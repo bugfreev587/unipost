@@ -827,7 +827,7 @@ export default function CliReferencePage() {
     <DocsPage
       className="docs-page-wide cli-reference-page"
       eyebrow="Developer tools"
-      title="CLI - Reference"
+      title="CLI Reference"
       lead="Every supported UniPost CLI command, grouped by workflow, with compact examples for agents and CI."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />

@@ -327,7 +327,7 @@ export default function CliPage() {
 
       <h2 id="command-groups">Command groups</h2>
       <p>
-        This overview keeps the setup path and safety model short. For every supported command, copyable examples, and sample JSON responses, open the <Link href="/docs/cli/reference">CLI Reference</Link>.
+        This overview keeps the setup path and safety model short. For every supported command, copyable examples, and sample JSON responses, open the <Link href="/docs/cli/reference">CLI Reference</Link>. For plain-language prompts that tell Codex or Claude Code how to use the CLI, open the <Link href="/docs/cli/agents">AI Agent Guide</Link>.
       </p>
       <DocsTable columns={["Group", "Commands"]} rows={COMMAND_ROWS} />
 

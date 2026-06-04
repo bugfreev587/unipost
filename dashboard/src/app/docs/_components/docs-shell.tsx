@@ -317,7 +317,8 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           label: "CLI",
           children: [
             { label: "Overview", href: "/docs/cli" },
-            { label: "Reference", href: "/docs/cli/reference" },
+            { label: "CLI Reference", href: "/docs/cli/reference" },
+            { label: "AI Agent Guide", href: "/docs/cli/agents" },
           ],
         },
         { label: "MCP", href: "/docs/mcp" },
@@ -2360,6 +2361,7 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/sdk"
     || current === "/docs/cli"
     || current === "/docs/cli/reference"
+    || current === "/docs/cli/agents"
     || current === "/docs/mcp"
     || current === "/docs/white-label"
     || current.startsWith("/docs/white-label/")

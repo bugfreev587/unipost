@@ -54,18 +54,22 @@ test("CLI docs split overview from a grouped command reference", async () => {
   const shellSource = await readFile(join(root, "src/app/docs/_components/docs-shell.tsx"), "utf8");
   const overviewSource = await readFile(join(root, "src/app/docs/cli/page.tsx"), "utf8");
   const referenceSource = await readFile(join(root, "src/app/docs/cli/reference/page.tsx"), "utf8");
+  const agentGuideSource = await readFile(join(root, "src/app/docs/cli/agents/page.tsx"), "utf8");
   const responseTabsSource = await readFile(join(root, "src/app/docs/cli/reference/command-response-tabs.tsx"), "utf8");
 
   assert.match(shellSource, /CLI/);
   assert.match(shellSource, /Overview/);
-  assert.match(shellSource, /Reference/);
+  assert.match(shellSource, /CLI Reference/);
+  assert.match(shellSource, /AI Agent Guide/);
   assert.match(shellSource, /\/docs\/cli\/reference/);
+  assert.match(shellSource, /\/docs\/cli\/agents/);
   assert.match(shellSource, /@media \(max-width:640px\)\{\.docs-auth-actions\{display:none\}/);
 
   assert.match(overviewSource, /title="CLI - Overview"/);
   assert.match(overviewSource, /\/docs\/cli\/reference/);
+  assert.match(overviewSource, /\/docs\/cli\/agents/);
 
-  assert.match(referenceSource, /title="CLI - Reference"/);
+  assert.match(referenceSource, /title="CLI Reference"/);
   assert.match(referenceSource, /CLI_REFERENCE_SECTIONS/);
   assert.match(referenceSource, /Setup & Diagnostics/);
   assert.match(referenceSource, /Auth & Config/);
@@ -100,6 +104,22 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /unipost accounts list --json/);
   assert.match(referenceSource, /"command": "accounts list"/);
   assert.match(referenceSource, /unipost agent capabilities --json/);
+
+  assert.match(agentGuideSource, /title="AI Agent Guide"/);
+  assert.match(agentGuideSource, /plain-language prompts/);
+  assert.match(agentGuideSource, /Read workspace context/);
+  assert.match(agentGuideSource, /Inspect account readiness/);
+  assert.match(agentGuideSource, /Prepare posts safely/);
+  assert.match(agentGuideSource, /Publish only after approval/);
+  assert.match(agentGuideSource, /请使用 UniPost CLI 查询我的 profiles 和 connected accounts/);
+  assert.match(agentGuideSource, /unipost agent bootstrap --client claude-code --json/);
+  assert.match(agentGuideSource, /unipost profiles list --json/);
+  assert.match(agentGuideSource, /unipost accounts list --json/);
+  assert.match(agentGuideSource, /unipost posts validate --account sa_\.\.\. --caption "\.\.\." --json/);
+  assert.match(agentGuideSource, /unipost posts draft --account sa_\.\.\. --caption "\.\.\." --json/);
+  assert.match(agentGuideSource, /do not publish, schedule, cancel, retry, or mutate data/);
+  assert.match(agentGuideSource, /--yes/);
+  assert.match(agentGuideSource, /--idempotency-key/);
 });
 
 test("CLI command responses keep a fixed inline height and can scroll without expanding", async () => {
