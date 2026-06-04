@@ -313,7 +313,13 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Advanced",
       items: [
-        { label: "CLI", href: "/docs/cli" },
+        {
+          label: "CLI",
+          children: [
+            { label: "Overview", href: "/docs/cli" },
+            { label: "Reference", href: "/docs/cli/reference" },
+          ],
+        },
         { label: "MCP", href: "/docs/mcp" },
       ],
     },
@@ -2352,6 +2358,7 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/publishing"
     || current === "/docs/sdk"
     || current === "/docs/cli"
+    || current === "/docs/cli/reference"
     || current === "/docs/mcp"
     || current === "/docs/white-label"
     || current.startsWith("/docs/white-label/")
