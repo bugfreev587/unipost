@@ -59,7 +59,6 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /getCalendarSnapSteps/);
   assert.match(source, /getCalendarSnapOffset/);
   assert.match(source, /shiftCalendarDateBySnapSteps/);
-  assert.match(source, /buildRollingMonthGrid/);
   assert.match(source, /buildRollingWeekDays/);
   assert.match(source, /posts-calendar-month-track/);
   assert.match(source, /posts-calendar-week-track/);
@@ -139,7 +138,7 @@ test("Posts calendar snap tracks keep fixed gutters outside moving date tracks",
   assert.doesNotMatch(weekColumns, /posts-calendar-week-heading-row/);
   assert.match(weekView, /className="posts-calendar-week-shell"/);
   assert.ok(monthWeekdayIndex >= 0, "month weekday header should render as its own static row");
-  assert.ok(monthTrackIndex >= 0, "month should render a rolling track for date cells");
+  assert.ok(monthTrackIndex >= 0, "month should render a fixed track for date cells");
   assert.ok(monthWeekdayIndex < monthTrackIndex, "month weekday header should stay outside the moving date track");
   assert.ok(weekHeaderIndex >= 0, "week date header should render before the time grid");
   assert.ok(weekBodyIndex >= 0, "week body should render after the header");
@@ -147,8 +146,10 @@ test("Posts calendar snap tracks keep fixed gutters outside moving date tracks",
   assert.match(weekHeader, /posts-calendar-week-header-inner posts-calendar-week-track/);
   assert.match(weekColumns, /posts-calendar-week-columns posts-calendar-week-track/);
   assert.match(source, /\.posts-calendar-month-track\{[^}]*width:100%/);
-  assert.match(source, /\.posts-calendar-month-track\{[^}]*height:calc\(100% \* 8 \/ 6\)/);
-  assert.match(source, /renderMonthDayGrid\(interactive \? rollingMonthCells : cells/);
+  assert.match(source, /\.posts-calendar-month-track\{[^}]*height:100%/);
+  assert.match(source, /renderMonthDayGrid\(cells,\s*"posts-calendar-month-days posts-calendar-month-track"\)/);
+  assert.doesNotMatch(source, /rollingMonthCells/);
+  assert.doesNotMatch(source, /buildRollingMonthGrid/);
   assert.match(source, /renderWeekColumns\(interactive \? rollingWeekDays : days/);
   assert.doesNotMatch(source, /posts-calendar-swipe-viewport/);
 });

@@ -48,7 +48,6 @@ import {
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   buildMonthGrid,
-  buildRollingMonthGrid,
   buildRollingWeekDays,
   buildWeekDays,
   bucketPostByLocalDay,
@@ -89,7 +88,6 @@ const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 560, height: 560 };
 const SNAP_TRANSITION_MS = 260;
 const WHEEL_SNAP_IDLE_MS = 110;
 const MONTH_VISIBLE_WEEKS = 6;
-const MONTH_BUFFER_WEEKS = 1;
 const WEEK_VISIBLE_DAYS = 7;
 const WEEK_BUFFER_DAYS = 1;
 
@@ -317,10 +315,6 @@ export function PostsCalendarView() {
   }, [filteredPosts]);
 
   const monthCells = useMemo(() => buildMonthGrid(visibleMonth), [visibleMonth]);
-  const rollingMonthCells = useMemo(
-    () => buildRollingMonthGrid(visibleMonth, MONTH_BUFFER_WEEKS, MONTH_VISIBLE_WEEKS, MONTH_BUFFER_WEEKS),
-    [visibleMonth],
-  );
   const weekDays = useMemo(() => buildWeekDays(visibleDate), [visibleDate]);
   const rollingWeekDays = useMemo(
     () => buildRollingWeekDays(visibleDate, WEEK_BUFFER_DAYS, WEEK_VISIBLE_DAYS, WEEK_BUFFER_DAYS),
@@ -687,7 +681,7 @@ export function PostsCalendarView() {
     >
       {renderMonthWeekdayHeader()}
       <div className="posts-calendar-month-view">
-        {renderMonthDayGrid(interactive ? rollingMonthCells : cells, "posts-calendar-month-days posts-calendar-month-track")}
+        {renderMonthDayGrid(cells, "posts-calendar-month-days posts-calendar-month-track")}
       </div>
     </div>
   );
@@ -2217,7 +2211,7 @@ const CALENDAR_CSS = `
 .posts-calendar-month-view{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
 .posts-calendar-month-weekdays{flex:0 0 38px;height:38px;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));background:var(--surface);border-bottom:1px solid var(--dborder)}
 .posts-calendar-month-days{flex:1;min-width:0;min-height:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));grid-template-rows:repeat(6,minmax(104px,1fr));background:var(--dborder);gap:1px}
-.posts-calendar-month-track{width:100%;height:calc(100% * 8 / 6);flex:0 0 auto;grid-template-rows:repeat(8,minmax(104px,1fr));will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,calc(-12.5% + var(--calendar-snap-offset)),0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
+.posts-calendar-month-track{width:100%;height:100%;flex:0 0 auto;grid-template-rows:repeat(6,minmax(104px,1fr));will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,var(--calendar-snap-offset),0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
 .posts-calendar-weekday{background:transparent;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-weekday.weekend{background:var(--calendar-weekend-surface)}
 .posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
@@ -2367,7 +2361,7 @@ const CALENDAR_CSS = `
 .posts-calendar-edit-footer button{height:36px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--dborder);border-radius:10px;background:var(--surface2);color:var(--dtext);font:inherit;font-size:13px;font-weight:760;padding:0 13px;white-space:nowrap}
 .posts-calendar-edit-footer button.primary{border-color:var(--daccent);background:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-edit-footer button:disabled{opacity:.55;cursor:not-allowed}
-@media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}.posts-calendar-month-track{grid-template-rows:repeat(8,minmax(114px,1fr))}}
+@media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}}
 @media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{overflow-x:auto}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:924px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-detail-grid{grid-template-columns:1fr}.posts-calendar-submitted-panel dl div{grid-template-columns:1fr}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.posts-calendar-popover,.posts-calendar-edit-inspector{animation:none}.posts-calendar-month-track,.posts-calendar-week-track{transition-duration:0ms}}
 `;
