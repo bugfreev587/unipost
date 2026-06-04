@@ -938,6 +938,7 @@ export function PostsCalendarView() {
       {selectedPost && selectedPostTarget ? (
         <EventPopover
           post={selectedPost}
+          profileId={profileId}
           anchorRect={selectedPostTarget.anchorRect}
           boundsRect={selectedPostTarget.boundsRect}
           profile={getPrimaryProfile(selectedPost, profilesById)}
@@ -1116,6 +1117,7 @@ function TimedPostButton({
 
 function EventPopover({
   post,
+  profileId,
   anchorRect,
   boundsRect,
   profile,
@@ -1126,6 +1128,7 @@ function EventPopover({
   onEdit,
 }: {
   post: SocialPost;
+  profileId: string;
   anchorRect: CalendarPopoverRect;
   boundsRect: CalendarPopoverRect;
   profile: Profile | null;
@@ -1240,14 +1243,24 @@ function EventPopover({
           <CalendarPostDetailGrid post={post} meta={meta} />
           <CalendarPostResults post={post} />
 
-          <button
-            type="button"
-            className="posts-calendar-open-list"
-            onClick={onEdit}
-            disabled={!editable}
-          >
-            {editable ? "Edit" : "View only"}
-          </button>
+          <div className="posts-calendar-popover-actions">
+            <Link
+              className="posts-calendar-open-list"
+              href={`/projects/${profileId}/posts/list?post=${encodeURIComponent(post.id)}`}
+              onClick={(event) => event.stopPropagation()}
+            >
+              <List size={14} />
+              Open in List
+            </Link>
+            <button
+              type="button"
+              className="posts-calendar-open-list"
+              onClick={onEdit}
+              disabled={!editable}
+            >
+              {editable ? "Edit" : "View only"}
+            </button>
+          </div>
         </div>
       </article>
     </div>
@@ -2305,7 +2318,8 @@ const CALENDAR_CSS = `
 .posts-calendar-submitted-panel dl div:first-child{border-top:0}
 .posts-calendar-submitted-panel dt{color:var(--dmuted2);font-size:11px;font-weight:700}
 .posts-calendar-submitted-panel dd{margin:0;color:var(--dtext);font-size:12px;line-height:1.35;word-break:break-word}
-.posts-calendar-open-list{display:inline-flex;align-items:center;justify-content:center;margin-top:17px;width:100%;height:36px;border-radius:10px;background:var(--surface2);border:1px solid var(--dborder);color:var(--dtext);text-decoration:none;font-size:14px;font-weight:700}
+.posts-calendar-popover-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:17px}
+.posts-calendar-open-list{display:inline-flex;align-items:center;justify-content:center;gap:6px;width:100%;height:36px;border-radius:10px;background:var(--surface2);border:1px solid var(--dborder);color:var(--dtext);text-decoration:none;font-size:14px;font-weight:700}
 .posts-calendar-open-list:hover{background:var(--surface3)}
 .posts-calendar-open-list:disabled{opacity:.55;cursor:not-allowed}
 .posts-calendar-popover-layer.edit-layer{z-index:92;background:color-mix(in srgb,var(--surface) 8%,transparent)}

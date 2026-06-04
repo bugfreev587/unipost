@@ -321,6 +321,8 @@ test("Posts calendar details popover mirrors list view post details", async () =
 
   assert.match(popover, /<CalendarPostDetailGrid post=\{post\} meta=\{meta\} \/>/);
   assert.match(popover, /<CalendarPostResults post=\{post\} \/>/);
+  assert.match(popover, /href=\{`\/projects\/\$\{profileId\}\/posts\/list\?post=\$\{encodeURIComponent\(post\.id\)\}`\}/);
+  assert.match(popover, />\s*Open in List\s*</);
   assert.match(detailsHelpers, /function CalendarPostDetailGrid/);
   assert.match(detailsHelpers, /Caption/);
   assert.match(detailsHelpers, /Mode/);
