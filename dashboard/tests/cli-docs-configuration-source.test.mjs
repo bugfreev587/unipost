@@ -44,6 +44,7 @@ test("CLI docs split overview from a grouped command reference", async () => {
   const shellSource = await readFile(join(root, "src/app/docs/_components/docs-shell.tsx"), "utf8");
   const overviewSource = await readFile(join(root, "src/app/docs/cli/page.tsx"), "utf8");
   const referenceSource = await readFile(join(root, "src/app/docs/cli/reference/page.tsx"), "utf8");
+  const responseTabsSource = await readFile(join(root, "src/app/docs/cli/reference/command-response-tabs.tsx"), "utf8");
 
   assert.match(shellSource, /CLI/);
   assert.match(shellSource, /Overview/);
@@ -74,8 +75,13 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /\.cli-command-summary\{display:grid;grid-template-columns:minmax\(260px,\.38fr\) minmax\(0,1fr\) 18px/);
   assert.match(referenceSource, /\.cli-command-example\{font-family:var\(--docs-mono\);font-size:12\.5px;line-height:1\.45;color:var\(--docs-text-soft\);overflow-wrap:anywhere\}/);
   assert.doesNotMatch(referenceSource, /\.cli-command-example\{[^}]*font-weight:650/);
-  assert.match(referenceSource, /viewerHeight=\{240\}/);
-  assert.match(referenceSource, /scrollbarVisibility="on-scroll"/);
+  assert.match(referenceSource, /CommandResponseTabs/);
+  assert.match(referenceSource, /cli-command-response-mount/);
+  assert.match(responseTabsSource, /closest\("details"\)/);
+  assert.match(responseTabsSource, /addEventListener\("toggle", syncOpen\)/);
+  assert.match(responseTabsSource, /removeEventListener\("toggle", syncOpen\)/);
+  assert.match(responseTabsSource, /viewerHeight=\{240\}/);
+  assert.match(responseTabsSource, /scrollbarVisibility="on-scroll"/);
   assert.match(referenceSource, /<details/);
   assert.match(referenceSource, /<summary/);
   assert.doesNotMatch(referenceSource, /command-reference-card/);

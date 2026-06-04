@@ -1,5 +1,5 @@
-import { CodeTabs } from "../../_components/code-block";
 import { DocsPage, DocsTable } from "../../_components/docs-shell";
+import { CommandResponseTabs } from "./command-response-tabs";
 
 type CliReferenceCommand = {
   name: string;
@@ -877,15 +877,10 @@ function CommandReferenceRow({ command, sectionTitle }: { command: CliReferenceC
       <div className="cli-command-panel">
         <p>{command.description}</p>
         <div className="cli-command-response-label">Example response</div>
-        <CodeTabs
-          snippets={[{
-            label: responseLabel,
-            lang: command.responseLang || "json",
-            code: response,
-          }]}
-          viewerHeight={240}
-          viewerMaxHeight={240}
-          scrollbarVisibility="on-scroll"
+        <CommandResponseTabs
+          response={response}
+          responseLabel={responseLabel}
+          responseLang={command.responseLang || "json"}
         />
       </div>
     </details>
@@ -1015,6 +1010,7 @@ const styles = `
 .cli-command-panel{display:grid;gap:10px;padding:0 14px 14px;border-top:1px solid var(--docs-border)}
 .cli-command-panel p{margin:12px 0 0;color:var(--docs-text-soft);font-size:13.5px;line-height:1.6}
 .cli-command-response-label{font-family:var(--docs-mono);font-size:11px;font-weight:800;letter-spacing:0;text-transform:uppercase;color:var(--docs-text-faint)}
+.cli-command-response-mount{min-width:0}
 .cli-command-panel .docs-code-tabs,.cli-command-panel .docs-code-block{margin:0;border-radius:8px;box-shadow:none}
 @media (max-width:920px){
   .cli-reference-group{gap:12px}
