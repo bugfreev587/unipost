@@ -40,6 +40,40 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /--dry-run/);
 });
 
+test("CLI docs split overview from a grouped command reference", async () => {
+  const shellSource = await readFile(join(root, "src/app/docs/_components/docs-shell.tsx"), "utf8");
+  const overviewSource = await readFile(join(root, "src/app/docs/cli/page.tsx"), "utf8");
+  const referenceSource = await readFile(join(root, "src/app/docs/cli/reference/page.tsx"), "utf8");
+
+  assert.match(shellSource, /CLI/);
+  assert.match(shellSource, /Overview/);
+  assert.match(shellSource, /Reference/);
+  assert.match(shellSource, /\/docs\/cli\/reference/);
+
+  assert.match(overviewSource, /title="CLI - Overview"/);
+  assert.match(overviewSource, /\/docs\/cli\/reference/);
+
+  assert.match(referenceSource, /title="CLI - Reference"/);
+  assert.match(referenceSource, /CLI_REFERENCE_SECTIONS/);
+  assert.match(referenceSource, /Setup & Diagnostics/);
+  assert.match(referenceSource, /Auth & Config/);
+  assert.match(referenceSource, /Profiles & Connect/);
+  assert.match(referenceSource, /Accounts/);
+  assert.match(referenceSource, /Posts/);
+  assert.match(referenceSource, /Media/);
+  assert.match(referenceSource, /Analytics/);
+  assert.match(referenceSource, /Examples/);
+  assert.match(referenceSource, /Agent & MCP/);
+  assert.match(referenceSource, /Self-management & Shell/);
+  assert.match(referenceSource, /command-reference-card/);
+  assert.match(referenceSource, /What it does/);
+  assert.match(referenceSource, /Example/);
+  assert.match(referenceSource, /Example response/);
+  assert.match(referenceSource, /unipost accounts list --json/);
+  assert.match(referenceSource, /"command": "accounts list"/);
+  assert.match(referenceSource, /unipost agent capabilities --json/);
+});
+
 test("API key setup dialog does not imply Codex is configured by auth alone", async () => {
   const source = await readFile(join(root, "src/app/(dashboard)/projects/[id]/api-keys/page.tsx"), "utf8");
 

@@ -205,7 +205,7 @@ export default function CliPage() {
     <DocsPage
       className="docs-page-wide"
       eyebrow="Developer tools"
-      title="CLI"
+      title="CLI - Overview"
       lead="Use UniPost from a terminal, or give a local AI agent a safe UniPost toolchain. Pick the setup path that matches what you are trying to do."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
@@ -289,6 +289,9 @@ export default function CliPage() {
       <DocsTable columns={["Problem", "Fix"]} rows={TROUBLESHOOTING_ROWS} />
 
       <h2 id="command-groups">Command groups</h2>
+      <p>
+        This overview keeps the setup path and safety model short. For every supported command, copyable examples, and sample JSON responses, open the <Link href="/docs/cli/reference">CLI Reference</Link>.
+      </p>
       <DocsTable columns={["Group", "Commands"]} rows={COMMAND_ROWS} />
 
       <h2 id="safe-publishing">Safe publishing model</h2>
