@@ -883,7 +883,9 @@ function CommandReferenceRow({ command, sectionTitle }: { command: CliReferenceC
             lang: command.responseLang || "json",
             code: response,
           }]}
+          viewerHeight={240}
           viewerMaxHeight={240}
+          scrollbarVisibility="on-scroll"
         />
       </div>
     </details>

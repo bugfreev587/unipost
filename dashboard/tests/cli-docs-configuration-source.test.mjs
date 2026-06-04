@@ -74,6 +74,8 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /\.cli-command-summary\{display:grid;grid-template-columns:minmax\(260px,\.38fr\) minmax\(0,1fr\) 18px/);
   assert.match(referenceSource, /\.cli-command-example\{font-family:var\(--docs-mono\);font-size:12\.5px;line-height:1\.45;color:var\(--docs-text-soft\);overflow-wrap:anywhere\}/);
   assert.doesNotMatch(referenceSource, /\.cli-command-example\{[^}]*font-weight:650/);
+  assert.match(referenceSource, /viewerHeight=\{240\}/);
+  assert.match(referenceSource, /scrollbarVisibility="on-scroll"/);
   assert.match(referenceSource, /<details/);
   assert.match(referenceSource, /<summary/);
   assert.doesNotMatch(referenceSource, /command-reference-card/);
@@ -82,6 +84,27 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /unipost accounts list --json/);
   assert.match(referenceSource, /"command": "accounts list"/);
   assert.match(referenceSource, /unipost agent capabilities --json/);
+});
+
+test("CLI command responses keep a fixed inline height and can scroll without expanding", async () => {
+  const codeBlockSource = await readFile(join(root, "src/app/docs/_components/code-block.tsx"), "utf8");
+  const monacoSource = await readFile(join(root, "src/app/docs/api/_components/json-monaco-viewer.tsx"), "utf8");
+
+  assert.match(codeBlockSource, /viewerHeight\?: number \| string/);
+  assert.match(codeBlockSource, /scrollbarVisibility\?: "default" \| "on-scroll"/);
+  assert.match(codeBlockSource, /height=\{viewerHeight\}/);
+  assert.match(codeBlockSource, /scrollbarVisibility=\{scrollbarVisibility\}/);
+
+  assert.match(monacoSource, /type ScrollbarVisibility = "default" \| "on-scroll"/);
+  assert.match(monacoSource, /docs-monaco-frame scrollbar-on-scroll/);
+  assert.match(monacoSource, /scrollbarVisibility === "on-scroll"/);
+  assert.match(monacoSource, /onWheelCapture=\{showScrollbar\}/);
+  assert.match(monacoSource, /onTouchMoveCapture=\{showScrollbar\}/);
+  assert.match(monacoSource, /handleMouseWheel: expanded \|\| scrollbarVisibility === "on-scroll"/);
+  assert.match(monacoSource, /vertical: expanded \|\| scrollbarVisibility === "on-scroll" \? "auto" : "hidden"/);
+
+  assert.match(codeBlockSource, /\.docs-monaco-frame\.scrollbar-on-scroll \.monaco-scrollable-element > \.scrollbar\.vertical/);
+  assert.match(codeBlockSource, /\.docs-monaco-frame\.scrollbar-on-scroll\.scrollbar-active \.monaco-scrollable-element > \.scrollbar\.vertical/);
 });
 
 test("API key setup dialog does not imply Codex is configured by auth alone", async () => {
