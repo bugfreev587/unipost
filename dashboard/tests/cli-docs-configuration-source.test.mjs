@@ -8,6 +8,14 @@ const root = process.cwd();
 test("CLI docs explain setup, configuration, and common fixes", async () => {
   const source = await readFile(join(root, "src/app/docs/cli/page.tsx"), "utf8");
 
+  assert.match(source, /What UniPost CLI lets agents do/);
+  assert.match(source, /Connect UniPost faster/);
+  assert.match(source, /Inspect real workspace data/);
+  assert.match(source, /Validate and draft safely/);
+  assert.match(source, /Codex or Claude Code can read your project/);
+  assert.match(source, /profiles, connected accounts, account health, platform capabilities, and metrics/);
+  assert.match(source, /Live or scheduled publishing is never automatic/);
+  assert.match(source, /Start in three steps/);
   assert.match(source, /Choose your setup path/);
   assert.match(source, /Path A: Command line only/);
   assert.match(source, /Path B: Local AI agent/);
@@ -38,6 +46,8 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /setup_token_used/);
   assert.match(source, /keychain_unavailable/);
   assert.match(source, /--dry-run/);
+  assert.doesNotMatch(source, /Canonical statuses/);
+  assert.doesNotMatch(source, /Runtime behavior/);
 });
 
 test("CLI docs split overview from a grouped command reference", async () => {

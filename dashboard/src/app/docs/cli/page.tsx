@@ -187,6 +187,33 @@ const COMMAND_ROWS = [
   ["Agent", "`agent bootstrap`, `agent capabilities`, `agent guide`, `agent context`, `agent mcp-config`, `agent mcp-test`, `agent install`, `agent plan`, `agent plan-publish`, and restricted `agent execute`."],
 ] as const;
 
+const USE_CASES = [
+  {
+    title: "Connect UniPost faster",
+    label: "Build integration code",
+    body: "Codex or Claude Code can read your project, add UniPost API, SDK, webhook, and environment-variable code, then run local tests and CLI validation against the same workspace.",
+    command: "unipost examples posts.create --lang node --json",
+  },
+  {
+    title: "Inspect real workspace data",
+    label: "Query connected accounts",
+    body: "Authenticated agents can retrieve profiles, connected accounts, account health, platform capabilities, and metrics before generating code or planning social workflows.",
+    command: "unipost agent bootstrap --client codex --json",
+  },
+  {
+    title: "Validate and draft safely",
+    label: "Plan publishing work",
+    body: "Agents can generate post payloads, validate them, dry-run publish requests, and create drafts. Live or scheduled publishing is never automatic and still needs explicit user approval.",
+    command: "unipost posts validate --account sa_... --json",
+  },
+] as const;
+
+const START_STEPS = [
+  ["1. Install and sign in", "Install once with `npm install -g @unipost/cli`, then run the Dashboard setup-token command. After install, use <code>unipost</code> commands everywhere. Update with <code>unipost upgrade</code> when you need the latest CLI."],
+  ["2. Choose who will use it", "Use Terminal for human command-line work. Use Codex or Claude Code when a local agent should read project code, query UniPost context, and help implement or validate workflows."],
+  ["3. Ground before action", "Run `auth status`, `profiles list`, `accounts list`, or `agent bootstrap` before drafting. Agents should validate, dry-run, or draft first; live publishing requires `--yes` and `--idempotency-key`."],
+] as const;
+
 const TROUBLESHOOTING_ROWS = [
   ["`zsh: command not found: unipost`", "Install the CLI once with `npm install -g @unipost/cli`, then open a new terminal and run `unipost --help`. If it still fails, check that your npm global bin directory is on PATH with `npm bin -g`."],
   ["Need the latest CLI", "Update with `unipost upgrade`, then run `unipost --version` to confirm the installed version."],
@@ -210,6 +237,29 @@ export default function CliPage() {
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
+      <section className="cli-use-cases" aria-labelledby="agent-use-cases">
+        <div className="cli-use-cases-copy">
+          <div className="cli-status-label">What the CLI unlocks</div>
+          <h2 id="agent-use-cases">What UniPost CLI lets agents do</h2>
+          <p>
+            The CLI gives Codex, Claude Code, and terminal users a safe way to use your real UniPost workspace. It can speed up integration work, inspect connected social accounts, and prepare publishing workflows without turning live publishing into an automatic action.
+          </p>
+        </div>
+        <div className="cli-use-case-grid">
+          {USE_CASES.map((item) => (
+            <article className="cli-use-case" key={item.title}>
+              <div className="cli-use-case-label">{item.label}</div>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+              <code>{item.command}</code>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <h2 id="start">Start in three steps</h2>
+      <DocsTable columns={["Step", "What to do"]} rows={START_STEPS} />
+
       <div className="cli-status">
         <div>
           <div className="cli-status-label">Beta status</div>
@@ -220,20 +270,7 @@ export default function CliPage() {
         <div className="cli-phase-pill">Agent setup beta</div>
       </div>
 
-      <h2 id="what-it-is">What the CLI is for</h2>
-      <DocsTable
-        columns={["Audience", "Job"]}
-        rows={[
-          ["Developers", "Verify auth, discover real account IDs, connect accounts, validate posts, create drafts, and generate cURL/native HTTP examples."],
-          ["AI agents", "Use stable JSON, intent catalogs, safe planning, wait commands, and explicit publish guardrails instead of scraping docs or guessing command syntax."],
-          ["Support and CI", "Run deterministic diagnostics, inspect request IDs, check account health, and branch on exit codes."],
-        ]}
-      />
-
       <h2 id="before-running">Before you run a command</h2>
-      <p>
-        Install once with <code>npm install -g @unipost/cli</code>. After install, use <code>unipost</code> commands everywhere: terminal workflows, Dashboard setup-token commands, and local agent setup. Update with <code>unipost upgrade</code> when you need the latest CLI.
-      </p>
       <DocsTable
         columns={["What you run", "What it actually does"]}
         rows={[
@@ -313,7 +350,7 @@ export default function CliPage() {
 
       <h2 id="agent-contract">Agent contract</h2>
       <p>
-        Codex, Claude Code, Cursor, and other agents should use <code>agent bootstrap</code>, <code>agent capabilities</code>, <code>agent guide</code>, <code>agent context</code>, <code>agent mcp-config</code>, <code>agent mcp-test</code>, <code>agent install</code>, and <code>agent plan</code> before writing. Phase 5 mirrors the same intent names into the MCP agent contract so clients can choose CLI commands, MCP tools, or client-specific instruction packages without guessing terminal syntax.
+        Codex, Claude Code, Cursor, and other agents should use <code>agent bootstrap</code>, <code>agent capabilities</code>, <code>agent context</code>, <code>agent mcp-config</code>, <code>agent mcp-test</code>, <code>agent install</code>, and <code>agent plan</code> before writing. The contract keeps account discovery, planning, validation, draft creation, and live-publish approvals explicit.
       </p>
       <DocsTable
         columns={["Primitive", "Contract"]}
@@ -351,36 +388,24 @@ export default function CliPage() {
           ["10", "timeout"],
         ]}
       />
-
-      <h2 id="status-enums">Canonical statuses</h2>
-      <DocsTable
-        columns={["Resource", "CLI-facing status values"]}
-        rows={[
-          ["Post", "`draft`, `scheduled`, `publishing`, `published`, `partial`, `failed`, `canceled`"],
-          ["Connect session", "`pending`, `completed`, `expired`, `canceled`"],
-          ["Media", "`pending`, `processing`, `ready`, `failed`"],
-        ]}
-      />
-
-      <h2 id="runtime-contract">Runtime behavior</h2>
-      <DocsTable
-        columns={["Area", "Behavior"]}
-        rows={[
-          ["Pagination", "`--limit`, `--cursor`, and `--all`; JSON metadata includes `next_cursor` when available."],
-          ["Output", "`--json` or `--output json`; `--field` for scripts; `--no-color` and `NO_COLOR=1` for plain output."],
-          ["Networking", "Bounded retries for reads and idempotent writes; respect `Retry-After`; no automatic retry for unsafe writes without idempotency."],
-          ["Credentials", "Setup-token login stores the named CLI key in OS keychain and keeps only locator/redacted metadata in config. `UNIPOST_API_KEY` and `--api-key` remain fallback auth paths; `auth logout` clears local credentials, and remote revoke happens from Dashboard."],
-          ["Telemetry", "First-run notice, redaction, and opt-out through config, `--no-telemetry`, or `UNIPOST_TELEMETRY=0`."],
-        ]}
-      />
     </DocsPage>
   );
 }
 
 const styles = `
+.cli-use-cases{display:grid;grid-template-columns:minmax(240px,.82fr) minmax(0,1.18fr);gap:22px;align-items:start;margin:10px 0 28px;padding:18px 0 24px;border-bottom:1px solid var(--docs-border)}
+.cli-use-cases-copy h2{margin:6px 0 0;font-size:28px;line-height:1.16;color:var(--docs-text);font-weight:760;letter-spacing:0}
+.cli-use-cases-copy p{margin:12px 0 0;color:var(--docs-text-soft);font-size:15px;line-height:1.65;max-width:58ch}
+.cli-use-case-grid{display:grid;gap:10px;min-width:0}
+.cli-use-case{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:14px 16px;min-width:0}
+.cli-use-case-label{font-family:var(--docs-mono);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--docs-text-faint)}
+.cli-use-case h3{margin:6px 0 0;font-size:17px;line-height:1.3;color:var(--docs-text);font-weight:720;letter-spacing:0}
+.cli-use-case p{margin:8px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.6}
+.cli-use-case code{display:block;margin-top:10px;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
 .cli-status{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:18px;align-items:start;margin:8px 0 26px;padding:18px 20px;border:1px solid var(--docs-border);border-radius:16px;background:var(--docs-bg-elevated)}
 .cli-status p{margin:6px 0 0;color:var(--docs-text-soft);line-height:1.65}
 .cli-status-label{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);font-family:var(--docs-mono)}
 .cli-phase-pill{display:inline-flex;align-items:center;justify-content:center;min-height:34px;padding:0 12px;border:1px solid var(--docs-border);border-radius:999px;background:var(--docs-bg-muted);color:var(--docs-text);font-family:var(--docs-mono);font-size:12px;font-weight:700;white-space:nowrap}
+@media (max-width:920px){.cli-use-cases{grid-template-columns:1fr;gap:14px}.cli-use-cases-copy h2{font-size:24px}}
 @media (max-width:720px){.cli-status{grid-template-columns:1fr}.cli-phase-pill{justify-content:flex-start;width:max-content;max-width:100%}}
 `;
