@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { Check, Copy, Maximize2, X } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -15,6 +15,7 @@ export type JsonViewerSnippet = {
 
 type MonacoLanguage = "javascript" | "python" | "go" | "json" | "shell" | "plaintext";
 type ViewerThemeVariant = "default" | "api";
+type ScrollbarVisibility = "default" | "on-scroll";
 
 function tryFormatJson(value: string) {
   try {
@@ -65,6 +66,31 @@ function getViewerValue(code: string, language: MonacoLanguage) {
     return tryFormatJson(code) || code;
   }
   return code;
+}
+
+function useScrollbarActivity(scrollbarVisibility: ScrollbarVisibility) {
+  const [scrollbarActive, setScrollbarActive] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const showScrollbar = useCallback(() => {
+    if (scrollbarVisibility !== "on-scroll") return;
+
+    setScrollbarActive(true);
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current);
+    }
+    timerRef.current = window.setTimeout(() => setScrollbarActive(false), 900);
+  }, [scrollbarVisibility]);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        window.clearTimeout(timerRef.current);
+      }
+    };
+  }, []);
+
+  return { scrollbarActive, showScrollbar };
 }
 
 function CopyButton({ code }: { code: string }) {
@@ -188,17 +214,22 @@ export function JsonMonacoViewer({
   code,
   height,
   maxHeight = 468,
+  scrollbarVisibility = "default",
   themeVariant = "default",
   expanded = false,
 }: {
   code: string;
   height?: number | string;
   maxHeight?: number;
+  scrollbarVisibility?: ScrollbarVisibility;
   themeVariant?: ViewerThemeVariant;
   expanded?: boolean;
 }) {
   const formatted = useMemo(() => tryFormatJson(code), [code]);
   const [themeName, setThemeName] = useState("unipost-json-dark");
+  const { scrollbarActive, showScrollbar } = useScrollbarActivity(scrollbarVisibility);
+  const baseFrameClassName = scrollbarVisibility === "on-scroll" ? "docs-monaco-frame scrollbar-on-scroll" : "docs-monaco-frame";
+  const frameClassName = `${baseFrameClassName}${expanded ? " expanded" : ""}${scrollbarActive ? " scrollbar-active" : ""}`;
 
   function applyTheme(monaco: typeof import("monaco-editor")) {
     const isDark = document.documentElement.classList.contains("dark");
@@ -259,7 +290,9 @@ export function JsonMonacoViewer({
 
   return (
     <div
-      className={`docs-monaco-frame${expanded ? " expanded" : ""}`}
+      className={frameClassName}
+      onTouchMoveCapture={showScrollbar}
+      onWheelCapture={showScrollbar}
       style={{
         border: "1px solid var(--docs-border)",
         borderRadius: themeVariant === "api" ? 8 : 16,
@@ -299,10 +332,10 @@ export function JsonMonacoViewer({
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
           scrollbar: {
             alwaysConsumeMouseWheel: false,
-            handleMouseWheel: expanded,
+            handleMouseWheel: expanded || scrollbarVisibility === "on-scroll",
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
-            vertical: expanded ? "auto" : "hidden",
+            vertical: expanded || scrollbarVisibility === "on-scroll" ? "auto" : "hidden",
             horizontal: "auto",
           },
         }}
@@ -316,6 +349,7 @@ export function MonacoCodeViewer({
   language,
   height,
   maxHeight = 468,
+  scrollbarVisibility = "default",
   themeVariant = "default",
   expanded = false,
 }: {
@@ -323,12 +357,16 @@ export function MonacoCodeViewer({
   language?: string;
   height?: number | string;
   maxHeight?: number;
+  scrollbarVisibility?: ScrollbarVisibility;
   themeVariant?: ViewerThemeVariant;
   expanded?: boolean;
 }) {
   const normalizedLanguage = useMemo(() => normalizeMonacoLanguage(language, code), [code, language]);
   const value = useMemo(() => getViewerValue(code, normalizedLanguage), [code, normalizedLanguage]);
   const [themeName, setThemeName] = useState("unipost-snippet-dark");
+  const { scrollbarActive, showScrollbar } = useScrollbarActivity(scrollbarVisibility);
+  const baseFrameClassName = scrollbarVisibility === "on-scroll" ? "docs-monaco-frame scrollbar-on-scroll" : "docs-monaco-frame";
+  const frameClassName = `${baseFrameClassName}${expanded ? " expanded" : ""}${scrollbarActive ? " scrollbar-active" : ""}`;
 
   function applyTheme(monaco: typeof import("monaco-editor")) {
     const isDark = document.documentElement.classList.contains("dark");
@@ -396,7 +434,9 @@ export function MonacoCodeViewer({
 
   return (
     <div
-      className={`docs-monaco-frame${expanded ? " expanded" : ""}`}
+      className={frameClassName}
+      onTouchMoveCapture={showScrollbar}
+      onWheelCapture={showScrollbar}
       style={{
         border: "1px solid var(--docs-border)",
         borderRadius: themeVariant === "api" ? 8 : 16,
@@ -436,10 +476,10 @@ export function MonacoCodeViewer({
           fontFamily: "var(--docs-mono, var(--mono), monospace)",
           scrollbar: {
             alwaysConsumeMouseWheel: false,
-            handleMouseWheel: expanded,
+            handleMouseWheel: expanded || scrollbarVisibility === "on-scroll",
             verticalScrollbarSize: 10,
             horizontalScrollbarSize: 10,
-            vertical: expanded ? "auto" : "hidden",
+            vertical: expanded || scrollbarVisibility === "on-scroll" ? "auto" : "hidden",
             horizontal: "auto",
           },
         }}
@@ -451,10 +491,14 @@ export function MonacoCodeViewer({
 export function JsonMonacoTabs({
   snippets,
   maxHeight = 468,
+  height,
+  scrollbarVisibility = "default",
   themeVariant = "default",
 }: {
   snippets: JsonViewerSnippet[];
   maxHeight?: number;
+  height?: number | string;
+  scrollbarVisibility?: ScrollbarVisibility;
   themeVariant?: ViewerThemeVariant;
 }) {
   const validSnippets = useMemo(
@@ -493,7 +537,7 @@ export function JsonMonacoTabs({
           <ExpandButton code={formatted} language="json" label={current.label} themeVariant={themeVariant} />
         </div>
       </div>
-      <JsonMonacoViewer code={formatted} maxHeight={maxHeight} themeVariant={themeVariant} />
+      <JsonMonacoViewer code={formatted} height={height} maxHeight={maxHeight} scrollbarVisibility={scrollbarVisibility} themeVariant={themeVariant} />
     </div>
   );
 }
@@ -501,10 +545,14 @@ export function JsonMonacoTabs({
 export function MonacoTabs({
   snippets,
   maxHeight = 468,
+  height,
+  scrollbarVisibility = "default",
   themeVariant = "default",
 }: {
   snippets: JsonViewerSnippet[];
   maxHeight?: number;
+  height?: number | string;
+  scrollbarVisibility?: ScrollbarVisibility;
   themeVariant?: ViewerThemeVariant;
 }) {
   const [active, setActive] = useState(0);
@@ -531,7 +579,7 @@ export function MonacoTabs({
           <ExpandButton code={copyValue} language={current.lang || current.label} label={current.label} themeVariant={themeVariant} />
         </div>
       </div>
-      <MonacoCodeViewer code={current.code} language={current.lang || current.label} maxHeight={maxHeight} themeVariant={themeVariant} />
+      <MonacoCodeViewer code={current.code} language={current.lang || current.label} height={height} maxHeight={maxHeight} scrollbarVisibility={scrollbarVisibility} themeVariant={themeVariant} />
     </div>
   );
 }
