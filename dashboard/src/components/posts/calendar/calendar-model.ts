@@ -108,6 +108,7 @@ const STATUS_COLOR_PALETTE: Record<CalendarStatusGroup, string> = {
   draft: "#a16207",
   cancelled: "#475569",
   archived: "#52525b",
+  unknown: "#64748b",
 };
 
 export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDayCell[] {

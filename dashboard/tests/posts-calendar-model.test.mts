@@ -125,6 +125,7 @@ test("calendar status colors use fixed dark semantic colors", async () => {
   assert.equal(model.getCalendarStatusColor("failed"), "#b91c1c");
   assert.equal(model.getCalendarStatusColor("draft"), "#a16207");
   assert.equal(model.getCalendarStatusColor("scheduled"), "#1d4ed8");
+  assert.equal(model.getCalendarStatusColor("unknown"), "#64748b");
 });
 
 test("buildWeekDays returns a rolling seven-day window anchored to the selected day", () => {
