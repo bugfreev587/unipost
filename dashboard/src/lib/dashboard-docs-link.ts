@@ -39,10 +39,13 @@ function toLandingOrigin(value: string | undefined): string | undefined {
 export function getDashboardDocsHref(options: DashboardDocsHrefOptions = {}) {
   const path = normalizePath(options.path);
   const landingOrigin =
-    toLandingOrigin(options.landingUrl ?? process.env.NEXT_PUBLIC_LANDING_URL) ??
-    toLandingOrigin(options.appUrl ?? process.env.NEXT_PUBLIC_APP_URL) ??
+    toLandingOrigin(options.landingUrl) ??
+    toLandingOrigin(options.appUrl) ??
     toLandingOrigin(options.currentOrigin) ??
-    toLandingOrigin(options.baseUrl ?? process.env.NEXT_PUBLIC_BASE_URL) ??
+    toLandingOrigin(options.baseUrl) ??
+    toLandingOrigin(process.env.NEXT_PUBLIC_LANDING_URL) ??
+    toLandingOrigin(process.env.NEXT_PUBLIC_APP_URL) ??
+    toLandingOrigin(process.env.NEXT_PUBLIC_BASE_URL) ??
     PRODUCTION_LANDING_ORIGIN;
 
   return `${landingOrigin}${path}`;
