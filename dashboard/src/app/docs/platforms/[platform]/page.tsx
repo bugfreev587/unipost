@@ -267,13 +267,21 @@ export default async function PlatformDetailPage({
         rows={data.requirements}
       />
       {supportsManagedUploads ? (
-        <p className="docs-note">
-          Hosted URLs: pass the public URL in <code>media_urls</code>. Local files:
-          reserve an upload with <ApiInlineLink endpoint="POST /v1/media" />, PUT the
-          bytes to the returned <code>upload_url</code>, then publish with{" "}
-          <code>media_ids</code>. Full flow in the{" "}
-          <Link href="/docs/publishing#local-file-flow">Publishing guide</Link>.
-        </p>
+        <>
+          <p className="docs-note">
+            Hosted URLs: pass the public URL in <code>media_urls</code>. Local files:
+            reserve an upload with <ApiInlineLink endpoint="POST /v1/media" />, PUT the
+            bytes to the returned <code>upload_url</code>, then publish with{" "}
+            <code>media_ids</code>. Full flow in the{" "}
+            <Link href="/docs/publishing#local-file-flow">Publishing guide</Link>.
+          </p>
+          {data.managedUploadNote ? (
+            <div className="docs-callout docs-callout-info docs-callout-compact">
+              <strong>Managed upload note</strong>
+              <DocsRichText text={data.managedUploadNote} />
+            </div>
+          ) : null}
+        </>
       ) : null}
 
       <MediaSpecsSection data={data} />

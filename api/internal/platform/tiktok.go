@@ -30,6 +30,11 @@ var (
 	tiktokPublishPollInterval = 5 * time.Second
 )
 
+const (
+	tiktokMaxRegularChunkSizeBytes = 64_000_000
+	tiktokDefaultUploadChunkSize   = 30_000_000
+)
+
 type tiktokMediaProxy interface {
 	UploadFromURL(context.Context, string) (string, error)
 }
@@ -627,13 +632,14 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 	videoSize := len(videoData)
 	slog.Info("tiktok post: downloaded video", "size", videoSize)
 
+	chunkSize, totalChunkCount := tiktokVideoUploadPlan(videoSize)
 	initBody, _ := json.Marshal(map[string]any{
 		"post_info": buildTikTokPostInfo(text, privacyLevel, opts, "video"),
 		"source_info": map[string]any{
 			"source":            "FILE_UPLOAD",
 			"video_size":        videoSize,
-			"chunk_size":        videoSize,
-			"total_chunk_count": 1,
+			"chunk_size":        chunkSize,
+			"total_chunk_count": totalChunkCount,
 		},
 	})
 
@@ -678,29 +684,53 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 		return "", fmt.Errorf("tiktok returned no upload URL")
 	}
 
-	slog.Info("tiktok post: uploading video", "publish_id", initResult.Data.PublishID)
+	slog.Info("tiktok post: uploading video",
+		"publish_id", initResult.Data.PublishID,
+		"chunk_size", chunkSize,
+		"total_chunk_count", totalChunkCount,
+	)
 
-	uploadReq, err := http.NewRequestWithContext(ctx, "PUT", initResult.Data.UploadURL, bytes.NewReader(videoData))
-	if err != nil {
-		return "", err
-	}
-	uploadReq.Header.Set("Content-Type", "application/octet-stream")
-	uploadReq.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", videoSize-1, videoSize))
-	uploadReq.Header.Set("Content-Length", fmt.Sprintf("%d", videoSize))
+	for chunkIndex := 0; chunkIndex < totalChunkCount; chunkIndex++ {
+		start := chunkIndex * chunkSize
+		end := start + chunkSize
+		if chunkIndex == totalChunkCount-1 {
+			end = videoSize
+		}
+		chunk := videoData[start:end]
 
-	uploadResp, err := a.client.Do(uploadReq)
-	if err != nil {
-		return "", fmt.Errorf("failed to upload video: %w", err)
-	}
-	defer uploadResp.Body.Close()
+		uploadReq, err := http.NewRequestWithContext(ctx, "PUT", initResult.Data.UploadURL, bytes.NewReader(chunk))
+		if err != nil {
+			return "", err
+		}
+		uploadReq.Header.Set("Content-Type", "application/octet-stream")
+		uploadReq.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, videoSize))
 
-	uploadRespBody, _ := io.ReadAll(uploadResp.Body)
-	slog.Info("tiktok post: upload response", "status", uploadResp.StatusCode, "body", string(uploadRespBody))
-	if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated {
-		return "", fmt.Errorf("tiktok upload failed (%d): %s", uploadResp.StatusCode, string(uploadRespBody))
+		uploadResp, err := a.client.Do(uploadReq)
+		if err != nil {
+			return "", fmt.Errorf("failed to upload video chunk %d/%d: %w", chunkIndex+1, totalChunkCount, err)
+		}
+		uploadRespBody, _ := io.ReadAll(uploadResp.Body)
+		_ = uploadResp.Body.Close()
+		slog.Info("tiktok post: upload response",
+			"status", uploadResp.StatusCode,
+			"chunk", chunkIndex+1,
+			"total_chunks", totalChunkCount,
+			"body", string(uploadRespBody),
+		)
+		if uploadResp.StatusCode != http.StatusOK && uploadResp.StatusCode != http.StatusCreated && uploadResp.StatusCode != http.StatusPartialContent {
+			return "", fmt.Errorf("tiktok upload chunk %d/%d failed (%d): %s", chunkIndex+1, totalChunkCount, uploadResp.StatusCode, string(uploadRespBody))
+		}
 	}
 
 	return initResult.Data.PublishID, nil
+}
+
+func tiktokVideoUploadPlan(videoSize int) (int, int) {
+	if videoSize <= tiktokMaxRegularChunkSizeBytes {
+		return videoSize, 1
+	}
+	totalChunkCount := videoSize / tiktokDefaultUploadChunkSize
+	return tiktokDefaultUploadChunkSize, totalChunkCount
 }
 
 // TikTokCreatorInfo mirrors the subset of /v2/post/publish/creator_info/query/
