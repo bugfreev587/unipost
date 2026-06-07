@@ -63,6 +63,11 @@ func (h *ErrorTriageHandler) CreateRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to run error triage: "+err.Error())
 		return
 	}
+	detail, detailErr := h.store.GetRunDetail(r.Context(), run.ID)
+	if detailErr == nil {
+		writeAccepted(w, detail.Run)
+		return
+	}
 	writeAccepted(w, run)
 }
 
@@ -86,6 +91,11 @@ func (h *ErrorTriageHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rerun error triage: "+err.Error())
+		return
+	}
+	nextDetail, detailErr := h.store.GetRunDetail(r.Context(), run.ID)
+	if detailErr == nil {
+		writeAccepted(w, nextDetail.Run)
 		return
 	}
 	writeAccepted(w, run)

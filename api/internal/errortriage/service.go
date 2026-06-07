@@ -32,12 +32,12 @@ type RunOptions struct {
 }
 
 type RunRecord struct {
-	ID               string
-	RunType          RunType
-	Status           RunStatus
-	WindowStart      time.Time
-	WindowEnd        time.Time
-	FailuresAnalyzed int
+	ID               string    `json:"id"`
+	RunType          RunType   `json:"run_type"`
+	Status           RunStatus `json:"status"`
+	WindowStart      time.Time `json:"window_start"`
+	WindowEnd        time.Time `json:"window_end"`
+	FailuresAnalyzed int       `json:"failures_analyzed"`
 }
 
 type CreateRunParams struct {

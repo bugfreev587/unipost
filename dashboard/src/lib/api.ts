@@ -2337,6 +2337,110 @@ export interface AdminUserPostFailure {
   debug_curl?: string;
 }
 
+export type ErrorTriageClassification =
+  | "unipost_bug"
+  | "user_action_needed"
+  | "upstream_platform_issue"
+  | "transient_no_action"
+  | "needs_human_review";
+
+export type ErrorTriageActionKind = "none" | "email" | "bug_plan" | "monitor" | "review";
+export type ErrorTriageWorkflowStatus = "pending_review" | "ready" | "partially_completed" | "completed" | "dismissed" | "failed";
+export type ErrorTriageRecipientStatus = "pending" | "sent" | "dismissed" | "send_failed";
+export type ErrorTriageRunHealthStatus = "no_actionable_issues" | "actionable_items" | "needs_review";
+
+export interface ErrorTriageRunSummary {
+  id: string;
+  run_type: "scheduled" | "manual";
+  status: "running" | "completed" | "failed";
+  window_start: string;
+  window_end: string;
+  failures_analyzed: number;
+  health_status: ErrorTriageRunHealthStatus;
+  items_total: number;
+  email_drafts: number;
+  bug_plans: number;
+  needs_review: number;
+  summary?: string;
+  error_message?: string;
+  started_at: string;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface ErrorTriageBugPlan {
+  title?: string;
+  impact?: string;
+  evidence?: string[];
+  suspected_area?: string;
+  proposed_fix?: string;
+  validation_plan?: string;
+  rollback_plan?: string;
+}
+
+export interface ErrorTriageEmailDraft {
+  subject?: string;
+  body?: string;
+  cta_url?: string;
+}
+
+export interface ErrorTriageRecipient {
+  id: string;
+  item_id: string;
+  recipient_scope_key: string;
+  workspace_id: string;
+  recipient_user_id: string;
+  email_snapshot: string;
+  current_email?: string;
+  status: ErrorTriageRecipientStatus;
+  latest_send_attempt_id?: string;
+  dismiss_reason?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ErrorTriageItem {
+  id: string;
+  run_id: string;
+  dedupe_key: string;
+  classification: ErrorTriageClassification;
+  action_kind: ErrorTriageActionKind;
+  workflow_status: ErrorTriageWorkflowStatus;
+  confidence: number;
+  platform?: string;
+  source?: string;
+  error_code?: string;
+  platform_error_code?: string;
+  failure_stage?: string;
+  affected_user_count: number;
+  affected_workspace_count: number;
+  affected_post_count: number;
+  latest_failure_at?: string | null;
+  evidence_json?: Record<string, unknown>;
+  ai_summary?: string;
+  admin_notes?: string;
+  bug_plan_json?: ErrorTriageBugPlan | null;
+  email_draft_json?: ErrorTriageEmailDraft | null;
+  cta_url?: string;
+  duplicate_of_item_id?: string;
+  created_at: string;
+  updated_at: string;
+  recipients?: ErrorTriageRecipient[];
+}
+
+export interface ErrorTriageRunDetail {
+  run: ErrorTriageRunSummary;
+  items: ErrorTriageItem[];
+}
+
+export interface ErrorTriageSendResult {
+  attempt_id: string;
+  attempt_number: number;
+  idempotency_key: string;
+  recipient_email: string;
+  recipient_user_id: string;
+}
+
 export interface AdminUserListParams {
   search?: string;
   plan?: "all" | "free" | "paid";
@@ -2814,6 +2918,89 @@ export async function listAdminPostFailures(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/post-failures${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminErrorTriageRuns(
+  token: string,
+  limit = 30,
+): Promise<ApiResponse<ErrorTriageRunSummary[]>> {
+  return request(`/v1/admin/error-triage/runs?limit=${limit}`, token);
+}
+
+export async function getAdminErrorTriageRun(
+  token: string,
+  id: string,
+): Promise<ApiResponse<ErrorTriageRunDetail>> {
+  return request(`/v1/admin/error-triage/runs/${encodeURIComponent(id)}`, token);
+}
+
+export async function createAdminErrorTriageRun(
+  token: string,
+  data?: { window_start?: string; window_end?: string; supersedes_run_id?: string },
+): Promise<ApiResponse<ErrorTriageRunSummary>> {
+  return request("/v1/admin/error-triage/runs", token, {
+    method: "POST",
+    body: JSON.stringify(data || {}),
+  });
+}
+
+export async function rerunAdminErrorTriageRun(
+  token: string,
+  id: string,
+): Promise<ApiResponse<ErrorTriageRunSummary>> {
+  return request(`/v1/admin/error-triage/runs/${encodeURIComponent(id)}/rerun`, token, {
+    method: "POST",
+  });
+}
+
+export async function updateAdminErrorTriageItem(
+  token: string,
+  id: string,
+  data: { workflow_status?: ErrorTriageWorkflowStatus; admin_notes?: string },
+): Promise<ApiResponse<{ ok: boolean }>> {
+  return request(`/v1/admin/error-triage/items/${encodeURIComponent(id)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function approveAdminErrorTriageBugPlan(
+  token: string,
+  id: string,
+  data?: { admin_notes?: string },
+): Promise<ApiResponse<{ ok: boolean }>> {
+  return request(`/v1/admin/error-triage/items/${encodeURIComponent(id)}/approve-bug-plan`, token, {
+    method: "POST",
+    body: JSON.stringify(data || {}),
+  });
+}
+
+export async function sendAdminErrorTriageEmail(
+  token: string,
+  itemId: string,
+  recipientId: string,
+): Promise<ApiResponse<ErrorTriageSendResult>> {
+  return request(
+    `/v1/admin/error-triage/items/${encodeURIComponent(itemId)}/recipients/${encodeURIComponent(recipientId)}/send-email`,
+    token,
+    { method: "POST" },
+  );
+}
+
+export async function dismissAdminErrorTriageRecipient(
+  token: string,
+  itemId: string,
+  recipientId: string,
+  reason?: string,
+): Promise<ApiResponse<{ ok: boolean }>> {
+  return request(
+    `/v1/admin/error-triage/items/${encodeURIComponent(itemId)}/recipients/${encodeURIComponent(recipientId)}/dismiss`,
+    token,
+    {
+      method: "POST",
+      body: JSON.stringify({ reason: reason || "" }),
+    },
+  );
 }
 
 export async function listAdminPosts(

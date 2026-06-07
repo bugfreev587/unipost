@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ComponentType, type SVGProps } from "react";
 import {
   AlertTriangle,
+  ClipboardCheck,
   CreditCard,
   FileText,
   LayoutDashboard,
@@ -96,6 +97,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true, icon: TrendingUp },
   { label: "Logs", href: "/admin/logs", section: "System", enabled: true, icon: FileText },
   { label: "Errors", href: "/admin/errors", section: "System", enabled: true, icon: AlertTriangle },
+  { label: "Triage", href: "/admin/error-triage", section: "System", enabled: true, icon: ClipboardCheck },
   { label: "Settings", href: "/admin/settings", section: "System", enabled: true, icon: Settings },
 ];
 
