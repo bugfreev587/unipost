@@ -11,7 +11,7 @@ import {
   Send,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   approveAdminErrorTriageBugPlan,
@@ -24,6 +24,7 @@ import {
   type ErrorTriageBugPlan,
   type ErrorTriageEmailDraft,
   type ErrorTriageItem,
+  type ErrorTriageRecipient,
   type ErrorTriageRunDetail,
   type ErrorTriageRunSummary,
 } from "@/lib/api";
@@ -32,16 +33,26 @@ import { AdminShell, StatCard, fmtNumber, fmtRelative } from "../_components/adm
 
 const workflowFinal = new Set(["completed", "dismissed"]);
 
+type PendingSendConfirmation = {
+  itemId: string;
+  recipientId: string;
+  recipientEmail: string;
+  subject: string;
+  body: string;
+};
+
 export default function AdminErrorTriagePage() {
   const { getToken } = useAuth();
   const [runs, setRuns] = useState<ErrorTriageRunSummary[]>([]);
   const [selectedRunId, setSelectedRunId] = useState<string>("");
+  const selectedRunIdRef = useRef("");
   const [detail, setDetail] = useState<ErrorTriageRunDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [actionKey, setActionKey] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [pendingSend, setPendingSend] = useState<PendingSendConfirmation | null>(null);
 
   const loadDetail = useCallback(async (runId: string, tokenOverride?: string) => {
     if (!runId) {
@@ -54,6 +65,7 @@ export default function AdminErrorTriagePage() {
       if (!token) throw new Error("Not authenticated");
       const res = await getAdminErrorTriageRun(token, runId);
       setDetail(res.data);
+      selectedRunIdRef.current = runId;
       setSelectedRunId(runId);
     } finally {
       setDetailLoading(false);
@@ -68,11 +80,12 @@ export default function AdminErrorTriagePage() {
       if (!token) throw new Error("Not authenticated");
       const res = await listAdminErrorTriageRuns(token, 30);
       setRuns(res.data);
-      const nextRunId = preferredRunId || selectedRunId || res.data[0]?.id || "";
+      const nextRunId = preferredRunId || selectedRunIdRef.current || res.data[0]?.id || "";
       if (nextRunId) {
         await loadDetail(nextRunId, token);
       } else {
         setDetail(null);
+        selectedRunIdRef.current = "";
         setSelectedRunId("");
       }
     } catch (err) {
@@ -80,7 +93,7 @@ export default function AdminErrorTriagePage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, loadDetail, selectedRunId]);
+  }, [getToken, loadDetail]);
 
   useEffect(() => {
     loadRuns();
@@ -120,7 +133,7 @@ export default function AdminErrorTriagePage() {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       const res = await createAdminErrorTriageRun(token);
-      setNotice("Run queued and completed.");
+      setNotice("Run completed.");
       await loadRuns(res.data.id);
     });
   }
@@ -139,18 +152,45 @@ export default function AdminErrorTriagePage() {
     await withAction(`approve:${item.id}`, async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      await approveAdminErrorTriageBugPlan(token, item.id, { admin_notes: "Bug plan approved from admin triage." });
+      await approveAdminErrorTriageBugPlan(token, item.id);
       setNotice("Bug plan approved.");
       await loadDetail(selectedRunId, token);
       await loadRuns(selectedRunId);
     });
   }
 
-  async function handleSend(item: ErrorTriageItem, recipientId: string) {
-    await withAction(`send:${recipientId}`, async () => {
+  async function handleSelectRun(runId: string) {
+    setError(null);
+    try {
+      await loadDetail(runId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load error triage run");
+    }
+  }
+
+  function requestSendConfirmation(item: ErrorTriageItem, recipient: ErrorTriageRecipient) {
+    const draft = item.email_draft_json;
+    if (!draft?.subject || !draft.body) {
+      setError("Email draft is missing a subject or body.");
+      return;
+    }
+    setPendingSend({
+      itemId: item.id,
+      recipientId: recipient.id,
+      recipientEmail: recipient.current_email || recipient.email_snapshot,
+      subject: draft.subject,
+      body: draft.body,
+    });
+  }
+
+  async function handleConfirmSend() {
+    if (!pendingSend) return;
+    const send = pendingSend;
+    await withAction(`send:${send.recipientId}`, async () => {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      await sendAdminErrorTriageEmail(token, item.id, recipientId);
+      await sendAdminErrorTriageEmail(token, send.itemId, send.recipientId);
+      setPendingSend(null);
       setNotice("Email sent.");
       await loadDetail(selectedRunId, token);
       await loadRuns(selectedRunId);
@@ -241,7 +281,7 @@ export default function AdminErrorTriagePage() {
                   type="button"
                   className="triage-run-row"
                   data-active={run.id === selectedRunId}
-                  onClick={() => loadDetail(run.id)}
+                  onClick={() => handleSelectRun(run.id)}
                 >
                   <span className="triage-run-top">
                     <span className="triage-run-window">{formatWindow(run)}</span>
@@ -285,7 +325,7 @@ export default function AdminErrorTriagePage() {
                       item={item}
                       busyKey={actionKey}
                       onApprove={() => handleApproveBugPlan(item)}
-                      onSend={(recipientId) => handleSend(item, recipientId)}
+                      onSend={(recipient) => requestSendConfirmation(item, recipient)}
                       onDismiss={(recipientId) => handleDismiss(item, recipientId)}
                     />
                   ))
@@ -295,6 +335,55 @@ export default function AdminErrorTriagePage() {
           )}
         </section>
       </div>
+
+      {pendingSend ? (
+        <div className="triage-modal-backdrop" role="presentation">
+          <div className="triage-modal" role="dialog" aria-modal="true" aria-labelledby="triage-send-confirm-title">
+            <div className="triage-modal-head">
+              <div>
+                <div id="triage-send-confirm-title" className="triage-modal-title">Confirm email send</div>
+                <div className="triage-modal-meta">{pendingSend.recipientEmail}</div>
+              </div>
+              <button
+                type="button"
+                className="ad-btn ad-btn-ghost triage-icon-btn"
+                onClick={() => setPendingSend(null)}
+                disabled={actionKey === `send:${pendingSend.recipientId}`}
+                aria-label="Close confirmation"
+              >
+                <XCircle strokeWidth={1.75} />
+              </button>
+            </div>
+            <div className="triage-modal-section">
+              <span>Subject</span>
+              <strong>{pendingSend.subject}</strong>
+            </div>
+            <div className="triage-modal-section">
+              <span>Body</span>
+              <div className="triage-modal-body-preview">{pendingSend.body}</div>
+            </div>
+            <div className="triage-modal-actions">
+              <button
+                type="button"
+                className="ad-btn ad-btn-ghost"
+                onClick={() => setPendingSend(null)}
+                disabled={actionKey === `send:${pendingSend.recipientId}`}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="ad-btn triage-primary-btn"
+                onClick={handleConfirmSend}
+                disabled={!!actionKey}
+              >
+                <Send strokeWidth={1.75} />
+                Send email
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </AdminShell>
   );
 }
@@ -309,7 +398,7 @@ function TriageItem({
   item: ErrorTriageItem;
   busyKey: string;
   onApprove: () => void;
-  onSend: (recipientId: string) => void;
+  onSend: (recipient: ErrorTriageRecipient) => void;
   onDismiss: (recipientId: string) => void;
 }) {
   const draft = item.email_draft_json;
@@ -380,6 +469,7 @@ function TriageItem({
           <div className="triage-recipient-list">
             {(item.recipients || []).map((recipient) => {
               const canSend = sendableWorkflow && (recipient.status === "pending" || recipient.status === "send_failed");
+              const canDismiss = recipient.status === "pending" || recipient.status === "send_failed";
               return (
                 <div key={recipient.id} className="triage-recipient-row">
                   <div className="triage-recipient-main">
@@ -391,7 +481,7 @@ function TriageItem({
                       type="button"
                       className="ad-btn ad-btn-ghost"
                       onClick={() => onDismiss(recipient.id)}
-                      disabled={!canSend || busyKey === `dismiss:${recipient.id}` || !!busyKey}
+                      disabled={!canDismiss || busyKey === `dismiss:${recipient.id}` || !!busyKey}
                     >
                       <XCircle strokeWidth={1.75} />
                       Dismiss
@@ -399,7 +489,7 @@ function TriageItem({
                     <button
                       type="button"
                       className="ad-btn triage-primary-btn"
-                      onClick={() => onSend(recipient.id)}
+                      onClick={() => onSend(recipient)}
                       disabled={!canSend || busyKey === `send:${recipient.id}` || !!busyKey}
                     >
                       <Send strokeWidth={1.75} />
@@ -762,6 +852,81 @@ const triageCss = `
   align-items: center;
   gap: 7px;
   flex-shrink: 0;
+}
+.triage-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--dtext) 28%, transparent);
+  padding: 20px;
+}
+.triage-modal {
+  width: min(640px, 100%);
+  max-height: min(720px, calc(100dvh - 40px));
+  overflow: auto;
+  border: 1px solid var(--dborder);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 22px 70px color-mix(in srgb, var(--dtext) 18%, transparent);
+  padding: 16px;
+}
+.triage-modal-head,
+.triage-modal-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.triage-modal-title {
+  color: var(--dtext);
+  font-size: 15px;
+  font-weight: 700;
+}
+.triage-modal-meta {
+  color: var(--dmuted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  margin-top: 3px;
+}
+.triage-icon-btn {
+  min-width: 32px;
+  padding-inline: 8px;
+}
+.triage-modal-section {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--dborder);
+  margin-top: 14px;
+  padding-top: 12px;
+}
+.triage-modal-section span {
+  color: var(--dmuted);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.triage-modal-section strong {
+  color: var(--dtext);
+  font-size: 13px;
+  line-height: 1.45;
+}
+.triage-modal-body-preview {
+  white-space: pre-wrap;
+  color: var(--dtext);
+  background: var(--surface2);
+  border: 1px solid var(--dborder);
+  border-radius: 6px;
+  padding: 11px 12px;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.triage-modal-actions {
+  justify-content: flex-end;
+  border-top: 1px solid var(--dborder);
+  margin-top: 14px;
+  padding-top: 12px;
 }
 .triage-b-danger {
   background: var(--danger-soft);

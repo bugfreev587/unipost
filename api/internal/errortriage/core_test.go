@@ -88,6 +88,28 @@ func TestSanitizeForAITruncatesAndRedactsSecrets(t *testing.T) {
 	}
 }
 
+func TestSanitizeForAIDoesNotSplitUTF8(t *testing.T) {
+	got, truncated := SanitizeForAI("prefix 中文 suffix", 10)
+	if !truncated {
+		t.Fatalf("expected truncation")
+	}
+	if !strings.HasPrefix(got, "prefix ") {
+		t.Fatalf("unexpected prefix after truncation: %q", got)
+	}
+	if strings.Contains(got, "\uFFFD") {
+		t.Fatalf("truncation produced replacement rune: %q", got)
+	}
+}
+
+func TestContainsSecretPatternDetectsRedactableOutput(t *testing.T) {
+	if !ContainsSecretPattern("Authorization: Bearer sk-live-secret") {
+		t.Fatalf("expected authorization-like value to be detected")
+	}
+	if ContainsSecretPattern("Please reconnect your Threads account in UniPost.") {
+		t.Fatalf("plain customer guidance should not be flagged")
+	}
+}
+
 func TestRecipientSendStateAllowsRetryAfterFailureOnly(t *testing.T) {
 	item := ItemState{
 		Classification: ClassificationUserActionNeeded,

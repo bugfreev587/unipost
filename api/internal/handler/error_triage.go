@@ -111,6 +111,10 @@ func (h *ErrorTriageHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid JSON body")
 		return
 	}
+	if strings.TrimSpace(body.WorkflowStatus) != "" && !validErrorTriageWorkflowStatus(body.WorkflowStatus) {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid workflow_status")
+		return
+	}
 	if err := h.store.UpdateItem(r.Context(), itemID, body.WorkflowStatus, body.AdminNotes); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update error triage item: "+err.Error())
 		return
@@ -197,4 +201,18 @@ func (h *ErrorTriageHandler) parseManualRunOptions(r *http.Request) (errortriage
 	}
 	opts.SupersedesRunID = strings.TrimSpace(body.SupersedesRunID)
 	return opts, nil
+}
+
+func validErrorTriageWorkflowStatus(status string) bool {
+	switch errortriage.WorkflowStatus(strings.TrimSpace(status)) {
+	case errortriage.WorkflowStatusPendingReview,
+		errortriage.WorkflowStatusReady,
+		errortriage.WorkflowStatusPartiallyCompleted,
+		errortriage.WorkflowStatusCompleted,
+		errortriage.WorkflowStatusDismissed,
+		errortriage.WorkflowStatusFailed:
+		return true
+	default:
+		return false
+	}
 }

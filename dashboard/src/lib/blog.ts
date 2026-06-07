@@ -688,6 +688,9 @@ export function parseGeneratedBlogPostFromSource(filePath: string, source: strin
   const meta = parseFrontmatter(parsed.frontmatter);
   const fileSlug = path.basename(filePath).replace(/\.mdx?$/i, "");
   const slug = normalizeSlug(stringValue(meta.slug) || fileSlug);
+  if (isGeneratedFixturePost(meta, slug)) {
+    return null;
+  }
   const title = stringValue(meta.title) || stringValue(meta.h1) || slug;
   const description = stringValue(meta.description) || stringValue(meta.excerpt) || title;
   const publishedAt = stringValue(meta.published_at) || stringValue(meta.publishedAt) || new Date().toISOString().slice(0, 10);
@@ -714,6 +717,10 @@ export function parseGeneratedBlogPostFromSource(filePath: string, source: strin
   };
   post.readingTime = `${Math.max(1, Math.ceil(countBlogWords(post) / 220))} min read`;
   return post;
+}
+
+function isGeneratedFixturePost(meta: Record<string, string | string[]>, slug: string): boolean {
+  return stringValue(meta.citeloop_article_id) === "dev-fixture" || slug === "citeloop-dev-verification";
 }
 
 export function mergeBlogPosts(existing: BlogPost[], generated: BlogPost[]): BlogPost[] {

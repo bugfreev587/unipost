@@ -42,6 +42,50 @@ func TestServiceRunCreatesItemsRecipientsAndCompletesRun(t *testing.T) {
 	}
 }
 
+func TestServiceRunCapsAnalyzerCallsAndFallsBackDeterministically(t *testing.T) {
+	failures := make([]Failure, 0, DefaultMaxAIBucketsPerRun+1)
+	for i := 0; i < DefaultMaxAIBucketsPerRun+1; i++ {
+		failures = append(failures, Failure{
+			PostID:       "post_" + strconvItoa(i),
+			WorkspaceID:  "ws_" + strconvItoa(i),
+			UserID:       "user_" + strconvItoa(i),
+			UserEmail:    "user" + strconvItoa(i) + "@example.com",
+			Platform:     "threads",
+			ErrorCode:    "missing_permission_" + strconvItoa(i),
+			FailureStage: "publish",
+			Message:      "reconnect required " + strconvItoa(i),
+			CreatedAt:    time.Date(2026, 6, 6, 8, i%60, 0, 0, time.UTC),
+		})
+	}
+	store := &fakeStore{failures: failures}
+	analyzer := &countingAnalyzer{}
+	svc := NewService(store, analyzer)
+
+	if _, err := svc.Run(context.Background(), RunOptions{
+		RunType:     RunTypeManual,
+		WindowStart: time.Date(2026, 6, 6, 7, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 6, 7, 7, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	if got, want := analyzer.calls, DefaultMaxAIBucketsPerRun; got != want {
+		t.Fatalf("analyzer calls = %d, want %d", got, want)
+	}
+	if got, want := len(store.items), DefaultMaxAIBucketsPerRun+1; got != want {
+		t.Fatalf("inserted items = %d, want %d", got, want)
+	}
+}
+
+type countingAnalyzer struct {
+	calls int
+}
+
+func (a *countingAnalyzer) Analyze(bucket Bucket) ItemDraft {
+	a.calls++
+	return DeterministicAnalyzer{}.Analyze(bucket)
+}
+
 type fakeStore struct {
 	failures   []Failure
 	items      []fakeItemInsert

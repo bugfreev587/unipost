@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Classification string
@@ -112,10 +113,18 @@ func SanitizeForAI(value string, maxLen int) (string, bool) {
 	out = redactURLSecrets(out)
 	truncated := false
 	if maxLen > 0 && len(out) > maxLen {
-		out = out[:maxLen]
+		out = truncateUTF8(out, maxLen)
 		truncated = true
 	}
 	return out, truncated
+}
+
+func ContainsSecretPattern(value string) bool {
+	if strings.TrimSpace(value) == "" {
+		return false
+	}
+	sanitized, _ := SanitizeForAI(value, 0)
+	return sanitized != value
 }
 
 func CanSendRecipient(item ItemState, recipient RecipientState, loopsConfigured bool, currentEmail string) (bool, string) {
@@ -211,6 +220,16 @@ func redactURLSecrets(value string) string {
 		})
 	}
 	return value
+}
+
+func truncateUTF8(value string, maxLen int) string {
+	if maxLen <= 0 || len(value) <= maxLen {
+		return value
+	}
+	for maxLen > 0 && !utf8.ValidString(value[:maxLen]) {
+		maxLen--
+	}
+	return value[:maxLen]
 }
 
 func strconvItoa(v int) string {

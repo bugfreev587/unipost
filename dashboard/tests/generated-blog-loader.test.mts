@@ -84,6 +84,25 @@ description: "Script"
   );
 });
 
+test("parseGeneratedBlogPostFromSource excludes development fixture posts", () => {
+  assert.equal(
+    parseGeneratedBlogPostFromSource(
+      "content/citeloop/blog/citeloop-dev-verification.mdx",
+      `---
+source: citeloop
+citeloop_article_id: "dev-fixture"
+slug: "citeloop-dev-verification"
+title: "CiteLoop Dev Verification"
+description: "Fixture"
+---
+
+This fixture should not publish.
+`,
+    ),
+    null,
+  );
+});
+
 test("mergeBlogPosts keeps existing posts and orders generated posts by date", () => {
   const existing: BlogPost = {
     slug: "existing",

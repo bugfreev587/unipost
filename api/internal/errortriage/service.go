@@ -3,6 +3,7 @@ package errortriage
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -22,6 +23,8 @@ const (
 )
 
 const PromptVersion = "error-triage-v1"
+
+const DefaultMaxAIBucketsPerRun = 100
 
 type RunOptions struct {
 	RunType         RunType
@@ -68,21 +71,26 @@ type Store interface {
 	InsertRecipient(ctx context.Context, itemID string, recipient RecipientCandidate) error
 }
 
+type ScheduledRunLockStore interface {
+	TryScheduledRunLock(ctx context.Context, windowStart time.Time) (unlock func(context.Context) error, acquired bool, err error)
+}
+
 type Analyzer interface {
 	Analyze(bucket Bucket) ItemDraft
 }
 
 type Service struct {
-	store    Store
-	analyzer Analyzer
-	model    string
+	store        Store
+	analyzer     Analyzer
+	model        string
+	maxAIBuckets int
 }
 
 func NewService(store Store, analyzer Analyzer) *Service {
 	if analyzer == nil {
 		analyzer = DeterministicAnalyzer{}
 	}
-	return &Service{store: store, analyzer: analyzer, model: "deterministic"}
+	return &Service{store: store, analyzer: analyzer, model: "deterministic", maxAIBuckets: DefaultMaxAIBucketsPerRun}
 }
 
 func (s *Service) WithModelName(model string) *Service {
@@ -95,6 +103,23 @@ func (s *Service) WithModelName(model string) *Service {
 func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 	if s == nil || s.store == nil {
 		return RunRecord{}, fmt.Errorf("error triage service is not configured")
+	}
+	if opts.RunType == RunTypeScheduled {
+		unlock, acquired, err := s.tryScheduledRunLock(ctx, opts.WindowStart)
+		if err != nil {
+			return RunRecord{}, err
+		}
+		if !acquired {
+			slog.Info("error triage: scheduled run skipped because lock is held", "window_start", opts.WindowStart, "window_end", opts.WindowEnd)
+			return RunRecord{RunType: opts.RunType, Status: RunStatusRunning, WindowStart: opts.WindowStart, WindowEnd: opts.WindowEnd}, nil
+		}
+		defer func() {
+			unlockCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := unlock(unlockCtx); err != nil {
+				slog.Warn("error triage: failed to release scheduled run advisory lock", "window_start", opts.WindowStart, "error", err)
+			}
+		}()
 	}
 	run, created, err := s.store.CreateRun(ctx, CreateRunParams{
 		RunType:         opts.RunType,
@@ -117,8 +142,20 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 	}
 
 	buckets := BuildBuckets(failures)
-	for _, bucket := range buckets {
-		draft := s.analyzer.Analyze(bucket)
+	aiBucketLimit := s.maxAIBuckets
+	if aiBucketLimit <= 0 {
+		aiBucketLimit = DefaultMaxAIBucketsPerRun
+	}
+	if len(buckets) > aiBucketLimit {
+		slog.Warn("error triage: AI bucket cap exceeded; remaining buckets use deterministic triage",
+			"run_id", run.ID,
+			"bucket_count", len(buckets),
+			"max_ai_buckets", aiBucketLimit,
+			"deterministic_bucket_count", len(buckets)-aiBucketLimit,
+		)
+	}
+	for index, bucket := range buckets {
+		draft := s.analyzeBucket(bucket, index, aiBucketLimit)
 		duplicateID, err := s.store.FindPreviousItem(ctx, draft.DedupeKey, run.ID)
 		if err != nil {
 			_ = s.store.FailRun(ctx, run.ID, err.Error())
@@ -158,6 +195,21 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 		return RunRecord{}, err
 	}
 	return completed, nil
+}
+
+func (s *Service) tryScheduledRunLock(ctx context.Context, windowStart time.Time) (func(context.Context) error, bool, error) {
+	lockStore, ok := s.store.(ScheduledRunLockStore)
+	if !ok {
+		return func(context.Context) error { return nil }, true, nil
+	}
+	return lockStore.TryScheduledRunLock(ctx, windowStart)
+}
+
+func (s *Service) analyzeBucket(bucket Bucket, index, aiBucketLimit int) ItemDraft {
+	if index >= aiBucketLimit {
+		return DeterministicAnalyzer{}.Analyze(bucket)
+	}
+	return s.analyzer.Analyze(bucket)
 }
 
 func countUsers(failures []Failure) int {
