@@ -25,6 +25,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/errortriage"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
@@ -305,9 +306,10 @@ func main() {
 		slog.Info("notifications: RESEND_API_KEY unset, using NoopMailer")
 	}
 
+	var loopsClient *loops.Client
 	var loopsSyncer *loops.Syncer
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
-		loopsClient := loops.NewClient(loops.Config{
+		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
@@ -360,6 +362,17 @@ func main() {
 
 	logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
 	go logRetentionWorker.Start(workerCtx)
+
+	errorTriageStore := errortriage.NewPostgresStore(pool)
+	errorTriageAnalyzer := errortriage.NewOpenAIAnalyzerFromEnv(errortriage.DeterministicAnalyzer{})
+	errorTriageService := errortriage.NewService(errorTriageStore, errorTriageAnalyzer).WithModelName(errorTriageAnalyzer.ModelName())
+	errorTriageEmailService := errortriage.NewEmailSendService(
+		errorTriageStore,
+		errortriage.NewLoopsSender(loopsClient),
+		os.Getenv("LOOPS_ERROR_TRIAGE_USER_ACTION_TRANSACTIONAL_ID"),
+	)
+	errorTriageWorker := worker.NewErrorTriageWorker(errorTriageService)
+	go errorTriageWorker.Start(workerCtx)
 
 	// Facebook's /videos endpoint returns a video_id immediately and
 	// finishes asynchronously. The initial publish poll waits 60s;
@@ -470,6 +483,7 @@ func main() {
 		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL")).
 		WithAIPlanner(reviewai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("ANTHROPIC_MODEL"), "", nil))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
+	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -612,6 +626,14 @@ func main() {
 		// guarding this group.
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
+		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
+		r.Get("/v1/admin/error-triage/runs/{id}", errorTriageHandler.GetRun)
+		r.Post("/v1/admin/error-triage/runs/{id}/rerun", errorTriageHandler.Rerun)
+		r.Patch("/v1/admin/error-triage/items/{id}", errorTriageHandler.UpdateItem)
+		r.Post("/v1/admin/error-triage/items/{id}/approve-bug-plan", errorTriageHandler.ApproveBugPlan)
+		r.Post("/v1/admin/error-triage/items/{id}/recipients/{recipientID}/send-email", errorTriageHandler.SendEmail)
+		r.Post("/v1/admin/error-triage/items/{id}/recipients/{recipientID}/dismiss", errorTriageHandler.DismissRecipient)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/signups", adminHandler.GetUserSignups)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
