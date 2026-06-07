@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -14,6 +15,8 @@ import (
 type PostgresStore struct {
 	pool *pgxpool.Pool
 }
+
+const maxFailuresPerRun = 1000
 
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
@@ -116,6 +119,38 @@ RETURNING id, run_type, status, window_start, window_end, failures_analyzed
 	return run, err == nil, err
 }
 
+func (s *PostgresStore) TryScheduledRunLock(ctx context.Context, windowStart time.Time) (func(context.Context) error, bool, error) {
+	if s == nil || s.pool == nil {
+		return nil, false, errors.New("postgres store is not configured")
+	}
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	lockKey := "error_triage:scheduled:" + windowStart.UTC().Format(time.RFC3339)
+	var acquired bool
+	if err := conn.QueryRow(ctx, `SELECT pg_try_advisory_lock(hashtext($1)::bigint)`, lockKey).Scan(&acquired); err != nil {
+		conn.Release()
+		return nil, false, err
+	}
+	if !acquired {
+		conn.Release()
+		return nil, false, nil
+	}
+	unlock := func(ctx context.Context) error {
+		defer conn.Release()
+		var released bool
+		if err := conn.QueryRow(ctx, `SELECT pg_advisory_unlock(hashtext($1)::bigint)`, lockKey).Scan(&released); err != nil {
+			return err
+		}
+		if !released {
+			return errors.New("scheduled run advisory lock was not held")
+		}
+		return nil
+	}
+	return unlock, true, nil
+}
+
 func (s *PostgresStore) CompleteRun(ctx context.Context, runID string, params CompleteRunParams) (RunRecord, error) {
 	return scanRunRecord(s.pool.QueryRow(ctx, `
 UPDATE error_triage_runs
@@ -161,7 +196,6 @@ SELECT
   pf.message,
   COALESCE(pf.raw_error, ''),
   COALESCE(spr.debug_curl, ''),
-  COALESCE(NULLIF(spr.caption, ''), NULLIF(sp.caption, ''), ''),
   pf.is_retriable,
   pf.created_at
 FROM post_failures pf
@@ -173,7 +207,7 @@ WHERE pf.created_at >= $1
   AND pf.created_at < $2
   AND sp.deleted_at IS NULL
 ORDER BY pf.created_at DESC
-LIMIT 1000
+LIMIT 1001
 `, start, end)
 	if err != nil {
 		return nil, err
@@ -198,7 +232,6 @@ LIMIT 1000
 			&f.Message,
 			&f.RawError,
 			&f.DebugCurl,
-			&f.Caption,
 			&f.IsRetriable,
 			&f.CreatedAt,
 		); err != nil {
@@ -206,7 +239,19 @@ LIMIT 1000
 		}
 		out = append(out, f)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) > maxFailuresPerRun {
+		slog.Warn("error triage: failure load truncated",
+			"window_start", start,
+			"window_end", end,
+			"limit", maxFailuresPerRun,
+			"loaded", len(out),
+		)
+		out = out[:maxFailuresPerRun]
+	}
+	return out, nil
 }
 
 func (s *PostgresStore) FindPreviousItem(ctx context.Context, dedupeKey, runID string) (string, error) {
@@ -217,6 +262,7 @@ FROM error_triage_items
 WHERE dedupe_key = $1
   AND run_id <> $2
   AND workflow_status NOT IN ('dismissed')
+  AND run_id <> COALESCE((SELECT supersedes_run_id FROM error_triage_runs WHERE id = $2), '00000000-0000-0000-0000-000000000000'::uuid)
 ORDER BY created_at DESC
 LIMIT 1
 `, dedupeKey, runID).Scan(&id)

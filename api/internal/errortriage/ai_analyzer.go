@@ -13,7 +13,10 @@ import (
 	"time"
 )
 
-const defaultOpenAIChatCompletionsURL = "https://api.openai.com/v1/chat/completions"
+const (
+	defaultOpenAIChatCompletionsURL = "https://api.openai.com/v1/chat/completions"
+	minAIConfidenceForAction        = 0.70
+)
 
 type OpenAIAnalyzer struct {
 	apiKey   string
@@ -98,6 +101,10 @@ type aiTriageSuggestion struct {
 	EmailDraft     EmailDraft     `json:"email_draft"`
 	BugPlan        BugPlan        `json:"bug_plan"`
 	CTAURL         string         `json:"cta_url"`
+	Safety         struct {
+		RequiresHumanReview bool   `json:"requires_human_review"`
+		Reason              string `json:"reason"`
+	} `json:"safety"`
 }
 
 func (a *OpenAIAnalyzer) call(bucket Bucket, fallback ItemDraft) (aiTriageSuggestion, error) {
@@ -112,6 +119,7 @@ func (a *OpenAIAnalyzer) call(bucket Bucket, fallback ItemDraft) (aiTriageSugges
 				"For user_action_needed, include email_draft with subject and body.",
 				"For unipost_bug, include bug_plan with title, impact, evidence, suspected_area, proposed_fix, validation_plan, rollback_plan.",
 				"Do not include secrets or raw tokens in any output.",
+				"Set safety.requires_human_review=true if the email draft or fix plan could be unsafe, uncertain, or contain sensitive data.",
 			}, " ")},
 			{"role": "user", "content": buildOpenAITriagePrompt(bucket, fallback)},
 		},
@@ -184,13 +192,22 @@ func buildOpenAITriagePrompt(bucket Bucket, fallback ItemDraft) string {
 	b.WriteString(strconvItoa(bucket.AffectedPostCount))
 	b.WriteString("\nEvidence JSON:\n")
 	b.Write(rawEvidence)
-	b.WriteString("\nReturn JSON with keys: classification, confidence, summary, email_draft, bug_plan, cta_url.")
+	b.WriteString("\nReturn JSON with keys: classification, confidence, summary, email_draft, bug_plan, cta_url, safety.")
 	return b.String()
 }
 
 func mergeAISuggestion(fallback ItemDraft, suggestion aiTriageSuggestion) (ItemDraft, bool) {
 	if !validClassification(suggestion.Classification) {
 		return ItemDraft{}, false
+	}
+	if suggestion.Safety.RequiresHumanReview {
+		return aiNeedsHumanReview(fallback, suggestion.Confidence, firstNonEmpty(suggestion.Safety.Reason, "model requested human review")), true
+	}
+	if suggestion.Confidence > 0 && suggestion.Confidence < minAIConfidenceForAction {
+		return aiNeedsHumanReview(fallback, suggestion.Confidence, "model confidence below threshold"), true
+	}
+	if aiOutputContainsSecret(suggestion) {
+		return aiNeedsHumanReview(fallback, suggestion.Confidence, "model output contained secret-shaped content"), true
 	}
 	out := fallback
 	action, status := workflowForClassification(suggestion.Classification)
@@ -225,6 +242,41 @@ func mergeAISuggestion(fallback ItemDraft, suggestion aiTriageSuggestion) (ItemD
 		}
 	}
 	return out, true
+}
+
+func aiNeedsHumanReview(fallback ItemDraft, confidence float64, reason string) ItemDraft {
+	out := fallback
+	out.Classification = ClassificationNeedsHumanReview
+	out.ActionKind = ActionKindReview
+	out.WorkflowStatus = WorkflowStatusPendingReview
+	if confidence > 0 && confidence <= 1 {
+		out.Confidence = confidence
+	} else if out.Confidence > 0.49 {
+		out.Confidence = 0.49
+	}
+	out.Summary = "AI triage requires human review: " + strings.TrimSpace(reason) + "."
+	out.EmailDraft = EmailDraft{}
+	out.BugPlan = BugPlan{}
+	out.CTAURL = ""
+	return out
+}
+
+func aiOutputContainsSecret(suggestion aiTriageSuggestion) bool {
+	parts := []string{
+		suggestion.Summary,
+		suggestion.CTAURL,
+		suggestion.EmailDraft.Subject,
+		suggestion.EmailDraft.Body,
+		suggestion.EmailDraft.CTAURL,
+		suggestion.BugPlan.Title,
+		suggestion.BugPlan.Impact,
+		suggestion.BugPlan.SuspectedArea,
+		suggestion.BugPlan.ProposedFix,
+		suggestion.BugPlan.ValidationPlan,
+		suggestion.BugPlan.RollbackPlan,
+	}
+	parts = append(parts, suggestion.BugPlan.Evidence...)
+	return ContainsSecretPattern(strings.Join(parts, "\n"))
 }
 
 func validClassification(classification Classification) bool {
