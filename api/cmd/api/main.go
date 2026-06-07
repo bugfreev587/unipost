@@ -364,7 +364,8 @@ func main() {
 	go logRetentionWorker.Start(workerCtx)
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
-	errorTriageService := errortriage.NewService(errorTriageStore, errortriage.DeterministicAnalyzer{})
+	errorTriageAnalyzer := errortriage.NewOpenAIAnalyzerFromEnv(errortriage.DeterministicAnalyzer{})
+	errorTriageService := errortriage.NewService(errorTriageStore, errorTriageAnalyzer).WithModelName(errorTriageAnalyzer.ModelName())
 	errorTriageEmailService := errortriage.NewEmailSendService(
 		errorTriageStore,
 		errortriage.NewLoopsSender(loopsClient),
