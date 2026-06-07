@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/xiaoboyu/unipost-api/internal/aiproviders"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
@@ -18,6 +19,7 @@ type AIPostAssistHandler struct {
 	queries           *db.Queries
 	superAdminChecker *auth.SuperAdminChecker
 	client            *http.Client
+	aiProviders       *aiproviders.Service
 }
 
 func NewAIPostAssistHandler(queries *db.Queries, superAdminChecker *auth.SuperAdminChecker) *AIPostAssistHandler {
@@ -26,6 +28,11 @@ func NewAIPostAssistHandler(queries *db.Queries, superAdminChecker *auth.SuperAd
 		superAdminChecker: superAdminChecker,
 		client:            http.DefaultClient,
 	}
+}
+
+func (h *AIPostAssistHandler) WithAIProviders(service *aiproviders.Service) *AIPostAssistHandler {
+	h.aiProviders = service
+	return h
 }
 
 type aiPostAssistRequest struct {
@@ -271,6 +278,21 @@ func getOpenAIModel() (string, error) {
 }
 
 func (h *AIPostAssistHandler) callOpenAIJSON(r *http.Request, systemPrompt, userPrompt string, temperature float64, out any) error {
+	if h.aiProviders != nil {
+		_, err := h.aiProviders.ChatCompletionsJSON(
+			r.Context(),
+			aiproviders.SurfacePostAssist,
+			[]aiproviders.ChatMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: userPrompt},
+			},
+			map[string]string{"type": "json_object"},
+			temperature,
+			out,
+		)
+		return err
+	}
+
 	model, err := getOpenAIModel()
 	if err != nil {
 		return err

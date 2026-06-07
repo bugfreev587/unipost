@@ -20,6 +20,7 @@ import (
 	"github.com/joho/godotenv"
 	slogbetterstack "github.com/samber/slog-betterstack"
 
+	"github.com/xiaoboyu/unipost-api/internal/aiproviders"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
@@ -184,6 +185,7 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
 	})
@@ -364,8 +366,8 @@ func main() {
 	go logRetentionWorker.Start(workerCtx)
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
-	errorTriageAnalyzer := errortriage.NewOpenAIAnalyzerFromEnv(errortriage.DeterministicAnalyzer{})
-	errorTriageService := errortriage.NewService(errorTriageStore, errorTriageAnalyzer).WithModelName(errorTriageAnalyzer.ModelName())
+	errorTriageAnalyzer := errortriage.NewProviderAnalyzer(aiProviderService, errortriage.DeterministicAnalyzer{})
+	errorTriageService := errortriage.NewService(errorTriageStore, errorTriageAnalyzer)
 	errorTriageEmailService := errortriage.NewEmailSendService(
 		errorTriageStore,
 		errortriage.NewLoopsSender(loopsClient),
@@ -434,7 +436,7 @@ func main() {
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
 	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker).SetQuotaChecker(quotaChecker).SetLoopsSyncer(loopsSyncer)
-	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker)
+	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker).WithAIProviders(aiProviderService)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
@@ -481,8 +483,9 @@ func main() {
 		WithArtifactStorage(storageClient).
 		WithEncryptor(encryptor).
 		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL")).
-		WithAIPlanner(reviewai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("ANTHROPIC_MODEL"), "", nil))
+		WithAIPlanner(reviewai.NewProviderPlanner(aiProviderService))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
+	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
 	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
 
 	// Public routes
@@ -620,6 +623,20 @@ func main() {
 			Get("/v1/admin/logs", adminHandler.ListLogs)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
 			Get("/v1/admin/logs/{id}", adminHandler.GetLog)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Get("/v1/admin/ai-providers", aiProviderHandler.List)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Put("/v1/admin/ai-providers/{provider}", aiProviderHandler.Update)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Post("/v1/admin/ai-providers/{provider}/test", aiProviderHandler.Test)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Post("/v1/admin/ai-providers/{provider}/disable", aiProviderHandler.Disable)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Put("/v1/admin/ai-provider-routing/{surface}", aiProviderHandler.Route)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Delete("/v1/admin/ai-provider-routing/{surface}", aiProviderHandler.Unroute)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Get("/v1/admin/ai-providers/events", aiProviderHandler.Events)
 		// Dev / QA: flip a workspace's plan_id directly without going
 		// through Stripe Checkout. Useful for testing the plan-feature
 		// gates end-to-end. Already protected by the admin middleware

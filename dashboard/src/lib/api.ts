@@ -2535,6 +2535,91 @@ export interface AdminBillingListParams {
   limit?: number;
 }
 
+export type AdminAIProvider = "tokengate" | "openai" | "anthropic";
+export type AdminAISurface = "post_assist" | "error_triage" | "app_review_ai";
+export type AdminAIClientKind = "chat_completions" | "messages";
+export type AdminAIProviderSource = "admin" | "env" | "none";
+export type AdminAIValidationStatus =
+  | "ok"
+  | "auth_failed"
+  | "model_failed"
+  | "rate_limited"
+  | "provider_failed"
+  | "config_failed";
+
+export interface AdminAIProviderStatus {
+  provider: AdminAIProvider;
+  configured: boolean;
+  enabled: boolean;
+  source: AdminAIProviderSource;
+  key_tail: string;
+  base_url: string;
+  chat_model: string;
+  messages_model: string;
+  last_validated_at?: string;
+  last_validation_status?: string;
+  last_validation_error?: string;
+  last_rotated_at?: string;
+  updated_at?: string;
+}
+
+export interface AdminAIRouteStatus {
+  surface: AdminAISurface;
+  provider?: AdminAIProvider;
+  source: AdminAIProviderSource;
+  client_kind?: AdminAIClientKind;
+  model?: string;
+  model_override?: string;
+}
+
+export interface AdminAIProvidersResponse {
+  providers: AdminAIProviderStatus[];
+  effective: Partial<Record<AdminAISurface, AdminAIRouteStatus>>;
+  routes: Partial<Record<AdminAISurface, AdminAIRouteStatus>>;
+}
+
+export interface AdminAIProviderUpdatePayload {
+  api_key?: string;
+  base_url: string;
+  chat_model?: string;
+  messages_model?: string;
+  enabled: boolean;
+}
+
+export interface AdminAIProviderTestPayload {
+  api_key?: string;
+  base_url?: string;
+  chat_model?: string;
+  messages_model?: string;
+}
+
+export interface AdminAIProviderValidationResult {
+  status: AdminAIValidationStatus;
+  message: string;
+}
+
+export interface AdminAIRoutePayload {
+  provider: AdminAIProvider;
+  client_kind: AdminAIClientKind;
+  model_override?: string;
+}
+
+export interface AdminAIProviderEvent {
+  id: number;
+  provider?: AdminAIProvider;
+  surface?: AdminAISurface;
+  action: string;
+  category: string;
+  actor_admin_id?: string;
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+}
+
+export interface AdminAIProviderEventsResponse {
+  events: AdminAIProviderEvent[];
+  next_cursor: string;
+}
+
 // Whoami — returns the authenticated user's identity plus an
 // is_admin flag derived from the backend ADMIN_USERS allowlist.
 // Used by the dashboard shell to decide whether to show the Admin
@@ -3001,6 +3086,74 @@ export async function dismissAdminErrorTriageRecipient(
       body: JSON.stringify({ reason: reason || "" }),
     },
   );
+}
+
+export async function listAdminAIProviders(token: string): Promise<ApiResponse<AdminAIProvidersResponse>> {
+  return request("/v1/admin/ai-providers", token);
+}
+
+export async function updateAdminAIProvider(
+  token: string,
+  provider: AdminAIProvider,
+  payload: AdminAIProviderUpdatePayload,
+): Promise<ApiResponse<AdminAIProviderStatus>> {
+  return request(`/v1/admin/ai-providers/${encodeURIComponent(provider)}`, token, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function testAdminAIProvider(
+  token: string,
+  provider: AdminAIProvider,
+  payload: AdminAIProviderTestPayload,
+): Promise<ApiResponse<AdminAIProviderValidationResult>> {
+  return request(`/v1/admin/ai-providers/${encodeURIComponent(provider)}/test`, token, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function routeAdminAIProviderSurface(
+  token: string,
+  surface: AdminAISurface,
+  payload: AdminAIRoutePayload,
+): Promise<ApiResponse<AdminAIRouteStatus>> {
+  return request(`/v1/admin/ai-provider-routing/${encodeURIComponent(surface)}`, token, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteAdminAIProviderSurfaceRoute(
+  token: string,
+  surface: AdminAISurface,
+): Promise<ApiResponse<{ surface: AdminAISurface; source: AdminAIProviderSource }>> {
+  return request(`/v1/admin/ai-provider-routing/${encodeURIComponent(surface)}`, token, {
+    method: "DELETE",
+  });
+}
+
+export async function disableAdminAIProvider(
+  token: string,
+  provider: AdminAIProvider,
+): Promise<ApiResponse<AdminAIProviderStatus>> {
+  return request(`/v1/admin/ai-providers/${encodeURIComponent(provider)}/disable`, token, {
+    method: "POST",
+  });
+}
+
+export async function listAdminAIProviderEvents(
+  token: string,
+  params?: { provider?: AdminAIProvider; action?: string; cursor?: string; limit?: number },
+): Promise<ApiResponse<AdminAIProviderEventsResponse>> {
+  const qs = new URLSearchParams();
+  if (params?.provider) qs.set("provider", params.provider);
+  if (params?.action) qs.set("action", params.action);
+  if (params?.cursor) qs.set("cursor", params.cursor);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  const s = qs.toString();
+  return request(`/v1/admin/ai-providers/events${s ? `?${s}` : ""}`, token);
 }
 
 export async function listAdminPosts(
