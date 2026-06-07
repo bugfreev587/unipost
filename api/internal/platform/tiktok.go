@@ -704,7 +704,6 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 		}
 		uploadReq.Header.Set("Content-Type", "application/octet-stream")
 		uploadReq.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end-1, videoSize))
-		uploadReq.Header.Set("Content-Length", fmt.Sprintf("%d", len(chunk)))
 
 		uploadResp, err := a.client.Do(uploadReq)
 		if err != nil {
@@ -731,9 +730,6 @@ func tiktokVideoUploadPlan(videoSize int) (int, int) {
 		return videoSize, 1
 	}
 	totalChunkCount := videoSize / tiktokDefaultUploadChunkSize
-	if totalChunkCount < 1 {
-		totalChunkCount = 1
-	}
 	return tiktokDefaultUploadChunkSize, totalChunkCount
 }
 
