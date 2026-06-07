@@ -3,12 +3,16 @@
 import { useAuth } from "@clerk/nextjs";
 import {
   CheckCircle2,
+  Circle,
   FlaskConical,
+  Globe2,
   KeyRound,
+  LockKeyhole,
   Power,
   RotateCw,
   Route,
   Save,
+  Server,
   ShieldAlert,
   Trash2,
 } from "lucide-react";
@@ -32,10 +36,34 @@ import {
 
 import { AdminShell, fmtRelative } from "../_components/admin-ui";
 
-const PROVIDERS: Array<{ id: AdminAIProvider; label: string; defaultBaseURL: string }> = [
-  { id: "tokengate", label: "TokenGate", defaultBaseURL: "https://gateway.mytokengate.com/v1" },
-  { id: "openai", label: "OpenAI", defaultBaseURL: "https://api.openai.com/v1" },
-  { id: "anthropic", label: "Anthropic", defaultBaseURL: "https://api.anthropic.com/v1" },
+const PROVIDERS: Array<{
+  id: AdminAIProvider;
+  label: string;
+  subtitle: string;
+  defaultBaseURL: string;
+  keyPlaceholder: string;
+}> = [
+  {
+    id: "tokengate",
+    label: "TokenGate",
+    subtitle: "OpenAI-compatible gateway",
+    defaultBaseURL: "https://gateway.mytokengate.com/v1",
+    keyPlaceholder: "tg_...:...",
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    subtitle: "Chat Completions",
+    defaultBaseURL: "https://api.openai.com/v1",
+    keyPlaceholder: "sk-...",
+  },
+  {
+    id: "anthropic",
+    label: "Claude Code",
+    subtitle: "Anthropic API",
+    defaultBaseURL: "https://api.anthropic.com/v1",
+    keyPlaceholder: "sk-ant-...",
+  },
 ];
 
 const SURFACES: Array<{ id: AdminAISurface; label: string; clientKind: AdminAIClientKind }> = [
@@ -47,7 +75,7 @@ const SURFACES: Array<{ id: AdminAISurface; label: string; clientKind: AdminAICl
 const providerLabels: Record<AdminAIProvider, string> = {
   tokengate: "TokenGate",
   openai: "OpenAI",
-  anthropic: "Anthropic",
+  anthropic: "Claude Code",
 };
 
 const surfaceLabels: Record<AdminAISurface, string> = {
@@ -56,8 +84,12 @@ const surfaceLabels: Record<AdminAISurface, string> = {
   app_review_ai: "App Review",
 };
 
+function providerMeta(provider: AdminAIProvider) {
+  return PROVIDERS.find((item) => item.id === provider) || PROVIDERS[0];
+}
+
 function defaultForm(provider: AdminAIProvider, status?: AdminAIProviderStatus) {
-  const meta = PROVIDERS.find((item) => item.id === provider) || PROVIDERS[0];
+  const meta = providerMeta(provider);
   return {
     apiKey: "",
     baseURL: status?.base_url || meta.defaultBaseURL,
@@ -81,6 +113,21 @@ function badgeClass(value: string) {
   if (value === "Validation failed" || value.endsWith("failed")) return "ad-badge ad-b-red";
   if (value === "Env fallback") return "ad-badge ad-b-blue";
   return "ad-badge ad-b-gray";
+}
+
+function keyTailLabel(tail?: string) {
+  return tail ? `...${tail}` : "No key";
+}
+
+function providerSummary(status?: AdminAIProviderStatus) {
+  if (!status) return "Not configured";
+  const label = statusLabel(status).toLowerCase();
+  return `${providerLabels[status.provider]} ${label} ${keyTailLabel(status.key_tail)}`;
+}
+
+function modelSummary(status?: AdminAIProviderStatus) {
+  if (!status) return "No model set";
+  return status.chat_model || status.messages_model || "Default model";
 }
 
 export default function AdminAIKeysPage() {
@@ -213,123 +260,195 @@ export default function AdminAIKeysPage() {
     });
   }
 
+  const selectedMeta = providerMeta(selectedProvider);
   const selectedStatus = providersById.get(selectedProvider);
+  const selectedStatusLabel = selectedStatus ? statusLabel(selectedStatus) : "Not configured";
   const selectedSurface = SURFACES.find((item) => item.id === routeSurface) || SURFACES[0];
 
   return (
     <AdminShell title="AI Keys" loading={loading} onRefresh={load} requireSuperAdmin>
       <style>{aiKeysCss}</style>
 
-      {error ? (
-        <div className="ai-alert ai-alert-error">
-          <ShieldAlert strokeWidth={1.75} />
-          <span>{error}</span>
+      <section className="ai-page-frame">
+        <div className="ai-hero">
+          <div>
+            <div className="ai-hero-kicker">LLM provider</div>
+            <h1>Admin</h1>
+          </div>
+          <div className={badgeClass(selectedStatusLabel)}>
+            <CheckCircle2 strokeWidth={1.75} />
+            <span>{providerSummary(selectedStatus)}</span>
+          </div>
         </div>
-      ) : null}
-      {notice ? (
-        <div className="ai-alert ai-alert-ok">
-          <CheckCircle2 strokeWidth={1.75} />
-          <span>{notice}</span>
-        </div>
-      ) : null}
 
-      <div className="ad-section-header">
-        <div>
-          <div className="ad-section-title">Provider status</div>
-          <div className="ad-section-meta">Admin-managed credentials and environment fallbacks</div>
-        </div>
-      </div>
+        {error ? (
+          <div className="ai-alert ai-alert-error">
+            <ShieldAlert strokeWidth={1.75} />
+            <span>{error}</span>
+          </div>
+        ) : null}
+        {notice ? (
+          <div className="ai-alert ai-alert-ok">
+            <CheckCircle2 strokeWidth={1.75} />
+            <span>{notice}</span>
+          </div>
+        ) : null}
 
-      <div className="ai-grid">
-        <div className="ai-main-col">
-          <div className="ad-tbl-wrap ad-tbl-static">
-            <table>
-              <thead>
-                <tr>
-                  <th>Provider</th>
-                  <th>Status</th>
-                  <th>Source</th>
-                  <th>Key tail</th>
-                  <th>Base URL</th>
-                  <th>Models</th>
-                  <th>Validated</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {(data?.providers || PROVIDERS.map((item) => ({ provider: item.id }) as AdminAIProviderStatus)).map((provider) => {
-                  const label = statusLabel(provider);
-                  return (
-                    <tr key={provider.provider} data-selected={provider.provider === selectedProvider} onClick={() => selectProvider(provider.provider)}>
-                      <td>
-                        <div className="ai-provider-cell">
-                          <KeyRound strokeWidth={1.75} />
-                          <span>{providerLabels[provider.provider]}</span>
-                        </div>
-                      </td>
-                      <td><span className={badgeClass(label)}>{label}</span></td>
-                      <td className="ad-mono">{provider.source || "none"}</td>
-                      <td className="ad-mono">{provider.key_tail ? `••••${provider.key_tail}` : "—"}</td>
-                      <td className="ai-url">{provider.base_url || "—"}</td>
-                      <td className="ai-models">
-                        <span>{provider.chat_model || "—"}</span>
-                        <span>{provider.messages_model || "—"}</span>
-                      </td>
-                      <td>{provider.last_validated_at ? fmtRelative(provider.last_validated_at) : "Never"}</td>
-                      <td>
-                        <div className="ai-actions">
-                          <button type="button" className="ad-btn ad-btn-ghost" onClick={(event) => { event.stopPropagation(); selectProvider(provider.provider); }}>
-                            <KeyRound strokeWidth={1.75} />
-                            Configure
-                          </button>
-                          <button type="button" className="ad-btn ad-btn-ghost" disabled={!!actionKey} onClick={(event) => { event.stopPropagation(); handleTest(provider.provider); }}>
-                            <FlaskConical strokeWidth={1.75} />
-                            Test
-                          </button>
-                          {provider.source === "admin" ? (
-                            <button type="button" className="ad-btn ad-btn-ghost" disabled={!!actionKey} onClick={(event) => { event.stopPropagation(); handleDisable(provider.provider); }}>
-                              <Power strokeWidth={1.75} />
-                              Disable
-                            </button>
-                          ) : null}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+        <section className="ai-credential-card">
+          <div className="ai-card-title-row">
+            <div className="ai-card-title">
+              <KeyRound strokeWidth={1.75} />
+              <span>API key</span>
+            </div>
+            <div className="ai-card-meta">
+              <span className={badgeClass(selectedStatusLabel)}>{selectedStatusLabel}</span>
+              <span className="ai-key-tail">{keyTailLabel(selectedStatus?.key_tail)}</span>
+            </div>
           </div>
 
-          <div className="ai-panel">
-            <div className="ai-panel-head">
+          <div className="ai-provider-card-grid">
+            {PROVIDERS.map((provider) => {
+              const status = providersById.get(provider.id);
+              const label = status ? statusLabel(status) : "Not configured";
+              const active = provider.id === selectedProvider;
+              return (
+                <button
+                  key={provider.id}
+                  type="button"
+                  className="ai-provider-card"
+                  data-active={active}
+                  onClick={() => selectProvider(provider.id)}
+                >
+                  <span>
+                    <strong>{provider.label}</strong>
+                    <small>{provider.subtitle}</small>
+                  </span>
+                  <span className="ai-provider-right">
+                    <span className={badgeClass(label)}>{status?.source || "none"}</span>
+                    {active ? <CheckCircle2 strokeWidth={2} /> : <Circle strokeWidth={1.75} />}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="ai-form-stack">
+            <label className="ai-field ai-field-full">
+              <span>{selectedMeta.label} API key</span>
+              <div className="ai-input-shell">
+                <KeyRound strokeWidth={1.75} />
+                <input
+                  type="password"
+                  value={form.apiKey}
+                  placeholder={selectedStatus?.configured ? "Leave blank to keep the existing key" : selectedMeta.keyPlaceholder}
+                  onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
+                />
+              </div>
+              <small>Leave blank to keep the existing key.</small>
+            </label>
+
+            <label className="ai-field ai-field-full">
+              <span>Base URL</span>
+              <div className="ai-input-shell">
+                <Globe2 strokeWidth={1.75} />
+                <input value={form.baseURL} onChange={(event) => setForm((current) => ({ ...current, baseURL: event.target.value }))} />
+              </div>
+              <small>Use the API backend URL with /v1, not the dashboard URL.</small>
+            </label>
+
+            <div className="ai-model-grid">
+              <label className="ai-field">
+                <span>Chat model</span>
+                <div className="ai-input-shell">
+                  <Server strokeWidth={1.75} />
+                  <input
+                    value={form.chatModel}
+                    placeholder="Optional"
+                    onChange={(event) => setForm((current) => ({ ...current, chatModel: event.target.value }))}
+                  />
+                </div>
+                <small>{selectedProvider === "anthropic" ? "Used only when routed through chat completions." : "Overrides the default chat model."}</small>
+              </label>
+              <label className="ai-field">
+                <span>Messages model</span>
+                <div className="ai-input-shell">
+                  <Server strokeWidth={1.75} />
+                  <input
+                    value={form.messagesModel}
+                    placeholder="Optional"
+                    onChange={(event) => setForm((current) => ({ ...current, messagesModel: event.target.value }))}
+                  />
+                </div>
+                <small>{modelSummary(selectedStatus)}</small>
+              </label>
+            </div>
+          </div>
+
+          <div className="ai-card-actions">
+            <label className="ai-toggle">
+              <input
+                type="checkbox"
+                checked={form.enabled}
+                onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))}
+              />
+              <span>Enabled</span>
+            </label>
+            <button type="button" className="ai-save-button" disabled={!!actionKey} onClick={handleSave}>
+              <Save strokeWidth={1.85} />
+              Save credentials
+            </button>
+            <button type="button" className="ai-secondary-button" disabled={!!actionKey} onClick={() => handleTest()}>
+              <FlaskConical strokeWidth={1.75} />
+              Test connection
+            </button>
+            <button type="button" className="ai-secondary-button" disabled={loading} onClick={load}>
+              <RotateCw strokeWidth={1.75} />
+              Refresh
+            </button>
+            {selectedStatus?.source === "admin" ? (
+              <button type="button" className="ai-danger-button" disabled={!!actionKey} onClick={() => handleDisable(selectedProvider)}>
+                <Power strokeWidth={1.75} />
+                Disable
+              </button>
+            ) : null}
+          </div>
+        </section>
+
+        <section className="ai-secret-card">
+          <LockKeyhole strokeWidth={1.75} />
+          <div>
+            <h2>Secrets stay server-side</h2>
+            <p>Only the provider, base URL, model names, and key tail are returned to the browser after saving.</p>
+          </div>
+        </section>
+
+        <div className="ai-ops-grid">
+          <section className="ai-ops-panel">
+            <div className="ai-ops-head">
               <div>
-                <div className="ad-panel-section-title">Active routing policy</div>
-                <div className="ai-panel-title">Effective AI surfaces</div>
+                <div className="ai-ops-kicker">Active routing policy</div>
+                <h2>Effective AI surfaces</h2>
               </div>
             </div>
             <div className="ai-route-grid">
               {SURFACES.map((surface) => {
                 const effective = data?.effective?.[surface.id];
                 const route = data?.routes?.[surface.id];
+                const sourceLabel = effective?.source === "admin" ? "Active" : effective?.source === "env" ? "Env fallback" : "Not configured";
                 return (
                   <div className="ai-route-row" key={surface.id}>
                     <div>
                       <div className="ai-route-name">{surface.label}</div>
                       <div className="ai-route-meta">{surface.clientKind.replace("_", " ")}</div>
                     </div>
-                    <div>
-                      <span className={badgeClass(effective?.source === "admin" ? "Active" : effective?.source === "env" ? "Env fallback" : "Not configured")}>
-                        {effective?.source || "none"}
-                      </span>
-                    </div>
+                    <span className={badgeClass(sourceLabel)}>{effective?.source || "none"}</span>
                     <div className="ai-route-detail">
-                      <span>{effective?.provider ? providerLabels[effective.provider] : "—"}</span>
-                      <span className="ad-mono">{effective?.model || "—"}</span>
+                      <span>{effective?.provider ? providerLabels[effective.provider] : "-"}</span>
+                      <span>{effective?.model || "-"}</span>
                     </div>
                     <button
                       type="button"
-                      className="ad-btn ad-btn-ghost"
+                      className="ai-mini-button"
                       disabled={!route || !!actionKey}
                       onClick={() => handleUnroute(surface.id)}
                     >
@@ -340,75 +459,15 @@ export default function AdminAIKeysPage() {
                 );
               })}
             </div>
-          </div>
-        </div>
+          </section>
 
-        <div className="ai-side-col">
-          <div className="ai-panel">
-            <div className="ai-panel-head">
+          <section className="ai-ops-panel">
+            <div className="ai-ops-head">
               <div>
-                <div className="ad-panel-section-title">Provider editor</div>
-                <div className="ai-panel-title">{providerLabels[selectedProvider]}</div>
+                <div className="ai-ops-kicker">Route surface</div>
+                <h2>Change provider</h2>
               </div>
-              <span className={badgeClass(selectedStatus ? statusLabel(selectedStatus) : "Not configured")}>
-                {selectedStatus ? statusLabel(selectedStatus) : "Not configured"}
-              </span>
             </div>
-
-            <div className="ai-provider-tabs">
-              {PROVIDERS.map((provider) => (
-                <button
-                  key={provider.id}
-                  type="button"
-                  className="ai-tab"
-                  data-active={provider.id === selectedProvider}
-                  onClick={() => selectProvider(provider.id)}
-                >
-                  {provider.label}
-                </button>
-              ))}
-            </div>
-
-            <label className="ai-field">
-              <span>API key</span>
-              <input
-                type="password"
-                value={form.apiKey}
-                placeholder={selectedStatus?.configured ? "Leave blank to keep stored key" : "Required on first save"}
-                onChange={(event) => setForm((current) => ({ ...current, apiKey: event.target.value }))}
-              />
-            </label>
-            <label className="ai-field">
-              <span>Base URL</span>
-              <input value={form.baseURL} onChange={(event) => setForm((current) => ({ ...current, baseURL: event.target.value }))} />
-            </label>
-            <label className="ai-field">
-              <span>Chat model</span>
-              <input value={form.chatModel} onChange={(event) => setForm((current) => ({ ...current, chatModel: event.target.value }))} />
-            </label>
-            <label className="ai-field">
-              <span>Messages model</span>
-              <input value={form.messagesModel} onChange={(event) => setForm((current) => ({ ...current, messagesModel: event.target.value }))} />
-            </label>
-            <label className="ai-check">
-              <input type="checkbox" checked={form.enabled} onChange={(event) => setForm((current) => ({ ...current, enabled: event.target.checked }))} />
-              <span>Enabled</span>
-            </label>
-
-            <div className="ai-form-actions">
-              <button type="button" className="ad-btn ai-primary-btn" disabled={!!actionKey} onClick={handleSave}>
-                <Save strokeWidth={1.75} />
-                Save
-              </button>
-              <button type="button" className="ad-btn ad-btn-ghost" disabled={!!actionKey} onClick={() => handleTest()}>
-                <FlaskConical strokeWidth={1.75} />
-                Test connection
-              </button>
-            </div>
-          </div>
-
-          <div className="ai-panel">
-            <div className="ad-panel-section-title">Route surface</div>
             <div className="ai-route-form">
               <label className="ai-field">
                 <span>Surface</span>
@@ -432,98 +491,594 @@ export default function AdminAIKeysPage() {
               </label>
               <label className="ai-field">
                 <span>Model override</span>
-                <input value={routeModel} onChange={(event) => setRouteModel(event.target.value)} />
+                <input value={routeModel} placeholder="Optional" onChange={(event) => setRouteModel(event.target.value)} />
               </label>
               {routeProvider === "tokengate" ? (
                 <div className="ai-notice">TokenGate can receive prompt payloads for the selected surface.</div>
               ) : null}
-              <button type="button" className="ad-btn ai-primary-btn" disabled={!!actionKey} onClick={handleRoute}>
-                <Route strokeWidth={1.75} />
+              <button type="button" className="ai-save-button ai-route-button" disabled={!!actionKey} onClick={handleRoute}>
+                <Route strokeWidth={1.85} />
                 Route surface
               </button>
             </div>
-          </div>
-
-          <div className="ai-panel">
-            <div className="ai-panel-head">
-              <div>
-                <div className="ad-panel-section-title">Recent events</div>
-                <div className="ai-panel-title">Credential activity</div>
-              </div>
-              <RotateCw className="ai-muted-icon" strokeWidth={1.75} />
-            </div>
-            <div className="ai-event-list">
-              {events.length === 0 ? (
-                <div className="ai-empty">No events recorded.</div>
-              ) : events.map((event) => (
-                <div className="ai-event" key={event.id}>
-                  <div>
-                    <div className="ai-event-action">{event.action}</div>
-                    <div className="ai-event-meta">
-                      {[event.provider ? providerLabels[event.provider] : null, event.surface ? surfaceLabels[event.surface] : null].filter(Boolean).join(" · ") || "Global"}
-                    </div>
-                  </div>
-                  <span>{event.created_at ? fmtRelative(event.created_at) : "—"}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          </section>
         </div>
-      </div>
+
+        <section className="ai-events-panel">
+          <div className="ai-ops-head">
+            <div>
+              <div className="ai-ops-kicker">Recent events</div>
+              <h2>Credential activity</h2>
+            </div>
+            <RotateCw className="ai-muted-icon" strokeWidth={1.75} />
+          </div>
+          <div className="ai-event-list">
+            {events.length === 0 ? (
+              <div className="ai-empty">No events recorded.</div>
+            ) : events.map((event) => (
+              <div className="ai-event" key={event.id}>
+                <div>
+                  <div className="ai-event-action">{event.action}</div>
+                  <div className="ai-event-meta">
+                    {[event.provider ? providerLabels[event.provider] : null, event.surface ? surfaceLabels[event.surface] : null].filter(Boolean).join(" / ") || "Global"}
+                  </div>
+                </div>
+                <span>{event.created_at ? fmtRelative(event.created_at) : "-"}</span>
+              </div>
+            ))}
+          </div>
+        </section>
+      </section>
     </AdminShell>
   );
 }
 
 const aiKeysCss = `
-.ai-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(340px, 0.55fr); gap: 16px; align-items: start; }
-.ai-main-col, .ai-side-col { display: grid; gap: 16px; min-width: 0; }
-.ai-panel { background: var(--surface); border: 1px solid var(--dborder); border-radius: 8px; padding: 16px; min-width: 0; }
-.ai-panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.ai-panel-title { font-size: 14px; font-weight: 650; color: var(--dtext); }
-.ai-provider-cell { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
-.ai-provider-cell svg { width: 15px; height: 15px; color: var(--dmuted); }
-.ai-url { max-width: 240px; word-break: break-all; color: var(--dmuted); font-family: var(--font-geist-mono), monospace; font-size: 11px; }
-.ai-models { display: grid; gap: 2px; color: var(--dmuted); font-family: var(--font-geist-mono), monospace; font-size: 11px; }
-.ai-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.ad-tbl-wrap tr[data-selected="true"] { background: color-mix(in srgb, var(--accent-dim) 42%, transparent); }
-.ad-b-green { background: var(--success-soft); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 24%, transparent); }
-.ad-b-red { background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent); }
-.ai-alert { display: flex; align-items: center; gap: 8px; border-radius: 8px; padding: 10px 12px; font-size: 12px; margin-bottom: 12px; }
-.ai-alert svg { width: 16px; height: 16px; flex-shrink: 0; }
-.ai-alert-error { color: var(--danger); background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 20%, transparent); }
-.ai-alert-ok { color: var(--success); background: var(--success-soft); border: 1px solid color-mix(in srgb, var(--success) 20%, transparent); }
-.ai-provider-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 12px; }
-.ai-tab { border: 1px solid var(--dborder2); border-radius: 6px; background: var(--surface2); color: var(--dmuted); font: inherit; font-size: 12px; padding: 7px 8px; cursor: pointer; }
-.ai-tab[data-active="true"] { color: var(--daccent); border-color: color-mix(in srgb, var(--daccent) 30%, var(--dborder)); background: var(--accent-dim); }
-.ai-field { display: grid; gap: 5px; margin-bottom: 10px; }
-.ai-field span { font-size: 11px; color: var(--dmuted); font-weight: 600; }
-.ai-field input, .ai-field select { width: 100%; min-width: 0; background: var(--surface2); border: 1px solid var(--dborder2); border-radius: 6px; color: var(--dtext); font: inherit; font-size: 12px; padding: 7px 9px; outline: none; }
-.ai-field input:focus, .ai-field select:focus { border-color: color-mix(in srgb, var(--primary) 32%, transparent); box-shadow: 0 0 0 3px var(--focus-ring); }
-.ai-field input[readonly] { color: var(--dmuted); cursor: default; }
-.ai-check { display: inline-flex; align-items: center; gap: 8px; color: var(--dtext); font-size: 12px; margin: 2px 0 12px; }
-.ai-check input { width: 14px; height: 14px; accent-color: var(--primary); }
-.ai-form-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.ai-primary-btn { background: var(--primary); color: var(--primary-foreground); border-color: color-mix(in srgb, var(--primary) 75%, black); }
-.ai-primary-btn:hover:not(:disabled) { filter: brightness(0.98); }
-.ai-route-grid { display: grid; gap: 8px; }
-.ai-route-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto minmax(150px, 1fr) auto; gap: 10px; align-items: center; border: 1px solid var(--dborder); border-radius: 8px; padding: 10px; background: var(--surface2); }
-.ai-route-name { font-weight: 650; color: var(--dtext); font-size: 12.5px; }
-.ai-route-meta { color: var(--dmuted); font-size: 11px; text-transform: capitalize; }
-.ai-route-detail { display: grid; gap: 1px; min-width: 0; }
-.ai-route-detail span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-route-form { display: grid; gap: 0; }
-.ai-notice { color: var(--warning); background: var(--warning-soft); border: 1px solid color-mix(in srgb, var(--warning) 22%, transparent); border-radius: 8px; padding: 9px 10px; font-size: 12px; margin-bottom: 10px; }
-.ai-event-list { display: grid; gap: 8px; }
-.ai-event { display: flex; justify-content: space-between; gap: 10px; border: 1px solid var(--dborder); border-radius: 8px; padding: 9px 10px; background: var(--surface2); }
-.ai-event-action { color: var(--dtext); font-family: var(--font-geist-mono), monospace; font-size: 11px; }
-.ai-event-meta, .ai-event span { color: var(--dmuted); font-size: 11px; }
-.ai-muted-icon { width: 15px; height: 15px; color: var(--dmuted); }
-.ai-empty { color: var(--dmuted); font-size: 12px; border: 1px dashed var(--dborder); border-radius: 8px; padding: 12px; text-align: center; }
-@media (max-width: 1120px) {
-  .ai-grid { grid-template-columns: 1fr; }
+.ai-page-frame {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 10px 0 54px;
 }
-@media (max-width: 720px) {
+.ai-hero {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 0 0 34px;
+}
+.ai-hero-kicker {
+  color: #65738a;
+  font-size: 17px;
+  font-weight: 760;
+  letter-spacing: 0;
+  line-height: 1.25;
+  margin-bottom: 6px;
+}
+.ai-hero h1 {
+  margin: 0;
+  color: #111827;
+  font-size: 30px;
+  line-height: 1.08;
+  font-weight: 820;
+  letter-spacing: -0.02em;
+}
+.ai-credential-card,
+.ai-secret-card,
+.ai-ops-panel,
+.ai-events-panel {
+  background: #ffffff;
+  border: 1px solid #dfe6ef;
+  border-radius: 14px;
+  box-shadow: 0 22px 52px -38px rgba(15, 23, 42, 0.34);
+}
+.ai-credential-card {
+  padding: 26px;
+}
+.ai-card-title-row,
+.ai-ops-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+.ai-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  color: #111827;
+  font-size: 18px;
+  font-weight: 760;
+  letter-spacing: -0.01em;
+}
+.ai-card-title svg {
+  width: 22px;
+  height: 22px;
+  color: #111827;
+}
+.ai-card-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.ai-key-tail {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  border: 1px solid #e5ebf3;
+  border-radius: 999px;
+  padding: 3px 10px;
+  color: #65738a;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  font-weight: 650;
+}
+.ad-badge svg {
+  width: 13px;
+  height: 13px;
+}
+.ad-b-green {
+  background: #ecfdf3;
+  color: #16883d;
+  border: 1px solid #bbf7d0;
+}
+.ad-b-red {
+  background: #fff1f0;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+.ad-b-blue {
+  background: #eff6ff;
+  color: #2563eb;
+  border: 1px solid #bfdbfe;
+}
+.ad-b-gray {
+  background: #f8fafc;
+  color: #64748b;
+  border: 1px solid #e2e8f0;
+}
+.ai-provider-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin: 28px 0 26px;
+}
+.ai-provider-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 14px;
+  border: 1px solid #dfe6ef;
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 20px 20px;
+  color: #111827;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
+}
+.ai-provider-card:hover {
+  border-color: #cbd5e1;
+  transform: translateY(-1px);
+  box-shadow: 0 18px 38px -30px rgba(15, 23, 42, 0.38);
+}
+.ai-provider-card[data-active="true"] {
+  background: #fff7f6;
+  border-color: #ef3b2d;
+  box-shadow: inset 0 0 0 1px rgba(239, 59, 45, 0.1);
+}
+.ai-provider-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  font-size: 18px;
+  font-weight: 780;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+.ai-provider-card small {
+  display: block;
+  margin-top: 8px;
+  color: #65738a;
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+.ai-provider-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.ai-provider-right svg {
+  width: 26px;
+  height: 26px;
+  color: #cbd5e1;
+}
+.ai-provider-card[data-active="true"] .ai-provider-right svg {
+  color: #ef3b2d;
+  fill: #ef3b2d;
+  stroke: #ef3b2d;
+}
+.ai-form-stack {
+  display: grid;
+  gap: 18px;
+}
+.ai-model-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+.ai-field {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+}
+.ai-field span {
+  color: #344256;
+  font-size: 17px;
+  font-weight: 740;
+  letter-spacing: -0.01em;
+}
+.ai-field small {
+  color: #65738a;
+  font-size: 14px;
+  font-weight: 560;
+  line-height: 1.45;
+}
+.ai-input-shell {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 0 14px;
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+.ai-input-shell:focus-within {
+  border-color: #ef3b2d;
+  box-shadow: 0 0 0 3px rgba(239, 59, 45, 0.08);
+}
+.ai-input-shell svg {
+  width: 18px;
+  height: 18px;
+  color: #9aa8ba;
+  flex-shrink: 0;
+}
+.ai-field input,
+.ai-field select {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #111827;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 580;
+  outline: none;
+  padding: 12px 13px;
+}
+.ai-input-shell input {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+}
+.ai-field input::placeholder {
+  color: #9aa8ba;
+}
+.ai-field input:focus,
+.ai-field select:focus {
+  border-color: #ef3b2d;
+  box-shadow: 0 0 0 3px rgba(239, 59, 45, 0.08);
+}
+.ai-input-shell input:focus {
+  box-shadow: none;
+}
+.ai-field input[readonly] {
+  color: #65738a;
+  cursor: default;
+}
+.ai-card-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+.ai-save-button,
+.ai-secondary-button,
+.ai-danger-button,
+.ai-mini-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  min-height: 42px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  padding: 0 17px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 720;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+.ai-save-button {
+  background: #ef3b2d;
+  color: #ffffff;
+  box-shadow: 0 14px 30px -22px rgba(239, 59, 45, 0.72);
+}
+.ai-save-button:hover:not(:disabled) {
+  background: #dc3327;
+  transform: translateY(-1px);
+}
+.ai-save-button:active:not(:disabled),
+.ai-secondary-button:active:not(:disabled),
+.ai-danger-button:active:not(:disabled),
+.ai-mini-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.ai-secondary-button,
+.ai-mini-button {
+  background: #ffffff;
+  color: #344256;
+  border-color: #dfe6ef;
+}
+.ai-secondary-button:hover:not(:disabled),
+.ai-mini-button:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+.ai-danger-button {
+  background: #fff7f6;
+  color: #dc2626;
+  border-color: #fecaca;
+}
+.ai-danger-button:hover:not(:disabled) {
+  background: #fff1f0;
+}
+.ai-save-button:disabled,
+.ai-secondary-button:disabled,
+.ai-danger-button:disabled,
+.ai-mini-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+  transform: none;
+  box-shadow: none;
+}
+.ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 8px 0 0;
+  color: #344256;
+  font-size: 14px;
+  font-weight: 680;
+}
+.ai-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #ef3b2d;
+}
+.ai-secret-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-top: 30px;
+  padding: 22px 26px;
+}
+.ai-secret-card svg {
+  width: 22px;
+  height: 22px;
+  color: #65738a;
+  margin-top: 2px;
+}
+.ai-secret-card h2,
+.ai-ops-panel h2,
+.ai-events-panel h2 {
+  margin: 0;
+  color: #344256;
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 760;
+  letter-spacing: -0.015em;
+}
+.ai-secret-card p {
+  margin: 8px 0 0;
+  color: #65738a;
+  font-size: 16px;
+  line-height: 1.45;
+}
+.ai-ops-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(320px, 0.75fr);
+  gap: 18px;
+  margin-top: 30px;
+}
+.ai-ops-panel,
+.ai-events-panel {
+  padding: 20px;
+}
+.ai-ops-kicker {
+  color: #65738a;
+  font-size: 11px;
+  font-weight: 780;
+  letter-spacing: 0.09em;
+  line-height: 1.2;
+  margin-bottom: 7px;
+  text-transform: uppercase;
+}
+.ai-route-grid,
+.ai-event-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 18px;
+}
+.ai-route-row {
+  display: grid;
+  grid-template-columns: minmax(130px, 1fr) auto minmax(150px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid #edf2f7;
+  padding: 13px 0 0;
+}
+.ai-route-row:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.ai-route-name {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 740;
+}
+.ai-route-meta {
+  color: #65738a;
+  font-size: 12px;
+  font-weight: 560;
+  text-transform: capitalize;
+}
+.ai-route-detail {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.ai-route-detail span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #344256;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+}
+.ai-mini-button {
+  min-height: 34px;
+  border-radius: 9px;
+  padding: 0 11px;
+  font-size: 12px;
+}
+.ai-route-form {
+  display: grid;
+  gap: 13px;
+  margin-top: 18px;
+}
+.ai-route-form .ai-field {
+  gap: 6px;
+}
+.ai-route-form .ai-field span {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.ai-notice {
+  color: #9a6400;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ai-route-button {
+  justify-self: start;
+}
+.ai-events-panel {
+  margin-top: 18px;
+}
+.ai-event {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border-top: 1px solid #edf2f7;
+  padding-top: 10px;
+}
+.ai-event:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.ai-event-action {
+  color: #111827;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  font-weight: 650;
+}
+.ai-event-meta,
+.ai-event span {
+  color: #65738a;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.ai-muted-icon {
+  width: 18px;
+  height: 18px;
+  color: #9aa8ba;
+}
+.ai-empty {
+  color: #65738a;
+  border: 1px dashed #dfe6ef;
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+}
+.ai-alert {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border-radius: 12px;
+  padding: 11px 13px;
+  font-size: 13px;
+  font-weight: 620;
+  margin-bottom: 14px;
+}
+.ai-alert svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+.ai-alert-error {
+  color: #dc2626;
+  background: #fff1f0;
+  border: 1px solid #fecaca;
+}
+.ai-alert-ok {
+  color: #16883d;
+  background: #ecfdf3;
+  border: 1px solid #bbf7d0;
+}
+@media (max-width: 1120px) {
+  .ai-page-frame { max-width: 860px; }
+  .ai-provider-card-grid,
+  .ai-ops-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .ai-page-frame { padding: 4px 0 32px; }
+  .ai-hero { align-items: flex-start; flex-direction: column; margin-bottom: 22px; }
+  .ai-hero h1 { font-size: 28px; }
+  .ai-credential-card { padding: 18px; border-radius: 12px; }
+  .ai-card-title-row { flex-direction: column; }
+  .ai-card-meta { justify-content: flex-start; }
+  .ai-model-grid { grid-template-columns: 1fr; }
+  .ai-provider-card { padding: 16px; }
+  .ai-provider-card strong { font-size: 16px; }
+  .ai-field span { font-size: 15px; }
+  .ai-card-actions { align-items: stretch; flex-direction: column; }
+  .ai-toggle,
+  .ai-save-button,
+  .ai-secondary-button,
+  .ai-danger-button { width: 100%; }
+  .ai-secret-card { padding: 18px; }
+  .ai-secret-card p { font-size: 14px; }
   .ai-route-row { grid-template-columns: 1fr; align-items: stretch; }
-  .ai-provider-tabs { grid-template-columns: 1fr; }
 }
 `;
