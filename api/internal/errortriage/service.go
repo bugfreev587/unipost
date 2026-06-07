@@ -79,6 +79,10 @@ type Analyzer interface {
 	Analyze(bucket Bucket) ItemDraft
 }
 
+type RunScopedAnalyzer interface {
+	AnalyzerForRun(context.Context) (Analyzer, string)
+}
+
 type Service struct {
 	store        Store
 	analyzer     Analyzer
@@ -135,6 +139,17 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 		return run, nil
 	}
 
+	runAnalyzer := s.analyzer
+	runModel := s.model
+	if scoped, ok := s.analyzer.(RunScopedAnalyzer); ok {
+		if analyzer, model := scoped.AnalyzerForRun(ctx); analyzer != nil {
+			runAnalyzer = analyzer
+			if model != "" {
+				runModel = model
+			}
+		}
+	}
+
 	failures, err := s.store.LoadFailures(ctx, opts.WindowStart, opts.WindowEnd)
 	if err != nil {
 		_ = s.store.FailRun(ctx, run.ID, err.Error())
@@ -155,7 +170,7 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 		)
 	}
 	for index, bucket := range buckets {
-		draft := s.analyzeBucket(bucket, index, aiBucketLimit)
+		draft := s.analyzeBucketWith(runAnalyzer, bucket, index, aiBucketLimit)
 		duplicateID, err := s.store.FindPreviousItem(ctx, draft.DedupeKey, run.ID)
 		if err != nil {
 			_ = s.store.FailRun(ctx, run.ID, err.Error())
@@ -183,7 +198,7 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 	}
 
 	completed, err := s.store.CompleteRun(ctx, run.ID, CompleteRunParams{
-		Model:              s.model,
+		Model:              runModel,
 		PromptVersion:      PromptVersion,
 		FailuresAnalyzed:   len(failures),
 		AffectedUsers:      countUsers(failures),
@@ -206,10 +221,17 @@ func (s *Service) tryScheduledRunLock(ctx context.Context, windowStart time.Time
 }
 
 func (s *Service) analyzeBucket(bucket Bucket, index, aiBucketLimit int) ItemDraft {
+	return s.analyzeBucketWith(s.analyzer, bucket, index, aiBucketLimit)
+}
+
+func (s *Service) analyzeBucketWith(analyzer Analyzer, bucket Bucket, index, aiBucketLimit int) ItemDraft {
 	if index >= aiBucketLimit {
 		return DeterministicAnalyzer{}.Analyze(bucket)
 	}
-	return s.analyzer.Analyze(bucket)
+	if analyzer == nil {
+		return DeterministicAnalyzer{}.Analyze(bucket)
+	}
+	return analyzer.Analyze(bucket)
 }
 
 func countUsers(failures []Failure) int {

@@ -77,6 +77,33 @@ func TestServiceRunCapsAnalyzerCallsAndFallsBackDeterministically(t *testing.T) 
 	}
 }
 
+func TestServiceRunUsesRunScopedAnalyzerModel(t *testing.T) {
+	store := &fakeStore{
+		failures: []Failure{
+			{PostID: "post_1", WorkspaceID: "ws_1", UserID: "user_1", UserEmail: "one@example.com", Platform: "threads", Source: "dashboard", ErrorCode: "missing_permission", FailureStage: "publish", Message: "reconnect required", CreatedAt: time.Date(2026, 6, 6, 8, 0, 0, 0, time.UTC)},
+		},
+	}
+	scoped := &runScopedAnalyzerFake{analyzer: &countingAnalyzer{}, model: "tokengate:gpt-route"}
+	svc := NewService(store, scoped)
+
+	if _, err := svc.Run(context.Background(), RunOptions{
+		RunType:     RunTypeManual,
+		WindowStart: time.Date(2026, 6, 6, 7, 0, 0, 0, time.UTC),
+		WindowEnd:   time.Date(2026, 6, 7, 7, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if scoped.calls != 1 {
+		t.Fatalf("run-scoped analyzer resolved %d times, want 1", scoped.calls)
+	}
+	if scoped.analyzer.calls != 1 {
+		t.Fatalf("scoped analyzer calls = %d, want 1", scoped.analyzer.calls)
+	}
+	if got := store.completed.Model; got != "tokengate:gpt-route" {
+		t.Fatalf("completed model = %q, want scoped model", got)
+	}
+}
+
 type countingAnalyzer struct {
 	calls int
 }
@@ -84,6 +111,21 @@ type countingAnalyzer struct {
 func (a *countingAnalyzer) Analyze(bucket Bucket) ItemDraft {
 	a.calls++
 	return DeterministicAnalyzer{}.Analyze(bucket)
+}
+
+type runScopedAnalyzerFake struct {
+	analyzer *countingAnalyzer
+	model    string
+	calls    int
+}
+
+func (a *runScopedAnalyzerFake) Analyze(bucket Bucket) ItemDraft {
+	return DeterministicAnalyzer{}.Analyze(bucket)
+}
+
+func (a *runScopedAnalyzerFake) AnalyzerForRun(context.Context) (Analyzer, string) {
+	a.calls++
+	return a.analyzer, a.model
 }
 
 type fakeStore struct {

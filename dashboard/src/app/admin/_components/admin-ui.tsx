@@ -9,6 +9,7 @@ import {
   ClipboardCheck,
   CreditCard,
   FileText,
+  KeyRound,
   LayoutDashboard,
   Menu,
   MousePointerClick,
@@ -98,6 +99,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Logs", href: "/admin/logs", section: "System", enabled: true, icon: FileText },
   { label: "Errors", href: "/admin/errors", section: "System", enabled: true, icon: AlertTriangle },
   { label: "Triage", href: "/admin/error-triage", section: "System", enabled: true, icon: ClipboardCheck },
+  { label: "AI Keys", href: "/admin/ai-keys", section: "System", enabled: true, icon: KeyRound },
   { label: "Settings", href: "/admin/settings", section: "System", enabled: true, icon: Settings },
 ];
 
