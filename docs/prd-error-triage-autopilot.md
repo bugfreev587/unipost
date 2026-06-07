@@ -40,7 +40,7 @@ The scheduled job must not automatically email customers and must not automatica
 2. Run a daily triage job at 12:00 AM America/Los_Angeles.
 3. Analyze production failures from the previous 24-hour PT window.
 4. Group failures into coherent buckets by platform, error code, account state, source, message pattern, and affected customers.
-5. Classify buckets as UniPost bug, user action needed, upstream platform issue, transient/no action, known duplicate, or needs human review.
+5. Classify buckets as UniPost bug, user action needed, upstream platform issue, transient/no action, or needs human review.
 6. Generate admin-readable daily reports with clear evidence and recommended next actions.
 7. Generate bug-fix plans for likely UniPost platform bugs, including suspected surface, reproduction clues, risk, validation plan, and rollout notes.
 8. Generate safe user email drafts for user-actionable issues.
@@ -72,7 +72,7 @@ The scheduled job must not automatically email customers and must not automatica
 
 - `post_failures` table exists with `platform`, `failure_stage`, `error_code`, `platform_error_code`, `message`, `raw_error`, `is_retriable`, and `created_at`.
 - `AdminHandler.ListPostFailures` currently builds admin failure rows by joining `social_posts`, `social_post_results`, `social_accounts`, `workspaces`, and `users`.
-- `social_post_results.debug_curl` may contain important evidence, and server-side code documents that it is redacted before admin exposure.
+- `social_post_results.debug_curl` may contain important evidence. It is intended to be written through `internal/debugrt`, which redacts sensitive headers and query params before storage; admin APIs currently pass the stored value through. Phase 1 must verify that every `debug_curl` value eligible for triage was captured through this redaction path, including older rows and any non-debugrt writers.
 - `post_failures` is a better long-term triage source than scraping `/admin/errors`, because it is structured, indexed, and independent of UI rendering.
 
 ### Loops
@@ -81,6 +81,7 @@ The scheduled job must not automatically email customers and must not automatica
 - `api/internal/loops/syncer.go` gates Loops lifecycle behavior through `email.loops_integration_v1`.
 - Current transactional IDs include plan changed, account canceled, and post failed.
 - Existing post-failed Loops events are customer notification oriented; this feature needs a separate admin-approved support email path with its own idempotency and audit trail.
+- The triage page must account for existing `post_failed` customer notifications so admin-approved follow-up emails do not read like a duplicate first notification.
 
 ### AI generation
 
@@ -102,7 +103,7 @@ The page should show the latest daily run by default.
 
 Primary page areas:
 
-- Run status card: `Completed`, `Running`, `Failed`, `No actionable issues`, or `Needs review`.
+- Run status card: `Completed`, `Running`, `Failed`, `No actionable issues`, or `Needs review`. The stored run status remains a small execution-state enum; `No actionable issues` and `Needs review` are UI health verdicts derived from item counts.
 - Summary cards: failures analyzed, affected users, affected workspaces, platform bug candidates, user email drafts, needs-review items.
 - Daily report: concise natural-language summary.
 - Buckets table: classification, confidence, platform, users affected, latest error, recommended action, and status.
@@ -129,11 +130,18 @@ The run should:
 4. Group related failures into buckets.
 5. Ask the AI classifier to produce structured triage output per bucket.
 6. Persist the report and item-level outputs.
-7. Mark the run completed, completed with review needed, or failed.
+7. Mark the run `completed` or `failed`, with review state exposed through the derived `health_status`.
+
+Storage uses `status=completed` for both clean and review-needed runs. The admin API returns a derived `health_status` such as `no_actionable_issues`, `actionable_items`, or `needs_review` so the UI does not overload the run execution status.
 
 ### Manual run
 
-Admins can click `Run now` for the last 24 hours. Manual runs are useful after deploys or after fixing a classifier prompt. Manual runs must be labeled as manual and must not replace the canonical scheduled run for the PT day unless the admin explicitly chooses `Re-run daily report`.
+Admins can click `Run now` for the trailing 24 hours. Manual runs are useful after deploys or after fixing a classifier prompt. Manual runs must be labeled as manual and must not replace the canonical scheduled run for the PT day unless the admin explicitly chooses `Re-run daily report`.
+
+API mapping:
+
+- `POST /v1/admin/error-triage/runs` creates a manual trailing-24-hour run.
+- `POST /v1/admin/error-triage/runs/{id}/rerun` re-runs the same window and run type as an existing run, preserving a link to the superseded run.
 
 ### No-issue day
 
@@ -156,7 +164,6 @@ unipost_bug
 user_action_needed
 upstream_platform_issue
 transient_no_action
-known_duplicate
 needs_human_review
 ```
 
@@ -227,16 +234,6 @@ Required output:
 - retry status if available
 - when to re-open if failures continue
 
-### `known_duplicate`
-
-Use when the same root cause already has an open triage item or known issue from a previous run.
-
-Required output:
-
-- duplicate-of item ID
-- latest evidence
-- whether impact increased
-
 ### `needs_human_review`
 
 Use when evidence is insufficient, confidence is low, or the proposed customer email could be unsafe.
@@ -246,6 +243,10 @@ Required output:
 - why review is needed
 - what evidence is missing
 - recommended next inspection path
+
+### Duplicate handling
+
+Known-duplicate detection must be deterministic, not model-generated. Before invoking AI for a bucket, the triage service computes a `dedupe_key` and checks previous triage items. If an open or recently resolved item with the same key exists, the new item links `duplicate_of_item_id` to that prior item and stores the latest evidence. The AI may receive duplicate context as supporting information, but it must not invent `duplicate_of_item_id` values.
 
 ## Data Requirements
 
@@ -261,6 +262,7 @@ error_triage_runs
 - window_start
 - window_end
 - timezone
+- supersedes_run_id
 - started_at
 - completed_at
 - model
@@ -275,13 +277,22 @@ error_triage_runs
 - updated_at
 ```
 
+Add a database-level duplicate guard for scheduled runs:
+
+```text
+UNIQUE (window_start) WHERE run_type = 'scheduled'
+```
+
+The advisory lock prevents duplicate work across API replicas; the unique index prevents duplicate scheduled rows if a process crashes or two schedulers race.
+
 ```text
 error_triage_items
 - id
 - run_id
 - dedupe_key
-- classification
-- status: pending_review | email_ready | email_sent | bug_plan_pending | bug_plan_approved | dismissed | no_action | needs_human_review
+- classification: unipost_bug | user_action_needed | upstream_platform_issue | transient_no_action | needs_human_review
+- action_kind: none | email | bug_plan | monitor | review
+- workflow_status: pending_review | ready | partially_completed | completed | dismissed | failed
 - confidence
 - platform
 - source
@@ -303,6 +314,8 @@ error_triage_items
 - updated_at
 ```
 
+`classification` describes what kind of problem the bucket is. `workflow_status` describes operator progress. They must not duplicate each other. For example, a `user_action_needed` item can move from `ready` to `partially_completed` to `completed`, while a `transient_no_action` item is usually created as `completed` with `action_kind=none`.
+
 ```text
 error_triage_item_failures
 - id
@@ -318,12 +331,31 @@ error_triage_item_failures
 ```
 
 ```text
-error_triage_email_sends
+error_triage_item_recipients
 - id
 - item_id
 - recipient_scope_key
+- workspace_id
+- recipient_user_id
+- email_snapshot
+- status: pending | sent | dismissed | send_failed
+- latest_send_attempt_id
+- dismissed_by_admin_id
+- dismissed_at
+- dismiss_reason
+- created_at
+- updated_at
+```
+
+```text
+error_triage_email_sends
+- id
+- item_id
+- recipient_id
+- recipient_scope_key
 - recipient_user_id
 - recipient_email
+- attempt_number
 - loops_event_name
 - loops_transactional_id
 - idempotency_key
@@ -333,9 +365,10 @@ error_triage_email_sends
 - sent_at
 - provider_status
 - provider_error
+- created_at
 ```
 
-For user-actionable buckets that affect multiple dashboard customers, the triage item may represent the shared root cause, but email delivery is per recipient. The stored draft may be generated from a shared template plus recipient-specific variables, and each recipient gets a separate send row, idempotency key, subject snapshot, and body snapshot.
+For user-actionable buckets that affect multiple dashboard customers, the triage item may represent the shared root cause, but email delivery is per recipient. The stored draft may be generated from a shared template plus recipient-specific variables. Each recipient gets a row in `error_triage_item_recipients`, and each send attempt gets a row in `error_triage_email_sends`.
 
 ### Dedupe model
 
@@ -354,6 +387,12 @@ The key must not include raw user content or secrets.
 
 ## AI Input and Output
 
+### Provider and model
+
+V1 should reuse the existing server-side AI integration pattern unless implementation discovers a strong reason to introduce a shared provider abstraction first. The current codebase already has OpenAI JSON-output usage in `api/internal/handler/ai_post_assist.go`; Error Triage should follow the same server-only secret model and make model name configurable through environment.
+
+The PRD does not require frontend access to AI providers. The admin page only calls UniPost backend APIs.
+
 ### Input
 
 The AI classifier receives only sanitized diagnostic data:
@@ -369,6 +408,15 @@ The AI classifier receives only sanitized diagnostic data:
 - captions only as truncated context when necessary
 
 The prompt must explicitly forbid leaking raw provider payloads, tokens, or private customer content into emails.
+
+Input limits must be explicit and logged:
+
+- default maximum buckets sent to AI per run: 100
+- default maximum representative failures per bucket: 25
+- default maximum serialized prompt input per bucket: 40,000 characters
+- if a bucket exceeds the cap, summarize deterministic aggregates and sample the newest and most frequent representative failures
+- persist a `truncated=true` signal in `evidence_json` when any cap is applied
+- never drop aggregate counts just because samples are capped
 
 ### Output schema
 
@@ -402,19 +450,39 @@ Required top-level fields:
 Add an admin-only backend endpoint:
 
 ```text
-POST /v1/admin/error-triage/items/{id}/send-email
+POST /v1/admin/error-triage/items/{id}/recipients/{recipient_id}/send-email
 ```
 
 The endpoint should:
 
 1. Require admin access.
 2. Load the triage item and email draft.
-3. Verify the item is `user_action_needed` and `email_ready`.
-4. Verify the recipient is the dashboard customer or workspace owner from the stored failure data.
-5. Use a deterministic idempotency key, such as `error_triage:{item_id}:{recipient_scope_key}`.
-6. Send through Loops server-side.
-7. Store a row in `error_triage_email_sends`.
-8. Move the recipient send state to `sent`; move the item to `email_sent` only after every intended recipient has been sent or dismissed.
+3. Require an explicit `recipient_id`.
+4. Verify the item is `classification=user_action_needed`, `action_kind=email`, and `workflow_status=ready` or `partially_completed`.
+5. Verify the recipient row is `pending` or `send_failed`.
+6. Reload the recipient user's current email from `users` at send time, and keep `email_snapshot` only as audit context.
+7. Verify the recipient is the dashboard customer or workspace owner from the stored failure data.
+8. Create a new `error_triage_email_sends` attempt row.
+9. Use a deterministic provider idempotency key, such as `error_triage:{item_id}:{recipient_scope_key}`.
+10. Send through Loops server-side.
+11. Mark the attempt `succeeded` or `failed`.
+12. If delivery succeeds, move the recipient status to `sent`.
+13. If delivery fails, move the recipient status to `send_failed` and keep the retry button available.
+14. Move the item workflow status to `completed` only after every intended recipient has been sent or dismissed.
+
+### Retry semantics
+
+Retries after a failed provider attempt reuse the same Loops idempotency key for that item/recipient. This prevents duplicate customer emails if Loops accepted the original request but UniPost received a timeout or ambiguous error.
+
+`error_triage_email_sends` stores one row per attempt. Failed attempts do not disable the send button. The UI disables sending only when the recipient status is `sent` or `dismissed`, when the item is no longer send-eligible, when Loops is not configured, or when the recipient email cannot be resolved.
+
+If an admin edits or regenerates the email draft after a failed send, the backend should create a new draft version and a new idempotency key suffix, such as:
+
+```text
+error_triage:{item_id}:{recipient_scope_key}:draft:{draft_version}
+```
+
+Draft editing is optional in v1, but the retry semantics must leave room for it.
 
 ### Loops configuration
 
@@ -431,6 +499,7 @@ If the transactional ID is missing but Loops is enabled, the send endpoint shoul
 Generated emails must:
 
 - be short, calm, and action-oriented
+- be framed as an admin-reviewed follow-up when the customer has already received the automatic `post_failed` notification
 - identify the affected platform and post when useful
 - explain what the customer can do next
 - include a dashboard CTA when available
@@ -442,6 +511,8 @@ Generated emails must:
 - avoid claiming UniPost fixed something unless it actually did
 
 The admin page must show the exact subject and body snapshot before sending.
+
+The item detail should show whether UniPost already sent the customer an automatic `post_failed` notification for the same post or bucket when that can be determined from existing notification delivery data or Loops audit data. If this cannot be determined, the page should display `Prior notification unknown` rather than assume no notification was sent.
 
 ### Recipient rule
 
@@ -459,13 +530,15 @@ GET /v1/admin/error-triage/runs/{id}
 POST /v1/admin/error-triage/runs
 POST /v1/admin/error-triage/runs/{id}/rerun
 PATCH /v1/admin/error-triage/items/{id}
-POST /v1/admin/error-triage/items/{id}/send-email
+POST /v1/admin/error-triage/items/{id}/recipients/{recipient_id}/send-email
 POST /v1/admin/error-triage/items/{id}/approve-bug-plan
 ```
 
 `PATCH /items/{id}` supports admin notes, status changes, and dismissal.
 
 `approve-bug-plan` marks a bug candidate as approved for implementation planning. It does not create a branch, commit, pull request, or deployment by itself.
+
+`POST /runs` maps to the admin `Run now` action. `POST /runs/{id}/rerun` maps to `Re-run daily report` or `Re-run this manual window`, depending on the source run.
 
 ## Admin UI Requirements
 
@@ -512,14 +585,14 @@ Show:
 
 ### One-click send
 
-For `email_ready` items:
+For user-action-needed items with a `pending` or `send_failed` recipient:
 
 - primary button: `Send via Loops`
 - confirmation modal: show recipient, subject, and body
 - success state: `Sent`
 - failure state: provider error with retry option
 
-The button must be disabled if Loops is not configured, if the draft requires human review, if the item has already been sent to that recipient, or if the recipient email is missing.
+The button must be disabled if Loops is not configured, if the draft requires human review, if the recipient status is `sent` or `dismissed`, if the item workflow status is not send-eligible, or if the recipient email is missing.
 
 Bulk email send is intentionally not included in v1. The one-click action applies to one previewed recipient at a time.
 
@@ -549,6 +622,26 @@ The scheduler must be safe with multiple replicas. If the hosting layer later pr
 8. Use idempotency keys to prevent duplicate sends.
 9. Persist model name and prompt version for audit.
 10. If classification confidence is below the configured threshold, mark the item `needs_human_review`.
+
+### Redaction preflight
+
+Phase 1 must verify the actual `debug_curl` redaction path before any `debug_curl` value is sent to AI. The implementation should confirm:
+
+- adapters that write `debug_curl` use `internal/debugrt` or an equivalent redaction function
+- legacy rows that cannot be proven redacted are excluded from AI input or redacted again
+- redaction covers authorization headers, bearer tokens, cookies, token-like query params, request signatures, and common provider secrets
+- tests fail if a rendered AI input or customer email contains secret-shaped values
+
+### Data retention
+
+Persist enough history for support and product quality, but do not keep PII-heavy evidence forever.
+
+Recommended retention:
+
+- keep full `evidence_json`, copied `user_email`, and sampled failure payloads for 180 days
+- keep run summaries, aggregate counts, classifications, bug plans, and email send audit snapshots for 13 months
+- after the evidence retention window, redact or delete PII-heavy fields while preserving aggregate reporting
+- never delete `error_triage_email_sends` audit rows before the configured support/audit retention period
 
 ## Feature Flag Decision
 
@@ -614,17 +707,23 @@ Metrics should include:
 - Unit test dedupe key generation.
 - Unit test classifier output validation.
 - Unit test secret redaction before AI input and email output.
-- Unit test Loops send idempotency.
+- Unit test `debug_curl` redaction preflight behavior.
+- Unit test recipient workflow state transitions.
+- Unit test Loops send idempotency and failed-attempt retry behavior.
 - Unit test admin permission checks.
 - Integration test run creation from seeded failures.
 - Integration test no-failure run.
 - Integration test duplicate scheduled run prevention.
+- Integration test scheduled run unique-index collision handling.
+- Integration test deterministic duplicate linking by `dedupe_key`.
 
 ### Dashboard
 
 - Build the admin page.
 - Test run list, run detail, item detail, empty state, running state, failed state, and sent state.
 - Test one-click send disabled states.
+- Test per-recipient pending, sent, dismissed, and send-failed states.
+- Test prior-post-failed-notification display states.
 - Test responsive admin layout using existing `AdminShell` conventions.
 
 ### End-to-end
@@ -634,6 +733,7 @@ Metrics should include:
 - Seed a UniPost-bug-like failure and verify a bug plan is generated but no code action happens.
 - Seed a no-action transient failure and verify no email draft is generated.
 - Verify repeated send attempts do not duplicate Loops emails.
+- Verify a failed Loops attempt leaves the recipient retryable.
 
 ## Acceptance Criteria
 
@@ -649,25 +749,33 @@ Metrics should include:
 10. Admins can send an eligible email draft via Loops with one click after reviewing the preview.
 11. Every Loops send is idempotent and audited.
 12. Customer emails never include debug curls, raw provider payloads, tokens, stack traces, or hidden internal notes.
-13. Admins can dismiss items and add notes.
-14. Admins can approve bug plans for later implementation planning.
-15. All required backend tests pass.
-16. `npm run build` passes for dashboard changes.
-17. Development deployment is validated against the new admin page and Loops send flow before reporting implementation complete.
+13. Multi-recipient buckets store and display independent recipient states.
+14. Failed Loops attempts can be retried without permanently disabling that recipient.
+15. Scheduled runs have both advisory-lock protection and a database-level uniqueness guard.
+16. Duplicate items are linked deterministically by `dedupe_key`, not by AI invention.
+17. Admins can dismiss items and add notes.
+18. Admins can approve bug plans for later implementation planning.
+19. All required backend tests pass.
+20. `npm run build` passes for dashboard changes.
+21. Development deployment is validated against the new admin page and Loops send flow before reporting implementation complete.
 
 ## Phased Rollout
 
 ### Phase 1 - Data and report foundation
 
 - Add triage tables.
+- Add scheduled-run uniqueness guard.
+- Verify and enforce `debug_curl` redaction eligibility before AI input.
 - Add daily run service.
 - Add failure grouping and deterministic no-AI summary fallback.
+- Add deterministic duplicate linking by `dedupe_key`.
 - Add admin APIs for runs and items.
 
 ### Phase 2 - AI classification
 
 - Add structured AI classifier.
 - Persist prompt version, model, report, and item output.
+- Enforce AI input caps and persist truncation metadata.
 - Add low-confidence handling.
 - Add redaction tests.
 
@@ -680,8 +788,9 @@ Metrics should include:
 ### Phase 4 - Loops send
 
 - Add dedicated Loops transactional ID configuration.
-- Add send endpoint.
+- Add recipient table, send-attempt audit table, and send endpoint.
 - Add one-click send preview and audit states.
+- Add failed-send retry semantics.
 - Verify delivery in development with a Loops test template.
 
 ### Phase 5 - Production launch
