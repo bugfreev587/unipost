@@ -183,8 +183,8 @@ func messageFingerprint(value string) string {
 		}
 	}
 	fields := strings.Fields(v)
-	if len(fields) > 3 {
-		fields = fields[:3]
+	if len(fields) > 2 {
+		fields = fields[:2]
 	}
 	return strings.Join(fields, " ")
 }
