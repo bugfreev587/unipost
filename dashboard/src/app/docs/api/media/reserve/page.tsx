@@ -1,6 +1,6 @@
 "use client";
 
-import { ApiInlineLink, EnumValues, type ApiFieldItem } from "../../_components/doc-components";
+import { ApiInlineLink, EnumValues, InfoBox, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -226,6 +226,13 @@ export default function ReserveMediaPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <InfoBox>
+        <strong>TikTok file_upload note:</strong> upload the complete video file to UniPost with this
+        endpoint, then publish with <code>media_ids</code>. UniPost handles TikTok&apos;s downstream
+        chunk sizing and sequential transfer automatically, including videos larger than <code>64 MB</code>.
+        Do not split the file or provide TikTok <code>chunk_size</code> / <code>total_chunk_count</code> yourself.
+      </InfoBox>
+    </SingleEndpointReferencePage>
   );
 }
