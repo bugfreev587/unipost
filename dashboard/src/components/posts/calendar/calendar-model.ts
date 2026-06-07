@@ -100,6 +100,17 @@ const PROFILE_COLOR_PALETTE = [
   "#ac8e68",
 ];
 
+const STATUS_COLOR_PALETTE: Record<CalendarStatusGroup, string> = {
+  published: "#15803d",
+  scheduled: "#1d4ed8",
+  in_progress: "#0f766e",
+  failed: "#b91c1c",
+  draft: "#a16207",
+  cancelled: "#475569",
+  archived: "#52525b",
+  unknown: "#64748b",
+};
+
 export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDayCell[] {
   return buildRollingMonthGrid(monthDate, 0, 6, 0, today);
 }
@@ -499,6 +510,10 @@ export function getPostStatusGroup(post: CalendarModelPost): CalendarStatusGroup
 export function shouldShowPostForStatusFilter(post: CalendarModelPost, filter: CalendarStatusFilter): boolean {
   if (filter === "all") return true;
   return getPostStatusGroup(post) === filter;
+}
+
+export function getCalendarStatusColor(status: CalendarStatusGroup): string {
+  return STATUS_COLOR_PALETTE[status];
 }
 
 export function getProfileCalendarColor(profile: CalendarModelProfile): string {

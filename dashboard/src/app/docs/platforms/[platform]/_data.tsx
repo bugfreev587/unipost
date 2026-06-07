@@ -30,6 +30,7 @@ export type PlatformDoc = {
   summary: PlatformSummary;
   capabilities: readonly (readonly string[])[];
   requirements: readonly (readonly string[])[];
+  managedUploadNote?: string;
   mediaSpecs?: readonly MediaSurfaceSpec[];
   options?: readonly (readonly string[])[];
   analytics: readonly (readonly string[])[];
@@ -828,8 +829,9 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["media_urls or media_ids", "Required", "1 video OR up to 35 images", "Use `media_urls` for hosted assets or `media_ids` for local files uploaded via `POST /v1/media`. This is the primary publish surface."],
       ["caption", "Optional", "2,200 chars", "Pair with media"],
       ["platform_options.tiktok.privacy_level", "Optional", "privacy enum", "Controls audience visibility"],
-      ["platform_options.tiktok.upload_mode", "Optional", "pull_from_url / file_upload", "Use file_upload if CDN domain is not registered"],
+      ["platform_options.tiktok.upload_mode", "Optional", "pull_from_url / file_upload", "Use `file_upload` if the CDN domain is not registered with TikTok. For local files uploaded through `POST /v1/media`, UniPost manages the TikTok transfer details after `POST /v1/posts`."],
     ],
+    managedUploadNote: "For TikTok `file_upload`, upload the complete local video to UniPost with `POST /v1/media` and publish with `media_ids`. UniPost automatically handles TikTok's downstream chunk sizing and sequential transfer, including videos larger than `64 MB`; do not split files or send TikTok `chunk_size` / `total_chunk_count` yourself.",
     mediaSpecs: [
       {
         surface: "Video",
@@ -869,6 +871,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     ],
     options: [
       ["platform_options.tiktok.privacy_level", "SELF_ONLY / PUBLIC_TO_EVERYONE / MUTUAL_FOLLOW_FRIENDS / FOLLOWER_OF_CREATOR", "Audience visibility"],
+      ["platform_options.tiktok.upload_mode", "pull_from_url / file_upload", "`file_upload` lets UniPost upload the video bytes to TikTok and handle downstream chunking automatically."],
       ["platform_options.tiktok.photo_cover_index", "0-based number", "Which image becomes the carousel cover"],
     ],
     analytics: [
