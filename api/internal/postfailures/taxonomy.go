@@ -40,6 +40,8 @@ func Classify(raw string) Classification {
 		c.ErrorCode = "media_error"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "invalid_params"):
 		c.ErrorCode = "validation_error"
+	case strings.Contains(s, "threads get user id failed") && isMetaOAuthReconnectError(s):
+		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "threads get user id failed") && strings.Contains(s, "(401)"):
 		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "threads get user id failed") && strings.Contains(s, "(403)"):
@@ -76,6 +78,16 @@ func Classify(raw string) Classification {
 	}
 
 	return c
+}
+
+func isMetaOAuthReconnectError(s string) bool {
+	if strings.Contains(s, `"code":190`) || strings.Contains(s, `"code": 190`) {
+		return true
+	}
+	return strings.Contains(s, "oauthexception") &&
+		(strings.Contains(s, "session has expired") ||
+			strings.Contains(s, "error validating access token") ||
+			strings.Contains(s, "invalid oauth access token"))
 }
 
 func extractMetaSubcode(raw string) string {

@@ -1137,6 +1137,33 @@ func (h *SocialPostHandler) recordPostFailure(ctx context.Context, arg db.Create
 			"stage", arg.FailureStage,
 			"error", err)
 	}
+	if postFailureShouldMarkReconnectRequired(arg) {
+		if rows, err := h.queries.MarkSocialAccountReconnectRequired(ctx, arg.SocialAccountID.String); err != nil {
+			slog.Warn("failed to mark social account reconnect required",
+				"post_id", arg.PostID,
+				"platform", arg.Platform,
+				"account_id", arg.SocialAccountID.String,
+				"error", err)
+		} else if rows > 0 {
+			slog.Info("marked social account reconnect required after post failure",
+				"post_id", arg.PostID,
+				"platform", arg.Platform,
+				"account_id", arg.SocialAccountID.String,
+				"error_code", arg.ErrorCode)
+		}
+	}
+}
+
+func postFailureShouldMarkReconnectRequired(arg db.CreatePostFailureParams) bool {
+	if !arg.SocialAccountID.Valid || strings.TrimSpace(arg.SocialAccountID.String) == "" {
+		return false
+	}
+	switch arg.ErrorCode {
+	case "account_reconnect_required", "auth_token_invalid":
+		return true
+	default:
+		return false
+	}
 }
 
 // eventForStatus maps a post status to its outbound webhook event

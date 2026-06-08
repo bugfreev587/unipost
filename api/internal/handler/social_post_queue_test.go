@@ -6,7 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
@@ -66,5 +69,26 @@ func TestResolvePublishingEventSourceDefaultsToDashboard(t *testing.T) {
 
 	if got != integrationlogs.SourceDashboard {
 		t.Fatalf("source = %q, want %q", got, integrationlogs.SourceDashboard)
+	}
+}
+
+func TestPostFailureShouldMarkReconnectRequired(t *testing.T) {
+	arg := db.CreatePostFailureParams{
+		ErrorCode:       "account_reconnect_required",
+		SocialAccountID: pgtype.Text{String: "acc_threads", Valid: true},
+	}
+	if !postFailureShouldMarkReconnectRequired(arg) {
+		t.Fatal("expected account_reconnect_required with account id to mark reconnect required")
+	}
+
+	arg.ErrorCode = "missing_permission"
+	if postFailureShouldMarkReconnectRequired(arg) {
+		t.Fatal("missing_permission should not mark reconnect required")
+	}
+
+	arg.ErrorCode = "account_reconnect_required"
+	arg.SocialAccountID = pgtype.Text{}
+	if postFailureShouldMarkReconnectRequired(arg) {
+		t.Fatal("missing account id should not mark reconnect required")
 	}
 }
