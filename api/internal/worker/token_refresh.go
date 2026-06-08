@@ -10,6 +10,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 )
 
 type TokenRefreshWorker struct {
@@ -72,6 +73,13 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 		newAccess, newRefresh, expiresAt, err := adapter.RefreshToken(ctx, refreshToken)
 		if err != nil {
 			slog.Error("token refresh: failed to refresh", "account_id", acc.ID, "error", err)
+			if refreshFailureShouldMarkReconnectRequired(err) {
+				if rows, markErr := w.queries.MarkSocialAccountReconnectRequired(ctx, acc.ID); markErr != nil {
+					slog.Error("token refresh: failed to mark reconnect required", "account_id", acc.ID, "error", markErr)
+				} else if rows > 0 {
+					slog.Info("token refresh: marked reconnect required", "account_id", acc.ID, "platform", acc.Platform)
+				}
+			}
 			continue
 		}
 
@@ -100,4 +108,11 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 
 		slog.Info("token refresh: refreshed", "account_id", acc.ID, "platform", acc.Platform)
 	}
+}
+
+func refreshFailureShouldMarkReconnectRequired(err error) bool {
+	if err == nil {
+		return false
+	}
+	return postfailures.ShouldMarkReconnectRequired(err.Error())
 }

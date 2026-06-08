@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -90,5 +91,19 @@ func TestPostFailureShouldMarkReconnectRequired(t *testing.T) {
 	arg.SocialAccountID = pgtype.Text{}
 	if postFailureShouldMarkReconnectRequired(arg) {
 		t.Fatal("missing account id should not mark reconnect required")
+	}
+}
+
+func TestInlineRefreshFailureShouldAbortPublish(t *testing.T) {
+	if !inlineRefreshFailureShouldAbortPublish(errors.New(`refresh failed (400): {"error":{"message":"Error validating access token: Session has expired","type":"OAuthException","code":190}}`)) {
+		t.Fatal("expected expired Meta OAuth refresh failure to abort publish")
+	}
+
+	if inlineRefreshFailureShouldAbortPublish(errors.New(`refresh failed (500): {"error":{"message":"temporarily unavailable"}}`)) {
+		t.Fatal("temporary refresh failures should not abort publish")
+	}
+
+	if inlineRefreshFailureShouldAbortPublish(nil) {
+		t.Fatal("nil refresh error should not abort publish")
 	}
 }

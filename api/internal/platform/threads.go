@@ -15,6 +15,8 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
 )
 
+const minThreadsLongLivedTokenLifetime = 24 * time.Hour
+
 type ThreadsAdapter struct {
 	client *http.Client
 }
@@ -70,8 +72,7 @@ func (a *ThreadsAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 	// Exchange for long-lived token
 	longToken, expiresIn, err := a.exchangeForLongLivedToken(ctx, config, tokenResp.AccessToken)
 	if err != nil {
-		longToken = tokenResp.AccessToken
-		expiresIn = 3600
+		return nil, fmt.Errorf("threads long-lived token exchange failed: %w", err)
 	}
 
 	// Get profile
@@ -552,14 +553,23 @@ func (a *ThreadsAdapter) exchangeForLongLivedToken(_ context.Context, config OAu
 		return "", 0, err
 	}
 	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", 0, fmt.Errorf("long-lived token swap returned %d: %s", resp.StatusCode, string(body))
+	}
 
 	var result struct {
 		AccessToken string `json:"access_token"`
 		ExpiresIn   int    `json:"expires_in"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", 0, fmt.Errorf("long-lived token swap decode: %w", err)
+	}
 	if result.AccessToken == "" {
-		return "", 0, fmt.Errorf("empty access token")
+		return "", 0, fmt.Errorf("long-lived token swap returned empty access token: %s", string(body))
+	}
+	if time.Duration(result.ExpiresIn)*time.Second <= minThreadsLongLivedTokenLifetime {
+		return "", 0, fmt.Errorf("short-lived Threads token returned by long-lived token swap: expires_in=%d", result.ExpiresIn)
 	}
 
 	return result.AccessToken, result.ExpiresIn, nil

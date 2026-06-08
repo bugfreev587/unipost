@@ -1166,6 +1166,13 @@ func postFailureShouldMarkReconnectRequired(arg db.CreatePostFailureParams) bool
 	}
 }
 
+func inlineRefreshFailureShouldAbortPublish(err error) bool {
+	if err == nil {
+		return false
+	}
+	return postfailures.ShouldMarkReconnectRequired(err.Error())
+}
+
 // eventForStatus maps a post status to its outbound webhook event
 // name. Centralized so the immediate path, the scheduler, and any
 // future replay path all agree.
@@ -1434,6 +1441,10 @@ func (h *SocialPostHandler) publishOneContext(
 				}
 			} else if refErr != nil {
 				slog.Error("token refresh: upstream failed", "account_id", acc.ID, "platform", acc.Platform, "error", refErr)
+				if inlineRefreshFailureShouldAbortPublish(refErr) {
+					oc.err = fmt.Errorf("account reconnect required after token refresh failed: %w", refErr)
+					return
+				}
 			}
 		}
 	}
