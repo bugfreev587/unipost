@@ -76,3 +76,16 @@ func TestFatalErrorCodes_YouTubeMetadata(t *testing.T) {
 		}
 	}
 }
+
+func TestFatalErrorCodes_PinterestOptions(t *testing.T) {
+	required := []string{
+		platform.CodePinterestBoardRequired,
+		platform.CodeInvalidPinterestBoardID,
+		platform.CodeInvalidPinterestLink,
+	}
+	for _, code := range required {
+		if !fatalErrorCodes[code] {
+			t.Errorf("Pinterest validator code %q must be in fatalErrorCodes", code)
+		}
+	}
+}
