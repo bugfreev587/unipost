@@ -2,11 +2,15 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 )
 
@@ -66,5 +70,40 @@ func TestResolvePublishingEventSourceDefaultsToDashboard(t *testing.T) {
 
 	if got != integrationlogs.SourceDashboard {
 		t.Fatalf("source = %q, want %q", got, integrationlogs.SourceDashboard)
+	}
+}
+
+func TestPostFailureShouldMarkReconnectRequired(t *testing.T) {
+	arg := db.CreatePostFailureParams{
+		ErrorCode:       "account_reconnect_required",
+		SocialAccountID: pgtype.Text{String: "acc_threads", Valid: true},
+	}
+	if !postFailureShouldMarkReconnectRequired(arg) {
+		t.Fatal("expected account_reconnect_required with account id to mark reconnect required")
+	}
+
+	arg.ErrorCode = "missing_permission"
+	if postFailureShouldMarkReconnectRequired(arg) {
+		t.Fatal("missing_permission should not mark reconnect required")
+	}
+
+	arg.ErrorCode = "account_reconnect_required"
+	arg.SocialAccountID = pgtype.Text{}
+	if postFailureShouldMarkReconnectRequired(arg) {
+		t.Fatal("missing account id should not mark reconnect required")
+	}
+}
+
+func TestInlineRefreshFailureShouldAbortPublish(t *testing.T) {
+	if !inlineRefreshFailureShouldAbortPublish(errors.New(`refresh failed (400): {"error":{"message":"Error validating access token: Session has expired","type":"OAuthException","code":190}}`)) {
+		t.Fatal("expected expired Meta OAuth refresh failure to abort publish")
+	}
+
+	if inlineRefreshFailureShouldAbortPublish(errors.New(`refresh failed (500): {"error":{"message":"temporarily unavailable"}}`)) {
+		t.Fatal("temporary refresh failures should not abort publish")
+	}
+
+	if inlineRefreshFailureShouldAbortPublish(nil) {
+		t.Fatal("nil refresh error should not abort publish")
 	}
 }

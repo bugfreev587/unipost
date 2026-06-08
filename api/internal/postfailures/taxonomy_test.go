@@ -34,6 +34,18 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable: false,
 		},
 		{
+			name:      "threads oauth 190 expired token",
+			raw:       `threads get user id failed (400): {"error":{"message":"Error validating access token: Session has expired on Sunday, 10-May-26 10:00:00 PDT.","type":"OAuthException","code":190,"error_subcode":0}}`,
+			code:      "account_reconnect_required",
+			retriable: false,
+		},
+		{
+			name:      "meta oauth 190 refresh expired token",
+			raw:       `refresh failed (400): {"error":{"message":"Error validating access token: Session has expired on Sunday, 10-May-26 10:00:00 PDT.","type":"OAuthException","code":190,"error_subcode":0}}`,
+			code:      "account_reconnect_required",
+			retriable: false,
+		},
+		{
 			name:      "threads missing permission",
 			raw:       `threads get user id failed (403): {"error":{"message":"Missing required permission threads_basic"}}`,
 			code:      "missing_permission",
@@ -63,5 +75,14 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 				t.Fatalf("IsRetriable = %v, want %v", got.IsRetriable, tt.retriable)
 			}
 		})
+	}
+}
+
+func TestShouldMarkReconnectRequired(t *testing.T) {
+	if !ShouldMarkReconnectRequired(`refresh failed (400): {"error":{"message":"Error validating access token: Session has expired","type":"OAuthException","code":190}}`) {
+		t.Fatal("expected Meta OAuth 190 refresh failure to require reconnect")
+	}
+	if ShouldMarkReconnectRequired(`refresh failed (500): {"error":{"message":"temporarily unavailable"}}`) {
+		t.Fatal("temporary platform refresh failure should not require reconnect")
 	}
 }
