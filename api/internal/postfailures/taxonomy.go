@@ -36,6 +36,8 @@ func Classify(raw string) Classification {
 	}
 
 	switch {
+	case isMetaOAuthReconnectError(s):
+		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "file_format_check_failed"):
 		c.ErrorCode = "media_error"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "invalid_params"):
@@ -78,6 +80,15 @@ func Classify(raw string) Classification {
 	}
 
 	return c
+}
+
+func ShouldMarkReconnectRequired(raw string) bool {
+	switch Classify(raw).ErrorCode {
+	case "account_reconnect_required", "auth_token_invalid":
+		return true
+	default:
+		return false
+	}
 }
 
 func isMetaOAuthReconnectError(s string) bool {
