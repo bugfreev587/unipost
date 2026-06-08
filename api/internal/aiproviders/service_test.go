@@ -3,6 +3,7 @@ package aiproviders
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -159,6 +160,41 @@ func TestResolveEffectiveConfigUsesRouteThenEnvFallback(t *testing.T) {
 	}
 }
 
+func TestResolveRoutedConfigDoesNotSilentlyFallbackWhenAdminRouteBreaks(t *testing.T) {
+	store := newFakeStore()
+	service := NewService(store, fakeCipher{}).WithEnv(mapEnv(map[string]string{
+		"OPENAI_API_KEY": "env-openai",
+		"OPENAI_MODEL":   "gpt-env",
+	}))
+
+	_, err := service.SaveProvider(context.Background(), SaveProviderInput{
+		Provider:  ProviderTokenGate,
+		APIKey:    "tokengate-secret",
+		BaseURL:   "https://gateway.example/v1",
+		ChatModel: "gpt-provider",
+		Enabled:   true,
+	})
+	if err != nil {
+		t.Fatalf("save provider failed: %v", err)
+	}
+	if _, err := service.RouteSurface(context.Background(), RouteSurfaceInput{
+		Surface:    SurfacePostAssist,
+		Provider:   ProviderTokenGate,
+		ClientKind: ClientKindChatCompletions,
+	}); err != nil {
+		t.Fatalf("route surface failed: %v", err)
+	}
+
+	row := store.providers[string(ProviderTokenGate)]
+	row.Enabled = false
+	store.providers[string(ProviderTokenGate)] = row
+
+	cfg, err := service.Resolve(context.Background(), SurfacePostAssist)
+	if !errors.Is(err, ErrProviderDisabled) {
+		t.Fatalf("expected routed provider error, got cfg=%#v err=%v", cfg, err)
+	}
+}
+
 func TestMessagesHeadersDifferByProvider(t *testing.T) {
 	native := EffectiveConfig{Provider: ProviderAnthropic, APIKey: "anthropic-key"}
 	req, _ := http.NewRequest(http.MethodPost, "https://api.anthropic.com/v1/messages", nil)
@@ -184,6 +220,36 @@ func TestMessagesHeadersDifferByProvider(t *testing.T) {
 	}
 }
 
+func TestProviderValidationFailsWhenConfiguredModelIsUnavailable(t *testing.T) {
+	service := NewService(newFakeStore(), fakeCipher{}).
+		WithEnv(mapEnv(nil)).
+		WithHTTPClient(roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.URL.String() != "https://provider.example/v1/models" {
+				t.Fatalf("unexpected validation URL: %s", req.URL.String())
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(`{"data":[{"id":"gpt-present"}]}`)),
+			}, nil
+		}))
+
+	result, err := service.TestProvider(context.Background(), TestProviderInput{
+		Provider:  ProviderOpenAI,
+		APIKey:    "openai-key",
+		BaseURL:   "https://provider.example/v1",
+		ChatModel: "gpt-missing",
+	})
+	if err != nil {
+		t.Fatalf("test provider returned unexpected error: %v", err)
+	}
+	if result.Status != ValidationModelFailed {
+		t.Fatalf("expected model failure, got %#v", result)
+	}
+	if !strings.Contains(result.Message, "gpt-missing") {
+		t.Fatalf("expected missing model in message, got %q", result.Message)
+	}
+}
+
 func TestValidationStatusFromHTTPStatus(t *testing.T) {
 	cases := map[int]ValidationStatus{
 		400: ValidationConfigFailed,
@@ -199,6 +265,12 @@ func TestValidationStatusFromHTTPStatus(t *testing.T) {
 			t.Fatalf("status %d: got %q want %q", status, got, want)
 		}
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) Do(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 type fakeCipher struct{}
