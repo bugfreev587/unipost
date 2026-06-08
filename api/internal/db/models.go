@@ -8,6 +8,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AdminAiProviderEvent struct {
+	ID           int64              `json:"id"`
+	Provider     pgtype.Text        `json:"provider"`
+	Surface      pgtype.Text        `json:"surface"`
+	Action       string             `json:"action"`
+	Category     string             `json:"category"`
+	ActorAdminID pgtype.Text        `json:"actor_admin_id"`
+	Metadata     []byte             `json:"metadata"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type AdminAiProviderKey struct {
+	Provider             string             `json:"provider"`
+	Enabled              bool               `json:"enabled"`
+	ApiKeyCiphertext     string             `json:"api_key_ciphertext"`
+	KeyTail              string             `json:"key_tail"`
+	BaseUrl              string             `json:"base_url"`
+	ChatModel            string             `json:"chat_model"`
+	MessagesModel        string             `json:"messages_model"`
+	LastValidatedAt      pgtype.Timestamptz `json:"last_validated_at"`
+	LastValidationStatus pgtype.Text        `json:"last_validation_status"`
+	LastValidationError  pgtype.Text        `json:"last_validation_error"`
+	LastRotatedAt        pgtype.Timestamptz `json:"last_rotated_at"`
+	CreatedByAdminID     pgtype.Text        `json:"created_by_admin_id"`
+	UpdatedByAdminID     pgtype.Text        `json:"updated_by_admin_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AiSurfaceRouting struct {
+	Surface          string             `json:"surface"`
+	Provider         string             `json:"provider"`
+	ClientKind       string             `json:"client_kind"`
+	ModelOverride    string             `json:"model_override"`
+	CreatedByAdminID pgtype.Text        `json:"created_by_admin_id"`
+	UpdatedByAdminID pgtype.Text        `json:"updated_by_admin_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ApiKey struct {
 	ID              string             `json:"id"`
 	Name            string             `json:"name"`
@@ -49,6 +89,19 @@ type AuditLog struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type CliSetupToken struct {
+	ID          string             `json:"id"`
+	WorkspaceID string             `json:"workspace_id"`
+	UserID      string             `json:"user_id"`
+	TokenHash   string             `json:"token_hash"`
+	Client      string             `json:"client"`
+	KeyName     string             `json:"key_name"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	UsedAt      pgtype.Timestamptz `json:"used_at"`
+	RevokedAt   pgtype.Timestamptz `json:"revoked_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type ConnectSession struct {
 	ID                       string             `json:"id"`
 	ProfileID                string             `json:"profile_id"`
@@ -64,6 +117,105 @@ type ConnectSession struct {
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
+}
+
+type ErrorTriageEmailSend struct {
+	ID                   string             `json:"id"`
+	ItemID               string             `json:"item_id"`
+	RecipientID          string             `json:"recipient_id"`
+	RecipientScopeKey    string             `json:"recipient_scope_key"`
+	RecipientUserID      string             `json:"recipient_user_id"`
+	RecipientEmail       string             `json:"recipient_email"`
+	AttemptNumber        int32              `json:"attempt_number"`
+	LoopsEventName       string             `json:"loops_event_name"`
+	LoopsTransactionalID pgtype.Text        `json:"loops_transactional_id"`
+	IdempotencyKey       string             `json:"idempotency_key"`
+	SubjectSnapshot      string             `json:"subject_snapshot"`
+	BodySnapshot         string             `json:"body_snapshot"`
+	SentByAdminID        string             `json:"sent_by_admin_id"`
+	SentAt               pgtype.Timestamptz `json:"sent_at"`
+	ProviderStatus       string             `json:"provider_status"`
+	ProviderError        pgtype.Text        `json:"provider_error"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+}
+
+type ErrorTriageItem struct {
+	ID                     string             `json:"id"`
+	RunID                  string             `json:"run_id"`
+	DedupeKey              string             `json:"dedupe_key"`
+	Classification         string             `json:"classification"`
+	ActionKind             string             `json:"action_kind"`
+	WorkflowStatus         string             `json:"workflow_status"`
+	Confidence             pgtype.Numeric     `json:"confidence"`
+	Platform               pgtype.Text        `json:"platform"`
+	Source                 pgtype.Text        `json:"source"`
+	ErrorCode              pgtype.Text        `json:"error_code"`
+	PlatformErrorCode      pgtype.Text        `json:"platform_error_code"`
+	FailureStage           pgtype.Text        `json:"failure_stage"`
+	AffectedUserCount      int32              `json:"affected_user_count"`
+	AffectedWorkspaceCount int32              `json:"affected_workspace_count"`
+	AffectedPostCount      int32              `json:"affected_post_count"`
+	LatestFailureAt        pgtype.Timestamptz `json:"latest_failure_at"`
+	EvidenceJson           []byte             `json:"evidence_json"`
+	AiSummary              pgtype.Text        `json:"ai_summary"`
+	AdminNotes             pgtype.Text        `json:"admin_notes"`
+	BugPlanJson            []byte             `json:"bug_plan_json"`
+	EmailDraftJson         []byte             `json:"email_draft_json"`
+	CtaUrl                 pgtype.Text        `json:"cta_url"`
+	DuplicateOfItemID      pgtype.Text        `json:"duplicate_of_item_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ErrorTriageItemFailure struct {
+	ID                 string             `json:"id"`
+	ItemID             string             `json:"item_id"`
+	PostID             string             `json:"post_id"`
+	SocialPostResultID pgtype.Text        `json:"social_post_result_id"`
+	PostFailureID      pgtype.Text        `json:"post_failure_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	UserID             string             `json:"user_id"`
+	UserEmail          string             `json:"user_email"`
+	Platform           pgtype.Text        `json:"platform"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+}
+
+type ErrorTriageItemRecipient struct {
+	ID                  string             `json:"id"`
+	ItemID              string             `json:"item_id"`
+	RecipientScopeKey   string             `json:"recipient_scope_key"`
+	WorkspaceID         string             `json:"workspace_id"`
+	RecipientUserID     string             `json:"recipient_user_id"`
+	EmailSnapshot       string             `json:"email_snapshot"`
+	Status              string             `json:"status"`
+	LatestSendAttemptID pgtype.Text        `json:"latest_send_attempt_id"`
+	DismissedByAdminID  pgtype.Text        `json:"dismissed_by_admin_id"`
+	DismissedAt         pgtype.Timestamptz `json:"dismissed_at"`
+	DismissReason       pgtype.Text        `json:"dismiss_reason"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
+type ErrorTriageRun struct {
+	ID                 string             `json:"id"`
+	RunType            string             `json:"run_type"`
+	Status             string             `json:"status"`
+	WindowStart        pgtype.Timestamptz `json:"window_start"`
+	WindowEnd          pgtype.Timestamptz `json:"window_end"`
+	Timezone           string             `json:"timezone"`
+	SupersedesRunID    pgtype.Text        `json:"supersedes_run_id"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	Model              pgtype.Text        `json:"model"`
+	PromptVersion      pgtype.Text        `json:"prompt_version"`
+	FailuresAnalyzed   int32              `json:"failures_analyzed"`
+	AffectedUsers      int32              `json:"affected_users"`
+	AffectedWorkspaces int32              `json:"affected_workspaces"`
+	Summary            pgtype.Text        `json:"summary"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	CreatedByAdminID   pgtype.Text        `json:"created_by_admin_id"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
 type InboxItem struct {

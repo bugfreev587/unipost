@@ -1,3 +1,6 @@
+import fs from "node:fs";
+import path from "node:path";
+
 export type BlogBlock =
   | { type: "lead"; text: string }
   | { type: "summary"; title?: string; items: string[] }
@@ -24,7 +27,7 @@ export type BlogPost = {
   blocks: BlogBlock[];
 };
 
-export const blogPosts: BlogPost[] = [
+export const staticBlogPosts: BlogPost[] = [
   {
     slug: "social-media-analytics-api",
     title: "Social Media Analytics API: Posts Overview and Platform Insights in UniPost",
@@ -644,8 +647,266 @@ Claude: [tool: unipost_publish_draft id="dr_8H2k"]
   },
 ];
 
+const GENERATED_BLOG_CANDIDATES = [
+  path.join(/* turbopackIgnore: true */ process.cwd(), "content", "citeloop", "blog"),
+  path.join(/* turbopackIgnore: true */ process.cwd(), "..", "content", "citeloop", "blog"),
+];
+
+const unsafeGeneratedPatterns = [/<\s*script\b/i, /^\s*import\s+/m, /\son[a-z]+\s*=/i];
+
+export function loadGeneratedBlogPosts(): BlogPost[] {
+  for (const dir of GENERATED_BLOG_CANDIDATES) {
+    if (fs.existsSync(dir)) {
+      return loadGeneratedBlogPostsFromDirectory(dir);
+    }
+  }
+  return [];
+}
+
+export function loadGeneratedBlogPostsFromDirectory(dir: string): BlogPost[] {
+  if (!fs.existsSync(dir)) {
+    return [];
+  }
+  return fs
+    .readdirSync(dir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.mdx?$/i.test(entry.name))
+    .map((entry) => {
+      const filePath = path.join(dir, entry.name);
+      return parseGeneratedBlogPostFromSource(filePath, fs.readFileSync(filePath, "utf8"));
+    })
+    .filter((post): post is BlogPost => Boolean(post));
+}
+
+export function parseGeneratedBlogPostFromSource(filePath: string, source: string): BlogPost | null {
+  if (unsafeGeneratedPatterns.some((pattern) => pattern.test(source))) {
+    return null;
+  }
+  const parsed = splitFrontmatter(source);
+  if (!parsed) {
+    return null;
+  }
+  const meta = parseFrontmatter(parsed.frontmatter);
+  const fileSlug = path.basename(filePath).replace(/\.mdx?$/i, "");
+  const slug = normalizeSlug(stringValue(meta.slug) || fileSlug);
+  if (isGeneratedFixturePost(meta, slug)) {
+    return null;
+  }
+  const title = stringValue(meta.title) || stringValue(meta.h1) || slug;
+  const description = stringValue(meta.description) || stringValue(meta.excerpt) || title;
+  const publishedAt = stringValue(meta.published_at) || stringValue(meta.publishedAt) || new Date().toISOString().slice(0, 10);
+  const updatedAt = stringValue(meta.updated_at) || stringValue(meta.updatedAt) || publishedAt;
+  const blocks = parseMarkdownBlocks(parsed.body, title);
+
+  if (!slug || blocks.length === 0) {
+    return null;
+  }
+
+  const post: BlogPost = {
+    slug,
+    title,
+    seoTitle: stringValue(meta.seo_title) || stringValue(meta.seoTitle) || title,
+    description,
+    excerpt: stringValue(meta.excerpt) || description,
+    publishedAt,
+    updatedAt,
+    readingTime: "1 min read",
+    category: stringValue(meta.category) || "Engineering",
+    author: stringValue(meta.author) || "UniPost",
+    keywords: arrayValue(meta.keywords),
+    blocks,
+  };
+  post.readingTime = `${Math.max(1, Math.ceil(countBlogWords(post) / 220))} min read`;
+  return post;
+}
+
+function isGeneratedFixturePost(meta: Record<string, string | string[]>, slug: string): boolean {
+  return stringValue(meta.citeloop_article_id) === "dev-fixture" || slug === "citeloop-dev-verification";
+}
+
+export function mergeBlogPosts(existing: BlogPost[], generated: BlogPost[]): BlogPost[] {
+  const seen = new Set(existing.map((post) => post.slug));
+  const merged = [...existing];
+  for (const post of generated) {
+    if (!seen.has(post.slug)) {
+      seen.add(post.slug);
+      merged.push(post);
+    }
+  }
+  return merged.sort((a, b) => Date.parse(b.publishedAt) - Date.parse(a.publishedAt));
+}
+
+export const blogPosts: BlogPost[] = mergeBlogPosts(staticBlogPosts, loadGeneratedBlogPosts());
+
 export function getBlogPost(slug: string) {
   return blogPosts.find((post) => post.slug === slug);
+}
+
+function splitFrontmatter(source: string): { frontmatter: string; body: string } | null {
+  const normalized = source.replace(/^\uFEFF/, "");
+  const match = normalized.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) {
+    return null;
+  }
+  return { frontmatter: match[1], body: match[2] };
+}
+
+function parseFrontmatter(frontmatter: string): Record<string, string | string[]> {
+  const values: Record<string, string | string[]> = {};
+  for (const line of frontmatter.split(/\r?\n/)) {
+    const match = line.match(/^([A-Za-z0-9_-]+):\s*(.*)$/);
+    if (!match) {
+      continue;
+    }
+    values[match[1]] = parseFrontmatterValue(match[2].trim());
+  }
+  return values;
+}
+
+function parseFrontmatterValue(value: string): string | string[] {
+  if (value === "[]") {
+    return [];
+  }
+  if (value.startsWith("[") && value.endsWith("]")) {
+    return value
+      .slice(1, -1)
+      .split(",")
+      .map((item) => unquote(item.trim()))
+      .filter(Boolean);
+  }
+  return unquote(value);
+}
+
+function unquote(value: string): string {
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1).replace(/\\"/g, '"');
+  }
+  return value;
+}
+
+function stringValue(value: string | string[] | undefined): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function arrayValue(value: string | string[] | undefined): string[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  return [];
+}
+
+function normalizeSlug(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 96);
+}
+
+function parseMarkdownBlocks(markdown: string, title: string): BlogBlock[] {
+  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
+  const blocks: BlogBlock[] = [];
+  let paragraph: string[] = [];
+  let firstParagraph = true;
+
+  const flushParagraph = () => {
+    const text = paragraph.join(" ").replace(/\s+/g, " ").trim();
+    paragraph = [];
+    if (!text) {
+      return;
+    }
+    blocks.push({ type: firstParagraph ? "lead" : "paragraph", text });
+    firstParagraph = false;
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      flushParagraph();
+      continue;
+    }
+
+    const codeMatch = trimmed.match(/^```(\w+)?\s*$/);
+    if (codeMatch) {
+      flushParagraph();
+      const code: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        code.push(lines[i]);
+        i++;
+      }
+      blocks.push({ type: "code", language: codeMatch[1] || "text", code: code.join("\n").trimEnd() });
+      continue;
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      flushParagraph();
+      const headingText = headingMatch[2].trim();
+      if (!(headingMatch[1] === "#" && headingText.toLowerCase() === title.toLowerCase())) {
+        blocks.push({ type: "heading", text: headingText });
+      }
+      continue;
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      flushParagraph();
+      const items: string[] = [];
+      while (i < lines.length && /^[-*]\s+/.test(lines[i].trim())) {
+        items.push(lines[i].trim().replace(/^[-*]\s+/, ""));
+        i++;
+      }
+      i--;
+      blocks.push({ type: "list", items });
+      continue;
+    }
+
+    if (trimmed.startsWith("|")) {
+      flushParagraph();
+      const tableLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        tableLines.push(lines[i].trim());
+        i++;
+      }
+      i--;
+      const table = parseMarkdownTable(tableLines);
+      if (table) {
+        blocks.push(table);
+      } else {
+        paragraph.push(...tableLines);
+      }
+      continue;
+    }
+
+    paragraph.push(trimmed);
+  }
+  flushParagraph();
+  return blocks;
+}
+
+function parseMarkdownTable(lines: string[]): BlogBlock | null {
+  if (lines.length < 2 || !/^\|?\s*:?-{3,}/.test(lines[1])) {
+    return null;
+  }
+  const headers = splitTableRow(lines[0]);
+  const rows = lines.slice(2).map(splitTableRow).filter((row) => row.length === headers.length);
+  if (headers.length === 0 || rows.length === 0) {
+    return null;
+  }
+  return { type: "table", headers, rows };
+}
+
+function splitTableRow(line: string): string[] {
+  return line
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim())
+    .filter(Boolean);
 }
 
 export function countBlogWords(post: BlogPost): number {

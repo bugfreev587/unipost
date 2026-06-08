@@ -1,5 +1,5 @@
 import type { MetadataRoute } from "next";
-import { blogPosts } from "@/lib/blog";
+import { staticBlogPosts } from "@/lib/blog";
 
 const BASE = "https://unipost.dev";
 
@@ -48,7 +48,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
     priority: path === "/tools" ? 0.7 : 0.6,
   }));
 
-  const blogPages: MetadataRoute.Sitemap = blogPosts.map((post) => ({
+  const blogPages: MetadataRoute.Sitemap = staticBlogPosts.map((post) => ({
     url: `${BASE}/blog/${post.slug}`,
     lastModified: new Date(post.updatedAt),
     changeFrequency: "monthly" as const,

@@ -37,6 +37,33 @@ func TestAnthropicClientReturnsValidatedAction(t *testing.T) {
 	}
 }
 
+func TestTokenGateMessagesClientUsesBearerAuth(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Authorization"); got != "Bearer tg-key" {
+			t.Fatalf("authorization header = %q", got)
+		}
+		if got := r.Header.Get("x-api-key"); got != "" {
+			t.Fatalf("tokengate client should not send x-api-key, got %q", got)
+		}
+		var body strings.Builder
+		if err := json.NewEncoder(&body).Encode(anthropicResponse{
+			Content: []anthropicContent{{Type: "text", Text: `{"action":"wait","reason":"page is loading","hold_ms_after_action":2000}`}},
+		}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       io.NopCloser(strings.NewReader(body.String())),
+		}, nil
+	})}
+
+	client := NewTokenGateMessagesClient("tg-key", "claude-test", "https://gateway.mytokengate.com/v1/messages", httpClient)
+	if _, err := client.NextAction(context.Background(), Observation{JobID: "rvjob_1"}, "Wait"); err != nil {
+		t.Fatalf("NextAction error: %v", err)
+	}
+}
+
 func TestAnthropicClientRejectsInvalidAction(t *testing.T) {
 	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		var body strings.Builder

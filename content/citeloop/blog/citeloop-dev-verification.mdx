@@ -1,0 +1,30 @@
+---
+source: citeloop
+citeloop_article_id: "dev-fixture"
+citeloop_topic_id: "dev-fixture-topic"
+slug: "citeloop-dev-verification"
+title: "CiteLoop Generated Blog Dev Verification"
+seo_title: "CiteLoop Generated Blog Dev Verification"
+description: "A generated-content fixture used to verify UniPost can render CiteLoop blog posts from content/citeloop/blog."
+excerpt: "A generated-content fixture used to verify UniPost can render CiteLoop blog posts from content/citeloop/blog."
+published_at: "2026-06-05"
+updated_at: "2026-06-05"
+author: "UniPost"
+category: "Engineering"
+keywords: ["citeloop", "generated content", "unipost blog"]
+canonical: "https://dev.unipost.dev/blog/citeloop-dev-verification"
+---
+
+# CiteLoop Generated Blog Dev Verification
+
+This article is loaded from the generated content folder used by CiteLoop's blog publisher. It verifies that UniPost can merge generated markdown posts into the existing blog index and detail routes.
+
+## What this fixture checks
+
+- The blog index includes generated posts from `content/citeloop/blog`.
+- The blog detail route can render a generated slug without affecting existing static posts.
+- The generated post keeps standard markdown content as content, not executable code.
+
+## Expected dev URL
+
+After the development deployment finishes, this fixture should be available at [dev.unipost.dev/blog/citeloop-dev-verification](https://dev.unipost.dev/blog/citeloop-dev-verification).
