@@ -80,6 +80,18 @@ test.describe("platform credentials layout", () => {
   });
 });
 
+test.describe("admin AI keys layout", () => {
+  test("uses a focused provider credential card instead of the dense status table", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/admin/ai-keys/page.tsx"), "utf8");
+
+    expect(pageSource).toContain('className="ai-hero-kicker"');
+    expect(pageSource).toContain('className="ai-credential-card"');
+    expect(pageSource).toContain('className="ai-provider-card"');
+    expect(pageSource).toContain("Secrets stay server-side");
+    expect(pageSource).not.toContain("Provider status");
+  });
+});
+
 test.describe("authenticated dashboard smoke", () => {
   test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
 

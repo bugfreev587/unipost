@@ -20,11 +20,13 @@ import (
 	"github.com/joho/godotenv"
 	slogbetterstack "github.com/samber/slog-betterstack"
 
+	"github.com/xiaoboyu/unipost-api/internal/aiproviders"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/errortriage"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
@@ -183,6 +185,7 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
 	})
@@ -305,9 +308,10 @@ func main() {
 		slog.Info("notifications: RESEND_API_KEY unset, using NoopMailer")
 	}
 
+	var loopsClient *loops.Client
 	var loopsSyncer *loops.Syncer
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
-		loopsClient := loops.NewClient(loops.Config{
+		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
@@ -360,6 +364,17 @@ func main() {
 
 	logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
 	go logRetentionWorker.Start(workerCtx)
+
+	errorTriageStore := errortriage.NewPostgresStore(pool)
+	errorTriageAnalyzer := errortriage.NewProviderAnalyzer(aiProviderService, errortriage.DeterministicAnalyzer{})
+	errorTriageService := errortriage.NewService(errorTriageStore, errorTriageAnalyzer)
+	errorTriageEmailService := errortriage.NewEmailSendService(
+		errorTriageStore,
+		errortriage.NewLoopsSender(loopsClient),
+		os.Getenv("LOOPS_ERROR_TRIAGE_USER_ACTION_TRANSACTIONAL_ID"),
+	)
+	errorTriageWorker := worker.NewErrorTriageWorker(errorTriageService)
+	go errorTriageWorker.Start(workerCtx)
 
 	// Facebook's /videos endpoint returns a video_id immediately and
 	// finishes asynchronously. The initial publish poll waits 60s;
@@ -421,7 +436,7 @@ func main() {
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
 	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker).SetQuotaChecker(quotaChecker).SetLoopsSyncer(loopsSyncer)
-	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker)
+	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker).WithAIProviders(aiProviderService)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
@@ -468,8 +483,10 @@ func main() {
 		WithArtifactStorage(storageClient).
 		WithEncryptor(encryptor).
 		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL")).
-		WithAIPlanner(reviewai.NewAnthropicClient(os.Getenv("ANTHROPIC_API_KEY"), os.Getenv("ANTHROPIC_MODEL"), "", nil))
+		WithAIPlanner(reviewai.NewProviderPlanner(aiProviderService))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
+	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
+	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -606,12 +623,34 @@ func main() {
 			Get("/v1/admin/logs", adminHandler.ListLogs)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
 			Get("/v1/admin/logs/{id}", adminHandler.GetLog)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Get("/v1/admin/ai-providers", aiProviderHandler.List)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Put("/v1/admin/ai-providers/{provider}", aiProviderHandler.Update)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Post("/v1/admin/ai-providers/{provider}/test", aiProviderHandler.Test)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Post("/v1/admin/ai-providers/{provider}/disable", aiProviderHandler.Disable)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Put("/v1/admin/ai-provider-routing/{surface}", aiProviderHandler.Route)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Delete("/v1/admin/ai-provider-routing/{surface}", aiProviderHandler.Unroute)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
+			Get("/v1/admin/ai-providers/events", aiProviderHandler.Events)
 		// Dev / QA: flip a workspace's plan_id directly without going
 		// through Stripe Checkout. Useful for testing the plan-feature
 		// gates end-to-end. Already protected by the admin middleware
 		// guarding this group.
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
 		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
+		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
+		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
+		r.Get("/v1/admin/error-triage/runs/{id}", errorTriageHandler.GetRun)
+		r.Post("/v1/admin/error-triage/runs/{id}/rerun", errorTriageHandler.Rerun)
+		r.Patch("/v1/admin/error-triage/items/{id}", errorTriageHandler.UpdateItem)
+		r.Post("/v1/admin/error-triage/items/{id}/approve-bug-plan", errorTriageHandler.ApproveBugPlan)
+		r.Post("/v1/admin/error-triage/items/{id}/recipients/{recipientID}/send-email", errorTriageHandler.SendEmail)
+		r.Post("/v1/admin/error-triage/items/{id}/recipients/{recipientID}/dismiss", errorTriageHandler.DismissRecipient)
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/signups", adminHandler.GetUserSignups)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)

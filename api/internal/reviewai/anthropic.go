@@ -16,11 +16,19 @@ const (
 	defaultAnthropicModel = "claude-sonnet-4-20250514"
 )
 
+type messagesAuthMode string
+
+const (
+	messagesAuthAnthropic messagesAuthMode = "anthropic"
+	messagesAuthBearer    messagesAuthMode = "bearer"
+)
+
 type AnthropicClient struct {
-	apiKey  string
-	model   string
-	baseURL string
-	client  *http.Client
+	apiKey   string
+	model    string
+	baseURL  string
+	client   *http.Client
+	authMode messagesAuthMode
 }
 
 type anthropicRequest struct {
@@ -50,6 +58,14 @@ type anthropicError struct {
 }
 
 func NewAnthropicClient(apiKey, model, baseURL string, client *http.Client) *AnthropicClient {
+	return newMessagesClient(apiKey, model, baseURL, client, messagesAuthAnthropic)
+}
+
+func NewTokenGateMessagesClient(apiKey, model, baseURL string, client *http.Client) *AnthropicClient {
+	return newMessagesClient(apiKey, model, baseURL, client, messagesAuthBearer)
+}
+
+func newMessagesClient(apiKey, model, baseURL string, client *http.Client, authMode messagesAuthMode) *AnthropicClient {
 	if strings.TrimSpace(model) == "" {
 		model = defaultAnthropicModel
 	}
@@ -60,10 +76,11 @@ func NewAnthropicClient(apiKey, model, baseURL string, client *http.Client) *Ant
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	return &AnthropicClient{
-		apiKey:  apiKey,
-		model:   model,
-		baseURL: baseURL,
-		client:  client,
+		apiKey:   apiKey,
+		model:    model,
+		baseURL:  baseURL,
+		client:   client,
+		authMode: authMode,
 	}
 }
 
@@ -93,8 +110,12 @@ func (c *AnthropicClient) NextAction(ctx context.Context, obs Observation, goal 
 		return Action{}, fmt.Errorf("create anthropic request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", c.apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
+	if c.authMode == messagesAuthBearer {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	} else {
+		req.Header.Set("x-api-key", c.apiKey)
+		req.Header.Set("anthropic-version", "2023-06-01")
+	}
 
 	resp, err := c.client.Do(req)
 	if err != nil {
