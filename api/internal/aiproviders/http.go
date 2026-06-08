@@ -35,6 +35,17 @@ type chatCompletionsResponse struct {
 	} `json:"error,omitempty"`
 }
 
+type providerModelsResponse struct {
+	Data   []providerModel `json:"data"`
+	Models []providerModel `json:"models"`
+}
+
+type providerModel struct {
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Model string `json:"model"`
+}
+
 func (s *Service) ChatCompletionsJSON(ctx context.Context, surface Surface, messages []ChatMessage, responseFormat any, temperature float64, out any) (EffectiveConfig, error) {
 	cfg, err := s.Resolve(ctx, surface)
 	if err != nil {
@@ -96,6 +107,8 @@ func (s *Service) TestProvider(ctx context.Context, input TestProviderInput) (Va
 	inputBaseURL := normalizeBaseURL(input.BaseURL)
 	baseURL := firstNonEmpty(inputBaseURL, defaultBaseURL(provider))
 	apiKey := strings.TrimSpace(input.APIKey)
+	chatModel := strings.TrimSpace(input.ChatModel)
+	messagesModel := strings.TrimSpace(input.MessagesModel)
 	persistResult := false
 	if apiKey == "" {
 		row, err := s.store.GetAdminAIProviderKey(ctx, string(provider))
@@ -112,6 +125,12 @@ func (s *Service) TestProvider(ctx context.Context, input TestProviderInput) (Va
 		if inputBaseURL == "" {
 			baseURL = firstNonEmpty(normalizeBaseURL(row.BaseUrl), defaultBaseURL(provider))
 		}
+		if chatModel == "" {
+			chatModel = strings.TrimSpace(row.ChatModel)
+		}
+		if messagesModel == "" {
+			messagesModel = strings.TrimSpace(row.MessagesModel)
+		}
 		persistResult = true
 	}
 	if strings.TrimSpace(apiKey) == "" {
@@ -122,7 +141,7 @@ func (s *Service) TestProvider(ctx context.Context, input TestProviderInput) (Va
 		Provider: provider,
 		APIKey:   apiKey,
 		BaseURL:  baseURL,
-	})
+	}, modelsForProviderValidation(provider, chatModel, messagesModel)...)
 	if persistResult {
 		_, _ = s.store.UpdateAdminAIProviderValidation(ctx, db.UpdateAdminAIProviderValidationParams{
 			Provider:             string(provider),
@@ -143,7 +162,7 @@ func (s *Service) TestProvider(ctx context.Context, input TestProviderInput) (Va
 	return result, nil
 }
 
-func (s *Service) validateModels(ctx context.Context, cfg EffectiveConfig) ValidationResult {
+func (s *Service) validateModels(ctx context.Context, cfg EffectiveConfig, expectedModels ...string) ValidationResult {
 	url := normalizeBaseURL(cfg.BaseURL) + "/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -160,12 +179,86 @@ func (s *Service) validateModels(ctx context.Context, cfg EffectiveConfig) Valid
 		return ValidationResult{Status: ValidationProviderFailed, Message: RedactProviderError(err.Error())}
 	}
 	defer res.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
+	payload, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode >= 200 && res.StatusCode <= 299 {
+		if missing := missingConfiguredModels(payload, expectedModels); len(missing) > 0 {
+			return ValidationResult{Status: ValidationModelFailed, Message: "Configured model unavailable: " + strings.Join(missing, ", ")}
+		}
 		return ValidationResult{Status: ValidationOK, Message: "Provider reachable"}
 	}
 	status := ValidationStatusFromHTTPStatus(res.StatusCode)
 	return ValidationResult{Status: status, Message: validationMessage(status, res.StatusCode)}
+}
+
+func modelsForProviderValidation(provider Provider, chatModel, messagesModel string) []string {
+	var models []string
+	switch provider {
+	case ProviderOpenAI:
+		models = appendModel(models, chatModel)
+	case ProviderAnthropic:
+		models = appendModel(models, messagesModel)
+	case ProviderTokenGate:
+		models = appendModel(models, chatModel)
+		models = appendModel(models, messagesModel)
+	}
+	return models
+}
+
+func appendModel(models []string, model string) []string {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return models
+	}
+	for _, existing := range models {
+		if existing == model {
+			return models
+		}
+	}
+	return append(models, model)
+}
+
+func missingConfiguredModels(payload []byte, expectedModels []string) []string {
+	expected := make([]string, 0, len(expectedModels))
+	for _, model := range expectedModels {
+		model = strings.TrimSpace(model)
+		if model != "" {
+			expected = append(expected, model)
+		}
+	}
+	if len(expected) == 0 {
+		return nil
+	}
+
+	available := map[string]bool{}
+	var parsed providerModelsResponse
+	if err := json.Unmarshal(payload, &parsed); err == nil {
+		for _, model := range parsed.Data {
+			addProviderModelIDs(available, model)
+		}
+		for _, model := range parsed.Models {
+			addProviderModelIDs(available, model)
+		}
+	}
+	if len(available) == 0 {
+		return expected
+	}
+
+	var missing []string
+	for _, model := range expected {
+		if !available[model] {
+			missing = append(missing, model)
+		}
+	}
+	return missing
+}
+
+func addProviderModelIDs(ids map[string]bool, model providerModel) {
+	for _, value := range []string{model.ID, model.Name, model.Model} {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			ids[value] = true
+		}
+	}
 }
 
 func ValidationStatusFromHTTPStatus(status int) ValidationStatus {

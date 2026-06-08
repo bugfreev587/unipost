@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -256,6 +257,12 @@ func (s *Service) Resolve(ctx context.Context, surface Surface) (EffectiveConfig
 	if route, err := s.store.GetAISurfaceRoute(ctx, string(normalized)); err == nil {
 		if cfg, err := s.resolveAdminRoute(ctx, normalized, route); err == nil {
 			return cfg, nil
+		} else {
+			slog.Warn("ai_provider_route_resolve_failed",
+				"surface", normalized,
+				"provider", route.Provider,
+				"error", err)
+			return EffectiveConfig{}, err
 		}
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return EffectiveConfig{}, err
