@@ -267,6 +267,7 @@ const (
 	// having to remember which media_ids had probe metadata.
 	CodeFacebookVideoMetadataUnknown = "facebook_video_metadata_unknown"
 	CodePinterestBoardRequired       = "pinterest_board_required"
+	CodeInvalidPinterestBoardID      = "invalid_pinterest_board_id"
 	CodeInvalidPinterestLink         = "invalid_pinterest_link"
 )
 
@@ -285,6 +286,7 @@ const defaultMaxScheduleAhead = 90 * 24 * time.Hour
 const minScheduleAhead = 30 * time.Second
 
 var youtubeLanguagePattern = regexp.MustCompile(`^[A-Za-z]{2,3}([_-][A-Za-z0-9]{2,8})*$`)
+var pinterestBoardIDPattern = regexp.MustCompile(`^\d+$`)
 
 var instagramMediaTypeValues = []string{"feed", "reels", "story"}
 
@@ -1328,6 +1330,17 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 				Field:             "platform_options.board_id",
 				Code:              CodePinterestBoardRequired,
 				Message:           "Pinterest requires platform_options.board_id so the Pin has a destination board",
+				Severity:          SeverityError,
+			})
+		} else if !pinterestBoardIDPattern.MatchString(boardID) {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "platform_options.board_id",
+				Code:              CodeInvalidPinterestBoardID,
+				Message:           "Pinterest platform_options.board_id must be a numeric board ID",
+				Actual:            boardID,
 				Severity:          SeverityError,
 			})
 		}

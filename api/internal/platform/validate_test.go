@@ -107,6 +107,16 @@ func stubCapabilities() map[string]Capability {
 				},
 			},
 		},
+		"pinterest": {
+			DisplayName: "Pinterest",
+			Text:        TextCapability{MaxLength: 800},
+			Media: MediaCapability{
+				RequiresMedia: true,
+				AllowMixed:    false,
+				Images:        ImageCapability{MaxCount: 1},
+				Videos:        VideoCapability{MaxCount: 1},
+			},
+		},
 	}
 }
 
@@ -119,6 +129,7 @@ func stubAccounts() map[string]ValidateAccount {
 		"acc_bluesky":   {Platform: "bluesky"},
 		"acc_youtube":   {Platform: "youtube"},
 		"acc_facebook":  {Platform: "facebook"},
+		"acc_pinterest": {Platform: "pinterest"},
 		"acc_dead":      {Platform: "twitter", Disconnected: true},
 		"acc_alien":     {Platform: "myspace"}, // unknown_platform path
 	}
@@ -349,6 +360,19 @@ func TestValidate_YouTubePublishAtRequiresPrivate(t *testing.T) {
 		},
 	}))
 	hasError(t, res, 0, CodeYouTubePublishAtRequiresPrivate)
+}
+
+func TestValidate_PinterestBoardIDMustBeNumeric(t *testing.T) {
+	res := ValidatePlatformPosts(validOpts([]PlatformPostInput{
+		{
+			AccountID:       "acc_pinterest",
+			Caption:         "Pin this",
+			MediaURLs:       []string{"https://cdn.example.com/pin.jpg"},
+			PlatformOptions: map[string]any{"board_id": "board_test"},
+		},
+	}))
+
+	hasError(t, res, 0, "invalid_pinterest_board_id")
 }
 
 func TestValidate_YouTubeAcceptsFullMetadata(t *testing.T) {
