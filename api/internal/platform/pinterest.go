@@ -181,6 +181,9 @@ func (a *PinterestAdapter) Post(ctx context.Context, accessToken string, text st
 	if boardID == "" {
 		return nil, fmt.Errorf("pinterest requires platform_options.board_id")
 	}
+	if !pinterestBoardIDPattern.MatchString(boardID) {
+		return nil, fmt.Errorf("invalid pinterest platform_options.board_id: must be a numeric board ID")
+	}
 
 	title := strings.TrimSpace(optString(opts, "title"))
 	link := strings.TrimSpace(optString(opts, "link"))
@@ -279,6 +282,10 @@ func looksEphemeralFetchURL(rawURL string) bool {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return false
+	}
+	switch strings.ToLower(u.Hostname()) {
+	case "tmpfiles.org":
+		return true
 	}
 	q := u.Query()
 	if q.Get("X-Amz-Algorithm") != "" || q.Get("X-Amz-Signature") != "" || q.Get("X-Amz-Credential") != "" {

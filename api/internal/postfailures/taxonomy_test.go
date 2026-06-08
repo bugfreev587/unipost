@@ -34,6 +34,12 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable: false,
 		},
 		{
+			name:      "threads oauth 190 expired token",
+			raw:       `threads get user id failed (400): {"error":{"message":"Error validating access token: Session has expired on Sunday, 10-May-26 10:00:00 PDT.","type":"OAuthException","code":190,"error_subcode":0}}`,
+			code:      "account_reconnect_required",
+			retriable: false,
+		},
+		{
 			name:      "threads missing permission",
 			raw:       `threads get user id failed (403): {"error":{"message":"Missing required permission threads_basic"}}`,
 			code:      "missing_permission",
