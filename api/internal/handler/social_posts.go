@@ -1843,6 +1843,11 @@ var fatalErrorCodes = map[string]bool{
 	platform.CodeInvalidRecordingDate:            true,
 	platform.CodeInvalidDefaultLanguage:          true,
 	platform.CodeYouTubePublishAtRequiresPrivate: true,
+	// Pinterest destination options are required before dispatch because
+	// the adapter cannot create a Pin without a valid board/link shape.
+	platform.CodePinterestBoardRequired:  true,
+	platform.CodeInvalidPinterestBoardID: true,
+	platform.CodeInvalidPinterestLink:    true,
 	// Plan gate (migration 057): targeting a plan-disallowed platform
 	// is fatal so the request fails fast with VALIDATION_ERROR rather
 	// than getting partway through the publish loop and recording a
