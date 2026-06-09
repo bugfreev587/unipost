@@ -19,12 +19,20 @@ UniPost customers integrate with the Developer API through API keys, but they do
 
 UniPost admins also need a product-wide view of Developer API health across all customer workspaces. Without that view, admin debugging relies on logs and manual database inspection instead of a focused metrics surface.
 
-UniPost already has the foundation for this work:
+UniPost already has the foundation for this work, but the existing implementation is not safe to treat as production-ready metrics infrastructure without fixes:
 
 - `api_metrics` stores per-request API metrics.
 - `api/internal/metrics/middleware.go` records API-key-authenticated requests only.
 - `api/internal/handler/api_metrics.go` exposes workspace-scoped metrics endpoints.
 - `dashboard/src/app/(dashboard)/projects/[id]/analytics/api/page.tsx` already renders a basic API metrics page.
+
+Known implementation gaps that V1 must fix before the data can be trusted:
+
+- The current recorder starts an async insert using `r.Context()` after the handler returns. The request context is canceled when the response completes, so inserts can be silently dropped.
+- The current recorder is mounted on the whole workspace route group and has no explicit exclusion for `/v1/api-metrics/*`, so metrics queries can pollute the metrics being measured.
+- The current path normalizer uses string heuristics. It can collapse valid route segments such as `social-posts` while missing short IDs such as `/v1/posts/42/publish`.
+- The current time-range parser silently ignores invalid timestamps and falls back to defaults.
+- The current overall and trend queries do not expose the full V1 taxonomy, including `rate_limited_count`, `error_rate_pct`, `server_failure_rate_pct`, `avg_ms`, status-code distribution, or day-level trends.
 
 This PRD turns that foundation into a first-class customer and admin product surface.
 
@@ -40,6 +48,15 @@ V1 should focus on API-key-authenticated Developer API calls only. It should not
 Admin users should see the same metric family aggregated across all customer workspaces, still limited to Developer API traffic.
 
 No feature flag is required for this work.
+
+## V1 decisions
+
+1. Add a nullable `api_key_id` column to `api_metrics` and write it from `auth.GetAPIKeyID`. V1 does not expose per-key metrics, but collecting the column now preserves future analytics without backfill gaps.
+2. Workspace API metrics are readable by any current workspace role. The data is operational visibility for the workspace, not a destructive admin action.
+3. API-key callers can read workspace metrics because the API key already authenticates to that workspace.
+4. Raw-query-backed time ranges are capped at 90 days. Requests over 90 days return `400 VALIDATION_ERROR`; they are not silently clamped.
+5. Admin API metrics use the existing admin gate, not super-admin-only access.
+6. `429` responses are counted in `client_error_count` and `error_rate_pct` because they are non-success HTTP responses. They are also exposed separately as `rate_limited_count` so product copy and debugging do not confuse rate limiting with validation or auth errors.
 
 ## Goals
 
@@ -97,7 +114,7 @@ V1 should expose a compact but complete observability bundle.
 | `success_count` | Count of responses with status `< 400` | Shows calls that completed successfully |
 | `client_error_count` | Count of responses with status `400-499` | Separates integration/auth/validation issues from UniPost failures |
 | `server_error_count` | Count of responses with status `>= 500` | Measures UniPost-side failures |
-| `rate_limited_count` | Count of responses with status `429` | Highlights quota or rate-limit pressure |
+| `rate_limited_count` | Count of responses with status `429`; also included in `client_error_count` | Highlights quota or rate-limit pressure |
 | `error_rate_pct` | `(client_error_count + server_error_count) / total_calls * 100` | Overall failed-request ratio |
 | `server_failure_rate_pct` | `server_error_count / total_calls * 100` | UniPost reliability signal |
 | `p50_ms` | 50th percentile of `duration_ms` | Typical latency |
@@ -120,7 +137,7 @@ Avoid calling all `4xx` responses "failures" in product copy. Some `4xx` respons
 
 | Metric | Reason to defer |
 | --- | --- |
-| Per API key metrics | Useful, but requires careful API-key identity exposure and likely a new `api_key_id` column |
+| Per API key breakdowns | V1 records `api_key_id`, but API/UI exposure needs a separate security and UX pass |
 | Error-code breakdown | Requires consistent handler-level application error codes in responses and metrics writes |
 | Request/response size | More storage and privacy considerations |
 | External provider latency | Belongs to publish/job/platform metrics, not HTTP API latency |
@@ -143,6 +160,13 @@ Examples:
 - `GET /v1/webhooks`
 - `GET /v1/usage`
 
+Implementation should define the measurable route set deliberately. Prefer one of these approaches:
+
+1. Mount the metrics recorder only around business Developer API routes.
+2. Maintain an explicit measurable-route registry based on chi route patterns.
+
+Do not rely on the current "entire workspace group plus implicit behavior" shape. If the implementation uses a deny-list as a transitional step, tests must cover every excluded prefix listed below.
+
 ### Excluded from V1
 
 The metrics recorder must not count:
@@ -163,7 +187,14 @@ The metrics recorder must not count:
 
 The workspace metrics API is part of the Developer API surface and should be documented for customers.
 
-All endpoints require normal workspace authentication. API key auth is required for third-party/customer automation. Clerk session auth may continue to support the dashboard.
+All endpoints require normal workspace authentication. API key auth is required for third-party/customer automation. Clerk session auth may continue to support the dashboard. Any active workspace role can read these metrics for the current workspace.
+
+Time range behavior:
+
+- If both `from` and `to` are omitted, default to the last 7 days.
+- If either `from` or `to` is present but invalid, return `400 VALIDATION_ERROR`.
+- If `from > to`, return `400 VALIDATION_ERROR`.
+- If the range exceeds 90 days, return `400 VALIDATION_ERROR`.
 
 ### Overall
 
@@ -252,6 +283,8 @@ Supported `interval` values:
 - `day`
 
 V1 should default to `hour` for ranges up to 7 days and `day` for longer ranges unless an explicit interval is provided.
+
+The current SQL hardcodes `date_trunc('hour', ...)`. V1 must parameterize interval selection through a safe server-side switch, not by interpolating arbitrary query strings into SQL.
 
 ### Status codes
 
@@ -388,26 +421,48 @@ The metrics middleware should continue to be non-blocking for responses.
 
 Requirements:
 
-- Record only API-key-authenticated Developer API requests.
+- Record only API-key-authenticated Developer API requests in the measurable route set.
 - Skip the excluded paths listed in this PRD.
+- Fix the current async insert context bug. The goroutine must not use the cancelable request context after the handler returns. Use `context.WithoutCancel(r.Context())` plus a short timeout, or an independent background context with timeout.
 - Capture:
   - workspace id
+  - API key id
   - method
   - normalized path
   - status code
   - duration ms
   - created at
 - Preserve response behavior if metrics insert fails.
-- Log insert failures only at a low-noise level if needed.
+- Do not silently swallow insert failures during development and tests. Production logging should be low-noise and should not expose secrets.
+- Add tests that prove fast requests still persist metrics rows after the response has completed.
+
+### Path normalization
+
+The current string heuristic normalizer must be replaced for V1.
+
+Use the matched chi route pattern from the request route context as the primary normalized path source. For example:
+
+- `/v1/posts/42/publish` should record as `/v1/posts/{id}/publish` or `/v1/posts/:id/publish`.
+- `/v1/social-posts` should remain `/v1/social-posts`, not collapse to `/v1/:id`.
+- `/v1/api-metrics/summary` should be excluded before it is recorded.
+
+Requirements:
+
+- Prefer `chi.RouteContext(r.Context()).RoutePattern()` after the downstream handler has matched the route.
+- Convert placeholder style consistently if the product wants `:id` instead of `{id}`.
+- Use a conservative fallback only when no route pattern exists.
+- Never store query strings.
+- Treat path normalization correctness as a privacy requirement, not only a display concern.
 
 ### Data model
 
-The existing table is sufficient for V1 core metrics:
+The existing table should be extended for V1:
 
 ```sql
 api_metrics (
   id,
   workspace_id,
+  api_key_id,
   method,
   path,
   status_code,
@@ -416,16 +471,29 @@ api_metrics (
 )
 ```
 
-Recommended additions:
+Required schema updates:
+
+- Add nullable `api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL`.
+- Preserve or create the workspace-scoped time index for the customer query path:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_api_metrics_workspace_time
+  ON api_metrics (workspace_id, created_at DESC);
+```
+
+- Preserve or create the workspace endpoint/time index for per-endpoint customer summaries:
+
+```sql
+CREATE INDEX IF NOT EXISTS idx_api_metrics_workspace_path_time
+  ON api_metrics (workspace_id, path, created_at DESC);
+```
 
 - Add an index for admin/global time-range queries:
 
 ```sql
-CREATE INDEX idx_api_metrics_time_path
+CREATE INDEX IF NOT EXISTS idx_api_metrics_time_path
   ON api_metrics (created_at DESC, path, method);
 ```
-
-- Consider adding nullable `api_key_id` for future per-key metrics, but V1 UI and API do not need to expose per-key analytics unless implementation cost is low and security review passes.
 
 ### Query behavior
 
@@ -435,10 +503,15 @@ Time range:
 - Maximum range is 90 days for raw-query-backed V1.
 - Invalid `from` or `to` returns `400 VALIDATION_ERROR`, not silent fallback.
 - `from > to` returns `400 VALIDATION_ERROR`.
+- Ranges longer than 90 days return `400 VALIDATION_ERROR`, not clamped results.
+- Replace the current silent-fallback `parseTimeRange` behavior.
 
 Aggregation:
 
 - Use percentile calculations in SQL for `p50`, `p95`, and `p99`.
+- Extend existing overall queries to include `rate_limited_count`, `error_rate_pct`, `server_failure_rate_pct`, and `avg_ms`.
+- Add status-code distribution queries.
+- Add trend queries for both hourly and daily buckets.
 - Return zeroes for empty overall responses.
 - Return empty arrays for empty list responses.
 
@@ -458,6 +531,7 @@ Performance:
 - Do not allow normal users to pass arbitrary `workspace_id`.
 - Do not expose API key secret values or full API key identifiers in V1 metrics responses.
 - Admin views may include workspace names and IDs because they are already admin-visible elsewhere.
+- Route-pattern-based normalization is a launch blocker. If route normalization leaks short numeric IDs, long IDs, UUIDs, or customer resource identifiers, the implementation does not meet this PRD.
 
 ## Documentation requirements
 
@@ -478,14 +552,22 @@ The docs should be explicit that API metrics are delayed only by normal request/
 Backend tests:
 
 - API-key request records a metrics row.
+- API-key request records the `api_key_id` internally.
 - Clerk/dashboard request does not record a metrics row.
 - `/v1/api-metrics/*` request does not record a metrics row.
-- Path normalization removes UUID-like and long ID-like segments.
+- Fast requests still record metrics after the HTTP response returns; async writes must not be canceled by `r.Context()`.
+- Path normalization uses route templates instead of string-length heuristics.
+- Path normalization keeps valid long route segments such as `/v1/social-posts`.
+- Path normalization normalizes short IDs such as `/v1/posts/42/publish`.
+- Path normalization removes UUID-like and long ID-like resource segments.
 - Workspace metrics endpoints only return current workspace data.
 - Admin metrics endpoints aggregate across workspaces.
 - Non-admin caller receives `403` for admin metrics endpoints.
 - Invalid time ranges return `400`.
+- Ranges over 90 days return `400`.
+- Trend supports both `interval=hour` and `interval=day`.
 - Status-code distribution separates `2xx`, `4xx`, `429`, and `5xx`.
+- `429` is included in `client_error_count` and also returned as `rate_limited_count`.
 
 Frontend tests or regression coverage:
 
@@ -528,19 +610,33 @@ Deployed dev validation:
 
 ## Rollout plan
 
-1. Extend backend queries and handler responses for the full V1 metric taxonomy.
-2. Add metrics-recorder exclusions for metrics endpoints and other non-business paths.
-3. Add admin metrics queries and admin handlers.
-4. Update dashboard workspace API metrics page.
-5. Add admin API metrics page and sidebar entry.
-6. Add public API documentation.
-7. Run local validation.
-8. Merge into local `dev`, rerun validation, push `dev`, wait for dev deployment, and self-accept in the development environment.
+1. Fix recorder correctness:
+   - replace cancelable async insert context
+   - add measurable-route inclusion or explicit route registry
+   - exclude metrics endpoints and non-business routes
+   - replace string heuristic path normalization with chi route-pattern normalization
+2. Add schema migration:
+   - nullable `api_key_id`
+   - workspace query indexes
+   - admin time-range index
+3. Extend backend queries and handler responses for the full V1 metric taxonomy.
+4. Replace silent time-range parsing with validation and 90-day limit handling.
+5. Add hourly and daily trend support.
+6. Add status-code distribution support.
+7. Add admin metrics queries and admin handlers.
+8. Update dashboard workspace API metrics page.
+9. Add admin API metrics page and sidebar entry.
+10. Add public API documentation.
+11. Run local validation.
+12. Merge into local `dev`, rerun validation, push `dev`, wait for dev deployment, and self-accept in the development environment.
 
-## Open decisions
+## Resolved decisions
 
-1. Should V1 add a nullable `api_key_id` column now for future per-key analytics, even if not exposed yet?
-2. Should metrics endpoints be available to all workspace roles, or require `admin` role and above in the dashboard while API keys remain workspace-scoped?
-3. Should 90 days remain the maximum raw-query range, or should customers get 180 days with lower granularity?
-4. Should admin `/admin/api-metrics` require normal admin or super admin access?
+1. `api_key_id` is added and recorded in V1, but not exposed in V1 API responses.
+2. Workspace metrics are readable by any workspace role.
+3. Raw metrics query range is capped at 90 days.
+4. Admin metrics require normal admin access, not super-admin access.
 
+## Remaining open decisions
+
+No product decisions are blocking implementation. Future PRDs can revisit per-key analytics, longer retention through rollups, external provider latency, and alerting.
