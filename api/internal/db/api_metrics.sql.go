@@ -17,55 +17,9 @@ SELECT
   COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
   COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
   COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
-  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
-  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
-  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms
-FROM api_metrics
-WHERE workspace_id = $1
-  AND created_at >= $2
-  AND created_at <= $3
-`
-
-type GetAPIMetricsOverallParams struct {
-	WorkspaceID string             `json:"workspace_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
-}
-
-type GetAPIMetricsOverallRow struct {
-	TotalCalls       int32 `json:"total_calls"`
-	SuccessCount     int32 `json:"success_count"`
-	ClientErrorCount int32 `json:"client_error_count"`
-	ServerErrorCount int32 `json:"server_error_count"`
-	P50Ms            int32 `json:"p50_ms"`
-	P95Ms            int32 `json:"p95_ms"`
-	P99Ms            int32 `json:"p99_ms"`
-}
-
-// Overall stats for a workspace within a time range.
-func (q *Queries) GetAPIMetricsOverall(ctx context.Context, arg GetAPIMetricsOverallParams) (GetAPIMetricsOverallRow, error) {
-	row := q.db.QueryRow(ctx, getAPIMetricsOverall, arg.WorkspaceID, arg.CreatedAt, arg.CreatedAt_2)
-	var i GetAPIMetricsOverallRow
-	err := row.Scan(
-		&i.TotalCalls,
-		&i.SuccessCount,
-		&i.ClientErrorCount,
-		&i.ServerErrorCount,
-		&i.P50Ms,
-		&i.P95Ms,
-		&i.P99Ms,
-	)
-	return i, err
-}
-
-const getAPIMetricsSummary = `-- name: GetAPIMetricsSummary :many
-SELECT
-  path,
-  method,
-  COUNT(*)::INTEGER AS total_calls,
-  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
-  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
-  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 400)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS error_rate_pct,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 500)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS server_failure_rate_pct,
   COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
   COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
   COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
@@ -74,34 +28,223 @@ FROM api_metrics
 WHERE workspace_id = $1
   AND created_at >= $2
   AND created_at <= $3
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+`
+
+type GetAPIMetricsOverallParams struct {
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2  pgtype.Timestamptz `json:"created_at_2"`
+	MethodFilter string             `json:"method_filter"`
+	PathFilter   string             `json:"path_filter"`
+	StatusClass  string             `json:"status_class"`
+}
+
+type GetAPIMetricsOverallRow struct {
+	TotalCalls           int32   `json:"total_calls"`
+	SuccessCount         int32   `json:"success_count"`
+	ClientErrorCount     int32   `json:"client_error_count"`
+	ServerErrorCount     int32   `json:"server_error_count"`
+	RateLimitedCount     int32   `json:"rate_limited_count"`
+	ErrorRatePct         float64 `json:"error_rate_pct"`
+	ServerFailureRatePct float64 `json:"server_failure_rate_pct"`
+	P50Ms                int32   `json:"p50_ms"`
+	P95Ms                int32   `json:"p95_ms"`
+	P99Ms                int32   `json:"p99_ms"`
+	AvgMs                int32   `json:"avg_ms"`
+}
+
+// Overall stats for a workspace within a time range.
+func (q *Queries) GetAPIMetricsOverall(ctx context.Context, arg GetAPIMetricsOverallParams) (GetAPIMetricsOverallRow, error) {
+	row := q.db.QueryRow(ctx, getAPIMetricsOverall,
+		arg.WorkspaceID,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
+	var i GetAPIMetricsOverallRow
+	err := row.Scan(
+		&i.TotalCalls,
+		&i.SuccessCount,
+		&i.ClientErrorCount,
+		&i.ServerErrorCount,
+		&i.RateLimitedCount,
+		&i.ErrorRatePct,
+		&i.ServerFailureRatePct,
+		&i.P50Ms,
+		&i.P95Ms,
+		&i.P99Ms,
+		&i.AvgMs,
+	)
+	return i, err
+}
+
+const getAPIMetricsStatusCodes = `-- name: GetAPIMetricsStatusCodes :many
+SELECT
+  status_code,
+  method,
+  path,
+  COUNT(*)::INTEGER AS total_calls
+FROM api_metrics
+WHERE workspace_id = $1
+  AND created_at >= $2
+  AND created_at <= $3
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+GROUP BY status_code, method, path
+ORDER BY total_calls DESC, status_code ASC
+LIMIT $7::INTEGER
+`
+
+type GetAPIMetricsStatusCodesParams struct {
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2  pgtype.Timestamptz `json:"created_at_2"`
+	MethodFilter string             `json:"method_filter"`
+	PathFilter   string             `json:"path_filter"`
+	StatusClass  string             `json:"status_class"`
+	RowLimit     int32              `json:"row_limit"`
+}
+
+type GetAPIMetricsStatusCodesRow struct {
+	StatusCode int32  `json:"status_code"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	TotalCalls int32  `json:"total_calls"`
+}
+
+func (q *Queries) GetAPIMetricsStatusCodes(ctx context.Context, arg GetAPIMetricsStatusCodesParams) ([]GetAPIMetricsStatusCodesRow, error) {
+	rows, err := q.db.Query(ctx, getAPIMetricsStatusCodes,
+		arg.WorkspaceID,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAPIMetricsStatusCodesRow{}
+	for rows.Next() {
+		var i GetAPIMetricsStatusCodesRow
+		if err := rows.Scan(
+			&i.StatusCode,
+			&i.Method,
+			&i.Path,
+			&i.TotalCalls,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAPIMetricsSummary = `-- name: GetAPIMetricsSummary :many
+WITH summary AS (
+SELECT
+  path,
+  method,
+  COUNT(*)::INTEGER AS total_calls,
+  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 400)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS error_rate_pct,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 500)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS server_failure_rate_pct,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
+FROM api_metrics
+WHERE workspace_id = $1
+  AND created_at >= $2
+  AND created_at <= $3
+  AND ($6::TEXT = '' OR method = $6::TEXT)
+  AND ($7::TEXT = '' OR path = $7::TEXT)
+  AND (
+    $8::TEXT = ''
+    OR ($8::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($8::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($8::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($8::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
 GROUP BY path, method
-ORDER BY total_calls DESC
+)
+SELECT path, method, total_calls, success_count, client_error_count, server_error_count, rate_limited_count, error_rate_pct, server_failure_rate_pct, p50_ms, p95_ms, p99_ms, avg_ms FROM summary
+ORDER BY
+  CASE WHEN $4::TEXT = 'p95_ms_desc' THEN p95_ms END DESC,
+  CASE WHEN $4::TEXT = 'p99_ms_desc' THEN p99_ms END DESC,
+  CASE WHEN $4::TEXT = 'server_errors_desc' THEN server_error_count END DESC,
+  CASE WHEN $4::TEXT = 'rate_limited_desc' THEN rate_limited_count END DESC,
+  total_calls DESC
+LIMIT $5::INTEGER
 `
 
 type GetAPIMetricsSummaryParams struct {
-	WorkspaceID string             `json:"workspace_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2  pgtype.Timestamptz `json:"created_at_2"`
+	SortKey      string             `json:"sort_key"`
+	RowLimit     int32              `json:"row_limit"`
+	MethodFilter string             `json:"method_filter"`
+	PathFilter   string             `json:"path_filter"`
+	StatusClass  string             `json:"status_class"`
 }
 
 type GetAPIMetricsSummaryRow struct {
-	Path             string `json:"path"`
-	Method           string `json:"method"`
-	TotalCalls       int32  `json:"total_calls"`
-	SuccessCount     int32  `json:"success_count"`
-	ClientErrorCount int32  `json:"client_error_count"`
-	ServerErrorCount int32  `json:"server_error_count"`
-	P50Ms            int32  `json:"p50_ms"`
-	P95Ms            int32  `json:"p95_ms"`
-	P99Ms            int32  `json:"p99_ms"`
-	AvgMs            int32  `json:"avg_ms"`
+	Path                 string  `json:"path"`
+	Method               string  `json:"method"`
+	TotalCalls           int32   `json:"total_calls"`
+	SuccessCount         int32   `json:"success_count"`
+	ClientErrorCount     int32   `json:"client_error_count"`
+	ServerErrorCount     int32   `json:"server_error_count"`
+	RateLimitedCount     int32   `json:"rate_limited_count"`
+	ErrorRatePct         float64 `json:"error_rate_pct"`
+	ServerFailureRatePct float64 `json:"server_failure_rate_pct"`
+	P50Ms                int32   `json:"p50_ms"`
+	P95Ms                int32   `json:"p95_ms"`
+	P99Ms                int32   `json:"p99_ms"`
+	AvgMs                int32   `json:"avg_ms"`
 }
 
 // Per-endpoint summary for a workspace within a time range.
 // Returns total calls, success (2xx/3xx), client errors (4xx),
 // server errors (5xx), and latency percentiles.
 func (q *Queries) GetAPIMetricsSummary(ctx context.Context, arg GetAPIMetricsSummaryParams) ([]GetAPIMetricsSummaryRow, error) {
-	rows, err := q.db.Query(ctx, getAPIMetricsSummary, arg.WorkspaceID, arg.CreatedAt, arg.CreatedAt_2)
+	rows, err := q.db.Query(ctx, getAPIMetricsSummary,
+		arg.WorkspaceID,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.SortKey,
+		arg.RowLimit,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -116,6 +259,9 @@ func (q *Queries) GetAPIMetricsSummary(ctx context.Context, arg GetAPIMetricsSum
 			&i.SuccessCount,
 			&i.ClientErrorCount,
 			&i.ServerErrorCount,
+			&i.RateLimitedCount,
+			&i.ErrorRatePct,
+			&i.ServerFailureRatePct,
 			&i.P50Ms,
 			&i.P95Ms,
 			&i.P99Ms,
@@ -131,49 +277,776 @@ func (q *Queries) GetAPIMetricsSummary(ctx context.Context, arg GetAPIMetricsSum
 	return items, nil
 }
 
-const getAPIMetricsTrend = `-- name: GetAPIMetricsTrend :many
+const getAPIMetricsTrendDaily = `-- name: GetAPIMetricsTrendDaily :many
 SELECT
-  date_trunc('hour', created_at)::timestamptz AS bucket,
+  date_trunc('day', created_at)::timestamptz AS bucket,
   COUNT(*)::INTEGER AS total_calls,
   COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
-  COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count
+  COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
 FROM api_metrics
 WHERE workspace_id = $1
   AND created_at >= $2
   AND created_at <= $3
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
 GROUP BY bucket
 ORDER BY bucket
 `
 
-type GetAPIMetricsTrendParams struct {
-	WorkspaceID string             `json:"workspace_id"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	CreatedAt_2 pgtype.Timestamptz `json:"created_at_2"`
+type GetAPIMetricsTrendDailyParams struct {
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2  pgtype.Timestamptz `json:"created_at_2"`
+	MethodFilter string             `json:"method_filter"`
+	PathFilter   string             `json:"path_filter"`
+	StatusClass  string             `json:"status_class"`
 }
 
-type GetAPIMetricsTrendRow struct {
-	Bucket       pgtype.Timestamptz `json:"bucket"`
-	TotalCalls   int32              `json:"total_calls"`
-	SuccessCount int32              `json:"success_count"`
-	ErrorCount   int32              `json:"error_count"`
+type GetAPIMetricsTrendDailyRow struct {
+	Bucket           pgtype.Timestamptz `json:"bucket"`
+	TotalCalls       int32              `json:"total_calls"`
+	SuccessCount     int32              `json:"success_count"`
+	ErrorCount       int32              `json:"error_count"`
+	ClientErrorCount int32              `json:"client_error_count"`
+	ServerErrorCount int32              `json:"server_error_count"`
+	RateLimitedCount int32              `json:"rate_limited_count"`
+	P50Ms            int32              `json:"p50_ms"`
+	P95Ms            int32              `json:"p95_ms"`
+	P99Ms            int32              `json:"p99_ms"`
+	AvgMs            int32              `json:"avg_ms"`
 }
 
-// Hourly call counts for a workspace within a time range.
-// Used for the usage-over-time chart.
-func (q *Queries) GetAPIMetricsTrend(ctx context.Context, arg GetAPIMetricsTrendParams) ([]GetAPIMetricsTrendRow, error) {
-	rows, err := q.db.Query(ctx, getAPIMetricsTrend, arg.WorkspaceID, arg.CreatedAt, arg.CreatedAt_2)
+func (q *Queries) GetAPIMetricsTrendDaily(ctx context.Context, arg GetAPIMetricsTrendDailyParams) ([]GetAPIMetricsTrendDailyRow, error) {
+	rows, err := q.db.Query(ctx, getAPIMetricsTrendDaily,
+		arg.WorkspaceID,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []GetAPIMetricsTrendRow{}
+	items := []GetAPIMetricsTrendDailyRow{}
 	for rows.Next() {
-		var i GetAPIMetricsTrendRow
+		var i GetAPIMetricsTrendDailyRow
 		if err := rows.Scan(
 			&i.Bucket,
 			&i.TotalCalls,
 			&i.SuccessCount,
 			&i.ErrorCount,
+			&i.ClientErrorCount,
+			&i.ServerErrorCount,
+			&i.RateLimitedCount,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+			&i.AvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAPIMetricsTrendHourly = `-- name: GetAPIMetricsTrendHourly :many
+SELECT
+  date_trunc('hour', created_at)::timestamptz AS bucket,
+  COUNT(*)::INTEGER AS total_calls,
+  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
+  COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
+FROM api_metrics
+WHERE workspace_id = $1
+  AND created_at >= $2
+  AND created_at <= $3
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type GetAPIMetricsTrendHourlyParams struct {
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2  pgtype.Timestamptz `json:"created_at_2"`
+	MethodFilter string             `json:"method_filter"`
+	PathFilter   string             `json:"path_filter"`
+	StatusClass  string             `json:"status_class"`
+}
+
+type GetAPIMetricsTrendHourlyRow struct {
+	Bucket           pgtype.Timestamptz `json:"bucket"`
+	TotalCalls       int32              `json:"total_calls"`
+	SuccessCount     int32              `json:"success_count"`
+	ErrorCount       int32              `json:"error_count"`
+	ClientErrorCount int32              `json:"client_error_count"`
+	ServerErrorCount int32              `json:"server_error_count"`
+	RateLimitedCount int32              `json:"rate_limited_count"`
+	P50Ms            int32              `json:"p50_ms"`
+	P95Ms            int32              `json:"p95_ms"`
+	P99Ms            int32              `json:"p99_ms"`
+	AvgMs            int32              `json:"avg_ms"`
+}
+
+// Hourly call counts for a workspace within a time range.
+// Used for the usage-over-time chart.
+func (q *Queries) GetAPIMetricsTrendHourly(ctx context.Context, arg GetAPIMetricsTrendHourlyParams) ([]GetAPIMetricsTrendHourlyRow, error) {
+	rows, err := q.db.Query(ctx, getAPIMetricsTrendHourly,
+		arg.WorkspaceID,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAPIMetricsTrendHourlyRow{}
+	for rows.Next() {
+		var i GetAPIMetricsTrendHourlyRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.TotalCalls,
+			&i.SuccessCount,
+			&i.ErrorCount,
+			&i.ClientErrorCount,
+			&i.ServerErrorCount,
+			&i.RateLimitedCount,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+			&i.AvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAdminAPIMetricsOverall = `-- name: GetAdminAPIMetricsOverall :one
+SELECT
+  COUNT(*)::INTEGER AS total_calls,
+  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 400)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS error_rate_pct,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 500)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS server_failure_rate_pct,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
+FROM api_metrics
+WHERE created_at >= $1
+  AND created_at <= $2
+  AND ($3::TEXT = '' OR workspace_id = $3::TEXT)
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+`
+
+type GetAdminAPIMetricsOverallParams struct {
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2     pgtype.Timestamptz `json:"created_at_2"`
+	WorkspaceFilter string             `json:"workspace_filter"`
+	MethodFilter    string             `json:"method_filter"`
+	PathFilter      string             `json:"path_filter"`
+	StatusClass     string             `json:"status_class"`
+}
+
+type GetAdminAPIMetricsOverallRow struct {
+	TotalCalls           int32   `json:"total_calls"`
+	SuccessCount         int32   `json:"success_count"`
+	ClientErrorCount     int32   `json:"client_error_count"`
+	ServerErrorCount     int32   `json:"server_error_count"`
+	RateLimitedCount     int32   `json:"rate_limited_count"`
+	ErrorRatePct         float64 `json:"error_rate_pct"`
+	ServerFailureRatePct float64 `json:"server_failure_rate_pct"`
+	P50Ms                int32   `json:"p50_ms"`
+	P95Ms                int32   `json:"p95_ms"`
+	P99Ms                int32   `json:"p99_ms"`
+	AvgMs                int32   `json:"avg_ms"`
+}
+
+func (q *Queries) GetAdminAPIMetricsOverall(ctx context.Context, arg GetAdminAPIMetricsOverallParams) (GetAdminAPIMetricsOverallRow, error) {
+	row := q.db.QueryRow(ctx, getAdminAPIMetricsOverall,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.WorkspaceFilter,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
+	var i GetAdminAPIMetricsOverallRow
+	err := row.Scan(
+		&i.TotalCalls,
+		&i.SuccessCount,
+		&i.ClientErrorCount,
+		&i.ServerErrorCount,
+		&i.RateLimitedCount,
+		&i.ErrorRatePct,
+		&i.ServerFailureRatePct,
+		&i.P50Ms,
+		&i.P95Ms,
+		&i.P99Ms,
+		&i.AvgMs,
+	)
+	return i, err
+}
+
+const getAdminAPIMetricsStatusCodes = `-- name: GetAdminAPIMetricsStatusCodes :many
+SELECT
+  status_code,
+  method,
+  path,
+  COUNT(*)::INTEGER AS total_calls
+FROM api_metrics
+WHERE created_at >= $1
+  AND created_at <= $2
+  AND ($3::TEXT = '' OR workspace_id = $3::TEXT)
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+GROUP BY status_code, method, path
+ORDER BY total_calls DESC, status_code ASC
+LIMIT $7::INTEGER
+`
+
+type GetAdminAPIMetricsStatusCodesParams struct {
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2     pgtype.Timestamptz `json:"created_at_2"`
+	WorkspaceFilter string             `json:"workspace_filter"`
+	MethodFilter    string             `json:"method_filter"`
+	PathFilter      string             `json:"path_filter"`
+	StatusClass     string             `json:"status_class"`
+	RowLimit        int32              `json:"row_limit"`
+}
+
+type GetAdminAPIMetricsStatusCodesRow struct {
+	StatusCode int32  `json:"status_code"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	TotalCalls int32  `json:"total_calls"`
+}
+
+func (q *Queries) GetAdminAPIMetricsStatusCodes(ctx context.Context, arg GetAdminAPIMetricsStatusCodesParams) ([]GetAdminAPIMetricsStatusCodesRow, error) {
+	rows, err := q.db.Query(ctx, getAdminAPIMetricsStatusCodes,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.WorkspaceFilter,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAdminAPIMetricsStatusCodesRow{}
+	for rows.Next() {
+		var i GetAdminAPIMetricsStatusCodesRow
+		if err := rows.Scan(
+			&i.StatusCode,
+			&i.Method,
+			&i.Path,
+			&i.TotalCalls,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAdminAPIMetricsSummary = `-- name: GetAdminAPIMetricsSummary :many
+WITH summary AS (
+SELECT
+  path,
+  method,
+  COUNT(*)::INTEGER AS total_calls,
+  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 400)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS error_rate_pct,
+  CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE status_code >= 500)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS server_failure_rate_pct,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
+FROM api_metrics
+WHERE created_at >= $1
+  AND created_at <= $2
+  AND ($5::TEXT = '' OR workspace_id = $5::TEXT)
+  AND ($6::TEXT = '' OR method = $6::TEXT)
+  AND ($7::TEXT = '' OR path = $7::TEXT)
+  AND (
+    $8::TEXT = ''
+    OR ($8::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($8::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($8::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($8::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+GROUP BY path, method
+HAVING COUNT(*) >= $9::INTEGER
+)
+SELECT path, method, total_calls, success_count, client_error_count, server_error_count, rate_limited_count, error_rate_pct, server_failure_rate_pct, p50_ms, p95_ms, p99_ms, avg_ms FROM summary
+ORDER BY
+  CASE WHEN $3::TEXT = 'p95_ms_desc' THEN p95_ms END DESC,
+  CASE WHEN $3::TEXT = 'p99_ms_desc' THEN p99_ms END DESC,
+  CASE WHEN $3::TEXT = 'server_errors_desc' THEN server_error_count END DESC,
+  CASE WHEN $3::TEXT = 'rate_limited_desc' THEN rate_limited_count END DESC,
+  total_calls DESC
+LIMIT $4::INTEGER
+`
+
+type GetAdminAPIMetricsSummaryParams struct {
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2     pgtype.Timestamptz `json:"created_at_2"`
+	SortKey         string             `json:"sort_key"`
+	RowLimit        int32              `json:"row_limit"`
+	WorkspaceFilter string             `json:"workspace_filter"`
+	MethodFilter    string             `json:"method_filter"`
+	PathFilter      string             `json:"path_filter"`
+	StatusClass     string             `json:"status_class"`
+	MinCalls        int32              `json:"min_calls"`
+}
+
+type GetAdminAPIMetricsSummaryRow struct {
+	Path                 string  `json:"path"`
+	Method               string  `json:"method"`
+	TotalCalls           int32   `json:"total_calls"`
+	SuccessCount         int32   `json:"success_count"`
+	ClientErrorCount     int32   `json:"client_error_count"`
+	ServerErrorCount     int32   `json:"server_error_count"`
+	RateLimitedCount     int32   `json:"rate_limited_count"`
+	ErrorRatePct         float64 `json:"error_rate_pct"`
+	ServerFailureRatePct float64 `json:"server_failure_rate_pct"`
+	P50Ms                int32   `json:"p50_ms"`
+	P95Ms                int32   `json:"p95_ms"`
+	P99Ms                int32   `json:"p99_ms"`
+	AvgMs                int32   `json:"avg_ms"`
+}
+
+func (q *Queries) GetAdminAPIMetricsSummary(ctx context.Context, arg GetAdminAPIMetricsSummaryParams) ([]GetAdminAPIMetricsSummaryRow, error) {
+	rows, err := q.db.Query(ctx, getAdminAPIMetricsSummary,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.SortKey,
+		arg.RowLimit,
+		arg.WorkspaceFilter,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+		arg.MinCalls,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAdminAPIMetricsSummaryRow{}
+	for rows.Next() {
+		var i GetAdminAPIMetricsSummaryRow
+		if err := rows.Scan(
+			&i.Path,
+			&i.Method,
+			&i.TotalCalls,
+			&i.SuccessCount,
+			&i.ClientErrorCount,
+			&i.ServerErrorCount,
+			&i.RateLimitedCount,
+			&i.ErrorRatePct,
+			&i.ServerFailureRatePct,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+			&i.AvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAdminAPIMetricsTrendDaily = `-- name: GetAdminAPIMetricsTrendDaily :many
+SELECT
+  date_trunc('day', created_at)::timestamptz AS bucket,
+  COUNT(*)::INTEGER AS total_calls,
+  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
+  COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
+FROM api_metrics
+WHERE created_at >= $1
+  AND created_at <= $2
+  AND ($3::TEXT = '' OR workspace_id = $3::TEXT)
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type GetAdminAPIMetricsTrendDailyParams struct {
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2     pgtype.Timestamptz `json:"created_at_2"`
+	WorkspaceFilter string             `json:"workspace_filter"`
+	MethodFilter    string             `json:"method_filter"`
+	PathFilter      string             `json:"path_filter"`
+	StatusClass     string             `json:"status_class"`
+}
+
+type GetAdminAPIMetricsTrendDailyRow struct {
+	Bucket           pgtype.Timestamptz `json:"bucket"`
+	TotalCalls       int32              `json:"total_calls"`
+	SuccessCount     int32              `json:"success_count"`
+	ErrorCount       int32              `json:"error_count"`
+	ClientErrorCount int32              `json:"client_error_count"`
+	ServerErrorCount int32              `json:"server_error_count"`
+	RateLimitedCount int32              `json:"rate_limited_count"`
+	P50Ms            int32              `json:"p50_ms"`
+	P95Ms            int32              `json:"p95_ms"`
+	P99Ms            int32              `json:"p99_ms"`
+	AvgMs            int32              `json:"avg_ms"`
+}
+
+func (q *Queries) GetAdminAPIMetricsTrendDaily(ctx context.Context, arg GetAdminAPIMetricsTrendDailyParams) ([]GetAdminAPIMetricsTrendDailyRow, error) {
+	rows, err := q.db.Query(ctx, getAdminAPIMetricsTrendDaily,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.WorkspaceFilter,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAdminAPIMetricsTrendDailyRow{}
+	for rows.Next() {
+		var i GetAdminAPIMetricsTrendDailyRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.TotalCalls,
+			&i.SuccessCount,
+			&i.ErrorCount,
+			&i.ClientErrorCount,
+			&i.ServerErrorCount,
+			&i.RateLimitedCount,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+			&i.AvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAdminAPIMetricsTrendHourly = `-- name: GetAdminAPIMetricsTrendHourly :many
+SELECT
+  date_trunc('hour', created_at)::timestamptz AS bucket,
+  COUNT(*)::INTEGER AS total_calls,
+  COUNT(*) FILTER (WHERE status_code < 400)::INTEGER AS success_count,
+  COUNT(*) FILTER (WHERE status_code >= 400)::INTEGER AS error_count,
+  COUNT(*) FILTER (WHERE status_code >= 400 AND status_code < 500)::INTEGER AS client_error_count,
+  COUNT(*) FILTER (WHERE status_code >= 500)::INTEGER AS server_error_count,
+  COUNT(*) FILTER (WHERE status_code = 429)::INTEGER AS rate_limited_count,
+  COALESCE(percentile_cont(0.50) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p50_ms,
+  COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p95_ms,
+  COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms), 0)::INTEGER AS p99_ms,
+  COALESCE(AVG(duration_ms), 0)::INTEGER AS avg_ms
+FROM api_metrics
+WHERE created_at >= $1
+  AND created_at <= $2
+  AND ($3::TEXT = '' OR workspace_id = $3::TEXT)
+  AND ($4::TEXT = '' OR method = $4::TEXT)
+  AND ($5::TEXT = '' OR path = $5::TEXT)
+  AND (
+    $6::TEXT = ''
+    OR ($6::TEXT = '2xx' AND status_code >= 200 AND status_code < 300)
+    OR ($6::TEXT = '3xx' AND status_code >= 300 AND status_code < 400)
+    OR ($6::TEXT = '4xx' AND status_code >= 400 AND status_code < 500)
+    OR ($6::TEXT = '5xx' AND status_code >= 500 AND status_code < 600)
+  )
+GROUP BY bucket
+ORDER BY bucket
+`
+
+type GetAdminAPIMetricsTrendHourlyParams struct {
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2     pgtype.Timestamptz `json:"created_at_2"`
+	WorkspaceFilter string             `json:"workspace_filter"`
+	MethodFilter    string             `json:"method_filter"`
+	PathFilter      string             `json:"path_filter"`
+	StatusClass     string             `json:"status_class"`
+}
+
+type GetAdminAPIMetricsTrendHourlyRow struct {
+	Bucket           pgtype.Timestamptz `json:"bucket"`
+	TotalCalls       int32              `json:"total_calls"`
+	SuccessCount     int32              `json:"success_count"`
+	ErrorCount       int32              `json:"error_count"`
+	ClientErrorCount int32              `json:"client_error_count"`
+	ServerErrorCount int32              `json:"server_error_count"`
+	RateLimitedCount int32              `json:"rate_limited_count"`
+	P50Ms            int32              `json:"p50_ms"`
+	P95Ms            int32              `json:"p95_ms"`
+	P99Ms            int32              `json:"p99_ms"`
+	AvgMs            int32              `json:"avg_ms"`
+}
+
+func (q *Queries) GetAdminAPIMetricsTrendHourly(ctx context.Context, arg GetAdminAPIMetricsTrendHourlyParams) ([]GetAdminAPIMetricsTrendHourlyRow, error) {
+	rows, err := q.db.Query(ctx, getAdminAPIMetricsTrendHourly,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.WorkspaceFilter,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAdminAPIMetricsTrendHourlyRow{}
+	for rows.Next() {
+		var i GetAdminAPIMetricsTrendHourlyRow
+		if err := rows.Scan(
+			&i.Bucket,
+			&i.TotalCalls,
+			&i.SuccessCount,
+			&i.ErrorCount,
+			&i.ClientErrorCount,
+			&i.ServerErrorCount,
+			&i.RateLimitedCount,
+			&i.P50Ms,
+			&i.P95Ms,
+			&i.P99Ms,
+			&i.AvgMs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getAdminAPIMetricsWorkspaces = `-- name: GetAdminAPIMetricsWorkspaces :many
+WITH workspace_stats AS (
+  SELECT
+    am.workspace_id,
+    COALESCE(w.name, '') AS workspace_name,
+    COUNT(*)::INTEGER AS total_calls,
+    COUNT(*) FILTER (WHERE am.status_code = 429)::INTEGER AS rate_limited_count,
+    CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE am.status_code >= 400)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS error_rate_pct,
+    CAST(CASE WHEN COUNT(*) = 0 THEN 0 ELSE (COUNT(*) FILTER (WHERE am.status_code >= 500)::DOUBLE PRECISION / COUNT(*)::DOUBLE PRECISION) * 100 END AS DOUBLE PRECISION) AS server_failure_rate_pct,
+    COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY am.duration_ms), 0)::INTEGER AS p95_ms,
+    COALESCE(percentile_cont(0.99) WITHIN GROUP (ORDER BY am.duration_ms), 0)::INTEGER AS p99_ms
+  FROM api_metrics am
+  LEFT JOIN workspaces w ON w.id = am.workspace_id
+  WHERE am.created_at >= $1
+    AND am.created_at <= $2
+    AND ($5::TEXT = '' OR am.workspace_id = $5::TEXT)
+    AND ($6::TEXT = '' OR am.method = $6::TEXT)
+    AND ($7::TEXT = '' OR am.path = $7::TEXT)
+    AND (
+      $8::TEXT = ''
+      OR ($8::TEXT = '2xx' AND am.status_code >= 200 AND am.status_code < 300)
+      OR ($8::TEXT = '3xx' AND am.status_code >= 300 AND am.status_code < 400)
+      OR ($8::TEXT = '4xx' AND am.status_code >= 400 AND am.status_code < 500)
+      OR ($8::TEXT = '5xx' AND am.status_code >= 500 AND am.status_code < 600)
+    )
+  GROUP BY am.workspace_id, w.name
+  HAVING COUNT(*) >= $9::INTEGER
+),
+endpoint_p95 AS (
+  SELECT
+    am.workspace_id,
+    am.path AS slowest_endpoint,
+    COALESCE(percentile_cont(0.95) WITHIN GROUP (ORDER BY am.duration_ms), 0)::INTEGER AS slowest_endpoint_p95_ms
+  FROM api_metrics am
+  WHERE am.created_at >= $1
+    AND am.created_at <= $2
+    AND ($5::TEXT = '' OR am.workspace_id = $5::TEXT)
+    AND ($6::TEXT = '' OR am.method = $6::TEXT)
+    AND ($7::TEXT = '' OR am.path = $7::TEXT)
+    AND (
+      $8::TEXT = ''
+      OR ($8::TEXT = '2xx' AND am.status_code >= 200 AND am.status_code < 300)
+      OR ($8::TEXT = '3xx' AND am.status_code >= 300 AND am.status_code < 400)
+      OR ($8::TEXT = '4xx' AND am.status_code >= 400 AND am.status_code < 500)
+      OR ($8::TEXT = '5xx' AND am.status_code >= 500 AND am.status_code < 600)
+    )
+  GROUP BY am.workspace_id, am.path
+),
+endpoint_stats AS (
+  SELECT
+    workspace_id,
+    slowest_endpoint,
+    slowest_endpoint_p95_ms,
+    ROW_NUMBER() OVER (
+      PARTITION BY workspace_id
+      ORDER BY slowest_endpoint_p95_ms DESC, slowest_endpoint ASC
+    ) AS rn
+  FROM endpoint_p95
+)
+SELECT
+  ws.workspace_id,
+  ws.workspace_name,
+  ws.total_calls,
+  ws.rate_limited_count,
+  ws.error_rate_pct,
+  ws.server_failure_rate_pct,
+  ws.p95_ms,
+  ws.p99_ms,
+  COALESCE(es.slowest_endpoint, '') AS slowest_endpoint,
+  COALESCE(es.slowest_endpoint_p95_ms, 0)::INTEGER AS slowest_endpoint_p95_ms
+FROM workspace_stats ws
+LEFT JOIN endpoint_stats es ON es.workspace_id = ws.workspace_id AND es.rn = 1
+ORDER BY
+  CASE WHEN $3::TEXT = 'p95_ms_desc' THEN ws.p95_ms END DESC,
+  CASE WHEN $3::TEXT = 'p99_ms_desc' THEN ws.p99_ms END DESC,
+  CASE WHEN $3::TEXT = 'rate_limited_desc' THEN ws.rate_limited_count END DESC,
+  ws.total_calls DESC
+LIMIT $4::INTEGER
+`
+
+type GetAdminAPIMetricsWorkspacesParams struct {
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	CreatedAt_2     pgtype.Timestamptz `json:"created_at_2"`
+	SortKey         string             `json:"sort_key"`
+	RowLimit        int32              `json:"row_limit"`
+	WorkspaceFilter string             `json:"workspace_filter"`
+	MethodFilter    string             `json:"method_filter"`
+	PathFilter      string             `json:"path_filter"`
+	StatusClass     string             `json:"status_class"`
+	MinCalls        int32              `json:"min_calls"`
+}
+
+type GetAdminAPIMetricsWorkspacesRow struct {
+	WorkspaceID          string  `json:"workspace_id"`
+	WorkspaceName        string  `json:"workspace_name"`
+	TotalCalls           int32   `json:"total_calls"`
+	RateLimitedCount     int32   `json:"rate_limited_count"`
+	ErrorRatePct         float64 `json:"error_rate_pct"`
+	ServerFailureRatePct float64 `json:"server_failure_rate_pct"`
+	P95Ms                int32   `json:"p95_ms"`
+	P99Ms                int32   `json:"p99_ms"`
+	SlowestEndpoint      string  `json:"slowest_endpoint"`
+	SlowestEndpointP95Ms int32   `json:"slowest_endpoint_p95_ms"`
+}
+
+func (q *Queries) GetAdminAPIMetricsWorkspaces(ctx context.Context, arg GetAdminAPIMetricsWorkspacesParams) ([]GetAdminAPIMetricsWorkspacesRow, error) {
+	rows, err := q.db.Query(ctx, getAdminAPIMetricsWorkspaces,
+		arg.CreatedAt,
+		arg.CreatedAt_2,
+		arg.SortKey,
+		arg.RowLimit,
+		arg.WorkspaceFilter,
+		arg.MethodFilter,
+		arg.PathFilter,
+		arg.StatusClass,
+		arg.MinCalls,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetAdminAPIMetricsWorkspacesRow{}
+	for rows.Next() {
+		var i GetAdminAPIMetricsWorkspacesRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.WorkspaceName,
+			&i.TotalCalls,
+			&i.RateLimitedCount,
+			&i.ErrorRatePct,
+			&i.ServerFailureRatePct,
+			&i.P95Ms,
+			&i.P99Ms,
+			&i.SlowestEndpoint,
+			&i.SlowestEndpointP95Ms,
 		); err != nil {
 			return nil, err
 		}
@@ -186,21 +1059,23 @@ func (q *Queries) GetAPIMetricsTrend(ctx context.Context, arg GetAPIMetricsTrend
 }
 
 const insertAPIMetric = `-- name: InsertAPIMetric :exec
-INSERT INTO api_metrics (workspace_id, method, path, status_code, duration_ms)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO api_metrics (workspace_id, api_key_id, method, path, status_code, duration_ms)
+VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertAPIMetricParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	Method      string `json:"method"`
-	Path        string `json:"path"`
-	StatusCode  int32  `json:"status_code"`
-	DurationMs  int32  `json:"duration_ms"`
+	WorkspaceID string      `json:"workspace_id"`
+	ApiKeyID    pgtype.Text `json:"api_key_id"`
+	Method      string      `json:"method"`
+	Path        string      `json:"path"`
+	StatusCode  int32       `json:"status_code"`
+	DurationMs  int32       `json:"duration_ms"`
 }
 
 func (q *Queries) InsertAPIMetric(ctx context.Context, arg InsertAPIMetricParams) error {
 	_, err := q.db.Exec(ctx, insertAPIMetric,
 		arg.WorkspaceID,
+		arg.ApiKeyID,
 		arg.Method,
 		arg.Path,
 		arg.StatusCode,

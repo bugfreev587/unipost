@@ -432,6 +432,7 @@ func main() {
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
+	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
 	apiMetricsRecorder := metrics.NewRecorder(queries)
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
@@ -655,6 +656,11 @@ func main() {
 		r.Get("/v1/admin/users/signups", adminHandler.GetUserSignups)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
 		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)
+		r.Get("/v1/admin/api-metrics/overall", adminAPIMetricsHandler.Overall)
+		r.Get("/v1/admin/api-metrics/summary", adminAPIMetricsHandler.Summary)
+		r.Get("/v1/admin/api-metrics/trend", adminAPIMetricsHandler.Trend)
+		r.Get("/v1/admin/api-metrics/status-codes", adminAPIMetricsHandler.StatusCodes)
+		r.Get("/v1/admin/api-metrics/workspaces", adminAPIMetricsHandler.Workspaces)
 	})
 
 	// All workspace-scoped routes — accept either a Bearer API key or
@@ -847,6 +853,7 @@ func main() {
 		r.Get("/v1/api-metrics/summary", apiMetricsHandler.Summary)
 		r.Get("/v1/api-metrics/trend", apiMetricsHandler.Trend)
 		r.Get("/v1/api-metrics/overall", apiMetricsHandler.Overall)
+		r.Get("/v1/api-metrics/status-codes", apiMetricsHandler.StatusCodes)
 
 		// Billing. Read is workspace-wide (any role); checkout / portal
 		// are owner-only because they touch the payment method.
