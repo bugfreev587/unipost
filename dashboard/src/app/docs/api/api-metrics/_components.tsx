@@ -348,7 +348,7 @@ function RelatedMetricsEndpoints() {
   return (
     <section className="api-field-section">
       <h2 className="api-field-section-title">Related Endpoints</h2>
-      <ul style={{ display: "grid", gap: 10, margin: 0, paddingLeft: 20, color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
+      <ul style={{ display: "grid", gap: 10, margin: 0, paddingLeft: 18, listStyleType: "disc", listStylePosition: "outside", color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
         <li><ApiInlineLink endpoint="GET /v1/api-metrics/overall" /> for aggregate totals.</li>
         <li><ApiInlineLink endpoint="GET /v1/api-metrics/summary" /> for per-endpoint latency and error rows.</li>
         <li><ApiInlineLink endpoint="GET /v1/api-metrics/trend" /> for hourly or daily chart buckets.</li>
