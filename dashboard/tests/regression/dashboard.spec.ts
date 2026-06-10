@@ -54,9 +54,26 @@ test.describe("public dashboard surfaces", () => {
   test("API Metrics docs stay wired into the API docs shell", async () => {
     const docsShellSource = await readFile(path.join(process.cwd(), "src/app/docs/_components/docs-shell.tsx"), "utf8");
     const apiMetricsPageSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/page.tsx"), "utf8");
+    const apiMetricsComponentSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/_components.tsx"), "utf8");
+    const apiMetricsOverallSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/overall/page.tsx"), "utf8");
+    const apiMetricsSummarySource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/summary/page.tsx"), "utf8");
+    const apiMetricsTrendSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/trend/page.tsx"), "utf8");
+    const apiMetricsStatusCodesSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/status-codes/page.tsx"), "utf8");
 
-    expect(docsShellSource).toContain('label: "API Metrics", href: "/docs/api/api-metrics", method: "GET"');
-    expect(apiMetricsPageSource).toContain("<SingleEndpointReferencePage");
+    expect(docsShellSource).toContain('label: "API Metrics"');
+    expect(docsShellSource).toContain('href: "/docs/api/api-metrics/overall"');
+    expect(docsShellSource).toContain('href: "/docs/api/api-metrics/summary"');
+    expect(docsShellSource).toContain('href: "/docs/api/api-metrics/trend"');
+    expect(docsShellSource).toContain('href: "/docs/api/api-metrics/status-codes"');
+    expect(apiMetricsPageSource).toContain('redirect("/docs/api/api-metrics/overall")');
+    expect(apiMetricsOverallSource).toContain('endpoint="overall"');
+    expect(apiMetricsSummarySource).toContain('endpoint="summary"');
+    expect(apiMetricsTrendSource).toContain('endpoint="trend"');
+    expect(apiMetricsStatusCodesSource).toContain('endpoint="status-codes"');
+    expect(apiMetricsComponentSource).toContain('path: "/v1/api-metrics/overall"');
+    expect(apiMetricsComponentSource).toContain('path: "/v1/api-metrics/summary"');
+    expect(apiMetricsComponentSource).toContain('path: "/v1/api-metrics/trend"');
+    expect(apiMetricsComponentSource).toContain('path: "/v1/api-metrics/status-codes"');
   });
 });
 

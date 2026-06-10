@@ -70,7 +70,10 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
       { label: "Analytics platforms", method: "GET", path: "/v1/analytics/platforms", href: "/docs/api/analytics/platforms", description: "List platform availability and analytics health." },
       { label: "Get analytics platform", method: "GET", path: "/v1/analytics/platforms/{platform}", href: "/docs/api/analytics/platforms/detail", description: "Read platform summary, trend, accounts, and top posts." },
       { label: "Request analytics refresh", method: "POST", path: "/v1/analytics/refresh", href: "/docs/api/analytics/refresh", description: "Mark matching rows stale for the refresh worker." },
-      { label: "API Metrics", method: "GET", path: "/v1/api-metrics/overall", href: "/docs/api/api-metrics", description: "Read workspace API latency, volume, and status metrics." },
+      { label: "Overall metrics", method: "GET", path: "/v1/api-metrics/overall", href: "/docs/api/api-metrics/overall", description: "Read aggregate workspace API latency, volume, and status metrics." },
+      { label: "Endpoint summary", method: "GET", path: "/v1/api-metrics/summary", href: "/docs/api/api-metrics/summary", description: "Compare metrics by normalized endpoint and HTTP method." },
+      { label: "Metrics trend", method: "GET", path: "/v1/api-metrics/trend", href: "/docs/api/api-metrics/trend", description: "Chart hourly or daily API traffic, error, and latency buckets." },
+      { label: "Status-code distribution", method: "GET", path: "/v1/api-metrics/status-codes", href: "/docs/api/api-metrics/status-codes", description: "Break API traffic down by exact HTTP status code." },
     ],
   },
   {
