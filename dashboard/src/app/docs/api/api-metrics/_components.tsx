@@ -348,9 +348,12 @@ function RelatedMetricsEndpoints() {
   return (
     <section className="api-field-section">
       <h2 className="api-field-section-title">Related Endpoints</h2>
-      <p style={{ margin: 0, color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
-        Use <ApiInlineLink endpoint="GET /v1/api-metrics/overall" /> for aggregate totals, <ApiInlineLink endpoint="GET /v1/api-metrics/summary" /> for per-endpoint latency and error rows, <ApiInlineLink endpoint="GET /v1/api-metrics/trend" /> for hourly or daily chart buckets, and <ApiInlineLink endpoint="GET /v1/api-metrics/status-codes" /> for exact status-code distribution.
-      </p>
+      <ul style={{ display: "grid", gap: 10, margin: 0, paddingLeft: 20, color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
+        <li><ApiInlineLink endpoint="GET /v1/api-metrics/overall" /> for aggregate totals.</li>
+        <li><ApiInlineLink endpoint="GET /v1/api-metrics/summary" /> for per-endpoint latency and error rows.</li>
+        <li><ApiInlineLink endpoint="GET /v1/api-metrics/trend" /> for hourly or daily chart buckets.</li>
+        <li><ApiInlineLink endpoint="GET /v1/api-metrics/status-codes" /> for exact status-code distribution.</li>
+      </ul>
     </section>
   );
 }
