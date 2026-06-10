@@ -1,28 +1,43 @@
 "use client";
 
-import { ApiReferencePage, CodeTabs, MethodBadge, ParamTable } from "../_components/doc-components";
+import { ApiInlineLink, EnumValues, type ApiFieldItem } from "../_components/doc-components";
+import { SingleEndpointReferencePage } from "../_components/single-endpoint-page";
 
-const QUERY_PARAMS = [
-  { name: "from", type: "RFC3339", required: false, description: "Start timestamp. Defaults to 7 days before now." },
-  { name: "to", type: "RFC3339", required: false, description: "End timestamp. Defaults to now. The maximum raw range is 90 days." },
-  { name: "interval", type: "hour | day", required: false, description: "Trend bucket size. Defaults to hour for short ranges and day for longer ranges." },
-  { name: "method", type: "GET | POST | PUT | PATCH | DELETE", required: false, description: "Filter by HTTP method." },
-  { name: "path", type: "string", required: false, description: "Filter by normalized endpoint path such as /v1/posts/:id/publish." },
-  { name: "status_class", type: "2xx | 3xx | 4xx | 5xx", required: false, description: "Filter by HTTP status class." },
-  { name: "sort", type: "string", required: false, description: "For summary endpoints: total_calls_desc, p95_ms_desc, p99_ms_desc, server_errors_desc, or rate_limited_desc." },
-  { name: "limit", type: "integer", required: false, description: "Maximum rows to return. Defaults to 50, maximum 200." },
+const AUTH_FIELDS: ApiFieldItem[] = [
+  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key." },
 ];
 
-const METRICS = [
-  ["total_calls", "Number of matching API requests."],
-  ["success_count", "Responses with status below 400."],
-  ["client_error_count", "Responses from 400 through 499, including 429."],
-  ["server_error_count", "Responses with status 500 or higher."],
-  ["rate_limited_count", "Responses with status 429, also included in client_error_count."],
-  ["error_rate_pct", "All 4xx and 5xx responses divided by total calls, including 429 rate-limit responses."],
-  ["server_failure_rate_pct", "5xx responses divided by total calls."],
-  ["p50_ms / p95_ms / p99_ms", "Latency percentiles measured at the UniPost API layer."],
-  ["avg_ms", "Average latency in milliseconds."],
+const QUERY_FIELDS: ApiFieldItem[] = [
+  { name: "from?", type: "string", description: "Start timestamp in RFC3339 format. Defaults to 7 days before now." },
+  { name: "to?", type: "string", description: "End timestamp in RFC3339 format. Defaults to now. The maximum raw range is 90 days." },
+  { name: "interval?", type: "string", description: <>Trend bucket size. Defaults to hour for short ranges and day for longer ranges.<EnumValues values={["hour", "day"]} /></> },
+  { name: "method?", type: "string", description: <>Filter by HTTP method.<EnumValues values={["GET", "POST", "PUT", "PATCH", "DELETE"]} /></> },
+  { name: "path?", type: "string", description: <>Filter by normalized endpoint path, such as <code>/v1/posts/:id/publish</code>.</> },
+  { name: "status_class?", type: "string", description: <>Filter by HTTP status class.<EnumValues values={["2xx", "3xx", "4xx", "5xx"]} /></> },
+  { name: "sort?", type: "string", description: <>Summary sort key.<EnumValues values={["total_calls_desc", "p95_ms_desc", "p99_ms_desc", "server_errors_desc", "rate_limited_desc"]} /></> },
+  { name: "limit?", type: "integer", description: "Maximum rows for list endpoints. Defaults to 50, maximum 200." },
+];
+
+const RESPONSE_200_FIELDS: ApiFieldItem[] = [
+  { name: "total_calls", type: "number", description: "Number of matching API requests." },
+  { name: "success_count", type: "number", description: "Responses with status below 400." },
+  { name: "client_error_count", type: "number", description: "Responses from 400 through 499, including 429." },
+  { name: "server_error_count", type: "number", description: "Responses with status 500 or higher." },
+  { name: "rate_limited_count", type: "number", description: "Responses with status 429, also included in client_error_count." },
+  { name: "error_rate_pct", type: "number", description: "All 4xx and 5xx responses divided by total calls, including 429 rate-limit responses." },
+  { name: "server_failure_rate_pct", type: "number", description: "5xx responses divided by total calls." },
+  { name: "reliability_pct", type: "number", description: "Requests that did not return 5xx, divided by total calls." },
+  { name: "p50_ms", type: "number", description: "Median latency measured at the UniPost API layer." },
+  { name: "p95_ms", type: "number", description: "95th percentile latency measured at the UniPost API layer." },
+  { name: "p99_ms", type: "number", description: "99th percentile latency measured at the UniPost API layer." },
+  { name: "avg_ms", type: "number", description: "Average latency in milliseconds." },
+];
+
+const ERROR_FIELDS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED" or "VALIDATION_ERROR".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "unauthorized" or "validation_error".' },
+  { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const SNIPPETS = [
@@ -40,13 +55,19 @@ const SNIPPETS = [
   },
   {
     lang: "curl",
+    label: "Trend",
+    code: `curl "https://api.unipost.dev/v1/api-metrics/trend?interval=day" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
+    lang: "curl",
     label: "Status Codes",
     code: `curl "https://api.unipost.dev/v1/api-metrics/status-codes?status_class=4xx" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
 ];
 
-const RESPONSE = [
+const RESPONSE_SNIPPETS = [
   {
     lang: "json",
     label: "200",
@@ -67,71 +88,68 @@ const RESPONSE = [
   }
 }`,
   },
+  {
+    lang: "json",
+    label: "400",
+    code: `{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "normalized_code": "validation_error",
+    "message": "time range cannot exceed 90 days"
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "401",
+    code: `{
+  "error": {
+    "code": "UNAUTHORIZED",
+    "normalized_code": "unauthorized",
+    "message": "Missing or invalid API key."
+  },
+  "request_id": "req_123"
+}`,
+  },
 ];
 
 export default function APIMetricsDocsPage() {
   return (
-    <ApiReferencePage
-      breadcrumbItems={[{ label: "API Reference", href: "/docs/api" }, { label: "API Metrics" }]}
-      section="api"
+    <SingleEndpointReferencePage
+      section="analytics"
       title="API Metrics"
-      description="Query workspace-scoped latency, volume, and error metrics for API-key calls to the UniPost Developer API."
+      description={
+        <>
+          Query workspace-scoped latency, volume, and error metrics for API-key calls to the UniPost Developer API. Metrics include API-key-authenticated Developer API traffic only; dashboard sessions, admin routes, hosted public flows, OAuth callbacks, inbound provider webhooks, health checks, and the metrics endpoints themselves are excluded.
+        </>
+      }
+      method="GET"
+      path="/v1/api-metrics/overall"
+      requestSections={[
+        { title: "Authorization", items: AUTH_FIELDS },
+        { title: "Query Params", items: QUERY_FIELDS },
+      ]}
+      responses={[
+        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "400", fields: ERROR_FIELDS },
+        { code: "401", fields: ERROR_FIELDS },
+        { code: "500", fields: ERROR_FIELDS },
+      ]}
+      snippets={SNIPPETS}
+      responseSnippets={RESPONSE_SNIPPETS}
     >
-      <div style={{ display: "grid", gap: 28 }}>
-        <section>
-          <h2 style={{ fontSize: 18, margin: "0 0 12px", color: "var(--docs-text)" }}>Endpoints</h2>
-          <div style={{ display: "grid", gap: 8 }}>
-            {[
-              ["/v1/api-metrics/overall", "Aggregate calls, errors, reliability, and latency."],
-              ["/v1/api-metrics/summary", "Per-method and per-normalized-path metrics."],
-              ["/v1/api-metrics/trend", "Hourly or daily buckets for calls, errors, and latency."],
-              ["/v1/api-metrics/status-codes", "Exact HTTP status-code distribution by endpoint."],
-            ].map(([path, description]) => (
-              <div key={path} style={{ display: "grid", gridTemplateColumns: "88px minmax(0, 1fr)", gap: 12, alignItems: "center", padding: 12, border: "1px solid var(--docs-border)", borderRadius: 8 }}>
-                <MethodBadge method="GET" />
-                <div>
-                  <code style={{ fontFamily: "var(--docs-mono)", color: "var(--docs-text)" }}>{path}</code>
-                  <div style={{ fontSize: 13, color: "var(--docs-text-soft)", marginTop: 4 }}>{description}</div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section>
-          <h2 style={{ fontSize: 18, margin: "0 0 12px", color: "var(--docs-text)" }}>Scope</h2>
-          <p style={{ color: "var(--docs-text-soft)", fontSize: 14, lineHeight: 1.7 }}>
-            Metrics include API-key-authenticated Developer API traffic only. Dashboard session traffic, admin routes, public hosted flows, OAuth callbacks, inbound provider webhooks, health checks, and the API metrics endpoints themselves are excluded.
+      <section className="api-field-section">
+        <h2 className="api-field-section-title">Related Endpoints</h2>
+        <div style={{ display: "grid", gap: 10 }}>
+          <p style={{ margin: 0, color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
+            Use <ApiInlineLink endpoint="GET /v1/api-metrics/overall" /> for aggregate totals, <ApiInlineLink endpoint="GET /v1/api-metrics/summary" /> for per-endpoint latency and error rows, <ApiInlineLink endpoint="GET /v1/api-metrics/trend" /> for hourly or daily chart buckets, and <ApiInlineLink endpoint="GET /v1/api-metrics/status-codes" /> for exact status-code distribution.
           </p>
-          <p style={{ color: "var(--docs-text-soft)", fontSize: 14, lineHeight: 1.7, marginTop: 10 }}>
-            Trend <code style={{ fontFamily: "var(--docs-mono)" }}>error_count</code> uses the same 4xx-plus-5xx definition as <code style={{ fontFamily: "var(--docs-mono)" }}>error_rate_pct</code>; 429 responses are also exposed separately through <code style={{ fontFamily: "var(--docs-mono)" }}>rate_limited_count</code>.
+          <p style={{ margin: 0, color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.7 }}>
+            Trend <code>error_count</code> uses the same 4xx-plus-5xx definition as <code>error_rate_pct</code>; 429 responses are also exposed separately through <code>rate_limited_count</code>.
           </p>
-        </section>
-
-        <ParamTable title="Query parameters" params={QUERY_PARAMS} />
-
-        <section>
-          <h2 style={{ fontSize: 18, margin: "0 0 12px", color: "var(--docs-text)" }}>Metric fields</h2>
-          <div style={{ borderTop: "1px solid var(--docs-border)" }}>
-            {METRICS.map(([name, description]) => (
-              <div key={name} style={{ display: "grid", gridTemplateColumns: "210px minmax(0, 1fr)", gap: 14, padding: "10px 0", borderBottom: "1px solid var(--docs-border)" }}>
-                <code style={{ fontFamily: "var(--docs-mono)", color: "var(--docs-text)" }}>{name}</code>
-                <span style={{ color: "var(--docs-text-soft)", fontSize: 13.5 }}>{description}</span>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section>
-          <h2 style={{ fontSize: 18, margin: "0 0 12px", color: "var(--docs-text)" }}>Examples</h2>
-          <CodeTabs snippets={SNIPPETS} />
-        </section>
-
-        <section>
-          <h2 style={{ fontSize: 18, margin: "0 0 12px", color: "var(--docs-text)" }}>Response</h2>
-          <CodeTabs snippets={RESPONSE} />
-        </section>
-      </div>
-    </ApiReferencePage>
+        </div>
+      </section>
+    </SingleEndpointReferencePage>
   );
 }

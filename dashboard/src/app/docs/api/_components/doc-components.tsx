@@ -1363,6 +1363,7 @@ function getApiSectionBreadcrumb(pathname: string) {
     { prefix: "/docs/api/posts/drafts/", label: "Drafts", href: "/docs/api/posts/drafts" },
     { prefix: "/docs/api/posts/", label: "Posts", href: "/docs/api/posts/list" },
     { prefix: "/docs/api/media/", label: "Media", href: "/docs/api/media" },
+    { prefix: "/docs/api/api-metrics", label: "API Metrics", href: "/docs/api/api-metrics" },
     { prefix: "/docs/api/analytics/", label: "Analytics", href: "/docs/api/analytics" },
     { prefix: "/docs/api/webhooks/", label: "Webhooks", href: "/docs/api/webhooks" },
     { prefix: "/docs/api/workspace/", label: "Workspace", href: "/docs/api/workspace/get" },
