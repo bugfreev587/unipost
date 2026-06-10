@@ -1,16 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
-import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
   getAPIMetricsSummary,
   getAPIMetricsTrend,
   getAPIMetricsOverall,
+  getAPIMetricsStatusCodes,
   type APIMetricsSummaryRow,
   type APIMetricsTrendRow,
   type APIMetricsOverall,
+  type APIMetricsStatusCodeRow,
 } from "@/lib/api";
 import { Activity, CheckCircle2, AlertTriangle, Clock, TrendingUp } from "lucide-react";
 
@@ -22,38 +22,42 @@ const TIME_RANGES = [
 ];
 
 export default function APIMetricsPage() {
-  useParams<{ id: string }>();
-  const workspaceId = useWorkspaceId();
   const { getToken } = useAuth();
 
   const [range, setRange] = useState(7);
   const [overall, setOverall] = useState<APIMetricsOverall | null>(null);
   const [summary, setSummary] = useState<APIMetricsSummaryRow[]>([]);
   const [trend, setTrend] = useState<APIMetricsTrendRow[]>([]);
+  const [statusCodes, setStatusCodes] = useState<APIMetricsStatusCodeRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!workspaceId) return;
     setLoading(true);
+    setError(null);
     try {
       const token = await getToken();
       if (!token) return;
       const to = new Date().toISOString();
       const from = new Date(Date.now() - range * 24 * 60 * 60 * 1000).toISOString();
-      const [o, s, t] = await Promise.all([
+      const interval = range > 7 ? "day" : "hour";
+      const [o, s, t, c] = await Promise.all([
         getAPIMetricsOverall(token, from, to),
-        getAPIMetricsSummary(token, from, to),
-        getAPIMetricsTrend(token, from, to),
+        getAPIMetricsSummary(token, from, to, { limit: 100 }),
+        getAPIMetricsTrend(token, from, to, { interval }),
+        getAPIMetricsStatusCodes(token, from, to, { limit: 100 }),
       ]);
       setOverall(o.data);
       setSummary(s.data || []);
       setTrend(t.data || []);
+      setStatusCodes(c.data || []);
     } catch (err) {
       console.error("Failed to load API metrics:", err);
+      setError("Failed to load API metrics. Please retry.");
     } finally {
       setLoading(false);
     }
-  }, [workspaceId, getToken, range]);
+  }, [getToken, range]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -84,6 +88,11 @@ export default function APIMetricsPage() {
 
       {loading ? (
         <div style={{ color: "var(--dmuted)", padding: 40, textAlign: "center" }}>Loading metrics...</div>
+      ) : error ? (
+        <div style={{ border: "1px solid var(--danger)", borderRadius: 8, padding: 16, color: "var(--danger)", background: "color-mix(in srgb, var(--danger) 8%, transparent)" }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8 }}>{error}</div>
+          <button type="button" className="dbtn dbtn-secondary" onClick={loadData}>Retry</button>
+        </div>
       ) : !overall || overall.total_calls === 0 ? (
         <div style={{ textAlign: "center", padding: 60, color: "var(--dmuted)" }}>
           <Activity style={{ width: 40, height: 40, margin: "0 auto 12px", opacity: 0.3 }} />
@@ -102,7 +111,7 @@ export default function APIMetricsPage() {
             />
             <MetricCard
               icon={<CheckCircle2 className="w-4 h-4" />}
-              label="Success Rate"
+              label="Reliability"
               value={`${overall.reliability_pct.toFixed(1)}%`}
               color={overall.reliability_pct >= 99 ? "var(--success)" : overall.reliability_pct >= 95 ? "var(--warning)" : "var(--danger)"}
             />
@@ -110,14 +119,21 @@ export default function APIMetricsPage() {
               icon={<AlertTriangle className="w-4 h-4" />}
               label="Errors"
               value={`${overall.client_error_count + overall.server_error_count}`}
-              sub={`${overall.client_error_count} client · ${overall.server_error_count} server`}
+              sub={`${overall.error_rate_pct.toFixed(1)}% / ${overall.client_error_count} client / ${overall.server_error_count} server`}
               color={overall.server_error_count > 0 ? "var(--danger)" : "var(--warning)"}
+            />
+            <MetricCard
+              icon={<AlertTriangle className="w-4 h-4" />}
+              label="Rate Limited"
+              value={`${overall.rate_limited_count}`}
+              sub="HTTP 429 responses"
+              color={overall.rate_limited_count > 0 ? "var(--warning)" : "var(--dmuted)"}
             />
             <MetricCard
               icon={<Clock className="w-4 h-4" />}
               label="Latency (p50 / p95 / p99)"
-              value={`${overall.p50_ms}ms`}
-              sub={`p95: ${overall.p95_ms}ms · p99: ${overall.p99_ms}ms`}
+              value={`${overall.p95_ms}ms`}
+              sub={`p50: ${overall.p50_ms}ms / p99: ${overall.p99_ms}ms / avg: ${overall.avg_ms}ms`}
               color="var(--dtext)"
             />
           </div>
@@ -159,7 +175,43 @@ export default function APIMetricsPage() {
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 10, color: "var(--dmuted2)" }}>
                 <span>{trend.length > 0 ? new Date(trend[0].bucket).toLocaleDateString() : ""}</span>
+                <span>
+                  {trend.length > 0
+                    ? `latest p95 ${trend[trend.length - 1].p95_ms}ms`
+                    : ""}
+                </span>
                 <span>{trend.length > 0 ? new Date(trend[trend.length - 1].bucket).toLocaleDateString() : ""}</span>
+              </div>
+            </div>
+          )}
+
+          {statusCodes.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--dmuted2)", marginBottom: 8 }}>
+                Status Code Distribution
+              </div>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Status</th>
+                      <th>Endpoint</th>
+                      <th style={{ textAlign: "right" }}>Calls</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {statusCodes.slice(0, 12).map((row) => (
+                      <tr key={`${row.status_code}-${row.method}-${row.path}`}>
+                        <td style={{ fontFamily: "var(--font-geist-mono), monospace", color: statusColor(row.status_code) }}>{row.status_code}</td>
+                        <td>
+                          <span style={{ fontSize: 10, fontWeight: 600, color: methodColor(row.method), marginRight: 6, fontFamily: "var(--font-geist-mono), monospace" }}>{row.method}</span>
+                          <span style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 12.5 }}>{row.path}</span>
+                        </td>
+                        <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace" }}>{row.total_calls}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
           )}
@@ -176,6 +228,7 @@ export default function APIMetricsPage() {
                   <th style={{ textAlign: "right" }}>Calls</th>
                   <th style={{ textAlign: "right" }}>Success</th>
                   <th style={{ textAlign: "right" }}>4xx</th>
+                  <th style={{ textAlign: "right" }}>429</th>
                   <th style={{ textAlign: "right" }}>5xx</th>
                   <th style={{ textAlign: "right" }}>Error %</th>
                   <th style={{ textAlign: "right" }}>p50</th>
@@ -201,6 +254,7 @@ export default function APIMetricsPage() {
                       <td style={{ textAlign: "right", fontFamily: "var(--font-geist-mono), monospace" }}>{row.total_calls}</td>
                       <td style={{ textAlign: "right", color: "var(--success)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.success_count}</td>
                       <td style={{ textAlign: "right", color: row.client_error_count > 0 ? "var(--warning)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.client_error_count}</td>
+                      <td style={{ textAlign: "right", color: row.rate_limited_count > 0 ? "var(--warning)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.rate_limited_count}</td>
                       <td style={{ textAlign: "right", color: row.server_error_count > 0 ? "var(--danger)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>{row.server_error_count}</td>
                       <td style={{ textAlign: "right", color: errorRate > 10 ? "var(--danger)" : errorRate > 5 ? "var(--warning)" : "var(--dmuted)", fontFamily: "var(--font-geist-mono), monospace" }}>
                         {errorRate.toFixed(1)}%
@@ -218,6 +272,14 @@ export default function APIMetricsPage() {
       )}
     </>
   );
+}
+
+function statusColor(status: number): string {
+  if (status >= 500) return "var(--danger)";
+  if (status === 429) return "var(--warning)";
+  if (status >= 400) return "var(--warning)";
+  if (status >= 200 && status < 400) return "var(--success)";
+  return "var(--dmuted)";
 }
 
 function MetricCard({ icon, label, value, sub, color }: {

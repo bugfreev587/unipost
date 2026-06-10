@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/clerk/clerk-sdk-go/v2/jwks"
+	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/xiaoboyu/unipost-api/internal/apikey"
@@ -196,4 +196,8 @@ const APIKeyIDKey contextKey = "apiKeyID"
 func GetAPIKeyID(ctx context.Context) string {
 	id, _ := ctx.Value(APIKeyIDKey).(string)
 	return id
+}
+
+func SetAPIKeyID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, APIKeyIDKey, id)
 }

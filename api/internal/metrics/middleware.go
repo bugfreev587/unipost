@@ -1,14 +1,19 @@
 // Package metrics provides a chi middleware that records per-request
 // API metrics to the api_metrics table. Only active on API-key-auth
-// routes — dashboard (Clerk) routes are excluded.
+// routes - dashboard (Clerk) routes are excluded.
 
 package metrics
 
 import (
+	"context"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -18,19 +23,29 @@ import (
 // API-key-authenticated request. The insert is fire-and-forget (async)
 // so it never blocks or slows down the response.
 type Recorder struct {
-	queries *db.Queries
+	inserter metricInserter
 }
 
-func NewRecorder(queries *db.Queries) *Recorder {
-	return &Recorder{queries: queries}
+type metricInserter interface {
+	InsertAPIMetric(context.Context, db.InsertAPIMetricParams) error
+}
+
+func NewRecorder(inserter metricInserter) *Recorder {
+	return &Recorder{inserter: inserter}
 }
 
 // Middleware returns the chi-compatible handler wrapper.
 func (rec *Recorder) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if rec == nil || rec.inserter == nil || shouldSkipPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Only record requests authenticated via API key, not Clerk session.
 		// DualAuthMiddleware stamps APIKeyID in context for API-key paths.
-		if auth.GetAPIKeyID(r.Context()) == "" {
+		apiKeyID := auth.GetAPIKeyID(r.Context())
+		if apiKeyID == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -45,18 +60,22 @@ func (rec *Recorder) Middleware(next http.Handler) http.Handler {
 		next.ServeHTTP(sw, r)
 		durationMs := int(time.Since(start).Milliseconds())
 
-		// Normalize the path: strip UUIDs and IDs to group endpoints.
-		normalizedPath := normalizePath(r.URL.Path)
+		normalizedPath := normalizeRoutePattern(chi.RouteContext(r.Context()).RoutePattern(), r.URL.Path)
 
-		// Fire-and-forget insert — don't block the response.
+		// Fire-and-forget insert: don't block the response.
 		go func() {
-			_ = rec.queries.InsertAPIMetric(r.Context(), db.InsertAPIMetricParams{
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 2*time.Second)
+			defer cancel()
+			if err := rec.inserter.InsertAPIMetric(ctx, db.InsertAPIMetricParams{
 				WorkspaceID: workspaceID,
+				ApiKeyID:    pgtype.Text{String: apiKeyID, Valid: true},
 				Method:      r.Method,
 				Path:        normalizedPath,
 				StatusCode:  int32(sw.status),
 				DurationMs:  int32(durationMs),
-			})
+			}); err != nil {
+				slog.Debug("api metrics: insert failed", "err", err, "workspace_id", workspaceID)
+			}
 		}()
 	})
 }
@@ -72,20 +91,52 @@ func (sw *statusWriter) WriteHeader(code int) {
 	sw.ResponseWriter.WriteHeader(code)
 }
 
-// uuidRegex matches UUIDs and other ID-like path segments.
-var uuidRegex = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+var placeholderRegex = regexp.MustCompile(`\{[^/{}]+\}`)
+var uuidSegmentRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var numericSegmentRegex = regexp.MustCompile(`^[0-9]+$`)
+var longIDLikeSegmentRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{12,}$`)
 
-// normalizePath replaces UUID path segments with :id so that
-// /v1/social-posts/abc-123 and /v1/social-posts/def-456 both
-// become /v1/social-posts/:id.
-func normalizePath(path string) string {
-	// Replace UUIDs
-	normalized := uuidRegex.ReplaceAllString(path, ":id")
-	// Also replace any remaining numeric-only segments (e.g. /users/12345)
-	parts := strings.Split(normalized, "/")
+func shouldSkipPath(path string) bool {
+	for _, skippedPath := range []string{
+		"/v1/api-metrics",
+		"/v1/admin",
+		"/v1/me",
+		"/v1/public",
+		"/health",
+	} {
+		if path == skippedPath || strings.HasPrefix(path, skippedPath+"/") {
+			return true
+		}
+	}
+	for _, prefix := range []string{
+		"/webhooks/",
+	} {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return strings.HasSuffix(path, "/ws")
+}
+
+func normalizeRoutePattern(routePattern, rawPath string) string {
+	routePattern = strings.TrimSpace(routePattern)
+	if routePattern != "" {
+		routePattern = placeholderRegex.ReplaceAllString(routePattern, ":id")
+		if strings.HasPrefix(routePattern, "/") {
+			return routePattern
+		}
+	}
+	return normalizePathFallback(rawPath)
+}
+
+func normalizePathFallback(path string) string {
+	path = strings.Split(path, "?")[0]
+	parts := strings.Split(path, "/")
 	for i, p := range parts {
-		if len(p) > 8 && !strings.HasPrefix(p, "v1") && !strings.Contains(p, ":") {
-			// Long alphanumeric segments that aren't version prefixes
+		if p == "" || p == "v1" {
+			continue
+		}
+		if uuidSegmentRegex.MatchString(p) || numericSegmentRegex.MatchString(p) || (longIDLikeSegmentRegex.MatchString(p) && strings.IndexFunc(p, func(r rune) bool { return r >= '0' && r <= '9' }) >= 0) {
 			parts[i] = ":id"
 		}
 	}
