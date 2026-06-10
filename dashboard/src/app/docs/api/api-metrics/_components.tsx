@@ -320,8 +320,10 @@ export function ApiMetricsEndpointPage({ endpoint }: { endpoint: ApiMetricsEndpo
       snippets={config.snippets}
       responseSnippets={config.responseSnippets}
     >
-      <MetricSemantics />
-      <RelatedMetricsEndpoints />
+      <div style={{ display: "grid", gap: 34 }}>
+        <MetricSemantics />
+        <RelatedMetricsEndpoints />
+      </div>
     </SingleEndpointReferencePage>
   );
 }
