@@ -19,7 +19,7 @@ const METRICS = [
   ["client_error_count", "Responses from 400 through 499, including 429."],
   ["server_error_count", "Responses with status 500 or higher."],
   ["rate_limited_count", "Responses with status 429, also included in client_error_count."],
-  ["error_rate_pct", "All non-success responses divided by total calls."],
+  ["error_rate_pct", "All 4xx and 5xx responses divided by total calls, including 429 rate-limit responses."],
   ["server_failure_rate_pct", "5xx responses divided by total calls."],
   ["p50_ms / p95_ms / p99_ms", "Latency percentiles measured at the UniPost API layer."],
   ["avg_ms", "Average latency in milliseconds."],
@@ -103,6 +103,9 @@ export default function APIMetricsDocsPage() {
           <p style={{ color: "var(--docs-text-soft)", fontSize: 14, lineHeight: 1.7 }}>
             Metrics include API-key-authenticated Developer API traffic only. Dashboard session traffic, admin routes, public hosted flows, OAuth callbacks, inbound provider webhooks, health checks, and the API metrics endpoints themselves are excluded.
           </p>
+          <p style={{ color: "var(--docs-text-soft)", fontSize: 14, lineHeight: 1.7, marginTop: 10 }}>
+            Trend <code style={{ fontFamily: "var(--docs-mono)" }}>error_count</code> uses the same 4xx-plus-5xx definition as <code style={{ fontFamily: "var(--docs-mono)" }}>error_rate_pct</code>; 429 responses are also exposed separately through <code style={{ fontFamily: "var(--docs-mono)" }}>rate_limited_count</code>.
+          </p>
         </section>
 
         <ParamTable title="Query parameters" params={QUERY_PARAMS} />
@@ -132,4 +135,3 @@ export default function APIMetricsDocsPage() {
     </ApiReferencePage>
   );
 }
-

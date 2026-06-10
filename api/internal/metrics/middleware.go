@@ -97,15 +97,21 @@ var numericSegmentRegex = regexp.MustCompile(`^[0-9]+$`)
 var longIDLikeSegmentRegex = regexp.MustCompile(`^[A-Za-z0-9_-]{12,}$`)
 
 func shouldSkipPath(path string) bool {
-	for _, prefix := range []string{
+	for _, skippedPath := range []string{
 		"/v1/api-metrics",
 		"/v1/admin",
 		"/v1/me",
 		"/v1/public",
 		"/health",
+	} {
+		if path == skippedPath || strings.HasPrefix(path, skippedPath+"/") {
+			return true
+		}
+	}
+	for _, prefix := range []string{
 		"/webhooks/",
 	} {
-		if path == strings.TrimSuffix(prefix, "/") || strings.HasPrefix(path, prefix) {
+		if strings.HasPrefix(path, prefix) {
 			return true
 		}
 	}

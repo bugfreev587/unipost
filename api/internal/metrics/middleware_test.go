@@ -114,6 +114,32 @@ func TestRecorderSkipsMetricsEndpointsAndClerkTraffic(t *testing.T) {
 	}
 }
 
+func TestRecorderDoesNotSkipMediaTraffic(t *testing.T) {
+	inserter := newRecordingInserter()
+	rec := NewRecorder(inserter)
+	router := chi.NewRouter()
+	router.Use(testAuthContext("ws_1", "ak_1"))
+	router.Use(rec.Middleware)
+	router.Post("/v1/media", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/media", nil)
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201", rr.Code)
+	}
+	got := waitForMetric(t, inserter)
+	if got.arg.Path != "/v1/media" {
+		t.Fatalf("path = %q, want /v1/media", got.arg.Path)
+	}
+	if got.arg.StatusCode != http.StatusCreated {
+		t.Fatalf("status code = %d, want 201", got.arg.StatusCode)
+	}
+}
+
 func TestNormalizeRoutePatternKeepsResourceNamesAndNormalizesIDs(t *testing.T) {
 	tests := []struct {
 		name         string
