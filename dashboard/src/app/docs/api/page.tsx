@@ -70,7 +70,7 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
       { label: "Analytics platforms", method: "GET", path: "/v1/analytics/platforms", href: "/docs/api/analytics/platforms", description: "List platform availability and analytics health." },
       { label: "Get analytics platform", method: "GET", path: "/v1/analytics/platforms/{platform}", href: "/docs/api/analytics/platforms/detail", description: "Read platform summary, trend, accounts, and top posts." },
       { label: "Request analytics refresh", method: "POST", path: "/v1/analytics/refresh", href: "/docs/api/analytics/refresh", description: "Mark matching rows stale for the refresh worker." },
-      { label: "API metrics", method: "GET", path: "/v1/api-metrics/overall", href: "/docs/api/api-metrics", description: "Read workspace API latency, volume, and status metrics." },
+      { label: "API Metrics", method: "GET", path: "/v1/api-metrics/overall", href: "/docs/api/api-metrics", description: "Read workspace API latency, volume, and status metrics." },
     ],
   },
   {

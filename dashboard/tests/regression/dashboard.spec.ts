@@ -21,6 +21,7 @@ const publicRoutes = [
   { path: "/docs/api/analytics/platforms", marker: /Analytics platforms|GET\s+\/v1\/analytics\/platforms/i },
   { path: "/docs/api/analytics/platforms/detail", marker: /Get analytics platform|GET\s+\/v1\/analytics\/platforms\/\{platform\}/i },
   { path: "/docs/api/analytics/refresh", marker: /Request analytics refresh|POST\s+\/v1\/analytics\/refresh/i },
+  { path: "/docs/api/api-metrics", marker: /API Metrics|GET\s+\/v1\/api-metrics\/overall/i },
 ];
 
 test.describe("public dashboard surfaces", () => {
@@ -48,6 +49,14 @@ test.describe("public dashboard surfaces", () => {
     await expect(page.getByRole("link", { name: /Pinterest Analytics/i })).toBeVisible();
     await expect(page.getByText(/Coming Soon/i)).toHaveCount(0);
     await expect(page.getByText(/Thread Splitter|Caption Generator/i)).toHaveCount(0);
+  });
+
+  test("API Metrics docs stay wired into the API docs shell", async () => {
+    const docsShellSource = await readFile(path.join(process.cwd(), "src/app/docs/_components/docs-shell.tsx"), "utf8");
+    const apiMetricsPageSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/page.tsx"), "utf8");
+
+    expect(docsShellSource).toContain('label: "API Metrics", href: "/docs/api/api-metrics", method: "GET"');
+    expect(apiMetricsPageSource).toContain("<SingleEndpointReferencePage");
   });
 });
 
