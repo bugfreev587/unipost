@@ -3258,6 +3258,9 @@ export interface APIMetricsSummaryRow {
   success_count: number;
   client_error_count: number;
   server_error_count: number;
+  rate_limited_count: number;
+  error_rate_pct: number;
+  server_failure_rate_pct: number;
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
@@ -3269,6 +3272,13 @@ export interface APIMetricsTrendRow {
   total_calls: number;
   success_count: number;
   error_count: number;
+  client_error_count: number;
+  server_error_count: number;
+  rate_limited_count: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  avg_ms: number;
 }
 
 export interface APIMetricsOverall {
@@ -3276,34 +3286,131 @@ export interface APIMetricsOverall {
   success_count: number;
   client_error_count: number;
   server_error_count: number;
+  rate_limited_count: number;
+  error_rate_pct: number;
+  server_failure_rate_pct: number;
   reliability_pct: number;
   p50_ms: number;
   p95_ms: number;
   p99_ms: number;
+  avg_ms: number;
+}
+
+export interface APIMetricsStatusCodeRow {
+  status_code: number;
+  method: string;
+  path: string;
+  total_calls: number;
+}
+
+export interface AdminAPIMetricsWorkspaceRow {
+  workspace_id: string;
+  workspace_name: string;
+  total_calls: number;
+  rate_limited_count: number;
+  error_rate_pct: number;
+  server_failure_rate_pct: number;
+  p95_ms: number;
+  p99_ms: number;
+  slowest_endpoint: string;
+  slowest_endpoint_p95_ms: number;
+}
+
+export interface APIMetricsQueryParams {
+  from: string;
+  to: string;
+  interval?: "hour" | "day";
+  method?: string;
+  path?: string;
+  status_class?: "2xx" | "3xx" | "4xx" | "5xx";
+  sort?: "total_calls_desc" | "p95_ms_desc" | "p99_ms_desc" | "server_errors_desc" | "rate_limited_desc";
+  limit?: number;
+  workspace_id?: string;
+  min_calls?: number;
+}
+
+function apiMetricsQuery(params: APIMetricsQueryParams): string {
+  const q = new URLSearchParams();
+  q.set("from", params.from);
+  q.set("to", params.to);
+  for (const key of ["interval", "method", "path", "status_class", "sort", "workspace_id"] as const) {
+    const value = params[key];
+    if (value) q.set(key, String(value));
+  }
+  if (params.limit) q.set("limit", String(params.limit));
+  if (params.min_calls) q.set("min_calls", String(params.min_calls));
+  return q.toString();
 }
 
 export async function getAPIMetricsSummary(
   token: string,
   from: string,
-  to: string
+  to: string,
+  params?: Partial<APIMetricsQueryParams>
 ): Promise<ApiResponse<APIMetricsSummaryRow[]>> {
-  return request(`/v1/api-metrics/summary?from=${from}&to=${to}`, token);
+  return request(`/v1/api-metrics/summary?${apiMetricsQuery({ from, to, ...params })}`, token);
 }
 
 export async function getAPIMetricsTrend(
   token: string,
   from: string,
-  to: string
+  to: string,
+  params?: Partial<APIMetricsQueryParams>
 ): Promise<ApiResponse<APIMetricsTrendRow[]>> {
-  return request(`/v1/api-metrics/trend?from=${from}&to=${to}`, token);
+  return request(`/v1/api-metrics/trend?${apiMetricsQuery({ from, to, ...params })}`, token);
 }
 
 export async function getAPIMetricsOverall(
   token: string,
   from: string,
-  to: string
+  to: string,
+  params?: Partial<APIMetricsQueryParams>
 ): Promise<ApiResponse<APIMetricsOverall>> {
-  return request(`/v1/api-metrics/overall?from=${from}&to=${to}`, token);
+  return request(`/v1/api-metrics/overall?${apiMetricsQuery({ from, to, ...params })}`, token);
+}
+
+export async function getAPIMetricsStatusCodes(
+  token: string,
+  from: string,
+  to: string,
+  params?: Partial<APIMetricsQueryParams>
+): Promise<ApiResponse<APIMetricsStatusCodeRow[]>> {
+  return request(`/v1/api-metrics/status-codes?${apiMetricsQuery({ from, to, ...params })}`, token);
+}
+
+export async function getAdminAPIMetricsOverall(
+  token: string,
+  params: APIMetricsQueryParams
+): Promise<ApiResponse<APIMetricsOverall>> {
+  return request(`/v1/admin/api-metrics/overall?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminAPIMetricsSummary(
+  token: string,
+  params: APIMetricsQueryParams
+): Promise<ApiResponse<APIMetricsSummaryRow[]>> {
+  return request(`/v1/admin/api-metrics/summary?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminAPIMetricsTrend(
+  token: string,
+  params: APIMetricsQueryParams
+): Promise<ApiResponse<APIMetricsTrendRow[]>> {
+  return request(`/v1/admin/api-metrics/trend?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminAPIMetricsStatusCodes(
+  token: string,
+  params: APIMetricsQueryParams
+): Promise<ApiResponse<APIMetricsStatusCodeRow[]>> {
+  return request(`/v1/admin/api-metrics/status-codes?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminAPIMetricsWorkspaces(
+  token: string,
+  params: APIMetricsQueryParams
+): Promise<ApiResponse<AdminAPIMetricsWorkspaceRow[]>> {
+  return request(`/v1/admin/api-metrics/workspaces?${apiMetricsQuery(params)}`, token);
 }
 
 // Inbox

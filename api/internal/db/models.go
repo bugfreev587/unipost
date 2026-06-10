@@ -70,6 +70,7 @@ type ApiMetric struct {
 	StatusCode  int32              `json:"status_code"`
 	DurationMs  int32              `json:"duration_ms"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ApiKeyID    pgtype.Text        `json:"api_key_id"`
 }
 
 type AuditLog struct {

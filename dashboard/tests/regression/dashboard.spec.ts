@@ -54,6 +54,7 @@ test.describe("public dashboard surfaces", () => {
 test.describe("workspace-scoped developer routes", () => {
   const workspaceScopedPages = [
     "src/app/(dashboard)/projects/[id]/api-keys/page.tsx",
+    "src/app/(dashboard)/projects/[id]/analytics/api/page.tsx",
     "src/app/(dashboard)/projects/[id]/credentials/page.tsx",
     "src/app/(dashboard)/projects/[id]/webhooks/page.tsx",
   ];
