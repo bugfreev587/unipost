@@ -173,13 +173,13 @@ export default function LocalConnectTestPage() {
 
 const styles = `
 .lct-summary{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);gap:12px;margin:4px 0 28px}
-.lct-summary>div{border:1px solid #e5e9f0;border-radius:8px;background:#ffffff;padding:16px;box-shadow:0 1px 0 rgba(15,23,42,.02)}
-.lct-summary-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:#6f7685;margin-bottom:8px}
+.lct-summary>div{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:16px;box-shadow:var(--docs-card-shadow)}
+.lct-summary-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:8px}
 .lct-summary p{margin:0;color:var(--docs-text-soft);font-size:14px;line-height:1.62}
 .lct-note{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:8px 0 16px;max-width:820px}
 .lct-next{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.lct-next-link{display:inline-flex;align-items:center;min-height:34px;border:1px solid #d9e0ea;border-radius:6px;background:#ffffff;padding:0 12px;color:var(--docs-text);font-size:13px;font-weight:680;text-decoration:none;transition:border-color .14s ease,background .14s ease,transform .14s ease}
-.lct-next-link:hover{border-color:#c7d0dd;background:#fbfcfe;transform:translateY(-1px);text-decoration:none!important}
+.lct-next-link{display:inline-flex;align-items:center;min-height:34px;border:1px solid var(--docs-border);border-radius:6px;background:var(--docs-bg-elevated);padding:0 12px;color:var(--docs-text);font-size:13px;font-weight:680;text-decoration:none;transition:border-color .14s ease,background .14s ease,transform .14s ease,box-shadow .14s ease}
+.lct-next-link:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));background:var(--docs-bg-muted);box-shadow:var(--docs-card-shadow);transform:translateY(-1px);text-decoration:none!important}
 @media (max-width:760px){
   .lct-summary{grid-template-columns:1fr}
 }

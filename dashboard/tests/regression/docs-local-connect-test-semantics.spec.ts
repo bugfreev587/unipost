@@ -28,5 +28,8 @@ test.describe("local Connect testing documentation", () => {
     expect(pageSource).toContain("--profile-id \"$PROFILE_ID\"");
     expect(pageSource).toContain("Connection session URL:");
     expect(pageSource).toContain("Copy this URL into your browser");
+    expect(pageSource).toContain(".lct-summary>div{border:1px solid var(--docs-border)");
+    expect(pageSource).toContain("background:var(--docs-bg-elevated)");
+    expect(pageSource).not.toContain("background:#ffffff");
   });
 });
