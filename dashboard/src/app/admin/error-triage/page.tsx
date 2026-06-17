@@ -143,7 +143,7 @@ export default function AdminErrorTriagePage() {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       const res = await rerunAdminErrorTriageRun(token, runId);
-      setNotice("Run re-created for the same window.");
+      setNotice("Run refreshed for the same window.");
       await loadRuns(res.data.id);
     });
   }

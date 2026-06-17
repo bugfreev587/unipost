@@ -82,12 +82,10 @@ func (h *ErrorTriageHandler) Rerun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load error triage run: "+err.Error())
 		return
 	}
-	run, err := h.runner.Run(r.Context(), errortriage.RunOptions{
-		RunType:         errortriage.RunTypeManual,
-		WindowStart:     detail.Run.WindowStart,
-		WindowEnd:       detail.Run.WindowEnd,
-		AdminUserID:     auth.GetUserID(r.Context()),
-		SupersedesRunID: runID,
+	run, err := h.runner.Rerun(r.Context(), runID, errortriage.RunOptions{
+		WindowStart: detail.Run.WindowStart,
+		WindowEnd:   detail.Run.WindowEnd,
+		AdminUserID: auth.GetUserID(r.Context()),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to rerun error triage: "+err.Error())
