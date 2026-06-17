@@ -131,7 +131,7 @@ export default function LocalConnectTestPage() {
       <h2 id="create-session">3. Create a session to connect a social media account</h2>
       <p className="lct-note">
         Set your API key, profile ID, and target platform, then run the script.
-        The example uses <code>--allow-quickstart-creds</code> so a workspace
+        The example uses <code>--allow-quickstart-creds</code>{" "}so a workspace
         without uploaded platform credentials can still test against UniPost&apos;s
         shared OAuth app. Remove that flag when you intentionally want the test
         to require your workspace Platform Credentials.
