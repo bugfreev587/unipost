@@ -294,6 +294,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       items: [
         { label: "Quickstart Mode", href: "/docs/quickstart" },
         { label: "Connect Sessions", href: "/docs/connect-sessions" },
+        { label: "Local Connect testing", href: "/docs/local-connect-test" },
         { label: "Hosted Connect (White-label branding)", href: "/docs/white-label" },
         {
           label: "Platform Credentials",
@@ -2366,6 +2367,7 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/dashboard-quickstart"
     || current === "/docs/quickstart"
     || current === "/docs/connect-sessions"
+    || current === "/docs/local-connect-test"
     || current === "/docs/publishing"
     || current === "/docs/sdk"
     || current === "/docs/cli"

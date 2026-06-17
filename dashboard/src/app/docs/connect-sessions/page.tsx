@@ -308,6 +308,11 @@ export default function ConnectSessionsGuidePage() {
           <div className="cs-next-title">Get session</div>
           <div className="cs-next-body">Fallback polling for status and the completed managed account id.</div>
         </Link>
+        <Link href="/docs/local-connect-test" className="cs-next-card">
+          <div className="cs-next-kicker">Local testing</div>
+          <div className="cs-next-title">Run Connect from your terminal</div>
+          <div className="cs-next-body">Download the helper script and copy the returned hosted OAuth URL into a browser.</div>
+        </Link>
         <Link href="/docs/platform-credentials" className="cs-next-card">
           <div className="cs-next-kicker">Developer apps</div>
           <div className="cs-next-title">Platform Credentials</div>

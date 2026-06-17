@@ -21,6 +21,10 @@ export default function DocsHomePage() {
           <div className="docs-card-title">Connect Sessions</div>
           <p>Let end users connect customer-owned accounts with hosted OAuth, using UniPost&apos;s shared app or workspace Platform Credentials.</p>
         </Link>
+        <Link href="/docs/local-connect-test" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Local Connect testing</div>
+          <p>Download the helper script, create a Connect Session from your terminal, and open the returned OAuth URL in a browser.</p>
+        </Link>
       </div>
 
       <h2 id="dashboard-path">Using the Dashboard</h2>
@@ -46,7 +50,8 @@ export default function DocsHomePage() {
 
       <p>
         <strong>Customer-owned accounts:</strong> if you are embedding UniPost into your own product, start with{" "}
-        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use <Link href="/docs/white-label">Hosted Connect</Link>{" "}
+        <Link href="/docs/connect-sessions">Connect Sessions</Link>. Use{" "}
+        <Link href="/docs/local-connect-test">Local Connect testing</Link> to prove the flow from your terminal, use <Link href="/docs/white-label">Hosted Connect</Link>{" "}
         when you need white-label branding, and use <Link href="/docs/platform-credentials">Platform Credentials</Link> when you need your own OAuth app and platform quota.
       </p>
     </DocsPage>
