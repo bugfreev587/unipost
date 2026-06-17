@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, Copy, ExternalLink, X } from "lucide-react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 
 import {
   listAdminPostFailures,
@@ -27,6 +36,9 @@ export default function AdminErrorsPage() {
   const [platform, setPlatform] = useState<(typeof PLATFORM_OPTIONS)[number]>("all");
   const [source, setSource] = useState<(typeof SOURCE_OPTIONS)[number]>("all");
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(30);
+  const [selectedFailureId, setSelectedFailureId] = useState<string | null>(null);
+  const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
+  const [rawCopied, setRawCopied] = useState(false);
   const limit = 100;
 
   const loadFailures = useCallback(async () => {
@@ -75,6 +87,38 @@ export default function AdminErrorsPage() {
     failures.forEach((item) => counts.set(item.source, (counts.get(item.source) || 0) + 1));
     return [...counts.entries()].sort((a, b) => b[1] - a[1])[0] ?? null;
   }, [failures]);
+  const selectedFailure = useMemo(() => {
+    if (!selectedFailureId) return null;
+    return failures.find((failure, idx) => failureKey(failure, idx) === selectedFailureId) ?? null;
+  }, [failures, selectedFailureId]);
+
+  useEffect(() => {
+    if (selectedFailureId && !selectedFailure) {
+      setSelectedFailureId(null);
+    }
+  }, [selectedFailure, selectedFailureId]);
+
+  const openFailureDetail = useCallback((failure: AdminUserPostFailure, idx: number) => {
+    setSelectedFailureId(failureKey(failure, idx));
+    setDrawerTab("attributes");
+    setRawCopied(false);
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    setSelectedFailureId(null);
+    setRawCopied(false);
+  }, []);
+
+  const copyRawFailure = useCallback(async () => {
+    if (!selectedFailure) return;
+    await navigator.clipboard.writeText(JSON.stringify(selectedFailure, null, 2));
+    setRawCopied(true);
+    window.setTimeout(() => setRawCopied(false), 1200);
+  }, [selectedFailure]);
+
+  const stopLinkClick = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
+    event.stopPropagation();
+  }, []);
 
   return (
     <AdminShell title="Errors" loading={loading} onRefresh={loadFailures}>
@@ -132,62 +176,344 @@ export default function AdminErrorsPage() {
         </select>
       </div>
 
-      <div className="ad-stack">
-        {loading && failures.length === 0 ? (
-          <div className="ad-failure-card" style={{ color: "var(--dmuted)", textAlign: "center" }}>Loading…</div>
-        ) : failures.length === 0 ? (
-          <div className="ad-failure-card" style={{ color: "var(--dmuted)", textAlign: "center" }}>
-            No failures matched the current filters.
-          </div>
-        ) : (
-          failures.map((failure, idx) => {
-            const message = failure.error_message || failure.error_summary || "No error message recorded.";
-            return (
-              <article
-                key={`${failure.post_id}-${failure.platform || "parent"}-${idx}`}
-                className="ad-failure-card"
-              >
-                <div className="ad-failure-head">
-                  <div>
-                    <div className="ad-failure-meta">
-                      <span className="ad-badge ad-b-gray">{failure.platform || failure.post_status}</span>
-                      <span className="ad-badge ad-b-blue">{failure.source}</span>
-                      {failure.account_name ? <span style={{ fontSize: 11, color: "var(--dmuted)" }}>@{failure.account_name}</span> : null}
+      <div style={errorsConsoleStyle}>
+        <div className="ad-stack">
+          {loading && failures.length === 0 ? (
+            <div className="ad-failure-card" style={{ color: "var(--dmuted)", textAlign: "center" }}>Loading...</div>
+          ) : failures.length === 0 ? (
+            <div className="ad-failure-card" style={{ color: "var(--dmuted)", textAlign: "center" }}>
+              No failures matched the current filters.
+            </div>
+          ) : (
+            failures.map((failure, idx) => {
+              const id = failureKey(failure, idx);
+              const selected = id === selectedFailureId;
+              const message = failure.error_message || failure.error_summary || "No error message recorded.";
+              return (
+                <article
+                  key={id}
+                  className="ad-failure-card"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open error details for ${failure.user_email}`}
+                  aria-pressed={selected}
+                  onClick={() => openFailureDetail(failure, idx)}
+                  onKeyDown={(event) => handleFailureKeyDown(event, () => openFailureDetail(failure, idx))}
+                  style={{
+                    cursor: "pointer",
+                    outline: "none",
+                    borderColor: selected ? "color-mix(in srgb, var(--danger) 38%, var(--dborder))" : undefined,
+                    background: selected ? "color-mix(in srgb, var(--danger-soft) 42%, var(--surface))" : undefined,
+                  }}
+                >
+                  <div className="ad-failure-head">
+                    <div>
+                      <div className="ad-failure-meta">
+                        <span className="ad-badge ad-b-gray">{failure.platform || failure.post_status}</span>
+                        <span className="ad-badge ad-b-blue">{failure.source}</span>
+                        {failure.account_name ? <span style={{ fontSize: 11, color: "var(--dmuted)" }}>@{failure.account_name}</span> : null}
+                      </div>
+                      <div className="ad-failure-title" style={{ marginTop: 6 }}>
+                        <Link href={`/admin/users?user=${failure.user_id}`} className="ad-link" onClick={stopLinkClick}>
+                          {failure.user_email}
+                        </Link>
+                        <span style={{ color: "var(--dmuted2)" }}> · </span>
+                        <span>{failure.workspace_name}</span>
+                      </div>
                     </div>
-                    <div className="ad-failure-title" style={{ marginTop: 6 }}>
-                      <Link href={`/admin/users?user=${failure.user_id}`} className="ad-link">
-                        {failure.user_email}
-                      </Link>
-                      <span style={{ color: "var(--dmuted2)" }}> · </span>
-                      <span>{failure.workspace_name}</span>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11.5, color: "var(--dmuted)" }}>{fmtRelative(failure.created_at)}</div>
+                      <div className="ad-mono" style={{ marginTop: 4 }}>{failure.post_id.slice(0, 16)}</div>
                     </div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontSize: 11.5, color: "var(--dmuted)" }}>{fmtRelative(failure.created_at)}</div>
-                    <div className="ad-mono" style={{ marginTop: 4 }}>{failure.post_id.slice(0, 16)}</div>
+
+                  {failure.caption ? <div className="ad-failure-caption">{failure.caption}</div> : null}
+                  <div className="ad-failure-message">{message}</div>
+
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <div className="ad-mono">
+                      workspace {failure.workspace_id.slice(0, 12)} · user {failure.user_id.slice(0, 12)}
+                    </div>
+                    <Link href={`/admin/users?user=${failure.user_id}`} className="ad-link" style={{ fontSize: 12 }} onClick={stopLinkClick}>
+                      Inspect user →
+                    </Link>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </div>
+
+        {selectedFailure ? (
+          <aside
+            className="errors-detail-drawer"
+            role="dialog"
+            aria-label="Error detail"
+            style={drawerStyle}
+          >
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 700 }}>Error details</div>
+                <div style={{ color: "var(--dmuted)", marginTop: 4 }}>
+                  {selectedFailure.platform || selectedFailure.post_status} · {selectedFailure.source}
+                </div>
+              </div>
+              <button type="button" onClick={closeDetail} style={iconButtonStyle} aria-label="Close error details">
+                <X size={16} />
+              </button>
+            </div>
+
+            <DrawerTabs
+              active={drawerTab}
+              onChange={setDrawerTab}
+              rightSlot={
+                drawerTab === "raw" ? (
+                  <button
+                    type="button"
+                    onClick={copyRawFailure}
+                    style={drawerCopyButtonStyle}
+                    aria-label="Copy raw error JSON"
+                  >
+                    {rawCopied ? (
+                      <>
+                        <Check size={12} />
+                        Copied
+                      </>
+                    ) : (
+                      <>
+                        <Copy size={12} />
+                        Copy
+                      </>
+                    )}
+                  </button>
+                ) : null
+              }
+            />
+
+            {drawerTab === "raw" ? (
+              <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedFailure, null, 2)}</pre>
+            ) : (
+              <div style={{ display: "grid", gap: 14 }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <FieldChip label="platform" value={selectedFailure.platform || "parent"} />
+                  <FieldChip label="source" value={selectedFailure.source} />
+                  <FieldChip label="status" value={selectedFailure.post_status} />
+                  <FieldChip label="time" value={new Date(selectedFailure.created_at).toLocaleString()} />
+                </div>
+
+                <div style={sectionStyle}>
+                  <div style={sectionTitleStyle}>Context</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    <FieldChip label="workspace" value={selectedFailure.workspace_id} />
+                    <FieldChip label="user" value={selectedFailure.user_id} />
+                    <FieldChip label="owner" value={selectedFailure.user_email} />
+                    {selectedFailure.account_name ? <FieldChip label="account" value={selectedFailure.account_name} /> : null}
+                    <FieldChip label="post_id" value={selectedFailure.post_id} />
                   </div>
                 </div>
 
-                {failure.caption ? <div className="ad-failure-caption">{failure.caption}</div> : null}
-                <div className="ad-failure-message">{message}</div>
-
-                {failure.debug_curl ? (
-                  <pre className="ad-failure-debug">{failure.debug_curl}</pre>
-                ) : null}
-
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
-                  <div className="ad-mono">
-                    workspace {failure.workspace_id.slice(0, 12)} · user {failure.user_id.slice(0, 12)}
+                <div style={sectionStyle}>
+                  <div style={sectionTitleStyle}>Summary</div>
+                  {selectedFailure.caption ? (
+                    <div style={{ fontSize: 14, lineHeight: 1.55, marginBottom: 12 }}>{selectedFailure.caption}</div>
+                  ) : null}
+                  <div style={{ fontSize: 14, lineHeight: 1.6, color: "var(--danger)" }}>
+                    {selectedFailure.error_message || selectedFailure.error_summary || "No error message recorded."}
                   </div>
-                  <Link href={`/admin/users?user=${failure.user_id}`} className="ad-link" style={{ fontSize: 12 }}>
-                    Inspect user →
+                </div>
+
+                <div style={sectionStyle}>
+                  <div style={sectionTitleStyle}>Debug curl</div>
+                  {selectedFailure.debug_curl ? (
+                    <pre style={drawerCodeBlockStyle}>{selectedFailure.debug_curl}</pre>
+                  ) : (
+                    <div style={{ color: "var(--dmuted2)", fontSize: 13 }}>No debug curl captured for this failure.</div>
+                  )}
+                </div>
+
+                <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                  <Link href={`/admin/users?user=${selectedFailure.user_id}`} className="ad-link" style={drawerLinkButtonStyle}>
+                    Inspect user
+                    <ExternalLink size={14} />
                   </Link>
                 </div>
-              </article>
-            );
-          })
-        )}
+              </div>
+            )}
+          </aside>
+        ) : null}
       </div>
     </AdminShell>
   );
 }
+
+function failureKey(failure: AdminUserPostFailure, idx: number) {
+  return `${failure.post_id}-${failure.platform || "parent"}-${failure.created_at}-${idx}`;
+}
+
+function handleFailureKeyDown(event: KeyboardEvent<HTMLElement>, open: () => void) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  open();
+}
+
+function FieldChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={fieldChipStyle}>
+      <span style={{ color: "var(--dmuted2)" }}>{label}</span>
+      <span style={{ fontFamily: "var(--font-geist-mono), monospace" }}>{value}</span>
+    </span>
+  );
+}
+
+function DrawerTabs({
+  active,
+  onChange,
+  rightSlot,
+}: {
+  active: "attributes" | "raw";
+  onChange: (next: "attributes" | "raw") => void;
+  rightSlot?: React.ReactNode;
+}) {
+  return (
+    <div style={drawerTabBarStyle}>
+      <div style={{ display: "flex", gap: 4 }}>
+        <button type="button" onClick={() => onChange("attributes")} style={drawerTabButtonStyle(active === "attributes")}>
+          Attributes
+        </button>
+        <button type="button" onClick={() => onChange("raw")} style={drawerTabButtonStyle(active === "raw")}>
+          Raw Data
+        </button>
+      </div>
+      {rightSlot}
+    </div>
+  );
+}
+
+const errorsConsoleStyle: CSSProperties = {
+  position: "relative",
+  minHeight: 420,
+};
+
+const drawerStyle: CSSProperties = {
+  position: "fixed",
+  top: 0,
+  right: 0,
+  bottom: 0,
+  width: "45%",
+  minWidth: 380,
+  maxWidth: 760,
+  background: "var(--surface-raised, var(--surface))",
+  borderLeft: "1px solid var(--dborder)",
+  zIndex: 30,
+  overflowY: "auto",
+  padding: 18,
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+  boxShadow: "-18px 0 44px color-mix(in srgb, var(--sidebar) 28%, transparent)",
+};
+
+const iconButtonStyle: CSSProperties = {
+  height: 32,
+  width: 32,
+  borderRadius: 10,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface2)",
+  color: "var(--dtext)",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+};
+
+const drawerTabBarStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  borderBottom: "1px solid var(--dborder)",
+  paddingBottom: 8,
+};
+
+function drawerTabButtonStyle(active: boolean): CSSProperties {
+  return {
+    background: "transparent",
+    border: "none",
+    padding: "6px 4px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: active ? "var(--dtext)" : "var(--dmuted2)",
+    borderBottom: active ? "2px solid var(--danger)" : "2px solid transparent",
+    cursor: "pointer",
+    marginBottom: -9,
+  };
+}
+
+const drawerCopyButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "4px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface)",
+  color: "var(--dtext)",
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const sectionStyle: CSSProperties = {
+  borderRadius: 14,
+  border: "1px solid color-mix(in srgb, var(--dborder) 74%, var(--sidebar) 26%)",
+  background: "color-mix(in srgb, var(--surface2) 82%, var(--sidebar) 18%)",
+  padding: 14,
+};
+
+const sectionTitleStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  color: "var(--dmuted)",
+  marginBottom: 10,
+};
+
+const fieldChipStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "6px 10px",
+  borderRadius: 999,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface2)",
+  color: "var(--dtext)",
+  fontSize: 12,
+};
+
+const drawerRawJsonStyle: CSSProperties = {
+  margin: 0,
+  padding: 14,
+  borderRadius: 12,
+  border: "1px solid color-mix(in srgb, var(--dborder) 74%, var(--sidebar) 26%)",
+  background: "color-mix(in srgb, var(--surface) 66%, var(--sidebar) 34%)",
+  color: "var(--dtext)",
+  fontSize: 12,
+  lineHeight: 1.6,
+  overflow: "auto",
+  whiteSpace: "pre",
+  fontFamily: "var(--font-geist-mono), monospace",
+};
+
+const drawerCodeBlockStyle: CSSProperties = {
+  ...drawerRawJsonStyle,
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-all",
+};
+
+const drawerLinkButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  fontSize: 13,
+};

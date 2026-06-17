@@ -7,7 +7,7 @@ SUITE="${1:-}"
 LOG_DIR="${LOG_DIR:-${ROOT_DIR}/artifacts/regression}"
 
 if [[ -z "$SUITE" ]]; then
-  echo "usage: $0 <smoke|sdk-js|sdk-python|sdk-go|sdk-java>" >&2
+  echo "usage: $0 <smoke|sdk-js|sdk-python|sdk-go|sdk-java|ai-provider>" >&2
   exit 64
 fi
 
@@ -15,8 +15,13 @@ UNIPOST_API_KEY="${UNIPOST_API_KEY:-}"
 BASE_URL="${BASE_URL:-https://api.unipost.dev}"
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
+TOKENGATE_REGRESSION_API_KEY="${TOKENGATE_REGRESSION_API_KEY:-}"
+TOKENGATE_REGRESSION_BASE_URL="${TOKENGATE_REGRESSION_BASE_URL:-}"
+TOKENGATE_REGRESSION_EXPECTED_MODELS="${TOKENGATE_REGRESSION_EXPECTED_MODELS:-}"
+TOKENGATE_REGRESSION_CHAT_MODEL="${TOKENGATE_REGRESSION_CHAT_MODEL:-}"
+AI_PROVIDER_MONITOR_CHAT="${AI_PROVIDER_MONITOR_CHAT:-true}"
 
-if [[ -z "$UNIPOST_API_KEY" ]]; then
+if [[ "$SUITE" != "ai-provider" && -z "$UNIPOST_API_KEY" ]]; then
   echo "UNIPOST_API_KEY is required" >&2
   exit 64
 fi
@@ -76,6 +81,15 @@ case "$SUITE" in
       TEST_PUBLISH_NOW="$TEST_PUBLISH_NOW" \
       LOG_DIR="$LOG_DIR" \
       bash "$ROOT_DIR/scripts/sdk-published-regression/run-suite.sh" sdk-java
+    ;;
+  ai-provider)
+    run_and_log env \
+      TOKENGATE_REGRESSION_API_KEY="$TOKENGATE_REGRESSION_API_KEY" \
+      TOKENGATE_REGRESSION_BASE_URL="$TOKENGATE_REGRESSION_BASE_URL" \
+      TOKENGATE_REGRESSION_EXPECTED_MODELS="$TOKENGATE_REGRESSION_EXPECTED_MODELS" \
+      TOKENGATE_REGRESSION_CHAT_MODEL="$TOKENGATE_REGRESSION_CHAT_MODEL" \
+      AI_PROVIDER_MONITOR_CHAT="$AI_PROVIDER_MONITOR_CHAT" \
+      bash "$ROOT_DIR/scripts/ai-provider-monitor.sh"
     ;;
   *)
     echo "unknown suite: $SUITE" >&2

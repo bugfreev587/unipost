@@ -111,6 +111,19 @@ test.describe("admin AI keys layout", () => {
   });
 });
 
+test.describe("admin errors details drawer", () => {
+  test("lets admins open a failure detail drawer with copyable raw data", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/admin/errors/page.tsx"), "utf8");
+
+    expect(pageSource).toContain("openFailureDetail");
+    expect(pageSource).toContain('role="dialog"');
+    expect(pageSource).toContain("Error details");
+    expect(pageSource).toContain("Raw Data");
+    expect(pageSource).toContain("copyRawFailure");
+    expect(pageSource).toContain("navigator.clipboard.writeText");
+  });
+});
+
 test.describe("authenticated dashboard smoke", () => {
   test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
 
