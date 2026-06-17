@@ -18,6 +18,17 @@ type PostgresStore struct {
 
 const maxFailuresPerRun = 1000
 
+const findPreviousItemSQL = `
+SELECT id
+FROM error_triage_items
+WHERE dedupe_key = $1
+  AND run_id <> $2
+  AND workflow_status NOT IN ('dismissed')
+  AND run_id <> COALESCE((SELECT supersedes_run_id FROM error_triage_runs WHERE id = $2), '')
+ORDER BY created_at DESC
+LIMIT 1
+`
+
 func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
 	return &PostgresStore{pool: pool}
 }
@@ -256,16 +267,7 @@ LIMIT 1001
 
 func (s *PostgresStore) FindPreviousItem(ctx context.Context, dedupeKey, runID string) (string, error) {
 	var id string
-	err := s.pool.QueryRow(ctx, `
-SELECT id
-FROM error_triage_items
-WHERE dedupe_key = $1
-  AND run_id <> $2
-  AND workflow_status NOT IN ('dismissed')
-  AND run_id <> COALESCE((SELECT supersedes_run_id FROM error_triage_runs WHERE id = $2), '00000000-0000-0000-0000-000000000000'::uuid)
-ORDER BY created_at DESC
-LIMIT 1
-`, dedupeKey, runID).Scan(&id)
+	err := s.pool.QueryRow(ctx, findPreviousItemSQL, dedupeKey, runID).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}

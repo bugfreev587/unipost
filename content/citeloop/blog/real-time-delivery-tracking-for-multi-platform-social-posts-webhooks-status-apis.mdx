@@ -1,0 +1,532 @@
+---
+source: citeloop
+citeloop_article_id: "e4f3768f-421f-41eb-a6ad-b9cdef3df23b"
+citeloop_topic_id: "e525448b-6b40-4367-82e8-5bd3d80183ac"
+slug: "real-time-delivery-tracking-for-multi-platform-social-posts-webhooks-status-apis"
+title: "Real-Time Delivery Tracking for Multi-Platform Social Posts: Webhooks & Status APIs"
+seo_title: "Real-Time Delivery Tracking for Multi-Platform Social Posts: Webhooks & Status APIs"
+description: "Show how delivery status tracking and webhooks enable developers to monitor post success across platforms and implement retry logic"
+excerpt: "Show how delivery status tracking and webhooks enable developers to monitor post success across platforms and implement retry logic"
+published_at: "2026-06-16"
+updated_at: "2026-06-16"
+author: "UniPost"
+category: "Engineering"
+keywords: []
+canonical: "https://dev.unipost.dev/blog/real-time-delivery-tracking-for-multi-platform-social-posts-webhooks-status-apis"
+---
+
+# Real-Time Delivery Tracking for Multi-Platform Social Posts: Webhooks & Status APIs
+
+**Title:** Social Media Post Delivery Tracking with Webhooks & Status APIs | Developer Guide
+
+**Meta Description:** Learn how to implement delivery status tracking and webhooks for multi-platform social posts. Monitor success across X, LinkedIn, Instagram, and more with real-time status updates and automatic retry logic.
+
+**Slug:** social-media-post-delivery-tracking-webhooks
+
+---
+
+## Building Reliable Social Publishing: Delivery Tracking Fundamentals
+
+When you publish a post to social media through an API, the work doesn't end at the HTTP response. The actual delivery—whether your content appears on the platform, triggers any errors, or gets moderated—happens asynchronously across nine different platforms with different timing and failure modes.
+
+This guide walks you through implementing delivery status tracking and webhook patterns to monitor post success, detect failures, and automatically retry failed deliveries. These patterns are essential for building reliable social publishing features into your SaaS product, scheduling tool, or AI agent.
+
+---
+
+## Why Delivery Tracking Matters for Social Publishing
+
+### The Multi-Platform Timing Problem
+
+When you send a post to X, LinkedIn, Instagram, TikTok, Threads, YouTube, Facebook, Pinterest, and Bluesky simultaneously:
+
+- **X** confirms delivery in milliseconds
+- **LinkedIn** queues the post and returns success before actual publishing
+- **Instagram** may reject the post 5–30 seconds later due to media validation
+- **TikTok** enforces rate limits that trigger failures minutes after submission
+- **YouTube** requires thumbnail processing before the video goes live
+
+Without delivery tracking, your API response shows "success" for a post that will fail on three platforms 30 seconds later.
+
+### Real-World Impact
+
+**Untracked failures lead to:**
+- Silent post failures users don't discover until hours later
+- Missed publishing windows for time-sensitive content
+- Manual investigation workflows that kill developer productivity
+- Inability to implement retry logic or platform-specific fallbacks
+
+**Tracked delivery enables:**
+- Real-time visibility into what succeeded and what failed
+- Automatic retry logic with exponential backoff
+- Platform-specific error handling (e.g., reject oversized media before posting to Pinterest)
+- Normalized analytics across platforms despite different response timing
+
+---
+
+## Webhook Architecture for Delivery Status
+
+### How Webhooks Enable Monitoring
+
+A webhook is an HTTP callback your server registers with the API. When a post's delivery status changes—success, failure, moderation hold, or platform rejection—the API sends a POST request to your endpoint with the status update.
+
+This pattern decouples the initial publishing request from status monitoring:
+
+1. **Your app** sends POST `/posts` with content and social accounts
+2. **API** returns `{ post_id, status: "pending" }` immediately
+3. **Your app** continues serving the user without blocking
+4. **Social platforms** process the post asynchronously
+5. **API** detects status changes and POSTs to your webhook endpoint
+6. **Your app** updates the post record and notifies the user
+
+### Webhook Payload Structure
+
+When delivery status changes, you receive a webhook payload like this:
+
+```json
+{
+  "event": "post.delivery.completed",
+  "timestamp": "2025-01-15T14:32:18Z",
+  "post_id": "post_abc123xyz",
+  "platform": "x",
+  "status": "success",
+  "platform_post_id": "1234567890",
+  "delivered_at": "2025-01-15T14:32:05Z",
+  "metadata": {
+    "media_count": 2,
+    "engagement_possible": true
+  }
+}
+```
+
+For failures, the payload includes diagnostics:
+
+```json
+{
+  "event": "post.delivery.failed",
+  "timestamp": "2025-01-15T14:33:42Z",
+  "post_id": "post_abc123xyz",
+  "platform": "instagram",
+  "status": "failed",
+  "failure_code": "INVALID_MEDIA_DIMENSIONS",
+  "failure_message": "Image must be between 1080x1350 and 1200x1500 pixels. Provided: 800x600.",
+  "attempt_count": 1,
+  "retryable": true,
+  "next_retry_at": "2025-01-15T14:34:42Z"
+}
+```
+
+---
+
+## Implementing Webhook Receivers
+
+### Step 1: Register Your Webhook Endpoint
+
+Configure your webhook URL in the API dashboard or via the Settings API:
+
+```bash
+curl -X POST https://api.example.com/webhooks \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://your-app.com/webhooks/social-delivery",
+    "events": [
+      "post.delivery.success",
+      "post.delivery.failed",
+      "post.delivery.scheduled"
+    ],
+    "active": true
+  }'
+```
+
+### Step 2: Build Your Webhook Handler
+
+Your handler should:
+- Verify the webhook signature for security
+- Parse the status payload
+- Update your post record
+- Trigger retry logic if applicable
+- Log the event for debugging
+
+Example Node.js implementation:
+
+```javascript
+const express = require('express');
+const crypto = require('crypto');
+
+const app = express();
+app.use(express.json());
+
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
+// Verify webhook signature
+function verifyWebhookSignature(req) {
+  const signature = req.headers['x-webhook-signature'];
+  const timestamp = req.headers['x-webhook-timestamp'];
+  const body = JSON.stringify(req.body);
+  
+  const hash = crypto
+    .createHmac('sha256', WEBHOOK_SECRET)
+    .update(`${timestamp}.${body}`)
+    .digest('hex');
+  
+  return crypto.timingSafeEqual(signature, hash);
+}
+
+app.post('/webhooks/social-delivery', async (req, res) => {
+  try {
+    // Verify signature
+    if (!verifyWebhookSignature(req)) {
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+
+    const { event, post_id, platform, status, failure_code, retryable } = req.body;
+
+    // Update post record in your database
+    await updatePostDeliveryStatus({
+      postId: post_id,
+      platform,
+      status,
+      failureCode: failure_code,
+      timestamp: new Date()
+    });
+
+    // Handle failures with retry logic
+    if (status === 'failed' && retryable) {
+      await scheduleRetry(post_id, platform);
+    }
+
+    // Notify user via UI/email
+    await notifyUserOfDeliveryStatus(post_id, platform, status);
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook handler error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+app.listen(3000);
+```
+
+### Step 3: Idempotency and Deduplication
+
+Webhooks can be delivered more than once. Implement idempotency:
+
+```javascript
+async function updatePostDeliveryStatus({
+  postId,
+  platform,
+  status,
+  failureCode,
+  timestamp
+}) {
+  // Use a unique key to detect duplicates
+  const idempotencyKey = `${postId}-${platform}-${timestamp}`;
+  
+  const existing = await db.webhookLog.findOne({ idempotencyKey });
+  if (existing) {
+    console.log('Duplicate webhook, skipping');
+    return;
+  }
+
+  // Record the webhook
+  await db.webhookLog.create({ idempotencyKey, data: req.body });
+
+  // Update post status
+  await db.post.updateOne(
+    { id: postId },
+    {
+      $set: {
+        [`platforms.${platform}.status`]: status,
+        [`platforms.${platform}.failureCode`]: failureCode,
+        updatedAt: new Date()
+      }
+    }
+  );
+}
+```
+
+---
+
+## Polling-Based Status API for Supplementary Monitoring
+
+While webhooks are the primary delivery mechanism, webhooks can fail to deliver. Implement a polling fallback using the Status API:
+
+### Query Post Delivery Status
+
+```bash
+curl -X GET https://api.example.com/posts/post_abc123xyz/status \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+Response:
+
+```json
+{
+  "post_id": "post_abc123xyz",
+  "created_at": "2025-01-15T14:30:00Z",
+  "platforms": [
+    {
+      "platform": "x",
+      "status": "success",
+      "platform_post_id": "1234567890",
+      "delivered_at": "2025-01-15T14:32:05Z"
+    },
+    {
+      "platform": "instagram",
+      "status": "failed",
+      "failure_code": "INVALID_MEDIA_DIMENSIONS",
+      "failure_message": "Image must be between 1080x1350 pixels.",
+      "attempt_count": 1,
+      "retryable": true,
+      "next_retry_at": "2025-01-15T14:34:42Z"
+    },
+    {
+      "platform": "linkedin",
+      "status": "pending",
+      "estimated_delivery": "2025-01-15T14:35:00Z"
+    }
+  ]
+}
+```
+
+### Implement Polling Fallback
+
+```javascript
+async function pollPostStatus(postId, maxRetries = 10) {
+  let attempt = 0;
+  const pollInterval = 5000; // 5 seconds
+
+  const poll = async () => {
+    attempt++;
+
+    const response = await fetch(
+      `https://api.example.com/posts/${postId}/status`,
+      {
+        headers: { Authorization: `Bearer ${API_KEY}` }
+      }
+    );
+
+    const data = await response.json();
+
+    // Check if all platforms have terminal status
+    const allResolved = data.platforms.every(
+      (p) => p.status === 'success' || p.status === 'failed'
+    );
+
+    if (allResolved || attempt >= maxRetries) {
+      return data;
+    }
+
+    // Wait before next poll
+    await new Promise((resolve) => setTimeout(resolve, pollInterval));
+    return poll();
+  };
+
+  return poll();
+}
+```
+
+---
+
+## Implementing Automatic Retry Logic
+
+### Retry Strategy Framework
+
+Not all failures are retryable. Implement logic that respects platform-specific constraints:
+
+```javascript
+async function scheduleRetry(postId, platform) {
+  const post = await db.post.findOne({ id: postId });
+  const platformData = post.platforms[platform];
+
+  // Check if retryable
+  if (!platformData.retryable) {
+    console.log(`${platform} failure is not retryable`);
+    return;
+  }
+
+  // Don't exceed retry limit
+  if (platformData.attempt_count >= 3) {
+    console.log(`Max retries exceeded for ${platform}`);
+    return;
+  }
+
+  // Calculate exponential backoff
+  const baseDelay = 30000; // 30 seconds
+  const delayMs = baseDelay * Math.pow(2, platformData.attempt_count);
+  const retryAt = new Date(Date.now() + delayMs);
+
+  // Schedule retry
+  await db.post.updateOne(
+    { id: postId },
+    {
+      $set: {
+        [`platforms.${platform}.retry_scheduled_at`]: retryAt,
+        [`platforms.${platform}.status`]: 'retry_scheduled'
+      }
+    }
+  );
+
+  // Queue background job
+  await jobQueue.add('retry-post-delivery', {
+    postId,
+    platform,
+    attemptCount: platformData.attempt_count + 1
+  }, {
+    delay: delayMs
+  });
+}
+```
+
+### Retry Execution with Platform-Specific Handling
+
+```javascript
+async function executeRetry(postId, platform, attemptCount) {
+  const post = await db.post.findOne({ id: postId });
+
+  // Fetch the original post content
+  const content = post.content;
+  const media = post.media;
+
+  try {
+    // Platform-specific validation
+    if (platform === 'instagram') {
+      // Re-validate media dimensions
+      for (const image of media) {
+        const dimensions = await getImageDimensions(image.url);
+        if (!isValidInstagramDimension(dimensions)) {
+          throw new Error('INVALID_MEDIA_DIMENSIONS');
+        }
+      }
+    }
+
+    if (platform === 'tiktok') {
+      // Check rate limits before retrying
+      const remaining = await checkRateLimit(post.account_id);
+      if (remaining < 1) {
+        throw new Error('RATE_LIMIT_EXCEEDED');
+      }
+    }
+
+    // Attempt re-publish
+    const response = await fetch(
+      'https://api.example.com/posts',
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          accounts: [post.account_id],
+          platforms: [platform],
+          content,
+          media: media.map(m => ({ url: m.url })),
+          retry_of: postId,
+          attempt: attemptCount
+        })
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    await db.post.updateOne(
+      { id: postId },
+      {
+        $set: {
+          [`platforms.${platform}.status`]: 'pending',
+          [`platforms.${platform}.attempt_count`]: attemptCount,
+          [`platforms.${platform}.last_retry_at`]: new Date()
+        }
+      }
+    );
+  } catch (error) {
+    // Log failure
+    await db.post.updateOne(
+      { id: postId },
+      {
+        $set: {
+          [`platforms.${platform}.last_error`]: error.message,
+          [`platforms.${platform}.attempt_count`]: attemptCount
+        }
+      }
+    );
+
+    // Schedule next retry if applicable
+    if (attemptCount < 3 && isRetryableError(error.message)) {
+      await scheduleRetry(postId, platform);
+    }
+  }
+}
+```
+
+---
+
+## Webhook Security and Validation
+
+### Signature Verification
+
+Every webhook includes a signature header for verification:
+
+**Headers:**
+```
+X-Webhook-Signature: sha256=abc123...
+X-Webhook-Timestamp: 1705341138
+```
+
+**Verification process:**
+```javascript
+function verifyWebhookSignature(req) {
+  const signature = req.headers['x-webhook-signature'];
+  const timestamp = req.headers['x-webhook-timestamp'];
+  
+  // Prevent replay attacks: reject if older than 5 minutes
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - parseInt(timestamp)) > 300) {
+    throw new Error('Webhook timestamp too old');
+  }
+
+  // Reconstruct the signed content
+  const body = req.rawBody; // Must capture raw body before JSON parsing
+  const signedContent = `${timestamp}.${body}`;
+
+  // Compute HMAC-SHA256
+  const computed = crypto
+    .createHmac('sha256', WEBHOOK_SECRET)
+    .update(signedContent)
+    .digest('hex');
+
+  // Constant-time comparison
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(`sha256=${computed}`)
+  );
+}
+```
+
+### Handle Webhook Delivery Failures
+
+If your webhook endpoint is unreachable, the API will retry with exponential backoff:
+
+- **Attempt 1:** Immediately
+- **Attempt 2:** 30 seconds
+- **Attempt 3:** 5 minutes
+- **Attempt 4:** 30 minutes
+- **Attempt 5:** 2 hours
+
+After 5 failed attempts, the webhook is marked as failed. Monitor failed webhooks in your dashboard and re-trigger them manually if needed.
+
+---
+
+## Complete Example: Building a Social Post Delivery Monitor
+
+Here's an end-to-end example showing delivery tracking in action:
+
+### 1. Create and Publish a Post
+
+```javascript
+async function publishToSocial(content, mediaUrls, accountIds) {
+  const response = await
