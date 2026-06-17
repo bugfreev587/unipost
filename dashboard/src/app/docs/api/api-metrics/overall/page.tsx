@@ -1,5 +1,5 @@
-import { ApiMetricsEndpointPage } from "../_components";
+import { APIMetricsEndpointPage } from "../_components/api-metrics-endpoint-page";
 
 export default function APIMetricsOverallPage() {
-  return <ApiMetricsEndpointPage endpoint="overall" />;
+  return <APIMetricsEndpointPage endpoint="overall" />;
 }

@@ -462,10 +462,10 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         {
           label: "API Metrics",
           children: [
-            { label: "Overall metrics", href: "/docs/api/api-metrics/overall", method: "GET" },
-            { label: "Endpoint summary", href: "/docs/api/api-metrics/summary", method: "GET" },
-            { label: "Metrics trend", href: "/docs/api/api-metrics/trend", method: "GET" },
-            { label: "Status-code distribution", href: "/docs/api/api-metrics/status-codes", method: "GET" },
+            { label: "Overall", href: "/docs/api/api-metrics/overall", method: "GET" },
+            { label: "Summary", href: "/docs/api/api-metrics/summary", method: "GET" },
+            { label: "Trend", href: "/docs/api/api-metrics/trend", method: "GET" },
+            { label: "Status-Code", href: "/docs/api/api-metrics/status-codes", method: "GET" },
           ],
         },
       ],
