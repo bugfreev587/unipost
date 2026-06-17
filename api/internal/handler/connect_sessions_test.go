@@ -18,7 +18,9 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
+	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 )
 
 // TestValidateReturnURL — accept https/http with a host, reject everything else.
@@ -368,6 +370,47 @@ func TestGetConnectSession_CompletedReturnsManagedAccountID(t *testing.T) {
 	}
 }
 
+func TestConnectCallbackReusesDisconnectedManagedAccountForExternalUser(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "tiktok",
+		allowQuickstart:        true,
+		credentialErr:          pgx.ErrNoRows,
+		activeAccountLookupErr: pgx.ErrNoRows,
+		createManagedErr:       fmt.Errorf("duplicate key value violates unique constraint \"social_accounts_managed_unique_idx\""),
+		reusedManagedID:        "sa_disconnected_1",
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "tiktok"}),
+		"https://api.example.com",
+		nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "tiktok")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.createManagedCalls != 0 {
+		t.Fatalf("CreateManagedSocialAccount calls = %d, want 0", fdb.createManagedCalls)
+	}
+	if fdb.upsertManagedCalls != 1 {
+		t.Fatalf("UpsertManagedSocialAccount calls = %d, want 1", fdb.upsertManagedCalls)
+	}
+	if fdb.completedAcctID != "sa_disconnected_1" {
+		t.Fatalf("completed social account = %q", fdb.completedAcctID)
+	}
+}
+
 type connectSessionTestDB struct {
 	platform                  string
 	status                    string
@@ -375,6 +418,11 @@ type connectSessionTestDB struct {
 	allowQuickstart           bool
 	credentialErr             error
 	platformCredentialLookups int
+	activeAccountLookupErr    error
+	createManagedErr          error
+	reusedManagedID           string
+	createManagedCalls        int
+	upsertManagedCalls        int
 }
 
 func (f *connectSessionTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -413,6 +461,31 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	case strings.Contains(query, "-- name: GetConnectSessionByOAuthState"):
 		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
+	case strings.Contains(query, "-- name: FindActiveManagedSocialAccountByExternalAccount"):
+		if f.activeAccountLookupErr != nil {
+			return scanRow{err: f.activeAccountLookupErr}
+		}
+		return f.socialAccountRow("sa_active_1", f.platform, "platform-account-old", "user_123", "active")
+	case strings.Contains(query, "-- name: CreateManagedSocialAccount"):
+		f.createManagedCalls++
+		if f.createManagedErr != nil {
+			return scanRow{err: f.createManagedErr}
+		}
+		return f.socialAccountRow("sa_created_1", f.platform, stringArg(args, 5), pgTextString(args, 11), "active")
+	case strings.Contains(query, "-- name: UpsertManagedSocialAccount"):
+		f.upsertManagedCalls++
+		id := f.reusedManagedID
+		if id == "" {
+			id = "sa_upserted_1"
+		}
+		return f.socialAccountRow(id, f.platform, stringArg(args, 5), pgTextString(args, 11), "active")
+	case strings.Contains(query, "-- name: MarkConnectSessionCompleted"):
+		if len(args) > 1 {
+			if completedID, ok := args[1].(pgtype.Text); ok && completedID.Valid {
+				f.completedAcctID = completedID.String
+			}
+		}
+		return f.connectSessionRow(f.platform, "completed", f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
 	}
@@ -448,6 +521,34 @@ func (f *connectSessionTestDB) connectSessionRow(platform, status, completedAcct
 		now,
 		completedAt,
 		allowQuickstart,
+	}}
+}
+
+func (f *connectSessionTestDB) socialAccountRow(id, platform, externalAccountID, externalUserID, status string) scanRow {
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	accountName := pgtype.Text{String: "Robyn", Valid: true}
+	externalUser := pgtype.Text{String: externalUserID, Valid: externalUserID != ""}
+	sessionID := pgtype.Text{String: "cs_1", Valid: true}
+	return scanRow{values: []any{
+		id,
+		"pr_1",
+		platform,
+		"encrypted-access",
+		pgtype.Text{String: "encrypted-refresh", Valid: true},
+		futureTimestamptz(),
+		externalAccountID,
+		accountName,
+		pgtype.Text{},
+		now,
+		pgtype.Timestamptz{},
+		[]byte(`{"username":"Robyn"}`),
+		[]string{"user.info.basic"},
+		status,
+		"managed",
+		sessionID,
+		externalUser,
+		pgtype.Text{},
+		now,
 	}}
 }
 
@@ -493,4 +594,56 @@ func withChiParam(req *http.Request, key, value string) *http.Request {
 
 func futureTimestamptz() pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: time.Now().Add(30 * time.Minute), Valid: true}
+}
+
+func stringArg(args []interface{}, index int) string {
+	if index >= len(args) {
+		return ""
+	}
+	value, _ := args[index].(string)
+	return value
+}
+
+func pgTextString(args []interface{}, index int) string {
+	if index >= len(args) {
+		return ""
+	}
+	value, _ := args[index].(pgtype.Text)
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
+
+type fakeOAuthConnector struct {
+	platform string
+}
+
+func (f fakeOAuthConnector) Platform() string {
+	return f.platform
+}
+
+func (f fakeOAuthConnector) AuthorizeURL(connect.SessionView) (string, error) {
+	return "https://auth.example.com", nil
+}
+
+func (f fakeOAuthConnector) ExchangeCode(context.Context, connect.SessionView, string) (*connect.TokenSet, error) {
+	return &connect.TokenSet{
+		AccessToken:  "access-token",
+		RefreshToken: "refresh-token",
+		ExpiresAt:    time.Now().Add(time.Hour),
+		Scopes:       []string{"user.info.basic"},
+	}, nil
+}
+
+func (f fakeOAuthConnector) FetchProfile(context.Context, string) (*connect.Profile, error) {
+	return &connect.Profile{
+		ExternalAccountID: "platform-account-new",
+		Username:          "Robyn",
+		DisplayName:       "Robyn",
+	}, nil
+}
+
+func (f fakeOAuthConnector) Refresh(context.Context, string) (*connect.TokenSet, error) {
+	return nil, fmt.Errorf("unexpected refresh")
 }
