@@ -130,6 +130,44 @@ RETURNING id, run_type, status, window_start, window_end, failures_analyzed
 	return run, err == nil, err
 }
 
+func (s *PostgresStore) ResetRun(ctx context.Context, runID string, adminUserID string) (RunRecord, error) {
+	if s == nil || s.pool == nil {
+		return RunRecord{}, errors.New("postgres store is not configured")
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `DELETE FROM error_triage_items WHERE run_id = $1`, runID); err != nil {
+		return RunRecord{}, err
+	}
+	run, err := scanRunRecord(tx.QueryRow(ctx, `
+UPDATE error_triage_runs
+SET status = 'running',
+    started_at = NOW(),
+    completed_at = NULL,
+    model = NULL,
+    prompt_version = NULL,
+    failures_analyzed = 0,
+    affected_users = 0,
+    affected_workspaces = 0,
+    summary = NULL,
+    error_message = NULL,
+    created_by_admin_id = COALESCE(NULLIF($2, ''), created_by_admin_id),
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, run_type, status, window_start, window_end, failures_analyzed
+`, runID, adminUserID))
+	if err != nil {
+		return RunRecord{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return RunRecord{}, err
+	}
+	return run, nil
+}
+
 func (s *PostgresStore) TryScheduledRunLock(ctx context.Context, windowStart time.Time) (func(context.Context) error, bool, error) {
 	if s == nil || s.pool == nil {
 		return nil, false, errors.New("postgres store is not configured")

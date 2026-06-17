@@ -6,6 +6,7 @@ test.describe("local Connect testing documentation", () => {
   test("places the page between Connect Sessions and Hosted Connect with local setup steps", async () => {
     const docsShellSource = await readFile(path.join(process.cwd(), "src/app/docs/_components/docs-shell.tsx"), "utf8");
     const pageSource = await readFile(path.join(process.cwd(), "src/app/docs/local-connect-test/page.tsx"), "utf8");
+    const connectAccountImageDir = path.join(process.cwd(), "public/docs/connect-account");
 
     const connectSessionsIndex = docsShellSource.indexOf('{ label: "Connect Sessions", href: "/docs/connect-sessions" }');
     const localTestingIndex = docsShellSource.indexOf('{ label: "Local Connect testing", href: "/docs/local-connect-test" }');
@@ -18,6 +19,9 @@ test.describe("local Connect testing documentation", () => {
 
     expect(pageSource).toContain('title="Test Connect locally"');
     expect(pageSource).toContain("/docs/downloads/create_connect_session_url.py");
+    expect(pageSource).toContain("export UNIPOST_DOCS_ORIGIN='https://dev.unipost.dev'");
+    expect(pageSource).toContain("curl -fL");
+    expect(pageSource).toContain("python3 -m py_compile create_connect_session_url.py");
     expect(pageSource).toContain("Dashboard -> Developer -> API Keys");
     expect(pageSource).toContain("Dashboard -> Profile");
     expect(pageSource).toContain("GET /v1/profiles");
@@ -28,5 +32,15 @@ test.describe("local Connect testing documentation", () => {
     expect(pageSource).toContain("--profile-id \"$PROFILE_ID\"");
     expect(pageSource).toContain("Connection session URL:");
     expect(pageSource).toContain("Copy this URL into your browser");
+    expect(pageSource).toContain("Complete OAuth in the browser");
+    expect(pageSource).toContain("The screenshots below show the browser flow");
+    expect(pageSource).toContain("<h2 id=\"after-oauth\">6. After OAuth</h2>");
+    for (const imageName of ["1.png", "2.png", "3.png", "4.png"]) {
+      expect(pageSource).toContain(`/docs/connect-account/${imageName}`);
+      await expect(readFile(path.join(connectAccountImageDir, imageName))).resolves.toBeInstanceOf(Buffer);
+    }
+    expect(pageSource).toContain(".lct-summary>div{border:1px solid var(--docs-border)");
+    expect(pageSource).toContain("background:var(--docs-bg-elevated)");
+    expect(pageSource).not.toContain("background:#ffffff");
   });
 });

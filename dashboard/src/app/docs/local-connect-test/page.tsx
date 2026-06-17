@@ -5,9 +5,12 @@ import { ApiInlineLink } from "../api/_components/doc-components";
 const DOWNLOAD_SNIPPETS = [
   {
     label: "Download",
-    code: `curl -L "https://unipost.dev/docs/downloads/create_connect_session_url.py" \\
+    code: `export UNIPOST_DOCS_ORIGIN='https://dev.unipost.dev'
+
+curl -fL "$UNIPOST_DOCS_ORIGIN/docs/downloads/create_connect_session_url.py" \\
   -o create_connect_session_url.py
 
+python3 -m py_compile create_connect_session_url.py
 chmod +x create_connect_session_url.py`,
   },
 ];
@@ -57,6 +60,37 @@ https://app.unipost.dev/connect/youtube?session=cs_abc123&state=state_123
 
 Copy this URL into your browser to complete OAuth.
 Expires at: 2026-06-17T20:00:00Z`,
+  },
+];
+
+const OAUTH_FLOW_STEPS = [
+  {
+    n: "1",
+    title: "Open the Connection session URL",
+    body: "The URL opens UniPost Hosted Connect for the selected platform. Click the authorize button to leave UniPost and start the platform OAuth flow.",
+    img: "/docs/connect-account/1.png",
+    alt: "Hosted Connect page with an Authorize YouTube button.",
+  },
+  {
+    n: "2",
+    title: "Choose the account to connect",
+    body: "The platform asks the user to sign in or choose an existing account. This example uses YouTube, so the account picker is shown by Google.",
+    img: "/docs/connect-account/2.png",
+    alt: "Google account picker shown during YouTube OAuth.",
+  },
+  {
+    n: "3",
+    title: "Approve platform access",
+    body: "Review the requested access and continue. UniPost receives the OAuth callback after the platform authorization completes.",
+    img: "/docs/connect-account/3.png",
+    alt: "Google OAuth consent screen asking the user to continue.",
+  },
+  {
+    n: "4",
+    title: "Confirm the connection succeeded",
+    body: <>When the browser returns to UniPost, the hosted flow shows the connected state. The connected account now belongs to the profile used in <code>PROFILE_ID</code>.</>,
+    img: "/docs/connect-account/4.png",
+    alt: "UniPost connected success screen after OAuth completes.",
   },
 ];
 
@@ -125,6 +159,8 @@ export default function LocalConnectTestPage() {
       <p className="lct-note">
         Download <a href="/docs/downloads/create_connect_session_url.py" download>create_connect_session_url.py</a>{" "}
         into the directory where you want to run the local test. The script only uses the Python standard library.
+        Use <code>https://dev.unipost.dev</code> while testing from development docs; switch <code>UNIPOST_DOCS_ORIGIN</code>{" "}
+        to <code>https://unipost.dev</code> after the page is released to production.
       </p>
       <DocsCodeTabs snippets={DOWNLOAD_SNIPPETS} />
 
@@ -147,7 +183,28 @@ export default function LocalConnectTestPage() {
       </p>
       <DocsCodeTabs snippets={OUTPUT_SNIPPETS} />
 
-      <h2 id="after-oauth">5. After OAuth</h2>
+      <h2 id="browser-oauth-flow">5. Complete OAuth in the browser</h2>
+      <p className="lct-note">
+        The screenshots below show the browser flow after opening the returned
+        Connection session URL. This example uses YouTube; other platforms follow
+        the same pattern with their own sign-in and consent screens.
+      </p>
+      <ol className="docs-screenshot-steps">
+        {OAUTH_FLOW_STEPS.map((step) => (
+          <li key={step.n} className="docs-screenshot-step">
+            <div className="docs-screenshot-step-head">
+              <div className="docs-screenshot-step-number">{step.n}</div>
+              <div className="docs-screenshot-step-title">{step.title}</div>
+            </div>
+            <div className="docs-screenshot-step-body">{step.body}</div>
+            <div className="docs-screenshot-step-image">
+              <img src={step.img} alt={step.alt} />
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      <h2 id="after-oauth">6. After OAuth</h2>
       <p className="lct-note">
         Complete the platform authorization in the browser. When OAuth finishes,
         UniPost records the connected account under the profile you passed in{" "}
@@ -173,13 +230,13 @@ export default function LocalConnectTestPage() {
 
 const styles = `
 .lct-summary{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr);gap:12px;margin:4px 0 28px}
-.lct-summary>div{border:1px solid #e5e9f0;border-radius:8px;background:#ffffff;padding:16px;box-shadow:0 1px 0 rgba(15,23,42,.02)}
-.lct-summary-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:#6f7685;margin-bottom:8px}
+.lct-summary>div{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:16px;box-shadow:var(--docs-card-shadow)}
+.lct-summary-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:8px}
 .lct-summary p{margin:0;color:var(--docs-text-soft);font-size:14px;line-height:1.62}
 .lct-note{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:8px 0 16px;max-width:820px}
 .lct-next{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.lct-next-link{display:inline-flex;align-items:center;min-height:34px;border:1px solid #d9e0ea;border-radius:6px;background:#ffffff;padding:0 12px;color:var(--docs-text);font-size:13px;font-weight:680;text-decoration:none;transition:border-color .14s ease,background .14s ease,transform .14s ease}
-.lct-next-link:hover{border-color:#c7d0dd;background:#fbfcfe;transform:translateY(-1px);text-decoration:none!important}
+.lct-next-link{display:inline-flex;align-items:center;min-height:34px;border:1px solid var(--docs-border);border-radius:6px;background:var(--docs-bg-elevated);padding:0 12px;color:var(--docs-text);font-size:13px;font-weight:680;text-decoration:none;transition:border-color .14s ease,background .14s ease,transform .14s ease,box-shadow .14s ease}
+.lct-next-link:hover{border-color:color-mix(in srgb, var(--docs-link) 38%, var(--docs-border));background:var(--docs-bg-muted);box-shadow:var(--docs-card-shadow);transform:translateY(-1px);text-decoration:none!important}
 @media (max-width:760px){
   .lct-summary{grid-template-columns:1fr}
 }
