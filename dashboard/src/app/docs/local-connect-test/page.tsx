@@ -5,9 +5,12 @@ import { ApiInlineLink } from "../api/_components/doc-components";
 const DOWNLOAD_SNIPPETS = [
   {
     label: "Download",
-    code: `curl -L "https://unipost.dev/docs/downloads/create_connect_session_url.py" \\
+    code: `export UNIPOST_DOCS_ORIGIN='https://dev.unipost.dev'
+
+curl -fL "$UNIPOST_DOCS_ORIGIN/docs/downloads/create_connect_session_url.py" \\
   -o create_connect_session_url.py
 
+python3 -m py_compile create_connect_session_url.py
 chmod +x create_connect_session_url.py`,
   },
 ];
@@ -125,6 +128,8 @@ export default function LocalConnectTestPage() {
       <p className="lct-note">
         Download <a href="/docs/downloads/create_connect_session_url.py" download>create_connect_session_url.py</a>{" "}
         into the directory where you want to run the local test. The script only uses the Python standard library.
+        Use <code>https://dev.unipost.dev</code> while testing from development docs; switch <code>UNIPOST_DOCS_ORIGIN</code>{" "}
+        to <code>https://unipost.dev</code> after the page is released to production.
       </p>
       <DocsCodeTabs snippets={DOWNLOAD_SNIPPETS} />
 

@@ -18,6 +18,9 @@ test.describe("local Connect testing documentation", () => {
 
     expect(pageSource).toContain('title="Test Connect locally"');
     expect(pageSource).toContain("/docs/downloads/create_connect_session_url.py");
+    expect(pageSource).toContain("export UNIPOST_DOCS_ORIGIN='https://dev.unipost.dev'");
+    expect(pageSource).toContain("curl -fL");
+    expect(pageSource).toContain("python3 -m py_compile create_connect_session_url.py");
     expect(pageSource).toContain("Dashboard -> Developer -> API Keys");
     expect(pageSource).toContain("Dashboard -> Profile");
     expect(pageSource).toContain("GET /v1/profiles");
