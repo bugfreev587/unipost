@@ -42,6 +42,52 @@ func TestServiceRunCreatesItemsRecipientsAndCompletesRun(t *testing.T) {
 	}
 }
 
+func TestServiceRerunResetsExistingRunWithoutCreatingDuplicate(t *testing.T) {
+	windowStart := time.Date(2026, 6, 16, 7, 0, 0, 0, time.UTC)
+	windowEnd := time.Date(2026, 6, 17, 7, 0, 0, 0, time.UTC)
+	store := &fakeStore{
+		resetRun: RunRecord{
+			ID:          "run_existing",
+			RunType:     RunTypeManual,
+			Status:      RunStatusRunning,
+			WindowStart: windowStart,
+			WindowEnd:   windowEnd,
+		},
+		failures: []Failure{
+			{PostID: "post_1", WorkspaceID: "ws_1", UserID: "user_1", UserEmail: "one@example.com", Platform: "instagram", Source: "api", ErrorCode: "temporary_platform_error", FailureStage: "dispatch", Message: "retry later", CreatedAt: time.Date(2026, 6, 16, 9, 0, 0, 0, time.UTC)},
+		},
+	}
+	svc := NewService(store, DeterministicAnalyzer{})
+
+	run, err := svc.Rerun(context.Background(), "run_existing", RunOptions{
+		WindowStart: windowStart,
+		WindowEnd:   windowEnd,
+		AdminUserID: "admin_1",
+	})
+	if err != nil {
+		t.Fatalf("Rerun returned error: %v", err)
+	}
+
+	if run.ID != "run_existing" {
+		t.Fatalf("rerun ID = %q, want existing run id", run.ID)
+	}
+	if store.createRunCalls != 0 {
+		t.Fatalf("CreateRun calls = %d, want 0", store.createRunCalls)
+	}
+	if store.resetRunCalls != 1 {
+		t.Fatalf("ResetRun calls = %d, want 1", store.resetRunCalls)
+	}
+	if got, want := len(store.items), 1; got != want {
+		t.Fatalf("items inserted = %d, want %d", got, want)
+	}
+	if got := store.items[0].runID; got != "run_existing" {
+		t.Fatalf("item run ID = %q, want existing run id", got)
+	}
+	if got, want := store.completed.FailuresAnalyzed, 1; got != want {
+		t.Fatalf("failures analyzed = %d, want %d", got, want)
+	}
+}
+
 func TestServiceRunCapsAnalyzerCallsAndFallsBackDeterministically(t *testing.T) {
 	failures := make([]Failure, 0, DefaultMaxAIBucketsPerRun+1)
 	for i := 0; i < DefaultMaxAIBucketsPerRun+1; i++ {
@@ -129,10 +175,13 @@ func (a *runScopedAnalyzerFake) AnalyzerForRun(context.Context) (Analyzer, strin
 }
 
 type fakeStore struct {
-	failures   []Failure
-	items      []fakeItemInsert
-	recipients []RecipientCandidate
-	completed  CompleteRunParams
+	failures       []Failure
+	items          []fakeItemInsert
+	recipients     []RecipientCandidate
+	completed      CompleteRunParams
+	resetRun       RunRecord
+	createRunCalls int
+	resetRunCalls  int
 }
 
 type fakeItemInsert struct {
@@ -142,7 +191,16 @@ type fakeItemInsert struct {
 }
 
 func (s *fakeStore) CreateRun(ctx context.Context, params CreateRunParams) (RunRecord, bool, error) {
+	s.createRunCalls++
 	return RunRecord{ID: "run_1", RunType: params.RunType, Status: RunStatusRunning, WindowStart: params.WindowStart, WindowEnd: params.WindowEnd}, true, nil
+}
+
+func (s *fakeStore) ResetRun(ctx context.Context, runID string, adminUserID string) (RunRecord, error) {
+	s.resetRunCalls++
+	if s.resetRun.ID != "" {
+		return s.resetRun, nil
+	}
+	return RunRecord{ID: runID, RunType: RunTypeManual, Status: RunStatusRunning}, nil
 }
 
 func (s *fakeStore) CompleteRun(ctx context.Context, runID string, params CompleteRunParams) (RunRecord, error) {

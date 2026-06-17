@@ -62,6 +62,7 @@ type CompleteRunParams struct {
 
 type Store interface {
 	CreateRun(ctx context.Context, params CreateRunParams) (RunRecord, bool, error)
+	ResetRun(ctx context.Context, runID string, adminUserID string) (RunRecord, error)
 	CompleteRun(ctx context.Context, runID string, params CompleteRunParams) (RunRecord, error)
 	FailRun(ctx context.Context, runID string, message string) error
 	LoadFailures(ctx context.Context, start, end time.Time) ([]Failure, error)
@@ -138,7 +139,21 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 	if !created {
 		return run, nil
 	}
+	return s.processRun(ctx, run)
+}
 
+func (s *Service) Rerun(ctx context.Context, runID string, opts RunOptions) (RunRecord, error) {
+	if s == nil || s.store == nil {
+		return RunRecord{}, fmt.Errorf("error triage service is not configured")
+	}
+	run, err := s.store.ResetRun(ctx, runID, opts.AdminUserID)
+	if err != nil {
+		return RunRecord{}, err
+	}
+	return s.processRun(ctx, run)
+}
+
+func (s *Service) processRun(ctx context.Context, run RunRecord) (RunRecord, error) {
 	runAnalyzer := s.analyzer
 	runModel := s.model
 	if scoped, ok := s.analyzer.(RunScopedAnalyzer); ok {
@@ -150,7 +165,7 @@ func (s *Service) Run(ctx context.Context, opts RunOptions) (RunRecord, error) {
 		}
 	}
 
-	failures, err := s.store.LoadFailures(ctx, opts.WindowStart, opts.WindowEnd)
+	failures, err := s.store.LoadFailures(ctx, run.WindowStart, run.WindowEnd)
 	if err != nil {
 		_ = s.store.FailRun(ctx, run.ID, err.Error())
 		return RunRecord{}, err
