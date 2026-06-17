@@ -73,6 +73,17 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     ],
   },
   {
+    title: "TikTok Analytics",
+    description: "Read TikTok profile fields, account statistics, public video inventory, and UniPost-published TikTok post performance.",
+    endpoints: [
+      { label: "TikTok Analytics overview", method: "GET", path: "/v1/accounts/{id}/tiktok/*", href: "/docs/api/analytics/tiktok", description: "Understand TikTok analytics scopes, production gating, and endpoint choices." },
+      { label: "Get TikTok profile", method: "GET", path: "/v1/accounts/{id}/tiktok/profile", href: "/docs/api/analytics/tiktok/profile", description: "Fetch profile fields from user.info.profile." },
+      { label: "Get TikTok account metrics", method: "GET", path: "/v1/accounts/{id}/metrics", href: "/docs/api/analytics/tiktok/account-metrics", description: "Fetch followers, following, public video count, and total likes from user.info.stats." },
+      { label: "List TikTok public videos", method: "GET", path: "/v1/accounts/{id}/tiktok/videos", href: "/docs/api/analytics/tiktok/videos", description: "Fetch public video inventory and engagement counters from video.list." },
+      { label: "TikTok post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/posts", description: "Read normalized metrics for TikTok posts published through UniPost." },
+    ],
+  },
+  {
     title: "API Metrics",
     description: "Inspect API-key traffic volume, latency, and status-code health for workspace Developer API calls.",
     endpoints: [
