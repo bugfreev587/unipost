@@ -70,7 +70,16 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
       { label: "Analytics platforms", method: "GET", path: "/v1/analytics/platforms", href: "/docs/api/analytics/platforms", description: "List platform availability and analytics health." },
       { label: "Get analytics platform", method: "GET", path: "/v1/analytics/platforms/{platform}", href: "/docs/api/analytics/platforms/detail", description: "Read platform summary, trend, accounts, and top posts." },
       { label: "Request analytics refresh", method: "POST", path: "/v1/analytics/refresh", href: "/docs/api/analytics/refresh", description: "Mark matching rows stale for the refresh worker." },
-      { label: "API Metrics", method: "GET", path: "/v1/api-metrics/overall", href: "/docs/api/api-metrics", description: "Read workspace API latency, volume, and status metrics." },
+    ],
+  },
+  {
+    title: "API Metrics",
+    description: "Inspect API-key traffic volume, latency, and status-code health for workspace Developer API calls.",
+    endpoints: [
+      { label: "Overall", method: "GET", path: "/v1/api-metrics/overall", href: "/docs/api/api-metrics/overall", description: "Read aggregate API latency, volume, and error totals." },
+      { label: "Summary", method: "GET", path: "/v1/api-metrics/summary", href: "/docs/api/api-metrics/summary", description: "List per-endpoint API latency and error rows." },
+      { label: "Trend", method: "GET", path: "/v1/api-metrics/trend", href: "/docs/api/api-metrics/trend", description: "Read hourly or daily API metrics buckets." },
+      { label: "Status-Code", method: "GET", path: "/v1/api-metrics/status-codes", href: "/docs/api/api-metrics/status-codes", description: "Read exact status-code distribution by endpoint." },
     ],
   },
   {

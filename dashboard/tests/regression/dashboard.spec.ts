@@ -22,6 +22,10 @@ const publicRoutes = [
   { path: "/docs/api/analytics/platforms/detail", marker: /Get analytics platform|GET\s+\/v1\/analytics\/platforms\/\{platform\}/i },
   { path: "/docs/api/analytics/refresh", marker: /Request analytics refresh|POST\s+\/v1\/analytics\/refresh/i },
   { path: "/docs/api/api-metrics", marker: /API Metrics|GET\s+\/v1\/api-metrics\/overall/i },
+  { path: "/docs/api/api-metrics/overall", marker: /Overall|GET\s+\/v1\/api-metrics\/overall/i },
+  { path: "/docs/api/api-metrics/summary", marker: /Summary|GET\s+\/v1\/api-metrics\/summary/i },
+  { path: "/docs/api/api-metrics/trend", marker: /Trend|GET\s+\/v1\/api-metrics\/trend/i },
+  { path: "/docs/api/api-metrics/status-codes", marker: /Status-Code|GET\s+\/v1\/api-metrics\/status-codes/i },
 ];
 
 test.describe("public dashboard surfaces", () => {
@@ -55,8 +59,13 @@ test.describe("public dashboard surfaces", () => {
     const docsShellSource = await readFile(path.join(process.cwd(), "src/app/docs/_components/docs-shell.tsx"), "utf8");
     const apiMetricsPageSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/page.tsx"), "utf8");
 
-    expect(docsShellSource).toContain('label: "API Metrics", href: "/docs/api/api-metrics", method: "GET"');
-    expect(apiMetricsPageSource).toContain("<SingleEndpointReferencePage");
+    expect(docsShellSource).toContain('label: "API Metrics",');
+    expect(docsShellSource).toContain('label: "Overall", href: "/docs/api/api-metrics/overall", method: "GET"');
+    expect(docsShellSource).toContain('label: "Summary", href: "/docs/api/api-metrics/summary", method: "GET"');
+    expect(docsShellSource).toContain('label: "Trend", href: "/docs/api/api-metrics/trend", method: "GET"');
+    expect(docsShellSource).toContain('label: "Status-Code", href: "/docs/api/api-metrics/status-codes", method: "GET"');
+    expect(docsShellSource).not.toContain('label: "API Metrics", href: "/docs/api/api-metrics", method: "GET"');
+    expect(apiMetricsPageSource).toContain('redirect("/docs/api/api-metrics/overall")');
   });
 });
 
