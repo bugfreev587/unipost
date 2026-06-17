@@ -1,0 +1,58 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { test } from "node:test";
+
+const root = process.cwd();
+
+async function source(path) {
+  return readFile(join(root, path), "utf8");
+}
+
+test("TikTok Analytics API docs live under a dedicated Analytics category", async () => {
+  const [apiIndex, docsShell, toolsConfig] = await Promise.all([
+    source("src/app/docs/api/page.tsx"),
+    source("src/app/docs/_components/docs-shell.tsx"),
+    source("src/app/tools/_components/public-analytics-tool.tsx"),
+  ]);
+
+  assert.match(apiIndex, /title:\s*"TikTok Analytics"/);
+  assert.match(apiIndex, /\/docs\/api\/analytics\/tiktok\/profile/);
+  assert.match(apiIndex, /\/docs\/api\/analytics\/tiktok\/account-metrics/);
+  assert.match(apiIndex, /\/docs\/api\/analytics\/tiktok\/videos/);
+
+  assert.match(docsShell, /label:\s*"TikTok Analytics"/);
+  assert.match(docsShell, /\/docs\/api\/analytics\/tiktok\/profile/);
+  assert.match(docsShell, /\/docs\/api\/analytics\/tiktok\/account-metrics/);
+  assert.match(docsShell, /\/docs\/api\/analytics\/tiktok\/videos/);
+
+  assert.match(toolsConfig, /docsHref:\s*"\/docs\/api\/analytics\/tiktok"/);
+});
+
+test("TikTok Analytics endpoint pages document production readiness and scopes", async () => {
+  const [overview, profile, metrics, videos, platformData, featureFlagDocs] = await Promise.all([
+    source("src/app/docs/api/analytics/tiktok/page.tsx"),
+    source("src/app/docs/api/analytics/tiktok/profile/page.tsx"),
+    source("src/app/docs/api/analytics/tiktok/account-metrics/page.tsx"),
+    source("src/app/docs/api/analytics/tiktok/videos/page.tsx"),
+    source("src/app/docs/platforms/[platform]/_data.tsx"),
+    readFile(join(root, "../docs/feature-flags-unleash.md"), "utf8"),
+  ]);
+
+  for (const page of [overview, profile, metrics, videos]) {
+    assert.match(page, /tiktok\.analytics_scopes/);
+    assert.match(page, /production/i);
+    assert.match(page, /approved|public-ready|ready/i);
+    assert.match(page, /user\.info\.(profile|stats)|video\.list/);
+    assert.doesNotMatch(page, /until (TikTok approves|approval is complete)|Keep the flag off in production/i);
+  }
+
+  assert.match(profile, /\/v1\/accounts\/:account_id\/tiktok\/profile/);
+  assert.match(metrics, /\/v1\/accounts\/:account_id\/metrics/);
+  assert.match(videos, /\/v1\/accounts\/:account_id\/tiktok\/videos/);
+  assert.match(platformData, /analytics scopes are approved/i);
+  assert.match(featureFlagDocs, /production:\s*on/i);
+  assert.match(featureFlagDocs, /TikTok approved/i);
+  assert.doesNotMatch(platformData, /until TikTok approves/i);
+  assert.doesNotMatch(featureFlagDocs, /until TikTok approves/i);
+});

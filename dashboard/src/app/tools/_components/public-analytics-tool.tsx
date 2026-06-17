@@ -48,7 +48,7 @@ export const analyticsTools: Record<AnalyticsToolSlug, AnalyticsToolConfig> = {
       "Connect TikTok once and inspect profile fields, follower stats, public videos, and post-level performance from the same UniPost analytics surface.",
     accent: "#111827",
     scopes: ["user.info.profile", "user.info.stats", "video.list"],
-    docsHref: "/docs/api/analytics/posts",
+    docsHref: "/docs/api/analytics/tiktok",
     metrics: [
       { label: "Followers", value: "12.4k", note: "From user.info.stats" },
       { label: "Total Likes", value: "86.7k", note: "Account-level TikTok stats" },
