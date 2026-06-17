@@ -26,13 +26,12 @@ import {
   listSocialAccounts,
   listSocialPosts,
   type AccountMetrics,
-  type PostAnalytics,
   type SocialAccount,
-  type SocialPost,
   type TikTokProfile,
   type TikTokVideo,
 } from "@/lib/api";
 import { PlatformIcon } from "@/components/platform-icons";
+import { buildTikTokPostRows, type TikTokPostRow } from "./tiktok-analytics-rows";
 
 const REQUIRED_SCOPES = ["user.info.profile", "user.info.stats", "video.list"] as const;
 
@@ -115,16 +114,6 @@ const previewPostRows: TikTokPostRow[] = [
   { title: "Product launch recap", status: "Published", videoId: "7350123456789012345", views: 8200, likes: 612, comments: 38, shares: 91 },
   { title: "Creator API tutorial", status: "Published", videoId: "7350123456789012311", views: 5700, likes: 433, comments: 27, shares: 64 },
 ];
-
-type TikTokPostRow = {
-  title: string;
-  status: string;
-  videoId: string;
-  views: number;
-  likes: number;
-  comments: number;
-  shares: number;
-};
 
 type TikTokAnalyticsViewProps = {
   profileId?: string;
@@ -219,7 +208,7 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
       const analyticsSettled = await Promise.allSettled(
         published.map((post) => getPostAnalytics(token, post.id))
       );
-      setPostRows(buildPostRows(published, analyticsSettled, account.id));
+      setPostRows(buildTikTokPostRows(published, analyticsSettled, account.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load TikTok analytics");
     } finally {
@@ -309,29 +298,6 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
   );
 }
 
-function buildPostRows(
-  posts: SocialPost[],
-  analyticsSettled: PromiseSettledResult<import("@/lib/api").ApiResponse<PostAnalytics[]>>[],
-  accountId: string
-): TikTokPostRow[] {
-  return posts.map((post, index) => {
-    const analytics = analyticsSettled[index];
-    const row = analytics.status === "fulfilled"
-      ? analytics.value.data.find((item) => item.social_account_id === accountId)
-      : undefined;
-    const result = post.results?.find((item) => item.social_account_id === accountId);
-    return {
-      title: post.caption || "Untitled TikTok post",
-      status: result?.status || post.status,
-      videoId: String(row?.platform_specific?.tiktok_video_id || result?.external_id || row?.external_id || "-"),
-      views: row?.video_views || 0,
-      likes: row?.likes || 0,
-      comments: row?.comments || 0,
-      shares: row?.shares || 0,
-    };
-  });
-}
-
 function ScopeReadiness({ missingScopes }: { missingScopes: readonly string[] }) {
   const ready = missingScopes.length === 0;
   return (
@@ -405,16 +371,15 @@ function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; acc
 }
 
 function ProfileAvatar({ src, label }: { src: string; label: string }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  const showImage = src && !failed;
+  const [failedSrc, setFailedSrc] = useState("");
+  const showImage = src && failedSrc !== src;
   return (
     <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg, #111827, #0f766e)", display: "grid", placeItems: "center", color: "white", fontWeight: 700, overflow: "hidden", flexShrink: 0 }}>
       {showImage ? (
         <img
           src={src}
           alt=""
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(src)}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       ) : (
@@ -485,16 +450,15 @@ function VideosTable({ videos }: { videos: TikTokVideo[] }) {
 }
 
 function VideoThumb({ video }: { video: TikTokVideo }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [video.cover_image_url]);
-  const showImage = video.cover_image_url && !failed;
+  const [failedSrc, setFailedSrc] = useState("");
+  const showImage = video.cover_image_url && failedSrc !== video.cover_image_url;
   return (
     <div style={{ width: 38, height: 38, borderRadius: 6, background: "var(--surface2)", display: "grid", placeItems: "center", color: "var(--dmuted)", overflow: "hidden", flexShrink: 0 }}>
       {showImage ? (
         <img
           src={video.cover_image_url}
           alt=""
-          onError={() => setFailed(true)}
+          onError={() => setFailedSrc(video.cover_image_url || "")}
           style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
         />
       ) : (

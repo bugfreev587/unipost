@@ -461,6 +461,16 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
+          label: "TikTok Analytics",
+          children: [
+            { label: "Overview", href: "/docs/api/analytics/tiktok" },
+            { label: "Get TikTok profile", href: "/docs/api/analytics/tiktok/profile", method: "GET" },
+            { label: "Get TikTok account metrics", href: "/docs/api/analytics/tiktok/account-metrics", method: "GET" },
+            { label: "List TikTok public videos", href: "/docs/api/analytics/tiktok/videos", method: "GET" },
+            { label: "TikTok post analytics", href: "/docs/api/analytics/posts", method: "GET" },
+          ],
+        },
+        {
           label: "API Metrics",
           children: [
             { label: "Overall", href: "/docs/api/api-metrics/overall", method: "GET" },

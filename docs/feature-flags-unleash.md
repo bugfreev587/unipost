@@ -43,7 +43,7 @@ Start with the env provider:
 
 ```text
 FEATURE_FLAGS_PROVIDER=env
-FEATURE_TIKTOK_ANALYTICS_SCOPES=false
+FEATURE_TIKTOK_ANALYTICS_SCOPES=true
 ```
 
 After Unleash is live and the backend token is created:
@@ -74,7 +74,7 @@ The response is intentionally simple:
     "environment": "production",
     "provider": "unleash",
     "flags": {
-      "tiktok.analytics_scopes": false
+      "tiktok.analytics_scopes": true
     },
     "plan_gates": {
       "inbox": true
@@ -93,12 +93,12 @@ Create this flag in Unleash:
 tiktok.analytics_scopes
 ```
 
-Recommended defaults:
+Recommended rollout state:
 
 ```text
 development: on
-production: off
-fallback: off in production
+production: on
+fallback: off in production unless FEATURE_TIKTOK_ANALYTICS_SCOPES=true is set
 ```
 
 This flag controls whether TikTok OAuth requests include:
@@ -109,7 +109,7 @@ user.info.stats
 video.list
 ```
 
-It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. Production should stay off until TikTok approves those scopes for the production app. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
+It also controls the dashboard TikTok platform analytics surface under `Analytics -> Platforms -> TikTok` and the backend endpoints that fetch TikTok profile, account metrics, and public video inventory. TikTok approved `user.info.profile`, `user.info.stats`, and `video.list` for the production app, so production should be on for the public Analytics API rollout. The emergency rollback is to disable `tiktok.analytics_scopes` in the production environment.
 
 Create this flag in Unleash:
 
