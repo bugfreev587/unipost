@@ -63,6 +63,37 @@ Expires at: 2026-06-17T20:00:00Z`,
   },
 ];
 
+const OAUTH_FLOW_STEPS = [
+  {
+    n: "1",
+    title: "Open the Connection session URL",
+    body: "The URL opens UniPost Hosted Connect for the selected platform. Click the authorize button to leave UniPost and start the platform OAuth flow.",
+    img: "/docs/connect-account/1.png",
+    alt: "Hosted Connect page with an Authorize YouTube button.",
+  },
+  {
+    n: "2",
+    title: "Choose the account to connect",
+    body: "The platform asks the user to sign in or choose an existing account. This example uses YouTube, so the account picker is shown by Google.",
+    img: "/docs/connect-account/2.png",
+    alt: "Google account picker shown during YouTube OAuth.",
+  },
+  {
+    n: "3",
+    title: "Approve platform access",
+    body: "Review the requested access and continue. UniPost receives the OAuth callback after the platform authorization completes.",
+    img: "/docs/connect-account/3.png",
+    alt: "Google OAuth consent screen asking the user to continue.",
+  },
+  {
+    n: "4",
+    title: "Confirm the connection succeeded",
+    body: <>When the browser returns to UniPost, the hosted flow shows the connected state. The connected account now belongs to the profile used in <code>PROFILE_ID</code>.</>,
+    img: "/docs/connect-account/4.png",
+    alt: "UniPost connected success screen after OAuth completes.",
+  },
+];
+
 export default function LocalConnectTestPage() {
   return (
     <DocsPage
@@ -152,7 +183,28 @@ export default function LocalConnectTestPage() {
       </p>
       <DocsCodeTabs snippets={OUTPUT_SNIPPETS} />
 
-      <h2 id="after-oauth">5. After OAuth</h2>
+      <h2 id="browser-oauth-flow">5. Complete OAuth in the browser</h2>
+      <p className="lct-note">
+        The screenshots below show the browser flow after opening the returned
+        Connection session URL. This example uses YouTube; other platforms follow
+        the same pattern with their own sign-in and consent screens.
+      </p>
+      <ol className="docs-screenshot-steps">
+        {OAUTH_FLOW_STEPS.map((step) => (
+          <li key={step.n} className="docs-screenshot-step">
+            <div className="docs-screenshot-step-head">
+              <div className="docs-screenshot-step-number">{step.n}</div>
+              <div className="docs-screenshot-step-title">{step.title}</div>
+            </div>
+            <div className="docs-screenshot-step-body">{step.body}</div>
+            <div className="docs-screenshot-step-image">
+              <img src={step.img} alt={step.alt} />
+            </div>
+          </li>
+        ))}
+      </ol>
+
+      <h2 id="after-oauth">6. After OAuth</h2>
       <p className="lct-note">
         Complete the platform authorization in the browser. When OAuth finishes,
         UniPost records the connected account under the profile you passed in{" "}
