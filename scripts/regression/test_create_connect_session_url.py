@@ -105,6 +105,45 @@ class CreateConnectSessionURLTest(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("Missing UNIPOST_API_KEY", stderr.getvalue())
 
+    def test_accepts_short_profile_and_platform_env_aliases(self):
+        module = load_script_module()
+        calls = []
+
+        def fake_request(method, url, headers, payload):
+            calls.append(payload)
+            return {
+                "data": {
+                    "id": "cs_env_alias",
+                    "platform": "youtube",
+                    "status": "pending",
+                    "url": "https://app.unipost.dev/connect/youtube?session=cs_env_alias&state=state_test",
+                }
+            }
+
+        code = module.main(
+            ["--external-user-id", "local-user-456"],
+            environ={
+                "UNIPOST_API_KEY": "sk_test_456",
+                "PLATFORM": "youtube",
+                "PROFILE_ID": "16202f3f-0c3c-4b92-afae-177f279c692a",
+            },
+            request_json=fake_request,
+            stdout=io.StringIO(),
+            stderr=io.StringIO(),
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            calls,
+            [
+                {
+                    "platform": "youtube",
+                    "external_user_id": "local-user-456",
+                    "profile_id": "16202f3f-0c3c-4b92-afae-177f279c692a",
+                }
+            ],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
