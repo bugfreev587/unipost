@@ -457,7 +457,15 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Analytics platforms", href: "/docs/api/analytics/platforms", method: "GET" },
             { label: "Get analytics platform", href: "/docs/api/analytics/platforms/detail", method: "GET" },
             { label: "Request analytics refresh", href: "/docs/api/analytics/refresh", method: "POST" },
-            { label: "API Metrics", href: "/docs/api/api-metrics", method: "GET" },
+          ],
+        },
+        {
+          label: "API Metrics",
+          children: [
+            { label: "Overall", href: "/docs/api/api-metrics/overall", method: "GET" },
+            { label: "Summary", href: "/docs/api/api-metrics/summary", method: "GET" },
+            { label: "Trend", href: "/docs/api/api-metrics/trend", method: "GET" },
+            { label: "Status-Code", href: "/docs/api/api-metrics/status-codes", method: "GET" },
           ],
         },
       ],
