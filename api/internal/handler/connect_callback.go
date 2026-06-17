@@ -433,7 +433,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			ExternalUserEmail: session.ExternalUserEmail,
 		})
 	case lookupErr == pgx.ErrNoRows:
-		saved, err = h.queries.CreateManagedSocialAccount(r.Context(), db.CreateManagedSocialAccountParams{
+		saved, err = h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
 			ProfileID:         session.ProfileID,
 			Platform:          platformName,
 			AccessToken:       encAccess,
