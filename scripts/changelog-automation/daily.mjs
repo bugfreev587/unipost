@@ -6,6 +6,7 @@ import {
   extractAnthropicCandidateContent,
   isDiscordWebhookURL,
   isLosAngelesHour,
+  normalizeCandidatePayload,
   normalizeSourceHash,
   parseAIJSONContent,
   renderDiscordCandidateMessage,
@@ -42,7 +43,10 @@ const windowInfo = process.env.CHANGELOG_WINDOW_START && process.env.CHANGELOG_W
 
 const commits = collectCommits(windowInfo.startISO, windowInfo.endISO);
 const sourceHash = normalizeSourceHash(commits.map((commit) => `commit:${commit.sha}`));
-const payload = await draftCandidate({ commits, windowInfo });
+const payload = normalizeCandidatePayload(await draftCandidate({ commits, windowInfo }), {
+  commits,
+  repo: process.env.CHANGELOG_REPO,
+});
 
 await writeFile(`${outDir}/candidate.json`, `${JSON.stringify(payload, null, 2)}\n`);
 await writeFile(`${outDir}/source.json`, `${JSON.stringify({ window: windowInfo, commits, sourceHash }, null, 2)}\n`);
