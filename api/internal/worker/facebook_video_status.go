@@ -13,6 +13,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 )
 
 // FacebookVideoStatusWorker flips Facebook video rows out of
@@ -171,6 +172,7 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 				"result_id", r.SocialPostResultID, "error", err)
 			return
 		}
+		w.recordFailure(ctx, r, "platform_status", errMsg)
 		slog.Warn("facebook video status: flipped to failed (reel reclassified)",
 			"result_id", r.SocialPostResultID, "video_id", videoID,
 			"permalink_url", st.PermalinkURL)
@@ -226,6 +228,7 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 				"result_id", r.SocialPostResultID, "error", err)
 			return
 		}
+		w.recordFailure(ctx, r, "platform_status", errMsg)
 		slog.Info("facebook video status: flipped to failed (FB error)",
 			"result_id", r.SocialPostResultID, "video_id", videoID, "message", errMsg)
 
@@ -249,6 +252,7 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 					"result_id", r.SocialPostResultID, "error", err)
 				return
 			}
+			w.recordFailure(ctx, r, "platform_status", errMsg)
 			slog.Warn("facebook video status: flipped to failed (phase error)",
 				"result_id", r.SocialPostResultID, "video_id", videoID, "message", errMsg)
 			return
@@ -273,10 +277,45 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 					"result_id", r.SocialPostResultID, "error", err)
 				return
 			}
+			w.recordFailure(ctx, r, "worker_timeout", errMsg)
 			slog.Warn("facebook video status: flipped to failed (stale cap)",
 				"result_id", r.SocialPostResultID, "video_id", videoID,
 				"phase", st.VideoStatus, "age", time.Since(r.PostCreatedAt.Time))
 		}
+	}
+}
+
+func (w *FacebookVideoStatusWorker) recordFailure(ctx context.Context, row db.ListFacebookVideosAwaitingStatusRow, failureStage, message string) {
+	failure := postfailures.BuildParams(
+		row.PostID,
+		row.SocialPostResultID,
+		row.WorkspaceID,
+		row.SocialAccountID,
+		"facebook",
+		failureStage,
+		message,
+		message,
+	)
+	if err := w.queries.UpdateSocialPostResultFailureDetails(ctx, db.UpdateSocialPostResultFailureDetailsParams{
+		ID:                row.SocialPostResultID,
+		ErrorCode:         postfailures.ToText(failure.ErrorCode),
+		FailureStage:      postfailures.ToText(failure.FailureStage),
+		PlatformErrorCode: failure.PlatformErrorCode,
+		IsRetriable:       pgtype.Bool{Bool: failure.IsRetriable, Valid: true},
+		NextAction:        postfailures.ToText(postfailures.NextActionForErrorCode(failure.ErrorCode)),
+	}); err != nil {
+		slog.Warn("facebook video status: failed to persist structured result failure fields",
+			"post_id", row.PostID,
+			"result_id", row.SocialPostResultID,
+			"stage", failureStage,
+			"error", err)
+	}
+	if _, err := w.queries.CreatePostFailure(ctx, failure); err != nil {
+		slog.Warn("facebook video status: failed to persist structured post failure",
+			"post_id", row.PostID,
+			"result_id", row.SocialPostResultID,
+			"stage", failureStage,
+			"error", err)
 	}
 }
 

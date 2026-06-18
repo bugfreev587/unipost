@@ -113,6 +113,36 @@ func ToText(v string) pgtype.Text {
 	return pgtype.Text{String: v, Valid: strings.TrimSpace(v) != ""}
 }
 
+func NextActionForErrorCode(errorCode string) string {
+	switch strings.TrimSpace(errorCode) {
+	case "validation_error":
+		return "fix_request"
+	case "platform_request_invalid":
+		return "review_platform_options"
+	case "media_error":
+		return "fix_media"
+	case "temporary_platform_error", "worker_stalled":
+		return "retry_later"
+	case "rate_limit":
+		return "wait_and_retry"
+	case "quota_exceeded":
+		return "review_quota"
+	case "account_reconnect_required", "auth_token_invalid":
+		return "reconnect_account"
+	case "missing_permission":
+		return "reconnect_or_update_permissions"
+	case "target_not_found":
+		return "select_valid_target"
+	case "unknown_error", "platform_error":
+		return "contact_support"
+	default:
+		if strings.TrimSpace(errorCode) == "" {
+			return ""
+		}
+		return "contact_support"
+	}
+}
+
 func FirstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if strings.TrimSpace(v) != "" {
