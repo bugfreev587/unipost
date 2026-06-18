@@ -37,9 +37,14 @@ test("publish workflow and daily workflow exist with safe triggers", async () =>
   const daily = await source(".github/workflows/changelog-daily.yml");
   const publish = await source(".github/workflows/changelog-publish.yml");
 
-  assert.match(daily, /timezone:\s*"America\/Los_Angeles"/);
+  assert.doesNotMatch(daily, /timezone:/);
+  assert.match(daily, /cron:\s*"0 15 \* \* \*"/);
+  assert.match(daily, /cron:\s*"0 16 \* \* \*"/);
+  assert.match(daily, /CHANGELOG_REQUIRE_LA_HOUR/);
   assert.match(daily, /scripts\/changelog-automation\/daily\.mjs/);
   assert.match(daily, /CHANGELOG_ANTHROPIC_API_KEY/);
+  assert.match(daily, /CHANGELOG_ANTHROPIC_MODEL/);
+  assert.match(daily, /claude-haiku-4-5-20251001/);
   assert.match(daily, /REGRESSION_ALERT_WEBHOOK_URL/);
   assert.match(daily, /webhook_test/);
   assert.match(publish, /workflow_dispatch/);

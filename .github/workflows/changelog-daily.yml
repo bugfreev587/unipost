@@ -2,8 +2,8 @@ name: Changelog Daily Candidate
 
 on:
   schedule:
-    - cron: "0 8 * * *"
-      timezone: "America/Los_Angeles"
+    - cron: "0 15 * * *"
+    - cron: "0 16 * * *"
   workflow_dispatch:
     inputs:
       window_start:
@@ -38,12 +38,14 @@ jobs:
     env:
       CHANGELOG_AI_API_KEY: ${{ secrets.CHANGELOG_AI_API_KEY }}
       CHANGELOG_ANTHROPIC_API_KEY: ${{ secrets.CHANGELOG_ANTHROPIC_API_KEY }}
+      CHANGELOG_ANTHROPIC_MODEL: ${{ vars.CHANGELOG_ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001' }}
       CHANGELOG_AI_MODEL: ${{ vars.CHANGELOG_AI_MODEL || 'gpt-4.1-mini' }}
       CHANGELOG_API_BASE: ${{ vars.CHANGELOG_API_BASE || 'https://api.unipost.dev' }}
       CHANGELOG_AUTOMATION_TOKEN: ${{ secrets.CHANGELOG_AUTOMATION_TOKEN }}
       CHANGELOG_DASHBOARD_BASE_URL: ${{ vars.CHANGELOG_DASHBOARD_BASE_URL || 'https://app.unipost.dev' }}
       CHANGELOG_DISCORD_WEBHOOK_URL: ${{ secrets.CHANGELOG_DISCORD_WEBHOOK_URL || secrets.REGRESSION_ALERT_WEBHOOK_URL }}
       CHANGELOG_REPO: ${{ github.repository }}
+      CHANGELOG_REQUIRE_LA_HOUR: ${{ github.event_name == 'schedule' && '8' || '' }}
       CHANGELOG_WINDOW_START: ${{ inputs.window_start }}
       CHANGELOG_WINDOW_END: ${{ inputs.window_end }}
       CHANGELOG_WEBHOOK_TEST: ${{ inputs.webhook_test }}

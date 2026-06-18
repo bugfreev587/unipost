@@ -5,6 +5,7 @@ import {
   computePreviousLosAngelesWindow,
   extractAnthropicCandidateContent,
   isDiscordWebhookURL,
+  isLosAngelesHour,
   normalizeSourceHash,
   renderDiscordCandidateMessage,
   validateCandidatePayload,
@@ -12,6 +13,17 @@ import {
 
 const outDir = process.env.CHANGELOG_OUT_DIR || "artifacts/changelog";
 await mkdir(outDir, { recursive: true });
+
+if (process.env.CHANGELOG_REQUIRE_LA_HOUR) {
+  const requiredHour = Number(process.env.CHANGELOG_REQUIRE_LA_HOUR);
+  if (!Number.isInteger(requiredHour) || requiredHour < 0 || requiredHour > 23) {
+    throw new Error("CHANGELOG_REQUIRE_LA_HOUR must be an integer from 0 to 23");
+  }
+  if (!isLosAngelesHour(new Date(), requiredHour)) {
+    console.log(`Skipping scheduled changelog run because it is not ${requiredHour}:00 in Los Angeles.`);
+    process.exit(0);
+  }
+}
 
 if (process.env.CHANGELOG_WEBHOOK_TEST === "true") {
   await sendDiscord("UniPost changelog automation webhook test.");
@@ -134,7 +146,7 @@ async function draftCandidate({ commits, windowInfo }) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: process.env.CHANGELOG_ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+        model: process.env.CHANGELOG_ANTHROPIC_MODEL || "claude-haiku-4-5-20251001",
         max_tokens: 1600,
         temperature: 0.2,
         system: messages[0].content,

@@ -69,6 +69,10 @@ export function computePreviousLosAngelesWindow(now = new Date()) {
   };
 }
 
+export function isLosAngelesHour(now = new Date(), expectedHour) {
+  return localParts(now, LA_TIME_ZONE).hour === Number(expectedHour);
+}
+
 export function normalizeSourceHash(parts) {
   const cleaned = [...new Set((parts || []).map((part) => String(part || "").trim()).filter(Boolean))].sort();
   return createHash("sha256").update(cleaned.join("\n")).digest("hex");
