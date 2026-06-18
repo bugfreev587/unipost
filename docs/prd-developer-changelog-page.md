@@ -2,6 +2,7 @@
 Status: Planning
 Owner: Marketing / Developer Experience
 Created: 2026-06-18
+Updated: 2026-06-18
 
 ---
 
@@ -28,7 +29,7 @@ UniPost 现在的公开 landing navigation 里有一个直接指向 `/docs` 的 
    - UniPost 是一个仍在稳定迭代的产品。
    - UniPost 的能力发展有清晰轨迹。
    - SDK、API、Dashboard、平台支持等发布都有可追踪版本和链接。
-5. SDK 发布时必须显示 SDK package name 和 version number，例如 `@unipost/sdk-js v0.4.0`。
+5. SDK 发布时必须显示 SDK ecosystem, package name 和 version number。JavaScript SDK 的 npm package 是 `@unipost/sdk`; `sdk-js` 是 GitHub repo name, not the npm package name.
 6. 页面要适合未来持续维护，不依赖工程师每次改复杂布局才能新增一条发布记录。
 
 ---
@@ -105,7 +106,8 @@ The canonical page URL should be `/changelog`. The nav label and page title can 
 
 - `/docs`
 - `/changelog`
-- `/change-logs` if an alias route exists
+
+If `/change-logs` is implemented as a real alias route, include it in the active-state check. If it is only a redirect to `/changelog`, do not include it because users will not remain on that path.
 
 ### 5.3 Footer
 
@@ -175,9 +177,9 @@ Desktop columns:
 
 | Column | Purpose |
 | --- | --- |
-| Date | Release date, displayed as `YYYY-MM-DD` or `Month YYYY` if only a month-level release is appropriate |
-| Release | Human-readable title and 1 to 2 sentence summary |
-| Area | Category pill, such as `API`, `SDK`, `Dashboard`, `Platform`, `DX`, `Reliability` |
+| Date | Sortable release date, displayed as `YYYY-MM-DD` or a custom display date such as `June 2026` |
+| Release | Human-readable title and 1 to 2 sentence summary. Breaking changes must show a visible `Breaking` badge near the title |
+| Area / Impact | Category pill, such as `API`, `SDK`, `Dashboard`, `Platform`, `DX`, `Reliability`, plus an impact pill such as `New`, `Improved`, `Changed`, or `Fixed` |
 | SDK | Package and version pills when applicable, otherwise `-` |
 | Links | Docs, API reference, blog post, package registry, or migration guide |
 
@@ -186,6 +188,7 @@ Mobile behavior:
 - Each release becomes one stacked row.
 - Date and category appear at top.
 - Title and summary come next.
+- `Breaking` and impact labels appear near the title or category, not hidden in body text.
 - SDK versions appear as inline pills.
 - Links appear as compact text buttons.
 - No horizontal scrolling should be required.
@@ -202,6 +205,7 @@ Recommended filters:
 - Dashboard
 - Platform
 - DX
+- Reliability
 
 Filtering should be progressive enhancement. The full release list must still be visible and crawlable without relying on client-side JavaScript.
 
@@ -228,26 +232,46 @@ Recommended fields:
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
 | `id` | string | yes | Stable slug for anchors |
-| `date` | string | yes | ISO date if known, otherwise month-level metadata plus display label |
+| `date` | string | yes | ISO date used for sorting, for example `2026-06-18`. If only a month is known, use the first day of that month for sorting and set `displayDate` |
+| `displayDate` | string | no | Optional user-facing date such as `June 2026` when exact day-level dating is not verified |
 | `title` | string | yes | Short release title |
 | `summary` | string | yes | 1 to 2 sentences |
 | `category` | enum | yes | `api`, `sdk`, `dashboard`, `platform`, `dx`, `reliability` |
-| `sdkVersions` | array | no | Package name, version, registry URL |
+| `sdkVersions` | array | no | SDK ecosystem, package coordinate, version, registry URL, and optional install command |
 | `links` | array | no | Label and URL |
-| `impact` | enum | yes | `new`, `improved`, `changed`, `fixed` |
-| `isBreaking` | boolean | yes | Defaults to false |
+| `impact` | enum | yes | `new`, `improved`, `changed`, `fixed`. Render as a visible impact label |
+| `isBreaking` | boolean | yes | Defaults to false. When true, render a visible `Breaking` badge and require a migration or docs link |
+
+SDK version objects should support different package ecosystems:
+
+| Field | Type | Required | Notes |
+| --- | --- | --- | --- |
+| `ecosystem` | enum | yes | `npm`, `pip`, `go`, `maven` |
+| `packageName` | string | yes | Examples: `@unipost/sdk`, `unipost`, `github.com/unipost-dev/sdk-go`, `dev.unipost:sdk-java` |
+| `version` | string | yes | Verified package version, without guessing |
+| `href` | string | yes | Registry, package, module, or release URL |
+| `installCommand` | string | no | Exact install snippet when useful, e.g. `npm install @unipost/sdk@0.4.0` |
+
+The changelog SDK pill should represent official UniPost SDK packages only. Do not label `@unipost/agentpost` or AgentPost releases as SDK releases; AgentPost is a separate OSS frontend/CLI package built on UniPost.
 
 Example entry shape for implementation:
 
 ```ts
 {
-  id: "sdk-js-publish-support",
+  id: "sdk-javascript-release",
   date: "2026-06-18",
-  title: "JavaScript SDK publish helpers",
-  summary: "The JavaScript SDK adds typed helpers for creating drafts, publishing posts, and reading delivery results.",
+  displayDate: "June 18, 2026",
+  title: "JavaScript SDK release",
+  summary: "The JavaScript SDK ships a verified npm release. The final public entry should describe the concrete shipped methods after checking the release tag and package notes.",
   category: "sdk",
   sdkVersions: [
-    { packageName: "@unipost/sdk-js", version: "0.4.0", href: "https://www.npmjs.com/package/@unipost/sdk-js" }
+    {
+      ecosystem: "npm",
+      packageName: "@unipost/sdk",
+      version: "0.4.0",
+      href: "https://www.npmjs.com/package/@unipost/sdk",
+      installCommand: "npm install @unipost/sdk@0.4.0"
+    }
   ],
   links: [
     { label: "SDK docs", href: "/docs/sdk" },
@@ -258,7 +282,7 @@ Example entry shape for implementation:
 }
 ```
 
-This example is a schema example, not a claim that this exact SDK version has shipped. Launch content must use verified release dates and verified package versions.
+This example is a schema example. The package name and npm version were checked while revising this PRD, but launch content must still verify the release date, release notes, registry version, and feature summary before publishing the entry.
 
 ---
 
@@ -282,6 +306,8 @@ Content rule:
 - Every launch entry must be traceable to a merged PR, docs page, release tag, package registry version, or dated internal release note.
 - If a release date cannot be verified exactly, use a month-level display such as `June 2026`, but keep the underlying data structured.
 - SDK version numbers must never be guessed. If the package version cannot be verified, omit the SDK pill for that entry.
+- Before implementation, create a release research table with one row per candidate release: title, category, impact, display date, date source, PR/tag/source link, SDK version source when applicable, docs link, and whether the entry is breaking.
+- A strong first seed candidate is Developer Logs API. Verify it against the relevant PRs, `/docs/api/logs/*` docs, and deployment status before publishing it as `reliability` or `api` with `impact: "new"`.
 
 ---
 
@@ -296,6 +322,7 @@ Design principles:
 - Keep the first screen useful: latest release plus visible history.
 - Prefer neutral surfaces, crisp borders, and restrained accent color.
 - Use monospace styling for SDK package names, versions, API paths, and dates.
+- Make `Breaking` badges and impact labels scannable without making the table noisy.
 - Avoid a generic three-card feature row.
 - Avoid decorative gradients, oversized hero copy, and marketing filler.
 
@@ -335,7 +362,8 @@ Sitemap:
 Indexing:
 
 - Page should be indexable.
-- Release anchors should be linkable, for example `/changelog#sdk-js-publish-support`.
+- Release anchors should be linkable, for example `/changelog#sdk-javascript-release`.
+- Only `/changelog` should be added to the sitemap. Do not add hash-fragment release anchors to the sitemap because search engines do not treat fragments as separate pages.
 
 ---
 
@@ -372,7 +400,7 @@ Track these events if the existing analytics system supports public marketing ev
 | `changelog_filter_selected` | User changes release category filter |
 | `changelog_release_link_clicked` | User clicks a release docs/package/blog link |
 
-If no public marketing analytics pattern exists, implementation can skip custom events and rely on page analytics.
+Current marketing code does not expose an obvious public `track()`, PostHog, or gtag helper. v1 should skip custom analytics events and rely on existing page analytics. Do not introduce a new analytics stack just for this page. Revisit these events only after a shared marketing analytics pattern exists.
 
 ---
 
@@ -384,17 +412,22 @@ Suggested implementation surfaces:
   - Replace `Docs` nav item with accessible `Developer` dropdown.
   - Keep `Docs` as a dropdown item.
   - Add `Change Logs`.
+  - Use the existing `dashboard/src/components/ui/dropdown-menu.tsx` primitives, based on `@base-ui/react/menu`, instead of hand-rolling keyboard, Escape, outside-click, and ARIA behavior.
+  - Current public marketing navigation is a flat `PUBLIC_NAV_ITEMS` array. Mobile public nav is not a separate hamburger menu; CSS currently moves `.mk-nav-links` into a horizontally scrollable row under 900px. The dropdown trigger and menu must remain tappable and readable in that responsive layout.
 - `dashboard/src/app/changelog/page.tsx`
   - New public page.
-  - Reuse marketing shell and public site header.
+  - Explicitly import and render `PublicSiteHeader` from `dashboard/src/components/marketing/nav.tsx`; this repo does not have a shared `(marketing)` route-group layout for these pages.
+  - The global `SiteFooterGate` should display the footer by default because `/changelog` is not in `HIDDEN_PREFIXES`.
   - Add route metadata.
 - `dashboard/src/app/sitemap.ts`
-  - Add `/changelog`.
+  - Add exactly one `/changelog` entry. Do not add hash-fragment release anchors.
 - Optional:
   - Add `/change-logs` redirect to `/changelog`.
   - Update footer to include `Change Logs`.
 
 The page should use a local typed data file or colocated constant for v1. If release entries become frequent, move to MDX or a lightweight content collection later.
+
+Before writing implementation code in `dashboard/`, read `dashboard/AGENTS.md` and the relevant guide under `dashboard/node_modules/next/dist/docs/`, because this project explicitly warns that its Next.js version has breaking differences from standard assumptions.
 
 ---
 
@@ -427,8 +460,10 @@ Manual validation:
   - Escape closes menu.
 - SEO:
   - Confirm title, description, canonical URL, and sitemap entry.
+  - Confirm only `/changelog` appears in the sitemap; release hash anchors should not.
 - Content:
   - Confirm every published release entry has verified date, category, links, and SDK version when applicable.
+  - Confirm each release has a research-table source row before it is added to the page.
 
 Remote validation after pushing to `origin/dev`:
 
@@ -446,12 +481,15 @@ Remote validation after pushing to `origin/dev`:
 4. `/changelog` is a public, indexable page.
 5. The page includes a latest-release area and a release table/history list.
 6. Release rows include date, title, summary, area, links, and SDK version pills when applicable.
-7. SDK version numbers are displayed only when verified.
-8. The page launches with 5 to 8 verified major releases.
-9. Desktop and mobile layouts are polished and do not overflow.
-10. Keyboard and screen-reader access for the dropdown and release links is handled.
-11. Build passes.
-12. After merge to `dev`, the dev deployment is validated at the development domain.
+7. Release rows visibly render `impact`; breaking changes visibly render a `Breaking` badge and include a migration or docs link.
+8. SDK version numbers are displayed only when verified from the correct ecosystem registry or release source.
+9. SDK data supports at least npm, pip, Go module, and Maven package shapes.
+10. Reliability releases can be represented in category pills and filters.
+11. The page launches with 5 to 8 verified major releases, backed by a release research table.
+12. Desktop and mobile layouts are polished and do not overflow.
+13. Keyboard and screen-reader access for the dropdown and release links is handled.
+14. Build passes.
+15. After merge to `dev`, the dev deployment is validated at the development domain.
 
 ---
 
