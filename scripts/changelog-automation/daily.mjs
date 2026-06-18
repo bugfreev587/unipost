@@ -7,6 +7,7 @@ import {
   isDiscordWebhookURL,
   isLosAngelesHour,
   normalizeSourceHash,
+  parseAIJSONContent,
   renderDiscordCandidateMessage,
   validateCandidatePayload,
 } from "./lib.mjs";
@@ -154,7 +155,7 @@ async function draftCandidate({ commits, windowInfo }) {
       }),
     });
     if (!res.ok) throw new Error(`Anthropic request failed: HTTP ${res.status}`);
-    return JSON.parse(extractAnthropicCandidateContent(await res.json()));
+    return parseAIJSONContent(extractAnthropicCandidateContent(await res.json()));
   }
   const res = await fetch(process.env.CHANGELOG_AI_URL || "https://api.openai.com/v1/chat/completions", {
     method: "POST",
@@ -173,7 +174,7 @@ async function draftCandidate({ commits, windowInfo }) {
   const body = await res.json();
   const content = body.choices?.[0]?.message?.content;
   if (!content) throw new Error("AI response did not include message content");
-  return JSON.parse(content);
+  return parseAIJSONContent(content);
 }
 
 async function createCandidate(payload, sourceHash, windowInfo) {
