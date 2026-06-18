@@ -27,6 +27,10 @@ type ErrorBody struct {
 	Code           string           `json:"code"`
 	NormalizedCode string           `json:"normalized_code,omitempty"`
 	Message        string           `json:"message"`
+	Hint           string           `json:"hint,omitempty"`
+	NextAction     string           `json:"next_action,omitempty"`
+	IsRetriable    *bool            `json:"is_retriable,omitempty"`
+	DocsURL        string           `json:"docs_url,omitempty"`
 	Issues         []platform.Issue `json:"issues,omitempty"`
 }
 
@@ -40,6 +44,14 @@ type legacyCursorSuccessResponse struct {
 	Meta       *MetaResponse `json:"meta,omitempty"`
 	RequestID  string        `json:"request_id,omitempty"`
 	NextCursor string        `json:"next_cursor,omitempty"`
+}
+
+type ErrorDetails struct {
+	Hint        string
+	NextAction  string
+	IsRetriable *bool
+	DocsURL     string
+	Issues      []platform.Issue
 }
 
 func requestIDFromResponse(w http.ResponseWriter) string {
@@ -177,11 +189,20 @@ func writeSuccessWithLegacyCursor(w http.ResponseWriter, data any, nextCursor st
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
+	writeErrorWithDetails(w, status, code, message, ErrorDetails{})
+}
+
+func writeErrorWithDetails(w http.ResponseWriter, status int, code, message string, details ErrorDetails) {
 	writeJSON(w, status, ErrorResponse{
 		Error: ErrorBody{
 			Code:           code,
 			NormalizedCode: normalizeErrorCode(code),
 			Message:        message,
+			Hint:           details.Hint,
+			NextAction:     details.NextAction,
+			IsRetriable:    details.IsRetriable,
+			DocsURL:        details.DocsURL,
+			Issues:         details.Issues,
 		},
 		RequestID: requestIDFromResponse(w),
 	})
@@ -197,11 +218,15 @@ func writeRateLimited(w http.ResponseWriter, normalizedCode, message string, ret
 		retryAfter = time.Second
 	}
 	w.Header().Set("Retry-After", strconv.Itoa(int(retryAfter.Seconds())))
+	isRetriable := true
 	writeJSON(w, http.StatusTooManyRequests, ErrorResponse{
 		Error: ErrorBody{
 			Code:           "RATE_LIMITED",
 			NormalizedCode: normalizedCode,
 			Message:        message,
+			Hint:           "Wait for the Retry-After window to pass, then retry the request.",
+			NextAction:     "wait_and_retry",
+			IsRetriable:    &isRetriable,
 		},
 		RequestID: requestIDFromResponse(w),
 	})

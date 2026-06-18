@@ -818,6 +818,47 @@ func TestValidate_MediaIDUnsupportedFormat(t *testing.T) {
 	hasError(t, res, 0, CodeUnsupportedFormat)
 }
 
+func TestValidate_TikTokPhotoTitleLengthIsActionable(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_jpeg": {
+				Status:      "uploaded",
+				ContentType: "image/jpeg",
+				SizeBytes:   512_000,
+			},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_tiktok", Caption: strings.Repeat("x", 91), MediaIDs: []string{"med_jpeg"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+
+	if len(res.Errors) == 0 {
+		t.Fatalf("expected TikTok title length error, got valid result")
+	}
+	var got Issue
+	for _, issue := range res.Errors {
+		if issue.Code == CodeExceedsMaxLength && issue.Platform == "tiktok" && issue.Field == "caption" {
+			got = issue
+			break
+		}
+	}
+	if got.Code == "" {
+		t.Fatalf("expected TikTok caption/title max length issue, got %#v", res.Errors)
+	}
+	if got.Actual != 91 || got.Limit != tiktokPhotoTitleMaxLength {
+		t.Fatalf("actual/limit = %#v/%#v, want 91/%d", got.Actual, got.Limit, tiktokPhotoTitleMaxLength)
+	}
+	if got.Hint == "" || got.NextAction != "shorten_caption" {
+		t.Fatalf("hint/next_action = %q/%q, want actionable shorten_caption", got.Hint, got.NextAction)
+	}
+	if !strings.Contains(got.Message, "90 characters") {
+		t.Fatalf("message = %q, want explicit 90 character limit", got.Message)
+	}
+}
+
 // ─── Sprint 4 PR3: first_comment validation ───────────────────────────
 
 func TestValidate_FirstComment_Supported(t *testing.T) {

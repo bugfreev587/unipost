@@ -1872,11 +1872,16 @@ func filterFatalIssues(errs []platform.Issue) []platform.Issue {
 // issue list. Mirrors the shape of the /validate endpoint's response so
 // clients can use the same error-handling code for both.
 func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
+	isRetriable := false
 	writeJSON(w, http.StatusBadRequest, ErrorResponse{
 		Error: ErrorBody{
 			Code:           "VALIDATION_ERROR",
 			NormalizedCode: normalizeErrorCode("VALIDATION_ERROR"),
 			Message:        "request failed pre-publish validation",
+			Hint:           "Fix the listed validation issues and retry.",
+			NextAction:     "fix_request",
+			IsRetriable:    &isRetriable,
+			DocsURL:        "https://unipost.dev/docs/api/posts/validate",
 			Issues:         errs,
 		},
 		RequestID: requestIDFromResponse(w),
