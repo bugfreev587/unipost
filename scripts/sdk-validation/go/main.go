@@ -1136,6 +1136,65 @@ func main() {
 		return nil
 	})
 
+	section("9. Developer logs")
+
+	var firstLog *unipost.LogEntry
+	test("Logs.List()", func() error {
+		page, err := client.Logs.List(ctx, &unipost.LogListParams{Limit: 1})
+		if err != nil {
+			return err
+		}
+		if page == nil || page.Data == nil {
+			return fmt.Errorf("expected logs page")
+		}
+		if len(page.Data) > 0 {
+			log := page.Data[0]
+			firstLog = &log
+		}
+		return nil
+	})
+
+	if firstLog != nil && firstLog.ID > 0 {
+		test("Logs.Get()", func() error {
+			log, err := client.Logs.Get(ctx, firstLog.ID)
+			if err != nil {
+				return err
+			}
+			if log == nil || log.ID != firstLog.ID {
+				return fmt.Errorf("expected matching log id")
+			}
+			return nil
+		})
+
+		test("Logs.Stream() replay", func() error {
+			streamCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			defer cancel()
+			afterID := firstLog.ID - 1
+			if afterID < 0 {
+				afterID = 0
+			}
+			stream, err := client.Logs.Stream(streamCtx, &unipost.LogStreamParams{AfterID: afterID})
+			if err != nil {
+				return err
+			}
+			defer stream.Close()
+			if !stream.Next() {
+				if err := stream.Err(); err != nil {
+					return err
+				}
+				return fmt.Errorf("expected replayed log event")
+			}
+			event := stream.Event()
+			if event.ID < firstLog.ID {
+				return fmt.Errorf("expected replayed log id >= %d, got %d", firstLog.ID, event.ID)
+			}
+			return nil
+		})
+	} else {
+		skip("Logs.Get()", "No retained logs available")
+		skip("Logs.Stream() replay", "No retained logs available")
+	}
+
 	cleanup(ctx, client)
 
 	fmt.Println("\n╔══════════════════════════════════════════════════╗")

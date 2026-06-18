@@ -2,6 +2,7 @@ package dev.unipost.validation;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import dev.unipost.APIError;
+import dev.unipost.LogStream;
 import dev.unipost.Page;
 import dev.unipost.UniPost;
 import dev.unipost.WebhookVerifier;
@@ -530,6 +531,7 @@ public final class UnipostSdkTest {
             JsonNode res = client.usage().get();
             assertTrue(res.isObject(), "Expected usage object");
         });
+
         test("oauth.connect()", () -> {
             try {
                 JsonNode res = client.oauth().connect("bluesky", Map.of("redirect_url", "https://example.com/callback"));
@@ -542,6 +544,34 @@ public final class UnipostSdkTest {
                 throw error;
             }
         });
+
+        section("10. Developer logs");
+        Holder<JsonNode> firstLog = new Holder<>();
+        test("logs.list()", () -> {
+            Page<JsonNode> page = client.logs().list(Map.of("limit", 1));
+            assertNotNull(page.getData(), "Expected logs data");
+            if (!page.getData().isEmpty()) {
+                firstLog.value = page.getData().get(0);
+            }
+        });
+        if (firstLog.value != null && firstLog.value.path("id").canConvertToLong()) {
+            test("logs.get()", () -> {
+                long logId = firstLog.value.path("id").asLong();
+                JsonNode log = client.logs().get(logId);
+                assertEquals(logId, log.path("id").asLong(), "Expected matching log id");
+            });
+            test("logs.stream() replay", () -> {
+                long logId = firstLog.value.path("id").asLong();
+                long afterId = Math.max(0, logId - 1);
+                try (LogStream stream = client.logs().stream(Map.of("after_id", afterId))) {
+                    assertTrue(stream.next(), "Expected replayed log event");
+                    assertTrue(stream.event().path("id").asLong() >= logId, "Expected replayed log id");
+                }
+            });
+        } else {
+            skip("logs.get()", "No retained logs available");
+            skip("logs.stream() replay", "No retained logs available");
+        }
 
         cleanup(client);
         summaryAndExit();

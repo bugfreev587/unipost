@@ -67,6 +67,9 @@ Legend:
 | `GET /v1/analytics/platforms` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/analytics/platforms/{platform}` | Yes | Yes | Yes | Yes | Yes |
 | `POST /v1/analytics/refresh` | Yes | Yes | Yes | Yes | Yes, negative path |
+| `GET /v1/logs` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/logs/{id}` | Yes | Yes | Yes | Yes | Conditional |
+| `GET /v1/logs/stream` | Yes | Yes | Yes | Yes | Conditional |
 | `POST /v1/webhooks` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/webhooks` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/webhooks/{id}` | Yes | Yes | Yes | Yes | Yes |
@@ -106,9 +109,6 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 | `GET /v1/limits` | Direct smoke | Covered by `scripts/smoke-test.sh`. |
 | `GET /v1/members` | Direct smoke | Read path covered by `scripts/smoke-test.sh`; mutating invite/role paths are not covered. |
 | `GET /v1/audit-log` | Direct smoke | Covered by `scripts/smoke-test.sh`. |
-| `GET /v1/logs` | Direct smoke | Cursor pagination (`meta.has_more`/`next_cursor`, no `meta.total`), cursor-follow no-duplicate check, and invalid-cursor 422 covered by `scripts/smoke-test.sh`. SDK `logs.list` pending. |
-| `GET /v1/logs/{id}` | Conditional | Single-log lookup is conditional on a known log id; cross-workspace 404 covered by Go handler tests. SDK `logs.get` pending. |
-| `GET /v1/logs/stream` | Direct smoke | SSE content-type smoke covered by `scripts/smoke-test.sh`; replay (`after_id`/`Last-Event-ID`) and no-gap behavior covered by Go handler tests. SDK `logs.stream` pending. |
 | `GET /v1/inbox/*` and `POST /v1/inbox/*` | Partial direct smoke | `unread-count` is covered by `scripts/smoke-test.sh` and may pass as 200 or 402 plan-gated. |
 | `GET /v1/me/*`, notifications, tutorials, activation | No | Clerk-session-only; not suitable for API-key SDK regression. |
 | `GET /v1/admin/*` | No | Admin-session-only; separate admin smoke recommended. |
