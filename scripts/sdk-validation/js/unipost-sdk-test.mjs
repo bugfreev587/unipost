@@ -775,6 +775,35 @@ async function main() {
     assert(typeof res.post_count === 'number', 'Expected usage payload');
   });
 
+  section('9. Developer logs');
+
+  const firstLog = await test('logs.list()', async () => {
+    const page = await client.logs.list({ limit: 1 });
+    assert(Array.isArray(page?.data), 'Expected logs data array');
+    assert(page.meta && typeof page.meta.has_more === 'boolean', 'Expected logs cursor meta');
+    return page.data[0] || null;
+  });
+
+  if (firstLog?.id) {
+    await test('logs.get()', async () => {
+      const log = await client.logs.get(firstLog.id);
+      assert(Number(log.id) === Number(firstLog.id), 'Expected matching log id');
+    });
+
+    await test('logs.stream() replay', async () => {
+      const afterId = Math.max(0, Number(firstLog.id) - 1);
+      const signal = AbortSignal.timeout(10_000);
+      for await (const log of client.logs.stream({ afterId }, { signal })) {
+        assert(Number(log.id) >= Number(firstLog.id), 'Expected replayed log id');
+        return log;
+      }
+      throw new Error('Expected replayed log event');
+    });
+  } else {
+    skip('logs.get()', 'No retained logs available');
+    skip('logs.stream() replay', 'No retained logs available');
+  }
+
   await cleanup(client);
 
   console.log('\n╔══════════════════════════════════════════════════╗');
