@@ -290,7 +290,7 @@ Preserve:
 
 Backend files likely involved:
 
-- `api/internal/db/migrations/083_admin_search_history.sql`
+- `api/internal/db/migrations/084_admin_search_history.sql`
 - `api/internal/db/queries/admin_search_history.sql`
 - generated `api/internal/db/admin_search_history.sql.go`
 - `api/internal/handler/admin_search_history.go`
