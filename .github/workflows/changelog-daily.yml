@@ -14,6 +14,14 @@ on:
         description: "Optional ISO end time for the commit window"
         required: false
         type: string
+      webhook_test:
+        description: "Send a Discord webhook test and exit"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 permissions:
   contents: read
@@ -29,14 +37,16 @@ jobs:
     timeout-minutes: 15
     env:
       CHANGELOG_AI_API_KEY: ${{ secrets.CHANGELOG_AI_API_KEY }}
+      CHANGELOG_ANTHROPIC_API_KEY: ${{ secrets.CHANGELOG_ANTHROPIC_API_KEY }}
       CHANGELOG_AI_MODEL: ${{ vars.CHANGELOG_AI_MODEL || 'gpt-4.1-mini' }}
       CHANGELOG_API_BASE: ${{ vars.CHANGELOG_API_BASE || 'https://api.unipost.dev' }}
       CHANGELOG_AUTOMATION_TOKEN: ${{ secrets.CHANGELOG_AUTOMATION_TOKEN }}
       CHANGELOG_DASHBOARD_BASE_URL: ${{ vars.CHANGELOG_DASHBOARD_BASE_URL || 'https://app.unipost.dev' }}
-      CHANGELOG_DISCORD_WEBHOOK_URL: ${{ secrets.CHANGELOG_DISCORD_WEBHOOK_URL }}
+      CHANGELOG_DISCORD_WEBHOOK_URL: ${{ secrets.CHANGELOG_DISCORD_WEBHOOK_URL || secrets.REGRESSION_ALERT_WEBHOOK_URL }}
       CHANGELOG_REPO: ${{ github.repository }}
       CHANGELOG_WINDOW_START: ${{ inputs.window_start }}
       CHANGELOG_WINDOW_END: ${{ inputs.window_end }}
+      CHANGELOG_WEBHOOK_TEST: ${{ inputs.webhook_test }}
     steps:
       - uses: actions/checkout@v4
         with:

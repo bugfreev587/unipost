@@ -4,6 +4,8 @@ import { test } from "node:test";
 import {
   applyCandidateToReleasesSource,
   computePreviousLosAngelesWindow,
+  extractAnthropicCandidateContent,
+  isDiscordWebhookURL,
   normalizeSourceHash,
   renderDiscordCandidateMessage,
   validateCandidatePayload,
@@ -77,6 +79,24 @@ test("renderDiscordCandidateMessage includes markdown action links", () => {
   assert.match(message, /\[Publish\]\(https:\/\/app\.unipost\.dev/);
   assert.match(message, /\[Save for later\]\(https:\/\/app\.unipost\.dev/);
   assert.match(message, /\[Discard\]\(https:\/\/app\.unipost\.dev/);
+});
+
+test("isDiscordWebhookURL accepts only Discord webhook URLs", () => {
+  assert.equal(isDiscordWebhookURL("https://discord.com/api/webhooks/123/token"), true);
+  assert.equal(isDiscordWebhookURL("https://discordapp.com/api/webhooks/123/token"), true);
+  assert.equal(isDiscordWebhookURL("https://hooks.slack.com/services/T000/B000/xxx"), false);
+  assert.equal(isDiscordWebhookURL(""), false);
+});
+
+test("extractAnthropicCandidateContent reads text content from messages responses", () => {
+  const content = extractAnthropicCandidateContent({
+    content: [
+      { type: "text", text: "  " },
+      { type: "text", text: JSON.stringify(candidatePayload) },
+    ],
+  });
+
+  assert.equal(content, JSON.stringify(candidatePayload));
 });
 
 test("applyCandidateToReleasesSource inserts candidate once at the top of releases array", () => {
