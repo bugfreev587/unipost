@@ -75,6 +75,11 @@ UNIPOST_API_KEY=up_live_... unipost agent execute --plan plan.json --json
 UNIPOST_API_KEY=up_live_... unipost examples posts.create --lang node --account sa_...
 UNIPOST_API_KEY=up_live_... unipost examples mcp.claude-code --json
 UNIPOST_API_KEY=up_live_... unipost doctor --json
+UNIPOST_API_KEY=up_live_... unipost doctor diagnose --json
+UNIPOST_API_KEY=up_live_... unipost doctor explain --request-id req_... --json
+UNIPOST_API_KEY=up_live_... unipost logs list --status error --since 2h --json
+UNIPOST_API_KEY=up_live_... unipost doctor verify --json
+UNIPOST_API_KEY=up_live_... unipost doctor support-bundle --json
 unipost upgrade
 unipost self help
 unipost completion zsh
@@ -94,6 +99,11 @@ post lifecycle waits, cancel/retry operations, account diagnostics, local media
 upload/readiness waits, analytics reads, MCP client setup generation, MCP auth
 testing, Codex/Claude Code instruction packages, and a limited structured
 `agent execute` beta.
+The Agent Debug Kit adds `doctor diagnose`, `doctor explain`, `doctor verify`,
+`doctor support-bundle`, and `logs list/get`. `doctor diagnose` returns
+`doctor.v1` under the standard JSON envelope and includes local project repair
+hints for common auth, payload, media, SDK, and environment mistakes without
+reading real `.env` contents.
 Publish-capable writes require explicit user approval through `--yes` and a
 stable `--idempotency-key`; draft creation and dry-run validation remain safe
 without live publishing.

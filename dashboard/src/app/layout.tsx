@@ -117,18 +117,6 @@ export default function RootLayout({
       signUpForceRedirectUrl={SIGN_UP_REDIRECT_URL}
       afterSignOutUrl={process.env.NEXT_PUBLIC_LANDING_URL || "https://unipost.dev"}
       appearance={{
-        variables: {
-          colorBackground: "var(--clerk-bg)",
-          colorInputBackground: "var(--clerk-muted-bg)",
-          colorText: "var(--clerk-text)",
-          colorTextSecondary: "var(--clerk-text-secondary)",
-          colorTextOnPrimaryBackground: "var(--primary-foreground)",
-          colorPrimary: "var(--clerk-primary)",
-          colorDanger: "var(--clerk-danger)",
-          colorNeutral: "var(--clerk-neutral)",
-          colorInputText: "var(--clerk-text)",
-          borderRadius: "8px",
-        },
         elements: {
           // Modal / card
           card: "!bg-[var(--clerk-card-bg)] !text-[var(--clerk-text)] !border !border-[var(--clerk-border)] !shadow-2xl",

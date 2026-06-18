@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
@@ -194,6 +194,7 @@ function createContext(argv, io) {
     env,
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
+    cwd: io.cwd || process.cwd(),
     fetchImpl: io.fetchImpl || globalThis.fetch,
     execFile: io.execFile || execFile,
     secureStore: io.secureStore || createDefaultSecureStore(),
@@ -215,6 +216,7 @@ function fallbackContext(argv, io) {
     env,
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
+    cwd: io.cwd || process.cwd(),
     fetchImpl: io.fetchImpl || globalThis.fetch,
     execFile: io.execFile || execFile,
     secureStore: io.secureStore || createDefaultSecureStore(),
@@ -938,6 +940,8 @@ async function doctorCommand(context, subcommand, third) {
 async function doctorDiagnose(context) {
   const findings = [];
   const environment = doctorEnvironment(context);
+  const localProject = await analyzeLocalProject(context);
+  findings.push(...findingsForLocalProject(localProject));
   let workspace = null;
   let lastRequestId = "";
   let lastRateLimit = {};
@@ -1139,6 +1143,7 @@ async function doctorDiagnose(context) {
     status,
     workspace,
     environment,
+    localProject,
     findings,
     summary: doctorSummary(status, findings),
     requestId: lastRequestId,
@@ -2784,6 +2789,14 @@ function agentCapabilities() {
         statuses: ["passed", "failed", "input_required", "manual_action_required", "needs_support"],
         action_safety_levels: ["read_only", "safe_to_execute_without_user", "needs_user_approval", "manual_only"],
         finding_categories: ["auth", "sdk", "workspace", "account", "payload", "media", "webhook", "logs", "unknown"],
+        local_project_hints: true,
+        local_project_hint_kinds: [
+          "auth_header_missing_bearer",
+          "hardcoded_api_key",
+          "singular_account_id_payload",
+          "local_media_path",
+          "webhook_raw_body_risk",
+        ],
       },
       intents: [
         {
@@ -3029,6 +3042,7 @@ function agentGuide(client) {
     ].join(" "),
     debug_prompt: [
       `To fix a broken integration, run \`${CLI_RUNNER} doctor diagnose --json\` and act on data.findings by their recommended_actions safety level.`,
+      "Use data.local_project for framework, SDK, env-var, and relative file/line repair hints; prefer recommended_actions target_files.",
       `Use \`${CLI_RUNNER} doctor explain --request-id <id> --json\` and \`${CLI_RUNNER} logs list --status error --since 2h --json\` to correlate failures.`,
       `Run \`${CLI_RUNNER} doctor verify --json\` after each patch; escalate with \`${CLI_RUNNER} doctor support-bundle --json\` only when stuck.`,
       "doctor verify is non-destructive and never live-publishes. Keep API keys, tokens, cookies, and webhook secrets masked.",
@@ -4368,6 +4382,214 @@ function doctorEnvironment(context) {
   };
 }
 
+async function analyzeLocalProject(context) {
+  const root = context.cwd || process.cwd();
+  const envNames = new Set();
+  const scannedFiles = [];
+  const codeHints = [];
+  const sdkPackages = [];
+  const frameworks = new Set();
+  const envFiles = [];
+  let packageManager = "unknown";
+  let scanned = false;
+  let skipSourceHints = false;
+
+  const packageJson = await readJsonIfPresent(join(root, "package.json"));
+  if (packageJson) {
+    scanned = true;
+    packageManager = await detectPackageManager(root);
+    skipSourceHints = packageJson.name === "@unipost/cli";
+    const dependencies = {
+      ...(packageJson.dependencies || {}),
+      ...(packageJson.devDependencies || {}),
+      ...(packageJson.peerDependencies || {}),
+    };
+    for (const [name, version] of Object.entries(dependencies)) {
+      detectFrameworkFromDependency(name, frameworks);
+      if (isUnipostSdkDependency(name)) {
+        sdkPackages.push({ name, version: String(version || "") });
+      }
+    }
+    scannedFiles.push("package.json");
+  }
+
+  for (const envFile of [".env.example", ".env.sample", ".env.local.example"]) {
+    const content = await readTextIfPresent(join(root, envFile));
+    if (content == null) {
+      continue;
+    }
+    scanned = true;
+    scannedFiles.push(envFile);
+    envFiles.push({ path: envFile, read: true });
+    for (const name of extractEnvVarNames(content)) {
+      envNames.add(name);
+    }
+    codeHints.push(...detectLocalCodeHints(envFile, content));
+  }
+
+  for (const secretEnvFile of [".env", ".env.local", ".env.production"]) {
+    if (await fileExists(join(root, secretEnvFile))) {
+      scanned = true;
+      envFiles.push({ path: secretEnvFile, read: false, reason: "secret_bearing_file" });
+    }
+  }
+
+  const manifestReaders = [
+    { path: "requirements.txt", kind: "python" },
+    { path: "pyproject.toml", kind: "python" },
+    { path: "go.mod", kind: "go" },
+    { path: "pom.xml", kind: "java" },
+  ];
+  for (const manifest of manifestReaders) {
+    const content = await readTextIfPresent(join(root, manifest.path));
+    if (content == null) {
+      continue;
+    }
+    scanned = true;
+    scannedFiles.push(manifest.path);
+    detectManifestSignals(manifest.kind, content, frameworks, sdkPackages);
+    for (const name of extractEnvVarNames(content)) {
+      envNames.add(name);
+    }
+  }
+
+  if (!skipSourceHints) {
+    const sourceFiles = await collectSourceFiles(root);
+    for (const file of sourceFiles) {
+      const content = await readTextIfPresent(join(root, file));
+      if (content == null) {
+        continue;
+      }
+      scanned = true;
+      scannedFiles.push(file);
+      for (const name of extractEnvVarNames(content)) {
+        envNames.add(name);
+      }
+      codeHints.push(...detectLocalCodeHints(file, content));
+    }
+  }
+
+  const limitedHints = codeHints.slice(0, 20);
+  return {
+    scanned,
+    root: ".",
+    package_manager: packageManager,
+    frameworks: [...frameworks].sort(),
+    sdk: {
+      detected: sdkPackages.length > 0,
+      packages: dedupeObjects(sdkPackages, (item) => item.name),
+    },
+    env_files: envFiles,
+    env_var_names: [...envNames].sort(),
+    code_hints: limitedHints,
+    scanned_files: [...new Set(scannedFiles)].slice(0, 80),
+  };
+}
+
+function findingsForLocalProject(localProject) {
+  if (!localProject?.scanned) {
+    return [];
+  }
+  const findings = [];
+  const hints = localProject.code_hints || [];
+  const authHints = hints.filter((hint) => hint.kind === "auth_header_missing_bearer");
+  if (authHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_auth_header_missing_bearer",
+      severity: "error",
+      category: "auth",
+      confidence: 0.88,
+      summary: "Local integration code appears to send the UniPost API key without the Bearer prefix.",
+      evidence: authHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "code_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Patch the request headers to send `Authorization: Bearer <UNIPOST_API_KEY>` instead of the raw key or `X-API-Key`.",
+        target_files: uniqueHintFiles(authHints),
+        verification: { command: `${CLI_RUNNER} doctor verify --json` },
+      }],
+    }));
+  }
+
+  const secretHints = hints.filter((hint) => hint.kind === "hardcoded_api_key");
+  if (secretHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_hardcoded_api_key",
+      severity: "critical",
+      category: "auth",
+      confidence: 0.92,
+      summary: "Local project files appear to contain a hardcoded UniPost API key.",
+      evidence: secretHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Move the key into a local secret store or environment variable, rotate the exposed key, and keep only `UNIPOST_API_KEY=` in example files.",
+        target_files: uniqueHintFiles(secretHints),
+        verification: { command: `${CLI_RUNNER} doctor diagnose --json` },
+      }],
+    }));
+  }
+
+  const payloadHints = hints.filter((hint) =>
+    hint.kind === "singular_account_id_payload" || hint.kind === "local_media_path");
+  if (payloadHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_payload_shape",
+      severity: "warning",
+      category: "payload",
+      confidence: 0.72,
+      summary: "Local post payload code has fields that often cause UniPost validation failures.",
+      evidence: payloadHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "payload_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Use `account_ids: [<account_id>]` for post creation and pass public media URLs or uploaded media ids instead of local file paths.",
+        target_files: uniqueHintFiles(payloadHints),
+        verification: { command: `${CLI_RUNNER} posts validate --json` },
+      }],
+    }));
+  }
+
+  const webhookHints = hints.filter((hint) => hint.kind === "webhook_raw_body_risk");
+  if (webhookHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_webhook_raw_body_risk",
+      severity: "warning",
+      category: "webhook",
+      confidence: 0.68,
+      summary: "Local webhook code may parse JSON before verifying the UniPost signature.",
+      evidence: webhookHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "code_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Verify UniPost webhook signatures against the raw body before JSON parsing, or mount a raw-body parser on the webhook route.",
+        target_files: uniqueHintFiles(webhookHints),
+        verification: { command: `${CLI_RUNNER} doctor diagnose --json` },
+      }],
+    }));
+  }
+
+  const envNames = new Set(localProject.env_var_names || []);
+  if (envNames.has("UNIPOST_KEY") && !envNames.has("UNIPOST_API_KEY")) {
+    findings.push(makeFinding({
+      id: "finding_local_env_var_name_mismatch",
+      severity: "warning",
+      category: "auth",
+      confidence: 0.7,
+      summary: "Local examples reference UNIPOST_KEY but the CLI and docs expect UNIPOST_API_KEY.",
+      evidence: [{ source: "local_project", message: "Found UNIPOST_KEY without UNIPOST_API_KEY." }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Rename the environment variable to `UNIPOST_API_KEY`, or map your application config to that variable consistently.",
+        target_files: (localProject.env_files || []).filter((file) => file.read).map((file) => file.path),
+        verification: { command: `${CLI_RUNNER} doctor diagnose --json` },
+      }],
+    }));
+  }
+  return findings;
+}
+
 function makeFinding(finding) {
   return {
     id: finding.id,
@@ -4381,6 +4603,234 @@ function makeFinding(finding) {
     docs_url: finding.docs_url || DOCS_DEBUG_URL,
     ...(finding.request_id ? { request_id: finding.request_id } : {}),
   };
+}
+
+async function readJsonIfPresent(filePath) {
+  const text = await readTextIfPresent(filePath);
+  if (text == null) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function readTextIfPresent(filePath) {
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile() || fileStat.size > 256 * 1024) {
+      return null;
+    }
+    return await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function fileExists(filePath) {
+  try {
+    const fileStat = await stat(filePath);
+    return fileStat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function detectPackageManager(root) {
+  if (await fileExists(join(root, "pnpm-lock.yaml"))) return "pnpm";
+  if (await fileExists(join(root, "yarn.lock"))) return "yarn";
+  if (await fileExists(join(root, "bun.lockb")) || await fileExists(join(root, "bun.lock"))) return "bun";
+  if (await fileExists(join(root, "package-lock.json"))) return "npm";
+  return "npm";
+}
+
+function detectFrameworkFromDependency(name, frameworks) {
+  const normalized = String(name || "").toLowerCase();
+  if (normalized === "next") frameworks.add("next");
+  if (normalized === "express") frameworks.add("express");
+  if (normalized === "fastify") frameworks.add("fastify");
+  if (normalized === "hono") frameworks.add("hono");
+  if (normalized.includes("nestjs")) frameworks.add("nestjs");
+}
+
+function detectManifestSignals(kind, content, frameworks, sdkPackages) {
+  const text = String(content || "").toLowerCase();
+  if (kind === "python") {
+    if (/\bfastapi\b/.test(text)) frameworks.add("fastapi");
+    if (/\bflask\b/.test(text)) frameworks.add("flask");
+    if (/\bdjango\b/.test(text)) frameworks.add("django");
+    if (/\bunipost\b/.test(text)) sdkPackages.push({ name: "unipost", version: "" });
+  }
+  if (kind === "go") {
+    if (text.includes("github.com/gin-gonic/gin")) frameworks.add("gin");
+    if (text.includes("github.com/labstack/echo")) frameworks.add("echo");
+    if (text.includes("github.com/unipost-dev/sdk-go")) sdkPackages.push({ name: "github.com/unipost-dev/sdk-go", version: "" });
+  }
+  if (kind === "java") {
+    if (text.includes("spring-boot")) frameworks.add("spring-boot");
+    if (text.includes("dev.unipost")) sdkPackages.push({ name: "dev.unipost", version: "" });
+  }
+}
+
+function isUnipostSdkDependency(name) {
+  const normalized = String(name || "").toLowerCase();
+  return normalized === "@unipost/sdk" || normalized === "unipost" || normalized.includes("unipost-sdk");
+}
+
+function extractEnvVarNames(content) {
+  const names = new Set();
+  const text = String(content || "");
+  for (const match of text.matchAll(/\bUNIPOST_[A-Z0-9_]+\b/g)) {
+    names.add(match[0]);
+  }
+  return names;
+}
+
+async function collectSourceFiles(root) {
+  const files = [];
+  for (const dir of ["src", "app", "pages", "api", "server", "lib", "routes"]) {
+    await collectSourceFilesFromDir(root, dir, files, 0);
+    if (files.length >= 80) {
+      break;
+    }
+  }
+  return files.slice(0, 80);
+}
+
+async function collectSourceFilesFromDir(root, dir, files, depth) {
+  if (depth > 4 || files.length >= 80) {
+    return;
+  }
+  const fullDir = join(root, dir);
+  let entries = [];
+  try {
+    entries = await readdir(fullDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (files.length >= 80) {
+      return;
+    }
+    if (entry.name.startsWith(".") || ["node_modules", ".next", "dist", "build", "coverage"].includes(entry.name)) {
+      continue;
+    }
+    const child = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await collectSourceFilesFromDir(root, child, files, depth + 1);
+      continue;
+    }
+    if (entry.isFile() && isAnalyzableSourceFile(entry.name)) {
+      files.push(child);
+    }
+  }
+}
+
+function isAnalyzableSourceFile(fileName) {
+  return [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".go", ".java", ".rb", ".php"].includes(extname(fileName).toLowerCase());
+}
+
+function detectLocalCodeHints(file, content) {
+  const hints = [];
+  const lines = String(content || "").split(/\r?\n/);
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    const lower = line.toLowerCase();
+    if (/\b(up_live_|up_test_)[A-Za-z0-9_-]{8,}/.test(line)) {
+      hints.push({
+        kind: "hardcoded_api_key",
+        file,
+        line: lineNumber,
+        message: "Contains a literal UniPost API key. Move it to an environment variable and rotate it if it was committed.",
+      });
+    }
+    if (looksLikeRawAuthorizationHeader(line)) {
+      hints.push({
+        kind: "auth_header_missing_bearer",
+        file,
+        line: lineNumber,
+        message: "Authorization header appears to use a raw API key or X-API-Key instead of `Authorization: Bearer <key>`.",
+      });
+    }
+    if (looksLikePostPayloadWithSingularAccountId(line)) {
+      hints.push({
+        kind: "singular_account_id_payload",
+        file,
+        line: lineNumber,
+        message: "Post payload uses singular `account_id`; current UniPost post creation expects `account_ids`.",
+      });
+    }
+    if (/\bmedia_urls?\b/.test(line) && /["']\.{1,2}\//.test(line)) {
+      hints.push({
+        kind: "local_media_path",
+        file,
+        line: lineNumber,
+        message: "Media URL payload appears to contain a local file path. Upload media first or use a public URL.",
+      });
+    }
+    if (lower.includes("webhook") && lower.includes("express.json(")) {
+      hints.push({
+        kind: "webhook_raw_body_risk",
+        file,
+        line: lineNumber,
+        message: "Webhook code may parse JSON before signature verification. Verify signatures against the raw body.",
+      });
+    }
+  });
+  return hints;
+}
+
+function looksLikeRawAuthorizationHeader(line) {
+  const lower = String(line || "").toLowerCase();
+  if (lower.includes("x-api-key")) {
+    return true;
+  }
+  if (!lower.includes("authorization")) {
+    return false;
+  }
+  if (lower.includes("bearer")) {
+    return false;
+  }
+  return /UNIPOST_API_KEY|UNIPOST_KEY|apiKey|api_key|unipostApiKey/.test(line);
+}
+
+function looksLikePostPayloadWithSingularAccountId(line) {
+  const text = String(line || "");
+  if (!(/"account_id"\s*:|\baccount_id\s*:/.test(text))) {
+    return false;
+  }
+  const lower = text.toLowerCase();
+  if (lower.includes("platform_posts")) {
+    return false;
+  }
+  return lower.includes("json.stringify") || /\{\s*["']?account_id["']?\s*:/.test(text);
+}
+
+function hintEvidence(hint) {
+  return {
+    source: "local_project",
+    message: `${hint.file}:${hint.line} ${hint.message}`,
+  };
+}
+
+function uniqueHintFiles(hints) {
+  return [...new Set((hints || []).map((hint) => hint.file).filter(Boolean))];
+}
+
+function dedupeObjects(items, keyFn) {
+  const seen = new Set();
+  const output = [];
+  for (const item of items || []) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
 }
 
 function compactWorkspace(workspace) {
@@ -4510,6 +4960,7 @@ function doctorEnvelopeResult(context, options) {
     created_at: nowIso(),
     ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
     ...(options.environment ? { environment: options.environment } : {}),
+    ...(options.localProject ? { local_project: options.localProject } : {}),
     summary: options.summary || "",
     findings: options.findings || [],
     ...(options.verification ? { verification: options.verification } : {}),

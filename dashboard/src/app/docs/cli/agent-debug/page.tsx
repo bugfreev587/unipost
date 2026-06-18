@@ -31,18 +31,31 @@ const DIAGNOSE_RESPONSE = `{
     "schema_version": "doctor.v1",
     "command": "doctor.diagnose",
     "status": "failed",
+    "local_project": {
+      "frameworks": ["next"],
+      "sdk": { "detected": true, "packages": [{ "name": "@unipost/sdk", "version": "0.4.0" }] },
+      "code_hints": [
+        {
+          "kind": "auth_header_missing_bearer",
+          "file": "src/unipost.ts",
+          "line": 12,
+          "message": "Authorization header appears to use a raw API key..."
+        }
+      ]
+    },
     "findings": [
       {
-        "id": "finding_auth_unauthorized",
-        "severity": "critical",
+        "id": "finding_local_auth_header_missing_bearer",
+        "severity": "error",
         "category": "auth",
-        "confidence": 0.92,
-        "summary": "UniPost rejected the API key (401)...",
+        "confidence": 0.88,
+        "summary": "Local integration code appears to send the UniPost API key without the Bearer prefix.",
         "recommended_actions": [
           {
             "type": "code_patch",
             "safety": "safe_to_execute_without_user",
-            "instruction": "Send Authorization: Bearer <UNIPOST_API_KEY>."
+            "instruction": "Patch the request headers to send Authorization: Bearer <UNIPOST_API_KEY>.",
+            "target_files": ["src/unipost.ts"]
           }
         ],
         "verify_command": "unipost doctor verify --json"
@@ -101,6 +114,16 @@ export default function CliAgentDebugPage() {
       </p>
       <DocsCodeTabs snippets={[{ label: "doctor diagnose --json", lang: "json", code: DIAGNOSE_RESPONSE }]} />
       <DocsTable columns={["data.status", "Meaning"]} rows={STATUS_ROWS} />
+
+      <h2 id="local-project">Local project hints</h2>
+      <p>
+        <code>doctor diagnose</code> also inspects the current project for safe repair
+        hints: detected frameworks, installed UniPost SDK packages, environment variable
+        names from example files, and relative file/line hints for common issues like a
+        missing <code>Bearer</code> prefix, singular <code>account_id</code> post payloads,
+        or local file paths passed as media URLs. It does not read real <code>.env</code>
+        contents; those files are reported only as secret-bearing files.
+      </p>
 
       <h2 id="safety">Action safety levels</h2>
       <p>

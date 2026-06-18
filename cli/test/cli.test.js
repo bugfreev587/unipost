@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -33,6 +33,7 @@ async function runCli(args, options = {}) {
       },
     },
     execFile: options.execFile,
+    cwd: options.cwd,
   });
 
   return { code, stdout, stderr };
@@ -1555,6 +1556,7 @@ test("agent guide and mcp-config return client-specific setup content", async ()
   assert.equal(guideBody.data.client, "codex");
   assert.match(guideBody.data.recommended_prompt, /posts validate/);
   assert.match(guideBody.data.recommended_prompt, /unipost agent bootstrap/);
+  assert.match(guideBody.data.debug_prompt, /data\.local_project/);
   assert.doesNotMatch(guideBody.data.recommended_prompt, /npx -y @unipost\/cli agent bootstrap/);
 
   const claudeConfig = await runCli(["agent", "mcp-config", "claude-code", "--json"]);
@@ -1750,6 +1752,79 @@ test("doctor diagnose reports unauthorized auth as a failed status", async () =>
   });
 });
 
+test("doctor diagnose includes local project repair hints for agent fixes", async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), "unipost-local-project-"));
+  try {
+    await mkdir(join(projectDir, "src"), { recursive: true });
+    await writeFile(join(projectDir, "package.json"), JSON.stringify({
+      dependencies: {
+        "@unipost/sdk": "0.4.0",
+        next: "15.0.0",
+      },
+    }, null, 2));
+    await writeFile(join(projectDir, ".env.example"), "UNIPOST_KEY=up_live_example\n");
+    await writeFile(join(projectDir, "src", "unipost.js"), [
+      "export async function publish(caption) {",
+      "  return fetch('https://api.unipost.dev/v1/posts', {",
+      "    method: 'POST',",
+      "    headers: { Authorization: process.env.UNIPOST_API_KEY },",
+      "    body: JSON.stringify({ account_id: 'sa_1', caption, media_urls: ['./demo.png'] })",
+      "  });",
+      "}",
+      "",
+    ].join("\n"));
+    await writeFile(join(projectDir, "src", "webhook.js"), [
+      "import express from 'express';",
+      "const app = express();",
+      "app.use('/webhooks/unipost', express.json());",
+      "app.post('/webhooks/unipost', (req, res) => verifyUnipostWebhook(req.body));",
+      "",
+    ].join("\n"));
+
+    await withServer((req, res) => {
+      if (req.url === "/health") return void writeJson(res, 200, { ok: true });
+      if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_diag", name: "Diag" } });
+      if (req.url === "/v1/profiles") return void writeJson(res, 200, { data: [{ id: "pr_1" }] });
+      if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [{ id: "sa_1", status: "connected" }] });
+      if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [] });
+      writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+    }, async (baseUrl) => {
+      const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+        cwd: projectDir,
+        env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+      });
+      assert.equal(result.code, 6);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.local_project.package_manager, "npm");
+      assert.ok(body.data.local_project.frameworks.includes("next"));
+      assert.equal(body.data.local_project.sdk.detected, true);
+      assert.ok(body.data.local_project.env_var_names.includes("UNIPOST_KEY"));
+      assert.ok(body.data.local_project.env_var_names.includes("UNIPOST_API_KEY"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "auth_header_missing_bearer"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "singular_account_id_payload"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "local_media_path"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "webhook_raw_body_risk"));
+
+      const authFinding = body.data.findings.find((finding) => finding.id === "finding_local_auth_header_missing_bearer");
+      assert.ok(authFinding);
+      assert.equal(authFinding.category, "auth");
+      assert.equal(authFinding.recommended_actions[0].target_files[0], "src/unipost.js");
+      assert.match(authFinding.recommended_actions[0].instruction, /Bearer/);
+
+      const payloadFinding = body.data.findings.find((finding) => finding.id === "finding_local_payload_shape");
+      assert.ok(payloadFinding);
+      assert.equal(payloadFinding.recommended_actions[0].safety, "safe_to_execute_without_user");
+
+      const webhookFinding = body.data.findings.find((finding) => finding.id === "finding_local_webhook_raw_body_risk");
+      assert.ok(webhookFinding);
+      assert.equal(webhookFinding.recommended_actions[0].target_files[0], "src/webhook.js");
+      assert.match(webhookFinding.recommended_actions[0].instruction, /raw body/);
+    });
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
 test("doctor verify --json runs non-destructive checks and never live-publishes", async () => {
   await withServer((req, res) => {
     if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_v" } });
@@ -1828,5 +1903,6 @@ test("agent capabilities advertises doctor and logs debug commands", async () =>
   assert.ok(body.data.commands.includes("doctor diagnose"));
   assert.ok(body.data.commands.includes("logs list"));
   assert.equal(body.data.debug.schema_version, "doctor.v1");
+  assert.equal(body.data.debug.local_project_hints, true);
   assert.ok(body.data.debug.action_safety_levels.includes("manual_only"));
 });
