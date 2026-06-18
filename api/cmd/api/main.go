@@ -23,6 +23,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/aiproviders"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
+	"github.com/xiaoboyu/unipost-api/internal/changelog"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -490,6 +491,26 @@ func main() {
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
 	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
+	changelogStore := changelog.NewPostgresStore(pool)
+	changelogService := changelog.NewService(
+		changelogStore,
+		changelog.NewSigner(os.Getenv("CHANGELOG_ACTION_SIGNING_SECRET")),
+		&changelog.GitHubDispatcher{
+			Token: os.Getenv("CHANGELOG_RELEASE_GITHUB_TOKEN"),
+			Repo:  os.Getenv("CHANGELOG_GITHUB_REPO"),
+		},
+		changelog.ServiceConfig{
+			DashboardBaseURL: os.Getenv("NEXT_PUBLIC_APP_URL"),
+			GitHubRef:        os.Getenv("CHANGELOG_PUBLISH_REF"),
+			GitHubWorkflow:   firstNonEmpty(os.Getenv("CHANGELOG_PUBLISH_WORKFLOW"), "changelog-publish.yml"),
+			DryRun:           strings.EqualFold(os.Getenv("CHANGELOG_PUBLISH_DRY_RUN"), "true"),
+		},
+	)
+	changelogAutomationHandler := handler.NewChangelogAutomationHandler(
+		changelogStore,
+		changelogService,
+		os.Getenv("CHANGELOG_AUTOMATION_TOKEN"),
+	)
 
 	// Public routes
 	r.Get("/health", healthHandler.Health)
@@ -565,6 +586,13 @@ func main() {
 	// CLI setup-token exchange. The setup token itself is the short-lived
 	// bearer, so this endpoint stays outside the normal API-key auth group.
 	r.Post("/v1/cli/setup-tokens/exchange", cliSetupTokenHandler.Exchange)
+
+	// Internal changelog automation endpoints. These are intentionally
+	// outside Clerk/API-key auth because GitHub Actions calls them with
+	// a dedicated automation token. Human actions still go through the
+	// super-admin routes below.
+	r.Post("/internal/changelog-candidates", changelogAutomationHandler.CreateInternalCandidate)
+	r.Get("/internal/changelog-candidates/{id}", changelogAutomationHandler.GetInternalCandidate)
 
 	// User-identity routes (Clerk session only — these are about the
 	// signed-in human, not a workspace, so no API-key counterpart).
@@ -644,6 +672,10 @@ func main() {
 			Delete("/v1/admin/ai-provider-routing/{surface}", aiProviderHandler.Unroute)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
 			Get("/v1/admin/ai-providers/events", aiProviderHandler.Events)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
+			Get("/v1/admin/changelog-candidates/{id}", changelogAutomationHandler.GetAdminCandidate)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
+			Post("/v1/admin/changelog-candidates/{id}/actions", changelogAutomationHandler.ConfirmAdminAction)
 		// Dev / QA: flip a workspace's plan_id directly without going
 		// through Stripe Checkout. Useful for testing the plan-feature
 		// gates end-to-end. Already protected by the admin middleware
@@ -985,6 +1017,15 @@ func corsAllowedOrigins() []string {
 	}
 
 	return origins
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func firstEnv(names ...string) string {
