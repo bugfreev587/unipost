@@ -25,6 +25,10 @@ export default function DocsHomePage() {
           <div className="docs-card-title">Local Connect testing</div>
           <p>Download the helper script, create a Connect Session from your terminal, and open the returned OAuth URL in a browser.</p>
         </Link>
+        <Link href="/docs/guides/analytics" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Analytics Guides</div>
+          <p>Answer task questions such as which UniPost API returns TikTok followers, post analytics, and export rows.</p>
+        </Link>
       </div>
 
       <h2 id="dashboard-path">Using the Dashboard</h2>
