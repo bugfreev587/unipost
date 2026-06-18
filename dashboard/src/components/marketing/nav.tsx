@@ -3,10 +3,17 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
+import { BookOpen, ChevronDown, History } from "lucide-react";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { LandingAttribution } from "@/components/marketing/landing-attribution";
 import { appendLandingSessionId } from "@/lib/landing-attribution";
 import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 // New signups land on /welcome, where they enter their first name and
@@ -31,10 +38,14 @@ const PUBLIC_NAV_ITEMS = [
   { href: "/tools", label: "Tools", key: "tools" },
   { href: "/pricing", label: "Pricing", key: "pricing" },
   { href: "/blog", label: "Blog", key: "blog" },
-  { href: "/docs", label: "Docs", key: "docs" },
 ] as const;
 
-type PublicNavKey = (typeof PUBLIC_NAV_ITEMS)[number]["key"];
+const DEVELOPER_NAV_ITEMS = [
+  { href: "/docs", label: "Docs", description: "Quickstarts, API reference, SDKs, CLI, and MCP.", icon: BookOpen },
+  { href: "/changelog", label: "Change Logs", description: "Major product, API, and SDK releases.", icon: History },
+] as const;
+
+type PublicNavKey = (typeof PUBLIC_NAV_ITEMS)[number]["key"] | "developer";
 
 function useLandingRedirectUrls() {
   const [urls, setUrls] = useState({
@@ -115,6 +126,41 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
               {item.label}
             </Link>
           ))}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <button
+                  type="button"
+                  className={`mk-nav-link mk-nav-dropdown-trigger${active === "developer" ? " active" : ""}`}
+                />
+              }
+            >
+              <span>Developer</span>
+              <ChevronDown aria-hidden="true" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              side="bottom"
+              align="center"
+              sideOffset={8}
+              className="mk-nav-dropdown-content"
+            >
+              {DEVELOPER_NAV_ITEMS.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <DropdownMenuItem
+                    key={item.href}
+                    render={<Link href={item.href} className="mk-nav-dropdown-item" />}
+                  >
+                    <Icon aria-hidden="true" />
+                    <span>
+                      <strong>{item.label}</strong>
+                      <small>{item.description}</small>
+                    </span>
+                  </DropdownMenuItem>
+                );
+              })}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
         <MarketingNav />
       </div>

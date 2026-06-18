@@ -320,6 +320,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Overview", href: "/docs/cli" },
             { label: "CLI Reference", href: "/docs/cli/reference" },
             { label: "AI Agent Guide", href: "/docs/cli/agents" },
+            { label: "AI-assisted debugging", href: "/docs/cli/agent-debug" },
           ],
         },
         { label: "MCP", href: "/docs/mcp" },
