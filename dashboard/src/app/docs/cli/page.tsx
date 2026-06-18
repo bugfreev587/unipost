@@ -13,11 +13,17 @@ unipost auth login --setup-token ust_... --client terminal --base-url https://ap
 unipost auth status --json`,
   },
   {
-    label: "API key fallback",
+    label: "Existing API key",
+    lang: "bash",
+    code: `unipost init --api-key up_live_... --base-url https://api.unipost.dev --json
+unipost auth status --json`,
+  },
+  {
+    label: "CI or one-off",
     lang: "bash",
     code: `export UNIPOST_API_KEY=up_live_...
-unipost auth login --api-key "$UNIPOST_API_KEY" --json
-unipost auth status --json`,
+unipost auth status --json
+unipost doctor verify --json`,
   },
 ];
 
@@ -146,7 +152,7 @@ const JSON_ENVELOPE = [
   "meta": {
     "request_id": "req_...",
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.1.2",
+    "cli_version": "0.3.0",
     "command": "accounts list",
     "source": "cli"
   }
@@ -167,7 +173,7 @@ const JSON_ENVELOPE = [
   "meta": {
     "request_id": "req_...",
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.1.2",
+    "cli_version": "0.3.0",
     "command": "auth status",
     "source": "cli"
   }
@@ -177,7 +183,7 @@ const JSON_ENVELOPE = [
 
 const COMMAND_ROWS = [
   ["CLI self-management", "`upgrade`, `self update`, `self help`, `--version`, `--help`, and `completion`."],
-  ["Auth and config", "`config path`, `config show`, `config set base_url`, `config set default_profile_id`, `auth login --setup-token`, `auth login --api-key`, `auth logout`, `auth status`, `auth list`, and `auth use`."],
+  ["Auth and config", "`init`, `auth login --api-key`, Dashboard setup-token login, `auth logout`, `auth status`, `config path`, `config show`, `config set base_url`, and `config set default_profile_id`. `auth list` and `auth use` remain compatibility commands for the single current binding."],
   ["Quickstart", "`init`, `doctor`, `quickstart`, `profiles list/create/get/use`, and `connect create/get/wait`."],
   ["Accounts", "`accounts list`, `accounts get`, `accounts health`, `accounts capabilities`, and `accounts metrics`."],
   ["Posts", "`posts list`, `posts get`, `posts analytics`, `posts validate`, `posts draft`, `posts create --dry-run`, `posts create`, `posts schedule`, `posts publish-draft`, `posts wait`, `posts cancel`, and `posts retry`."],
@@ -209,7 +215,7 @@ const USE_CASES = [
 ] as const;
 
 const START_STEPS = [
-  ["1. Install and sign in", "Install once with `npm install -g @unipost/cli`, then run the Dashboard setup-token command. After install, use <code>unipost</code> commands everywhere. Update with <code>unipost upgrade</code> when you need the latest CLI."],
+  ["1. Install and sign in", "Install once with `npm install -g @unipost/cli`, then run `unipost init` or the Dashboard setup-token command. After install, use <code>unipost</code> commands everywhere. Update with <code>unipost upgrade</code> when you need the latest CLI."],
   ["2. Choose who will use it", "Use Terminal for human command-line work. Use Codex or Claude Code when a local agent should read project code, query UniPost context, and help implement or validate workflows."],
   ["3. Ground before action", "Run `auth status`, `profiles list`, `accounts list`, or `agent bootstrap` before drafting. Agents should validate, dry-run, or draft first; live publishing requires `--yes` and `--idempotency-key`."],
 ] as const;
@@ -220,8 +226,9 @@ const TROUBLESHOOTING_ROWS = [
   ["Codex or Claude Code still does not know UniPost after setup-token login", "The setup token signs in the UniPost CLI only. Run `unipost agent install --client codex --json` or `unipost agent install --client claude-code --json`, then follow the returned instruction package setup in that agent."],
   ["`codex` or `claude` command is missing", "Install or open that AI agent separately. UniPost CLI does not install Codex, Claude Code, or any other local agent executable."],
   ["API key is missing or invalid", "Use the Dashboard setup token flow first. If you are running in CI, set `UNIPOST_API_KEY`, then run `unipost auth status --json`."],
+  ["Replacing the local account binding is blocked", "UniPost CLI keeps one local binding. Run `unipost auth logout --json` first, or rerun the login/init command with `--yes` after confirming the new workspace should replace the old one."],
   ["`setup_token_invalid`, `setup_token_expired`, or `setup_token_used`", "Create a fresh Dashboard setup token. Setup tokens are short-lived and single-use, so copy the newest command from Dashboard before retrying."],
-  ["`keychain_unavailable`", "The CLI could not store the named key in OS keychain. Retry from a normal logged-in desktop shell, or use `UNIPOST_API_KEY` as the fallback auth path."],
+  ["`keychain_unavailable`", "The CLI could not store the named key in secure local storage. On Linux, Windows, or CI, use `UNIPOST_API_KEY`, pass `--api-key` for one-off commands, or rerun with `--metadata-only` if you only want redacted metadata."],
   ["Wrong API URL", "Copy the newest Dashboard setup command; it includes `--base-url` for the current environment. If you are configuring manually, run `unipost config set base_url https://dev-api.unipost.dev --json` for dev validation."],
   ["No profile or account IDs", "Run `unipost profiles list --json`, `unipost quickstart --name \"Brand\" --json`, or `unipost connect create --json`, then check `unipost accounts list --json`."],
   ["Live publish is blocked", "Start with `posts validate`, `posts draft`, or `posts create --dry-run`. Only add `--yes` and `--idempotency-key` after the user explicitly approves live or scheduled publishing."],
@@ -264,7 +271,7 @@ export default function CliPage() {
         <div>
           <div className="cli-status-label">Beta status</div>
           <p>
-            Dashboard setup tokens, npm-installed <code>unipost</code> commands, and API-key fallback are available now. A setup token creates a named revocable CLI key and stores it in OS keychain; <code>UNIPOST_API_KEY</code> remains the CI-friendly fallback. Browser/device auth remains a later auth surface; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
+            Dashboard setup tokens, npm-installed <code>unipost</code> commands, and existing API-key login are available now. On macOS, setup-token and API-key login store a secure local CLI credential; <code>UNIPOST_API_KEY</code> remains the CI-friendly fallback. Browser/device auth remains a later auth surface; for direct production integrations, use the <Link href="/docs/api">REST API</Link>, <Link href="/docs/sdk">SDKs</Link>, or <Link href="/docs/mcp">MCP</Link>.
           </p>
         </div>
         <div className="cli-phase-pill">Agent setup beta</div>
@@ -278,7 +285,7 @@ export default function CliPage() {
           ["`unipost ...`", "The normal command prefix after install. Use this in Dashboard setup-token commands, terminal workflows, and agent setup."],
           ["`unipost upgrade`", "Updates the installed CLI package with npm, then you can run `unipost --version` to confirm."],
           ["`unipost self help`", "Shows CLI install, update, version, and help commands."],
-          ["Dashboard setup-token command", "Exchanges the one-time token for a named CLI key and stores it in OS keychain. A setup token only logs the UniPost CLI in."],
+          ["Dashboard setup-token command", "Exchanges the one-time token for a named CLI key and stores it in secure local storage when available. A setup token only logs the UniPost CLI in."],
           ["`codex`, `claude`, or another agent command", "A separate local AI agent. UniPost CLI does not install those programs."],
         ]}
       />
@@ -293,8 +300,8 @@ export default function CliPage() {
         columns={["Step", "What to do"]}
         rows={[
           ["1. Install once", "Run `npm install -g @unipost/cli`, then confirm `unipost --help` works."],
-          ["2. Copy the setup command", "Open Dashboard -> Project -> API Keys -> Set up UniPost CLI. Choose Terminal. Copy the generated `unipost auth login ...` setup-token command for the current environment."],
-          ["3. Run it exactly", "Run the copied command as-is. It should include `--setup-token`, `--client terminal`, `--base-url`, and `--json`."],
+          ["2. Choose a credential path", "Run `unipost init --api-key up_live_... --json` when you already have a key, or open Dashboard -> Project -> API Keys -> Set up UniPost CLI and copy the generated setup-token command."],
+          ["3. Run it exactly", "Run the copied Dashboard command as-is, or run `unipost init --api-key <key> --json`. Dashboard commands should include `--setup-token`, `--client terminal`, `--base-url`, and `--json`. To replace an existing local binding, run `unipost auth logout --json` first or add `--yes` after confirming the new workspace."],
           ["4. Verify auth", "Run `unipost auth status --json`. Confirm the credential source and `base_url` match the environment you are using."],
           ["5. Discover real IDs", "Run `unipost profiles list --json`, `unipost accounts list --json`, and `unipost accounts health --account sa_... --json` before validating or drafting posts."],
         ]}

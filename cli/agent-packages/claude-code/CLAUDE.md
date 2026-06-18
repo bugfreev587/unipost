@@ -4,6 +4,9 @@ Use UniPost through first-party CLI and MCP contracts.
 
 ## Required Discovery
 
+- Run `unipost auth status --json`. If auth is `missing` or `metadata_only`,
+  ask the user to run `unipost init` or the Dashboard-generated setup command
+  before continuing.
 - Run `unipost agent bootstrap --client claude-code --json`.
 - Run `unipost agent capabilities --client claude-code --json`.
 - Run `unipost agent context --json` after authentication.
