@@ -86,23 +86,29 @@ const platformDocs = [
   },
 ];
 
-test("supported platform Analytics API docs are exposed under Analytics", async () => {
+test("Analytics docs stay unified-first instead of exposing each platform as a primary API category", async () => {
   const [apiIndex, docsShell] = await Promise.all([
     source("src/app/docs/api/page.tsx"),
     source("src/app/docs/_components/docs-shell.tsx"),
   ]);
 
+  assert.match(apiIndex, /title:\s*"Analytics"/);
+  assert.match(apiIndex, /path:\s*"\/v1\/analytics\/platforms"/);
+  assert.match(apiIndex, /Platform capabilities/);
+  assert.match(docsShell, /label:\s*"Analytics"/);
+  assert.match(docsShell, /label:\s*"Platform capabilities"/);
+
   for (const platform of platformDocs) {
-    assert.match(apiIndex, new RegExp(`title:\\s*"${platform.label}"`), `${platform.label} is missing from API index`);
-    assert.match(docsShell, new RegExp(`label:\\s*"${platform.label}"`), `${platform.label} is missing from docs sidebar`);
+    assert.doesNotMatch(apiIndex, new RegExp(`title:\\s*"${platform.label}"`), `${platform.label} should not be a primary API index group`);
+    assert.doesNotMatch(docsShell, new RegExp(`label:\\s*"${platform.label}"`), `${platform.label} should not be a primary docs sidebar group`);
     for (const path of platform.paths) {
-      assert.match(apiIndex, new RegExp(path.replaceAll("/", "\\/")), `${path} is missing from API index`);
-      assert.match(docsShell, new RegExp(path.replaceAll("/", "\\/")), `${path} is missing from docs sidebar`);
+      assert.doesNotMatch(apiIndex, new RegExp(path.replaceAll("/", "\\/")), `${path} should not be promoted from the API index`);
+      assert.doesNotMatch(docsShell, new RegExp(path.replaceAll("/", "\\/")), `${path} should not be promoted from the docs sidebar`);
     }
   }
 });
 
-test("supported platform Analytics docs describe scopes and real public API routes", async () => {
+test("platform Analytics docs describe optional native drilldowns behind the unified Analytics API", async () => {
   const dataSource = await source("src/app/docs/api/analytics/_data/platform-analytics-docs.tsx");
 
   for (const platform of platformDocs) {
@@ -111,6 +117,7 @@ test("supported platform Analytics docs describe scopes and real public API rout
     assert.ok(overview, `${pagePath} should exist`);
     assert.match(dataSource, new RegExp(`label:\\s*"${platform.label}"`), `${platform.label} should be defined in platform analytics docs data`);
     assert.match(dataSource, /public-ready|production|public API/i, `${platform.label} should describe public readiness`);
+    assert.match(dataSource, /optional native drilldown|native drilldown/i, `${platform.label} should be positioned as a drilldown, not the primary integration path`);
 
     for (const scope of platform.scopes) {
       assert.match(dataSource, new RegExp(scope.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")), `${platform.label} should document ${scope}`);
@@ -121,14 +128,14 @@ test("supported platform Analytics docs describe scopes and real public API rout
   }
 });
 
-test("public Analytics tools link to platform-specific API docs", async () => {
+test("public Analytics tools link back to unified platform capabilities docs", async () => {
   const toolsConfig = await source("src/app/tools/_components/public-analytics-tool.tsx");
 
-  for (const slug of ["instagram", "threads", "pinterest"]) {
+  for (const slug of ["tiktok", "instagram", "threads", "pinterest"]) {
     assert.match(
       toolsConfig,
-      new RegExp(`slug:\\s*"${slug}"[\\s\\S]*?docsHref:\\s*"\\/docs\\/api\\/analytics\\/${slug}"`),
-      `${slug} public tool should link to its platform analytics docs`,
+      new RegExp(`slug:\\s*"${slug}"[\\s\\S]*?docsHref:\\s*"\\/docs\\/api\\/analytics\\/platforms"`),
+      `${slug} public tool should link to unified platform capabilities docs`,
     );
   }
 });

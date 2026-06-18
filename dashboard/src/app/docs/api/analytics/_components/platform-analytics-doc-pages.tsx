@@ -8,7 +8,7 @@ import type { PlatformAnalyticsDoc, PlatformAnalyticsEndpointDoc, PlatformAnalyt
 function platformBreadcrumb(platform: PlatformAnalyticsDoc, leaf?: string) {
   return [
     { label: "API Reference", href: "/docs/api" },
-    { label: "Analytics", href: "/docs/api/analytics/summary" },
+    { label: "Analytics", href: "/docs/api/analytics/platforms" },
     { label: platform.label, href: leaf ? `/docs/api/analytics/${platform.slug}` : undefined },
     ...(leaf ? [{ label: leaf }] : []),
   ];
@@ -30,7 +30,7 @@ export function PlatformAnalyticsOverviewPage({ platform }: { platform: Platform
         <section style={{ border: "1px solid var(--docs-border)", borderRadius: 8, padding: 18, background: "var(--docs-bg-elevated)" }}>
           <h2 style={{ margin: 0, fontSize: 16, color: "var(--docs-text)", fontWeight: 720 }}>Production readiness</h2>
           <p style={{ margin: "8px 0 0", color: "var(--docs-text-soft)", fontSize: 13.5, lineHeight: 1.65 }}>
-            {platform.productionReadiness} These are public API docs for supported <code>{platform.platformName}</code> Analytics surfaces.
+            {platform.productionReadiness} These optional native drilldown docs explain platform-specific fields and scopes behind the unified UniPost Analytics API.
           </p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}>
             {platform.scopes.map((scope) => (
@@ -93,7 +93,7 @@ export function PlatformAnalyticsEndpointPage({
       breadcrumbItems={platformBreadcrumb(platform, endpoint.label)}
       section="analytics"
       title={endpoint.label}
-      description={`${endpoint.description} ${endpoint.scopeNote}`}
+      description={`${endpoint.description} This optional native drilldown is for platform-specific fields that go beyond the normalized UniPost Analytics API. ${endpoint.scopeNote}`}
       method={endpoint.method}
       path={endpoint.path}
       requestSections={endpoint.requestSections}

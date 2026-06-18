@@ -60,68 +60,16 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
   },
   {
     title: "Analytics",
-    description: "Build reporting tables, platform summaries, exports, and refresh workflows across Instagram, Threads, Pinterest, TikTok, and Facebook Page.",
+    description: "Build one normalized reporting workflow across Instagram, Threads, Pinterest, TikTok, and Facebook Page without integrating each platform separately.",
     endpoints: [
       { label: "Workspace summary", method: "GET", path: "/v1/analytics/summary", href: "/docs/api/analytics/summary", description: "Read workspace-level analytics cards." },
       { label: "Post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/posts", description: "Inspect one post's platform results." },
       { label: "List analytics posts", method: "GET", path: "/v1/analytics/posts", href: "/docs/api/analytics/posts-list", description: "List normalized post-level analytics rows." },
       { label: "Export analytics posts", method: "GET", path: "/v1/analytics/posts/export", href: "/docs/api/analytics/posts/export", description: "Download normalized post analytics as CSV." },
       { label: "Analytics rollup", method: "GET", path: "/v1/analytics/rollup", href: "/docs/api/analytics/rollup", description: "Read time-bucketed metrics grouped by platform, account, or status." },
-      { label: "Analytics platforms", method: "GET", path: "/v1/analytics/platforms", href: "/docs/api/analytics/platforms", description: "List platform availability and analytics health." },
-      { label: "Get analytics platform", method: "GET", path: "/v1/analytics/platforms/{platform}", href: "/docs/api/analytics/platforms/detail", description: "Read platform summary, trend, accounts, and top posts." },
+      { label: "Platform capabilities", method: "GET", path: "/v1/analytics/platforms", href: "/docs/api/analytics/platforms", description: "List platform availability, metric coverage, and analytics health for the unified API." },
+      { label: "Get platform summary", method: "GET", path: "/v1/analytics/platforms/{platform}", href: "/docs/api/analytics/platforms/detail", description: "Read one platform's normalized summary, trend, accounts, and top posts." },
       { label: "Request analytics refresh", method: "POST", path: "/v1/analytics/refresh", href: "/docs/api/analytics/refresh", description: "Mark matching rows stale for the refresh worker." },
-    ],
-  },
-  {
-    title: "Instagram Analytics",
-    description: "Read Instagram Business profile details, account metrics, recent media insights, and UniPost-published Instagram post performance.",
-    endpoints: [
-      { label: "Instagram Analytics overview", method: "GET", path: "/v1/accounts/{id}/instagram/*", href: "/docs/api/analytics/instagram", description: "Understand Instagram analytics scopes and endpoint choices." },
-      { label: "Get Instagram profile", method: "GET", path: "/v1/accounts/{id}/instagram/profile", href: "/docs/api/analytics/instagram/profile", description: "Fetch Instagram profile fields from instagram_business_basic." },
-      { label: "Get Instagram account metrics", method: "GET", path: "/v1/accounts/{id}/metrics", href: "/docs/api/analytics/instagram/account-metrics", description: "Fetch follower, following, and media counts for Instagram accounts." },
-      { label: "List Instagram media analytics", method: "GET", path: "/v1/accounts/{id}/instagram/media", href: "/docs/api/analytics/instagram/media", description: "Fetch recent media rows with reach, likes, comments, shares, and saves." },
-      { label: "Instagram post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/posts", description: "Read normalized metrics for Instagram posts published through UniPost." },
-    ],
-  },
-  {
-    title: "Threads Analytics",
-    description: "Read Threads profile details, account metrics, recent post insights, and UniPost-published Threads post performance.",
-    endpoints: [
-      { label: "Threads Analytics overview", method: "GET", path: "/v1/accounts/{id}/threads/*", href: "/docs/api/analytics/threads", description: "Understand Threads analytics scopes and endpoint choices." },
-      { label: "Get Threads profile", method: "GET", path: "/v1/accounts/{id}/threads/profile", href: "/docs/api/analytics/threads/profile", description: "Fetch Threads profile fields from threads_basic." },
-      { label: "Get Threads account metrics", method: "GET", path: "/v1/accounts/{id}/metrics", href: "/docs/api/analytics/threads/account-metrics", description: "Fetch account insights from threads_manage_insights." },
-      { label: "List Threads post analytics", method: "GET", path: "/v1/accounts/{id}/threads/posts", href: "/docs/api/analytics/threads/posts", description: "Fetch recent Threads posts with views, likes, replies, reposts, and quotes." },
-      { label: "Threads post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/posts", description: "Read normalized metrics for Threads posts published through UniPost." },
-    ],
-  },
-  {
-    title: "Pinterest Analytics",
-    description: "Read Pinterest board inventory and UniPost-published Pin analytics.",
-    endpoints: [
-      { label: "Pinterest Analytics overview", method: "GET", path: "/v1/accounts/{id}/pinterest/*", href: "/docs/api/analytics/pinterest", description: "Understand Pinterest analytics scopes and endpoint choices." },
-      { label: "List Pinterest boards", method: "GET", path: "/v1/accounts/{id}/pinterest/boards", href: "/docs/api/analytics/pinterest/boards", description: "Fetch Pinterest boards available to the connected account." },
-      { label: "Pinterest post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/pinterest/post-analytics", description: "Read normalized Pin metrics for Pinterest posts published through UniPost." },
-    ],
-  },
-  {
-    title: "TikTok Analytics",
-    description: "Read TikTok profile fields, account statistics, public video inventory, and UniPost-published TikTok post performance.",
-    endpoints: [
-      { label: "TikTok Analytics overview", method: "GET", path: "/v1/accounts/{id}/tiktok/*", href: "/docs/api/analytics/tiktok", description: "Understand TikTok analytics scopes, production gating, and endpoint choices." },
-      { label: "Get TikTok profile", method: "GET", path: "/v1/accounts/{id}/tiktok/profile", href: "/docs/api/analytics/tiktok/profile", description: "Fetch profile fields from user.info.profile." },
-      { label: "Get TikTok account metrics", method: "GET", path: "/v1/accounts/{id}/metrics", href: "/docs/api/analytics/tiktok/account-metrics", description: "Fetch followers, following, public video count, and total likes from user.info.stats." },
-      { label: "List TikTok public videos", method: "GET", path: "/v1/accounts/{id}/tiktok/videos", href: "/docs/api/analytics/tiktok/videos", description: "Fetch public video inventory and engagement counters from video.list." },
-      { label: "TikTok post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/posts", description: "Read normalized metrics for TikTok posts published through UniPost." },
-    ],
-  },
-  {
-    title: "Facebook Page Analytics",
-    description: "Read Facebook Page profile data, Page Insights, recent Page posts, and UniPost-published Facebook post performance.",
-    endpoints: [
-      { label: "Facebook Page Analytics overview", method: "GET", path: "/v1/accounts/{id}/facebook/*", href: "/docs/api/analytics/facebook", description: "Understand Facebook Page analytics scopes and endpoint choices." },
-      { label: "Get Facebook Page analytics", method: "GET", path: "/v1/accounts/{id}/facebook/page-analytics", href: "/docs/api/analytics/facebook/page-analytics", description: "Fetch Page profile, Page Insights, recent Page posts, and per-post engagement." },
-      { label: "Get Facebook Page insights", method: "GET", path: "/v1/accounts/{id}/facebook/page-insights", href: "/docs/api/analytics/facebook/page-insights", description: "Fetch Page-level follows, impressions, views, and post engagements." },
-      { label: "Facebook Page post analytics", method: "GET", path: "/v1/posts/{post_id}/analytics", href: "/docs/api/analytics/facebook/post-analytics", description: "Read normalized metrics for Facebook posts published through UniPost." },
     ],
   },
   {
