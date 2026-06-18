@@ -135,6 +135,26 @@ function createMemorySecureStore() {
   };
 }
 
+function createUnavailableSecureStore() {
+  const unavailable = () => {
+    const error = new Error("Secure local credential storage is not available on this platform.");
+    error.code = "keychain_unavailable";
+    error.normalizedCode = "keychain_unavailable";
+    throw error;
+  };
+  return {
+    async set() {
+      unavailable();
+    },
+    async get() {
+      unavailable();
+    },
+    async delete() {
+      unavailable();
+    },
+  };
+}
+
 test("prints the CLI version", async () => {
   const result = await runCli(["--version"]);
 
@@ -148,6 +168,11 @@ test("--help defaults examples to the installed unipost command", async () => {
 
   assert.equal(result.code, 0);
   assert.match(result.stdout, /\n  unipost auth status/);
+  const primaryUsage = result.stdout.split("Dashboard setup flow:")[0];
+  assert.doesNotMatch(primaryUsage, /auth login --setup-token/);
+  assert.match(result.stdout, /Dashboard setup flow:\n  unipost auth login --setup-token/);
+  assert.match(result.stdout, /--metadata-only/);
+  assert.match(result.stdout, /auth login --api-key validates an existing key and stores it in secure local/);
   assert.match(result.stdout, /Install:\n  npm install -g @unipost\/cli/);
   assert.match(result.stdout, /\n  unipost upgrade/);
   assert.match(result.stdout, /\n  unipost self update/);
@@ -183,17 +208,47 @@ test("self help explains install update and version commands", async () => {
   assert.match(result.stdout, /unipost --version/);
 });
 
-test("auth status --json fails with a stable envelope when credentials are missing", async () => {
-  const result = await runCli(["auth", "status", "--json", "--base-url", "http://127.0.0.1:65534"]);
+test("auth status --json reports missing local auth without requiring an API key", async () => {
+  await withTempConfig(async (configDir) => {
+    const result = await runCli(["auth", "status", "--json", "--base-url", "http://127.0.0.1:65534"], {
+      env: { UNIPOST_CONFIG_DIR: configDir },
+    });
 
-  assert.equal(result.code, 4);
-  const body = JSON.parse(result.stdout);
-  assert.equal(body.ok, false);
-  assert.equal(body.error.code, "unauthorized");
-  assert.equal(body.error.normalized_code, "unauthorized");
-  assert.match(body.error.hint, /UNIPOST_API_KEY/);
-  assert.equal(body.meta.command, "auth status");
-  assert.equal(body.meta.base_url, "http://127.0.0.1:65534");
+    assert.equal(result.code, 4);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.ok, true);
+    assert.equal(body.data.authenticated, false);
+    assert.equal(body.data.state, "missing");
+    assert.match(body.data.next_actions.join("\n"), /unipost init/);
+    assert.equal(body.meta.command, "auth status");
+    assert.equal(body.meta.base_url, "http://127.0.0.1:65534");
+  });
+});
+
+test("auth status --json reports metadata-only local auth as not ready", async () => {
+  await withTempConfig(async (configDir) => {
+    await writeFile(join(configDir, "config.json"), JSON.stringify({
+      credential: {
+        type: "api_key",
+        storage: "metadata_only",
+        workspace_id: "ws_meta",
+        workspace_name: "Metadata Workspace",
+        key_fingerprint: "abc123",
+      },
+    }));
+
+    const result = await runCli(["auth", "status", "--json"], {
+      env: { UNIPOST_CONFIG_DIR: configDir },
+    });
+
+    assert.equal(result.code, 4);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.ok, true);
+    assert.equal(body.data.authenticated, false);
+    assert.equal(body.data.state, "metadata_only");
+    assert.equal(body.data.credential.storage, "metadata_only");
+    assert.match(body.data.next_actions.join("\n"), /auth login --api-key <key>/);
+  });
 });
 
 test("--output rejects unsupported formats with exit 2", async () => {
@@ -275,11 +330,14 @@ test("auth list/use tracks local workspace defaults without storing API keys", a
       const listBody = JSON.parse(list.stdout);
       assert.equal(listBody.data.credentials[0].workspace_id, "ws_auth");
       assert.equal(listBody.data.credentials[0].credential_source, "env");
+      assert.equal(listBody.warnings[0].code, "single_account_compatibility");
       assert.equal(JSON.stringify(listBody).includes("up_test_valid"), false);
 
       const use = await runCli(["auth", "use", "ws_auth", "--json", "--base-url", baseUrl], { env });
       assert.equal(use.code, 0);
-      assert.equal(JSON.parse(use.stdout).data.default_workspace_id, "ws_auth");
+      const useBody = JSON.parse(use.stdout);
+      assert.equal(useBody.data.default_workspace_id, "ws_auth");
+      assert.equal(useBody.warnings[0].code, "single_account_compatibility");
 
       const config = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
       assert.equal(config.default_workspace_id, "ws_auth");
@@ -317,8 +375,9 @@ test("config path/show/set manages safe local defaults", async () => {
   });
 });
 
-test("auth login stores only redacted credential metadata and logout clears it", async () => {
+test("auth login --api-key stores a secure credential by default and logout clears it", async () => {
   await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
     await withServer((req, res) => {
       assert.equal(req.method, "GET");
       assert.equal(req.url, "/v1/workspace");
@@ -330,28 +389,280 @@ test("auth login stores only redacted credential metadata and logout clears it",
     }, async (baseUrl) => {
       const env = { UNIPOST_CONFIG_DIR: configDir };
 
-      const login = await runCli(["auth", "login", "--api-key", "up_test_secret_acceptance", "--json", "--base-url", baseUrl], { env });
+      const login = await runCli(["auth", "login", "--api-key", "up_test_secret_acceptance", "--json", "--base-url", baseUrl], { env, secureStore });
       assert.equal(login.code, 0);
       const loginBody = JSON.parse(login.stdout);
       assert.equal(loginBody.data.workspace.id, "ws_login");
-      assert.equal(loginBody.data.credential.storage, "metadata_only");
-      assert.equal(loginBody.data.stored_secret, false);
+      assert.equal(loginBody.data.credential.storage, "keychain");
+      assert.equal(loginBody.data.stored_secret, true);
       assert.equal(JSON.stringify(loginBody).includes("up_test_secret_acceptance"), false);
+      assert.equal([...secureStore.values.values()].includes("up_test_secret_acceptance"), true);
 
       const configAfterLogin = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
       assert.equal(configAfterLogin.credential.workspace_id, "ws_login");
-      assert.equal(configAfterLogin.credential.storage, "metadata_only");
+      assert.equal(configAfterLogin.credential.storage, "keychain");
       assert.equal(Boolean(configAfterLogin.credential.key_fingerprint), true);
       assert.equal(JSON.stringify(configAfterLogin).includes("up_test_secret_acceptance"), false);
 
-      const logout = await runCli(["auth", "logout", "--json"], { env });
+      const status = await runCli(["auth", "status", "--json"], { env, secureStore });
+      assert.equal(status.code, 0);
+      const statusBody = JSON.parse(status.stdout);
+      assert.equal(statusBody.data.authenticated, true);
+      assert.equal(statusBody.data.state, "keychain_ready");
+      assert.equal(statusBody.data.credential_source, "keychain");
+
+      const logout = await runCli(["auth", "logout", "--json"], { env, secureStore });
       assert.equal(logout.code, 0);
       const logoutBody = JSON.parse(logout.stdout);
       assert.equal(logoutBody.data.removed_credential, true);
       assert.equal(logoutBody.data.remote_revoked, false);
+      assert.equal(secureStore.deleted.length, 1);
+      assert.equal([...secureStore.values.values()].includes("up_test_secret_acceptance"), false);
 
       const configAfterLogout = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
       assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "credential"), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "base_url"), false);
+    });
+  });
+});
+
+test("auth login --api-key --metadata-only preserves the explicit no-secret mode", async () => {
+  await withTempConfig(async (configDir) => {
+    await withServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/v1/workspace");
+      assert.equal(req.headers.authorization, "Bearer up_test_secret_metadata");
+      writeJson(res, 200, {
+        data: { id: "ws_metadata", name: "Metadata Workspace" },
+        request_id: "req_metadata",
+      });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_CONFIG_DIR: configDir };
+
+      const login = await runCli([
+        "auth", "login",
+        "--api-key", "up_test_secret_metadata",
+        "--metadata-only",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env, secureStore: createMemorySecureStore() });
+
+      assert.equal(login.code, 0);
+      const loginBody = JSON.parse(login.stdout);
+      assert.equal(loginBody.data.credential.storage, "metadata_only");
+      assert.equal(loginBody.data.stored_secret, false);
+      assert.equal(loginBody.data.authenticated_commands_ready, false);
+      assert.equal(JSON.stringify(loginBody).includes("up_test_secret_metadata"), false);
+
+      const status = await runCli(["auth", "status", "--json"], { env });
+      assert.equal(status.code, 4);
+      assert.equal(JSON.parse(status.stdout).data.state, "metadata_only");
+    });
+  });
+});
+
+test("auth login --api-key fails clearly when secure storage is unavailable", async () => {
+  await withTempConfig(async (configDir) => {
+    await withServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/v1/workspace");
+      assert.equal(req.headers.authorization, "Bearer up_test_secret_unavailable");
+      writeJson(res, 200, {
+        data: { id: "ws_unavailable", name: "Unavailable Workspace" },
+        request_id: "req_unavailable",
+      });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_CONFIG_DIR: configDir };
+      const login = await runCli([
+        "auth", "login",
+        "--api-key", "up_test_secret_unavailable",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env, secureStore: createUnavailableSecureStore() });
+
+      assert.equal(login.code, 4);
+      const body = JSON.parse(login.stdout);
+      assert.equal(body.ok, false);
+      assert.equal(body.error.code, "keychain_unavailable");
+      assert.match(body.error.hint, /--metadata-only/);
+
+      const configAfterLogin = JSON.parse(await readFile(join(configDir, "config.json"), "utf8").catch(() => "{}"));
+      assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogin, "credential"), false);
+      assert.equal(JSON.stringify(configAfterLogin).includes("up_test_secret_unavailable"), false);
+    });
+  });
+});
+
+test("auth login --api-key requires --yes before replacing an existing binding", async () => {
+  await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
+    const oldAccount = "workspace:ws_old:key:key_old";
+    secureStore.values.set(`dev.unipost.cli:${oldAccount}`, "up_test_old_secret");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(join(configDir, "config.json"), `${JSON.stringify({
+      base_url: "http://unipost-cli-test.local",
+      default_workspace_id: "ws_old",
+      credential: {
+        type: "api_key",
+        storage: "keychain",
+        workspace_id: "ws_old",
+        workspace_name: "Old Workspace",
+        key_id: "key_old",
+        key_name: "Old CLI Key",
+        key_prefix: "up_test_old",
+        key_fingerprint: "oldfingerprint",
+        keychain_service: "dev.unipost.cli",
+        keychain_account: oldAccount,
+        credential_source: "api_key",
+      },
+    }, null, 2)}\n`);
+
+    await withServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/v1/workspace");
+      assert.equal(req.headers.authorization, "Bearer up_test_new_secret");
+      writeJson(res, 200, {
+        data: { id: "ws_new", name: "New Workspace" },
+        request_id: "req_rebind_preview",
+      });
+    }, async (baseUrl) => {
+      const result = await runCli([
+        "auth", "login",
+        "--api-key", "up_test_new_secret",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env: { UNIPOST_CONFIG_DIR: configDir }, secureStore });
+
+      assert.equal(result.code, 6);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.error.code, "auth_rebind_confirmation_required");
+      assert.match(body.error.message, /requires confirmation/);
+      assert.match(body.error.hint, /--yes/);
+      assert.equal([...secureStore.values.values()].includes("up_test_new_secret"), false);
+      assert.equal([...secureStore.values.values()].includes("up_test_old_secret"), true);
+      assert.equal(secureStore.deleted.length, 0);
+
+      const config = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(config.credential.workspace_id, "ws_old");
+      assert.equal(config.credential.keychain_account, oldAccount);
+      assert.equal(JSON.stringify(config).includes("up_test_new_secret"), false);
+    });
+  });
+});
+
+test("auth login --api-key --yes replaces an existing binding and deletes the old keychain item", async () => {
+  await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
+    const oldAccount = "workspace:ws_old:key:key_old";
+    secureStore.values.set(`dev.unipost.cli:${oldAccount}`, "up_test_old_secret");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(join(configDir, "config.json"), `${JSON.stringify({
+      base_url: "http://unipost-cli-test.local",
+      default_workspace_id: "ws_old",
+      credential: {
+        type: "api_key",
+        storage: "keychain",
+        workspace_id: "ws_old",
+        workspace_name: "Old Workspace",
+        key_id: "key_old",
+        key_name: "Old CLI Key",
+        key_prefix: "up_test_old",
+        key_fingerprint: "oldfingerprint",
+        keychain_service: "dev.unipost.cli",
+        keychain_account: oldAccount,
+        credential_source: "api_key",
+      },
+    }, null, 2)}\n`);
+
+    await withServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/v1/workspace");
+      assert.equal(req.headers.authorization, "Bearer up_test_new_secret");
+      writeJson(res, 200, {
+        data: { id: "ws_new", name: "New Workspace" },
+        request_id: "req_rebind_confirmed",
+      });
+    }, async (baseUrl) => {
+      const result = await runCli([
+        "auth", "login",
+        "--api-key", "up_test_new_secret",
+        "--yes",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env: { UNIPOST_CONFIG_DIR: configDir }, secureStore });
+
+      assert.equal(result.code, 0);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.workspace.id, "ws_new");
+      assert.equal(body.data.credential.workspace_id, "ws_new");
+      assert.equal(body.data.credential.storage, "keychain");
+      assert.equal([...secureStore.values.values()].includes("up_test_new_secret"), true);
+      assert.equal([...secureStore.values.values()].includes("up_test_old_secret"), false);
+      assert.deepEqual(secureStore.deleted, [{ service: "dev.unipost.cli", account: oldAccount }]);
+
+      const config = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(config.credential.workspace_id, "ws_new");
+      assert.notEqual(config.credential.keychain_account, oldAccount);
+      assert.equal(JSON.stringify(config).includes("up_test_new_secret"), false);
+    });
+  });
+});
+
+test("auth login --api-key keeps the old binding when the replacement key fails validation", async () => {
+  await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
+    const oldAccount = "workspace:ws_old:key:key_old";
+    secureStore.values.set(`dev.unipost.cli:${oldAccount}`, "up_test_old_secret");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(join(configDir, "config.json"), `${JSON.stringify({
+      base_url: "http://unipost-cli-test.local",
+      default_workspace_id: "ws_old",
+      credential: {
+        type: "api_key",
+        storage: "keychain",
+        workspace_id: "ws_old",
+        workspace_name: "Old Workspace",
+        key_id: "key_old",
+        key_name: "Old CLI Key",
+        key_prefix: "up_test_old",
+        key_fingerprint: "oldfingerprint",
+        keychain_service: "dev.unipost.cli",
+        keychain_account: oldAccount,
+        credential_source: "api_key",
+      },
+    }, null, 2)}\n`);
+
+    await withServer((req, res) => {
+      assert.equal(req.method, "GET");
+      assert.equal(req.url, "/v1/workspace");
+      assert.equal(req.headers.authorization, "Bearer up_test_bad_secret");
+      writeJson(res, 401, {
+        error: {
+          code: "UNAUTHORIZED",
+          normalized_code: "unauthorized",
+          message: "Invalid API key.",
+        },
+        request_id: "req_rebind_failed",
+      });
+    }, async (baseUrl) => {
+      const result = await runCli([
+        "auth", "login",
+        "--api-key", "up_test_bad_secret",
+        "--yes",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env: { UNIPOST_CONFIG_DIR: configDir }, secureStore });
+
+      assert.equal(result.code, 4);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.error.normalized_code, "unauthorized");
+      assert.equal([...secureStore.values.values()].includes("up_test_bad_secret"), false);
+      assert.equal([...secureStore.values.values()].includes("up_test_old_secret"), true);
+      assert.equal(secureStore.deleted.length, 0);
+
+      const config = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(config.credential.workspace_id, "ws_old");
+      assert.equal(config.credential.keychain_account, oldAccount);
     });
   });
 });
@@ -433,6 +744,80 @@ test("auth login --setup-token defaults to terminal setup, stores the API key in
 
       const configAfterLogout = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
       assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "credential"), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(configAfterLogout, "base_url"), false);
+    });
+  });
+});
+
+test("auth login --setup-token preflights secure storage before exchanging the token", async () => {
+  await withTempConfig(async (configDir) => {
+    await withServer((req, res) => {
+      writeJson(res, 500, {
+        error: {
+          code: "UNEXPECTED_REQUEST",
+          normalized_code: "upstream_error",
+          message: `Unexpected request: ${req.method} ${req.url}`,
+        },
+      });
+    }, async (baseUrl, requests) => {
+      const result = await runCli([
+        "auth", "login",
+        "--setup-token", "ust_setup_unavailable",
+        "--json",
+        "--base-url", baseUrl,
+      ], {
+        env: { UNIPOST_CONFIG_DIR: configDir },
+        secureStore: createUnavailableSecureStore(),
+      });
+
+      assert.equal(result.code, 4);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.error.code, "keychain_unavailable");
+      assert.equal(requests.length, 0);
+    });
+  });
+});
+
+test("auth login --setup-token requires --yes before replacing an existing binding", async () => {
+  await withTempConfig(async (configDir) => {
+    await mkdir(configDir, { recursive: true });
+    await writeFile(join(configDir, "config.json"), `${JSON.stringify({
+      default_workspace_id: "ws_existing",
+      credential: {
+        type: "api_key",
+        storage: "keychain",
+        workspace_id: "ws_existing",
+        workspace_name: "Existing Workspace",
+        keychain_service: "dev.unipost.cli",
+        keychain_account: "workspace:ws_existing:key:key_existing",
+      },
+    }, null, 2)}\n`);
+
+    await withServer((req, res) => {
+      writeJson(res, 500, {
+        error: {
+          code: "UNEXPECTED_REQUEST",
+          normalized_code: "upstream_error",
+          message: `Unexpected request: ${req.method} ${req.url}`,
+        },
+      });
+    }, async (baseUrl, requests) => {
+      const result = await runCli([
+        "auth", "login",
+        "--setup-token", "ust_replace_setup",
+        "--client", "codex",
+        "--json",
+        "--base-url", baseUrl,
+      ], {
+        env: { UNIPOST_CONFIG_DIR: configDir },
+        secureStore: createMemorySecureStore(),
+      });
+
+      assert.equal(result.code, 6);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.error.code, "auth_rebind_confirmation_required");
+      assert.match(body.error.hint, /--yes/);
+      assert.equal(requests.length, 0);
     });
   });
 });
@@ -1672,6 +2057,54 @@ test("init and quickstart summarize the first-run state without creating a live 
   });
 });
 
+test("init --api-key stores secure auth before summarizing workspace readiness", async () => {
+  await withTempConfig(async (configDir) => {
+    const secureStore = createMemorySecureStore();
+    await withServer((req, res) => {
+      if (req.method === "GET" && req.url === "/v1/workspace") {
+        assert.equal(req.headers.authorization, "Bearer up_test_init_secret");
+        writeJson(res, 200, {
+          data: { id: "ws_init_login", name: "Init Login Workspace" },
+          request_id: "req_init_login_workspace",
+        });
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/profiles") {
+        assert.equal(req.headers.authorization, "Bearer up_test_init_secret");
+        writeJson(res, 200, {
+          data: [{ id: "pr_init_login", name: "Init Brand", account_count: 0 }],
+          request_id: "req_init_login_profiles",
+        });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+    }, async (baseUrl) => {
+      const env = { UNIPOST_CONFIG_DIR: configDir };
+      const result = await runCli([
+        "init",
+        "--api-key", "up_test_init_secret",
+        "--json",
+        "--base-url", baseUrl,
+      ], { env, secureStore });
+
+      assert.equal(result.code, 0);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.authenticated, true);
+      assert.equal(body.data.credential_source, "keychain");
+      assert.equal(body.data.workspace.id, "ws_init_login");
+      assert.equal(body.data.default_profile_id, "pr_init_login");
+      assert.equal([...secureStore.values.values()].includes("up_test_init_secret"), true);
+
+      const config = JSON.parse(await readFile(join(configDir, "config.json"), "utf8"));
+      assert.equal(config.base_url, baseUrl);
+      assert.equal(config.credential.storage, "keychain");
+      assert.equal(config.credential.workspace_id, "ws_init_login");
+      assert.equal(config.default_profile_id, "pr_init_login");
+      assert.equal(JSON.stringify(config).includes("up_test_init_secret"), false);
+    });
+  });
+});
+
 // ---- Agent Debug Kit (Phase 1 + 2) ----
 
 test("doctor diagnose --json returns a doctor.v1 payload with findings under data", async () => {
@@ -1886,7 +2319,7 @@ test("doctor support-bundle --upload posts the redacted report to the support bu
       assert.equal(result.code, 0);
       assert.ok(uploaded, "expected upload request");
       assert.equal(uploaded.schema_version, "doctor.v1");
-      assert.equal(uploaded.cli_version, "0.2.0");
+      assert.equal(uploaded.cli_version, "0.3.0");
       assert.match(uploaded.report_markdown, /# UniPost Debug Report/);
       assert.doesNotMatch(uploaded.report_markdown, /should_not_leave_cli|up_live_abcd1234efgh/);
       const body = JSON.parse(result.stdout);

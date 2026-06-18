@@ -2,11 +2,14 @@
 
 Installable UniPost CLI for developer quickstarts and AI agent operator workflows.
 
-The current implementation supports Dashboard-generated setup tokens for
-keychain-backed CLI auth, plus API-key fallback through `UNIPOST_API_KEY`.
+The current implementation supports Dashboard-generated setup tokens for secure
+local CLI auth, existing API-key login, and command-level fallback through
+`UNIPOST_API_KEY`.
 Browser/device auth is still a later auth surface; setup-token login creates a
-named revocable API key and stores the plaintext secret in OS keychain, not in
-the local config file.
+named revocable API key. On macOS, setup-token and API-key login store the
+plaintext secret in macOS keychain, not in the local config file. On Linux,
+Windows, and CI, use `UNIPOST_API_KEY`, pass `--api-key` per command, or choose
+`--metadata-only` explicitly.
 
 Install once:
 
@@ -29,7 +32,7 @@ install or configure Codex, Claude Code, Cursor, or any other local AI agent.
 To let a local AI agent use UniPost:
 
 1. Finish CLI auth first:
-   `unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json`
+   `unipost init --api-key up_live_... --base-url https://api.unipost.dev --json`
 2. Add the UniPost instruction package for that agent:
    `unipost agent install --client codex --json`
 3. In the agent session, have it run:
@@ -37,6 +40,7 @@ To let a local AI agent use UniPost:
 
 ```bash
 unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json
+unipost init --api-key up_live_... --base-url https://api.unipost.dev --json
 unipost config path --json
 unipost config set base_url https://dev-api.unipost.dev --json
 unipost config set default_profile_id pr_... --json
@@ -88,12 +92,16 @@ unipost completion zsh
 
 The CLI stores non-secret local defaults such as the selected profile in
 `~/.unipost/config.json`. `auth login --api-key` validates the key against
-`/v1/workspace`, then stores redacted credential metadata only. `auth login
---setup-token` exchanges a short-lived Dashboard token for a named API key and
-stores that secret in OS keychain; the config file stores only the keychain
-locator and redacted metadata. `auth logout` removes local keychain/config
-credentials only; revoke the named key from Dashboard if it should stop working
-remotely.
+`/v1/workspace`, then stores a secure local credential on macOS. Use
+`auth login --api-key <key> --metadata-only` only when you intentionally want
+redacted metadata without a stored secret. `auth login --setup-token` exchanges
+a short-lived Dashboard token for a named API key and stores that secret in
+macOS keychain when secure storage is available; the config file stores only the
+keychain locator and redacted metadata. The CLI keeps one local account binding
+at a time: run `auth logout` before binding a different account, or rerun
+`auth login ... --yes` after confirming replacement. `auth logout` removes local
+keychain/config credentials and clears stored `base_url`; revoke the named key
+from Dashboard if it should stop working remotely.
 
 Phase 5 supports agent planning, dry-run publish validation, scheduled publish,
 post lifecycle waits, cancel/retry operations, account diagnostics, local media
