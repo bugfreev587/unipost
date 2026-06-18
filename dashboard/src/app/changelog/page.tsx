@@ -27,7 +27,8 @@ export const metadata: Metadata = {
 
 const changelogReleaseRows = [...changelogReleases].sort((a, b) => b.date.localeCompare(a.date));
 const latestRelease = changelogReleaseRows[0];
-const latestSdk = changelogReleaseRows.flatMap((release) => release.sdkVersions ?? [])[0];
+const latestSdkRelease = changelogReleaseRows.find((release) => release.sdkVersions?.length);
+const latestSdks = latestSdkRelease?.sdkVersions ?? [];
 
 const categoryCounts = changelogCategories
   .map((category) => ({
@@ -155,11 +156,22 @@ export default function ChangelogPage() {
                 </div>
               ))}
             </div>
-            {latestSdk ? (
+            {latestSdks.length ? (
               <div className="chg-index-sdk">
-                <span>Latest SDK</span>
-                <code>{latestSdk.packageName}</code>
-                <strong>v{latestSdk.version}</strong>
+                <span>Latest SDKs</span>
+                <div className="chg-index-sdk-list">
+                  {latestSdks.map((sdk) => (
+                    <Link
+                      key={`${sdk.ecosystem}-${sdk.packageName}-${sdk.version}-index`}
+                      href={sdk.href}
+                      className="chg-index-sdk-item"
+                      title={sdk.installCommand ?? `${sdk.packageName} v${sdk.version}`}
+                    >
+                      <code>{sdk.ecosystem}</code>
+                      <strong>v{sdk.version}</strong>
+                    </Link>
+                  ))}
+                </div>
               </div>
             ) : null}
           </aside>
@@ -262,10 +274,13 @@ const CSS = `
 .chg-index-counts div{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border-right:1px solid var(--chg-border);border-bottom:1px solid var(--chg-border);background:var(--chg-surface-alt)}
 .chg-index-counts span{font-size:12px;color:var(--chg-muted)}
 .chg-index-counts strong{font-family:var(--chg-mono);font-size:13px;color:var(--chg-text)}
-.chg-index-sdk{display:grid;gap:4px;padding:14px 0 0;border-top:1px solid var(--chg-border)}
+.chg-index-sdk{display:grid;gap:9px;padding:14px 0 0;border-top:1px solid var(--chg-border)}
 .chg-index-sdk span{font-size:12px;color:var(--chg-subtle)}
-.chg-index-sdk code{font-family:var(--chg-mono);font-size:13px;color:var(--chg-text)}
-.chg-index-sdk strong{font-family:var(--chg-mono);font-size:13px;color:var(--chg-link)}
+.chg-index-sdk-list{display:flex;flex-wrap:wrap;gap:7px}
+.chg-index-sdk-item{display:inline-flex;align-items:center;gap:6px;padding:7px 9px;border:1px solid var(--chg-border);border-radius:8px;background:var(--chg-surface-alt);text-decoration:none}
+.chg-index-sdk-item code{font-family:var(--chg-mono);font-size:11.5px;color:var(--chg-text)}
+.chg-index-sdk-item strong{font-family:var(--chg-mono);font-size:11.5px;color:var(--chg-link)}
+.chg-index-sdk-item:hover{border-color:color-mix(in srgb,var(--chg-link) 28%,var(--chg-border))}
 .chg-history{max-width:1320px;margin:0 auto;padding:46px 32px 112px}
 .chg-section-head{display:grid;gap:4px;margin-bottom:22px}
 .chg-section-head h2{margin:0;font-size:30px;line-height:1.18;letter-spacing:0;font-weight:780;color:var(--chg-text)}
