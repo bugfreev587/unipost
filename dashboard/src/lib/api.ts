@@ -1372,6 +1372,11 @@ export interface SocialPostResult {
   // URL uses shortcodes that aren't derivable from the numeric post ID.
   url?: string;
   error_message?: string;
+  error_code?: string;
+  failure_stage?: string;
+  platform_error_code?: string;
+  is_retriable?: boolean;
+  next_action?: string;
   published_at?: string;
   // Serialized curl dump of every failing HTTP request the adapter
   // made during this dispatch. Populated only when status === "failed".

@@ -78,6 +78,32 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 	}
 }
 
+func TestNextActionForErrorCode(t *testing.T) {
+	tests := []struct {
+		code string
+		want string
+	}{
+		{code: "validation_error", want: "fix_request"},
+		{code: "media_error", want: "fix_media"},
+		{code: "temporary_platform_error", want: "retry_later"},
+		{code: "rate_limit", want: "wait_and_retry"},
+		{code: "account_reconnect_required", want: "reconnect_account"},
+		{code: "missing_permission", want: "reconnect_or_update_permissions"},
+		{code: "target_not_found", want: "select_valid_target"},
+		{code: "platform_error", want: "contact_support"},
+		{code: "", want: ""},
+		{code: "new_future_code", want: "contact_support"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.code, func(t *testing.T) {
+			if got := NextActionForErrorCode(tt.code); got != tt.want {
+				t.Fatalf("NextActionForErrorCode(%q) = %q, want %q", tt.code, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestShouldMarkReconnectRequired(t *testing.T) {
 	if !ShouldMarkReconnectRequired(`refresh failed (400): {"error":{"message":"Error validating access token: Session has expired","type":"OAuthException","code":190}}`) {
 		t.Fatal("expected Meta OAuth 190 refresh failure to require reconnect")

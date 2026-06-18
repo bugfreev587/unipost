@@ -5,6 +5,7 @@ import Link from "next/link";
 import { X, ExternalLink, Copy } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import type { SocialPost } from "@/lib/api";
+import { describePostResultFailure } from "@/lib/post-result-errors";
 import { buildContactPageHref } from "@/lib/support";
 
 const CSS = `.pdd-overlay{position:fixed;inset:0;background:var(--overlay);z-index:50;animation:pdd-fade-in .15s ease}
@@ -25,7 +26,9 @@ const CSS = `.pdd-overlay{position:fixed;inset:0;background:var(--overlay);z-ind
 .pdd-result-name{font-size:13px;font-weight:600;color:var(--dtext)}
 .pdd-result-link{font-size:11px;color:var(--daccent);text-decoration:none;display:inline-flex;align-items:center;gap:3px;margin-top:2px}
 .pdd-result-link:hover{text-decoration:underline}
+.pdd-result-error-title{font-size:12px;font-weight:700;color:var(--danger);margin-top:6px}
 .pdd-result-error{font-size:12px;color:var(--danger);margin-top:3px;line-height:1.4}
+.pdd-result-next{font-size:11px;color:var(--dmuted);margin-top:4px;line-height:1.4}
 .pdd-result-support{display:inline-flex;align-items:center;margin-top:6px;font-size:11px;font-weight:600;color:var(--dtext);text-decoration:none}
 .pdd-result-support:hover{text-decoration:underline}
 .pdd-meta-row{display:flex;justify-content:space-between;align-items:center;padding:6px 0;font-size:13px}
@@ -99,6 +102,7 @@ export function PostDetailDrawer({ post, onClose, onDuplicate }: Props) {
               {post.results.map((r, i) => {
                 const badge = RESULT_BADGE[r.status] || RESULT_BADGE.pending;
                 const url = externalUrl(r.platform, r.external_id || "");
+                const failure = r.status === "failed" ? describePostResultFailure(r) : null;
                 return (
                   <div key={i} className="pdd-result">
                     <AccountDestinationIcon platform={r.platform || ""} size={16} />
@@ -112,14 +116,16 @@ export function PostDetailDrawer({ post, onClose, onDuplicate }: Props) {
                           View on {r.platform} <ExternalLink style={{ width: 10, height: 10 }} />
                         </a>
                       )}
-                      {r.error_message && <div className="pdd-result-error">{r.error_message}</div>}
-                      {r.error_message && (
+                      {failure ? <div className="pdd-result-error-title">{failure.title}</div> : null}
+                      {failure ? <div className="pdd-result-error">{failure.message}</div> : r.error_message ? <div className="pdd-result-error">{r.error_message}</div> : null}
+                      {failure?.nextActionLabel ? <div className="pdd-result-next">Next: {failure.nextActionLabel}</div> : null}
+                      {(failure || r.error_message) && (
                         <Link
                           href={buildContactPageHref({
                             topic: "post-publish-failure",
                             source: "post-detail-drawer",
                             post: post.id,
-                            error: r.error_message,
+                            error: failure?.message || r.error_message || "",
                           })}
                           className="pdd-result-support"
                         >

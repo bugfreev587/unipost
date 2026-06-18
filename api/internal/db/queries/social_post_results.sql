@@ -26,9 +26,24 @@ SET
   error_message = $4,
   published_at = $5,
   url = $6,
-  debug_curl = $7
+  debug_curl = $7,
+  error_code = NULL,
+  failure_stage = NULL,
+  platform_error_code = NULL,
+  is_retriable = NULL,
+  next_action = NULL
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateSocialPostResultFailureDetails :exec
+UPDATE social_post_results
+SET
+  error_code = $2,
+  failure_stage = $3,
+  platform_error_code = $4,
+  is_retriable = $5,
+  next_action = $6
+WHERE id = $1;
 
 -- name: DeleteSocialPostResultsByPost :exec
 DELETE FROM social_post_results WHERE post_id = $1;
@@ -87,6 +102,8 @@ LIMIT $2;
 -- processing for absurdly long.
 SELECT
   spr.id                     AS social_post_result_id,
+  sp.id                      AS post_id,
+  sp.workspace_id,
   spr.external_id,
   spr.url,
   spr.fb_media_type,
