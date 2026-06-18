@@ -1,0 +1,133 @@
+name: Changelog Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_id:
+        description: "Candidate ID to publish"
+        required: true
+        type: string
+      source_hash:
+        description: "Expected candidate source hash"
+        required: true
+        type: string
+      action_request_id:
+        description: "Backend action request ID"
+        required: true
+        type: string
+      requested_by:
+        description: "Admin user ID that approved the publish"
+        required: true
+        type: string
+      dry_run:
+        description: "Create and validate the release commit without merging"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: changelog-publish-${{ inputs.candidate_id }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish changelog candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      CHANGELOG_API_BASE: ${{ vars.CHANGELOG_API_BASE || 'https://api.unipost.dev' }}
+      CHANGELOG_AUTOMATION_TOKEN: ${{ secrets.CHANGELOG_AUTOMATION_TOKEN }}
+      CHANGELOG_CANDIDATE_ID: ${{ inputs.candidate_id }}
+      CHANGELOG_RELEASE_GITHUB_TOKEN: ${{ secrets.CHANGELOG_RELEASE_GITHUB_TOKEN }}
+      CHANGELOG_RELEASES_PATH: dashboard/src/app/changelog/releases.ts
+      CHANGELOG_SOURCE_HASH: ${{ inputs.source_hash }}
+      GH_TOKEN: ${{ secrets.CHANGELOG_RELEASE_GITHUB_TOKEN }}
+      RELEASE_BRANCH: changelog-auto-${{ inputs.candidate_id }}-${{ github.run_id }}
+      REQUESTED_BY: ${{ inputs.requested_by }}
+    steps:
+      - name: Require release token
+        run: |
+          if [ -z "$CHANGELOG_RELEASE_GITHUB_TOKEN" ]; then
+            echo "CHANGELOG_RELEASE_GITHUB_TOKEN is required so publish pushes can trigger deployment workflows."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ secrets.CHANGELOG_RELEASE_GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: api/go.mod
+          cache-dependency-path: api/go.sum
+
+      - name: Apply candidate to release source
+        run: node scripts/changelog-automation/apply-candidate.mjs
+
+      - name: Validate automation source tests
+        run: |
+          node --test scripts/changelog-automation/lib.test.mjs
+          node --test dashboard/tests/changelog-automation-source.test.mjs
+
+      - name: Validate dashboard changelog source tests
+        working-directory: dashboard
+        run: node --test tests/changelog-source.test.mjs tests/changelog-automation-source.test.mjs
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci
+
+      - name: Build dashboard
+        working-directory: dashboard
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_API_URL: https://api.unipost.dev
+          NEXT_PUBLIC_APP_URL: https://app.unipost.dev
+          NEXT_PUBLIC_BASE_URL: https://unipost.dev
+          NEXT_PUBLIC_LANDING_URL: https://unipost.dev
+          NEXT_PUBLIC_APP_HOST: app.unipost.dev
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+          CLERK_SECRET_KEY: sk_test_dummy
+        run: npm run build
+
+      - name: Test API
+        working-directory: api
+        run: go test ./...
+
+      - name: Commit changelog release
+        run: |
+          git config user.name "UniPost Changelog Automation"
+          git config user.email "changelog-bot@unipost.dev"
+          git checkout -b "$RELEASE_BRANCH"
+          git add dashboard/src/app/changelog/releases.ts
+          if git diff --cached --quiet; then
+            echo "No changelog changes to publish."
+            exit 0
+          fi
+          git commit -m "Add automated changelog release $CHANGELOG_CANDIDATE_ID"
+          git push origin "$RELEASE_BRANCH"
+
+      - name: Stop after dry run
+        if: ${{ inputs.dry_run == 'true' }}
+        run: |
+          echo "Dry run completed. Candidate branch: $RELEASE_BRANCH"
+
+      - name: Promote through dev, staging, and main
+        if: ${{ inputs.dry_run != 'true' }}
+        run: scripts/changelog-automation/promote-release.sh

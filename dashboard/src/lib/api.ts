@@ -280,6 +280,74 @@ export interface AdminSupportBundleListParams {
   limit?: number;
 }
 
+export type AdminChangelogAction = "publish" | "save" | "discard";
+
+export interface AdminChangelogLink {
+  label: string;
+  href: string;
+}
+
+export interface AdminChangelogSDKVersion {
+  ecosystem: "npm" | "pip" | "go" | "maven";
+  packageName: string;
+  version: string;
+  href: string;
+  installCommand?: string;
+}
+
+export interface AdminChangelogReleaseCandidate {
+  id: string;
+  date: string;
+  displayDate?: string;
+  title: string;
+  summary: string;
+  category: "api" | "sdk" | "dashboard" | "platform" | "dx" | "reliability";
+  impact: "new" | "improved" | "changed" | "fixed";
+  isBreaking: boolean;
+  sdkVersions?: AdminChangelogSDKVersion[];
+  links: AdminChangelogLink[];
+  sourceLinks: AdminChangelogLink[];
+  confidence?: string;
+  whyUserVisible: string;
+  excludedCommits?: string[];
+}
+
+export interface AdminChangelogCandidatePayload {
+  hasCandidate: boolean;
+  candidate?: AdminChangelogReleaseCandidate;
+  reason?: string;
+  excludedCommits?: string[];
+}
+
+export interface AdminChangelogCandidate {
+  id: string;
+  source_hash: string;
+  status: "pending" | "saved" | "discarded" | "publishing" | "published" | "failed";
+  payload: AdminChangelogCandidatePayload;
+  window_start: string;
+  window_end: string;
+  discord_message_id?: string;
+  action_request_id?: string;
+  workflow_run_url?: string;
+  acted_by_admin_id?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminChangelogCandidatePreview {
+  candidate: AdminChangelogCandidate;
+  action: AdminChangelogAction;
+}
+
+export interface AdminChangelogActionResult {
+  candidate_id: string;
+  status: AdminChangelogCandidate["status"];
+  action: AdminChangelogAction;
+  message: string;
+  workflow_run_url?: string;
+}
+
 // Client
 
 async function request<T>(
@@ -3454,6 +3522,34 @@ export async function getAdminAPIMetricsWorkspaces(
   params: APIMetricsQueryParams
 ): Promise<ApiResponse<AdminAPIMetricsWorkspaceRow[]>> {
   return request(`/v1/admin/api-metrics/workspaces?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminChangelogCandidate(
+  token: string,
+  candidateId: string,
+  params: { action: AdminChangelogAction; expires: string; signature: string }
+): Promise<ApiResponse<AdminChangelogCandidatePreview>> {
+  const qs = new URLSearchParams({
+    action: params.action,
+    expires: params.expires,
+    signature: params.signature,
+  });
+  return request(`/v1/admin/changelog-candidates/${encodeURIComponent(candidateId)}?${qs.toString()}`, token);
+}
+
+export async function confirmAdminChangelogCandidateAction(
+  token: string,
+  candidateId: string,
+  data: { action: AdminChangelogAction; expires: string; signature: string }
+): Promise<ApiResponse<AdminChangelogActionResult>> {
+  return request(`/v1/admin/changelog-candidates/${encodeURIComponent(candidateId)}/actions`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      action: data.action,
+      expires: Number(data.expires),
+      signature: data.signature,
+    }),
+  });
 }
 
 // Inbox
