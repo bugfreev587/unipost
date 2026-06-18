@@ -1355,6 +1355,114 @@ test("Phase 3 live post creation is blocked without confirmation and idempotency
   });
 });
 
+test("posts create preserves structured validation issues in JSON errors", async () => {
+  await withServer(async (req, res) => {
+    if (req.method === "POST" && req.url === "/v1/posts") {
+      writeJson(res, 400, {
+        error: {
+          code: "VALIDATION_ERROR",
+          normalized_code: "validation_error",
+          message: "request failed pre-publish validation",
+          hint: "Fix the listed validation issues and retry.",
+          next_action: "fix_request",
+          is_retriable: false,
+          docs_url: "https://unipost.dev/docs/api/posts/validate",
+          issues: [
+            {
+              platform_post_index: 0,
+              account_id: "sa_tiktok_1",
+              platform: "tiktok",
+              field: "caption",
+              code: "exceeds_max_length",
+              message: "TikTok photo title must be 90 characters or fewer.",
+              hint: "Shorten this TikTok photo caption/title to 90 characters or fewer before publishing.",
+              next_action: "shorten_caption",
+              actual: 91,
+              limit: 90,
+              severity: "error",
+            },
+          ],
+        },
+        request_id: "req_validation",
+      });
+      return;
+    }
+    writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+  }, async (baseUrl) => {
+    const result = await runCli([
+      "posts", "create", "--account", "sa_tiktok_1", "--caption", "Photo launch", "--yes", "--idempotency-key", "idem_validation", "--json", "--base-url", baseUrl,
+    ], { env: { UNIPOST_API_KEY: "up_test_valid" } });
+
+    assert.notEqual(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.error.code, "validation_error");
+    assert.equal(body.error.normalized_code, "validation_error");
+    assert.equal(body.error.next_action, "fix_request");
+    assert.equal(body.error.is_retriable, false);
+    assert.equal(body.error.docs_url, "https://unipost.dev/docs/api/posts/validate");
+    assert.equal(body.error.issues[0].platform, "tiktok");
+    assert.equal(body.error.issues[0].field, "caption");
+    assert.equal(body.error.issues[0].actual, 91);
+    assert.equal(body.meta.request_id, "req_validation");
+  });
+});
+
+test("posts validate and create print structured issue details for humans", async () => {
+  await withServer(async (req, res) => {
+    if (req.method === "POST" && req.url === "/v1/posts/validate") {
+      writeJson(res, 200, {
+        data: {
+          valid: false,
+          errors: [
+            { platform: "tiktok", field: "caption", message: "TikTok photo title must be 90 characters or fewer.", actual: 91, limit: 90, next_action: "shorten_caption" },
+            { platform: "instagram", field: "media_urls", message: "Instagram requires media.", next_action: "attach_media" },
+            { platform: "youtube", field: "platform_options.youtube.title", message: "YouTube title is required.", next_action: "set_title" },
+            { platform: "linkedin", field: "caption", message: "Caption exceeds the platform maximum.", actual: 3100, limit: 3000, next_action: "shorten_caption" },
+          ],
+          warnings: [],
+        },
+        request_id: "req_validate",
+      });
+      return;
+    }
+    if (req.method === "POST" && req.url === "/v1/posts") {
+      writeJson(res, 400, {
+        error: {
+          code: "VALIDATION_ERROR",
+          normalized_code: "validation_error",
+          message: "request failed pre-publish validation",
+          hint: "Fix the listed validation issues and retry.",
+          issues: [
+            { platform: "tiktok", field: "caption", message: "TikTok photo title must be 90 characters or fewer.", actual: 91, limit: 90, next_action: "shorten_caption" },
+          ],
+        },
+        request_id: "req_create",
+      });
+      return;
+    }
+    writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+  }, async (baseUrl) => {
+    const env = { UNIPOST_API_KEY: "up_test_valid" };
+    const validate = await runCli(["posts", "validate", "--account", "sa_tiktok_1", "--caption", "Photo launch", "--base-url", baseUrl], { env });
+    assert.equal(validate.code, 0);
+    assert.match(validate.stdout, /Post validation returned issues/);
+    assert.match(validate.stdout, /tiktok caption: TikTok photo title must be 90 characters or fewer/);
+    assert.match(validate.stdout, /actual=91/);
+    assert.match(validate.stdout, /limit=90/);
+    assert.match(validate.stdout, /next_action=shorten_caption/);
+    assert.match(validate.stdout, /1 more issue/);
+    assert.doesNotMatch(validate.stdout, /Caption exceeds the platform maximum/);
+
+    const create = await runCli([
+      "posts", "create", "--account", "sa_tiktok_1", "--caption", "Photo launch", "--yes", "--idempotency-key", "idem_human", "--base-url", baseUrl,
+    ], { env });
+    assert.notEqual(create.code, 0);
+    assert.match(create.stderr, /request failed pre-publish validation/);
+    assert.match(create.stderr, /tiktok caption: TikTok photo title must be 90 characters or fewer/);
+    assert.match(create.stderr, /Request ID: req_create/);
+  });
+});
+
 test("Phase 3 posts schedule maps to create with scheduled_at", async () => {
   await withServer(async (req, res) => {
     const body = await readRequestJson(req);

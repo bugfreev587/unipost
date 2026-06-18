@@ -142,6 +142,9 @@ class CliError extends Error {
     exitCode,
     requestId,
     status,
+    issues,
+    isRetriable,
+    nextAction,
     cause,
   }) {
     super(message, { cause });
@@ -152,6 +155,9 @@ class CliError extends Error {
     this.exitCode = exitCode || EXIT.generic;
     this.requestId = requestId;
     this.status = status;
+    this.issues = Array.isArray(issues) ? issues : [];
+    this.isRetriable = isRetriable;
+    this.nextAction = nextAction;
   }
 }
 
@@ -2072,10 +2078,11 @@ async function posts(context, subcommand, id) {
       body: payload,
     });
     const validation = normalizeStatuses(unwrapData(response.body));
+    const issues = validationIssues(validation);
     return envelopeResult({
       data: { validation },
       meta: { request_id: response.requestId, rate_limit: response.rateLimit },
-      human: validation?.valid ? "Post is valid.\n" : "Post validation returned issues.\n",
+      human: validation?.valid ? "Post is valid.\n" : `Post validation returned issues.\n${formatValidationIssues(issues)}`,
     });
   }
   if (subcommand === "draft") {
@@ -2103,10 +2110,11 @@ async function posts(context, subcommand, id) {
         body: payload,
       });
       const validation = normalizeStatuses(unwrapData(response.body));
+      const issues = validationIssues(validation);
       return envelopeResult({
         data: { dry_run: true, payload, validation },
         meta: { request_id: response.requestId, rate_limit: response.rateLimit },
-        human: validation?.valid ? "Post dry run is valid.\n" : "Post dry run returned issues.\n",
+        human: validation?.valid ? "Post dry run is valid.\n" : `Post dry run returned issues.\n${formatValidationIssues(issues)}`,
       });
     }
     if (payload.status !== "draft") {
@@ -4097,17 +4105,21 @@ async function readJsonBody(response) {
 
 function errorFromApiResponse(response, body, requestId) {
   const backend = body?.error || {};
-  const normalizedCode = normalizeCode(backend.normalized_code || backend.code || statusCodeToCode(response.status));
+  const backendCode = backend.code || backend.normalized_code || statusCodeToCode(response.status);
+  const normalizedCode = normalizeCode(backend.normalized_code || backendCode);
   const exitCode = ERROR_EXIT_BY_CODE.get(normalizedCode) || exitCodeFromStatus(response.status);
   return new CliError({
     code: normalizedCode,
     normalizedCode,
     message: backend.message || `UniPost API returned HTTP ${response.status}.`,
-    hint: hintForCode(normalizedCode),
-    docsUrl: DOCS_CLI_URL,
+    hint: backend.hint || hintForCode(normalizedCode),
+    docsUrl: backend.docs_url || DOCS_CLI_URL,
     exitCode,
     requestId,
     status: response.status,
+    issues: Array.isArray(backend.issues) ? backend.issues : [],
+    isRetriable: typeof backend.is_retriable === "boolean" ? backend.is_retriable : undefined,
+    nextAction: backend.next_action || undefined,
   });
 }
 
@@ -4424,8 +4436,20 @@ function writeError(context, error) {
     return;
   }
   context.stderr.write(`${error.message}\n`);
+  if (error.issues?.length) {
+    context.stderr.write(formatValidationIssues(error.issues));
+  }
   if (error.hint) {
     context.stderr.write(`${error.hint}\n`);
+  }
+  if (error.nextAction) {
+    context.stderr.write(`Next action: ${error.nextAction}\n`);
+  }
+  if (error.requestId) {
+    context.stderr.write(`Request ID: ${error.requestId}\n`);
+  }
+  if (error.docsUrl) {
+    context.stderr.write(`Docs: ${error.docsUrl}\n`);
   }
 }
 
@@ -4458,7 +4482,10 @@ function errorEnvelope(context, error) {
       normalized_code: error.normalizedCode,
       message: error.message,
       ...(error.hint ? { hint: error.hint } : {}),
+      ...(error.nextAction ? { next_action: error.nextAction } : {}),
+      ...(typeof error.isRetriable === "boolean" ? { is_retriable: error.isRetriable } : {}),
       ...(error.docsUrl ? { docs_url: error.docsUrl } : {}),
+      ...(error.issues?.length ? { issues: error.issues } : {}),
     },
     warnings: [],
     meta: baseMeta(context, {
@@ -4582,6 +4609,59 @@ function renderPost(post) {
     return "Post not found.\n";
   }
   return `${post.id || "post"}\t${post.status || ""}${post.caption ? `\t${post.caption}` : ""}\n`;
+}
+
+function validationIssues(validation) {
+  if (!validation || typeof validation !== "object") {
+    return [];
+  }
+  if (Array.isArray(validation.issues)) {
+    return validation.issues;
+  }
+  return [
+    ...(Array.isArray(validation.errors) ? validation.errors : []),
+    ...(Array.isArray(validation.warnings) ? validation.warnings : []),
+  ];
+}
+
+function formatValidationIssues(issues, max = 3) {
+  const list = Array.isArray(issues) ? issues.filter(Boolean) : [];
+  if (list.length === 0) {
+    return "";
+  }
+  const lines = list.slice(0, max).map(formatValidationIssue);
+  if (list.length > max) {
+    lines.push(`- ${list.length - max} more ${list.length - max === 1 ? "issue" : "issues"}.`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function formatValidationIssue(issue) {
+  const subject = [issue.platform, issue.field].filter(Boolean).join(" ") || issue.code || "issue";
+  const details = [];
+  if (issue.actual !== undefined && issue.actual !== null) {
+    details.push(`actual=${formatIssueValue(issue.actual)}`);
+  }
+  if (issue.limit !== undefined && issue.limit !== null) {
+    details.push(`limit=${formatIssueValue(issue.limit)}`);
+  }
+  if (issue.next_action) {
+    details.push(`next_action=${issue.next_action}`);
+  }
+  if (issue.code) {
+    details.push(`code=${issue.code}`);
+  }
+  const suffix = details.length ? ` (${details.join(", ")})` : "";
+  const message = issue.message || issue.hint || "Validation issue.";
+  const hint = issue.hint && issue.hint !== issue.message ? `\n  Hint: ${issue.hint}` : "";
+  return `- ${subject}: ${message}${suffix}${hint}`;
+}
+
+function formatIssueValue(value) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return JSON.stringify(value);
 }
 
 function renderMedia(mediaItem) {
