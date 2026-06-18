@@ -6,6 +6,7 @@ import {
   computePreviousLosAngelesWindow,
   extractAnthropicCandidateContent,
   isDiscordWebhookURL,
+  isLosAngelesHour,
   normalizeSourceHash,
   renderDiscordCandidateMessage,
   validateCandidatePayload,
@@ -43,6 +44,13 @@ test("computePreviousLosAngelesWindow handles PDT and PST offsets", () => {
     startISO: "2026-12-17T08:00:00.000Z",
     endISO: "2026-12-18T08:00:00.000Z",
   });
+});
+
+test("isLosAngelesHour handles PDT and PST schedule guards", () => {
+  assert.equal(isLosAngelesHour(new Date("2026-06-18T15:05:00.000Z"), 8), true);
+  assert.equal(isLosAngelesHour(new Date("2026-06-18T16:05:00.000Z"), 8), false);
+  assert.equal(isLosAngelesHour(new Date("2026-12-18T15:05:00.000Z"), 8), false);
+  assert.equal(isLosAngelesHour(new Date("2026-12-18T16:05:00.000Z"), 8), true);
 });
 
 test("validateCandidatePayload rejects missing sources and forbidden SDK package names", () => {
