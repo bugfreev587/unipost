@@ -94,6 +94,15 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     ],
   },
   {
+    title: "Logs",
+    description: "Query, backfill, and stream workspace integration logs for API, publishing, OAuth, webhook, and worker activity.",
+    endpoints: [
+      { label: "List logs", method: "GET", path: "/v1/logs", href: "/docs/api/logs/list", description: "Cursor-paginated log search and backfill." },
+      { label: "Get log", method: "GET", path: "/v1/logs/{id}", href: "/docs/api/logs/get", description: "Fetch one log with redacted payloads." },
+      { label: "Stream logs", method: "GET", path: "/v1/logs/stream", href: "/docs/api/logs/stream", description: "Real-time SSE log stream with replay." },
+    ],
+  },
+  {
     title: "Connect Sessions",
     description: "Create branded account-connection sessions for embedded and white-label onboarding flows.",
     endpoints: [

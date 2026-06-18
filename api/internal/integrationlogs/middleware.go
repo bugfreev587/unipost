@@ -26,6 +26,14 @@ func (rw *loggingResponseWriter) WriteHeader(code int) {
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Flush supports SSE streaming by delegating to the underlying
+// ResponseWriter's Flusher interface.
+func (rw *loggingResponseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 func (rw *loggingResponseWriter) Write(p []byte) (int, error) {
 	if rw.body.Len() < maxCapturedBodyBytes {
 		remaining := maxCapturedBodyBytes - rw.body.Len()
