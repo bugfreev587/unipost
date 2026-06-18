@@ -12,7 +12,7 @@ import (
 
 func ValidateCandidate(payload CandidatePayload) error {
 	if !payload.HasCandidate {
-		return nil
+		return fmt.Errorf("%w: hasCandidate must be true", ErrCandidateInvalid)
 	}
 	c := payload.Candidate
 	if strings.TrimSpace(c.ID) == "" {
