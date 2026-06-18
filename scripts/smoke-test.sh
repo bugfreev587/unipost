@@ -324,9 +324,45 @@ api GET "/v1/audit-log?limit=5"
 assert_status "200" "GET /v1/audit-log"
 assert_jq_truthy '.data' 'audit-log data present'
 
-api GET "/v1/logs?limit=5"
+api GET "/v1/logs?limit=2"
 assert_status "200" "GET /v1/logs"
 assert_jq_truthy '.data' 'logs data present'
+# Cursor pagination: meta carries has_more + limit, never total.
+assert_jq '.meta.total' 'null' 'logs list omits meta.total under cursor pagination'
+assert_jq '.meta.limit' '2' 'logs list echoes limit'
+# Follow the cursor when one is offered and confirm the next page has no
+# row that duplicates the first page.
+LOGS_NEXT_CURSOR=$(echo "$RESP_BODY" | jq -r '.meta.next_cursor // ""')
+LOGS_FIRST_IDS=$(echo "$RESP_BODY" | jq -r '[.data[].id] | join(",")')
+if [[ -n "$LOGS_NEXT_CURSOR" && "$LOGS_NEXT_CURSOR" != "null" ]]; then
+  api GET "/v1/logs?limit=2&cursor=${LOGS_NEXT_CURSOR}"
+  assert_status "200" "GET /v1/logs?cursor=… (next page)"
+  DUP=$(echo "$RESP_BODY" | jq -r --arg first "$LOGS_FIRST_IDS" '
+    ($first | split(",")) as $seen
+    | [.data[].id | tostring | select(. as $id | $seen | index($id))] | length')
+  if [[ "${DUP:-0}" == "0" ]]; then
+    pass "logs cursor page has no duplicate rows"
+  else
+    fail "logs cursor pagination" "next page repeated $DUP row(s) from the first page"
+  fi
+fi
+# Invalid cursor is a 422 VALIDATION_ERROR.
+api GET "/v1/logs?cursor=not-a-real-cursor"
+assert_status "422" "GET /v1/logs?cursor=invalid"
+assert_jq '.error.code' 'VALIDATION_ERROR' 'invalid cursor returns VALIDATION_ERROR'
+
+# Real-time SSE stream: open briefly and confirm the event-stream content
+# type. The stream stays open, so cap it with --max-time.
+STREAM_CT=$(curl -sS -N --max-time 4 -o /dev/null -w '%{http_code} %{content_type}' \
+  -H "Authorization: Bearer ${API_KEY}" \
+  -H "Accept: text/event-stream" \
+  "${BASE_URL}/v1/logs/stream?status=error" 2>/dev/null || true)
+STREAM_CT="${STREAM_CT:-000}"
+if [[ "$STREAM_CT" == 200* && "$STREAM_CT" == *"text/event-stream"* ]]; then
+  pass "GET /v1/logs/stream opens an SSE stream ($STREAM_CT)"
+else
+  fail "GET /v1/logs/stream" "expected 200 text/event-stream, got '$STREAM_CT'"
+fi
 
 api GET "/v1/inbox/unread-count"
 assert_status_one_of "GET /v1/inbox/unread-count returns data or plan gate" "200" "402"

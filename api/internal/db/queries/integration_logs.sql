@@ -60,7 +60,34 @@ WHERE workspace_id = sqlc.arg('workspace_id')::text
   )
   AND ts >= sqlc.arg('from_ts')::timestamptz
   AND ts <= sqlc.arg('to_ts')::timestamptz
+  AND (
+    sqlc.arg('cursor_ts')::timestamptz IS NULL
+    OR ts < sqlc.arg('cursor_ts')::timestamptz
+    OR (ts = sqlc.arg('cursor_ts')::timestamptz AND id < sqlc.arg('cursor_id')::bigint)
+  )
 ORDER BY ts DESC, id DESC
+LIMIT sqlc.arg('limit')::int;
+
+-- name: ListIntegrationLogsAfterID :many
+SELECT id, workspace_id, ts, level, status, category, action, source, message,
+       request_id, trace_id,
+       actor_user_id, actor_api_key_id,
+       profile_id, social_account_id, post_id, platform_post_id, platform,
+       endpoint, method, http_status_code, remote_status_code, duration_ms,
+       error_code, metadata, request_payload, response_payload, created_at
+FROM integration_logs
+WHERE workspace_id = sqlc.arg('workspace_id')::text
+  AND id > sqlc.arg('after_id')::bigint
+  AND (sqlc.arg('category')::TEXT = '' OR category = sqlc.arg('category'))
+  AND (sqlc.arg('status')::TEXT = '' OR status = sqlc.arg('status'))
+  AND (sqlc.arg('level')::TEXT = '' OR level = sqlc.arg('level'))
+  AND (sqlc.arg('platform')::TEXT = '' OR platform = sqlc.arg('platform'))
+  AND (sqlc.arg('profile_id')::TEXT = '' OR profile_id = sqlc.arg('profile_id'))
+  AND (sqlc.arg('social_account_id')::TEXT = '' OR social_account_id = sqlc.arg('social_account_id'))
+  AND (sqlc.arg('post_id')::TEXT = '' OR post_id = sqlc.arg('post_id'))
+  AND (sqlc.arg('request_id')::TEXT = '' OR request_id = sqlc.arg('request_id'))
+  AND (sqlc.arg('error_code')::TEXT = '' OR error_code = sqlc.arg('error_code'))
+ORDER BY id ASC
 LIMIT sqlc.arg('limit')::int;
 
 -- name: DeleteExpiredIntegrationLogsForWorkspace :exec

@@ -224,8 +224,13 @@ WHERE workspace_id = $1::text
   )
   AND ts >= $14::timestamptz
   AND ts <= $15::timestamptz
+  AND (
+    $16::timestamptz IS NULL
+    OR ts < $16::timestamptz
+    OR (ts = $16::timestamptz AND id < $17::bigint)
+  )
 ORDER BY ts DESC, id DESC
-LIMIT $16::int
+LIMIT $18::int
 `
 
 type ListIntegrationLogsParams struct {
@@ -244,6 +249,8 @@ type ListIntegrationLogsParams struct {
 	Query           string             `json:"query"`
 	FromTs          pgtype.Timestamptz `json:"from_ts"`
 	ToTs            pgtype.Timestamptz `json:"to_ts"`
+	CursorTs        pgtype.Timestamptz `json:"cursor_ts"`
+	CursorID        int64              `json:"cursor_id"`
 	Limit           int32              `json:"limit"`
 }
 
@@ -264,6 +271,108 @@ func (q *Queries) ListIntegrationLogs(ctx context.Context, arg ListIntegrationLo
 		arg.Query,
 		arg.FromTs,
 		arg.ToTs,
+		arg.CursorTs,
+		arg.CursorID,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []IntegrationLog{}
+	for rows.Next() {
+		var i IntegrationLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Ts,
+			&i.Level,
+			&i.Status,
+			&i.Category,
+			&i.Action,
+			&i.Source,
+			&i.Message,
+			&i.RequestID,
+			&i.TraceID,
+			&i.ActorUserID,
+			&i.ActorApiKeyID,
+			&i.ProfileID,
+			&i.SocialAccountID,
+			&i.PostID,
+			&i.PlatformPostID,
+			&i.Platform,
+			&i.Endpoint,
+			&i.Method,
+			&i.HTTPStatusCode,
+			&i.RemoteStatusCode,
+			&i.DurationMs,
+			&i.ErrorCode,
+			&i.Metadata,
+			&i.RequestPayload,
+			&i.ResponsePayload,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listIntegrationLogsAfterID = `-- name: ListIntegrationLogsAfterID :many
+SELECT id, workspace_id, ts, level, status, category, action, source, message,
+       request_id, trace_id,
+       actor_user_id, actor_api_key_id,
+       profile_id, social_account_id, post_id, platform_post_id, platform,
+       endpoint, method, http_status_code, remote_status_code, duration_ms,
+       error_code, metadata, request_payload, response_payload, created_at
+FROM integration_logs
+WHERE workspace_id = $1::text
+  AND id > $2::bigint
+  AND ($3::TEXT = '' OR category = $3)
+  AND ($4::TEXT = '' OR status = $4)
+  AND ($5::TEXT = '' OR level = $5)
+  AND ($6::TEXT = '' OR platform = $6)
+  AND ($7::TEXT = '' OR profile_id = $7)
+  AND ($8::TEXT = '' OR social_account_id = $8)
+  AND ($9::TEXT = '' OR post_id = $9)
+  AND ($10::TEXT = '' OR request_id = $10)
+  AND ($11::TEXT = '' OR error_code = $11)
+ORDER BY id ASC
+LIMIT $12::int
+`
+
+type ListIntegrationLogsAfterIDParams struct {
+	WorkspaceID     string `json:"workspace_id"`
+	AfterID         int64  `json:"after_id"`
+	Category        string `json:"category"`
+	Status          string `json:"status"`
+	Level           string `json:"level"`
+	Platform        string `json:"platform"`
+	ProfileID       string `json:"profile_id"`
+	SocialAccountID string `json:"social_account_id"`
+	PostID          string `json:"post_id"`
+	RequestID       string `json:"request_id"`
+	ErrorCode       string `json:"error_code"`
+	Limit           int32  `json:"limit"`
+}
+
+func (q *Queries) ListIntegrationLogsAfterID(ctx context.Context, arg ListIntegrationLogsAfterIDParams) ([]IntegrationLog, error) {
+	rows, err := q.db.Query(ctx, listIntegrationLogsAfterID,
+		arg.WorkspaceID,
+		arg.AfterID,
+		arg.Category,
+		arg.Status,
+		arg.Level,
+		arg.Platform,
+		arg.ProfileID,
+		arg.SocialAccountID,
+		arg.PostID,
+		arg.RequestID,
+		arg.ErrorCode,
 		arg.Limit,
 	)
 	if err != nil {

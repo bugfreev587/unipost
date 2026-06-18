@@ -901,6 +901,10 @@ func main() {
 		r.Get("/v1/audit-log", auditHandler.List)
 		logsHandler := handler.NewLogsHandler(queries)
 		r.Get("/v1/logs", logsHandler.List)
+		// Mount the static /stream route before the /{id} param route so
+		// chi does not treat "stream" as a log id.
+		logsStreamHandler := handler.NewLogsStreamHandler(logsHub, queries)
+		r.Get("/v1/logs/stream", logsStreamHandler.Stream)
 		r.Get("/v1/logs/{id}", logsHandler.Get)
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
