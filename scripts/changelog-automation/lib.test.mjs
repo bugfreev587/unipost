@@ -107,6 +107,16 @@ test("extractAnthropicCandidateContent reads text content from messages response
   assert.equal(content, JSON.stringify(candidatePayload));
 });
 
+test("extractAnthropicCandidateContent strips markdown JSON fences", () => {
+  const content = extractAnthropicCandidateContent({
+    content: [
+      { type: "text", text: `\`\`\`json\n${JSON.stringify(candidatePayload)}\n\`\`\`` },
+    ],
+  });
+
+  assert.equal(content, JSON.stringify(candidatePayload));
+});
+
 test("applyCandidateToReleasesSource inserts candidate once at the top of releases array", () => {
   const source = `export const changelogReleases: ChangelogRelease[] = [
   {

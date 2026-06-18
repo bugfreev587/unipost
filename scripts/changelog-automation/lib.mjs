@@ -120,7 +120,12 @@ export function extractAnthropicCandidateContent(body) {
     .join("\n")
     .trim();
   if (!text) throw new Error("Anthropic response did not include text content");
-  return text;
+  return stripMarkdownJSONFence(text);
+}
+
+function stripMarkdownJSONFence(text) {
+  const match = text.match(/^```(?:json)?\s*\n([\s\S]*?)\n?```\s*$/i);
+  return match ? match[1].trim() : text;
 }
 
 function validateLink(link) {
