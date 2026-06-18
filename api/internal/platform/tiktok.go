@@ -256,15 +256,15 @@ var TikTokPrivacyValues = []string{
 // misleading "Invalid authorization header" 400 for some malformed bodies,
 // so we always send the required toggle fields with permissive defaults.
 //
-// mediaKind is "video" or "photo"; video posts additionally emit
-// disable_duet / disable_stitch (TikTok rejects those fields on photo
-// posts). disable_* fields default to false which keeps existing API
-// callers unchanged, but the dashboard sends them all true by default
-// to satisfy the Content Posting API audit (toggles off by default).
+// mediaKind is "video" or "photo"; photo posts put the full caption in
+// description and omit title because TikTok caps photo titles at 90 UTF-16
+// code units. Video posts additionally emit disable_duet / disable_stitch
+// (TikTok rejects those fields on photo posts). disable_* fields default to
+// false which keeps existing API callers unchanged, but the dashboard sends
+// them all true by default to satisfy the Content Posting API audit (toggles
+// off by default).
 func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any, mediaKind string) map[string]any {
 	info := map[string]any{
-		"title":                text,
-		"description":          text,
 		"privacy_level":        privacyLevel,
 		"disable_comment":      optBool(opts, "disable_comment"),
 		"auto_add_music":       true,
@@ -272,8 +272,12 @@ func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any, mediaKi
 		"brand_organic_toggle": optBool(opts, "brand_organic_toggle"),
 	}
 	if mediaKind == "video" {
+		info["title"] = text
+		info["description"] = text
 		info["disable_duet"] = optBool(opts, "disable_duet")
 		info["disable_stitch"] = optBool(opts, "disable_stitch")
+	} else {
+		info["description"] = text
 	}
 	return info
 }
@@ -282,6 +286,9 @@ func wrapTikTokInitError(prefix string, status int, body []byte, privacyLevel st
 	msg := fmt.Sprintf("%s (%d): %s", prefix, status, string(body))
 	if strings.Contains(string(body), `"code":"invalid_params"`) {
 		msg += " [TikTok often returns this message for malformed request bodies; we now send the required toggle fields automatically.]"
+		if strings.Contains(prefix, "photo init") {
+			msg += " [For photo posts, TikTok caps photo title at 90 UTF-16 code units; UniPost sends the full caption as description.]"
+		}
 		if privacyLevel != "SELF_ONLY" {
 			msg += " [If this TikTok app is still in sandbox/unaudited mode, TikTok may reject non-SELF_ONLY privacy levels.]"
 		}
