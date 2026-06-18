@@ -257,6 +257,29 @@ export interface AdminIntegrationLog extends IntegrationLog {
   plan_id?: string;
 }
 
+export interface AdminSupportBundle {
+  id: string;
+  workspace_id: string;
+  workspace_name?: string;
+  owner_email?: string;
+  plan_id?: string;
+  run_id: string;
+  schema_version: string;
+  cli_version?: string;
+  summary: string;
+  report_markdown?: string;
+  finding_count: number;
+  recent_error_count: number;
+  created_at: string;
+}
+
+export interface AdminSupportBundleListParams {
+  workspace_id?: string;
+  owner_email?: string;
+  q?: string;
+  limit?: number;
+}
+
 // Client
 
 async function request<T>(
@@ -1505,6 +1528,26 @@ export async function getAdminIntegrationLog(
   id: number | string
 ): Promise<ApiResponse<AdminIntegrationLog>> {
   return request(`/v1/admin/logs/${id}`, token);
+}
+
+export async function listAdminSupportBundles(
+  token: string,
+  params?: AdminSupportBundleListParams
+): Promise<ApiResponse<AdminSupportBundle[]>> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    qs.set(key, String(value));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request(`/v1/admin/support-bundles${suffix}`, token);
+}
+
+export async function getAdminSupportBundle(
+  token: string,
+  id: string
+): Promise<ApiResponse<AdminSupportBundle>> {
+  return request(`/v1/admin/support-bundles/${encodeURIComponent(id)}`, token);
 }
 
 export async function createCheckout(

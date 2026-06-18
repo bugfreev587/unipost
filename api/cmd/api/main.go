@@ -486,6 +486,7 @@ func main() {
 		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL")).
 		WithAIPlanner(reviewai.NewProviderPlanner(aiProviderService))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
+	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
 	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
 
@@ -624,6 +625,10 @@ func main() {
 			Get("/v1/admin/logs", adminHandler.ListLogs)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
 			Get("/v1/admin/logs/{id}", adminHandler.GetLog)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Support bundles are restricted to super admins")).
+			Get("/v1/admin/support-bundles", supportBundleHandler.ListAdmin)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Support bundles are restricted to super admins")).
+			Get("/v1/admin/support-bundles/{id}", supportBundleHandler.GetAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
 			Get("/v1/admin/ai-providers", aiProviderHandler.List)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
@@ -906,6 +911,7 @@ func main() {
 		logsStreamHandler := handler.NewLogsStreamHandler(logsHub, queries)
 		r.Get("/v1/logs/stream", logsStreamHandler.Stream)
 		r.Get("/v1/logs/{id}", logsHandler.Get)
+		r.Post("/v1/support-bundles", supportBundleHandler.Create)
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
 		// Plan-gated (migration 059): Free + API plans get 402.

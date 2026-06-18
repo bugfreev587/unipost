@@ -23,7 +23,14 @@ unipost logs list --status error --since 2h --json
 # patch local code / config, then verify
 unipost doctor verify --json
 # only if still stuck:
-unipost doctor support-bundle --json`;
+unipost doctor support-bundle --json
+# with user approval, upload the redacted bundle for UniPost admin review
+unipost doctor support-bundle --upload --json`;
+
+const MCP_SNIPPET = `# After MCP setup, agents can call these read-only tools:
+unipost_debug_recent_logs({ "status": "error", "limit": 20 })
+unipost_debug_explain_request({ "request_id": "req_..." })
+unipost_debug_stream_info({ "status": "error", "after_id": "110000" })`;
 
 const DIAGNOSE_RESPONSE = `{
   "ok": true,
@@ -145,9 +152,20 @@ export default function CliAgentDebugPage() {
       <p>
         When the agent cannot resolve the issue, <code>unipost doctor support-bundle --json</code>
         writes a redacted <code>unipost-debug-report.md</code> with request ids, log ids,
-        findings, and environment metadata — no secrets and no source code. Share that file
-        with UniPost support.
+        findings, and environment metadata — no secrets and no source code. With explicit user
+        approval, add <code>--upload</code> to store the redacted report in the super-admin
+        support bundle viewer; the CLI still writes the local report first and returns the
+        uploaded bundle id under <code>data.support.upload</code>.
       </p>
+
+      <h2 id="mcp">MCP debug tools</h2>
+      <p>
+        The UniPost MCP server exposes read-only debug tools for agents that already have a
+        workspace API key. Agents can list recent workspace logs, explain one request or log id,
+        and obtain the authenticated SSE stream URL plus reconnect rules. The stream tool returns
+        instructions instead of opening an indefinite MCP call.
+      </p>
+      <DocsCodeTabs snippets={[{ label: "MCP", lang: "js", code: MCP_SNIPPET }]} />
     </DocsPage>
   );
 }

@@ -43,8 +43,9 @@ diagnose -> explain -> patch local code/config -> verify -> escalate only if nee
    `passed` means the fix worked.
 7. If verification still fails after a few bounded attempts, run
    `unipost doctor support-bundle --json`. It writes a redacted
-   `unipost-debug-report.md`. Ask the user to share that file with UniPost
-   support. Do not paste secrets anywhere.
+   `unipost-debug-report.md`. If the user explicitly approves sending it to
+   UniPost support, run `unipost doctor support-bundle --upload --json` and
+   share only the returned bundle id. Do not paste secrets anywhere.
 
 ## Hard safety rules
 
@@ -56,7 +57,8 @@ diagnose -> explain -> patch local code/config -> verify -> escalate only if nee
   `--allow-live-publish`, and only when they explicitly ask.
 - Never disconnect/delete accounts, rotate webhook secrets, or revoke API keys
   as part of debugging.
-- Do not upload the support bundle. v1 only writes a local redacted report.
+- Upload a support bundle only after explicit user approval. The upload is
+  redacted and workspace-scoped, but it is still support escalation.
 
 ## Reference
 

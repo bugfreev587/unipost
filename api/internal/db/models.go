@@ -636,6 +636,22 @@ type Subscription struct {
 	WorkspaceID          string             `json:"workspace_id"`
 }
 
+type SupportBundle struct {
+	ID               string             `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	ActorUserID      pgtype.Text        `json:"actor_user_id"`
+	ActorApiKeyID    pgtype.Text        `json:"actor_api_key_id"`
+	RunID            string             `json:"run_id"`
+	SchemaVersion    string             `json:"schema_version"`
+	CliVersion       string             `json:"cli_version"`
+	Summary          string             `json:"summary"`
+	ReportMarkdown   string             `json:"report_markdown"`
+	Payload          []byte             `json:"payload"`
+	FindingCount     int32              `json:"finding_count"`
+	RecentErrorCount int32              `json:"recent_error_count"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type Usage struct {
 	ID          string             `json:"id"`
 	Period      string             `json:"period"`

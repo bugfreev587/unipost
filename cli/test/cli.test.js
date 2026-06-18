@@ -1845,6 +1845,58 @@ test("doctor verify --json runs non-destructive checks and never live-publishes"
   });
 });
 
+test("doctor support-bundle --upload posts the redacted report to the support bundle API", async () => {
+  await withTempConfig(async (dir) => {
+    let uploaded = null;
+    await withServer(async (req, res) => {
+      if (req.url === "/health") return void writeJson(res, 200, { status: "ok" });
+      if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_support", name: "Support WS" } });
+      if (req.url === "/v1/profiles") return void writeJson(res, 200, { data: [{ id: "prof_1" }] });
+      if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [{ id: "sa_1", status: "connected" }] });
+      if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [{
+        id: 99,
+        status: "error",
+        action: "publish",
+        message: "failed with up_live_should_not_leave_cli",
+        request_id: "req_upload",
+      }] });
+      if (req.url === "/v1/support-bundles" && req.method === "POST") {
+        uploaded = await readRequestJson(req);
+        return void writeJson(res, 201, {
+          data: {
+            id: "sb_123",
+            workspace_id: "ws_support",
+            run_id: uploaded.run_id,
+            schema_version: "doctor.v1",
+            cli_version: uploaded.cli_version,
+            summary: uploaded.summary,
+            finding_count: uploaded.finding_count,
+            recent_error_count: uploaded.recent_error_count,
+            created_at: "2026-06-18T00:00:00Z",
+          },
+          request_id: "req_bundle",
+        });
+      }
+      writeJson(res, 404, { error: { normalized_code: "not_found", message: `unexpected ${req.method} ${req.url}` } });
+    }, async (baseUrl) => {
+      const result = await runCli(["doctor", "support-bundle", "--upload", "--json", "--base-url", baseUrl], {
+        env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+        cwd: dir,
+      });
+      assert.equal(result.code, 0);
+      assert.ok(uploaded, "expected upload request");
+      assert.equal(uploaded.schema_version, "doctor.v1");
+      assert.equal(uploaded.cli_version, "0.2.0");
+      assert.match(uploaded.report_markdown, /# UniPost Debug Report/);
+      assert.doesNotMatch(uploaded.report_markdown, /should_not_leave_cli|up_live_abcd1234efgh/);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.support.upload.status, "uploaded");
+      assert.equal(body.data.support.upload.id, "sb_123");
+      assert.equal(body.data.support.upload.request_id, "req_bundle");
+    });
+  });
+});
+
 test("logs list --json maps filters to the public logs API and redacts secrets", async () => {
   await withServer((req, res) => {
     assert.match(req.url, /^\/v1\/logs\?/);
