@@ -51,6 +51,36 @@ func TestHubUnsubscribe_ClosesChannelAndStopsDelivery(t *testing.T) {
 	h.Unsubscribe("ws_1", sub)
 }
 
+// TestHubBroadcast_ConcurrentChurn races Broadcast against Subscribe and
+// Unsubscribe. Run with -race, it guards against concurrent map
+// access and send-on-closed-channel panics.
+func TestHubBroadcast_ConcurrentChurn(t *testing.T) {
+	h := NewHub()
+	done := make(chan struct{})
+
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				h.Broadcast("ws_1", []byte("x"))
+			}
+		}
+	}()
+
+	for i := 0; i < 200; i++ {
+		sub := h.Subscribe("ws_1")
+		// Drain a little so the buffer doesn't merely fill.
+		select {
+		case <-sub.C():
+		default:
+		}
+		h.Unsubscribe("ws_1", sub)
+	}
+	close(done)
+}
+
 func TestHubBroadcast_DropsSlowSubscriber(t *testing.T) {
 	h := NewHub()
 	sub := h.Subscribe("ws_1")

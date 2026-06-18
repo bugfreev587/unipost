@@ -117,6 +117,7 @@ func (f streamFilters) replayParams(workspaceID string, afterID int64) db.ListIn
 		SocialAccountID: f.socialAccountID,
 		PostID:          f.postID,
 		RequestID:       f.requestID,
+		ErrorCode:       f.errorCode,
 		Limit:           sseReplayLimit,
 	}
 }
@@ -174,6 +175,22 @@ func (h *LogsStreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	sub := h.hub.Subscribe(workspaceID)
 	defer h.hub.Unsubscribe(workspaceID, sub)
 
+	ctx := r.Context()
+	lastID := afterID
+
+	// Fetch the first replay page before committing headers so a replay
+	// query failure can still surface as a 500 instead of a silently
+	// truncated 200 stream.
+	var firstPage []db.IntegrationLog
+	if doReplay {
+		rows, err := h.queries.ListIntegrationLogsAfterID(ctx, filters.replayParams(workspaceID, afterID))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load logs for replay")
+			return
+		}
+		firstPage = rows
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -181,24 +198,39 @@ func (h *LogsStreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
-	ctx := r.Context()
-	lastID := afterID
-
 	if doReplay {
-		rows, err := h.queries.ListIntegrationLogsAfterID(ctx, filters.replayParams(workspaceID, afterID))
-		if err == nil {
-			for _, row := range rows {
+		// Page through retained rows until exhausted. Rows are ordered by
+		// id ASC, so the last row's id is the next page cursor. lastID
+		// advances for every row seen (matching or not) so the cursor
+		// cannot stall and later-arriving live events are deduped.
+		page := firstPage
+		for {
+			for _, row := range page {
 				obj := logRowToStreamObj(row)
-				if !filters.matches(obj) {
-					continue
-				}
-				if err := writeLogEvent(w, flusher, row.ID, obj); err != nil {
-					return
+				if filters.matches(obj) {
+					if err := writeLogEvent(w, flusher, row.ID, obj); err != nil {
+						return
+					}
 				}
 				if row.ID > lastID {
 					lastID = row.ID
 				}
 			}
+			if len(page) < sseReplayLimit {
+				break // last page reached
+			}
+			next, err := h.queries.ListIntegrationLogsAfterID(ctx, filters.replayParams(workspaceID, lastID))
+			if err != nil {
+				// Headers are already committed, so signal the failure as
+				// an SSE error event and close rather than pretend the
+				// client is caught up.
+				writeStreamError(w, flusher, "replay_failed", "Failed to load additional logs for replay")
+				return
+			}
+			if len(next) == 0 {
+				break
+			}
+			page = next
 		}
 	}
 
@@ -273,6 +305,19 @@ func decodeLiveEnvelope(msg []byte) (workspaceID string, logObj map[string]any, 
 		return "", nil, 0, false
 	}
 	return env.WorkspaceID, env.Log, parsed, true
+}
+
+// writeStreamError emits a terminal SSE error event. Used when a
+// failure happens after the 200 headers are already committed.
+func writeStreamError(w http.ResponseWriter, flusher http.Flusher, code, message string) {
+	data, err := json.Marshal(map[string]string{"code": code, "message": message})
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Fprintf(w, "event: error\ndata: %s\n\n", data); err != nil {
+		return
+	}
+	flusher.Flush()
 }
 
 func writeLogEvent(w http.ResponseWriter, flusher http.Flusher, id int64, logObj map[string]any) error {

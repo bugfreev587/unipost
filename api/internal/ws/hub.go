@@ -103,13 +103,17 @@ func (h *Hub) Unregister(workspaceID string, c *Conn) {
 
 // Broadcast sends a message to all WebSocket connections and raw
 // subscribers for a workspace.
+//
+// The read lock is held for the whole fan-out. The sends are
+// non-blocking (select/default), so holding the lock cannot stall, and
+// it prevents Unregister/Unsubscribe from deleting an entry or closing
+// a channel mid-iteration — which would otherwise race the map or panic
+// on send-to-closed-channel.
 func (h *Hub) Broadcast(workspaceID string, msg []byte) {
 	h.mu.RLock()
-	conns := h.conns[workspaceID]
-	subs := h.subs[workspaceID]
-	h.mu.RUnlock()
+	defer h.mu.RUnlock()
 
-	for c := range conns {
+	for c := range h.conns[workspaceID] {
 		select {
 		case c.send <- msg:
 		default:
@@ -118,7 +122,7 @@ func (h *Hub) Broadcast(workspaceID string, msg []byte) {
 		}
 	}
 
-	for s := range subs {
+	for s := range h.subs[workspaceID] {
 		select {
 		case s.ch <- msg:
 		default:

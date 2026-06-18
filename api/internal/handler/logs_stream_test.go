@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,14 +19,41 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
+// fakeStreamStore emulates the real query: rows with id > after_id,
+// ordered id ASC, capped at Limit, with status/error_code filters
+// applied — so multi-page replay can be exercised.
 type fakeStreamStore struct {
 	rows       []db.IntegrationLog
 	lastParams db.ListIntegrationLogsAfterIDParams
+	err        error
+	calls      int
 }
 
 func (f *fakeStreamStore) ListIntegrationLogsAfterID(ctx context.Context, arg db.ListIntegrationLogsAfterIDParams) ([]db.IntegrationLog, error) {
 	f.lastParams = arg
-	return f.rows, nil
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	sorted := append([]db.IntegrationLog(nil), f.rows...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
+	out := make([]db.IntegrationLog, 0, arg.Limit)
+	for _, row := range sorted {
+		if row.ID <= arg.AfterID {
+			continue
+		}
+		if arg.Status != "" && row.Status != arg.Status {
+			continue
+		}
+		if arg.ErrorCode != "" && (!row.ErrorCode.Valid || row.ErrorCode.String != arg.ErrorCode) {
+			continue
+		}
+		out = append(out, row)
+		if int32(len(out)) >= arg.Limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func TestStream_MissingWorkspaceReturns401(t *testing.T) {
@@ -191,6 +220,68 @@ func TestStream_LastEventIDReplay(t *testing.T) {
 	}
 	if store.lastParams.AfterID != 7 {
 		t.Fatalf("replay queried after_id=%d, want 7", store.lastParams.AfterID)
+	}
+}
+
+// TestStream_ReplayPagesUntilExhausted proves replay does not stop at
+// sseReplayLimit: with more retained rows than one page, every row is
+// replayed before live mode.
+func TestStream_ReplayPagesUntilExhausted(t *testing.T) {
+	total := sseReplayLimit + 100 // spans two replay pages
+	rows := make([]db.IntegrationLog, 0, total)
+	for i := 1; i <= total; i++ {
+		rows = append(rows, sampleLog(int64(i), "ws_1", time.Now()))
+	}
+	store := &fakeStreamStore{rows: rows}
+	h := NewLogsStreamHandler(ws.NewHub(), store)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := auth.SetWorkspaceID(r.Context(), "ws_1")
+		h.Stream(w, r.WithContext(ctx))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/v1/logs/stream?after_id=0", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	ids := make(chan int64, total)
+	go streamIDs(resp.Body, ids)
+
+	var last int64
+	for i := 1; i <= total; i++ {
+		last = waitID(t, ids)
+	}
+	if last != int64(total) {
+		t.Fatalf("last replayed id = %d, want %d (rows past page 1 were dropped)", last, total)
+	}
+	if store.calls < 2 {
+		t.Fatalf("expected at least 2 replay pages, got %d calls", store.calls)
+	}
+}
+
+// TestStream_ReplayErrorBeforeHeadersReturns500 proves a first-page
+// replay failure surfaces as 500 rather than a truncated 200 stream.
+func TestStream_ReplayErrorBeforeHeadersReturns500(t *testing.T) {
+	store := &fakeStreamStore{err: errors.New("db down")}
+	h := NewLogsStreamHandler(ws.NewHub(), store)
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/logs/stream?after_id=5", nil)
+	r = r.WithContext(auth.SetWorkspaceID(r.Context(), "ws_1"))
+	w := httptest.NewRecorder()
+	h.Stream(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct == "text/event-stream" {
+		t.Fatal("must not commit SSE headers when replay fails before streaming")
 	}
 }
 
