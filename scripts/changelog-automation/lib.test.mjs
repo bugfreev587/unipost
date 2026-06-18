@@ -7,6 +7,7 @@ import {
   extractAnthropicCandidateContent,
   isDiscordWebhookURL,
   isLosAngelesHour,
+  normalizeCandidatePayload,
   normalizeSourceHash,
   parseAIJSONContent,
   renderDiscordCandidateMessage,
@@ -111,6 +112,23 @@ test("extractAnthropicCandidateContent reads text content from messages response
 test("parseAIJSONContent accepts raw and fenced JSON", () => {
   assert.deepEqual(parseAIJSONContent(JSON.stringify(candidatePayload)), candidatePayload);
   assert.deepEqual(parseAIJSONContent(`\`\`\`json\n${JSON.stringify(candidatePayload)}\n\`\`\``), candidatePayload);
+});
+
+test("normalizeCandidatePayload coerces links and injects verified commit sources", () => {
+  const payload = structuredClone(candidatePayload);
+  payload.candidate.links = ["/docs/api/logs"];
+  payload.candidate.sourceLinks = ["https://github.com/bugfreev587/made-up-branch"];
+
+  const normalized = normalizeCandidatePayload(payload, {
+    repo: "bugfreev587/unipost",
+    commits: [{ sha: "abcdef1234567890", subject: "fix: something", author: "UniPost" }],
+  });
+
+  assert.deepEqual(normalized.candidate.links, [{ label: "logs", href: "/docs/api/logs" }]);
+  assert.deepEqual(normalized.candidate.sourceLinks, [{
+    label: "Commit abcdef1",
+    href: "https://github.com/bugfreev587/unipost/commit/abcdef1234567890",
+  }]);
 });
 
 test("applyCandidateToReleasesSource inserts candidate once at the top of releases array", () => {
