@@ -1335,8 +1335,10 @@ async function doctorSupportBundle(context) {
   };
   let uploadNote = "";
   if (context.options.upload) {
-    support.upload = { status: "not_available", message: "Support bundle upload is not enabled in v1. Share unipost-debug-report.md with UniPost support." };
-    uploadNote = " Upload is not enabled in v1; share the local report.";
+    support.upload = await uploadSupportBundle(context, bundle, report);
+    uploadNote = support.upload.status === "uploaded"
+      ? ` Uploaded to UniPost support as ${support.upload.id}.`
+      : ` Upload failed: ${support.upload.message || "unknown error"}. Share the local report.`;
   }
 
   return doctorEnvelopeResult(context, {
@@ -1349,6 +1351,51 @@ async function doctorSupportBundle(context) {
     summary: `Wrote redacted support bundle to ${reportPath}.${uploadNote}`,
     runId: bundle.run_id,
   });
+}
+
+async function uploadSupportBundle(context, bundle, reportMarkdown) {
+  const body = {
+    schema_version: bundle.schema_version,
+    run_id: bundle.run_id,
+    cli_version: CLI_VERSION,
+    summary: supportBundleSummary(bundle),
+    report_markdown: redactSecrets(reportMarkdown),
+    payload: redactStructuredValue(bundle),
+    finding_count: bundle.findings.length,
+    recent_error_count: bundle.recent_errors.length,
+  };
+
+  try {
+    const response = await requestJson(context, "/v1/support-bundles", {
+      auth: true,
+      method: "POST",
+      body,
+    });
+    const uploaded = unwrapData(response.body) || {};
+    return {
+      status: "uploaded",
+      id: uploaded.id || "",
+      request_id: response.requestId,
+      created_at: uploaded.created_at || "",
+    };
+  } catch (error) {
+    const normalized = normalizeError(error);
+    return {
+      status: "failed",
+      message: redactSecrets(normalized.message),
+      request_id: normalized.requestId || "",
+      code: normalized.normalizedCode,
+    };
+  }
+}
+
+function supportBundleSummary(bundle) {
+  const errors = bundle.recent_errors.length;
+  const findings = bundle.findings.length;
+  if (findings === 0 && errors === 0) {
+    return "No findings or recent error logs found.";
+  }
+  return `${findings} finding${findings === 1 ? "" : "s"} and ${errors} recent error log${errors === 1 ? "" : "s"}.`;
 }
 
 // logs routes the logs command group (Phase 1 CLI access to the public logs API).

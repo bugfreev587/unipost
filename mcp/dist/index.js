@@ -5,18 +5,11 @@ const mcp_js_1 = require("@modelcontextprotocol/sdk/server/mcp.js");
 const stdio_js_1 = require("@modelcontextprotocol/sdk/server/stdio.js");
 const zod_1 = require("zod");
 const agent_contract_js_1 = require("./agent-contract.js");
+const api_client_js_1 = require("./api-client.js");
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const API_KEY = process.env.UNIPOST_API_KEY || "";
 async function apiRequest(path, options) {
-    const res = await fetch(`${API_URL}${path}`, {
-        ...options,
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${API_KEY}`,
-            ...options?.headers,
-        },
-    });
-    return res.json();
+    return (0, api_client_js_1.apiRequest)(API_URL, path, API_KEY, options);
 }
 const server = new mcp_js_1.McpServer({
     name: "unipost",
@@ -63,7 +56,7 @@ server.tool("unipost_create_post", "Create and publish a post to one or more soc
         body.media_urls = media_urls;
     if (scheduled_at)
         body.scheduled_at = scheduled_at;
-    const data = await apiRequest("/v1/social-posts", {
+    const data = await apiRequest("/v1/posts", {
         method: "POST",
         body: JSON.stringify(body),
     });
@@ -80,7 +73,7 @@ server.tool("unipost_create_post", "Create and publish a post to one or more soc
 server.tool("unipost_get_post", "Get the status and details of a published post", {
     post_id: zod_1.z.string().describe("The post ID"),
 }, async ({ post_id }) => {
-    const data = await apiRequest(`/v1/social-posts/${post_id}`);
+    const data = await apiRequest(`/v1/posts/${post_id}`);
     return {
         content: [
             {
@@ -94,7 +87,7 @@ server.tool("unipost_get_post", "Get the status and details of a published post"
 server.tool("unipost_get_analytics", "Get engagement metrics (views, likes, comments, shares) for a published post", {
     post_id: zod_1.z.string().describe("The post ID"),
 }, async ({ post_id }) => {
-    const data = await apiRequest(`/v1/social-posts/${post_id}/analytics`);
+    const data = await apiRequest(`/v1/posts/${post_id}/analytics`);
     return {
         content: [
             {
@@ -112,7 +105,7 @@ server.tool("unipost_list_posts", "List recent posts with their status", {
         .describe("Filter by status: scheduled, published, failed"),
     limit: zod_1.z.number().optional().describe("Maximum number of posts to return"),
 }, async ({ status }) => {
-    let path = "/v1/social-posts";
+    let path = "/v1/posts";
     if (status)
         path += `?status=${status}`;
     const data = await apiRequest(path);

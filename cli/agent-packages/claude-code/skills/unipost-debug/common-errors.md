@@ -48,3 +48,11 @@ evidence and the recommended action; you apply the repository-specific edit.
 Always run `unipost doctor verify --json` after a patch. It performs only
 non-destructive checks (auth probe, workspace read, account/health read, logs
 read). It never publishes. `data.status: "passed"` confirms the fix.
+
+## Escalating to UniPost support
+
+If the same failure remains after bounded safe fixes, run
+`unipost doctor support-bundle --json` to create a local redacted
+`unipost-debug-report.md`. Upload it only when the user explicitly approves:
+`unipost doctor support-bundle --upload --json`. Share the returned support
+bundle id, not the full report text.

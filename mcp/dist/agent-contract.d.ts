@@ -55,6 +55,22 @@ export declare const UNIPOST_AGENT_INTENTS: readonly [{
     readonly required_inputs: readonly [];
     readonly optional_inputs: readonly ["language", "account_ids", "caption"];
     readonly canonical_actions: readonly ["examples.posts.create"];
+}, {
+    readonly name: "diagnose_logs";
+    readonly safety_level: "read_only";
+    readonly requires_user_confirmation: false;
+    readonly required_user_confirmations: readonly [];
+    readonly required_inputs: readonly [];
+    readonly optional_inputs: readonly ["status", "category", "request_id", "since", "after_id"];
+    readonly canonical_actions: readonly ["logs.list", "logs.stream"];
+}, {
+    readonly name: "explain_request_failure";
+    readonly safety_level: "read_only";
+    readonly requires_user_confirmation: false;
+    readonly required_user_confirmations: readonly [];
+    readonly required_inputs: readonly [];
+    readonly optional_inputs: readonly ["request_id", "log_id"];
+    readonly canonical_actions: readonly ["doctor.explain", "logs.get"];
 }];
 export declare const MCP_AGENT_TOOLS: readonly [{
     readonly name: "unipost_agent_capabilities";
@@ -65,6 +81,15 @@ export declare const MCP_AGENT_TOOLS: readonly [{
 }, {
     readonly name: "unipost_agent_plan";
     readonly description: "Convert an explicit UniPost intent plus structured inputs into safe canonical actions.";
+}, {
+    readonly name: "unipost_debug_recent_logs";
+    readonly description: "Fetch recent workspace-scoped UniPost logs for agent debugging.";
+}, {
+    readonly name: "unipost_debug_explain_request";
+    readonly description: "Explain one UniPost log entry or request id and suggest safe next debugging actions.";
+}, {
+    readonly name: "unipost_debug_stream_info";
+    readonly description: "Return SSE log stream connection instructions for live agent debugging.";
 }];
 export declare function intentByName(name: string): {
     readonly name: "diagnose_setup";
@@ -122,6 +147,22 @@ export declare function intentByName(name: string): {
     readonly required_inputs: readonly [];
     readonly optional_inputs: readonly ["language", "account_ids", "caption"];
     readonly canonical_actions: readonly ["examples.posts.create"];
+} | {
+    readonly name: "diagnose_logs";
+    readonly safety_level: "read_only";
+    readonly requires_user_confirmation: false;
+    readonly required_user_confirmations: readonly [];
+    readonly required_inputs: readonly [];
+    readonly optional_inputs: readonly ["status", "category", "request_id", "since", "after_id"];
+    readonly canonical_actions: readonly ["logs.list", "logs.stream"];
+} | {
+    readonly name: "explain_request_failure";
+    readonly safety_level: "read_only";
+    readonly requires_user_confirmation: false;
+    readonly required_user_confirmations: readonly [];
+    readonly required_inputs: readonly [];
+    readonly optional_inputs: readonly ["request_id", "log_id"];
+    readonly canonical_actions: readonly ["doctor.explain", "logs.get"];
 };
 export declare function agentCapabilitiesPayload(): {
     catalog_version: string;
@@ -186,6 +227,22 @@ export declare function agentCapabilitiesPayload(): {
         readonly required_inputs: readonly [];
         readonly optional_inputs: readonly ["language", "account_ids", "caption"];
         readonly canonical_actions: readonly ["examples.posts.create"];
+    }, {
+        readonly name: "diagnose_logs";
+        readonly safety_level: "read_only";
+        readonly requires_user_confirmation: false;
+        readonly required_user_confirmations: readonly [];
+        readonly required_inputs: readonly [];
+        readonly optional_inputs: readonly ["status", "category", "request_id", "since", "after_id"];
+        readonly canonical_actions: readonly ["logs.list", "logs.stream"];
+    }, {
+        readonly name: "explain_request_failure";
+        readonly safety_level: "read_only";
+        readonly requires_user_confirmation: false;
+        readonly required_user_confirmations: readonly [];
+        readonly required_inputs: readonly [];
+        readonly optional_inputs: readonly ["request_id", "log_id"];
+        readonly canonical_actions: readonly ["doctor.explain", "logs.get"];
     }];
     mcp_tools: readonly [{
         readonly name: "unipost_agent_capabilities";
@@ -196,17 +253,28 @@ export declare function agentCapabilitiesPayload(): {
     }, {
         readonly name: "unipost_agent_plan";
         readonly description: "Convert an explicit UniPost intent plus structured inputs into safe canonical actions.";
+    }, {
+        readonly name: "unipost_debug_recent_logs";
+        readonly description: "Fetch recent workspace-scoped UniPost logs for agent debugging.";
+    }, {
+        readonly name: "unipost_debug_explain_request";
+        readonly description: "Explain one UniPost log entry or request id and suggest safe next debugging actions.";
+    }, {
+        readonly name: "unipost_debug_stream_info";
+        readonly description: "Return SSE log stream connection instructions for live agent debugging.";
     }];
 };
 export declare function planForIntent(input: Record<string, unknown>): {
-    intent: "diagnose_setup" | "diagnose_account" | "create_draft_post" | "plan_publish_post" | "connect_account" | "upload_media" | "generate_post_example";
+    intent: "diagnose_setup" | "diagnose_account" | "create_draft_post" | "plan_publish_post" | "connect_account" | "upload_media" | "generate_post_example" | "diagnose_logs" | "explain_request_failure";
     safety_level: "read_only" | "draft_write" | "live_write_plan" | "setup_write";
     missing_inputs: ("account_id" | "account_ids" | "caption" | "platform" | "file_path")[];
     required_user_confirmations: ("approve_live_publish" | "approve_local_file_upload")[];
     safe_to_execute_without_user: boolean;
     actions: {
-        canonical_action: "agent.bootstrap" | "agent.context" | "accounts.health" | "accounts.capabilities" | "accounts.metrics" | "posts.validate" | "posts.draft" | "posts.create_dry_run" | "posts.create" | "connect.create" | "connect.wait" | "media.upload" | "media.wait" | "examples.posts.create";
+        canonical_action: "agent.bootstrap" | "agent.context" | "accounts.health" | "accounts.capabilities" | "accounts.metrics" | "posts.validate" | "posts.draft" | "posts.create_dry_run" | "posts.create" | "connect.create" | "connect.wait" | "media.upload" | "media.wait" | "examples.posts.create" | "logs.list" | "logs.stream" | "doctor.explain" | "logs.get";
         safety_level: "read_only" | "draft_write" | "live_write_plan" | "setup_write";
     }[];
 };
-export declare function registerAgentContractTools(server: any, apiRequest: (path: string, options?: RequestInit) => Promise<any>): void;
+export declare function registerAgentContractTools(server: any, apiRequest: (path: string, options?: RequestInit) => Promise<any>, options?: {
+    apiUrl?: string;
+}): void;

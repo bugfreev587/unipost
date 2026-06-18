@@ -28,6 +28,7 @@ import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
 import { CountryDonut } from "../_components/country-donut";
 import { AdminShell, PanelRow, bucketByLocalDay, fmtCents, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { SearchHistoryInput } from "../_components/search-history-input";
 
 function CountryBadge({ code }: { code?: string | null }) {
   const name = countryNameFromCode(code);
@@ -217,11 +218,12 @@ export default function AdminUsersPage() {
       </div>
 
       <div className="ad-filter-bar">
-        <input
+        <SearchHistoryInput
+          fieldKey="admin.users.search"
           className="ad-search"
           placeholder="Search by email or ID..."
           value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          onChange={setSearchInput}
         />
         <select value={plan} onChange={(e) => setPlan(e.target.value as typeof plan)}>
           <option value="all">All Plans</option>

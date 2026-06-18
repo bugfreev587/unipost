@@ -1,0 +1,58 @@
+name: Changelog Daily Candidate
+
+on:
+  schedule:
+    - cron: "0 8 * * *"
+      timezone: "America/Los_Angeles"
+  workflow_dispatch:
+    inputs:
+      window_start:
+        description: "Optional ISO start time for the commit window"
+        required: false
+        type: string
+      window_end:
+        description: "Optional ISO end time for the commit window"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: changelog-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    name: Generate changelog candidate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CHANGELOG_AI_API_KEY: ${{ secrets.CHANGELOG_AI_API_KEY }}
+      CHANGELOG_AI_MODEL: ${{ vars.CHANGELOG_AI_MODEL || 'gpt-4.1-mini' }}
+      CHANGELOG_API_BASE: ${{ vars.CHANGELOG_API_BASE || 'https://api.unipost.dev' }}
+      CHANGELOG_AUTOMATION_TOKEN: ${{ secrets.CHANGELOG_AUTOMATION_TOKEN }}
+      CHANGELOG_DASHBOARD_BASE_URL: ${{ vars.CHANGELOG_DASHBOARD_BASE_URL || 'https://app.unipost.dev' }}
+      CHANGELOG_DISCORD_WEBHOOK_URL: ${{ secrets.CHANGELOG_DISCORD_WEBHOOK_URL }}
+      CHANGELOG_REPO: ${{ github.repository }}
+      CHANGELOG_WINDOW_START: ${{ inputs.window_start }}
+      CHANGELOG_WINDOW_END: ${{ inputs.window_end }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Generate candidate and notify Discord
+        run: node scripts/changelog-automation/daily.mjs
+
+      - name: Upload candidate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-daily-candidate
+          path: artifacts/changelog
+          if-no-files-found: ignore
