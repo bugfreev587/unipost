@@ -430,6 +430,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Revoke API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
           ],
         },
+        { label: "Errors", href: "/docs/api/errors" },
         { label: "Platform Credentials", href: "/docs/api/platform-credentials" },
       ],
     },

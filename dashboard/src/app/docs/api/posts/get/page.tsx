@@ -25,6 +25,11 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "results[].account_name", type: "string", description: "Resolved handle or account display name when available." },
   { name: "results[].status", type: "string", description: <>Per-account publish status.<EnumValues values={["queued", "publishing", "processing", "published", "failed"]} /></> },
   { name: "results[].url", type: "string | null", description: "Canonical public post URL when available." },
+  { name: "results[].error_code", type: "string | null", description: "Normalized publish failure code for failed rows, such as platform_request_invalid, media_error, or account_reconnect_required." },
+  { name: "results[].failure_stage", type: "string | null", description: "Stage where the failure occurred, such as validation, publish, status_check, or worker_status_check." },
+  { name: "results[].platform_error_code", type: "string | null", description: "Provider-specific error code when UniPost can safely extract one, such as TikTok invalid_params." },
+  { name: "results[].is_retriable", type: "boolean | null", description: "Whether retrying this result is expected to help." },
+  { name: "results[].next_action", type: "string | null", description: "Stable action enum for UI and automation, such as review_platform_options, reconnect_account, or wait_and_retry." },
   { name: "results[].debug_curl", type: "string | null", description: "Redacted failing curl trace for debugging, only on failed results." },
 ];
 
@@ -187,7 +192,12 @@ const POLLING_EXAMPLE_SNIPPETS = [
         "platform": "linkedin",
         "account_name": "UniPost",
         "status": "failed",
-        "error_message": "LinkedIn rejected the caption because it exceeded the platform limit."
+        "error_message": "LinkedIn rejected the caption because it exceeded the platform limit.",
+        "error_code": "validation_error",
+        "failure_stage": "publish",
+        "platform_error_code": null,
+        "is_retriable": false,
+        "next_action": "fix_request"
       }
     ]
   }
@@ -206,14 +216,24 @@ const POLLING_EXAMPLE_SNIPPETS = [
         "social_account_id": "sa_instagram_123",
         "platform": "instagram",
         "status": "failed",
-        "error_message": "Instagram rejected the media because the aspect ratio was unsupported."
+        "error_message": "Instagram rejected the media because the aspect ratio was unsupported.",
+        "error_code": "media_error",
+        "failure_stage": "publish",
+        "platform_error_code": null,
+        "is_retriable": false,
+        "next_action": "fix_media"
       },
       {
         "id": "spr_b",
         "social_account_id": "sa_threads_456",
         "platform": "threads",
         "status": "failed",
-        "error_message": "Threads rejected the request because the token was expired."
+        "error_message": "Threads rejected the request because the token was expired.",
+        "error_code": "account_reconnect_required",
+        "failure_stage": "publish",
+        "platform_error_code": "190",
+        "is_retriable": false,
+        "next_action": "reconnect_account"
       }
     ]
   }
