@@ -98,7 +98,9 @@ Actions:
 Publish | Save for later | Discard
 ```
 
-Discord incoming webhooks can post the message. The action controls should be link buttons or plain links. The links point back to a UniPost-owned signed action endpoint. Webhooks are not responsible for processing the click.
+Discord incoming webhooks can post the message. V1 should use plain Markdown links for the three actions because they are durable, easy to audit, and do not require a Discord bot application. Link-style components may be considered later. For non-application-owned incoming webhooks, Discord only respects components when `with_components=true`, and those components cannot be interactive; the webhook itself must never be responsible for processing clicks.
+
+The links point back to a UniPost-owned signed action endpoint. The endpoint must then require a UniPost admin session before any state change or release action is allowed.
 
 ### 5.2 Publish Result Message
 
@@ -171,6 +173,14 @@ on:
   workflow_dispatch:
 ```
 
+Current GitHub Actions documentation supports `timezone` on scheduled workflows. Implementation must still verify the workflow with the repository's actual linting/tooling before merging because older action validators may not understand the newer field.
+
+Fallback if `timezone` is rejected by tooling:
+
+- Schedule one or two UTC cron triggers that cover 8:00 AM Los Angeles time across PST/PDT, for example `0 15,16 * * *`.
+- Add a first script step that computes the current `America/Los_Angeles` local time and exits unless it is the intended 8:00 AM run.
+- Keep the collection window logic timezone-aware in the script instead of relying on the UTC trigger time.
+
 The workflow should live on the default branch and should support manual dispatch for backfills and testing.
 
 ### 7.2 Source Of Truth
@@ -197,6 +207,8 @@ Example:
 - Collection window: `2026-06-17 00:00:00` through `2026-06-17 23:59:59 America/Los_Angeles`
 
 The collector should persist the exact window in the candidate payload.
+
+The window must be computed from the Los Angeles calendar day with an IANA timezone library. Do not compute it as "now minus 24 hours in UTC"; that will drift across daylight-saving transitions and can include or exclude the wrong commits.
 
 ### 7.4 Inputs To AI
 
@@ -263,9 +275,11 @@ The validator must reject a candidate if any of these are true:
 6. It includes `@unipost/sdk-js` as a package name. The JavaScript npm package is `@unipost/sdk`.
 7. It includes AgentPost as an SDK release.
 8. It lacks a user-visible rationale.
-9. It has low confidence.
+9. Its objective evidence is insufficient, for example missing source links, missing registry verification for SDK versions, or no user-visible rationale.
 
 The validator should allow a "no candidate" result and should treat that as success.
+
+`confidence` is an AI-produced signal for the human reviewer, not an authorization mechanism. Low confidence should make the Discord message more cautious and prevent automatic preselection, but it should not be the only reason to reject a candidate if objective verification is strong and the human explicitly approves it.
 
 ### 8.1 SDK Verification
 
@@ -278,13 +292,15 @@ For SDK entries, verify each ecosystem before allowing Publish:
 | Go | `github.com/unipost-dev/sdk-go` | Go module proxy or Git tag |
 | Maven | `dev.unipost:sdk-java` | Maven Central metadata or artifact path |
 
-The generated `sdkVersions` objects must include:
+For SDK release candidates, generated `sdkVersions` objects should include:
 
 - `ecosystem`
 - `packageName`
 - `version`
 - `href`
 - `installCommand`
+
+`installCommand` is optional in the current `releases.ts` type, so validators should not reject older entries solely because it is absent. New AI-generated SDK entries should include it whenever the ecosystem has a clear install command.
 
 ---
 
@@ -312,6 +328,8 @@ Suggested table shape:
 
 The `source_hash` prevents repeated prompts for the same work.
 
+State transitions must be atomic. In particular, Publish / Save for later / Discard must claim the candidate by changing `pending -> publishing`, `pending -> saved`, or `pending -> discarded` inside a transaction or equivalent compare-and-set operation. This is what makes action links single-use; the HMAC signature alone prevents tampering but does not prevent replay by someone with the original URL.
+
 ---
 
 ## 10. Discord Actions
@@ -333,6 +351,16 @@ The signature should cover:
 
 Links must be single-use. Expired, reused, or invalid signatures should return a safe HTML response and send no release action.
 
+Signed links are not sufficient authorization. Anyone who can see or copy the Discord message can click them. The endpoint must therefore:
+
+1. Verify the signature and expiration.
+2. Load the candidate and confirm it is still `pending`.
+3. Require an authenticated UniPost admin or super-admin session.
+4. Show a confirmation page with the candidate summary and action.
+5. Only perform the atomic status transition after the authenticated confirmation.
+
+Private Discord channels and short expirations are defense in depth, not the primary authorization control.
+
 ### 10.2 Actions
 
 | Action | Behavior |
@@ -340,6 +368,8 @@ Links must be single-use. Expired, reused, or invalid signatures should return a
 | Publish | Start release orchestration. |
 | Save for later | Mark candidate as saved and optionally include it in the next daily digest. |
 | Discard | Mark candidate as discarded and suppress repeats for the same source hash. |
+
+Each action must be idempotent. A second click after a successful state transition should show "Already handled" and should not enqueue another release workflow.
 
 ### 10.3 User Feedback
 
@@ -355,13 +385,40 @@ The Discord message should also be updated or followed up where possible.
 
 ---
 
-## 11. Publish Orchestration
+## 11. Backend To GitHub Actions Bridge
 
-### 11.1 High-level Flow
+The signed/admin-confirmed backend endpoint owns the click workflow. GitHub Actions owns repository mutation, PRs, merges, deployment monitoring, and verification.
+
+Recommended trigger: GitHub REST API `workflow_dispatch` against a dedicated workflow file, for example `.github/workflows/changelog-publish.yml`.
+
+Backend flow after authenticated Publish confirmation:
+
+1. Atomically change candidate status from `pending` to `publishing`.
+2. Create an `action_request_id` for audit and idempotency.
+3. Call `POST /repos/{owner}/{repo}/actions/workflows/changelog-publish.yml/dispatches`.
+4. Use `ref: "main"` or the repository default branch that contains the release workflow.
+5. Pass inputs:
+   - `candidate_id`
+   - `source_hash`
+   - `action_request_id`
+   - `requested_by`
+   - `dry_run`
+6. Store the dispatch request metadata and later correlate the workflow run by `action_request_id` in the run name, job output, or artifact.
+7. Send a Discord "publish started" follow-up with the candidate id and workflow link when available.
+
+`repository_dispatch` is acceptable if future orchestration needs a custom event type, but `workflow_dispatch` is the simpler v1 because it directly targets the release workflow and exposes typed inputs.
+
+Save for later and Discard do not need GitHub Actions. They should update candidate state in the backend and send a Discord follow-up.
+
+---
+
+## 12. Publish Orchestration
+
+### 12.1 High-level Flow
 
 When Publish is clicked:
 
-1. Mark candidate `publishing`.
+1. Backend marks candidate `publishing` and dispatches the release workflow.
 2. Create branch `dev-changelog-auto-YYYY-MM-DD`.
 3. Update `dashboard/src/app/changelog/releases.ts`.
 4. Run local/source validation in the workflow.
@@ -377,7 +434,7 @@ When Publish is clicked:
 14. Mark candidate `published`.
 15. Send Discord success report.
 
-### 11.2 Branch And PR Policy
+### 12.2 Branch And PR Policy
 
 Even though the user wants one-click production release, the automation should still preserve PR audit records.
 
@@ -392,7 +449,15 @@ Recommended:
 
 This gives complete auditability while still satisfying "one click to production".
 
-### 11.3 Files The Automation May Edit
+Token and branch-protection requirements:
+
+- Do not assume the default `GITHUB_TOKEN` is enough for the full release chain.
+- `GITHUB_TOKEN` events have recursive workflow limitations; for example, a push made with `GITHUB_TOKEN` will not trigger push-based downstream workflows, except for documented dispatch exceptions.
+- Use a GitHub App installation token or a tightly scoped service-account PAT for branch creation, PR creation, and merges when downstream push/deploy workflows must run.
+- Branch protection on `dev`, `staging`, and `main` must explicitly allow the automation actor, merge queue, or required-review bypass policy being used.
+- Phase 4 cannot be accepted until a test run proves that automation-created merges trigger the expected GitHub checks, Vercel deployments, Railway deployments, and environment verifications.
+
+### 12.3 Files The Automation May Edit
 
 Allowed:
 
@@ -408,7 +473,7 @@ Disallowed:
 - feature flag configuration
 - secrets or env files
 
-### 11.4 Validation Before Dev Merge
+### 12.4 Validation Before Dev Merge
 
 Minimum:
 
@@ -421,7 +486,7 @@ If the generated changelog entry changes page layout risk, run:
 
 - `npm run test:regression:dashboard`
 
-### 11.5 Environment Verification
+### 12.5 Environment Verification
 
 Dev:
 
@@ -443,7 +508,7 @@ Production:
 
 ---
 
-## 12. Failure Handling
+## 13. Failure Handling
 
 The orchestrator must stop at the first failed stage.
 
@@ -461,27 +526,32 @@ The automation must not retry blindly more than once per stage. A manual rerun s
 
 ---
 
-## 13. Security And Permissions
+## 14. Security And Permissions
 
 Required secrets:
 
 - `CHANGELOG_AI_API_KEY` or use the existing server-side AI provider path if implemented there.
 - `CHANGELOG_DISCORD_WEBHOOK_URL`
 - `CHANGELOG_ACTION_SIGNING_SECRET`
-- GitHub token with permission to create branches, PRs, and merge PRs.
+- GitHub App installation token or service-account PAT with permission to create branches, PRs, merge PRs, trigger workflows, and allow downstream deployments to start.
 
 Rules:
 
 - Never send secrets to AI.
 - Never include secret-bearing URLs in Discord.
 - Signed action URLs should expire.
+- Signed action URLs must be paired with UniPost admin-session authorization before any mutation.
+- Publish must require a super-admin or explicitly configured release-admin role.
 - The release orchestrator should only allow known actions and known candidate ids.
 - The action endpoint should be rate limited.
+- Candidate state transitions must be atomic and single-use.
+- Discord messages should be posted only to a private owner/release channel, but channel privacy does not replace backend authorization.
 - Production release automation should be restricted to candidates generated by the daily workflow or an explicit manual workflow dispatch.
+- GitHub automation credentials should be scoped to the repository and rotated like other production release credentials.
 
 ---
 
-## 14. Observability
+## 15. Observability
 
 Every run should produce a durable audit trail:
 
@@ -502,7 +572,7 @@ The Discord final message should include enough links for a human to inspect the
 
 ---
 
-## 15. Rollout Plan
+## 16. Rollout Plan
 
 ### Phase 1: Dry Run Digest
 
@@ -514,6 +584,7 @@ The Discord final message should include enough links for a human to inspect the
 ### Phase 2: Save And Discard Actions
 
 - Add signed action endpoint.
+- Add admin-session confirmation before state changes.
 - Implement Save for later and Discard.
 - Do not implement Publish yet.
 
@@ -523,12 +594,14 @@ The Discord final message should include enough links for a human to inspect the
 - Auto-merge after checks.
 - Verify dev.
 - Stop and report to Discord.
+- Prove backend-to-Actions `workflow_dispatch` and candidate idempotency.
 
 ### Phase 4: Full Release
 
 - Extend Publish to promote `dev -> staging -> main`.
 - Verify staging and production.
 - Send final success/failure reports.
+- Prove automation token behavior with branch protection and downstream deployments before enabling production Publish.
 
 ### Phase 5: Hardening
 
@@ -538,7 +611,7 @@ The Discord final message should include enough links for a human to inspect the
 
 ---
 
-## 16. Open Decisions
+## 17. Open Decisions
 
 1. Candidate store:
    - backend table preferred
@@ -552,16 +625,22 @@ The Discord final message should include enough links for a human to inspect the
 4. Discord message update:
    - use follow-up messages in v1
    - edit original webhook message if message id/token handling is straightforward
+5. GitHub automation credential:
+   - GitHub App installation token preferred
+   - service-account PAT acceptable if scoped, rotated, and approved
+6. Release-admin authorization:
+   - define whether existing super-admin role is enough
+   - decide whether a narrower release-admin role is needed before Phase 3
 
 ---
 
-## 17. Acceptance Criteria
+## 18. Acceptance Criteria
 
 1. Daily workflow can be manually dispatched.
 2. Daily workflow sends a Discord candidate for a test commit window.
 3. Candidate JSON passes schema validation.
 4. SDK versions are verified before any SDK candidate is publishable.
-5. Publish action rejects invalid, expired, reused, or tampered links.
+5. Publish action rejects invalid, expired, reused, tampered, or unauthenticated links.
 6. Save for later changes candidate status and prevents loss of the candidate.
 7. Discard suppresses the same source hash from future prompts.
 8. Publish creates a changelog update and runs validations before merging to `dev`.
@@ -571,11 +650,16 @@ The Discord final message should include enough links for a human to inspect the
 12. Production verification checks `https://unipost.dev/changelog` and `https://api.unipost.dev/health`.
 13. Any failed stage stops the pipeline and sends Discord failure details.
 14. Successful production publication sends Discord success details with links.
+15. A duplicate click on any action cannot enqueue a duplicate release.
+16. Phase 4 test evidence proves the automation token triggers downstream checks and deployments under branch protection.
 
 ---
 
-## 18. References
+## 19. References
 
 - GitHub Actions scheduled workflows: https://docs.github.com/actions/using-workflows/workflow-syntax-for-github-actions
-- Discord webhook resource: https://docs.discord.com/developers/resources/webhook
-- Discord message components: https://docs.discord.com/developers/components/using-message-components
+- GitHub Actions timezone support announcement: https://github.blog/changelog/2026-03-19-github-actions-late-march-2026-updates/
+- GitHub Actions workflow dispatch REST API: https://docs.github.com/rest/actions/workflows#create-a-workflow-dispatch-event
+- GitHub Actions `GITHUB_TOKEN` behavior: https://docs.github.com/en/actions/concepts/security/github_token
+- Discord webhook resource: https://discord.com/developers/docs/resources/webhook
+- Discord message components: https://discord.com/developers/docs/components/using-message-components
