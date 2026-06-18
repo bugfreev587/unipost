@@ -1851,7 +1851,19 @@ test("logs list --json maps filters to the public logs API and redacts secrets",
     assert.match(req.url, /status=error/);
     assert.match(req.url, /from=/);
     writeJson(res, 200, {
-      data: [{ id: 7, ts: "2026-06-17T00:00:00Z", status: "error", category: "publish", action: "create", error_code: "validation_error", request_id: "req_abc", message: "key up_live_secretvalue123 leaked" }],
+      data: [{
+        id: 7,
+        ts: "2026-06-17T00:00:00Z",
+        status: "error",
+        category: "publish",
+        action: "create",
+        error_code: "validation_error",
+        request_id: "req_abc",
+        message: "key up_live_secretvalue123 leaked",
+        url: "https://graph.example.test/post?access_token=oauth_urlsecret123",
+        headers: { Authorization: "Bearer headersecret123" },
+        custom_debug: { nested: "token up_test_nestedsecret123" },
+      }],
       meta: { has_more: false, limit: 100 },
       request_id: "req_list",
     });
@@ -1864,13 +1876,24 @@ test("logs list --json maps filters to the public logs API and redacts secrets",
     assert.equal(body.data.logs.length, 1);
     assert.equal(body.data.logs[0].id, 7);
     assert.doesNotMatch(body.data.logs[0].message, /secretvalue123/);
+    assert.doesNotMatch(result.stdout, /urlsecret123|headersecret123|nestedsecret123/);
   });
 });
 
-test("logs get <id> --json reads a single log", async () => {
+test("logs get <id> --json reads a single log and redacts unexpected secret fields", async () => {
   await withServer((req, res) => {
     assert.equal(req.url, "/v1/logs/42");
-    writeJson(res, 200, { data: { id: 42, status: "error", action: "create", error_code: "not_found" }, request_id: "req_g" });
+    writeJson(res, 200, {
+      data: {
+        id: 42,
+        status: "error",
+        action: "create",
+        error_code: "not_found",
+        url: "https://graph.example.test/media?access_token=oauth_getsecret123",
+        raw_headers: { "x-api-key": "up_test_headersecret456" },
+      },
+      request_id: "req_g",
+    });
   }, async (baseUrl) => {
     const result = await runCli(["logs", "get", "42", "--json", "--base-url", baseUrl], {
       env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
@@ -1878,6 +1901,7 @@ test("logs get <id> --json reads a single log", async () => {
     assert.equal(result.code, 0);
     const body = JSON.parse(result.stdout);
     assert.equal(body.data.log.id, 42);
+    assert.doesNotMatch(result.stdout, /getsecret123|headersecret456/);
   });
 });
 
@@ -1905,4 +1929,5 @@ test("agent capabilities advertises doctor and logs debug commands", async () =>
   assert.equal(body.data.debug.schema_version, "doctor.v1");
   assert.equal(body.data.debug.local_project_hints, true);
   assert.ok(body.data.debug.action_safety_levels.includes("manual_only"));
+  assert.deepEqual(body.data.debug.statuses, ["passed", "failed", "input_required", "needs_support"]);
 });

@@ -2786,7 +2786,7 @@ function agentCapabilities() {
           `${CLI_RUNNER} logs list --status error --since 2h --json`,
           `${CLI_RUNNER} logs get <id> --json`,
         ],
-        statuses: ["passed", "failed", "input_required", "manual_action_required", "needs_support"],
+        statuses: ["passed", "failed", "input_required", "needs_support"],
         action_safety_levels: ["read_only", "safe_to_execute_without_user", "needs_user_approval", "manual_only"],
         finding_categories: ["auth", "sdk", "workspace", "account", "payload", "media", "webhook", "logs", "unknown"],
         local_project_hints: true,
@@ -4942,7 +4942,7 @@ function doctorStatusExit(status) {
   if (status === "passed") {
     return EXIT.success;
   }
-  if (status === "input_required" || status === "manual_action_required") {
+  if (status === "input_required") {
     return EXIT.missingInput;
   }
   if (status === "needs_support") {
@@ -4988,29 +4988,29 @@ function redactSecrets(input) {
   text = text.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer <redacted>");
   text = text.replace(/(authorization|cookie|set-cookie|x-api-key)"\s*:\s*"[^"]*"/gi, '$1":"<redacted>"');
   text = text.replace(/("(?:access_token|refresh_token|client_secret|webhook_secret|signing_secret|api_key|password|secret)"\s*:\s*)"[^"]*"/gi, '$1"<redacted>"');
+  text = text.replace(/([?&](?:access_token|refresh_token|client_secret|webhook_secret|signing_secret|api_key|password|secret)=)[^"&#\s\\]+/gi, "$1<redacted>");
   text = text.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "<redacted-jwt>");
   return text;
 }
 
-// redactLog returns a copy of a log with secret-bearing payloads scrubbed.
+function redactStructuredValue(value) {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    return value;
+  }
+  try {
+    return JSON.parse(redactSecrets(serialized));
+  } catch {
+    return "<redacted>";
+  }
+}
+
+// redactLog returns a copy of a log with secret-bearing fields scrubbed.
 function redactLog(log) {
   if (!log || typeof log !== "object") {
-    return log;
+    return typeof log === "string" ? redactSecrets(log) : log;
   }
-  const copy = { ...log };
-  if (copy.message) {
-    copy.message = redactSecrets(copy.message);
-  }
-  for (const key of ["request_payload", "response_payload", "metadata"]) {
-    if (copy[key] !== undefined && copy[key] !== null) {
-      try {
-        copy[key] = JSON.parse(redactSecrets(JSON.stringify(copy[key])));
-      } catch {
-        copy[key] = "<redacted>";
-      }
-    }
-  }
-  return copy;
+  return redactStructuredValue(log);
 }
 
 // sinceToFrom converts a relative duration like "2h", "30m", "7d" into an
