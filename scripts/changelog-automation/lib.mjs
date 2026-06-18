@@ -129,6 +129,53 @@ export function parseAIJSONContent(content) {
   return JSON.parse(fenced ? fenced[1].trim() : text);
 }
 
+export function normalizeCandidatePayload(payload, { commits = [], repo = "" } = {}) {
+  if (!payload?.hasCandidate || !payload.candidate) return payload;
+  const candidate = {
+    ...payload.candidate,
+    links: normalizeLinks(payload.candidate.links),
+    sourceLinks: verifiedCommitLinks(commits, repo) || normalizeLinks(payload.candidate.sourceLinks),
+  };
+  return { ...payload, candidate };
+}
+
+function normalizeLinks(links) {
+  return (links || [])
+    .map(coerceLink)
+    .filter(Boolean);
+}
+
+function coerceLink(link) {
+  if (typeof link === "string") {
+    const href = link.trim();
+    if (!href) return null;
+    return { label: labelForHref(href), href };
+  }
+  if (!link || typeof link !== "object") return null;
+  const label = String(link.label || "").trim();
+  const href = String(link.href || "").trim();
+  if (!label || !href) return null;
+  return { ...link, label, href };
+}
+
+function verifiedCommitLinks(commits, repo) {
+  const ownerRepo = String(repo || "").trim();
+  if (!ownerRepo || !Array.isArray(commits) || commits.length === 0) return null;
+  return commits
+    .map((commit) => String(commit?.sha || "").trim())
+    .filter(Boolean)
+    .map((sha) => ({
+      label: `Commit ${sha.slice(0, 7)}`,
+      href: `https://github.com/${ownerRepo}/commit/${sha}`,
+    }));
+}
+
+function labelForHref(href) {
+  const clean = href.replace(/[#?].*$/, "").replace(/\/+$/, "");
+  const segment = clean.split("/").filter(Boolean).pop();
+  return segment || href;
+}
+
 function validateLink(link) {
   if (!link || !String(link.label || "").trim() || !String(link.href || "").trim()) {
     throw new Error("links require label and href");
