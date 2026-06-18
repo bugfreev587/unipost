@@ -9,10 +9,13 @@ Use the UniPost CLI as the source of truth. Do not infer command syntax from doc
 
 ## Startup
 
-1. Run `unipost agent bootstrap --client codex --json`.
-2. Run `unipost agent capabilities --client codex --json`.
-3. Run `unipost agent context --json` when authenticated.
-4. Use `unipost agent mcp-test --json` before configuring MCP.
+1. Run `unipost auth status --json`. If auth is `missing` or `metadata_only`,
+   ask the user to run `unipost init` or the Dashboard-generated setup command
+   before continuing.
+2. Run `unipost agent bootstrap --client codex --json`.
+3. Run `unipost agent capabilities --client codex --json`.
+4. Run `unipost agent context --json` when authenticated.
+5. Use `unipost agent mcp-test --json` before configuring MCP.
 
 ## Safety
 

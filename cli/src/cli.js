@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 
-const CLI_VERSION = "0.2.0";
+const CLI_VERSION = "0.3.0";
 const CLI_RUNNER = "unipost";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
@@ -114,6 +114,7 @@ const GLOBAL_BOOLEAN_FLAGS = new Set([
   "--json",
   "--non-interactive",
   "--yes",
+  "--metadata-only",
   "--quiet",
   "--verbose",
   "--no-color",
@@ -283,11 +284,31 @@ function keychainUnavailableError() {
   return new CliError({
     code: "keychain_unavailable",
     normalizedCode: "keychain_unavailable",
-    message: "OS keychain storage is unavailable on this platform.",
-    hint: "Use UNIPOST_API_KEY for command-level fallback auth, or run setup-token login on macOS keychain.",
+    message: "Secure local credential storage is not available on this platform.",
+    hint: "Use UNIPOST_API_KEY for authenticated commands, pass --api-key for one-off commands, or rerun with --metadata-only to record redacted metadata only.",
     docsUrl: DOCS_CLI_URL,
     exitCode: EXIT.auth,
   });
+}
+
+function isKeychainUnavailable(error) {
+  return (error instanceof CliError && error.normalizedCode === "keychain_unavailable")
+    || error?.normalizedCode === "keychain_unavailable"
+    || error?.code === "keychain_unavailable";
+}
+
+async function assertSecureStoreAvailable(context) {
+  try {
+    await context.secureStore.get({
+      service: KEYCHAIN_SERVICE,
+      account: "__unipost_secure_store_probe__",
+    });
+  } catch (error) {
+    if (isKeychainUnavailable(error)) {
+      throw keychainUnavailableError();
+    }
+    throw error;
+  }
 }
 
 function parseArgs(argv) {
@@ -524,7 +545,48 @@ function selfCommand(context, subcommand) {
 }
 
 async function authStatus(context) {
-  requireApiKey(context, "auth status");
+  const config = await readConfig(context);
+  if (!context.options.apiKey) {
+    if (config.credential?.storage === "metadata_only") {
+      return localAuthStatusResult(context, {
+        state: "metadata_only",
+        credential: config.credential,
+        nextActions: [
+          `Run ${CLI_RUNNER} auth login --api-key <key> to store it in secure local storage.`,
+          "Or set UNIPOST_API_KEY for one-off authenticated commands.",
+        ],
+        human: "API key metadata is present, but no secret is stored for authenticated commands.\n",
+      });
+    }
+    if (config.credential?.storage === "keychain") {
+      const state = context.options.storedCredentialError ? "keychain_unavailable" : "invalid";
+      return localAuthStatusResult(context, {
+        state,
+        credential: config.credential,
+        nextActions: state === "keychain_unavailable"
+          ? [
+              "Use UNIPOST_API_KEY for authenticated commands.",
+              "Retry from macOS keychain or a future supported secure-store platform.",
+            ]
+          : [
+              `Run ${CLI_RUNNER} auth logout, then ${CLI_RUNNER} init.`,
+              `Or run ${CLI_RUNNER} auth login --api-key <key> to replace the local binding.`,
+            ],
+        human: state === "keychain_unavailable"
+          ? "Secure local credential storage is not available on this platform.\n"
+          : "Stored credential metadata exists, but no usable secret was found.\n",
+      });
+    }
+    return localAuthStatusResult(context, {
+      state: "missing",
+      credential: null,
+      nextActions: [
+        `Run ${CLI_RUNNER} init to configure this machine.`,
+        "Or set UNIPOST_API_KEY for one-off authenticated commands.",
+      ],
+      human: "No UniPost API key found. Run unipost init to configure this machine.\n",
+    });
+  }
 
   const response = await requestJson(context, "/v1/workspace", { auth: true });
   const workspace = unwrapData(response.body);
@@ -532,6 +594,7 @@ async function authStatus(context) {
   return envelopeResult({
     data: {
       authenticated: true,
+      state: context.options.credentialSource === "keychain" ? "keychain_ready" : "authenticated",
       credential_source: context.options.credentialSource,
       workspace,
     },
@@ -540,6 +603,21 @@ async function authStatus(context) {
       rate_limit: response.rateLimit,
     },
     human: `Authenticated with workspace ${workspace?.id || "unknown"}.\n`,
+  });
+}
+
+function localAuthStatusResult(context, { state, credential, nextActions, human }) {
+  return envelopeResult({
+    data: {
+      authenticated: false,
+      state,
+      credential_source: "none",
+      ...(credential ? { credential: sanitizeConfig(credential) } : {}),
+      next_actions: nextActions,
+      config_path: configPath(context),
+    },
+    human,
+    exitCode: EXIT.auth,
   });
 }
 
@@ -552,13 +630,26 @@ async function authLogin(context) {
       code: "missing_required_input",
       normalizedCode: "missing_required_input",
       message: "auth login requires --api-key or --setup-token.",
-      hint: "Use auth login --setup-token <token> from the dashboard CLI setup flow, or pass --api-key for metadata-only fallback.",
+      hint: "Use auth login --api-key <key>, or copy the setup-token command from the dashboard CLI setup flow.",
       docsUrl: DOCS_CLI_URL,
       exitCode: EXIT.missingInput,
     });
   }
 
+  if (context.options.metadataOnly) {
+    return recordMetadataOnlyCredential(context);
+  }
+
+  return loginWithApiKey(context);
+}
+
+async function recordMetadataOnlyCredential(context) {
   const { workspace, response } = await fetchWorkspace(context);
+  const replacement = await prepareCredentialReplacement(context, {
+    apiKey: { key: context.options.apiKey },
+    workspace,
+    targetStorage: "metadata_only",
+  });
   const credential = {
     type: "api_key",
     storage: "metadata_only",
@@ -572,6 +663,7 @@ async function authLogin(context) {
     credential,
     default_workspace_id: workspace?.id || "",
   });
+  await deletePreviousKeychainCredential(context, replacement.previousCredential);
 
   return envelopeResult({
     data: {
@@ -579,9 +671,10 @@ async function authLogin(context) {
       workspace,
       credential: config.credential,
       stored_secret: false,
+      authenticated_commands_ready: false,
       config_path: configPath(context),
       next_actions: [
-        "Use auth login --setup-token for keychain-backed CLI auth, or continue passing UNIPOST_API_KEY for command-level fallback.",
+        `Run ${CLI_RUNNER} auth login --api-key <key> to store a secure local credential, or continue passing UNIPOST_API_KEY for command-level fallback.`,
       ],
     },
     warnings: [{
@@ -592,12 +685,53 @@ async function authLogin(context) {
       request_id: response.requestId,
       rate_limit: response.rateLimit,
     },
-    human: `Logged in to workspace ${workspace?.id || "unknown"} metadata only. Set UNIPOST_API_KEY for authenticated commands.\n`,
+    human: `Recorded API key metadata for workspace ${workspace?.id || "unknown"} only. Set UNIPOST_API_KEY for authenticated commands.\n`,
+  });
+}
+
+async function loginWithApiKey(context) {
+  const { workspace, response } = await fetchWorkspace(context);
+  const replacement = await prepareCredentialReplacement(context, {
+    apiKey: { key: context.options.apiKey },
+    workspace,
+    targetStorage: "keychain",
+  });
+  const credential = await storeKeychainCredential(context, {
+    apiKey: {
+      key: context.options.apiKey,
+      prefix: maskApiKey(context.options.apiKey),
+    },
+    workspace,
+    client: context.options.client || "terminal",
+    source: "api_key",
+    previousCredential: replacement.previousCredential,
+  });
+  context.options.credentialSource = "keychain";
+
+  return envelopeResult({
+    data: {
+      authenticated: true,
+      workspace,
+      credential,
+      stored_secret: true,
+      authenticated_commands_ready: true,
+      config_path: configPath(context),
+      next_actions: [
+        `Run ${CLI_RUNNER} auth status --json to confirm secure local auth.`,
+      ],
+    },
+    meta: {
+      request_id: response.requestId,
+      rate_limit: response.rateLimit,
+    },
+    human: `Logged in to workspace ${workspace?.id || "unknown"} with secure local CLI auth.\n`,
   });
 }
 
 async function loginWithSetupToken(context, defaultClient = "terminal") {
   const client = context.options.client || defaultClient;
+  await assertSecureStoreAvailable(context);
+  await requireSetupTokenReplacementConfirmation(context);
   const exchange = await exchangeSetupToken(context, client);
   const apiKey = exchange.api_key || exchange.apiKey;
   if (!apiKey?.key) {
@@ -620,6 +754,7 @@ async function loginWithSetupToken(context, defaultClient = "terminal") {
       apiKey,
       workspace,
       client: credentialClient,
+      source: "setup_token",
     });
     const nextActions = [
       `Run ${CLI_RUNNER} auth status --json to confirm keychain-backed auth.`,
@@ -650,6 +785,21 @@ async function loginWithSetupToken(context, defaultClient = "terminal") {
   }
 }
 
+async function requireSetupTokenReplacementConfirmation(context) {
+  const config = await readConfig(context);
+  if (!config.credential || context.options.yes) {
+    return;
+  }
+  throw new CliError({
+    code: "auth_rebind_confirmation_required",
+    normalizedCode: "auth_rebind_confirmation_required",
+    message: "Existing UniPost CLI binding requires confirmation before replacement.",
+    hint: `Rerun with --yes after confirming you want to replace workspace ${config.credential.workspace_id || "unknown"}.`,
+    docsUrl: DOCS_CLI_URL,
+    exitCode: EXIT.validation,
+  });
+}
+
 async function exchangeSetupToken(context, client) {
   const response = await requestJson(context, "/v1/cli/setup-tokens/exchange", {
     method: "POST",
@@ -662,15 +812,84 @@ async function exchangeSetupToken(context, client) {
   return unwrapData(response.body);
 }
 
-async function storeKeychainCredential(context, { apiKey, workspace, client }) {
+async function prepareCredentialReplacement(context, { apiKey, workspace, targetStorage }) {
+  const config = await readConfig(context);
+  const current = config.credential;
+  if (!current) {
+    return { previousCredential: null };
+  }
+
+  const next = {
+    workspace_id: workspace?.id || "",
+    key_id: apiKey.id || "",
+    key_fingerprint: fingerprintSecret(apiKey.key),
+    storage: targetStorage,
+  };
+  if (!credentialReplacementNeedsConfirmation(current, next)) {
+    return { previousCredential: null };
+  }
+  if (!context.options.yes) {
+    throw new CliError({
+      code: "auth_rebind_confirmation_required",
+      normalizedCode: "auth_rebind_confirmation_required",
+      message: "Existing UniPost CLI binding requires confirmation before replacement.",
+      hint: [
+        `Current workspace: ${current.workspace_name || current.workspace_id || "unknown"}.`,
+        `New workspace: ${workspace?.name || workspace?.id || "unknown"}.`,
+        "Rerun with --yes after confirming this local single-account binding should be replaced.",
+      ].join(" "),
+      docsUrl: DOCS_CLI_URL,
+      exitCode: EXIT.validation,
+    });
+  }
+  return { previousCredential: current };
+}
+
+function credentialReplacementNeedsConfirmation(current, next) {
+  if (!current || typeof current !== "object") {
+    return false;
+  }
+  if (current.storage === "keychain" && next.storage === "metadata_only") {
+    return true;
+  }
+  if (current.workspace_id && next.workspace_id && current.workspace_id !== next.workspace_id) {
+    return true;
+  }
+  if (current.key_fingerprint && next.key_fingerprint && current.key_fingerprint !== next.key_fingerprint) {
+    return true;
+  }
+  if (current.key_id && next.key_id && current.key_id !== next.key_id) {
+    return true;
+  }
+  return false;
+}
+
+async function deletePreviousKeychainCredential(context, credential) {
+  if (!credential || credential.storage !== "keychain" || !credential.keychain_account) {
+    return;
+  }
+  await context.secureStore.delete({
+    service: credential.keychain_service || KEYCHAIN_SERVICE,
+    account: credential.keychain_account,
+  });
+}
+
+async function storeKeychainCredential(context, { apiKey, workspace, client, source = "setup_token", previousCredential = null }) {
   const workspaceID = workspace?.id || "";
   const keyID = apiKey.id || "";
   const account = `workspace:${workspaceID}:key:${keyID || fingerprintSecret(apiKey.key)}`;
-  await context.secureStore.set({
-    service: KEYCHAIN_SERVICE,
-    account,
-    value: apiKey.key,
-  });
+  try {
+    await context.secureStore.set({
+      service: KEYCHAIN_SERVICE,
+      account,
+      value: apiKey.key,
+    });
+  } catch (error) {
+    if (isKeychainUnavailable(error)) {
+      throw keychainUnavailableError();
+    }
+    throw error;
+  }
   const credential = {
     type: "api_key",
     storage: "keychain",
@@ -679,11 +898,11 @@ async function storeKeychainCredential(context, { apiKey, workspace, client }) {
     client,
     key_id: keyID,
     key_name: apiKey.name || "",
-    key_prefix: apiKey.prefix || "",
+    key_prefix: apiKey.prefix || maskApiKey(apiKey.key),
     key_fingerprint: fingerprintSecret(apiKey.key),
     keychain_service: KEYCHAIN_SERVICE,
     keychain_account: account,
-    credential_source: "setup_token",
+    credential_source: source,
     authenticated_at: new Date().toISOString(),
   };
   const configPatch = {
@@ -694,6 +913,7 @@ async function storeKeychainCredential(context, { apiKey, workspace, client }) {
     configPatch.base_url = context.options.baseUrl;
   }
   const config = await patchConfig(context, configPatch);
+  await deletePreviousKeychainCredential(context, previousCredential);
   return config.credential;
 }
 
@@ -706,7 +926,7 @@ async function authLogout(context) {
       account: current.credential.keychain_account,
     });
   }
-  const { credential: _credential, ...rest } = current;
+  const { credential: _credential, base_url: _baseUrl, ...rest } = current;
   const config = await writeConfig(context, {
     ...rest,
     updated_at: new Date().toISOString(),
@@ -1458,6 +1678,7 @@ async function authList(context) {
         credentials: [],
         active_workspace_id: "",
       },
+      warnings: [singleAccountCompatibilityWarning()],
       human: "No local or environment credential is active.\n",
       exitCode: EXIT.auth,
     });
@@ -1478,6 +1699,7 @@ async function authList(context) {
       request_id: response.requestId,
       rate_limit: response.rateLimit,
     },
+    warnings: [singleAccountCompatibilityWarning()],
     human: `Active workspace: ${workspace?.id || "unknown"} (${context.options.credentialSource}).\n`,
   });
 }
@@ -1490,13 +1712,24 @@ async function authUse(context, workspaceID) {
       default_workspace_id: config.default_workspace_id,
       config_path: configPath(context),
     },
+    warnings: [singleAccountCompatibilityWarning()],
     human: `Default workspace set to ${id}.\n`,
   });
+}
+
+function singleAccountCompatibilityWarning() {
+  return {
+    code: "single_account_compatibility",
+    message: "UniPost CLI uses one local account binding at a time; auth list/use are compatibility commands, not a multi-account switcher.",
+  };
 }
 
 async function init(context) {
   if (!context.options.apiKey && context.options.setupToken) {
     await loginWithSetupToken(context);
+  }
+  if (context.options.apiKey && context.options.credentialSource === "flag") {
+    await loginWithApiKey(context);
   }
   if (!context.options.apiKey) {
     return envelopeResult({
@@ -3689,13 +3922,21 @@ async function applyConfigDefaults(context) {
     context.options.baseUrlSource = "config";
   }
   if (shouldLoadStoredCredential(context) && config.credential?.storage === "keychain") {
-    const value = await context.secureStore.get({
-      service: config.credential.keychain_service || KEYCHAIN_SERVICE,
-      account: config.credential.keychain_account,
-    });
-    if (value) {
-      context.options.apiKey = value;
-      context.options.credentialSource = "keychain";
+    try {
+      const value = await context.secureStore.get({
+        service: config.credential.keychain_service || KEYCHAIN_SERVICE,
+        account: config.credential.keychain_account,
+      });
+      if (value) {
+        context.options.apiKey = value;
+        context.options.credentialSource = "keychain";
+      }
+    } catch (error) {
+      if (isKeychainUnavailable(error)) {
+        context.options.storedCredentialError = "keychain_unavailable";
+        return;
+      }
+      throw error;
     }
   }
 }
@@ -3994,10 +4235,9 @@ _unipost() {
     'config path:Print the local UniPost config path'
     'config show:Print redacted local UniPost config'
     'config set:Set a safe local UniPost config value'
-    'auth login:Log in with a setup token or validate API-key metadata'
-    'auth logout:Remove local credential metadata'
+    'auth login:Log in with a secure local CLI credential'
+    'auth logout:Remove the local CLI credential'
     'auth status:Verify the configured UniPost credential'
-    'auth list:List locally discoverable UniPost credentials'
     'init:Initialize local UniPost CLI config'
     'quickstart:Run the safe first-run workflow'
     'profiles list:List profiles'
@@ -4059,7 +4299,7 @@ _unipost() {
     '--content-type[Override media MIME type]:mime:' \\
     '--idempotency-key[Idempotency key]:key:' \\
     '--agent-name[Calling agent name]:name:' \\
-    '--yes[Confirm publish-capable or destructive writes]' \\
+    '--yes[Confirm local auth replacement, publish-capable writes, or destructive writes]' \\
     '--all[Follow pagination until exhausted]' \\
     '--non-interactive[Never prompt]' \\
     '--no-color[Disable ANSI color]' \\
@@ -4074,7 +4314,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart config path config show config set auth login auth logout auth status auth list auth use profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --setup-token --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart config path config show config set auth login auth logout auth status profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --setup-token --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --metadata-only --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -4086,8 +4326,8 @@ function fishCompletion() {
 complete -c unipost -a "config path" -d "Print local config path"
 complete -c unipost -a "config show" -d "Print redacted local config"
 complete -c unipost -a "config set" -d "Set a safe local config value"
-complete -c unipost -a "auth login" -d "Log in with setup-token keychain auth or API-key metadata"
-complete -c unipost -a "auth logout" -d "Remove local credential metadata"
+complete -c unipost -a "auth login" -d "Log in with a secure local CLI credential"
+complete -c unipost -a "auth logout" -d "Remove the local CLI credential"
 complete -c unipost -a "auth status" -d "Verify the configured UniPost credential"
 complete -c unipost -a "profiles list" -d "List profiles"
 complete -c unipost -a "connect create" -d "Create a Connect session"
@@ -4138,7 +4378,7 @@ complete -c unipost -l plan -d "Read structured agent plan JSON"
 complete -c unipost -l content-type -d "Override media MIME type"
 complete -c unipost -l idempotency-key -d "Idempotency key"
 complete -c unipost -l agent-name -d "Calling agent name"
-complete -c unipost -l yes -d "Confirm write"
+complete -c unipost -l yes -d "Confirm local auth replacement or write"
 `;
 }
 
@@ -5174,7 +5414,6 @@ Usage:
   ${CLI_RUNNER} config path|show [--json]
   ${CLI_RUNNER} config set base_url <url> [--json]
   ${CLI_RUNNER} config set default_profile_id <profile_id> [--json]
-  ${CLI_RUNNER} auth login --setup-token <token> [--client <client>] [--json]
   ${CLI_RUNNER} auth login --api-key <key> [--json]
   ${CLI_RUNNER} auth logout [--json]
   ${CLI_RUNNER} auth status [--json] [--api-key <key>] [--base-url <url>]
@@ -5209,6 +5448,12 @@ Usage:
   ${CLI_RUNNER} self update
   ${CLI_RUNNER} self help
 
+Dashboard setup flow:
+  ${CLI_RUNNER} auth login --setup-token <token> [--client <client>] [--json]
+
+Setup tokens are generated by the UniPost Dashboard. You normally copy the full
+command from Dashboard instead of typing it manually.
+
 Global flags:
   --json, --output <table|json|yaml>, --field <field>, --non-interactive
   --base-url <url>, --api-key <key>, --setup-token <token>, --limit <n>, --cursor <cursor>, --all
@@ -5216,14 +5461,17 @@ Global flags:
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
   --since <2h|30m|7d>, --request-id <id>, --log-id <id>, --error-code <code>, --category <c>, --action <a>
-  --from-file <path>, --plan <path>, --content-type <mime>, --yes
+  --from-file <path>, --plan <path>, --content-type <mime>, --yes, --metadata-only
   --idempotency-key <key>, --agent-name <name>, --upload, --allow-live-publish
   --no-color, --no-telemetry
 
 Auth note:
   auth login --setup-token exchanges a Dashboard-generated short-lived token for
-  a named API key and stores the secret in OS keychain. auth login --api-key
-  remains metadata-only and never writes the plaintext key to config.
+  a named API key and stores the secret in secure local storage when available.
+  auth login --api-key validates an existing key and stores it in secure local
+  storage by default. Use --metadata-only only when you intentionally do not
+  want local authenticated commands to remember the secret. If another local
+  binding already exists, confirm replacement with --yes or run auth logout first.
 
 Install:
   npm install -g @unipost/cli

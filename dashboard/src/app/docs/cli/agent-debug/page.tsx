@@ -17,7 +17,8 @@ unipost agent guide --client codex --json`,
   },
 ];
 
-const LOOP_SNIPPET = `unipost doctor diagnose --json          # find root causes
+const LOOP_SNIPPET = `unipost auth status --json              # classify local auth first
+unipost doctor diagnose --json          # find root causes
 unipost doctor explain --request-id req_... --json
 unipost logs list --status error --since 2h --json
 # patch local code / config, then verify
@@ -101,6 +102,10 @@ export default function CliAgentDebugPage() {
         verifies the fix, and only escalates a redacted support bundle when it cannot
         resolve the problem. Code edits stay with the agent, which already understands the
         repository; the CLI provides trusted evidence and deterministic verification.
+        Agents should run <code>unipost auth status --json</code> first. If auth is
+        <code> missing</code>, run <code>unipost init</code> or the Dashboard setup
+        command. If auth is <code> metadata_only</code>, rebind with
+        <code> auth login --api-key</code> or set <code>UNIPOST_API_KEY</code>.
       </p>
 
       <h2 id="install">Install the debug skill</h2>
