@@ -189,7 +189,7 @@ export default function AccountMetricsPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get account metrics"
-      description="Returns follower / following / post counts for one connected social account, fetched live from the platform's API. Currently supported on X (Twitter). TikTok account metrics are implemented behind TikTok's analytics scopes and should be treated as unavailable in production until those scopes are approved and enabled. Other platforms return 501 NOT_SUPPORTED. Not cached — every call hits the upstream API, so prefer caching client-side if your dashboard polls frequently."
+      description="Returns follower / following / post counts for one connected social account, fetched live from the platform's API. Currently supported on X, Instagram, Threads, and TikTok when the relevant platform scopes are granted. Other platforms return 501 NOT_SUPPORTED. Not cached — every call hits the upstream API, so prefer caching client-side if your dashboard polls frequently."
       method="GET"
       path="/v1/accounts/:account_id/metrics"
       requestSections={[

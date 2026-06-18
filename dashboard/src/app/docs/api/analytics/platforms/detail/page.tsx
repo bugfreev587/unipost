@@ -8,7 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "platform", type: "string", description: <>Analytics-capable platform key.<EnumValues values={["instagram", "threads", "pinterest", "tiktok"]} /></> },
+  { name: "platform", type: "string", description: <>Analytics-capable platform key.<EnumValues values={["instagram", "threads", "pinterest", "tiktok", "facebook"]} /></> },
 ];
 
 const QUERY_FIELDS: ApiFieldItem[] = [

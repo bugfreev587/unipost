@@ -90,7 +90,7 @@ export const analyticsTools: Record<AnalyticsToolSlug, AnalyticsToolConfig> = {
       "UniPost brings Instagram Business account data, recent media insights, and published post performance into one developer-friendly analytics view.",
     accent: "#c13584",
     scopes: ["instagram_business_basic", "instagram_business_manage_insights"],
-    docsHref: "/docs/api/accounts/metrics",
+    docsHref: "/docs/api/analytics/instagram",
     metrics: [
       { label: "Followers", value: "48.6k", note: "Business profile snapshot" },
       { label: "Media", value: "328", note: "Connected account inventory" },
@@ -132,7 +132,7 @@ export const analyticsTools: Record<AnalyticsToolSlug, AnalyticsToolConfig> = {
       "Track Threads profile performance, recent posts, replies, reposts, quotes, and published content without building a separate Meta analytics layer.",
     accent: "#111827",
     scopes: ["threads_basic", "threads_manage_insights"],
-    docsHref: "/docs/api/analytics/posts",
+    docsHref: "/docs/api/analytics/threads",
     metrics: [
       { label: "Followers", value: "21.9k", note: "Profile analytics" },
       { label: "Views", value: "42.7k", note: "Recent post window" },
@@ -174,7 +174,7 @@ export const analyticsTools: Record<AnalyticsToolSlug, AnalyticsToolConfig> = {
       "UniPost connects Pinterest boards, published Pins, impressions, saves, outbound clicks, and comments into one analytics workflow.",
     accent: "#bd081c",
     scopes: ["pins:read", "boards:read", "user_accounts:read"],
-    docsHref: "/docs/api/analytics/posts",
+    docsHref: "/docs/api/analytics/pinterest",
     metrics: [
       { label: "Published Pins", value: "64", note: "UniPost-published pins" },
       { label: "Boards", value: "12", note: "Connected board inventory" },

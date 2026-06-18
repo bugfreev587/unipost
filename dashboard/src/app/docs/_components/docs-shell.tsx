@@ -462,6 +462,34 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         {
+          label: "Instagram Analytics",
+          children: [
+            { label: "Overview", href: "/docs/api/analytics/instagram" },
+            { label: "Get Instagram profile", href: "/docs/api/analytics/instagram/profile", method: "GET" },
+            { label: "Get Instagram account metrics", href: "/docs/api/analytics/instagram/account-metrics", method: "GET" },
+            { label: "List Instagram media analytics", href: "/docs/api/analytics/instagram/media", method: "GET" },
+            { label: "Instagram post analytics", href: "/docs/api/analytics/posts", method: "GET" },
+          ],
+        },
+        {
+          label: "Threads Analytics",
+          children: [
+            { label: "Overview", href: "/docs/api/analytics/threads" },
+            { label: "Get Threads profile", href: "/docs/api/analytics/threads/profile", method: "GET" },
+            { label: "Get Threads account metrics", href: "/docs/api/analytics/threads/account-metrics", method: "GET" },
+            { label: "List Threads post analytics", href: "/docs/api/analytics/threads/posts", method: "GET" },
+            { label: "Threads post analytics", href: "/docs/api/analytics/posts", method: "GET" },
+          ],
+        },
+        {
+          label: "Pinterest Analytics",
+          children: [
+            { label: "Overview", href: "/docs/api/analytics/pinterest" },
+            { label: "List Pinterest boards", href: "/docs/api/analytics/pinterest/boards", method: "GET" },
+            { label: "Pinterest post analytics", href: "/docs/api/analytics/pinterest/post-analytics", method: "GET" },
+          ],
+        },
+        {
           label: "TikTok Analytics",
           children: [
             { label: "Overview", href: "/docs/api/analytics/tiktok" },
@@ -469,6 +497,15 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Get TikTok account metrics", href: "/docs/api/analytics/tiktok/account-metrics", method: "GET" },
             { label: "List TikTok public videos", href: "/docs/api/analytics/tiktok/videos", method: "GET" },
             { label: "TikTok post analytics", href: "/docs/api/analytics/posts", method: "GET" },
+          ],
+        },
+        {
+          label: "Facebook Page Analytics",
+          children: [
+            { label: "Overview", href: "/docs/api/analytics/facebook" },
+            { label: "Get Facebook Page analytics", href: "/docs/api/analytics/facebook/page-analytics", method: "GET" },
+            { label: "Get Facebook Page insights", href: "/docs/api/analytics/facebook/page-insights", method: "GET" },
+            { label: "Facebook Page post analytics", href: "/docs/api/analytics/facebook/post-analytics", method: "GET" },
           ],
         },
         {
