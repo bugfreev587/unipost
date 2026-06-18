@@ -20,6 +20,7 @@ They are not equivalent.
 
 - `--setup-token` is a Dashboard-driven bootstrap flow. Users only get a setup token after clicking a Dashboard action, and the token is useful only for that first local CLI setup.
 - `--api-key` validates an existing API key and records redacted metadata only in `0.2.0`; it does not store the secret in keychain, so follow-up commands still fail unless `UNIPOST_API_KEY` is set.
+- The current secure-store implementation is macOS-only. It shells out to `/usr/bin/security`; Linux and Windows currently report keychain unavailable.
 - `unipost init` does not currently provide a smooth "I already have an API key" path.
 - Users who want to replace an old account/workspace binding do not have an obvious single-account rebind workflow.
 
@@ -37,7 +38,7 @@ UniPost CLI should use a **single-account local binding model**:
 - One local UniPost workspace/account binding at a time.
 - `auth login` replaces the existing binding after confirmation.
 - `auth logout` fully unbinds the current local credential.
-- No multi-account switcher, no account list, and no hidden active-account ambiguity.
+- No promoted multi-account switcher, no account-list workflow, and no hidden active-account ambiguity.
 
 The primary human path should be:
 
@@ -51,12 +52,22 @@ The primary non-interactive path should be:
 unipost auth login --api-key <key> --json
 ```
 
+This path is keychain-backed on macOS in V1. On Linux and Windows, V1 must not silently pretend that local authenticated commands are ready. It should fail with a clear `KEYCHAIN_UNAVAILABLE` error unless the user explicitly chooses `--metadata-only`, passes `--api-key` per command, or uses `UNIPOST_API_KEY`.
+
 The Dashboard setup-token path should still exist, but it should be presented as a Dashboard-generated onboarding command, not as a normal command users are expected to invent.
+
+## Product Decisions
+
+1. **Secret persistence is macOS-only in V1.** The CLI will use the current macOS keychain implementation for locally remembered secrets. Linux libsecret and Windows Credential Manager support are deferred to a future cross-platform storage phase.
+2. **No silent metadata-only fallback.** When keychain-backed login is requested on a platform without secure local storage, the command should return `KEYCHAIN_UNAVAILABLE` with actionable alternatives. Users can choose `--metadata-only` explicitly, export `UNIPOST_API_KEY`, or pass `--api-key` for one-off commands.
+3. **Hidden input is the default human path.** Docs and `init` should prefer hidden interactive key entry. Inline `auth login --api-key <key>` remains supported for CI and controlled non-interactive contexts.
+4. **`auth list` and `auth use` stay compatibility-only.** These commands already exist but do not provide true multi-account support. V1 should hide or de-emphasize them, make them operate only on the single current binding, and add deprecation messaging.
+5. **`auth logout` resets environment binding state.** Logout should remove credential metadata and remove stored `base_url` so the CLI returns to the production default unless `UNIPOST_BASE_URL` or `--base-url` is supplied.
 
 ## Goals
 
 1. Let a user who already has a UniPost API key configure or reconfigure CLI in one obvious flow.
-2. Make `auth login --api-key` keychain-backed by default so follow-up commands work immediately.
+2. Make `auth login --api-key` keychain-backed by default on macOS so follow-up commands work immediately, and make non-macOS secure-storage limitations explicit.
 3. Keep setup-token support for Dashboard copy-paste onboarding, but remove it from the top-level help's primary command list.
 4. Support replacing an old account/workspace binding with a new one without multi-account complexity.
 5. Make `doctor`, `init`, and `auth status` explain the exact fix when local auth is missing or metadata-only.
@@ -73,15 +84,26 @@ The Dashboard setup-token path should still exist, but it should be presented as
 - No change to server API-key permission semantics.
 - No change to logs/workspace authorization scope.
 - No migration that attempts to recover previously discarded API-key plaintext from metadata-only records.
+- No Linux libsecret or Windows Credential Manager implementation in V1.
 
 ## Current Behavior
+
+### Secure store
+
+Current behavior:
+
+- macOS uses `/usr/bin/security` to read/write the login keychain.
+- Non-macOS platforms use a stub secure store that throws a keychain-unavailable error.
+- The CLI therefore cannot currently persist API-key secrets on Linux, Windows, or most CI runners.
+
+This platform constraint must be visible in user-facing behavior. A command must not say authenticated local commands are ready when the platform cannot store the secret.
 
 ### `auth login --setup-token`
 
 Current intended behavior:
 
 - Exchanges a Dashboard-generated setup token for a named CLI API key.
-- Stores the returned API key in OS keychain.
+- Stores the returned API key in macOS keychain when secure local storage is available.
 - Stores redacted credential metadata in local config.
 - Follow-up authenticated commands work without `UNIPOST_API_KEY`.
 
@@ -93,7 +115,7 @@ Current `0.2.0` behavior:
 
 - Validates the API key against the API.
 - Records redacted metadata only.
-- Does not store the API key in OS keychain.
+- Does not store the API key in any secure local store.
 - Prints a message telling the user to set `UNIPOST_API_KEY`.
 - Follow-up commands such as `doctor` fail unless the user exports `UNIPOST_API_KEY` or passes `--api-key`.
 
@@ -108,9 +130,30 @@ Current behavior when no API key is available:
 
 It does not give an obvious path for the common case "I already have an API key and want to configure this machine."
 
+### `auth status`
+
+Current `0.2.0` behavior:
+
+- Calls the authenticated workspace check before classifying local auth state.
+- Fails when no API key is available.
+- Cannot currently report `missing`, `metadata_only`, or `keychain_unavailable` as first-class local states.
+
+The target design requires `auth status` to inspect local config and secure-store availability before making any authenticated API call.
+
+### `auth list` and `auth use`
+
+Current behavior:
+
+- Both commands already exist.
+- They do not implement true multi-account switching.
+- `auth list` reports at most the current active credential.
+- `auth use` sets the default workspace id and should not be presented as account switching.
+
+V1 should keep these as compatibility commands only, hide them from prominent help, and add deprecation or clarification text.
+
 ## Target UX
 
-### First-time setup with an existing API key
+### First-time setup with an existing API key on macOS
 
 Command:
 
@@ -127,7 +170,7 @@ Expected interactive flow:
    - Open Dashboard setup instructions.
 3. If the user pastes an API key:
    - Validate key against the selected/default base URL.
-   - Store the key in OS keychain.
+   - Store the key in macOS keychain.
    - Store only redacted metadata in config.
    - Print workspace name/id and next commands.
 4. `unipost doctor --json` works immediately afterward.
@@ -137,6 +180,33 @@ Expected non-interactive equivalent:
 ```bash
 unipost auth login --api-key <key> --yes --json
 ```
+
+### First-time setup with an existing API key on Linux/Windows
+
+Command:
+
+```bash
+unipost init
+```
+
+Expected interactive flow:
+
+1. CLI detects that secure local secret storage is unavailable.
+2. CLI still lets the user validate an API key against the selected/default base URL.
+3. CLI does not write the full key to local config.
+4. CLI explains the available choices:
+   - Set `UNIPOST_API_KEY` in the current shell or local environment.
+   - Pass `--api-key` for one-off commands.
+   - Record redacted metadata only with an explicit metadata-only choice.
+5. CLI reports authenticated local commands as not ready unless a usable key is available from env or command flags.
+
+Non-interactive behavior:
+
+```bash
+unipost auth login --api-key <key> --json
+```
+
+On non-macOS V1, this should fail with `KEYCHAIN_UNAVAILABLE` unless `--metadata-only` is present. The error should include exact recovery commands.
 
 ### First-time setup from Dashboard
 
@@ -150,7 +220,7 @@ Expected behavior:
 
 - The user or agent copies the command exactly.
 - CLI exchanges the setup token for a named CLI API key.
-- CLI stores the returned key in OS keychain.
+- CLI stores the returned key in macOS keychain when secure storage is available.
 - CLI prints success and suggests `unipost doctor --json`.
 
 The user should not need to discover or type `--setup-token` from top-level help.
@@ -254,7 +324,8 @@ Behavior:
 - Validates active credential if present.
 - Offers replacement when a credential already exists.
 - Supports API-key and setup-token input.
-- Stores secrets only in OS keychain.
+- Stores secrets only in the configured secure store. In V1 this means macOS keychain only.
+- On non-macOS, explains secure storage is unavailable and offers env-var, one-off `--api-key`, or explicit metadata-only paths.
 - Never prints full API keys.
 - Does not create social posts or mutate workspace data beyond optional CLI API-key creation through setup-token exchange.
 
@@ -268,10 +339,11 @@ Role:
 Target default behavior:
 
 - Validate key.
-- Store full key in OS keychain.
+- Store full key in macOS keychain when available.
 - Store redacted metadata in config.
 - Replace any existing binding after confirmation.
 - Follow-up commands work without environment variables.
+- On non-macOS V1, fail with `KEYCHAIN_UNAVAILABLE` unless `--metadata-only` is present. Do not silently fall back to metadata-only.
 
 Flags:
 
@@ -294,6 +366,7 @@ Target behavior:
 - Keep `--client` because Dashboard can generate client-specific named keys and audit metadata.
 - Move out of the top-level help's primary command list.
 - Document as "Dashboard setup flow" in detailed auth help and docs.
+- On non-macOS V1, preflight secure-store availability before exchanging the token. If secure storage is unavailable, return `KEYCHAIN_UNAVAILABLE` and do not create a new API key that the CLI would immediately discard.
 
 ### `unipost auth logout`
 
@@ -305,6 +378,7 @@ Target behavior:
 
 - Delete current keychain secret if present.
 - Remove credential metadata from config.
+- Remove stored `base_url` so the CLI falls back to the production default unless `UNIPOST_BASE_URL` or `--base-url` is set.
 - Preserve unrelated config such as display preferences only if currently supported and safe.
 - After logout, `doctor` should clearly report no API key found and suggest `unipost init`.
 
@@ -314,6 +388,13 @@ Role:
 
 - Explain whether authenticated commands are ready.
 
+Required behavior:
+
+- Must run without an API key.
+- Must classify local config, metadata, and secure-store availability before attempting any API request.
+- Should only call `/v1/workspace` when it has a usable secret from keychain, `UNIPOST_API_KEY`, or `--api-key`.
+- Should return a stable JSON state even when auth is missing or the keychain is unavailable.
+
 Target states:
 
 | State | Meaning | Suggested action |
@@ -322,7 +403,7 @@ Target states:
 | `metadata_only` | Metadata exists, no stored secret | Run `unipost auth login --api-key <key>` or set `UNIPOST_API_KEY` |
 | `missing` | No local auth | Run `unipost init` |
 | `invalid` | Stored key fails validation | Run `unipost auth logout` then `unipost init`, or replace with `auth login --api-key <key>` |
-| `keychain_unavailable` | OS keychain cannot be used | Use `UNIPOST_API_KEY` or pass `--api-key` |
+| `keychain_unavailable` | Secure local store cannot be used | Use `UNIPOST_API_KEY` or pass `--api-key` |
 
 ## Help And Documentation Changes
 
@@ -374,7 +455,7 @@ Docs should show:
 unipost auth login --api-key <key>
 ```
 
-for users who already created a key.
+for users who already created a key and are running on macOS, or for CI-style contexts where the key is already available and the user understands the local storage behavior.
 
 Docs should mention setup-token only in:
 
@@ -407,18 +488,20 @@ Codex and Claude Code skills should say:
   - storage mode
   - authenticated_at
 
-### OS keychain
+### Secure local store
 
-The full API key should be stored only in OS keychain for keychain-backed modes:
+The full API key should be stored only in a secure OS credential store for keychain-backed modes. In V1, the only supported secure local store is macOS keychain via `/usr/bin/security`.
 
 - setup-token exchange
 - api-key login default
 - interactive `init` API-key entry
 
-If keychain is unavailable:
+If keychain is unavailable on Linux, Windows, or CI:
 
 - Interactive flows must explain that secure local storage is unavailable.
 - CLI may offer `UNIPOST_API_KEY` fallback.
+- CLI may offer explicit `--metadata-only` fallback.
+- Non-interactive keychain-backed login must fail with `KEYCHAIN_UNAVAILABLE` instead of silently recording metadata-only state.
 - CLI must not silently write plaintext API keys to config.
 
 ### Base URL
@@ -467,6 +550,25 @@ When existing binding differs from the new key's workspace:
 - Show old workspace and new workspace.
 - Do not delete the old keychain item until the new key validates.
 
+When secure local storage is unavailable:
+
+```text
+Secure local credential storage is not available on this platform.
+Use UNIPOST_API_KEY for authenticated commands, pass --api-key for one-off commands, or rerun with --metadata-only to record redacted metadata only.
+```
+
+JSON output should include:
+
+```json
+{
+  "ok": false,
+  "error": {
+    "code": "KEYCHAIN_UNAVAILABLE",
+    "message": "Secure local credential storage is not available on this platform."
+  }
+}
+```
+
 ### `auth logout`
 
 When keychain deletion fails:
@@ -480,6 +582,7 @@ When keychain deletion fails:
 - Avoid encouraging users to paste production keys into AI chat.
 - Prefer Dashboard setup-token flow for agent onboarding because it can create a named, revocable CLI key without exposing a long-lived secret.
 - API-key login may accept the key from terminal input; docs should warn that shell history can capture inline command arguments.
+- Setup-token commands also appear in shell history and process arguments when pasted inline. This is mitigated by short expiry, one-time exchange, revocability, and generated client-specific keys, but docs should still avoid presenting inline tokens as a generic manual command.
 - Interactive `init` should prefer hidden input for pasted API keys.
 - JSON output must redact key material.
 - Support bundles must continue to redact API keys and authorization headers.
@@ -504,13 +607,15 @@ unipost auth login --api-key <key>
 
 No automatic migration can restore the key because the previous flow intentionally did not store it.
 
-If existing `auth list` / `auth use` commands are present, stop promoting them. Options:
+`auth list` and `auth use` already exist, but they should not be promoted as multi-account tools.
 
-1. Keep as compatibility aliases but mark hidden/deprecated in help.
-2. Make them operate on the single current credential only and return a deprecation warning.
-3. Remove in a future major CLI version.
+V1 behavior:
 
-Preferred V1: keep compatibility, hide from top-level help, and add deprecation warnings.
+- Keep them as compatibility commands.
+- Hide them from top-level help and docs.
+- Make `auth list` report only the single current binding.
+- Make `auth use` operate only on the current workspace metadata and return a clarification or deprecation warning.
+- Consider removal only in a future major CLI version.
 
 ## API / Backend Requirements
 
@@ -520,7 +625,7 @@ Setup-token flow continues to require existing Dashboard-issued token exchange b
 
 - Token is short-lived.
 - Token can create or return a named CLI API key once.
-- CLI stores returned key in OS keychain.
+- CLI stores returned key in macOS keychain when secure storage is available.
 
 Dashboard should generate commands with explicit client metadata:
 
@@ -554,40 +659,47 @@ Backend audit/logging for setup-token-created CLI keys should include:
 
 ## Acceptance Criteria
 
-1. A user with an existing API key can run `unipost auth login --api-key <key>` and then `unipost doctor --json` without setting `UNIPOST_API_KEY`.
-2. A user can run `unipost init`, paste an API key, and end with a keychain-backed local binding.
+1. On macOS, a user with an existing API key can run `unipost auth login --api-key <key>` and then `unipost doctor --json` without setting `UNIPOST_API_KEY`.
+2. On macOS, a user can run `unipost init`, paste an API key through hidden input, and end with a keychain-backed local binding.
 3. If an old binding exists, `init` and `auth login --api-key` clearly ask before replacing it.
 4. Replacing a binding validates the new key before deleting the old keychain secret.
-5. `auth logout` removes the single local binding; `auth status` then reports missing auth and recommends `unipost init`.
+5. `auth logout` removes the single local binding, removes stored `base_url`, and `auth status` then reports missing auth and recommends `unipost init`.
 6. `--metadata-only` preserves the old no-secret behavior and says authenticated commands are not ready.
-7. `unipost --help` no longer presents setup-token as a normal first-class login option.
-8. `unipost auth login --help` explains setup-token as Dashboard-generated.
-9. Public docs recommend `unipost init` for local setup and mention setup-token only in Dashboard/agent setup contexts.
-10. Codex and Claude Code skills tell agents to prefer `auth status`, `init`, or Dashboard setup commands before asking users for long-lived API keys.
-11. Existing metadata-only configs produce actionable repair messages rather than ambiguous "logged in" state.
-12. Tests cover keychain-backed API-key login, replacement confirmation, metadata-only mode, help text, init reconfiguration, and logout.
+7. On non-macOS, `auth login --api-key <key>` returns `KEYCHAIN_UNAVAILABLE` unless `--metadata-only` is passed, and it gives env-var and one-off alternatives.
+8. `auth status --json` runs without an API key and reports `missing`, `metadata_only`, `keychain_ready`, `invalid`, or `keychain_unavailable`.
+9. `unipost --help` no longer presents setup-token as a normal first-class login option.
+10. `unipost auth login --help` explains setup-token as Dashboard-generated and short-lived.
+11. Public docs recommend `unipost init` for local setup and mention setup-token only in Dashboard/agent setup contexts.
+12. Codex and Claude Code skills tell agents to prefer `auth status`, `init`, or Dashboard setup commands before asking users for long-lived API keys.
+13. Existing metadata-only configs produce actionable repair messages rather than ambiguous "logged in" state.
+14. `auth list` and `auth use` are hidden/de-emphasized compatibility commands and do not imply multi-account switching.
+15. Tests cover macOS keychain-backed API-key login, non-macOS keychain-unavailable behavior, replacement confirmation, metadata-only mode, help text, init reconfiguration, status without a key, and logout.
 
 ## Test Plan
 
 ### CLI unit tests
 
-- `auth login --api-key` stores a keychain-backed credential by default.
+- On macOS or with a fake available secure store, `auth login --api-key` stores a keychain-backed credential by default.
+- With a fake unavailable secure store, `auth login --api-key` fails with `KEYCHAIN_UNAVAILABLE` unless `--metadata-only` is passed.
 - `auth login --api-key --metadata-only` does not store the secret and reports `authenticated_commands_ready: false`.
 - Existing binding replacement requires confirmation.
 - `--yes` allows non-interactive replacement.
 - Replacement does not delete the old keychain item when new validation fails.
-- `auth logout` deletes keychain item and config metadata.
-- `auth status` distinguishes `keychain_ready`, `metadata_only`, `missing`, `invalid`, and `keychain_unavailable`.
+- `auth logout` deletes keychain item, config metadata, and stored `base_url`.
+- `auth status` runs without a key and distinguishes `keychain_ready`, `metadata_only`, `missing`, `invalid`, and `keychain_unavailable`.
 - `doctor` emits actionable findings for missing and metadata-only auth.
 - `init` can complete first-time API-key setup.
+- `init` uses hidden input for pasted API keys.
 - `init` can replace an existing binding.
 - Top-level help hides setup-token from the primary command list.
 - Auth help documents setup-token as Dashboard-generated.
+- `auth list` and `auth use` remain compatibility commands and do not expose multi-account semantics.
 
 ### Integration smoke tests
 
-- Fresh temporary HOME, API-key login, `doctor --json` succeeds.
+- Fresh temporary HOME on macOS or fake secure-store environment, API-key login, `doctor --json` succeeds.
 - Fresh temporary HOME, metadata-only login, `doctor --json` fails with repair hint.
+- Fresh temporary HOME with unavailable secure store, API-key login returns `KEYCHAIN_UNAVAILABLE` and leaves no plaintext key in config.
 - Existing binding to workspace A, login with workspace B key and confirmation, `config show` reflects workspace B.
 - Base URL mismatch warning appears for live key against dev/staging URL.
 
@@ -601,10 +713,14 @@ Backend audit/logging for setup-token-created CLI keys should include:
 
 ### Phase 1: CLI auth behavior
 
-- Make `auth login --api-key` keychain-backed by default.
+- Make `auth login --api-key` keychain-backed by default on macOS.
+- Add explicit `KEYCHAIN_UNAVAILABLE` behavior for Linux, Windows, and CI environments without secure storage.
 - Add `--metadata-only`.
 - Add replacement confirmation and `--yes`.
-- Improve `auth status`, `doctor`, and `logout` messages.
+- Make `auth status` classify local state without requiring an API key.
+- Improve `doctor` and `logout` messages.
+- Make `auth logout` remove stored `base_url`.
+- Keep `auth list` and `auth use` as hidden/de-emphasized compatibility commands.
 
 ### Phase 2: `init` reconfiguration wizard
 
@@ -626,11 +742,16 @@ Backend audit/logging for setup-token-created CLI keys should include:
 - Label setup-token as short-lived and Dashboard-generated.
 - Prefer client-specific command snippets for Codex and Claude Code.
 
+### Future Phase: Cross-platform secure storage
+
+- Evaluate Linux libsecret support.
+- Evaluate Windows Credential Manager support.
+- Preserve the V1 no-plaintext-config invariant.
+- Update acceptance criteria so `auth login --api-key` can be keychain-backed by default beyond macOS only when those secure stores exist.
+
 ## Open Questions
 
-1. Should inline `auth login --api-key <key>` remain supported, or should docs prefer hidden interactive input because shell history can capture the key?
-2. Should `init` create a named API key through Dashboard setup-token only, while API-key login uses the already-created key as-is?
-3. Should `auth list` and `auth use` remain hidden compatibility commands or be removed in the next CLI minor version?
-4. Should `auth logout` preserve `base_url`, or should it reset to production default to avoid stale dev/staging bindings?
-5. Should replacement confirmation be required when the workspace is the same but the API key id differs?
-6. Should setup-token commands expire after first successful exchange or after a short time window even if unused?
+1. Should `init` create a named API key through Dashboard setup-token only, while API-key login uses the already-created key as-is?
+2. Should replacement confirmation be required when the workspace is the same but the API key id differs?
+3. Should setup-token commands expire after first successful exchange or after a short time window even if unused?
+4. Should cross-platform secure storage move into the next CLI minor release, or remain deferred until macOS behavior has been validated in production?
