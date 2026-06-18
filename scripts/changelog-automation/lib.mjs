@@ -97,6 +97,28 @@ export function validateCandidatePayload(payload) {
   return payload;
 }
 
+export function isDiscordWebhookURL(value) {
+  const href = String(value || "").trim();
+  if (!href) return false;
+  try {
+    const url = new URL(href);
+    return (url.hostname === "discord.com" || url.hostname === "discordapp.com") &&
+      url.pathname.startsWith("/api/webhooks/");
+  } catch {
+    return false;
+  }
+}
+
+export function extractAnthropicCandidateContent(body) {
+  const text = (body?.content || [])
+    .filter((part) => part?.type === "text" && String(part.text || "").trim())
+    .map((part) => String(part.text).trim())
+    .join("\n")
+    .trim();
+  if (!text) throw new Error("Anthropic response did not include text content");
+  return text;
+}
+
 function validateLink(link) {
   if (!link || !String(link.label || "").trim() || !String(link.href || "").trim()) {
     throw new Error("links require label and href");

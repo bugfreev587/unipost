@@ -39,6 +39,9 @@ test("publish workflow and daily workflow exist with safe triggers", async () =>
 
   assert.match(daily, /timezone:\s*"America\/Los_Angeles"/);
   assert.match(daily, /scripts\/changelog-automation\/daily\.mjs/);
+  assert.match(daily, /CHANGELOG_ANTHROPIC_API_KEY/);
+  assert.match(daily, /REGRESSION_ALERT_WEBHOOK_URL/);
+  assert.match(daily, /webhook_test/);
   assert.match(publish, /workflow_dispatch/);
   assert.match(publish, /candidate_id/);
   assert.match(publish, /CHANGELOG_RELEASE_GITHUB_TOKEN/);

@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import {
   computePreviousLosAngelesWindow,
+  extractAnthropicCandidateContent,
+  isDiscordWebhookURL,
   normalizeSourceHash,
   renderDiscordCandidateMessage,
   validateCandidatePayload,
@@ -10,6 +12,12 @@ import {
 
 const outDir = process.env.CHANGELOG_OUT_DIR || "artifacts/changelog";
 await mkdir(outDir, { recursive: true });
+
+if (process.env.CHANGELOG_WEBHOOK_TEST === "true") {
+  await sendDiscord("UniPost changelog automation webhook test.");
+  console.log("Changelog Discord webhook test sent.");
+  process.exit(0);
+}
 
 const windowInfo = process.env.CHANGELOG_WINDOW_START && process.env.CHANGELOG_WINDOW_END
   ? {
@@ -70,14 +78,72 @@ async function draftCandidate({ commits, windowInfo }) {
     };
   }
   const apiKey = process.env.CHANGELOG_AI_API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const anthropicKey = process.env.CHANGELOG_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey && !anthropicKey) {
     return {
       hasCandidate: false,
-      reason: "CHANGELOG_AI_API_KEY is not configured; no AI candidate was generated.",
+      reason: "No changelog AI key is configured; no AI candidate was generated.",
       excludedCommits: commits.map((commit) => commit.sha),
     };
   }
   const model = process.env.CHANGELOG_AI_MODEL || "gpt-4.1-mini";
+  const messages = [
+    {
+      role: "system",
+      content: [
+        "You write sparse, factual UniPost public changelog candidates.",
+        "Return strict JSON only with hasCandidate and candidate fields.",
+        "Only include user-visible shipped work. Do not invent SDK versions.",
+        "Never use @unipost/sdk-js. The JavaScript package is @unipost/sdk.",
+        "Do not treat @unipost/agentpost as an SDK.",
+      ].join(" "),
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        date: windowInfo.localDate,
+        commits,
+        schema: {
+          hasCandidate: true,
+          candidate: {
+            id: "stable-kebab-id",
+            date: windowInfo.localDate,
+            displayDate: "Month D, YYYY",
+            title: "Release title",
+            summary: "One factual sentence.",
+            category: "api|sdk|dashboard|platform|dx|reliability",
+            impact: "new|improved|changed|fixed",
+            isBreaking: false,
+            sdkVersions: [],
+            links: [],
+            sourceLinks: [],
+            confidence: "low|medium|high",
+            whyUserVisible: "Concrete user-visible reason.",
+            excludedCommits: [],
+          },
+        },
+      }),
+    },
+  ];
+  if (anthropicKey && !apiKey) {
+    const res = await fetch(process.env.CHANGELOG_ANTHROPIC_URL || "https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": anthropicKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: process.env.CHANGELOG_ANTHROPIC_MODEL || "claude-3-5-haiku-latest",
+        max_tokens: 1600,
+        temperature: 0.2,
+        system: messages[0].content,
+        messages: messages.slice(1),
+      }),
+    });
+    if (!res.ok) throw new Error(`Anthropic request failed: HTTP ${res.status}`);
+    return JSON.parse(extractAnthropicCandidateContent(await res.json()));
+  }
   const res = await fetch(process.env.CHANGELOG_AI_URL || "https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -88,44 +154,7 @@ async function draftCandidate({ commits, windowInfo }) {
       model,
       temperature: 0.2,
       response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You write sparse, factual UniPost public changelog candidates.",
-            "Return strict JSON only with hasCandidate and candidate fields.",
-            "Only include user-visible shipped work. Do not invent SDK versions.",
-            "Never use @unipost/sdk-js. The JavaScript package is @unipost/sdk.",
-            "Do not treat @unipost/agentpost as an SDK.",
-          ].join(" "),
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            date: windowInfo.localDate,
-            commits,
-            schema: {
-              hasCandidate: true,
-              candidate: {
-                id: "stable-kebab-id",
-                date: windowInfo.localDate,
-                displayDate: "Month D, YYYY",
-                title: "Release title",
-                summary: "One factual sentence.",
-                category: "api|sdk|dashboard|platform|dx|reliability",
-                impact: "new|improved|changed|fixed",
-                isBreaking: false,
-                sdkVersions: [],
-                links: [],
-                sourceLinks: [],
-                confidence: "low|medium|high",
-                whyUserVisible: "Concrete user-visible reason.",
-                excludedCommits: [],
-              },
-            },
-          }),
-        },
-      ],
+      messages,
     }),
   });
   if (!res.ok) throw new Error(`AI request failed: HTTP ${res.status}`);
@@ -159,6 +188,9 @@ async function createCandidate(payload, sourceHash, windowInfo) {
 }
 
 async function sendDiscord(content) {
+  if (!isDiscordWebhookURL(process.env.CHANGELOG_DISCORD_WEBHOOK_URL)) {
+    throw new Error("CHANGELOG_DISCORD_WEBHOOK_URL must be a Discord webhook URL");
+  }
   const res = await fetch(process.env.CHANGELOG_DISCORD_WEBHOOK_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
