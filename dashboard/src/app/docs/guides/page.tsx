@@ -1,0 +1,47 @@
+import Link from "next/link";
+import { DocsPage } from "../_components/docs-shell";
+
+export default function GuidesIndexPage() {
+  return (
+    <DocsPage
+      eyebrow="Guides"
+      title="Task guides for UniPost integrations"
+      lead="Use Guides when you know the outcome you want and need the shortest path to the right UniPost API. API Reference stays focused on endpoint contracts."
+      className="docs-page-wide"
+    >
+      <div className="docs-grid">
+        <Link href="/docs/guides/analytics" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Analytics guides</div>
+          <p>Get account metrics, TikTok followers, UniPost-published post analytics, exports, and reconnect guidance.</p>
+        </Link>
+        <Link href="/docs/publishing" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Publishing guide</div>
+          <p>Create posts through the shared publishing flow, including hosted URLs, local media uploads, and status handling.</p>
+        </Link>
+        <Link href="/docs/connect-sessions" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Connect Sessions</div>
+          <p>Let customers connect their own social accounts through UniPost's hosted OAuth flow.</p>
+        </Link>
+        <Link href="/docs/local-connect-test" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Local Connect testing</div>
+          <p>Create a Connect Session from your terminal and open the OAuth flow locally.</p>
+        </Link>
+      </div>
+
+      <h2 id="how-guides-work">How Guides work</h2>
+      <p>
+        Guides answer workflow questions first, then link back to API Reference for exact request, response, and error details.
+        If you already know the endpoint, start in <Link href="/docs/api">API Reference</Link>.
+      </p>
+
+      <h2 id="start-with-analytics">Start with Analytics</h2>
+      <p>
+        The Analytics guide set is built around common questions that are hard to answer from endpoint names alone, such as
+        which UniPost API returns TikTok followers and which fields to read from the response.
+      </p>
+      <p>
+        Start here: <Link href="/docs/guides/analytics">Analytics guides</Link>
+      </p>
+    </DocsPage>
+  );
+}
