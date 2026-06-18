@@ -1669,3 +1669,164 @@ test("init and quickstart summarize the first-run state without creating a live 
     });
   });
 });
+
+// ---- Agent Debug Kit (Phase 1 + 2) ----
+
+test("doctor diagnose --json returns a doctor.v1 payload with findings under data", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/health") {
+      writeJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.url === "/v1/workspace") {
+      writeJson(res, 200, { data: { id: "ws_diag", name: "Diag", plan: "pro" }, request_id: "req_ws" });
+      return;
+    }
+    if (req.url === "/v1/profiles") {
+      writeJson(res, 200, { data: [{ id: "pr_1" }] });
+      return;
+    }
+    if (req.url === "/v1/accounts") {
+      writeJson(res, 200, { data: [{ id: "sa_1", platform: "linkedin", status: "connected" }] });
+      return;
+    }
+    if (req.url.startsWith("/v1/logs")) {
+      writeJson(res, 200, { data: [], meta: { has_more: false } });
+      return;
+    }
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.ok, true);
+    assert.equal(body.data.schema_version, "doctor.v1");
+    assert.equal(body.data.command, "doctor.diagnose");
+    assert.equal(body.data.status, "passed");
+    assert.equal(body.data.environment.api_key_kind, "live");
+    assert.equal(body.data.environment.api_key_masked, "up_live_abcd...4efgh");
+    assert.ok(Array.isArray(body.data.findings));
+  });
+});
+
+test("doctor diagnose flags a missing connected account as input_required", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/health") return void writeJson(res, 200, { ok: true });
+    if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_diag" } });
+    if (req.url === "/v1/profiles") return void writeJson(res, 200, { data: [{ id: "pr_1" }] });
+    if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [] });
+    if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [] });
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 3);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.status, "input_required");
+    const finding = body.data.findings.find((f) => f.id === "finding_no_connected_account");
+    assert.ok(finding);
+    assert.equal(finding.recommended_actions[0].safety, "manual_only");
+  });
+});
+
+test("doctor diagnose reports unauthorized auth as a failed status", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/health") return void writeJson(res, 200, { ok: true });
+    if (req.url === "/v1/workspace") {
+      return void writeJson(res, 401, { error: { normalized_code: "unauthorized", message: "bad key" } });
+    }
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 6);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.status, "failed");
+    assert.ok(body.data.findings.some((f) => f.id === "finding_auth_unauthorized"));
+  });
+});
+
+test("doctor verify --json runs non-destructive checks and never live-publishes", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_v" } });
+    if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [{ id: "sa_1", status: "connected" }] });
+    if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [] });
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "verify", "--allow-live-publish", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.command, "doctor.verify");
+    assert.equal(body.data.status, "passed");
+    assert.equal(body.data.verification.passed, true);
+    const livePublish = body.data.verification.checks.find((c) => c.id === "live_publish");
+    assert.equal(livePublish.status, "warn");
+  });
+});
+
+test("logs list --json maps filters to the public logs API and redacts secrets", async () => {
+  await withServer((req, res) => {
+    assert.match(req.url, /^\/v1\/logs\?/);
+    assert.match(req.url, /status=error/);
+    assert.match(req.url, /from=/);
+    writeJson(res, 200, {
+      data: [{ id: 7, ts: "2026-06-17T00:00:00Z", status: "error", category: "publish", action: "create", error_code: "validation_error", request_id: "req_abc", message: "key up_live_secretvalue123 leaked" }],
+      meta: { has_more: false, limit: 100 },
+      request_id: "req_list",
+    });
+  }, async (baseUrl) => {
+    const result = await runCli(["logs", "list", "--status", "error", "--since", "2h", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.logs.length, 1);
+    assert.equal(body.data.logs[0].id, 7);
+    assert.doesNotMatch(body.data.logs[0].message, /secretvalue123/);
+  });
+});
+
+test("logs get <id> --json reads a single log", async () => {
+  await withServer((req, res) => {
+    assert.equal(req.url, "/v1/logs/42");
+    writeJson(res, 200, { data: { id: 42, status: "error", action: "create", error_code: "not_found" }, request_id: "req_g" });
+  }, async (baseUrl) => {
+    const result = await runCli(["logs", "get", "42", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.log.id, 42);
+  });
+});
+
+test("doctor explain --request-id correlates a failed request", async () => {
+  await withServer((req, res) => {
+    assert.match(req.url, /^\/v1\/logs\?.*request_id=req_xyz/);
+    writeJson(res, 200, { data: [{ id: 9, status: "error", action: "create", http_status_code: 422, error_code: "validation_error", request_id: "req_xyz" }], request_id: "req_e" });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "explain", "--request-id", "req_xyz", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.command, "doctor.explain");
+    assert.ok(body.data.findings.some((f) => f.id === "finding_request_explained"));
+  });
+});
+
+test("agent capabilities advertises doctor and logs debug commands", async () => {
+  const result = await runCli(["agent", "capabilities", "--json"]);
+  assert.equal(result.code, 0);
+  const body = JSON.parse(result.stdout);
+  assert.ok(body.data.commands.includes("doctor diagnose"));
+  assert.ok(body.data.commands.includes("logs list"));
+  assert.equal(body.data.debug.schema_version, "doctor.v1");
+  assert.ok(body.data.debug.action_safety_levels.includes("manual_only"));
+});
