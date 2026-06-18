@@ -210,7 +210,7 @@ export const platformAnalyticsDocs: Record<PlatformAnalyticsDoc["slug"], Platfor
     label: "Instagram Analytics",
     platformName: "Instagram",
     title: "Instagram Analytics",
-    description: "Instagram Analytics exposes Business profile details, live account metrics, recent media insight rows, and UniPost-published Instagram post performance.",
+    description: "Optional native drilldown for Instagram Business profile details, live account metrics, recent media insight rows, and UniPost-published Instagram post performance.",
     productionReadiness: "Public-ready for connected Instagram Business accounts with instagram_business_basic and instagram_business_manage_insights granted.",
     scopes: ["instagram_business_basic", "instagram_business_manage_insights"],
     endpoints: [
@@ -332,7 +332,7 @@ export const platformAnalyticsDocs: Record<PlatformAnalyticsDoc["slug"], Platfor
     label: "Threads Analytics",
     platformName: "Threads",
     title: "Threads Analytics",
-    description: "Threads Analytics exposes profile details, live account metrics, recent post insights, and UniPost-published Threads post performance.",
+    description: "Optional native drilldown for Threads profile details, live account metrics, recent post insights, and UniPost-published Threads post performance.",
     productionReadiness: "Public-ready for connected Threads profiles with threads_basic and threads_manage_insights granted.",
     scopes: ["threads_basic", "threads_manage_insights"],
     endpoints: [
@@ -446,7 +446,7 @@ export const platformAnalyticsDocs: Record<PlatformAnalyticsDoc["slug"], Platfor
     label: "Pinterest Analytics",
     platformName: "Pinterest",
     title: "Pinterest Analytics",
-    description: "Pinterest Analytics exposes board inventory and UniPost-published Pin performance, including impressions, saves, outbound clicks, and comments.",
+    description: "Optional native drilldown for Pinterest board inventory and UniPost-published Pin performance, including impressions, saves, outbound clicks, and comments.",
     productionReadiness: "Public-ready for connected Pinterest accounts with pins:read, boards:read, and user_accounts:read granted.",
     scopes: ["pins:read", "boards:read", "user_accounts:read"],
     endpoints: [
@@ -503,7 +503,7 @@ export const platformAnalyticsDocs: Record<PlatformAnalyticsDoc["slug"], Platfor
     label: "Facebook Page Analytics",
     platformName: "Facebook Page",
     title: "Facebook Page Analytics",
-    description: "Facebook Page Analytics exposes Page profile data, Page Insights, recent Page posts, and UniPost-published Facebook post performance.",
+    description: "Optional native drilldown for Facebook Page profile data, Page Insights, recent Page posts, and UniPost-published Facebook post performance.",
     productionReadiness: "Public-ready for connected Facebook Pages with pages_read_engagement granted; read_insights unlocks Page-level insight fields.",
     scopes: ["pages_read_engagement", "read_insights"],
     endpoints: [

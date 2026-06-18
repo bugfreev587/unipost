@@ -92,8 +92,8 @@ export default function AnalyticsPlatformDetailPage() {
   return (
     <SingleEndpointReferencePage
       section="analytics"
-      title="Get analytics platform"
-      description="Returns one platform's analytics availability, summary metrics, daily trend, connected-account health, and top posts."
+      title="Get platform summary"
+      description="Returns one platform's normalized analytics availability, summary metrics, daily trend, connected-account health, and top posts from the unified UniPost Analytics API."
       method="GET"
       path="/v1/analytics/platforms/{platform}"
       requestSections={[

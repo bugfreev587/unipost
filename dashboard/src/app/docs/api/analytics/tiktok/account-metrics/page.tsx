@@ -85,13 +85,13 @@ export default function TikTokAccountMetricsPage() {
     <SingleEndpointReferencePage
       breadcrumbItems={[
         { label: "API Reference", href: "/docs/api" },
-        { label: "Analytics", href: "/docs/api/analytics/summary" },
+        { label: "Analytics", href: "/docs/api/analytics/platforms" },
         { label: "TikTok Analytics", href: "/docs/api/analytics/tiktok" },
         { label: "Account metrics" },
       ]}
       section="analytics"
       title="Get TikTok account metrics"
-      description="Returns account-level TikTok statistics for one connected account. TikTok has approved user.info.stats for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
+      description="Returns account-level TikTok statistics for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved user.info.stats for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
       method="GET"
       path="/v1/accounts/:account_id/metrics"
       requestSections={[
