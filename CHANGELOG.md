@@ -8,6 +8,16 @@ each section heading below corresponds to a sprint, not a published version.
 
 ## [Unreleased]
 
+### Added — UniPost CLI 0.3.0
+
+- **Single-account auth onboarding cleanup** — `auth login --api-key` now stores
+  a secure local credential by default on macOS, `--metadata-only` is an
+  explicit compatibility mode, `auth status` reports missing and metadata-only
+  local states without requiring a key, `init --api-key` can configure an
+  existing key, replacement of an existing local binding requires confirmation,
+  and `auth logout` clears stale local `base_url` state. Codex and Claude Code
+  instruction packages now begin debug workflows with `auth status`.
+
 ### Changed — Workspace + Profile Architecture Refactor
 
 - **Breaking**: `Project` concept split into `Workspace` (security boundary,

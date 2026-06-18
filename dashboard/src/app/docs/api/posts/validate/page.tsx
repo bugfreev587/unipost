@@ -105,9 +105,24 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     description: "Human-readable validation message.",
   },
   {
+    name: "errors[].hint?",
+    type: "string",
+    description: "Specific remediation guidance when UniPost can safely suggest a fix.",
+  },
+  {
+    name: "errors[].next_action?",
+    type: "string",
+    description: "Stable action enum for blocking validation errors, such as shorten_caption or fix_request.",
+  },
+  {
     name: "errors[].actual?",
     type: "any",
-    description: "Structured details for issue-specific recovery steps, when available.",
+    description: "Actual submitted value or count, such as a caption length of 91.",
+  },
+  {
+    name: "errors[].limit?",
+    type: "any",
+    description: "Platform limit that was exceeded or missed, such as 90 for TikTok photo titles.",
   },
   {
     name: "errors[].severity",
@@ -136,6 +151,11 @@ const ERROR_FIELDS: ApiFieldItem[] = [
     name: "error.message",
     type: "string",
     description: "Human-readable error message.",
+  },
+  {
+    name: "error.issues?",
+    type: "array",
+    description: "Structured validation issues when create/publish preflight rejects the payload.",
   },
   {
     name: "request_id",

@@ -20,11 +20,12 @@ const GLOBAL_FLAGS = [
   ["`--output <table|json|yaml>`", "Selects human/table, JSON, or YAML output where the command supports structured output."],
   ["`--field <field>`", "Prints one field from the JSON envelope, useful for scripts."],
   ["`--base-url <url>`", "Overrides the API origin for this run."],
-  ["`--api-key <key>`", "Uses an API key for this run without changing local config."],
+  ["`--api-key <key>`", "Uses an API key for this run. With `auth login` or `init`, it can create the local CLI binding."],
   ["`--setup-token <token>`", "Exchanges a Dashboard setup token for a local CLI credential."],
+  ["`--metadata-only`", "Records redacted API-key metadata only; authenticated commands still need `UNIPOST_API_KEY` or `--api-key`."],
   ["`--profile <id>` / `--account <id>`", "Selects a profile or account for commands that need one."],
   ["`--limit`, `--cursor`, `--all`", "Controls pagination for list commands."],
-  ["`--yes`", "Confirms a publish-capable or destructive action after user approval."],
+  ["`--yes`", "Confirms local auth replacement, publish-capable writes, or destructive actions after user approval."],
   ["`--idempotency-key <key>`", "Required for publish-capable writes after approval."],
 ] as const;
 
@@ -43,7 +44,7 @@ const ACCOUNTS_LIST_RESPONSE = `{
   "warnings": [],
   "meta": {
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.1.2",
+    "cli_version": "0.3.0",
     "command": "accounts list",
     "source": "cli"
   }
@@ -102,7 +103,7 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
     commands: [
       {
         name: "auth login --setup-token",
-        description: "Exchanges a short-lived Dashboard setup token for a named local CLI credential.",
+        description: "Exchanges a short-lived Dashboard setup token for a named local CLI credential. If a local binding already exists, add `--yes` after confirming replacement.",
         example: "unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json",
         response: envelope("auth login", `{
     "authenticated": true,
@@ -113,37 +114,41 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
       },
       {
         name: "auth login --api-key",
-        description: "Validates an API key and stores only redacted local credential metadata.",
+        description: "Validates an existing API key and stores a secure local CLI credential when available. If a local binding already exists, add `--yes` after confirming replacement.",
         example: "unipost auth login --api-key up_live_... --json",
         response: envelope("auth login", `{
     "authenticated": true,
-    "credential_source": "api_key",
     "workspace": { "id": "ws_1", "name": "Studio" },
+    "credential": { "storage": "keychain", "credential_source": "api_key" },
+    "stored_secret": true,
+    "authenticated_commands_ready": true,
     "config_path": "~/.config/unipost/config.json"
   }`),
       },
       {
         name: "auth logout",
-        description: "Clears local UniPost CLI credential metadata and keychain locator values.",
+        description: "Clears the single local UniPost CLI credential and stored base URL.",
         example: "unipost auth logout --json",
         response: envelope("auth logout", `{
-    "logged_out": true,
+    "removed_credential": true,
+    "remote_revoked": false,
     "config_path": "~/.config/unipost/config.json"
   }`),
       },
       {
         name: "auth status",
-        description: "Verifies that the active credential can reach the current workspace.",
+        description: "Reports local auth state and verifies a usable credential when present.",
         example: "unipost auth status --json",
         response: envelope("auth status", `{
     "authenticated": true,
+    "state": "keychain_ready",
     "credential_source": "keychain",
     "workspace": { "id": "ws_1", "name": "Studio" }
   }`),
       },
       {
         name: "auth list",
-        description: "Shows the active local or environment credential and workspace selection.",
+        description: "Compatibility command that reports the single current local or environment credential.",
         example: "unipost auth list --json",
         response: envelope("auth list", `{
     "credentials": [
@@ -159,7 +164,7 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
       },
       {
         name: "auth use",
-        description: "Sets the default workspace ID used by later CLI commands.",
+        description: "Compatibility command that sets the default workspace ID for the single local binding.",
         example: "unipost auth use ws_1 --json",
         response: envelope("auth use", `{
     "default_workspace_id": "ws_1",
@@ -776,14 +781,14 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
         name: "--version",
         description: "Prints the installed CLI version.",
         example: "unipost --version",
-        response: "0.1.2\n",
+        response: "0.3.0\n",
         responseLang: "text",
       },
       {
         name: "--help",
         description: "Prints top-level usage, supported commands, global flags, install, and upgrade notes.",
         example: "unipost --help",
-        response: "UniPost CLI 0.1.2\n\nUsage:\n  unipost --version\n  unipost init [--json]\n  unipost accounts list|get|health|capabilities|metrics [--json]\n",
+        response: "UniPost CLI 0.3.0\n\nUsage:\n  unipost --version\n  unipost init [--json]\n  unipost accounts list|get|health|capabilities|metrics [--json]\n",
         responseLang: "text",
       },
       {
@@ -901,7 +906,7 @@ function envelope(command: string, data: string, options: { pagination?: boolean
   "warnings": [],
   "meta": {
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.1.2",
+    "cli_version": "0.3.0",
     "command": "${command}",
     "source": "cli"${pagination}
   }

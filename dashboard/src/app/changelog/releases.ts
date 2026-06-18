@@ -47,6 +47,34 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "cli-0-3-0-auth-onboarding",
+    date: "2026-06-18",
+    displayDate: "June 18, 2026",
+    title: "CLI 0.3.0 auth onboarding cleanup",
+    summary:
+      "The UniPost CLI now treats auth as a single local binding: API-key login stores a secure local credential on macOS, metadata-only mode is explicit, replacing an existing binding requires confirmation, auth status classifies missing and metadata-only setups, and agent debug skills start with an auth readiness check.",
+    category: "dx",
+    impact: "improved",
+    isBreaking: false,
+    sdkVersions: [
+      {
+        ecosystem: "npm",
+        packageName: "@unipost/cli",
+        version: "0.3.0",
+        href: "https://www.npmjs.com/package/@unipost/cli",
+        installCommand: "npm install -g @unipost/cli@0.3.0",
+      },
+    ],
+    links: [
+      { label: "CLI overview", href: "/docs/cli" },
+      { label: "CLI reference", href: "/docs/cli/reference" },
+      { label: "AI-assisted debugging", href: "/docs/cli/agent-debug" },
+    ],
+    sourceLinks: [
+      { label: "npm package", href: "https://www.npmjs.com/package/@unipost/cli" },
+    ],
+  },
+  {
     id: "sdk-0-4-0",
     date: "2026-06-18",
     displayDate: "June 18, 2026",
