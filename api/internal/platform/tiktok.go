@@ -283,17 +283,50 @@ func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any, mediaKi
 }
 
 func wrapTikTokInitError(prefix string, status int, body []byte, privacyLevel string) error {
-	msg := fmt.Sprintf("%s (%d): %s", prefix, status, string(body))
-	if strings.Contains(string(body), `"code":"invalid_params"`) {
-		msg += " [TikTok often returns this message for malformed request bodies; we now send the required toggle fields automatically.]"
-		if strings.Contains(prefix, "photo init") {
-			msg += " [For photo posts, TikTok caps photo title at 90 UTF-16 code units; UniPost sends the full caption as description.]"
-		}
-		if privacyLevel != "SELF_ONLY" {
-			msg += " [If this TikTok app is still in sandbox/unaudited mode, TikTok may reject non-SELF_ONLY privacy levels.]"
-		}
+	code, providerMessage := parseTikTokErrorBody(body)
+	if code == "invalid_params" {
+		return fmt.Errorf("%s", tiktokInvalidParamsMessage(prefix, status, providerMessage, privacyLevel))
 	}
+	msg := fmt.Sprintf("%s (%d): %s", prefix, status, string(body))
 	return fmt.Errorf("%s", msg)
+}
+
+func parseTikTokErrorBody(body []byte) (code string, message string) {
+	var payload struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return "", ""
+	}
+	return strings.TrimSpace(payload.Error.Code), strings.TrimSpace(payload.Error.Message)
+}
+
+func tiktokInvalidParamsMessage(prefix string, status int, providerMessage string, privacyLevel string) string {
+	mediaKind := "publish"
+	if strings.Contains(prefix, "photo init") {
+		mediaKind = "photo publish"
+	} else if strings.Contains(prefix, "pull init") {
+		mediaKind = "video publish"
+	}
+	parts := []string{
+		fmt.Sprintf("TikTok rejected the %s request: TikTok reported invalid_params.", mediaKind),
+		"Common fixes: confirm the TikTok privacy/content options are supported.",
+		"UniPost sends TikTok's required interaction toggles automatically.",
+	}
+	if strings.Contains(prefix, "photo init") {
+		parts = append(parts, "For photo posts, keep photo captions/titles to 90 characters or fewer.")
+	}
+	if privacyLevel != "SELF_ONLY" {
+		parts = append(parts, "If this TikTok app is still in sandbox/unaudited mode, use SELF_ONLY privacy until app review is complete.")
+	}
+	if providerMessage != "" && !strings.Contains(strings.ToLower(providerMessage), "invalid authorization header") {
+		parts = append(parts, "TikTok message: "+providerMessage+".")
+	}
+	parts = append(parts, fmt.Sprintf("(provider_error=invalid_params, status=%d)", status))
+	return strings.Join(parts, " ")
 }
 
 func shouldRetryTikTokWithSelfOnly(status int, body []byte, privacyLevel string) bool {
