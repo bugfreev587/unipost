@@ -28,7 +28,7 @@ const SDKS = [
     language: "Java 11+",
     repo: "github.com/unipost-dev/sdk-java",
     href: "https://github.com/unipost-dev/sdk-java",
-    install: "implementation(\"dev.unipost:sdk-java:0.2.9\")",
+    install: "implementation(\"dev.unipost:sdk-java:0.3.0\")",
   },
 ] as const;
 
@@ -52,7 +52,7 @@ export default function SdkPage() {
       className="docs-page-wide"
       eyebrow="SDKs"
       title="SDKs"
-      lead="Official UniPost client libraries for JavaScript, Python, Go, and Java. Publish to every connected platform with one typed interface."
+      lead="Official UniPost client libraries for JavaScript, Python, Go, and Java. Publish, analyze, and stream developer logs with one API-key-authenticated interface."
     >
       <style dangerouslySetInnerHTML={{ __html: styles }} />
 
