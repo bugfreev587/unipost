@@ -37,6 +37,7 @@ import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { z } from "zod";
 import { registerAgentContractTools } from "./agent-contract.js";
+import { apiRequest as requestApi } from "./api-client.js";
 
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const PORT = parseInt(process.env.PORT || "3001", 10);
@@ -45,15 +46,7 @@ const HOSTED_URL_GUIDANCE =
 
 // ── API helper (uses per-request API key) ──
 async function apiRequest(path: string, apiKey: string, options?: RequestInit) {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-      ...options?.headers,
-    },
-  });
-  return res.json();
+  return requestApi(API_URL, path, apiKey, options);
 }
 
 type UploadMediaResult =
@@ -205,9 +198,9 @@ function createMcpServer(apiKey: string): McpServer {
       "platform_posts entry becomes ONE platform post — listing the",
       "same account_id twice produces two posts on that account.",
       "",
-      "Both shapes accept an optional idempotency_key — passing the",
-      "same key within 24h returns the original response unchanged",
-      "(no duplicate posts created).",
+      "For scheduled posts, optional idempotency_key prevents duplicate",
+      "scheduled posts: same key + same scheduled payload returns the",
+      "existing scheduled post. Do not rely on it for immediate publish.",
       "",
       "Call unipost_get_capabilities first to learn each platform's",
       "caption length and media limits, or unipost_validate_post to",
@@ -270,7 +263,7 @@ function createMcpServer(apiKey: string): McpServer {
         .string()
         .optional()
         .describe(
-          "Optional idempotency key. Same key + same workspace within 24h returns the prior response unchanged."
+          "Optional idempotency key for scheduled posts. Same key + same scheduled payload returns the existing scheduled post."
         ),
       status: z
         .enum(["draft"])
@@ -299,7 +292,7 @@ function createMcpServer(apiKey: string): McpServer {
       if (args.idempotency_key) body.idempotency_key = args.idempotency_key;
       if (args.status) body.status = args.status;
 
-      const data = await apiRequest("/v1/social-posts", apiKey, {
+      const data = await apiRequest("/v1/posts", apiKey, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -344,7 +337,7 @@ function createMcpServer(apiKey: string): McpServer {
         if (args.media_urls?.length) body.media_urls = args.media_urls;
       }
       if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
-      const data = await apiRequest("/v1/social-posts/validate", apiKey, {
+      const data = await apiRequest("/v1/posts/validate", apiKey, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -370,7 +363,7 @@ function createMcpServer(apiKey: string): McpServer {
     "Get the status and details of a published post",
     { post_id: z.string().describe("The post ID") },
     async ({ post_id }) => {
-      const data = await apiRequest(`/v1/social-posts/${post_id}`, apiKey);
+      const data = await apiRequest(`/v1/posts/${post_id}`, apiKey);
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
     }
   );
@@ -380,7 +373,7 @@ function createMcpServer(apiKey: string): McpServer {
     "Get engagement metrics for a published post",
     { post_id: z.string().describe("The post ID") },
     async ({ post_id }) => {
-      const data = await apiRequest(`/v1/social-posts/${post_id}/analytics`, apiKey);
+      const data = await apiRequest(`/v1/posts/${post_id}/analytics`, apiKey);
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
     }
   );
@@ -406,7 +399,7 @@ function createMcpServer(apiKey: string): McpServer {
       if (args.limit) params.set("limit", String(args.limit));
       if (args.cursor) params.set("cursor", args.cursor);
       const qs = params.toString();
-      const data = await apiRequest("/v1/social-posts" + (qs ? "?" + qs : ""), apiKey);
+      const data = await apiRequest("/v1/posts" + (qs ? "?" + qs : ""), apiKey);
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };
     }
   );
@@ -589,7 +582,7 @@ function createMcpServer(apiKey: string): McpServer {
       if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
       if (args.idempotency_key) body.idempotency_key = args.idempotency_key;
 
-      const data = await apiRequest("/v1/social-posts", apiKey, {
+      const data = await apiRequest("/v1/posts", apiKey, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -645,7 +638,7 @@ function createMcpServer(apiKey: string): McpServer {
       }
       if (args.scheduled_at) body.scheduled_at = args.scheduled_at;
 
-      const data = await apiRequest("/v1/social-posts", apiKey, {
+      const data = await apiRequest("/v1/posts", apiKey, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -661,12 +654,12 @@ function createMcpServer(apiKey: string): McpServer {
       idempotency_key: z
         .string()
         .optional()
-        .describe("Optional idempotency key for retry safety."),
+        .describe("Optional idempotency key for draft publish retry safety when the API supports it."),
     },
     async ({ draft_id, idempotency_key }) => {
       const body: any = {};
       if (idempotency_key) body.idempotency_key = idempotency_key;
-      const data = await apiRequest(`/v1/social-posts/${draft_id}/publish`, apiKey, {
+      const data = await apiRequest(`/v1/posts/${draft_id}/publish`, apiKey, {
         method: "POST",
         body: JSON.stringify(body),
       });
@@ -722,7 +715,7 @@ function createMcpServer(apiKey: string): McpServer {
       scheduled_at: z.string().describe("New RFC3339 timestamp; must be at least 60 seconds in the future."),
     },
     async ({ post_id, scheduled_at }) => {
-      const data = await apiRequest(`/v1/social-posts/${post_id}`, apiKey, {
+      const data = await apiRequest(`/v1/posts/${post_id}`, apiKey, {
         method: "PATCH",
         body: JSON.stringify({ scheduled_at }),
       });
@@ -737,7 +730,7 @@ function createMcpServer(apiKey: string): McpServer {
       post_id: z.string().describe("ID of the draft or scheduled post."),
     },
     async ({ post_id }) => {
-      const data = await apiRequest(`/v1/social-posts/${post_id}/cancel`, apiKey, {
+      const data = await apiRequest(`/v1/posts/${post_id}/cancel`, apiKey, {
         method: "POST",
       });
       return { content: [{ type: "text" as const, text: JSON.stringify(data.data, null, 2) }] };

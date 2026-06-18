@@ -40,20 +40,13 @@ const sse_js_1 = require("@modelcontextprotocol/sdk/server/sse.js");
 const streamableHttp_js_1 = require("@modelcontextprotocol/sdk/server/streamableHttp.js");
 const zod_1 = require("zod");
 const agent_contract_js_1 = require("./agent-contract.js");
+const api_client_js_1 = require("./api-client.js");
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const PORT = parseInt(process.env.PORT || "3001", 10);
 const HOSTED_URL_GUIDANCE = "If you are creating a post from an already-public media URL, pass that URL directly under platform_posts[].media_urls in unipost_create_post. Use unipost_upload_media only when you need UniPost to store raw bytes and return a media_id.";
 // ── API helper (uses per-request API key) ──
 async function apiRequest(path, apiKey, options) {
-    const res = await fetch(`${API_URL}${path}`, {
-        ...options,
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-            ...options?.headers,
-        },
-    });
-    return res.json();
+    return (0, api_client_js_1.apiRequest)(API_URL, path, apiKey, options);
 }
 async function uploadMediaToLibrary(apiKey, args) {
     if (!args.base64_data && !args.url) {
@@ -171,9 +164,9 @@ function createMcpServer(apiKey) {
         "platform_posts entry becomes ONE platform post — listing the",
         "same account_id twice produces two posts on that account.",
         "",
-        "Both shapes accept an optional idempotency_key — passing the",
-        "same key within 24h returns the original response unchanged",
-        "(no duplicate posts created).",
+        "For scheduled posts, optional idempotency_key prevents duplicate",
+        "scheduled posts: same key + same scheduled payload returns the",
+        "existing scheduled post. Do not rely on it for immediate publish.",
         "",
         "Call unipost_get_capabilities first to learn each platform's",
         "caption length and media limits, or unipost_validate_post to",
@@ -224,7 +217,7 @@ function createMcpServer(apiKey) {
         idempotency_key: zod_1.z
             .string()
             .optional()
-            .describe("Optional idempotency key. Same key + same workspace within 24h returns the prior response unchanged."),
+            .describe("Optional idempotency key for scheduled posts. Same key + same scheduled payload returns the existing scheduled post."),
         status: zod_1.z
             .enum(["draft"])
             .optional()
@@ -256,7 +249,7 @@ function createMcpServer(apiKey) {
             body.idempotency_key = args.idempotency_key;
         if (args.status)
             body.status = args.status;
-        const data = await apiRequest("/v1/social-posts", apiKey, {
+        const data = await apiRequest("/v1/posts", apiKey, {
             method: "POST",
             body: JSON.stringify(body),
         });
@@ -296,7 +289,7 @@ function createMcpServer(apiKey) {
         }
         if (args.scheduled_at)
             body.scheduled_at = args.scheduled_at;
-        const data = await apiRequest("/v1/social-posts/validate", apiKey, {
+        const data = await apiRequest("/v1/posts/validate", apiKey, {
             method: "POST",
             body: JSON.stringify(body),
         });
@@ -310,11 +303,11 @@ function createMcpServer(apiKey) {
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
     });
     server.tool("unipost_get_post", "Get the status and details of a published post", { post_id: zod_1.z.string().describe("The post ID") }, async ({ post_id }) => {
-        const data = await apiRequest(`/v1/social-posts/${post_id}`, apiKey);
+        const data = await apiRequest(`/v1/posts/${post_id}`, apiKey);
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
     });
     server.tool("unipost_get_analytics", "Get engagement metrics for a published post", { post_id: zod_1.z.string().describe("The post ID") }, async ({ post_id }) => {
-        const data = await apiRequest(`/v1/social-posts/${post_id}/analytics`, apiKey);
+        const data = await apiRequest(`/v1/posts/${post_id}/analytics`, apiKey);
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
     });
     server.tool("unipost_list_posts", "List recent posts with optional filters and cursor pagination. Use cursor from a previous call's next_cursor field to walk through more than 25 results.", {
@@ -339,7 +332,7 @@ function createMcpServer(apiKey) {
         if (args.cursor)
             params.set("cursor", args.cursor);
         const qs = params.toString();
-        const data = await apiRequest("/v1/social-posts" + (qs ? "?" + qs : ""), apiKey);
+        const data = await apiRequest("/v1/posts" + (qs ? "?" + qs : ""), apiKey);
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };
     });
     // ── Sprint 2 tools ──
@@ -494,7 +487,7 @@ function createMcpServer(apiKey) {
             body.scheduled_at = args.scheduled_at;
         if (args.idempotency_key)
             body.idempotency_key = args.idempotency_key;
-        const data = await apiRequest("/v1/social-posts", apiKey, {
+        const data = await apiRequest("/v1/posts", apiKey, {
             method: "POST",
             body: JSON.stringify(body),
         });
@@ -539,7 +532,7 @@ function createMcpServer(apiKey) {
         }
         if (args.scheduled_at)
             body.scheduled_at = args.scheduled_at;
-        const data = await apiRequest("/v1/social-posts", apiKey, {
+        const data = await apiRequest("/v1/posts", apiKey, {
             method: "POST",
             body: JSON.stringify(body),
         });
@@ -550,12 +543,12 @@ function createMcpServer(apiKey) {
         idempotency_key: zod_1.z
             .string()
             .optional()
-            .describe("Optional idempotency key for retry safety."),
+            .describe("Optional idempotency key for draft publish retry safety when the API supports it."),
     }, async ({ draft_id, idempotency_key }) => {
         const body = {};
         if (idempotency_key)
             body.idempotency_key = idempotency_key;
-        const data = await apiRequest(`/v1/social-posts/${draft_id}/publish`, apiKey, {
+        const data = await apiRequest(`/v1/posts/${draft_id}/publish`, apiKey, {
             method: "POST",
             body: JSON.stringify(body),
         });
@@ -592,7 +585,7 @@ function createMcpServer(apiKey) {
         post_id: zod_1.z.string().describe("ID of the scheduled post."),
         scheduled_at: zod_1.z.string().describe("New RFC3339 timestamp; must be at least 60 seconds in the future."),
     }, async ({ post_id, scheduled_at }) => {
-        const data = await apiRequest(`/v1/social-posts/${post_id}`, apiKey, {
+        const data = await apiRequest(`/v1/posts/${post_id}`, apiKey, {
             method: "PATCH",
             body: JSON.stringify({ scheduled_at }),
         });
@@ -601,7 +594,7 @@ function createMcpServer(apiKey) {
     server.tool("unipost_cancel_post", "Cancel a draft or scheduled post. Cancelled posts are skipped by the scheduler; cancellation cannot be undone. Returns 409 for posts that are already publishing or published.", {
         post_id: zod_1.z.string().describe("ID of the draft or scheduled post."),
     }, async ({ post_id }) => {
-        const data = await apiRequest(`/v1/social-posts/${post_id}/cancel`, apiKey, {
+        const data = await apiRequest(`/v1/posts/${post_id}/cancel`, apiKey, {
             method: "POST",
         });
         return { content: [{ type: "text", text: JSON.stringify(data.data, null, 2) }] };

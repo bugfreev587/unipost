@@ -37,6 +37,19 @@ type AdminAiProviderKey struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AdminSearchHistory struct {
+	ID              string             `json:"id"`
+	AdminUserID     string             `json:"admin_user_id"`
+	FieldKey        string             `json:"field_key"`
+	Value           string             `json:"value"`
+	ValueNormalized string             `json:"value_normalized"`
+	UsageCount      int32              `json:"usage_count"`
+	FirstUsedAt     pgtype.Timestamptz `json:"first_used_at"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AiSurfaceRouting struct {
 	Surface          string             `json:"surface"`
 	Provider         string             `json:"provider"`
@@ -634,6 +647,22 @@ type Subscription struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 	TrialUsed            bool               `json:"trial_used"`
 	WorkspaceID          string             `json:"workspace_id"`
+}
+
+type SupportBundle struct {
+	ID               string             `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	ActorUserID      pgtype.Text        `json:"actor_user_id"`
+	ActorApiKeyID    pgtype.Text        `json:"actor_api_key_id"`
+	RunID            string             `json:"run_id"`
+	SchemaVersion    string             `json:"schema_version"`
+	CliVersion       string             `json:"cli_version"`
+	Summary          string             `json:"summary"`
+	ReportMarkdown   string             `json:"report_markdown"`
+	Payload          []byte             `json:"payload"`
+	FindingCount     int32              `json:"finding_count"`
+	RecentErrorCount int32              `json:"recent_error_count"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type Usage struct {

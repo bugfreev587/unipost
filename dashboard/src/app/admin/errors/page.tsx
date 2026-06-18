@@ -20,6 +20,7 @@ import {
 } from "@/lib/api";
 
 import { AdminShell, StatCard, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { SearchHistoryInput } from "../_components/search-history-input";
 
 const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky"] as const;
 const SOURCE_OPTIONS = ["all", "dashboard", "api", "mcp"] as const;
@@ -146,11 +147,12 @@ export default function AdminErrorsPage() {
       </div>
 
       <div className="ad-filter-bar">
-        <input
+        <SearchHistoryInput
+          fieldKey="admin.errors.search"
           className="ad-search"
           placeholder="Search by user, workspace, caption, or error..."
           value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          onChange={setSearchInput}
           style={{ width: 320 }}
         />
         <select value={platform} onChange={(e) => setPlatform(e.target.value as typeof platform)}>

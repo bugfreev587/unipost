@@ -1,0 +1,223 @@
+---
+source: citeloop
+citeloop_article_id: "0525251d-008d-45b6-ad21-629b669616b6"
+citeloop_topic_id: "a94297f7-a418-4304-ab3f-e0c76ca13613"
+slug: "team-access-control-rbac-social-publishing"
+title: "RBAC for Social Media Publishing | Team Access Control with UniPost API"
+seo_title: "RBAC for Social Media Publishing | Team Access Control with UniPost API"
+description: "Implement role-based access control (RBAC) and team collaboration for social publishing. Per-member API keys, approval workflows, and account restrictions with UniPost."
+excerpt: "Implement role-based access control (RBAC) and team collaboration for social publishing. Per-member API keys, approval workflows, and account restrictions with UniPost."
+published_at: "2026-06-18"
+updated_at: "2026-06-18"
+author: "UniPost"
+category: "Engineering"
+keywords: []
+canonical: "https://dev.unipost.dev/blog/team-access-control-rbac-social-publishing"
+---
+
+# Team Collaboration and RBAC in Social Publishing: Managing Multi-User Access
+
+## Why RBAC Matters in Social Publishing
+
+Social media represents your brand's voice to the world. When teams coordinate across multiple accounts and campaigns, uncontrolled access creates risk:
+
+- **Brand safety**: Unvetted content reaches your audience without review
+- **Compliance violations**: Unauthorized posts breach regulatory requirements
+- **Credential exposure**: Shared API keys or passwords create audit nightmares
+- **Operational clarity**: Limited visibility into who posted what, when, or why
+
+Role-based access control (RBAC) addresses these challenges by enabling granular permission assignment based on job function. When integrated with a unified social publishing API like UniPost, teams can assign scoped API keys to individual members, track all actions through webhooks, and build approval workflows on top of the platform's native capabilities.
+
+## Building Team RBAC on UniPost
+
+UniPost provides the foundational infrastructure for secure multi-user social publishing with RBAC support:
+
+- **Per-member API key authentication**: Generate individual API keys for each team member. UniPost authenticates requests via API key headers, enabling audit trails and per-person revocation.
+- **Hosted OAuth for account connections**: Teams connect social accounts once through UniPost's OAuth flows. Each connected account (referenced by ID) can be assigned to specific team members in your application layer.
+- **Webhook notifications for RBAC workflows**: UniPost sends webhooks on post delivery, failure, or pending states. Use these events to trigger your own approval workflows, team notifications, and role-based actions.
+- **Dashboard and API publishing**: Both the UniPost Dashboard and API require API key authentication, providing a single point of access control for RBAC-gated requests.
+
+## Implementing Role-Based Access Control on Top of UniPost
+
+UniPost provides API key authentication and webhook infrastructure; you layer role definitions, account restrictions, and approval logic on top in your application.
+
+### Step 1: Define Roles for Your Team
+
+Create role definitions based on job function:
+
+| Role | Create Drafts | Schedule Posts | Publish Immediately | Approve Posts | View Analytics | Manage Team Members |
+|------|---|---|---|---|---|---|
+| Admin | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Content Lead | ✓ | ✓ | ✓ | ✓ | ✓ | – |
+| Creator | ✓ | ✓ | – | – | ✓ | – |
+| Reviewer | – | – | – | ✓ | ✓ | – |
+| Analyst | – | – | – | – | ✓ | – |
+
+Customize roles to match your organization's structure. The key principle: assign only the permissions each role needs to perform their function.
+
+### Step 2: Generate Per-Member API Keys
+
+For each team member, create a unique API key in your user management system and associate it with their role and allowed social accounts:
+
+```json
+{
+  "user_id": "user_123",
+  "name": "Sarah Chen",
+  "role": "content_lead",
+  "allowed_accounts": [
+    "sa_twitter_brand",
+    "sa_instagram_brand"
+  ],
+  "api_key": "sk_live_xxxxx",
+  "created_at": "2024-01-15T10:30:00Z",
+  "expires_at": "2025-01-15T00:00:00Z"
+}
+```
+
+**Best practices for RBAC key management**:
+- Hash keys server-side; display the full key only once at creation.
+- Set expiration dates and enforce periodic rotation (12–24 months).
+- Enable immediate revocation if a key is compromised.
+- Log every API call with its associated key and user role for audit trails.
+
+### Step 3: Validate Permissions Before Publishing to UniPost
+
+Before sending a publish request to UniPost, validate the API key's role and permissions in your application:
+
+```json
+1. Receive publish request with Authorization header (Bearer sk_live_xxxxx)
+2. Hash and look up the API key in your database
+3. Retrieve the associated user, role, and allowed_accounts
+4. Check if the role has permission for this action (e.g., posts:publish)
+5. Verify the target social account is in allowed_accounts
+6. Check if key expiration is valid
+7. If valid: forward to UniPost API with the request
+8. If invalid: reject with 403 Forbidden
+```
+
+This validation layer ensures only authorized team members can publish to specific accounts via UniPost.
+
+### Step 4: Publish via UniPost
+
+Once validated, send the publish request to UniPost. Include the team member's user ID or key metadata for tracking:
+
+```json
+POST https://api.unipost.app/v1/posts
+Authorization: Bearer sk_live_xxxxx
+Content-Type: application/json
+
+{
+  "text": "Check out our latest blog post on social media strategy.",
+  "accounts": ["sa_twitter_brand", "sa_instagram_brand"],
+  "media": [],
+  "schedule_for": null
+}
+```
+
+UniPost handles multi-platform validation, media upload, and delivery tracking across all connected accounts.
+
+### Step 5: Implement Approval Workflows with UniPost Webhooks
+
+For sensitive accounts or content types, use UniPost's webhooks to trigger RBAC-gated approval workflows:
+
+1. **Creator schedules a post** with a flag `requires_approval: true` (stored in your application).
+2. **Post enters draft state** in your system; creator cannot send to UniPost yet.
+3. **Reviewer (with approval permission) is notified** via your application (email, Slack, dashboard).
+4. **Reviewer approves or rejects** in your dashboard based on their RBAC role.
+5. **Approved post is sent to UniPost** for publishing at the scheduled time.
+6. **UniPost sends webhook notification** (`post.delivered` or `post.failed`) back to your application.
+7. **Your application logs the final status** with the creator's user ID and role for audit trails.
+
+Example webhook handling:
+
+```json
+POST /webhooks/unipost
+
+{
+  "event": "post.delivered",
+  "post_id": "post_abc123",
+  "account_id": "sa_twitter_brand",
+  "status": "delivered",
+  "timestamp": "2024-01-15T14:22:00Z"
+}
+
+Response: Update your database with final status and notify the team member who created the post.
+```
+
+## Account-Level Access Control with RBAC
+
+Restrict team members to specific social accounts based on responsibility and role:
+
+```json
+{
+  "user_id": "user_456",
+  "role": "creator",
+  "allowed_accounts": ["sa_twitter_brand", "sa_instagram_brand"],
+  "restricted_accounts": ["sa_linkedin_executive", "sa_tiktok_paid"]
+}
+```
+
+This prevents junior creators from posting to executive or paid accounts, enforcing role-based boundaries.
+
+## Action-Level Permissions
+
+Implement granular API action permissions in your RBAC layer:
+
+- `posts:create` – Create post drafts
+- `posts:schedule` – Schedule posts for future delivery
+- `posts:publish` – Immediately publish posts to UniPost
+- `posts:approve` – Review and approve queued posts
+- `accounts:view` – List connected social accounts
+- `analytics:view` – Access performance metrics
+- `team:manage` – Invite or remove team members
+
+Before executing any action, check that the user's role includes the required permission.
+
+## Security Best Practices for RBAC
+
+### Key Rotation and Expiration
+
+- Set API key expiration to 12–24 months.
+- Prompt team members to generate new keys before expiration.
+- Require new key generation after role changes or security incidents.
+- Never store full API keys in logs or error messages.
+
+### Audit Logging for RBAC Compliance
+
+Log all publishing activities for compliance and investigation:
+
+```json
+{
+  "timestamp": "2024-01-15T14:22:00Z",
+  "user_id": "user_123",
+  "role": "content_lead",
+  "action": "posts:publish",
+  "account_id": "sa_twitter_brand",
+  "post_id": "post_abc123",
+  "ip_address": "192.168.1.1",
+  "status": "success"
+}
+```
+
+Include user ID, role, action, account, and outcome. This creates an immutable trail for security reviews and regulatory compliance.
+
+### Role Change and Offboarding
+
+When a team member changes roles or leaves:
+
+1. **Revoke all API keys** associated with the user immediately.
+2. **Update role assignments** in your RBAC system.
+3. **Audit accounts and posts** created by that user in the past 30 days.
+4. **Generate a compliance report** for your security and legal teams.
+
+## Summary: RBAC for Multi-User Social Publishing
+
+Role-based access control transforms social publishing from a single-key operation into a secure, auditable, team-wide workflow. By combining UniPost's per-member API key authentication, webhook infrastructure, and account connection model with your own role definitions and approval logic, you can:
+
+- Assign granular permissions based on job function
+- Track every post, approval, and publish action to a specific team member
+- Enforce account-level restrictions to protect sensitive accounts
+- Implement approval workflows for compliance-critical content
+- Revoke access immediately if a key or team member is compromised
+
+UniPost handles the heavy lifting of multi-platform publishing, validation, and delivery; you handle the RBAC layer that makes it safe for teams.

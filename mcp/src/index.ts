@@ -4,20 +4,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { registerAgentContractTools } from "./agent-contract.js";
+import { apiRequest as requestApi } from "./api-client.js";
 
 const API_URL = process.env.UNIPOST_API_URL || "https://api.unipost.dev";
 const API_KEY = process.env.UNIPOST_API_KEY || "";
 
 async function apiRequest(path: string, options?: RequestInit) {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${API_KEY}`,
-      ...options?.headers,
-    },
-  });
-  return res.json();
+  return requestApi(API_URL, path, API_KEY, options);
 }
 
 const server = new McpServer({
@@ -77,7 +70,7 @@ server.tool(
     if (media_urls?.length) body.media_urls = media_urls;
     if (scheduled_at) body.scheduled_at = scheduled_at;
 
-    const data = await apiRequest("/v1/social-posts", {
+    const data = await apiRequest("/v1/posts", {
       method: "POST",
       body: JSON.stringify(body),
     });
@@ -100,7 +93,7 @@ server.tool(
     post_id: z.string().describe("The post ID"),
   },
   async ({ post_id }) => {
-    const data = await apiRequest(`/v1/social-posts/${post_id}`);
+    const data = await apiRequest(`/v1/posts/${post_id}`);
     return {
       content: [
         {
@@ -120,7 +113,7 @@ server.tool(
     post_id: z.string().describe("The post ID"),
   },
   async ({ post_id }) => {
-    const data = await apiRequest(`/v1/social-posts/${post_id}/analytics`);
+    const data = await apiRequest(`/v1/posts/${post_id}/analytics`);
     return {
       content: [
         {
@@ -144,7 +137,7 @@ server.tool(
     limit: z.number().optional().describe("Maximum number of posts to return"),
   },
   async ({ status }) => {
-    let path = "/v1/social-posts";
+    let path = "/v1/posts";
     if (status) path += `?status=${status}`;
     const data = await apiRequest(path);
     return {

@@ -257,6 +257,114 @@ export interface AdminIntegrationLog extends IntegrationLog {
   plan_id?: string;
 }
 
+export interface AdminSupportBundle {
+  id: string;
+  workspace_id: string;
+  workspace_name?: string;
+  owner_email?: string;
+  plan_id?: string;
+  run_id: string;
+  schema_version: string;
+  cli_version?: string;
+  summary: string;
+  report_markdown?: string;
+  finding_count: number;
+  recent_error_count: number;
+  created_at: string;
+}
+
+export interface AdminSupportBundleListParams {
+  workspace_id?: string;
+  owner_email?: string;
+  q?: string;
+  limit?: number;
+}
+
+export type AdminSearchHistoryFieldKey =
+  | "admin.logs.q"
+  | "admin.logs.workspace_id"
+  | "admin.logs.owner_email"
+  | "admin.errors.search"
+  | "admin.api_metrics.workspace_id"
+  | "admin.posts.search"
+  | "admin.users.search";
+
+export interface AdminSearchHistoryItem {
+  id: string;
+  field_key: AdminSearchHistoryFieldKey;
+  value: string;
+  usage_count: number;
+  last_used_at: string;
+}
+
+export type AdminChangelogAction = "publish" | "save" | "discard";
+
+export interface AdminChangelogLink {
+  label: string;
+  href: string;
+}
+
+export interface AdminChangelogSDKVersion {
+  ecosystem: "npm" | "pip" | "go" | "maven";
+  packageName: string;
+  version: string;
+  href: string;
+  installCommand?: string;
+}
+
+export interface AdminChangelogReleaseCandidate {
+  id: string;
+  date: string;
+  displayDate?: string;
+  title: string;
+  summary: string;
+  category: "api" | "sdk" | "dashboard" | "platform" | "dx" | "reliability";
+  impact: "new" | "improved" | "changed" | "fixed";
+  isBreaking: boolean;
+  sdkVersions?: AdminChangelogSDKVersion[];
+  links: AdminChangelogLink[];
+  sourceLinks: AdminChangelogLink[];
+  confidence?: string;
+  whyUserVisible: string;
+  excludedCommits?: string[];
+}
+
+export interface AdminChangelogCandidatePayload {
+  hasCandidate: boolean;
+  candidate?: AdminChangelogReleaseCandidate;
+  reason?: string;
+  excludedCommits?: string[];
+}
+
+export interface AdminChangelogCandidate {
+  id: string;
+  source_hash: string;
+  status: "pending" | "saved" | "discarded" | "publishing" | "published" | "failed";
+  payload: AdminChangelogCandidatePayload;
+  window_start: string;
+  window_end: string;
+  discord_message_id?: string;
+  action_request_id?: string;
+  workflow_run_url?: string;
+  acted_by_admin_id?: string;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminChangelogCandidatePreview {
+  candidate: AdminChangelogCandidate;
+  action: AdminChangelogAction;
+}
+
+export interface AdminChangelogActionResult {
+  candidate_id: string;
+  status: AdminChangelogCandidate["status"];
+  action: AdminChangelogAction;
+  message: string;
+  workflow_run_url?: string;
+}
+
 // Client
 
 async function request<T>(
@@ -1505,6 +1613,57 @@ export async function getAdminIntegrationLog(
   id: number | string
 ): Promise<ApiResponse<AdminIntegrationLog>> {
   return request(`/v1/admin/logs/${id}`, token);
+}
+
+export async function listAdminSearchHistory(
+  token: string,
+  fieldKey: AdminSearchHistoryFieldKey,
+  limit = 8,
+): Promise<ApiResponse<AdminSearchHistoryItem[]>> {
+  const qs = new URLSearchParams();
+  qs.set("field_key", fieldKey);
+  qs.set("limit", String(limit));
+  return request(`/v1/admin/search-history?${qs.toString()}`, token);
+}
+
+export async function saveAdminSearchHistory(
+  token: string,
+  fieldKey: AdminSearchHistoryFieldKey,
+  value: string,
+): Promise<ApiResponse<AdminSearchHistoryItem>> {
+  return request("/v1/admin/search-history", token, {
+    method: "POST",
+    body: JSON.stringify({ field_key: fieldKey, value }),
+  });
+}
+
+export async function deleteAdminSearchHistory(
+  token: string,
+  id: string,
+): Promise<ApiResponse<{ deleted: boolean }>> {
+  return request(`/v1/admin/search-history/${encodeURIComponent(id)}`, token, {
+    method: "DELETE",
+  });
+}
+
+export async function listAdminSupportBundles(
+  token: string,
+  params?: AdminSupportBundleListParams
+): Promise<ApiResponse<AdminSupportBundle[]>> {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value === undefined || value === null || value === "") continue;
+    qs.set(key, String(value));
+  }
+  const suffix = qs.toString() ? `?${qs.toString()}` : "";
+  return request(`/v1/admin/support-bundles${suffix}`, token);
+}
+
+export async function getAdminSupportBundle(
+  token: string,
+  id: string
+): Promise<ApiResponse<AdminSupportBundle>> {
+  return request(`/v1/admin/support-bundles/${encodeURIComponent(id)}`, token);
 }
 
 export async function createCheckout(
@@ -3411,6 +3570,34 @@ export async function getAdminAPIMetricsWorkspaces(
   params: APIMetricsQueryParams
 ): Promise<ApiResponse<AdminAPIMetricsWorkspaceRow[]>> {
   return request(`/v1/admin/api-metrics/workspaces?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminChangelogCandidate(
+  token: string,
+  candidateId: string,
+  params: { action: AdminChangelogAction; expires: string; signature: string }
+): Promise<ApiResponse<AdminChangelogCandidatePreview>> {
+  const qs = new URLSearchParams({
+    action: params.action,
+    expires: params.expires,
+    signature: params.signature,
+  });
+  return request(`/v1/admin/changelog-candidates/${encodeURIComponent(candidateId)}?${qs.toString()}`, token);
+}
+
+export async function confirmAdminChangelogCandidateAction(
+  token: string,
+  candidateId: string,
+  data: { action: AdminChangelogAction; expires: string; signature: string }
+): Promise<ApiResponse<AdminChangelogActionResult>> {
+  return request(`/v1/admin/changelog-candidates/${encodeURIComponent(candidateId)}/actions`, token, {
+    method: "POST",
+    body: JSON.stringify({
+      action: data.action,
+      expires: Number(data.expires),
+      signature: data.signature,
+    }),
+  });
 }
 
 // Inbox

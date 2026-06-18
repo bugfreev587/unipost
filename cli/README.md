@@ -80,6 +80,7 @@ UNIPOST_API_KEY=up_live_... unipost doctor explain --request-id req_... --json
 UNIPOST_API_KEY=up_live_... unipost logs list --status error --since 2h --json
 UNIPOST_API_KEY=up_live_... unipost doctor verify --json
 UNIPOST_API_KEY=up_live_... unipost doctor support-bundle --json
+UNIPOST_API_KEY=up_live_... unipost doctor support-bundle --upload --json
 unipost upgrade
 unipost self help
 unipost completion zsh
@@ -100,10 +101,15 @@ upload/readiness waits, analytics reads, MCP client setup generation, MCP auth
 testing, Codex/Claude Code instruction packages, and a limited structured
 `agent execute` beta.
 The Agent Debug Kit adds `doctor diagnose`, `doctor explain`, `doctor verify`,
-`doctor support-bundle`, and `logs list/get`. `doctor diagnose` returns
+`doctor support-bundle`, and `logs list/get`. `doctor support-bundle --upload`
+stores the redacted report in UniPost's super-admin support bundle viewer after
+the local report is written. `doctor diagnose` returns
 `doctor.v1` under the standard JSON envelope and includes local project repair
 hints for common auth, payload, media, SDK, and environment mistakes without
 reading real `.env` contents.
+The MCP server also exposes read-only debug helpers for agents:
+`unipost_debug_recent_logs`, `unipost_debug_explain_request`, and
+`unipost_debug_stream_info`.
 Publish-capable writes require explicit user approval through `--yes` and a
 stable `--idempotency-key`; draft creation and dry-run validation remain safe
 without live publishing.
