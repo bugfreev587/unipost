@@ -9,24 +9,24 @@ async function source(path) {
   return readFile(join(root, path), "utf8");
 }
 
-test("TikTok Analytics API docs live under a dedicated Analytics category", async () => {
+test("TikTok Analytics docs are not promoted as a separate primary Analytics API category", async () => {
   const [apiIndex, docsShell, toolsConfig] = await Promise.all([
     source("src/app/docs/api/page.tsx"),
     source("src/app/docs/_components/docs-shell.tsx"),
     source("src/app/tools/_components/public-analytics-tool.tsx"),
   ]);
 
-  assert.match(apiIndex, /title:\s*"TikTok Analytics"/);
-  assert.match(apiIndex, /\/docs\/api\/analytics\/tiktok\/profile/);
-  assert.match(apiIndex, /\/docs\/api\/analytics\/tiktok\/account-metrics/);
-  assert.match(apiIndex, /\/docs\/api\/analytics\/tiktok\/videos/);
+  assert.doesNotMatch(apiIndex, /title:\s*"TikTok Analytics"/);
+  assert.doesNotMatch(apiIndex, /\/docs\/api\/analytics\/tiktok\/profile/);
+  assert.doesNotMatch(apiIndex, /\/docs\/api\/analytics\/tiktok\/account-metrics/);
+  assert.doesNotMatch(apiIndex, /\/docs\/api\/analytics\/tiktok\/videos/);
 
-  assert.match(docsShell, /label:\s*"TikTok Analytics"/);
-  assert.match(docsShell, /\/docs\/api\/analytics\/tiktok\/profile/);
-  assert.match(docsShell, /\/docs\/api\/analytics\/tiktok\/account-metrics/);
-  assert.match(docsShell, /\/docs\/api\/analytics\/tiktok\/videos/);
+  assert.doesNotMatch(docsShell, /label:\s*"TikTok Analytics"/);
+  assert.doesNotMatch(docsShell, /\/docs\/api\/analytics\/tiktok\/profile/);
+  assert.doesNotMatch(docsShell, /\/docs\/api\/analytics\/tiktok\/account-metrics/);
+  assert.doesNotMatch(docsShell, /\/docs\/api\/analytics\/tiktok\/videos/);
 
-  assert.match(toolsConfig, /docsHref:\s*"\/docs\/api\/analytics\/tiktok"/);
+  assert.match(toolsConfig, /docsHref:\s*"\/docs\/api\/analytics\/platforms"/);
 });
 
 test("TikTok Analytics endpoint pages document production readiness and scopes", async () => {
@@ -43,6 +43,7 @@ test("TikTok Analytics endpoint pages document production readiness and scopes",
     assert.match(page, /tiktok\.analytics_scopes/);
     assert.match(page, /production/i);
     assert.match(page, /approved|public-ready|ready/i);
+    assert.match(page, /optional native drilldown|native drilldown/i);
     assert.match(page, /user\.info\.(profile|stats)|video\.list/);
     assert.doesNotMatch(page, /until (TikTok approves|approval is complete)|Keep the flag off in production/i);
   }

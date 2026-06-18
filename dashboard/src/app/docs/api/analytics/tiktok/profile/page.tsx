@@ -89,13 +89,13 @@ export default function TikTokProfileAnalyticsPage() {
     <SingleEndpointReferencePage
       breadcrumbItems={[
         { label: "API Reference", href: "/docs/api" },
-        { label: "Analytics", href: "/docs/api/analytics/summary" },
+        { label: "Analytics", href: "/docs/api/analytics/platforms" },
         { label: "TikTok Analytics", href: "/docs/api/analytics/tiktok" },
         { label: "Profile" },
       ]}
       section="analytics"
       title="Get TikTok profile"
-      description="Returns TikTok profile fields for one connected account. TikTok has approved user.info.profile for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
+      description="Returns TikTok profile fields for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved user.info.profile for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
       method="GET"
       path="/v1/accounts/:account_id/tiktok/profile"
       requestSections={[

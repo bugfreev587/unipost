@@ -68,8 +68,8 @@ export default function AnalyticsPlatformsPage() {
   return (
     <SingleEndpointReferencePage
       section="analytics"
-      title="Analytics platforms"
-      description="Returns analytics availability, supported metrics, account health, and platform detail entry points for connected destinations."
+      title="Platform capabilities"
+      description="Returns the platform availability, supported metrics, and account health that power the unified UniPost Analytics API. Use this to understand optional native drilldowns without integrating each platform separately."
       method="GET"
       path="/v1/analytics/platforms"
       requestSections={[

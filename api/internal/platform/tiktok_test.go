@@ -133,6 +133,27 @@ func TestBuildTikTokPostInfoPhotoOmitsDuetStitch(t *testing.T) {
 	}
 }
 
+func TestBuildTikTokPostInfoPhotoUsesDescriptionOnly(t *testing.T) {
+	caption := "Automation, but make it useful. Robyn's new auto publish feature sends your posts out on its own so you can spend less time clicking and more time creating."
+	info := buildTikTokPostInfo(caption, "PUBLIC_TO_EVERYONE", nil, "photo")
+
+	if _, ok := info["title"]; ok {
+		t.Fatal("photo post_info must not include title; TikTok caps photo titles at 90 UTF-16 code units")
+	}
+	if got := info["description"]; got != caption {
+		t.Fatalf("description = %v, want full caption", got)
+	}
+}
+
+func TestBuildTikTokPostInfoVideoKeepsCaptionAsTitle(t *testing.T) {
+	caption := "A normal TikTok video caption"
+	info := buildTikTokPostInfo(caption, "PUBLIC_TO_EVERYONE", nil, "video")
+
+	if got := info["title"]; got != caption {
+		t.Fatalf("title = %v, want video caption", got)
+	}
+}
+
 func TestShouldRetryTikTokWithSelfOnly(t *testing.T) {
 	body := []byte(`{"error":{"code":"invalid_params","message":"Invalid authorization header. Please check the format."}}`)
 
@@ -164,6 +185,18 @@ func TestWrapTikTokInitErrorIncludesSandboxGuidance(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error = %q, want to contain %q", got, want)
 		}
+	}
+}
+
+func TestWrapTikTokInitErrorIncludesPhotoTitleGuidance(t *testing.T) {
+	body := []byte(`{"error":{"code":"invalid_params","message":"The request post info is empty or incorrect"}}`)
+
+	err := wrapTikTokInitError("tiktok photo init failed", http.StatusBadRequest, body, "SELF_ONLY")
+	if err == nil {
+		t.Fatal("expected wrapped error")
+	}
+	if got := err.Error(); !strings.Contains(got, "photo title") || !strings.Contains(got, "90 UTF-16") {
+		t.Fatalf("error = %q, want photo title limit guidance", got)
 	}
 }
 

@@ -456,19 +456,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "List analytics posts", href: "/docs/api/analytics/posts-list", method: "GET" },
             { label: "Export analytics posts", href: "/docs/api/analytics/posts/export", method: "GET" },
             { label: "Analytics rollup", href: "/docs/api/analytics/rollup", method: "GET" },
-            { label: "Analytics platforms", href: "/docs/api/analytics/platforms", method: "GET" },
-            { label: "Get analytics platform", href: "/docs/api/analytics/platforms/detail", method: "GET" },
+            { label: "Platform capabilities", href: "/docs/api/analytics/platforms", method: "GET" },
+            { label: "Get platform summary", href: "/docs/api/analytics/platforms/detail", method: "GET" },
             { label: "Request analytics refresh", href: "/docs/api/analytics/refresh", method: "POST" },
-          ],
-        },
-        {
-          label: "TikTok Analytics",
-          children: [
-            { label: "Overview", href: "/docs/api/analytics/tiktok" },
-            { label: "Get TikTok profile", href: "/docs/api/analytics/tiktok/profile", method: "GET" },
-            { label: "Get TikTok account metrics", href: "/docs/api/analytics/tiktok/account-metrics", method: "GET" },
-            { label: "List TikTok public videos", href: "/docs/api/analytics/tiktok/videos", method: "GET" },
-            { label: "TikTok post analytics", href: "/docs/api/analytics/posts", method: "GET" },
           ],
         },
         {
