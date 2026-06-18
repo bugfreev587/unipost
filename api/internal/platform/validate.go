@@ -161,6 +161,8 @@ type Issue struct {
 	Field             string `json:"field"`
 	Code              string `json:"code"`
 	Message           string `json:"message"`
+	Hint              string `json:"hint,omitempty"`
+	NextAction        string `json:"next_action,omitempty"`
 	Actual            any    `json:"actual,omitempty"`
 	Limit             any    `json:"limit,omitempty"`
 	Severity          string `json:"severity"`
@@ -279,6 +281,8 @@ const MaxPlatformPosts = 20
 // be when the caller doesn't override it. 90 days mirrors what the
 // big SaaS schedulers do.
 const defaultMaxScheduleAhead = 90 * 24 * time.Hour
+
+const tiktokPhotoTitleMaxLength = 90
 
 // minScheduleAhead is the minimum lead time for a scheduled post.
 // Anything closer than this is treated as "publish now" and will
@@ -1053,6 +1057,25 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			Message:           plat + " does not allow mixing images and video in one post",
 			Severity:          SeverityError,
 		})
+	}
+
+	if plat == "tiktok" && imageCount > 0 && videoCount == 0 {
+		titleLen := len([]rune(strings.TrimSpace(post.Caption)))
+		if titleLen > tiktokPhotoTitleMaxLength {
+			res.Errors = append(res.Errors, Issue{
+				PlatformPostIndex: i,
+				AccountID:         post.AccountID,
+				Platform:          plat,
+				Field:             "caption",
+				Code:              CodeExceedsMaxLength,
+				Message:           "TikTok photo title must be 90 characters or fewer. UniPost uses the caption as the TikTok photo title for photo posts.",
+				Hint:              "Shorten this TikTok photo caption/title to 90 characters or fewer before publishing.",
+				NextAction:        "shorten_caption",
+				Actual:            titleLen,
+				Limit:             tiktokPhotoTitleMaxLength,
+				Severity:          SeverityError,
+			})
+		}
 	}
 
 	if plat == "facebook" {

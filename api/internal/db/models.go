@@ -103,6 +103,23 @@ type AuditLog struct {
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
+type ChangelogCandidate struct {
+	ID               string             `json:"id"`
+	SourceHash       string             `json:"source_hash"`
+	Status           string             `json:"status"`
+	PayloadJson      []byte             `json:"payload_json"`
+	WindowStart      pgtype.Timestamptz `json:"window_start"`
+	WindowEnd        pgtype.Timestamptz `json:"window_end"`
+	DiscordMessageID pgtype.Text        `json:"discord_message_id"`
+	ActionRequestID  pgtype.Text        `json:"action_request_id"`
+	WorkflowRunUrl   pgtype.Text        `json:"workflow_run_url"`
+	ActedByAdminID   pgtype.Text        `json:"acted_by_admin_id"`
+	ActedAt          pgtype.Timestamptz `json:"acted_at"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type CliSetupToken struct {
 	ID          string             `json:"id"`
 	WorkspaceID string             `json:"workspace_id"`
@@ -632,6 +649,11 @@ type SocialPostResult struct {
 	DebugCurl         pgtype.Text        `json:"debug_curl"`
 	FbMediaType       pgtype.Text        `json:"fb_media_type"`
 	RemotelyDeletedAt pgtype.Timestamptz `json:"remotely_deleted_at"`
+	ErrorCode         pgtype.Text        `json:"error_code"`
+	FailureStage      pgtype.Text        `json:"failure_stage"`
+	PlatformErrorCode pgtype.Text        `json:"platform_error_code"`
+	IsRetriable       pgtype.Bool        `json:"is_retriable"`
+	NextAction        pgtype.Text        `json:"next_action"`
 }
 
 type Subscription struct {

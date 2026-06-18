@@ -74,6 +74,11 @@ export interface ApiError {
     code: string;
     normalized_code?: string;
     message: string;
+    hint?: string;
+    next_action?: string;
+    is_retriable?: boolean;
+    docs_url?: string;
+    issues?: SocialPostValidationIssue[];
   };
   request_id?: string;
 }
@@ -86,6 +91,13 @@ export interface ApiError {
 export interface ApiFetchError extends Error {
   status?: number;
   code?: string;
+  rawCode?: string;
+  requestId?: string;
+  hint?: string;
+  nextAction?: string;
+  isRetriable?: boolean;
+  docsUrl?: string;
+  issues?: SocialPostValidationIssue[];
 }
 
 export interface CreateSocialPostPayload {
@@ -113,6 +125,8 @@ export interface SocialPostValidationIssue {
   field: string;
   code: string;
   message: string;
+  hint?: string;
+  next_action?: string;
   actual?: unknown;
   limit?: unknown;
   severity: "error" | "warning";
@@ -367,6 +381,54 @@ export interface AdminChangelogActionResult {
 
 // Client
 
+function formatIssueValue(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+export function formatApiValidationIssue(issue: SocialPostValidationIssue): string {
+  const target = [issue.platform, issue.field].filter(Boolean).join(" ");
+  const base = issue.message || issue.code || issue.field || "Validation issue";
+  const facts: string[] = [];
+  if (issue.actual !== undefined) facts.push(`current: ${formatIssueValue(issue.actual)}`);
+  if (issue.limit !== undefined) facts.push(`limit: ${formatIssueValue(issue.limit)}`);
+  if (issue.hint) facts.push(`next: ${issue.hint}`);
+  const suffix = facts.length > 0 ? ` (${facts.join("; ")})` : "";
+  return target ? `${target}: ${base}${suffix}` : `${base}${suffix}`;
+}
+
+export function createApiFetchError(status: number, body: unknown): ApiFetchError {
+  const envelope = body as Partial<ApiError>;
+  const apiError = envelope?.error;
+  const issues = Array.isArray(apiError?.issues) ? apiError.issues : undefined;
+  let message = apiError?.message || `Request failed: ${status}`;
+  if (issues && issues.length > 0) {
+    const details = issues.map(formatApiValidationIssue).filter(Boolean).join("; ");
+    if (details) message += `: ${details}`;
+  }
+
+  const thrown = new Error(message) as ApiFetchError;
+  thrown.status = status;
+  thrown.rawCode = apiError?.code;
+  if (apiError?.normalized_code || apiError?.code) {
+    thrown.code = apiError.normalized_code || apiError.code;
+  }
+  thrown.requestId = envelope?.request_id;
+  thrown.hint = apiError?.hint;
+  thrown.nextAction = apiError?.next_action;
+  thrown.isRetriable = apiError?.is_retriable;
+  thrown.docsUrl = apiError?.docs_url;
+  thrown.issues = issues;
+  return thrown;
+}
+
 async function request<T>(
   path: string,
   token: string,
@@ -384,22 +446,7 @@ async function request<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const err = body as ApiError & { error?: { issues?: Array<{ message?: string; field?: string; code?: string }> } };
-    // Include validation issue details if present
-    let message = err.error?.message || `Request failed: ${res.status}`;
-    if (err.error?.issues && err.error.issues.length > 0) {
-      const details = err.error.issues.map((i) => i.message || i.code).filter(Boolean).join("; ");
-      if (details) message += `: ${details}`;
-    }
-    // Attach the server-returned error code (e.g. NEEDS_RECONNECT,
-    // VALIDATION_ERROR) onto the thrown Error so callers can branch
-    // on it without parsing the message. Typed on ApiFetchError below.
-    const thrown = new Error(message) as ApiFetchError;
-    thrown.status = res.status;
-    if (err.error?.normalized_code || err.error?.code) {
-      thrown.code = err.error?.normalized_code || err.error?.code;
-    }
-    throw thrown;
+    throw createApiFetchError(res.status, body);
   }
 
   if (res.status === 204) {
@@ -413,8 +460,7 @@ async function requestPublic<T>(path: string, options?: RequestInit): Promise<T>
   const res = await fetch(`${API_URL}${path}`, options);
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    const err = body as ApiError;
-    throw new Error(err.error?.message || `Request failed: ${res.status}`);
+    throw createApiFetchError(res.status, body);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -1326,6 +1372,11 @@ export interface SocialPostResult {
   // URL uses shortcodes that aren't derivable from the numeric post ID.
   url?: string;
   error_message?: string;
+  error_code?: string;
+  failure_stage?: string;
+  platform_error_code?: string;
+  is_retriable?: boolean;
+  next_action?: string;
   published_at?: string;
   // Serialized curl dump of every failing HTTP request the adapter
   // made during this dispatch. Populated only when status === "failed".

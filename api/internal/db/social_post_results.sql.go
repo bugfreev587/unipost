@@ -87,7 +87,7 @@ func (q *Queries) CountPublishedTodayByAccount(ctx context.Context, socialAccoun
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
 INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action
 `
 
 type CreateSocialPostResultParams struct {
@@ -130,6 +130,11 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.DebugCurl,
 		&i.FbMediaType,
 		&i.RemotelyDeletedAt,
+		&i.ErrorCode,
+		&i.FailureStage,
+		&i.PlatformErrorCode,
+		&i.IsRetriable,
+		&i.NextAction,
 	)
 	return i, err
 }
@@ -144,7 +149,7 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 }
 
 const getSocialPostResultByIDAndPost = `-- name: GetSocialPostResultByIDAndPost :one
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results WHERE id = $1 AND post_id = $2
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action FROM social_post_results WHERE id = $1 AND post_id = $2
 `
 
 type GetSocialPostResultByIDAndPostParams struct {
@@ -168,6 +173,11 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 		&i.DebugCurl,
 		&i.FbMediaType,
 		&i.RemotelyDeletedAt,
+		&i.ErrorCode,
+		&i.FailureStage,
+		&i.PlatformErrorCode,
+		&i.IsRetriable,
+		&i.NextAction,
 	)
 	return i, err
 }
@@ -175,6 +185,8 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 const listFacebookVideosAwaitingStatus = `-- name: ListFacebookVideosAwaitingStatus :many
 SELECT
   spr.id                     AS social_post_result_id,
+  sp.id                      AS post_id,
+  sp.workspace_id,
   spr.external_id,
   spr.url,
   spr.fb_media_type,
@@ -196,6 +208,8 @@ LIMIT 100
 
 type ListFacebookVideosAwaitingStatusRow struct {
 	SocialPostResultID string             `json:"social_post_result_id"`
+	PostID             string             `json:"post_id"`
+	WorkspaceID        string             `json:"workspace_id"`
 	ExternalID         pgtype.Text        `json:"external_id"`
 	Url                pgtype.Text        `json:"url"`
 	FbMediaType        pgtype.Text        `json:"fb_media_type"`
@@ -224,6 +238,8 @@ func (q *Queries) ListFacebookVideosAwaitingStatus(ctx context.Context) ([]ListF
 		var i ListFacebookVideosAwaitingStatusRow
 		if err := rows.Scan(
 			&i.SocialPostResultID,
+			&i.PostID,
+			&i.WorkspaceID,
 			&i.ExternalID,
 			&i.Url,
 			&i.FbMediaType,
@@ -290,7 +306,7 @@ func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg 
 }
 
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2
@@ -329,6 +345,11 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 			&i.DebugCurl,
 			&i.FbMediaType,
 			&i.RemotelyDeletedAt,
+			&i.ErrorCode,
+			&i.FailureStage,
+			&i.PlatformErrorCode,
+			&i.IsRetriable,
+			&i.NextAction,
 		); err != nil {
 			return nil, err
 		}
@@ -341,7 +362,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -366,6 +387,11 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.DebugCurl,
 			&i.FbMediaType,
 			&i.RemotelyDeletedAt,
+			&i.ErrorCode,
+			&i.FailureStage,
+			&i.PlatformErrorCode,
+			&i.IsRetriable,
+			&i.NextAction,
 		); err != nil {
 			return nil, err
 		}
@@ -378,7 +404,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 }
 
 const listSocialPostResultsByPostIDs = `-- name: ListSocialPostResultsByPostIDs :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action FROM social_post_results
 WHERE post_id = ANY($1::text[])
 `
 
@@ -404,6 +430,11 @@ func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 [
 			&i.DebugCurl,
 			&i.FbMediaType,
 			&i.RemotelyDeletedAt,
+			&i.ErrorCode,
+			&i.FailureStage,
+			&i.PlatformErrorCode,
+			&i.IsRetriable,
+			&i.NextAction,
 		); err != nil {
 			return nil, err
 		}
@@ -447,9 +478,14 @@ SET
   error_message = $4,
   published_at = $5,
   url = $6,
-  debug_curl = $7
+  debug_curl = $7,
+  error_code = NULL,
+  failure_stage = NULL,
+  platform_error_code = NULL,
+  is_retriable = NULL,
+  next_action = NULL
 WHERE id = $1
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action
 `
 
 type UpdateSocialPostResultAfterRetryParams struct {
@@ -491,6 +527,43 @@ func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg Upda
 		&i.DebugCurl,
 		&i.FbMediaType,
 		&i.RemotelyDeletedAt,
+		&i.ErrorCode,
+		&i.FailureStage,
+		&i.PlatformErrorCode,
+		&i.IsRetriable,
+		&i.NextAction,
 	)
 	return i, err
+}
+
+const updateSocialPostResultFailureDetails = `-- name: UpdateSocialPostResultFailureDetails :exec
+UPDATE social_post_results
+SET
+  error_code = $2,
+  failure_stage = $3,
+  platform_error_code = $4,
+  is_retriable = $5,
+  next_action = $6
+WHERE id = $1
+`
+
+type UpdateSocialPostResultFailureDetailsParams struct {
+	ID                string      `json:"id"`
+	ErrorCode         pgtype.Text `json:"error_code"`
+	FailureStage      pgtype.Text `json:"failure_stage"`
+	PlatformErrorCode pgtype.Text `json:"platform_error_code"`
+	IsRetriable       pgtype.Bool `json:"is_retriable"`
+	NextAction        pgtype.Text `json:"next_action"`
+}
+
+func (q *Queries) UpdateSocialPostResultFailureDetails(ctx context.Context, arg UpdateSocialPostResultFailureDetailsParams) error {
+	_, err := q.db.Exec(ctx, updateSocialPostResultFailureDetails,
+		arg.ID,
+		arg.ErrorCode,
+		arg.FailureStage,
+		arg.PlatformErrorCode,
+		arg.IsRetriable,
+		arg.NextAction,
+	)
+	return err
 }

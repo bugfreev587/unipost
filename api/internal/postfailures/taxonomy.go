@@ -15,7 +15,11 @@ type Classification struct {
 	IsRetriable       bool
 }
 
-var metaSubcodePattern = regexp.MustCompile(`error_subcode["=: ]+([0-9]+)`)
+var (
+	metaSubcodePattern       = regexp.MustCompile(`error_subcode["=: ]+([0-9]+)`)
+	providerErrorCodePattern = regexp.MustCompile(`(?i)provider_error=([a-z0-9_.:-]+)`)
+	jsonErrorCodePattern     = regexp.MustCompile(`"code"\s*:\s*"([^"]+)"`)
+)
 
 func Classify(raw string) Classification {
 	s := strings.ToLower(strings.TrimSpace(raw))
@@ -34,14 +38,23 @@ func Classify(raw string) Classification {
 	if code := extractMetaSubcode(raw); code != "" {
 		c.PlatformErrorCode = code
 	}
+	if strings.Contains(s, "tiktok") {
+		if code := extractTikTokProviderCode(raw); code != "" {
+			c.PlatformErrorCode = code
+		}
+	}
 
 	switch {
 	case isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "file_format_check_failed"):
 		c.ErrorCode = "media_error"
+		c.PlatformErrorCode = "file_format_check_failed"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "invalid_params"):
-		c.ErrorCode = "validation_error"
+		c.ErrorCode = "platform_request_invalid"
+		if c.PlatformErrorCode == "" {
+			c.PlatformErrorCode = "invalid_params"
+		}
 	case strings.Contains(s, "threads get user id failed") && isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "threads get user id failed") && strings.Contains(s, "(401)"):
@@ -109,8 +122,51 @@ func extractMetaSubcode(raw string) string {
 	return ""
 }
 
+func extractTikTokProviderCode(raw string) string {
+	if m := providerErrorCodePattern.FindStringSubmatch(raw); len(m) == 2 {
+		return strings.ToLower(strings.TrimSpace(m[1]))
+	}
+	if m := jsonErrorCodePattern.FindStringSubmatch(raw); len(m) == 2 {
+		code := strings.ToLower(strings.TrimSpace(m[1]))
+		if code != "" && code != "ok" {
+			return code
+		}
+	}
+	return ""
+}
+
 func ToText(v string) pgtype.Text {
 	return pgtype.Text{String: v, Valid: strings.TrimSpace(v) != ""}
+}
+
+func NextActionForErrorCode(errorCode string) string {
+	switch strings.TrimSpace(errorCode) {
+	case "validation_error":
+		return "fix_request"
+	case "platform_request_invalid":
+		return "review_platform_options"
+	case "media_error":
+		return "fix_media"
+	case "temporary_platform_error", "worker_stalled":
+		return "retry_later"
+	case "rate_limit":
+		return "wait_and_retry"
+	case "quota_exceeded":
+		return "review_quota"
+	case "account_reconnect_required", "auth_token_invalid":
+		return "reconnect_account"
+	case "missing_permission":
+		return "reconnect_or_update_permissions"
+	case "target_not_found":
+		return "select_valid_target"
+	case "unknown_error", "platform_error":
+		return "contact_support"
+	default:
+		if strings.TrimSpace(errorCode) == "" {
+			return ""
+		}
+		return "contact_support"
+	}
 }
 
 func FirstNonEmpty(values ...string) string {

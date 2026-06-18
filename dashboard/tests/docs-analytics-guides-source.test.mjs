@@ -9,6 +9,19 @@ async function source(path) {
   return readFile(join(root, path), "utf8");
 }
 
+test("Docs AI Search PRD defines grounded guide-first search requirements", async () => {
+  const prd = await source("../docs/prd-docs-ai-search.md");
+
+  assert.match(prd, /^# PRD - Docs AI Search/m);
+  assert.match(prd, /guide-first/i);
+  assert.match(prd, /grounded/i);
+  assert.match(prd, /citation/i);
+  assert.match(prd, /no answer without source/i);
+  assert.match(prd, /API Reference remains.*Reference/i);
+  assert.match(prd, /Analytics Guides/i);
+  assert.match(prd, /docs chunk/i);
+});
+
 test("Analytics guides are exposed as Guides, not as API Reference endpoint groups", async () => {
   const docsShell = await source("src/app/docs/_components/docs-shell.tsx");
   const docsHome = await source("src/app/docs/page.tsx");

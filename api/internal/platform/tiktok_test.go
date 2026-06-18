@@ -177,10 +177,11 @@ func TestWrapTikTokInitErrorIncludesSandboxGuidance(t *testing.T) {
 	}
 	got := err.Error()
 	for _, want := range []string{
-		"tiktok photo init failed (400)",
-		"malformed request bodies",
+		"TikTok rejected the photo publish request",
+		"provider_error=invalid_params",
 		"sandbox/unaudited mode",
 		"SELF_ONLY",
+		"90 characters or fewer",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("error = %q, want to contain %q", got, want)
@@ -195,7 +196,7 @@ func TestWrapTikTokInitErrorIncludesPhotoTitleGuidance(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected wrapped error")
 	}
-	if got := err.Error(); !strings.Contains(got, "photo title") || !strings.Contains(got, "90 UTF-16") {
+	if got := err.Error(); !strings.Contains(got, "photo captions/titles") || !strings.Contains(got, "90 characters or fewer") {
 		t.Fatalf("error = %q, want photo title limit guidance", got)
 	}
 }
