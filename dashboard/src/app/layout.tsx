@@ -55,6 +55,7 @@ const themeInitScript = `
       "/pinterest-api",
       "/bluesky-api",
       "/blog",
+      "/changelog",
     ]);
     const isMarketingHost =
       host === "unipost.dev" ||
