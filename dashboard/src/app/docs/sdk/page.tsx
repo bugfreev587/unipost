@@ -28,7 +28,7 @@ const SDKS = [
     language: "Java 11+",
     repo: "github.com/unipost-dev/sdk-java",
     href: "https://github.com/unipost-dev/sdk-java",
-    install: "implementation(\"dev.unipost:sdk-java:0.3.0\")",
+    install: "implementation(\"dev.unipost:sdk-java:0.4.0\")",
   },
 ] as const;
 

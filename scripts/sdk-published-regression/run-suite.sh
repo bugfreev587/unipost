@@ -18,7 +18,7 @@ TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
 JS_SDK_SPEC="${JS_SDK_SPEC:-@unipost/sdk@latest}"
 PYTHON_SDK_SPEC="${PYTHON_SDK_SPEC:-unipost}"
 GO_SDK_SPEC="${GO_SDK_SPEC:-github.com/unipost-dev/sdk-go@latest}"
-JAVA_SDK_VERSION="${JAVA_SDK_VERSION:-0.3.0}"
+JAVA_SDK_VERSION="${JAVA_SDK_VERSION:-0.4.0}"
 
 if [[ -z "$UNIPOST_API_KEY" ]]; then
   echo "UNIPOST_API_KEY is required" >&2
