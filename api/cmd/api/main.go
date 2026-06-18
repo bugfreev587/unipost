@@ -433,6 +433,7 @@ func main() {
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
 	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
+	adminSearchHistoryHandler := handler.NewAdminSearchHistoryHandler(queries, superAdminChecker)
 	apiMetricsRecorder := metrics.NewRecorder(queries)
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
@@ -666,6 +667,9 @@ func main() {
 		r.Get("/v1/admin/api-metrics/trend", adminAPIMetricsHandler.Trend)
 		r.Get("/v1/admin/api-metrics/status-codes", adminAPIMetricsHandler.StatusCodes)
 		r.Get("/v1/admin/api-metrics/workspaces", adminAPIMetricsHandler.Workspaces)
+		r.Get("/v1/admin/search-history", adminSearchHistoryHandler.List)
+		r.Post("/v1/admin/search-history", adminSearchHistoryHandler.Save)
+		r.Delete("/v1/admin/search-history/{id}", adminSearchHistoryHandler.Delete)
 	})
 
 	// All workspace-scoped routes — accept either a Bearer API key or

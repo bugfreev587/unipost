@@ -280,6 +280,23 @@ export interface AdminSupportBundleListParams {
   limit?: number;
 }
 
+export type AdminSearchHistoryFieldKey =
+  | "admin.logs.q"
+  | "admin.logs.workspace_id"
+  | "admin.logs.owner_email"
+  | "admin.errors.search"
+  | "admin.api_metrics.workspace_id"
+  | "admin.posts.search"
+  | "admin.users.search";
+
+export interface AdminSearchHistoryItem {
+  id: string;
+  field_key: AdminSearchHistoryFieldKey;
+  value: string;
+  usage_count: number;
+  last_used_at: string;
+}
+
 // Client
 
 async function request<T>(
@@ -1528,6 +1545,37 @@ export async function getAdminIntegrationLog(
   id: number | string
 ): Promise<ApiResponse<AdminIntegrationLog>> {
   return request(`/v1/admin/logs/${id}`, token);
+}
+
+export async function listAdminSearchHistory(
+  token: string,
+  fieldKey: AdminSearchHistoryFieldKey,
+  limit = 8,
+): Promise<ApiResponse<AdminSearchHistoryItem[]>> {
+  const qs = new URLSearchParams();
+  qs.set("field_key", fieldKey);
+  qs.set("limit", String(limit));
+  return request(`/v1/admin/search-history?${qs.toString()}`, token);
+}
+
+export async function saveAdminSearchHistory(
+  token: string,
+  fieldKey: AdminSearchHistoryFieldKey,
+  value: string,
+): Promise<ApiResponse<AdminSearchHistoryItem>> {
+  return request("/v1/admin/search-history", token, {
+    method: "POST",
+    body: JSON.stringify({ field_key: fieldKey, value }),
+  });
+}
+
+export async function deleteAdminSearchHistory(
+  token: string,
+  id: string,
+): Promise<ApiResponse<{ deleted: boolean }>> {
+  return request(`/v1/admin/search-history/${encodeURIComponent(id)}`, token, {
+    method: "DELETE",
+  });
 }
 
 export async function listAdminSupportBundles(

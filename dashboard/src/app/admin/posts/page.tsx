@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 
 import { AdminShell, StatCard, bucketByLocalDay, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { SearchHistoryInput } from "../_components/search-history-input";
 import { fmtAdminPostTimelineDate, getAdminPostPublishTimeline } from "./timeline";
 
 const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "failed", "canceled", "archived"] as const;
@@ -163,11 +164,12 @@ export default function AdminPostsPage() {
           headline cards, per-platform cards, time-series chart, and the
           row table are all driven by the same filter state. */}
       <div className="ad-filter-bar" style={{ marginBottom: 16 }}>
-        <input
+        <SearchHistoryInput
+          fieldKey="admin.posts.search"
           className="ad-search"
           placeholder="Search by user, workspace, caption, or post ID..."
           value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
+          onChange={setSearchInput}
           style={{ width: 320 }}
         />
         <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>

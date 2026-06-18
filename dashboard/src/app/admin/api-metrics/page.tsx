@@ -18,6 +18,7 @@ import {
 } from "@/lib/api";
 
 import { AdminShell, StatCard, fmtNumber } from "../_components/admin-ui";
+import { SearchHistoryInput } from "../_components/search-history-input";
 
 const DAY_OPTIONS = [1, 7, 30, 90] as const;
 const METHOD_OPTIONS = ["all", "GET", "POST", "PUT", "PATCH", "DELETE"] as const;
@@ -136,11 +137,12 @@ export default function AdminAPIMetricsPage() {
             <option key={value} value={value}>{sortLabel(value)}</option>
           ))}
         </select>
-        <input
+        <SearchHistoryInput
+          fieldKey="admin.api_metrics.workspace_id"
           className="ad-search"
           placeholder="workspace_id"
           value={workspaceID}
-          onChange={(e) => setWorkspaceID(e.target.value)}
+          onChange={setWorkspaceID}
           style={{ width: 220 }}
         />
       </div>

@@ -19,6 +19,7 @@ import {
   listAdminIntegrationLogs,
 } from "@/lib/api";
 import { AdminShell } from "../_components/admin-ui";
+import { SearchHistoryInput } from "../_components/search-history-input";
 
 type TimeRangeKey = "15m" | "1h" | "24h" | "7d" | "30d";
 
@@ -452,28 +453,32 @@ function AdminLogsPageInner() {
         </div>
 
         <div style={toolbarWrapStyle}>
-          <label style={searchStyle}>
-            <Search size={16} />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search logs..."
-              style={inputStyle}
-            />
-          </label>
-
-          <input
-            value={workspaceFilter}
-            onChange={(e) => setWorkspaceFilter(e.target.value)}
-            placeholder="Workspace ID"
-            style={filterInputStyle}
+          <SearchHistoryInput
+            fieldKey="admin.logs.q"
+            value={query}
+            onChange={setQuery}
+            placeholder="Search logs..."
+            wrapperStyle={searchStyle}
+            inputStyle={inputStyle}
+            leadingIcon={<Search size={16} />}
           />
 
-          <input
+          <SearchHistoryInput
+            fieldKey="admin.logs.workspace_id"
+            value={workspaceFilter}
+            onChange={setWorkspaceFilter}
+            placeholder="Workspace ID"
+            wrapperStyle={filterInputStyle}
+            inputStyle={inputStyle}
+          />
+
+          <SearchHistoryInput
+            fieldKey="admin.logs.owner_email"
             value={ownerEmailFilter}
-            onChange={(e) => setOwnerEmailFilter(e.target.value)}
+            onChange={setOwnerEmailFilter}
             placeholder="User email"
-            style={filterInputStyle}
+            wrapperStyle={filterInputStyle}
+            inputStyle={inputStyle}
           />
 
           <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>

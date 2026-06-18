@@ -37,6 +37,19 @@ type AdminAiProviderKey struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AdminSearchHistory struct {
+	ID              string             `json:"id"`
+	AdminUserID     string             `json:"admin_user_id"`
+	FieldKey        string             `json:"field_key"`
+	Value           string             `json:"value"`
+	ValueNormalized string             `json:"value_normalized"`
+	UsageCount      int32              `json:"usage_count"`
+	FirstUsedAt     pgtype.Timestamptz `json:"first_used_at"`
+	LastUsedAt      pgtype.Timestamptz `json:"last_used_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AiSurfaceRouting struct {
 	Surface          string             `json:"surface"`
 	Provider         string             `json:"provider"`

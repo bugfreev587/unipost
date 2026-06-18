@@ -463,6 +463,7 @@ export const adminCss = `
 .ad-section-title { font-size: 14px; font-weight: 600; letter-spacing: -0.2px; }
 .ad-section-meta { font-size: 11px; color: var(--dmuted); }
 .ad-filter-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
+.admin-search-history { position: relative; display: inline-flex; align-items: center; min-width: 0; }
 .ad-search { background: var(--surface2); border: 1px solid var(--dborder2); border-radius: 6px; color: var(--dtext); font-size: 12px; padding: 6px 10px; font-family: inherit; outline: none; width: 220px; }
 .ad-search:focus { border-color: color-mix(in srgb, var(--primary) 32%, transparent); box-shadow: 0 0 0 3px var(--focus-ring); }
 .ad-search::placeholder { color: var(--dmuted2); }
@@ -613,6 +614,9 @@ export const adminCss = `
   .ad-filter-bar {
     align-items: stretch;
     flex-direction: column;
+  }
+  .admin-search-history {
+    width: 100% !important;
   }
   .ad-search,
   .ad-filter-bar select {
