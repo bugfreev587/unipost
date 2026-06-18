@@ -36,6 +36,15 @@ func TestValidateCandidateRequiresObjectiveEvidence(t *testing.T) {
 	}
 }
 
+func TestValidateCandidateRejectsEmptyNoCandidatePayload(t *testing.T) {
+	payload := CandidatePayload{}
+
+	err := ValidateCandidate(payload)
+	if err == nil {
+		t.Fatal("ValidateCandidate returned nil, want empty payload rejection")
+	}
+}
+
 func TestValidateCandidateRejectsSDKJSAndAgentPostAsSDK(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
