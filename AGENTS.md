@@ -21,50 +21,58 @@
 - Run the relevant validation again on local `dev` before pushing `dev`.
 - If validation passes, push local `dev` to `origin/dev`.
 - Pushing or merging to `dev` deploys the development environment only. Do not promote from `dev` to `staging` or `main` unless the user explicitly asks for a release, staging promotion, production release, or PR.
+- If the user says to run the standard release flow, follow the `Standard release flow` section after completing the normal task-branch work.
 
-## Three-environment release flow
+## Standard release flow
 
-- Use this promotion chain for all normal releases: `dev-<task-slug>` -> `dev` -> `staging` -> `main`.
+- Use this flow when the user says to run the standard release flow, walk the standard release flow, or `走标准发布流程`.
+- That instruction means Codex should carry the change through development, staging, and production unless the user explicitly narrows the target environment.
+- Use this promotion chain for all standard releases: `dev-<task-slug>` -> `origin/dev` -> PR to `staging` -> PR to production (`main`).
 - Environment mapping:
   1. `dev` deploys to Vercel `unipost-dev`, Railway `dev`, and Clerk Development.
   2. `staging` deploys to Vercel `unipost-staging`, Railway `staging`, and Clerk Development.
   3. `main` deploys to Vercel `unipost`, Railway `production`, and Clerk Production.
-- Treat `dev` as the integration environment for active work. It may receive frequent changes.
-- Treat `staging` as pre-production. Only promote changes to `staging` when they are intended to become a release candidate.
-- Treat `main` as production. Only promote from `staging` to `main` after staging validation passes and the user explicitly approves a production release or PR.
-- Do not merge a feature branch directly into `staging` or `main` during normal development. The only exception is a user-approved hotfix flow.
-- Do not create a pull request from `dev` to `main`. Production PRs must be from `staging` to `main` unless the user explicitly approves a hotfix exception.
-- Use pull requests for cross-environment promotions:
-  1. Release candidate: PR or merge `dev` -> `staging`.
-  2. Production release: PR `staging` -> `main`.
-- Before creating any explicitly requested promotion pull request, run the local CI-equivalent checks for the changed surface:
+- Start every standard release from a clean branch based on the latest `origin/dev`:
+  1. Run `git fetch origin`.
+  2. Create `dev-<task-slug>` directly from `origin/dev`.
+  3. Rename the conversation/thread to exactly match `dev-<task-slug>`.
+  4. Implement and validate the change on `dev-<task-slug>`.
+- After implementation is complete, update local `dev` from `origin/dev`, merge `dev-<task-slug>` into local `dev`, rerun the required validation, then push local `dev` directly to `origin/dev`.
+- After pushing `origin/dev`, wait for all triggered checks and development deployments to finish, then verify the expected outcome in the real development environment.
+- After development verification passes, create a promotion PR from `dev` to `staging`. Merge the PR after its checks pass, wait for the staging redeployment to finish, then verify the expected outcome in the real staging environment.
+- After staging verification passes, create a production PR from `staging` to `main`. Merge the PR after its checks pass, wait for the production redeployment to finish, then verify production health and the changed critical user flow in the real production environment.
+- Do not merge a feature branch directly into `staging` or `main` during the standard release flow.
+- Do not create a pull request from `dev` to `main`. Production PRs must be from `staging` to `main`.
+- Before creating any promotion pull request, run the local CI-equivalent checks for the changed surface:
   1. Backend/API changes: from `api/`, run `GOCACHE=/tmp/unipost-go-build go test ./...`.
   2. Dashboard/frontend/docs changes: from `dashboard/`, run `npm run build`.
   3. Dashboard routing, auth, onboarding, analytics, posting, account connection, docs shell, or shared UI shell changes: from `dashboard/`, run `npm run test:regression:dashboard` when Playwright browsers are installed.
 - If the user explicitly asks for a PR and a required check cannot be run, report the skipped check and why before creating the PR.
-- After promoting to `staging`, validate the deployed staging environment before promoting to `main`.
-- After promoting to `main`, verify the production health check and any changed critical user flow.
+- If any check, deployment, or environment verification fails, inspect the failure, make the needed fix in the correct source branch for that stage, rerun validation, and continue the same release flow only after the failure is resolved.
 
 ## Hotfix flow
 
 - Use this flow only for urgent production fixes or when the user explicitly asks for a hotfix.
-- Start hotfixes from the latest `main`, not from `dev`:
+- Start hotfixes from the latest `origin/staging`, not from `dev` or `main`:
   1. Fetch `origin`.
-  2. Switch to local `main`.
-  3. Pull the latest `main` from remote with `git pull --ff-only origin main`.
-  4. Create `hotfix-<task-slug>` from `main`.
+  2. Create `hotfix-<task-slug>` directly from `origin/staging`.
+  3. Rename the conversation/thread to exactly match `hotfix-<task-slug>`.
 - Keep the hotfix branch narrowly scoped to the production issue.
-- Run the relevant local CI-equivalent checks before creating or merging the hotfix PR.
-- Merge the hotfix to `main` only after the required validation passes and the user approves the production change.
-- After the hotfix reaches `main`, immediately backport it to both `staging` and `dev` by merge or cherry-pick. Do not leave production-only hotfix commits absent from `staging` or `dev`, because the next normal release could otherwise reintroduce the bug.
-- If the backport has conflicts or cannot be applied cleanly, stop and ask the user how to proceed.
+- Implement and validate the fix on `hotfix-<task-slug>`.
+- Merge the hotfix into local `staging`, rerun the required validation, then push `staging` to `origin/staging`.
+- After pushing `origin/staging`, wait for all triggered checks and the staging redeployment to finish, then verify the fix in the real staging environment.
+- After staging verification passes, create a production PR from `staging` to `main`. Merge the PR after its checks pass, wait for the production redeployment to finish, then verify production health and the fixed user flow in the real production environment.
+- After production verification passes, sync the same change back to `dev` by merging or cherry-picking it into local `dev`, rerun required validation, push `dev` to `origin/dev`, wait for the development deployment, and verify the development environment.
+- If the sync to `dev` has conflicts or cannot be applied cleanly, stop and ask the user how to proceed.
 
 ## Push and PR rules
 
 - Normal task branches may be pushed to `origin/dev-<task-slug>` for review or backup.
 - `dev` may be pushed after task validation passes.
-- `staging` may be pushed only as a release-candidate promotion from `dev`, unless the user explicitly approves another source.
-- `main` may be pushed or merged only as a production release from `staging` or as a user-approved hotfix from `hotfix-<task-slug>`.
+- Use pull requests for cross-environment promotions in the standard release flow: `dev` -> `staging`, then `staging` -> `main`.
+- Use pull requests for production hotfix promotion: `staging` -> `main`.
+- `staging` may be updated only by a standard release promotion from `dev` or by a hotfix branch that started from `origin/staging`.
+- `main` may be updated only by a production release or hotfix PR from `staging`.
 - Never bypass `staging` for normal production releases.
 - Never use production domains for dev-environment validation, and never use dev domains for production release validation.
 

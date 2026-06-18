@@ -18,6 +18,7 @@ import {
   clearStoredQuickstartSelectedAccountId,
   consumeStoredQuickstartSelectedAccountId,
 } from "@/components/tutorials/quickstart-selection-storage";
+import { describePostResultFailure } from "@/lib/post-result-errors";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 
@@ -145,6 +146,7 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-result-text{font-size:13.5px;color:var(--dmuted);line-height:1.6}
 .posts-result-link{display:inline-flex;align-items:center;gap:4px;color:var(--daccent);text-decoration:none;font-size:13px;font-weight:600}
 .posts-result-link:hover{text-decoration:underline}
+.posts-error-title{font-size:12px;font-weight:800;color:var(--danger);margin-bottom:6px}
 .posts-error{font-size:12px;color:var(--danger);background:var(--danger-soft);border:1px solid color-mix(in srgb,var(--danger) 22%,transparent);border-radius:10px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-geist-mono),monospace;line-height:1.6;max-height:148px;overflow:auto}
 .posts-hint{font-size:14px;color:var(--dtext);line-height:1.65}
 .posts-hint-label{color:var(--dmuted)}
@@ -1014,7 +1016,7 @@ function PostResultCard({
     : result.external_id && result.platform
       ? postUrlFor(result.platform, result.external_id)
       : null;
-  const hint = result.status === "failed" ? categorizeError(result.error_message || "") : null;
+  const failure = result.status === "failed" ? describePostResultFailure(result) : null;
 
   return (
     <div className="posts-result-card">
@@ -1047,34 +1049,35 @@ function PostResultCard({
 
       {result.status === "failed" ? (
         <>
+          {failure ? (
+            <div className="posts-error-title">{failure.title}</div>
+          ) : null}
           <div className="posts-error">
-            {result.error_message || "Publish failed (no error message reported)."}
+            {failure?.message || result.error_message || "Publish failed (no error message reported)."}
           </div>
-          {hint ? (
+          {failure?.nextActionLabel ? (
             <div className="posts-hint" style={{ marginTop: 10 }}>
-              <span className="posts-hint-label">{hint.label}: </span>
-              {hint.body}
-              {hint.action ? (
+              <span className="posts-hint-label">Next: </span>
+              {failure.actionHref ? (
                 <>
-                  {" "}
-                  {hint.action.href.startsWith("http") ? (
-                    <a href={hint.action.href} target="_blank" rel="noreferrer" className="posts-result-link">
-                      {hint.action.label}
+                  {failure.actionHref.startsWith("http") ? (
+                    <a href={failure.actionHref} target="_blank" rel="noreferrer" className="posts-result-link">
+                      {failure.nextActionLabel}
                     </a>
                   ) : (
-                    <Link href={hint.action.href.replace(":id", workspaceId)} className="posts-result-link">
-                      {hint.action.label}
+                    <Link href={failure.actionHref.replace(":id", workspaceId)} className="posts-result-link">
+                      {failure.nextActionLabel}
                     </Link>
                   )}
                 </>
-              ) : null}
+              ) : failure.nextActionLabel}
             </div>
           ) : null}
           {/* Retry button — only meaningful for failed rows. Fire-
               and-reload: on success the whole posts list is refetched
               because the parent post's status may have flipped from
               failed → partial / published. */}
-          {result.id ? (
+          {result.id && failure?.canRetry ? (
             <div className="posts-retry-row">
               <button
                 type="button"
@@ -1557,32 +1560,6 @@ function humanizeCode(value: string): string {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
-}
-
-type ErrorHint = {
-  label: string;
-  body: string;
-  action?: { label: string; href: string };
-};
-
-function categorizeError(error: string): ErrorHint | null {
-  const e = error.toLowerCase();
-  if (e.includes("account is disconnected") || e.includes("account not found")) {
-    return { label: "What to do", body: "The connected social account was disconnected before this post was published.", action: { label: "Reconnect on Accounts page", href: "/projects/:id/accounts" } };
-  }
-  if (e.includes("token") && (e.includes("expired") || e.includes("invalid") || e.includes("revoked") || e.includes("unauthorized"))) {
-    return { label: "What to do", body: "The platform access token is no longer valid.", action: { label: "Reconnect on Accounts page", href: "/projects/:id/accounts" } };
-  }
-  if (e.includes("rate limit") || e.includes("too many requests") || e.includes("429")) {
-    return { label: "What to do", body: "The platform rate-limited this request. Wait a few minutes and retry." };
-  }
-  if (e.includes("instagram requires at least one")) {
-    return { label: "What to do", body: "Instagram does not support text-only posts. Attach at least one image or video." };
-  }
-  if (e.includes("duplicate") || e.includes("duplicate_post")) {
-    return { label: "Likely cause", body: "The platform rejected this post because the content looks like a duplicate of a recent post." };
-  }
-  return null;
 }
 
 function InlineStatusPill({ status }: { status: string }) {

@@ -46,6 +46,7 @@ import {
   listSocialAccounts,
   type PlatformCapabilitiesEnvelope,
   validateSocialPost,
+  type ApiFetchError,
   type CreateSocialPostPayload,
   type SocialPostValidationIssue,
   type SocialPostValidationResult,
@@ -63,6 +64,38 @@ const COMPOSE_MIN_AI_PANE_WIDTH = 320;
 const COMPOSE_DEFAULT_RIGHT_PANE_WIDTH = 560;
 const COMPOSE_DEFAULT_AI_PANE_WIDTH = 400;
 const COMPOSE_RESIZER_WIDTH = 12;
+
+type SubmitErrorState = {
+  message: string;
+  mailto: string;
+  contactHref: string;
+  requestId?: string;
+  hint?: string;
+  docsUrl?: string;
+};
+
+function apiFetchErrorFromUnknown(err: unknown): ApiFetchError | null {
+  if (!(err instanceof Error)) return null;
+  const maybe = err as ApiFetchError;
+  if (
+    maybe.status !== undefined ||
+    maybe.code !== undefined ||
+    maybe.requestId !== undefined ||
+    maybe.hint !== undefined ||
+    maybe.issues !== undefined
+  ) {
+    return maybe;
+  }
+  return null;
+}
+
+function validationResultFromApiIssues(issues: SocialPostValidationIssue[]): SocialPostValidationResult {
+  return {
+    valid: false,
+    errors: issues.filter((issue) => issue.severity !== "warning"),
+    warnings: issues.filter((issue) => issue.severity === "warning"),
+  };
+}
 
 function clampDrawerWidth(width: number) {
   if (typeof window === "undefined") return width;
@@ -1465,8 +1498,20 @@ const ISSUE_COPY: Record<string, string> = {
 };
 
 function issueSummary(issue: SocialPostValidationIssue): string {
-  if (issue.code === "missing_required") return issue.message;
-  return ISSUE_COPY[issue.code] || issue.message;
+  const hasPreciseServerContext =
+    issue.actual !== undefined ||
+    issue.limit !== undefined ||
+    Boolean(issue.hint) ||
+    Boolean(issue.platform) ||
+    issue.field.startsWith("platform_options.");
+  const base = hasPreciseServerContext && issue.message
+    ? issue.message
+    : ISSUE_COPY[issue.code] || issue.message;
+  const details: string[] = [];
+  if (issue.actual !== undefined) details.push(`Current: ${String(issue.actual)}`);
+  if (issue.limit !== undefined) details.push(`Limit: ${String(issue.limit)}`);
+  if (issue.hint) details.push(issue.hint);
+  return details.length > 0 ? `${base} ${details.join(" · ")}` : base;
 }
 
 function issueTargetLabel(issue: SocialPostValidationIssue, accounts: SocialAccount[]): string {
@@ -1633,7 +1678,7 @@ export function CreatePostDrawer({
   const [validationResult, setValidationResult] = useState<SocialPostValidationResult | null>(null);
   const [validationChecked, setValidationChecked] = useState(false);
   const [warningsAcknowledged, setWarningsAcknowledged] = useState(false);
-  const [submitError, setSubmitError] = useState<{ message: string; mailto: string; contactHref: string } | null>(null);
+  const [submitError, setSubmitError] = useState<SubmitErrorState | null>(null);
   const [submitSuccess, setSubmitSuccess] = useState<{ message: string; tiktokURL?: string } | null>(null);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
   const [isAIPanelOpen, setIsAIPanelOpen] = useState(false);
@@ -2142,9 +2187,19 @@ export function CreatePostDrawer({
       setSubmitError(null);
       return { ok: result.errors.length === 0, result, token };
     } catch (err) {
+      const apiError = apiFetchErrorFromUnknown(err);
       const message = err instanceof Error ? err.message : "Validation failed";
+      if (apiError?.issues?.length) {
+        setValidationResult(validationResultFromApiIssues(apiError.issues));
+        setValidationChecked(true);
+        const firstIssue = apiError.issues.find((issue) => issue.severity !== "warning") || apiError.issues[0];
+        if (firstIssue) focusIssue(firstIssue);
+      }
       setSubmitError({
         message,
+        requestId: apiError?.requestId,
+        hint: apiError?.hint,
+        docsUrl: apiError?.docsUrl,
         mailto: buildSupportMailto({
           subject: "Validation failed in dashboard",
           intro: "A validation request failed in the dashboard create post drawer.",
@@ -2155,6 +2210,7 @@ export function CreatePostDrawer({
             `Selected accounts: ${form.selectedAccountIds.size}`,
             `Page: ${typeof window !== "undefined" ? window.location.pathname : "/posts"}`,
             `Error: ${message}`,
+            apiError?.requestId ? `Request ID: ${apiError.requestId}` : undefined,
           ],
         }),
         contactHref: buildContactPageHref({
@@ -2254,12 +2310,23 @@ export function CreatePostDrawer({
       // Rate-limit errors get a friendlier, action-oriented message.
       // Non-429 errors fall through to the raw API message + the
       // existing support links so customers can escalate real bugs.
+      const apiError = apiFetchErrorFromUnknown(err);
+      if (apiError?.issues?.length) {
+        const apiValidation = validationResultFromApiIssues(apiError.issues);
+        setValidationResult(apiValidation);
+        setValidationChecked(true);
+        const firstIssue = apiValidation.errors[0] || apiValidation.warnings[0];
+        if (firstIssue) focusIssue(firstIssue);
+      }
       const friendly = friendlyRateLimitMessage(err);
       const message = friendly ?? (err instanceof Error ? err.message : "Failed to create post");
       console.error("Create post failed:", err);
       console.error("[CreatePost] payload was:", JSON.stringify(form.buildPayload(), null, 2));
       setSubmitError({
         message,
+        requestId: apiError?.requestId,
+        hint: apiError?.hint,
+        docsUrl: apiError?.docsUrl,
         mailto: buildSupportMailto({
           subject: "Publish failed in dashboard",
           intro: "A publish action failed in the dashboard create post drawer.",
@@ -2270,6 +2337,7 @@ export function CreatePostDrawer({
             `Selected accounts: ${form.selectedAccountIds.size}`,
             `Page: ${typeof window !== "undefined" ? window.location.pathname : "/posts"}`,
             `Error: ${message}`,
+            apiError?.requestId ? `Request ID: ${apiError.requestId}` : undefined,
           ],
         }),
         contactHref: buildContactPageHref({
@@ -2297,11 +2365,22 @@ export function CreatePostDrawer({
       await onCreated(response.data.id);
       onOpenChange(false);
     } catch (err) {
+      const apiError = apiFetchErrorFromUnknown(err);
+      if (apiError?.issues?.length) {
+        const apiValidation = validationResultFromApiIssues(apiError.issues);
+        setValidationResult(apiValidation);
+        setValidationChecked(true);
+        const firstIssue = apiValidation.errors[0] || apiValidation.warnings[0];
+        if (firstIssue) focusIssue(firstIssue);
+      }
       const friendly = friendlyRateLimitMessage(err);
       const message = friendly ?? (err instanceof Error ? err.message : "Failed to save draft");
       console.error("Save draft failed:", err);
       setSubmitError({
         message,
+        requestId: apiError?.requestId,
+        hint: apiError?.hint,
+        docsUrl: apiError?.docsUrl,
         mailto: buildSupportMailto({
           subject: "Save draft failed in dashboard",
           intro: "A draft save action failed in the dashboard create post drawer.",
@@ -2312,6 +2391,7 @@ export function CreatePostDrawer({
             `Selected accounts: ${form.selectedAccountIds.size}`,
             `Page: ${typeof window !== "undefined" ? window.location.pathname : "/posts"}`,
             `Error: ${message}`,
+            apiError?.requestId ? `Request ID: ${apiError.requestId}` : undefined,
           ],
         }),
         contactHref: buildContactPageHref({
@@ -2819,7 +2899,7 @@ export function CreatePostDrawer({
                   borderColor: "color-mix(in srgb, var(--primary) 35%, transparent)",
                 }}
               >
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" style={{ color: "var(--primary)" }} />
                   <div
                     className="font-mono text-[11px] uppercase tracking-[0.12em]"
@@ -2874,6 +2954,16 @@ export function CreatePostDrawer({
                 <p className="text-[13px] text-[#fee2e2] leading-relaxed mb-3">
                   {submitError.message}
                 </p>
+                {submitError.hint && (
+                  <p className="mb-2 text-[12.5px] leading-relaxed text-[#fecaca]">
+                    Next step: {submitError.hint}
+                  </p>
+                )}
+                {submitError.requestId && (
+                  <p className="mb-3 font-mono text-[11px] text-[#fca5a5]">
+                    Request ID: {submitError.requestId}
+                  </p>
+                )}
                 <div className="flex items-center gap-2">
                   <a
                     href={submitError.mailto}
@@ -2881,6 +2971,16 @@ export function CreatePostDrawer({
                   >
                     Contact support
                   </a>
+                  {submitError.docsUrl && (
+                    <a
+                      href={submitError.docsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center rounded-lg border border-[#7f1d1d]/60 px-3 py-2 text-[12px] font-medium text-[#fca5a5] hover:border-[#b91c1c] transition-colors"
+                    >
+                      Open docs
+                    </a>
+                  )}
                   <Link
                     href={submitError.contactHref}
                     className="inline-flex items-center rounded-lg border border-[#7f1d1d]/60 px-3 py-2 text-[12px] font-medium text-[#fca5a5] hover:border-[#b91c1c] transition-colors"

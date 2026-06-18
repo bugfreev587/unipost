@@ -142,10 +142,17 @@ type postResultResponse struct {
 	// API). When present, the dashboard uses this directly instead of
 	// constructing one from external_id — important for platforms like
 	// Threads where the public URL uses shortcodes, not numeric IDs.
-	URL           *string        `json:"url,omitempty"`
-	ErrorMessage  *string        `json:"error_message,omitempty"`
-	PublishedAt   *string        `json:"published_at,omitempty"`
-	PublishStatus map[string]any `json:"publish_status,omitempty"`
+	URL          *string `json:"url,omitempty"`
+	ErrorMessage *string `json:"error_message,omitempty"`
+	ErrorCode    *string `json:"error_code,omitempty"`
+	FailureStage *string `json:"failure_stage,omitempty"`
+	// PlatformErrorCode is the provider's stable/near-stable error token
+	// when one is safely available, for example TikTok invalid_params.
+	PlatformErrorCode *string        `json:"platform_error_code,omitempty"`
+	IsRetriable       *bool          `json:"is_retriable,omitempty"`
+	NextAction        *string        `json:"next_action,omitempty"`
+	PublishedAt       *string        `json:"published_at,omitempty"`
+	PublishStatus     map[string]any `json:"publish_status,omitempty"`
 	// Warnings (Sprint 4 PR3) carries non-fatal issues that didn't
 	// prevent the main post from being published. The first user is
 	// first_comment failure: the parent post lands and reports
@@ -164,6 +171,87 @@ type postResultResponse struct {
 	// can review their own choices after the fact. Nil when we can't
 	// reconstruct it (legacy posts without metadata).
 	Submitted *submittedSettings `json:"submitted,omitempty"`
+}
+
+func postResultResponseFromDBResult(row db.SocialPostResult, account accountSummary) postResultResponse {
+	resp := postResultResponse{
+		ID:              row.ID,
+		SocialAccountID: row.SocialAccountID,
+		Platform:        account.Platform,
+		AccountName:     account.Name,
+		Caption:         row.Caption,
+		Status:          row.Status,
+	}
+	if row.ExternalID.Valid {
+		resp.ExternalID = &row.ExternalID.String
+	}
+	if row.Url.Valid {
+		resp.URL = &row.Url.String
+	}
+	if row.ErrorMessage.Valid {
+		resp.ErrorMessage = &row.ErrorMessage.String
+	}
+	if row.ErrorCode.Valid {
+		resp.ErrorCode = &row.ErrorCode.String
+	}
+	if row.FailureStage.Valid {
+		resp.FailureStage = &row.FailureStage.String
+	}
+	if row.PlatformErrorCode.Valid {
+		resp.PlatformErrorCode = &row.PlatformErrorCode.String
+	}
+	if row.IsRetriable.Valid {
+		v := row.IsRetriable.Bool
+		resp.IsRetriable = &v
+	}
+	if row.NextAction.Valid {
+		resp.NextAction = &row.NextAction.String
+	}
+	if row.PublishedAt.Valid {
+		t := row.PublishedAt.Time.Format(time.RFC3339)
+		resp.PublishedAt = &t
+	}
+	if row.DebugCurl.Valid {
+		resp.DebugCurl = &row.DebugCurl.String
+	}
+	return resp
+}
+
+func clearPostResultFailureDetails(resp *postResultResponse) {
+	resp.ErrorMessage = nil
+	resp.ErrorCode = nil
+	resp.FailureStage = nil
+	resp.PlatformErrorCode = nil
+	resp.IsRetriable = nil
+	resp.NextAction = nil
+}
+
+func applyPostFailureDetailsToResponse(resp *postResultResponse, failure db.CreatePostFailureParams) {
+	if strings.TrimSpace(failure.ErrorCode) != "" {
+		resp.ErrorCode = &failure.ErrorCode
+	}
+	if strings.TrimSpace(failure.FailureStage) != "" {
+		resp.FailureStage = &failure.FailureStage
+	}
+	if failure.PlatformErrorCode.Valid {
+		resp.PlatformErrorCode = &failure.PlatformErrorCode.String
+	}
+	v := failure.IsRetriable
+	resp.IsRetriable = &v
+	if action := postfailures.NextActionForErrorCode(failure.ErrorCode); action != "" {
+		resp.NextAction = &action
+	}
+}
+
+func updateSocialPostResultFailureDetailsParams(resultID string, failure db.CreatePostFailureParams) db.UpdateSocialPostResultFailureDetailsParams {
+	return db.UpdateSocialPostResultFailureDetailsParams{
+		ID:                resultID,
+		ErrorCode:         postfailures.ToText(failure.ErrorCode),
+		FailureStage:      postfailures.ToText(failure.FailureStage),
+		PlatformErrorCode: failure.PlatformErrorCode,
+		IsRetriable:       pgtype.Bool{Bool: failure.IsRetriable, Valid: true},
+		NextAction:        postfailures.ToText(postfailures.NextActionForErrorCode(failure.ErrorCode)),
+	}
 }
 
 // submittedSettings is the per-account snapshot of what was sent to
@@ -1002,8 +1090,9 @@ func (h *SocialPostHandler) executePublishLoop(
 			continue
 		}
 
+		var failureDetails *db.CreatePostFailureParams
 		if status == "failed" && dbResult.ErrorMessage.Valid {
-			h.recordPostFailure(r.Context(), postfailures.BuildParams(
+			failure := postfailures.BuildParams(
 				post.ID,
 				dbResult.ID,
 				workspaceID,
@@ -1012,32 +1101,14 @@ func (h *SocialPostHandler) executePublishLoop(
 				"dispatch",
 				dbResult.ErrorMessage.String,
 				dbResult.ErrorMessage.String,
-			))
+			)
+			failureDetails = &failure
+			h.recordPostFailure(r.Context(), failure)
 		}
 
-		rr := postResultResponse{
-			ID:              dbResult.ID,
-			SocialAccountID: dbResult.SocialAccountID,
-			Platform:        oc.platform,
-			AccountName:     oc.accountName,
-			Caption:         dbResult.Caption,
-			Status:          dbResult.Status,
-		}
-		if dbResult.ExternalID.Valid {
-			rr.ExternalID = &dbResult.ExternalID.String
-		}
-		if dbResult.Url.Valid {
-			rr.URL = &dbResult.Url.String
-		}
-		if dbResult.ErrorMessage.Valid {
-			rr.ErrorMessage = &dbResult.ErrorMessage.String
-		}
-		if dbResult.PublishedAt.Valid {
-			t := dbResult.PublishedAt.Time.Format(time.RFC3339)
-			rr.PublishedAt = &t
-		}
-		if dbResult.DebugCurl.Valid {
-			rr.DebugCurl = &dbResult.DebugCurl.String
+		rr := postResultResponseFromDBResult(dbResult, accountSummary{Platform: oc.platform, Name: oc.accountName})
+		if failureDetails != nil {
+			applyPostFailureDetailsToResponse(&rr, *failureDetails)
 		}
 		// Submitted settings come straight from parsed.Posts[i] — the
 		// request we just dispatched — instead of re-decoding metadata.
@@ -1130,6 +1201,16 @@ func (h *SocialPostHandler) executePublishLoop(
 }
 
 func (h *SocialPostHandler) recordPostFailure(ctx context.Context, arg db.CreatePostFailureParams) {
+	if arg.SocialPostResultID.Valid && strings.TrimSpace(arg.SocialPostResultID.String) != "" {
+		if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(arg.SocialPostResultID.String, arg)); err != nil {
+			slog.Warn("failed to persist structured result failure fields",
+				"post_id", arg.PostID,
+				"result_id", arg.SocialPostResultID.String,
+				"platform", arg.Platform,
+				"stage", arg.FailureStage,
+				"error", err)
+		}
+	}
 	if _, err := h.queries.CreatePostFailure(ctx, arg); err != nil {
 		slog.Warn("failed to persist structured post failure",
 			"post_id", arg.PostID,
@@ -1872,11 +1953,16 @@ func filterFatalIssues(errs []platform.Issue) []platform.Issue {
 // issue list. Mirrors the shape of the /validate endpoint's response so
 // clients can use the same error-handling code for both.
 func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
+	isRetriable := false
 	writeJSON(w, http.StatusBadRequest, ErrorResponse{
 		Error: ErrorBody{
 			Code:           "VALIDATION_ERROR",
 			NormalizedCode: normalizeErrorCode("VALIDATION_ERROR"),
 			Message:        "request failed pre-publish validation",
+			Hint:           "Fix the listed validation issues and retry.",
+			NextAction:     "fix_request",
+			IsRetriable:    &isRetriable,
+			DocsURL:        "https://unipost.dev/docs/api/posts/validate",
 			Issues:         errs,
 		},
 		RequestID: requestIDFromResponse(w),
@@ -1939,30 +2025,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 
 	for _, res := range results {
 		info := accountInfo[res.SocialAccountID]
-		rr := postResultResponse{
-			ID:              res.ID,
-			SocialAccountID: res.SocialAccountID,
-			Platform:        info.Platform,
-			AccountName:     info.Name,
-			Caption:         res.Caption,
-			Status:          res.Status,
-		}
-		if res.ExternalID.Valid {
-			rr.ExternalID = &res.ExternalID.String
-		}
-		if res.Url.Valid {
-			rr.URL = &res.Url.String
-		}
-		if res.ErrorMessage.Valid {
-			rr.ErrorMessage = &res.ErrorMessage.String
-		}
-		if res.PublishedAt.Valid {
-			t := res.PublishedAt.Time.Format(time.RFC3339)
-			rr.PublishedAt = &t
-		}
-		if res.DebugCurl.Valid {
-			rr.DebugCurl = &res.DebugCurl.String
-		}
+		rr := postResultResponseFromDBResult(res, info)
 		if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 			rr.Submitted = sub
 		}
@@ -1999,27 +2062,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 	submittedByAccount := buildSubmittedMap(post.Metadata, derefText(post.Caption))
 	var responseResults []postResultResponse
 	for _, res := range results {
-		rr := postResultResponse{
-			ID:              res.ID,
-			SocialAccountID: res.SocialAccountID,
-			Status:          res.Status,
-		}
-		if res.ExternalID.Valid {
-			rr.ExternalID = &res.ExternalID.String
-		}
-		if res.Url.Valid {
-			rr.URL = &res.Url.String
-		}
-		if res.ErrorMessage.Valid {
-			rr.ErrorMessage = &res.ErrorMessage.String
-		}
-		if res.PublishedAt.Valid {
-			t := res.PublishedAt.Time.Format(time.RFC3339)
-			rr.PublishedAt = &t
-		}
-		if res.DebugCurl.Valid {
-			rr.DebugCurl = &res.DebugCurl.String
-		}
+		rr := postResultResponseFromDBResult(res, accountSummary{})
 		if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 			rr.Submitted = sub
 		}
@@ -2092,6 +2135,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 									DebugCurl:    pgtype.Text{Valid: false},
 								})
 								rr.Status = "published"
+								clearPostResultFailureDetails(&rr)
 								if newURL != "" {
 									rr.URL = &newURL
 								}
@@ -2111,6 +2155,18 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 								})
 								rr.Status = "failed"
 								rr.ErrorMessage = &errMsg
+								failure := postfailures.BuildParams(
+									post.ID,
+									res.ID,
+									workspaceID,
+									res.SocialAccountID,
+									"facebook",
+									"platform_status",
+									errMsg,
+									errMsg,
+								)
+								h.recordPostFailure(r.Context(), failure)
+								applyPostFailureDetailsToResponse(&rr, failure)
 							}
 						}
 					}
@@ -2245,29 +2301,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 		var responseResults []postResultResponse
 		for _, res := range postResults {
 			summary := accountMap[res.SocialAccountID]
-			rr := postResultResponse{
-				ID:              res.ID,
-				SocialAccountID: res.SocialAccountID,
-				Platform:        summary.Platform,
-				AccountName:     summary.Name,
-				Status:          res.Status,
-			}
-			if res.ExternalID.Valid {
-				rr.ExternalID = &res.ExternalID.String
-			}
-			if res.Url.Valid {
-				rr.URL = &res.Url.String
-			}
-			if res.ErrorMessage.Valid {
-				rr.ErrorMessage = &res.ErrorMessage.String
-			}
-			if res.PublishedAt.Valid {
-				t := res.PublishedAt.Time.Format(time.RFC3339)
-				rr.PublishedAt = &t
-			}
-			if res.DebugCurl.Valid {
-				rr.DebugCurl = &res.DebugCurl.String
-			}
+			rr := postResultResponseFromDBResult(res, summary)
 			if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 				rr.Submitted = sub
 			}
