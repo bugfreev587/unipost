@@ -596,7 +596,10 @@ export default function LogsPage() {
   return (
     <div className="logs-page-fullheight">
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16 }}>
-        <div className="dt-page-title">Logs</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <div className="dt-page-title">Workspace Logs</div>
+          <div style={{ fontSize: 12, color: "var(--dmuted)" }}>Current workspace</div>
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button
             type="button"

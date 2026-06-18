@@ -52,6 +52,40 @@ func TestRedactJSON_TruncatesLargePayloads(t *testing.T) {
 	}
 }
 
+// TestRedactJSON_PublicDocKeyFragments guards every sensitive key
+// fragment that public docs promise to redact. If a fragment is
+// removed from sensitiveKeyFragments, the corresponding case fails so
+// the docs and code cannot drift apart.
+func TestRedactJSON_PublicDocKeyFragments(t *testing.T) {
+	fragments := []string{
+		"token",
+		"secret",
+		"authorization",
+		"cookie",
+		"password",
+		"refresh_token",
+		"access_token",
+		"client_secret",
+	}
+
+	for _, fragment := range fragments {
+		t.Run(fragment, func(t *testing.T) {
+			// Exact key and a key that merely contains the fragment
+			// must both be redacted (substring match).
+			for _, key := range []string{fragment, "x_" + fragment + "_y"} {
+				raw := RedactJSON(map[string]any{key: "sensitive-value"})
+				var decoded map[string]any
+				if err := json.Unmarshal(raw, &decoded); err != nil {
+					t.Fatalf("unmarshal redacted json: %v", err)
+				}
+				if decoded[key] != redactedValue {
+					t.Fatalf("key %q not redacted: got %#v", key, decoded[key])
+				}
+			}
+		})
+	}
+}
+
 func TestRedactJSON_InvalidJSONInputFallsBack(t *testing.T) {
 	type invalid struct {
 		Ch chan int `json:"ch"`

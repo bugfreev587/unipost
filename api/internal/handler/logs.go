@@ -1,7 +1,11 @@
 package handler
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,12 +18,47 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
-type LogsHandler struct {
-	queries *db.Queries
+// logsStore is the subset of *db.Queries the logs handlers need. An
+// interface keeps the handlers unit-testable with a fake store.
+type logsStore interface {
+	ListIntegrationLogs(context.Context, db.ListIntegrationLogsParams) ([]db.IntegrationLog, error)
+	GetIntegrationLog(context.Context, db.GetIntegrationLogParams) (db.IntegrationLog, error)
 }
 
-func NewLogsHandler(queries *db.Queries) *LogsHandler {
+type LogsHandler struct {
+	queries logsStore
+}
+
+func NewLogsHandler(queries logsStore) *LogsHandler {
 	return &LogsHandler{queries: queries}
+}
+
+// encodeLogCursor produces an opaque, reversible page position. It
+// encodes only the last seen (ts, id), never raw SQL or workspace
+// state, so it is safe to hand back to customers.
+func encodeLogCursor(ts time.Time, id int64) string {
+	raw := fmt.Sprintf("%d:%d", ts.UTC().UnixNano(), id)
+	return base64.RawURLEncoding.EncodeToString([]byte(raw))
+}
+
+func decodeLogCursor(s string) (time.Time, int64, error) {
+	b, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(s))
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	parts := strings.SplitN(string(b), ":", 2)
+	if len(parts) != 2 {
+		return time.Time{}, 0, errors.New("malformed cursor")
+	}
+	nanos, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	id, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	return time.Unix(0, nanos).UTC(), id, nil
 }
 
 type integrationLogResponse struct {
@@ -68,6 +107,19 @@ func (h *LogsHandler) List(w http.ResponseWriter, r *http.Request) {
 	from := parseLogTime(q.Get("from"), time.Now().AddDate(0, 0, -7))
 	to := parseLogTime(q.Get("to"), time.Now())
 
+	cursorTs := pgtype.Timestamptz{Valid: false}
+	var cursorID int64
+	if raw := strings.TrimSpace(q.Get("cursor")); raw != "" {
+		ts, id, err := decodeLogCursor(raw)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid cursor")
+			return
+		}
+		cursorTs = pgtype.Timestamptz{Time: ts, Valid: true}
+		cursorID = id
+	}
+
+	// Fetch one extra row to detect whether another page exists.
 	rows, err := h.queries.ListIntegrationLogs(r.Context(), db.ListIntegrationLogsParams{
 		WorkspaceID:     workspaceID,
 		Category:        strings.TrimSpace(q.Get("category")),
@@ -84,18 +136,31 @@ func (h *LogsHandler) List(w http.ResponseWriter, r *http.Request) {
 		Query:           strings.TrimSpace(q.Get("q")),
 		FromTs:          pgtype.Timestamptz{Time: from, Valid: true},
 		ToTs:            pgtype.Timestamptz{Time: to, Valid: true},
-		Limit:           int32(limit),
+		CursorTs:        cursorTs,
+		CursorID:        cursorID,
+		Limit:           int32(limit + 1),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load logs: "+err.Error())
 		return
 	}
 
+	hasMore := len(rows) > limit
+	if hasMore {
+		rows = rows[:limit]
+	}
+
 	out := make([]integrationLogResponse, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, toIntegrationLogResponse(row, false))
 	}
-	writeSuccessWithListMeta(w, out, len(out), limit)
+
+	nextCursor := ""
+	if hasMore && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		nextCursor = encodeLogCursor(last.Ts.Time, last.ID)
+	}
+	writeSuccessWithCursor(w, out, nextCursor, hasMore, limit)
 }
 
 func (h *LogsHandler) Get(w http.ResponseWriter, r *http.Request) {

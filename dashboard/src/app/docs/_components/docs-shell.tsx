@@ -497,6 +497,20 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         },
       ],
     },
+    {
+      title: "Developer Operations",
+      items: [
+        {
+          label: "Logs",
+          children: [
+            { label: "Overview", href: "/docs/api/logs" },
+            { label: "List logs", href: "/docs/api/logs/list", method: "GET" },
+            { label: "Get log", href: "/docs/api/logs/get", method: "GET" },
+            { label: "Stream logs (SSE)", href: "/docs/api/logs/stream", method: "GET" },
+          ],
+        },
+      ],
+    },
   ],
 };
 

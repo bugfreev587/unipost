@@ -91,6 +91,14 @@ func (sw *statusWriter) WriteHeader(code int) {
 	sw.ResponseWriter.WriteHeader(code)
 }
 
+// Flush supports SSE streaming by delegating to the underlying
+// ResponseWriter's Flusher interface.
+func (sw *statusWriter) Flush() {
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 var placeholderRegex = regexp.MustCompile(`\{[^/{}]+\}`)
 var uuidSegmentRegex = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var numericSegmentRegex = regexp.MustCompile(`^[0-9]+$`)
