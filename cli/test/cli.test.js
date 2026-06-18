@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -33,6 +33,7 @@ async function runCli(args, options = {}) {
       },
     },
     execFile: options.execFile,
+    cwd: options.cwd,
   });
 
   return { code, stdout, stderr };
@@ -1555,6 +1556,7 @@ test("agent guide and mcp-config return client-specific setup content", async ()
   assert.equal(guideBody.data.client, "codex");
   assert.match(guideBody.data.recommended_prompt, /posts validate/);
   assert.match(guideBody.data.recommended_prompt, /unipost agent bootstrap/);
+  assert.match(guideBody.data.debug_prompt, /data\.local_project/);
   assert.doesNotMatch(guideBody.data.recommended_prompt, /npx -y @unipost\/cli agent bootstrap/);
 
   const claudeConfig = await runCli(["agent", "mcp-config", "claude-code", "--json"]);
@@ -1668,4 +1670,264 @@ test("init and quickstart summarize the first-run state without creating a live 
       assert.deepEqual(bodies, [{ name: "New Brand" }]);
     });
   });
+});
+
+// ---- Agent Debug Kit (Phase 1 + 2) ----
+
+test("doctor diagnose --json returns a doctor.v1 payload with findings under data", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/health") {
+      writeJson(res, 200, { ok: true });
+      return;
+    }
+    if (req.url === "/v1/workspace") {
+      writeJson(res, 200, { data: { id: "ws_diag", name: "Diag", plan: "pro" }, request_id: "req_ws" });
+      return;
+    }
+    if (req.url === "/v1/profiles") {
+      writeJson(res, 200, { data: [{ id: "pr_1" }] });
+      return;
+    }
+    if (req.url === "/v1/accounts") {
+      writeJson(res, 200, { data: [{ id: "sa_1", platform: "linkedin", status: "connected" }] });
+      return;
+    }
+    if (req.url.startsWith("/v1/logs")) {
+      writeJson(res, 200, { data: [], meta: { has_more: false } });
+      return;
+    }
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.ok, true);
+    assert.equal(body.data.schema_version, "doctor.v1");
+    assert.equal(body.data.command, "doctor.diagnose");
+    assert.equal(body.data.status, "passed");
+    assert.equal(body.data.environment.api_key_kind, "live");
+    assert.equal(body.data.environment.api_key_masked, "up_live_abcd...4efgh");
+    assert.ok(Array.isArray(body.data.findings));
+  });
+});
+
+test("doctor diagnose flags a missing connected account as input_required", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/health") return void writeJson(res, 200, { ok: true });
+    if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_diag" } });
+    if (req.url === "/v1/profiles") return void writeJson(res, 200, { data: [{ id: "pr_1" }] });
+    if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [] });
+    if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [] });
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 3);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.status, "input_required");
+    const finding = body.data.findings.find((f) => f.id === "finding_no_connected_account");
+    assert.ok(finding);
+    assert.equal(finding.recommended_actions[0].safety, "manual_only");
+  });
+});
+
+test("doctor diagnose reports unauthorized auth as a failed status", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/health") return void writeJson(res, 200, { ok: true });
+    if (req.url === "/v1/workspace") {
+      return void writeJson(res, 401, { error: { normalized_code: "unauthorized", message: "bad key" } });
+    }
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 6);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.status, "failed");
+    assert.ok(body.data.findings.some((f) => f.id === "finding_auth_unauthorized"));
+  });
+});
+
+test("doctor diagnose includes local project repair hints for agent fixes", async () => {
+  const projectDir = await mkdtemp(join(tmpdir(), "unipost-local-project-"));
+  try {
+    await mkdir(join(projectDir, "src"), { recursive: true });
+    await writeFile(join(projectDir, "package.json"), JSON.stringify({
+      dependencies: {
+        "@unipost/sdk": "0.4.0",
+        next: "15.0.0",
+      },
+    }, null, 2));
+    await writeFile(join(projectDir, ".env.example"), "UNIPOST_KEY=up_live_example\n");
+    await writeFile(join(projectDir, "src", "unipost.js"), [
+      "export async function publish(caption) {",
+      "  return fetch('https://api.unipost.dev/v1/posts', {",
+      "    method: 'POST',",
+      "    headers: { Authorization: process.env.UNIPOST_API_KEY },",
+      "    body: JSON.stringify({ account_id: 'sa_1', caption, media_urls: ['./demo.png'] })",
+      "  });",
+      "}",
+      "",
+    ].join("\n"));
+    await writeFile(join(projectDir, "src", "webhook.js"), [
+      "import express from 'express';",
+      "const app = express();",
+      "app.use('/webhooks/unipost', express.json());",
+      "app.post('/webhooks/unipost', (req, res) => verifyUnipostWebhook(req.body));",
+      "",
+    ].join("\n"));
+
+    await withServer((req, res) => {
+      if (req.url === "/health") return void writeJson(res, 200, { ok: true });
+      if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_diag", name: "Diag" } });
+      if (req.url === "/v1/profiles") return void writeJson(res, 200, { data: [{ id: "pr_1" }] });
+      if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [{ id: "sa_1", status: "connected" }] });
+      if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [] });
+      writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+    }, async (baseUrl) => {
+      const result = await runCli(["doctor", "diagnose", "--json", "--base-url", baseUrl], {
+        cwd: projectDir,
+        env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+      });
+      assert.equal(result.code, 6);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.local_project.package_manager, "npm");
+      assert.ok(body.data.local_project.frameworks.includes("next"));
+      assert.equal(body.data.local_project.sdk.detected, true);
+      assert.ok(body.data.local_project.env_var_names.includes("UNIPOST_KEY"));
+      assert.ok(body.data.local_project.env_var_names.includes("UNIPOST_API_KEY"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "auth_header_missing_bearer"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "singular_account_id_payload"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "local_media_path"));
+      assert.ok(body.data.local_project.code_hints.some((hint) => hint.kind === "webhook_raw_body_risk"));
+
+      const authFinding = body.data.findings.find((finding) => finding.id === "finding_local_auth_header_missing_bearer");
+      assert.ok(authFinding);
+      assert.equal(authFinding.category, "auth");
+      assert.equal(authFinding.recommended_actions[0].target_files[0], "src/unipost.js");
+      assert.match(authFinding.recommended_actions[0].instruction, /Bearer/);
+
+      const payloadFinding = body.data.findings.find((finding) => finding.id === "finding_local_payload_shape");
+      assert.ok(payloadFinding);
+      assert.equal(payloadFinding.recommended_actions[0].safety, "safe_to_execute_without_user");
+
+      const webhookFinding = body.data.findings.find((finding) => finding.id === "finding_local_webhook_raw_body_risk");
+      assert.ok(webhookFinding);
+      assert.equal(webhookFinding.recommended_actions[0].target_files[0], "src/webhook.js");
+      assert.match(webhookFinding.recommended_actions[0].instruction, /raw body/);
+    });
+  } finally {
+    await rm(projectDir, { recursive: true, force: true });
+  }
+});
+
+test("doctor verify --json runs non-destructive checks and never live-publishes", async () => {
+  await withServer((req, res) => {
+    if (req.url === "/v1/workspace") return void writeJson(res, 200, { data: { id: "ws_v" } });
+    if (req.url === "/v1/accounts") return void writeJson(res, 200, { data: [{ id: "sa_1", status: "connected" }] });
+    if (req.url.startsWith("/v1/logs")) return void writeJson(res, 200, { data: [] });
+    writeJson(res, 404, { error: { normalized_code: "not_found", message: "nope" } });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "verify", "--allow-live-publish", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.command, "doctor.verify");
+    assert.equal(body.data.status, "passed");
+    assert.equal(body.data.verification.passed, true);
+    const livePublish = body.data.verification.checks.find((c) => c.id === "live_publish");
+    assert.equal(livePublish.status, "warn");
+  });
+});
+
+test("logs list --json maps filters to the public logs API and redacts secrets", async () => {
+  await withServer((req, res) => {
+    assert.match(req.url, /^\/v1\/logs\?/);
+    assert.match(req.url, /status=error/);
+    assert.match(req.url, /from=/);
+    writeJson(res, 200, {
+      data: [{
+        id: 7,
+        ts: "2026-06-17T00:00:00Z",
+        status: "error",
+        category: "publish",
+        action: "create",
+        error_code: "validation_error",
+        request_id: "req_abc",
+        message: "key up_live_secretvalue123 leaked",
+        url: "https://graph.example.test/post?access_token=oauth_urlsecret123",
+        headers: { Authorization: "Bearer headersecret123" },
+        custom_debug: { nested: "token up_test_nestedsecret123" },
+      }],
+      meta: { has_more: false, limit: 100 },
+      request_id: "req_list",
+    });
+  }, async (baseUrl) => {
+    const result = await runCli(["logs", "list", "--status", "error", "--since", "2h", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.logs.length, 1);
+    assert.equal(body.data.logs[0].id, 7);
+    assert.doesNotMatch(body.data.logs[0].message, /secretvalue123/);
+    assert.doesNotMatch(result.stdout, /urlsecret123|headersecret123|nestedsecret123/);
+  });
+});
+
+test("logs get <id> --json reads a single log and redacts unexpected secret fields", async () => {
+  await withServer((req, res) => {
+    assert.equal(req.url, "/v1/logs/42");
+    writeJson(res, 200, {
+      data: {
+        id: 42,
+        status: "error",
+        action: "create",
+        error_code: "not_found",
+        url: "https://graph.example.test/media?access_token=oauth_getsecret123",
+        raw_headers: { "x-api-key": "up_test_headersecret456" },
+      },
+      request_id: "req_g",
+    });
+  }, async (baseUrl) => {
+    const result = await runCli(["logs", "get", "42", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.log.id, 42);
+    assert.doesNotMatch(result.stdout, /getsecret123|headersecret456/);
+  });
+});
+
+test("doctor explain --request-id correlates a failed request", async () => {
+  await withServer((req, res) => {
+    assert.match(req.url, /^\/v1\/logs\?.*request_id=req_xyz/);
+    writeJson(res, 200, { data: [{ id: 9, status: "error", action: "create", http_status_code: 422, error_code: "validation_error", request_id: "req_xyz" }], request_id: "req_e" });
+  }, async (baseUrl) => {
+    const result = await runCli(["doctor", "explain", "--request-id", "req_xyz", "--json", "--base-url", baseUrl], {
+      env: { UNIPOST_API_KEY: "up_live_abcd1234efgh" },
+    });
+    assert.equal(result.code, 0);
+    const body = JSON.parse(result.stdout);
+    assert.equal(body.data.command, "doctor.explain");
+    assert.ok(body.data.findings.some((f) => f.id === "finding_request_explained"));
+  });
+});
+
+test("agent capabilities advertises doctor and logs debug commands", async () => {
+  const result = await runCli(["agent", "capabilities", "--json"]);
+  assert.equal(result.code, 0);
+  const body = JSON.parse(result.stdout);
+  assert.ok(body.data.commands.includes("doctor diagnose"));
+  assert.ok(body.data.commands.includes("logs list"));
+  assert.equal(body.data.debug.schema_version, "doctor.v1");
+  assert.equal(body.data.debug.local_project_hints, true);
+  assert.ok(body.data.debug.action_safety_levels.includes("manual_only"));
+  assert.deepEqual(body.data.debug.statuses, ["passed", "failed", "input_required", "needs_support"]);
 });

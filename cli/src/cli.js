@@ -1,25 +1,35 @@
 import { createHash } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir, platform } from "node:os";
 import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 
-const CLI_VERSION = "0.1.2";
+const CLI_VERSION = "0.2.0";
 const CLI_RUNNER = "unipost";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
 const DOCS_CLI_URL = "https://unipost.dev/docs/cli";
+const DOCS_DEBUG_URL = "https://unipost.dev/docs/cli/agent-debug";
+const APP_BASE_URL = "https://app.unipost.dev";
+const DOCTOR_SCHEMA_VERSION = "doctor.v1";
+const API_KEY_PREFIXES = { up_live_: "live", up_test_: "test" };
 const KEYCHAIN_SERVICE = "dev.unipost.cli";
 const AGENT_CATALOG_VERSION = "2026-06-03.phase5";
 const MCP_ENDPOINT = "https://mcp.unipost.dev/mcp";
 const AGENT_PACKAGE_FILES = [
   "agent-packages/codex/SKILL.md",
   "agent-packages/claude-code/CLAUDE.md",
+  "agent-packages/claude-code/skills/unipost-debug/SKILL.md",
+  "agent-packages/codex/skills/unipost-debug/SKILL.md",
 ];
+const DEBUG_SKILL_TARGETS = {
+  "claude-code": ".claude/skills/unipost-debug/SKILL.md",
+  codex: ".codex/skills/unipost-debug/SKILL.md",
+};
 const TERMINAL_POST_STATUSES = new Set(["published", "failed", "partial", "canceled"]);
 const TERMINAL_MEDIA_STATUSES = new Set(["ready", "failed"]);
 
@@ -91,6 +101,13 @@ const GLOBAL_FLAGS_WITH_VALUES = new Set([
   "--timeout",
   "--from-file",
   "--plan",
+  "--since",
+  "--request-id",
+  "--log-id",
+  "--error-code",
+  "--category",
+  "--action",
+  "--url",
 ]);
 
 const GLOBAL_BOOLEAN_FLAGS = new Set([
@@ -110,6 +127,8 @@ const GLOBAL_BOOLEAN_FLAGS = new Set([
   "--replace-key",
   "--allow-quickstart-creds",
   "--no-quickstart-creds",
+  "--upload",
+  "--allow-live-publish",
 ]);
 
 class CliError extends Error {
@@ -175,6 +194,7 @@ function createContext(argv, io) {
     env,
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
+    cwd: io.cwd || process.cwd(),
     fetchImpl: io.fetchImpl || globalThis.fetch,
     execFile: io.execFile || execFile,
     secureStore: io.secureStore || createDefaultSecureStore(),
@@ -196,6 +216,7 @@ function fallbackContext(argv, io) {
     env,
     stdout: io.stdout || process.stdout,
     stderr: io.stderr || process.stderr,
+    cwd: io.cwd || process.cwd(),
     fetchImpl: io.fetchImpl || globalThis.fetch,
     execFile: io.execFile || execFile,
     secureStore: io.secureStore || createDefaultSecureStore(),
@@ -431,7 +452,10 @@ async function dispatch(context) {
     return agent(context, subcommand, third);
   }
   if (command === "doctor") {
-    return doctor(context);
+    return doctorCommand(context, subcommand, third);
+  }
+  if (command === "logs") {
+    return logs(context, subcommand, third);
   }
   if (command === "completion") {
     return completion(context, subcommand);
@@ -888,6 +912,495 @@ async function doctor(context) {
     },
     human: renderDoctor(checks, workspace, context.options.telemetry),
     exitCode: hardExit,
+  });
+}
+
+// doctorCommand routes the doctor command group. Bare `doctor` keeps its
+// original flat health-check behavior for backward compatibility; the
+// agent-oriented subcommands return the stable doctor.v1 payload under data.
+async function doctorCommand(context, subcommand, third) {
+  if (!subcommand) {
+    return doctor(context);
+  }
+  if (subcommand === "diagnose") {
+    return doctorDiagnose(context);
+  }
+  if (subcommand === "verify") {
+    return doctorVerify(context);
+  }
+  if (subcommand === "explain") {
+    return doctorExplain(context);
+  }
+  if (subcommand === "support-bundle") {
+    return doctorSupportBundle(context);
+  }
+  return invalidSubcommand("doctor", subcommand);
+}
+
+async function doctorDiagnose(context) {
+  const findings = [];
+  const environment = doctorEnvironment(context);
+  const localProject = await analyzeLocalProject(context);
+  findings.push(...findingsForLocalProject(localProject));
+  let workspace = null;
+  let lastRequestId = "";
+  let lastRateLimit = {};
+
+  // Auth + environment heuristics that need no network call.
+  if (!context.options.apiKey) {
+    findings.push(makeFinding({
+      id: "finding_api_key_missing",
+      severity: "critical",
+      category: "auth",
+      confidence: 0.99,
+      summary: "No UniPost API key was found in the environment, CLI config, or --api-key.",
+      evidence: [{ source: "local_env", message: "UNIPOST_API_KEY is not set and no stored credential is active." }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Set UNIPOST_API_KEY to a UniPost API key (up_live_... or up_test_...), or run `unipost auth login`.",
+      }],
+    }));
+  } else if (environment.api_key_kind === "unknown") {
+    findings.push(makeFinding({
+      id: "finding_api_key_prefix_unknown",
+      severity: "error",
+      category: "auth",
+      confidence: 0.9,
+      summary: "The API key does not start with the expected up_live_ or up_test_ prefix.",
+      evidence: [{ source: "local_env", message: `Key prefix looks like "${environment.api_key_masked}".` }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Use a UniPost API key that starts with up_live_ or up_test_. Copy it from the UniPost dashboard.",
+      }],
+    }));
+  } else if (environment.api_key_kind === "live" && environment.base_url_env !== "production" && environment.base_url_env !== "unknown") {
+    findings.push(makeFinding({
+      id: "finding_live_key_non_production_base",
+      severity: "warning",
+      category: "auth",
+      confidence: 0.8,
+      summary: `A live API key is being used against a ${environment.base_url_env} base URL (${environment.base_url}).`,
+      evidence: [{ source: "local_env", message: "Live keys are normally used against https://api.unipost.dev." }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Use a matching environment: a live key with https://api.unipost.dev, or a test key with the dev/staging base URL.",
+      }],
+    }));
+  } else if (environment.api_key_kind === "test" && environment.base_url_env === "production") {
+    findings.push(makeFinding({
+      id: "finding_test_key_production_base",
+      severity: "warning",
+      category: "auth",
+      confidence: 0.75,
+      summary: "A test API key is being used against the production base URL.",
+      evidence: [{ source: "local_env", message: "Test keys are normally used against the dev or staging base URL." }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Use a live key against https://api.unipost.dev, or point --base-url at the dev/staging API for test keys.",
+      }],
+    }));
+  }
+
+  // API reachability.
+  const health = await runCheck(async () => requestJson(context, "/health", { auth: false }));
+  if (health.ok) {
+    lastRequestId = health.value.requestId || lastRequestId;
+  } else {
+    findings.push(makeFinding({
+      id: "finding_api_unreachable",
+      severity: "critical",
+      category: "auth",
+      confidence: 0.95,
+      summary: "The UniPost API is not reachable at the configured base URL.",
+      evidence: [{ source: "api_probe", message: redactSecrets(health.error.message) }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: `Check connectivity and the base URL. Current base URL: ${environment.base_url}.`,
+      }],
+    }));
+  }
+
+  // Authenticated probes only when a key is present.
+  if (context.options.apiKey) {
+    const auth = await runCheck(async () => requestJson(context, "/v1/workspace", { auth: true }));
+    if (auth.ok) {
+      workspace = compactWorkspace(unwrapData(auth.value.body));
+      lastRequestId = auth.value.requestId || lastRequestId;
+      lastRateLimit = auth.value.rateLimit || lastRateLimit;
+    } else {
+      const code = auth.error.normalizedCode;
+      findings.push(makeFinding({
+        id: code === "forbidden" ? "finding_auth_forbidden" : "finding_auth_unauthorized",
+        severity: "critical",
+        category: "auth",
+        confidence: 0.92,
+        summary: code === "forbidden"
+          ? "The API key authenticated but lacks permission for this workspace."
+          : "UniPost rejected the API key (401). The key may be wrong, revoked, or missing the Bearer prefix.",
+        evidence: [{ source: "api_probe", message: redactSecrets(auth.error.message) }],
+        recommended_actions: [{
+          type: "code_patch",
+          safety: "safe_to_execute_without_user",
+          instruction: "Send the header as `Authorization: Bearer <UNIPOST_API_KEY>` and confirm the key is active in the dashboard.",
+        }],
+        request_id: auth.error.requestId,
+      }));
+    }
+
+    // Profile / account readiness (best effort; never throws).
+    if (workspace) {
+      const profiles = await runCheck(async () => fetchProfiles(context));
+      if (profiles.ok && profiles.value.profiles.length === 0) {
+        findings.push(makeFinding({
+          id: "finding_no_profile",
+          severity: "error",
+          category: "workspace",
+          confidence: 0.85,
+          summary: "This workspace has no profiles yet.",
+          recommended_actions: [{
+            type: "manual_dashboard_action",
+            safety: "manual_only",
+            url: `${APP_BASE_URL}/profiles`,
+            instruction: "Create a profile in the UniPost dashboard, then rerun verification.",
+          }],
+        }));
+      }
+
+      const accounts = await runCheck(async () => fetchAccounts(context));
+      if (accounts.ok) {
+        const list = accounts.value.accounts || [];
+        if (list.length === 0) {
+          findings.push(makeFinding({
+            id: "finding_no_connected_account",
+            severity: "error",
+            category: "account",
+            confidence: 0.85,
+            summary: "No connected social account is available for this workspace.",
+            recommended_actions: [{
+              type: "manual_dashboard_action",
+              safety: "manual_only",
+              url: `${APP_BASE_URL}/profiles`,
+              instruction: "Connect at least one social account in the UniPost dashboard, then rerun verification.",
+            }],
+          }));
+        } else {
+          const unhealthy = list.filter((account) => accountHealthState(account) === "unhealthy");
+          if (unhealthy.length > 0) {
+            findings.push(makeFinding({
+              id: "finding_account_unhealthy",
+              severity: "warning",
+              category: "account",
+              confidence: 0.7,
+              summary: `${unhealthy.length} connected account(s) report an unhealthy or disconnected status.`,
+              evidence: unhealthy.slice(0, 5).map((account) => ({
+                source: "account_read",
+                message: `Account ${account.id || "unknown"} (${account.platform || "platform"}) status: ${accountStatusLabel(account)}.`,
+              })),
+              recommended_actions: [{
+                type: "manual_dashboard_action",
+                safety: "manual_only",
+                url: `${APP_BASE_URL}/profiles`,
+                instruction: "Reconnect or refresh the affected account in the UniPost dashboard.",
+              }],
+            }));
+          }
+        }
+      }
+
+      // Logs correlation: surface the most recent failed requests as evidence.
+      const errorLogs = await runCheck(async () => fetchRecentErrorLogs(context));
+      if (errorLogs.ok && errorLogs.value.length > 0) {
+        const latest = errorLogs.value[0];
+        findings.push(makeFinding({
+          id: "finding_recent_failed_requests",
+          severity: "warning",
+          category: "logs",
+          confidence: 0.6,
+          summary: `${errorLogs.value.length} recent failed request(s) found in your UniPost logs.`,
+          evidence: errorLogs.value.slice(0, 5).map((log) => ({
+            source: "logs",
+            message: summarizeLog(log),
+          })),
+          recommended_actions: [{
+            type: "code_patch",
+            safety: "safe_to_execute_without_user",
+            instruction: `Inspect the latest failure with \`unipost doctor explain --request-id ${latest.request_id || "<request_id>"} --json\` or \`unipost logs get ${latest.id} --json\`.`,
+          }],
+          request_id: latest.request_id,
+        }));
+      }
+    }
+  }
+
+  const status = resolveDoctorStatus(findings);
+  return doctorEnvelopeResult(context, {
+    command: "doctor.diagnose",
+    status,
+    workspace,
+    environment,
+    localProject,
+    findings,
+    summary: doctorSummary(status, findings),
+    requestId: lastRequestId,
+    rateLimit: lastRateLimit,
+  });
+}
+
+async function doctorVerify(context) {
+  requireApiKey(context, "doctor verify");
+  const environment = doctorEnvironment(context);
+  const checks = [];
+  const findings = [];
+  let workspace = null;
+  let lastRequestId = "";
+  let lastRateLimit = {};
+
+  const auth = await runCheck(async () => requestJson(context, "/v1/workspace", { auth: true }));
+  if (auth.ok) {
+    workspace = compactWorkspace(unwrapData(auth.value.body));
+    lastRequestId = auth.value.requestId || lastRequestId;
+    lastRateLimit = auth.value.rateLimit || lastRateLimit;
+    checks.push({ id: "auth_probe", status: "pass", message: "API key authenticated against /v1/workspace." });
+    checks.push({ id: "workspace_read", status: "pass", message: `Workspace ${workspace?.id || "unknown"} is readable.` });
+  } else {
+    checks.push({ id: "auth_probe", status: "fail", message: redactSecrets(auth.error.message) });
+    findings.push(makeFinding({
+      id: "finding_verify_auth_failed",
+      severity: "critical",
+      category: "auth",
+      confidence: 0.95,
+      summary: "Verification could not authenticate the API key.",
+      evidence: [{ source: "api_probe", message: redactSecrets(auth.error.message) }],
+      recommended_actions: [{
+        type: "code_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Fix the Authorization header or API key, then rerun `unipost doctor verify --json`.",
+      }],
+    }));
+  }
+
+  if (workspace) {
+    const accounts = await runCheck(async () => fetchAccounts(context));
+    if (accounts.ok) {
+      const list = accounts.value.accounts || [];
+      const unhealthy = list.filter((account) => accountHealthState(account) === "unhealthy");
+      checks.push({
+        id: "account_health",
+        status: list.length === 0 ? "warn" : unhealthy.length > 0 ? "warn" : "pass",
+        message: list.length === 0
+          ? "No connected accounts to verify."
+          : `${list.length} account(s) read; ${unhealthy.length} unhealthy.`,
+      });
+    } else {
+      checks.push({ id: "account_health", status: "warn", message: redactSecrets(accounts.error.message) });
+    }
+
+    const logsRead = await runCheck(async () => fetchRecentErrorLogs(context));
+    checks.push({
+      id: "logs_read",
+      status: logsRead.ok ? "pass" : "warn",
+      message: logsRead.ok
+        ? `Logs are readable for this workspace (${logsRead.value.length} recent error(s)).`
+        : redactSecrets(logsRead.error.message),
+    });
+  }
+
+  if (context.options.allowLivePublish) {
+    checks.push({
+      id: "live_publish",
+      status: "warn",
+      message: "Live-publish verification is not performed automatically in v1, even with --allow-live-publish.",
+    });
+  }
+
+  const passed = findings.length === 0 && checks.every((check) => check.status !== "fail");
+  const status = passed ? "passed" : "failed";
+  return doctorEnvelopeResult(context, {
+    command: "doctor.verify",
+    status,
+    workspace,
+    environment,
+    findings,
+    verification: { passed, checks },
+    summary: passed ? "Verification passed using non-destructive checks." : "Verification found blocking issues.",
+    requestId: lastRequestId,
+    rateLimit: lastRateLimit,
+  });
+}
+
+async function doctorExplain(context) {
+  requireApiKey(context, "doctor explain");
+  const requestId = context.options.requestId;
+  const logId = context.options.logId;
+  if (!requestId && !logId) {
+    throw new CliError({
+      code: "missing_required_input",
+      normalizedCode: "missing_required_input",
+      message: "doctor explain requires --request-id <id> or --log-id <id>.",
+      hint: "Find ids with `unipost logs list --status error --json`.",
+      exitCode: EXIT.missingInput,
+    });
+  }
+
+  let log = null;
+  let lastRequestId = "";
+  if (logId) {
+    const response = await requestJson(context, `/v1/logs/${encodeURIComponent(logId)}`, { auth: true });
+    log = redactLog(unwrapData(response.body));
+    lastRequestId = response.requestId;
+  } else {
+    const response = await requestJson(context, apiPath("/v1/logs", { request_id: requestId, limit: 1 }), { auth: true });
+    const list = unwrapData(response.body) || [];
+    log = list.length > 0 ? redactLog(list[0]) : null;
+    lastRequestId = response.requestId;
+  }
+
+  const findings = [];
+  let status = "passed";
+  if (!log) {
+    status = "needs_support";
+    findings.push(makeFinding({
+      id: "finding_log_not_found",
+      severity: "warning",
+      category: "logs",
+      confidence: 0.5,
+      summary: "No matching log was found for the provided id in this workspace.",
+      recommended_actions: [{
+        type: "support_bundle",
+        safety: "needs_user_approval",
+        instruction: "Confirm the id and time window, or run `unipost logs list --status error --since 24h --json`.",
+      }],
+    }));
+  } else {
+    findings.push(makeFinding({
+      id: "finding_request_explained",
+      severity: log.status === "error" ? "error" : "info",
+      category: log.category || "logs",
+      confidence: 0.7,
+      summary: explainLogSummary(log),
+      evidence: [{ source: "logs", message: summarizeLog(log) }, { source: "logs", message: redactSecrets(JSON.stringify(log).slice(0, 2000)) }],
+      recommended_actions: [{
+        type: "code_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: recommendationForLog(log),
+      }],
+      request_id: log.request_id,
+    }));
+  }
+
+  return doctorEnvelopeResult(context, {
+    command: "doctor.explain",
+    status,
+    findings,
+    summary: log ? explainLogSummary(log) : "No matching log found.",
+    requestId: lastRequestId,
+  });
+}
+
+async function doctorSupportBundle(context) {
+  requireApiKey(context, "doctor support-bundle");
+  const diagnose = await doctorDiagnose(context);
+  const diagnoseData = diagnose.data;
+  const errorLogs = await runCheck(async () => fetchRecentErrorLogs(context));
+  const recentErrors = errorLogs.ok ? errorLogs.value.slice(0, 20).map(redactLog) : [];
+
+  const bundle = {
+    schema_version: "doctor.v1",
+    command: "doctor.support_bundle",
+    run_id: newRunId(),
+    created_at: nowIso(),
+    cli_version: CLI_VERSION,
+    runtime: { platform: platform(), node: process.version },
+    environment: diagnoseData.environment,
+    workspace: diagnoseData.workspace,
+    findings: diagnoseData.findings,
+    recent_errors: recentErrors,
+    redacted: true,
+  };
+
+  const reportPath = "unipost-debug-report.md";
+  const report = renderSupportBundleMarkdown(bundle);
+  await writeFile(reportPath, report, { mode: 0o600 });
+
+  const support = {
+    report_path: reportPath,
+    redacted: true,
+    finding_count: bundle.findings.length,
+    recent_error_count: recentErrors.length,
+  };
+  let uploadNote = "";
+  if (context.options.upload) {
+    support.upload = { status: "not_available", message: "Support bundle upload is not enabled in v1. Share unipost-debug-report.md with UniPost support." };
+    uploadNote = " Upload is not enabled in v1; share the local report.";
+  }
+
+  return doctorEnvelopeResult(context, {
+    command: "doctor.support_bundle",
+    status: diagnoseData.status === "passed" ? "passed" : "needs_support",
+    workspace: diagnoseData.workspace,
+    environment: diagnoseData.environment,
+    findings: diagnoseData.findings,
+    support,
+    summary: `Wrote redacted support bundle to ${reportPath}.${uploadNote}`,
+    runId: bundle.run_id,
+  });
+}
+
+// logs routes the logs command group (Phase 1 CLI access to the public logs API).
+async function logs(context, subcommand, third) {
+  if (subcommand === "list") {
+    return logsList(context);
+  }
+  if (subcommand === "get") {
+    return logsGet(context, third);
+  }
+  return invalidSubcommand("logs", subcommand);
+}
+
+async function logsList(context) {
+  requireApiKey(context, "logs list");
+  const from = context.options.since ? sinceToFrom(context.options.since) : context.options.from;
+  const query = {
+    status: context.options.status,
+    category: context.options.category,
+    action: context.options.action,
+    error_code: context.options.errorCode,
+    platform: context.options.platform,
+    profile_id: context.options.profile,
+    social_account_id: context.options.account,
+    request_id: context.options.requestId,
+    from,
+    to: context.options.to,
+    limit: context.options.limit,
+    cursor: context.options.cursor,
+  };
+  const response = await requestJson(context, apiPath("/v1/logs", query), { auth: true });
+  const list = (unwrapData(response.body) || []).map(redactLog);
+  return envelopeResult({
+    data: { logs: list },
+    meta: {
+      request_id: response.requestId,
+      rate_limit: response.rateLimit,
+      pagination: paginationFromBody(response.body),
+    },
+    human: renderLogsList(list),
+  });
+}
+
+async function logsGet(context, id) {
+  requireApiKey(context, "logs get");
+  const logId = requireValue(id, "<log_id>", "logs get requires a log id.");
+  const response = await requestJson(context, `/v1/logs/${encodeURIComponent(logId)}`, { auth: true });
+  const log = redactLog(unwrapData(response.body));
+  return envelopeResult({
+    data: { log },
+    meta: { request_id: response.requestId, rate_limit: response.rateLimit },
+    human: `${summarizeLog(log)}\n`,
   });
 }
 
@@ -2254,11 +2767,41 @@ function agentCapabilities() {
         "agent mcp-config",
         "agent mcp-test",
         "agent install",
+        "doctor diagnose",
+        "doctor verify",
+        "doctor explain",
+        "doctor support-bundle",
+        "logs list",
+        "logs get",
       ],
+      debug: {
+        schema_version: DOCTOR_SCHEMA_VERSION,
+        doctor_commands: [
+          `${CLI_RUNNER} doctor diagnose --json`,
+          `${CLI_RUNNER} doctor verify --json`,
+          `${CLI_RUNNER} doctor explain --request-id <id> --json`,
+          `${CLI_RUNNER} doctor support-bundle --json`,
+        ],
+        logs_commands: [
+          `${CLI_RUNNER} logs list --status error --since 2h --json`,
+          `${CLI_RUNNER} logs get <id> --json`,
+        ],
+        statuses: ["passed", "failed", "input_required", "needs_support"],
+        action_safety_levels: ["read_only", "safe_to_execute_without_user", "needs_user_approval", "manual_only"],
+        finding_categories: ["auth", "sdk", "workspace", "account", "payload", "media", "webhook", "logs", "unknown"],
+        local_project_hints: true,
+        local_project_hint_kinds: [
+          "auth_header_missing_bearer",
+          "hardcoded_api_key",
+          "singular_account_id_payload",
+          "local_media_path",
+          "webhook_raw_body_risk",
+        ],
+      },
       intents: [
         {
           name: "diagnose_setup",
-          description: "Check auth, workspace, profile and account readiness for an agent.",
+          description: "Check auth, workspace, profile and account readiness for an agent. Run doctor and logs reads before suggesting code changes.",
           command: `${CLI_RUNNER} agent bootstrap --json`,
           canonical_action: "agent.bootstrap",
           safety_level: "read_only",
@@ -2271,6 +2814,11 @@ function agentCapabilities() {
             },
             additionalProperties: false,
           },
+          related_commands: [
+            `${CLI_RUNNER} doctor diagnose --json`,
+            `${CLI_RUNNER} doctor verify --json`,
+            `${CLI_RUNNER} logs list --status error --since 2h --json`,
+          ],
         },
         {
           name: "diagnose_account",
@@ -2492,9 +3040,17 @@ function agentGuide(client) {
       `Use \`${CLI_RUNNER} posts create --from-file post.json --dry-run --json\` before asking for live-publish approval.`,
       "Never live-publish unless the user explicitly approves the exact action and the command includes --yes plus --idempotency-key.",
     ].join(" "),
+    debug_prompt: [
+      `To fix a broken integration, run \`${CLI_RUNNER} doctor diagnose --json\` and act on data.findings by their recommended_actions safety level.`,
+      "Use data.local_project for framework, SDK, env-var, and relative file/line repair hints; prefer recommended_actions target_files.",
+      `Use \`${CLI_RUNNER} doctor explain --request-id <id> --json\` and \`${CLI_RUNNER} logs list --status error --since 2h --json\` to correlate failures.`,
+      `Run \`${CLI_RUNNER} doctor verify --json\` after each patch; escalate with \`${CLI_RUNNER} doctor support-bundle --json\` only when stuck.`,
+      "doctor verify is non-destructive and never live-publishes. Keep API keys, tokens, cookies, and webhook secrets masked.",
+    ].join(" "),
     stable_contracts: [
       "Branch on normalized_code, exit code, and documented status enum values.",
       "Treat canceled as the only CLI-facing spelling for canceled resources.",
+      "doctor.* and logs.* JSON lives under the standard envelope data field; doctor payloads carry schema_version doctor.v1.",
     ],
   };
 }
@@ -2590,18 +3146,31 @@ function agentInstallInstructions(client) {
   const file = normalizedClient === "claude-code"
     ? "agent-packages/claude-code/CLAUDE.md"
     : "agent-packages/codex/SKILL.md";
+  const debugSkillSource = normalizedClient === "claude-code"
+    ? "agent-packages/claude-code/skills/unipost-debug/SKILL.md"
+    : "agent-packages/codex/skills/unipost-debug/SKILL.md";
+  const debugSkillTarget = DEBUG_SKILL_TARGETS[normalizedClient] || DEBUG_SKILL_TARGETS.codex;
   return {
     client: normalizedClient,
     mode: "instructions",
     automatic_install: false,
     files: AGENT_PACKAGE_FILES.map((path) => ({
       path,
-      description: path.endsWith("SKILL.md") ? "Codex skill instructions" : "Claude Code project instructions",
+      description: path.includes("skills/unipost-debug")
+        ? "UniPost Agent Debug Kit skill (diagnose/verify/explain integrations)"
+        : path.endsWith("SKILL.md") ? "Codex skill instructions" : "Claude Code project instructions",
     })),
     selected_file: file,
+    debug_skill: {
+      source: debugSkillSource,
+      target: debugSkillTarget,
+      reference: debugSkillSource.replace("SKILL.md", "common-errors.md"),
+    },
     instructions: [
       `Use ${file} as the first-party UniPost instruction package for ${normalizedClient}.`,
+      `Copy ${debugSkillSource} (and common-errors.md) into ${debugSkillTarget} to install the UniPost debug skill.`,
       `Run \`${CLI_RUNNER} agent bootstrap --json\`, \`${CLI_RUNNER} agent capabilities --json\`, and \`${CLI_RUNNER} agent guide --client <client>\` before modifying user projects.`,
+      `For broken integrations, run \`${CLI_RUNNER} doctor diagnose --json\` and follow the recommended actions, then \`${CLI_RUNNER} doctor verify --json\`.`,
       `Use \`${CLI_RUNNER} agent mcp-test --json\` before configuring MCP.`,
       "Do not execute live publish plans; use explicit publish commands only after user approval with --yes and --idempotency-key.",
     ].join("\n"),
@@ -3741,6 +4310,798 @@ function renderMedia(mediaItem) {
   return `${lines.join("\n")}\n`;
 }
 
+// ---- Agent Debug Kit helpers (doctor.v1 + logs) ----
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function newRunId() {
+  const stamp = Date.now().toString(36);
+  const rand = Math.random().toString(36).slice(2, 10);
+  return `udr_${stamp}${rand}`;
+}
+
+function apiKeyKind(key) {
+  if (!key) {
+    return "missing";
+  }
+  for (const [prefix, kind] of Object.entries(API_KEY_PREFIXES)) {
+    if (key.startsWith(prefix)) {
+      return kind;
+    }
+  }
+  return "unknown";
+}
+
+// maskApiKey renders a key as prefix + first 4 + ... + last 5, e.g. up_live_9BWr...vhzHk.
+function maskApiKey(key) {
+  if (!key) {
+    return "";
+  }
+  const prefix = Object.keys(API_KEY_PREFIXES).find((value) => key.startsWith(value)) || "";
+  const body = key.slice(prefix.length);
+  if (body.length <= 9) {
+    return `${prefix}${body.slice(0, 1)}...`;
+  }
+  return `${prefix}${body.slice(0, 4)}...${body.slice(-5)}`;
+}
+
+// baseUrlEnvKind classifies a base URL into a UniPost environment.
+function baseUrlEnvKind(baseUrl) {
+  let host = "";
+  try {
+    host = new URL(baseUrl).host.toLowerCase();
+  } catch {
+    return "unknown";
+  }
+  if (host.includes("localhost") || host.startsWith("127.0.0.1") || host.includes("0.0.0.0")) {
+    return "development";
+  }
+  if (host.startsWith("dev-") || host.includes("dev-api")) {
+    return "development";
+  }
+  if (host.startsWith("staging-") || host.includes("staging-api")) {
+    return "staging";
+  }
+  if (host === "api.unipost.dev") {
+    return "production";
+  }
+  return "unknown";
+}
+
+function doctorEnvironment(context) {
+  const key = context.options.apiKey || "";
+  return {
+    base_url: context.options.baseUrl,
+    base_url_source: context.options.baseUrlSource,
+    base_url_env: baseUrlEnvKind(context.options.baseUrl),
+    api_key_present: Boolean(key),
+    api_key_kind: apiKeyKind(key),
+    api_key_masked: maskApiKey(key),
+  };
+}
+
+async function analyzeLocalProject(context) {
+  const root = context.cwd || process.cwd();
+  const envNames = new Set();
+  const scannedFiles = [];
+  const codeHints = [];
+  const sdkPackages = [];
+  const frameworks = new Set();
+  const envFiles = [];
+  let packageManager = "unknown";
+  let scanned = false;
+  let skipSourceHints = false;
+
+  const packageJson = await readJsonIfPresent(join(root, "package.json"));
+  if (packageJson) {
+    scanned = true;
+    packageManager = await detectPackageManager(root);
+    skipSourceHints = packageJson.name === "@unipost/cli";
+    const dependencies = {
+      ...(packageJson.dependencies || {}),
+      ...(packageJson.devDependencies || {}),
+      ...(packageJson.peerDependencies || {}),
+    };
+    for (const [name, version] of Object.entries(dependencies)) {
+      detectFrameworkFromDependency(name, frameworks);
+      if (isUnipostSdkDependency(name)) {
+        sdkPackages.push({ name, version: String(version || "") });
+      }
+    }
+    scannedFiles.push("package.json");
+  }
+
+  for (const envFile of [".env.example", ".env.sample", ".env.local.example"]) {
+    const content = await readTextIfPresent(join(root, envFile));
+    if (content == null) {
+      continue;
+    }
+    scanned = true;
+    scannedFiles.push(envFile);
+    envFiles.push({ path: envFile, read: true });
+    for (const name of extractEnvVarNames(content)) {
+      envNames.add(name);
+    }
+    codeHints.push(...detectLocalCodeHints(envFile, content));
+  }
+
+  for (const secretEnvFile of [".env", ".env.local", ".env.production"]) {
+    if (await fileExists(join(root, secretEnvFile))) {
+      scanned = true;
+      envFiles.push({ path: secretEnvFile, read: false, reason: "secret_bearing_file" });
+    }
+  }
+
+  const manifestReaders = [
+    { path: "requirements.txt", kind: "python" },
+    { path: "pyproject.toml", kind: "python" },
+    { path: "go.mod", kind: "go" },
+    { path: "pom.xml", kind: "java" },
+  ];
+  for (const manifest of manifestReaders) {
+    const content = await readTextIfPresent(join(root, manifest.path));
+    if (content == null) {
+      continue;
+    }
+    scanned = true;
+    scannedFiles.push(manifest.path);
+    detectManifestSignals(manifest.kind, content, frameworks, sdkPackages);
+    for (const name of extractEnvVarNames(content)) {
+      envNames.add(name);
+    }
+  }
+
+  if (!skipSourceHints) {
+    const sourceFiles = await collectSourceFiles(root);
+    for (const file of sourceFiles) {
+      const content = await readTextIfPresent(join(root, file));
+      if (content == null) {
+        continue;
+      }
+      scanned = true;
+      scannedFiles.push(file);
+      for (const name of extractEnvVarNames(content)) {
+        envNames.add(name);
+      }
+      codeHints.push(...detectLocalCodeHints(file, content));
+    }
+  }
+
+  const limitedHints = codeHints.slice(0, 20);
+  return {
+    scanned,
+    root: ".",
+    package_manager: packageManager,
+    frameworks: [...frameworks].sort(),
+    sdk: {
+      detected: sdkPackages.length > 0,
+      packages: dedupeObjects(sdkPackages, (item) => item.name),
+    },
+    env_files: envFiles,
+    env_var_names: [...envNames].sort(),
+    code_hints: limitedHints,
+    scanned_files: [...new Set(scannedFiles)].slice(0, 80),
+  };
+}
+
+function findingsForLocalProject(localProject) {
+  if (!localProject?.scanned) {
+    return [];
+  }
+  const findings = [];
+  const hints = localProject.code_hints || [];
+  const authHints = hints.filter((hint) => hint.kind === "auth_header_missing_bearer");
+  if (authHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_auth_header_missing_bearer",
+      severity: "error",
+      category: "auth",
+      confidence: 0.88,
+      summary: "Local integration code appears to send the UniPost API key without the Bearer prefix.",
+      evidence: authHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "code_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Patch the request headers to send `Authorization: Bearer <UNIPOST_API_KEY>` instead of the raw key or `X-API-Key`.",
+        target_files: uniqueHintFiles(authHints),
+        verification: { command: `${CLI_RUNNER} doctor verify --json` },
+      }],
+    }));
+  }
+
+  const secretHints = hints.filter((hint) => hint.kind === "hardcoded_api_key");
+  if (secretHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_hardcoded_api_key",
+      severity: "critical",
+      category: "auth",
+      confidence: 0.92,
+      summary: "Local project files appear to contain a hardcoded UniPost API key.",
+      evidence: secretHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Move the key into a local secret store or environment variable, rotate the exposed key, and keep only `UNIPOST_API_KEY=` in example files.",
+        target_files: uniqueHintFiles(secretHints),
+        verification: { command: `${CLI_RUNNER} doctor diagnose --json` },
+      }],
+    }));
+  }
+
+  const payloadHints = hints.filter((hint) =>
+    hint.kind === "singular_account_id_payload" || hint.kind === "local_media_path");
+  if (payloadHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_payload_shape",
+      severity: "warning",
+      category: "payload",
+      confidence: 0.72,
+      summary: "Local post payload code has fields that often cause UniPost validation failures.",
+      evidence: payloadHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "payload_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Use `account_ids: [<account_id>]` for post creation and pass public media URLs or uploaded media ids instead of local file paths.",
+        target_files: uniqueHintFiles(payloadHints),
+        verification: { command: `${CLI_RUNNER} posts validate --json` },
+      }],
+    }));
+  }
+
+  const webhookHints = hints.filter((hint) => hint.kind === "webhook_raw_body_risk");
+  if (webhookHints.length > 0) {
+    findings.push(makeFinding({
+      id: "finding_local_webhook_raw_body_risk",
+      severity: "warning",
+      category: "webhook",
+      confidence: 0.68,
+      summary: "Local webhook code may parse JSON before verifying the UniPost signature.",
+      evidence: webhookHints.slice(0, 5).map(hintEvidence),
+      recommended_actions: [{
+        type: "code_patch",
+        safety: "safe_to_execute_without_user",
+        instruction: "Verify UniPost webhook signatures against the raw body before JSON parsing, or mount a raw-body parser on the webhook route.",
+        target_files: uniqueHintFiles(webhookHints),
+        verification: { command: `${CLI_RUNNER} doctor diagnose --json` },
+      }],
+    }));
+  }
+
+  const envNames = new Set(localProject.env_var_names || []);
+  if (envNames.has("UNIPOST_KEY") && !envNames.has("UNIPOST_API_KEY")) {
+    findings.push(makeFinding({
+      id: "finding_local_env_var_name_mismatch",
+      severity: "warning",
+      category: "auth",
+      confidence: 0.7,
+      summary: "Local examples reference UNIPOST_KEY but the CLI and docs expect UNIPOST_API_KEY.",
+      evidence: [{ source: "local_project", message: "Found UNIPOST_KEY without UNIPOST_API_KEY." }],
+      recommended_actions: [{
+        type: "env_hint",
+        safety: "needs_user_approval",
+        instruction: "Rename the environment variable to `UNIPOST_API_KEY`, or map your application config to that variable consistently.",
+        target_files: (localProject.env_files || []).filter((file) => file.read).map((file) => file.path),
+        verification: { command: `${CLI_RUNNER} doctor diagnose --json` },
+      }],
+    }));
+  }
+  return findings;
+}
+
+function makeFinding(finding) {
+  return {
+    id: finding.id,
+    severity: finding.severity,
+    category: finding.category,
+    confidence: finding.confidence,
+    summary: finding.summary,
+    evidence: finding.evidence || [],
+    recommended_actions: finding.recommended_actions || [],
+    verify_command: finding.verify_command || `${CLI_RUNNER} doctor verify --json`,
+    docs_url: finding.docs_url || DOCS_DEBUG_URL,
+    ...(finding.request_id ? { request_id: finding.request_id } : {}),
+  };
+}
+
+async function readJsonIfPresent(filePath) {
+  const text = await readTextIfPresent(filePath);
+  if (text == null) {
+    return null;
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+async function readTextIfPresent(filePath) {
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile() || fileStat.size > 256 * 1024) {
+      return null;
+    }
+    return await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function fileExists(filePath) {
+  try {
+    const fileStat = await stat(filePath);
+    return fileStat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function detectPackageManager(root) {
+  if (await fileExists(join(root, "pnpm-lock.yaml"))) return "pnpm";
+  if (await fileExists(join(root, "yarn.lock"))) return "yarn";
+  if (await fileExists(join(root, "bun.lockb")) || await fileExists(join(root, "bun.lock"))) return "bun";
+  if (await fileExists(join(root, "package-lock.json"))) return "npm";
+  return "npm";
+}
+
+function detectFrameworkFromDependency(name, frameworks) {
+  const normalized = String(name || "").toLowerCase();
+  if (normalized === "next") frameworks.add("next");
+  if (normalized === "express") frameworks.add("express");
+  if (normalized === "fastify") frameworks.add("fastify");
+  if (normalized === "hono") frameworks.add("hono");
+  if (normalized.includes("nestjs")) frameworks.add("nestjs");
+}
+
+function detectManifestSignals(kind, content, frameworks, sdkPackages) {
+  const text = String(content || "").toLowerCase();
+  if (kind === "python") {
+    if (/\bfastapi\b/.test(text)) frameworks.add("fastapi");
+    if (/\bflask\b/.test(text)) frameworks.add("flask");
+    if (/\bdjango\b/.test(text)) frameworks.add("django");
+    if (/\bunipost\b/.test(text)) sdkPackages.push({ name: "unipost", version: "" });
+  }
+  if (kind === "go") {
+    if (text.includes("github.com/gin-gonic/gin")) frameworks.add("gin");
+    if (text.includes("github.com/labstack/echo")) frameworks.add("echo");
+    if (text.includes("github.com/unipost-dev/sdk-go")) sdkPackages.push({ name: "github.com/unipost-dev/sdk-go", version: "" });
+  }
+  if (kind === "java") {
+    if (text.includes("spring-boot")) frameworks.add("spring-boot");
+    if (text.includes("dev.unipost")) sdkPackages.push({ name: "dev.unipost", version: "" });
+  }
+}
+
+function isUnipostSdkDependency(name) {
+  const normalized = String(name || "").toLowerCase();
+  return normalized === "@unipost/sdk" || normalized === "unipost" || normalized.includes("unipost-sdk");
+}
+
+function extractEnvVarNames(content) {
+  const names = new Set();
+  const text = String(content || "");
+  for (const match of text.matchAll(/\bUNIPOST_[A-Z0-9_]+\b/g)) {
+    names.add(match[0]);
+  }
+  return names;
+}
+
+async function collectSourceFiles(root) {
+  const files = [];
+  for (const dir of ["src", "app", "pages", "api", "server", "lib", "routes"]) {
+    await collectSourceFilesFromDir(root, dir, files, 0);
+    if (files.length >= 80) {
+      break;
+    }
+  }
+  return files.slice(0, 80);
+}
+
+async function collectSourceFilesFromDir(root, dir, files, depth) {
+  if (depth > 4 || files.length >= 80) {
+    return;
+  }
+  const fullDir = join(root, dir);
+  let entries = [];
+  try {
+    entries = await readdir(fullDir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (files.length >= 80) {
+      return;
+    }
+    if (entry.name.startsWith(".") || ["node_modules", ".next", "dist", "build", "coverage"].includes(entry.name)) {
+      continue;
+    }
+    const child = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await collectSourceFilesFromDir(root, child, files, depth + 1);
+      continue;
+    }
+    if (entry.isFile() && isAnalyzableSourceFile(entry.name)) {
+      files.push(child);
+    }
+  }
+}
+
+function isAnalyzableSourceFile(fileName) {
+  return [".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".py", ".go", ".java", ".rb", ".php"].includes(extname(fileName).toLowerCase());
+}
+
+function detectLocalCodeHints(file, content) {
+  const hints = [];
+  const lines = String(content || "").split(/\r?\n/);
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    const lower = line.toLowerCase();
+    if (/\b(up_live_|up_test_)[A-Za-z0-9_-]{8,}/.test(line)) {
+      hints.push({
+        kind: "hardcoded_api_key",
+        file,
+        line: lineNumber,
+        message: "Contains a literal UniPost API key. Move it to an environment variable and rotate it if it was committed.",
+      });
+    }
+    if (looksLikeRawAuthorizationHeader(line)) {
+      hints.push({
+        kind: "auth_header_missing_bearer",
+        file,
+        line: lineNumber,
+        message: "Authorization header appears to use a raw API key or X-API-Key instead of `Authorization: Bearer <key>`.",
+      });
+    }
+    if (looksLikePostPayloadWithSingularAccountId(line)) {
+      hints.push({
+        kind: "singular_account_id_payload",
+        file,
+        line: lineNumber,
+        message: "Post payload uses singular `account_id`; current UniPost post creation expects `account_ids`.",
+      });
+    }
+    if (/\bmedia_urls?\b/.test(line) && /["']\.{1,2}\//.test(line)) {
+      hints.push({
+        kind: "local_media_path",
+        file,
+        line: lineNumber,
+        message: "Media URL payload appears to contain a local file path. Upload media first or use a public URL.",
+      });
+    }
+    if (lower.includes("webhook") && lower.includes("express.json(")) {
+      hints.push({
+        kind: "webhook_raw_body_risk",
+        file,
+        line: lineNumber,
+        message: "Webhook code may parse JSON before signature verification. Verify signatures against the raw body.",
+      });
+    }
+  });
+  return hints;
+}
+
+function looksLikeRawAuthorizationHeader(line) {
+  const lower = String(line || "").toLowerCase();
+  if (lower.includes("x-api-key")) {
+    return true;
+  }
+  if (!lower.includes("authorization")) {
+    return false;
+  }
+  if (lower.includes("bearer")) {
+    return false;
+  }
+  return /UNIPOST_API_KEY|UNIPOST_KEY|apiKey|api_key|unipostApiKey/.test(line);
+}
+
+function looksLikePostPayloadWithSingularAccountId(line) {
+  const text = String(line || "");
+  if (!(/"account_id"\s*:|\baccount_id\s*:/.test(text))) {
+    return false;
+  }
+  const lower = text.toLowerCase();
+  if (lower.includes("platform_posts")) {
+    return false;
+  }
+  return lower.includes("json.stringify") || /\{\s*["']?account_id["']?\s*:/.test(text);
+}
+
+function hintEvidence(hint) {
+  return {
+    source: "local_project",
+    message: `${hint.file}:${hint.line} ${hint.message}`,
+  };
+}
+
+function uniqueHintFiles(hints) {
+  return [...new Set((hints || []).map((hint) => hint.file).filter(Boolean))];
+}
+
+function dedupeObjects(items, keyFn) {
+  const seen = new Set();
+  const output = [];
+  for (const item of items || []) {
+    const key = keyFn(item);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    output.push(item);
+  }
+  return output;
+}
+
+function compactWorkspace(workspace) {
+  if (!workspace || typeof workspace !== "object") {
+    return null;
+  }
+  return {
+    id: workspace.id || "",
+    name: workspace.name || "",
+    ...(workspace.plan ? { plan: workspace.plan } : {}),
+  };
+}
+
+function accountStatusLabel(account) {
+  return String(
+    account?.health?.status
+      || account?.health_status
+      || account?.status
+      || account?.connection_status
+      || "unknown",
+  ).toLowerCase();
+}
+
+function accountHealthState(account) {
+  const label = accountStatusLabel(account);
+  if (["healthy", "connected", "active", "ok", "ready"].includes(label)) {
+    return "healthy";
+  }
+  if (["error", "disconnected", "unhealthy", "expired", "revoked", "failed", "needs_reauth"].includes(label)) {
+    return "unhealthy";
+  }
+  return "unknown";
+}
+
+async function fetchRecentErrorLogs(context) {
+  const from = sinceToFrom(context.options.since || "24h");
+  const response = await requestJson(context, apiPath("/v1/logs", {
+    status: "error",
+    from,
+    limit: 20,
+  }), { auth: true });
+  return (unwrapData(response.body) || []).map(redactLog);
+}
+
+function summarizeLog(log) {
+  if (!log) {
+    return "No log.";
+  }
+  const parts = [];
+  if (log.ts) parts.push(log.ts);
+  if (log.status) parts.push(log.status);
+  if (log.category) parts.push(log.category);
+  if (log.action) parts.push(log.action);
+  const httpStatus = log.http_status_code ?? log.remote_status_code;
+  if (httpStatus) parts.push(`http ${httpStatus}`);
+  if (log.error_code) parts.push(`error_code=${log.error_code}`);
+  if (log.request_id) parts.push(`request_id=${log.request_id}`);
+  if (log.id) parts.push(`log_id=${log.id}`);
+  return redactSecrets(parts.join(" "));
+}
+
+function explainLogSummary(log) {
+  const httpStatus = log.http_status_code ?? log.remote_status_code;
+  const where = log.action || log.category || "request";
+  const code = log.error_code ? ` (${log.error_code})` : "";
+  return redactSecrets(`The ${where} returned ${log.status || "a result"}${httpStatus ? ` with HTTP ${httpStatus}` : ""}${code}.`);
+}
+
+function recommendationForLog(log) {
+  const code = String(log.error_code || "").toLowerCase();
+  if (code === "unauthorized" || log.http_status_code === 401) {
+    return "Fix the Authorization header or API key, then rerun `unipost doctor verify --json`.";
+  }
+  if (code === "validation_error" || code === "invalid_request" || log.http_status_code === 422) {
+    return "Adjust the request payload to match the documented schema, then revalidate with `unipost posts validate --json`.";
+  }
+  if (code === "not_found" || log.http_status_code === 404) {
+    return "Confirm the profile_id, account_id, or resource id belongs to this workspace.";
+  }
+  return "Use the redacted evidence to correlate the failure with your local request and patch the integration code.";
+}
+
+function resolveDoctorStatus(findings) {
+  if (findings.length === 0) {
+    return "passed";
+  }
+  const blocking = findings.filter((finding) => finding.severity === "error" || finding.severity === "critical");
+  if (blocking.length === 0) {
+    return "passed";
+  }
+  const allManual = blocking.every((finding) =>
+    (finding.recommended_actions || []).length > 0
+    && finding.recommended_actions.every((action) => action.safety === "manual_only"));
+  return allManual ? "input_required" : "failed";
+}
+
+function doctorSummary(status, findings) {
+  if (status === "passed") {
+    return findings.length === 0 ? "No issues detected." : "No blocking issues detected.";
+  }
+  const blocking = findings.filter((finding) => finding.severity === "error" || finding.severity === "critical").length;
+  if (status === "input_required") {
+    return `UniPost doctor needs ${blocking} manual setup step(s) before it can continue.`;
+  }
+  return `UniPost doctor found ${blocking} blocking issue(s).`;
+}
+
+function doctorStatusExit(status) {
+  if (status === "passed") {
+    return EXIT.success;
+  }
+  if (status === "input_required") {
+    return EXIT.missingInput;
+  }
+  if (status === "needs_support") {
+    return EXIT.generic;
+  }
+  return EXIT.validation;
+}
+
+function doctorEnvelopeResult(context, options) {
+  const data = {
+    schema_version: DOCTOR_SCHEMA_VERSION,
+    command: options.command,
+    run_id: options.runId || newRunId(),
+    status: options.status,
+    created_at: nowIso(),
+    ...(options.workspace !== undefined ? { workspace: options.workspace } : {}),
+    ...(options.environment ? { environment: options.environment } : {}),
+    ...(options.localProject ? { local_project: options.localProject } : {}),
+    summary: options.summary || "",
+    findings: options.findings || [],
+    ...(options.verification ? { verification: options.verification } : {}),
+    ...(options.support ? { support: options.support } : {}),
+  };
+  return envelopeResult({
+    data,
+    meta: {
+      ...(options.requestId ? { request_id: options.requestId } : {}),
+      ...(options.rateLimit && Object.keys(options.rateLimit).length > 0 ? { rate_limit: options.rateLimit } : {}),
+    },
+    human: renderDoctorPayload(data),
+    exitCode: doctorStatusExit(options.status),
+  });
+}
+
+// redactSecrets masks API keys, bearer tokens, and obvious secret-bearing
+// fields anywhere in a string before it is printed or written to a bundle.
+function redactSecrets(input) {
+  if (input == null) {
+    return input;
+  }
+  let text = String(input);
+  text = text.replace(/\b(up_live_|up_test_)[A-Za-z0-9_-]+/g, (match) => maskApiKey(match));
+  text = text.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, "Bearer <redacted>");
+  text = text.replace(/(authorization|cookie|set-cookie|x-api-key)"\s*:\s*"[^"]*"/gi, '$1":"<redacted>"');
+  text = text.replace(/("(?:access_token|refresh_token|client_secret|webhook_secret|signing_secret|api_key|password|secret)"\s*:\s*)"[^"]*"/gi, '$1"<redacted>"');
+  text = text.replace(/([?&](?:access_token|refresh_token|client_secret|webhook_secret|signing_secret|api_key|password|secret)=)[^"&#\s\\]+/gi, "$1<redacted>");
+  text = text.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, "<redacted-jwt>");
+  return text;
+}
+
+function redactStructuredValue(value) {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    return value;
+  }
+  try {
+    return JSON.parse(redactSecrets(serialized));
+  } catch {
+    return "<redacted>";
+  }
+}
+
+// redactLog returns a copy of a log with secret-bearing fields scrubbed.
+function redactLog(log) {
+  if (!log || typeof log !== "object") {
+    return typeof log === "string" ? redactSecrets(log) : log;
+  }
+  return redactStructuredValue(log);
+}
+
+// sinceToFrom converts a relative duration like "2h", "30m", "7d" into an
+// absolute RFC3339 timestamp suitable for the logs API `from` parameter.
+function sinceToFrom(since) {
+  const match = /^(\d+)\s*([smhdw])$/i.exec(String(since || "").trim());
+  if (!match) {
+    return since;
+  }
+  const value = Number(match[1]);
+  const unit = match[2].toLowerCase();
+  const unitMs = { s: 1000, m: 60000, h: 3600000, d: 86400000, w: 604800000 }[unit];
+  return new Date(Date.now() - value * unitMs).toISOString();
+}
+
+function renderDoctorPayload(data) {
+  const lines = [`UniPost ${data.command} — ${data.status}`];
+  if (data.summary) {
+    lines.push(data.summary);
+  }
+  for (const finding of data.findings || []) {
+    lines.push(`- [${finding.severity}] ${finding.summary}`);
+    for (const action of finding.recommended_actions || []) {
+      lines.push(`    -> ${action.instruction}`);
+    }
+  }
+  if (data.verification?.checks) {
+    for (const check of data.verification.checks) {
+      lines.push(`  ${check.status.toUpperCase()} ${check.id}: ${check.message}`);
+    }
+  }
+  if (data.support?.report_path) {
+    lines.push(`Support bundle: ${data.support.report_path}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function renderLogsList(list) {
+  if (!list || list.length === 0) {
+    return "No logs found for the given filters.\n";
+  }
+  return `${list.map((log) => summarizeLog(log)).join("\n")}\n`;
+}
+
+function renderSupportBundleMarkdown(bundle) {
+  const lines = [
+    "# UniPost Debug Report",
+    "",
+    `- Generated: ${bundle.created_at}`,
+    `- Run id: ${bundle.run_id}`,
+    `- CLI version: ${bundle.cli_version}`,
+    `- Runtime: ${bundle.runtime.platform} / node ${bundle.runtime.node}`,
+    `- Redacted: ${bundle.redacted}`,
+    "",
+    "## Environment",
+    "",
+    `- Base URL: ${bundle.environment?.base_url || "unknown"} (${bundle.environment?.base_url_env || "unknown"})`,
+    `- API key present: ${bundle.environment?.api_key_present}`,
+    `- API key kind: ${bundle.environment?.api_key_kind}`,
+    `- API key (masked): ${bundle.environment?.api_key_masked || "n/a"}`,
+    "",
+    "## Workspace",
+    "",
+    `- Id: ${bundle.workspace?.id || "unknown"}`,
+    `- Plan: ${bundle.workspace?.plan || "unknown"}`,
+    "",
+    "## Findings",
+    "",
+  ];
+  if (bundle.findings.length === 0) {
+    lines.push("- None.");
+  } else {
+    for (const finding of bundle.findings) {
+      lines.push(`- **[${finding.severity}] ${finding.id}** — ${finding.summary}`);
+      for (const action of finding.recommended_actions || []) {
+        lines.push(`  - (${action.safety}) ${action.instruction}`);
+      }
+    }
+  }
+  lines.push("", "## Recent errors", "");
+  if (bundle.recent_errors.length === 0) {
+    lines.push("- None in the selected window.");
+  } else {
+    for (const log of bundle.recent_errors) {
+      lines.push(`- ${summarizeLog(log)}`);
+    }
+  }
+  lines.push("");
+  return redactSecrets(`${lines.join("\n")}\n`);
+}
+
 function renderDoctor(checks, workspace, telemetry) {
   const lines = ["UniPost doctor\n"];
   for (const check of checks) {
@@ -3790,6 +5151,12 @@ Usage:
   ${CLI_RUNNER} agent capabilities|context|guide [--json]
   ${CLI_RUNNER} agent mcp-config|mcp-test|install [--client <client>] [--json]
   ${CLI_RUNNER} doctor [--json] [--api-key <key>] [--base-url <url>]
+  ${CLI_RUNNER} doctor diagnose [--since <2h>] [--json]
+  ${CLI_RUNNER} doctor verify [--allow-live-publish] [--json]
+  ${CLI_RUNNER} doctor explain --request-id <id> | --log-id <id> [--json]
+  ${CLI_RUNNER} doctor support-bundle [--since <24h>] [--upload] [--json]
+  ${CLI_RUNNER} logs list [--status error] [--since <2h>] [--category <c>] [--json]
+  ${CLI_RUNNER} logs get <log_id> [--json]
   ${CLI_RUNNER} completion <bash|zsh|fish>
   ${CLI_RUNNER} upgrade
   ${CLI_RUNNER} self update
@@ -3801,8 +5168,9 @@ Global flags:
   --client <terminal|codex|claude-code|cursor|windsurf>, --profile <id>, --account <id>
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
+  --since <2h|30m|7d>, --request-id <id>, --log-id <id>, --error-code <code>, --category <c>, --action <a>
   --from-file <path>, --plan <path>, --content-type <mime>, --yes
-  --idempotency-key <key>, --agent-name <name>
+  --idempotency-key <key>, --agent-name <name>, --upload, --allow-live-publish
   --no-color, --no-telemetry
 
 Auth note:
