@@ -8,6 +8,9 @@ const configuredProfileId = process.env.DASHBOARD_TEST_PROFILE_ID;
 
 const publicRoutes = [
   { path: "/docs", marker: /UniPost|Dashboard|API/i },
+  { path: "/docs/guides", marker: /Task guides|Analytics guides/i },
+  { path: "/docs/guides/analytics", marker: /Analytics Guides|Unified-first Analytics/i },
+  { path: "/docs/guides/analytics/tiktok-followers", marker: /Get TikTok followers|user\.info\.stats/i },
   { path: "/pricing", marker: /Free|Basic|Growth|Team/i },
   { path: "/tools", marker: /TikTok Analytics|Instagram Analytics|Threads Analytics|Pinterest Analytics/i },
   { path: "/tools/tiktok-analytics", marker: /TikTok Analytics/i },

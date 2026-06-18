@@ -30,7 +30,7 @@ type NavGroup = {
 
 type SidebarItem = NavLeaf | NavGroup;
 
-type DocsPrimaryKey = "overview" | "platforms" | "api-reference" | "resources";
+type DocsPrimaryKey = "overview" | "platforms" | "guides" | "api-reference" | "resources";
 
 type DocsPrimaryNav = {
   key: DocsPrimaryKey;
@@ -277,6 +277,7 @@ const userButtonAppearance = {
 const DOCS_PRIMARY_NAV: DocsPrimaryNav[] = [
   { key: "overview", label: "Overview", href: "/docs" },
   { key: "platforms", label: "Platforms", href: "/docs/platforms" },
+  { key: "guides", label: "Guides", href: "/docs/guides" },
   { key: "api-reference", label: "API Reference", href: "/docs/api" },
   { key: "resources", label: "Resources", href: "/docs/resources" },
 ];
@@ -340,6 +341,28 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         { label: "Pinterest", href: "/docs/platforms/pinterest" },
         { label: "Bluesky", href: "/docs/platforms/bluesky" },
         { label: "Facebook", href: "/docs/platforms/facebook", badge: "Beta" },
+      ],
+    },
+  ],
+  guides: [
+    {
+      title: "Analytics Guides",
+      description: "Task-oriented docs that point back to UniPost's unified Analytics API.",
+      items: [
+        { label: "Overview", href: "/docs/guides" },
+        { label: "Analytics overview", href: "/docs/guides/analytics" },
+        { label: "Get TikTok followers", href: "/docs/guides/analytics/tiktok-followers" },
+        { label: "Get account metrics", href: "/docs/guides/analytics/account-metrics" },
+        { label: "Get post analytics", href: "/docs/guides/analytics/post-analytics" },
+        { label: "Export analytics rows", href: "/docs/guides/analytics/export-post-analytics" },
+        { label: "Reconnect analytics scopes", href: "/docs/guides/analytics/reconnect-analytics-scopes" },
+      ],
+    },
+    {
+      title: "Publishing Guides",
+      items: [
+        { label: "Publishing guide", href: "/docs/publishing" },
+        { label: "Connect Sessions", href: "/docs/connect-sessions" },
       ],
     },
   ],
@@ -2371,6 +2394,7 @@ function isNavGroupActive(current: string, item: NavGroup) {
 
 function getActivePrimaryNav(current: string): DocsPrimaryKey {
   if (current.startsWith("/docs/platforms")) return "platforms";
+  if (current.startsWith("/docs/guides")) return "guides";
   if (current.startsWith("/docs/resources")) return "resources";
   if (current.startsWith("/docs/api")) return "api-reference";
   return "overview";
@@ -2384,6 +2408,8 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/connect-sessions"
     || current === "/docs/local-connect-test"
     || current === "/docs/publishing"
+    || current === "/docs/guides"
+    || current.startsWith("/docs/guides/")
     || current === "/docs/sdk"
     || current === "/docs/cli"
     || current === "/docs/cli/reference"
