@@ -15,7 +15,11 @@ type Classification struct {
 	IsRetriable       bool
 }
 
-var metaSubcodePattern = regexp.MustCompile(`error_subcode["=: ]+([0-9]+)`)
+var (
+	metaSubcodePattern       = regexp.MustCompile(`error_subcode["=: ]+([0-9]+)`)
+	providerErrorCodePattern = regexp.MustCompile(`(?i)provider_error=([a-z0-9_.:-]+)`)
+	jsonErrorCodePattern     = regexp.MustCompile(`"code"\s*:\s*"([^"]+)"`)
+)
 
 func Classify(raw string) Classification {
 	s := strings.ToLower(strings.TrimSpace(raw))
@@ -34,14 +38,23 @@ func Classify(raw string) Classification {
 	if code := extractMetaSubcode(raw); code != "" {
 		c.PlatformErrorCode = code
 	}
+	if strings.Contains(s, "tiktok") {
+		if code := extractTikTokProviderCode(raw); code != "" {
+			c.PlatformErrorCode = code
+		}
+	}
 
 	switch {
 	case isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "file_format_check_failed"):
 		c.ErrorCode = "media_error"
+		c.PlatformErrorCode = "file_format_check_failed"
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "invalid_params"):
-		c.ErrorCode = "validation_error"
+		c.ErrorCode = "platform_request_invalid"
+		if c.PlatformErrorCode == "" {
+			c.PlatformErrorCode = "invalid_params"
+		}
 	case strings.Contains(s, "threads get user id failed") && isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
 	case strings.Contains(s, "threads get user id failed") && strings.Contains(s, "(401)"):
@@ -105,6 +118,19 @@ func extractMetaSubcode(raw string) string {
 	m := metaSubcodePattern.FindStringSubmatch(raw)
 	if len(m) == 2 {
 		return m[1]
+	}
+	return ""
+}
+
+func extractTikTokProviderCode(raw string) string {
+	if m := providerErrorCodePattern.FindStringSubmatch(raw); len(m) == 2 {
+		return strings.ToLower(strings.TrimSpace(m[1]))
+	}
+	if m := jsonErrorCodePattern.FindStringSubmatch(raw); len(m) == 2 {
+		code := strings.ToLower(strings.TrimSpace(m[1]))
+		if code != "" && code != "ok" {
+			return code
+		}
 	}
 	return ""
 }

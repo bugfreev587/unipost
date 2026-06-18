@@ -4,10 +4,11 @@ import "testing"
 
 func TestClassifyKnownPublishFailures(t *testing.T) {
 	tests := []struct {
-		name      string
-		raw       string
-		code      string
-		retriable bool
+		name              string
+		raw               string
+		code              string
+		platformErrorCode string
+		retriable         bool
 	}{
 		{
 			name:      "tiktok file format",
@@ -16,10 +17,11 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable: false,
 		},
 		{
-			name:      "tiktok invalid params",
-			raw:       `tiktok photo init (400): {"error":{"code":"invalid_params","message":"Invalid authorization header. Please check the format."}}`,
-			code:      "validation_error",
-			retriable: false,
+			name:              "tiktok invalid params",
+			raw:               `TikTok rejected the photo publish request: TikTok reported invalid_params. Common fixes: keep photo captions/titles to 90 characters or fewer and use SELF_ONLY if the app is still in sandbox mode. (provider_error=invalid_params, status=400)`,
+			code:              "platform_request_invalid",
+			platformErrorCode: "invalid_params",
+			retriable:         false,
 		},
 		{
 			name:      "youtube upload quota",
@@ -70,6 +72,9 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			got := Classify(tt.raw)
 			if got.ErrorCode != tt.code {
 				t.Fatalf("ErrorCode = %q, want %q", got.ErrorCode, tt.code)
+			}
+			if tt.platformErrorCode != "" && got.PlatformErrorCode != tt.platformErrorCode {
+				t.Fatalf("PlatformErrorCode = %q, want %q", got.PlatformErrorCode, tt.platformErrorCode)
 			}
 			if got.IsRetriable != tt.retriable {
 				t.Fatalf("IsRetriable = %v, want %v", got.IsRetriable, tt.retriable)
