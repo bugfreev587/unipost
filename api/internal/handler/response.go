@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -53,6 +54,16 @@ type ErrorDetails struct {
 	DocsURL     string
 	Issues      []platform.Issue
 }
+
+const (
+	apiErrorsDocsURL        = "https://unipost.dev/docs/api/errors"
+	internalErrorMessage    = "UniPost could not complete the request because of an internal error."
+	upstreamErrorMessage    = "A downstream service could not complete the request."
+	internalErrorHint       = "Retry the request. If it continues, contact support with the request_id."
+	upstreamErrorHint       = "Retry the request later. If it continues, contact support with the request_id."
+	internalErrorNextAction = "contact_support"
+	upstreamErrorNextAction = "wait_and_retry"
+)
 
 func requestIDFromResponse(w http.ResponseWriter) string {
 	return w.Header().Get("X-Request-Id")
@@ -193,19 +204,78 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 }
 
 func writeErrorWithDetails(w http.ResponseWriter, status int, code, message string, details ErrorDetails) {
+	requestID := requestIDFromResponse(w)
+	safeMessage, safeDetails := customerFacingError(status, code, message, details)
+	if safeMessage != message {
+		slog.Warn("sanitized customer-facing error response",
+			"status", status,
+			"code", code,
+			"request_id", requestID,
+			"internal_message", message,
+		)
+	}
 	writeJSON(w, status, ErrorResponse{
 		Error: ErrorBody{
 			Code:           code,
 			NormalizedCode: normalizeErrorCode(code),
-			Message:        message,
-			Hint:           details.Hint,
-			NextAction:     details.NextAction,
-			IsRetriable:    details.IsRetriable,
-			DocsURL:        details.DocsURL,
-			Issues:         details.Issues,
+			Message:        safeMessage,
+			Hint:           safeDetails.Hint,
+			NextAction:     safeDetails.NextAction,
+			IsRetriable:    safeDetails.IsRetriable,
+			DocsURL:        safeDetails.DocsURL,
+			Issues:         safeDetails.Issues,
 		},
-		RequestID: requestIDFromResponse(w),
+		RequestID: requestID,
 	})
+}
+
+func customerFacingError(status int, code, message string, details ErrorDetails) (string, ErrorDetails) {
+	if !shouldSanitizeError(status, code) {
+		return message, details
+	}
+
+	safeDetails := details
+	if strings.TrimSpace(safeDetails.DocsURL) == "" {
+		safeDetails.DocsURL = apiErrorsDocsURL
+	}
+	if isUpstreamError(code) {
+		if strings.TrimSpace(safeDetails.Hint) == "" {
+			safeDetails.Hint = upstreamErrorHint
+		}
+		if strings.TrimSpace(safeDetails.NextAction) == "" {
+			safeDetails.NextAction = upstreamErrorNextAction
+		}
+		return upstreamErrorMessage, safeDetails
+	}
+
+	if strings.TrimSpace(safeDetails.Hint) == "" {
+		safeDetails.Hint = internalErrorHint
+	}
+	if strings.TrimSpace(safeDetails.NextAction) == "" {
+		safeDetails.NextAction = internalErrorNextAction
+	}
+	return internalErrorMessage, safeDetails
+}
+
+func shouldSanitizeError(status int, code string) bool {
+	if status < http.StatusInternalServerError {
+		return false
+	}
+	switch normalizeErrorCode(code) {
+	case "internal_error", "upstream_error", "tiktok_error":
+		return true
+	default:
+		return false
+	}
+}
+
+func isUpstreamError(code string) bool {
+	switch normalizeErrorCode(code) {
+	case "upstream_error", "tiktok_error":
+		return true
+	default:
+		return false
+	}
 }
 
 // writeRateLimited writes a 429 with the precise normalized_code
