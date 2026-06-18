@@ -362,6 +362,17 @@ def main():
     else:
         skip("oauth/connect URL lookup()", "No profile available")
 
+    section("9. Developer logs")
+
+    logs_page = test("logs.list()", lambda: _test_logs_list(client))
+    first_log = logs_page["data"][0] if logs_page and logs_page.get("data") else None
+    if first_log and first_log.get("id"):
+        test("logs.get()", lambda: _test_logs_get(client, first_log["id"]))
+        test("logs.stream() replay", lambda: _test_logs_stream(client, first_log["id"]))
+    else:
+        skip("logs.get()", "No retained logs available")
+        skip("logs.stream() replay", "No retained logs available")
+
     cleanup(client)
 
     print("\n╔══════════════════════════════════════════════════╗")
@@ -863,6 +874,26 @@ def _test_analytics_refresh_validation(client):
 def _test_usage(client):
     payload = client.usage.get()
     assert_true(isinstance(payload.post_count, int), "Expected usage payload")
+    return payload
+
+
+def _test_logs_list(client):
+    payload = client.logs.list(limit=1)
+    assert_true(isinstance(payload.get("data"), list), "Expected logs data list")
+    assert_true(isinstance(payload.get("meta"), dict), "Expected logs meta")
+    return payload
+
+
+def _test_logs_get(client, log_id):
+    payload = client.logs.get(log_id)
+    assert_true(int(payload["id"]) == int(log_id), "Expected matching log id")
+    return payload
+
+
+def _test_logs_stream(client, log_id):
+    after_id = max(0, int(log_id) - 1)
+    payload = next(client.logs.stream(after_id=after_id))
+    assert_true(int(payload["id"]) >= int(log_id), "Expected replayed log id")
     return payload
 
 
