@@ -48,6 +48,9 @@ func TestWriteRateLimited(t *testing.T) {
 					Code           string `json:"code"`
 					NormalizedCode string `json:"normalized_code"`
 					Message        string `json:"message"`
+					Hint           string `json:"hint"`
+					NextAction     string `json:"next_action"`
+					IsRetriable    *bool  `json:"is_retriable"`
 				} `json:"error"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -61,6 +64,15 @@ func TestWriteRateLimited(t *testing.T) {
 			}
 			if got.Error.Message != "slow down" {
 				t.Errorf("error.message = %q, want %q", got.Error.Message, "slow down")
+			}
+			if got.Error.Hint == "" {
+				t.Errorf("error.hint should tell the caller to wait before retrying")
+			}
+			if got.Error.NextAction != "wait_and_retry" {
+				t.Errorf("error.next_action = %q, want wait_and_retry", got.Error.NextAction)
+			}
+			if got.Error.IsRetriable == nil || !*got.Error.IsRetriable {
+				t.Errorf("error.is_retriable = %#v, want explicit true", got.Error.IsRetriable)
 			}
 		})
 	}

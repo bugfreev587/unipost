@@ -180,6 +180,54 @@ func TestWriteErrorContract(t *testing.T) {
 	}
 }
 
+func TestWriteErrorWithDetailsContract(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set("X-Request-Id", "req_detailed_error")
+	isRetriable := false
+
+	writeErrorWithDetails(rr, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "bad input", ErrorDetails{
+		Hint:        "Fix the listed fields and retry.",
+		NextAction:  "fix_request",
+		IsRetriable: &isRetriable,
+		DocsURL:     "https://unipost.dev/docs/api/posts/validate",
+	})
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("writeErrorWithDetails status = %d, want 422", rr.Code)
+	}
+
+	var got struct {
+		Error struct {
+			Code           string `json:"code"`
+			NormalizedCode string `json:"normalized_code"`
+			Message        string `json:"message"`
+			Hint           string `json:"hint"`
+			NextAction     string `json:"next_action"`
+			IsRetriable    *bool  `json:"is_retriable"`
+			DocsURL        string `json:"docs_url"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Error.Code != "VALIDATION_ERROR" || got.Error.NormalizedCode != "validation_error" || got.Error.Message != "bad input" {
+		t.Fatalf("error body = %#v, want validation error contract", got.Error)
+	}
+	if got.Error.Hint != "Fix the listed fields and retry." || got.Error.NextAction != "fix_request" {
+		t.Fatalf("remediation fields = hint:%q next_action:%q, want actionable values", got.Error.Hint, got.Error.NextAction)
+	}
+	if got.Error.IsRetriable == nil || *got.Error.IsRetriable {
+		t.Fatalf("is_retriable = %#v, want explicit false", got.Error.IsRetriable)
+	}
+	if got.Error.DocsURL != "https://unipost.dev/docs/api/posts/validate" {
+		t.Fatalf("docs_url = %q, want validation docs URL", got.Error.DocsURL)
+	}
+	if got.RequestID != "req_detailed_error" {
+		t.Fatalf("request_id = %q, want req_detailed_error", got.RequestID)
+	}
+}
+
 func TestWriteValidationErrorsContract(t *testing.T) {
 	rr := httptest.NewRecorder()
 	rr.Header().Set("X-Request-Id", "req_validation")
@@ -205,6 +253,10 @@ func TestWriteValidationErrorsContract(t *testing.T) {
 			Code           string           `json:"code"`
 			NormalizedCode string           `json:"normalized_code"`
 			Message        string           `json:"message"`
+			Hint           string           `json:"hint"`
+			NextAction     string           `json:"next_action"`
+			IsRetriable    *bool            `json:"is_retriable"`
+			DocsURL        string           `json:"docs_url"`
 			Issues         []platform.Issue `json:"issues"`
 		} `json:"error"`
 		RequestID string `json:"request_id"`
@@ -217,6 +269,15 @@ func TestWriteValidationErrorsContract(t *testing.T) {
 	}
 	if got.RequestID != "req_validation" {
 		t.Fatalf("request_id = %q, want req_validation", got.RequestID)
+	}
+	if got.Error.Hint == "" || got.Error.NextAction != "fix_request" {
+		t.Fatalf("validation remediation = hint:%q next_action:%q, want actionable fix_request", got.Error.Hint, got.Error.NextAction)
+	}
+	if got.Error.IsRetriable == nil || *got.Error.IsRetriable {
+		t.Fatalf("validation is_retriable = %#v, want explicit false", got.Error.IsRetriable)
+	}
+	if got.Error.DocsURL != "https://unipost.dev/docs/api/posts/validate" {
+		t.Fatalf("validation docs_url = %q, want validate docs URL", got.Error.DocsURL)
 	}
 	if len(got.Error.Issues) != 1 || got.Error.Issues[0].Code != platform.CodeMediaNotUploaded {
 		t.Fatalf("issues = %#v, want media_not_uploaded issue", got.Error.Issues)
