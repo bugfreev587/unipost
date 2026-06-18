@@ -123,6 +123,12 @@ export function extractAnthropicCandidateContent(body) {
   return text;
 }
 
+export function parseAIJSONContent(content) {
+  const text = String(content || "").trim();
+  const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return JSON.parse(fenced ? fenced[1].trim() : text);
+}
+
 function validateLink(link) {
   if (!link || !String(link.label || "").trim() || !String(link.href || "").trim()) {
     throw new Error("links require label and href");

@@ -8,6 +8,7 @@ import {
   isDiscordWebhookURL,
   isLosAngelesHour,
   normalizeSourceHash,
+  parseAIJSONContent,
   renderDiscordCandidateMessage,
   validateCandidatePayload,
 } from "./lib.mjs";
@@ -105,6 +106,11 @@ test("extractAnthropicCandidateContent reads text content from messages response
   });
 
   assert.equal(content, JSON.stringify(candidatePayload));
+});
+
+test("parseAIJSONContent accepts raw and fenced JSON", () => {
+  assert.deepEqual(parseAIJSONContent(JSON.stringify(candidatePayload)), candidatePayload);
+  assert.deepEqual(parseAIJSONContent(`\`\`\`json\n${JSON.stringify(candidatePayload)}\n\`\`\``), candidatePayload);
 });
 
 test("applyCandidateToReleasesSource inserts candidate once at the top of releases array", () => {
