@@ -32,9 +32,19 @@ test("changelog data keeps verified release metadata and SDK ecosystem fields", 
   assert.match(releases, /impact:\s*ChangelogImpact/);
   assert.match(releases, /isBreaking:\s*boolean/);
   assert.match(releases, /packageName:\s*"@unipost\/sdk"/);
+  assert.match(releases, /packageName:\s*"unipost"/);
+  assert.match(releases, /packageName:\s*"github\.com\/unipost-dev\/sdk-go"/);
+  assert.match(releases, /packageName:\s*"dev\.unipost:sdk-java"/);
+  assert.match(releases, /pip install unipost==0\.4\.0/);
+  assert.match(releases, /go get github\.com\/unipost-dev\/sdk-go@v0\.4\.0/);
+  assert.match(releases, /dev\.unipost:sdk-java:0\.4\.0/);
   assert.doesNotMatch(releases, /@unipost\/sdk-js/);
   assert.match(releases, /sourceLinks/);
   assert.match(releases, /Developer Logs API/);
+  assert.match(releases, /Agent Debug Kit/);
+  assert.match(releases, /Local Connect testing/);
+  assert.match(releases, /Analytics Explorer API/);
+  assert.match(releases, /Posts calendar and scheduled-post editing/);
 });
 
 test("changelog page renders table, impact badges, SDK versions, and release links", async () => {
@@ -43,6 +53,7 @@ test("changelog page renders table, impact badges, SDK versions, and release lin
   assert.match(page, /PublicSiteHeader active="developer"/);
   assert.match(page, /Change Logs/);
   assert.match(page, /Latest release/);
+  assert.match(page, /Latest SDKs/);
   assert.match(page, /release-table/);
   assert.match(page, /impactLabel/);
   assert.match(page, /Breaking/);
