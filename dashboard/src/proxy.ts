@@ -49,6 +49,7 @@ export default clerkMiddleware(async (auth, request) => {
     pathname.startsWith("/preview") ||
     pathname.startsWith("/review/") ||
     pathname === "/pricing" ||
+    pathname === "/changelog" ||
     pathname.startsWith("/blog") ||
     pathname === "/solutions" ||
     pathname === "/compare" ||
