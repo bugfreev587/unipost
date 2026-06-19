@@ -2609,6 +2609,40 @@ export interface ErrorTriageRecipient {
   updated_at: string;
 }
 
+export interface ErrorTriageReviewAnalysis {
+  what_is_this_error?: string;
+  why_it_happened?: string;
+  how_to_resolve?: string;
+  missing_evidence?: string;
+  next_inspection_path?: string;
+}
+
+export interface ErrorTriageEvidenceSample {
+  post_failure_id?: string;
+  post_id?: string;
+  social_post_result_id?: string;
+  workspace_id?: string;
+  platform?: string;
+  source?: string;
+  error_code?: string;
+  platform_error_code?: string;
+  failure_stage?: string;
+  message?: string;
+  debug_curl?: string;
+  created_at?: string;
+}
+
+export interface ErrorTriageEvidence {
+  samples?: ErrorTriageEvidenceSample[];
+  truncated?: boolean;
+  failure_count?: number;
+  affected_user_count?: number;
+  affected_workspace_count?: number;
+  affected_post_count?: number;
+  review_analysis?: ErrorTriageReviewAnalysis;
+  [key: string]: unknown;
+}
+
 export interface ErrorTriageItem {
   id: string;
   run_id: string;
@@ -2626,7 +2660,7 @@ export interface ErrorTriageItem {
   affected_workspace_count: number;
   affected_post_count: number;
   latest_failure_at?: string | null;
-  evidence_json?: Record<string, unknown>;
+  evidence_json?: ErrorTriageEvidence;
   ai_summary?: string;
   admin_notes?: string;
   bug_plan_json?: ErrorTriageBugPlan | null;

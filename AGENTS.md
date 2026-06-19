@@ -113,8 +113,8 @@ For frontend, dashboard, landing page, component styling, layout, typography, or
 
 ## Feature flag and production isolation rules
 
-- Before starting implementation for API-layer changes or Dashboard-layer changes, proactively ask the user whether the change should be protected by a feature flag.
-- Add a feature flag only when the user explicitly says the change needs one, including when they answer yes to the pre-implementation flag prompt. Otherwise, do not add a feature flag.
+- Default to no feature flag for API-layer changes and Dashboard-layer changes. Do not proactively ask whether a change needs a feature flag.
+- Add a feature flag only when the user explicitly says the change needs one. Otherwise, do not add a feature flag.
 - When the user says a feature flag is needed, create the flag in Unleash at `https://flags.unipost.dev` before wiring the flag into code. If you cannot access or log in to `flags.unipost.dev`, ask the user for help.
 - Use Unleash as the remote feature flag provider. The UniPost backend is the authority for sensitive decisions; the frontend may hide or show UI from `/v1/me/features`, but it must not connect to Unleash directly or receive Unleash tokens.
 - Production defaults must be conservative. New flags should be `off` in `production`, and may be `on` in `development` only after the backend fallback is safe.
