@@ -47,6 +47,23 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "changelog-webhook-validation-support",
+    date: "2026-06-18",
+    displayDate: "June 18, 2026",
+    title: "Changelog webhook validation support",
+    summary: "Added support for changelog webhook validation.",
+    category: "api",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 07d1795", href: "https://github.com/bugfreev587/unipost/commit/07d1795752999114f444c8f3c875d7d9af5ad337" },
+    { label: "Commit 30163a6", href: "https://github.com/bugfreev587/unipost/commit/30163a6f3ec56d876399b86640e729064d9f5732" },
+    { label: "Commit ddf108f", href: "https://github.com/bugfreev587/unipost/commit/ddf108f0e71abafaa9085f16ba84169f2930b4aa" },
+    { label: "Commit cfdf5f8", href: "https://github.com/bugfreev587/unipost/commit/cfdf5f82b0f3d36e9e3b4ec42f8b4d5237e4d350" },
+  ],
+  },
+  {
     id: "cli-0-3-0-auth-onboarding",
     date: "2026-06-18",
     displayDate: "June 18, 2026",
