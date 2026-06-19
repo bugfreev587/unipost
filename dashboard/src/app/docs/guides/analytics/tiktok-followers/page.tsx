@@ -1,7 +1,31 @@
 import Link from "next/link";
-import { CodeBlock } from "../../../_components/code-block";
-import { DocsPage } from "../../../_components/docs-shell";
+import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-shell";
 import { ApiInlineLink } from "../../../api/_components/doc-components";
+
+const REQUEST_SNIPPETS = [{
+  label: "cURL",
+  lang: "bash",
+  code: `curl "https://api.unipost.dev/v1/accounts/sa_tiktok_123/metrics" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+}];
+
+const RESPONSE_SNIPPETS = [{
+  label: "200",
+  lang: "json",
+  code: `{
+  "data": {
+    "social_account_id": "sa_tiktok_123",
+    "platform": "tiktok",
+    "follower_count": 12840,
+    "following_count": 312,
+    "post_count": 86,
+    "platform_specific": {
+      "likes_count": 54021
+    },
+    "fetched_at": "2026-06-18T18:30:00Z"
+  }
+}`,
+}];
 
 export default function TikTokFollowersGuidePage() {
   return (
@@ -17,34 +41,15 @@ export default function TikTokFollowersGuidePage() {
       </p>
 
       <h2 id="answer">Direct answer</h2>
-      <div className="docs-table-wrap">
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Question</th>
-              <th>Answer</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Which UniPost API gets TikTok followers?</td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /></td>
-            </tr>
-            <tr>
-              <td>Which TikTok scope is required?</td>
-              <td><code>user.info.stats</code></td>
-            </tr>
-            <tr>
-              <td>Which response field should I read?</td>
-              <td><code>data.follower_count</code></td>
-            </tr>
-            <tr>
-              <td>Should I use <code>video.list</code>?</td>
-              <td>No. <code>video.list</code> is for public videos and post-level TikTok video inventory, not follower count.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DocsTable
+        columns={["Question", "Answer"]}
+        rows={[
+          ["Which UniPost API gets TikTok followers?", <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/metrics" />],
+          ["Which TikTok scope is required?", <code key="scope">user.info.stats</code>],
+          ["Which response field should I read?", <code key="field">data.follower_count</code>],
+          [<span key="question">Should I use <code>video.list</code>?</span>, <span key="answer">No. <code>video.list</code> is for public videos and post-level TikTok video inventory, not follower count.</span>],
+        ]}
+      />
 
       <h2 id="steps">Steps</h2>
       <ol className="docs-step-list">
@@ -65,64 +70,25 @@ export default function TikTokFollowersGuidePage() {
       </ol>
 
       <h2 id="request">Request</h2>
-      <CodeBlock
-        language="bash"
-        title="cURL"
-        code={`curl "https://api.unipost.dev/v1/accounts/sa_tiktok_123/metrics" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`}
-      />
+      <DocsCodeTabs snippets={REQUEST_SNIPPETS} />
 
       <h2 id="response">Response</h2>
-      <CodeBlock
-        language="json"
-        title="200"
-        code={`{
-  "data": {
-    "social_account_id": "sa_tiktok_123",
-    "platform": "tiktok",
-    "follower_count": 12840,
-    "following_count": 312,
-    "post_count": 86,
-    "platform_specific": {
-      "likes_count": 54021
-    },
-    "fetched_at": "2026-06-18T18:30:00Z"
-  }
-}`}
-      />
+      <DocsCodeTabs snippets={RESPONSE_SNIPPETS} />
 
       <h2 id="scope-notes">Scope notes</h2>
-      <ul className="docs-step-list">
-        <li><code>user.info.profile</code> powers TikTok profile fields such as username, bio, profile links, and verification status.</li>
-        <li><code>user.info.stats</code> powers follower count, following count, likes count, and video count.</li>
-        <li><code>video.list</code> powers public videos and post-level TikTok video lookup; it is not the followers API.</li>
-      </ul>
+      <p><code>user.info.profile</code> powers TikTok profile fields such as username, bio, profile links, and verification status.</p>
+      <p><code>user.info.stats</code> powers follower count, following count, likes count, and video count.</p>
+      <p><code>video.list</code> powers public videos and post-level TikTok video lookup; it is not the followers API.</p>
 
       <h2 id="troubleshooting">Troubleshooting</h2>
-      <div className="docs-table-wrap">
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Symptom</th>
-              <th>What to do</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>The account is disconnected or returns a reconnect-required state.</td>
-              <td>Reconnect the TikTok account so the new token includes <code>user.info.stats</code>.</td>
-            </tr>
-            <tr>
-              <td>The response has an upstream error in <code>platform_specific</code>.</td>
-              <td>Retry later or surface the request id to support. Upstream rate limits and provider errors are reported separately from real zero counts.</td>
-            </tr>
-            <tr>
-              <td>The account has zero followers.</td>
-              <td>Check whether <code>platform_specific.upstream_status</code> is present. If it is absent, the zero is the platform value.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DocsTable
+        columns={["Symptom", "What to do"]}
+        rows={[
+          ["The account is disconnected or returns a reconnect-required state.", <span key="action">Reconnect the TikTok account so the new token includes <code>user.info.stats</code>.</span>],
+          [<span key="symptom">The response has an upstream error in <code>platform_specific</code>.</span>, "Retry later or surface the request id to support. Upstream rate limits and provider errors are reported separately from real zero counts."],
+          ["The account has zero followers.", <span key="action">Check whether <code>platform_specific.upstream_status</code> is present. If it is absent, the zero is the platform value.</span>],
+        ]}
+      />
 
       <h2 id="reference">Reference</h2>
       <div className="docs-next-grid">

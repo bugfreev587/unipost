@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DocsPage } from "../../../_components/docs-shell";
+import { DocsPage, DocsTable } from "../../../_components/docs-shell";
 import { ApiInlineLink } from "../../../api/_components/doc-components";
 
 export default function ReconnectAnalyticsScopesGuidePage() {
@@ -33,44 +33,16 @@ export default function ReconnectAnalyticsScopesGuidePage() {
       </p>
 
       <h2 id="platform-scope-map">Common scope map</h2>
-      <div className="docs-table-wrap">
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Platform</th>
-              <th>Analytics scopes</th>
-              <th>Common UniPost API</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>Instagram</td>
-              <td><code>instagram_business_basic</code>, <code>instagram_business_manage_insights</code></td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /></td>
-            </tr>
-            <tr>
-              <td>Threads</td>
-              <td><code>threads_basic</code>, <code>threads_manage_insights</code></td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /></td>
-            </tr>
-            <tr>
-              <td>Pinterest</td>
-              <td><code>pins:read</code>, <code>boards:read</code>, <code>user_accounts:read</code></td>
-              <td><ApiInlineLink endpoint="GET /v1/posts/{post_id}/analytics" /></td>
-            </tr>
-            <tr>
-              <td>TikTok</td>
-              <td><code>user.info.profile</code>, <code>user.info.stats</code>, <code>video.list</code></td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /></td>
-            </tr>
-            <tr>
-              <td>Facebook Page</td>
-              <td><code>pages_read_engagement</code>, <code>read_insights</code></td>
-              <td><ApiInlineLink endpoint="GET /v1/posts/{post_id}/analytics" /></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DocsTable
+        columns={["Platform", "Analytics scopes", "Common UniPost API"]}
+        rows={[
+          ["Instagram", <span key="scopes"><code>instagram_business_basic</code>, <code>instagram_business_manage_insights</code></span>, <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/metrics" />],
+          ["Threads", <span key="scopes"><code>threads_basic</code>, <code>threads_manage_insights</code></span>, <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/metrics" />],
+          ["Pinterest", <span key="scopes"><code>pins:read</code>, <code>boards:read</code>, <code>user_accounts:read</code></span>, <ApiInlineLink key="api" endpoint="GET /v1/posts/{post_id}/analytics" />],
+          ["TikTok", <span key="scopes"><code>user.info.profile</code>, <code>user.info.stats</code>, <code>video.list</code></span>, <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/metrics" />],
+          ["Facebook Page", <span key="scopes"><code>pages_read_engagement</code>, <code>read_insights</code></span>, <ApiInlineLink key="api" endpoint="GET /v1/posts/{post_id}/analytics" />],
+        ]}
+      />
 
       <h2 id="reference">Reference</h2>
       <div className="docs-next-grid">
