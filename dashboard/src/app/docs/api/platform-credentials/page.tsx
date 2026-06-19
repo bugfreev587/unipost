@@ -1,71 +1,242 @@
 import Link from "next/link";
-import { DocsPage, DocsTable } from "../../_components/docs-shell";
+import type { ReactNode } from "react";
+import {
+  ApiAccordion,
+  ApiEndpointCard,
+  ApiFieldList,
+  ApiInlineLink,
+  ApiReferenceGrid,
+  ApiReferencePage,
+  CodeTabs,
+  InfoBox,
+  MethodBadge,
+  type ApiFieldItem,
+} from "../_components/doc-components";
+
+const AUTH_FIELDS: ApiFieldItem[] = [
+  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key, or a Clerk session JWT for dashboard callers." },
+];
+
+const CREATE_BODY_FIELDS: ApiFieldItem[] = [
+  {
+    name: "platform",
+    type: "string",
+    description: (
+      <>
+        Platform key for the upstream OAuth app.
+        <br />
+        Values: <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>.
+      </>
+    ),
+  },
+  { name: "client_id", type: "string", description: "Client ID, App ID, or Client Key copied from the platform developer portal." },
+  { name: "client_secret", type: "string", description: "Client secret copied from the platform developer portal. UniPost stores it encrypted at rest and never returns client_secret from read endpoints." },
+];
+
+const DELETE_PATH_FIELDS: ApiFieldItem[] = [
+  { name: "platform", type: "string", description: "Platform key whose stored OAuth app credentials should be deleted." },
+];
+
+const CREATE_RESPONSE_FIELDS: ApiFieldItem[] = [
+  { name: "data.platform", type: "string", description: "Platform key that was created or replaced." },
+  { name: "data.client_id", type: "string", description: "Public client ID that was saved. The client_secret is never returned." },
+  { name: "data.created_at", type: "string", description: "Timestamp for the saved credential row." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
+];
+
+const LIST_RESPONSE_FIELDS: ApiFieldItem[] = [
+  { name: "data[]", type: "array", description: "Configured platform credential rows for the authenticated workspace." },
+  { name: "data[].platform", type: "string", description: "Platform key for this credential row." },
+  { name: "data[].client_id", type: "string", description: "Public client ID. The client_secret is never returned by this endpoint." },
+  { name: "data[].created_at", type: "string", description: "Timestamp for when the credentials were uploaded or replaced." },
+  { name: "meta.total", type: "number", description: "Total configured platform credential rows returned by the list endpoint." },
+  { name: "meta.limit", type: "number", description: "Applied list limit." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
+];
+
+const DELETE_RESPONSE_FIELDS: ApiFieldItem[] = [
+  { name: "status", type: "204 No Content", description: "Credentials were deleted if they existed; no response body is returned." },
+];
+
+const ERROR_FIELDS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: 'Usually "UNAUTHORIZED", "PLAN_FEATURE_NOT_AVAILABLE", "VALIDATION_ERROR", or "INTERNAL_ERROR".' },
+  { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "plan_feature_not_available" or "validation_error".' },
+  { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
+];
+
+const REQUEST_SNIPPETS = [
+  {
+    lang: "curl",
+    label: "Create",
+    code: `curl -X POST "https://api.unipost.dev/v1/platform-credentials" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "platform": "tiktok",
+    "client_id": "aweme_client_key",
+    "client_secret": "aweme_client_secret"
+  }'`,
+  },
+  {
+    lang: "curl",
+    label: "List",
+    code: `curl "https://api.unipost.dev/v1/platform-credentials" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
+    lang: "curl",
+    label: "Delete",
+    code: `curl -X DELETE "https://api.unipost.dev/v1/platform-credentials/tiktok" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+];
+
+const RESPONSE_SNIPPETS = [
+  {
+    lang: "json",
+    label: "201",
+    code: `{
+  "data": {
+    "platform": "tiktok",
+    "client_id": "aweme_client_key",
+    "created_at": "2026-06-01T10:00:00Z"
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "200",
+    code: `{
+  "data": [
+    {
+      "platform": "tiktok",
+      "client_id": "aweme_client_key",
+      "created_at": "2026-06-01T10:00:00Z"
+    }
+  ],
+  "meta": { "total": 1, "limit": 1 },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "text",
+    label: "204",
+    code: "No response body",
+  },
+  {
+    lang: "json",
+    label: "402",
+    code: `{
+  "error": {
+    "code": "PLAN_FEATURE_NOT_AVAILABLE",
+    "normalized_code": "plan_feature_not_available",
+    "message": "White-label credentials require the Basic plan or higher - upgrade at unipost.dev/pricing"
+  },
+  "request_id": "req_123"
+}`,
+  },
+];
+
+function EndpointSection({
+  method,
+  path,
+  title,
+  children,
+}: {
+  method: "GET" | "POST" | "DELETE";
+  path: string;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <ApiEndpointCard method={method} path={path}>
+      <div style={{ padding: "18px", borderBottom: "1px solid var(--docs-border)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 11, flexWrap: "wrap", marginBottom: 8 }}>
+          <MethodBadge method={method} />
+          <code style={{ fontFamily: "var(--docs-mono)", fontSize: 14, color: "var(--docs-text)", overflowWrap: "anywhere" }}>{path}</code>
+        </div>
+        <h2 style={{ fontSize: 17, lineHeight: 1.35, margin: 0, color: "var(--docs-text)", fontWeight: 720 }}>{title}</h2>
+      </div>
+      <div style={{ padding: "18px", display: "grid", gap: 18 }}>
+        {children}
+      </div>
+    </ApiEndpointCard>
+  );
+}
 
 export default function PlatformCredentialsPage() {
   return (
-    <DocsPage
+    <ApiReferencePage
       breadcrumbItems={[
         { label: "API Reference", href: "/docs/api" },
         { label: "Platform Credentials" },
       ]}
+      section="core"
       title="Platform Credentials"
-      lead="Upload your own OAuth App client_id + client_secret for a platform. Platform Credentials control the platform OAuth app and quota source; Hosted Connect branding controls UniPost's pre-OAuth page."
+      description={
+        <>
+          Upload, inspect, and remove workspace-owned OAuth app credentials. Platform Credentials are separate from Hosted Connect branding: credentials control the upstream platform app identity and quota, while <Link href="/docs/white-label">Hosted Connect</Link> controls UniPost&apos;s pre-OAuth page. See the <Link href="/docs/platform-credentials">Platform Credentials guide</Link> for platform setup steps.
+        </>
+      }
     >
-      <h2 id="when-to-use">When to use this endpoint</h2>
-      <p>Use this endpoint when a workspace should connect accounts through its own platform developer app instead of UniPost&rsquo;s shared app. Platform Credentials are separate from Hosted Connect branding: branding changes the page UniPost hosts, while credentials change the app identity and quota the upstream platform sees. If you intentionally want to allow UniPost&rsquo;s shared Quickstart OAuth app for a specific session, create that session with <code>allow_quickstart_creds=true</code>. See the <Link href="/docs/platform-credentials">Platform Credentials guide</Link> for the full setup walkthrough.</p>
+      <ApiReferenceGrid
+        left={
+          <div style={{ display: "grid", gap: 16 }}>
+            <InfoBox>
+              Open <strong style={{ color: "var(--docs-text)" }}>Developer - Platform Credentials</strong> in the dashboard for manual setup, or use these endpoints for scripts and admin tooling. Basic supports one platform credential slot; Growth and Team support all supported platforms. Connect Sessions can use UniPost&apos;s shared OAuth app only when <code>allow_quickstart_creds</code> is true and no workspace credential exists.
+            </InfoBox>
 
-      <h2 id="paid-plan">Paid plan required</h2>
-      <p>Basic and up can upload platform credentials. Basic supports 1 platform slot; Growth and Team support all supported platforms. Free and API workspaces can still use UniPost&apos;s shared Quickstart OAuth apps only when a session is created with <code>allow_quickstart_creds=true</code>.</p>
+            <EndpointSection method="POST" path="/v1/platform-credentials" title="Upload credentials">
+              <ApiFieldList title="Authorization" items={AUTH_FIELDS} />
+              <ApiFieldList title="Request Body" items={CREATE_BODY_FIELDS} />
+              <ApiAccordion title="201 Response Body" defaultOpen>
+                <ApiFieldList items={CREATE_RESPONSE_FIELDS} />
+              </ApiAccordion>
+              <ApiAccordion title="401 / 402 / 422 / 500 Error Body">
+                <ApiFieldList items={ERROR_FIELDS} />
+              </ApiAccordion>
+              <InfoBox>
+                A successful upload replaces any previous credentials for the same platform. New Connect Sessions for that platform will use these credentials unless the session explicitly allows the shared quickstart fallback.
+              </InfoBox>
+            </EndpointSection>
 
-      <h2 id="create">Upload credentials</h2>
-      <p>SDK support for platform credential management is coming soon. For now, upload credentials from the dashboard or call the REST endpoint directly.</p>
-      <DocsTable
-        columns={["Field", "Required", "Notes"]}
-        rows={[
-          ["platform", "Yes", <>One of <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>. The dashboard groups Instagram and Threads under the Meta credential card; Facebook Page has its own row so Connect sessions can require Facebook-specific workspace credentials. See <Link href="/docs/platforms#platform-names">available platform names</Link>.</>],
-          ["client_id", "Yes", "Client / App ID from the platform developer portal"],
-          ["client_secret", "Yes", "Stored encrypted at rest (AES-256-GCM). Never returned in any read endpoint."],
-        ]}
+            <EndpointSection method="GET" path="/v1/platform-credentials" title="List configured platforms">
+              <ApiFieldList title="Authorization" items={AUTH_FIELDS} />
+              <ApiAccordion title="200 Response Body" defaultOpen>
+                <ApiFieldList items={LIST_RESPONSE_FIELDS} />
+              </ApiAccordion>
+              <ApiAccordion title="401 / 500 Error Body">
+                <ApiFieldList items={ERROR_FIELDS} />
+              </ApiAccordion>
+              <InfoBox>
+                This endpoint returns the public <code>client_id</code> only. There is no API that reads back <code>client_secret</code>.
+              </InfoBox>
+            </EndpointSection>
+
+            <EndpointSection method="DELETE" path="/v1/platform-credentials/:platform" title="Remove credentials">
+              <ApiFieldList title="Authorization" items={AUTH_FIELDS} />
+              <ApiFieldList title="Path Params" items={DELETE_PATH_FIELDS} />
+              <ApiAccordion title="204 Response" defaultOpen>
+                <ApiFieldList items={DELETE_RESPONSE_FIELDS} />
+              </ApiAccordion>
+              <ApiAccordion title="401 / 500 Error Body">
+                <ApiFieldList items={ERROR_FIELDS} />
+              </ApiAccordion>
+              <InfoBox>
+                Deleting credentials affects future OAuth flows only. Existing connected accounts continue publishing with their stored tokens. Future <ApiInlineLink endpoint="POST /v1/connect/sessions" /> calls for this platform fail unless credentials are uploaded again or the session uses <code>allow_quickstart_creds=true</code>.
+              </InfoBox>
+            </EndpointSection>
+          </div>
+        }
+        right={
+          <div style={{ display: "grid", gap: 14, alignContent: "start" }}>
+            <CodeTabs snippets={REQUEST_SNIPPETS} />
+            <CodeTabs snippets={RESPONSE_SNIPPETS} />
+          </div>
+        }
       />
-      <p>A successful upload replaces any previous credentials for the same platform in this workspace — uploading a second set for the same platform overwrites the first. On Basic, creating a second platform row is rejected until you upgrade.</p>
-
-      <h2 id="list">List configured platforms</h2>
-      <p>Returns one row per platform that has credentials stored. <code>client_secret</code> is never included — there is no read endpoint that exposes it.</p>
-      <DocsTable
-        columns={["Response field", "Notes"]}
-        rows={[
-          ["platform", "Which platform these credentials are for"],
-          ["client_id", "The public App ID, safe to return"],
-          ["created_at", "ISO timestamp of when the credentials were uploaded"],
-          ["meta.total", "Total configured platform credential rows returned by the list endpoint"],
-          ["meta.limit", "Applied list limit when the endpoint starts supporting partial reads"],
-          ["request_id", "Request identifier for debugging and support"],
-        ]}
-      />
-
-      <h2 id="delete">Remove credentials</h2>
-      <p>Deletes the stored credentials for one platform. After a successful delete, future Connect sessions for that platform will fail validation unless they are explicitly created with <code>allow_quickstart_creds=true</code>. Existing already-connected accounts continue to publish using their stored tokens — deletion only affects <em>future</em> OAuth flows.</p>
-      <p>Returns <code>204 No Content</code> on success; safe to call when no credentials exist for that platform.</p>
-
-      <h2 id="errors">Errors</h2>
-      <DocsTable
-        columns={["Status", "Code", "When"]}
-        rows={[
-          ["401", "UNAUTHORIZED / unauthorized", "Missing or invalid API key / session"],
-          ["402", "PLAN_FEATURE_NOT_AVAILABLE / plan_feature_not_available", "Workspace plan does not include platform credentials, or Basic has already used its 1 platform slot"],
-          ["404", "NOT_FOUND / not_found", "Workspace does not belong to the caller"],
-          ["422", "VALIDATION_ERROR / validation_error", "Missing platform, client_id, or client_secret"],
-        ]}
-      />
-
-      <h2 id="auth-modes">Auth modes</h2>
-      <DocsTable
-        columns={["Mode", "Auth", "Use case"]}
-        rows={[
-          ["Workspace API key", "Bearer up_live_xxxx", "Programmatic onboarding (CI, admin scripts, customer integrations)"],
-          ["Clerk session (Dashboard)", "Browser cookie", "Human uploading credentials through Developer → Platform Credentials"],
-        ]}
-      />
-    </DocsPage>
+    </ApiReferencePage>
   );
 }
