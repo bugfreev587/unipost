@@ -166,10 +166,12 @@ export default function CliAgentDebugPage() {
 
       <section className="debug-flow" aria-label="AI-assisted debugging flow">
         {DEBUG_FLOW.map((item) => (
-          <article className="debug-flow-card" key={item.title}>
-            <div className="debug-kicker">{item.label}</div>
-            <h3>{item.title}</h3>
-            <p>{item.body}</p>
+          <article className="debug-flow-row" key={item.title}>
+            <div className="debug-flow-copy">
+              <div className="debug-kicker">{item.label}</div>
+              <h3>{item.title}</h3>
+              <p>{item.body}</p>
+            </div>
             <code>{item.command}</code>
           </article>
         ))}
@@ -252,12 +254,12 @@ const styles = `
 .debug-rule-title{font-size:14px;font-weight:760;color:var(--docs-text)}
 .debug-rule-card p{margin:8px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.6}
 .debug-rule-card code{display:inline-flex;margin-top:12px;max-width:100%;overflow-wrap:anywhere;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px}
-.debug-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:22px 0 8px}
-.debug-flow-card{min-width:0;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:14px 16px}
-.debug-flow-card h3{margin:6px 0 0;color:var(--docs-text);font-size:17px;line-height:1.3;font-weight:720;letter-spacing:0}
-.debug-flow-card p{margin:8px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.6}
-.debug-flow-card code{display:block;margin-top:10px;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
-@media (max-width:1040px){.debug-flow{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width:920px){.debug-hero{grid-template-columns:1fr}.debug-hero-copy h2{font-size:25px}}
-@media (max-width:640px){.debug-flow{grid-template-columns:1fr}}
+.debug-flow{display:grid;gap:0;margin:24px 0 8px}
+.debug-flow-row{display:grid;grid-template-columns:minmax(190px,.34fr) minmax(0,1fr);gap:22px;align-items:start;padding:20px 0;border-top:1px solid var(--docs-border)}
+.debug-flow-row:first-child{padding-top:4px;border-top:none}
+.debug-flow-copy{min-width:0}
+.debug-flow-row h3{margin:6px 0 0;color:var(--docs-text);font-size:19px;line-height:1.3;font-weight:740;letter-spacing:0}
+.debug-flow-row p{margin:9px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.65}
+.debug-flow-row code{display:block;align-self:center;justify-self:stretch;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px;line-height:1.55;overflow-wrap:anywhere;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-muted);padding:12px 14px}
+@media (max-width:920px){.debug-hero,.debug-flow-row{grid-template-columns:1fr}.debug-hero-copy h2{font-size:25px}.debug-flow-row code{align-self:start}}
 `;
