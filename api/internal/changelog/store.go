@@ -68,6 +68,35 @@ WHERE id = $1
 	return record, err
 }
 
+func (s *PostgresStore) ListCandidatesByStatus(ctx context.Context, status CandidateStatus, limit int) ([]CandidateRecord, error) {
+	if s == nil || s.pool == nil {
+		return nil, errors.New("changelog postgres store is not configured")
+	}
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, source_hash, status, payload_json, window_start, window_end, COALESCE(discord_message_id, ''), COALESCE(action_request_id, ''), COALESCE(workflow_run_url, ''), COALESCE(acted_by_admin_id, ''), COALESCE(error_message, ''), created_at, updated_at
+FROM changelog_candidates
+WHERE status = $1
+ORDER BY updated_at DESC, created_at DESC
+LIMIT $2
+`, string(status), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var records []CandidateRecord
+	for rows.Next() {
+		record, err := scanCandidateRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
+}
+
 func (s *PostgresStore) ClaimCandidate(ctx context.Context, id string, from []CandidateStatus, to CandidateStatus, actor string) (CandidateRecord, error) {
 	if s == nil || s.pool == nil {
 		return CandidateRecord{}, errors.New("changelog postgres store is not configured")

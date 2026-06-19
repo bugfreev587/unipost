@@ -130,13 +130,93 @@ export function parseAIJSONContent(content) {
 }
 
 export function normalizeCandidatePayload(payload, { commits = [], repo = "" } = {}) {
-  if (!payload?.hasCandidate || !payload.candidate) return payload;
+  const payloads = normalizeCandidatePayloads(payload, { commits, repo });
+  if (payloads.length === 0) return payload;
+  return payloads[0];
+}
+
+export function normalizeCandidatePayloads(payload, { commits = [], repo = "" } = {}) {
+  if (!payload?.hasCandidate) return [];
+  const rawCandidates = Array.isArray(payload.candidates)
+    ? payload.candidates
+    : payload.candidate
+      ? [payload.candidate]
+      : [];
+  return rawCandidates
+    .filter((candidate) => candidate && typeof candidate === "object")
+    .map((candidate) => normalizedPayloadForCandidate(payload, candidate, {
+      commits,
+      repo,
+      useAllCommitFallback: rawCandidates.length === 1,
+    }));
+}
+
+function normalizedPayloadForCandidate(payload, rawCandidate, { commits, repo, useAllCommitFallback }) {
+  const { candidate: _candidate, candidates: _candidates, ...rest } = payload;
+  const scopedCommitLinks = verifiedCommitLinksForCandidate(rawCandidate, commits, repo);
+  const fallbackSourceLinks = useAllCommitFallback
+    ? verifiedCommitLinks(commits, repo)
+    : null;
+  const normalizedSourceLinks = scopedCommitLinks ||
+    fallbackSourceLinks ||
+    normalizeLinks(rawCandidate.sourceLinks) ||
+    [];
   const candidate = {
-    ...payload.candidate,
-    links: normalizeLinks(payload.candidate.links),
-    sourceLinks: verifiedCommitLinks(commits, repo) || normalizeLinks(payload.candidate.sourceLinks),
+    ...rawCandidate,
+    links: normalizeLinks(rawCandidate.links),
+    sourceLinks: normalizedSourceLinks,
   };
-  return { ...payload, candidate };
+  return { ...rest, hasCandidate: true, candidate };
+}
+
+export function candidateSourceHash(payload) {
+  if (!payload?.hasCandidate || !payload.candidate) return normalizeSourceHash([]);
+  const candidate = payload.candidate;
+  const sourceParts = (candidate.sourceLinks || [])
+    .map((link) => `source:${String(link.href || "").trim()}`)
+    .filter((part) => part !== "source:");
+  const sdkParts = (candidate.sdkVersions || [])
+    .map((sdk) => `sdk:${sdk.ecosystem}:${sdk.packageName}:${sdk.version}`)
+    .filter(Boolean);
+  return normalizeSourceHash([...sourceParts, ...sdkParts]);
+}
+
+export function selectReviewPayloads(entries, { limit = 2 } = {}) {
+  const max = Number.isInteger(limit) && limit > 0 ? limit : 2;
+  return (entries || [])
+    .map((entry, index) => ({ ...entry, index, score: reviewScore(entry) }))
+    .filter((entry) => entry.payload?.hasCandidate && entry.payload.candidate)
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, max)
+    .map(({ index: _index, score: _score, ...entry }) => entry);
+}
+
+function reviewScore(entry) {
+  const candidate = entry?.payload?.candidate || {};
+  const savedBoost = entry?.status === "saved" ? 10000 : 0;
+  const breakingBoost = candidate.isBreaking ? 1000 : 0;
+  const impactBoost = {
+    new: 400,
+    improved: 300,
+    changed: 200,
+    fixed: 100,
+  }[candidate.impact] || 0;
+  const categoryBoost = {
+    sdk: 80,
+    api: 70,
+    reliability: 60,
+    platform: 50,
+    dashboard: 40,
+    dx: 30,
+  }[candidate.category] || 0;
+  const sdkBoost = candidate.sdkVersions?.length ? 60 : 0;
+  const confidenceBoost = {
+    high: 30,
+    medium: 20,
+    low: 10,
+  }[candidate.confidence] || 0;
+  const sourceBoost = Math.min(candidate.sourceLinks?.length || 0, 5);
+  return savedBoost + breakingBoost + impactBoost + categoryBoost + sdkBoost + confidenceBoost + sourceBoost;
 }
 
 function normalizeLinks(links) {
@@ -168,6 +248,24 @@ function verifiedCommitLinks(commits, repo) {
       label: `Commit ${sha.slice(0, 7)}`,
       href: `https://github.com/${ownerRepo}/commit/${sha}`,
     }));
+}
+
+function verifiedCommitLinksForCandidate(candidate, commits, repo) {
+  const sourceShas = Array.isArray(candidate?.sourceCommitShas)
+    ? candidate.sourceCommitShas
+    : Array.isArray(candidate?.sourceCommits)
+      ? candidate.sourceCommits
+      : [];
+  const wanted = sourceShas
+    .map((sha) => String(sha || "").trim())
+    .filter(Boolean);
+  if (wanted.length === 0) return null;
+  const scopedCommits = (commits || []).filter((commit) => {
+    const sha = String(commit?.sha || "").trim();
+    return sha && wanted.some((wantedSha) => sha === wantedSha || sha.startsWith(wantedSha) || wantedSha.startsWith(sha));
+  });
+  if (scopedCommits.length === 0) return null;
+  return verifiedCommitLinks(scopedCommits, repo);
 }
 
 function labelForHref(href) {
