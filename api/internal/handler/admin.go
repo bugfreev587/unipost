@@ -968,6 +968,56 @@ parent_failures AS (
       WHERE spr.post_id = sp.id
     )
     AND (COALESCE(sp.metadata->>'error_summary', '') <> '' OR pf.id IS NOT NULL)
+),
+linked_failure_events AS (
+  SELECT
+    pf.id AS post_failure_id,
+    spr.id AS social_post_result_id,
+    sp.id AS post_id,
+    u.id AS user_id,
+    u.email AS user_email,
+    sp.workspace_id,
+    w.name AS workspace_name,
+    pf.created_at,
+    sp.status AS post_status,
+    sp.source,
+    COALESCE(NULLIF(pf.platform, ''), sa.platform) AS platform,
+    sa.account_name,
+    NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
+    NULLIF(COALESCE(pf.message, spr.error_message), '') AS error_message,
+    NULLIF(sp.metadata->>'error_summary', '') AS error_summary,
+    NULLIF(spr.debug_curl, '') AS debug_curl,
+    NULLIF(COALESCE(pf.error_code, spr.error_code), '') AS error_code,
+    NULLIF(COALESCE(pf.failure_stage, spr.failure_stage), '') AS failure_stage,
+    NULLIF(COALESCE(pf.platform_error_code, spr.platform_error_code), '') AS platform_error_code,
+    pf.is_retriable AS is_retriable,
+    NULLIF(spr.next_action, '') AS next_action
+  FROM post_failures pf
+  JOIN social_posts sp ON sp.id = pf.post_id
+  JOIN workspaces w ON w.id = sp.workspace_id
+  JOIN users u ON u.id = w.user_id
+  LEFT JOIN social_post_results spr ON spr.id = pf.social_post_result_id
+  LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
+  WHERE ($1::TEXT = '' OR u.id = $1)
+    AND u.id != ALL($7)
+    AND sp.deleted_at IS NULL
+    AND pf.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND ($3::TEXT = '' OR sp.source = $3)
+    AND ($4::TEXT = '' OR COALESCE(NULLIF(pf.platform, ''), sa.platform) = $4)
+    AND $5::TEXT <> ''
+    AND (pf.id = $5 OR COALESCE(spr.id, '') = $5 OR sp.id = $5)
+    AND NOT (
+      (pf.social_post_result_id IS NOT NULL AND spr.status = 'failed')
+      OR (
+        pf.social_post_result_id IS NULL
+        AND sp.status = 'failed'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM social_post_results child_spr
+          WHERE child_spr.post_id = sp.id
+        )
+      )
+    )
 )
 SELECT
   post_failure_id,
@@ -995,6 +1045,8 @@ FROM (
   SELECT * FROM failed_results
   UNION ALL
   SELECT * FROM parent_failures
+  UNION ALL
+  SELECT * FROM linked_failure_events
 ) failures
 WHERE (
   $5::TEXT = ''
