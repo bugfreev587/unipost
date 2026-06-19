@@ -228,6 +228,88 @@ func TestWriteErrorWithDetailsContract(t *testing.T) {
 	}
 }
 
+func TestWriteErrorSanitizesInternalServerDetails(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set("X-Request-Id", "req_internal")
+
+	writeError(rr, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user: pq: password authentication failed for user app")
+
+	if rr.Code != http.StatusInternalServerError {
+		t.Fatalf("writeError status = %d, want 500", rr.Code)
+	}
+
+	var got struct {
+		Error struct {
+			Code           string `json:"code"`
+			NormalizedCode string `json:"normalized_code"`
+			Message        string `json:"message"`
+			Hint           string `json:"hint"`
+			NextAction     string `json:"next_action"`
+			DocsURL        string `json:"docs_url"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Error.Code != "INTERNAL_ERROR" || got.Error.NormalizedCode != "internal_error" {
+		t.Fatalf("error identifiers = %#v, want internal error contract", got.Error)
+	}
+	if got.Error.Message == "" || got.Error.Message == "Failed to load user: pq: password authentication failed for user app" {
+		t.Fatalf("message = %q, want sanitized customer-safe copy", got.Error.Message)
+	}
+	if got.Error.Message == "" || got.Error.Hint == "" || got.Error.NextAction != "contact_support" {
+		t.Fatalf("remediation = message:%q hint:%q next_action:%q, want actionable sanitized response", got.Error.Message, got.Error.Hint, got.Error.NextAction)
+	}
+	if got.Error.DocsURL != "https://unipost.dev/docs/api/errors" {
+		t.Fatalf("docs_url = %q, want API errors docs", got.Error.DocsURL)
+	}
+	if got.RequestID != "req_internal" {
+		t.Fatalf("request_id = %q, want req_internal", got.RequestID)
+	}
+}
+
+func TestWriteErrorSanitizesUpstreamDetails(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set("X-Request-Id", "req_upstream")
+
+	writeError(rr, http.StatusBadGateway, "TIKTOK_ERROR", `tiktok profile failed: {"error":"Invalid authorization header","log_id":"abc"}`)
+
+	if rr.Code != http.StatusBadGateway {
+		t.Fatalf("writeError status = %d, want 502", rr.Code)
+	}
+
+	var got struct {
+		Error struct {
+			Code           string `json:"code"`
+			NormalizedCode string `json:"normalized_code"`
+			Message        string `json:"message"`
+			Hint           string `json:"hint"`
+			NextAction     string `json:"next_action"`
+			DocsURL        string `json:"docs_url"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Error.Code != "TIKTOK_ERROR" || got.Error.NormalizedCode != "tiktok_error" {
+		t.Fatalf("error identifiers = %#v, want TikTok error contract", got.Error)
+	}
+	if got.Error.Message == "" || got.Error.Message == `tiktok profile failed: {"error":"Invalid authorization header","log_id":"abc"}` {
+		t.Fatalf("message = %q, want sanitized upstream copy", got.Error.Message)
+	}
+	if got.Error.Hint == "" || got.Error.NextAction != "wait_and_retry" {
+		t.Fatalf("remediation = hint:%q next_action:%q, want retry guidance", got.Error.Hint, got.Error.NextAction)
+	}
+	if got.Error.DocsURL != "https://unipost.dev/docs/api/errors" {
+		t.Fatalf("docs_url = %q, want API errors docs", got.Error.DocsURL)
+	}
+	if got.RequestID != "req_upstream" {
+		t.Fatalf("request_id = %q, want req_upstream", got.RequestID)
+	}
+}
+
 func TestWriteValidationErrorsContract(t *testing.T) {
 	rr := httptest.NewRecorder()
 	rr.Header().Set("X-Request-Id", "req_validation")

@@ -1,7 +1,7 @@
 "use client";
 
 import { SignInButton, SignUpButton, UserButton, useAuth } from "@clerk/nextjs";
-import { ChevronRight, ListTree, Menu, Search, X } from "lucide-react";
+import { ChevronRight, ListTree, Menu, Search, Send, Sparkles, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from "react";
@@ -60,6 +60,26 @@ type DocsSearchResult = {
   group?: string;
   method?: NavLeaf["method"];
   keywords: string;
+};
+
+type DocsSearchMode = "ask" | "search";
+
+type DocsAiSource = {
+  id: string;
+  title: string;
+  path: string;
+  section_title: string;
+  primary_nav: string;
+  excerpt: string;
+};
+
+type DocsAiAnswer = {
+  answer: string;
+  steps: string[];
+  confidence: "high" | "medium" | "low" | "none";
+  sources: DocsAiSource[];
+  related: DocsAiSource[];
+  generated_by: "ai" | "extractive" | "fallback";
 };
 
 const API_SIDEBAR_DEFAULT_WIDTH = 336;
@@ -655,8 +675,13 @@ function DocsSearch() {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<DocsSearchMode>("ask");
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [answer, setAnswer] = useState<DocsAiAnswer | null>(null);
+  const [answerError, setAnswerError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const [feedbackStatus, setFeedbackStatus] = useState<"helpful" | "not_helpful" | "missing_docs" | "error" | null>(null);
   const [mounted, setMounted] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -714,15 +739,100 @@ function DocsSearch() {
     setActiveIndex(0);
   }, [query]);
 
+  function handleQueryChange(value: string) {
+    setQuery(value);
+    if (mode === "ask") {
+      setAnswer(null);
+      setAnswerError(null);
+      setFeedbackStatus(null);
+    }
+  }
+
+  function changeMode(nextMode: DocsSearchMode) {
+    setMode(nextMode);
+    setActiveIndex(0);
+    setAnswer(null);
+    setAnswerError(null);
+    setFeedbackStatus(null);
+    window.setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
   function closeSearch() {
     setOpen(false);
     setQuery("");
     setActiveIndex(0);
+    setAnswer(null);
+    setAnswerError(null);
+    setFeedbackStatus(null);
   }
 
   function selectResult(result: DocsSearchResult) {
     closeSearch();
     router.push(result.href);
+  }
+
+  function selectDocsSource(path: string) {
+    closeSearch();
+    router.push(path);
+  }
+
+  async function askDocs(nextQuery = query) {
+    const trimmed = nextQuery.trim();
+    if (!trimmed || asking) return;
+
+    setMode("ask");
+    setAsking(true);
+    setAnswerError(null);
+    setFeedbackStatus(null);
+
+    try {
+      const response = await fetch("/api/docs/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: trimmed }),
+      });
+      const payload = await response.json().catch(() => null) as { data?: DocsAiAnswer; error?: { message?: string } } | null;
+
+      if (!response.ok || !payload?.data) {
+        throw new Error(payload?.error?.message || "Unable to answer right now.");
+      }
+
+      setAnswer(payload.data);
+    } catch (error) {
+      setAnswer(null);
+      setAnswerError(error instanceof Error ? error.message : "Unable to answer right now.");
+    } finally {
+      setAsking(false);
+    }
+  }
+
+  async function sendFeedback(rating: "helpful" | "not_helpful" | "missing_docs") {
+    if (!query.trim()) return;
+
+    setFeedbackStatus(rating);
+    try {
+      const response = await fetch("/api/docs/feedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: query.trim(),
+          rating,
+          path: pathname,
+          sources: answer?.sources.map((source) => source.path) ?? [],
+        }),
+      });
+
+      if (!response.ok) {
+        setFeedbackStatus("error");
+      }
+    } catch {
+      setFeedbackStatus("error");
+    }
+  }
+
+  function askExample(example: string) {
+    setQuery(example);
+    void askDocs(example);
   }
 
   function handleDialogKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -731,6 +841,16 @@ function DocsSearch() {
       closeSearch();
       return;
     }
+
+    if (mode === "ask") {
+      if (event.key === "Enter" && event.target instanceof HTMLInputElement) {
+        event.preventDefault();
+        void askDocs();
+      }
+      return;
+    }
+
+    if (results.length === 0) return;
 
     if (event.key === "ArrowDown") {
       event.preventDefault();
@@ -752,9 +872,9 @@ function DocsSearch() {
 
   return (
     <>
-      <button type="button" className="docs-search-trigger" onClick={() => setOpen(true)} aria-label="Search docs">
-        <Search size={15} />
-        <span>Search docs</span>
+      <button type="button" className="docs-search-trigger" onClick={() => setOpen(true)} aria-label="Ask or search docs">
+        <Sparkles size={15} />
+        <span>Ask docs</span>
         <kbd>⌘K</kbd>
       </button>
       {open && mounted ? createPortal((
@@ -767,53 +887,160 @@ function DocsSearch() {
             onMouseDown={(event) => event.stopPropagation()}
             onKeyDown={handleDialogKeyDown}
           >
+            <div className="docs-search-tabs" role="tablist" aria-label="Docs search mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "ask"}
+                className={`docs-search-tab${mode === "ask" ? " active" : ""}`}
+                onClick={() => changeMode("ask")}
+              >
+                <Sparkles size={14} />
+                Ask UniPost Docs
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "search"}
+                className={`docs-search-tab${mode === "search" ? " active" : ""}`}
+                onClick={() => changeMode("search")}
+              >
+                <Search size={14} />
+                Classic search
+              </button>
+            </div>
             <div className="docs-search-input-row">
-              <Search size={18} />
+              {mode === "ask" ? <Sparkles size={18} /> : <Search size={18} />}
               <input
                 ref={inputRef}
                 value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search docs..."
-                aria-label="Search docs"
+                onChange={(event) => handleQueryChange(event.target.value)}
+                placeholder={mode === "ask" ? "Ask about UniPost APIs, scopes, or analytics..." : "Search docs..."}
+                aria-label={mode === "ask" ? "Ask UniPost Docs" : "Search docs"}
               />
+              {mode === "ask" ? (
+                <button
+                  type="button"
+                  className="docs-search-send"
+                  onClick={() => void askDocs()}
+                  disabled={!query.trim() || asking}
+                  aria-label="Ask UniPost Docs"
+                >
+                  <Send size={15} />
+                </button>
+              ) : null}
               <kbd>Esc</kbd>
             </div>
-            <div className="docs-search-section-label">{query.trim() ? "Results" : "Suggested"}</div>
-            <div className="docs-search-results" role="listbox" aria-label="Search results">
-              {results.length > 0 ? (
-                results.map((result, index) => (
-                  <button
-                    key={result.href}
-                    type="button"
-                    className={`docs-search-result${index === activeIndex ? " active" : ""}`}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => selectResult(result)}
-                    role="option"
-                    aria-selected={index === activeIndex}
-                  >
-                    <span className="docs-search-result-main">
-                      <span className="docs-search-result-title">
-                        {result.method ? (
-                          <span
-                            className="docs-search-method"
-                            style={{ color: DOCS_METHOD_COLORS[result.method] }}
-                          >
-                            {result.method}
+            {mode === "ask" ? (
+              <div className="docs-ai-panel">
+                {!query.trim() && !answer && !asking ? (
+                  <div className="docs-ai-examples" aria-label="Suggested docs questions">
+                    {[
+                      "How do I get TikTok followers?",
+                      "Which API exports analytics as CSV?",
+                      "What fields are in account metrics?",
+                    ].map((example) => (
+                      <button key={example} type="button" onClick={() => askExample(example)}>
+                        {example}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {asking ? (
+                  <div className="docs-ai-status" aria-live="polite">Searching docs...</div>
+                ) : null}
+                {answerError ? (
+                  <div className="docs-ai-error" role="status">{answerError}</div>
+                ) : null}
+                {answer ? (
+                  <div className="docs-ai-answer" aria-live="polite">
+                    <div className="docs-ai-answer-topline">
+                      <span className={`docs-ai-confidence ${answer.confidence}`}>{answer.confidence}</span>
+                      <span>{answer.generated_by === "ai" ? "Grounded AI answer" : "Grounded docs answer"}</span>
+                    </div>
+                    <p>{answer.answer}</p>
+                    {answer.steps.length > 0 ? (
+                      <ol className="docs-ai-steps">
+                        {answer.steps.map((step) => <li key={step}>{step}</li>)}
+                      </ol>
+                    ) : null}
+                    {answer.sources.length > 0 ? (
+                      <>
+                        <div className="docs-ai-section-title">Sources</div>
+                        <div className="docs-ai-sources">
+                          {answer.sources.map((source) => (
+                            <button key={source.id} type="button" onClick={() => selectDocsSource(source.path)}>
+                              <span>{source.title}</span>
+                              <small>{source.primary_nav} / {source.section_title}</small>
+                              <code>{source.path}</code>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                    {answer.related.length > 0 ? (
+                      <>
+                        <div className="docs-ai-section-title">Related</div>
+                        <div className="docs-ai-related">
+                          {answer.related.map((source) => (
+                            <button key={source.id} type="button" onClick={() => selectDocsSource(source.path)}>
+                              {source.title}
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    ) : null}
+                    <div className="docs-ai-feedback" aria-label="Docs AI feedback">
+                      <button type="button" onClick={() => void sendFeedback("helpful")}>Helpful</button>
+                      <button type="button" onClick={() => void sendFeedback("not_helpful")}>Not helpful</button>
+                      <button type="button" onClick={() => void sendFeedback("missing_docs")}>Missing docs</button>
+                      {feedbackStatus ? (
+                        <span>{feedbackStatus === "error" ? "Could not record feedback" : "Feedback recorded"}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                <div className="docs-search-section-label">{query.trim() ? "Search results" : "Suggested"}</div>
+                <div className="docs-search-results" role="listbox" aria-label="Search results">
+                  {results.length > 0 ? (
+                    results.map((result, index) => (
+                      <button
+                        key={result.href}
+                        type="button"
+                        className={`docs-search-result${index === activeIndex ? " active" : ""}`}
+                        onMouseEnter={() => setActiveIndex(index)}
+                        onClick={() => selectResult(result)}
+                        role="option"
+                        aria-selected={index === activeIndex}
+                      >
+                        <span className="docs-search-result-main">
+                          <span className="docs-search-result-title">
+                            {result.method ? (
+                              <span
+                                className="docs-search-method"
+                                style={{ color: DOCS_METHOD_COLORS[result.method] }}
+                              >
+                                {result.method}
+                              </span>
+                            ) : null}
+                            {result.title}
                           </span>
-                        ) : null}
-                        {result.title}
-                      </span>
-                      <span className="docs-search-result-meta">
-                        {[result.primary, result.section, result.group].filter(Boolean).join(" / ")}
-                      </span>
-                    </span>
-                    <span className="docs-search-result-path">{result.href}</span>
-                  </button>
-                ))
-              ) : (
-                <div className="docs-search-empty">No docs found for “{query.trim()}”.</div>
-              )}
-            </div>
+                          <span className="docs-search-result-meta">
+                            {[result.primary, result.section, result.group].filter(Boolean).join(" / ")}
+                          </span>
+                        </span>
+                        <span className="docs-search-result-path">{result.href}</span>
+                      </button>
+                    ))
+                  ) : (
+                    <div className="docs-search-empty">No docs found for “{query.trim()}”.</div>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
       ), document.body) : null}
@@ -961,10 +1188,17 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-search-trigger kbd,.docs-search-input-row kbd{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:24px;padding:0 6px;border:1px solid var(--docs-border-strong);border-radius:6px;background:var(--docs-bg-muted);color:var(--docs-text-muted);font-family:var(--docs-ui);font-size:12px;font-weight:650;line-height:1;box-shadow:inset 0 -1px 0 rgba(15,23,42,.04)}
 .docs-search-overlay{position:fixed;inset:0;z-index:90;display:flex;align-items:flex-start;justify-content:center;padding:92px 20px 24px;background:rgba(15,18,26,.16);backdrop-filter:blur(5px)}
 .docs-search-dialog{width:min(610px,100%);overflow:hidden;border:1px solid color-mix(in srgb, var(--docs-border) 88%, transparent);border-radius:14px;background:var(--docs-bg-elevated);box-shadow:0 22px 62px rgba(15,23,42,.18)}
+.docs-search-tabs{display:flex;align-items:center;gap:6px;padding:9px 10px 0}
+.docs-search-tab{height:31px;display:inline-flex;align-items:center;gap:7px;padding:0 10px;border:1px solid transparent;border-radius:8px;background:transparent;color:var(--docs-text-muted);font-family:var(--docs-ui);font-size:12.5px;font-weight:680;line-height:1;cursor:pointer}
+.docs-search-tab:hover{background:var(--docs-bg-muted);color:var(--docs-text)}
+.docs-search-tab.active{border-color:var(--docs-border);background:var(--docs-bg-muted);color:var(--docs-text)}
 .docs-search-input-row{display:flex;align-items:center;gap:11px;padding:12px 13px;border-bottom:1px solid var(--docs-border);color:var(--docs-text-faint)}
 .docs-search-input-row:focus-within{box-shadow:inset 0 0 0 1px color-mix(in srgb, #7aa7e8 42%, transparent)}
 .docs-search-input-row input{width:100%;border:0!important;outline:0!important;box-shadow:none!important;background:transparent;color:var(--docs-text);font-family:var(--docs-ui);font-size:16px;font-weight:520;line-height:1.35;appearance:none}
 .docs-search-input-row input::placeholder{color:var(--docs-text-faint)}
+.docs-search-send{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;border:1px solid var(--docs-border-strong);border-radius:8px;background:var(--docs-bg-muted);color:var(--docs-text);cursor:pointer}
+.docs-search-send:hover:not(:disabled){border-color:color-mix(in srgb, var(--docs-link) 45%, var(--docs-border));color:var(--docs-link)}
+.docs-search-send:disabled{opacity:.45;cursor:not-allowed}
 .docs-search-section-label{padding:9px 13px 2px;color:var(--docs-text-faint);font-size:11px;font-weight:760;letter-spacing:.08em;text-transform:uppercase}
 .docs-search-results{max-height:min(392px,calc(100vh - 210px));overflow:auto;padding:5px 7px 8px;scrollbar-width:none}
 .docs-search-results::-webkit-scrollbar{display:none}
@@ -976,6 +1210,35 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-search-result-meta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-muted);font-size:12.5px;font-weight:500}
 .docs-search-result-path{max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-faint);font-family:var(--docs-mono);font-size:12px}
 .docs-search-empty{padding:34px 18px 38px;color:var(--docs-text-muted);font-size:14px;text-align:center}
+.docs-ai-panel{max-height:min(468px,calc(100vh - 218px));overflow:auto;padding:10px 12px 12px;scrollbar-width:none}
+.docs-ai-panel::-webkit-scrollbar{display:none}
+.docs-ai-examples{display:grid;gap:8px;padding:2px 0 4px}
+.docs-ai-examples button,.docs-ai-related button{width:100%;padding:11px 12px;border:1px solid var(--docs-border);border-radius:9px;background:transparent;color:var(--docs-text);font-family:var(--docs-ui);font-size:13.5px;font-weight:620;text-align:left;cursor:pointer}
+.docs-ai-examples button:hover,.docs-ai-related button:hover{background:var(--docs-bg-muted);border-color:var(--docs-border-strong)}
+.docs-ai-status,.docs-ai-error{padding:28px 12px;color:var(--docs-text-muted);font-size:14px;text-align:center}
+.docs-ai-error{color:#dc2626}
+.docs-ai-answer{display:grid;gap:12px}
+.docs-ai-answer-topline{display:flex;align-items:center;gap:8px;color:var(--docs-text-faint);font-size:12px;font-weight:720}
+.docs-ai-confidence{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;border:1px solid var(--docs-border);background:var(--docs-bg-muted);color:var(--docs-text-muted);font-size:11px;text-transform:uppercase}
+.docs-ai-confidence.high{border-color:color-mix(in srgb, #10b981 36%, var(--docs-border));background:color-mix(in srgb, #ecfdf5 75%, transparent);color:#047857}
+.docs-ai-confidence.medium{border-color:color-mix(in srgb, #eab308 42%, var(--docs-border));background:color-mix(in srgb, #fefce8 76%, transparent);color:#92400e}
+.docs-ai-confidence.low,.docs-ai-confidence.none{border-color:color-mix(in srgb, #94a3b8 42%, var(--docs-border));background:var(--docs-bg-muted);color:var(--docs-text-muted)}
+.docs-ai-answer p{margin:0;color:var(--docs-text);font-size:14px;line-height:1.65}
+.docs-ai-steps{margin:0;padding-left:20px;color:var(--docs-text-soft);font-size:13.5px;line-height:1.62}
+.docs-ai-steps li+li{margin-top:5px}
+.docs-ai-section-title{margin-top:2px;color:var(--docs-text-faint);font-size:11px;font-weight:760;letter-spacing:.08em;text-transform:uppercase}
+.docs-ai-sources{display:grid;gap:7px}
+.docs-ai-sources button{width:100%;display:grid;gap:4px;padding:10px 11px;border:1px solid var(--docs-border);border-radius:9px;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.docs-ai-sources button:hover{background:var(--docs-bg-muted);border-color:var(--docs-border-strong)}
+.docs-ai-sources span{color:var(--docs-text);font-size:13.5px;font-weight:680;line-height:1.28}
+.docs-ai-sources small{color:var(--docs-text-muted);font-size:12px;line-height:1.3}
+.docs-ai-sources code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-faint);font-family:var(--docs-mono);font-size:11.5px}
+.docs-ai-related{display:flex;gap:8px;flex-wrap:wrap}
+.docs-ai-related button{width:auto;padding:8px 10px;font-size:12.5px}
+.docs-ai-feedback{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:2px}
+.docs-ai-feedback button{height:30px;padding:0 10px;border:1px solid var(--docs-border);border-radius:8px;background:transparent;color:var(--docs-text-muted);font-family:var(--docs-ui);font-size:12px;font-weight:680;cursor:pointer}
+.docs-ai-feedback button:hover{background:var(--docs-bg-muted);color:var(--docs-text)}
+.docs-ai-feedback span{color:var(--docs-text-faint);font-size:12px;font-weight:620}
 .docs-auth-actions{display:flex;align-items:center;gap:8px}
 .docs-auth-btn{display:inline-flex;align-items:center;justify-content:center;padding:8px 13px;border-radius:10px;border:1px solid transparent;font-family:var(--docs-ui);font-size:13px;font-weight:600;line-height:1;text-decoration:none;cursor:pointer;transition:all .14s}
 .docs-auth-btn.ghost{background:transparent;color:var(--docs-text-muted);border-color:var(--docs-border)}
