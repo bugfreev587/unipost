@@ -54,3 +54,23 @@ func TestAdminPostFailuresSQLSearchesConcreteFailureIdentifiers(t *testing.T) {
 		}
 	}
 }
+
+func TestAdminPostFailuresSQLLinksHistoricalFailureEventsByConcreteID(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		"linked_failure_events AS",
+		"FROM post_failures pf\n  JOIN social_posts sp ON sp.id = pf.post_id",
+		"AND $5::TEXT <> ''",
+		"AND (pf.id = $5 OR COALESCE(spr.id, '') = $5 OR sp.id = $5)",
+		"pf.created_at >= NOW() - ($2::INT * INTERVAL '1 day')",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin post failures SQL should link historical post_failures by concrete ID %q", want)
+		}
+	}
+}

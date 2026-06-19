@@ -54,3 +54,30 @@ test("TikTok followers guide points users to the unified account metrics API", a
   assert.match(guide, /\/docs\/api\/accounts\/list/);
   assert.doesNotMatch(guide, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|feature flag/i);
 });
+
+test("Analytics guides reuse shared docs presentation primitives", async () => {
+  const docsShell = await source("src/app/docs/_components/docs-shell.tsx");
+  const accountMetrics = await source("src/app/docs/guides/analytics/account-metrics/page.tsx");
+  const analyticsOverview = await source("src/app/docs/guides/analytics/page.tsx");
+  const postAnalytics = await source("src/app/docs/guides/analytics/post-analytics/page.tsx");
+  const reconnectScopes = await source("src/app/docs/guides/analytics/reconnect-analytics-scopes/page.tsx");
+  const tiktokFollowers = await source("src/app/docs/guides/analytics/tiktok-followers/page.tsx");
+
+  for (const guide of [accountMetrics, analyticsOverview, postAnalytics, reconnectScopes, tiktokFollowers]) {
+    assert.doesNotMatch(guide, /_components\/code-block/, "guides should use DocsCodeTabs from the docs shell instead of direct CodeBlock imports");
+    assert.doesNotMatch(guide, /<table className="docs-table">/, "guides should use DocsTable so shared table widths and nowrap rules apply");
+  }
+
+  assert.match(postAnalytics, /<p>Post analytics availability depends/);
+  assert.doesNotMatch(postAnalytics, /id="scope-notes"[\s\S]*?<ul className="docs-step-list">/, "scope notes should render as article paragraphs, not indented step lists");
+  assert.doesNotMatch(tiktokFollowers, /id="scope-notes"[\s\S]*?<ul className="docs-step-list">/, "TikTok scope notes should render as article paragraphs, not indented step lists");
+
+  assert.match(docsShell, /case "field\|meaning":/);
+  assert.match(docsShell, /case "task\|unipost api\|start here":/);
+  assert.match(docsShell, /case "platform\|analytics scopes\|common unipost api":/);
+  assert.match(docsShell, /case "field\|meaning":[\s\S]*?return columnIndex === 0;/);
+  assert.match(docsShell, /case "task\|unipost api\|start here":[\s\S]*?return columnIndex === 1;/);
+  assert.match(docsShell, /case "platform\|analytics scopes\|common unipost api":[\s\S]*?return columnIndex === 2;/);
+  assert.match(docsShell, /\.docs-api-inline\{[^}]*white-space:nowrap/s);
+  assert.match(docsShell, /\.docs-api-inline-method\{[^}]*color:#16a34a/s);
+});
