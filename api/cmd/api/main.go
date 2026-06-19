@@ -591,6 +591,7 @@ func main() {
 	// outside Clerk/API-key auth because GitHub Actions calls them with
 	// a dedicated automation token. Human actions still go through the
 	// super-admin routes below.
+	r.Get("/internal/changelog-candidates", changelogAutomationHandler.ListInternalCandidates)
 	r.Post("/internal/changelog-candidates", changelogAutomationHandler.CreateInternalCandidate)
 	r.Get("/internal/changelog-candidates/{id}", changelogAutomationHandler.GetInternalCandidate)
 

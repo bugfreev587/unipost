@@ -17,6 +17,7 @@ import (
 type changelogCandidateStore interface {
 	CreateCandidate(rctx context.Context, input changelog.CreateCandidateInput) (changelog.CandidateRecord, bool, error)
 	GetCandidate(rctx context.Context, id string) (changelog.CandidateRecord, error)
+	ListCandidatesByStatus(rctx context.Context, status changelog.CandidateStatus, limit int) ([]changelog.CandidateRecord, error)
 }
 
 type changelogActionService interface {
@@ -43,6 +44,10 @@ type changelogCandidateResponse struct {
 	Candidate changelog.CandidateRecord `json:"candidate"`
 	Created   bool                      `json:"created,omitempty"`
 	Actions   changelog.ActionLinks     `json:"actions,omitempty"`
+}
+
+type changelogCandidateListResponse struct {
+	Candidates []changelogCandidateResponse `json:"candidates"`
 }
 
 func (h *ChangelogAutomationHandler) CreateInternalCandidate(w http.ResponseWriter, r *http.Request) {
@@ -84,6 +89,45 @@ func (h *ChangelogAutomationHandler) GetInternalCandidate(w http.ResponseWriter,
 		return
 	}
 	writeSuccess(w, record)
+}
+
+func (h *ChangelogAutomationHandler) ListInternalCandidates(w http.ResponseWriter, r *http.Request) {
+	if !h.validAutomationToken(r) {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid changelog automation token")
+		return
+	}
+	status := changelog.CandidateStatus(strings.TrimSpace(r.URL.Query().Get("status")))
+	if status == "" {
+		status = changelog.StatusSaved
+	}
+	if !validChangelogListStatus(status) {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Unsupported changelog candidate status")
+		return
+	}
+	limit := 10
+	if rawLimit := strings.TrimSpace(r.URL.Query().Get("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "BAD_REQUEST", "limit must be a positive integer")
+			return
+		}
+		if parsed < limit {
+			limit = parsed
+		}
+	}
+	records, err := h.store.ListCandidatesByStatus(r.Context(), status, limit)
+	if err != nil {
+		writeChangelogError(w, err)
+		return
+	}
+	out := changelogCandidateListResponse{Candidates: make([]changelogCandidateResponse, 0, len(records))}
+	for _, record := range records {
+		out.Candidates = append(out.Candidates, changelogCandidateResponse{
+			Candidate: record,
+			Actions:   h.actions.BuildActionLinks(record),
+		})
+	}
+	writeSuccess(w, out)
 }
 
 func (h *ChangelogAutomationHandler) GetAdminCandidate(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +181,15 @@ func (h *ChangelogAutomationHandler) validAutomationToken(r *http.Request) bool 
 	}
 	header := strings.TrimSpace(r.Header.Get("Authorization"))
 	return header == "Bearer "+h.automationToken
+}
+
+func validChangelogListStatus(status changelog.CandidateStatus) bool {
+	switch status {
+	case changelog.StatusPending, changelog.StatusSaved, changelog.StatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func writeChangelogError(w http.ResponseWriter, err error) {
