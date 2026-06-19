@@ -2678,6 +2678,7 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/cli"
     || current === "/docs/cli/reference"
     || current === "/docs/cli/agents"
+    || current === "/docs/cli/agent-debug"
     || current === "/docs/mcp"
     || current === "/docs/white-label"
     || current.startsWith("/docs/white-label/")
