@@ -3,6 +3,7 @@ import { Geist, Geist_Mono, Inter } from "next/font/google";
 import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
 import { ThemeProvider } from "@/components/theme-provider";
+import { GoogleAnalytics } from "@/components/marketing/google-analytics";
 import { SiteFooterGate } from "@/components/marketing/site-footer";
 import { LandingAttributionBinder } from "@/components/marketing/landing-attribution-binder";
 import "./globals.css";
@@ -35,6 +36,7 @@ const inter = Inter({
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
+const GOOGLE_SITE_VERIFICATION = process.env.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION?.trim();
 
 const themeInitScript = `
 (() => {
@@ -104,6 +106,11 @@ export const metadata: Metadata = {
     shortcut: "/brand/unipost-favicon-32.png",
     apple: "/brand/unipost-icon-128.png",
   },
+  verification: GOOGLE_SITE_VERIFICATION
+    ? {
+        google: GOOGLE_SITE_VERIFICATION,
+      }
+    : undefined,
 };
 
 export default function RootLayout({
@@ -176,6 +183,7 @@ export default function RootLayout({
           <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         </head>
         <body className="min-h-full flex flex-col bg-[var(--app-bg)] text-[var(--text)]">
+          <GoogleAnalytics />
           <ThemeProvider>
             <LandingAttributionBinder />
             {children}
