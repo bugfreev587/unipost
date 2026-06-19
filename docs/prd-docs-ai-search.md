@@ -14,7 +14,7 @@ UniPost's docs currently do two jobs:
 - API Reference documents exact endpoints, parameters, responses, and errors.
 - Guides explain how to complete real workflows.
 
-The API Reference is good for developers who already know which endpoint they need, but it is weak for task-shaped questions such as "How do I get TikTok followers?" A user may find TikTok scopes, native analytics pages, account metrics, and post analytics, but still miss that the UniPost answer is the unified `GET /v1/accounts/{account_id}/metrics` endpoint.
+The API Reference is good for developers who already know which endpoint they need, but it is weak for task-shaped questions such as "How do I get TikTok followers?" A user may find TikTok scopes, native analytics pages, account metrics, and post analytics, but still miss that the UniPost answer is the unified `GET /v1/accounts/{id}/metrics` endpoint.
 
 Docs AI Search should bridge that gap without turning API Reference pages into FAQ pages. API Reference remains the Reference layer: stable, endpoint-shaped, and easy to scan. Task answers should live in Guides and be discoverable by AI search.
 
@@ -84,7 +84,9 @@ The index should store docs chunks rather than entire pages. Each docs chunk sho
 - `platforms`
 - `last_indexed_at`
 
-Guides should carry task tags such as `analytics`, `tiktok`, `followers`, `account metrics`, and `scopes`. API Reference chunks should carry endpoint aliases such as `GET /v1/accounts/{account_id}/metrics`, `GET /v1/accounts/:account_id/metrics`, and normalized SDK method names when available.
+Guides should carry task tags such as `analytics`, `tiktok`, `followers`, `account metrics`, and `scopes`. API Reference chunks should carry the canonical endpoint form plus aliases. For account metrics, the canonical public docs path is `GET /v1/accounts/{id}/metrics`; aliases should include `GET /v1/accounts/{account_id}/metrics`, `GET /v1/accounts/:account_id/metrics`, `GET /v1/accounts/:id/metrics`, and normalized SDK method names when available.
+
+Endpoint and task metadata cannot be treated as fully automatic extraction output. Fields such as `product_area`, `tags`, `endpoint_aliases`, and platform capability tags require manual curation or a structured registry, then automated validation.
 
 ## Retrieval Strategy
 
@@ -102,14 +104,16 @@ For exact endpoint queries, rank API Reference first and attach Guides as relate
 
 - Do not answer without citations from indexed docs.
 - Do not invent scopes, fields, endpoint paths, pricing, or availability.
-- Do not claim a platform supports a metric unless a docs source says so.
+- Do not claim a platform supports a metric unless the indexed source of truth says so. For analytics capability claims, treat `dashboard/src/lib/platform-capabilities.ts` or docs generated from it as authoritative, with prose guide pages explaining how to use the supported capability.
 - Do not expose feature flags, internal rollout keys, private comments, or branch names in public answers.
 - Do not advise users to call provider-native APIs when UniPost offers a unified public API for the same task.
 - Return a fallback answer when the docs are stale or ambiguous.
 
 ## Analytics Guides Dependency
 
-Analytics Guides should ship before Docs AI Search so the model has task-shaped knowledge. The first guide set should cover:
+Analytics Guides are the critical path for Docs AI Search. The retrieval and answer API can be built mechanically, but the missing knowledge is task-shaped content that teaches the unified-API framing instead of sending users to native platform drilldowns. Analytics Guides should ship and be reviewed before Docs AI Search so the model has citable workflow knowledge.
+
+The first guide set should cover:
 
 - Which API gets TikTok followers.
 - How to read normalized account metrics across platforms.
@@ -117,7 +121,7 @@ Analytics Guides should ship before Docs AI Search so the model has task-shaped 
 - How to export analytics rows.
 - How to reconnect accounts when analytics scopes are missing.
 
-This gives AI search a clean source of truth for common questions while keeping API Reference clean.
+This gives AI search a clean source of truth for common questions while keeping API Reference clean. Rollout should treat guide authoring and review as the long pole: AI Search should not launch publicly until these guides exist, are indexed, and pass the example-question evals below.
 
 ## Technical Approach
 
@@ -126,18 +130,23 @@ This gives AI search a clean source of truth for common questions while keeping 
 - Add a `Guides` docs section outside API Reference.
 - Create Analytics Guides for high-frequency user questions.
 - Ensure existing keyword search indexes the new guide pages through docs navigation.
+- Decide whether to keep docs content in TSX pages with a generated index, or introduce a structured docs registry/frontmatter-style export for new guide pages.
 
 ### Phase 2: Static docs index
 
-- Add an extraction script that walks docs routes and/or structured source metadata.
-- Emit chunked JSON with stable ids based on path and heading.
-- Include endpoint aliases and platform tags.
+- Build a content-level index, not just the current nav-level keyword index.
+- Default extraction path: run the Next docs build or render docs pages, parse rendered/built HTML by headings, and emit chunks with stable ids based on public path and heading anchors. This handles today's mixed TSX authoring patterns: fully hardcoded pages and data-driven pages such as platform analytics docs.
+- Alternative path: introduce a structured docs content source in Phase 1, then extract chunks from that registry. This creates cleaner metadata but requires retrofitting existing docs pages.
+- Treat metadata enrichment as its own workstream. Manually curate or registry-source `product_area`, `tags`, `endpoint_aliases`, and platform tags, then validate them in CI.
+- Include endpoint aliases and platform tags, including canonical `GET /v1/accounts/{id}/metrics` and account-id aliases.
+- Decide whether the same content-level index should also improve classic keyword search. Prefer one extraction pipeline unless there is a specific reason to keep the existing nav-only search index separate.
 - Validate that every indexed chunk maps to a public docs URL.
 
 ### Phase 3: AI answer API
 
 - Add a server-side docs answer route.
-- Retrieve candidate chunks using hybrid keyword and vector matching.
+- Start with keyword retrieval plus LLM rerank and answer generation for the small docs corpus.
+- Evaluate whether vector retrieval is needed after offline evals. If vectors are needed, choose both an embedding provider and a vector store, such as pgvector or an external vector database. Anthropic should remain the default generation provider through the latest Claude models, but embeddings require a separate provider decision.
 - Generate answers with strict source grounding.
 - Return answer text, citations, related pages, and confidence state.
 
@@ -151,7 +160,7 @@ This gives AI search a clean source of truth for common questions while keeping 
 
 | Question | Expected primary source | Expected answer |
 | --- | --- | --- |
-| How do I get TikTok followers? | Analytics Guide: TikTok followers | Call `GET /v1/accounts/{account_id}/metrics`, ensure `user.info.stats`, read `data.follower_count`. |
+| How do I get TikTok followers? | Analytics Guide: TikTok followers | Call `GET /v1/accounts/{id}/metrics`, ensure `user.info.stats`, read `data.follower_count`. |
 | Which endpoint exports analytics? | Analytics Guide: Export analytics rows | Use `GET /v1/analytics/posts/export`; link the exact API Reference page. |
 | Does `video.list` give followers? | Analytics Guide: TikTok followers | No. `video.list` is for public videos; followers come from `user.info.stats` through account metrics. |
 | What fields are returned by account metrics? | API Reference: Get account metrics | Link the endpoint contract and list the normalized response fields. |
@@ -164,18 +173,22 @@ This gives AI search a clean source of truth for common questions while keeping 
 - Guide pages are preferred over API Reference for task questions.
 - API Reference remains endpoint-shaped and does not gain broad FAQ/task walkthrough content.
 - Analytics Guides exist before the AI search launch and are included in the docs index.
+- Canonical endpoint forms and common aliases are indexed, including `GET /v1/accounts/{id}/metrics` and `GET /v1/accounts/{account_id}/metrics`.
+- Analytics capability claims are grounded in `dashboard/src/lib/platform-capabilities.ts` or docs generated from that source.
 - Internal feedback can identify docs gaps from unanswered or low-confidence questions.
 
 ## Rollout
 
-1. Ship Analytics Guides and index them in existing docs search.
+1. Ship and review Analytics Guides; index them in existing docs search.
 2. Build the static docs chunk index and run offline answer evaluations.
-3. Release AI search to internal users.
-4. Expand to public docs once citation quality and fallback behavior pass acceptance.
+3. Decide whether v1 needs vector retrieval or whether keyword retrieval plus LLM rerank meets quality bars.
+4. Release AI search to internal users.
+5. Expand to public docs once citation quality and fallback behavior pass acceptance.
 
 ## Open Questions
 
-- Which model and embedding provider should be used for production AI search?
+- Which generation model should be used for production AI search? Default target is the latest Claude model available to UniPost.
+- If offline evals show keyword retrieval plus LLM rerank is not enough, which embedding provider and vector store should be used?
 - Should search history be stored per workspace, anonymous session, or not stored initially?
 - What retention window is acceptable for raw user questions?
 - Should docs feedback create support tickets, Linear issues, or an internal dashboard queue?

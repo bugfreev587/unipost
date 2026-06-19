@@ -29,7 +29,8 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /unipost upgrade/);
   assert.match(source, /unipost self help/);
   assert.match(source, /Choose Terminal/);
-  assert.match(source, /Copy the generated `unipost auth login/);
+  assert.match(source, /unipost init --api-key up_live_/);
+  assert.match(source, /copy the generated setup-token command/i);
   assert.match(source, /--client terminal/);
   assert.match(source, /Path B is for Codex, Claude Code, Cursor/);
   assert.match(source, /Configure the CLI/);
@@ -40,6 +41,7 @@ test("CLI docs explain setup, configuration, and common fixes", async () => {
   assert.match(source, /zsh: command not found: unipost/);
   assert.match(source, /--base-url https:\/\/api\.unipost\.dev/);
   assert.match(source, /UNIPOST_API_KEY/);
+  assert.match(source, /--metadata-only/);
   assert.match(source, /config set base_url/);
   assert.match(source, /auth status --json/);
   assert.match(source, /setup_token_expired/);
@@ -73,6 +75,8 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /CLI_REFERENCE_SECTIONS/);
   assert.match(referenceSource, /Setup & Diagnostics/);
   assert.match(referenceSource, /Auth & Config/);
+  assert.match(referenceSource, /secure local CLI credential/);
+  assert.match(referenceSource, /single current local or environment credential/);
   assert.match(referenceSource, /Profiles & Connect/);
   assert.match(referenceSource, /Accounts/);
   assert.match(referenceSource, /Posts/);
@@ -167,6 +171,8 @@ test("CLI README explains install-first usage and separate agent install", async
   assert.match(source, /Update with `unipost upgrade`/);
   assert.match(source, /unipost self help/);
   assert.match(source, /unipost auth login --setup-token ust_\.\.\. --client terminal/);
+  assert.match(source, /unipost init --api-key up_live_/);
+  assert.match(source, /--metadata-only/);
   assert.doesNotMatch(source, /npx -y @unipost\/cli/);
   assert.doesNotMatch(source, /No-install one-off alternative/);
   assert.match(source, /To let a local AI agent use UniPost/);

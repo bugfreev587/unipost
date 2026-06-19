@@ -20,6 +20,12 @@ test("Docs AI Search PRD defines grounded guide-first search requirements", asyn
   assert.match(prd, /API Reference remains.*Reference/i);
   assert.match(prd, /Analytics Guides/i);
   assert.match(prd, /docs chunk/i);
+  assert.match(prd, /GET \/v1\/accounts\/\{id\}\/metrics/);
+  assert.match(prd, /GET \/v1\/accounts\/\{account_id\}\/metrics/);
+  assert.match(prd, /rendered\/built HTML|built HTML|rendered HTML/i);
+  assert.match(prd, /platform-capabilities\.ts/);
+  assert.match(prd, /keyword retrieval \+ LLM rerank|LLM rerank/i);
+  assert.match(prd, /vector store|pgvector/i);
 });
 
 test("Analytics guides are exposed as Guides, not as API Reference endpoint groups", async () => {
