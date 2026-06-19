@@ -98,6 +98,7 @@ type aiTriageSuggestion struct {
 	Classification Classification `json:"classification"`
 	Confidence     float64        `json:"confidence"`
 	Summary        string         `json:"summary"`
+	ReviewAnalysis ReviewAnalysis `json:"review_analysis"`
 	EmailDraft     EmailDraft     `json:"email_draft"`
 	BugPlan        BugPlan        `json:"bug_plan"`
 	CTAURL         string         `json:"cta_url"`
@@ -118,6 +119,7 @@ func (a *OpenAIAnalyzer) call(bucket Bucket, fallback ItemDraft) (aiTriageSugges
 				"Do not mark known duplicates; dedupe is handled by deterministic code.",
 				"For user_action_needed, include email_draft with subject and body.",
 				"For unipost_bug, include bug_plan with title, impact, evidence, suspected_area, proposed_fix, validation_plan, rollback_plan.",
+				"For every classification, include review_analysis with what_is_this_error, why_it_happened, how_to_resolve, missing_evidence, and next_inspection_path.",
 				"Do not include secrets or raw tokens in any output.",
 				"Set safety.requires_human_review=true if the email draft or fix plan could be unsafe, uncertain, or contain sensitive data.",
 			}, " ")},
@@ -192,7 +194,7 @@ func buildOpenAITriagePrompt(bucket Bucket, fallback ItemDraft) string {
 	b.WriteString(strconvItoa(bucket.AffectedPostCount))
 	b.WriteString("\nEvidence JSON:\n")
 	b.Write(rawEvidence)
-	b.WriteString("\nReturn JSON with keys: classification, confidence, summary, email_draft, bug_plan, cta_url, safety.")
+	b.WriteString("\nReturn JSON with keys: classification, confidence, summary, review_analysis, email_draft, bug_plan, cta_url, safety.")
 	return b.String()
 }
 
@@ -200,14 +202,14 @@ func mergeAISuggestion(fallback ItemDraft, suggestion aiTriageSuggestion) (ItemD
 	if !validClassification(suggestion.Classification) {
 		return ItemDraft{}, false
 	}
+	if aiOutputContainsSecret(suggestion) {
+		return aiNeedsHumanReview(fallback, suggestion.Confidence, "model output contained secret-shaped content"), true
+	}
 	if suggestion.Safety.RequiresHumanReview {
 		return aiNeedsHumanReview(fallback, suggestion.Confidence, firstNonEmpty(suggestion.Safety.Reason, "model requested human review")), true
 	}
 	if suggestion.Confidence > 0 && suggestion.Confidence < minAIConfidenceForAction {
 		return aiNeedsHumanReview(fallback, suggestion.Confidence, "model confidence below threshold"), true
-	}
-	if aiOutputContainsSecret(suggestion) {
-		return aiNeedsHumanReview(fallback, suggestion.Confidence, "model output contained secret-shaped content"), true
 	}
 	out := fallback
 	action, status := workflowForClassification(suggestion.Classification)
@@ -219,6 +221,10 @@ func mergeAISuggestion(fallback ItemDraft, suggestion aiTriageSuggestion) (ItemD
 	}
 	if strings.TrimSpace(suggestion.Summary) != "" {
 		out.Summary = strings.TrimSpace(suggestion.Summary)
+	}
+	if reviewAnalysis := normalizeReviewAnalysis(suggestion.ReviewAnalysis); len(reviewAnalysis) > 0 {
+		out.ReviewAnalysis = reviewAnalysis
+		setReviewAnalysisEvidence(&out, reviewAnalysis)
 	}
 	out.EmailDraft = EmailDraft{}
 	out.BugPlan = BugPlan{}
@@ -258,6 +264,23 @@ func aiNeedsHumanReview(fallback ItemDraft, confidence float64, reason string) I
 	out.EmailDraft = EmailDraft{}
 	out.BugPlan = BugPlan{}
 	out.CTAURL = ""
+	reviewAnalysis := normalizeReviewAnalysis(out.ReviewAnalysis)
+	if len(reviewAnalysis) == 0 {
+		reviewAnalysis = ReviewAnalysis{
+			"what_is_this_error":   "AI triage could not safely classify this failure bucket.",
+			"why_it_happened":      "AI requested human review because " + strings.TrimSpace(reason) + ".",
+			"how_to_resolve":       "Open the raw failure evidence, inspect the provider response and worker logs, then classify the bucket manually.",
+			"missing_evidence":     "A safer classification needs more concrete provider, account, or worker evidence.",
+			"next_inspection_path": "Start from the linked raw error sample and compare it with logs for the same post.",
+		}
+	} else {
+		reviewAnalysis["why_it_happened"] = "AI requested human review because " + strings.TrimSpace(reason) + ". " + strings.TrimSpace(reviewAnalysis["why_it_happened"])
+		if strings.TrimSpace(reviewAnalysis["how_to_resolve"]) == "" {
+			reviewAnalysis["how_to_resolve"] = "Open the raw failure evidence, inspect the provider response and worker logs, then classify the bucket manually."
+		}
+	}
+	out.ReviewAnalysis = reviewAnalysis
+	setReviewAnalysisEvidence(&out, reviewAnalysis)
 	return out
 }
 
@@ -276,7 +299,27 @@ func aiOutputContainsSecret(suggestion aiTriageSuggestion) bool {
 		suggestion.BugPlan.RollbackPlan,
 	}
 	parts = append(parts, suggestion.BugPlan.Evidence...)
+	for _, value := range suggestion.ReviewAnalysis {
+		parts = append(parts, value)
+	}
 	return ContainsSecretPattern(strings.Join(parts, "\n"))
+}
+
+func normalizeReviewAnalysis(analysis ReviewAnalysis) ReviewAnalysis {
+	out := ReviewAnalysis{}
+	for _, key := range []string{"what_is_this_error", "why_it_happened", "how_to_resolve", "missing_evidence", "next_inspection_path"} {
+		if value := strings.TrimSpace(analysis[key]); value != "" {
+			out[key] = value
+		}
+	}
+	return out
+}
+
+func setReviewAnalysisEvidence(out *ItemDraft, analysis ReviewAnalysis) {
+	if out.Evidence == nil {
+		out.Evidence = map[string]any{}
+	}
+	out.Evidence["review_analysis"] = map[string]string(analysis)
 }
 
 func validClassification(classification Classification) bool {
