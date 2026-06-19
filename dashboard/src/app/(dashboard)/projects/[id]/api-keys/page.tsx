@@ -137,13 +137,13 @@ export default function ApiKeysPage() {
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
           <Dialog open={setupOpen} onOpenChange={(open) => { setSetupOpen(open); if (!open) { setSetupPrompt(null); setSetupCopied(false); } }}>
             <DialogTrigger render={<button className="dbtn dbtn-ghost" />}>
-              <Terminal style={{ width: 13, height: 13 }} /> Set up UniPost CLI
+              <Terminal style={{ width: 13, height: 13 }} /> Set up CLI / Agent
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Set up UniPost CLI</DialogTitle>
+                <DialogTitle>Set up UniPost CLI or Agent</DialogTitle>
                 <DialogDescription>
-                  Install once with npm install -g @unipost/cli, then create a short-lived setup token that signs the UniPost CLI in. Choose Terminal for command line only. Choose Codex or Claude Code only when a local agent will use UniPost.
+                  Install once with npm install -g @unipost/cli, then create a short-lived setup token that signs the UniPost CLI in. Choose Terminal for command line only. Choose Codex or Claude Code only when a local agent will use UniPost. This is the Connect with Codex / Claude Code path.
                 </DialogDescription>
               </DialogHeader>
               <div style={{ padding: "8px 0" }}>

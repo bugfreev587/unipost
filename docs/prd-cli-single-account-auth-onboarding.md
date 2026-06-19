@@ -106,6 +106,7 @@ Current intended behavior:
 - Stores the returned API key in macOS keychain when secure local storage is available.
 - Stores redacted credential metadata in local config.
 - Follow-up authenticated commands work without `UNIPOST_API_KEY`.
+- If a valid local binding already exists, returns `already_configured` and does not consume the setup token unless the user explicitly requests replacement with `--replace-key`, `--reauth`, or `--yes`.
 
 This is the better onboarding behavior, but users only know the token when Dashboard gives them a command to copy.
 
@@ -367,6 +368,7 @@ Target behavior:
 - Move out of the top-level help's primary command list.
 - Document as "Dashboard setup flow" in detailed auth help and docs.
 - On non-macOS V1, preflight secure-store availability before exchanging the token. If secure storage is unavailable, return `KEYCHAIN_UNAVAILABLE` and do not create a new API key that the CLI would immediately discard.
+- If an existing local keychain binding validates successfully, return `already_configured` and leave the setup token unused unless replacement was explicitly requested.
 
 ### `unipost auth logout`
 
@@ -626,6 +628,7 @@ Setup-token flow continues to require existing Dashboard-issued token exchange b
 - Token is short-lived.
 - Token can create or return a named CLI API key once.
 - CLI stores returned key in macOS keychain when secure storage is available.
+- CLI does not exchange the token when a valid local binding is already present, so users can safely paste a Dashboard command twice without creating duplicate CLI keys.
 
 Dashboard should generate commands with explicit client metadata:
 
