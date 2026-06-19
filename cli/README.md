@@ -97,11 +97,13 @@ The CLI stores non-secret local defaults such as the selected profile in
 redacted metadata without a stored secret. `auth login --setup-token` exchanges
 a short-lived Dashboard token for a named API key and stores that secret in
 macOS keychain when secure storage is available; the config file stores only the
-keychain locator and redacted metadata. The CLI keeps one local account binding
-at a time: run `auth logout` before binding a different account, or rerun
-`auth login ... --yes` after confirming replacement. `auth logout` removes local
-keychain/config credentials and clears stored `base_url`; revoke the named key
-from Dashboard if it should stop working remotely.
+keychain locator and redacted metadata. If a valid local binding already exists,
+setup-token login returns `already_configured` and does not consume the token.
+The CLI keeps one local account binding at a time: run `auth logout` before
+binding a different account, or rerun `auth login ... --replace-key` after
+confirming replacement. `auth logout` removes local keychain/config credentials
+and clears stored `base_url`; revoke the named key from Dashboard if it should
+stop working remotely.
 
 Phase 5 supports agent planning, dry-run publish validation, scheduled publish,
 post lifecycle waits, cancel/retry operations, account diagnostics, local media
@@ -118,6 +120,9 @@ reading real `.env` contents.
 The MCP server also exposes read-only debug helpers for agents:
 `unipost_debug_recent_logs`, `unipost_debug_explain_request`, and
 `unipost_debug_stream_info`.
+`agent context --json` includes workspace, profiles, accounts, recent posts, and
+a recent post summary so agents can choose real IDs and reason about failed or
+draft work without inventing state.
 Publish-capable writes require explicit user approval through `--yes` and a
 stable `--idempotency-key`; draft creation and dry-run validation remain safe
 without live publishing.

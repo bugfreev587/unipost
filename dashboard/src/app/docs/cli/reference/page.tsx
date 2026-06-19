@@ -21,11 +21,12 @@ const GLOBAL_FLAGS = [
   ["`--field <field>`", "Prints one field from the JSON envelope, useful for scripts."],
   ["`--base-url <url>`", "Overrides the API origin for this run."],
   ["`--api-key <key>`", "Uses an API key for this run. With `auth login` or `init`, it can create the local CLI binding."],
-  ["`--setup-token <token>`", "Exchanges a Dashboard setup token for a local CLI credential."],
+  ["`--setup-token <token>`", "Uses a short-lived Dashboard setup token for local CLI onboarding."],
   ["`--metadata-only`", "Records redacted API-key metadata only; authenticated commands still need `UNIPOST_API_KEY` or `--api-key`."],
   ["`--profile <id>` / `--account <id>`", "Selects a profile or account for commands that need one."],
   ["`--limit`, `--cursor`, `--all`", "Controls pagination for list commands."],
   ["`--yes`", "Confirms local auth replacement, publish-capable writes, or destructive actions after user approval."],
+  ["`--replace-key` / `--reauth`", "Intentionally replaces or refreshes the single local CLI auth binding instead of reusing a valid one."],
   ["`--idempotency-key <key>`", "Required for publish-capable writes after approval."],
 ] as const;
 
@@ -44,7 +45,7 @@ const ACCOUNTS_LIST_RESPONSE = `{
   "warnings": [],
   "meta": {
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.3.0",
+    "cli_version": "0.3.1",
     "command": "accounts list",
     "source": "cli"
   }
@@ -103,12 +104,13 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
     commands: [
       {
         name: "auth login --setup-token",
-        description: "Exchanges a short-lived Dashboard setup token for a named local CLI credential. If a local binding already exists, add `--yes` after confirming replacement.",
+        description: "Exchanges a short-lived Dashboard setup token for a named local CLI credential. If a valid local binding already exists, the CLI returns `already_configured` and does not consume the token unless you pass `--replace-key`, `--reauth`, or `--yes`.",
         example: "unipost auth login --setup-token ust_... --client terminal --base-url https://api.unipost.dev --json",
         response: envelope("auth login", `{
     "authenticated": true,
-    "credential_source": "keychain",
+    "status": "already_configured",
     "workspace": { "id": "ws_1", "name": "Studio" },
+    "setup_token_exchanged": false,
     "config_path": "~/.config/unipost/config.json"
   }`),
       },
@@ -662,14 +664,21 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
       },
       {
         name: "agent context",
-        description: "Returns real workspace, profile, account, and default context for agent grounding.",
+        description:
+          "Returns real workspace, profile, account, recent_posts, recent_post_summary, and default context for agent grounding.",
         example: "unipost agent context --json",
         response: envelope("agent context", `{
     "workspace": { "id": "ws_1", "name": "Studio" },
     "profiles": [{ "id": "pr_1", "name": "Studio" }],
     "accounts": [{ "id": "sa_1", "platform": "linkedin" }],
+    "recent_posts": [{ "id": "post_1", "status": "published" }],
+    "recent_post_summary": {
+      "total_returned": 1,
+      "has_more": false,
+      "by_status": { "published": 1 }
+    },
     "defaults": { "workspace_id": "ws_1", "profile_id": "pr_1" },
-    "grounding": { "profile_count": 1, "account_count": 1, "has_default_profile": true }
+    "grounding": { "profile_count": 1, "account_count": 1, "recent_post_count": 1, "has_default_profile": true }
   }`),
       },
       {
@@ -781,14 +790,14 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
         name: "--version",
         description: "Prints the installed CLI version.",
         example: "unipost --version",
-        response: "0.3.0\n",
+        response: "0.3.1\n",
         responseLang: "text",
       },
       {
         name: "--help",
         description: "Prints top-level usage, supported commands, global flags, install, and upgrade notes.",
         example: "unipost --help",
-        response: "UniPost CLI 0.3.0\n\nUsage:\n  unipost --version\n  unipost init [--json]\n  unipost accounts list|get|health|capabilities|metrics [--json]\n",
+        response: "UniPost CLI 0.3.1\n\nUsage:\n  unipost --version\n  unipost init [--json]\n  unipost accounts list|get|health|capabilities|metrics [--json]\n",
         responseLang: "text",
       },
       {
@@ -906,7 +915,7 @@ function envelope(command: string, data: string, options: { pagination?: boolean
   "warnings": [],
   "meta": {
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.3.0",
+    "cli_version": "0.3.1",
     "command": "${command}",
     "source": "cli"${pagination}
   }

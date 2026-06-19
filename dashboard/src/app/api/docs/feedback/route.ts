@@ -3,12 +3,18 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 
 const RATINGS = new Set(["helpful", "not_helpful", "missing_docs"]);
+const CONFIDENCE = new Set(["high", "medium", "low", "none"]);
+const GENERATED_BY = new Set(["ai", "extractive", "fallback"]);
 
 type DocsAiFeedbackRequest = {
   query?: unknown;
   rating?: unknown;
   path?: unknown;
   sources?: unknown;
+  related?: unknown;
+  confidence?: unknown;
+  generated_by?: unknown;
+  coverage_reason?: unknown;
 };
 
 function badRequest(message: string) {
@@ -30,6 +36,16 @@ export async function POST(request: Request) {
   const sources = Array.isArray(body.sources)
     ? body.sources.filter((source): source is string => typeof source === "string").slice(0, 5)
     : [];
+  const related = Array.isArray(body.related)
+    ? body.related.filter((source): source is string => typeof source === "string").slice(0, 5)
+    : [];
+  const confidence = typeof body.confidence === "string" && CONFIDENCE.has(body.confidence)
+    ? body.confidence
+    : undefined;
+  const generated_by = typeof body.generated_by === "string" && GENERATED_BY.has(body.generated_by)
+    ? body.generated_by
+    : undefined;
+  const coverage_reason = typeof body.coverage_reason === "string" ? body.coverage_reason.slice(0, 160) : undefined;
 
   if (!query) {
     return badRequest("query is required.");
@@ -44,6 +60,10 @@ export async function POST(request: Request) {
     rating,
     path,
     sources,
+    related,
+    confidence,
+    generated_by,
+    coverage_reason,
     recorded_at: new Date().toISOString(),
   });
 

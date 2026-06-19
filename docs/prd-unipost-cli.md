@@ -1,6 +1,6 @@
 # UniPost CLI PRD
 **开发者 Quickstart CLI + AI Agent Operator CLI**
-Status: Planning
+Status: Implemented through CLI 0.3.1; browser/device auth remains deferred
 Owner: Developer Experience / Platform API
 Created: 2026-06-02
 
@@ -56,22 +56,19 @@ UniPost CLI 是 UniPost 的 first-party command line interface，覆盖两条产
 
 ## 3.1 Current Backend Reality And Launch Gates
 
-This PRD includes the target onboarding experience, but some backend dependencies are not implemented yet. The implementation plan must distinguish between fallback launch paths and the full agent-assisted onboarding path.
+This PRD's setup-token path has been implemented. Dashboard can issue short-lived, single-use setup tokens; the CLI can exchange a token for a named, revocable CLI API key; and agent bootstrap can complete onboarding without asking the user to paste a long-lived API key into an agent chat.
 
-Hard dependencies for the full post-signup agent onboarding flow:
+Current production-ready paths:
 
-- **Not implemented yet:** device auth or browser auth endpoint for CLI login.
-- **Not implemented yet:** Dashboard-issued setup token (`ust_...`) issuance.
-- **Not implemented yet:** setup-token exchange endpoint that creates a named, revocable CLI API key and returns the plaintext key once to the local CLI.
-- **Needs backend confirmation or addition:** request metadata fields for CLI/agent audit, such as `source`, `cli_version`, `agent_name`, and `client`.
-- **Needs package availability check:** SDK-backed examples require published SDK packages. Until SDK packages are confirmed available, CLI examples must include cURL and dependency-free language examples that use native HTTP/fetch.
+- Dashboard-issued setup token (`ust_...`) issuance is available from the API Keys setup flow.
+- Setup-token exchange creates a named CLI API key and returns the plaintext key once to the local CLI.
+- The CLI stores keychain-backed credentials on macOS, keeps config metadata redacted, and reuses a valid local binding without consuming a fresh setup token.
+- CLI and agent requests include CLI-oriented metadata headers such as CLI version and source; write flows keep explicit approval and idempotency guardrails.
+- CLI examples include cURL and dependency-free native Node `fetch`. SDK examples are enabled only for SDK packages that are published and installable.
 
-Phase implications:
+Deferred auth surface:
 
-- Phase 1 and the minimal Phase 2 Quickstart can launch with `UNIPOST_API_KEY` as the auth path.
-- The polished "paste this Dashboard prompt into Codex / Claude Code" flow is not complete until setup-token or device auth exists.
-- If setup-token/device auth is not ready for Phase 2, Phase 2 success criteria should use the fallback path: the user provides `UNIPOST_API_KEY`, then `agent bootstrap` runs diagnostics and context discovery.
-- Full agent-assisted onboarding becomes GA only when Dashboard setup token or device auth can create/store a local CLI credential without manual API-key copy/paste.
+- Browser/device auth remains a future convenience path. It is no longer a launch blocker because Dashboard setup tokens cover the first-party agent onboarding flow.
 
 ---
 
@@ -353,16 +350,16 @@ generate_integration_example
 CLI resolves credentials and bootstrap auth signals in this order:
 
 1. `--api-key` flag
-2. `--setup-token` flag for `agent bootstrap` only
+2. `--setup-token` flag from the Dashboard CLI setup flow (`auth login`, `init`, or `agent bootstrap`)
 3. `UNIPOST_API_KEY` environment variable
 4. local CLI config metadata pointing to OS keychain, if configured
 5. explicit file-based credential storage, only if the user opted in
 
 Recommended v1 default:
 
-- Prefer `UNIPOST_API_KEY` for developer clarity and CI compatibility.
-- Allow `unipost auth login --api-key ...` to store a redacted local config or keychain value.
-- For agent-assisted onboarding, prefer browser/device auth or one-time setup tokens over asking users to paste long-lived API keys into Codex / Claude Code.
+- Prefer Dashboard setup tokens for first-run local/agent onboarding, `auth login --api-key ...` when the user already has a key, and `UNIPOST_API_KEY` for CI or one-off command fallback.
+- Allow `unipost auth login --api-key ...` to store a keychain-backed credential on macOS or explicit redacted metadata with `--metadata-only`.
+- For agent-assisted onboarding, prefer one-time setup tokens over asking users to paste long-lived API keys into Codex / Claude Code. Browser/device auth remains a future alternative.
 - Never print the full API key after storing it.
 
 ### 8.2 Browser, Device, And Setup Token Auth
@@ -567,7 +564,7 @@ Behavior:
 - `--dry-run`: validate and preview request without creating or publishing when the API supports it.
 - `--schedule-at`: schedules a publish-capable post at an RFC3339/ISO-8601 timestamp when used by posts commands.
 - `--limit`, `--cursor`, `--all`: standard pagination controls for list commands.
-- `--setup-token`: passes a short-lived Dashboard-generated setup token for bootstrap only.
+- `--setup-token`: passes a short-lived Dashboard-generated setup token for `auth login`, `init`, or `agent bootstrap`.
 - `--client`: tells bootstrap/config commands which agent or IDE should receive tailored instructions.
 - `--intent`: tells `agent plan` which UniPost task the agent believes the user requested.
 - `--agent-name`: records the calling agent in CLI metadata when included.
@@ -900,7 +897,7 @@ unipost agent mcp-config claude-code --json
 - default profile
 - profiles
 - connected accounts
-- recent posts summary
+- recent posts and `recent_post_summary`
 - failed posts summary
 - analytics availability
 - recommended next commands
@@ -1600,7 +1597,7 @@ Example prompt shown in Dashboard:
 请帮我接入 UniPost API。先确认本地已安装 UniPost CLI，然后运行 unipost agent bootstrap --client codex，根据 CLI 输出继续操作。如果 CLI 需要我选择 profile、平台或账号，请用白话问我确认。
 ```
 
-The setup token must be short-lived, single-use and scoped to onboarding. If setup-token auth is not available, Dashboard should show the device auth flow instead:
+The setup token must be short-lived, single-use and scoped to onboarding. Dashboard setup-token auth is the current implemented path; browser/device auth remains a future alternative:
 
 ```bash
 unipost agent bootstrap --client codex
@@ -2051,13 +2048,16 @@ API dependencies:
 - Pagination signals for list endpoints, including `Link` header or response metadata.
 - Rate-limit headers and `Retry-After` for retry/backoff behavior.
 
-New hard backend dependencies for full agent-assisted onboarding:
+Current backend support for full agent-assisted onboarding:
 
-- Browser/device auth endpoint for CLI login.
 - Short-lived, single-use setup token issuance from Dashboard.
 - Setup token exchange endpoint that creates a named, revocable CLI API key and returns the plaintext key once to the local CLI.
 - Backend support for generated key metadata such as key name, client type and source.
-- Backend error codes for setup token expired/used, user declined, permission denied, API key quota exceeded, and key creation failure.
+- Backend error codes for setup token expired/used, permission denied and key creation failures.
+
+Future backend enhancement:
+
+- Browser/device auth endpoint for CLI login as an alternative to Dashboard setup tokens.
 
 Backend behavior that improves CLI quality:
 

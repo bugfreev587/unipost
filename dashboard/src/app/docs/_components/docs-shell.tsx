@@ -80,6 +80,7 @@ type DocsAiAnswer = {
   sources: DocsAiSource[];
   related: DocsAiSource[];
   generated_by: "ai" | "extractive" | "fallback";
+  coverage_reason?: string;
 };
 
 const API_SIDEBAR_DEFAULT_WIDTH = 336;
@@ -841,6 +842,10 @@ function DocsSearch() {
           rating,
           path: pathname,
           sources: answer?.sources.map((source) => source.path) ?? [],
+          related: answer?.related.map((source) => source.path) ?? [],
+          confidence: answer?.confidence,
+          generated_by: answer?.generated_by,
+          coverage_reason: answer?.coverage_reason,
         }),
       });
 
@@ -1913,6 +1918,10 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-shell-guide-redesign .docs-page-guide-redesign .wlp-top-callout{
   max-width:760px;
 }
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-list{
+  list-style:none;
+  padding-left:0;
+}
 .docs-shell-guide-redesign .docs-page-guide-redesign p{
   font-size:15.5px;
   line-height:1.74;
@@ -1925,6 +1934,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
   font-size:14.5px;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-list li{
+  padding-left:0;
   font-size:15.5px;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-callout,

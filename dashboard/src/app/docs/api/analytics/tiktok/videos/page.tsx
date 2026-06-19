@@ -110,7 +110,7 @@ export default function TikTokVideosAnalyticsPage() {
       ]}
       section="analytics"
       title="List TikTok public videos"
-      description="Returns owned public TikTok videos and engagement counters for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved video.list for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
+      description="Returns owned public TikTok videos and engagement counters for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved video.list for production use; newly connected accounts request this scope during OAuth, and older accounts may need reconnect before public video inventory is available."
       method="GET"
       path="/v1/accounts/:account_id/tiktok/videos"
       requestSections={[

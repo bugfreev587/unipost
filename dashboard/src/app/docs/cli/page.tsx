@@ -152,7 +152,7 @@ const JSON_ENVELOPE = [
   "meta": {
     "request_id": "req_...",
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.3.0",
+    "cli_version": "0.3.1",
     "command": "accounts list",
     "source": "cli"
   }
@@ -173,7 +173,7 @@ const JSON_ENVELOPE = [
   "meta": {
     "request_id": "req_...",
     "base_url": "https://api.unipost.dev",
-    "cli_version": "0.3.0",
+    "cli_version": "0.3.1",
     "command": "auth status",
     "source": "cli"
   }
@@ -285,7 +285,7 @@ export default function CliPage() {
           ["`unipost ...`", "The normal command prefix after install. Use this in Dashboard setup-token commands, terminal workflows, and agent setup."],
           ["`unipost upgrade`", "Updates the installed CLI package with npm, then you can run `unipost --version` to confirm."],
           ["`unipost self help`", "Shows CLI install, update, version, and help commands."],
-          ["Dashboard setup-token command", "Exchanges the one-time token for a named CLI key and stores it in secure local storage when available. A setup token only logs the UniPost CLI in."],
+          ["Dashboard setup-token command", "Exchanges the one-time token for a named CLI key when no valid local binding exists. If the current binding is still valid, the CLI returns `already_configured` and does not consume the token."],
           ["`codex`, `claude`, or another agent command", "A separate local AI agent. UniPost CLI does not install those programs."],
         ]}
       />
@@ -301,7 +301,7 @@ export default function CliPage() {
         rows={[
           ["1. Install once", "Run `npm install -g @unipost/cli`, then confirm `unipost --help` works."],
           ["2. Choose a credential path", "Run `unipost init --api-key up_live_... --json` when you already have a key, or open Dashboard -> Project -> API Keys -> Set up UniPost CLI and copy the generated setup-token command."],
-          ["3. Run it exactly", "Run the copied Dashboard command as-is, or run `unipost init --api-key <key> --json`. Dashboard commands should include `--setup-token`, `--client terminal`, `--base-url`, and `--json`. To replace an existing local binding, run `unipost auth logout --json` first or add `--yes` after confirming the new workspace."],
+          ["3. Run it exactly", "Run the copied Dashboard command as-is, or run `unipost init --api-key <key> --json`. Dashboard commands should include `--setup-token`, `--client terminal`, `--base-url`, and `--json`. To replace an existing local binding, run `unipost auth logout --json` first or rerun with `--replace-key` after confirming the new workspace."],
           ["4. Verify auth", "Run `unipost auth status --json`. Confirm the credential source and `base_url` match the environment you are using."],
           ["5. Discover real IDs", "Run `unipost profiles list --json`, `unipost accounts list --json`, and `unipost accounts health --account sa_... --json` before validating or drafting posts."],
         ]}
@@ -317,7 +317,7 @@ export default function CliPage() {
         rows={[
           ["1. Finish CLI auth", "Complete Path A first. The agent will reuse the same UniPost CLI credentials and config."],
           ["2. Add UniPost instructions", "Run `unipost agent install --client codex --json` or `unipost agent install --client claude-code --json`, then follow the returned instruction package setup."],
-          ["3. Start the agent with grounding", "In the agent session, have it run `unipost agent bootstrap --client codex --json`, `agent capabilities`, and `agent context` before it plans or writes anything."],
+          ["3. Start the agent with grounding", "In the agent session, have it run `unipost agent bootstrap --client codex --json`, `agent capabilities`, and `agent context` before it plans or writes anything. Agent context includes workspace, profiles, accounts, recent posts, and a recent post summary."],
           ["4. Keep publish safe", "Agents should validate, draft, or dry-run first. Live or scheduled publish still requires explicit user approval plus `--yes` and `--idempotency-key`."],
         ]}
       />

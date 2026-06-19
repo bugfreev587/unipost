@@ -47,6 +47,33 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "cli-0-3-1-agent-context-auth-reuse",
+    date: "2026-06-18",
+    displayDate: "June 18, 2026",
+    title: "CLI 0.3.1 setup-token reuse and agent context",
+    summary:
+      "The UniPost CLI now reuses a valid local binding instead of consuming a Dashboard setup token, adds explicit --replace-key/--reauth replacement wording, and includes recent posts plus a status summary in agent context output.",
+    category: "dx",
+    impact: "fixed",
+    isBreaking: false,
+    sdkVersions: [
+      {
+        ecosystem: "npm",
+        packageName: "@unipost/cli",
+        version: "0.3.1",
+        href: "https://www.npmjs.com/package/@unipost/cli",
+        installCommand: "npm install -g @unipost/cli@0.3.1",
+      },
+    ],
+    links: [
+      { label: "CLI overview", href: "/docs/cli" },
+      { label: "CLI reference", href: "/docs/cli/reference" },
+    ],
+    sourceLinks: [
+      { label: "npm package", href: "https://www.npmjs.com/package/@unipost/cli" },
+    ],
+  },
+  {
     id: "cli-0-3-0-auth-onboarding",
     date: "2026-06-18",
     displayDate: "June 18, 2026",

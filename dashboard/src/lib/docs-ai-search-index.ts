@@ -1,6 +1,17 @@
 import { PLATFORM_METRICS } from "@/lib/platform-capabilities";
 
 export type DocsAiConfidence = "high" | "medium" | "low" | "none";
+export type DocsAiIntent = "analytics" | "auth" | "connect" | "credentials" | "posting" | "reference" | "unknown";
+export type DocsAiProductArea =
+  | "accounts"
+  | "analytics"
+  | "auth"
+  | "connect"
+  | "credentials"
+  | "platforms"
+  | "posting"
+  | "publishing"
+  | "resources";
 
 export type DocsAiChunk = {
   id: string;
@@ -10,8 +21,9 @@ export type DocsAiChunk = {
   primary_nav: "Guides" | "API Reference" | "Platforms" | "Resources" | "Overview";
   section_title: string;
   content: string;
-  product_area: "analytics" | "accounts" | "platforms" | "publishing";
+  product_area: DocsAiProductArea;
   tags: string[];
+  intent_tags: DocsAiIntent[];
   endpoint_aliases: string[];
   platforms: string[];
   last_indexed_at: string;
@@ -26,6 +38,8 @@ export type DocsAiSearchHit = {
 export type DocsAiSearchResult = {
   hits: DocsAiSearchHit[];
   confidence: DocsAiConfidence;
+  intent: DocsAiIntent;
+  coverage_reason?: string;
 };
 
 export type DocsAiSource = {
@@ -44,13 +58,28 @@ export type GroundedDocsAnswer = {
   sources: DocsAiSource[];
   related: DocsAiSource[];
   generated_by: "ai" | "extractive" | "fallback";
+  coverage_reason?: string;
 };
 
-const LAST_INDEXED_AT = "2026-06-18T00:00:00.000Z";
+const LAST_INDEXED_AT = "2026-06-19T00:00:00.000Z";
 
 function chunk(input: Omit<DocsAiChunk, "last_indexed_at">): DocsAiChunk {
   return { ...input, last_indexed_at: LAST_INDEXED_AT };
 }
+
+const ALL_PUBLISH_PLATFORMS = [
+  "instagram",
+  "threads",
+  "pinterest",
+  "tiktok",
+  "facebook",
+  "linkedin",
+  "twitter",
+  "youtube",
+  "bluesky",
+];
+
+const OAUTH_PLATFORMS = ["instagram", "threads", "pinterest", "tiktok", "facebook", "linkedin", "twitter", "youtube"];
 
 const platformCapabilitySummary = Object.entries(PLATFORM_METRICS)
   .map(([platform, metrics]) => {
@@ -69,6 +98,219 @@ const platformCapabilitySummary = Object.entries(PLATFORM_METRICS)
 
 export const DOCS_AI_INDEX: DocsAiChunk[] = [
   chunk({
+    id: "guide-connect-sessions-overview",
+    title: "Connect Sessions",
+    path: "/docs/connect-sessions",
+    section_id: "when-to-use",
+    primary_nav: "Guides",
+    section_title: "When to use Connect Sessions",
+    product_area: "connect",
+    tags: ["connect sessions", "customer accounts", "hosted oauth", "managed accounts", "account connection", "api"],
+    intent_tags: ["connect"],
+    endpoint_aliases: [
+      "POST /v1/connect/sessions",
+      "GET /v1/connect/sessions/{session_id}",
+      "GET /v1/connect/sessions/:session_id",
+      "/v1/connect/sessions",
+    ],
+    platforms: OAUTH_PLATFORMS,
+    content:
+      "Use Connect Sessions when your product needs to send an end user through account authorization and then publish on behalf of the account they connected. The primary API is POST /v1/connect/sessions. The hosted flow authorizes your end user inside UniPost's Connect flow. Store external_user_id plus the completed managed_account_id. The managed_account_id is the account_id used later in platform_posts.",
+  }),
+  chunk({
+    id: "guide-connect-sessions-create",
+    title: "Create a Connect Session",
+    path: "/docs/connect-sessions",
+    section_id: "quickstart-session",
+    primary_nav: "Guides",
+    section_title: "Shared-app fallback session",
+    product_area: "connect",
+    tags: ["connect sessions", "create session", "hosted oauth url", "allow_quickstart_creds", "tiktok"],
+    intent_tags: ["connect"],
+    endpoint_aliases: [
+      "POST /v1/connect/sessions",
+      "client.connect.createSession",
+      "client.connect.create_session",
+      "/v1/connect/sessions",
+    ],
+    platforms: OAUTH_PLATFORMS,
+    content:
+      "Create a hosted customer account connection by calling POST /v1/connect/sessions with platform, profile_id when required, external_user_id, optional external_user_email, optional return_url, and allow_quickstart_creds when shared-app fallback is acceptable. For TikTok, set platform to tiktok. The response includes data.id, data.url, data.status, data.expires_at, and data.allow_quickstart_creds. Redirect or send the end user to data.url so they can authorize the account.",
+  }),
+  chunk({
+    id: "guide-connect-sessions-completion",
+    title: "Handle Connect Session completion",
+    path: "/docs/connect-sessions",
+    section_id: "completion",
+    primary_nav: "Guides",
+    section_title: "Handle completion",
+    product_area: "connect",
+    tags: ["connect sessions", "webhook", "account.connected", "managed_account_id", "polling"],
+    intent_tags: ["connect"],
+    endpoint_aliases: [
+      "GET /v1/connect/sessions/{session_id}",
+      "GET /v1/connect/sessions/:session_id",
+      "account.connected",
+    ],
+    platforms: OAUTH_PLATFORMS,
+    content:
+      "After the hosted URL completes, subscribe to the account.connected webhook and store the returned social_account_id as the account id for future publishing. Poll GET /v1/connect/sessions/{session_id} only as a fallback for local development, CLI demos, or integrations that cannot receive webhooks. Terminal statuses are completed, expired, and cancelled.",
+  }),
+  chunk({
+    id: "api-reference-connect-session-create",
+    title: "Create connect session",
+    path: "/docs/api/connect/sessions/create",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "POST connect session",
+    product_area: "connect",
+    tags: ["api reference", "connect sessions", "create session", "hosted onboarding", "oauth"],
+    intent_tags: ["connect", "reference"],
+    endpoint_aliases: [
+      "POST /v1/connect/sessions",
+      "/v1/connect/sessions",
+      "connect.createSession",
+      "connect.create_session",
+    ],
+    platforms: OAUTH_PLATFORMS,
+    content:
+      "POST /v1/connect/sessions creates a hosted onboarding session for a customer-owned social account. The body includes platform, profile_id when needed, external_user_id, optional external_user_email, optional return_url, and optional allow_quickstart_creds. The 201 response returns data.id, data.platform, data.url, data.allow_quickstart_creds, data.status, data.expires_at, and later managed_account_id after completion.",
+  }),
+  chunk({
+    id: "api-reference-connect-session-get",
+    title: "Get connect session",
+    path: "/docs/api/connect/sessions/get",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "GET connect session",
+    product_area: "connect",
+    tags: ["api reference", "connect sessions", "polling", "session status", "managed_account_id"],
+    intent_tags: ["connect", "reference"],
+    endpoint_aliases: [
+      "GET /v1/connect/sessions/{session_id}",
+      "GET /v1/connect/sessions/:session_id",
+      "/v1/connect/sessions/{session_id}",
+      "/v1/connect/sessions/:session_id",
+    ],
+    platforms: OAUTH_PLATFORMS,
+    content:
+      "GET /v1/connect/sessions/{session_id} returns a Connect Session by id. Use it as a polling fallback to inspect status. The response includes status and managed_account_id when the hosted connection completes.",
+  }),
+  chunk({
+    id: "guide-tiktok-platform-credentials",
+    title: "TikTok Platform Credential Setup",
+    path: "/docs/platform-credentials/tiktok",
+    section_id: "api-workflow",
+    primary_nav: "Guides",
+    section_title: "Connect a TikTok account through your app",
+    product_area: "credentials",
+    tags: ["tiktok", "platform credentials", "client key", "client secret", "callback", "connect session"],
+    intent_tags: ["credentials", "connect"],
+    endpoint_aliases: [
+      "POST /v1/platform-credentials",
+      "GET /v1/platform-credentials",
+      "POST /v1/connect/sessions",
+    ],
+    platforms: ["tiktok"],
+    content:
+      "For customer TikTok connections with your own app, save TikTok Platform Credentials first. TikTok calls the public identifier Client Key; UniPost stores Client Key and Client Secret. Add the exact callback URL https://api.unipost.dev/v1/connect/callback/tiktok in TikTok for Developers. After credentials are saved, create a TikTok Connect Session with platform set to tiktok, a profile_id, external_user_id, and return_url, then send the returned hosted OAuth URL to the end user.",
+  }),
+  chunk({
+    id: "platform-guide-tiktok-connect",
+    title: "TikTok platform guide",
+    path: "/docs/platforms/tiktok",
+    section_id: "setup",
+    primary_nav: "Platforms",
+    section_title: "Setup",
+    product_area: "platforms",
+    tags: ["tiktok", "quickstart", "white-label", "oauth", "connect", "publishing", "analytics"],
+    intent_tags: ["connect", "posting", "analytics"],
+    endpoint_aliases: [
+      "POST /v1/connect/sessions",
+      "POST /v1/posts",
+      "GET /v1/accounts/{account_id}/metrics",
+    ],
+    platforms: ["tiktok"],
+    content:
+      "TikTok supports OAuth connection through Quickstart and White-label / Hosted Connect. TikTok publishing supports single video posts and photo carousels with privacy controls under platform_options.tiktok. TikTok analytics are limited to approved scopes and expose views, likes, comments, and shares for supported video inventory; follower count is read through unified account metrics.",
+  }),
+  chunk({
+    id: "api-reference-api-keys",
+    title: "Create API key",
+    path: "/docs/api/api-keys/create",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "POST API key",
+    product_area: "auth",
+    tags: ["api keys", "authentication", "authorization", "bearer token", "sdk"],
+    intent_tags: ["auth", "reference"],
+    endpoint_aliases: [
+      "POST /v1/api-keys",
+      "GET /v1/api-keys",
+      "/v1/api-keys",
+    ],
+    platforms: [],
+    content:
+      "UniPost API calls use Authorization: Bearer <token> with a workspace API key. POST /v1/api-keys creates a new API key for the authenticated workspace. The plaintext key is returned only once at creation time; store it before navigating away. The first key must be created in the dashboard because no API key exists yet.",
+  }),
+  chunk({
+    id: "api-reference-list-profiles",
+    title: "List profiles",
+    path: "/docs/api/profiles/list",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "GET profiles",
+    product_area: "accounts",
+    tags: ["profiles", "profile_id", "branding", "connect sessions"],
+    intent_tags: ["connect", "reference"],
+    endpoint_aliases: [
+      "GET /v1/profiles",
+      "/v1/profiles",
+      "client.profiles.list",
+    ],
+    platforms: [],
+    content:
+      "GET /v1/profiles lists profiles that belong to the workspace behind the API key. Use a profile id when creating Connect Sessions in workspaces with multiple profiles, and when choosing the branded hosted Connect surface.",
+  }),
+  chunk({
+    id: "api-reference-list-accounts",
+    title: "List accounts",
+    path: "/docs/api/accounts/list",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "GET accounts",
+    product_area: "accounts",
+    tags: ["accounts", "social accounts", "account_id", "platform", "analytics"],
+    intent_tags: ["analytics", "posting", "reference"],
+    endpoint_aliases: [
+      "GET /v1/accounts",
+      "/v1/accounts",
+    ],
+    platforms: ALL_PUBLISH_PLATFORMS,
+    content:
+      "GET /v1/accounts lists connected social accounts. Use it to choose the connected account id for publishing and account metrics. The returned account id is also the managed_account_id from completed Connect Sessions.",
+  }),
+  chunk({
+    id: "guide-publishing-overview",
+    title: "Publishing guide",
+    path: "/docs/publishing",
+    section_id: "overview",
+    primary_nav: "Guides",
+    section_title: "Overview",
+    product_area: "publishing",
+    tags: ["publish", "posting", "posts", "platform_posts", "media", "account_id"],
+    intent_tags: ["posting"],
+    endpoint_aliases: [
+      "POST /v1/posts",
+      "POST /v1/media",
+      "/v1/posts",
+      "/v1/media",
+    ],
+    platforms: ALL_PUBLISH_PLATFORMS,
+    content:
+      "After an account is connected, publish by creating posts with connected account ids in platform_posts or account_ids. For local files, upload media with POST /v1/media, then publish with media_ids. TikTok publishing requires video or image carousel media and uses platform_options.tiktok for privacy and upload controls.",
+  }),
+  chunk({
     id: "analytics-guide-tiktok-followers",
     title: "Get TikTok followers",
     path: "/docs/guides/analytics/tiktok-followers",
@@ -77,6 +319,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Direct answer",
     product_area: "analytics",
     tags: ["analytics", "tiktok", "followers", "account metrics", "scopes"],
+    intent_tags: ["analytics"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/metrics",
       "GET /v1/accounts/{id}/metrics",
@@ -98,6 +341,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Fields to read",
     product_area: "analytics",
     tags: ["analytics", "accounts", "followers", "following", "post count", "metrics"],
+    intent_tags: ["analytics"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/metrics",
       "GET /v1/accounts/{id}/metrics",
@@ -117,6 +361,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "GET account metrics",
     product_area: "accounts",
     tags: ["api reference", "account metrics", "followers", "account_id"],
+    intent_tags: ["analytics", "reference"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/metrics",
       "GET /v1/accounts/{id}/metrics",
@@ -136,11 +381,12 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Steps",
     product_area: "analytics",
     tags: ["analytics", "export", "csv", "posts", "reporting", "bi"],
+    intent_tags: ["analytics"],
     endpoint_aliases: [
       "GET /v1/analytics/posts/export",
       "/v1/analytics/posts/export",
     ],
-    platforms: ["instagram", "threads", "pinterest", "tiktok", "facebook", "linkedin", "twitter", "youtube", "bluesky"],
+    platforms: ALL_PUBLISH_PLATFORMS,
     content:
       "Use GET /v1/analytics/posts/export when your app needs normalized post-level analytics rows as CSV across multiple UniPost-published posts. Choose from and to, add optional platform, account_id, profile_id, post_id, status, and sort filters, then save the CSV response.",
   }),
@@ -153,12 +399,13 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Overview",
     product_area: "analytics",
     tags: ["analytics", "posts", "post analytics", "likes", "comments", "shares", "views"],
+    intent_tags: ["analytics"],
     endpoint_aliases: [
       "GET /v1/posts/{post_id}/analytics",
       "GET /v1/posts/:post_id/analytics",
       "/v1/posts/{post_id}/analytics",
     ],
-    platforms: ["instagram", "threads", "pinterest", "tiktok", "facebook", "linkedin", "twitter", "youtube", "bluesky"],
+    platforms: ALL_PUBLISH_PLATFORMS,
     content:
       "Use GET /v1/posts/{post_id}/analytics for normalized post-level analytics on a single UniPost-published post. The response includes destination results, normalized analytics fields such as likes, comments, shares, saves, clicks, video views, engagement rate where available, platform_specific data, and fetched_at.",
   }),
@@ -171,6 +418,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Supported metrics by platform",
     product_area: "platforms",
     tags: ["analytics", "platforms", "capabilities", "metrics", "support matrix"],
+    intent_tags: ["analytics", "reference"],
     endpoint_aliases: [
       "GET /v1/analytics/platforms",
       "/v1/analytics/platforms",
@@ -189,6 +437,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Steps",
     product_area: "analytics",
     tags: ["analytics", "scopes", "reconnect", "oauth", "permissions"],
+    intent_tags: ["analytics", "connect"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/health",
       "GET /v1/accounts/:account_id/health",
@@ -207,6 +456,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     section_title: "Overview",
     product_area: "analytics",
     tags: ["analytics", "tiktok", "profile", "videos", "native drilldown"],
+    intent_tags: ["analytics", "reference"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/tiktok/profile",
       "GET /v1/accounts/{account_id}/tiktok/videos",
@@ -220,6 +470,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
 
 const STOP_WORDS = new Set([
   "a",
+  "about",
   "an",
   "and",
   "api",
@@ -229,16 +480,17 @@ const STOP_WORDS = new Set([
   "does",
   "for",
   "from",
-  "get",
   "how",
   "i",
   "is",
   "it",
+  "my",
   "of",
   "on",
   "or",
   "the",
   "to",
+  "unipost",
   "use",
   "what",
   "which",
@@ -247,6 +499,18 @@ const STOP_WORDS = new Set([
 
 function normalize(value: string) {
   return value.toLowerCase().replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, "\"");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function normalizeEndpoint(value: string) {
+  return normalize(value)
+    .replace(/\{[a-z0-9_]+\}/g, "{param}")
+    .replace(/:[a-z0-9_]+/g, "{param}")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function tokenize(query: string) {
@@ -258,71 +522,203 @@ function tokenize(query: string) {
   ));
 }
 
-function scoreChunk(chunkToScore: DocsAiChunk, query: string, terms: string[]) {
+function includesTerm(haystack: string, term: string) {
+  if (/[./:{}-]/.test(term)) return haystack.includes(term);
+  return new RegExp(`\\b${escapeRegExp(term)}\\b`, "i").test(haystack);
+}
+
+function hasAny(value: string, patterns: RegExp[]) {
+  return patterns.some((pattern) => pattern.test(value));
+}
+
+function detectIntent(query: string): DocsAiIntent {
   const normalizedQuery = normalize(query);
+  const hasEndpoint = /\b(GET|POST|PUT|PATCH|DELETE)\s+\/v1\//i.test(query) || /\/v1\//.test(query);
+  const isBareEndpoint = /^(GET|POST|PUT|PATCH|DELETE)\s+\/v1\/[a-z0-9_/:{}.-]+$/i.test(query.trim());
+  if (isBareEndpoint) return "reference";
+
+  const connectIntent = hasAny(normalizedQuery, [
+    /\bconnect\b/,
+    /\bconnection\b/,
+    /\bconnect session\b/,
+    /\boauth\b/,
+    /\bauthori[sz]e\b/,
+    /\bonboarding\b/,
+    /\bhosted\b/,
+    /\bcallback\b/,
+    /\breturn_url\b/,
+    /\ballow_quickstart_creds\b/,
+  ]);
+  const credentialsIntent = hasAny(normalizedQuery, [
+    /\bcredential/,
+    /\bclient key\b/,
+    /\bclient secret\b/,
+    /\bapp id\b/,
+    /\bdeveloper app\b/,
+    /\bredirect uri\b/,
+    /\bcallback url\b/,
+  ]);
+  const analyticsIntent = hasAny(normalizedQuery, [
+    /\banalytics?\b/,
+    /\bmetrics?\b/,
+    /\bfollowers?\b/,
+    /\bfans?\b/,
+    /\bfollower_count\b/,
+    /\bviews?\b/,
+    /\blikes?\b/,
+    /\bcomments?\b/,
+    /\bshares?\b/,
+    /\bexport\b/,
+    /\bcsv\b/,
+    /\bvideo\.list\b/,
+    /\buser\.info\b/,
+  ]);
+  const authIntent = hasAny(normalizedQuery, [
+    /\bapi keys?\b/,
+    /\bauth\b/,
+    /\bauthentication\b/,
+    /\bauthorization\b/,
+    /\bbearer\b/,
+    /\btoken\b/,
+  ]);
+  const postingIntent = hasAny(normalizedQuery, [
+    /\bpublish\b/,
+    /\bposting\b/,
+    /\bposts?\b/,
+    /\bmedia\b/,
+    /\bschedule\b/,
+    /\bcaption\b/,
+    /\bphoto\b/,
+    /\bvideo\b/,
+    /\bcarousel\b/,
+  ]);
+
+  if (hasEndpoint && !connectIntent && !analyticsIntent && !credentialsIntent && !postingIntent && !authIntent) return "reference";
+  if (connectIntent) return "connect";
+  if (credentialsIntent) return "credentials";
+  if (analyticsIntent) return "analytics";
+  if (authIntent) return "auth";
+  if (postingIntent) return "posting";
+  if (hasEndpoint) return "reference";
+  return "unknown";
+}
+
+function chunkCoversIntent(chunkToScore: DocsAiChunk, intent: DocsAiIntent) {
+  if (intent === "unknown") return true;
+  if (intent === "reference") return chunkToScore.primary_nav === "API Reference" || chunkToScore.intent_tags.includes("reference");
+  if (chunkToScore.intent_tags.includes(intent)) return true;
+
+  switch (intent) {
+    case "analytics":
+      return ["analytics", "accounts", "platforms"].includes(chunkToScore.product_area);
+    case "connect":
+      return ["connect"].includes(chunkToScore.product_area);
+    case "credentials":
+      return ["credentials"].includes(chunkToScore.product_area);
+    case "auth":
+      return ["auth"].includes(chunkToScore.product_area);
+    case "posting":
+      return ["posting", "publishing"].includes(chunkToScore.product_area);
+    default:
+      return false;
+  }
+}
+
+function isTaskQuery(query: string) {
+  return /\b(how|which|what|where|connect|get|export|reconnect|field|fields|followers?|publish|create)\b/i.test(query);
+}
+
+function scoreChunk(chunkToScore: DocsAiChunk, query: string, terms: string[], intent: DocsAiIntent) {
+  const normalizedQuery = normalize(query);
+  const normalizedEndpointQuery = normalizeEndpoint(query);
   const title = normalize(chunkToScore.title);
   const content = normalize(chunkToScore.content);
   const tags = chunkToScore.tags.map(normalize).join(" ");
+  const intentTags = chunkToScore.intent_tags.map(normalize).join(" ");
   const aliases = chunkToScore.endpoint_aliases.map(normalize).join(" ");
+  const normalizedAliases = chunkToScore.endpoint_aliases.map(normalizeEndpoint).join(" ");
   const path = normalize(chunkToScore.path);
   const platforms = chunkToScore.platforms.map(normalize).join(" ");
-  const haystack = `${title} ${content} ${tags} ${aliases} ${path} ${platforms}`;
-  let score = 0;
+  const haystack = `${title} ${content} ${tags} ${intentTags} ${aliases} ${path} ${platforms}`;
   const matchedTerms: string[] = [];
+  let score = 0;
 
   for (const term of terms) {
-    if (!haystack.includes(term)) continue;
+    if (!includesTerm(haystack, term)) continue;
 
     matchedTerms.push(term);
-    score += 5;
-    if (title.includes(term)) score += 9;
-    if (tags.includes(term)) score += 7;
-    if (aliases.includes(term)) score += 11;
-    if (platforms.includes(term)) score += 5;
-    if (path.includes(term)) score += 4;
+    score += 4;
+    if (includesTerm(title, term)) score += 13;
+    if (includesTerm(tags, term)) score += 10;
+    if (includesTerm(intentTags, term)) score += 14;
+    if (includesTerm(aliases, term)) score += 18;
+    if (includesTerm(platforms, term)) score += 7;
+    if (includesTerm(path, term)) score += 6;
+    if (includesTerm(content, term)) score += 4;
   }
 
-  if (normalizedQuery && aliases.includes(normalizedQuery)) score += 44;
-  if (normalizedQuery && title.includes(normalizedQuery)) score += 36;
-  if (normalizedQuery.includes("follower") && chunkToScore.id.includes("followers")) score += 26;
-  if (normalizedQuery.includes("tiktok") && chunkToScore.platforms.includes("tiktok")) score += 18;
-  if (normalizedQuery.includes("video.list") && content.includes("video.list")) score += 18;
-  if (normalizedQuery.includes("export") && path.includes("export")) score += 24;
-  if (normalizedQuery.includes("csv") && content.includes("csv")) score += 15;
+  if (normalizedQuery && title.includes(normalizedQuery)) score += 42;
+  if (normalizedQuery && aliases.includes(normalizedQuery)) score += 70;
+  if (normalizedEndpointQuery && normalizedAliases.includes(normalizedEndpointQuery)) score += intent === "reference" ? 150 : 95;
 
-  const isTaskQuery = /\b(how|which|what|where|followers?|export|reconnect|field|fields)\b/i.test(query);
-  if (isTaskQuery && chunkToScore.primary_nav === "Guides") score += 10;
-  if (/\bendpoint|reference|path|route\b/i.test(query) && chunkToScore.primary_nav === "API Reference") score += 10;
+  if (normalizedQuery.includes("connect session") && chunkToScore.tags.some((tag) => normalize(tag).includes("connect session"))) score += 40;
+  if (normalizedQuery.includes("allow_quickstart_creds") && content.includes("allow_quickstart_creds")) score += 32;
+  if (normalizedQuery.includes("tiktok") && chunkToScore.platforms.includes("tiktok")) score += 12;
+  if (normalizedQuery.includes("follower") && chunkToScore.id.includes("followers") && intent !== "connect") score += 34;
+  if (normalizedQuery.includes("video.list") && content.includes("video.list")) score += 28;
+  if ((normalizedQuery.includes("export") || normalizedQuery.includes("csv")) && path.includes("export")) score += 30;
+  if (normalizedQuery.includes("client key") && content.includes("client key")) score += 34;
+  if (normalizedQuery.includes("callback") && content.includes("callback")) score += 20;
 
-  return { score, matchedTerms };
+  if (chunkCoversIntent(chunkToScore, intent)) score += intent === "unknown" ? 0 : 42;
+  if (!chunkCoversIntent(chunkToScore, intent) && intent !== "unknown") score -= 42;
+
+  if (isTaskQuery(query) && intent !== "reference" && chunkToScore.primary_nav === "Guides") score += 16;
+  if (intent === "reference" && chunkToScore.primary_nav === "API Reference") score += 42;
+  if (intent === "reference" && chunkToScore.primary_nav === "Guides") score -= 12;
+
+  return { score: Math.max(0, score), matchedTerms };
 }
 
 function confidenceForScore(score: number): DocsAiConfidence {
-  if (score >= 62) return "high";
-  if (score >= 34) return "medium";
-  if (score >= 16) return "low";
+  if (score >= 118) return "high";
+  if (score >= 74) return "medium";
+  if (score >= 42) return "low";
   return "none";
+}
+
+function coverageReasonFor(hits: DocsAiSearchHit[], intent: DocsAiIntent, confidence: DocsAiConfidence) {
+  if (hits.length === 0 || confidence === "none") return "not enough source coverage";
+  const top = hits[0]?.chunk;
+  if (!top) return "not enough source coverage";
+  if (!chunkCoversIntent(top, intent)) return `top source does not cover ${intent} intent`;
+  return undefined;
 }
 
 export function searchDocsIndex(query: string, options: { limit?: number } = {}): DocsAiSearchResult {
   const trimmed = query.trim();
   if (!trimmed) {
-    return { hits: [], confidence: "none" };
+    return { hits: [], confidence: "none", intent: "unknown", coverage_reason: "empty query" };
   }
 
+  const intent = detectIntent(trimmed);
   const terms = tokenize(trimmed);
   const hits = DOCS_AI_INDEX
     .map((chunkItem) => {
-      const scored = scoreChunk(chunkItem, trimmed, terms);
+      const scored = scoreChunk(chunkItem, trimmed, terms, intent);
       return { chunk: chunkItem, score: scored.score, matchedTerms: scored.matchedTerms };
     })
     .filter((hit) => hit.score > 0)
     .sort((a, b) => b.score - a.score || a.chunk.title.localeCompare(b.chunk.title))
     .slice(0, options.limit ?? 5);
+  const confidence = confidenceForScore(hits[0]?.score ?? 0);
+  const coverage_reason = coverageReasonFor(hits, intent, confidence);
 
   return {
     hits,
-    confidence: confidenceForScore(hits[0]?.score ?? 0),
+    confidence: coverage_reason ? "none" : confidence,
+    intent,
+    coverage_reason,
   };
 }
 
@@ -341,14 +737,141 @@ function sourceFromHit(hit: DocsAiSearchHit): DocsAiSource {
   };
 }
 
-function isInsufficientCoverage(search: DocsAiSearchResult) {
-  // no answer without source coverage: low-confidence matches can be shown as related docs,
-  // but the answer must explicitly say the docs do not contain enough support.
-  return search.confidence === "none" || search.hits.length === 0;
+function uniqueHitsByPath(hits: DocsAiSearchHit[]) {
+  const seen = new Set<string>();
+  return hits.filter((hit) => {
+    if (seen.has(hit.chunk.path)) return false;
+    seen.add(hit.chunk.path);
+    return true;
+  });
 }
 
-function answerForKnownAnalyticsTask(query: string, search: DocsAiSearchResult) {
+function hitById(search: DocsAiSearchResult, id: string) {
+  const rankedHit = search.hits.find((hit) => hit.chunk.id === id);
+  if (rankedHit) return rankedHit;
+
+  const chunkItem = DOCS_AI_INDEX.find((item) => item.id === id);
+  if (!chunkItem) return undefined;
+
+  return {
+    chunk: chunkItem,
+    score: 0,
+    matchedTerms: [],
+  };
+}
+
+function orderedHitsForAnswer(query: string, search: DocsAiSearchResult) {
+  if (search.intent === "connect") {
+    const isExactCreateSession = normalizeEndpoint(query).includes("post /v1/connect/sessions");
+    const mentionsTikTok = normalize(query).includes("tiktok");
+    const primaryGuide = hitById(search, "guide-connect-sessions-create")
+      ?? search.hits.find((hit) => hit.chunk.product_area === "connect" && hit.chunk.primary_nav === "Guides");
+    const createReference = hitById(search, "api-reference-connect-session-create");
+    const completionGuide = hitById(search, "guide-connect-sessions-completion");
+    const tiktokCredentials = mentionsTikTok ? hitById(search, "guide-tiktok-platform-credentials") : undefined;
+
+    if (isExactCreateSession) {
+      return uniqueHitsByPath([
+        createReference,
+        primaryGuide,
+        completionGuide,
+        ...search.hits,
+      ].filter((hit): hit is DocsAiSearchHit => Boolean(hit)));
+    }
+
+    return uniqueHitsByPath([
+      primaryGuide,
+      createReference,
+      tiktokCredentials,
+      completionGuide,
+      ...search.hits,
+    ].filter((hit): hit is DocsAiSearchHit => Boolean(hit)));
+  }
+
+  return uniqueHitsByPath(search.hits);
+}
+
+function isInsufficientCoverage(search: DocsAiSearchResult) {
+  return search.confidence === "none" || search.hits.length === 0 || Boolean(search.coverage_reason);
+}
+
+function answerForConnectTask(query: string, search: DocsAiSearchResult) {
   const normalizedQuery = normalize(query);
+  const isExactCreateSession = normalizeEndpoint(query).includes("post /v1/connect/sessions");
+  const mentionsTikTok = normalizedQuery.includes("tiktok");
+
+  if (isExactCreateSession) {
+    return {
+      answer:
+        "POST /v1/connect/sessions creates a hosted onboarding session for a customer-owned social account. Send platform, external_user_id, profile_id when needed, optional return_url, and optional allow_quickstart_creds; the response starts pending and includes data.url for the hosted authorization flow.",
+      steps: [
+        "Create the session from your backend with Authorization: Bearer <UNIPOST_API_KEY>.",
+        "Send the returned data.url to the end user so they can authorize the account.",
+        "Handle completion from the account.connected webhook, or poll GET /v1/connect/sessions/{session_id} as a fallback.",
+      ],
+    };
+  }
+
+  if (mentionsTikTok || search.hits.some((hit) => hit.chunk.platforms.includes("tiktok"))) {
+    return {
+      answer:
+        "Use Connect Sessions for customer-owned TikTok account connection. Call POST /v1/connect/sessions with platform set to tiktok, your external_user_id, profile_id when needed, and return_url when you want the browser sent back to your app; then send the returned data.url to the user for TikTok authorization.",
+      steps: [
+        "Create or choose the API key that your backend will use as Authorization: Bearer <UNIPOST_API_KEY>.",
+        "If you need your own TikTok app on the consent screen, save TikTok Platform Credentials with the Client Key, Client Secret, and UniPost callback URL first.",
+        "Call POST /v1/connect/sessions with platform=tiktok, profile_id when required, external_user_id, optional external_user_email, optional return_url, and allow_quickstart_creds only when shared-app fallback is acceptable.",
+        "Redirect or send the end user to data.url.",
+        "Store the connected account id from the account.connected webhook, or poll GET /v1/connect/sessions/{session_id} as a fallback until status is completed.",
+      ],
+    };
+  }
+
+  return {
+    answer:
+      "Use Connect Sessions when your product needs an end user to authorize a customer-owned account. Call POST /v1/connect/sessions, send the returned data.url to the user, then store the managed_account_id from completion.",
+    steps: [
+      "Choose the target platform and profile_id if your workspace has multiple profiles.",
+      "Call POST /v1/connect/sessions with external_user_id and optional return_url.",
+      "Send data.url to the user.",
+      "Use account.connected webhooks for completion, with GET /v1/connect/sessions/{session_id} as a polling fallback.",
+    ],
+  };
+}
+
+function answerForCredentialsTask(query: string) {
+  const normalizedQuery = normalize(query);
+
+  if (normalizedQuery.includes("tiktok")) {
+    return {
+      answer:
+        "For TikTok Platform Credentials, create or use a TikTok developer app, add UniPost's callback URL https://api.unipost.dev/v1/connect/callback/tiktok, then save the TikTok Client Key and Client Secret in UniPost. After that, create a TikTok Connect Session with POST /v1/connect/sessions and send the returned data.url to your end user.",
+      steps: [
+        "Create the TikTok app from a company-owned developer account.",
+        "Add https://api.unipost.dev/v1/connect/callback/tiktok to TikTok's callback or redirect allowlist.",
+        "Save the Client Key and Client Secret in UniPost Platform Credentials.",
+        "Create a TikTok Connect Session with platform=tiktok to validate the end-user OAuth path.",
+      ],
+    };
+  }
+
+  return null;
+}
+
+function answerForAnalyticsTask(query: string) {
+  const normalizedQuery = normalize(query);
+
+  if (normalizedQuery.includes("video.list") && /follower|fans?/.test(normalizedQuery)) {
+    return {
+      answer:
+        "No. video.list is for TikTok public video inventory and post-level video metrics, not follower count. To get TikTok followers through UniPost, call GET /v1/accounts/{account_id}/metrics and read data.follower_count; the TikTok scope behind that account metric is user.info.stats.",
+      steps: [
+        "Use GET /v1/accounts to find the connected TikTok account id.",
+        "Call GET /v1/accounts/{account_id}/metrics.",
+        "Read data.follower_count from the response.",
+        "Use video.list-backed TikTok drilldowns only when you need public videos or video engagement counters.",
+      ],
+    };
+  }
 
   if (normalizedQuery.includes("tiktok") && /follower|fans?/.test(normalizedQuery)) {
     return {
@@ -387,21 +910,32 @@ function answerForKnownAnalyticsTask(query: string, search: DocsAiSearchResult) 
     };
   }
 
-  const top = search.hits[0]?.chunk;
-  if (!top) return null;
+  return null;
+}
 
-  return {
-    answer: `The closest documented path is ${top.title}. ${top.content}`,
-    steps: [
-      `Open ${top.path}.`,
-      "Use the cited source before wiring the API call into production.",
-    ],
-  };
+function answerForKnownTask(query: string, search: DocsAiSearchResult) {
+  if (search.intent === "connect" || search.intent === "reference") {
+    const connectAnswer = answerForConnectTask(query, search);
+    if (connectAnswer && search.hits.some((hit) => hit.chunk.intent_tags.includes("connect"))) return connectAnswer;
+  }
+
+  if (search.intent === "credentials") {
+    const credentialsAnswer = answerForCredentialsTask(query);
+    if (credentialsAnswer) return credentialsAnswer;
+  }
+
+  if (search.intent === "analytics" || search.intent === "reference") {
+    const analyticsAnswer = answerForAnalyticsTask(query);
+    if (analyticsAnswer) return analyticsAnswer;
+  }
+
+  return null;
 }
 
 export function buildGroundedDocsAnswer(query: string, search = searchDocsIndex(query)): GroundedDocsAnswer {
-  const sources = search.hits.slice(0, 3).map(sourceFromHit);
-  const related = search.hits.slice(3, 5).map(sourceFromHit);
+  const answerHits = orderedHitsForAnswer(query, search);
+  const candidateSources = answerHits.slice(0, 4).map(sourceFromHit);
+  const related = answerHits.slice(4, 7).map(sourceFromHit);
 
   if (isInsufficientCoverage(search)) {
     return {
@@ -410,19 +944,21 @@ export function buildGroundedDocsAnswer(query: string, search = searchDocsIndex(
       steps: [],
       confidence: "none",
       sources: [],
-      related: sources,
+      related: candidateSources,
       generated_by: "fallback",
+      coverage_reason: search.coverage_reason ?? "not enough source coverage",
     };
   }
 
-  const taskAnswer = answerForKnownAnalyticsTask(query, search);
+  const taskAnswer = answerForKnownTask(query, search);
 
   return {
-    answer: taskAnswer?.answer ?? "The docs contain relevant source coverage, but no task answer template matched this query. Use the cited sources below.",
+    answer: taskAnswer?.answer ?? "The docs contain relevant source coverage, but no deterministic task answer matched this query. Use the cited sources below.",
     steps: taskAnswer?.steps ?? [],
     confidence: search.confidence,
-    sources,
+    sources: candidateSources.slice(0, 3),
     related,
     generated_by: "extractive",
+    coverage_reason: search.coverage_reason,
   };
 }

@@ -41,6 +41,9 @@ test("Docs answer API uses AI SDK only after retrieval and keeps a deterministic
   assert.match(route, /No matching docs|not found in the docs|not enough source coverage/i);
   assert.match(route, /sources/);
   assert.match(route, /confidence/);
+  assert.match(route, /docs_ai_answer/);
+  assert.match(route, /coverage_reason/);
+  assert.match(route, /generated_by/);
 });
 
 test("Docs AI feedback endpoint records helpfulness and missing-doc signals", async () => {
@@ -51,6 +54,9 @@ test("Docs AI feedback endpoint records helpfulness and missing-doc signals", as
   assert.match(route, /not_helpful/);
   assert.match(route, /missing_docs/);
   assert.match(route, /query/);
+  assert.match(route, /confidence/);
+  assert.match(route, /generated_by/);
+  assert.match(route, /related/);
 });
 
 test("Docs shell preserves classic keyword search while adding task-shaped AI answers", async () => {
@@ -63,6 +69,9 @@ test("Docs shell preserves classic keyword search while adding task-shaped AI an
   assert.match(shell, /Search results/);
   assert.match(shell, /Source|Sources/);
   assert.match(shell, /Helpful|Not helpful|Missing docs/);
+  assert.match(shell, /confidence:\s*answer\?\.confidence/);
+  assert.match(shell, /generated_by:\s*answer\?\.generated_by/);
+  assert.match(shell, /related:\s*answer\?\.related/);
 });
 
 test("Docs AI browser routes stay public for unauthenticated docs visitors", async () => {
