@@ -125,6 +125,17 @@ test.describe("admin errors details drawer", () => {
     expect(pageSource).toContain("copyRawFailure");
     expect(pageSource).toContain("navigator.clipboard.writeText");
   });
+
+  test("uses URL filters as the initial failure query", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/admin/errors/page.tsx"), "utf8");
+
+    expect(pageSource).toContain("useState(() => initialFiltersFromURL())");
+    expect(pageSource).toContain("useState(initialFilters.search)");
+    expect(pageSource).toContain("useState(initialFilters.platform)");
+    expect(pageSource).toContain("useState(initialFilters.source)");
+    expect(pageSource).toContain("useState(initialFilters.days)");
+    expect(pageSource).not.toContain("const initial = initialFiltersFromURL();");
+  });
 });
 
 test.describe("authenticated dashboard smoke", () => {
