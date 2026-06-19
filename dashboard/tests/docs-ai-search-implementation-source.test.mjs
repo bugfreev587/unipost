@@ -74,6 +74,20 @@ test("Docs shell preserves classic keyword search while adding task-shaped AI an
   assert.match(shell, /related:\s*answer\?\.related/);
 });
 
+test("Docs AI answer panel renders answers as structured rich content", async () => {
+  const shell = await source("src/app/docs/_components/docs-shell.tsx");
+
+  assert.match(shell, /splitDocsAiAnswerParagraphs/);
+  assert.match(shell, /renderDocsRichContent\(paragraph\)/);
+  assert.match(shell, /renderDocsRichContent\(step\)/);
+  assert.doesNotMatch(shell, /<p>\{answer\.answer\}<\/p>/);
+  assert.match(shell, /docs-ai-answer-body/);
+  assert.match(shell, /docs-ai-answer-lead/);
+  assert.match(shell, /docs-ai-answer-detail/);
+  assert.match(shell, /docs-ai-step-marker/);
+  assert.match(shell, /docs-ai-source-title/);
+});
+
 test("Docs AI browser routes stay public for unauthenticated docs visitors", async () => {
   const proxy = await source("src/proxy.ts");
 
