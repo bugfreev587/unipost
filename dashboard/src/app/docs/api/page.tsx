@@ -30,13 +30,6 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     ],
   },
   {
-    title: "Errors",
-    description: "Preserve structured error fields, validation issues, request IDs, and stable next_action values in client integrations.",
-    endpoints: [
-      { label: "Error contract", method: "GET", path: "/docs/api/errors", href: "/docs/api/errors", description: "Reference API error envelopes, validation issues, publish failure fields, and route naming." },
-    ],
-  },
-  {
     title: "Accounts",
     description: "Connect social accounts, inspect account health, and query account-level platform capabilities.",
     endpoints: [
