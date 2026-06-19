@@ -1,7 +1,37 @@
 import Link from "next/link";
-import { CodeBlock } from "../../../_components/code-block";
-import { DocsPage } from "../../../_components/docs-shell";
+import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
 import { ApiInlineLink } from "../../../api/_components/doc-components";
+
+const REQUEST_SNIPPETS = [{
+  label: "cURL",
+  lang: "bash",
+  code: `curl "https://api.unipost.dev/v1/posts/post_abc123/analytics" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+}];
+
+const RESPONSE_SNIPPETS = [{
+  label: "200",
+  lang: "json",
+  code: `{
+  "data": {
+    "post_id": "post_abc123",
+    "metrics": {
+      "likes": 214,
+      "comments": 19,
+      "shares": 47,
+      "saves": 12,
+      "impressions": 18420,
+      "reach": 4210,
+      "video_views": 0,
+      "engagement_rate": 0.0152,
+      "platform_specific": {
+        "retweet_count": 31,
+        "quote_count": 16
+      }
+    }
+  }
+}`,
+}];
 
 export default function PostAnalyticsGuidePage() {
   return (
@@ -29,45 +59,16 @@ export default function PostAnalyticsGuidePage() {
       </ol>
 
       <h2 id="request">Request</h2>
-      <CodeBlock
-        language="bash"
-        title="cURL"
-        code={`curl "https://api.unipost.dev/v1/posts/post_abc123/analytics" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`}
-      />
+      <DocsCodeTabs snippets={REQUEST_SNIPPETS} />
 
       <h2 id="response">Response</h2>
-      <CodeBlock
-        language="json"
-        title="200"
-        code={`{
-  "data": {
-    "post_id": "post_abc123",
-    "metrics": {
-      "likes": 214,
-      "comments": 19,
-      "shares": 47,
-      "saves": 12,
-      "impressions": 18420,
-      "reach": 4210,
-      "video_views": 0,
-      "engagement_rate": 0.0152,
-      "platform_specific": {
-        "retweet_count": 31,
-        "quote_count": 16
-      }
-    }
-  }
-}`}
-      />
+      <DocsCodeTabs snippets={RESPONSE_SNIPPETS} />
 
       <h2 id="scope-notes">Scope notes</h2>
-      <ul className="docs-step-list">
-        <li>Post analytics availability depends on the destination platform and the scopes granted to the connected account.</li>
-        <li>TikTok post analytics uses <code>video.list</code> to look up public videos owned by the connected TikTok account.</li>
-        <li>Pinterest Pin analytics uses the approved Pinterest read scopes for UniPost-published Pins.</li>
-        <li>Instagram, Threads, and Facebook Page metrics depend on their respective insights scopes.</li>
-      </ul>
+      <p>Post analytics availability depends on the destination platform and the scopes granted to the connected account.</p>
+      <p>TikTok post analytics uses <code>video.list</code> to look up public videos owned by the connected TikTok account.</p>
+      <p>Pinterest Pin analytics uses the approved Pinterest read scopes for UniPost-published Pins.</p>
+      <p>Instagram, Threads, and Facebook Page metrics depend on their respective insights scopes.</p>
 
       <h2 id="reference">Reference</h2>
       <div className="docs-next-grid">
