@@ -54,26 +54,16 @@ export default function AdminErrorsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [search, setSearch] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [platform, setPlatform] = useState<(typeof PLATFORM_OPTIONS)[number]>("all");
-  const [source, setSource] = useState<(typeof SOURCE_OPTIONS)[number]>("all");
-  const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(30);
+  const [initialFilters] = useState(() => initialFiltersFromURL());
+  const [search, setSearch] = useState(initialFilters.search);
+  const [searchInput, setSearchInput] = useState(initialFilters.search);
+  const [platform, setPlatform] = useState(initialFilters.platform);
+  const [source, setSource] = useState(initialFilters.source);
+  const [days, setDays] = useState(initialFilters.days);
   const [selectedFailureId, setSelectedFailureId] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
   const [rawCopied, setRawCopied] = useState(false);
   const limit = 100;
-
-  useEffect(() => {
-    const initial = initialFiltersFromURL();
-    if (initial.search) {
-      setSearch(initial.search);
-      setSearchInput(initial.search);
-    }
-    if (initial.platform !== "all") setPlatform(initial.platform);
-    if (initial.source !== "all") setSource(initial.source);
-    if (initial.days !== 30) setDays(initial.days);
-  }, []);
 
   const loadFailures = useCallback(async () => {
     setLoading(true);
