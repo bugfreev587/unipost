@@ -80,6 +80,7 @@ type DocsAiAnswer = {
   sources: DocsAiSource[];
   related: DocsAiSource[];
   generated_by: "ai" | "extractive" | "fallback";
+  coverage_reason?: string;
 };
 
 const API_SIDEBAR_DEFAULT_WIDTH = 336;
@@ -841,6 +842,10 @@ function DocsSearch() {
           rating,
           path: pathname,
           sources: answer?.sources.map((source) => source.path) ?? [],
+          related: answer?.related.map((source) => source.path) ?? [],
+          confidence: answer?.confidence,
+          generated_by: answer?.generated_by,
+          coverage_reason: answer?.coverage_reason,
         }),
       });
 

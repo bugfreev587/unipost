@@ -91,7 +91,7 @@ export default function TikTokAccountMetricsPage() {
       ]}
       section="analytics"
       title="Get TikTok account metrics"
-      description="Returns account-level TikTok statistics for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved user.info.stats for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
+      description="Returns account-level TikTok statistics for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved user.info.stats for production use; newly connected accounts request this scope during OAuth, and older accounts may need reconnect before account statistics are available."
       method="GET"
       path="/v1/accounts/:account_id/metrics"
       requestSections={[

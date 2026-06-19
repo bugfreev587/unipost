@@ -95,7 +95,7 @@ export default function TikTokProfileAnalyticsPage() {
       ]}
       section="analytics"
       title="Get TikTok profile"
-      description="Returns TikTok profile fields for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved user.info.profile for production use; enable tiktok.analytics_scopes in the target environment to serve this public-ready endpoint."
+      description="Returns TikTok profile fields for one connected account as an optional native drilldown beyond the normalized UniPost Analytics API. TikTok has approved user.info.profile for production use; newly connected accounts request this scope during OAuth, and older accounts may need reconnect before profile data is available."
       method="GET"
       path="/v1/accounts/:account_id/tiktok/profile"
       requestSections={[

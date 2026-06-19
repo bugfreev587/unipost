@@ -46,7 +46,7 @@ export default function TikTokAnalyticsDocsPage() {
         <section style={{ border: "1px solid var(--docs-border)", borderRadius: 8, padding: 18, background: "var(--docs-bg-elevated)" }}>
           <h2 style={{ margin: 0, fontSize: 16, color: "var(--docs-text)", fontWeight: 720 }}>Production readiness</h2>
           <p style={{ margin: "8px 0 0", color: "var(--docs-text-soft)", fontSize: 13.5, lineHeight: 1.65 }}>
-            These optional native drilldown endpoints are public-ready: TikTok approved <code>user.info.profile</code>, <code>user.info.stats</code>, and <code>video.list</code> for the production app. Enable <code>tiktok.analytics_scopes</code> in production to request those scopes and serve TikTok-specific analytics. When the flag is off, the endpoints return <code>FEATURE_DISABLED</code> as the rollback path.
+            These optional native drilldown endpoints are public-ready: TikTok approved <code>user.info.profile</code>, <code>user.info.stats</code>, and <code>video.list</code> for the production app. Newly connected TikTok accounts request these scopes during OAuth; reconnect older accounts before relying on live TikTok-specific analytics.
           </p>
         </section>
 
