@@ -108,6 +108,8 @@ test("CLI docs split overview from a grouped command reference", async () => {
   assert.match(referenceSource, /unipost accounts list --json/);
   assert.match(referenceSource, /"command": "accounts list"/);
   assert.match(referenceSource, /unipost agent capabilities --json/);
+  assert.match(referenceSource, /recent_posts, recent_post_summary/);
+  assert.match(referenceSource, /"recent_post_summary"/);
 
   assert.match(agentGuideSource, /title="AI Agent Guide"/);
   assert.match(agentGuideSource, /plain-language prompts/);

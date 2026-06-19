@@ -664,7 +664,8 @@ const CLI_REFERENCE_SECTIONS: CliReferenceSection[] = [
       },
       {
         name: "agent context",
-        description: "Returns real workspace, profile, account, recent post, and default context for agent grounding.",
+        description:
+          "Returns real workspace, profile, account, recent_posts, recent_post_summary, and default context for agent grounding.",
         example: "unipost agent context --json",
         response: envelope("agent context", `{
     "workspace": { "id": "ws_1", "name": "Studio" },
