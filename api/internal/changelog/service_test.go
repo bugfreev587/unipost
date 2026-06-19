@@ -63,7 +63,7 @@ func (d *fakeDispatcher) Dispatch(ctx context.Context, req DispatchRequest) (Dis
 	return DispatchResult{WorkflowURL: "https://github.com/bugfreev587/unipost/actions/workflows/changelog-publish.yml"}, nil
 }
 
-func TestHandleActionSavesAndRejectsDuplicateClicks(t *testing.T) {
+func TestHandleActionSavesAndAllowsSavedCandidateRetry(t *testing.T) {
 	store := &memoryStore{record: CandidateRecord{
 		ID:         "candidate-1",
 		SourceHash: "source-hash",
@@ -88,15 +88,18 @@ func TestHandleActionSavesAndRejectsDuplicateClicks(t *testing.T) {
 		t.Fatalf("status = %q, want %q", result.Status, StatusSaved)
 	}
 
-	_, err = svc.HandleAction(context.Background(), ActionRequest{
+	result, err = svc.HandleAction(context.Background(), ActionRequest{
 		CandidateID:  "candidate-1",
 		Action:       ActionSave,
 		ExpiresUnix:  expires.Unix(),
 		Signature:    signature,
 		ActorAdminID: "admin_1",
 	})
-	if !errors.Is(err, ErrCandidateAlreadyHandled) {
-		t.Fatalf("duplicate HandleAction error = %v, want ErrCandidateAlreadyHandled", err)
+	if err != nil {
+		t.Fatalf("second HandleAction save returned %v", err)
+	}
+	if result.Status != StatusSaved {
+		t.Fatalf("second status = %q, want %q", result.Status, StatusSaved)
 	}
 }
 
@@ -133,6 +136,39 @@ func TestHandleActionPublishDispatchesWorkflowAndStoresMetadata(t *testing.T) {
 	}
 	if store.record.WorkflowRunURL == "" {
 		t.Fatal("workflow URL was not stored")
+	}
+}
+
+func TestHandleActionPublishAllowsSavedCandidateRetry(t *testing.T) {
+	dispatcher := &fakeDispatcher{}
+	store := &memoryStore{record: CandidateRecord{
+		ID:         "candidate-1",
+		SourceHash: "source-hash",
+		Status:     StatusSaved,
+		Payload:    validPayload(),
+	}}
+	svc := NewService(store, NewSigner("secret"), dispatcher, ServiceConfig{
+		GitHubRef:      "main",
+		GitHubWorkflow: "changelog-publish.yml",
+	})
+	expires := time.Now().Add(time.Hour)
+	signature := svc.signer.Sign("candidate-1", ActionPublish, expires, "source-hash")
+
+	result, err := svc.HandleAction(context.Background(), ActionRequest{
+		CandidateID:  "candidate-1",
+		Action:       ActionPublish,
+		ExpiresUnix:  expires.Unix(),
+		Signature:    signature,
+		ActorAdminID: "admin_1",
+	})
+	if err != nil {
+		t.Fatalf("HandleAction publish returned %v", err)
+	}
+	if result.Status != StatusPublishing {
+		t.Fatalf("status = %q, want %q", result.Status, StatusPublishing)
+	}
+	if dispatcher.req.CandidateID != "candidate-1" {
+		t.Fatalf("dispatch request = %#v", dispatcher.req)
 	}
 }
 

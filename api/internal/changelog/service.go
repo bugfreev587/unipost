@@ -96,19 +96,19 @@ func (s *Service) HandleAction(ctx context.Context, req ActionRequest) (ActionRe
 	}
 	switch req.Action {
 	case ActionSave:
-		claimed, err := s.store.ClaimCandidate(ctx, record.ID, []CandidateStatus{StatusPending}, StatusSaved, req.ActorAdminID)
+		claimed, err := s.store.ClaimCandidate(ctx, record.ID, []CandidateStatus{StatusPending, StatusSaved}, StatusSaved, req.ActorAdminID)
 		if err != nil {
 			return ActionResult{}, err
 		}
 		return ActionResult{CandidateID: record.ID, Action: req.Action, Status: claimed.Status, Message: "Saved for later"}, nil
 	case ActionDiscard:
-		claimed, err := s.store.ClaimCandidate(ctx, record.ID, []CandidateStatus{StatusPending}, StatusDiscarded, req.ActorAdminID)
+		claimed, err := s.store.ClaimCandidate(ctx, record.ID, []CandidateStatus{StatusPending, StatusSaved}, StatusDiscarded, req.ActorAdminID)
 		if err != nil {
 			return ActionResult{}, err
 		}
 		return ActionResult{CandidateID: record.ID, Action: req.Action, Status: claimed.Status, Message: "Discarded"}, nil
 	case ActionPublish:
-		claimed, err := s.store.ClaimCandidate(ctx, record.ID, []CandidateStatus{StatusPending}, StatusPublishing, req.ActorAdminID)
+		claimed, err := s.store.ClaimCandidate(ctx, record.ID, []CandidateStatus{StatusPending, StatusSaved}, StatusPublishing, req.ActorAdminID)
 		if err != nil {
 			return ActionResult{}, err
 		}

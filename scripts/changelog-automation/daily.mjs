@@ -2,18 +2,21 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import {
+  candidateSourceHash,
   computePreviousLosAngelesWindow,
   extractAnthropicCandidateContent,
   isDiscordWebhookURL,
   isLosAngelesHour,
-  normalizeCandidatePayload,
+  normalizeCandidatePayloads,
   normalizeSourceHash,
   parseAIJSONContent,
   renderDiscordCandidateMessage,
+  selectReviewPayloads,
   validateCandidatePayload,
 } from "./lib.mjs";
 
 const outDir = process.env.CHANGELOG_OUT_DIR || "artifacts/changelog";
+const reviewLimit = reviewCandidateLimit();
 await mkdir(outDir, { recursive: true });
 
 if (process.env.CHANGELOG_REQUIRE_LA_HOUR) {
@@ -43,34 +46,60 @@ const windowInfo = process.env.CHANGELOG_WINDOW_START && process.env.CHANGELOG_W
 
 const commits = collectCommits(windowInfo.startISO, windowInfo.endISO);
 const sourceHash = normalizeSourceHash(commits.map((commit) => `commit:${commit.sha}`));
-const payload = normalizeCandidatePayload(await draftCandidate({ commits, windowInfo }), {
+const draftPayload = await draftCandidate({ commits, windowInfo });
+const draftedPayloads = normalizeCandidatePayloads(draftPayload, {
   commits,
   repo: process.env.CHANGELOG_REPO,
 });
+const savedEntries = await listSavedCandidates(reviewLimit);
+const selectedEntries = selectReviewPayloads([
+  ...savedEntries,
+  ...draftedPayloads.map((payload) => ({ payload, status: "new" })),
+], { limit: reviewLimit });
 
-await writeFile(`${outDir}/candidate.json`, `${JSON.stringify(payload, null, 2)}\n`);
+const firstSelectedPayload = selectedEntries[0]?.payload || draftPayload;
+
+await writeFile(`${outDir}/candidate.json`, `${JSON.stringify(firstSelectedPayload, null, 2)}\n`);
+await writeFile(`${outDir}/candidates.json`, `${JSON.stringify({
+  selected: selectedEntries.map(({ payload, status }) => ({ status, payload })),
+  drafted: draftedPayloads,
+  saved: savedEntries.map(({ payload, status }) => ({ status, payload })),
+}, null, 2)}\n`);
 await writeFile(`${outDir}/source.json`, `${JSON.stringify({ window: windowInfo, commits, sourceHash }, null, 2)}\n`);
 
-if (!payload.hasCandidate) {
-  console.log(`No changelog candidate: ${payload.reason || "no reason provided"}`);
+if (selectedEntries.length === 0) {
+  console.log(`No changelog candidate: ${draftPayload.reason || "no reason provided"}`);
   if (process.env.CHANGELOG_DISCORD_WEBHOOK_URL && process.env.CHANGELOG_NOTIFY_EMPTY === "true") {
-    await sendDiscord(renderDiscordCandidateMessage(payload, {}));
+    await sendDiscord(renderDiscordCandidateMessage(draftPayload, {}));
   }
   process.exit(0);
 }
 
-validateCandidatePayload(payload);
-const createResponse = await createCandidate(payload, sourceHash, windowInfo);
-if (createResponse.data?.candidate?.status && !["pending", "saved", "failed"].includes(createResponse.data.candidate.status)) {
-  console.log(`Candidate already ${createResponse.data.candidate.status}; skipping Discord prompt.`);
-  process.exit(0);
+let promptedCount = 0;
+for (const entry of selectedEntries) {
+  validateCandidatePayload(entry.payload);
+  if (entry.status === "saved") {
+    if (process.env.CHANGELOG_DISCORD_WEBHOOK_URL) {
+      await sendDiscord(renderDiscordCandidateMessage(entry.payload, entry.actions));
+    }
+    promptedCount += 1;
+    console.log(`Requeued saved changelog candidate ${entry.payload.candidate.id}`);
+    continue;
+  }
+  const createResponse = await createCandidate(entry.payload, candidateSourceHash(entry.payload), windowInfo);
+  if (createResponse.data?.candidate?.status && !["pending", "saved", "failed"].includes(createResponse.data.candidate.status)) {
+    console.log(`Candidate ${entry.payload.candidate.id} already ${createResponse.data.candidate.status}; skipping Discord prompt.`);
+    continue;
+  }
+  const actions = createResponse.data.actions;
+  const messagePayload = createResponse.data?.candidate?.payload || entry.payload;
+  if (process.env.CHANGELOG_DISCORD_WEBHOOK_URL) {
+    await sendDiscord(renderDiscordCandidateMessage(messagePayload, actions));
+  }
+  promptedCount += 1;
+  console.log(`Created changelog candidate ${messagePayload.candidate.id}`);
 }
-
-const actions = createResponse.data.actions;
-if (process.env.CHANGELOG_DISCORD_WEBHOOK_URL) {
-  await sendDiscord(renderDiscordCandidateMessage(payload, actions));
-}
-console.log(`Created changelog candidate ${payload.candidate.id}`);
+console.log(`Prompted ${promptedCount} changelog candidate${promptedCount === 1 ? "" : "s"}`);
 
 function collectCommits(startISO, endISO) {
   const raw = execFileSync("git", [
@@ -109,7 +138,10 @@ async function draftCandidate({ commits, windowInfo }) {
       role: "system",
       content: [
         "You write sparse, factual UniPost public changelog candidates.",
-        "Return strict JSON only with hasCandidate and candidate fields.",
+        "Return strict JSON only with hasCandidate and candidates fields.",
+        "Return at most five candidates; the workflow will review at most two.",
+        "Group related commits into one candidate. Do not create one candidate per commit.",
+        "Include sourceCommitShas on each candidate with only the commit SHAs that support that candidate.",
         "Only include user-visible shipped work. Do not invent SDK versions.",
         "Never use @unipost/sdk-js. The JavaScript package is @unipost/sdk.",
         "Do not treat @unipost/agentpost as an SDK.",
@@ -122,22 +154,25 @@ async function draftCandidate({ commits, windowInfo }) {
         commits,
         schema: {
           hasCandidate: true,
-          candidate: {
-            id: "stable-kebab-id",
-            date: windowInfo.localDate,
-            displayDate: "Month D, YYYY",
-            title: "Release title",
-            summary: "One factual sentence.",
-            category: "api|sdk|dashboard|platform|dx|reliability",
-            impact: "new|improved|changed|fixed",
-            isBreaking: false,
-            sdkVersions: [],
-            links: [],
-            sourceLinks: [],
-            confidence: "low|medium|high",
-            whyUserVisible: "Concrete user-visible reason.",
-            excludedCommits: [],
-          },
+          candidates: [
+            {
+              id: "stable-kebab-id",
+              date: windowInfo.localDate,
+              displayDate: "Month D, YYYY",
+              title: "Release title",
+              summary: "One factual sentence.",
+              category: "api|sdk|dashboard|platform|dx|reliability",
+              impact: "new|improved|changed|fixed",
+              isBreaking: false,
+              sdkVersions: [],
+              links: [],
+              sourceCommitShas: [],
+              sourceLinks: [],
+              confidence: "low|medium|high",
+              whyUserVisible: "Concrete user-visible reason.",
+              excludedCommits: [],
+            },
+          ],
         },
       }),
     },
@@ -181,6 +216,30 @@ async function draftCandidate({ commits, windowInfo }) {
   return parseAIJSONContent(content);
 }
 
+async function listSavedCandidates(limit) {
+  const apiBase = process.env.CHANGELOG_API_BASE;
+  const token = process.env.CHANGELOG_AUTOMATION_TOKEN;
+  if (!apiBase || !token) return [];
+  const url = new URL(`${apiBase.replace(/\/+$/, "")}/internal/changelog-candidates`);
+  url.searchParams.set("status", "saved");
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) throw new Error(`saved candidate list failed: HTTP ${res.status} ${await res.text()}`);
+  const body = await res.json();
+  return (body.data?.candidates || [])
+    .filter((item) => item?.candidate?.payload?.hasCandidate)
+    .map((item) => ({
+      payload: item.candidate.payload,
+      status: "saved",
+      actions: item.actions,
+      record: item.candidate,
+    }));
+}
+
 async function createCandidate(payload, sourceHash, windowInfo) {
   const apiBase = process.env.CHANGELOG_API_BASE;
   const token = process.env.CHANGELOG_AUTOMATION_TOKEN;
@@ -202,6 +261,15 @@ async function createCandidate(payload, sourceHash, windowInfo) {
   });
   if (!res.ok) throw new Error(`candidate create failed: HTTP ${res.status} ${await res.text()}`);
   return res.json();
+}
+
+function reviewCandidateLimit() {
+  const raw = process.env.CHANGELOG_DAILY_REVIEW_LIMIT || "2";
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error("CHANGELOG_DAILY_REVIEW_LIMIT must be a positive integer");
+  }
+  return Math.min(parsed, 2);
 }
 
 async function sendDiscord(content) {
