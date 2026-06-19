@@ -2530,6 +2530,8 @@ export interface AdminUserDetail {
 
 export interface AdminUserPostFailure {
   post_id: string;
+  post_failure_id?: string;
+  social_post_result_id?: string;
   user_id: string;
   user_email: string;
   workspace_id: string;
@@ -2542,6 +2544,11 @@ export interface AdminUserPostFailure {
   caption?: string;
   error_message?: string;
   error_summary?: string;
+  error_code?: string;
+  failure_stage?: string;
+  platform_error_code?: string;
+  is_retriable?: boolean;
+  next_action?: string;
   // Curl dump of every failing HTTP request the adapter made. Server
   // redacts Authorization header + token query params before sending.
   debug_curl?: string;
