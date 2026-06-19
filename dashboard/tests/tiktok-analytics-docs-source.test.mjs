@@ -40,11 +40,12 @@ test("TikTok Analytics endpoint pages document production readiness and scopes",
   ]);
 
   for (const page of [overview, profile, metrics, videos]) {
-    assert.match(page, /tiktok\.analytics_scopes/);
     assert.match(page, /production/i);
     assert.match(page, /approved|public-ready|ready/i);
     assert.match(page, /optional native drilldown|native drilldown/i);
     assert.match(page, /user\.info\.(profile|stats)|video\.list/);
+    assert.match(page, /reconnect|newly connected|connected accounts/i);
+    assert.doesNotMatch(page, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|feature flag/i);
     assert.doesNotMatch(page, /until (TikTok approves|approval is complete)|Keep the flag off in production/i);
   }
 
@@ -52,6 +53,7 @@ test("TikTok Analytics endpoint pages document production readiness and scopes",
   assert.match(metrics, /\/v1\/accounts\/:account_id\/metrics/);
   assert.match(videos, /\/v1\/accounts\/:account_id\/tiktok\/videos/);
   assert.match(platformData, /analytics scopes are approved/i);
+  assert.doesNotMatch(platformData, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|feature flag/i);
   assert.match(featureFlagDocs, /production:\s*on/i);
   assert.match(featureFlagDocs, /TikTok approved/i);
   assert.doesNotMatch(platformData, /until TikTok approves/i);

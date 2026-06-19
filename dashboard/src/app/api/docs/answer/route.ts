@@ -30,7 +30,23 @@ function rateLimited() {
   );
 }
 
-function answerResponse(answer: GroundedDocsAnswer) {
+function logAnswer(query: string, answer: GroundedDocsAnswer) {
+  console.info("docs_ai_answer", {
+    query,
+    query_length: query.length,
+    confidence: answer.confidence,
+    generated_by: answer.generated_by,
+    coverage_reason: answer.coverage_reason,
+    source_ids: answer.sources.map((source) => source.id),
+    source_paths: answer.sources.map((source) => source.path),
+    related_ids: answer.related.map((source) => source.id),
+    related_paths: answer.related.map((source) => source.path),
+    recorded_at: new Date().toISOString(),
+  });
+}
+
+function answerResponse(query: string, answer: GroundedDocsAnswer) {
+  logAnswer(query, answer);
   return NextResponse.json({
     data: answer,
   });
@@ -140,8 +156,8 @@ export async function POST(request: Request) {
   const groundedAnswer = buildGroundedDocsAnswer(query, search);
 
   if (groundedAnswer.confidence === "none") {
-    return answerResponse(groundedAnswer);
+    return answerResponse(query, groundedAnswer);
   }
 
-  return answerResponse(await refineWithAi(query, groundedAnswer));
+  return answerResponse(query, await refineWithAi(query, groundedAnswer));
 }
