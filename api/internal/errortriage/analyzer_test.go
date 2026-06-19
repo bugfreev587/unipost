@@ -50,6 +50,66 @@ func TestDeterministicAnalyzerClassifiesUnipostBug(t *testing.T) {
 	}
 }
 
+func TestDeterministicAnalyzerAddsReviewAnalysisForHumanReview(t *testing.T) {
+	analyzer := DeterministicAnalyzer{}
+	item := analyzer.Analyze(Bucket{
+		Key:                    "triage:worker-timeout",
+		AffectedUserCount:      1,
+		AffectedWorkspaceCount: 1,
+		AffectedPostCount:      1,
+		Failures: []Failure{{
+			PostID:             "post_123",
+			SocialPostResultID: "spr_123",
+			PostFailureID:      "pf_123",
+			WorkspaceID:        "ws_123",
+			Platform:           "instagram",
+			Source:             "api",
+			ErrorCode:          "platform_error",
+			FailureStage:       "worker_timeout",
+			Message:            "Instagram worker timed out while waiting for provider processing",
+		}},
+	})
+
+	analysis, ok := item.Evidence["review_analysis"].(map[string]string)
+	if !ok {
+		t.Fatalf("review_analysis missing or wrong type: %#v", item.Evidence["review_analysis"])
+	}
+	if analysis["what_is_this_error"] == "" {
+		t.Fatalf("what_is_this_error should be present: %#v", analysis)
+	}
+	if analysis["why_it_happened"] == "" {
+		t.Fatalf("why_it_happened should be present: %#v", analysis)
+	}
+	if analysis["how_to_resolve"] == "" {
+		t.Fatalf("how_to_resolve should be present: %#v", analysis)
+	}
+}
+
+func TestBuildEvidenceIncludesConcreteFailureIdentifiers(t *testing.T) {
+	evidence := buildEvidence(Bucket{
+		Failures: []Failure{{
+			PostID:             "post_123",
+			SocialPostResultID: "spr_123",
+			PostFailureID:      "pf_123",
+			WorkspaceID:        "ws_123",
+			Platform:           "youtube",
+			ErrorCode:          "platform_error",
+			FailureStage:       "worker_timeout",
+			Message:            "YouTube worker timed out",
+		}},
+	})
+	samples, ok := evidence["samples"].([]map[string]any)
+	if !ok || len(samples) != 1 {
+		t.Fatalf("samples missing: %#v", evidence["samples"])
+	}
+	if samples[0]["post_failure_id"] != "pf_123" {
+		t.Fatalf("post_failure_id missing: %#v", samples[0])
+	}
+	if samples[0]["social_post_result_id"] != "spr_123" {
+		t.Fatalf("social_post_result_id missing: %#v", samples[0])
+	}
+}
+
 func TestBuildBucketsCreatesRecipientsPerWorkspaceOwner(t *testing.T) {
 	failures := []Failure{
 		{PostID: "post_1", WorkspaceID: "ws_1", UserID: "user_1", UserEmail: "one@example.com", Platform: "threads", Source: "dashboard", ErrorCode: "missing_permission", FailureStage: "publish", Message: "reconnect required"},

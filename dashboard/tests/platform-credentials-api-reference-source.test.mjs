@@ -5,17 +5,61 @@ import { test } from "node:test";
 
 const root = process.cwd();
 
-test("Platform Credentials API docs use the API Reference endpoint pattern", async () => {
-  const source = await readFile(join(root, "src/app/docs/api/platform-credentials/page.tsx"), "utf8");
+async function source(path) {
+  return readFile(join(root, path), "utf8");
+}
 
-  assert.match(source, /ApiReferencePage/, "page should use the API Reference page shell");
-  assert.match(source, /ApiEndpointCard/, "page should render endpoint cards");
-  assert.doesNotMatch(source, /<DocsPage/, "API Reference page should not use the generic guide shell");
+test("Platform Credentials API docs are split into endpoint pages", async () => {
+  const groupSource = await readFile(join(root, "src/app/docs/api/platform-credentials/page.tsx"), "utf8");
 
-  assert.match(source, /method="POST"[\s\S]*?path="\/v1\/platform-credentials"/, "upload endpoint should be visible");
-  assert.match(source, /method="GET"[\s\S]*?path="\/v1\/platform-credentials"/, "list endpoint should be visible");
-  assert.match(source, /method="DELETE"[\s\S]*?path="\/v1\/platform-credentials\/:platform"/, "delete endpoint should be visible");
+  assert.match(groupSource, /redirect\("\/docs\/api\/platform-credentials\/create"\)/, "group page should redirect to the create endpoint");
+  assert.doesNotMatch(groupSource, /ApiEndpointCard/, "group page should not contain the combined endpoint reference");
 
-  assert.match(source, /client_secret/, "upload request fields should document client_secret");
-  assert.match(source, /client_secret[^]*never returned|never[^]*client_secret/i, "response docs should say secrets are never returned");
+  const createSource = await source("src/app/docs/api/platform-credentials/create/page.tsx");
+  const listSource = await source("src/app/docs/api/platform-credentials/list/page.tsx");
+  const deleteSource = await source("src/app/docs/api/platform-credentials/delete/page.tsx");
+
+  assert.match(createSource, /SingleEndpointReferencePage/, "create page should use the standard single-endpoint shell");
+  assert.match(createSource, /title="Upload platform credentials"/);
+  assert.match(createSource, /method="POST"/);
+  assert.match(createSource, /path="\/v1\/platform-credentials"/);
+  assert.match(createSource, /client_secret/, "upload request fields should document client_secret");
+  assert.match(createSource, /client_secret[^]*never returned|never[^]*client_secret/i, "create response docs should say secrets are never returned");
+  assert.doesNotMatch(createSource, /method="GET"/, "create page should not render the list endpoint");
+  assert.doesNotMatch(createSource, /method="DELETE"/, "create page should not render the delete endpoint");
+
+  assert.match(listSource, /SingleEndpointReferencePage/, "list page should use the standard single-endpoint shell");
+  assert.match(listSource, /title="List platform credentials"/);
+  assert.match(listSource, /method="GET"/);
+  assert.match(listSource, /path="\/v1\/platform-credentials"/);
+  assert.match(listSource, /data\[\]\.client_id/);
+  assert.match(listSource, /client_secret[^]*never returned|never[^]*client_secret/i, "list page should say secrets are never returned");
+  assert.doesNotMatch(listSource, /method="POST"/, "list page should not render the create endpoint");
+  assert.doesNotMatch(listSource, /method="DELETE"/, "list page should not render the delete endpoint");
+
+  assert.match(deleteSource, /SingleEndpointReferencePage/, "delete page should use the standard single-endpoint shell");
+  assert.match(deleteSource, /title="Delete platform credentials"/);
+  assert.match(deleteSource, /method="DELETE"/);
+  assert.match(deleteSource, /path="\/v1\/platform-credentials\/:platform"/);
+  assert.match(deleteSource, /204 No Content/);
+  assert.doesNotMatch(deleteSource, /method="POST"/, "delete page should not render the create endpoint");
+  assert.doesNotMatch(deleteSource, /method="GET"/, "delete page should not render the list endpoint");
+});
+
+test("Platform Credentials sidebar owns endpoint links and Errors", async () => {
+  const docsShellSource = await source("src/app/docs/_components/docs-shell.tsx");
+  const apiReferenceStart = docsShellSource.indexOf('"api-reference": [');
+  assert.notEqual(apiReferenceStart, -1, "API Reference sidebar config should exist");
+  const apiReferenceSource = docsShellSource.slice(apiReferenceStart);
+  const platformGroupMatch = apiReferenceSource.match(/label: "Platform Credentials",\s*children: \[[\s\S]*?\n\s*\],\n\s*\}/);
+
+  assert.ok(platformGroupMatch, "Platform Credentials should be a sidebar group with children");
+  const platformGroup = platformGroupMatch[0];
+
+  assert.match(platformGroup, /label: "Upload credentials", href: "\/docs\/api\/platform-credentials\/create", method: "POST"/);
+  assert.match(platformGroup, /label: "List credentials", href: "\/docs\/api\/platform-credentials\/list", method: "GET"/);
+  assert.match(platformGroup, /label: "Delete credentials", href: "\/docs\/api\/platform-credentials\/delete", method: "DELETE"/);
+  assert.match(platformGroup, /label: "Errors", href: "\/docs\/api\/errors"/);
+
+  assert.doesNotMatch(apiReferenceSource, /\n\s*\{ label: "Errors", href: "\/docs\/api\/errors" \},\n\s*\{\s*label: "Platform Credentials"/, "Errors should not remain a separate Core item before Platform Credentials");
 });

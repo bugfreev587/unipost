@@ -5,6 +5,8 @@ import {
   AlertTriangle,
   Bug,
   CheckCircle2,
+  ExternalLink,
+  FileSearch,
   Mail,
   Play,
   RotateCcw,
@@ -23,6 +25,8 @@ import {
   sendAdminErrorTriageEmail,
   type ErrorTriageBugPlan,
   type ErrorTriageEmailDraft,
+  type ErrorTriageEvidenceSample,
+  type ErrorTriageReviewAnalysis,
   type ErrorTriageItem,
   type ErrorTriageRecipient,
   type ErrorTriageRunDetail,
@@ -406,6 +410,8 @@ function TriageItem({
   const hasEmail = hasEmailDraft(draft);
   const hasBug = hasBugPlan(bugPlan);
   const sendableWorkflow = item.workflow_status === "ready" || item.workflow_status === "partially_completed";
+  const reviewRows = reviewAnalysisRows(item.evidence_json?.review_analysis);
+  const samples = Array.isArray(item.evidence_json?.samples) ? item.evidence_json.samples.slice(0, 5) : [];
 
   return (
     <article className="triage-item">
@@ -433,6 +439,52 @@ function TriageItem({
         <Fact label="Users" value={fmtNumber(item.affected_user_count)} />
         <Fact label="Posts" value={fmtNumber(item.affected_post_count)} />
       </div>
+
+      {reviewRows.length ? (
+        <div className="triage-subsection">
+          <div className="triage-subhead">
+            <FileSearch strokeWidth={1.75} />
+            <span>AI analysis</span>
+          </div>
+          <div className="triage-analysis-grid">
+            {reviewRows.map((row) => (
+              <PlanRow key={row.label} label={row.label} value={row.value} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {samples.length ? (
+        <div className="triage-subsection">
+          <div className="triage-subhead">
+            <FileSearch strokeWidth={1.75} />
+            <span>Failure samples</span>
+          </div>
+          <div className="triage-sample-list">
+            {samples.map((sample, index) => {
+              const href = rawErrorHref(sample);
+              return (
+                <div key={`${sample.post_failure_id || sample.post_id || index}`} className="triage-sample-row">
+                  <div className="triage-sample-head">
+                    <div>
+                      <span>{sampleTitle(sample, index)}</span>
+                      <small>{sampleMeta(sample)}</small>
+                    </div>
+                    {href ? (
+                      <a className="triage-raw-link" href={href}>
+                        <ExternalLink strokeWidth={1.75} />
+                        Open raw error
+                      </a>
+                    ) : null}
+                  </div>
+                  {sample.message ? <p>{sample.message}</p> : null}
+                  {sample.debug_curl ? <code>{sample.debug_curl}</code> : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
 
       {hasBug && bugPlan ? (
         <div className="triage-subsection">
@@ -523,6 +575,38 @@ function PlanRow({ label, value }: { label: string; value?: string }) {
       <p>{value}</p>
     </div>
   );
+}
+
+function reviewAnalysisRows(analysis: ErrorTriageReviewAnalysis | undefined) {
+  return [
+    { label: "What", value: analysis?.what_is_this_error },
+    { label: "Why", value: analysis?.why_it_happened },
+    { label: "How", value: analysis?.how_to_resolve },
+    { label: "Missing", value: analysis?.missing_evidence },
+    { label: "Inspect", value: analysis?.next_inspection_path },
+  ].filter((row): row is { label: string; value: string } => Boolean(row.value?.trim()));
+}
+
+function sampleTitle(sample: ErrorTriageEvidenceSample, index: number) {
+  return sample.post_failure_id || sample.post_id || sample.social_post_result_id || `sample ${index + 1}`;
+}
+
+function sampleMeta(sample: ErrorTriageEvidenceSample) {
+  return [
+    sample.platform,
+    sample.source,
+    sample.failure_stage,
+    sample.platform_error_code || sample.error_code,
+  ].filter(Boolean).join(" · ") || "failure sample";
+}
+
+function rawErrorHref(sample: ErrorTriageEvidenceSample) {
+  const search = sample.post_failure_id || sample.post_id || sample.social_post_result_id || sample.platform_error_code || sample.error_code || "";
+  if (!search) return "";
+  const params = new URLSearchParams({ search, days: "90" });
+  if (sample.platform) params.set("platform", sample.platform);
+  if (sample.source) params.set("source", sample.source);
+  return `/admin/errors?${params.toString()}`;
 }
 
 function StatusBadge({ status }: { status: string }) {
@@ -797,6 +881,89 @@ const triageCss = `
   font-size: 12px;
   line-height: 1.5;
 }
+.triage-analysis-grid {
+  display: grid;
+  gap: 0;
+}
+.triage-sample-list {
+  display: grid;
+  gap: 8px;
+}
+.triage-sample-row {
+  border: 1px solid var(--dborder);
+  border-radius: 8px;
+  background: var(--surface2);
+  padding: 10px 11px;
+  min-width: 0;
+}
+.triage-sample-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.triage-sample-head div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.triage-sample-head span {
+  color: var(--dtext);
+  font-size: 12px;
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.triage-sample-head small {
+  color: var(--dmuted);
+  font-size: 11px;
+  font-family: var(--font-geist-mono), monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.triage-sample-row p {
+  margin: 8px 0 0;
+  color: var(--dtext);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.triage-sample-row code {
+  display: block;
+  margin-top: 8px;
+  max-height: 104px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--dmuted);
+  background: var(--surface);
+  border: 1px solid color-mix(in srgb, var(--dborder) 70%, transparent);
+  border-radius: 6px;
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  font-family: var(--font-geist-mono), monospace;
+}
+.triage-raw-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  color: var(--dlink, var(--primary));
+  font-size: 11.5px;
+  font-weight: 650;
+  text-decoration: none;
+}
+.triage-raw-link:hover {
+  text-decoration: underline;
+}
+.triage-raw-link svg {
+  width: 13px;
+  height: 13px;
+}
 .triage-evidence-list {
   display: grid;
   gap: 4px;
@@ -968,6 +1135,7 @@ const triageCss = `
   }
   .triage-item-head,
   .triage-run-summary,
+  .triage-sample-head,
   .triage-recipient-row {
     align-items: flex-start;
     flex-direction: column;
@@ -988,6 +1156,9 @@ const triageCss = `
   .triage-plan-row {
     grid-template-columns: 1fr;
     gap: 2px;
+  }
+  .triage-raw-link {
+    width: 100%;
   }
 }
 `;
