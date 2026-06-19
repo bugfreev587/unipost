@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Keyboard
 import { createPortal } from "react-dom";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { splitDocsAiAnswerParagraphs } from "@/lib/docs-ai-answer-formatting";
 import { ApiInlineLink } from "../api/_components/doc-components";
 import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
 import { DocsContentBreadcrumb } from "./docs-content-breadcrumb";
@@ -735,6 +736,7 @@ function DocsSearch() {
 
     return scored.slice(0, 8).map((item) => item.result);
   }, [pathname, query]);
+  const answerParagraphs = answer ? splitDocsAiAnswerParagraphs(answer.answer) : [];
 
   useEffect(() => {
     setMounted(true);
@@ -985,11 +987,28 @@ function DocsSearch() {
                       <span className={`docs-ai-confidence ${answer.confidence}`}>{answer.confidence}</span>
                       <span>{answer.generated_by === "ai" ? "Grounded AI answer" : "Grounded docs answer"}</span>
                     </div>
-                    <p>{answer.answer}</p>
+                    <div className="docs-ai-answer-body">
+                      {answerParagraphs.map((paragraph, index) => (
+                        <p
+                          key={`${index}-${paragraph}`}
+                          className={index === 0 ? "docs-ai-answer-lead" : "docs-ai-answer-detail"}
+                        >
+                          {renderDocsRichContent(paragraph)}
+                        </p>
+                      ))}
+                    </div>
                     {answer.steps.length > 0 ? (
-                      <ol className="docs-ai-steps">
-                        {answer.steps.map((step) => <li key={step}>{step}</li>)}
-                      </ol>
+                      <div className="docs-ai-next-steps">
+                        <div className="docs-ai-section-title">Next steps</div>
+                        <ol className="docs-ai-steps">
+                          {answer.steps.map((step, index) => (
+                            <li key={step}>
+                              <span className="docs-ai-step-marker">{index + 1}</span>
+                              <span>{renderDocsRichContent(step)}</span>
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
                     ) : null}
                     {answer.sources.length > 0 ? (
                       <>
@@ -997,9 +1016,12 @@ function DocsSearch() {
                         <div className="docs-ai-sources">
                           {answer.sources.map((source) => (
                             <button key={source.id} type="button" onClick={() => selectDocsSource(source.path)}>
-                              <span>{source.title}</span>
-                              <small>{source.primary_nav} / {source.section_title}</small>
-                              <code>{source.path}</code>
+                              <span className="docs-ai-source-title">{source.title}</span>
+                              <span className="docs-ai-source-meta">
+                                <span>{source.primary_nav}</span>
+                                <span>{source.section_title}</span>
+                              </span>
+                              <code className="docs-ai-source-path">{source.path}</code>
                             </button>
                           ))}
                         </div>
@@ -1244,22 +1266,29 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-ai-examples button:hover,.docs-ai-related button:hover{background:var(--docs-bg-muted);border-color:var(--docs-border-strong)}
 .docs-ai-status,.docs-ai-error{padding:28px 12px;color:var(--docs-text-muted);font-size:14px;text-align:center}
 .docs-ai-error{color:#dc2626}
-.docs-ai-answer{display:grid;gap:12px}
+.docs-ai-answer{display:grid;gap:14px}
 .docs-ai-answer-topline{display:flex;align-items:center;gap:8px;color:var(--docs-text-faint);font-size:12px;font-weight:720}
 .docs-ai-confidence{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;border:1px solid var(--docs-border);background:var(--docs-bg-muted);color:var(--docs-text-muted);font-size:11px;text-transform:uppercase}
 .docs-ai-confidence.high{border-color:color-mix(in srgb, #10b981 36%, var(--docs-border));background:color-mix(in srgb, #ecfdf5 75%, transparent);color:#047857}
 .docs-ai-confidence.medium{border-color:color-mix(in srgb, #eab308 42%, var(--docs-border));background:color-mix(in srgb, #fefce8 76%, transparent);color:#92400e}
 .docs-ai-confidence.low,.docs-ai-confidence.none{border-color:color-mix(in srgb, #94a3b8 42%, var(--docs-border));background:var(--docs-bg-muted);color:var(--docs-text-muted)}
-.docs-ai-answer p{margin:0;color:var(--docs-text);font-size:14px;line-height:1.65}
-.docs-ai-steps{margin:0;padding-left:20px;color:var(--docs-text-soft);font-size:13.5px;line-height:1.62}
-.docs-ai-steps li+li{margin-top:5px}
+.docs-ai-answer-body{display:grid;gap:9px;padding:1px 0 2px}
+.docs-ai-answer-body p{margin:0}
+.docs-ai-answer-lead{color:var(--docs-text);font-size:15px;font-weight:540;line-height:1.68}
+.docs-ai-answer-detail{color:var(--docs-text-soft);font-size:13.75px;font-weight:460;line-height:1.62}
+.docs-ai-answer-body code{color:var(--docs-text);font-weight:620}
+.docs-ai-next-steps{display:grid;gap:8px;padding:11px 12px;border:1px solid color-mix(in srgb, var(--docs-border) 76%, transparent);border-radius:12px;background:color-mix(in srgb, var(--docs-bg-muted) 58%, transparent)}
+.docs-ai-steps{display:grid;gap:7px;margin:0;padding:0;color:var(--docs-text-soft);font-size:13.5px;line-height:1.58;list-style:none}
+.docs-ai-steps li{display:grid;grid-template-columns:22px minmax(0,1fr);gap:9px;align-items:start}
+.docs-ai-step-marker{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 12%, var(--docs-bg-elevated));border:1px solid color-mix(in srgb, var(--docs-link) 24%, var(--docs-border));color:var(--docs-link);font-family:var(--docs-mono);font-size:11px;font-weight:760;line-height:1}
 .docs-ai-section-title{margin-top:2px;color:var(--docs-text-faint);font-size:11px;font-weight:760;letter-spacing:.08em;text-transform:uppercase}
-.docs-ai-sources{display:grid;gap:7px}
-.docs-ai-sources button{width:100%;display:grid;gap:4px;padding:10px 11px;border:1px solid var(--docs-border);border-radius:9px;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.docs-ai-sources{display:grid;gap:8px}
+.docs-ai-sources button{width:100%;display:grid;gap:6px;padding:11px 12px;border:1px solid var(--docs-border);border-radius:10px;background:color-mix(in srgb, var(--docs-bg-elevated) 84%, transparent);color:inherit;text-align:left;cursor:pointer}
 .docs-ai-sources button:hover{background:var(--docs-bg-muted);border-color:var(--docs-border-strong)}
-.docs-ai-sources span{color:var(--docs-text);font-size:13.5px;font-weight:680;line-height:1.28}
-.docs-ai-sources small{color:var(--docs-text-muted);font-size:12px;line-height:1.3}
-.docs-ai-sources code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-faint);font-family:var(--docs-mono);font-size:11.5px}
+.docs-ai-source-title{color:var(--docs-text);font-size:13.5px;font-weight:710;line-height:1.28}
+.docs-ai-source-meta{display:flex;align-items:center;gap:7px;color:var(--docs-text-muted);font-size:12px;font-weight:560;line-height:1.3}
+.docs-ai-source-meta span+span::before{content:"/";margin-right:7px;color:var(--docs-text-faint)}
+.docs-ai-source-path{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--docs-text-faint);font-family:var(--docs-mono);font-size:11.5px}
 .docs-ai-related{display:flex;gap:8px;flex-wrap:wrap}
 .docs-ai-related button{width:auto;padding:8px 10px;font-size:12.5px}
 .docs-ai-feedback{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding-top:2px}
