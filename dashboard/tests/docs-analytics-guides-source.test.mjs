@@ -81,3 +81,18 @@ test("Analytics guides reuse shared docs presentation primitives", async () => {
   assert.match(docsShell, /\.docs-api-inline\{[^}]*white-space:nowrap/s);
   assert.match(docsShell, /\.docs-api-inline-method\{[^}]*color:#16a34a/s);
 });
+
+test("Guide step lists do not render as invisible-marker indented body copy", async () => {
+  const docsShell = await source("src/app/docs/_components/docs-shell.tsx");
+
+  assert.match(
+    docsShell,
+    /\.docs-shell-guide-redesign \.docs-page-guide-redesign \.docs-step-list\{[^}]*list-style:none[^}]*padding-left:0/s,
+    "guide step lists should remove list markers and the matching phantom indent",
+  );
+  assert.match(
+    docsShell,
+    /\.docs-shell-guide-redesign \.docs-page-guide-redesign \.docs-step-list li\{[^}]*padding-left:0/s,
+    "guide step list items should align with normal body paragraphs",
+  );
+});
