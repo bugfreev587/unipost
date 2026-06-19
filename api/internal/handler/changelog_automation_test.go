@@ -17,6 +17,7 @@ import (
 
 type fakeChangelogStore struct {
 	record  changelog.CandidateRecord
+	records []changelog.CandidateRecord
 	created bool
 	err     error
 }
@@ -41,6 +42,22 @@ func (s *fakeChangelogStore) GetCandidate(_ context.Context, id string) (changel
 		return changelog.CandidateRecord{}, changelog.ErrCandidateNotFound
 	}
 	return s.record, nil
+}
+
+func (s *fakeChangelogStore) ListCandidatesByStatus(_ context.Context, status changelog.CandidateStatus, limit int) ([]changelog.CandidateRecord, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	var out []changelog.CandidateRecord
+	for _, record := range s.records {
+		if record.Status == status {
+			out = append(out, record)
+		}
+	}
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 type fakeChangelogActions struct {
@@ -122,6 +139,46 @@ func TestCreateInternalCandidateReturnsActionLinks(t *testing.T) {
 	}
 }
 
+func TestListInternalCandidatesReturnsSavedCandidatesWithActionLinks(t *testing.T) {
+	store := &fakeChangelogStore{records: []changelog.CandidateRecord{
+		{
+			ID:          "saved-candidate",
+			SourceHash:  "source-hash",
+			Status:      changelog.StatusSaved,
+			Payload:     validChangelogHandlerPayload(),
+			WindowStart: time.Date(2026, 6, 17, 7, 0, 0, 0, time.UTC),
+			WindowEnd:   time.Date(2026, 6, 18, 7, 0, 0, 0, time.UTC),
+		},
+		{
+			ID:          "pending-candidate",
+			SourceHash:  "source-hash-2",
+			Status:      changelog.StatusPending,
+			Payload:     validChangelogHandlerPayload(),
+			WindowStart: time.Date(2026, 6, 17, 7, 0, 0, 0, time.UTC),
+			WindowEnd:   time.Date(2026, 6, 18, 7, 0, 0, 0, time.UTC),
+		},
+	}}
+	h := NewChangelogAutomationHandler(store, &fakeChangelogActions{}, "secret")
+	req := httptest.NewRequest(http.MethodGet, "/internal/changelog-candidates?status=saved&limit=1", nil)
+	req.Header.Set("Authorization", "Bearer secret")
+	rr := httptest.NewRecorder()
+
+	h.ListInternalCandidates(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("saved-candidate")) {
+		t.Fatalf("response missing saved candidate: %s", rr.Body.String())
+	}
+	if bytes.Contains(rr.Body.Bytes(), []byte("pending-candidate")) {
+		t.Fatalf("response included wrong status candidate: %s", rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte("changelog-actions?action=publish")) {
+		t.Fatalf("response missing action links: %s", rr.Body.String())
+	}
+}
+
 func TestGetAdminCandidateRequiresSignedQuery(t *testing.T) {
 	actions := &fakeChangelogActions{record: changelog.CandidateRecord{ID: "candidate-1", Status: changelog.StatusPending}}
 	h := NewChangelogAutomationHandler(&fakeChangelogStore{}, actions, "secret")
@@ -156,4 +213,21 @@ func withRouteParam(req *http.Request, key, value string) *http.Request {
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add(key, value)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+}
+
+func validChangelogHandlerPayload() changelog.CandidatePayload {
+	return changelog.CandidatePayload{
+		HasCandidate: true,
+		Candidate: changelog.Candidate{
+			ID:             "developer-logs-api",
+			Date:           "2026-06-18",
+			Title:          "Developer Logs API",
+			Summary:        "Workspace-scoped logs.",
+			Category:       changelog.CategoryReliability,
+			Impact:         changelog.ImpactNew,
+			WhyUserVisible: "Developers can inspect logs.",
+			Links:          []changelog.Link{{Label: "Docs", Href: "/docs/api/logs"}},
+			SourceLinks:    []changelog.Link{{Label: "PR", Href: "https://github.com/bugfreev587/unipost/pull/67"}},
+		},
+	}
 }

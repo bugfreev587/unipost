@@ -3,14 +3,17 @@ import { test } from "node:test";
 
 import {
   applyCandidateToReleasesSource,
+  candidateSourceHash,
   computePreviousLosAngelesWindow,
   extractAnthropicCandidateContent,
   isDiscordWebhookURL,
   isLosAngelesHour,
   normalizeCandidatePayload,
+  normalizeCandidatePayloads,
   normalizeSourceHash,
   parseAIJSONContent,
   renderDiscordCandidateMessage,
+  selectReviewPayloads,
   validateCandidatePayload,
 } from "./lib.mjs";
 
@@ -129,6 +132,104 @@ test("normalizeCandidatePayload coerces links and injects verified commit source
     label: "Commit abcdef1",
     href: "https://github.com/bugfreev587/unipost/commit/abcdef1234567890",
   }]);
+});
+
+test("normalizeCandidatePayloads keeps source links scoped to each candidate", () => {
+  const aiPayload = {
+    hasCandidate: true,
+    candidates: [
+      {
+        ...structuredClone(candidatePayload.candidate),
+        id: "webhook-validation",
+        title: "Webhook validation",
+        sourceCommitShas: ["aaaaaaa111111111"],
+        sourceLinks: [],
+      },
+      {
+        ...structuredClone(candidatePayload.candidate),
+        id: "sdk-release",
+        title: "SDK release",
+        category: "sdk",
+        sourceCommitShas: ["bbbbbbb222222222"],
+        sourceLinks: [],
+      },
+    ],
+  };
+
+  const payloads = normalizeCandidatePayloads(aiPayload, {
+    repo: "bugfreev587/unipost",
+    commits: [
+      { sha: "aaaaaaa111111111", subject: "fix: webhook validation", author: "UniPost" },
+      { sha: "bbbbbbb222222222", subject: "feat: sdk release", author: "UniPost" },
+    ],
+  });
+
+  assert.equal(payloads.length, 2);
+  assert.deepEqual(payloads[0].candidate.sourceLinks, [{
+    label: "Commit aaaaaaa",
+    href: "https://github.com/bugfreev587/unipost/commit/aaaaaaa111111111",
+  }]);
+  assert.deepEqual(payloads[1].candidate.sourceLinks, [{
+    label: "Commit bbbbbbb",
+    href: "https://github.com/bugfreev587/unipost/commit/bbbbbbb222222222",
+  }]);
+  assert.notEqual(candidateSourceHash(payloads[0]), candidateSourceHash(payloads[1]));
+});
+
+test("selectReviewPayloads caps daily review to two highest-impact candidates", () => {
+  const low = structuredClone(candidatePayload);
+  low.candidate.id = "docs-copy";
+  low.candidate.title = "Docs copy cleanup";
+  low.candidate.category = "dx";
+  low.candidate.impact = "fixed";
+
+  const medium = structuredClone(candidatePayload);
+  medium.candidate.id = "dashboard-flow";
+  medium.candidate.title = "Dashboard flow";
+  medium.candidate.category = "dashboard";
+  medium.candidate.impact = "improved";
+
+  const high = structuredClone(candidatePayload);
+  high.candidate.id = "api-release";
+  high.candidate.title = "API release";
+  high.candidate.category = "api";
+  high.candidate.impact = "new";
+
+  const selected = selectReviewPayloads([
+    { payload: low, status: "new" },
+    { payload: medium, status: "new" },
+    { payload: high, status: "new" },
+  ], { limit: 2 });
+
+  assert.deepEqual(selected.map((entry) => entry.payload.candidate.id), ["api-release", "dashboard-flow"]);
+});
+
+test("selectReviewPayloads gives saved candidates another review slot", () => {
+  const saved = structuredClone(candidatePayload);
+  saved.candidate.id = "saved-webhook";
+  saved.candidate.title = "Saved webhook";
+  saved.candidate.category = "dx";
+  saved.candidate.impact = "fixed";
+
+  const high = structuredClone(candidatePayload);
+  high.candidate.id = "api-release";
+  high.candidate.title = "API release";
+  high.candidate.category = "api";
+  high.candidate.impact = "new";
+
+  const medium = structuredClone(candidatePayload);
+  medium.candidate.id = "dashboard-flow";
+  medium.candidate.title = "Dashboard flow";
+  medium.candidate.category = "dashboard";
+  medium.candidate.impact = "improved";
+
+  const selected = selectReviewPayloads([
+    { payload: high, status: "new" },
+    { payload: medium, status: "new" },
+    { payload: saved, status: "saved" },
+  ], { limit: 2 });
+
+  assert.deepEqual(selected.map((entry) => entry.payload.candidate.id), ["saved-webhook", "api-release"]);
 });
 
 test("applyCandidateToReleasesSource inserts candidate once at the top of releases array", () => {
