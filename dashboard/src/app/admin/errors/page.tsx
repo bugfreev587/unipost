@@ -26,6 +26,28 @@ const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", 
 const SOURCE_OPTIONS = ["all", "dashboard", "api", "mcp"] as const;
 const DAY_OPTIONS = [7, 30, 90] as const;
 
+function initialFiltersFromURL() {
+  if (typeof window === "undefined") {
+    return { search: "", platform: "all" as const, source: "all" as const, days: 30 as const };
+  }
+  const params = new URLSearchParams(window.location.search);
+  const platformParam = params.get("platform");
+  const sourceParam = params.get("source");
+  const daysParam = Number(params.get("days"));
+  return {
+    search: params.get("search") || "",
+    platform: PLATFORM_OPTIONS.includes(platformParam as typeof PLATFORM_OPTIONS[number])
+      ? platformParam as typeof PLATFORM_OPTIONS[number]
+      : "all",
+    source: SOURCE_OPTIONS.includes(sourceParam as typeof SOURCE_OPTIONS[number])
+      ? sourceParam as typeof SOURCE_OPTIONS[number]
+      : "all",
+    days: DAY_OPTIONS.includes(daysParam as typeof DAY_OPTIONS[number])
+      ? daysParam as typeof DAY_OPTIONS[number]
+      : 30,
+  };
+}
+
 export default function AdminErrorsPage() {
   const { getToken } = useAuth();
   const [failures, setFailures] = useState<AdminUserPostFailure[]>([]);
@@ -41,6 +63,17 @@ export default function AdminErrorsPage() {
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
   const [rawCopied, setRawCopied] = useState(false);
   const limit = 100;
+
+  useEffect(() => {
+    const initial = initialFiltersFromURL();
+    if (initial.search) {
+      setSearch(initial.search);
+      setSearchInput(initial.search);
+    }
+    if (initial.platform !== "all") setPlatform(initial.platform);
+    if (initial.source !== "all") setSource(initial.source);
+    if (initial.days !== 30) setDays(initial.days);
+  }, []);
 
   const loadFailures = useCallback(async () => {
     setLoading(true);
