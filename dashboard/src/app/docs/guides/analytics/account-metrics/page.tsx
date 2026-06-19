@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { CodeBlock } from "../../../_components/code-block";
-import { DocsPage } from "../../../_components/docs-shell";
+import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-shell";
 import { ApiInlineLink } from "../../../api/_components/doc-components";
 
 export default function AccountMetricsGuidePage() {
@@ -27,50 +26,31 @@ export default function AccountMetricsGuidePage() {
       </ol>
 
       <h2 id="request">Request</h2>
-      <CodeBlock
-        language="bash"
-        title="cURL"
-        code={`curl "https://api.unipost.dev/v1/accounts/sa_instagram_123/metrics" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY"`}
+      <DocsCodeTabs
+        snippets={[{
+          label: "cURL",
+          lang: "bash",
+          code: `curl "https://api.unipost.dev/v1/accounts/sa_instagram_123/metrics" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+        }]}
       />
 
       <h2 id="fields">Fields to read</h2>
-      <div className="docs-table-wrap">
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Field</th>
-              <th>Meaning</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>data.follower_count</code></td>
-              <td>Followers reported by the platform.</td>
-            </tr>
-            <tr>
-              <td><code>data.following_count</code></td>
-              <td>Accounts this account follows, when the platform exposes it.</td>
-            </tr>
-            <tr>
-              <td><code>data.post_count</code></td>
-              <td>Lifetime post, video, or media count exposed by the platform.</td>
-            </tr>
-            <tr>
-              <td><code>data.platform_specific</code></td>
-              <td>Provider-native additions or upstream failure details that do not fit the normalized shape.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DocsTable
+        columns={["Field", "Meaning"]}
+        rows={[
+          [<code key="field">data.follower_count</code>, "Followers reported by the platform."],
+          [<code key="field">data.following_count</code>, "Accounts this account follows, when the platform exposes it."],
+          [<code key="field">data.post_count</code>, "Lifetime post, video, or media count exposed by the platform."],
+          [<code key="field">data.platform_specific</code>, "Provider-native additions or upstream failure details that do not fit the normalized shape."],
+        ]}
+      />
 
       <h2 id="platform-notes">Platform notes</h2>
-      <ul className="docs-step-list">
-        <li>TikTok followers require <code>user.info.stats</code>; likes count appears in <code>platform_specific.likes_count</code>.</li>
-        <li>Instagram and Threads require the approved account insight scopes documented in platform capabilities.</li>
-        <li>X account metrics depend on X API availability and rate limits for the connected account.</li>
-        <li>Unsupported platforms return <code>NOT_SUPPORTED</code> instead of an empty success response.</li>
-      </ul>
+      <p>TikTok followers require <code>user.info.stats</code>; likes count appears in <code>platform_specific.likes_count</code>.</p>
+      <p>Instagram and Threads require the approved account insight scopes documented in platform capabilities.</p>
+      <p>X account metrics depend on X API availability and rate limits for the connected account.</p>
+      <p>Unsupported platforms return <code>NOT_SUPPORTED</code> instead of an empty success response.</p>
 
       <h2 id="reference">Reference</h2>
       <div className="docs-next-grid">

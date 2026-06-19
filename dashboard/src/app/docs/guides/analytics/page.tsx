@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DocsPage } from "../../_components/docs-shell";
+import { DocsPage, DocsTable } from "../../_components/docs-shell";
 import { ApiInlineLink } from "../../api/_components/doc-components";
 
 export default function AnalyticsGuidesPage() {
@@ -41,44 +41,16 @@ export default function AnalyticsGuidesPage() {
       </p>
 
       <h2 id="common-tasks">Common tasks</h2>
-      <div className="docs-table-wrap">
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Task</th>
-              <th>UniPost API</th>
-              <th>Start here</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td>TikTok followers</td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /></td>
-              <td><Link href="/docs/guides/analytics/tiktok-followers">Get TikTok followers</Link></td>
-            </tr>
-            <tr>
-              <td>Account metrics across platforms</td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /></td>
-              <td><Link href="/docs/guides/analytics/account-metrics">Get account metrics</Link></td>
-            </tr>
-            <tr>
-              <td>One published post</td>
-              <td><ApiInlineLink endpoint="GET /v1/posts/{post_id}/analytics" /></td>
-              <td><Link href="/docs/guides/analytics/post-analytics">Get post analytics</Link></td>
-            </tr>
-            <tr>
-              <td>CSV export</td>
-              <td><ApiInlineLink endpoint="GET /v1/analytics/posts/export" /></td>
-              <td><Link href="/docs/guides/analytics/export-post-analytics">Export analytics rows</Link></td>
-            </tr>
-            <tr>
-              <td>Missing scopes</td>
-              <td><ApiInlineLink endpoint="GET /v1/accounts/{account_id}/health" /></td>
-              <td><Link href="/docs/guides/analytics/reconnect-analytics-scopes">Reconnect analytics scopes</Link></td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DocsTable
+        columns={["Task", "UniPost API", "Start here"]}
+        rows={[
+          ["TikTok followers", <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/metrics" />, <Link key="guide" href="/docs/guides/analytics/tiktok-followers">Get TikTok followers</Link>],
+          ["Account metrics across platforms", <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/metrics" />, <Link key="guide" href="/docs/guides/analytics/account-metrics">Get account metrics</Link>],
+          ["One published post", <ApiInlineLink key="api" endpoint="GET /v1/posts/{post_id}/analytics" />, <Link key="guide" href="/docs/guides/analytics/post-analytics">Get post analytics</Link>],
+          ["CSV export", <ApiInlineLink key="api" endpoint="GET /v1/analytics/posts/export" />, <Link key="guide" href="/docs/guides/analytics/export-post-analytics">Export analytics rows</Link>],
+          ["Missing scopes", <ApiInlineLink key="api" endpoint="GET /v1/accounts/{account_id}/health" />, <Link key="guide" href="/docs/guides/analytics/reconnect-analytics-scopes">Reconnect analytics scopes</Link>],
+        ]}
+      />
 
       <h2 id="reference">Reference links</h2>
       <p>

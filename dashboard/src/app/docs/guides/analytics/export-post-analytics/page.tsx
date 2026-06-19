@@ -1,6 +1,5 @@
 import Link from "next/link";
-import { CodeBlock } from "../../../_components/code-block";
-import { DocsPage } from "../../../_components/docs-shell";
+import { DocsCodeTabs, DocsPage, DocsTable } from "../../../_components/docs-shell";
 import { ApiInlineLink } from "../../../api/_components/doc-components";
 
 export default function ExportPostAnalyticsGuidePage() {
@@ -26,47 +25,32 @@ export default function ExportPostAnalyticsGuidePage() {
       </ol>
 
       <h2 id="request">Request</h2>
-      <CodeBlock
-        language="bash"
-        title="cURL"
-        code={`curl "https://api.unipost.dev/v1/analytics/posts/export?platform=tiktok&from=2026-06-01&to=2026-06-30" \\
+      <DocsCodeTabs
+        snippets={[{
+          label: "cURL",
+          lang: "bash",
+          code: `curl "https://api.unipost.dev/v1/analytics/posts/export?platform=tiktok&from=2026-06-01&to=2026-06-30" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
-  -o unipost-analytics-posts.csv`}
+  -o unipost-analytics-posts.csv`,
+        }]}
       />
 
       <h2 id="columns">Useful columns</h2>
-      <div className="docs-table-wrap">
-        <table className="docs-table">
-          <thead>
-            <tr>
-              <th>Column</th>
-              <th>Meaning</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td><code>post_id</code></td>
-              <td>UniPost post id.</td>
-            </tr>
-            <tr>
-              <td><code>platform</code></td>
-              <td>Destination platform for the row.</td>
-            </tr>
-            <tr>
-              <td><code>social_account_id</code></td>
-              <td>Connected social account used for the post.</td>
-            </tr>
-            <tr>
-              <td><code>impressions</code>, <code>reach</code>, <code>likes</code>, <code>comments</code>, <code>shares</code></td>
-              <td>Normalized performance metrics when available.</td>
-            </tr>
-            <tr>
-              <td><code>last_failure_reason</code></td>
-              <td>Most recent cached upstream analytics failure, when present.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+      <DocsTable
+        columns={["Column", "Meaning"]}
+        rows={[
+          [<code key="column">post_id</code>, "UniPost post id."],
+          [<code key="column">platform</code>, "Destination platform for the row."],
+          [<code key="column">social_account_id</code>, "Connected social account used for the post."],
+          [
+            <span key="columns">
+              <code>impressions</code>, <code>reach</code>, <code>likes</code>, <code>comments</code>, <code>shares</code>
+            </span>,
+            "Normalized performance metrics when available.",
+          ],
+          [<code key="column">last_failure_reason</code>, "Most recent cached upstream analytics failure, when present."],
+        ]}
+      />
 
       <h2 id="reference">Reference</h2>
       <div className="docs-next-grid">

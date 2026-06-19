@@ -133,16 +133,22 @@ function getDocsTableColumnWidths(columns: readonly string[]) {
     case "video|value":
     case "limitation|why":
     case "code|what it means":
+    case "field|meaning":
+    case "column|meaning":
       return ["34%", "66%"];
     case "feature|support|notes":
     case "metric|support|notes":
     case "surface|support|notes":
       return ["34%", "32%", "34%"];
+    case "task|unipost api|start here":
+      return ["30%", "40%", "30%"];
     case "option|values|notes":
       return ["34%", "32%", "34%"];
     case "pattern|api path|when to use it":
     case "step|api call|purpose":
       return ["14%", "36%", "50%"];
+    case "platform|analytics scopes|common unipost api":
+      return ["16%", "41%", "43%"];
     case "channel|available|what you need|format rule":
       return ["26%", "14%", "32%", "28%"];
     case "event|severity|default on|what triggers it":
@@ -203,6 +209,15 @@ function isNoWrapDocsTableColumn(columns: readonly string[], columnIndex: number
   const key = columns.map((column) => column.trim().toLowerCase()).join("|");
 
   switch (key) {
+    case "field|meaning":
+    case "column|meaning":
+      return columnIndex === 0;
+    case "question|answer":
+      return columnIndex === 1;
+    case "task|unipost api|start here":
+      return columnIndex === 1;
+    case "platform|analytics scopes|common unipost api":
+      return columnIndex === 2;
     case "pattern|api path|when to use it":
     case "step|api call|purpose":
       return columnIndex === 1;
@@ -1281,17 +1296,17 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-nav-link{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 8px;border-radius:10px;font-size:14.5px;font-weight:560;line-height:1.38;color:var(--docs-nav-text);text-decoration:none;transition:all .12s}
 .docs-nav-link:hover{color:var(--docs-nav-text-strong);background:var(--docs-nav-hover)}
 .docs-nav-link.active{color:var(--docs-nav-active-text);font-weight:560;background:var(--docs-nav-active-bg);box-shadow:inset 0 0 0 1px var(--docs-nav-active-border)}
-.docs-api-inline{position:relative;display:inline-flex;align-items:center;padding:2px 8px 3px;border-radius:10px;background:color-mix(in srgb, #2f7d4e 18%, var(--docs-inline-code-bg));border:1px solid color-mix(in srgb, #5ca772 24%, var(--docs-border));color:var(--docs-text);font-family:var(--docs-mono);font-size:.84em;font-weight:560;line-height:1.15;letter-spacing:.005em;text-decoration:none;vertical-align:baseline;overflow:hidden;transition:all .14s}
-.docs-api-inline:hover{background:color-mix(in srgb, #2f7d4e 24%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #5ca772 40%, var(--docs-border));color:var(--docs-text);transform:translateY(-1px)}
+.docs-api-inline{position:relative;display:inline-flex;align-items:center;padding:2px 8px 3px;border-radius:10px;background:color-mix(in srgb, #16a34a 17%, var(--docs-inline-code-bg));border:1px solid color-mix(in srgb, #16a34a 34%, var(--docs-border));color:var(--docs-text);font-family:var(--docs-mono);font-size:.84em;font-weight:560;line-height:1.15;letter-spacing:.005em;text-decoration:none;vertical-align:baseline;overflow:hidden;white-space:nowrap;overflow-wrap:normal;word-break:normal;transition:all .14s}
+.docs-api-inline:hover{background:color-mix(in srgb, #16a34a 23%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #16a34a 48%, var(--docs-border));color:var(--docs-text);transform:translateY(-1px)}
 .docs-api-inline.docs-api-inline-post{background:color-mix(in srgb, #2563eb 16%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #60a5fa 28%, var(--docs-border))}
 .docs-api-inline.docs-api-inline-post:hover{background:color-mix(in srgb, #2563eb 22%, var(--docs-inline-code-bg));border-color:color-mix(in srgb, #60a5fa 42%, var(--docs-border))}
 .docs-api-inline-static{cursor:default}
 .docs-api-inline-glow{position:absolute;inset:0;background:linear-gradient(90deg,rgba(104,211,145,.2),transparent 62%);opacity:.34;pointer-events:none}
 .docs-api-inline.docs-api-inline-post .docs-api-inline-glow{background:linear-gradient(90deg,rgba(96,165,250,.24),transparent 62%)}
-.docs-api-inline-label{position:relative;z-index:1;display:inline-flex;align-items:center;gap:8px}
-.docs-api-inline-method{color:#83d39e;font-weight:700;letter-spacing:.02em}
+.docs-api-inline-label{position:relative;z-index:1;display:inline-flex;align-items:center;gap:8px;min-width:max-content;white-space:nowrap}
+.docs-api-inline-method{color:#16a34a;font-weight:700;letter-spacing:.02em;white-space:nowrap}
 .docs-api-inline.docs-api-inline-post .docs-api-inline-method{color:#60a5fa}
-.docs-api-inline-path{color:var(--docs-link)}
+.docs-api-inline-path{color:var(--docs-link);white-space:nowrap}
 .docs-nav-badge{font-size:10px;font-family:var(--docs-mono);padding:2px 6px;border-radius:999px;background:color-mix(in srgb, var(--docs-bg-elevated) 78%, var(--docs-nav-surface));color:var(--docs-nav-text-faint)}
 .docs-main{min-width:0}
 .docs-main-api{max-width:none}
