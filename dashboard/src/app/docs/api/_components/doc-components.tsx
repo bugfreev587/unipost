@@ -54,7 +54,9 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^GET \/v1\/(?:accounts|social-accounts)\/[^/]+\/facebook\/page-analytics$/i, href: "/docs/api/analytics/facebook/page-analytics" },
   { match: /^GET \/v1\/(?:accounts|social-accounts)\/[^/]+\/facebook\/page-insights$/i, href: "/docs/api/analytics/facebook/page-insights" },
   { match: /^POST \/v1\/analytics\/refresh$/i, href: "/docs/api/analytics/refresh" },
-  { match: /^(?:POST|GET|DELETE) \/v1\/platform-credentials(?:\/[^/]+)?$/i, href: "/docs/api/platform-credentials" },
+  { match: /^POST \/v1\/platform-credentials$/i, href: "/docs/api/platform-credentials/create" },
+  { match: /^GET \/v1\/platform-credentials$/i, href: "/docs/api/platform-credentials/list" },
+  { match: /^DELETE \/v1\/platform-credentials\/[^/]+$/i, href: "/docs/api/platform-credentials/delete" },
   { match: /^GET \/v1\/(?:posts|social-posts)\/[^/]+$/i, href: "/docs/api/posts/get" },
   { match: /^GET \/v1\/(?:posts|social-posts)$/i, href: "/docs/api/posts/list" },
   { match: /^GET \/v1\/workspace$/i, href: "/docs/api/workspace/get" },
@@ -99,10 +101,9 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^POST \/v1\/media$/i, href: "/docs/api/media" },
   { match: /^GET \/v1\/users/i, href: "/docs/api/users" },
   // Legacy workspace-scoped Platform Credentials paths.
-  {
-    match: /^(?:POST|GET|DELETE) \/v1\/workspaces\/[^/]+\/platform-credentials(?:\/[^/]+)?$/i,
-    href: "/docs/api/platform-credentials",
-  },
+  { match: /^POST \/v1\/workspaces\/[^/]+\/platform-credentials$/i, href: "/docs/api/platform-credentials/create" },
+  { match: /^GET \/v1\/workspaces\/[^/]+\/platform-credentials$/i, href: "/docs/api/platform-credentials/list" },
+  { match: /^DELETE \/v1\/workspaces\/[^/]+\/platform-credentials\/[^/]+$/i, href: "/docs/api/platform-credentials/delete" },
 ];
 
 function normalizeEndpointReference(value: string) {
