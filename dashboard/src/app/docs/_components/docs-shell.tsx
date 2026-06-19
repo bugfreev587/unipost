@@ -450,8 +450,15 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Revoke API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
           ],
         },
-        { label: "Errors", href: "/docs/api/errors" },
-        { label: "Platform Credentials", href: "/docs/api/platform-credentials" },
+        {
+          label: "Platform Credentials",
+          children: [
+            { label: "Upload credentials", href: "/docs/api/platform-credentials/create", method: "POST" },
+            { label: "List credentials", href: "/docs/api/platform-credentials/list", method: "GET" },
+            { label: "Delete credentials", href: "/docs/api/platform-credentials/delete", method: "DELETE" },
+            { label: "Errors", href: "/docs/api/errors" },
+          ],
+        },
       ],
     },
     {

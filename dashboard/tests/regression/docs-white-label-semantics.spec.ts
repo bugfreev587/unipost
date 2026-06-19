@@ -9,7 +9,7 @@ test.describe("white-label documentation semantics", () => {
     const platformCredentialsSource = await readFile(path.join(process.cwd(), "src/app/docs/platform-credentials/page.tsx"), "utf8");
     const platformGuideSource = await readFile(path.join(process.cwd(), "src/app/docs/platform-credentials/[platform]/page.tsx"), "utf8");
     const legacyPlatformGuideSource = await readFile(path.join(process.cwd(), "src/app/docs/white-label/[platform]/page.tsx"), "utf8");
-    const credentialsSource = await readFile(path.join(process.cwd(), "src/app/docs/api/platform-credentials/page.tsx"), "utf8");
+    const credentialsSource = await readFile(path.join(process.cwd(), "src/app/docs/api/platform-credentials/create/page.tsx"), "utf8");
     const connectSessionsSource = await readFile(path.join(process.cwd(), "src/app/docs/connect-sessions/page.tsx"), "utf8");
 
     expect(docsShellSource).toContain("Hosted Connect (White-label branding)");

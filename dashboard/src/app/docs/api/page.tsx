@@ -105,7 +105,9 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     endpoints: [
       { label: "Get workspace", method: "GET", path: "/v1/workspace", href: "/docs/api/workspace/get", description: "Fetch workspace metadata." },
       { label: "Update workspace", method: "PATCH", path: "/v1/workspace", href: "/docs/api/workspace/update", description: "Update workspace metadata." },
-      { label: "Platform credentials", method: "POST", path: "/v1/platform-credentials", href: "/docs/api/platform-credentials", description: "Save workspace-owned platform OAuth credentials." },
+      { label: "Upload platform credentials", method: "POST", path: "/v1/platform-credentials", href: "/docs/api/platform-credentials/create", description: "Save workspace-owned platform OAuth credentials." },
+      { label: "List platform credentials", method: "GET", path: "/v1/platform-credentials", href: "/docs/api/platform-credentials/list", description: "List configured platform OAuth credentials." },
+      { label: "Delete platform credentials", method: "DELETE", path: "/v1/platform-credentials/{platform}", href: "/docs/api/platform-credentials/delete", description: "Remove workspace-owned platform OAuth credentials." },
       { label: "List users", method: "GET", path: "/v1/users", href: "/docs/api/users/list", description: "List managed users." },
       { label: "Get user", method: "GET", path: "/v1/users/{external_user_id}", href: "/docs/api/users/get", description: "Fetch one managed user." },
       { label: "Create webhook", method: "POST", path: "/v1/webhooks", href: "/docs/api/webhooks/create", description: "Create a webhook subscription." },
