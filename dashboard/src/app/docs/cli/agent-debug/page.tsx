@@ -1,4 +1,5 @@
 import { DocsCodeTabs, DocsPage, DocsTable } from "../../_components/docs-shell";
+import { DebugCommandCode } from "./debug-command-code";
 
 const INSTALL_SNIPPETS = [
   {
@@ -172,7 +173,9 @@ export default function CliAgentDebugPage() {
               <h3>{item.title}</h3>
               <p>{item.body}</p>
             </div>
-            <code>{item.command}</code>
+            <div className="debug-flow-command">
+              <DebugCommandCode code={item.command} language={item.command.startsWith("unipost ") ? "bash" : "text"} />
+            </div>
           </article>
         ))}
       </section>
@@ -260,6 +263,11 @@ const styles = `
 .debug-flow-copy{min-width:0}
 .debug-flow-row h3{margin:6px 0 0;color:var(--docs-text);font-size:19px;line-height:1.3;font-weight:740;letter-spacing:0}
 .debug-flow-row p{margin:9px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.65}
-.debug-flow-row code{display:block;align-self:center;justify-self:stretch;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px;line-height:1.55;overflow-wrap:anywhere;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-muted);padding:12px 14px}
-@media (max-width:920px){.debug-hero,.debug-flow-row{grid-template-columns:1fr}.debug-hero-copy h2{font-size:25px}.debug-flow-row code{align-self:start}}
+.debug-flow-command{align-self:center;justify-self:stretch;min-width:0}
+.debug-flow-command .docs-code-tabs{margin:0}
+.debug-command-code-body{margin:0;padding:18px 20px 20px;background:#272936;color:#f4f4f5;font-family:var(--docs-mono);font-size:13px;line-height:1.7;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
+.debug-command-code-body code{font:inherit;color:inherit}
+.debug-command-expanded-body{margin:0;height:100%;padding:20px 22px;overflow:auto;background:#272936;color:#f4f4f5;font-family:var(--docs-mono);font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+.debug-command-expanded-body code{font:inherit;color:inherit}
+@media (max-width:920px){.debug-hero,.debug-flow-row{grid-template-columns:1fr}.debug-hero-copy h2{font-size:25px}.debug-flow-command{align-self:start}}
 `;
