@@ -66,7 +66,12 @@ export default clerkMiddleware(async (auth, request) => {
     // agent authenticates it with a short-lived review-session cookie.
     pathname.startsWith("/tiktok/posting") ||
     pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
-  if (isPublicPage) {
+
+  const isPublicDocsApi =
+    pathname === "/api/docs/answer" ||
+    pathname === "/api/docs/feedback";
+
+  if (isPublicPage || isPublicDocsApi) {
     return withCountryCookie(NextResponse.next(), request);
   }
 
