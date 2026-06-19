@@ -778,9 +778,16 @@ test("auth login --setup-token preflights secure storage before exchanging the t
   });
 });
 
-test("auth login --setup-token requires --yes before replacing an existing binding", async () => {
+test("auth login --setup-token reuses a valid local binding without consuming the setup token", async () => {
   await withTempConfig(async (configDir) => {
     await mkdir(configDir, { recursive: true });
+    const secureStore = createMemorySecureStore();
+    const existingAccount = "workspace:ws_existing:key:key_existing";
+    await secureStore.set({
+      service: "dev.unipost.cli",
+      account: existingAccount,
+      value: "up_live_existing_secret",
+    });
     await writeFile(join(configDir, "config.json"), `${JSON.stringify({
       default_workspace_id: "ws_existing",
       credential: {
@@ -788,12 +795,22 @@ test("auth login --setup-token requires --yes before replacing an existing bindi
         storage: "keychain",
         workspace_id: "ws_existing",
         workspace_name: "Existing Workspace",
+        key_id: "key_existing",
+        key_prefix: "up_live_existing",
         keychain_service: "dev.unipost.cli",
-        keychain_account: "workspace:ws_existing:key:key_existing",
+        keychain_account: existingAccount,
       },
     }, null, 2)}\n`);
 
     await withServer((req, res) => {
+      if (req.method === "GET" && req.url === "/v1/workspace") {
+        assert.equal(req.headers.authorization, "Bearer up_live_existing_secret");
+        writeJson(res, 200, {
+          data: { id: "ws_existing", name: "Existing Workspace" },
+          request_id: "req_existing_workspace",
+        });
+        return;
+      }
       writeJson(res, 500, {
         error: {
           code: "UNEXPECTED_REQUEST",
@@ -810,14 +827,157 @@ test("auth login --setup-token requires --yes before replacing an existing bindi
         "--base-url", baseUrl,
       ], {
         env: { UNIPOST_CONFIG_DIR: configDir },
-        secureStore: createMemorySecureStore(),
+        secureStore,
       });
 
-      assert.equal(result.code, 6);
+      assert.equal(result.code, 0);
       const body = JSON.parse(result.stdout);
-      assert.equal(body.error.code, "auth_rebind_confirmation_required");
-      assert.match(body.error.hint, /--yes/);
-      assert.equal(requests.length, 0);
+      assert.equal(body.data.status, "already_configured");
+      assert.equal(body.data.setup_token_exchanged, false);
+      assert.equal(body.data.workspace.id, "ws_existing");
+      assert.equal(body.data.credential.storage, "keychain");
+      assert.equal(body.data.credential.key_id, "key_existing");
+      assert.equal(JSON.stringify(body).includes("ust_replace_setup"), false);
+      assert.deepEqual(requests.map((req) => `${req.method} ${req.url}`), ["GET /v1/workspace"]);
+    });
+  });
+});
+
+test("auth login --setup-token does not consume the setup token when existing binding validation is inconclusive", async () => {
+  await withTempConfig(async (configDir) => {
+    await mkdir(configDir, { recursive: true });
+    const secureStore = createMemorySecureStore();
+    const existingAccount = "workspace:ws_existing:key:key_existing";
+    await secureStore.set({
+      service: "dev.unipost.cli",
+      account: existingAccount,
+      value: "up_live_existing_secret",
+    });
+    await writeFile(join(configDir, "config.json"), `${JSON.stringify({
+      default_workspace_id: "ws_existing",
+      credential: {
+        type: "api_key",
+        storage: "keychain",
+        workspace_id: "ws_existing",
+        workspace_name: "Existing Workspace",
+        keychain_service: "dev.unipost.cli",
+        keychain_account: existingAccount,
+      },
+    }, null, 2)}\n`);
+
+    await withServer((req, res) => {
+      if (req.method === "GET" && req.url === "/v1/workspace") {
+        writeJson(res, 500, {
+          error: {
+            code: "INTERNAL_ERROR",
+            normalized_code: "internal_error",
+            message: "Workspace check is temporarily unavailable.",
+          },
+        });
+        return;
+      }
+      writeJson(res, 500, {
+        error: {
+          code: "UNEXPECTED_REQUEST",
+          normalized_code: "upstream_error",
+          message: `Unexpected request: ${req.method} ${req.url}`,
+        },
+      });
+    }, async (baseUrl, requests) => {
+      const result = await runCli([
+        "auth", "login",
+        "--setup-token", "ust_keep_unused",
+        "--client", "codex",
+        "--json",
+        "--base-url", baseUrl,
+      ], {
+        env: { UNIPOST_CONFIG_DIR: configDir },
+        secureStore,
+      });
+
+      assert.equal(result.code, 7);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.error.normalized_code, "internal_error");
+      assert.ok(requests.length >= 1);
+      assert.ok(requests.every((req) => req.method === "GET" && req.url === "/v1/workspace"));
+    });
+  });
+});
+
+test("auth login --setup-token --replace-key intentionally exchanges and replaces an existing binding", async () => {
+  await withTempConfig(async (configDir) => {
+    await mkdir(configDir, { recursive: true });
+    const secureStore = createMemorySecureStore();
+    const oldAccount = "workspace:ws_old:key:key_old";
+    await secureStore.set({
+      service: "dev.unipost.cli",
+      account: oldAccount,
+      value: "up_live_old_secret",
+    });
+    await writeFile(join(configDir, "config.json"), `${JSON.stringify({
+      default_workspace_id: "ws_old",
+      credential: {
+        type: "api_key",
+        storage: "keychain",
+        workspace_id: "ws_old",
+        workspace_name: "Old Workspace",
+        key_id: "key_old",
+        keychain_service: "dev.unipost.cli",
+        keychain_account: oldAccount,
+      },
+    }, null, 2)}\n`);
+
+    await withServer(async (req, res) => {
+      if (req.method === "POST" && req.url === "/v1/cli/setup-tokens/exchange") {
+        const body = await readRequestJson(req);
+        assert.deepEqual(body, { setup_token: "ust_replace_setup", client: "codex" });
+        writeJson(res, 201, {
+          data: {
+            workspace_id: "ws_new",
+            client: "codex",
+            api_key: {
+              id: "key_new",
+              name: "Codex CLI",
+              key: "up_live_new_secret",
+              prefix: "up_live_new",
+              environment: "production",
+              created_at: "2026-06-03T12:00:00Z",
+            },
+          },
+          request_id: "req_exchange_replace",
+        });
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/workspace") {
+        assert.equal(req.headers.authorization, "Bearer up_live_new_secret");
+        writeJson(res, 200, {
+          data: { id: "ws_new", name: "New Workspace" },
+          request_id: "req_new_workspace",
+        });
+        return;
+      }
+      writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
+    }, async (baseUrl) => {
+      const result = await runCli([
+        "auth", "login",
+        "--setup-token", "ust_replace_setup",
+        "--client", "codex",
+        "--replace-key",
+        "--json",
+        "--base-url", baseUrl,
+      ], {
+        env: { UNIPOST_CONFIG_DIR: configDir },
+        secureStore,
+      });
+
+      assert.equal(result.code, 0);
+      const body = JSON.parse(result.stdout);
+      assert.equal(body.data.workspace.id, "ws_new");
+      assert.equal(body.data.credential.key_id, "key_new");
+      assert.equal(body.data.credential.client, "codex");
+      assert.equal([...secureStore.values.values()].includes("up_live_new_secret"), true);
+      assert.equal([...secureStore.values.values()].includes("up_live_old_secret"), false);
+      assert.equal(secureStore.deleted.length, 1);
     });
   });
 });
@@ -863,6 +1023,10 @@ test("agent bootstrap --setup-token exchanges the token before loading workspace
       }
       if (req.method === "GET" && req.url === "/v1/accounts") {
         writeJson(res, 200, { data: [{ id: "acct_boot", platform: "linkedin", status: "connected" }] });
+        return;
+      }
+      if (req.method === "GET" && req.url === "/v1/posts?limit=5") {
+        writeJson(res, 200, { data: [{ id: "post_boot", status: "published" }] });
         return;
       }
       writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
@@ -2028,6 +2192,19 @@ test("agent capabilities and context expose stable machine-readable discovery", 
       writeJson(res, 200, { data: [{ id: "sa_agent", platform: "linkedin", account_name: "Agent", status: "active" }], request_id: "req_accounts" });
       return;
     }
+    if (req.url === "/v1/posts?limit=5") {
+      writeJson(res, 200, {
+        data: [
+          { id: "post_1", status: "published", caption: "Live", created_at: "2026-06-03T12:00:00Z" },
+          { id: "post_2", status: "failed", caption: "Needs help", created_at: "2026-06-02T12:00:00Z" },
+          { id: "post_3", status: "draft", caption: "Draft", created_at: "2026-06-01T12:00:00Z" },
+        ],
+        next_cursor: "cur_next",
+        has_more: true,
+        request_id: "req_posts",
+      });
+      return;
+    }
     writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
   }, async (baseUrl) => {
     const context = await runCli(["agent", "context", "--json", "--base-url", baseUrl], {
@@ -2039,6 +2216,11 @@ test("agent capabilities and context expose stable machine-readable discovery", 
     assert.equal(body.data.profiles[0].id, "pr_agent");
     assert.equal(body.data.accounts[0].id, "sa_agent");
     assert.equal(body.data.grounding.account_count, 1);
+    assert.equal(body.data.recent_posts.length, 3);
+    assert.equal(body.data.recent_post_summary.total_returned, 3);
+    assert.equal(body.data.recent_post_summary.has_more, true);
+    assert.deepEqual(body.data.recent_post_summary.by_status, { published: 1, failed: 1, draft: 1 });
+    assert.equal(body.data.grounding.recent_post_count, 3);
   });
 });
 
@@ -2085,6 +2267,10 @@ test("agent bootstrap diagnoses missing auth and succeeds with API-key fallback"
     }
     if (req.url === "/v1/accounts") {
       writeJson(res, 200, { data: [{ id: "sa_boot", platform: "linkedin", account_name: "Boot", status: "active" }] });
+      return;
+    }
+    if (req.url === "/v1/posts?limit=5") {
+      writeJson(res, 200, { data: [{ id: "post_boot", status: "published" }] });
       return;
     }
     writeJson(res, 404, { error: { code: "NOT_FOUND", normalized_code: "not_found", message: "Not found" } });
@@ -2427,7 +2613,7 @@ test("doctor support-bundle --upload posts the redacted report to the support bu
       assert.equal(result.code, 0);
       assert.ok(uploaded, "expected upload request");
       assert.equal(uploaded.schema_version, "doctor.v1");
-      assert.equal(uploaded.cli_version, "0.3.0");
+      assert.equal(uploaded.cli_version, "0.3.1");
       assert.match(uploaded.report_markdown, /# UniPost Debug Report/);
       assert.doesNotMatch(uploaded.report_markdown, /should_not_leave_cli|up_live_abcd1234efgh/);
       const body = JSON.parse(result.stdout);

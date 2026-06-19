@@ -8,7 +8,7 @@ import { promisify } from "node:util";
 
 const execFile = promisify(execFileCallback);
 
-const CLI_VERSION = "0.3.0";
+const CLI_VERSION = "0.3.1";
 const CLI_RUNNER = "unipost";
 const DEFAULT_BASE_URL = "https://api.unipost.dev";
 const DOCS_QUICKSTART_URL = "https://unipost.dev/docs/quickstart";
@@ -737,8 +737,13 @@ async function loginWithApiKey(context) {
 async function loginWithSetupToken(context, defaultClient = "terminal") {
   const client = context.options.client || defaultClient;
   await assertSecureStoreAvailable(context);
-  await requireSetupTokenReplacementConfirmation(context);
+  const existing = await reuseValidCredentialBeforeSetupTokenExchange(context, client);
+  if (existing) {
+    return existing;
+  }
+  const previousCredential = await previousSetupCredential(context);
   const exchange = await exchangeSetupToken(context, client);
+  context.options.setupTokenExchanged = true;
   const apiKey = exchange.api_key || exchange.apiKey;
   if (!apiKey?.key) {
     throw new CliError({
@@ -761,6 +766,7 @@ async function loginWithSetupToken(context, defaultClient = "terminal") {
       workspace,
       client: credentialClient,
       source: "setup_token",
+      previousCredential,
     });
     const nextActions = [
       `Run ${CLI_RUNNER} auth status --json to confirm keychain-backed auth.`,
@@ -791,19 +797,73 @@ async function loginWithSetupToken(context, defaultClient = "terminal") {
   }
 }
 
-async function requireSetupTokenReplacementConfirmation(context) {
-  const config = await readConfig(context);
-  if (!config.credential || context.options.yes) {
-    return;
+async function reuseValidCredentialBeforeSetupTokenExchange(context, client) {
+  if (credentialReplacementRequested(context)) {
+    return null;
   }
-  throw new CliError({
-    code: "auth_rebind_confirmation_required",
-    normalizedCode: "auth_rebind_confirmation_required",
-    message: "Existing UniPost CLI binding requires confirmation before replacement.",
-    hint: `Rerun with --yes after confirming you want to replace workspace ${config.credential.workspace_id || "unknown"}.`,
-    docsUrl: DOCS_CLI_URL,
-    exitCode: EXIT.validation,
+  const config = await readConfig(context);
+  const credential = config.credential;
+  if (credential?.storage !== "keychain" || !credential.keychain_account) {
+    return null;
+  }
+
+  const storedKey = await context.secureStore.get({
+    service: credential.keychain_service || KEYCHAIN_SERVICE,
+    account: credential.keychain_account,
   });
+  if (!storedKey) {
+    return null;
+  }
+
+  const previousApiKey = context.options.apiKey;
+  const previousCredentialSource = context.options.credentialSource;
+  context.options.apiKey = storedKey;
+  context.options.credentialSource = "keychain";
+  try {
+    const { workspace, response } = await fetchWorkspace(context);
+    context.options.setupTokenAlreadyConfigured = true;
+    context.options.setupTokenExchanged = false;
+    const nextActions = [
+      `Run ${CLI_RUNNER} auth status --json to confirm local auth.`,
+    ];
+    if (client !== "terminal") {
+      nextActions.push(`Run ${CLI_RUNNER} agent bootstrap --client ${client} --json before agent workflows.`);
+    }
+    return envelopeResult({
+      data: {
+        authenticated: true,
+        status: "already_configured",
+        workspace,
+        credential: sanitizeConfig(credential),
+        stored_secret: true,
+        setup_token_exchanged: false,
+        config_path: configPath(context),
+        next_actions: nextActions,
+      },
+      warnings: [{
+        code: "setup_token_not_used",
+        message: "A valid local UniPost CLI credential already exists, so the setup token was not exchanged.",
+      }],
+      meta: {
+        request_id: response.requestId,
+        rate_limit: response.rateLimit,
+      },
+      human: `Existing UniPost CLI credential is already valid for workspace ${workspace?.id || "unknown"}; setup token was not used.\n`,
+    });
+  } catch (error) {
+    context.options.apiKey = previousApiKey;
+    context.options.credentialSource = previousCredentialSource;
+    const cliError = normalizeError(error);
+    if (!["unauthorized", "forbidden", "not_found"].includes(cliError.normalizedCode)) {
+      throw cliError;
+    }
+    return null;
+  }
+}
+
+async function previousSetupCredential(context) {
+  const config = await readConfig(context);
+  return config.credential || null;
 }
 
 async function exchangeSetupToken(context, client) {
@@ -834,7 +894,7 @@ async function prepareCredentialReplacement(context, { apiKey, workspace, target
   if (!credentialReplacementNeedsConfirmation(current, next)) {
     return { previousCredential: null };
   }
-  if (!context.options.yes) {
+  if (!credentialReplacementRequested(context)) {
     throw new CliError({
       code: "auth_rebind_confirmation_required",
       normalizedCode: "auth_rebind_confirmation_required",
@@ -842,13 +902,17 @@ async function prepareCredentialReplacement(context, { apiKey, workspace, target
       hint: [
         `Current workspace: ${current.workspace_name || current.workspace_id || "unknown"}.`,
         `New workspace: ${workspace?.name || workspace?.id || "unknown"}.`,
-        "Rerun with --yes after confirming this local single-account binding should be replaced.",
+        "Rerun with --replace-key or --yes after confirming this local single-account binding should be replaced.",
       ].join(" "),
       docsUrl: DOCS_CLI_URL,
       exitCode: EXIT.validation,
     });
   }
   return { previousCredential: current };
+}
+
+function credentialReplacementRequested(context) {
+  return Boolean(context.options.replaceKey || context.options.reauth || context.options.yes);
 }
 
 function credentialReplacementNeedsConfirmation(current, next) {
@@ -3238,15 +3302,24 @@ function agentCapabilities() {
 
 async function agentContextData(context) {
   const config = await readConfig(context);
-  const [{ workspace, response: workspaceResponse }, { profiles }, { accounts: accountList }] = await Promise.all([
+  const [
+    { workspace, response: workspaceResponse },
+    { profiles },
+    { accounts: accountList },
+    { posts: recentPosts, pagination: recentPostPagination },
+  ] = await Promise.all([
     fetchWorkspace(context),
     fetchProfiles(context),
     fetchAccounts(context),
+    fetchRecentPosts(context),
   ]);
+  const recentPostSummary = summarizeRecentPosts(recentPosts, recentPostPagination);
   return {
     workspace,
     profiles,
     accounts: accountList,
+    recent_posts: recentPosts,
+    recent_post_summary: recentPostSummary,
     defaults: {
       workspace_id: config.default_workspace_id || workspace?.id || "",
       profile_id: config.default_profile_id || "",
@@ -3254,8 +3327,11 @@ async function agentContextData(context) {
     grounding: {
       profile_count: profiles.length,
       account_count: accountList.length,
+      recent_post_count: recentPosts.length,
       has_default_profile: Boolean(config.default_profile_id),
     },
+    setup_token_exchanged: context.options.setupTokenExchanged === true,
+    auth_status: context.options.setupTokenAlreadyConfigured ? "already_configured" : "authenticated",
     request_id: workspaceResponse.requestId,
   };
 }
@@ -3894,6 +3970,11 @@ function paginationFromBody(body) {
       pagination[key] = meta[key];
     }
   }
+  for (const key of ["total", "limit", "has_more"]) {
+    if (body?.[key] !== undefined && body?.[key] !== null && body?.[key] !== "") {
+      pagination[key] = body[key];
+    }
+  }
   if (body?.next_cursor) {
     pagination.next_cursor = body.next_cursor;
   }
@@ -4088,6 +4169,39 @@ async function fetchAccounts(context) {
     accounts: normalizeStatuses(unwrapData(response.body) || []),
     pagination: paginationFromBody(response.body),
     response,
+  };
+}
+
+async function fetchRecentPosts(context) {
+  const response = await requestJson(context, apiPath("/v1/posts", { limit: 5 }), { auth: true });
+  return {
+    posts: normalizeStatuses(unwrapData(response.body) || []),
+    pagination: paginationFromBody(response.body),
+    response,
+  };
+}
+
+function summarizeRecentPosts(posts, pagination) {
+  const byStatus = {};
+  const byPlatform = {};
+  for (const post of posts) {
+    const status = post?.status || "unknown";
+    byStatus[status] = (byStatus[status] || 0) + 1;
+    const platformPosts = Array.isArray(post?.platform_posts) ? post.platform_posts : [];
+    for (const platformPost of platformPosts) {
+      const platform = platformPost?.platform || platformPost?.provider || "";
+      if (platform) {
+        byPlatform[platform] = (byPlatform[platform] || 0) + 1;
+      }
+    }
+  }
+  return {
+    total_returned: posts.length,
+    has_more: Boolean(pagination?.has_more),
+    next_cursor: pagination?.next_cursor || "",
+    latest_post_id: posts[0]?.id || "",
+    by_status: byStatus,
+    by_platform: byPlatform,
   };
 }
 
@@ -4312,6 +4426,8 @@ _unipost() {
     '--idempotency-key[Idempotency key]:key:' \\
     '--agent-name[Calling agent name]:name:' \\
     '--yes[Confirm local auth replacement, publish-capable writes, or destructive writes]' \\
+    '--replace-key[Replace the current local auth binding]' \\
+    '--reauth[Force auth setup instead of reusing a valid local binding]' \\
     '--all[Follow pagination until exhausted]' \\
     '--non-interactive[Never prompt]' \\
     '--no-color[Disable ANSI color]' \\
@@ -4326,7 +4442,7 @@ _unipost "$@"
 function bashCompletion() {
   return `# bash completion for unipost
 _unipost_completion() {
-  local words="init quickstart config path config show config set auth login auth logout auth status profiles list profiles get profiles create profiles use connect create connect get connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --setup-token --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --metadata-only --limit --cursor --all --non-interactive --no-color --no-telemetry"
+  local words="init quickstart config path config show config set auth login auth logout auth status profiles list profiles get profiles create profiles use connect create connect wait accounts list accounts get accounts health accounts capabilities accounts metrics posts list posts get posts analytics posts validate posts draft posts create posts schedule posts publish-draft posts wait posts cancel posts retry media upload media get media wait analytics summary analytics posts analytics platforms analytics platform examples posts.create examples mcp.claude-code agent plan agent plan-publish agent execute agent bootstrap agent capabilities agent context agent guide agent mcp-config agent mcp-test agent install doctor completion --json --output --field --base-url --api-key --setup-token --client --name --profile --platform --account --caption --status --result --from --to --at --schedule-at --from-file --plan --content-type --idempotency-key --agent-name --yes --replace-key --reauth --metadata-only --limit --cursor --all --non-interactive --no-color --no-telemetry"
   COMPREPLY=($(compgen -W "$words" -- "\${COMP_WORDS[COMP_CWORD]}"))
 }
 complete -F _unipost_completion unipost
@@ -4391,6 +4507,8 @@ complete -c unipost -l content-type -d "Override media MIME type"
 complete -c unipost -l idempotency-key -d "Idempotency key"
 complete -c unipost -l agent-name -d "Calling agent name"
 complete -c unipost -l yes -d "Confirm local auth replacement or write"
+complete -c unipost -l replace-key -d "Replace the current local auth binding"
+complete -c unipost -l reauth -d "Force auth setup instead of reusing a valid binding"
 `;
 }
 
@@ -5541,17 +5659,21 @@ Global flags:
   --platform <name>, --caption <text>, --status <status>, --result <id>
   --from <date>, --to <date>, --at <timestamp>, --schedule-at <timestamp>
   --since <2h|30m|7d>, --request-id <id>, --log-id <id>, --error-code <code>, --category <c>, --action <a>
-  --from-file <path>, --plan <path>, --content-type <mime>, --yes, --metadata-only
+  --from-file <path>, --plan <path>, --content-type <mime>, --yes, --replace-key, --reauth, --metadata-only
   --idempotency-key <key>, --agent-name <name>, --upload, --allow-live-publish
   --no-color, --no-telemetry
 
 Auth note:
   auth login --setup-token exchanges a Dashboard-generated short-lived token for
   a named API key and stores the secret in secure local storage when available.
+  If a valid local binding already exists, it returns already_configured and
+  does not consume the setup token unless --replace-key, --reauth, or --yes is
+  present.
   auth login --api-key validates an existing key and stores it in secure local
   storage by default. Use --metadata-only only when you intentionally do not
   want local authenticated commands to remember the secret. If another local
-  binding already exists, confirm replacement with --yes or run auth logout first.
+  binding already exists, confirm replacement with --replace-key or run auth
+  logout first.
 
 Install:
   npm install -g @unipost/cli
