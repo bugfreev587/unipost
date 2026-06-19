@@ -739,19 +739,26 @@ type adminUserDetailResponse struct {
 }
 
 type adminPostFailure struct {
-	PostID        string    `json:"post_id"`
-	UserID        string    `json:"user_id"`
-	UserEmail     string    `json:"user_email"`
-	WorkspaceID   string    `json:"workspace_id"`
-	WorkspaceName string    `json:"workspace_name"`
-	CreatedAt     time.Time `json:"created_at"`
-	PostStatus    string    `json:"post_status"`
-	Source        string    `json:"source"`
-	Platform      *string   `json:"platform,omitempty"`
-	AccountName   *string   `json:"account_name,omitempty"`
-	Caption       *string   `json:"caption,omitempty"`
-	ErrorMessage  *string   `json:"error_message,omitempty"`
-	ErrorSummary  *string   `json:"error_summary,omitempty"`
+	PostID             string    `json:"post_id"`
+	PostFailureID      *string   `json:"post_failure_id,omitempty"`
+	SocialPostResultID *string   `json:"social_post_result_id,omitempty"`
+	UserID             string    `json:"user_id"`
+	UserEmail          string    `json:"user_email"`
+	WorkspaceID        string    `json:"workspace_id"`
+	WorkspaceName      string    `json:"workspace_name"`
+	CreatedAt          time.Time `json:"created_at"`
+	PostStatus         string    `json:"post_status"`
+	Source             string    `json:"source"`
+	Platform           *string   `json:"platform,omitempty"`
+	AccountName        *string   `json:"account_name,omitempty"`
+	Caption            *string   `json:"caption,omitempty"`
+	ErrorMessage       *string   `json:"error_message,omitempty"`
+	ErrorSummary       *string   `json:"error_summary,omitempty"`
+	ErrorCode          *string   `json:"error_code,omitempty"`
+	FailureStage       *string   `json:"failure_stage,omitempty"`
+	PlatformErrorCode  *string   `json:"platform_error_code,omitempty"`
+	IsRetriable        *bool     `json:"is_retriable,omitempty"`
+	NextAction         *string   `json:"next_action,omitempty"`
 	// DebugCurl is the redacted curl dump captured by debugrt when the
 	// adapter's HTTP call failed. Always included for admins — this
 	// is the primary diagnostic surface for platform failures.
@@ -873,6 +880,8 @@ func (h *AdminHandler) queryPostFailures(ctx context.Context, opts adminPostFail
 	rows, err := h.pool.Query(ctx, `
 WITH failed_results AS (
   SELECT
+    pf.id AS post_failure_id,
+    spr.id AS social_post_result_id,
     sp.id AS post_id,
     u.id AS user_id,
     u.email AS user_email,
@@ -881,27 +890,41 @@ WITH failed_results AS (
     sp.created_at,
     sp.status AS post_status,
     sp.source,
-    sa.platform,
+    COALESCE(NULLIF(pf.platform, ''), sa.platform) AS platform,
     sa.account_name,
     NULLIF(COALESCE(spr.caption, sp.caption), '') AS caption,
-    NULLIF(spr.error_message, '') AS error_message,
+    NULLIF(COALESCE(pf.message, spr.error_message), '') AS error_message,
     NULL::TEXT AS error_summary,
-    NULLIF(spr.debug_curl, '') AS debug_curl
+    NULLIF(spr.debug_curl, '') AS debug_curl,
+    NULLIF(COALESCE(pf.error_code, spr.error_code), '') AS error_code,
+    NULLIF(COALESCE(pf.failure_stage, spr.failure_stage), '') AS failure_stage,
+    NULLIF(COALESCE(pf.platform_error_code, spr.platform_error_code), '') AS platform_error_code,
+    COALESCE(CASE WHEN pf.id IS NOT NULL THEN pf.is_retriable END, spr.is_retriable) AS is_retriable,
+    NULLIF(spr.next_action, '') AS next_action
   FROM social_posts sp
   JOIN workspaces w ON w.id = sp.workspace_id
   JOIN users u ON u.id = w.user_id
   JOIN social_post_results spr ON spr.post_id = sp.id
   LEFT JOIN social_accounts sa ON sa.id = spr.social_account_id
+  LEFT JOIN LATERAL (
+    SELECT pf.*
+    FROM post_failures pf
+    WHERE pf.social_post_result_id = spr.id
+    ORDER BY CASE WHEN pf.id = $5 THEN 0 ELSE 1 END, pf.created_at DESC
+    LIMIT 1
+  ) pf ON TRUE
   WHERE ($1::TEXT = '' OR u.id = $1)
     AND u.id != ALL($7)
     AND sp.deleted_at IS NULL
     AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
     AND spr.status = 'failed'
     AND ($3::TEXT = '' OR sp.source = $3)
-    AND ($4::TEXT = '' OR sa.platform = $4)
+    AND ($4::TEXT = '' OR COALESCE(NULLIF(pf.platform, ''), sa.platform) = $4)
 ),
 parent_failures AS (
   SELECT
+    pf.id AS post_failure_id,
+    NULL::TEXT AS social_post_result_id,
     sp.id AS post_id,
     u.id AS user_id,
     u.email AS user_email,
@@ -910,30 +933,45 @@ parent_failures AS (
     sp.created_at,
     sp.status AS post_status,
     sp.source,
-    NULL::TEXT AS platform,
+    NULLIF(pf.platform, '') AS platform,
     NULL::TEXT AS account_name,
     NULLIF(sp.caption, '') AS caption,
-    NULL::TEXT AS error_message,
+    NULLIF(pf.message, '') AS error_message,
     NULLIF(sp.metadata->>'error_summary', '') AS error_summary,
-    NULL::TEXT AS debug_curl
+    NULL::TEXT AS debug_curl,
+    NULLIF(pf.error_code, '') AS error_code,
+    NULLIF(pf.failure_stage, '') AS failure_stage,
+    NULLIF(pf.platform_error_code, '') AS platform_error_code,
+    CASE WHEN pf.id IS NOT NULL THEN pf.is_retriable END AS is_retriable,
+    NULL::TEXT AS next_action
   FROM social_posts sp
   JOIN workspaces w ON w.id = sp.workspace_id
   JOIN users u ON u.id = w.user_id
+  LEFT JOIN LATERAL (
+    SELECT pf.*
+    FROM post_failures pf
+    WHERE pf.post_id = sp.id
+      AND pf.social_post_result_id IS NULL
+    ORDER BY CASE WHEN pf.id = $5 THEN 0 ELSE 1 END, pf.created_at DESC
+    LIMIT 1
+  ) pf ON TRUE
   WHERE ($1::TEXT = '' OR u.id = $1)
     AND u.id != ALL($7)
     AND sp.deleted_at IS NULL
     AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
     AND sp.status = 'failed'
     AND ($3::TEXT = '' OR sp.source = $3)
-    AND ($4::TEXT = '')
+    AND ($4::TEXT = '' OR pf.platform = $4)
     AND NOT EXISTS (
       SELECT 1
       FROM social_post_results spr
       WHERE spr.post_id = sp.id
     )
-    AND COALESCE(sp.metadata->>'error_summary', '') <> ''
+    AND (COALESCE(sp.metadata->>'error_summary', '') <> '' OR pf.id IS NOT NULL)
 )
 SELECT
+  post_failure_id,
+  social_post_result_id,
   post_id,
   user_id,
   user_email,
@@ -947,7 +985,12 @@ SELECT
   caption,
   error_message,
   error_summary,
-  debug_curl
+  debug_curl,
+  error_code,
+  failure_stage,
+  platform_error_code,
+  is_retriable,
+  next_action
 FROM (
   SELECT * FROM failed_results
   UNION ALL
@@ -955,11 +998,19 @@ FROM (
 ) failures
 WHERE (
   $5::TEXT = ''
+  OR COALESCE(post_failure_id, '') = $5
+  OR COALESCE(social_post_result_id, '') = $5
+  OR post_id = $5
+  OR workspace_id = $5
+  OR user_id = $5
   OR user_email ILIKE '%' || $5 || '%'
   OR workspace_name ILIKE '%' || $5 || '%'
   OR COALESCE(account_name, '') ILIKE '%' || $5 || '%'
   OR COALESCE(caption, '') ILIKE '%' || $5 || '%'
   OR COALESCE(error_message, error_summary, '') ILIKE '%' || $5 || '%'
+  OR COALESCE(error_code, '') ILIKE '%' || $5 || '%'
+  OR COALESCE(failure_stage, '') ILIKE '%' || $5 || '%'
+  OR COALESCE(platform_error_code, '') ILIKE '%' || $5 || '%'
 )
 ORDER BY created_at DESC
 LIMIT $6
@@ -973,7 +1024,11 @@ LIMIT $6
 	for rows.Next() {
 		var item adminPostFailure
 		var platform, accountName, caption, errorMessage, errorSummary, debugCurl *string
+		var postFailureID, socialPostResultID, errorCode, failureStage, platformErrorCode, nextAction *string
+		var isRetriable *bool
 		if err := rows.Scan(
+			&postFailureID,
+			&socialPostResultID,
 			&item.PostID,
 			&item.UserID,
 			&item.UserEmail,
@@ -988,15 +1043,27 @@ LIMIT $6
 			&errorMessage,
 			&errorSummary,
 			&debugCurl,
+			&errorCode,
+			&failureStage,
+			&platformErrorCode,
+			&isRetriable,
+			&nextAction,
 		); err != nil {
 			return nil, err
 		}
+		item.PostFailureID = postFailureID
+		item.SocialPostResultID = socialPostResultID
 		item.Platform = platform
 		item.AccountName = accountName
 		item.Caption = caption
 		item.ErrorMessage = errorMessage
 		item.ErrorSummary = errorSummary
 		item.DebugCurl = debugCurl
+		item.ErrorCode = errorCode
+		item.FailureStage = failureStage
+		item.PlatformErrorCode = platformErrorCode
+		item.IsRetriable = isRetriable
+		item.NextAction = nextAction
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
