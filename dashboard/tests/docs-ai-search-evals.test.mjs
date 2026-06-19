@@ -55,7 +55,7 @@ after(async () => {
 });
 
 function answerFor(query) {
-  const search = docsAi.searchDocsIndex(query, { limit: 6 });
+  const search = docsAi.searchDocsIndex(query, { limit: 5 });
   return {
     search,
     answer: docsAi.buildGroundedDocsAnswer(query, search),
@@ -68,6 +68,7 @@ test("TikTok connect API questions route to Connect Sessions, not analytics foll
   assert.match(answer.answer, /POST \/v1\/connect\/sessions/);
   assert.match(answer.answer, /data\.url|returned URL|hosted.*URL/i);
   assert.equal(answer.sources[0]?.path, "/docs/connect-sessions");
+  assert.equal(answer.sources[1]?.path, "/docs/api/connect/sessions/create");
   assert.notEqual(answer.sources[0]?.path, "/docs/guides/analytics/tiktok-followers");
   assert.ok(
     answer.sources.some((source) => source.path === "/docs/api/connect/sessions/create"),

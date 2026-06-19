@@ -746,15 +746,44 @@ function uniqueHitsByPath(hits: DocsAiSearchHit[]) {
   });
 }
 
-function orderedHitsForAnswer(search: DocsAiSearchResult) {
+function hitById(search: DocsAiSearchResult, id: string) {
+  const rankedHit = search.hits.find((hit) => hit.chunk.id === id);
+  if (rankedHit) return rankedHit;
+
+  const chunkItem = DOCS_AI_INDEX.find((item) => item.id === id);
+  if (!chunkItem) return undefined;
+
+  return {
+    chunk: chunkItem,
+    score: 0,
+    matchedTerms: [],
+  };
+}
+
+function orderedHitsForAnswer(query: string, search: DocsAiSearchResult) {
   if (search.intent === "connect") {
-    const primaryGuide = search.hits.find((hit) => hit.chunk.product_area === "connect" && hit.chunk.primary_nav === "Guides");
-    const createReference = search.hits.find((hit) => hit.chunk.id === "api-reference-connect-session-create");
-    const tiktokCredentials = search.hits.find((hit) => hit.chunk.id === "guide-tiktok-platform-credentials");
+    const isExactCreateSession = normalizeEndpoint(query).includes("post /v1/connect/sessions");
+    const mentionsTikTok = normalize(query).includes("tiktok");
+    const primaryGuide = hitById(search, "guide-connect-sessions-create")
+      ?? search.hits.find((hit) => hit.chunk.product_area === "connect" && hit.chunk.primary_nav === "Guides");
+    const createReference = hitById(search, "api-reference-connect-session-create");
+    const completionGuide = hitById(search, "guide-connect-sessions-completion");
+    const tiktokCredentials = mentionsTikTok ? hitById(search, "guide-tiktok-platform-credentials") : undefined;
+
+    if (isExactCreateSession) {
+      return uniqueHitsByPath([
+        createReference,
+        primaryGuide,
+        completionGuide,
+        ...search.hits,
+      ].filter((hit): hit is DocsAiSearchHit => Boolean(hit)));
+    }
+
     return uniqueHitsByPath([
       primaryGuide,
       createReference,
       tiktokCredentials,
+      completionGuide,
       ...search.hits,
     ].filter((hit): hit is DocsAiSearchHit => Boolean(hit)));
   }
@@ -904,7 +933,7 @@ function answerForKnownTask(query: string, search: DocsAiSearchResult) {
 }
 
 export function buildGroundedDocsAnswer(query: string, search = searchDocsIndex(query)): GroundedDocsAnswer {
-  const answerHits = orderedHitsForAnswer(search);
+  const answerHits = orderedHitsForAnswer(query, search);
   const candidateSources = answerHits.slice(0, 4).map(sourceFromHit);
   const related = answerHits.slice(4, 7).map(sourceFromHit);
 
