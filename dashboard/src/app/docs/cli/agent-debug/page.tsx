@@ -86,14 +86,70 @@ const SAFETY_ROWS = [
   ["manual_only", "A real dashboard/product step the user must do themselves."],
 ] as const;
 
+const DEBUG_FLOW = [
+  {
+    title: "Classify auth",
+    label: "Local readiness",
+    body: "Start with the local CLI binding so the agent knows whether it can query the workspace or needs a setup step first.",
+    command: "unipost auth status --json",
+  },
+  {
+    title: "Find evidence",
+    label: "Doctor payload",
+    body: "Use doctor.v1 findings and workspace logs as the source of truth instead of guessing from error text.",
+    command: "unipost doctor diagnose --json",
+  },
+  {
+    title: "Patch safely",
+    label: "Recommended actions",
+    body: "Apply only actions whose safety level allows it. Ask before touching secrets, dashboards, or live product state.",
+    command: "finding.recommended_actions[]",
+  },
+  {
+    title: "Verify or escalate",
+    label: "Closed loop",
+    body: "Re-run verification after every patch. Generate a redacted bundle only when the issue cannot be resolved locally.",
+    command: "unipost doctor verify --json",
+  },
+] as const;
+
+const SETUP_RULES = [
+  ["1. Finish CLI auth", "Run `unipost init`, the Dashboard setup command, or `auth login --api-key` until `unipost auth status --json` reports a usable credential."],
+  ["2. Add agent instructions", "Run `unipost agent install --client codex|claude-code --json`, then copy the returned debug skill files into the agent-specific skills directory."],
+  ["3. Start with diagnosis", "Ask the agent to use UniPost debug. It should run auth status, diagnose, explain/logs commands, patch local code when safe, and verify."],
+  ["4. Escalate with redaction", "If local repair is not enough, create a support bundle. Uploading still requires explicit user approval."],
+] as const;
+
 export default function CliAgentDebugPage() {
   return (
     <DocsPage
-      className="docs-page-wide"
+      className="docs-page-wide cli-agent-debug-page"
       eyebrow="Developer tools"
       title="AI-assisted debugging"
       lead="Let Claude Code, Codex, or another local agent diagnose and repair a broken UniPost integration with the unipost CLI — diagnose, explain, patch, verify, escalate."
     >
+      <style dangerouslySetInnerHTML={{ __html: styles }} />
+
+      <section className="debug-hero" aria-labelledby="debug-purpose">
+        <div className="debug-hero-copy">
+          <div className="debug-kicker">Agent repair loop</div>
+          <h2 id="debug-purpose">Give the agent evidence, boundaries, and a verification command.</h2>
+          <p>
+            The debug kit turns UniPost errors into a closed loop for local agents:
+            classify auth, inspect logs, patch safe code/config issues, then prove the
+            fix with non-destructive verification.
+          </p>
+        </div>
+        <div className="debug-rule-card">
+          <div className="debug-rule-title">Default boundary</div>
+          <p>
+            Read freely. Patch local code when the finding says it is safe. Ask before
+            changing secrets, uploading bundles, or doing anything in the dashboard.
+          </p>
+          <code>doctor diagnose -&gt; patch -&gt; doctor verify</code>
+        </div>
+      </section>
+
       <h2 id="how-it-works">How it works</h2>
       <p>
         The <code>unipost doctor</code> commands emit a stable, machine-readable
@@ -108,11 +164,23 @@ export default function CliAgentDebugPage() {
         <code> auth login --api-key</code> or set <code>UNIPOST_API_KEY</code>.
       </p>
 
+      <section className="debug-flow" aria-label="AI-assisted debugging flow">
+        {DEBUG_FLOW.map((item) => (
+          <article className="debug-flow-card" key={item.title}>
+            <div className="debug-kicker">{item.label}</div>
+            <h3>{item.title}</h3>
+            <p>{item.body}</p>
+            <code>{item.command}</code>
+          </article>
+        ))}
+      </section>
+
       <h2 id="install">Install the debug skill</h2>
       <p>
         Install the first-party UniPost debug skill for your agent, then ask it in plain
         language: <em>&ldquo;Use UniPost debug to fix my integration.&rdquo;</em>
       </p>
+      <DocsTable columns={["Step", "What to do"]} rows={SETUP_RULES} />
       <DocsCodeTabs snippets={INSTALL_SNIPPETS} />
 
       <h2 id="loop">The debugging loop</h2>
@@ -174,3 +242,22 @@ export default function CliAgentDebugPage() {
     </DocsPage>
   );
 }
+
+const styles = `
+.debug-hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,.44fr);gap:22px;align-items:stretch;margin:8px 0 30px;padding:18px 0 26px;border-bottom:1px solid var(--docs-border)}
+.debug-hero-copy h2{margin:8px 0 0;color:var(--docs-text);font-size:30px;line-height:1.15;font-weight:760;letter-spacing:0;max-width:760px}
+.debug-hero-copy p{margin:12px 0 0;color:var(--docs-text-soft);font-size:15px;line-height:1.7;max-width:68ch}
+.debug-kicker{font-family:var(--docs-mono);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint)}
+.debug-rule-card{border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:16px 18px;align-self:start}
+.debug-rule-title{font-size:14px;font-weight:760;color:var(--docs-text)}
+.debug-rule-card p{margin:8px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.6}
+.debug-rule-card code{display:inline-flex;margin-top:12px;max-width:100%;overflow-wrap:anywhere;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px}
+.debug-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:22px 0 8px}
+.debug-flow-card{min-width:0;border:1px solid var(--docs-border);border-radius:8px;background:var(--docs-bg-elevated);padding:14px 16px}
+.debug-flow-card h3{margin:6px 0 0;color:var(--docs-text);font-size:17px;line-height:1.3;font-weight:720;letter-spacing:0}
+.debug-flow-card p{margin:8px 0 0;color:var(--docs-text-soft);font-size:14px;line-height:1.6}
+.debug-flow-card code{display:block;margin-top:10px;color:var(--docs-text);font-family:var(--docs-mono);font-size:12px;line-height:1.55;overflow-wrap:anywhere}
+@media (max-width:1040px){.debug-flow{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:920px){.debug-hero{grid-template-columns:1fr}.debug-hero-copy h2{font-size:25px}}
+@media (max-width:640px){.debug-flow{grid-template-columns:1fr}}
+`;
