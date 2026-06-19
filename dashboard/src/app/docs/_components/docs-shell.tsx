@@ -456,9 +456,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Upload credentials", href: "/docs/api/platform-credentials/create", method: "POST" },
             { label: "List credentials", href: "/docs/api/platform-credentials/list", method: "GET" },
             { label: "Delete credentials", href: "/docs/api/platform-credentials/delete", method: "DELETE" },
-            { label: "Errors", href: "/docs/api/errors" },
           ],
         },
+        { label: "Errors", href: "/docs/api/errors" },
       ],
     },
     {
