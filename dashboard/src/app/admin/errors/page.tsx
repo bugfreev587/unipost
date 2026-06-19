@@ -183,7 +183,7 @@ export default function AdminErrorsPage() {
         <SearchHistoryInput
           fieldKey="admin.errors.search"
           className="ad-search"
-          placeholder="Search by user, workspace, caption, or error..."
+          placeholder="Search by user, workspace, ID, caption, or error..."
           value={searchInput}
           onChange={setSearchInput}
           style={{ width: 320 }}
@@ -246,6 +246,7 @@ export default function AdminErrorsPage() {
                       <div className="ad-failure-meta">
                         <span className="ad-badge ad-b-gray">{failure.platform || failure.post_status}</span>
                         <span className="ad-badge ad-b-blue">{failure.source}</span>
+                        {failure.error_code ? <span className="ad-badge ad-b-red">{failure.error_code}</span> : null}
                         {failure.account_name ? <span style={{ fontSize: 11, color: "var(--dmuted)" }}>@{failure.account_name}</span> : null}
                       </div>
                       <div className="ad-failure-title" style={{ marginTop: 6 }}>
@@ -344,8 +345,23 @@ export default function AdminErrorsPage() {
                     <FieldChip label="owner" value={selectedFailure.user_email} />
                     {selectedFailure.account_name ? <FieldChip label="account" value={selectedFailure.account_name} /> : null}
                     <FieldChip label="post_id" value={selectedFailure.post_id} />
+                    {selectedFailure.post_failure_id ? <FieldChip label="post_failure_id" value={selectedFailure.post_failure_id} /> : null}
+                    {selectedFailure.social_post_result_id ? <FieldChip label="social_post_result_id" value={selectedFailure.social_post_result_id} /> : null}
                   </div>
                 </div>
+
+                {(selectedFailure.error_code || selectedFailure.failure_stage || selectedFailure.platform_error_code || selectedFailure.next_action || selectedFailure.is_retriable != null) ? (
+                  <div style={sectionStyle}>
+                    <div style={sectionTitleStyle}>Failure classification</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                      {selectedFailure.error_code ? <FieldChip label="error_code" value={selectedFailure.error_code} /> : null}
+                      {selectedFailure.failure_stage ? <FieldChip label="failure_stage" value={selectedFailure.failure_stage} /> : null}
+                      {selectedFailure.platform_error_code ? <FieldChip label="platform_error_code" value={selectedFailure.platform_error_code} /> : null}
+                      {selectedFailure.next_action ? <FieldChip label="next_action" value={selectedFailure.next_action} /> : null}
+                      {selectedFailure.is_retriable != null ? <FieldChip label="retriable" value={String(selectedFailure.is_retriable)} /> : null}
+                    </div>
+                  </div>
+                ) : null}
 
                 <div style={sectionStyle}>
                   <div style={sectionTitleStyle}>Summary</div>
@@ -382,6 +398,8 @@ export default function AdminErrorsPage() {
 }
 
 function failureKey(failure: AdminUserPostFailure, idx: number) {
+  if (failure.post_failure_id) return failure.post_failure_id;
+  if (failure.social_post_result_id) return failure.social_post_result_id;
   return `${failure.post_id}-${failure.platform || "parent"}-${failure.created_at}-${idx}`;
 }
 

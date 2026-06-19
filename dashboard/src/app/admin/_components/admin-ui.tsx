@@ -482,6 +482,7 @@ export const adminCss = `
 .ad-mono { font-family: var(--font-geist-mono), monospace; font-size: 11px; color: var(--dmuted); }
 .ad-badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 20px; font-size: 10.5px; font-weight: 600; font-family: var(--font-geist-mono), monospace; }
 .ad-b-blue { background: var(--info-soft); color: var(--info); border: 1px solid color-mix(in srgb, var(--info) 22%, transparent); }
+.ad-b-red { background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 22%, transparent); }
 .ad-b-gray { background: var(--surface2); color: var(--dmuted); border: 1px solid var(--dborder2); }
 .ad-mrr-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--success); font-family: var(--font-geist-mono), monospace; background: var(--success-soft); border: 1px solid color-mix(in srgb, var(--success) 20%, transparent); padding: 1px 6px; border-radius: 3px; }
 .ad-plat-icons { display: flex; gap: 3px; flex-wrap: wrap; }

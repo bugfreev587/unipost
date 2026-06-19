@@ -46,11 +46,16 @@ test("Platform Credentials API docs are split into endpoint pages", async () => 
   assert.doesNotMatch(deleteSource, /method="GET"/, "delete page should not render the list endpoint");
 });
 
-test("Platform Credentials sidebar owns endpoint links and Errors", async () => {
+test("API Reference sidebar lists Errors as the final Core item", async () => {
   const docsShellSource = await source("src/app/docs/_components/docs-shell.tsx");
   const apiReferenceStart = docsShellSource.indexOf('"api-reference": [');
   assert.notEqual(apiReferenceStart, -1, "API Reference sidebar config should exist");
   const apiReferenceSource = docsShellSource.slice(apiReferenceStart);
+  const coreStart = apiReferenceSource.indexOf('title: "Core"');
+  const publishingStart = apiReferenceSource.indexOf('title: "Publishing"', coreStart);
+  assert.notEqual(coreStart, -1, "Core sidebar group should exist");
+  assert.notEqual(publishingStart, -1, "Publishing sidebar group should follow Core");
+  const coreGroup = apiReferenceSource.slice(coreStart, publishingStart);
   const platformGroupMatch = apiReferenceSource.match(/label: "Platform Credentials",\s*children: \[[\s\S]*?\n\s*\],\n\s*\}/);
 
   assert.ok(platformGroupMatch, "Platform Credentials should be a sidebar group with children");
@@ -59,7 +64,8 @@ test("Platform Credentials sidebar owns endpoint links and Errors", async () => 
   assert.match(platformGroup, /label: "Upload credentials", href: "\/docs\/api\/platform-credentials\/create", method: "POST"/);
   assert.match(platformGroup, /label: "List credentials", href: "\/docs\/api\/platform-credentials\/list", method: "GET"/);
   assert.match(platformGroup, /label: "Delete credentials", href: "\/docs\/api\/platform-credentials\/delete", method: "DELETE"/);
-  assert.match(platformGroup, /label: "Errors", href: "\/docs\/api\/errors"/);
+  assert.doesNotMatch(platformGroup, /label: "Errors", href: "\/docs\/api\/errors"/);
 
-  assert.doesNotMatch(apiReferenceSource, /\n\s*\{ label: "Errors", href: "\/docs\/api\/errors" \},\n\s*\{\s*label: "Platform Credentials"/, "Errors should not remain a separate Core item before Platform Credentials");
+  assert.match(coreGroup, /label: "Errors", href: "\/docs\/api\/errors"/, "Errors should be a standalone Core item");
+  assert.match(coreGroup, /label: "Platform Credentials"[\s\S]*?\},\n\s*\{ label: "Errors", href: "\/docs\/api\/errors" \},\n\s*\],\n\s*\}/, "Errors should be the final Core item after Platform Credentials");
 });
