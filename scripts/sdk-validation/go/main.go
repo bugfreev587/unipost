@@ -1147,7 +1147,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if usage.PostLimit < 0 {
+		if usage.PostCount < 0 {
 			return fmt.Errorf("unexpected usage payload")
 		}
 		return nil
