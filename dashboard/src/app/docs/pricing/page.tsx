@@ -19,8 +19,8 @@ export default function DocsPricingPage() {
           ["API",    "$10",    "1,000",  "Dashboard + API + MCP, all 9 platforms incl. X, and read-only Analytics API. Inbox is not included."],
           ["Basic",  "$19",    "2,500",  "Adds one shared custom platform slot for Hosted Connect branding and Platform Credentials, plus Inbox (DMs + comments) and full Analytics. Hosted onboarding still shows Powered by UniPost."],
           ["Growth", "$59",    "7,500",  "Adds Hosted Connect branding and Platform Credentials across all supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
-          ["Team",   "$149",   "25,000", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
-          ["Enterprise", "Custom", "Custom", "Custom volume, SLA, dedicated support, contract flexibility. Contact us."],
+          ["Team",   "$149",   "Unlimited", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
+          ["Enterprise", "Custom", "Custom", "SLA, dedicated support, security review, and contract flexibility. Contact us."],
         ]}
       />
 
@@ -40,7 +40,7 @@ export default function DocsPricingPage() {
       <h2 id="usage-controls">Usage and safety controls</h2>
       <p>Two limits apply to every plan:</p>
       <ul>
-        <li><strong>Monthly post quota</strong> — the post number in the table above. Free is a hard cap: once a Free workspace reaches 100 posts/month, new publish requests are rejected until the next month or an upgrade. Paid plans use soft overage: posting continues over the cap, but sustained overage triggers an upgrade conversation. No surprise billing.</li>
+        <li><strong>Monthly post quota</strong> — Free, API, Basic, and Growth use the post number in the table above. Free is a hard cap: once a Free workspace reaches 100 posts/month, new publish requests are rejected until the next month or an upgrade. API, Basic, and Growth use soft overage: posting continues over the cap, but sustained overage triggers an upgrade conversation. Team includes unlimited monthly posts. No surprise billing.</li>
         <li><strong>Per-account daily safety caps</strong> — each connected account has a daily ceiling to keep it from being flagged as a spam bot by the platform itself: X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. UTC-day window. Failed posts don&apos;t count.</li>
       </ul>
 
