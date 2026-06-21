@@ -20,3 +20,9 @@ test('platform credentials round-trip is explicit and uses only supported platfo
     assert.match(source, /twitter.*linkedin.*bluesky.*youtube.*tiktok.*instagram.*threads.*facebook.*pinterest/s);
   }
 });
+
+test('go usage regression accepts unlimited post limits', async () => {
+  const source = await readFile(new URL('../../scripts/sdk-validation/go/main.go', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /usage\.PostLimit < 0/);
+  assert.match(source, /usage\.PostCount < 0/);
+});
