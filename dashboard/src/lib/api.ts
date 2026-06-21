@@ -1767,6 +1767,14 @@ export interface ApiLimits {
   current_profiles: number;
   max_members: number; // -1 = unlimited
   current_members: number;
+  max_api_keys: number; // -1 = unlimited
+  current_api_keys: number;
+  max_webhooks: number; // -1 = unlimited
+  current_webhooks: number;
+  max_managed_accounts: number; // -1 = unlimited
+  current_managed_accounts: number;
+  max_managed_users: number; // -1 = unlimited
+  current_managed_users: number;
 }
 
 export async function getApiLimits(token: string): Promise<ApiResponse<ApiLimits>> {

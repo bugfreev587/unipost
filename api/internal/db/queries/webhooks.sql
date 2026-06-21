@@ -6,6 +6,12 @@ RETURNING *;
 -- name: ListWebhooksByWorkspace :many
 SELECT * FROM webhooks WHERE workspace_id = $1 ORDER BY created_at DESC;
 
+-- name: CountActiveWebhooksByWorkspace :one
+SELECT COUNT(*)::INTEGER AS total
+FROM webhooks
+WHERE workspace_id = $1
+  AND active = true;
+
 -- name: GetWebhook :one
 SELECT * FROM webhooks WHERE id = $1;
 

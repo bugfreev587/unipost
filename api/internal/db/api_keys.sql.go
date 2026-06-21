@@ -11,6 +11,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveAPIKeysByWorkspace = `-- name: CountActiveAPIKeysByWorkspace :one
+SELECT COUNT(*)::INTEGER AS total
+FROM api_keys
+WHERE workspace_id = $1
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW())
+`
+
+func (q *Queries) CountActiveAPIKeysByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countActiveAPIKeysByWorkspace, workspaceID)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
 const createAPIKey = `-- name: CreateAPIKey :one
 INSERT INTO api_keys (id, workspace_id, name, prefix, key_hash, environment, expires_at, created_by_user_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)

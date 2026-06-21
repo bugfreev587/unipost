@@ -3,6 +3,13 @@ SELECT * FROM api_keys
 WHERE workspace_id = $1 AND revoked_at IS NULL
 ORDER BY created_at DESC;
 
+-- name: CountActiveAPIKeysByWorkspace :one
+SELECT COUNT(*)::INTEGER AS total
+FROM api_keys
+WHERE workspace_id = $1
+  AND revoked_at IS NULL
+  AND (expires_at IS NULL OR expires_at > NOW());
+
 -- name: CreateAPIKey :one
 -- created_by_user_id (RBAC migration 063) attributes the key to the
 -- member who created it. The auth path uses this to derive the key's

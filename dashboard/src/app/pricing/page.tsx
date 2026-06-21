@@ -151,7 +151,7 @@ const FAQS = [
   { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
   { q: "When do I need Growth?", a: "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
-  { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost bundles Inbox + Analytics into Basic at $19/mo with no add-ons (Zernio sells Analytics and Comments+DMs as $9/mo each on its Build tier). PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
+  { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. For an embedded app with 100 end users connecting 2 social accounts each, UniPost Growth is $59/mo if total usage fits under 7,500 posts/month; Zernio's current account-meter pricing is $418/mo for those 200 connected accounts. PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
 
 // ── Icons ──
@@ -281,6 +281,15 @@ export default function PricingPage() {
               </div>
             );
           })}
+        </div>
+
+        {/* Embedded apps */}
+        <div className="pr-soft">
+          <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><path d="M4 8h8M8 4v8" /><circle cx="8" cy="8" r="6.5" /></svg></div>
+          <div>
+            <div className="pr-soft-title">Built for embedded apps without a connected-account tax.</div>
+            <div className="pr-soft-desc">UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. If your app has 100 end users connecting 2 social accounts each, Growth is $59/mo when total usage fits under 7,500 posts/month; Zernio&apos;s current account-meter pricing is $418/mo for those 200 connected accounts. <Link href="/alternatives/zernio">See the Zernio comparison</Link>.</div>
+          </div>
         </div>
 
         {/* Quota behavior */}

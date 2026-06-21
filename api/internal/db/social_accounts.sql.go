@@ -26,6 +26,87 @@ func (q *Queries) ArmSocialAccountDisconnectNotification(ctx context.Context, id
 	return result.RowsAffected(), nil
 }
 
+const countActiveManagedAccountsByWorkspace = `-- name: CountActiveManagedAccountsByWorkspace :one
+SELECT COUNT(*)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.disconnected_at IS NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = ''
+`
+
+func (q *Queries) CountActiveManagedAccountsByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countActiveManagedAccountsByWorkspace, workspaceID)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
+const countManagedAccountsByWorkspaceAndExternalUser = `-- name: CountManagedAccountsByWorkspaceAndExternalUser :one
+SELECT COUNT(*)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.external_user_id = $2
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = ''
+`
+
+type CountManagedAccountsByWorkspaceAndExternalUserParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+}
+
+func (q *Queries) CountManagedAccountsByWorkspaceAndExternalUser(ctx context.Context, arg CountManagedAccountsByWorkspaceAndExternalUserParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countManagedAccountsByWorkspaceAndExternalUser, arg.WorkspaceID, arg.ExternalUserID)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
+const countManagedAccountsByWorkspaceExternalUserAndPlatform = `-- name: CountManagedAccountsByWorkspaceExternalUserAndPlatform :one
+SELECT COUNT(*)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.external_user_id = $2
+  AND sa.platform = $3
+  AND sa.disconnected_at IS NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = ''
+`
+
+type CountManagedAccountsByWorkspaceExternalUserAndPlatformParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+	Platform       string      `json:"platform"`
+}
+
+func (q *Queries) CountManagedAccountsByWorkspaceExternalUserAndPlatform(ctx context.Context, arg CountManagedAccountsByWorkspaceExternalUserAndPlatformParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countManagedAccountsByWorkspaceExternalUserAndPlatform, arg.WorkspaceID, arg.ExternalUserID, arg.Platform)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
+const countManagedUsersByWorkspace = `-- name: CountManagedUsersByWorkspace :one
+SELECT COUNT(DISTINCT sa.external_user_id)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.external_user_id IS NOT NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = ''
+`
+
+func (q *Queries) CountManagedUsersByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countManagedUsersByWorkspace, workspaceID)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
 const createManagedSocialAccount = `-- name: CreateManagedSocialAccount :one
 INSERT INTO social_accounts (
   profile_id, platform, access_token, refresh_token, token_expires_at,
