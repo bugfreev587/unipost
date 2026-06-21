@@ -87,6 +87,8 @@ export default function ApiLimitsPage() {
 
       <PlanCard planID={limits.plan_id} />
 
+      <PlanPackagingCard limits={limits} />
+
       <LimitCard
         title="Request rate"
         primary={`${limits.request_rate_per_min} req/min`}
@@ -115,6 +117,99 @@ export default function ApiLimitsPage() {
       <UpgradeFooter />
     </div>
   );
+}
+
+function PlanPackagingCard({ limits }: { limits: ApiLimits }) {
+  const rows = [
+    {
+      label: "API keys",
+      detail: "Active, non-revoked keys",
+      current: limits.current_api_keys,
+      max: limits.max_api_keys,
+    },
+    {
+      label: "Webhook endpoints",
+      detail: "Active endpoints",
+      current: limits.current_webhooks,
+      max: limits.max_webhooks,
+    },
+    {
+      label: "Managed accounts",
+      detail: "Successful Hosted Connect accounts",
+      current: limits.current_managed_accounts,
+      max: limits.max_managed_accounts,
+    },
+    {
+      label: "Managed users",
+      detail: "Distinct completed external_user_id values",
+      current: limits.current_managed_users,
+      max: limits.max_managed_users,
+    },
+  ];
+
+  return (
+    <Card>
+      <CardTitle>Plan packaging limits</CardTitle>
+      <p style={{ margin: "6px 0 12px", fontSize: 12, color: "var(--dmuted)", lineHeight: 1.6 }}>
+        Free plan caps apply to new API keys, active webhooks, and successful Hosted
+        Connect completions. Connect Session create attempts are not capped by plan.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+        {rows.map((row) => (
+          <PlanLimitRow key={row.label} {...row} />
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function PlanLimitRow({
+  label,
+  detail,
+  current,
+  max,
+}: {
+  label: string;
+  detail: string;
+  current: number;
+  max: number;
+}) {
+  const capped = max >= 0;
+  const atLimit = capped && current >= max;
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "center",
+        gap: 16,
+        padding: "10px 0",
+        borderTop: "1px solid var(--dborder)",
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 600 }}>{label}</div>
+        <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 2 }}>{detail}</div>
+      </div>
+      <div
+        style={{
+          color: atLimit ? "#f87171" : "var(--dtext)",
+          fontFamily: "var(--font-mono, ui-monospace)",
+          fontSize: 13,
+          fontWeight: 600,
+          whiteSpace: "nowrap",
+        }}
+      >
+        {formatPlanLimit(current, max)}
+      </div>
+    </div>
+  );
+}
+
+function formatPlanLimit(current: number, max: number) {
+  if (max < 0) return `${current.toLocaleString()} / Unlimited`;
+  return `${current.toLocaleString()} / ${max.toLocaleString()}`;
 }
 
 function DailyCapsCard({

@@ -13,14 +13,16 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/apikey"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 type APIKeyHandler struct {
 	queries *db.Queries
+	quota   *quota.Checker
 }
 
 func NewAPIKeyHandler(queries *db.Queries) *APIKeyHandler {
-	return &APIKeyHandler{queries: queries}
+	return &APIKeyHandler{queries: queries, quota: quota.NewChecker(queries)}
 }
 
 type apiKeyResponse struct {
@@ -126,6 +128,21 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if body.Environment != "production" && body.Environment != "test" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Environment must be 'production' or 'test'")
 		return
+	}
+
+	if h.quota != nil {
+		if cap, hasCap := h.quota.MaxAPIKeysForPlan(r.Context(), workspaceID); hasCap {
+			current, err := h.queries.CountActiveAPIKeysByWorkspace(r.Context(), workspaceID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check API key limit")
+				return
+			}
+			if int(current) >= cap {
+				writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+					"Free plan workspaces can have 1 active API key. Upgrade to create more API keys.")
+				return
+			}
+		}
 	}
 
 	plaintext, prefix, hash, err := apikey.Generate(body.Environment)

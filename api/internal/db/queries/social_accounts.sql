@@ -84,6 +84,44 @@ WHERE profile_id = $1
   AND disconnected_at IS NULL
 LIMIT 1;
 
+-- name: CountActiveManagedAccountsByWorkspace :one
+SELECT COUNT(*)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.disconnected_at IS NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = '';
+
+-- name: CountManagedUsersByWorkspace :one
+SELECT COUNT(DISTINCT sa.external_user_id)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.external_user_id IS NOT NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = '';
+
+-- name: CountManagedAccountsByWorkspaceAndExternalUser :one
+SELECT COUNT(*)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.external_user_id = $2
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = '';
+
+-- name: CountManagedAccountsByWorkspaceExternalUserAndPlatform :one
+SELECT COUNT(*)::INTEGER AS total
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.connection_type = 'managed'
+  AND sa.external_user_id = $2
+  AND sa.platform = $3
+  AND sa.disconnected_at IS NULL
+  AND COALESCE(sa.metadata->>'dismissed_at', '') = '';
+
 -- name: CreateManagedSocialAccount :one
 INSERT INTO social_accounts (
   profile_id, platform, access_token, refresh_token, token_expires_at,
