@@ -248,13 +248,18 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if connectSessionPlatformUsesOAuthApp(body.Platform) && !body.AllowQuickstartCreds {
+		if !workspaceAllowsPlatformCredentialsForPlatform(r.Context(), h.queries, workspaceID, body.Platform) {
+			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+				"Your current plan supports custom hosted branding and platform credentials for 1 platform. Use the selected platform or upgrade to Growth for all supported platforms.")
+			return
+		}
 		_, credErr := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
 			WorkspaceID: workspaceID,
 			Platform:    body.Platform,
 		})
 		if credErr == pgx.ErrNoRows {
 			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
-				"workspace is missing "+body.Platform+" platform credentials; upload white-label credentials first or pass allow_quickstart_creds=true")
+				"workspace is missing "+body.Platform+" platform credentials; upload workspace Platform Credentials first or pass allow_quickstart_creds=true")
 			return
 		}
 		if credErr != nil {
@@ -440,12 +445,16 @@ func (h *ConnectSessionHandler) PublicGet(w http.ResponseWriter, r *http.Request
 	if sub, subErr := h.queries.GetSubscriptionByWorkspace(r.Context(), profile.WorkspaceID); subErr == nil && sub.PlanID != "" {
 		planID = sub.PlanID
 	}
+	customPlatformSlot := ""
+	if ws, wsErr := h.queries.GetWorkspace(r.Context(), profile.WorkspaceID); wsErr == nil && ws.CustomPlatformSlot.Valid {
+		customPlatformSlot = ws.CustomPlatformSlot.String
+	}
 
 	// Hosted Connect branding is Basic+; the attribution-removal toggle
 	// is Growth+. Older branding values may remain in the DB after a
 	// downgrade, so we gate what the public page sees here instead of
 	// trying to retroactively scrub stored values.
-	if planAllowsHostedConnectBranding(planID) && (profile.BrandingLogoUrl.Valid || profile.BrandingDisplayName.Valid || profile.BrandingPrimaryColor.Valid || profile.BrandingHidePoweredBy) {
+	if planAllowsHostedConnectBrandingForPlatform(planID, session.Platform, customPlatformSlot) && (profile.BrandingLogoUrl.Valid || profile.BrandingDisplayName.Valid || profile.BrandingPrimaryColor.Valid || profile.BrandingHidePoweredBy) {
 		resp.Branding = &publicBrandingPayload{}
 		if profile.BrandingLogoUrl.Valid {
 			resp.Branding.LogoURL = profile.BrandingLogoUrl.String
@@ -524,16 +533,26 @@ type httpError struct {
 
 func planAllowsHostedConnectBranding(planID string) bool {
 	switch planID {
-	case "basic", "growth", "team":
+	case "basic", "growth", "team", "enterprise":
 		return true
 	default:
 		return false
 	}
 }
 
+func planAllowsHostedConnectBrandingForPlatform(planID, platform, customPlatformSlot string) bool {
+	if !planAllowsHostedConnectBranding(planID) {
+		return false
+	}
+	if planID != "basic" {
+		return true
+	}
+	return customPlatformSlot != "" && customPlatformSlot == platform
+}
+
 func planAllowsHidePoweredBy(planID string) bool {
 	switch planID {
-	case "growth", "team":
+	case "growth", "team", "enterprise":
 		return true
 	default:
 		return false

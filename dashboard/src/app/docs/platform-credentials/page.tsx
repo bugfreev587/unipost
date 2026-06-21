@@ -44,7 +44,7 @@ export default function PlatformCredentialsOverviewPage() {
           ["Dashboard page", "Developer → Platform Credentials"],
           ["What it controls", "Which official platform OAuth app and quota UniPost uses for future OAuth flows"],
           ["What it does not control", <>The UniPost-hosted pre-OAuth page. Configure that in <Link href="/docs/white-label">Hosted Connect (White-label branding)</Link>.</>],
-          ["Who can use it", "Qualified paid plans. Basic supports one platform credential slot; Growth and Team support all supported platforms."],
+          ["Who can use it", "Qualified paid plans. Basic supports one shared custom platform slot across Platform Credentials and Hosted Connect branding; Growth, Team, and Enterprise support all supported platforms."],
           ["Shared fallback", "Connect Sessions can still use UniPost's shared OAuth app when allow_quickstart_creds is true and no workspace credential exists."],
         ]}
       />
@@ -53,9 +53,10 @@ export default function PlatformCredentialsOverviewPage() {
       <p className="pc-note">
         Platform Credentials are workspace-level developer app credentials:
         client ID plus client secret for the official platform. They are
-        independent from Hosted Connect branding, so Quickstart and branded
-        Hosted Connect flows can both use either credential source when the
-        plan and session settings allow it.
+        independent from Hosted Connect branding, but Basic uses one shared
+        custom platform slot for both surfaces. Quickstart and branded Hosted
+        Connect flows can use either credential source when the plan, selected
+        platform slot, and session settings allow it.
       </p>
       <div className="docs-step-flow">
         <div className="docs-step-row">

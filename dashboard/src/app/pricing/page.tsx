@@ -66,11 +66,11 @@ const TIERS: Tier[] = [
     blurb: "Operating console for solo builders and creators.",
     posts: "2,500 posts/mo",
     features: [
-      { kind: "headline", text: "White-label + Inbox + Analytics" },
+      { kind: "headline", text: "Custom Hosted + Inbox + Analytics" },
       { kind: "include", text: "All 9 platforms incl. X" },
       { kind: "include", text: "Inbox: DMs + comments" },
       { kind: "include", text: "Full Analytics suite" },
-      { kind: "include", text: "White-label for 1 platform" },
+      { kind: "include", text: "Hosted Connect + credentials for 1 platform" },
       { kind: "include", text: "5 profiles · 1 user" },
       { kind: "exclude", text: "Hide Powered by UniPost" },
     ],
@@ -82,9 +82,9 @@ const TIERS: Tier[] = [
     blurb: "Embed UniPost into your own product.",
     posts: "7,500 posts/mo",
     features: [
-      { kind: "headline", text: "Full white-label / native mode" },
+      { kind: "headline", text: "All-platform custom mode" },
       { kind: "include", text: "Everything in Basic" },
-      { kind: "include", text: "BYO credentials on all supported platforms" },
+      { kind: "include", text: "Hosted Connect + credentials on all supported platforms" },
       { kind: "include", text: "Optional removal of Powered by UniPost" },
       { kind: "include", text: "Branded OAuth flow" },
       { kind: "include", text: "25 profiles · 3 users" },
@@ -134,7 +134,7 @@ const COMPARE_ROWS: CompareRow[] = [
   { name: "Dashboard UI", sub: "Compose, account management, analytics, and workspace settings in browser", free: true, api: true, basic: true, growth: true, team: true },
   { name: "Inbox", sub: "DMs and comments from connected accounts", free: false, api: false, basic: true, growth: true, team: true },
   { name: "Analytics", sub: "Reach, impressions, engagement", free: false, api: "read-only API", basic: true, growth: true, team: true },
-  { name: "White-label / native mode", sub: "Bring your own platform credentials", free: false, api: false, basic: "1 platform", growth: "All supported", team: "All supported" },
+  { name: "Hosted Connect + Platform Credentials", sub: "Shared custom platform scope for branding and BYO developer credentials", free: false, api: false, basic: "1 shared platform", growth: "All supported", team: "All supported" },
   { name: "Hosted Connect attribution", sub: "\"Powered by UniPost\" on hosted onboarding", free: "Shown", api: "Shown", basic: "Shown", growth: "Optional", team: "Optional" },
   { name: "RBAC + per-member API keys", sub: "Roles: owner / admin / editor", free: false, api: false, basic: false, growth: false, team: true },
   { name: "Audit log", sub: "Membership and config-change history", free: false, api: false, basic: false, growth: false, team: true },
@@ -148,8 +148,8 @@ const FAQS = [
   { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
   { q: "What happens if I go over my monthly post quota?", a: "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. Paid plans keep soft overage behavior: posting continues for now, with usage warnings and upgrade guidance instead of surprise billing. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
-  { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one-platform white-label. Same publishing API on both." },
-  { q: "When do I need Growth?", a: "When one-platform white-label on Basic is no longer enough and you need BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
+  { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
+  { q: "When do I need Growth?", a: "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
   { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost bundles Inbox + Analytics into Basic at $19/mo with no add-ons (Zernio sells Analytics and Comments+DMs as $9/mo each on its Build tier). PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
@@ -225,7 +225,7 @@ export default function PricingPage() {
           <h1 className="pr-hero-title">Start free.<br />Upgrade for visibility,<br />collaboration, and scale.</h1>
           <p className="pr-hero-sub">
             Start with 100 posts/month on a permanent Free plan. Paid plans unlock Inbox, Analytics,
-            X publishing, one-platform or full white-label, and team workflows.
+            X publishing, one shared custom platform or all-platform custom mode, and team workflows.
           </p>
           <p className="pr-hero-altlink">
             Comparing alternatives?{" "}

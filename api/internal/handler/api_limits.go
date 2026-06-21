@@ -73,13 +73,14 @@ type apiLimitsResponse struct {
 	// dashboard uses these to render upgrade gates / grey out tiles
 	// instead of letting the user click into a feature only to hit
 	// a 402.
-	PlanAllowsTwitter    bool `json:"plan_allows_twitter"`
-	PlanAllowsInbox      bool `json:"plan_allows_inbox"`
-	PlanAllowsAnalytics  bool `json:"plan_allows_analytics"`
-	PlanAllowsWhiteLabel bool `json:"plan_allows_white_label"`
-	PlanAllowsHostedConnectBranding bool `json:"plan_allows_hosted_connect_branding"`
-	PlanAllowsHidePoweredBy bool `json:"plan_allows_hide_powered_by"`
-	WhiteLabelPlatformLimit int `json:"white_label_platform_limit"`
+	PlanAllowsTwitter               bool    `json:"plan_allows_twitter"`
+	PlanAllowsInbox                 bool    `json:"plan_allows_inbox"`
+	PlanAllowsAnalytics             bool    `json:"plan_allows_analytics"`
+	PlanAllowsWhiteLabel            bool    `json:"plan_allows_white_label"`
+	PlanAllowsHostedConnectBranding bool    `json:"plan_allows_hosted_connect_branding"`
+	PlanAllowsHidePoweredBy         bool    `json:"plan_allows_hide_powered_by"`
+	WhiteLabelPlatformLimit         int     `json:"white_label_platform_limit"`
+	CustomPlatformSlot              *string `json:"custom_platform_slot"`
 
 	// MaxProfiles is the per-plan profile cap (NULL/unlimited = -1).
 	// CurrentProfiles is the live count for this workspace. The
@@ -132,27 +133,34 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	currentMembers, _ := h.queries.CountActiveMembersByWorkspace(r.Context(), workspaceID)
 
+	var customPlatformSlot *string
+	if ws, err := h.queries.GetWorkspace(r.Context(), workspaceID); err == nil && ws.CustomPlatformSlot.Valid {
+		v := ws.CustomPlatformSlot.String
+		customPlatformSlot = &v
+	}
+
 	writeSuccess(w, apiLimitsResponse{
-		PlanID:              planID,
-		RequestRatePerMin:   requestPerMin,
-		RequestBurst:        limits.RequestBurstTokens,
-		EnqueuePostsPerMin:  limits.EnqueuePostsPerMin,
-		EnqueuePostsPer5Min: limits.EnqueuePostsPer5Min,
-		QueueDepthCap:       limits.WorkspaceQueueDepthCap,
-		ManagedUserDepthCap: limits.ManagedUserQueueDepthCap,
-		QueueDepthCurrent:   int(depth),
-		PerPlatformDailyCap: copyDailyCapMap(),
-		PlanAllowsTwitter:              h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
-		PlanAllowsInbox:                h.quota.PlanAllowsInbox(r.Context(), workspaceID),
-		PlanAllowsAnalytics:            h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
-		PlanAllowsWhiteLabel:           h.quota.PlanAllowsWhiteLabel(r.Context(), workspaceID),
+		PlanID:                          planID,
+		RequestRatePerMin:               requestPerMin,
+		RequestBurst:                    limits.RequestBurstTokens,
+		EnqueuePostsPerMin:              limits.EnqueuePostsPerMin,
+		EnqueuePostsPer5Min:             limits.EnqueuePostsPer5Min,
+		QueueDepthCap:                   limits.WorkspaceQueueDepthCap,
+		ManagedUserDepthCap:             limits.ManagedUserQueueDepthCap,
+		QueueDepthCurrent:               int(depth),
+		PerPlatformDailyCap:             copyDailyCapMap(),
+		PlanAllowsTwitter:               h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
+		PlanAllowsInbox:                 h.quota.PlanAllowsInbox(r.Context(), workspaceID),
+		PlanAllowsAnalytics:             h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
+		PlanAllowsWhiteLabel:            h.quota.PlanAllowsWhiteLabel(r.Context(), workspaceID),
 		PlanAllowsHostedConnectBranding: h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID),
-		PlanAllowsHidePoweredBy:        h.quota.PlanAllowsHidePoweredBy(r.Context(), workspaceID),
-		WhiteLabelPlatformLimit:        h.quota.WhiteLabelPlatformLimit(r.Context(), workspaceID),
-		MaxProfiles:         maxProfiles,
-		CurrentProfiles:     int(currentProfiles),
-		MaxMembers:          maxMembers,
-		CurrentMembers:      int(currentMembers),
+		PlanAllowsHidePoweredBy:         h.quota.PlanAllowsHidePoweredBy(r.Context(), workspaceID),
+		WhiteLabelPlatformLimit:         h.quota.WhiteLabelPlatformLimit(r.Context(), workspaceID),
+		CustomPlatformSlot:              customPlatformSlot,
+		MaxProfiles:                     maxProfiles,
+		CurrentProfiles:                 int(currentProfiles),
+		MaxMembers:                      maxMembers,
+		CurrentMembers:                  int(currentMembers),
 	})
 }
 

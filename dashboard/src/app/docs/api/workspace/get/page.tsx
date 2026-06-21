@@ -12,6 +12,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "name", type: "string", description: "Human-readable workspace name." },
   { name: "per_account_monthly_limit", type: "number | null", description: "Optional per-account monthly publish quota." },
   { name: "usage_modes", type: "string[]", description: <>Active usage modes selected during onboarding.<EnumValues values={["publishing", "agentic"]} /></>, },
+  { name: "custom_platform_slot", type: "string | null", description: <>Shared Basic custom platform slot used by Hosted Connect branding and Platform Credentials.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"]} /></>, },
   { name: "created_at", type: "string", description: "Creation timestamp." },
   { name: "updated_at", type: "string", description: "Last update timestamp." },
 ];
@@ -96,6 +97,7 @@ const RESPONSE_SNIPPETS = [
     "name": "Acme",
     "per_account_monthly_limit": null,
     "usage_modes": ["publishing"],
+    "custom_platform_slot": "tiktok",
     "created_at": "2026-01-04T10:00:00Z",
     "updated_at": "2026-04-23T18:00:00Z"
   }

@@ -8,6 +8,7 @@ import { ImageIcon, Lock, Trash2, Upload } from "lucide-react";
 import {
   getProfile,
   updateProfile,
+  updateWorkspace,
   uploadProfileLogo,
   deleteProfileLogo,
   getApiLimits,
@@ -16,6 +17,17 @@ import {
 
 const LOGO_MAX_BYTES = 2 * 1024 * 1024;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const CUSTOM_PLATFORM_OPTIONS = [
+  { id: "twitter", name: "X / Twitter" },
+  { id: "linkedin", name: "LinkedIn" },
+  { id: "bluesky", name: "Bluesky" },
+  { id: "youtube", name: "YouTube" },
+  { id: "tiktok", name: "TikTok" },
+  { id: "instagram", name: "Instagram" },
+  { id: "threads", name: "Threads" },
+  { id: "facebook", name: "Facebook Page" },
+  { id: "pinterest", name: "Pinterest" },
+];
 
 export default function NativeModePage() {
   const { id: profileId } = useParams<{ id: string }>();
@@ -32,6 +44,8 @@ export default function NativeModePage() {
   const [brandingMessage, setBrandingMessage] = useState("");
   const [planAllowsHostedConnectBranding, setPlanAllowsHostedConnectBranding] = useState<boolean | null>(null);
   const [planAllowsHidePoweredBy, setPlanAllowsHidePoweredBy] = useState<boolean | null>(null);
+  const [whiteLabelPlatformLimit, setWhiteLabelPlatformLimit] = useState<number | null>(null);
+  const [customPlatformSlot, setCustomPlatformSlot] = useState("");
 
   const applyProfile = useCallback((next: Profile) => {
     setProfile(next);
@@ -53,6 +67,8 @@ export default function NativeModePage() {
       if (limitsRes) {
         setPlanAllowsHostedConnectBranding(limitsRes.data.plan_allows_hosted_connect_branding);
         setPlanAllowsHidePoweredBy(limitsRes.data.plan_allows_hide_powered_by);
+        setWhiteLabelPlatformLimit(limitsRes.data.white_label_platform_limit);
+        setCustomPlatformSlot(limitsRes.data.custom_platform_slot || "");
       }
     } catch (e) {
       setPageError((e as Error).message || "Failed to load Hosted Connect settings");
@@ -74,6 +90,10 @@ export default function NativeModePage() {
       setBrandingError("Primary color must be a 6-digit hex value, for example #111111.");
       return;
     }
+    if (whiteLabelPlatformLimit === 1 && !customPlatformSlot) {
+      setBrandingError("Choose the platform this Basic plan should customize.");
+      return;
+    }
 
     setBrandingSaving(true);
     setBrandingError("");
@@ -81,13 +101,17 @@ export default function NativeModePage() {
     try {
       const token = await getToken();
       if (!token) return;
+      if (whiteLabelPlatformLimit === 1) {
+        const workspaceRes = await updateWorkspace(token, { custom_platform_slot: customPlatformSlot });
+        setCustomPlatformSlot(workspaceRes.data.custom_platform_slot || "");
+      }
       const res = await updateProfile(token, profile.id, {
         branding_display_name: displayName,
         branding_primary_color: primaryColor,
         branding_hide_powered_by: planAllowsHidePoweredBy === true ? brandingHidePoweredBy : false,
       });
       applyProfile(res.data);
-      setBrandingMessage("Profile branding saved.");
+      setBrandingMessage(whiteLabelPlatformLimit === 1 ? "Profile branding and platform slot saved." : "Profile branding saved.");
     } catch (e) {
       setBrandingError((e as Error).message || "Failed to save profile branding");
     } finally {
@@ -146,10 +170,12 @@ export default function NativeModePage() {
 
   const brandingLocked = planAllowsHostedConnectBranding === false;
   const attributionLocked = planAllowsHidePoweredBy === false;
+  const requiresCustomPlatformSlot = whiteLabelPlatformLimit === 1;
+  const customSlotMissing = requiresCustomPlatformSlot && !customPlatformSlot;
   const previewName = brandingDisplayName.trim() || profile?.name || "Your product";
   const previewColor = HEX_COLOR_RE.test(brandingPrimaryColor.trim()) ? brandingPrimaryColor.trim() : "#111111";
   const effectiveHidePoweredBy = planAllowsHidePoweredBy === true && brandingHidePoweredBy;
-  const brandingReady = Boolean(profile?.branding_logo_url) && Boolean(brandingDisplayName.trim()) && HEX_COLOR_RE.test(brandingPrimaryColor.trim());
+  const brandingReady = Boolean(profile?.branding_logo_url) && Boolean(brandingDisplayName.trim()) && HEX_COLOR_RE.test(brandingPrimaryColor.trim()) && !customSlotMissing;
   const brandingBadgeClass = brandingLocked ? "dbadge-gray" : brandingReady ? "dbadge-green" : "dbadge-amber";
   const brandingBadgeLabel = brandingLocked ? "Locked" : brandingReady ? "Ready" : "Needs setup";
 
@@ -340,6 +366,49 @@ export default function NativeModePage() {
                 </label>
               </div>
 
+              {whiteLabelPlatformLimit !== null && (
+                <div style={{ marginBottom: 16 }}>
+                  <label>
+                    <span className="dform-label">Custom platform scope</span>
+                    {whiteLabelPlatformLimit === 1 ? (
+                      <select
+                        className="dform-input"
+                        value={customPlatformSlot}
+                        onChange={(e) => setCustomPlatformSlot(e.target.value)}
+                        disabled={brandingLocked}
+                        style={{ height: 46 }}
+                      >
+                        <option value="">Choose one platform</option>
+                        {CUSTOM_PLATFORM_OPTIONS.map((platform) => (
+                          <option key={platform.id} value={platform.id}>
+                            {platform.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div
+                        className="dform-input"
+                        style={{
+                          minHeight: 46,
+                          display: "flex",
+                          alignItems: "center",
+                          color: "var(--dmuted)",
+                        }}
+                      >
+                        {whiteLabelPlatformLimit === -1 ? "All supported platforms" : "Available on Basic or higher"}
+                      </div>
+                    )}
+                  </label>
+                  <div style={{ fontSize: 12, color: "var(--dmuted)", lineHeight: 1.5, marginTop: 7 }}>
+                    {whiteLabelPlatformLimit === 1
+                      ? "Basic uses one shared platform slot for Hosted Connect branding and Platform Credentials."
+                      : whiteLabelPlatformLimit === -1
+                        ? "Growth, Team, and Enterprise apply Hosted Connect branding across all supported platforms."
+                        : "Hosted Connect branding and Platform Credentials start on Basic."}
+                  </div>
+                </div>
+              )}
+
               <div style={{ display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", marginBottom: 16 }}>
                 <div
                   style={{
@@ -411,7 +480,7 @@ export default function NativeModePage() {
                 <span>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 650, color: "var(--dtext)" }}>Hide Powered by UniPost</span>
                   <span style={{ display: "block", fontSize: 12, color: "var(--dmuted)", lineHeight: 1.5 }}>
-                    {attributionLocked ? "Available on Growth and Team." : "Applies to the hosted Connect page footer."}
+                    {attributionLocked ? "Available on Growth, Team, and Enterprise." : "Applies to the hosted Connect page footer."}
                   </span>
                 </span>
               </label>
@@ -420,7 +489,7 @@ export default function NativeModePage() {
                 type="button"
                 className="dbtn dbtn-primary"
                 onClick={() => void handleBrandingSave()}
-                disabled={brandingLocked || brandingSaving || !profile}
+                disabled={brandingLocked || brandingSaving || !profile || customSlotMissing}
                 style={{ fontSize: 13, padding: "8px 16px" }}
               >
                 {brandingSaving ? "Saving..." : "Save profile"}

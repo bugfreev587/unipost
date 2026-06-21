@@ -14,7 +14,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   { name: "external_user_id", type: "string", description: "Your stable end-user identifier." },
   { name: "external_user_email?", type: "string", description: "Optional email for reconciliation and support." },
   { name: "return_url?", type: "string", description: "Where UniPost redirects the user after completion, cancellation, or a handled OAuth failure. This is not the OAuth callback URL or platform redirect_uri." },
-  { name: "allow_quickstart_creds?", type: "boolean", description: "Optional escape hatch for OAuth platforms. Defaults to false. When false, the workspace must already have Platform Credentials uploaded for that platform. When true, UniPost may fall back to the shared Quickstart OAuth app if no workspace credentials exist; workspace credentials still take priority when present." },
+  { name: "allow_quickstart_creds?", type: "boolean", description: "Optional escape hatch for OAuth platforms. Defaults to false. When false, the workspace must already have Platform Credentials uploaded for that platform. On Basic, that platform must also match the workspace's shared custom platform slot. When true, UniPost may fall back to the shared Quickstart OAuth app if no workspace credentials exist; workspace credentials still take priority when present." },
 ];
 
 const RESPONSE_201_FIELDS: ApiFieldItem[] = [
@@ -191,6 +191,8 @@ export default function CreateConnectSessionPage() {
           Connect flow. For OAuth platforms, this endpoint defaults to
           workspace-credential mode: the workspace must already have Platform Credentials
           uploaded unless you explicitly pass <code>allow_quickstart_creds=true</code>.
+          On Basic, the requested OAuth platform must also match the workspace&apos;s
+          shared custom platform slot.
           Facebook Page sessions connect the first publishable Page returned by
           Meta for the authorizing user.
           See the <Link href="/docs/connect-sessions">Connect Sessions guide</Link>{" "}

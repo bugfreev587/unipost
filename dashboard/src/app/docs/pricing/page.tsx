@@ -9,7 +9,7 @@ export default function DocsPricingPage() {
       lead="UniPost is priced by product stage, not raw post volume. Pick the tier that matches how you use the product — Free / API / Basic / Growth / Team / Enterprise — then scale within it."
     >
       <h2 id="when-to-read">When to read this page</h2>
-      <p>Pricing influences architecture decisions: which surfaces you build against, whether you need white-label Connect, and how you split traffic across plans. Read this early if you&apos;re evaluating where UniPost fits in your product.</p>
+      <p>Pricing influences architecture decisions: which surfaces you build against, whether you need Hosted Connect branding, Platform Credentials, and how you split traffic across plans. Read this early if you&apos;re evaluating where UniPost fits in your product.</p>
 
       <h2 id="ladder">The ladder</h2>
       <DocsTable
@@ -17,8 +17,8 @@ export default function DocsPricingPage() {
         rows={[
           ["Free",   "$0",     "100",    "API + dashboard + 8 platforms (no X). Try without a credit card."],
           ["API",    "$10",    "1,000",  "Dashboard + API + MCP, all 9 platforms incl. X, and read-only Analytics API. Inbox is not included."],
-          ["Basic",  "$19",    "2,500",  "Adds white-label for 1 platform, Inbox (DMs + comments), and full Analytics. Hosted onboarding still shows Powered by UniPost."],
-          ["Growth", "$59",    "7,500",  "Adds full white-label / native mode across supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
+          ["Basic",  "$19",    "2,500",  "Adds one shared custom platform slot for Hosted Connect branding and Platform Credentials, plus Inbox (DMs + comments) and full Analytics. Hosted onboarding still shows Powered by UniPost."],
+          ["Growth", "$59",    "7,500",  "Adds Hosted Connect branding and Platform Credentials across all supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
           ["Team",   "$149",   "25,000", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
           ["Enterprise", "Custom", "Custom", "Custom volume, SLA, dedicated support, contract flexibility. Contact us."],
         ]}
@@ -31,8 +31,8 @@ export default function DocsPricingPage() {
           ["Evaluating UniPost or building a hobby project", <span key="f">Free</span>],
           ["Building with the dashboard, REST API, MCP, and lightweight analytics", <span key="a">API</span>],
           ["Running UniPost as your day-to-day operating console (compose, Inbox, Analytics)", <span key="b">Basic</span>],
-          ["Embedding UniPost into your own SaaS with one branded platform", <span key="b2">Basic</span>],
-          ["Embedding UniPost into your own SaaS across multiple platforms or without UniPost attribution", <span key="g">Growth</span>],
+          ["Embedding UniPost into your own SaaS with one shared custom platform", <span key="b2">Basic</span>],
+          ["Embedding UniPost into your own SaaS across multiple custom platforms or without UniPost attribution", <span key="g">Growth</span>],
           ["Running an agency or multi-operator team with role-based access", <span key="t">Team</span>],
         ]}
       />
@@ -45,7 +45,7 @@ export default function DocsPricingPage() {
       </ul>
 
       <h2 id="free-plan">Free plan and trials</h2>
-      <p>The Free plan is the public trial path: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial; upgrade when you need X publishing, higher volume, Inbox, Analytics, white-label, or team workflows.</p>
+      <p>The Free plan is the public trial path: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial; upgrade when you need X publishing, higher volume, Inbox, Analytics, custom Hosted Connect, Platform Credentials, or team workflows.</p>
 
       <h2 id="full-pricing">Full pricing</h2>
       <p>Side-by-side feature comparison and FAQs:</p>

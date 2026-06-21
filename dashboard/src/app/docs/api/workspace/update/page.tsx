@@ -1,6 +1,6 @@
 "use client";
 
-import type { ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -10,6 +10,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "name?", type: "string", description: "New workspace display name. Must be non-empty when provided." },
   { name: "per_account_monthly_limit?", type: "number", description: "Per-account monthly publish quota; 0 to 1,000,000." },
+  { name: "custom_platform_slot?", type: "string | null", description: <>Shared Basic custom platform slot for Hosted Connect branding and Platform Credentials. Send an empty string to clear it.<EnumValues values={["twitter", "linkedin", "bluesky", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"]} /></> },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
@@ -17,6 +18,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "name", type: "string", description: "Updated workspace name." },
   { name: "per_account_monthly_limit", type: "number | null", description: "Updated quota value." },
   { name: "usage_modes", type: "string[]", description: "Active usage modes." },
+  { name: "custom_platform_slot", type: "string | null", description: "Selected shared custom platform slot, or null when unset." },
   { name: "created_at", type: "string", description: "Creation timestamp." },
   { name: "updated_at", type: "string", description: "Updated timestamp." },
 ];
@@ -35,7 +37,7 @@ const SNIPPETS = [
     code: `curl -X PATCH "https://api.unipost.dev/v1/workspace" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{ "name": "Acme Inc." }'`,
+  -d '{ "name": "Acme Inc.", "custom_platform_slot": "tiktok" }'`,
   },
   {
     lang: "js",
@@ -108,6 +110,7 @@ const RESPONSE_SNIPPETS = [
     "name": "Acme Inc.",
     "per_account_monthly_limit": null,
     "usage_modes": ["publishing"],
+    "custom_platform_slot": "tiktok",
     "created_at": "2026-01-04T10:00:00Z",
     "updated_at": "2026-04-27T18:00:00Z"
   }
@@ -120,7 +123,7 @@ export default function UpdateWorkspacePage() {
     <SingleEndpointReferencePage
       section="core"
       title="Update workspace"
-      description="Updates the workspace bound to the authenticated caller. Either field is optional; passing neither is a no-op that still returns the current state."
+      description="Updates the workspace bound to the authenticated caller. Each field is optional; passing none is a no-op that still returns the current state."
       method="PATCH"
       path="/v1/workspace"
       requestSections={[

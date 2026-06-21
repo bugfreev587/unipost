@@ -34,7 +34,7 @@ export default function WhiteLabelPage() {
           ["What it controls", "The UniPost-hosted pre-OAuth page: logo, display name, primary color, and attribution"],
           ["What it does not control", <>The official platform OAuth app, consent screen, app review, or quota. Configure those in <Link href="/docs/platform-credentials">Platform Credentials</Link>.</>],
           ["Credential source", "UniPost shared OAuth app or workspace Platform Credentials"],
-          ["Plan shape", "Hosted Connect profile branding starts on Basic; attribution removal depends on plan"],
+          ["Plan shape", "Hosted Connect profile branding starts on Basic. Basic applies branding to one shared custom platform slot; Growth, Team, and Enterprise apply it to all supported platforms. Attribution removal depends on plan."],
           ["Best use case", "Customer-facing SaaS onboarding where the connection handoff should look like your product"],
         ]}
       />
@@ -43,7 +43,7 @@ export default function WhiteLabelPage() {
       <p className="wl-note">
         White-label branding is the Hosted Connect Profile your end users see
         before they continue to Instagram, YouTube, TikTok, LinkedIn, or another
-        platform. It is independent from Platform Credentials. You can combine either Hosted Connect profile with either credential source.
+        platform. It is independent from Platform Credentials. You can combine either Hosted Connect profile with either credential source; on Basic, both surfaces must use the same selected platform slot.
       </p>
       <DocsTable
         columns={["Layer", "Dashboard page", "What it changes"]}
@@ -66,26 +66,33 @@ export default function WhiteLabelPage() {
         <div className="docs-step-row">
           <div className="docs-step-number">2</div>
           <div>
+            <div className="docs-step-title">Choose the custom platform scope</div>
+            <div className="docs-step-copy">On Basic, pick the one platform this workspace customizes. That same slot applies to Hosted Connect branding and Platform Credentials. Growth, Team, and Enterprise use all supported platforms.</div>
+          </div>
+        </div>
+        <div className="docs-step-row">
+          <div className="docs-step-number">3</div>
+          <div>
             <div className="docs-step-title">Set the display name</div>
             <div className="docs-step-copy">Use the product or tenant name that should appear on the UniPost-hosted Connect page before the platform OAuth screen.</div>
           </div>
         </div>
         <div className="docs-step-row">
-          <div className="docs-step-number">3</div>
+          <div className="docs-step-number">4</div>
           <div>
             <div className="docs-step-title">Upload the logo</div>
             <div className="docs-step-copy">Upload a PNG or JPG logo. UniPost stores it and renders it on the hosted Connect page for new sessions that use this profile.</div>
           </div>
         </div>
         <div className="docs-step-row">
-          <div className="docs-step-number">4</div>
+          <div className="docs-step-number">5</div>
           <div>
             <div className="docs-step-title">Choose the primary color</div>
             <div className="docs-step-copy">Pick the accent color used by the Hosted Connect page. Keep it close to the customer-facing product brand so the handoff feels familiar.</div>
           </div>
         </div>
         <div className="docs-step-row">
-          <div className="docs-step-number">5</div>
+          <div className="docs-step-number">6</div>
           <div>
             <div className="docs-step-title">Save and test a Connect Session</div>
             <div className="docs-step-copy">Create a Connect Session with this profile and open the returned URL. Confirm the pre-OAuth page shows the correct name, logo, and color.</div>
@@ -107,12 +114,13 @@ export default function WhiteLabelPage() {
         has approved Platform Credentials for the requested platform, UniPost
         can use that app and quota. If a session allows quickstart fallback and
         no workspace credentials exist, UniPost can use its shared OAuth app.
+        On Basic, the requested platform must match the workspace&apos;s shared custom platform slot for branding or Platform Credentials to apply.
       </p>
       <DocsTable
         columns={["Question", "Answer"]}
         rows={[
-          ["Can a default Hosted Connect page use workspace Platform Credentials?", "Yes"],
-          ["Can a branded Hosted Connect page use UniPost shared OAuth?", "Yes, when quickstart fallback is allowed"],
+          ["Can a default Hosted Connect page use workspace Platform Credentials?", "Yes, when the workspace plan and custom platform slot allow that platform"],
+          ["Can a branded Hosted Connect page use UniPost shared OAuth?", "Yes, when quickstart fallback is allowed and the requested platform is inside the plan's branding scope"],
           ["Where do I configure developer app client ID and secret?", <Link key="pc" href="/docs/platform-credentials">Platform Credentials</Link>],
           ["Where do I configure logo/name/color?", "Developer → Hosted Connect"],
         ]}
