@@ -35,6 +35,7 @@ export function useCurrentWorkspace(): { workspace: Workspace | null; loading: b
             // need them should query the relevant scoped endpoint.
             per_account_monthly_limit: null,
             usage_modes: [],
+            custom_platform_slot: null,
             created_at: "",
             updated_at: "",
           });

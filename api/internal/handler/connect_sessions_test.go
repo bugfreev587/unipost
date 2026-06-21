@@ -223,7 +223,7 @@ func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 
 	for _, platform := range []string{"tiktok", "facebook", "pinterest"} {
 		t.Run(platform, func(t *testing.T) {
-			fdb := &connectSessionTestDB{platform: platform, credentialErr: pgx.ErrNoRows}
+			fdb := &connectSessionTestDB{platform: platform, planID: "basic", customPlatformSlot: platform, credentialErr: pgx.ErrNoRows}
 			h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
 			body := fmt.Sprintf(`{
 				"platform": %q,
@@ -317,6 +317,77 @@ func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	}
 }
 
+func TestResolveConnector_BasicIgnoresCredentialsOutsideCustomPlatformSlot(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("linkedin-secret")
+	if err != nil {
+		t.Fatalf("encrypt secret: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:              "linkedin",
+		planID:                "basic",
+		customPlatformSlot:    "tiktok",
+		credentialSecretValue: encryptedSecret,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "linkedin"}),
+		"https://api.example.com",
+		nil,
+	)
+
+	connector, ok, err := h.resolveConnector(context.Background(), "ws_1", "linkedin", true)
+
+	if err != nil {
+		t.Fatalf("resolveConnector: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected fallback connector")
+	}
+	if connector == nil {
+		t.Fatal("expected fallback connector")
+	}
+	if fdb.platformCredentialLookups != 0 {
+		t.Fatalf("credential lookups = %d, want 0", fdb.platformCredentialLookups)
+	}
+}
+
+func TestResolveConnector_NoSubscriptionDoesNotUseWorkspaceCredentials(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:        "linkedin",
+		subscriptionErr: pgx.ErrNoRows,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "linkedin"}),
+		"https://api.example.com",
+		nil,
+	)
+
+	connector, ok, err := h.resolveConnector(context.Background(), "ws_1", "linkedin", true)
+
+	if err != nil {
+		t.Fatalf("resolveConnector: %v", err)
+	}
+	if !ok || connector == nil {
+		t.Fatal("expected fallback connector")
+	}
+	if fdb.platformCredentialLookups != 0 {
+		t.Fatalf("credential lookups = %d, want 0", fdb.platformCredentialLookups)
+	}
+}
+
 func TestOAuthCallbackRedirectsConnectSessionState(t *testing.T) {
 	fdb := &connectSessionTestDB{platform: "tiktok", allowQuickstart: true}
 	h := &OAuthHandler{queries: db.New(fdb)}
@@ -370,6 +441,65 @@ func TestGetConnectSession_CompletedReturnsManagedAccountID(t *testing.T) {
 	}
 }
 
+func TestPublicGet_BasicBrandingRequiresMatchingCustomPlatformSlot(t *testing.T) {
+	fdb := &connectSessionTestDB{
+		platform:           "linkedin",
+		planID:             "basic",
+		customPlatformSlot: "tiktok",
+		profileBranding:    true,
+	}
+	h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1?state=state_1", nil)
+	req = withChiParam(req, "id", "cs_1")
+	rec := httptest.NewRecorder()
+
+	h.PublicGet(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data publicConnectSessionResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if env.Data.Branding != nil {
+		t.Fatalf("basic branding should be hidden for non-slot platform, got %+v", env.Data.Branding)
+	}
+}
+
+func TestPublicGet_BasicBrandingShowsOnMatchingCustomPlatformSlot(t *testing.T) {
+	fdb := &connectSessionTestDB{
+		platform:           "tiktok",
+		planID:             "basic",
+		customPlatformSlot: "tiktok",
+		profileBranding:    true,
+	}
+	h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1?state=state_1", nil)
+	req = withChiParam(req, "id", "cs_1")
+	rec := httptest.NewRecorder()
+
+	h.PublicGet(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data publicConnectSessionResponse `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&env); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if env.Data.Branding == nil {
+		t.Fatal("basic branding should show on the selected custom platform")
+	}
+	if env.Data.Branding.DisplayName != "TailTales Custom" {
+		t.Fatalf("display name = %q", env.Data.Branding.DisplayName)
+	}
+}
+
 func TestConnectCallbackReusesDisconnectedManagedAccountForExternalUser(t *testing.T) {
 	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
 	if err != nil {
@@ -416,6 +546,11 @@ type connectSessionTestDB struct {
 	status                    string
 	completedAcctID           string
 	allowQuickstart           bool
+	planID                    string
+	subscriptionErr           error
+	customPlatformSlot        string
+	profileBranding           bool
+	credentialSecretValue     string
 	credentialErr             error
 	platformCredentialLookups int
 	activeAccountLookupErr    error
@@ -437,16 +572,66 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 	switch {
 	case strings.Contains(query, "-- name: GetProfile"):
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		logoURL := pgtype.Text{}
+		displayName := pgtype.Text{}
+		primaryColor := pgtype.Text{}
+		if f.profileBranding {
+			logoURL = pgtype.Text{String: "https://cdn.example.com/logo.png", Valid: true}
+			displayName = pgtype.Text{String: "TailTales Custom", Valid: true}
+			primaryColor = pgtype.Text{String: "#10b981", Valid: true}
+		}
 		return scanRow{values: []any{
-			"pr_1", "TailTales", now, now, pgtype.Text{}, pgtype.Text{}, pgtype.Text{}, "ws_1", false, pgtype.Text{},
+			"pr_1", "TailTales", now, now, logoURL, displayName, primaryColor, "ws_1", false, pgtype.Text{},
+		}}
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		if f.subscriptionErr != nil {
+			return scanRow{err: f.subscriptionErr}
+		}
+		planID := f.planID
+		if planID == "" {
+			planID = "free"
+		}
+		return scanRow{values: []any{
+			"sub_1",
+			planID,
+			pgtype.Text{},
+			pgtype.Text{},
+			"active",
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			pgtype.Bool{},
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			false,
+			"ws_1",
+		}}
+	case strings.Contains(query, "-- name: GetWorkspace"):
+		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		customPlatformSlot := pgtype.Text{}
+		if f.customPlatformSlot != "" {
+			customPlatformSlot = pgtype.Text{String: f.customPlatformSlot, Valid: true}
+		}
+		return scanRow{values: []any{
+			"ws_1",
+			"user_1",
+			"Workspace",
+			pgtype.Int4{},
+			now,
+			now,
+			[]string{"publishing"},
+			customPlatformSlot,
 		}}
 	case strings.Contains(query, "-- name: GetPlatformCredential"):
 		f.platformCredentialLookups++
 		if f.credentialErr != nil {
 			return scanRow{err: f.credentialErr}
 		}
+		secret := f.credentialSecretValue
+		if secret == "" {
+			secret = "encrypted-secret"
+		}
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		return scanRow{values: []any{"pc_1", f.platform, "client-id", "encrypted-secret", now, "ws_1"}}
+		return scanRow{values: []any{"pc_1", f.platform, "client-id", secret, now, "ws_1"}}
 	case strings.Contains(query, "-- name: CreateConnectSession"):
 		platform, _ := args[1].(string)
 		externalUserID, _ := args[2].(string)

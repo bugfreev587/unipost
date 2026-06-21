@@ -3,9 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
@@ -54,7 +57,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 	if limit == 0 {
 		writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
-			"White-label credentials require the Basic plan or higher — upgrade at unipost.dev/pricing")
+			"Platform Credentials require the Basic plan or higher — upgrade at unipost.dev/pricing")
 		return
 	}
 
@@ -72,11 +75,32 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "platform, client_id, and client_secret are required")
 		return
 	}
+	body.Platform = strings.ToLower(strings.TrimSpace(body.Platform))
+	if !connectablePlatforms[body.Platform] {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+			"platform must be one of "+connectablePlatformList)
+		return
+	}
 
 	if limit > 0 {
+		if limit == 1 {
+			_, err := h.queries.ClaimWorkspaceCustomPlatformSlot(r.Context(), db.ClaimWorkspaceCustomPlatformSlotParams{
+				ID:                 workspaceID,
+				CustomPlatformSlot: pgtype.Text{String: body.Platform, Valid: true},
+			})
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+					"Your current plan supports custom hosted branding and platform credentials for 1 platform. Use the selected platform or upgrade to Growth for all supported platforms.")
+				return
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check custom platform slot")
+				return
+			}
+		}
 		creds, err := h.queries.ListPlatformCredentialsByWorkspace(r.Context(), workspaceID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check white-label limits")
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check custom platform limits")
 			return
 		}
 		alreadyConfigured := false
@@ -88,7 +112,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		}
 		if !alreadyConfigured && len(creds) >= limit {
 			writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
-				"Your current plan supports white-label credentials for 1 platform. Upgrade to Growth for all supported platforms.")
+				"Your current plan supports custom hosted branding and platform credentials for 1 platform. Use the selected platform or upgrade to Growth for all supported platforms.")
 			return
 		}
 	}

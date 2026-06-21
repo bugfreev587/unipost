@@ -99,12 +99,11 @@ func RequirePlanAnalytics(q *quota.Checker) func(http.Handler) http.Handler {
 	}
 }
 
-// RequirePlanWhiteLabel blocks the white-label / native-mode platform
-// credentials endpoints (POST/DELETE /v1/platform-credentials) on
-// plans where plans.white_label is FALSE (Free / API / Basic).
-// Growth and up are allowed. Read access (GET /v1/platform-credentials)
-// stays open so the dashboard can render "you have no creds yet"
-// instead of a 402 toast.
+// RequirePlanWhiteLabel blocks custom platform capability mutations on
+// plans where plans.white_label is FALSE (Free / API). Basic is allowed
+// through and is then constrained to one shared custom platform slot by
+// the PlatformCredentialHandler. Read access stays open so the dashboard
+// can render "you have no creds yet" instead of a 402 toast.
 func RequirePlanWhiteLabel(q *quota.Checker) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +114,7 @@ func RequirePlanWhiteLabel(q *quota.Checker) func(http.Handler) http.Handler {
 			}
 			if q != nil && !q.PlanAllowsWhiteLabel(r.Context(), workspaceID) {
 				writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
-					"White-label / native mode requires the Growth plan or higher — upgrade at unipost.dev/pricing")
+					"Custom platform capabilities require the Basic plan or higher — upgrade at unipost.dev/pricing")
 				return
 			}
 			next.ServeHTTP(w, r)

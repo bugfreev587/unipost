@@ -4,7 +4,7 @@ import "strings"
 
 // NewManagedConnector builds a Connect OAuth connector for the given
 // platform using the supplied client credentials. Callers use this
-// when a workspace has uploaded white-label credentials and the
+// when a workspace has uploaded Platform Credentials and the
 // managed Connect flow should run against that customer-owned app
 // instead of UniPost's global env-var credentials.
 func NewManagedConnector(platform, clientID, clientSecret, callbackBaseURL string) Connector {

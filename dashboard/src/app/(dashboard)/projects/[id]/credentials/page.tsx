@@ -18,14 +18,14 @@ import {
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev").replace(/\/+$/, "");
 
 const CRED_PLATFORMS = [
-  { id: "instagram", name: "Instagram", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/white-label/meta", developerPortal: "https://developers.facebook.com" },
-  { id: "threads", name: "Threads", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/white-label/meta", developerPortal: "https://developers.facebook.com" },
-  { id: "facebook", name: "Facebook Page", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/white-label/meta", developerPortal: "https://developers.facebook.com" },
-  { id: "linkedin", name: "LinkedIn", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/white-label/linkedin", developerPortal: "https://developer.linkedin.com" },
+  { id: "instagram", name: "Instagram", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/platform-credentials/meta", developerPortal: "https://developers.facebook.com" },
+  { id: "threads", name: "Threads", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/platform-credentials/meta", developerPortal: "https://developers.facebook.com" },
+  { id: "facebook", name: "Facebook Page", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/platform-credentials/meta", developerPortal: "https://developers.facebook.com" },
+  { id: "linkedin", name: "LinkedIn", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/platform-credentials/linkedin", developerPortal: "https://developer.linkedin.com" },
   { id: "pinterest", name: "Pinterest", idLabel: "App ID", secretLabel: "App Secret", docs: null, developerPortal: "https://developers.pinterest.com" },
-  { id: "tiktok", name: "TikTok", idLabel: "Client Key", secretLabel: "Client Secret", docs: "/docs/white-label/tiktok", developerPortal: "https://developers.tiktok.com" },
-  { id: "youtube", name: "YouTube", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/white-label/youtube", developerPortal: "https://console.cloud.google.com" },
-  { id: "twitter", name: "X / Twitter", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/white-label/twitter", developerPortal: "https://developer.x.com" },
+  { id: "tiktok", name: "TikTok", idLabel: "Client Key", secretLabel: "Client Secret", docs: "/docs/platform-credentials/tiktok", developerPortal: "https://developers.tiktok.com" },
+  { id: "youtube", name: "YouTube", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/platform-credentials/youtube", developerPortal: "https://console.cloud.google.com" },
+  { id: "twitter", name: "X / Twitter", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/platform-credentials/twitter", developerPortal: "https://developer.x.com" },
 ];
 
 type CredentialForm = {
@@ -45,8 +45,13 @@ export default function CredentialsPage() {
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [copiedPlatform, setCopiedPlatform] = useState<string | null>(null);
   const [credentialLimit, setCredentialLimit] = useState<number | null>(null);
+  const [customPlatformSlot, setCustomPlatformSlot] = useState("");
 
   const configuredPlatforms = useMemo(() => new Set(creds.map((c) => c.platform)), [creds]);
+  const customPlatformName = useMemo(
+    () => CRED_PLATFORMS.find((p) => p.id === customPlatformSlot)?.name || customPlatformSlot,
+    [customPlatformSlot]
+  );
   const writesLocked = credentialLimit === 0;
 
   const loadPage = useCallback(async () => {
@@ -61,6 +66,7 @@ export default function CredentialsPage() {
       setCreds(credsRes.data ?? []);
       if (limitsRes) {
         setCredentialLimit(limitsRes.data.white_label_platform_limit);
+        setCustomPlatformSlot(limitsRes.data.custom_platform_slot || "");
       }
     } catch (e) {
       setPageError((e as Error).message || "Failed to load platform credentials");
@@ -177,7 +183,11 @@ export default function CredentialsPage() {
           </div>
           <div style={{ fontSize: 13, color: "var(--dmuted)", lineHeight: 1.6 }}>
             {credentialLimit === 0 && "Your current plan can use UniPost's shared OAuth apps, but cannot save custom platform credentials."}
-            {credentialLimit === 1 && `Your current plan includes custom credentials for 1 platform. ${configuredPlatforms.size}/1 platform slot configured.`}
+            {credentialLimit === 1 && (
+              customPlatformSlot
+                ? <>Your current plan includes 1 shared custom platform slot: {customPlatformName}. Hosted Connect branding and Platform Credentials both use this platform. Change it in <Link href={`/projects/${profileId}/accounts/native`} style={{ color: "var(--daccent)", textDecoration: "none" }}>Hosted Connect</Link>.</>
+                : `Your current plan includes 1 shared custom platform slot. Saving credentials for a platform will claim that slot for both Platform Credentials and Hosted Connect branding.`
+            )}
             {credentialLimit === -1 && "Your current plan includes custom credentials across all supported platforms."}
           </div>
         </div>
@@ -243,6 +253,8 @@ export default function CredentialsPage() {
           const cred = creds.find((c) => c.platform === p.id);
           const form = forms[p.id] || { clientId: "", clientSecret: "" };
           const callbackUrl = `${API_BASE_URL}/v1/connect/callback/${p.id}`;
+          const outsideBasicSlot = credentialLimit === 1 && Boolean(customPlatformSlot) && customPlatformSlot !== p.id;
+          const formDisabled = writesLocked || outsideBasicSlot;
 
           return (
             <div key={p.id} className="settings-section" style={{ marginBottom: 0 }}>
@@ -252,6 +264,9 @@ export default function CredentialsPage() {
                     <span style={{ fontSize: 14, fontWeight: 600, color: "var(--dtext)" }}>{p.name}</span>
                     {configured && (
                       <span className="dbadge dbadge-green" style={{ fontSize: 10 }}>Configured</span>
+                    )}
+                    {credentialLimit === 1 && customPlatformSlot === p.id && (
+                      <span className="dbadge dbadge-amber" style={{ fontSize: 10 }}>Shared slot</span>
                     )}
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
@@ -285,35 +300,49 @@ export default function CredentialsPage() {
               </div>
               <div className="settings-section-body">
                 {configured ? (
-                  <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
-                    Client ID: <span className="mono">{cred?.client_id}</span>
-                  </div>
+                  <>
+                    <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
+                      Client ID: <span className="mono">{cred?.client_id}</span>
+                    </div>
+                    {outsideBasicSlot && (
+                      <div style={{ fontSize: 12, color: "var(--dmuted2)", lineHeight: 1.5, marginTop: 8 }}>
+                        This credential is saved, but Basic only activates the shared slot platform: {customPlatformName}.
+                      </div>
+                    )}
+                  </>
                 ) : (
-                  <div className="platform-credential-form">
-                    <input
-                      className="dform-input"
-                      placeholder={p.idLabel}
-                      value={form.clientId}
-                      onChange={(e) => updateForm(p.id, "clientId", e.target.value)}
-                      disabled={writesLocked}
-                    />
-                    <input
-                      className="dform-input"
-                      type="password"
-                      placeholder={p.secretLabel}
-                      value={form.clientSecret}
-                      onChange={(e) => updateForm(p.id, "clientSecret", e.target.value)}
-                      disabled={writesLocked}
-                    />
-                    <button
-                      className="dbtn dbtn-primary platform-credential-save"
-                      onClick={() => handleSave(p.id)}
-                      disabled={writesLocked || saving === p.id || !form.clientId || !form.clientSecret}
-                      style={{ padding: "8px 16px" }}
-                    >
-                      {saving === p.id ? "..." : "Save"}
-                    </button>
-                  </div>
+                  <>
+                    <div className="platform-credential-form">
+                      <input
+                        className="dform-input"
+                        placeholder={p.idLabel}
+                        value={form.clientId}
+                        onChange={(e) => updateForm(p.id, "clientId", e.target.value)}
+                        disabled={formDisabled}
+                      />
+                      <input
+                        className="dform-input"
+                        type="password"
+                        placeholder={p.secretLabel}
+                        value={form.clientSecret}
+                        onChange={(e) => updateForm(p.id, "clientSecret", e.target.value)}
+                        disabled={formDisabled}
+                      />
+                      <button
+                        className="dbtn dbtn-primary platform-credential-save"
+                        onClick={() => handleSave(p.id)}
+                        disabled={formDisabled || saving === p.id || !form.clientId || !form.clientSecret}
+                        style={{ padding: "8px 16px" }}
+                      >
+                        {saving === p.id ? "..." : "Save"}
+                      </button>
+                    </div>
+                    {outsideBasicSlot && (
+                      <div style={{ fontSize: 12, color: "var(--dmuted2)", lineHeight: 1.5, marginTop: 8 }}>
+                        Basic can save credentials only for the shared slot platform: {customPlatformName}.
+                      </div>
+                    )}
+                  </>
                 )}
               </div>
             </div>

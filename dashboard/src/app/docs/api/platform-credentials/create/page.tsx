@@ -73,7 +73,7 @@ const RESPONSE_SNIPPETS = [
   "error": {
     "code": "PLAN_FEATURE_NOT_AVAILABLE",
     "normalized_code": "plan_feature_not_available",
-    "message": "White-label credentials require the Basic plan or higher - upgrade at unipost.dev/pricing"
+    "message": "Platform Credentials require the Basic plan or higher - upgrade at unipost.dev/pricing"
   },
   "request_id": "req_123"
 }`,
@@ -92,7 +92,7 @@ export default function CreatePlatformCredentialsPage() {
       title="Upload platform credentials"
       description={
         <>
-          Upload or replace workspace-owned OAuth app credentials for one upstream platform. Platform Credentials are separate from Hosted Connect branding: credentials control the platform app identity and quota used by future <ApiInlineLink endpoint="POST /v1/connect/sessions" /> OAuth flows, while <Link href="/docs/white-label">Hosted Connect</Link> controls the pre-OAuth branding layer.
+          Upload or replace workspace-owned OAuth app credentials for one upstream platform. Platform Credentials are separate from Hosted Connect branding: credentials control the platform app identity and quota used by future <ApiInlineLink endpoint="POST /v1/connect/sessions" /> OAuth flows, while <Link href="/docs/white-label">Hosted Connect</Link> controls the pre-OAuth branding layer. On Basic, both surfaces share one selected platform slot.
         </>
       }
       method="POST"
@@ -112,7 +112,7 @@ export default function CreatePlatformCredentialsPage() {
       responseSnippets={RESPONSE_SNIPPETS}
     >
       <InfoBox>
-        A successful upload replaces any previous credentials for the same platform. Basic supports one platform credential slot; Growth and Team support all supported platforms. See the <Link href="/docs/platform-credentials">Platform Credentials guide</Link> for platform setup steps.
+        A successful upload replaces any previous credentials for the same platform. Basic supports one shared custom platform slot across Platform Credentials and Hosted Connect branding; Growth, Team, and Enterprise support all supported platforms. See the <Link href="/docs/platform-credentials">Platform Credentials guide</Link> for platform setup steps.
       </InfoBox>
     </SingleEndpointReferencePage>
   );

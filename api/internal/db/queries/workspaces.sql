@@ -27,6 +27,21 @@ SET per_account_monthly_limit = sqlc.narg('per_account_monthly_limit')::INTEGER,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateWorkspaceCustomPlatformSlot :one
+UPDATE workspaces
+SET custom_platform_slot = NULLIF(sqlc.arg('custom_platform_slot')::TEXT, ''),
+    updated_at           = NOW()
+WHERE id = $1
+RETURNING *;
+
+-- name: ClaimWorkspaceCustomPlatformSlot :one
+UPDATE workspaces
+SET custom_platform_slot = $2,
+    updated_at           = NOW()
+WHERE id = $1
+  AND (custom_platform_slot IS NULL OR custom_platform_slot = $2)
+RETURNING *;
+
 -- name: UpdateWorkspaceUsageModes :one
 UPDATE workspaces SET usage_modes = $2, updated_at = NOW()
 WHERE id = $1

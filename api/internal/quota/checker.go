@@ -199,9 +199,8 @@ func (c *Checker) PlanAllowsAnalytics(ctx context.Context, workspaceID string) b
 }
 
 // PlanAllowsWhiteLabel reports whether the workspace's plan unlocks
-// white-label / native-mode platform credentials. Migration 013
-// added the plans.white_label column; the May 2026 ladder (058)
-// sets this true on Growth and up. Free / API / Basic are gated.
+// any custom platform capability. Basic has one shared platform slot;
+// Growth, Team, and Enterprise cover all supported platforms.
 func (c *Checker) PlanAllowsWhiteLabel(ctx context.Context, workspaceID string) bool {
 	planID := c.PlanIDFor(ctx, workspaceID)
 	plan, err := c.queries.GetPlan(ctx, planID)
@@ -219,15 +218,16 @@ func (c *Checker) PlanAllowsWhiteLabel(ctx context.Context, workspaceID string) 
 func (c *Checker) PlanAllowsHostedConnectBranding(ctx context.Context, workspaceID string) bool {
 	planID := c.PlanIDFor(ctx, workspaceID)
 	switch planID {
-	case "basic", "growth", "team":
+	case "basic", "growth", "team", "enterprise":
 		return true
 	default:
 		return false
 	}
 }
 
-// WhiteLabelPlatformLimit returns how many BYO platform credential rows
-// the workspace may actively configure. -1 means unlimited.
+// WhiteLabelPlatformLimit returns how many shared custom platform slots
+// the workspace may actively configure. The slot covers both Hosted
+// Connect branding and Platform Credentials. -1 means unlimited.
 //
 // Product packaging:
 //   - Free / API: 0
@@ -240,7 +240,7 @@ func (c *Checker) WhiteLabelPlatformLimit(ctx context.Context, workspaceID strin
 	switch c.PlanIDFor(ctx, workspaceID) {
 	case "basic":
 		return 1
-	case "growth", "team":
+	case "growth", "team", "enterprise":
 		return -1
 	default:
 		return 0
@@ -252,7 +252,7 @@ func (c *Checker) WhiteLabelPlatformLimit(ctx context.Context, workspaceID strin
 // up are allowed.
 func (c *Checker) PlanAllowsHidePoweredBy(ctx context.Context, workspaceID string) bool {
 	switch c.PlanIDFor(ctx, workspaceID) {
-	case "growth", "team":
+	case "growth", "team", "enterprise":
 		return true
 	default:
 		return false
