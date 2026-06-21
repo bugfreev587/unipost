@@ -13,6 +13,18 @@ from unipost import UniPost, UniPostError, verify_webhook_signature
 API_KEY = os.environ.get("UNIPOST_API_KEY", "")
 TEST_ACCOUNT_ID = os.environ.get("TEST_ACCOUNT_ID", "")
 TEST_PUBLISH_NOW = os.environ.get("TEST_PUBLISH_NOW") == "true"
+TEST_PLATFORM_CREDENTIALS_PLATFORM = os.environ.get("TEST_PLATFORM_CREDENTIALS_PLATFORM", "").strip().lower()
+SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS = (
+    "twitter",
+    "linkedin",
+    "bluesky",
+    "youtube",
+    "tiktok",
+    "instagram",
+    "threads",
+    "facebook",
+    "pinterest",
+)
 
 passed = 0
 failed = 0
@@ -116,6 +128,16 @@ def skip(name, reason):
 def assert_true(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def platform_credentials_test_platform():
+    if not TEST_PLATFORM_CREDENTIALS_PLATFORM:
+        raise SkipTest("Set TEST_PLATFORM_CREDENTIALS_PLATFORM to run destructive credentials round-trip")
+    if TEST_PLATFORM_CREDENTIALS_PLATFORM not in SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS:
+        raise ValueError(
+            f"TEST_PLATFORM_CREDENTIALS_PLATFORM must be one of {', '.join(SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS)}"
+        )
+    return TEST_PLATFORM_CREDENTIALS_PLATFORM
 
 
 def expect_api_error(name, fn, expected_codes):
@@ -275,8 +297,7 @@ def main():
 
     section("6. Platform credentials")
 
-    platform_name = f"sdk-py-{int(datetime.now(timezone.utc).timestamp())}"
-    test("platform_credentials.create()/list()/delete()", lambda: _test_platform_credentials(client, platform_name))
+    test("platform_credentials.create()/list()/delete()", lambda: _test_platform_credentials(client))
 
     section("6b. API keys")
 
@@ -607,7 +628,8 @@ def _test_webhook_rotate(client, webhook_id):
     return payload
 
 
-def _test_platform_credentials(client, platform_name):
+def _test_platform_credentials(client):
+    platform_name = platform_credentials_test_platform()
     try:
         created = client.platform_credentials.create(
             platform=platform_name,

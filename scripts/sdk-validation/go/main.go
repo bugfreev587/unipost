@@ -25,6 +25,18 @@ var (
 	createdPlatformCredentials []string
 )
 
+var supportedPlatformCredentialsPlatforms = []string{
+	"twitter",
+	"linkedin",
+	"bluesky",
+	"youtube",
+	"tiktok",
+	"instagram",
+	"threads",
+	"facebook",
+	"pinterest",
+}
+
 type skipTestError string
 
 func (e skipTestError) Error() string { return string(e) }
@@ -129,6 +141,19 @@ func assert(condition bool, message string) error {
 
 func ptrString(value string) *string {
 	return &value
+}
+
+func platformCredentialsTestPlatform() (string, error) {
+	platform := strings.ToLower(strings.TrimSpace(os.Getenv("TEST_PLATFORM_CREDENTIALS_PLATFORM")))
+	if platform == "" {
+		return "", skipTestError("Set TEST_PLATFORM_CREDENTIALS_PLATFORM to run destructive credentials round-trip")
+	}
+	for _, supported := range supportedPlatformCredentialsPlatforms {
+		if platform == supported {
+			return platform, nil
+		}
+	}
+	return "", fmt.Errorf("TEST_PLATFORM_CREDENTIALS_PLATFORM must be one of %s", strings.Join(supportedPlatformCredentialsPlatforms, ", "))
 }
 
 func pickStableProfile(profiles []unipost.Profile, workspace *unipost.Workspace) *unipost.Profile {
@@ -660,8 +685,11 @@ func main() {
 
 	section("6. Platform credentials")
 
-	platformName := fmt.Sprintf("sdk-go-%d", time.Now().Unix())
 	test("PlatformCredentials.Create()/List()/Delete()", func() error {
+		platformName, err := platformCredentialsTestPlatform()
+		if err != nil {
+			return err
+		}
 		item, err := client.PlatformCredentials.Create(ctx, &unipost.CreatePlatformCredentialParams{
 			Platform:     platformName,
 			ClientID:     "sdk-client-id",
