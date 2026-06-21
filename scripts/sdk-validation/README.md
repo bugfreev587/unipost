@@ -28,7 +28,7 @@ What it covers now:
 - Connect session create/get
 - Users list/get when managed users exist
 - Webhook signature verification plus webhook CRUD/rotate
-- Platform credentials create/list/delete when the workspace plan allows it
+- Platform credentials create/list/delete only when `TEST_PLATFORM_CREDENTIALS_PLATFORM` explicitly names a supported platform that is safe for the test workspace to overwrite
 - API keys list, plus a create/revoke round-trip (mint a test key, verify the prefix, revoke it)
 - Posts validate/list/get/queue/analytics
 - Draft create/update/preview/archive/restore
@@ -83,6 +83,7 @@ Coverage broadly matches the JavaScript / Python / Go live suites, including pub
 | `UNIPOST_API_KEY` | Required. API key from app.unipost.dev |
 | `TEST_ACCOUNT_ID` | Optional. Enables post create/schedule/cancel tests |
 | `TEST_PUBLISH_NOW=true` | Optional. Actually publishes a post (irreversible) |
+| `TEST_PLATFORM_CREDENTIALS_PLATFORM` | Optional. Enables the destructive Platform Credentials create/list/delete round-trip for a supported platform (`twitter`, `linkedin`, `bluesky`, `youtube`, `tiktok`, `instagram`, `threads`, `facebook`, or `pinterest`). Leave unset for production regression keys unless that workspace is dedicated to credential overwrite testing. |
 
 ## Coverage notes
 
@@ -93,6 +94,7 @@ Coverage broadly matches the JavaScript / Python / Go live suites, including pub
   - `posts.retryResult()` only runs when a safe failed result already exists.
   - `deliveryJobs.retry()/cancel()` only runs when a retryable job already exists.
   - `logs.get()` and `logs.stream()` only run when `logs.list()` returns at least one retained log.
+  - `platform credentials create/list/delete` only runs when `TEST_PLATFORM_CREDENTIALS_PLATFORM` is set to a supported platform that is safe to overwrite.
 - Direct destructive calls such as deleting an arbitrary pre-existing account are intentionally not forced in validation. Cleanup paths still verify delete behavior for resources the scripts create themselves, such as posts, media, webhooks, and temporary profiles.
 
 ## Running the source-validation suites

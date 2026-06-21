@@ -6,6 +6,18 @@ const { UniPost, UniPostError, verifyWebhookSignature } = await import(sdkImport
 const API_KEY = process.env.UNIPOST_API_KEY || 'YOUR_API_KEY_HERE';
 const TEST_ACCOUNT_ID_ENV = process.env.TEST_ACCOUNT_ID || '';
 const TEST_PUBLISH_NOW = process.env.TEST_PUBLISH_NOW === 'true';
+const TEST_PLATFORM_CREDENTIALS_PLATFORM = (process.env.TEST_PLATFORM_CREDENTIALS_PLATFORM || '').trim().toLowerCase();
+const SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS = [
+  'twitter',
+  'linkedin',
+  'bluesky',
+  'youtube',
+  'tiktok',
+  'instagram',
+  'threads',
+  'facebook',
+  'pinterest',
+];
 
 let passed = 0;
 let failed = 0;
@@ -97,6 +109,16 @@ function isTikTokReconnectRequired(error) {
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function platformCredentialsTestPlatform() {
+  if (!TEST_PLATFORM_CREDENTIALS_PLATFORM) {
+    throw new SkipTestError('Set TEST_PLATFORM_CREDENTIALS_PLATFORM to run destructive credentials round-trip');
+  }
+  if (!SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS.includes(TEST_PLATFORM_CREDENTIALS_PLATFORM)) {
+    throw new Error(`TEST_PLATFORM_CREDENTIALS_PLATFORM must be one of ${SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS.join(', ')}`);
+  }
+  return TEST_PLATFORM_CREDENTIALS_PLATFORM;
 }
 
 async function expectApiError(name, fn, expectedCodes = []) {
@@ -469,8 +491,8 @@ async function main() {
 
   section('6. Platform credentials');
 
-  const platformKey = `sdk-js-${Date.now()}`;
   await test('platformCredentials.create()/list()/delete()', async () => {
+    const platformKey = platformCredentialsTestPlatform();
     try {
       const created = await client.platformCredentials.create({
         platform: platformKey,

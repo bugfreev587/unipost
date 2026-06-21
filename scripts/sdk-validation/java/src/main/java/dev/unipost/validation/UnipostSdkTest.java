@@ -23,6 +23,19 @@ public final class UnipostSdkTest {
     private static final String API_KEY = env("UNIPOST_API_KEY", "");
     private static final String BASE_URL = env("BASE_URL", "https://api.unipost.dev");
     private static final boolean TEST_PUBLISH_NOW = "true".equalsIgnoreCase(env("TEST_PUBLISH_NOW", "false"));
+    private static final String TEST_PLATFORM_CREDENTIALS_PLATFORM =
+            env("TEST_PLATFORM_CREDENTIALS_PLATFORM", "").trim().toLowerCase(Locale.ROOT);
+    private static final List<String> SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS = List.of(
+            "twitter",
+            "linkedin",
+            "bluesky",
+            "youtube",
+            "tiktok",
+            "instagram",
+            "threads",
+            "facebook",
+            "pinterest"
+    );
 
     private static int passed;
     private static int failed;
@@ -288,8 +301,8 @@ public final class UnipostSdkTest {
         }
 
         section("6. Platform credentials");
-        String platformKey = "sdk-java-" + Instant.now().getEpochSecond();
         test("platformCredentials.create()/list()/delete()", () -> {
+            String platformKey = platformCredentialsTestPlatform();
             JsonNode created = client.platformCredentials().create(map(
                     "platform", platformKey,
                     "client_id", "client-id",
@@ -696,6 +709,17 @@ public final class UnipostSdkTest {
             }
             throw new IllegalStateException("Expected API error");
         });
+    }
+
+    private static String platformCredentialsTestPlatform() throws SkipTestException {
+        if (TEST_PLATFORM_CREDENTIALS_PLATFORM.isBlank()) {
+            throw new SkipTestException("Set TEST_PLATFORM_CREDENTIALS_PLATFORM to run destructive credentials round-trip");
+        }
+        if (!SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS.contains(TEST_PLATFORM_CREDENTIALS_PLATFORM)) {
+            throw new IllegalArgumentException("TEST_PLATFORM_CREDENTIALS_PLATFORM must be one of "
+                    + String.join(", ", SUPPORTED_PLATFORM_CREDENTIALS_PLATFORMS));
+        }
+        return TEST_PLATFORM_CREDENTIALS_PLATFORM;
     }
 
     private static void skip(String name, String reason) {
