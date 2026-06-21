@@ -1,31 +1,29 @@
 // Zernio competitor data
-// Last verified: 2026-05-01 against zernio.com (homepage, pricing) + docs.zernio.com
-// Total platform count and Free-tier presence are user-confirmed.
-// Per-platform flags below are best-effort — Zernio's site advertises
-// the count but not always an itemized list, so flags are based on the
-// major networks Zernio publicly supports. Verify before quoting in marketing.
+// Last verified: 2026-06-21 against zernio.com/pricing + docs.zernio.com/pricing
+// Pricing evidence: docs/competitive-evidence/zernio-pricing-2026-06-21.md
+// Per-platform flags below are best-effort. Zernio's public pricing page
+// lists the major social, messaging, and ads networks it supports.
+// Verify current coverage before quoting platform-specific gaps in marketing.
 
 export const ZERNIO = {
   name: "Zernio",
   slug: "zernio",
-  tagline: "Social media platform with tiered features and add-ons",
+  tagline: "Pay-per-account social API with every feature bundled",
   pricing: {
     freeTier: true,
-    freePostsPerMonth: 20, // Zernio Free: 2 social sets, 20 posts/mo, no Tools API
-    startingPrice: 19, // Build tier: $19/mo monthly billing ($16/mo billed yearly)
-    pricingModel: "Tier + add-ons (Analytics, Comments+DMs, Ads each charged separately)",
+    freePostsPerMonth: 0, // Account-based free tier; use freeTierLabel for display.
+    freeTierLabel: "first 2 connected accounts free",
+    startingPrice: 6, // First paid band after the 2-account credit: $6/account/mo.
+    pricingModel: "Pay per connected social account; first 2 free, then graduated rates",
     enterprisePlan: true,
     tiers: [
-      { label: "Free",        price: 0,    posts: "20/mo" },
-      { label: "Build",       price: 19,   posts: "120/mo" },
-      { label: "Accelerate",  price: 49,   posts: "Unlimited" },
-      { label: "Unlimited",   price: 833,  posts: "Unlimited" },
+      { label: "First 2 accounts", price: 0, posts: "Unlimited", priceDisplay: "Free" },
+      { label: "Accounts 3-10", price: 6, posts: "Unlimited", priceDisplay: "$6/account/mo" },
+      { label: "Accounts 11-100", price: 3, posts: "Unlimited", priceDisplay: "$3/account/mo" },
+      { label: "Accounts 101-2,000", price: 1, posts: "Unlimited", priceDisplay: "$1/account/mo" },
+      { label: "2,001+ accounts", price: null, posts: "Unlimited", priceDisplay: "Custom" },
     ],
-    addOns: [
-      "Analytics ($9/mo on Build, $42/mo on Accelerate, $833/mo on Unlimited)",
-      "Comments + DMs (same per-tier pricing as Analytics)",
-      "Ads (same per-tier pricing as Analytics)",
-    ],
+    addOns: [],
   },
   platforms: {
     total: 15, // homepage advertises 15 (Instagram, TikTok, YouTube, X, LinkedIn, Facebook, Threads, Pinterest, Reddit, Bluesky, WhatsApp, Telegram, Discord, Snapchat, Google Business)
@@ -41,7 +39,7 @@ export const ZERNIO = {
   } as Record<string, boolean | string | number>,
   features: {
     scheduledPosts: true,
-    postAnalytics: true, // available as a paid add-on, not bundled
+    postAnalytics: true, // included with connected accounts per current public pricing
     webhooks: true,
     mediaUpload: true,
     twitterThreads: true,
@@ -50,7 +48,7 @@ export const ZERNIO = {
     firstComment: false,
     nativeMode: false, // only OAuth 2.1 verified; no white-label / branded OAuth advertised
     quickstartMode: false,
-    inbox: true, // Comments + DMs add-on
+    inbox: true, // included with connected accounts per current public pricing
     dashboard: true,
   },
   developerExperience: {
@@ -64,19 +62,20 @@ export const ZERNIO = {
     soc2: false, // no public security/compliance/trust page on zernio.com
     gdpr: false, // no explicit public GDPR claim
   },
-  heroTitle: "UniPost vs Zernio —\nThe full stack without the add-on tax",
-  heroSub: "Zernio sells Analytics and Comments+DMs as separate paid add-ons on top of its tier price. UniPost bundles them into Basic at $19/mo.",
+  heroTitle: "UniPost vs Zernio —\nEmbedded publishing without the connected-account tax",
+  heroSub: "Zernio's public pricing is pay per connected social account. UniPost self-serve plans are based on product tier and monthly post capacity, so embedded apps with many low-volume users can avoid account-meter pricing.",
   verdict: {
     chooseUs: [
-      "You want Inbox and Analytics included, not as add-ons",
-      "You want native MCP support without an upgrade or Tools API gating",
-      "You're a solo dev or indie hacker who wants more headroom on the free tier (100 posts vs Zernio's 20)",
-      "You want a branded OAuth (white-label) experience — UniPost ships this on Growth ($59/mo)",
+      "You are building an app where your own users connect social accounts",
+      "You want self-serve pricing based on product tier and monthly post capacity, not connected-account count",
+      "Your users are low- or medium-volume, so Growth can be more predictable than paying per connected account",
+      "You want branded OAuth through Hosted Connect — UniPost ships this on Growth ($59/mo)",
     ],
     chooseThem: [
       "You need 15 platforms and use ones UniPost doesn't have yet (Reddit, WhatsApp, Telegram, Discord, Snapchat, Google Business)",
       "You need Ads management as a first-class feature",
-      "You have enterprise-scale volume needs (Unlimited tier at $833/mo)",
+      "You want unlimited posts and every feature bundled with each connected account",
+      "Your connected-account count is low enough that per-account billing is predictable",
     ],
   },
   migrationEndpoint: {
@@ -88,19 +87,19 @@ export const ZERNIO = {
     to: 'account_ids: ["sa_instagram_xxx"]',
   },
   faqs: [
-    { q: "Can I use UniPost if I'm already using Zernio?", a: "Yes. You can run both in parallel during migration. UniPost's Free plan (100 posts/mo) gives you more headroom than Zernio's Free (20 posts/mo) to evaluate." },
-    { q: "What's the real-money difference at the entry tier?", a: "Zernio Build is $19/mo and excludes Inbox and Analytics — you add those as $9/mo each, bringing the realistic total to ~$37/mo. UniPost Basic is $19/mo with both bundled in. Same price, more value." },
+    { q: "Can I use UniPost if I'm already using Zernio?", a: "Yes. You can run both in parallel during migration. UniPost's Free plan gives you 100 posts/month to test the API and dashboard, while paid plans are organized around product stage and monthly post capacity." },
+    { q: "What's the real-money difference for an embedded app?", a: "If your app has 100 end users and each connects 2 social accounts, that is 200 connected accounts. Under Zernio's current graduated account pricing, 200 full-month accounts is $418/mo. If the same app fits under 7,500 posts/mo and Growth features, UniPost Growth is $59/mo." },
     { q: "Does UniPost support all the platforms Zernio supports?", a: "UniPost supports 9 platforms (X, Instagram, Facebook, Threads, TikTok, YouTube, LinkedIn, Pinterest, Bluesky). Zernio advertises 15. If you need a network beyond UniPost's nine, check our roadmap or contact us." },
-    { q: "Both have MCP — what's the difference?", a: "UniPost ships MCP as a core feature on every plan including Free. Zernio's MCP server (Tools API) is gated by tier. Same protocol, different packaging." },
+    { q: "Both have MCP — what's the difference?", a: "Both ship MCP support. The deciding factor is usually packaging: UniPost self-serve plans are not priced per connected social account, while Zernio's public pricing uses an account meter." },
     { q: "Does UniPost have a free plan?", a: "Yes — the Free plan includes 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial." },
-    { q: "Does UniPost support white-label OAuth?", a: "Yes — UniPost ships white-label (Native mode) on the Growth tier ($59/mo) so your users see your app name on the OAuth screen. Zernio's docs only describe standard OAuth 2.1, not branded white-label." },
+    { q: "Does UniPost support white-label OAuth?", a: "Yes — UniPost ships white-label (Native mode) on the Growth tier ($59/mo) so your users see your app name on the OAuth screen. Zernio's public docs describe standard OAuth flows; verify directly with Zernio if branded OAuth is a requirement." },
     { q: "How long does migration take?", a: "Most developers complete the switch in under an hour. The main change is the endpoint URL and field names." },
   ],
   seo: {
-    title: "UniPost vs Zernio — Social API Comparison (2026) | UniPost",
-    description: "Comparing Zernio alternatives? UniPost Basic ($19/mo) bundles Inbox and Analytics — Zernio sells them as $9/mo add-ons each. See the full comparison.",
+    title: "UniPost vs Zernio — Embedded Social API Comparison (2026) | UniPost",
+    description: "Comparing Zernio alternatives? UniPost self-serve plans are priced by product stage and monthly post capacity, not per connected social account.",
     keywords: ["zernio alternative", "zernio competitor", "zernio vs unipost", "social media api comparison"],
-    ogTitle: "UniPost vs Zernio — Social Media API Comparison",
-    ogDescription: "Inbox and Analytics included. No add-on tax. Compare UniPost and Zernio.",
+    ogTitle: "UniPost vs Zernio — Embedded Social API Comparison",
+    ogDescription: "No connected-account tax on self-serve plans. Compare UniPost and Zernio.",
   },
 };

@@ -21,6 +21,7 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // TestValidateReturnURL — accept https/http with a host, reject everything else.
@@ -215,6 +216,66 @@ func TestCreateConnectSession_OAuthQuickstartPlatformsEnabledInProduction(t *tes
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestCreateConnectSession_FreePlanRejectsNewExternalUserAfterManagedUserCap(t *testing.T) {
+	t.Setenv("UNIPOST_ENV", "development")
+
+	fdb := &connectSessionTestDB{
+		platform:                         "tiktok",
+		allowQuickstart:                  true,
+		managedUserCount:                 3,
+		existingExternalUserAccountCount: 0,
+	}
+	queries := db.New(fdb)
+	h := NewConnectSessionHandler(queries, "https://app.unipost.dev", quota.NewChecker(queries))
+	req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(`{
+		"platform": "tiktok",
+		"profile_id": "pr_1",
+		"external_user_id": "user_new",
+		"allow_quickstart_creds": true
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.createConnectSessionCalls != 0 {
+		t.Fatalf("CreateConnectSession calls = %d, want 0", fdb.createConnectSessionCalls)
+	}
+}
+
+func TestCreateConnectSession_FreePlanAllowsExistingExternalUserAtManagedUserCap(t *testing.T) {
+	t.Setenv("UNIPOST_ENV", "development")
+
+	fdb := &connectSessionTestDB{
+		platform:                         "tiktok",
+		allowQuickstart:                  true,
+		managedUserCount:                 3,
+		existingExternalUserAccountCount: 1,
+	}
+	queries := db.New(fdb)
+	h := NewConnectSessionHandler(queries, "https://app.unipost.dev", quota.NewChecker(queries))
+	req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(`{
+		"platform": "tiktok",
+		"profile_id": "pr_1",
+		"external_user_id": "user_123",
+		"allow_quickstart_creds": true
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.createConnectSessionCalls != 1 {
+		t.Fatalf("CreateConnectSession calls = %d, want 1", fdb.createConnectSessionCalls)
 	}
 }
 
@@ -541,6 +602,83 @@ func TestConnectCallbackReusesDisconnectedManagedAccountForExternalUser(t *testi
 	}
 }
 
+func TestConnectCallback_FreePlanRejectsNewManagedUserAfterCap(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:                         "tiktok",
+		allowQuickstart:                  true,
+		activeAccountLookupErr:           pgx.ErrNoRows,
+		managedUserCount:                 3,
+		existingExternalUserAccountCount: 0,
+		activeManagedAccountCount:        1,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "tiktok"}),
+		"https://api.example.com",
+		nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "tiktok")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.upsertManagedCalls != 0 {
+		t.Fatalf("UpsertManagedSocialAccount calls = %d, want 0", fdb.upsertManagedCalls)
+	}
+	if fdb.completedAcctID != "" {
+		t.Fatalf("completed social account = %q, want empty", fdb.completedAcctID)
+	}
+}
+
+func TestConnectCallback_FreePlanRejectsNewManagedAccountAfterCap(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:                                 "tiktok",
+		allowQuickstart:                          true,
+		activeAccountLookupErr:                   pgx.ErrNoRows,
+		managedUserCount:                         1,
+		existingExternalUserAccountCount:         1,
+		activeManagedAccountCount:                2,
+		existingExternalUserPlatformAccountCount: 0,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "tiktok"}),
+		"https://api.example.com",
+		nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "tiktok")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.upsertManagedCalls != 0 {
+		t.Fatalf("UpsertManagedSocialAccount calls = %d, want 0", fdb.upsertManagedCalls)
+	}
+	if fdb.completedAcctID != "" {
+		t.Fatalf("completed social account = %q, want empty", fdb.completedAcctID)
+	}
+}
+
 type connectSessionTestDB struct {
 	platform                  string
 	status                    string
@@ -558,6 +696,12 @@ type connectSessionTestDB struct {
 	reusedManagedID           string
 	createManagedCalls        int
 	upsertManagedCalls        int
+	createConnectSessionCalls int
+
+	managedUserCount                         int32
+	existingExternalUserAccountCount         int32
+	activeManagedAccountCount                int32
+	existingExternalUserPlatformAccountCount int32
 }
 
 func (f *connectSessionTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -633,6 +777,7 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return scanRow{values: []any{"pc_1", f.platform, "client-id", secret, now, "ws_1"}}
 	case strings.Contains(query, "-- name: CreateConnectSession"):
+		f.createConnectSessionCalls++
 		platform, _ := args[1].(string)
 		externalUserID, _ := args[2].(string)
 		externalEmail, _ := args[3].(pgtype.Text)
@@ -651,6 +796,14 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 			return scanRow{err: f.activeAccountLookupErr}
 		}
 		return f.socialAccountRow("sa_active_1", f.platform, "platform-account-old", "user_123", "active")
+	case strings.Contains(query, "-- name: CountManagedUsersByWorkspace"):
+		return scanRow{values: []any{f.managedUserCount}}
+	case strings.Contains(query, "-- name: CountManagedAccountsByWorkspaceAndExternalUser"):
+		return scanRow{values: []any{f.existingExternalUserAccountCount}}
+	case strings.Contains(query, "-- name: CountActiveManagedAccountsByWorkspace"):
+		return scanRow{values: []any{f.activeManagedAccountCount}}
+	case strings.Contains(query, "-- name: CountManagedAccountsByWorkspaceExternalUserAndPlatform"):
+		return scanRow{values: []any{f.existingExternalUserPlatformAccountCount}}
 	case strings.Contains(query, "-- name: CreateManagedSocialAccount"):
 		f.createManagedCalls++
 		if f.createManagedErr != nil {

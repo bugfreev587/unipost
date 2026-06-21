@@ -16,6 +16,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // WebhookSubscriptionHandler manages the per-project webhook
@@ -25,10 +26,11 @@ import (
 // return a secret_preview (first 8 chars) instead of the plaintext.
 type WebhookSubscriptionHandler struct {
 	queries *db.Queries
+	quota   *quota.Checker
 }
 
 func NewWebhookSubscriptionHandler(queries *db.Queries) *WebhookSubscriptionHandler {
-	return &WebhookSubscriptionHandler{queries: queries}
+	return &WebhookSubscriptionHandler{queries: queries, quota: quota.NewChecker(queries)}
 }
 
 // requireWorkspace returns the workspace ID stamped into the request
@@ -184,6 +186,20 @@ func (h *WebhookSubscriptionHandler) Create(w http.ResponseWriter, r *http.Reque
 	if body.Active != nil {
 		active = *body.Active
 	}
+	if active && h.quota != nil {
+		if cap, hasCap := h.quota.MaxWebhooksForPlan(r.Context(), workspaceID); hasCap {
+			current, err := h.queries.CountActiveWebhooksByWorkspace(r.Context(), workspaceID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check webhook limit")
+				return
+			}
+			if int(current) >= cap {
+				writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+					"Free plan workspaces can have 1 active webhook endpoint. Upgrade to create more active webhooks.")
+				return
+			}
+		}
+	}
 
 	wh, err := h.queries.CreateWebhook(r.Context(), db.CreateWebhookParams{
 		WorkspaceID: workspaceID,
@@ -329,6 +345,20 @@ func (h *WebhookSubscriptionHandler) Update(w http.ResponseWriter, r *http.Reque
 	active := existing.Active
 	if body.Active != nil {
 		active = *body.Active
+	}
+	if !existing.Active && active && h.quota != nil {
+		if cap, hasCap := h.quota.MaxWebhooksForPlan(r.Context(), workspaceID); hasCap {
+			current, err := h.queries.CountActiveWebhooksByWorkspace(r.Context(), workspaceID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check webhook limit")
+				return
+			}
+			if int(current) >= cap {
+				writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+					"Free plan workspaces can have 1 active webhook endpoint. Upgrade to activate more webhooks.")
+				return
+			}
+		}
 	}
 
 	updated, err := h.queries.UpdateWebhookURLEventsActive(r.Context(), db.UpdateWebhookURLEventsActiveParams{

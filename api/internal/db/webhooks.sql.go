@@ -11,6 +11,20 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countActiveWebhooksByWorkspace = `-- name: CountActiveWebhooksByWorkspace :one
+SELECT COUNT(*)::INTEGER AS total
+FROM webhooks
+WHERE workspace_id = $1
+  AND active = true
+`
+
+func (q *Queries) CountActiveWebhooksByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countActiveWebhooksByWorkspace, workspaceID)
+	var total int32
+	err := row.Scan(&total)
+	return total, err
+}
+
 const createWebhook = `-- name: CreateWebhook :one
 INSERT INTO webhooks (workspace_id, name, url, secret, events, active)
 VALUES ($1, $2, $3, $4, $5, $6)
