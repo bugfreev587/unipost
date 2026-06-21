@@ -17,7 +17,7 @@ export const UNIPOST = {
       { label: "API",        price: 10,   posts: "1,000/mo" },
       { label: "Basic",      price: 19,   posts: "2,500/mo" },
       { label: "Growth",     price: 59,   posts: "7,500/mo" },
-      { label: "Team",       price: 149,  posts: "25,000/mo" },
+      { label: "Team",       price: 149,  posts: "Unlimited" },
       { label: "Enterprise", price: null, posts: "Custom" },
     ],
   },

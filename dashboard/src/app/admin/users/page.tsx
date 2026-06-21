@@ -24,6 +24,7 @@ import {
   type AdminUserPostFailure,
   type AdminUserRow,
 } from "@/lib/api";
+import { formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
 import { CountryDonut } from "../_components/country-donut";
@@ -262,7 +263,7 @@ export default function AdminUsersPage() {
               <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
             ) : (
               users.map((u) => {
-                const usagePct = u.post_limit > 0 ? Math.min(100, (u.posts_used / u.post_limit) * 100) : 0;
+                const usagePct = usagePercentage(u.posts_used, u.post_limit);
                 const usageClass = usagePct >= 90 ? "ad-uf-r" : usagePct >= 70 ? "ad-uf-a" : "ad-uf-g";
                 return (
                   <tr key={u.id} onClick={() => openUser(u.id)}>
@@ -303,7 +304,7 @@ export default function AdminUsersPage() {
                       )}
                     </td>
                     <td>
-                      <div style={{ fontSize: 11.5 }}>{fmtNumber(u.posts_used)} / {fmtNumber(u.post_limit || 100)}</div>
+                      <div style={{ fontSize: 11.5 }}>{formatPostUsage(u.posts_used, u.post_limit || 100)}</div>
                       <div className="ad-usage-bar">
                         <div className={`ad-usage-fill ${usageClass}`} style={{ width: `${usagePct}%` }} />
                       </div>
@@ -356,7 +357,7 @@ export default function AdminUsersPage() {
                   />
                   <PanelRow
                     k="Posts used (this month)"
-                    v={<span style={{ color: detail.post_limit > 0 && detail.posts_used_this_month / detail.post_limit > 0.7 ? "var(--warning)" : undefined }}>{fmtNumber(detail.posts_used_this_month)} / {fmtNumber(detail.post_limit || 100)}</span>}
+                    v={<span style={{ color: detail.post_limit > 0 && detail.posts_used_this_month / detail.post_limit > 0.7 ? "var(--warning)" : undefined }}>{formatPostUsage(detail.posts_used_this_month, detail.post_limit || 100)}</span>}
                   />
                 </div>
 
@@ -384,7 +385,7 @@ export default function AdminUsersPage() {
                           </span>
                         </div>
                         <div className="ad-mono" style={{ marginTop: 2 }}>
-                          {workspace.id.slice(0, 16)} · {fmtNumber(workspace.posts_used)} / {fmtNumber(workspace.post_limit)} posts · {workspace.platform_count} platforms
+                          {workspace.id.slice(0, 16)} · {formatPostUsage(workspace.posts_used, workspace.post_limit)} · {workspace.platform_count} platforms
                         </div>
                       </div>
                     ))}

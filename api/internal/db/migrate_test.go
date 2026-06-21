@@ -32,3 +32,20 @@ func TestEmbeddedMigrationVersionsAreUnique(t *testing.T) {
 		t.Fatalf("walk migrations: %v", err)
 	}
 }
+
+func TestTeamPlanUnlimitedPostsMigrationExists(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/088_team_unlimited_posts.sql")
+	if err != nil {
+		t.Fatalf("read team unlimited posts migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	if !strings.Contains(sql, "update plans") ||
+		!strings.Contains(sql, "post_limit = -1") ||
+		!strings.Contains(sql, "id = 'team'") {
+		t.Fatalf("team unlimited migration should set plans.post_limit to -1 for team, got:\n%s", string(body))
+	}
+	if !strings.Contains(sql, "post_limit = 25000") {
+		t.Fatalf("team unlimited migration should include a down migration restoring 25000, got:\n%s", string(body))
+	}
+}
