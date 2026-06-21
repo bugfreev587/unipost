@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import { getBilling, createCheckout, createPortal, type BillingInfo, type Plan } from "@/lib/api";
+import { formatPlanPostAllowance, formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 
@@ -15,7 +16,7 @@ const PLANS: Plan[] = [
   { id: "api",    name: "API",    price_cents: 1000,  post_limit: 1000 },
   { id: "basic",  name: "Basic",  price_cents: 1900,  post_limit: 2500 },
   { id: "growth", name: "Growth", price_cents: 5900,  post_limit: 7500 },
-  { id: "team",   name: "Team",   price_cents: 14900, post_limit: 25000 },
+  { id: "team",   name: "Team",   price_cents: 14900, post_limit: -1 },
 ];
 
 // Short blurbs surfaced on the upgrade card so customers see the
@@ -123,7 +124,7 @@ function BillingSettingsContent() {
 
   const used = billing?.usage ?? 0;
   const limit = billing?.limit ?? 100;
-  const pct = billing ? Math.round(billing.percentage) : 0;
+  const pct = billing ? Math.round(usagePercentage(used, limit)) : 0;
   const barClass = pct >= 100 ? "bar-red" : pct >= 80 ? "bar-amber" : "bar-green";
 
   return (
@@ -238,7 +239,8 @@ function BillingSettingsContent() {
               color: pct >= 80 ? "var(--warning)" : "var(--dmuted)",
             }}
           >
-            {used.toLocaleString()} / {limit.toLocaleString()} posts &middot; {pct}%
+            {formatPostUsage(used, limit)}
+            {limit > 0 ? <> &middot; {pct}%</> : null}
           </div>
         </div>
         <div className="stat-card">
@@ -354,7 +356,7 @@ function BillingSettingsContent() {
                 </span>
               </div>
               <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
-                {plan.post_limit.toLocaleString()} posts
+                {formatPlanPostAllowance(plan.post_limit)}
               </div>
               {blurb && (
                 <div style={{ fontSize: 11.5, color: "var(--dmuted)", marginTop: 6, lineHeight: 1.4 }}>
@@ -381,7 +383,7 @@ function BillingSettingsContent() {
         })}
       </div>
       <div style={{ marginTop: 16, padding: "12px 14px", border: "1px dashed var(--dborder)", borderRadius: 8, fontSize: 12.5, color: "var(--dmuted)", lineHeight: 1.6 }}>
-        Need more than 25,000 posts/month or custom terms?{" "}
+        Need custom terms or security review?{" "}
         <a href="mailto:support@unipost.dev" style={{ color: "var(--daccent)", textDecoration: "underline" }}>Contact us about Enterprise</a>.
       </div>
     </>

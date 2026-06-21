@@ -109,10 +109,12 @@ export default function TermsPage() {
             </p>
             <h3 className="text-lg font-medium text-zinc-900 mt-4 mb-2">5.2 Usage Limits</h3>
             <p>
-              Each plan includes a monthly post limit. Free plan workspaces may be blocked from
-              creating new publish requests once the Free monthly limit is reached. Paid plans use a
-              soft-overage approach: exceeding your paid plan limit will not immediately interrupt
-              your service, but continued overuse may require upgrading your plan.
+              Some plans include a monthly post limit. Free plan workspaces may be blocked from
+              creating new publish requests once the Free monthly limit is reached. Paid plans with
+              a finite monthly limit use a soft-overage approach: exceeding that paid plan limit
+              will not immediately interrupt your service, but continued overuse may require
+              upgrading your plan. Team includes unlimited monthly posts, subject to platform,
+              account-safety, abuse-prevention, and operational rate limits.
             </p>
             <h3 className="text-lg font-medium text-zinc-900 mt-4 mb-2">5.3 Cancellation</h3>
             <p>
