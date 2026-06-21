@@ -121,6 +121,34 @@ export default function ComparePage() {
           ))}
         </div>
 
+        <div
+          style={{
+            margin: "-48px 0 var(--cmp-section-py)",
+            padding: 24,
+            border: "1px solid var(--cmp-border)",
+            borderRadius: 14,
+            background: "var(--cmp-s1)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 700,
+              letterSpacing: ".08em",
+              textTransform: "uppercase",
+              color: "var(--cmp-muted2)",
+              marginBottom: 8,
+            }}
+          >
+            Embedded pricing example
+          </div>
+          <p style={{ margin: 0, color: "var(--cmp-muted)", lineHeight: 1.7 }}>
+            If your app has 100 users and each connects 2 social accounts, Zernio's
+            current connected-account pricing is $418/mo. UniPost Growth is $59/mo
+            when the same app fits under 7,500 posts/month and Growth feature limits.
+          </p>
+        </div>
+
         {/* OVERVIEW TABLE */}
         <div className="cmp-table-section">
           <h2 className="cmp-table-title">Quick comparison</h2>
