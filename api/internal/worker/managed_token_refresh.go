@@ -7,7 +7,7 @@
 //      instead of the platform adapter registry because Connect
 //      accounts use the hosted OAuth connector implementations. The
 //      connector may use either UniPost's global app credentials or
-//      workspace-specific white-label credentials.
+//      workspace-specific Platform Credentials.
 //
 //   2. The query uses FOR UPDATE SKIP LOCKED so two API instances
 //      doing simultaneous ticks pick disjoint slices and never

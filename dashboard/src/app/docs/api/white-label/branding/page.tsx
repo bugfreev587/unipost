@@ -13,7 +13,7 @@ export default function BrandingPage() {
     >
       <h2 id="overview">Where the fields appear</h2>
       <p>The hosted Connect page at <code>app.unipost.dev/connect/{"{platform}"}</code> reads these three values at render time — there&rsquo;s no cache layer, so a PATCH is live on the very next page load. See the <Link href="/docs/white-label">Hosted Connect guide</Link> for the setup model that separates Hosted Connect branding, Platform Credentials, and Connect Sessions.</p>
-      <p>Plan packaging matters here: Basic and up can brand the hosted Connect page; only Growth and Team can hide the <code>Powered by UniPost</code> footer.</p>
+      <p>Plan packaging matters here: Basic and up can brand the hosted Connect page. Basic branding applies only to the workspace&apos;s one shared custom platform slot, the same slot used for Platform Credentials. Growth, Team, and Enterprise apply branding across all supported platforms and can hide the <code>Powered by UniPost</code> footer.</p>
       <DocsTable
         columns={["Field", "Where it appears on the Connect page"]}
         rows={[

@@ -38,8 +38,8 @@ func (a *TwitterAdapter) Platform() string { return "twitter" }
 
 // DefaultOAuthConfig falls back to TWITTER_CLIENT_ID / TWITTER_CLIENT_SECRET
 // env vars (the same pair Sprint 3 Connect uses) so the dashboard quickstart
-// works for projects that haven't set up white-label platform_credentials.
-// White-label credentials in platform_credentials still take precedence —
+// works for projects that haven't set up workspace Platform Credentials.
+// Platform Credentials still take precedence —
 // the BYO oauth handler reads them first and only falls through to this
 // function when none are configured.
 func (a *TwitterAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {

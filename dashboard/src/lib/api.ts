@@ -475,6 +475,7 @@ export interface Workspace {
   name: string;
   per_account_monthly_limit: number | null;
   usage_modes: string[];
+  custom_platform_slot: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -487,7 +488,7 @@ export async function getWorkspace(
 
 export async function updateWorkspace(
   token: string,
-  data: { name: string }
+  data: { name?: string; per_account_monthly_limit?: number | null; custom_platform_slot?: string | null }
 ): Promise<ApiResponse<Workspace>> {
   return request(`/v1/workspace`, token, {
     method: "PATCH",
@@ -1761,6 +1762,7 @@ export interface ApiLimits {
   plan_allows_hosted_connect_branding: boolean;
   plan_allows_hide_powered_by: boolean;
   white_label_platform_limit: number;
+  custom_platform_slot: string | null;
   max_profiles: number; // -1 = unlimited
   current_profiles: number;
   max_members: number; // -1 = unlimited

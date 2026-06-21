@@ -11,10 +11,40 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimWorkspaceCustomPlatformSlot = `-- name: ClaimWorkspaceCustomPlatformSlot :one
+UPDATE workspaces
+SET custom_platform_slot = $2,
+    updated_at           = NOW()
+WHERE id = $1
+  AND (custom_platform_slot IS NULL OR custom_platform_slot = $2)
+RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot
+`
+
+type ClaimWorkspaceCustomPlatformSlotParams struct {
+	ID                 string      `json:"id"`
+	CustomPlatformSlot pgtype.Text `json:"custom_platform_slot"`
+}
+
+func (q *Queries) ClaimWorkspaceCustomPlatformSlot(ctx context.Context, arg ClaimWorkspaceCustomPlatformSlotParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, claimWorkspaceCustomPlatformSlot, arg.ID, arg.CustomPlatformSlot)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.PerAccountMonthlyLimit,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UsageModes,
+		&i.CustomPlatformSlot,
+	)
+	return i, err
+}
+
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (user_id, name)
 VALUES ($1, $2)
-RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes
+RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot
 `
 
 type CreateWorkspaceParams struct {
@@ -33,6 +63,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }
@@ -47,7 +78,7 @@ func (q *Queries) DeleteWorkspace(ctx context.Context, id string) error {
 }
 
 const getDefaultWorkspaceForUser = `-- name: GetDefaultWorkspaceForUser :one
-SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1
+SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot FROM workspaces WHERE user_id = $1 ORDER BY created_at ASC LIMIT 1
 `
 
 func (q *Queries) GetDefaultWorkspaceForUser(ctx context.Context, userID string) (Workspace, error) {
@@ -61,12 +92,13 @@ func (q *Queries) GetDefaultWorkspaceForUser(ctx context.Context, userID string)
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes FROM workspaces WHERE id = $1
+SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot FROM workspaces WHERE id = $1
 `
 
 func (q *Queries) GetWorkspace(ctx context.Context, id string) (Workspace, error) {
@@ -80,12 +112,13 @@ func (q *Queries) GetWorkspace(ctx context.Context, id string) (Workspace, error
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }
 
 const getWorkspaceByIDAndOwner = `-- name: GetWorkspaceByIDAndOwner :one
-SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes FROM workspaces WHERE id = $1 AND user_id = $2
+SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot FROM workspaces WHERE id = $1 AND user_id = $2
 `
 
 type GetWorkspaceByIDAndOwnerParams struct {
@@ -104,12 +137,13 @@ func (q *Queries) GetWorkspaceByIDAndOwner(ctx context.Context, arg GetWorkspace
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }
 
 const listWorkspacesByUser = `-- name: ListWorkspacesByUser :many
-SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes FROM workspaces WHERE user_id = $1 ORDER BY created_at DESC
+SELECT id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot FROM workspaces WHERE user_id = $1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListWorkspacesByUser(ctx context.Context, userID string) ([]Workspace, error) {
@@ -129,6 +163,7 @@ func (q *Queries) ListWorkspacesByUser(ctx context.Context, userID string) ([]Wo
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.UsageModes,
+			&i.CustomPlatformSlot,
 		); err != nil {
 			return nil, err
 		}
@@ -143,7 +178,7 @@ func (q *Queries) ListWorkspacesByUser(ctx context.Context, userID string) ([]Wo
 const updateWorkspace = `-- name: UpdateWorkspace :one
 UPDATE workspaces SET name = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes
+RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot
 `
 
 type UpdateWorkspaceParams struct {
@@ -162,6 +197,36 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
+	)
+	return i, err
+}
+
+const updateWorkspaceCustomPlatformSlot = `-- name: UpdateWorkspaceCustomPlatformSlot :one
+UPDATE workspaces
+SET custom_platform_slot = NULLIF($2::TEXT, ''),
+    updated_at           = NOW()
+WHERE id = $1
+RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot
+`
+
+type UpdateWorkspaceCustomPlatformSlotParams struct {
+	ID                 string `json:"id"`
+	CustomPlatformSlot string `json:"custom_platform_slot"`
+}
+
+func (q *Queries) UpdateWorkspaceCustomPlatformSlot(ctx context.Context, arg UpdateWorkspaceCustomPlatformSlotParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, updateWorkspaceCustomPlatformSlot, arg.ID, arg.CustomPlatformSlot)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.PerAccountMonthlyLimit,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }
@@ -171,7 +236,7 @@ UPDATE workspaces
 SET per_account_monthly_limit = $2::INTEGER,
     updated_at                = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes
+RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot
 `
 
 type UpdateWorkspacePerAccountQuotaParams struct {
@@ -190,6 +255,7 @@ func (q *Queries) UpdateWorkspacePerAccountQuota(ctx context.Context, arg Update
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }
@@ -197,7 +263,7 @@ func (q *Queries) UpdateWorkspacePerAccountQuota(ctx context.Context, arg Update
 const updateWorkspaceUsageModes = `-- name: UpdateWorkspaceUsageModes :one
 UPDATE workspaces SET usage_modes = $2, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes
+RETURNING id, user_id, name, per_account_monthly_limit, created_at, updated_at, usage_modes, custom_platform_slot
 `
 
 type UpdateWorkspaceUsageModesParams struct {
@@ -216,6 +282,7 @@ func (q *Queries) UpdateWorkspaceUsageModes(ctx context.Context, arg UpdateWorks
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UsageModes,
+		&i.CustomPlatformSlot,
 	)
 	return i, err
 }

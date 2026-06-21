@@ -286,7 +286,7 @@ export default function AlternativePage() {
             </div>
           </div>
           <p className="alt-pricing-note">
-            UniPost&apos;s pricing is product-tier based. Free includes the API and dashboard. Basic ($19/mo) bundles Inbox, Analytics, and one-platform white-label. Growth ($59/mo) expands that to full white-label with optional attribution removal. Team ($149/mo) adds RBAC and team collaboration.
+            UniPost&apos;s pricing is product-tier based. Free includes the API and dashboard. Basic ($19/mo) bundles Inbox, Analytics, and one shared custom platform for Hosted Connect plus Platform Credentials. Growth ($59/mo) expands that to all supported platforms with optional attribution removal. Team ($149/mo) adds RBAC and team collaboration.
           </p>
         </div>
 

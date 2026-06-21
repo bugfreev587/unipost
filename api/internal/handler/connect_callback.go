@@ -94,7 +94,7 @@ func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, prof
 }
 
 func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool) (connect.Connector, bool, error) {
-	if workspaceID != "" {
+	if workspaceAllowsPlatformCredentialsForPlatform(ctx, h.queries, workspaceID, platform) {
 		cred, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
 			WorkspaceID: workspaceID,
 			Platform:    platform,

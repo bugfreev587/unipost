@@ -752,6 +752,7 @@ type Workspace struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	UsageModes             []string           `json:"usage_modes"`
+	CustomPlatformSlot     pgtype.Text        `json:"custom_platform_slot"`
 }
 
 type WorkspaceInvite struct {

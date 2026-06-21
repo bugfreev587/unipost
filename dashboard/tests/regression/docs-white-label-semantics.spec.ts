@@ -20,7 +20,8 @@ test.describe("white-label documentation semantics", () => {
     expect(whiteLabelSource).toContain('title="Hosted Connect (White-label branding)"');
     expect(whiteLabelSource).toContain("Hosted Connect Profile");
     expect(whiteLabelSource).toContain("Platform Credentials");
-    expect(whiteLabelSource).toContain("You can combine either Hosted Connect profile with either credential source.");
+    expect(whiteLabelSource).toContain("You can combine either Hosted Connect profile with either credential source");
+    expect(whiteLabelSource).toContain("on Basic, both surfaces must use the same selected platform slot");
     expect(whiteLabelSource).toContain("Developer → Hosted Connect");
     expect(whiteLabelSource).toContain("/docs/platform-credentials");
     expect(whiteLabelSource).not.toContain("Supported Platform Credentials");
@@ -30,6 +31,7 @@ test.describe("white-label documentation semantics", () => {
 
     expect(platformCredentialsSource).toContain('title="Platform Credentials"');
     expect(platformCredentialsSource).toContain("Developer → Platform Credentials");
+    expect(platformCredentialsSource).toContain("one shared custom platform slot across Platform Credentials and Hosted Connect branding");
     expect(platformCredentialsSource).toContain("/docs/platform-credentials/meta");
     expect(platformGuideSource).toContain("PLATFORM_CREDENTIAL_GUIDES");
     expect(platformGuideSource).toContain("Platform credential setup");

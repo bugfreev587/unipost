@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -24,6 +25,7 @@ type workspaceResponse struct {
 	Name                   string    `json:"name"`
 	PerAccountMonthlyLimit *int32    `json:"per_account_monthly_limit"`
 	UsageModes             []string  `json:"usage_modes"`
+	CustomPlatformSlot     *string   `json:"custom_platform_slot"`
 	CreatedAt              time.Time `json:"created_at"`
 	UpdatedAt              time.Time `json:"updated_at"`
 }
@@ -43,6 +45,10 @@ func toWorkspaceResponse(w db.Workspace) workspaceResponse {
 	if w.PerAccountMonthlyLimit.Valid {
 		v := w.PerAccountMonthlyLimit.Int32
 		resp.PerAccountMonthlyLimit = &v
+	}
+	if w.CustomPlatformSlot.Valid {
+		v := w.CustomPlatformSlot.String
+		resp.CustomPlatformSlot = &v
 	}
 	return resp
 }
@@ -64,8 +70,8 @@ func (h *WorkspaceHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, toWorkspaceResponse(ws))
 }
 
-// Update mutates the authenticated caller's workspace. Accepts name and
-// per_account_monthly_limit; both optional.
+// Update mutates the authenticated caller's workspace. Accepts name,
+// per_account_monthly_limit, and custom_platform_slot; all optional.
 func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
@@ -75,6 +81,7 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name                   *string `json:"name"`
 		PerAccountMonthlyLimit *int32  `json:"per_account_monthly_limit"`
+		CustomPlatformSlot     *string `json:"custom_platform_slot"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
@@ -95,6 +102,15 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.CustomPlatformSlot != nil {
+		slot := strings.ToLower(strings.TrimSpace(*body.CustomPlatformSlot))
+		if slot != "" && !connectablePlatforms[slot] {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+				"custom_platform_slot must be empty or one of "+connectablePlatformList)
+			return
+		}
+		*body.CustomPlatformSlot = slot
+	}
 
 	if body.Name != nil {
 		if _, err := h.queries.UpdateWorkspace(r.Context(), db.UpdateWorkspaceParams{
@@ -112,6 +128,15 @@ func (h *WorkspaceHandler) Update(w http.ResponseWriter, r *http.Request) {
 			PerAccountMonthlyLimit: limitParam,
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update workspace quota")
+			return
+		}
+	}
+	if body.CustomPlatformSlot != nil {
+		if _, err := h.queries.UpdateWorkspaceCustomPlatformSlot(r.Context(), db.UpdateWorkspaceCustomPlatformSlotParams{
+			ID:                 workspaceID,
+			CustomPlatformSlot: *body.CustomPlatformSlot,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update custom platform slot")
 			return
 		}
 	}

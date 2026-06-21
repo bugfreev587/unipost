@@ -209,6 +209,11 @@ export default function ConnectSessionsGuidePage() {
         missing.
       </p>
       <p className="cs-note">
+        On Basic, workspace Platform Credentials are active only for the workspace&apos;s
+        shared custom platform slot. Growth, Team, and Enterprise can use workspace
+        Platform Credentials across all supported OAuth platforms.
+      </p>
+      <p className="cs-note">
         These credential modes apply to OAuth platforms. Bluesky uses app
         passwords instead of OAuth apps, so <code>allow_quickstart_creds</code>{" "}
         does not change the Bluesky Connect Session path.
