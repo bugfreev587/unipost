@@ -26,6 +26,13 @@ type Checker struct {
 	queries *db.Queries
 }
 
+const (
+	FreePlanAPIKeyLimit         = 1
+	FreePlanWebhookLimit        = 1
+	FreePlanManagedAccountLimit = 2
+	FreePlanManagedUserLimit    = 3
+)
+
 type FreePlanHardBlockGate struct {
 	Status  QuotaStatus
 	planID  string
@@ -287,6 +294,34 @@ func (c *Checker) MaxMembersForPlan(ctx context.Context, workspaceID string) (in
 		return 0, false
 	}
 	return int(plan.MaxMembers.Int32), true
+}
+
+func (c *Checker) MaxAPIKeysForPlan(ctx context.Context, workspaceID string) (int, bool) {
+	if c.PlanIDFor(ctx, workspaceID) == "free" {
+		return FreePlanAPIKeyLimit, true
+	}
+	return 0, false
+}
+
+func (c *Checker) MaxWebhooksForPlan(ctx context.Context, workspaceID string) (int, bool) {
+	if c.PlanIDFor(ctx, workspaceID) == "free" {
+		return FreePlanWebhookLimit, true
+	}
+	return 0, false
+}
+
+func (c *Checker) MaxManagedAccountsForPlan(ctx context.Context, workspaceID string) (int, bool) {
+	if c.PlanIDFor(ctx, workspaceID) == "free" {
+		return FreePlanManagedAccountLimit, true
+	}
+	return 0, false
+}
+
+func (c *Checker) MaxManagedUsersForPlan(ctx context.Context, workspaceID string) (int, bool) {
+	if c.PlanIDFor(ctx, workspaceID) == "free" {
+		return FreePlanManagedUserLimit, true
+	}
+	return 0, false
 }
 
 // Increment adds to the usage count for the current period.

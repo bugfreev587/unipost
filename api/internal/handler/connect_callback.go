@@ -42,6 +42,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // ConnectCallbackHandler owns the OAuth dance for managed accounts.
@@ -57,6 +58,7 @@ type ConnectCallbackHandler struct {
 	limiter           *ipLimiter // shared in-memory limiter for callback brute-force protection
 	ilog              *integrationlogs.Logger
 	superAdminChecker *auth.SuperAdminChecker
+	quota             *quota.Checker
 }
 
 func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker) *ConnectCallbackHandler {
@@ -74,12 +76,62 @@ func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncrypt
 		callbackBaseURL:   callbackBaseURL,
 		limiter:           newIPLimiter(60, time.Minute),
 		superAdminChecker: superAdminChecker,
+		quota:             quota.NewChecker(queries),
 	}
 }
 
 func (h *ConnectCallbackHandler) SetIntegrationLogger(logger *integrationlogs.Logger) *ConnectCallbackHandler {
 	h.ilog = logger
 	return h
+}
+
+func (h *ConnectCallbackHandler) freePlanManagedConnectBlocked(ctx context.Context, workspaceID, externalUserID, platform string, wouldCreateManagedAccount bool) (bool, string, error) {
+	if h == nil || h.quota == nil || workspaceID == "" || externalUserID == "" {
+		return false, "", nil
+	}
+	externalUser := pgtype.Text{String: externalUserID, Valid: true}
+	if cap, hasCap := h.quota.MaxManagedUsersForPlan(ctx, workspaceID); hasCap {
+		existingForUser, err := h.queries.CountManagedAccountsByWorkspaceAndExternalUser(ctx, db.CountManagedAccountsByWorkspaceAndExternalUserParams{
+			WorkspaceID:    workspaceID,
+			ExternalUserID: externalUser,
+		})
+		if err != nil {
+			return false, "", err
+		}
+		if existingForUser == 0 {
+			currentUsers, err := h.queries.CountManagedUsersByWorkspace(ctx, workspaceID)
+			if err != nil {
+				return false, "", err
+			}
+			if int(currentUsers) >= cap {
+				return true, "Free plan workspaces can connect up to 3 managed users. Upgrade to onboard more users through Hosted Connect.", nil
+			}
+		}
+	}
+	if !wouldCreateManagedAccount {
+		return false, "", nil
+	}
+	if cap, hasCap := h.quota.MaxManagedAccountsForPlan(ctx, workspaceID); hasCap {
+		existingForUserPlatform, err := h.queries.CountManagedAccountsByWorkspaceExternalUserAndPlatform(ctx, db.CountManagedAccountsByWorkspaceExternalUserAndPlatformParams{
+			WorkspaceID:    workspaceID,
+			ExternalUserID: externalUser,
+			Platform:       platform,
+		})
+		if err != nil {
+			return false, "", err
+		}
+		if existingForUserPlatform > 0 {
+			return false, "", nil
+		}
+		currentAccounts, err := h.queries.CountActiveManagedAccountsByWorkspace(ctx, workspaceID)
+		if err != nil {
+			return false, "", err
+		}
+		if int(currentAccounts) >= cap {
+			return true, "Free plan workspaces can connect up to 2 managed social accounts. Upgrade to connect more accounts through Hosted Connect.", nil
+		}
+	}
+	return false, "", nil
 }
 
 func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, profileID string) string {
@@ -373,6 +425,26 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			hidePoweredBy = planAllowsHidePoweredBy(sub.PlanID) && prof.BrandingHidePoweredBy
 		}
 	}
+	activeAccount, lookupErr := h.queries.FindActiveManagedSocialAccountByExternalAccount(r.Context(), db.FindActiveManagedSocialAccountByExternalAccountParams{
+		ProfileID:         session.ProfileID,
+		Platform:          platformName,
+		ExternalAccountID: profile.ExternalAccountID,
+	})
+	if lookupErr != nil && lookupErr != pgx.ErrNoRows {
+		slog.Error("connect.callback: lookup failed", "platform", platformName, "err", lookupErr)
+		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
+		return
+	}
+	if profErr == nil {
+		if blocked, msg, limitErr := h.freePlanManagedConnectBlocked(r.Context(), prof.WorkspaceID, session.ExternalUserID, platformName, lookupErr == pgx.ErrNoRows); limitErr != nil {
+			slog.Error("connect.callback: managed connect limit check failed", "workspace_id", prof.WorkspaceID, "profile_id", session.ProfileID, "platform", platformName, "err", limitErr)
+			renderConnectError(w, http.StatusInternalServerError, "Failed to check plan limits.")
+			return
+		} else if blocked {
+			renderConnectError(w, http.StatusPaymentRequired, msg)
+			return
+		}
+	}
 	if profErr == nil {
 		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, prof.WorkspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
 			slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", prof.WorkspaceID, "err", shareErr)
@@ -399,12 +471,6 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	metadata, _ := json.Marshal(map[string]any{
 		"username":     profile.Username,
 		"display_name": profile.DisplayName,
-	})
-
-	activeAccount, lookupErr := h.queries.FindActiveManagedSocialAccountByExternalAccount(r.Context(), db.FindActiveManagedSocialAccountByExternalAccountParams{
-		ProfileID:         session.ProfileID,
-		Platform:          platformName,
-		ExternalAccountID: profile.ExternalAccountID,
 	})
 
 	accountName := pgtype.Text{String: nonEmpty(profile.Username, profile.DisplayName), Valid: profile.Username != "" || profile.DisplayName != ""}
@@ -448,10 +514,6 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
 		})
-	default:
-		slog.Error("connect.callback: lookup failed", "platform", platformName, "err", lookupErr)
-		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
-		return
 	}
 	if err != nil {
 		slog.Error("connect.callback: save failed", "platform", platformName, "err", err)

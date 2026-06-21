@@ -16,15 +16,26 @@ function ArrowIcon() { return <svg viewBox="0 0 16 16" fill="none" stroke="curre
 type RowValue = boolean | string | number;
 interface CompareSection { title: string; rows: { label: string; us: RowValue; them: RowValue }[] }
 
+function formatFreeTier(pricing: { freeTier: boolean; freePostsPerMonth: number | string; freeTierLabel?: string }) {
+  if (!pricing.freeTier) return "No free tier";
+  if (pricing.freeTierLabel) return pricing.freeTierLabel;
+  return `${pricing.freePostsPerMonth} posts/mo`;
+}
+
+function formatTierPrice(tier: { price: number | null; priceDisplay?: string }) {
+  if (tier.priceDisplay) return tier.priceDisplay;
+  return tier.price !== null ? `$${tier.price}/mo` : "Contact us";
+}
+
 function buildSections(comp: Competitor): CompareSection[] {
   const u = UNIPOST;
   const c = comp;
   return [
     { title: "Pricing", rows: [
-      { label: "Free tier", us: "✅ 100 posts/mo", them: c.pricing.freeTier ? `✅ ${c.pricing.freePostsPerMonth} posts/mo` : "❌ No free tier" },
+      { label: "Free tier", us: "100 posts/mo", them: formatFreeTier(c.pricing) },
       { label: "Starting price", us: `$${u.pricing.startingPrice}/month`, them: c.pricing.startingPrice ? `$${c.pricing.startingPrice}/month` : "Custom" },
       { label: "Pricing model", us: u.pricing.pricingModel, them: c.pricing.pricingModel },
-      { label: "Enterprise plan", us: "Custom", them: c.pricing.enterprisePlan ? "Custom" : "❌" },
+      { label: "Enterprise plan", us: "Custom", them: c.pricing.enterprisePlan ? "Custom" : "No" },
     ]},
     { title: "Platforms", rows: [
       { label: "Total platforms", us: u.platforms.total, them: c.platforms.total },
@@ -92,7 +103,7 @@ const CSS = `:root{--alt-bg:var(--app-bg);--alt-s1:var(--marketing-surface);--al
 .alt-btn{display:inline-flex;align-items:center;gap:6px;padding:8px 18px;border-radius:var(--alt-r);font-size:13.5px;font-weight:600;cursor:pointer;transition:all .15s;border:1px solid transparent;font-family:var(--alt-ui);text-decoration:none;white-space:nowrap}.alt-btn-primary{background:var(--alt-blue);color:#fff}.alt-btn-primary:hover{background:var(--marketing-link-hover);box-shadow:0 0 24px color-mix(in srgb,var(--marketing-link) 20%,transparent)}.alt-btn-ghost{background:transparent;color:var(--alt-muted);border-color:var(--alt-b2)}.alt-btn-ghost:hover{background:var(--alt-s2);color:var(--alt-text);border-color:var(--alt-b3)}.alt-btn-lg{padding:12px 28px;font-size:15px;border-radius:10px}
 
 /* PAGE */
-.alt-page{max-width:var(--alt-content-max);margin:0 auto;padding:0 var(--alt-px)}
+.alt-page{width:100%;max-width:var(--alt-content-max);margin:0 auto;padding:0 var(--alt-px)}
 
 /* BREADCRUMB */
 .alt-bread{padding:24px 0 0;font-size:13px;color:var(--alt-muted2)}.alt-bread a{color:var(--alt-muted);text-decoration:none}.alt-bread a:hover{color:var(--alt-text)}.alt-bread-sep{margin:0 8px}
@@ -110,7 +121,7 @@ const CSS = `:root{--alt-bg:var(--app-bg);--alt-s1:var(--marketing-surface);--al
 .alt-pricing{margin-bottom:var(--alt-section-py)}.alt-pricing-title{font-size:36px;font-weight:800;letter-spacing:-.8px;margin-bottom:32px;text-align:center}.alt-pricing-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}.alt-pricing-card{background:var(--alt-s1);border:1px solid var(--alt-border);border-radius:14px;padding:32px;position:relative}.alt-pricing-card.ours{border-color:var(--alt-accent)}.alt-pricing-card-badge{position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:var(--alt-accent);color:var(--primary-foreground);font-size:11px;font-weight:700;padding:3px 14px;border-radius:20px;font-family:var(--alt-mono);white-space:nowrap}.alt-pricing-card-name{font-size:18px;font-weight:700;margin-bottom:20px}.alt-pricing-tier{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--alt-border);font-size:14px}.alt-pricing-tier:last-child{border-bottom:none}.alt-pricing-tier-name{color:var(--alt-text)}.alt-pricing-tier-price{font-family:var(--alt-mono);font-weight:600;color:var(--alt-text)}.alt-pricing-note{font-size:14px;color:var(--alt-muted);text-align:center;max-width:600px;margin:0 auto;line-height:1.7}
 
 /* MCP SECTION */
-.alt-mcp{margin-bottom:var(--alt-section-py)}.alt-mcp-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:start}.alt-mcp-code{background:var(--alt-s2);border:1px solid var(--alt-border);border-radius:10px;padding:24px 28px;font-family:var(--alt-mono);font-size:13px;line-height:1.7;color:var(--alt-text);white-space:pre;overflow-x:auto}.alt-mcp-code-label{font-size:12px;color:var(--alt-muted);font-family:var(--alt-mono);margin-bottom:8px}.alt-mcp-points{list-style:none}.alt-mcp-point{display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:var(--alt-text);margin-bottom:14px;line-height:1.5}.alt-mcp-point svg{color:var(--alt-accent);flex-shrink:0;margin-top:3px}.alt-mcp-note{font-size:14px;color:var(--alt-muted);margin-top:20px;padding-top:20px;border-top:1px solid var(--alt-border)}
+.alt-mcp{margin-bottom:var(--alt-section-py)}.alt-mcp-grid{display:grid;grid-template-columns:1.2fr 1fr;gap:48px;align-items:start}.alt-mcp-grid>*{min-width:0}.alt-mcp-code{max-width:100%;background:var(--alt-s2);border:1px solid var(--alt-border);border-radius:10px;padding:24px 28px;font-family:var(--alt-mono);font-size:13px;line-height:1.7;color:var(--alt-text);white-space:pre;overflow-x:auto}.alt-mcp-code-label{font-size:12px;color:var(--alt-muted);font-family:var(--alt-mono);margin-bottom:8px}.alt-mcp-points{list-style:none}.alt-mcp-point{display:flex;align-items:flex-start;gap:10px;font-size:14.5px;color:var(--alt-text);margin-bottom:14px;line-height:1.5}.alt-mcp-point svg{color:var(--alt-accent);flex-shrink:0;margin-top:3px}.alt-mcp-note{font-size:14px;color:var(--alt-muted);margin-top:20px;padding-top:20px;border-top:1px solid var(--alt-border)}
 
 /* MIGRATION */
 .alt-migrate{margin-bottom:var(--alt-section-py)}.alt-migrate-steps{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:32px}.alt-migrate-step{background:var(--alt-s1);border:1px solid var(--alt-border);border-radius:12px;padding:28px 32px}.alt-migrate-step-num{font-family:var(--alt-mono);font-size:12px;color:var(--alt-accent);font-weight:600;margin-bottom:10px;letter-spacing:.05em}.alt-migrate-step-title{font-size:16px;font-weight:700;margin-bottom:8px}.alt-migrate-step-desc{font-size:13.5px;color:var(--alt-muted);line-height:1.6}.alt-migrate-code{font-family:var(--alt-mono);font-size:12.5px;background:var(--alt-s2);padding:3px 8px;border-radius:4px;color:var(--alt-text);margin-top:8px;display:inline-block}.alt-migrate-bottom{text-align:center}.alt-migrate-quote{font-size:15px;color:var(--alt-muted);font-style:italic;margin-bottom:20px}
@@ -133,7 +144,7 @@ const CSS = `:root{--alt-bg:var(--app-bg);--alt-s1:var(--marketing-surface);--al
 /* RESPONSIVE */
 @media(min-width:1600px){:root{--alt-content-max:1100px;--alt-px:40px}}
 @media(max-width:1024px){:root{--alt-px:24px;--alt-section-py:72px}}
-@media(max-width:768px){.alt-hero-title{font-size:36px}.alt-verdict-grid{grid-template-columns:1fr}.alt-table-hdr,.alt-row{grid-template-columns:2fr 1fr 1fr}.alt-pricing-grid{grid-template-columns:1fr}.alt-mcp-grid{grid-template-columns:1fr}.alt-migrate-steps{grid-template-columns:1fr}.alt-faq-grid{grid-template-columns:1fr}.alt-footer-top{grid-template-columns:1fr 1fr;gap:32px}.alt-footer-bottom{flex-direction:column;gap:12px;text-align:center}}
+@media(max-width:768px){.alt-hero-title{font-size:36px}.alt-hero-actions{flex-direction:column;align-items:stretch;width:100%;max-width:320px}.alt-hero-actions .alt-btn,.alt-hero-actions .lp-btn{justify-content:center}.alt-hero-meta{flex-wrap:wrap;justify-content:center}.alt-verdict-grid{grid-template-columns:1fr}.alt-table-hdr,.alt-row{grid-template-columns:2fr 1fr 1fr}.alt-pricing-grid{grid-template-columns:1fr}.alt-mcp-grid{grid-template-columns:1fr}.alt-migrate-steps{grid-template-columns:1fr}.alt-faq-grid{grid-template-columns:1fr}.alt-footer-top{grid-template-columns:1fr 1fr;gap:32px}.alt-footer-bottom{flex-direction:column;gap:12px;text-align:center}}
 `;
 
 const MCP_CONFIG = `// Claude Desktop config
@@ -271,7 +282,7 @@ export default function AlternativePage() {
               {UNIPOST.pricing.tiers.map((t) => (
                 <div key={t.label} className="alt-pricing-tier">
                   <span className="alt-pricing-tier-name">{t.label}</span>
-                  <span className="alt-pricing-tier-price">{t.price !== null ? `$${t.price}/mo` : "Contact us"}</span>
+                  <span className="alt-pricing-tier-price">{formatTierPrice(t)}</span>
                 </div>
               ))}
             </div>
@@ -280,7 +291,7 @@ export default function AlternativePage() {
               {comp.pricing.tiers.map((t) => (
                 <div key={t.label} className="alt-pricing-tier">
                   <span className="alt-pricing-tier-name">{t.label}</span>
-                  <span className="alt-pricing-tier-price">{t.price !== null ? `$${t.price}/mo` : "Contact us"}</span>
+                  <span className="alt-pricing-tier-price">{formatTierPrice(t)}</span>
                 </div>
               ))}
             </div>

@@ -240,6 +240,14 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 			"external_user_id must be ≤ 256 chars")
 		return
 	}
+	if blocked, err := h.freePlanManagedUserPreflightBlocked(r.Context(), workspaceID, body.ExternalUserID); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check managed user limit")
+		return
+	} else if blocked {
+		writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+			"Free plan workspaces can connect up to 3 managed users. Upgrade to onboard more users through Hosted Connect.")
+		return
+	}
 	if body.ReturnURL != "" {
 		if err := validateReturnURL(body.ReturnURL); err != nil {
 			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
@@ -338,6 +346,31 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeCreated(w, toConnectSessionResponse(session, hostedURL))
+}
+
+func (h *ConnectSessionHandler) freePlanManagedUserPreflightBlocked(ctx context.Context, workspaceID, externalUserID string) (bool, error) {
+	if h == nil || h.quota == nil || workspaceID == "" || externalUserID == "" {
+		return false, nil
+	}
+	cap, hasCap := h.quota.MaxManagedUsersForPlan(ctx, workspaceID)
+	if !hasCap {
+		return false, nil
+	}
+	existing, err := h.queries.CountManagedAccountsByWorkspaceAndExternalUser(ctx, db.CountManagedAccountsByWorkspaceAndExternalUserParams{
+		WorkspaceID:    workspaceID,
+		ExternalUserID: pgtype.Text{String: externalUserID, Valid: true},
+	})
+	if err != nil {
+		return false, err
+	}
+	if existing > 0 {
+		return false, nil
+	}
+	current, err := h.queries.CountManagedUsersByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return false, err
+	}
+	return int(current) >= cap, nil
 }
 
 // Get handles GET /v1/connect/sessions/{id} (API key, profile-scoped).

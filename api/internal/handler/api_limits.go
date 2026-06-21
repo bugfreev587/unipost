@@ -93,6 +93,18 @@ type apiLimitsResponse struct {
 	// the Members invite form. -1 = unlimited (Team / Enterprise).
 	MaxMembers     int `json:"max_members"`
 	CurrentMembers int `json:"current_members"`
+
+	// Plan-packaging caps used by Free-plan admission checks. Paid
+	// plans return -1 for the max fields in Phase 2 because they are
+	// intentionally not hard-capped on these dimensions yet.
+	MaxAPIKeys             int `json:"max_api_keys"`
+	CurrentAPIKeys         int `json:"current_api_keys"`
+	MaxWebhooks            int `json:"max_webhooks"`
+	CurrentWebhooks        int `json:"current_webhooks"`
+	MaxManagedAccounts     int `json:"max_managed_accounts"`
+	CurrentManagedAccounts int `json:"current_managed_accounts"`
+	MaxManagedUsers        int `json:"max_managed_users"`
+	CurrentManagedUsers    int `json:"current_managed_users"`
 }
 
 // Get handles GET /v1/limits. Auth comes from DualAuthMiddleware
@@ -133,6 +145,30 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	currentMembers, _ := h.queries.CountActiveMembersByWorkspace(r.Context(), workspaceID)
 
+	maxAPIKeys := -1
+	if cap, hasCap := h.quota.MaxAPIKeysForPlan(r.Context(), workspaceID); hasCap {
+		maxAPIKeys = cap
+	}
+	currentAPIKeys, _ := h.queries.CountActiveAPIKeysByWorkspace(r.Context(), workspaceID)
+
+	maxWebhooks := -1
+	if cap, hasCap := h.quota.MaxWebhooksForPlan(r.Context(), workspaceID); hasCap {
+		maxWebhooks = cap
+	}
+	currentWebhooks, _ := h.queries.CountActiveWebhooksByWorkspace(r.Context(), workspaceID)
+
+	maxManagedAccounts := -1
+	if cap, hasCap := h.quota.MaxManagedAccountsForPlan(r.Context(), workspaceID); hasCap {
+		maxManagedAccounts = cap
+	}
+	currentManagedAccounts, _ := h.queries.CountActiveManagedAccountsByWorkspace(r.Context(), workspaceID)
+
+	maxManagedUsers := -1
+	if cap, hasCap := h.quota.MaxManagedUsersForPlan(r.Context(), workspaceID); hasCap {
+		maxManagedUsers = cap
+	}
+	currentManagedUsers, _ := h.queries.CountManagedUsersByWorkspace(r.Context(), workspaceID)
+
 	var customPlatformSlot *string
 	if ws, err := h.queries.GetWorkspace(r.Context(), workspaceID); err == nil && ws.CustomPlatformSlot.Valid {
 		v := ws.CustomPlatformSlot.String
@@ -161,6 +197,14 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		CurrentProfiles:                 int(currentProfiles),
 		MaxMembers:                      maxMembers,
 		CurrentMembers:                  int(currentMembers),
+		MaxAPIKeys:                      maxAPIKeys,
+		CurrentAPIKeys:                  int(currentAPIKeys),
+		MaxWebhooks:                     maxWebhooks,
+		CurrentWebhooks:                 int(currentWebhooks),
+		MaxManagedAccounts:              maxManagedAccounts,
+		CurrentManagedAccounts:          int(currentManagedAccounts),
+		MaxManagedUsers:                 maxManagedUsers,
+		CurrentManagedUsers:             int(currentManagedUsers),
 	})
 }
 
