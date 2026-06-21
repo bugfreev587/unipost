@@ -549,11 +549,19 @@ WITH base AS (
        FROM usage usg
        JOIN workspaces w ON w.id = usg.workspace_id
        WHERE w.user_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0) AS posts_used,
-    COALESCE((SELECT SUM(pl.post_limit)::bigint
+    CASE WHEN EXISTS(
+       SELECT 1
        FROM subscriptions s
        JOIN plans pl ON pl.id = s.plan_id
        JOIN workspaces w ON w.id = s.workspace_id
-       WHERE w.user_id = u.id AND s.status = 'active'), 0) AS post_limit,
+       WHERE w.user_id = u.id AND s.status = 'active' AND pl.post_limit < 0
+    ) THEN -1 ELSE COALESCE((
+       SELECT SUM(pl.post_limit)::bigint
+       FROM subscriptions s
+       JOIN plans pl ON pl.id = s.plan_id
+       JOIN workspaces w ON w.id = s.workspace_id
+       WHERE w.user_id = u.id AND s.status = 'active'
+    ), 0) END AS post_limit,
     COALESCE((SELECT SUM(pl.price_cents)::bigint
        FROM subscriptions s
        JOIN plans pl ON pl.id = s.plan_id
@@ -1539,7 +1547,10 @@ SELECT
   (SELECT COUNT(*) FROM social_accounts sa JOIN profiles p ON p.id = sa.profile_id JOIN workspaces w ON w.id = p.workspace_id WHERE w.user_id = u.id AND sa.disconnected_at IS NULL),
   COALESCE((SELECT array_agg(DISTINCT sa.platform) FROM social_accounts sa JOIN profiles p ON p.id = sa.profile_id JOIN workspaces w ON w.id = p.workspace_id WHERE w.user_id = u.id AND sa.disconnected_at IS NULL), '{}'),
   COALESCE((SELECT SUM(usg.post_count)::bigint FROM usage usg JOIN workspaces w ON w.id = usg.workspace_id WHERE w.user_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0),
-  COALESCE((SELECT SUM(pl.post_limit)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN workspaces w ON w.id = s.workspace_id WHERE w.user_id = u.id AND s.status='active'), 0),
+  CASE WHEN EXISTS(SELECT 1 FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN workspaces w ON w.id = s.workspace_id WHERE w.user_id = u.id AND s.status='active' AND pl.post_limit < 0)
+    THEN -1
+    ELSE COALESCE((SELECT SUM(pl.post_limit)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN workspaces w ON w.id = s.workspace_id WHERE w.user_id = u.id AND s.status='active'), 0)
+  END,
   COALESCE((SELECT SUM(pl.price_cents)::bigint FROM subscriptions s JOIN plans pl ON pl.id = s.plan_id JOIN workspaces w ON w.id = s.workspace_id WHERE w.user_id = u.id AND s.status='active'), 0),
   (SELECT COUNT(*) FROM social_posts sp JOIN workspaces w ON w.id = sp.workspace_id WHERE w.user_id = u.id),
   (SELECT COUNT(*) FROM social_posts sp JOIN workspaces w ON w.id = sp.workspace_id WHERE w.user_id = u.id AND sp.status='failed' AND sp.created_at >= NOW() - INTERVAL '30 days'),

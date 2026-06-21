@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { listAdminBilling, setAdminWorkspacePlan, type AdminBillingListParams, type AdminBillingRow } from "@/lib/api";
+import { formatPostUsage, usagePercentage } from "@/lib/billing-format";
 
 import { AdminShell, StatCard, fmtCents, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
@@ -135,7 +136,7 @@ export default function AdminBillingPage() {
               <tr><td colSpan={8} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No billing rows matched the current filters.</td></tr>
             ) : (
               rows.map((row) => {
-                const usagePct = row.post_limit > 0 ? Math.min(100, (row.posts_used / row.post_limit) * 100) : 0;
+                const usagePct = usagePercentage(row.posts_used, row.post_limit);
                 const usageClass = usagePct >= 90 ? "ad-uf-r" : usagePct >= 70 ? "ad-uf-a" : "ad-uf-g";
                 return (
                   <tr key={row.workspace_id}>
@@ -173,7 +174,7 @@ export default function AdminBillingPage() {
                       </div>
                     </td>
                     <td>
-                      <div style={{ fontSize: 11.5 }}>{fmtNumber(row.posts_used)} / {fmtNumber(row.post_limit)}</div>
+                      <div style={{ fontSize: 11.5 }}>{formatPostUsage(row.posts_used, row.post_limit)}</div>
                       <div className="ad-usage-bar" style={{ width: 88, marginTop: 5 }}>
                         <div className={`ad-usage-fill ${usageClass}`} style={{ width: `${usagePct}%` }} />
                       </div>

@@ -95,7 +95,7 @@ const TIERS: Tier[] = [
     name: "Team",
     price: 149,
     blurb: "For agencies and multi-operator teams.",
-    posts: "25,000 posts/mo",
+    posts: "Unlimited posts/mo",
     features: [
       { kind: "headline", text: "RBAC + per-member API keys" },
       { kind: "include", text: "Everything in Growth" },
@@ -121,8 +121,8 @@ type CompareRow = {
 };
 
 const COMPARE_ROWS: CompareRow[] = [
-  { name: "Monthly posts", free: "100", api: "1,000", basic: "2,500", growth: "7,500", team: "25,000" },
-  { name: "Monthly quota behavior", sub: "Free stops at its quota; paid plans use soft overage with upgrade guidance", free: "Hard cap", api: "Soft overage", basic: "Soft overage", growth: "Soft overage", team: "Soft overage" },
+  { name: "Monthly posts", free: "100", api: "1,000", basic: "2,500", growth: "7,500", team: "Unlimited" },
+  { name: "Monthly quota behavior", sub: "Free stops at its quota; API, Basic, and Growth use soft overage with upgrade guidance; Team is unlimited", free: "Hard cap", api: "Soft overage", basic: "Soft overage", growth: "Soft overage", team: "Unlimited" },
   { name: "Platforms", sub: "X (Twitter), Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, Facebook", free: "8 (no X)", api: "9", basic: "9", growth: "9", team: "9" },
   { name: "Profiles", sub: "Brand groupings inside one workspace", free: "1", api: "2", basic: "5", growth: "25", team: "Unlimited" },
   { name: "Users", sub: "Team members on the workspace", free: "1", api: "1", basic: "1", growth: "3", team: "Unlimited" },
@@ -147,7 +147,7 @@ const FAQS = [
   { q: "Why is X (Twitter) not on the Free plan?", a: "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota is too small to absorb that cost without distorting our pricing for everyone else. Free workspaces can read existing X data; new X publishes and connections require any paid plan starting at $10/mo." },
   { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
-  { q: "What happens if I go over my monthly post quota?", a: "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. Paid plans keep soft overage behavior: posting continues for now, with usage warnings and upgrade guidance instead of surprise billing. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
+  { q: "What happens if I go over my monthly post quota?", a: "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. API, Basic, and Growth keep soft overage behavior: posting continues for now, with usage warnings and upgrade guidance instead of surprise billing. Team includes unlimited monthly posts. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
   { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
   { q: "When do I need Growth?", a: "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
@@ -288,7 +288,7 @@ export default function PricingPage() {
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><circle cx="8" cy="8" r="6.5" /><path d="M8 5v3M8 10v1" /></svg></div>
           <div>
             <div className="pr-soft-title">Free has a clear cap. Paid plans stay flexible.</div>
-            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month. Paid workspaces keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
+            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month. API, Basic, and Growth keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. Team includes unlimited monthly posts. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
           </div>
         </div>
 
@@ -328,9 +328,9 @@ export default function PricingPage() {
         {/* Enterprise */}
         <div className="pr-ent">
           <div>
-            <div className="pr-ent-title">Need more than 25,000 posts/month or custom terms?</div>
-            <div className="pr-ent-desc">Enterprise plans cover custom volume, dedicated support, SLA guarantees, security review, and contract flexibility. Get in touch and we&apos;ll size it to your needs.</div>
-            <div className="pr-ent-chips">{["Custom volume", "99.9% SLA", "Dedicated support", "Custom contract", "On-premise option"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
+            <div className="pr-ent-title">Need custom terms, SLA, or dedicated support?</div>
+            <div className="pr-ent-desc">Enterprise plans cover dedicated support, SLA guarantees, security review, and contract flexibility. Get in touch and we&apos;ll size it to your needs.</div>
+            <div className="pr-ent-chips">{["Custom terms", "99.9% SLA", "Dedicated support", "Security review", "On-premise option"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
           </div>
           <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact Sales →</a>
         </div>
