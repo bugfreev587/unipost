@@ -34,6 +34,7 @@ const OVERVIEW_ROWS: OverviewRow[] = [
   { label: "Webhooks", unipost: UNIPOST.features.webhooks, values: ALL_COMPETITORS.map((c) => c.features.webhooks) },
   { label: "Post analytics", unipost: UNIPOST.features.postAnalytics, values: ALL_COMPETITORS.map((c) => c.features.postAnalytics) },
   { label: "Scheduled posts", unipost: UNIPOST.features.scheduledPosts, values: ALL_COMPETITORS.map((c) => c.features.scheduledPosts) },
+  { label: "Official SDKs", unipost: UNIPOST.developerExperience.sdk, values: ALL_COMPETITORS.map((c) => c.developerExperience.sdk) },
   { label: "White-label (BYOC)", unipost: UNIPOST.features.nativeMode, values: ALL_COMPETITORS.map((c) => c.features.nativeMode) },
   { label: "Quickstart mode", unipost: UNIPOST.features.quickstartMode, values: ALL_COMPETITORS.map((c) => c.features.quickstartMode) },
   { label: "First comment", unipost: UNIPOST.features.firstComment, values: ALL_COMPETITORS.map((c) => c.features.firstComment) },

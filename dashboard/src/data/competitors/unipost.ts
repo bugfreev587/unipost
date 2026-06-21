@@ -1,6 +1,6 @@
 // UniPost's own data for comparison tables
-// Last verified: 2026-05-01 against unipost.dev/pricing (after the
-// product-tier pricing redesign — migration 058)
+// Last verified: 2026-06-21 against unipost.dev/pricing, /docs/sdk,
+// and the multi-language SDK changelog entry.
 
 export const UNIPOST = {
   name: "UniPost",
@@ -49,7 +49,7 @@ export const UNIPOST = {
   },
   developerExperience: {
     restApi: true,
-    sdk: "coming",
+    sdk: "JS, Python, Go, Java",
     docsQuality: 4,
     mcpServer: true,
     openSource: false,

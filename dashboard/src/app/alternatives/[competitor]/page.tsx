@@ -59,7 +59,7 @@ function buildSections(comp: Competitor): CompareSection[] {
     ]},
     { title: "Developer Experience", rows: [
       { label: "REST API", us: u.developerExperience.restApi, them: c.developerExperience.restApi },
-      { label: "SDK", us: u.developerExperience.sdk, them: c.developerExperience.sdk },
+      { label: "Official SDKs", us: u.developerExperience.sdk, them: c.developerExperience.sdk },
       { label: "Docs quality", us: "⭐".repeat(u.developerExperience.docsQuality as number), them: "⭐".repeat(c.developerExperience.docsQuality as number) },
       { label: "MCP Server", us: u.developerExperience.mcpServer, them: c.developerExperience.mcpServer },
       { label: "Open source", us: u.developerExperience.openSource, them: c.developerExperience.openSource },
