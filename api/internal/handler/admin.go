@@ -875,6 +875,120 @@ type adminBillingQuery struct {
 	Excluded []string
 }
 
+type adminEmailNotificationRow struct {
+	ID               string     `json:"id"`
+	EventType        string     `json:"event_type"`
+	TriggerEvent     string     `json:"trigger_event"`
+	WorkspaceID      string     `json:"workspace_id"`
+	WorkspaceName    string     `json:"workspace_name"`
+	UserID           string     `json:"user_id"`
+	OwnerEmail       string     `json:"owner_email"`
+	Email            string     `json:"email"`
+	Period           string     `json:"period"`
+	ThresholdPercent int32      `json:"threshold_percent"`
+	Status           string     `json:"status"`
+	TransactionalID  string     `json:"transactional_id"`
+	IdempotencyKey   string     `json:"idempotency_key"`
+	EffectiveUsage   int32      `json:"effective_usage"`
+	CompletedUsage   int32      `json:"completed_usage"`
+	ReservedUsage    int32      `json:"reserved_usage"`
+	PostLimit        int32      `json:"post_limit"`
+	FailureReason    *string    `json:"failure_reason,omitempty"`
+	AttemptedAt      time.Time  `json:"attempted_at"`
+	SentAt           *time.Time `json:"sent_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+type adminEmailNotificationsQuery struct {
+	Search    string
+	Status    string
+	Threshold int
+	Period    string
+	Limit     int
+	Offset    int
+}
+
+const adminEmailNotificationsSelectSQL = `
+SELECT
+  r.id,
+  'free_plan_quota_reminder' AS event_type,
+  'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event,
+  r.workspace_id,
+  COALESCE(w.name, '') AS workspace_name,
+  r.user_id,
+  COALESCE(u.email, '') AS owner_email,
+  r.email,
+  r.period,
+  r.threshold_percent,
+  r.status,
+  r.transactional_id,
+  r.idempotency_key,
+  r.effective_usage,
+  r.completed_usage,
+  r.reserved_usage,
+  r.post_limit,
+  r.failure_reason,
+  r.attempted_at,
+  r.sent_at,
+  r.created_at,
+  r.updated_at
+FROM free_plan_quota_email_reminders r
+LEFT JOIN workspaces w ON w.id = r.workspace_id
+LEFT JOIN users u ON u.id = r.user_id
+`
+
+const adminEmailNotificationsWhereSQL = `
+WHERE ($1::TEXT = '' OR r.status = $1)
+  AND ($2::INT = 0 OR r.threshold_percent = $2)
+  AND ($3::TEXT = '' OR r.period = $3)
+  AND (
+    $4::TEXT = ''
+    OR r.email ILIKE '%' || $4 || '%'
+    OR u.email ILIKE '%' || $4 || '%'
+    OR w.name ILIKE '%' || $4 || '%'
+    OR r.workspace_id ILIKE '%' || $4 || '%'
+    OR r.user_id ILIKE '%' || $4 || '%'
+    OR r.id ILIKE '%' || $4 || '%'
+    OR r.idempotency_key ILIKE '%' || $4 || '%'
+    OR ('usage_' || r.threshold_percent::TEXT || '_percent') ILIKE '%' || $4 || '%'
+  )
+`
+
+func adminEmailNotificationsBaseSelect() string {
+	return adminEmailNotificationsSelectSQL + adminEmailNotificationsWhereSQL + `
+ORDER BY r.attempted_at DESC, r.created_at DESC`
+}
+
+func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
+	status := strings.TrimSpace(strings.ToLower(raw))
+	switch status {
+	case "", "all":
+		return "", true
+	case "pending", "sent", "failed":
+		return status, true
+	default:
+		return "", false
+	}
+}
+
+func parseAdminEmailNotificationThreshold(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "all" {
+		return 0, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	switch value {
+	case 80, 85, 90, 95, 100:
+		return value, true
+	default:
+		return 0, false
+	}
+}
+
 func (h *AdminHandler) queryPostFailures(ctx context.Context, opts adminPostFailureQuery) ([]adminPostFailure, error) {
 	days := opts.Days
 	if days <= 0 || days > 365 {
@@ -1726,6 +1840,126 @@ func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) queryEmailNotifications(ctx context.Context, opts adminEmailNotificationsQuery) ([]adminEmailNotificationRow, int64, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset := opts.Offset
+	if offset < 0 {
+		offset = 0
+	}
+
+	args := []any{
+		strings.TrimSpace(opts.Status),
+		opts.Threshold,
+		strings.TrimSpace(opts.Period),
+		strings.TrimSpace(opts.Search),
+	}
+
+	var total int64
+	if err := h.pool.QueryRow(ctx, `
+SELECT COUNT(*)::BIGINT
+FROM free_plan_quota_email_reminders r
+LEFT JOIN workspaces w ON w.id = r.workspace_id
+LEFT JOIN users u ON u.id = r.user_id
+`+adminEmailNotificationsWhereSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	rows, err := h.pool.Query(ctx, adminEmailNotificationsBaseSelect()+`
+LIMIT $5 OFFSET $6`, append(args, limit, offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	out := make([]adminEmailNotificationRow, 0, limit)
+	for rows.Next() {
+		var item adminEmailNotificationRow
+		var failureReason *string
+		var sentAt *time.Time
+		if err := rows.Scan(
+			&item.ID,
+			&item.EventType,
+			&item.TriggerEvent,
+			&item.WorkspaceID,
+			&item.WorkspaceName,
+			&item.UserID,
+			&item.OwnerEmail,
+			&item.Email,
+			&item.Period,
+			&item.ThresholdPercent,
+			&item.Status,
+			&item.TransactionalID,
+			&item.IdempotencyKey,
+			&item.EffectiveUsage,
+			&item.CompletedUsage,
+			&item.ReservedUsage,
+			&item.PostLimit,
+			&failureReason,
+			&item.AttemptedAt,
+			&sentAt,
+			&item.CreatedAt,
+			&item.UpdatedAt,
+		); err != nil {
+			return nil, 0, err
+		}
+		item.FailureReason = failureReason
+		item.SentAt = sentAt
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	return out, total, nil
+}
+
+// ListEmailNotifications serves GET /v1/admin/email-notifications.
+// It is the read-only operational view for free-plan quota reminder
+// emails sent through Loops.
+func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	status, ok := normalizeAdminEmailNotificationStatus(q.Get("status"))
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "status must be one of: all, pending, sent, failed")
+		return
+	}
+	threshold, ok := parseAdminEmailNotificationThreshold(q.Get("threshold"))
+	if !ok {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "threshold must be one of: 80, 85, 90, 95, 100")
+		return
+	}
+
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	out, total, err := h.queryEmailNotifications(r.Context(), adminEmailNotificationsQuery{
+		Search:    q.Get("search"),
+		Status:    status,
+		Threshold: threshold,
+		Period:    q.Get("period"),
+		Limit:     limit,
+		Offset:    offset,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email notifications: "+err.Error())
+		return
+	}
+
+	writeSuccessWithListMeta(w, out, int(total), limit)
 }
 
 // SetPlan flips a workspace's subscription.plan_id directly, bypassing
