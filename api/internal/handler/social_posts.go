@@ -31,6 +31,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
@@ -58,7 +59,12 @@ type SocialPostHandler struct {
 	limiter     ratelimit.Limiter
 	ilog        *integrationlogs.Logger
 	loopsSyncer loopsLifecycleSyncer
+	quotaEmail  quotaEmailService
 	appBaseURL  string
+}
+
+type quotaEmailService interface {
+	EvaluateAndSend(context.Context, quotaemail.Evaluation) error
 }
 
 func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
@@ -132,6 +138,21 @@ func (h *SocialPostHandler) checkFreePlanPostQuotaForPeriod(ctx context.Context,
 	return h.quota.FreePlanHardBlockStatus(ctx, workspaceID, requestedUnits)
 }
 
+func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *SocialPostHandler {
+	h.quotaEmail = service
+	return h
+}
+
+func (h *SocialPostHandler) maybeSendFreePlanQuotaEmail(ctx context.Context, workspaceID string, eval quotaemail.Evaluation) {
+	if h == nil || h.quotaEmail == nil {
+		return
+	}
+	eval.WorkspaceID = workspaceID
+	if err := h.quotaEmail.EvaluateAndSend(ctx, eval); err != nil {
+		slog.Warn("quota email: evaluation failed", "workspace_id", workspaceID, "period", eval.Period, "blocked", eval.Blocked, "error", err)
+	}
+}
+
 func (h *SocialPostHandler) rejectFreePlanPostQuotaExceeded(w http.ResponseWriter, r *http.Request, workspaceID string, requestedUnits int) bool {
 	return h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, requestedUnits, "")
 }
@@ -141,6 +162,11 @@ func (h *SocialPostHandler) rejectFreePlanPostQuotaExceededForPeriod(w http.Resp
 	if !blocked {
 		return false
 	}
+	h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
+		Period:         period,
+		Blocked:        true,
+		RequestedUnits: requestedUnits,
+	})
 	writeFreePlanPostQuotaExceeded(w, status, requestedUnits)
 	return true
 }
@@ -704,6 +730,11 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
 		return
 	}
+	if parsed.ScheduledAt != nil {
+		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
+			Period: quota.PeriodForTime(*parsed.ScheduledAt),
+		})
+	}
 
 	h.logPublishingEvent(r.Context(), integrationlogs.Event{
 		WorkspaceID: workspaceID,
@@ -1200,6 +1231,7 @@ func (h *SocialPostHandler) executePublishLoop(
 
 	if publishedCount > 0 {
 		h.quota.Increment(r.Context(), workspaceID, publishedCount)
+		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{})
 	}
 
 	var caption *string

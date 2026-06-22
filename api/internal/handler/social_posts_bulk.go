@@ -31,6 +31,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
 
 // MaxBulkPosts is the per-request cap. 50 is large enough to batch
@@ -185,6 +186,10 @@ func (h *SocialPostHandler) processBulkOne(
 
 	quotaUnits := countPublishQuotaUnits(parsed.Posts, accountMap)
 	if quotaGate.Blocked(acceptedQuotaUnits + quotaUnits) {
+		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
+			Blocked:        true,
+			RequestedUnits: quotaUnits,
+		})
 		return bulkResultEntry{
 			Status: http.StatusPaymentRequired,
 			Error: &bulkErrorEnvelope{
