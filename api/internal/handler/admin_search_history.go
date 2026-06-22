@@ -30,6 +30,7 @@ var adminSearchHistoryAllowedFields = map[string]bool{
 	"admin.logs.owner_email":         true,
 	"admin.errors.search":            true,
 	"admin.api_metrics.workspace_id": true,
+	"admin.email.search":             true,
 	"admin.posts.search":             true,
 	"admin.users.search":             true,
 }

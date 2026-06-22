@@ -665,6 +665,7 @@ func main() {
 		r.Get("/v1/admin/landing-visitors", landingAttributionHandler.GetAdminVisitors)
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
+		r.Get("/v1/admin/email-notifications", adminHandler.ListEmailNotifications)
 		r.Get("/v1/admin/billing", adminHandler.ListBilling)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
 			Get("/v1/admin/logs", adminHandler.ListLogs)

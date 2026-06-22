@@ -74,3 +74,33 @@ func TestAdminPostFailuresSQLLinksHistoricalFailureEventsByConcreteID(t *testing
 		}
 	}
 }
+
+func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
+	sql := adminEmailNotificationsBaseSelect()
+
+	for _, want := range []string{
+		"free_plan_quota_email_reminders",
+		"'free_plan_quota_reminder' AS event_type",
+		"'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event",
+		"LEFT JOIN workspaces w ON w.id = r.workspace_id",
+		"LEFT JOIN users u ON u.id = r.user_id",
+		"effective_usage",
+		"completed_usage",
+		"reserved_usage",
+		"ORDER BY r.attempted_at DESC, r.created_at DESC",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin email notifications SQL missing %q:\n%s", want, sql)
+		}
+	}
+}
+
+func TestAdminEmailNotificationsRouteIsRegistered(t *testing.T) {
+	source, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(source), `r.Get("/v1/admin/email-notifications", adminHandler.ListEmailNotifications)`) {
+		t.Fatalf("admin email notifications route is not registered")
+	}
+}
