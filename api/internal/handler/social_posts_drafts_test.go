@@ -52,6 +52,24 @@ func TestRollbackDraftAndWriteFreePlanQuotaErrorReturnsQuotaAfterRollback(t *tes
 	}
 }
 
+func TestFreePlanQuotaExceededMessageMentionsScheduledReservations(t *testing.T) {
+	msg := freePlanQuotaExceededMessage(quota.QuotaStatus{
+		Usage:    98,
+		Reserved: 2,
+		Limit:    100,
+	}, 1)
+
+	if !strings.Contains(msg, "98 of 100") {
+		t.Fatalf("message should include published usage, got: %s", msg)
+	}
+	if !strings.Contains(msg, "2 scheduled posts") {
+		t.Fatalf("message should explain scheduled reservations, got: %s", msg)
+	}
+	if !strings.Contains(msg, "needs 1 more") {
+		t.Fatalf("message should include requested units, got: %s", msg)
+	}
+}
+
 type draftRollbackDB struct {
 	execErr error
 }

@@ -14,6 +14,7 @@ type QuotaStatus struct {
 	Warning    string  `json:"warning,omitempty"`
 	Message    string  `json:"message,omitempty"`
 	Usage      int     `json:"usage"`
+	Reserved   int     `json:"reserved,omitempty"`
 	Limit      int     `json:"limit"`
 	Percentage float64 `json:"percentage"`
 }
@@ -47,6 +48,13 @@ func NewChecker(queries *db.Queries) *Checker {
 // overage semantics; Free can be hard-blocked by
 // FreePlanHardBlockStatus at publish-admission call sites.
 func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
+	return c.CheckForPeriod(ctx, workspaceID, currentPeriod())
+}
+
+func (c *Checker) CheckForPeriod(ctx context.Context, workspaceID, period string) QuotaStatus {
+	if period == "" {
+		period = currentPeriod()
+	}
 	sub, err := c.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
 	if err != nil {
 		// No subscription = free plan defaults
@@ -62,7 +70,6 @@ func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 		return QuotaStatus{Allowed: true, Limit: -1} // unlimited
 	}
 
-	period := currentPeriod()
 	usage, err := c.queries.GetUsage(ctx, db.GetUsageParams{
 		WorkspaceID: workspaceID,
 		Period:      period,
@@ -100,7 +107,12 @@ func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 // The behavior is feature-flagged because it changes user-visible write
 // semantics. Paid plans deliberately keep the existing soft-overage model.
 func (c *Checker) FreePlanHardBlockStatus(ctx context.Context, workspaceID string, additionalPosts int) (QuotaStatus, bool) {
-	gate := c.FreePlanHardBlockGate(ctx, workspaceID)
+	gate := c.FreePlanHardBlockGateForPeriod(ctx, workspaceID, currentPeriod())
+	return gate.Status, gate.Blocked(additionalPosts)
+}
+
+func (c *Checker) FreePlanHardBlockStatusForPeriod(ctx context.Context, workspaceID string, additionalPosts int, period string) (QuotaStatus, bool) {
+	gate := c.FreePlanHardBlockGateForPeriod(ctx, workspaceID, period)
 	return gate.Status, gate.Blocked(additionalPosts)
 }
 
@@ -108,7 +120,11 @@ func (c *Checker) FreePlanHardBlockStatus(ctx context.Context, workspaceID strin
 // batch callers can project accepted posts without re-reading quota for
 // every item.
 func (c *Checker) FreePlanHardBlockGate(ctx context.Context, workspaceID string) FreePlanHardBlockGate {
-	status := c.Check(ctx, workspaceID)
+	return c.FreePlanHardBlockGateForPeriod(ctx, workspaceID, currentPeriod())
+}
+
+func (c *Checker) FreePlanHardBlockGateForPeriod(ctx context.Context, workspaceID, period string) FreePlanHardBlockGate {
+	status := c.CheckForPeriod(ctx, workspaceID, period)
 	gate := FreePlanHardBlockGate{Status: status}
 	if status.Limit < 0 {
 		return gate
@@ -120,6 +136,9 @@ func (c *Checker) FreePlanHardBlockGate(ctx context.Context, workspaceID string)
 	}
 	gate.enabled = true
 	gate.planID = c.PlanIDFor(ctx, workspaceID)
+	if gate.planID == "free" {
+		gate.Status.Reserved = c.scheduledReservations(ctx, workspaceID, period)
+	}
 	return gate
 }
 
@@ -134,7 +153,21 @@ func shouldHardBlockFreePlanQuota(planID string, status QuotaStatus, additionalP
 	if planID != "free" || additionalPosts <= 0 || status.Limit < 0 {
 		return false
 	}
-	return status.Usage+additionalPosts > status.Limit
+	return status.Usage+status.Reserved+additionalPosts > status.Limit
+}
+
+func (c *Checker) scheduledReservations(ctx context.Context, workspaceID, period string) int {
+	if period == "" {
+		period = currentPeriod()
+	}
+	count, err := c.queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{
+		WorkspaceID: workspaceID,
+		Period:      period,
+	})
+	if err != nil {
+		return 0
+	}
+	return int(count)
 }
 
 // PlanIDFor returns the plan ID associated with a workspace, or
@@ -340,5 +373,9 @@ func (c *Checker) EnsureSubscription(ctx context.Context, workspaceID string) {
 }
 
 func currentPeriod() string {
-	return time.Now().Format("2006-01")
+	return PeriodForTime(time.Now())
+}
+
+func PeriodForTime(t time.Time) string {
+	return t.UTC().Format("2006-01")
 }
