@@ -138,6 +138,23 @@ test.describe("admin errors details drawer", () => {
   });
 });
 
+test.describe("admin email notifications", () => {
+  test("wires quota reminder email notifications into admin navigation and API client", async () => {
+    const navSource = await readFile(path.join(process.cwd(), "src/app/admin/_components/admin-ui.tsx"), "utf8");
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/admin/email/page.tsx"), "utf8");
+    const apiSource = await readFile(path.join(process.cwd(), "src/lib/api.ts"), "utf8");
+
+    expect(navSource).toContain('label: "Email"');
+    expect(navSource).toContain('href: "/admin/email"');
+    expect(pageSource).toContain("listAdminEmailNotifications");
+    expect(pageSource).toContain("trigger_event");
+    expect(pageSource).toContain('fieldKey="admin.email.search"');
+    expect(apiSource).toContain("AdminEmailNotificationRow");
+    expect(apiSource).toContain('| "admin.email.search"');
+    expect(apiSource).toContain("/v1/admin/email-notifications");
+  });
+});
+
 test.describe("authenticated dashboard smoke", () => {
   test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
 

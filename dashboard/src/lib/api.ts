@@ -300,6 +300,7 @@ export type AdminSearchHistoryFieldKey =
   | "admin.logs.owner_email"
   | "admin.errors.search"
   | "admin.api_metrics.workspace_id"
+  | "admin.email.search"
   | "admin.posts.search"
   | "admin.users.search";
 
@@ -2769,6 +2770,42 @@ export interface AdminPostsAggregates {
   events: AdminPostsEvent[];
 }
 
+export type AdminEmailNotificationStatus = "pending" | "sent" | "failed";
+
+export interface AdminEmailNotificationRow {
+  id: string;
+  event_type: "free_plan_quota_reminder";
+  trigger_event: string;
+  workspace_id: string;
+  workspace_name: string;
+  user_id: string;
+  owner_email: string;
+  email: string;
+  period: string;
+  threshold_percent: number;
+  status: AdminEmailNotificationStatus;
+  transactional_id: string;
+  idempotency_key: string;
+  effective_usage: number;
+  completed_usage: number;
+  reserved_usage: number;
+  post_limit: number;
+  failure_reason?: string;
+  attempted_at: string;
+  sent_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminEmailNotificationListParams {
+  search?: string;
+  status?: "all" | AdminEmailNotificationStatus;
+  threshold?: "all" | 80 | 85 | 90 | 95 | 100;
+  period?: string;
+  limit?: number;
+  offset?: number;
+}
+
 export interface AdminBillingRow {
   workspace_id: string;
   workspace_name: string;
@@ -3448,6 +3485,21 @@ export async function listAdminPostsAggregates(
   if (params?.days != null) qs.set("days", String(params.days));
   const s = qs.toString();
   return request(`/v1/admin/posts/aggregates${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminEmailNotifications(
+  token: string,
+  params?: AdminEmailNotificationListParams
+): Promise<ApiResponse<AdminEmailNotificationRow[]>> {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.status && params.status !== "all") qs.set("status", params.status);
+  if (params?.threshold && params.threshold !== "all") qs.set("threshold", String(params.threshold));
+  if (params?.period) qs.set("period", params.period);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  const s = qs.toString();
+  return request(`/v1/admin/email-notifications${s ? `?${s}` : ""}`, token);
 }
 
 export async function listAdminBilling(
