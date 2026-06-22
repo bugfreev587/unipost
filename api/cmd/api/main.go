@@ -38,6 +38,7 @@ import (
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
 	"github.com/xiaoboyu/unipost-api/internal/reviewai"
@@ -327,6 +328,19 @@ func main() {
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
 	}
+	var freePlanQuotaEmailService *quotaemail.Service
+	if loopsClient != nil && os.Getenv("LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID") != "" {
+		freePlanQuotaEmailService = quotaemail.NewService(quotaemail.Config{
+			Store:           quotaemail.NewPostgresStore(queries),
+			Sender:          loopsClient,
+			TransactionalID: os.Getenv("LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID"),
+			PricingURL:      "https://unipost.dev/pricing",
+			AppBaseURL:      os.Getenv("APP_BASE_URL"),
+		})
+		slog.Info("quota email: free plan quota reminder configured")
+	} else {
+		slog.Info("quota email: free plan quota reminder disabled; Loops client or transactional ID missing")
+	}
 
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
@@ -338,7 +352,8 @@ func main() {
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
-		SetLoopsSyncer(loopsSyncer)
+		SetLoopsSyncer(loopsSyncer).
+		SetQuotaEmailService(freePlanQuotaEmailService)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
