@@ -32,6 +32,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
 
 // draftResponse is the payload returned by createDraft + PublishDraft +
@@ -205,6 +206,10 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	}
 	quotaUnits := countPublishQuotaUnits(posts, accountMap)
 	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, quotaUnits); blocked {
+		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
+			Blocked:        true,
+			RequestedUnits: quotaUnits,
+		})
 		h.rollbackDraftAndWriteFreePlanQuotaError(w, r, claimed.ID, status, quotaUnits)
 		return
 	}
@@ -405,6 +410,9 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reschedule post")
 		return
 	}
+	h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
+		Period: quota.PeriodForTime(t),
+	})
 	writeSuccess(w, socialPostResponseFromRow(updated))
 }
 
@@ -584,6 +592,11 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update post")
 		return
+	}
+	if updated.Status == "scheduled" && updated.ScheduledAt.Valid {
+		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
+			Period: quota.PeriodForTime(updated.ScheduledAt.Time),
+		})
 	}
 
 	// Re-run validation against the new content so the editor sees

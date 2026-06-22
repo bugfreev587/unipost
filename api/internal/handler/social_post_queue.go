@@ -15,6 +15,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
 
 const (
@@ -543,6 +544,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	if updated.Status == "published" {
 		h.quota.Increment(ctx, post.WorkspaceID, 1)
+		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{})
 	}
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
