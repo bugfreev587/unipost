@@ -249,6 +249,27 @@ type ErrorTriageRun struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
+type FreePlanQuotaEmailReminder struct {
+	ID               string             `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	UserID           string             `json:"user_id"`
+	Email            string             `json:"email"`
+	Period           string             `json:"period"`
+	ThresholdPercent int32              `json:"threshold_percent"`
+	Status           string             `json:"status"`
+	TransactionalID  string             `json:"transactional_id"`
+	IdempotencyKey   string             `json:"idempotency_key"`
+	EffectiveUsage   int32              `json:"effective_usage"`
+	CompletedUsage   int32              `json:"completed_usage"`
+	ReservedUsage    int32              `json:"reserved_usage"`
+	PostLimit        int32              `json:"post_limit"`
+	FailureReason    pgtype.Text        `json:"failure_reason"`
+	AttemptedAt      pgtype.Timestamptz `json:"attempted_at"`
+	SentAt           pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type InboxItem struct {
 	ID               string             `json:"id"`
 	SocialAccountID  string             `json:"social_account_id"`
