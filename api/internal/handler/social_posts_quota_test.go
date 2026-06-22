@@ -17,7 +17,9 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
 
 func TestCreateScheduledPostReturnsQuotaExceededWhenFreePlanCapIncludesReservations(t *testing.T) {
@@ -82,8 +84,64 @@ func TestCreateScheduledPostReturnsQuotaExceededWhenFreePlanCapIncludesReservati
 	}
 }
 
+func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
+	featureflags.SetProvider(featureflags.EnvProvider{})
+	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
+	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
+
+	dbtx := &scheduledQuotaHTTPTestDB{
+		usage:       79,
+		reserved:    0,
+		reservedSet: true,
+		createPost:  true,
+		createdPost: scheduledQuotaCreatedPost(t, time.Date(2026, 6, 25, 13, 0, 0, 0, time.UTC)),
+	}
+	quotaEmail := &recordingQuotaEmailService{}
+	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil).
+		SetQuotaEmailService(quotaEmail)
+	body := strings.NewReader(`{
+		"scheduled_at": "2026-06-25T13:00:00Z",
+		"platform_posts": [
+			{
+				"account_id": "acct_linkedin",
+				"caption": "Codex regression coverage for free quota email trigger."
+			}
+		]
+	}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/posts", body)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rr := httptest.NewRecorder()
+
+	handler.Create(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rr.Code, rr.Body.String())
+	}
+	if dbtx.createSocialPostCalls != 1 {
+		t.Fatalf("CreateSocialPost calls = %d, want 1", dbtx.createSocialPostCalls)
+	}
+	if len(quotaEmail.evals) != 1 {
+		t.Fatalf("quota email evaluations = %d, want 1", len(quotaEmail.evals))
+	}
+	got := quotaEmail.evals[0]
+	if got.WorkspaceID != "ws_1" {
+		t.Fatalf("workspace id = %q, want ws_1", got.WorkspaceID)
+	}
+	if got.Period != "2026-06" {
+		t.Fatalf("period = %q, want 2026-06", got.Period)
+	}
+	if got.Blocked {
+		t.Fatal("blocked = true, want false for an accepted scheduled post")
+	}
+}
+
 type scheduledQuotaHTTPTestDB struct {
 	createSocialPostCalls int
+	usage                 int32
+	reserved              int32
+	reservedSet           bool
+	createPost            bool
+	createdPost           db.SocialPost
 }
 
 func (f *scheduledQuotaHTTPTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -141,10 +199,14 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 			pgtype.Int4{},
 		}}
 	case strings.Contains(query, "-- name: GetUsage"):
+		usage := f.usage
+		if usage == 0 {
+			usage = 122
+		}
 		return scanRow{values: []any{
 			"usage_1",
 			args[1].(string),
-			int32(122),
+			usage,
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
 			"ws_1",
@@ -152,12 +214,54 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 	case strings.Contains(query, "-- name: GetScheduledSocialPostByIdempotencyKey"):
 		return scanRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "FROM social_posts sp") && strings.Contains(query, "sp.status = 'scheduled'"):
-		return scanRow{values: []any{int32(1)}}
+		reserved := f.reserved
+		if !f.reservedSet {
+			reserved = 1
+		}
+		return scanRow{values: []any{reserved}}
 	case strings.Contains(query, "-- name: CreateSocialPost"):
 		f.createSocialPostCalls++
+		if f.createPost {
+			return scheduledIdempotencySocialPostRow(f.createdPost)
+		}
 		return scanRow{err: errors.New("CreateSocialPost should not be called when free quota is exceeded")}
 	default:
 		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
+type recordingQuotaEmailService struct {
+	evals []quotaemail.Evaluation
+}
+
+func (s *recordingQuotaEmailService) EvaluateAndSend(_ context.Context, eval quotaemail.Evaluation) error {
+	s.evals = append(s.evals, eval)
+	return nil
+}
+
+func scheduledQuotaCreatedPost(t *testing.T, scheduledAt time.Time) db.SocialPost {
+	t.Helper()
+
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "acct_linkedin",
+		Caption:   "Codex regression coverage for free quota email trigger.",
+	}})
+	if err != nil {
+		t.Fatalf("encode metadata: %v", err)
+	}
+
+	return db.SocialPost{
+		ID:             "post_created",
+		Caption:        pgtype.Text{String: "Codex regression coverage for free quota email trigger.", Valid: true},
+		MediaUrls:      []string{},
+		Status:         "scheduled",
+		ScheduledAt:    pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+		CreatedAt:      pgtype.Timestamptz{Time: time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC), Valid: true},
+		Metadata:       metadata,
+		IdempotencyKey: pgtype.Text{},
+		WorkspaceID:    "ws_1",
+		Source:         "api",
+		ProfileIds:     []string{"prof_1"},
 	}
 }
 
