@@ -367,12 +367,66 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 			Disconnected: ok && acc.DisconnectedAt.Valid,
 		}
 	}
-	// Scheduled posts were quota-admitted when the user created them.
-	// Do not re-run the Free hard cap at execution time; silently
-	// failing already-accepted scheduled work is a worse user experience
-	// than allowing a small projected overage.
+	quotaUnits := countPublishQuotaUnits(parsed, accountMap)
+	if status, blocked := h.checkFreePlanPostQuota(ctx, post.WorkspaceID, quotaUnits); blocked {
+		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{
+			Blocked:        true,
+			RequestedUnits: quotaUnits,
+		})
+		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, status, quotaUnits)
+	}
 	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
 	return err
+}
+
+func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post db.SocialPost, parsed []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount, status quota.QuotaStatus, requestedUnits int) error {
+	msg := freePlanQuotaExceededMessage(status, requestedUnits)
+	summaries := make([]string, 0, len(parsed))
+
+	for _, pp := range parsed {
+		platformName := accountMap[pp.AccountID].Platform
+		res, err := h.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
+			PostID:          post.ID,
+			SocialAccountID: pp.AccountID,
+			Caption:         pp.Caption,
+			Status:          "failed",
+			ExternalID:      pgtype.Text{},
+			ErrorMessage:    pgtype.Text{String: msg, Valid: true},
+			PublishedAt:     pgtype.Timestamptz{},
+			Url:             pgtype.Text{},
+			DebugCurl:       pgtype.Text{},
+			FbMediaType:     pgtype.Text{},
+		})
+		if err != nil {
+			return err
+		}
+		summaries = append(summaries, fmt.Sprintf("[%s] %s", pp.AccountID, msg))
+		h.recordPostFailure(ctx, postfailures.BuildParams(
+			post.ID,
+			res.ID,
+			post.WorkspaceID,
+			pp.AccountID,
+			platformName,
+			"quota",
+			msg,
+			msg,
+		))
+	}
+
+	if err := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+		ID:          post.ID,
+		Status:      "failed",
+		PublishedAt: pgtype.Timestamptz{},
+	}); err != nil {
+		return err
+	}
+	if len(summaries) > 0 {
+		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+			ID:      post.ID,
+			Column2: strings.Join(summaries, "; "),
+		})
+	}
+	return nil
 }
 
 func (h *SocialPostHandler) socialPostResponseFromData(

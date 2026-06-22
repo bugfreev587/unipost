@@ -25,7 +25,8 @@ import { AdminShell, StatCard, bucketByLocalDay, fmtNumber, fmtRelative } from "
 import { SearchHistoryInput } from "../_components/search-history-input";
 import { fmtAdminPostTimelineDate, getAdminPostPublishTimeline } from "./timeline";
 
-const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "failed", "canceled", "archived"] as const;
+const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "partial", "failed", "canceled", "archived"] as const;
+const RESULT_STATUS_OPTIONS = ["all", "failed"] as const;
 const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky", "facebook"] as const;
 const SOURCE_OPTIONS = ["all", "ui", "dashboard", "api", "mcp"] as const;
 const DAY_OPTIONS = [7, 30, 90] as const;
@@ -51,6 +52,7 @@ export default function AdminPostsPage() {
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]>("all");
+  const [resultStatus, setResultStatus] = useState<(typeof RESULT_STATUS_OPTIONS)[number]>("all");
   const [platform, setPlatform] = useState<(typeof PLATFORM_OPTIONS)[number]>("all");
   const [source, setSource] = useState<(typeof SOURCE_OPTIONS)[number]>("all");
   const [userId, setUserId] = useState<string>("");
@@ -72,6 +74,7 @@ export default function AdminPostsPage() {
       const baseParams: AdminPostListParams = {
         search: search || undefined,
         status: status !== "all" ? status : undefined,
+        result_status: resultStatus !== "all" ? resultStatus : undefined,
         platform: platform !== "all" ? platform : undefined,
         source: source !== "all" ? source : undefined,
         user_id: userId || undefined,
@@ -92,7 +95,7 @@ export default function AdminPostsPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, getToken, platform, search, source, status, userId, workspaceId]);
+  }, [days, getToken, platform, resultStatus, search, source, status, userId, workspaceId]);
 
   useEffect(() => {
     loadAll();
@@ -176,6 +179,13 @@ export default function AdminPostsPage() {
           {STATUS_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All Statuses" : `Status: ${value}`}
+            </option>
+          ))}
+        </select>
+        <select value={resultStatus} onChange={(e) => setResultStatus(e.target.value as typeof resultStatus)}>
+          {RESULT_STATUS_OPTIONS.map((value) => (
+            <option key={value} value={value}>
+              {value === "all" ? "All Deliveries" : "Has failed attempts"}
             </option>
           ))}
         </select>
