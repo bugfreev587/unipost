@@ -2740,6 +2740,7 @@ export interface AdminPostRow {
 export interface AdminPostListParams {
   search?: string;
   status?: string;
+  result_status?: string;
   platform?: string;
   source?: string;
   user_id?: string;
@@ -3461,6 +3462,7 @@ export async function listAdminPosts(
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.status) qs.set("status", params.status);
+  if (params?.result_status) qs.set("result_status", params.result_status);
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.source) qs.set("source", params.source);
   if (params?.user_id) qs.set("user_id", params.user_id);
@@ -3478,6 +3480,7 @@ export async function listAdminPostsAggregates(
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.status) qs.set("status", params.status);
+  if (params?.result_status) qs.set("result_status", params.result_status);
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.source) qs.set("source", params.source);
   if (params?.user_id) qs.set("user_id", params.user_id);

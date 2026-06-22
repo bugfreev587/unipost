@@ -35,6 +35,48 @@ func TestAdminPostPlatformFilterSQLUsesStoredTargetPlatforms(t *testing.T) {
 	}
 }
 
+func TestAdminPostsSQLSupportsFailedResultFiltering(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		"ResultStatus string",
+		`normalizeAdminPostResultStatus(q.Get("result_status"))`,
+		"failed_result_count > 0",
+		"($10::TEXT = '' OR ($10 = 'failed' AND failed_result_count > 0))",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin posts SQL should support failed result filtering %q", want)
+		}
+	}
+}
+
+func TestAdminPostsPageExposesPartialAndFailedAttemptFilters(t *testing.T) {
+	pageSource, err := os.ReadFile("../../../dashboard/src/app/admin/posts/page.tsx")
+	if err != nil {
+		t.Fatalf("read admin posts page: %v", err)
+	}
+	apiSource, err := os.ReadFile("../../../dashboard/src/lib/api.ts")
+	if err != nil {
+		t.Fatalf("read dashboard api: %v", err)
+	}
+	combined := string(pageSource) + "\n" + string(apiSource)
+
+	for _, want := range []string{
+		`"partial"`,
+		"RESULT_STATUS_OPTIONS",
+		"Has failed attempts",
+		"result_status",
+	} {
+		if !strings.Contains(combined, want) {
+			t.Fatalf("admin posts UI/API should expose partial and failed-attempt filters %q", want)
+		}
+	}
+}
+
 func TestAdminPostFailuresSQLSearchesConcreteFailureIdentifiers(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {

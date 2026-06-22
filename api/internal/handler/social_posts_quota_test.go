@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -135,6 +136,41 @@ func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
 	}
 }
 
+func TestEnqueueScheduledPostBlocksFreePlanQuotaAtExecution(t *testing.T) {
+	featureflags.SetProvider(featureflags.EnvProvider{})
+	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
+	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
+
+	dbtx := &scheduledExecutionQuotaTestDB{}
+	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil)
+
+	err := handler.EnqueueScheduledPost(context.Background(), scheduledExecutionQuotaPost(t))
+
+	if err != nil {
+		t.Fatalf("EnqueueScheduledPost returned error: %v", err)
+	}
+	if dbtx.deliveryJobCalls != 0 {
+		t.Fatalf("CreatePostDeliveryJob calls = %d, want 0", dbtx.deliveryJobCalls)
+	}
+	if dbtx.updatedPostStatus != "failed" {
+		t.Fatalf("updated post status = %q, want failed", dbtx.updatedPostStatus)
+	}
+	if len(dbtx.createdResultStatuses) != 2 {
+		t.Fatalf("created results = %d, want 2", len(dbtx.createdResultStatuses))
+	}
+	for idx, status := range dbtx.createdResultStatuses {
+		if status != "failed" {
+			t.Fatalf("result[%d] status = %q, want failed", idx, status)
+		}
+	}
+	if !strings.Contains(dbtx.errorSummary, "Free plan monthly post quota exceeded") {
+		t.Fatalf("error summary = %q, want quota message", dbtx.errorSummary)
+	}
+	if dbtx.postFailureCalls != 2 {
+		t.Fatalf("post failure calls = %d, want 2", dbtx.postFailureCalls)
+	}
+}
+
 type scheduledQuotaHTTPTestDB struct {
 	createSocialPostCalls int
 	usage                 int32
@@ -263,6 +299,165 @@ func scheduledQuotaCreatedPost(t *testing.T, scheduledAt time.Time) db.SocialPos
 		Source:         "api",
 		ProfileIds:     []string{"prof_1"},
 	}
+}
+
+type scheduledExecutionQuotaTestDB struct {
+	createdResultStatuses []string
+	deliveryJobCalls      int
+	updatedPostStatus     string
+	errorSummary          string
+	postFailureCalls      int
+}
+
+func (f *scheduledExecutionQuotaTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
+		f.updatedPostStatus = args[1].(string)
+	case strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"):
+		f.errorSummary = args[1].(string)
+	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
+		return pgconn.CommandTag{}, nil
+	default:
+		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+func (f *scheduledExecutionQuotaTestDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *scheduledExecutionQuotaTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		id := args[0].(string)
+		return scanRow{values: socialAccountValues(db.SocialAccount{
+			ID:                id,
+			ProfileID:         "prof_1",
+			Platform:          "youtube",
+			AccessToken:       "token",
+			ExternalAccountID: id + "_external",
+			AccountName:       pgtype.Text{String: "YouTube Channel", Valid: true},
+			ConnectedAt:       pgtype.Timestamptz{Time: time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+			Status:            "connected",
+		})}
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		return scanRow{values: []any{
+			"sub_1",
+			"free",
+			pgtype.Text{},
+			pgtype.Text{},
+			"active",
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			pgtype.Bool{},
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			false,
+			"ws_1",
+		}}
+	case strings.Contains(query, "-- name: GetPlan"):
+		return scanRow{values: []any{
+			"free",
+			"Free",
+			int32(0),
+			int32(100),
+			pgtype.Text{},
+			pgtype.Timestamptz{},
+			false,
+			false,
+			false,
+			false,
+			pgtype.Int4{},
+			pgtype.Int4{},
+		}}
+	case strings.Contains(query, "-- name: GetUsage"):
+		return scanRow{values: []any{
+			"usage_1",
+			args[1].(string),
+			int32(100),
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			"ws_1",
+		}}
+	case strings.Contains(query, "FROM social_posts sp") && strings.Contains(query, "sp.status = 'scheduled'"):
+		return scanRow{values: []any{int32(0)}}
+	case strings.Contains(query, "-- name: CreateSocialPostResult"):
+		f.createdResultStatuses = append(f.createdResultStatuses, args[3].(string))
+		id := fmt.Sprintf("result_%d", len(f.createdResultStatuses))
+		return socialPostResultScanRow(db.SocialPostResult{
+			ID:              id,
+			PostID:          args[0].(string),
+			SocialAccountID: args[1].(string),
+			Caption:         args[2].(string),
+			Status:          args[3].(string),
+			ErrorMessage:    args[5].(pgtype.Text),
+		})
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		f.postFailureCalls++
+		return scanRow{values: []any{
+			fmt.Sprintf("pf_%d", f.postFailureCalls),
+			args[0].(string),
+			args[1].(pgtype.Text),
+			args[2].(string),
+			args[3].(pgtype.Text),
+			args[4].(string),
+			args[5].(string),
+			args[6].(string),
+			args[7].(pgtype.Text),
+			args[8].(string),
+			args[9].(pgtype.Text),
+			args[10].(bool),
+			pgtype.Timestamptz{},
+		}}
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		f.deliveryJobCalls++
+		return scanRow{err: errors.New("delivery job should not be created when scheduled execution exceeds free quota")}
+	default:
+		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
+func scheduledExecutionQuotaPost(t *testing.T) db.SocialPost {
+	t.Helper()
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{
+		{AccountID: "acct_youtube_1", Caption: "Scheduled video one"},
+		{AccountID: "acct_youtube_2", Caption: "Scheduled video two"},
+	})
+	if err != nil {
+		t.Fatalf("encode metadata: %v", err)
+	}
+	return db.SocialPost{
+		ID:          "post_scheduled",
+		Caption:     pgtype.Text{String: "Scheduled video one", Valid: true},
+		Status:      "publishing",
+		Metadata:    metadata,
+		WorkspaceID: "ws_1",
+		Source:      "api",
+		ProfileIds:  []string{"prof_1"},
+	}
+}
+
+func socialPostResultScanRow(result db.SocialPostResult) scanRow {
+	return scanRow{values: []any{
+		result.ID,
+		result.PostID,
+		result.SocialAccountID,
+		result.Status,
+		result.ExternalID,
+		result.ErrorMessage,
+		result.PublishedAt,
+		result.Caption,
+		result.Url,
+		result.DebugCurl,
+		result.FbMediaType,
+		result.RemotelyDeletedAt,
+		result.ErrorCode,
+		result.FailureStage,
+		result.PlatformErrorCode,
+		result.IsRetriable,
+		result.NextAction,
+	}}
 }
 
 type scheduledQuotaRows struct {

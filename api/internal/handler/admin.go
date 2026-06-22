@@ -802,15 +802,16 @@ type adminPostRow struct {
 }
 
 type adminPostsQuery struct {
-	Search      string
-	Status      string
-	Platform    string
-	Source      string
-	UserID      string
-	WorkspaceID string
-	Days        int
-	Limit       int
-	Excluded    []string
+	Search       string
+	Status       string
+	ResultStatus string
+	Platform     string
+	Source       string
+	UserID       string
+	WorkspaceID  string
+	Days         int
+	Limit        int
+	Excluded     []string
 }
 
 // adminPostsAggregatesResponse drives the four headline cards, the
@@ -1348,6 +1349,7 @@ SELECT
   failed_result_count
 FROM post_rollup
 WHERE ($5::TEXT = '' OR $5 = ANY(platforms))
+  AND ($10::TEXT = '' OR ($10 = 'failed' AND failed_result_count > 0))
   AND (
     $6::TEXT = ''
     OR user_email ILIKE '%' || $6 || '%'
@@ -1357,7 +1359,7 @@ WHERE ($5::TEXT = '' OR $5 = ANY(platforms))
   )
 ORDER BY created_at DESC
 LIMIT $7
-`, opts.Excluded, days, opts.Status, opts.Source, opts.Platform, opts.Search, limit, opts.UserID, opts.WorkspaceID)
+`, opts.Excluded, days, opts.Status, opts.Source, opts.Platform, opts.Search, limit, opts.UserID, opts.WorkspaceID, opts.ResultStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -1426,6 +1428,10 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
     AND ($5::TEXT = '' OR u.id = $5)
     AND ($6::TEXT = '' OR sp.workspace_id = $6)
     AND (` + platformFilterSQL + `)
+    AND ($9::TEXT = '' OR ($9 = 'failed' AND EXISTS (
+      SELECT 1 FROM social_post_results spr_filter
+      WHERE spr_filter.post_id = sp.id AND spr_filter.status = 'failed'
+    )))
     AND (
       $8::TEXT = ''
       OR u.email ILIKE '%' || $8 || '%'
@@ -1439,6 +1445,7 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
 		opts.Status, opts.Source,
 		opts.UserID, opts.WorkspaceID,
 		opts.Platform, opts.Search,
+		opts.ResultStatus,
 	}
 
 	out := &adminPostsAggregatesResponse{
@@ -1785,6 +1792,7 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	days, _ := strconv.Atoi(q.Get("days"))
 	limit, _ := strconv.Atoi(q.Get("limit"))
+	resultStatus := normalizeAdminPostResultStatus(q.Get("result_status"))
 
 	excluded, err := h.excludedUserIDs(r.Context())
 	if err != nil {
@@ -1793,15 +1801,16 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out, err := h.queryPosts(r.Context(), adminPostsQuery{
-		Search:      q.Get("search"),
-		Status:      q.Get("status"),
-		Platform:    q.Get("platform"),
-		Source:      q.Get("source"),
-		UserID:      q.Get("user_id"),
-		WorkspaceID: q.Get("workspace_id"),
-		Days:        days,
-		Limit:       limit,
-		Excluded:    excluded,
+		Search:       q.Get("search"),
+		Status:       q.Get("status"),
+		ResultStatus: resultStatus,
+		Platform:     q.Get("platform"),
+		Source:       q.Get("source"),
+		UserID:       q.Get("user_id"),
+		WorkspaceID:  q.Get("workspace_id"),
+		Days:         days,
+		Limit:        limit,
+		Excluded:     excluded,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load posts: "+err.Error())
@@ -1817,6 +1826,7 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	days, _ := strconv.Atoi(q.Get("days"))
+	resultStatus := normalizeAdminPostResultStatus(q.Get("result_status"))
 
 	excluded, err := h.excludedUserIDs(r.Context())
 	if err != nil {
@@ -1825,14 +1835,15 @@ func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Reques
 	}
 
 	out, err := h.queryPostsAggregates(r.Context(), adminPostsQuery{
-		Search:      q.Get("search"),
-		Status:      q.Get("status"),
-		Platform:    q.Get("platform"),
-		Source:      q.Get("source"),
-		UserID:      q.Get("user_id"),
-		WorkspaceID: q.Get("workspace_id"),
-		Days:        days,
-		Excluded:    excluded,
+		Search:       q.Get("search"),
+		Status:       q.Get("status"),
+		ResultStatus: resultStatus,
+		Platform:     q.Get("platform"),
+		Source:       q.Get("source"),
+		UserID:       q.Get("user_id"),
+		WorkspaceID:  q.Get("workspace_id"),
+		Days:         days,
+		Excluded:     excluded,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load aggregates: "+err.Error())
@@ -1840,6 +1851,13 @@ func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Reques
 	}
 
 	writeSuccess(w, out)
+}
+
+func normalizeAdminPostResultStatus(value string) string {
+	if value == "failed" {
+		return value
+	}
+	return ""
 }
 
 func (h *AdminHandler) queryEmailNotifications(ctx context.Context, opts adminEmailNotificationsQuery) ([]adminEmailNotificationRow, int64, error) {
