@@ -91,6 +91,15 @@ UniPost already has notification infrastructure for `billing.usage_80pct`, but t
 
 The existing notification worker currently renders billing usage email copy in backend code and sends through the configured `mail.Mailer`.
 
+That dormant path must not be finished as-is for this feature. It only models one 80% threshold, uses the generic user notification channel system, and is not aware of scheduled quota reservations or hard-block idempotency. V1 should treat the new Loops-backed reminder ledger as the replacement path for Free plan quota emails.
+
+Implementation requirements:
+
+- Do not add a new publisher for `billing.usage_80pct`.
+- Do not use `billing.usage_80pct` for Free plan quota reminder delivery.
+- Before production enablement, remove or hide `billing.usage_80pct` from user-visible notification settings, or relabel it as legacy and disabled, so users do not see a preference toggle that appears to control the new service emails.
+- Keep existing stored notification subscriptions harmless. They should not trigger duplicate 80% emails.
+
 ### Loops
 
 UniPost already has a Loops client that can:
@@ -123,6 +132,12 @@ Do not send quota reminder emails when:
 - The workspace has been deleted or is otherwise not send-eligible.
 - The threshold was already sent for the current period.
 
+### Notification preference policy
+
+Quota reminder emails are service notices about account usage limits and Free plan posting availability. V1 intentionally does not honor the existing `billing.usage_80pct` notification subscription preference for this sequence.
+
+The reason is product safety: the 95% and 100% messages warn about an imminent or active block, not an optional marketing or activity notification. Users may still see normal account footer links or notification settings links if UniPost's global email footer requires them, but the quota reminder send decision is controlled by the feature flag, plan eligibility, and threshold ledger.
+
 ### Thresholds
 
 For v1, the threshold sequence is:
@@ -137,9 +152,16 @@ The 95% email uses a stronger "almost blocked" tone.
 
 The 100% email uses a warning-style "blocked now" tone.
 
-### Crossing behavior
+### Threshold selection behavior
 
-Threshold eligibility is based on crossing into a threshold band.
+Threshold eligibility should be stateless with respect to previous percentage. On each detector run:
+
+1. Compute current effective percentage.
+2. Find every threshold less than or equal to the current effective percentage.
+3. Remove thresholds already sent for this workspace and period.
+4. Send only the highest remaining threshold.
+
+This handles normal usage increases, usage jumps, cancelled scheduled reservations, and re-added reservations without storing a separate previous percentage. The ledger is the source of truth.
 
 Examples:
 
@@ -153,7 +175,7 @@ Examples:
 | 70% | 92% | 90% only |
 | 78% | 101% | 100% only |
 
-When a single usage update crosses multiple unsent thresholds, send only the highest crossed threshold. This prevents a batch publish or scheduled reservation update from generating several emails at once.
+When a single usage update crosses multiple unsent thresholds, send only the highest eligible unsent threshold. This prevents a batch publish, downgrade, or scheduled reservation update from generating several emails at once.
 
 ### Monthly reset behavior
 
@@ -164,6 +186,8 @@ Because the quota period is `YYYY-MM` in UTC, the 100% email should say:
 ```text
 Your Free plan quota resets on the first day of the next month.
 ```
+
+The copy should not promise a local clock time. Users in timezones behind UTC may still be on the prior local calendar date when the UTC quota period changes.
 
 If the product later wants local-time precision, add a separate PRD to choose a timezone contract and update the quota period implementation.
 
@@ -196,8 +220,8 @@ Use UniPost backend threshold detection plus Loops transactional email.
 Flow:
 
 1. A publish, scheduled publish reservation, or scheduled quota scan recalculates Free plan quota state.
-2. Backend computes effective usage percentage.
-3. Backend maps the percentage to the highest eligible threshold.
+2. Backend computes effective usage percentage from completed usage plus reserved scheduled quota.
+3. Backend maps the effective percentage to the highest unsent eligible threshold.
 4. Backend checks the threshold send ledger for `(workspace_id, period, threshold)`.
 5. Backend creates a pending ledger row before provider delivery.
 6. Backend sends a Loops transactional email with deterministic idempotency.
@@ -231,7 +255,8 @@ The template should support these data variables:
 ```text
 workspace_name
 threshold_percent
-usage_percent
+effective_usage_percent
+display_usage_percent
 posts_used
 posts_reserved
 posts_limit
@@ -247,6 +272,8 @@ secondary_cta_label
 ```
 
 The backend should pass fully written `headline`, `body`, and CTA labels so the Loops template can remain a stable visual shell. That keeps behavioral copy versioned in code and makes tests practical.
+
+`effective_usage_percent` may exceed 100 when completed usage plus reserved scheduled posts is over the Free plan limit. `display_usage_percent` should be clamped to 100 for the 100% email variant so the blocked copy does not say both "150%" and "reached 100%".
 
 If the Loops transactional ID is missing while the feature flag is enabled, the backend should fail closed for sends and log a clear configuration error. It should not silently fall back to a marketing workflow.
 
@@ -264,7 +291,7 @@ Suggested fields:
 
 - `id`
 - `workspace_id`
-- `owner_user_id`
+- `workspace_owner_user_id`
 - `recipient_email`
 - `period`
 - `threshold_percent`
@@ -279,6 +306,8 @@ Suggested fields:
 - `sent_at`
 - `created_at`
 - `updated_at`
+
+`workspace_owner_user_id` should be populated from `workspaces.user_id`. The existing schema does not have a separate `owner_user_id` column on `workspaces`.
 
 Required unique constraint:
 
@@ -334,7 +363,7 @@ Use this variant for threshold emails below 95%.
 Subject pattern:
 
 ```text
-[UniPost] You've used {threshold_percent}% of your Free plan posts
+[UniPost] You've reached {threshold_percent}% of your Free plan posts
 ```
 
 Headline:
@@ -352,7 +381,7 @@ Your workspace has used {posts_used} of {posts_limit} Free plan posts this month
 If reserved scheduled posts are present:
 
 ```text
-You also have {posts_reserved} scheduled posts reserved, so your effective usage is {usage_percent}%.
+You also have {posts_reserved} scheduled posts reserved, so your effective usage is {display_usage_percent}%.
 ```
 
 Upgrade paragraph:
@@ -405,7 +434,7 @@ You're close to being blocked
 Body:
 
 ```text
-Your workspace has reached {usage_percent}% of its Free plan monthly post quota. Once it reaches 100%, new publish requests will be blocked until next month's reset unless you upgrade.
+Your workspace has reached {display_usage_percent}% of its Free plan monthly post quota. Once it reaches 100%, new publish requests will be blocked until next month's reset unless you upgrade.
 ```
 
 Upgrade paragraph:
@@ -431,7 +460,7 @@ Plain text example:
 ```text
 You're close to being blocked.
 
-Your workspace has reached {usage_percent}% of its Free plan monthly post quota. Once it reaches 100%, new publish requests will be blocked until next month's reset unless you upgrade.
+Your workspace has reached {display_usage_percent}% of its Free plan monthly post quota. Once it reaches 100%, new publish requests will be blocked until next month's reset unless you upgrade.
 
 Upgrade now to avoid an interruption:
 {pricing_url}
@@ -515,6 +544,15 @@ The detector should accept:
 - plan ID
 - owner user ID and email
 
+The detector must compute effective usage itself:
+
+```text
+effective_usage = Usage + Reserved
+effective_percentage = effective_usage / Limit * 100
+```
+
+Do not use `QuotaStatus.Percentage` for reminder thresholds. In `CheckForPeriod`, `Percentage` is completed-usage only. `Reserved` is populated through the Free plan hard-block gate path, so the detector should either live in `internal/quota` or explicitly obtain a `FreePlanHardBlockGateForPeriod` snapshot before computing thresholds.
+
 The detector should return:
 
 - no-op
@@ -584,6 +622,8 @@ Loops API availability and LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID confi
 
 No new dashboard page is required in v1.
 
+Implementation may update the existing notification settings surface to hide or relabel the dormant `billing.usage_80pct` notification type. That is a compatibility cleanup, not a new quota reminder page.
+
 However, emails link to existing billing or usage surfaces:
 
 - pricing page: `https://unipost.dev/pricing`
@@ -615,7 +655,7 @@ free_plan_quota_email_skipped
 Suggested log fields:
 
 - `workspace_id`
-- `owner_user_id`
+- `workspace_owner_user_id`
 - `period`
 - `threshold_percent`
 - `completed_usage`
@@ -661,6 +701,7 @@ These are service emails related to product usage and account limits. They shoul
 - Add the send ledger.
 - Add the threshold detector.
 - Add Loops transactional send support for this template.
+- Remove, hide, or disable the user-visible `billing.usage_80pct` notification setting before enabling the new service email sequence.
 - Add tests for threshold crossing and idempotency.
 - Add the scheduled safety scan.
 - Document the feature flag in `docs/feature-flags-unleash.md`.
@@ -670,7 +711,7 @@ These are service emails related to product usage and account limits. They shoul
 - Enable the flag in development.
 - Use test workspaces to cross 80%, 85%, 90%, 95%, and 100%.
 - Verify Loops receives one send per workspace, period, and threshold.
-- Verify a jump from below 80% to above 95% sends only the highest crossed threshold.
+- Verify a jump from below 80% to above 95% sends only the highest eligible unsent threshold.
 - Verify the 100% email explains block and reset.
 - Verify paid workspaces do not receive quota reminders.
 
@@ -698,10 +739,13 @@ Add tests for:
 - 99% to 100% sends 100%.
 - 70% to 92% sends 90% only.
 - 78% to 101% sends 100% only.
+- 60 completed posts plus 25 reserved scheduled posts on a 100-post limit sends the 85% threshold.
 - Re-running the detector for the same workspace, period, and threshold does not create a second send.
 - Paid plans are skipped.
 - Missing owner email is skipped.
 - Reserved scheduled posts are included in effective percentage.
+- `QuotaStatus.Percentage` is not used as the reminder threshold source.
+- A disabled legacy `billing.usage_80pct` notification subscription does not suppress the new service-email reminder.
 - Failed provider attempts can retry without creating a second threshold row.
 
 ### Integration tests
@@ -710,8 +754,10 @@ Add tests for:
 
 - Loops transactional payload includes required variables.
 - Loops idempotency key is deterministic and under the provider length limit.
+- The 100% email payload clamps `display_usage_percent` to 100 even when `effective_usage_percent` is higher.
 - Missing transactional ID returns a configuration error in the send worker.
 - The scheduled safety scan does not duplicate sends already created by publish-time detection.
+- The legacy `billing.usage_80pct` path does not publish or duplicate the new 80% reminder.
 
 ### Manual development acceptance
 
@@ -735,7 +781,7 @@ In the development environment:
 3. The 100% email clearly says Free plan posting is blocked and resets on the first day of the next month.
 4. Every email recommends upgrading and links to `https://unipost.dev/pricing`.
 5. Emails are sent at most once per workspace, period, and threshold.
-6. Usage jumps send only the highest crossed threshold email.
+6. Usage jumps send only the highest eligible unsent threshold email.
 7. Scheduled reserved quota units count toward effective usage for warning eligibility.
 8. Paid workspaces do not receive Free plan quota reminders.
 9. Provider failures do not block publishing.
@@ -748,4 +794,7 @@ In the development environment:
 2. Dashboard billing links should use the most accurate existing billing route available at implementation time. If a workspace-specific billing route exists, prefer it over account-level `/settings/billing`.
 3. The 100% email should be sent when effective usage reaches 100%, even if scheduled reservations are what push the workspace to the block threshold.
 4. V1 sends quota reminders to the workspace owner only.
-5. A downgrade from paid to Free mid-period should immediately evaluate quota reminders using the current period's effective usage.
+5. A downgrade from paid to Free mid-period should immediately evaluate quota reminders using the current period's effective usage. This may send the 100% blocked email if the workspace already exceeds the Free plan limit; implementation should coordinate this with any separate downgrade confirmation or plan-change email so the messaging does not feel duplicated.
+6. The new quota reminder sequence supersedes the dormant `billing.usage_80pct` notification type for Free plan quota emails.
+7. Quota reminder service emails do not honor the old `billing.usage_80pct` notification preference toggle.
+8. The reset copy intentionally omits a clock time because the current quota period is UTC-month based.
