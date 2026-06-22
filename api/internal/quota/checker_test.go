@@ -3,6 +3,7 @@ package quota
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -57,6 +58,63 @@ func TestFreePlanHardBlockStatusHonorsFeatureFlag(t *testing.T) {
 	}
 }
 
+func TestFreePlanHardBlockStatusDefaultsOnWhenFlagMissing(t *testing.T) {
+	featureflags.SetProvider(featureflags.EnvProvider{})
+	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
+	unsetenv(t, "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA")
+	t.Setenv("UNIPOST_ENV", "production")
+
+	checker := NewChecker(db.New(&fakeQuotaDB{
+		planID: "free",
+		limit:  100,
+		usage:  99,
+	}))
+
+	status, blocked := checker.FreePlanHardBlockStatus(context.Background(), "ws_123", 2)
+	if !blocked {
+		t.Fatal("expected free plan hard cap to block by default when the remote flag is missing")
+	}
+	if status.Usage != 99 || status.Limit != 100 {
+		t.Fatalf("status = usage %d limit %d, want 99/100", status.Usage, status.Limit)
+	}
+}
+
+func unsetenv(t *testing.T, name string) {
+	t.Helper()
+	old, ok := os.LookupEnv(name)
+	if err := os.Unsetenv(name); err != nil {
+		t.Fatalf("unset %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		if ok {
+			_ = os.Setenv(name, old)
+		} else {
+			_ = os.Unsetenv(name)
+		}
+	})
+}
+
+func TestFreePlanHardBlockStatusIncludesScheduledReservations(t *testing.T) {
+	featureflags.SetProvider(featureflags.EnvProvider{})
+	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
+	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
+
+	checker := NewChecker(db.New(&fakeQuotaDB{
+		planID:         "free",
+		limit:          100,
+		usage:          98,
+		scheduledUnits: 2,
+	}))
+
+	status, blocked := checker.FreePlanHardBlockStatus(context.Background(), "ws_123", 1)
+	if !blocked {
+		t.Fatal("expected free plan hard cap to include already scheduled posts")
+	}
+	if status.Reserved != 2 {
+		t.Fatalf("reserved = %d, want 2", status.Reserved)
+	}
+}
+
 func TestFreePlanHardBlockGateProjectsBulkAccumulation(t *testing.T) {
 	gate := FreePlanHardBlockGate{
 		Status:  QuotaStatus{Allowed: true, Usage: 0, Limit: 100},
@@ -77,9 +135,10 @@ func TestFreePlanHardBlockGateProjectsBulkAccumulation(t *testing.T) {
 }
 
 type fakeQuotaDB struct {
-	planID string
-	limit  int32
-	usage  int32
+	planID         string
+	limit          int32
+	usage          int32
+	scheduledUnits int32
 }
 
 func (f *fakeQuotaDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -131,6 +190,8 @@ func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) 
 			pgtype.Timestamptz{},
 			"ws_123",
 		}}
+	case strings.Contains(sql, "FROM social_posts"):
+		return fakeQuotaRow{values: []any{f.scheduledUnits}}
 	default:
 		return fakeQuotaRow{err: errors.New("unexpected query row")}
 	}

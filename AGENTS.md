@@ -107,6 +107,10 @@
 - When testing deployed development changes, use the development domains above. Do not use production domains for dev-environment validation.
 - When testing deployed staging changes, use the staging domains above. Do not use production domains for staging validation unless the user is explicitly validating production.
 
+## Database access
+
+- Public Railway Postgres URL: `postgresql://postgres:mjWlWEQEihjTHFCarwlwILychFpxVyzb@hopper.proxy.rlwy.net:29343/railway`
+
 ## UI design skill
 
 For frontend, dashboard, landing page, component styling, layout, typography, or visual polish work, use the installed `design-taste-frontend` / `taste-skill` Codex skill before designing or editing UI.
