@@ -96,6 +96,20 @@ func freePlanQuotaExceededMessage(status quota.QuotaStatus, requestedUnits int) 
 	if requestedUnits < 1 {
 		requestedUnits = 1
 	}
+	if status.Reserved > 0 {
+		scheduledLabel := "scheduled posts"
+		if status.Reserved == 1 {
+			scheduledLabel = "scheduled post"
+		}
+		return fmt.Sprintf(
+			"Free plan monthly post quota exceeded. You have used %d of %d posts this month, already have %d %s reserved, and this request needs %d more. Upgrade to continue posting.",
+			status.Usage,
+			status.Limit,
+			status.Reserved,
+			scheduledLabel,
+			requestedUnits,
+		)
+	}
 	return fmt.Sprintf(
 		"Free plan monthly post quota exceeded. You have used %d of %d posts this month, and this request needs %d more. Upgrade to continue posting.",
 		status.Usage,
@@ -105,14 +119,25 @@ func freePlanQuotaExceededMessage(status quota.QuotaStatus, requestedUnits int) 
 }
 
 func (h *SocialPostHandler) checkFreePlanPostQuota(ctx context.Context, workspaceID string, requestedUnits int) (quota.QuotaStatus, bool) {
+	return h.checkFreePlanPostQuotaForPeriod(ctx, workspaceID, requestedUnits, "")
+}
+
+func (h *SocialPostHandler) checkFreePlanPostQuotaForPeriod(ctx context.Context, workspaceID string, requestedUnits int, period string) (quota.QuotaStatus, bool) {
 	if h.quota == nil || requestedUnits <= 0 {
 		return quota.QuotaStatus{}, false
+	}
+	if period != "" {
+		return h.quota.FreePlanHardBlockStatusForPeriod(ctx, workspaceID, requestedUnits, period)
 	}
 	return h.quota.FreePlanHardBlockStatus(ctx, workspaceID, requestedUnits)
 }
 
 func (h *SocialPostHandler) rejectFreePlanPostQuotaExceeded(w http.ResponseWriter, r *http.Request, workspaceID string, requestedUnits int) bool {
-	status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, requestedUnits)
+	return h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, requestedUnits, "")
+}
+
+func (h *SocialPostHandler) rejectFreePlanPostQuotaExceededForPeriod(w http.ResponseWriter, r *http.Request, workspaceID string, requestedUnits int, period string) bool {
+	status, blocked := h.checkFreePlanPostQuotaForPeriod(r.Context(), workspaceID, requestedUnits, period)
 	if !blocked {
 		return false
 	}
@@ -595,7 +620,8 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
 			return
 		}
-		if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap)) {
+		quotaPeriod := quota.PeriodForTime(*parsed.ScheduledAt)
+		if h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap), quotaPeriod) {
 			return
 		}
 		if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{

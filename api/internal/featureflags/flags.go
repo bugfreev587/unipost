@@ -85,7 +85,7 @@ var definitions = map[Flag]Definition{
 		EnvVar:      "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA",
 		Description: "Hard-blocks Free plan publish acceptance once the workspace would exceed its monthly post quota. Paid plans keep soft overage behavior.",
 		DefaultEnabled: func(target Target) bool {
-			return !isProduction(target.Env)
+			return true
 		},
 	},
 	AppReviewAutopilotV1: {

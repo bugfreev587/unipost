@@ -203,11 +203,11 @@ Recommended defaults:
 
 ```text
 development: on
-production: off
-fallback: off in production
+production: on
+fallback: on in production
 ```
 
-Owner area: Billing / Publishing API. This flag controls whether Free plan workspaces are hard-blocked from creating new publish requests once the request would exceed the monthly post quota. Paid plans deliberately keep soft-overage behavior, with usage warnings and upgrade guidance rather than immediate interruption. There is no third-party approval dependency. Production rollback is to disable `billing.free_plan_hard_post_quota`; Free workspaces then return to the historical soft-overage behavior while the dashboard and pricing copy can be updated independently if needed.
+Owner area: Billing / Publishing API. This flag controls whether Free plan workspaces are hard-blocked from creating new publish requests once the request would exceed the monthly post quota. The quota projection includes already-published posts plus scheduled posts reserved in the same month. Paid plans deliberately keep soft-overage behavior, with usage warnings and upgrade guidance rather than immediate interruption. There is no third-party approval dependency. Production rollback is to disable `billing.free_plan_hard_post_quota`; Free workspaces then return to soft-overage behavior while the dashboard and pricing copy can be updated independently if needed.
 
 ## Admin Status Page
 
