@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import path from "node:path";
 import {
+  loadGeneratedBlogPostsFromDirectory,
   mergeBlogPosts,
   parseGeneratedBlogPostFromSource,
   type BlogPost,
@@ -126,4 +128,24 @@ test("mergeBlogPosts keeps existing posts and orders generated posts by date", (
   assert.equal(merged[0].slug, "generated");
   assert.equal(merged[1].slug, "existing");
   assert.equal(merged.find((post) => post.slug === "existing")?.title, "Existing");
+});
+
+test("generated blog posts spread the June 16 article dates across the target cadence", () => {
+  const posts = loadGeneratedBlogPostsFromDirectory(path.join(process.cwd(), "..", "content", "citeloop", "blog"));
+  const datesBySlug = new Map(posts.map((post) => [post.slug, post.publishedAt]));
+
+  assert.deepEqual(
+    [
+      "multi-platform-social-api-integration",
+      "real-time-delivery-tracking-for-multi-platform-social-posts-webhooks-status-apis",
+      "rest-api-to-mcp-server-ai-native-social-publishing",
+      "scheduling-posts-and-optimal-timing-integrating-temporal-logic-with-multi-platform-publishing",
+    ].map((slug) => [slug, datesBySlug.get(slug)]),
+    [
+      ["multi-platform-social-api-integration", "2026-06-16"],
+      ["real-time-delivery-tracking-for-multi-platform-social-posts-webhooks-status-apis", "2026-06-14"],
+      ["rest-api-to-mcp-server-ai-native-social-publishing", "2026-06-12"],
+      ["scheduling-posts-and-optimal-timing-integrating-temporal-logic-with-multi-platform-publishing", "2026-06-09"],
+    ],
+  );
 });
