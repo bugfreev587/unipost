@@ -1,17 +1,17 @@
 // PostForMe competitor data
-// Last verified: 2026-05-01 against postforme.dev (pricing, homepage, developers, about, faq)
+// Last verified: 2026-06-23 against postforme.dev (homepage, about, pricing, open-source)
 // Verify quarterly before updating — also re-verify whenever the live
 // pricing copy on UniPost references a specific PostForMe fact.
 
 export const POSTFORME = {
   name: "PostForMe",
   slug: "postforme",
-  tagline: "Open-source social posting API + dashboard",
+  tagline: "Open-source social media API with hosted and self-host paths",
   pricing: {
     freeTier: false,
     freePostsPerMonth: 0,
     startingPrice: 10,
-    pricingModel: "Single per-post-volume tier",
+    pricingModel: "Per-post-volume tier with unlimited accounts",
     enterprisePlan: true,
     tiers: [
       { label: "Standard", price: 10, posts: "1,000/mo" },
@@ -70,6 +70,15 @@ export const POSTFORME = {
       "You're comfortable running your own infrastructure",
     ],
   },
+  bestFit: {
+    unipost: "Managed SaaS teams that want a free tier, native MCP, inbox workflows, and no self-hosting burden.",
+    competitor: "Open-source/self-host buyers who like PostForMe's about-page transparency and $10/mo hosted starting tier.",
+  },
+  sourceLinks: [
+    { label: "PostForMe about", url: "https://www.postforme.dev/about" },
+    { label: "PostForMe pricing", url: "https://www.postforme.dev/pricing" },
+    { label: "PostForMe open-source page", url: "https://www.postforme.dev/open-source-social-media-api" },
+  ],
   migrationEndpoint: {
     from: "api.postforme.dev/v1/publish",
     to: "api.unipost.dev/v1/posts",

@@ -49,6 +49,7 @@ const PLATFORM_LINKS = [
 ];
 
 const COMPARE_LINKS = [
+  { label: "Best APIs", href: "/compare/social-media-apis" },
   { label: "vs Ayrshare", href: "/alternatives/ayrshare" },
   { label: "vs Zernio", href: "/alternatives/zernio" },
   { label: "vs PostForMe", href: "/alternatives/postforme" },
@@ -100,6 +101,9 @@ export function SiteFooter() {
             links={[
               { label: "Overview", href: "/" },
               { label: "About", href: "/about" },
+              { label: "Social Media API", href: "/social-media-api" },
+              { label: "Posting API", href: "/social-media-posting-api" },
+              { label: "Resources", href: "/resources" },
               { label: "Pricing", href: "/pricing" },
               { label: "Blog", href: "/blog" },
               { label: "Docs", href: "/docs" },

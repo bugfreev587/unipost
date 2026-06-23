@@ -97,6 +97,9 @@ const CSS = `:root{--alt-bg:var(--app-bg);--alt-s1:var(--marketing-surface);--al
 /* VERDICT */
 .alt-verdict{margin-bottom:var(--alt-section-py)}.alt-verdict-card{background:var(--alt-s1);border:1px solid var(--alt-b2);border-radius:16px;padding:40px 48px}.alt-verdict-title{font-size:22px;font-weight:800;letter-spacing:-.3px;margin-bottom:28px;color:var(--alt-text)}.alt-verdict-grid{display:grid;grid-template-columns:1fr 1fr;gap:48px}.alt-verdict-col-title{font-size:14px;font-weight:700;color:var(--alt-accent);margin-bottom:16px}.alt-verdict-col-title.them{color:var(--alt-muted)}.alt-verdict-item{display:flex;align-items:flex-start;gap:10px;font-size:14px;color:var(--alt-text);margin-bottom:12px;line-height:1.5}.alt-verdict-item svg{color:var(--alt-accent);flex-shrink:0;margin-top:2px}
 
+/* BEST FIT */
+.alt-fit{margin:-48px 0 var(--alt-section-py)}.alt-fit-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}.alt-fit-card{background:var(--alt-s1);border:1px solid var(--alt-border);border-radius:12px;padding:24px}.alt-fit-card.ours{border-color:var(--alt-accent)}.alt-fit-label{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--alt-muted2);margin-bottom:10px;font-family:var(--alt-mono)}.alt-fit-title{font-size:17px;font-weight:800;color:var(--alt-text);margin-bottom:8px}.alt-fit-copy{font-size:13.5px;color:var(--alt-muted);line-height:1.7;margin:0}.alt-source-notes{background:var(--alt-s2);border:1px solid var(--alt-border);border-radius:10px;padding:18px 20px}.alt-source-title{font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--alt-muted2);margin-bottom:10px;font-family:var(--alt-mono)}.alt-source-links{display:flex;flex-wrap:wrap;gap:8px}.alt-source-link{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid var(--alt-border);border-radius:8px;color:var(--alt-muted);text-decoration:none;font-size:13px}.alt-source-link:hover{border-color:var(--alt-b2);color:var(--alt-text);background:var(--alt-s3)}
+
 /* COMPARISON TABLE */
 .alt-table-section{margin-bottom:var(--alt-section-py)}.alt-table-title{font-size:36px;font-weight:800;letter-spacing:-.8px;margin-bottom:32px;text-align:center}.alt-table-wrap{border:1px solid var(--alt-border);border-radius:14px;overflow:hidden;margin-bottom:24px}.alt-table-hdr{display:grid;grid-template-columns:2.5fr 1fr 1fr;background:var(--alt-s2);border-bottom:1px solid var(--alt-border)}.alt-th{padding:14px 24px;font-size:12.5px;font-weight:600;color:var(--alt-muted);letter-spacing:.03em}.alt-th.hl{color:var(--alt-accent)}.alt-section-hdr{display:grid;grid-template-columns:1fr;background:var(--alt-s1);border-bottom:1px solid var(--alt-border);padding:12px 24px}.alt-section-label{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--alt-muted2)}.alt-row{display:grid;grid-template-columns:2.5fr 1fr 1fr;border-bottom:1px solid var(--alt-border);transition:background .1s}.alt-row:last-child{border-bottom:none}.alt-row:hover{background:var(--alt-s2)}.alt-cell{padding:14px 24px;display:flex;align-items:center;font-size:14px}.alt-cell-label{color:var(--alt-text);font-weight:500}.alt-chk{color:var(--alt-accent)}.alt-chk svg{width:15px;height:15px}.alt-x{color:var(--alt-muted2);font-size:16px}.alt-coming{font-size:12px;color:var(--alt-muted);font-family:var(--alt-mono);background:var(--alt-s2);padding:2px 8px;border-radius:4px;border:1px solid var(--alt-border)}.alt-val{font-size:13.5px;color:var(--alt-text)}
 
@@ -127,7 +130,7 @@ const CSS = `:root{--alt-bg:var(--app-bg);--alt-s1:var(--marketing-surface);--al
 /* RESPONSIVE */
 @media(min-width:1600px){:root{--alt-content-max:1100px;--alt-px:40px}}
 @media(max-width:1024px){:root{--alt-px:24px;--alt-section-py:72px}}
-@media(max-width:768px){.alt-hero-title{font-size:36px}.alt-hero-actions{flex-direction:column;align-items:stretch;width:100%;max-width:320px}.alt-hero-actions .alt-btn,.alt-hero-actions .lp-btn{justify-content:center}.alt-hero-meta{flex-wrap:wrap;justify-content:center}.alt-verdict-grid{grid-template-columns:1fr}.alt-table-hdr,.alt-row{grid-template-columns:2fr 1fr 1fr}.alt-pricing-grid{grid-template-columns:1fr}.alt-mcp-grid{grid-template-columns:1fr}.alt-migrate-steps{grid-template-columns:1fr}.alt-faq-grid{grid-template-columns:1fr}.alt-footer-top{grid-template-columns:1fr 1fr;gap:32px}.alt-footer-bottom{flex-direction:column;gap:12px;text-align:center}}
+@media(max-width:768px){.alt-hero-title{font-size:36px}.alt-hero-actions{flex-direction:column;align-items:stretch;width:100%;max-width:320px}.alt-hero-actions .alt-btn,.alt-hero-actions .lp-btn{justify-content:center}.alt-hero-meta{flex-wrap:wrap;justify-content:center}.alt-verdict-grid{grid-template-columns:1fr}.alt-fit-grid{grid-template-columns:1fr}.alt-table-hdr,.alt-row{grid-template-columns:2fr 1fr 1fr}.alt-pricing-grid{grid-template-columns:1fr}.alt-mcp-grid{grid-template-columns:1fr}.alt-migrate-steps{grid-template-columns:1fr}.alt-faq-grid{grid-template-columns:1fr}.alt-footer-top{grid-template-columns:1fr 1fr;gap:32px}.alt-footer-bottom{flex-direction:column;gap:12px;text-align:center}}
 `;
 
 const MCP_CONFIG = `// Claude Desktop config
@@ -210,6 +213,39 @@ export default function AlternativePageClient({ competitor: comp }: AlternativeP
                   <div key={item} className="alt-verdict-item"><ArrowIcon />{item}</div>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+
+        {/* BEST FIT */}
+        <div className="alt-fit">
+          <div className="alt-section-eyebrow">Best fit</div>
+          <div className="alt-fit-grid">
+            <div className="alt-fit-card ours">
+              <div className="alt-fit-label">Choose UniPost for</div>
+              <div className="alt-fit-title">UniPost fit</div>
+              <p className="alt-fit-copy">{comp.bestFit.unipost}</p>
+            </div>
+            <div className="alt-fit-card">
+              <div className="alt-fit-label">Choose {comp.name} for</div>
+              <div className="alt-fit-title">{comp.name} fit</div>
+              <p className="alt-fit-copy">{comp.bestFit.competitor}</p>
+            </div>
+          </div>
+          <div className="alt-source-notes">
+            <div className="alt-source-title">Source notes</div>
+            <div className="alt-source-links">
+              {comp.sourceLinks.map((source) => (
+                <a
+                  key={source.url}
+                  href={source.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="alt-source-link"
+                >
+                  {source.label} ↗
+                </a>
+              ))}
             </div>
           </div>
         </div>

@@ -66,31 +66,37 @@ const ICONS: Record<string, React.ReactElement> = {
 const SOLUTIONS = [
   {
     key: "saas",
+    href: "/solutions/saas-social-publishing",
     title: "SaaS Products",
     desc: "Add native social posting and scheduling to your SaaS without distracting your team from core product work. One API replaces six integrations.",
   },
   {
     key: "ai",
+    href: "/solutions/ai-agent-social-posting",
     title: "AI Content Generation",
     desc: "Close the loop between AI generation and social distribution. Let your AI agents publish across platforms via REST API or our native MCP server.",
   },
   {
     key: "ecommerce",
+    href: "/solutions/saas-social-publishing",
     title: "E-commerce Platforms",
     desc: "Drive sales with automated product launches, restock alerts, and promo campaigns shared across every social platform your sellers use.",
   },
   {
     key: "scheduler",
+    href: "/solutions/social-media-scheduler-api",
     title: "Social Media Schedulers",
     desc: "Build a custom scheduler app on top of one unified API. We handle OAuth, token refresh, media uploads, and platform quirks — you ship the UX.",
   },
   {
     key: "multiAccount",
+    href: "/solutions/white-label-social-media-api",
     title: "Multi-Account Management",
     desc: "Manage dozens or hundreds of social accounts affordably. White-label lets your customers see your brand on OAuth, while you scale on a flat rate.",
   },
   {
     key: "agency",
+    href: "/solutions/white-label-social-media-api",
     title: "Agencies & Creator Tools",
     desc: "Help agencies and creators publish on behalf of their clients without juggling six developer accounts. White-label friendly, audit-log ready.",
   },
@@ -100,6 +106,12 @@ export default function SolutionsPage() {
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
+      <style
+        dangerouslySetInnerHTML={{
+          __html:
+            ".sol-card{text-decoration:none;color:inherit}.sol-card-soon{color:var(--sol-blue)}",
+        }}
+      />
       <PublicSiteHeader active="solutions" />
 
       <div className="sol-page">
@@ -120,12 +132,12 @@ export default function SolutionsPage() {
         <section className="sol-grid-section">
           <div className="sol-grid">
             {SOLUTIONS.map((s) => (
-              <div key={s.key} className="sol-card">
+              <Link key={s.key} href={s.href} className="sol-card">
                 <div className="sol-card-icon">{ICONS[s.key]}</div>
                 <h3 className="sol-card-title">{s.title}</h3>
                 <p className="sol-card-desc">{s.desc}</p>
-                <div className="sol-card-soon">More details coming soon</div>
-              </div>
+                <div className="sol-card-soon">Read solution →</div>
+              </Link>
             ))}
           </div>
         </section>
