@@ -69,14 +69,13 @@ export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
       <StatCard
         label="Source platform"
         custom={
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, auto)", gap: "8px 20px", marginTop: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, max-content)", gap: "8px 30px", marginTop: 6 }}>
             {[...byPlatform.entries()].sort((a, b) => b[1] - a[1]).map(([platform, count]) => (
-              <span key={platform} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span key={platform} aria-label={`${platform}: ${count}`} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
                 <span style={{ color: platform === "youtube" ? "var(--dmuted)" : undefined, display: "inline-flex" }}>
                   <AccountDestinationIcon platform={platform} size={14} />
                 </span>
                 <span style={{ color: "var(--dtext)", fontWeight: 700 }}>{count}</span>
-                <span style={{ color: "var(--dmuted)", fontWeight: 600 }}>{quickstartSourceLabel(platform)}</span>
               </span>
             ))}
           </div>
@@ -99,13 +98,6 @@ export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
       )}
     </div>
   );
-}
-
-function quickstartSourceLabel(platform: string) {
-  if (platform === "youtube") return "YouTube channel";
-  if (platform === "facebook") return "Facebook Page";
-  if (platform === "twitter") return "X / Twitter account";
-  return `${platform.charAt(0).toUpperCase()}${platform.slice(1)} account`;
 }
 
 // ── Managed Users Stats ──────────────────────────────────────────────

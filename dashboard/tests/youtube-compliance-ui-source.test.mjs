@@ -53,7 +53,7 @@ async function main() {
   assert.match(statsSource, /AccountDestinationIcon/);
   assert.doesNotMatch(statsSource, /PlatformIcon/);
   assert.match(accountsSource, /Source platform/);
-  assert.match(statsSource, /YouTube channel/);
+  assert.doesNotMatch(statsSource, /quickstartSourceLabel/);
   assert.match(accountsSource, /connected through UniPost-managed OAuth/);
   assert.match(accountsSource, /AccountDestinationIcon/);
   assert.doesNotMatch(accountsSource, /PlatformIcon/);
