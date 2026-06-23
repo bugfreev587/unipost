@@ -440,6 +440,7 @@ type adminUserRow struct {
 	PlatformCount  int64      `json:"platform_count"`
 	Platforms      []string   `json:"platforms"`
 	PostsUsed      int64      `json:"posts_used"`
+	ScheduledPosts int64      `json:"scheduled_posts"`
 	PostLimit      int64      `json:"post_limit"`
 	MRRCents       int64      `json:"mrr_cents"`
 	IsPaid         bool       `json:"is_paid"`
@@ -549,6 +550,12 @@ WITH base AS (
        FROM usage usg
        JOIN workspaces w ON w.id = usg.workspace_id
        WHERE w.user_id = u.id AND usg.period = to_char(NOW(), 'YYYY-MM')), 0) AS posts_used,
+    COALESCE((SELECT COUNT(*)::bigint
+       FROM social_posts sp
+       JOIN workspaces w ON w.id = sp.workspace_id
+       WHERE w.user_id = u.id
+         AND sp.status = 'scheduled'
+         AND sp.deleted_at IS NULL), 0) AS scheduled_posts,
     CASE WHEN EXISTS(
        SELECT 1
        FROM subscriptions s
@@ -599,7 +606,7 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 			&u.SignupCountry,
 			&u.WorkspaceCount, &u.APIKeyCount, &u.PlatformCount,
 			&u.Platforms,
-			&u.PostsUsed, &u.PostLimit,
+			&u.PostsUsed, &u.ScheduledPosts, &u.PostLimit,
 			&u.MRRCents, &u.IsPaid,
 			&lastPostAt,
 		); err != nil {

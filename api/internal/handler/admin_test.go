@@ -117,6 +117,27 @@ func TestAdminPostFailuresSQLLinksHistoricalFailureEventsByConcreteID(t *testing
 	}
 }
 
+func TestAdminUsersListSQLIncludesScheduledPosts(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		"ScheduledPosts int64",
+		"`json:\"scheduled_posts\"`",
+		"AS scheduled_posts",
+		"sp.status = 'scheduled'",
+		"JOIN workspaces w ON w.id = sp.workspace_id",
+		"&u.ScheduledPosts",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin users list should include scheduled posts %q", want)
+		}
+	}
+}
+
 func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 	sql := adminEmailNotificationsBaseSelect()
 

@@ -251,6 +251,7 @@ export default function AdminUsersPage() {
               <th>Workspaces</th>
               <th>API Keys</th>
               <th>Platforms</th>
+              <th>Scheduled</th>
               <th>Posts Used</th>
               <th>Last Active</th>
               <th></th>
@@ -258,9 +259,9 @@ export default function AdminUsersPage() {
           </thead>
           <tbody>
             {loading && users.length === 0 ? (
-              <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={12} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
+              <tr><td colSpan={12} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
             ) : (
               users.map((u) => {
                 const usagePct = usagePercentage(u.posts_used, u.post_limit);
@@ -303,6 +304,7 @@ export default function AdminUsersPage() {
                         <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
                       )}
                     </td>
+                    <td>{fmtNumber(u.scheduled_posts)}</td>
                     <td>
                       <div style={{ fontSize: 11.5 }}>{formatPostUsage(u.posts_used, u.post_limit || 100)}</div>
                       <div className="ad-usage-bar">
