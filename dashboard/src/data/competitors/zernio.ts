@@ -1,5 +1,5 @@
 // Zernio competitor data
-// Last verified: 2026-06-21 against zernio.com/pricing + docs.zernio.com/pricing
+// Last verified: 2026-06-23 against zernio.com/social-media-api + zernio.com/blog/pay-per-account-pricing
 // Pricing evidence: docs/competitive-evidence/zernio-pricing-2026-06-21.md
 // Per-platform flags below are best-effort. Zernio's public pricing page
 // lists the major social, messaging, and ads networks it supports.
@@ -78,6 +78,15 @@ export const ZERNIO = {
       "Your connected-account count is low enough that per-account billing is predictable",
     ],
   },
+  bestFit: {
+    unipost: "Embedded apps that want product-tier pricing instead of a bill that grows with every connected social account.",
+    competitor: "Teams that need 15 platforms, unlimited posts, ads, and a pay-per-connected social account model.",
+  },
+  sourceLinks: [
+    { label: "Zernio social media API", url: "https://zernio.com/social-media-api" },
+    { label: "Zernio pay-per-account pricing", url: "https://zernio.com/blog/pay-per-account-pricing" },
+    { label: "Zernio docs", url: "https://docs.zernio.com/" },
+  ],
   migrationEndpoint: {
     from: "api.zernio.com/v1/posts",
     to: "api.unipost.dev/v1/posts",
