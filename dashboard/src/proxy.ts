@@ -45,10 +45,12 @@ export default clerkMiddleware(async (auth, request) => {
     pathname === "/terms" ||
     pathname === "/privacy" ||
     pathname === "/sitemap.xml" ||
+    pathname === "/robots.txt" ||
     pathname.startsWith("/docs") ||
     pathname.startsWith("/preview") ||
     pathname.startsWith("/review/") ||
     pathname === "/pricing" ||
+    pathname === "/about" ||
     pathname === "/changelog" ||
     pathname.startsWith("/blog") ||
     pathname === "/solutions" ||

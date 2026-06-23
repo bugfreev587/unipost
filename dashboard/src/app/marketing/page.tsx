@@ -15,11 +15,19 @@ const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const START_BUILDING_URL = `${APP_URL}/welcome`;
 
 export const metadata: Metadata = {
-  title: "UniPost | Ship Social Publishing in Days",
+  title: "UniPost | Unified Social Media Posting API for Developers",
   description:
-    "A unified social media publishing API for connecting customer accounts, uploading media, publishing to nine social networks, and tracking delivery.",
+    "UniPost is a unified social media posting API for developers building customer account connection, media uploads, scheduling, webhooks, analytics, inbox, and delivery across nine social platforms.",
   alternates: {
     canonical: "https://unipost.dev/",
+  },
+  openGraph: {
+    title: "UniPost | Unified Social Media Posting API for Developers",
+    description:
+      "Build social publishing into your product with one API for account connection, media uploads, scheduling, webhooks, analytics, inbox, and delivery across nine social platforms.",
+    url: "https://unipost.dev/",
+    siteName: "UniPost",
+    type: "website",
   },
 };
 
