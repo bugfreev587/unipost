@@ -16,6 +16,19 @@ function firstMeaningfulLine(source) {
     .find((line) => line && !line.startsWith("//")) || "";
 }
 
+describe("blog pages inherit the global light and dark theme", () => {
+  it("scopes blog colors to the global theme classes instead of forcing dark mode", () => {
+    const source = read("src/app/blog/layout.tsx");
+
+    assert.doesNotMatch(source, /:root\{--blog-bg:#/);
+    assert.doesNotMatch(source, /body\{background:var\(--blog-bg\)/);
+    assert.doesNotMatch(source, /\.mk-nav\{background:#/);
+    assert.match(source, /\.blog-shell\{[^}]*--blog-bg:var\(--app-bg\)/s);
+    assert.match(source, /\.light \.blog-shell\{/);
+    assert.match(source, /\.dark \.blog-shell\{/);
+  });
+});
+
 describe("public commercial pages expose SEO metadata from server routes", () => {
   const staticRoutes = [
     {
