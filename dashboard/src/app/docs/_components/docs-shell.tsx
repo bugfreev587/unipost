@@ -346,7 +346,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         { label: "SDKs", href: "/docs/sdk" },
-        { label: "Publishing guide", href: "/docs/publishing" },
       ],
     },
     {
@@ -2720,6 +2719,7 @@ function isNavGroupActive(current: string, item: NavGroup) {
 function getActivePrimaryNav(current: string): DocsPrimaryKey {
   if (current.startsWith("/docs/platforms")) return "platforms";
   if (current.startsWith("/docs/guides")) return "guides";
+  if (current === "/docs/publishing") return "guides";
   if (current.startsWith("/docs/resources")) return "resources";
   if (current.startsWith("/docs/api")) return "api-reference";
   return "overview";
