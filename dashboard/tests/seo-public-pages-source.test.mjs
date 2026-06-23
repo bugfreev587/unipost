@@ -278,4 +278,15 @@ describe("homepage and about page carry entity SEO intent", () => {
     assert.match(source, /SoftwareApplication/);
     assert.match(source, /BreadcrumbList/);
   });
+
+  it("about page platform grid renders official platform icons before labels", () => {
+    const source = read("src/app/about/page.tsx");
+    assert.match(source, /import \{ PlatformIcon \} from "@\/components\/platform-icons"/);
+    assert.match(source, /const ABOUT_PLATFORMS = \[/);
+    for (const platform of ["twitter", "linkedin", "instagram", "tiktok", "threads", "youtube", "facebook", "pinterest", "bluesky"]) {
+      assert.match(source, new RegExp(`platform: "${platform}"`));
+    }
+    assert.match(source, /<PlatformIcon platform=\{platform\.platform\}/);
+    assert.match(source, /<span className="about-platform-name">\{platform\.name\}<\/span>/);
+  });
 });

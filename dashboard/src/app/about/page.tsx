@@ -10,6 +10,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { PublicSiteHeader, MarketingCTA } from "@/components/marketing/nav";
+import { PlatformIcon } from "@/components/platform-icons";
 
 const description =
   "UniPost is a developer-first social media publishing API for products that need account connection, posting, scheduling, webhooks, analytics, and inbox workflows across social platforms.";
@@ -35,6 +36,18 @@ const ENTITY_FACTS = [
   ["Core workflows", "Account connection, media upload, posting, scheduling, webhooks, analytics, and inbox"],
   ["Supported platforms", "X, LinkedIn, Instagram, TikTok, Threads, YouTube, Facebook, Pinterest, and Bluesky"],
   ["Developer surfaces", "REST API, hosted OAuth, dashboard, webhooks, SDKs, and MCP server"],
+] as const;
+
+const ABOUT_PLATFORMS = [
+  { name: "X", platform: "twitter" },
+  { name: "LinkedIn", platform: "linkedin" },
+  { name: "Instagram", platform: "instagram" },
+  { name: "TikTok", platform: "tiktok" },
+  { name: "Threads", platform: "threads" },
+  { name: "YouTube", platform: "youtube" },
+  { name: "Facebook", platform: "facebook" },
+  { name: "Pinterest", platform: "pinterest" },
+  { name: "Bluesky", platform: "bluesky" },
 ] as const;
 
 const CAPABILITIES = [
@@ -156,7 +169,8 @@ body{background:var(--about-bg);color:var(--about-text)}
 .about-visual-top{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--about-border);padding-bottom:18px;margin-bottom:22px}
 .about-visual-label{font-family:var(--font-fira-code),monospace;font-size:12px;color:var(--about-subtle)}
 .about-visual-platforms{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:22px}
-.about-platform{border:1px solid var(--about-border);border-radius:var(--about-radius);padding:10px 12px;font-size:13px;color:var(--about-muted);background:var(--about-surface-alt)}
+.about-platform{display:flex;align-items:center;gap:9px;min-width:0;border:1px solid var(--about-border);border-radius:var(--about-radius);padding:10px 12px;font-size:13px;color:var(--about-muted);background:var(--about-surface-alt)}
+.about-platform-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .about-flow{display:grid;gap:10px}
 .about-flow-step{display:flex;align-items:center;gap:10px;border:1px solid var(--about-border);border-radius:var(--about-radius);padding:12px;background:var(--about-bg);font-size:14px;color:var(--about-text)}
 .about-flow-step svg{width:16px;height:16px;color:var(--about-link);flex:0 0 auto}
@@ -233,8 +247,11 @@ export default function AboutPage() {
                 <Globe2 aria-hidden="true" size={22} color="var(--about-link)" />
               </div>
               <div className="about-visual-platforms">
-                {["X", "LinkedIn", "Instagram", "TikTok", "Threads", "YouTube", "Facebook", "Pinterest", "Bluesky"].map((name) => (
-                  <div key={name} className="about-platform">{name}</div>
+                {ABOUT_PLATFORMS.map((platform) => (
+                  <div key={platform.name} className="about-platform">
+                    <PlatformIcon platform={platform.platform} size={16} />
+                    <span className="about-platform-name">{platform.name}</span>
+                  </div>
                 ))}
               </div>
               <div className="about-flow">
