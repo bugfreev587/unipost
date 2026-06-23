@@ -16,6 +16,7 @@ test("Source platform stats render icon counts without platform account labels",
 
   assert.match(sourcePlatformCard, /AccountDestinationIcon/);
   assert.match(sourcePlatformCard, /fontWeight: 700/);
+  assert.match(sourcePlatformCard, /gap: "8px 30px"/);
   assert.doesNotMatch(sourcePlatformCard, /quickstartSourceLabel/);
   assert.doesNotMatch(sourcePlatformCard, /account/);
   assert.doesNotMatch(sourcePlatformCard, /channel/);

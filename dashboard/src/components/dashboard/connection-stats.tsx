@@ -69,7 +69,7 @@ export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
       <StatCard
         label="Source platform"
         custom={
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, max-content)", gap: "8px 16px", marginTop: 6 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, max-content)", gap: "8px 30px", marginTop: 6 }}>
             {[...byPlatform.entries()].sort((a, b) => b[1] - a[1]).map(([platform, count]) => (
               <span key={platform} aria-label={`${platform}: ${count}`} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
                 <span style={{ color: platform === "youtube" ? "var(--dmuted)" : undefined, display: "inline-flex" }}>
