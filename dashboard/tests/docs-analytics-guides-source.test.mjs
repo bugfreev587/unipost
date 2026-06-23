@@ -43,6 +43,32 @@ test("Analytics guides are exposed as Guides, not as API Reference endpoint grou
   assert.doesNotMatch(apiReferenceSection, /\/docs\/guides\/analytics\/tiktok-followers/);
 });
 
+test("Publishing guide is grouped under Guides instead of Overview", async () => {
+  const docsShell = await source("src/app/docs/_components/docs-shell.tsx");
+
+  assert.match(
+    docsShell,
+    /if \(current === "\/docs\/publishing"\) return "guides"/,
+    "the publishing guide route should activate the Guides primary nav",
+  );
+
+  const overviewStart = docsShell.indexOf("overview: [");
+  const platformsStart = docsShell.indexOf("  platforms: [", overviewStart);
+  const guidesStart = docsShell.indexOf("  guides: [", platformsStart);
+  const resourcesStart = docsShell.indexOf("  resources: [", guidesStart);
+
+  assert.notEqual(overviewStart, -1, "overview sidebar nav should exist");
+  assert.notEqual(platformsStart, -1, "platforms sidebar nav should follow overview");
+  assert.notEqual(guidesStart, -1, "guides sidebar nav should exist");
+  assert.notEqual(resourcesStart, -1, "resources sidebar nav should follow guides");
+
+  const overviewSidebar = docsShell.slice(overviewStart, platformsStart);
+  const guidesSidebar = docsShell.slice(guidesStart, resourcesStart);
+
+  assert.doesNotMatch(overviewSidebar, /\/docs\/publishing/);
+  assert.match(guidesSidebar, /label:\s*"Publishing guide",\s*href:\s*"\/docs\/publishing"/);
+});
+
 test("TikTok followers guide points users to the unified account metrics API", async () => {
   const guide = await source("src/app/docs/guides/analytics/tiktok-followers/page.tsx");
 
