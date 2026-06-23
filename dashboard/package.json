@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test:seo": "node --test tests/seo-public-pages-source.test.mjs",
     "test:docs-ai": "node --test tests/docs-ai-answer-formatting.test.mjs tests/docs-ai-search-evals.test.mjs tests/docs-ai-search-implementation-source.test.mjs tests/docs-analytics-guides-source.test.mjs tests/tiktok-analytics-docs-source.test.mjs",
     "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts"
   },

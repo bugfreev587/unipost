@@ -46,6 +46,7 @@ const themeInitScript = `
     const landingPaths = new Set([
       "/",
       "/marketing",
+      "/about",
       "/twitter-api",
       "/linkedin-api",
       "/instagram-api",
