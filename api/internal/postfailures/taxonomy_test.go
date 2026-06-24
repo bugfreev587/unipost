@@ -54,6 +54,24 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable: false,
 		},
 		{
+			name:      "instagram transient media publish oauth code 2",
+			raw:       `publish failed (500): {"error":{"message":"An unexpected error has occurred. Please retry your request later.","type":"OAuthException","is_transient":true,"code":2,"fbtrace_id":"AJ4uhascsOC2cf1lq0bwhgJ"}}`,
+			code:      "temporary_platform_error",
+			retriable: true,
+		},
+		{
+			name:      "instagram transient flag without retry wording",
+			raw:       `publish failed (500): {"error":{"message":"An unexpected error has occurred.","type":"OAuthException","is_transient":true,"code":2,"fbtrace_id":"TRACE"}}`,
+			code:      "temporary_platform_error",
+			retriable: true,
+		},
+		{
+			name:      "meta retry later wording",
+			raw:       `publish failed (500): {"error":{"message":"Please retry your request later.","type":"OAuthException","code":2}}`,
+			code:      "temporary_platform_error",
+			retriable: true,
+		},
+		{
 			name:      "instagram timeout",
 			raw:       "instagram container processing timed out: container_id=178900 poll_count=30 elapsed_ms=60000",
 			code:      "temporary_platform_error",

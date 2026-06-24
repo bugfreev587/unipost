@@ -47,6 +47,9 @@ func Classify(raw string) Classification {
 	switch {
 	case isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
+	case isMetaTransientError(s):
+		c.ErrorCode = "temporary_platform_error"
+		c.IsRetriable = true
 	case strings.Contains(s, "tiktok") && strings.Contains(s, "file_format_check_failed"):
 		c.ErrorCode = "media_error"
 		c.PlatformErrorCode = "file_format_check_failed"
@@ -112,6 +115,18 @@ func isMetaOAuthReconnectError(s string) bool {
 		(strings.Contains(s, "session has expired") ||
 			strings.Contains(s, "error validating access token") ||
 			strings.Contains(s, "invalid oauth access token"))
+}
+
+func isMetaTransientError(s string) bool {
+	if strings.Contains(s, `"is_transient":true`) || strings.Contains(s, `"is_transient": true`) {
+		return true
+	}
+	if strings.Contains(s, "please retry your request later") {
+		return true
+	}
+	return strings.Contains(s, "oauthexception") &&
+		(strings.Contains(s, `"code":2`) || strings.Contains(s, `"code": 2`)) &&
+		(strings.Contains(s, "unexpected error") || strings.Contains(s, "retry"))
 }
 
 func extractMetaSubcode(raw string) string {
