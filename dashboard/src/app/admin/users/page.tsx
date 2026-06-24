@@ -304,7 +304,7 @@ export default function AdminUsersPage() {
                         <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
                       )}
                     </td>
-                    <td>{fmtNumber(u.scheduled_posts)}</td>
+                    <td>{fmtNumber(u.scheduled_posts ?? 0)}</td>
                     <td>
                       <div style={{ fontSize: 11.5 }}>{formatPostUsage(u.posts_used, u.post_limit || 100)}</div>
                       <div className="ad-usage-bar">
