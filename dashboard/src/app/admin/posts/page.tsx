@@ -2,7 +2,17 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Check, Copy, ExternalLink, X } from "lucide-react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   Bar,
   BarChart,
@@ -58,6 +68,9 @@ export default function AdminPostsPage() {
   const [userId, setUserId] = useState<string>("");
   const [workspaceId, setWorkspaceId] = useState<string>("");
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(30);
+  const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
+  const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
+  const [rawCopied, setRawCopied] = useState(false);
   // Filter dropdown options accumulate across loads so picking one filter
   // doesn't strand the others — once we've seen a user/workspace we keep
   // them selectable until a hard refresh.
@@ -149,6 +162,41 @@ export default function AdminPostsPage() {
       (e) => e.created_at,
     );
   }, [aggregates, days]);
+
+  const selectedPost = useMemo(() => {
+    if (!selectedPostId) return null;
+    return posts.find((post, idx) => postKey(post, idx) === selectedPostId) ?? null;
+  }, [posts, selectedPostId]);
+
+  useEffect(() => {
+    if (selectedPostId && !selectedPost) {
+      setSelectedPostId(null);
+    }
+  }, [selectedPost, selectedPostId]);
+
+  const openPostDetail = useCallback((post: AdminPostRow, idx: number) => {
+    setSelectedPostId(postKey(post, idx));
+    setDrawerTab("attributes");
+    setRawCopied(false);
+  }, []);
+
+  const closeDetail = useCallback(() => {
+    setSelectedPostId(null);
+    setRawCopied(false);
+  }, []);
+
+  const copyRawPost = useCallback(async () => {
+    if (!selectedPost) return;
+    await navigator.clipboard.writeText(JSON.stringify(selectedPost, null, 2));
+    setRawCopied(true);
+    window.setTimeout(() => setRawCopied(false), 1200);
+  }, [selectedPost]);
+
+  const stopLinkClick = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
+    event.stopPropagation();
+  }, []);
+
+  const selectedPublishTimeline = selectedPost ? getAdminPostPublishTimeline(selectedPost) : null;
 
   return (
     <AdminShell title="Posts" loading={loading} onRefresh={loadAll}>
@@ -377,14 +425,29 @@ export default function AdminPostsPage() {
             ) : posts.length === 0 ? (
               <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No posts matched the current filters.</td></tr>
             ) : (
-              posts.map((post) => {
+              posts.map((post, idx) => {
+                const id = postKey(post, idx);
+                const selected = id === selectedPostId;
                 const statusClass =
                   post.status === "failed" ? "ad-badge ad-b-blue" :
                   post.status === "published" ? "ad-badge ad-b-gray" :
                   "ad-badge ad-b-gray";
                 const publishTimeline = getAdminPostPublishTimeline(post);
                 return (
-                  <tr key={post.post_id}>
+                  <tr
+                    key={id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open post details for ${post.post_id}`}
+                    aria-pressed={selected}
+                    onClick={() => openPostDetail(post, idx)}
+                    onKeyDown={(event) => handlePostKeyDown(event, () => openPostDetail(post, idx))}
+                    style={{
+                      cursor: "pointer",
+                      outline: "none",
+                      background: selected ? "color-mix(in srgb, var(--daccent) 9%, var(--surface))" : undefined,
+                    }}
+                  >
                     <td style={{ minWidth: 280 }}>
                       <div style={{ fontWeight: 500 }}>
                         {post.caption?.slice(0, 110) || "No caption"}
@@ -412,7 +475,7 @@ export default function AdminPostsPage() {
                     <td><span className="ad-badge ad-b-gray">{post.source}</span></td>
                     <td>{post.workspace_name}</td>
                     <td>
-                      <Link href={`/admin/users?user=${post.user_id}`} className="ad-link">
+                      <Link href={`/admin/users?user=${post.user_id}`} className="ad-link" onClick={stopLinkClick}>
                         {post.user_email}
                       </Link>
                     </td>
@@ -452,6 +515,317 @@ export default function AdminPostsPage() {
           </tbody>
         </table>
       </div>
+
+      {selectedPost ? (
+        <aside
+          className="posts-detail-drawer"
+          role="dialog"
+          aria-label="Post detail"
+          style={drawerStyle}
+        >
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700 }}>Post detail</div>
+              <div style={{ color: "var(--dmuted)", marginTop: 4 }}>
+                {selectedPost.status} · {selectedPost.source}
+              </div>
+              <div className="ad-mono" style={{ marginTop: 5 }}>{selectedPost.post_id}</div>
+            </div>
+            <button type="button" onClick={closeDetail} style={iconButtonStyle} aria-label="Close post details">
+              <X size={16} />
+            </button>
+          </div>
+
+          <DrawerTabs
+            active={drawerTab}
+            onChange={setDrawerTab}
+            rightSlot={
+              drawerTab === "raw" ? (
+                <button
+                  type="button"
+                  onClick={copyRawPost}
+                  style={drawerCopyButtonStyle}
+                  aria-label="Copy raw post JSON"
+                >
+                  {rawCopied ? (
+                    <>
+                      <Check size={12} />
+                      Copied
+                    </>
+                  ) : (
+                    <>
+                      <Copy size={12} />
+                      Copy
+                    </>
+                  )}
+                </button>
+              ) : null
+            }
+          />
+
+          {drawerTab === "raw" ? (
+            <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedPost, null, 2)}</pre>
+          ) : (
+            <div style={{ display: "grid", gap: 14 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <FieldChip label="status" value={selectedPost.status} />
+                <FieldChip label="source" value={selectedPost.source} />
+                <FieldChip label="targets" value={String(selectedPost.platforms.length)} />
+                <FieldChip label="created" value={formatDateTime(selectedPost.created_at)} />
+              </div>
+
+              <div style={sectionStyle}>
+                <div style={sectionTitleStyle}>Caption</div>
+                <div style={captionStyle}>{selectedPost.caption || "No caption"}</div>
+              </div>
+
+              <div style={sectionStyle}>
+                <div style={sectionTitleStyle}>Context</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <FieldChip label="workspace" value={selectedPost.workspace_id} />
+                  <FieldChip label="workspace_name" value={selectedPost.workspace_name} />
+                  <FieldChip label="user" value={selectedPost.user_id} />
+                  <FieldChip label="owner" value={selectedPost.user_email} />
+                  <FieldChip label="post_id" value={selectedPost.post_id} />
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <Link href={`/admin/users?user=${selectedPost.user_id}`} className="ad-link" style={drawerLinkButtonStyle}>
+                    Inspect user
+                    <ExternalLink size={14} />
+                  </Link>
+                </div>
+              </div>
+
+              <div style={sectionStyle}>
+                <div style={sectionTitleStyle}>Targets</div>
+                {selectedPost.platforms.length > 0 ? (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {selectedPost.platforms.map((item) => (
+                      <FieldChip key={`${selectedPost.post_id}-${item}`} label="platform" value={item} />
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: "var(--dmuted2)", fontSize: 13 }}>No target platforms recorded.</div>
+                )}
+              </div>
+
+              <div style={sectionStyle}>
+                <div style={sectionTitleStyle}>Delivery</div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  <FieldChip label="total" value={fmtNumber(selectedPost.result_count)} />
+                  <FieldChip label="published" value={fmtNumber(selectedPost.published_result_count)} />
+                  <FieldChip label="failed" value={fmtNumber(selectedPost.failed_result_count)} />
+                </div>
+                <div className="ad-usage-bar" style={{ width: "100%", height: 8, marginTop: 12 }}>
+                  <div
+                    className={selectedPost.failed_result_count > 0 ? "ad-uf-r" : "ad-uf-g"}
+                    style={{
+                      width: `${selectedPost.result_count > 0 ? (selectedPost.published_result_count / selectedPost.result_count) * 100 : 0}%`,
+                      height: "100%",
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={sectionStyle}>
+                <div style={sectionTitleStyle}>Timeline</div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  <KeyValue label="Created" value={formatDateTime(selectedPost.created_at)} />
+                  <KeyValue label="Scheduled" value={formatDateTime(selectedPost.scheduled_at)} />
+                  <KeyValue label="Published" value={formatDateTime(selectedPost.published_at)} />
+                  {selectedPublishTimeline ? (
+                    <KeyValue
+                      label="Publish time"
+                      value={`${selectedPublishTimeline.label} · ${fmtAdminPostTimelineDate(selectedPublishTimeline.at)}`}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          )}
+        </aside>
+      ) : null}
     </AdminShell>
   );
 }
+
+function postKey(post: AdminPostRow, idx: number) {
+  return `${post.post_id}-${idx}`;
+}
+
+function handlePostKeyDown(event: KeyboardEvent<HTMLElement>, open: () => void) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  event.preventDefault();
+  open();
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString();
+}
+
+function FieldChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span style={fieldChipStyle}>
+      <span style={{ color: "var(--dmuted2)" }}>{label}</span>
+      <span style={{ fontFamily: "var(--font-geist-mono), monospace" }}>{value}</span>
+    </span>
+  );
+}
+
+function KeyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 13 }}>
+      <span style={{ color: "var(--dmuted)" }}>{label}</span>
+      <span style={{ color: "var(--dtext)", fontFamily: "var(--font-geist-mono), monospace", textAlign: "right" }}>{value}</span>
+    </div>
+  );
+}
+
+function DrawerTabs({
+  active,
+  onChange,
+  rightSlot,
+}: {
+  active: "attributes" | "raw";
+  onChange: (next: "attributes" | "raw") => void;
+  rightSlot?: ReactNode;
+}) {
+  return (
+    <div style={drawerTabBarStyle}>
+      <div style={{ display: "flex", gap: 4 }}>
+        <button type="button" onClick={() => onChange("attributes")} style={drawerTabButtonStyle(active === "attributes")}>
+          Attributes
+        </button>
+        <button type="button" onClick={() => onChange("raw")} style={drawerTabButtonStyle(active === "raw")}>
+          Raw Data
+        </button>
+      </div>
+      {rightSlot}
+    </div>
+  );
+}
+
+const drawerStyle: CSSProperties = {
+  position: "fixed",
+  top: 0,
+  right: 0,
+  bottom: 0,
+  width: "min(92vw, 760px)",
+  background: "var(--surface-raised, var(--surface))",
+  borderLeft: "1px solid var(--dborder)",
+  zIndex: 30,
+  overflowY: "auto",
+  padding: 18,
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+  boxShadow: "-18px 0 44px color-mix(in srgb, var(--sidebar) 28%, transparent)",
+};
+
+const iconButtonStyle: CSSProperties = {
+  height: 32,
+  width: 32,
+  borderRadius: 10,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface2)",
+  color: "var(--dtext)",
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  cursor: "pointer",
+};
+
+const drawerTabBarStyle: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  borderBottom: "1px solid var(--dborder)",
+  paddingBottom: 8,
+};
+
+function drawerTabButtonStyle(active: boolean): CSSProperties {
+  return {
+    background: "transparent",
+    border: "none",
+    padding: "6px 4px",
+    fontSize: 13,
+    fontWeight: 600,
+    color: active ? "var(--dtext)" : "var(--dmuted2)",
+    borderBottom: active ? "2px solid var(--daccent)" : "2px solid transparent",
+    cursor: "pointer",
+    marginBottom: -9,
+  };
+}
+
+const drawerCopyButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "4px 10px",
+  borderRadius: 8,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface)",
+  color: "var(--dtext)",
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+};
+
+const sectionStyle: CSSProperties = {
+  borderRadius: 14,
+  border: "1px solid color-mix(in srgb, var(--dborder) 74%, var(--sidebar) 26%)",
+  background: "color-mix(in srgb, var(--surface2) 82%, var(--sidebar) 18%)",
+  padding: 14,
+};
+
+const sectionTitleStyle: CSSProperties = {
+  fontSize: 12,
+  fontWeight: 700,
+  textTransform: "uppercase",
+  letterSpacing: "0.12em",
+  color: "var(--dmuted)",
+  marginBottom: 10,
+};
+
+const fieldChipStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "6px 10px",
+  borderRadius: 999,
+  border: "1px solid var(--dborder)",
+  background: "var(--surface2)",
+  color: "var(--dtext)",
+  fontSize: 12,
+};
+
+const captionStyle: CSSProperties = {
+  fontSize: 14,
+  lineHeight: 1.6,
+  color: "var(--dtext)",
+  whiteSpace: "pre-wrap",
+  wordBreak: "break-word",
+};
+
+const drawerRawJsonStyle: CSSProperties = {
+  margin: 0,
+  padding: 14,
+  borderRadius: 12,
+  border: "1px solid color-mix(in srgb, var(--dborder) 74%, var(--sidebar) 26%)",
+  background: "color-mix(in srgb, var(--surface) 66%, var(--sidebar) 34%)",
+  color: "var(--dtext)",
+  fontSize: 12,
+  lineHeight: 1.6,
+  overflow: "auto",
+  whiteSpace: "pre",
+  fontFamily: "var(--font-geist-mono), monospace",
+};
+
+const drawerLinkButtonStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  fontSize: 13,
+};

@@ -71,7 +71,7 @@ export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
         custom={
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, max-content)", gap: "8px 30px", marginTop: 6 }}>
             {[...byPlatform.entries()].sort((a, b) => b[1] - a[1]).map(([platform, count]) => (
-              <span key={platform} aria-label={`${platform}: ${count}`} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <span key={platform} aria-label={`${platform}: ${count}`} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13 }}>
                 <span style={{ color: platform === "youtube" ? "var(--dmuted)" : undefined, display: "inline-flex" }}>
                   <AccountDestinationIcon platform={platform} size={14} />
                 </span>
@@ -87,8 +87,8 @@ export function ConnectionStats({ accounts, profiles }: ConnectionStatsProps) {
           custom={
             <div style={{ display: "flex", flexDirection: "column", gap: 3, marginTop: 4 }}>
               {profiles.map((p) => (
-                <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                  <span style={{ color: "var(--dmuted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 100 }}>{p.name}</span>
+                <div key={p.id} style={{ display: "grid", gridTemplateColumns: "minmax(0, 120px) max-content", columnGap: 24, alignItems: "center", width: "max-content", maxWidth: "100%", fontSize: 13 }}>
+                  <span style={{ color: "var(--dmuted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, maxWidth: 120 }}>{p.name}</span>
                   <span style={{ color: "var(--dtext)", fontWeight: 700, fontFamily: "var(--font-geist-mono), monospace" }}>{byProfile.get(p.id) || 0}</span>
                 </div>
               ))}
