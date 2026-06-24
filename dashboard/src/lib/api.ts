@@ -2492,7 +2492,7 @@ export interface AdminUserRow {
   platform_count: number;
   platforms: string[];
   posts_used: number;
-  scheduled_posts: number;
+  scheduled_posts?: number;
   post_limit: number;
   mrr_cents: number;
   is_paid: boolean;
