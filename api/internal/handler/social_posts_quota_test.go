@@ -457,6 +457,9 @@ func socialPostResultScanRow(result db.SocialPostResult) scanRow {
 		result.PlatformErrorCode,
 		result.IsRetriable,
 		result.NextAction,
+		result.ErrorSource,
+		result.ErrorTemporality,
+		result.ProviderError,
 	}}
 }
 

@@ -31,7 +31,10 @@ SET
   failure_stage = NULL,
   platform_error_code = NULL,
   is_retriable = NULL,
-  next_action = NULL
+  next_action = NULL,
+  error_source = NULL,
+  error_temporality = NULL,
+  provider_error = NULL
 WHERE id = $1
 RETURNING *;
 
@@ -42,7 +45,10 @@ SET
   failure_stage = $3,
   platform_error_code = $4,
   is_retriable = $5,
-  next_action = $6
+  next_action = $6,
+  error_source = $7,
+  error_temporality = $8,
+  provider_error = $9
 WHERE id = $1;
 
 -- name: DeleteSocialPostResultsByPost :exec

@@ -78,6 +78,21 @@ func TestFacebookOAuthScopesIncludeAnalyticsScopes(t *testing.T) {
 	}
 }
 
+func TestWrapFacebookPublishErrorCarriesProviderFields(t *testing.T) {
+	err := wrapFacebookPublishError(http.StatusInternalServerError, []byte(`{"error":{"message":"An unexpected error has occurred. Please retry your request later.","type":"OAuthException","is_transient":true,"code":2,"error_subcode":0,"fbtrace_id":"TRACE"}}`))
+	carrier, ok := err.(interface{ ProviderErrorFields() map[string]any })
+	if !ok {
+		t.Fatalf("error %T does not carry provider fields", err)
+	}
+	fields := carrier.ProviderErrorFields()
+	if fields["provider"] != "meta" || fields["http_status"] != http.StatusInternalServerError || fields["code"] != "2" || fields["type"] != "OAuthException" || fields["is_transient"] != true {
+		t.Fatalf("provider fields = %#v", fields)
+	}
+	if _, ok := fields["trace_id"]; ok {
+		t.Fatalf("trace_id should not be exposed in public provider fields: %#v", fields)
+	}
+}
+
 func TestFacebookFetchPagesCarriesBusinessMetadata(t *testing.T) {
 	adapter := NewFacebookAdapter()
 	adapter.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {

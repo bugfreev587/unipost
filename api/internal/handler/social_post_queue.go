@@ -682,14 +682,14 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	// even though the queue is about to re-dispatch. Only terminal
 	// outcomes (non-retriable, or a retry job that just hit its
 	// max-attempts ceiling) should flip the row to failed.
-	failure := postfailures.BuildParams(
+	failure := postfailures.BuildParamsFromError(
 		post.ID,
 		res.ID,
 		post.WorkspaceID,
 		res.SocialAccountID,
 		postfailures.FirstNonEmpty(oc.platform, job.Platform),
 		failureStage,
-		errMsg,
+		oc.err,
 		errMsg,
 	)
 	anotherAttempt := failure.IsRetriable && (job.Kind == "dispatch" || job.Attempts < job.MaxAttempts)

@@ -353,7 +353,12 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 	containsSyntheticMedia := youtubeOptBool(opts, "contains_synthetic_media", false)
 
 	if until, ok := a.uploadQuotaBreaker().OpenUntil(); ok {
-		return nil, fmt.Errorf("youtube upload quota temporarily exhausted until %s: quota_scope=platform_project provider=youtube quota_limit=defaultVideoInsertPerDayPerProject", until.Format(time.RFC3339))
+		return nil, newProviderError(fmt.Sprintf("youtube upload quota temporarily exhausted until %s: quota_scope=platform_project provider=youtube quota_limit=defaultVideoInsertPerDayPerProject", until.Format(time.RFC3339)), map[string]any{
+			"provider":       "youtube",
+			"reason":         "rateLimitExceeded",
+			"quota_limit":    "defaultVideoInsertPerDayPerProject",
+			"quota_location": "platform_project",
+		})
 	}
 
 	// Download video
@@ -429,7 +434,13 @@ func (a *YouTubeAdapter) Post(ctx context.Context, accessToken string, text stri
 		if isYouTubeProjectUploadQuota(initResp.StatusCode, body) {
 			resetAt := nextYouTubeUploadQuotaReset(a.uploadQuotaBreaker().now())
 			a.uploadQuotaBreaker().Open(resetAt, "rateLimitExceeded")
-			return nil, fmt.Errorf("youtube upload init failed (%d): %s quota_scope=platform_project provider=youtube provider_reason=rateLimitExceeded quota_limit=defaultVideoInsertPerDayPerProject reset_at=%s", initResp.StatusCode, string(body), resetAt.Format(time.RFC3339))
+			return nil, newProviderError(fmt.Sprintf("youtube upload init failed (%d): %s quota_scope=platform_project provider=youtube provider_reason=rateLimitExceeded quota_limit=defaultVideoInsertPerDayPerProject reset_at=%s", initResp.StatusCode, string(body), resetAt.Format(time.RFC3339)), map[string]any{
+				"provider":       "youtube",
+				"http_status":    initResp.StatusCode,
+				"reason":         "rateLimitExceeded",
+				"quota_limit":    "defaultVideoInsertPerDayPerProject",
+				"quota_location": "platform_project",
+			})
 		}
 		return nil, fmt.Errorf("youtube upload init failed (%d): %s", initResp.StatusCode, string(body))
 	}

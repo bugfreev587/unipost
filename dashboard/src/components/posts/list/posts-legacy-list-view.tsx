@@ -1073,6 +1073,12 @@ function PostResultCard({
               ) : failure.nextActionLabel}
             </div>
           ) : null}
+          {failure?.retryStatusLabel ? (
+            <div className="posts-hint" style={{ marginTop: 8 }}>
+              <span className="posts-hint-label">Retry: </span>
+              {failure.retryStatusLabel}
+            </div>
+          ) : null}
           {/* Retry button — only meaningful for failed rows. Fire-
               and-reload: on success the whole posts list is refetched
               because the parent post's status may have flipped from

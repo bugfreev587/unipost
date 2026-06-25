@@ -159,15 +159,17 @@ function nextRetryCell(job: PostDeliveryJob) {
 
 function attemptsCell(job: PostDeliveryJob) {
   const label = `${job.attempts}/${job.max_attempts}`;
+  const remaining = Math.max(job.max_attempts - job.attempts, 0);
+  const detail = job.state === "succeeded" ? "complete" : `${remaining} left`;
   if (job.state === "dead" && job.attempts < job.max_attempts) {
     return (
       <span title="Stopped early — the platform returned a non-retriable error">
-        {label}{" "}
+        {label} ({detail}){" "}
         <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>(stopped)</span>
       </span>
     );
   }
-  return label;
+  return `${label} (${detail})`;
 }
 
 export default function QueuePage() {

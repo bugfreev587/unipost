@@ -23,10 +23,13 @@ INSERT INTO post_failures (
   platform_error_code,
   message,
   raw_error,
-  is_retriable
+  is_retriable,
+  error_source,
+  error_temporality,
+  provider_error
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, failure_stage, error_code, platform_error_code, message, raw_error, is_retriable, created_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, failure_stage, error_code, platform_error_code, message, raw_error, is_retriable, created_at, error_source, error_temporality, provider_error
 `
 
 type CreatePostFailureParams struct {
@@ -41,6 +44,9 @@ type CreatePostFailureParams struct {
 	Message            string      `json:"message"`
 	RawError           pgtype.Text `json:"raw_error"`
 	IsRetriable        bool        `json:"is_retriable"`
+	ErrorSource        pgtype.Text `json:"error_source"`
+	ErrorTemporality   pgtype.Text `json:"error_temporality"`
+	ProviderError      []byte      `json:"provider_error"`
 }
 
 func (q *Queries) CreatePostFailure(ctx context.Context, arg CreatePostFailureParams) (PostFailure, error) {
@@ -56,6 +62,9 @@ func (q *Queries) CreatePostFailure(ctx context.Context, arg CreatePostFailurePa
 		arg.Message,
 		arg.RawError,
 		arg.IsRetriable,
+		arg.ErrorSource,
+		arg.ErrorTemporality,
+		arg.ProviderError,
 	)
 	var i PostFailure
 	err := row.Scan(
@@ -72,12 +81,15 @@ func (q *Queries) CreatePostFailure(ctx context.Context, arg CreatePostFailurePa
 		&i.RawError,
 		&i.IsRetriable,
 		&i.CreatedAt,
+		&i.ErrorSource,
+		&i.ErrorTemporality,
+		&i.ProviderError,
 	)
 	return i, err
 }
 
 const listPostFailuresByPost = `-- name: ListPostFailuresByPost :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, failure_stage, error_code, platform_error_code, message, raw_error, is_retriable, created_at
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, failure_stage, error_code, platform_error_code, message, raw_error, is_retriable, created_at, error_source, error_temporality, provider_error
 FROM post_failures
 WHERE post_id = $1
 ORDER BY created_at ASC
@@ -106,6 +118,9 @@ func (q *Queries) ListPostFailuresByPost(ctx context.Context, postID string) ([]
 			&i.RawError,
 			&i.IsRetriable,
 			&i.CreatedAt,
+			&i.ErrorSource,
+			&i.ErrorTemporality,
+			&i.ProviderError,
 		); err != nil {
 			return nil, err
 		}

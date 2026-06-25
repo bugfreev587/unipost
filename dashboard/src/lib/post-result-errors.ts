@@ -10,12 +10,17 @@ export type PostResultFailureInput = Pick<
   | "platform_error_code"
   | "is_retriable"
   | "next_action"
+  | "error_source"
+  | "error_temporality"
+  | "provider_error"
+  | "retry_policy"
 >;
 
 export type PostResultFailureDescription = {
   title: string;
   message: string;
   nextActionLabel?: string;
+  retryStatusLabel?: string;
   actionHref?: string;
   canRetry: boolean;
 };
@@ -142,21 +147,99 @@ function legacyDescription(result: PostResultFailureInput): PostResultFailureDes
   };
 }
 
+function providerCodeLabel(result: PostResultFailureInput): string | undefined {
+  const provider = result.provider_error;
+  const code = provider?.code || provider?.reason || result.platform_error_code;
+  if (!code) return undefined;
+  const parts = [code];
+  if (provider?.subcode && provider.subcode !== code) parts.push(`subcode ${provider.subcode}`);
+  if (provider?.http_status) parts.push(`HTTP ${provider.http_status}`);
+  return parts.join(", ");
+}
+
+function safeErrorDetail(message?: string): string | undefined {
+  const trimmed = (message || "").trim();
+  if (!trimmed) return undefined;
+  if (trimmed.includes('{"error"') || trimmed.includes("{\"error\"")) {
+    return "Provider returned a structured error payload.";
+  }
+  return trimmed.length > 220 ? `${trimmed.slice(0, 217)}...` : trimmed;
+}
+
+function retryStatusLabel(result: PostResultFailureInput): string | undefined {
+  const policy = result.retry_policy;
+  if (!policy) {
+    return result.is_retriable ? "Retry may help." : undefined;
+  }
+  if (policy.will_retry) {
+    if (policy.retry_state === "running") return "UniPost is retrying now.";
+    if (policy.next_run_at) return `UniPost will retry automatically at ${new Date(policy.next_run_at).toLocaleString()}.`;
+    return "UniPost will retry automatically.";
+  }
+  switch (policy.retry_state) {
+    case "exhausted":
+      return "Automatic retries are exhausted.";
+    case "blocked":
+      return "Automatic retry is blocked.";
+    case "manual_only":
+      return policy.manual_retry_allowed ? "Manual retry is available." : "Manual retry is not available right now.";
+    case "not_retriable":
+      return policy.manual_retry_allowed ? "Manual retry is available after you address the issue." : "Automatic retry is not scheduled.";
+    default:
+      return policy.manual_retry_allowed ? "Manual retry is available." : "Retry state is unknown.";
+  }
+}
+
+function structuredMessage(result: PostResultFailureInput): string | undefined {
+  const name = platformName(result.platform);
+  const source = result.error_source;
+  const temporality = result.error_temporality;
+  const policy = result.retry_policy;
+
+  if (temporality === "temporary" && source === "platform") {
+    if (policy?.will_retry) return `${name} had a temporary official-platform error. UniPost will retry automatically.`;
+    if (policy?.retry_state === "exhausted") return `${name} had a temporary official-platform error, but automatic retries are exhausted.`;
+    return `${name} had a temporary official-platform error.`;
+  }
+  if (temporality === "temporary" && source === "worker") {
+    if (policy?.will_retry) return "A UniPost worker hit a temporary issue. UniPost will retry automatically.";
+    return "A UniPost worker hit a temporary issue.";
+  }
+  if (result.next_action === "reconnect_account" || result.next_action === "reconnect_or_update_permissions") {
+    return "Reconnect this account before retrying.";
+  }
+  if (temporality === "permanent") {
+    return source === "platform"
+      ? `${name} rejected the request. This needs a change before retrying.`
+      : "This request needs a change before retrying.";
+  }
+  if (temporality === "unknown" || source === "unknown") {
+    return "UniPost could not classify this failure. Contact support with the request ID.";
+  }
+  return undefined;
+}
+
 export function describePostResultFailure(result: PostResultFailureInput): PostResultFailureDescription {
   if (!result.error_code && !result.next_action && typeof result.is_retriable !== "boolean") {
     return legacyDescription(result);
   }
 
-  const messageParts = [result.error_message || "Publish failed."];
-  if (result.platform_error_code && result.error_message !== result.platform_error_code) {
-    messageParts.push(`Provider error: ${result.platform_error_code}.`);
+  const messageParts = [structuredMessage(result) || safeErrorDetail(result.error_message) || "Publish failed."];
+  const provider = providerCodeLabel(result);
+  if (provider) {
+    messageParts.push(`Provider error: ${provider}.`);
+  }
+  const detail = safeErrorDetail(result.error_message);
+  if (detail && detail !== messageParts[0]) {
+    messageParts.push(`Details: ${detail}`);
   }
 
   return {
     title: titleForErrorCode(result.error_code, result.platform),
     message: messageParts.join(" "),
     nextActionLabel: result.next_action ? NEXT_ACTION_LABELS[result.next_action] || result.next_action : undefined,
+    retryStatusLabel: retryStatusLabel(result),
     actionHref: actionHrefFor(result.next_action),
-    canRetry: result.is_retriable === true,
+    canRetry: result.retry_policy?.manual_retry_allowed ?? result.is_retriable === true,
   };
 }
