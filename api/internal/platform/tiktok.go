@@ -284,11 +284,19 @@ func buildTikTokPostInfo(text, privacyLevel string, opts map[string]any, mediaKi
 
 func wrapTikTokInitError(prefix string, status int, body []byte, privacyLevel string) error {
 	code, providerMessage := parseTikTokErrorBody(body)
+	fields := map[string]any{
+		"provider":    "tiktok",
+		"http_status": status,
+		"code":        code,
+	}
+	if providerMessage != "" {
+		fields["reason"] = providerMessage
+	}
 	if code == "invalid_params" {
-		return fmt.Errorf("%s", tiktokInvalidParamsMessage(prefix, status, providerMessage, privacyLevel))
+		return newProviderError(tiktokInvalidParamsMessage(prefix, status, providerMessage, privacyLevel), fields)
 	}
 	msg := fmt.Sprintf("%s (%d): %s", prefix, status, string(body))
-	return fmt.Errorf("%s", msg)
+	return newProviderError(msg, fields)
 }
 
 func parseTikTokErrorBody(body []byte) (code string, message string) {
@@ -568,7 +576,10 @@ func (a *TikTokAdapter) waitForPublish(ctx context.Context, accessToken string, 
 			if strings.TrimSpace(reason) == "" {
 				reason = "unknown_error"
 			}
-			return nil, fmt.Errorf("tiktok publish failed: %s", reason)
+			return nil, newProviderError(fmt.Sprintf("tiktok publish failed: %s", reason), map[string]any{
+				"provider": "tiktok",
+				"reason":   reason,
+			})
 		}
 	}
 

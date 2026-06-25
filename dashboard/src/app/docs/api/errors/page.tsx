@@ -9,6 +9,10 @@ const ERROR_FIELDS: ParamRow[] = [
   { name: "error.hint", type: "string", required: false, description: "Short remediation guidance when UniPost can safely suggest one." },
   { name: "error.next_action", type: "string", required: false, description: "Stable action enum for client UI and automation. Present only on actionable errors." },
   { name: "error.is_retriable", type: "boolean", required: false, description: "Whether retrying the same request later is expected to help." },
+  { name: "error.error_source", type: "string", required: false, description: "Where the failure originated: unipost, platform, worker, or unknown." },
+  { name: "error.error_temporality", type: "string", required: false, description: "Whether the condition is temporary, permanent, or unknown." },
+  { name: "error.provider_error", type: "object", required: false, description: "Sanitized provider fields such as provider, http_status, code, subcode, type, reason, domain, quota_limit, quota_location, and is_transient." },
+  { name: "error.retry_policy", type: "object", required: false, description: "Best-effort retry snapshot. Use will_retry for automatic retry state; use is_retriable for retry eligibility." },
   { name: "error.docs_url", type: "string", required: false, description: "Relevant documentation URL for the failed request." },
   { name: "error.issues", type: "array", required: false, description: "Field-level validation issues. Preserve this array in clients instead of parsing message text." },
   { name: "request_id", type: "string", required: true, description: "Request identifier to include when contacting support." },
@@ -50,6 +54,8 @@ const ERROR_EXAMPLE = `{
     "hint": "Fix the listed validation issues and retry.",
     "next_action": "fix_request",
     "is_retriable": false,
+    "error_source": "unipost",
+    "error_temporality": "permanent",
     "docs_url": "https://unipost.dev/docs/api/posts/validate",
     "issues": [
       {
@@ -80,7 +86,25 @@ const FAILED_RESULT_EXAMPLE = `{
   "failure_stage": "publish",
   "platform_error_code": "invalid_params",
   "is_retriable": false,
-  "next_action": "review_platform_options"
+  "next_action": "review_platform_options",
+  "error_source": "platform",
+  "error_temporality": "permanent",
+  "provider_error": {
+    "provider": "tiktok",
+    "http_status": 400,
+    "code": "invalid_params"
+  },
+  "retry_policy": {
+    "is_retriable": false,
+    "will_retry": false,
+    "retry_state": "not_retriable",
+    "next_run_at": null,
+    "attempts_made": null,
+    "max_attempts": null,
+    "attempts_remaining": null,
+    "manual_retry_allowed": true,
+    "reason": "classification_not_retriable"
+  }
 }`;
 
 export default function ApiErrorsPage() {
@@ -108,7 +132,7 @@ export default function ApiErrorsPage() {
 
         <DocSection id="publish-failures" title="Publish failure fields">
           <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
-            Failed per-account results returned by <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> include structured failure fields. Keep <code>error_message</code> for human display and use <code>error_code</code>, <code>platform_error_code</code>, <code>is_retriable</code>, and <code>next_action</code> for UI branching.
+            Failed per-account results returned by <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> include structured failure fields. Use <code>error_source</code> to distinguish UniPost, worker, and official platform failures. Use <code>error_temporality</code> to distinguish temporary, permanent, and unknown conditions. Use <code>retry_policy.will_retry</code> to know whether UniPost has actually scheduled automatic retry; <code>is_retriable</code> only means retrying may help. Do not parse <code>error_message</code> for branching.
           </p>
           <CodeTabs snippets={[{ lang: "json", label: "Failed result", code: FAILED_RESULT_EXAMPLE }]} />
           <div style={{ marginTop: 18 }}>
@@ -117,7 +141,7 @@ export default function ApiErrorsPage() {
                 { code: "validation_error", http: 400, description: "The request or post payload is invalid. Inspect issues and fix the listed fields." },
                 { code: "platform_request_invalid", http: 400, description: "The provider rejected platform options or metadata. Review privacy, title, disclosure, or content options." },
                 { code: "media_error", http: 400, description: "The provider rejected media format, dimensions, duration, URL, or processing state." },
-                { code: "temporary_platform_error", http: 503, description: "The platform or async worker path failed transiently. Retry later when is_retriable is true." },
+                { code: "temporary_platform_error", http: 503, description: "The platform or async worker path failed transiently. Check retry_policy.will_retry to know whether UniPost scheduled retry." },
                 { code: "rate_limit", http: 429, description: "Wait before retrying. Respect Retry-After when present." },
                 { code: "account_reconnect_required", http: 409, description: "Reconnect the affected social account before retrying." },
                 { code: "missing_permission", http: 403, description: "Reconnect or update platform permissions and scopes." },

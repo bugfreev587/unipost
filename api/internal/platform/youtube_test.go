@@ -28,6 +28,14 @@ func TestYouTubeUploadQuotaBreakerSkipsDownloadAfterProjectQuota(t *testing.T) {
 	if !strings.Contains(firstErr.Error(), "quota_scope=platform_project") {
 		t.Fatalf("first error = %q, want quota_scope metadata", firstErr.Error())
 	}
+	carrier, ok := firstErr.(interface{ ProviderErrorFields() map[string]any })
+	if !ok {
+		t.Fatalf("first error %T does not carry provider fields", firstErr)
+	}
+	fields := carrier.ProviderErrorFields()
+	if fields["provider"] != "youtube" || fields["http_status"] != http.StatusTooManyRequests || fields["reason"] != "rateLimitExceeded" || fields["quota_limit"] != "defaultVideoInsertPerDayPerProject" || fields["quota_location"] != "platform_project" {
+		t.Fatalf("provider fields = %#v", fields)
+	}
 	if transport.videoDownloads != 1 || transport.uploadInits != 1 {
 		t.Fatalf("first attempt downloads/inits = %d/%d, want 1/1", transport.videoDownloads, transport.uploadInits)
 	}

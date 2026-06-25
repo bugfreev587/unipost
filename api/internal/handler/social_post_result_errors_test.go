@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 )
 
 func TestPostResultResponseIncludesStructuredFailureFields(t *testing.T) {
@@ -21,6 +22,13 @@ func TestPostResultResponseIncludesStructuredFailureFields(t *testing.T) {
 		PlatformErrorCode: pgtype.Text{String: "invalid_params", Valid: true},
 		IsRetriable:       pgtype.Bool{Bool: false, Valid: true},
 		NextAction:        pgtype.Text{String: "review_platform_options", Valid: true},
+		ErrorSource:       pgtype.Text{String: postfailures.ErrorSourcePlatform, Valid: true},
+		ErrorTemporality:  pgtype.Text{String: postfailures.ErrorTemporalityPermanent, Valid: true},
+		ProviderError: postfailures.ProviderErrorJSON(&postfailures.ProviderError{
+			Provider:   "tiktok",
+			HTTPStatus: 400,
+			Code:       "invalid_params",
+		}),
 	}
 
 	response := postResultResponseFromDBResult(result, accountSummary{
@@ -55,5 +63,18 @@ func TestPostResultResponseIncludesStructuredFailureFields(t *testing.T) {
 	}
 	if got["next_action"] != "review_platform_options" {
 		t.Fatalf("next_action = %#v", got["next_action"])
+	}
+	if got["error_source"] != "platform" {
+		t.Fatalf("error_source = %#v", got["error_source"])
+	}
+	if got["error_temporality"] != "permanent" {
+		t.Fatalf("error_temporality = %#v", got["error_temporality"])
+	}
+	provider, ok := got["provider_error"].(map[string]any)
+	if !ok {
+		t.Fatalf("provider_error = %#v", got["provider_error"])
+	}
+	if provider["provider"] != "tiktok" || provider["code"] != "invalid_params" || provider["http_status"] != float64(400) {
+		t.Fatalf("provider_error = %#v", provider)
 	}
 }

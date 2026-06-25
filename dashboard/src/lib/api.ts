@@ -69,6 +69,35 @@ export interface ApiResponse<T> {
   request_id?: string;
 }
 
+export type ErrorSource = "unipost" | "platform" | "worker" | "unknown";
+export type ErrorTemporality = "temporary" | "permanent" | "unknown";
+export type RetryState = "not_retriable" | "scheduled" | "running" | "exhausted" | "blocked" | "manual_only" | "unknown";
+
+export interface ProviderError {
+  provider?: string;
+  http_status?: number;
+  code?: string;
+  subcode?: string;
+  type?: string;
+  reason?: string;
+  domain?: string;
+  quota_limit?: string;
+  quota_location?: string;
+  is_transient?: boolean;
+}
+
+export interface RetryPolicy {
+  is_retriable: boolean;
+  will_retry: boolean;
+  retry_state: RetryState;
+  next_run_at?: string;
+  attempts_made?: number;
+  max_attempts?: number;
+  attempts_remaining?: number;
+  manual_retry_allowed: boolean;
+  reason?: string;
+}
+
 export interface ApiError {
   error: {
     code: string;
@@ -77,6 +106,10 @@ export interface ApiError {
     hint?: string;
     next_action?: string;
     is_retriable?: boolean;
+    error_source?: ErrorSource;
+    error_temporality?: ErrorTemporality;
+    provider_error?: ProviderError;
+    retry_policy?: RetryPolicy;
     docs_url?: string;
     issues?: SocialPostValidationIssue[];
   };
@@ -96,6 +129,10 @@ export interface ApiFetchError extends Error {
   hint?: string;
   nextAction?: string;
   isRetriable?: boolean;
+  errorSource?: ErrorSource;
+  errorTemporality?: ErrorTemporality;
+  providerError?: ProviderError;
+  retryPolicy?: RetryPolicy;
   docsUrl?: string;
   issues?: SocialPostValidationIssue[];
 }
@@ -425,6 +462,10 @@ export function createApiFetchError(status: number, body: unknown): ApiFetchErro
   thrown.hint = apiError?.hint;
   thrown.nextAction = apiError?.next_action;
   thrown.isRetriable = apiError?.is_retriable;
+  thrown.errorSource = apiError?.error_source;
+  thrown.errorTemporality = apiError?.error_temporality;
+  thrown.providerError = apiError?.provider_error;
+  thrown.retryPolicy = apiError?.retry_policy;
   thrown.docsUrl = apiError?.docs_url;
   thrown.issues = issues;
   return thrown;
@@ -1379,6 +1420,10 @@ export interface SocialPostResult {
   platform_error_code?: string;
   is_retriable?: boolean;
   next_action?: string;
+  error_source?: ErrorSource;
+  error_temporality?: ErrorTemporality;
+  provider_error?: ProviderError;
+  retry_policy?: RetryPolicy;
   published_at?: string;
   // Serialized curl dump of every failing HTTP request the adapter
   // made during this dispatch. Populated only when status === "failed".
