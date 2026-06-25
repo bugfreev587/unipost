@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 type twitterRoundTripFunc func(*http.Request) (*http.Response, error)
@@ -134,6 +135,42 @@ func TestTwitterRefreshTokenRejectsMissingExpiresIn(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "expires_in") {
 		t.Fatalf("RefreshToken error = %q, want expires_in context", err.Error())
+	}
+}
+
+func TestTwitterRefreshTokenSendsClientCredentials(t *testing.T) {
+	t.Setenv("TWITTER_CLIENT_ID", "client-id")
+	t.Setenv("TWITTER_CLIENT_SECRET", "client-secret")
+
+	adapter := &TwitterAdapter{client: &http.Client{Transport: twitterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		username, password, ok := req.BasicAuth()
+		if !ok {
+			t.Fatal("missing basic auth")
+		}
+		if username != "client-id" || password != "client-secret" {
+			t.Fatalf("basic auth = %q/%q, want client-id/client-secret", username, password)
+		}
+		if err := req.ParseForm(); err != nil {
+			t.Fatalf("parse refresh form: %v", err)
+		}
+		if got := req.Form.Get("client_id"); got != "client-id" {
+			t.Fatalf("client_id = %q, want client-id", got)
+		}
+		if got := req.Form.Get("refresh_token"); got != "old-refresh" {
+			t.Fatalf("refresh_token = %q, want old-refresh", got)
+		}
+		return jsonResponse(http.StatusOK, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":7200}`), nil
+	})}}
+
+	access, refresh, expiresAt, err := adapter.RefreshToken(context.Background(), "old-refresh")
+	if err != nil {
+		t.Fatalf("RefreshToken: %v", err)
+	}
+	if access != "new-access" || refresh != "new-refresh" {
+		t.Fatalf("tokens = %q/%q, want new-access/new-refresh", access, refresh)
+	}
+	if time.Until(expiresAt) < time.Hour {
+		t.Fatalf("expiresAt = %s, want roughly 2h in the future", expiresAt)
 	}
 }
 
