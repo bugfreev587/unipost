@@ -100,6 +100,43 @@ func TestTwitterUploadMediaChunkedNormalizesParameterizedVideoContentType(t *tes
 	}
 }
 
+func TestTwitterRefreshTokenRejectsFailedResponse(t *testing.T) {
+	adapter := &TwitterAdapter{client: &http.Client{Transport: twitterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != "https://api.x.com/2/oauth2/token" {
+			t.Fatalf("unexpected request URL: %s", req.URL.String())
+		}
+		return jsonResponse(http.StatusBadRequest, `{"error":"invalid_grant"}`), nil
+	})}}
+
+	access, refresh, expiresAt, err := adapter.RefreshToken(context.Background(), "old-refresh")
+	if err == nil {
+		t.Fatal("RefreshToken error = nil, want non-nil")
+	}
+	if access != "" || refresh != "" || !expiresAt.IsZero() {
+		t.Fatalf("RefreshToken returned partial success: access=%q refresh=%q expiresAt=%s", access, refresh, expiresAt)
+	}
+	if !strings.Contains(err.Error(), "400") {
+		t.Fatalf("RefreshToken error = %q, want status code context", err.Error())
+	}
+}
+
+func TestTwitterRefreshTokenRejectsMissingExpiresIn(t *testing.T) {
+	adapter := &TwitterAdapter{client: &http.Client{Transport: twitterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"access_token":"new-access","refresh_token":"new-refresh"}`), nil
+	})}}
+
+	access, refresh, expiresAt, err := adapter.RefreshToken(context.Background(), "old-refresh")
+	if err == nil {
+		t.Fatal("RefreshToken error = nil, want non-nil")
+	}
+	if access != "" || refresh != "" || !expiresAt.IsZero() {
+		t.Fatalf("RefreshToken returned partial success: access=%q refresh=%q expiresAt=%s", access, refresh, expiresAt)
+	}
+	if !strings.Contains(err.Error(), "expires_in") {
+		t.Fatalf("RefreshToken error = %q, want expires_in context", err.Error())
+	}
+}
+
 func readMultipartFields(req *http.Request) (map[string]string, error) {
 	mediaType := req.Header.Get("Content-Type")
 	if !strings.HasPrefix(mediaType, "multipart/form-data") {
