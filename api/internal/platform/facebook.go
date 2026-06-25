@@ -1398,24 +1398,41 @@ func parseFacebookErrorCodes(body []byte) (int, int) {
 func wrapFacebookPublishError(status int, body []byte) error {
 	var parsed struct {
 		Error struct {
-			Code      int    `json:"code"`
-			Message   string `json:"message"`
-			Type      string `json:"type"`
-			FBTraceID string `json:"fbtrace_id"`
+			Code         int    `json:"code"`
+			ErrorSubcode int    `json:"error_subcode"`
+			Message      string `json:"message"`
+			Type         string `json:"type"`
+			IsTransient  *bool  `json:"is_transient"`
+			FBTraceID    string `json:"fbtrace_id"`
 		} `json:"error"`
 	}
 	_ = json.Unmarshal(body, &parsed)
 
 	if parsed.Error.Message != "" {
+		fields := map[string]any{
+			"provider":    "meta",
+			"http_status": status,
+			"code":        strconv.Itoa(parsed.Error.Code),
+			"type":        parsed.Error.Type,
+		}
+		if parsed.Error.ErrorSubcode != 0 {
+			fields["subcode"] = strconv.Itoa(parsed.Error.ErrorSubcode)
+		}
+		if parsed.Error.IsTransient != nil {
+			fields["is_transient"] = *parsed.Error.IsTransient
+		}
 		switch parsed.Error.Code {
 		case 190, 102, 200:
-			return fmt.Errorf("facebook: access token rejected (code %d: %s). Please reconnect the Page.",
-				parsed.Error.Code, parsed.Error.Message)
+			return newProviderError(fmt.Sprintf("facebook: access token rejected (code %d: %s). Please reconnect the Page.",
+				parsed.Error.Code, parsed.Error.Message), fields)
 		}
-		return fmt.Errorf("facebook publish (%d): %s [code=%d trace=%s]",
-			status, parsed.Error.Message, parsed.Error.Code, parsed.Error.FBTraceID)
+		return newProviderError(fmt.Sprintf("facebook publish (%d): %s [code=%d trace=%s]",
+			status, parsed.Error.Message, parsed.Error.Code, parsed.Error.FBTraceID), fields)
 	}
-	return fmt.Errorf("facebook publish (%d): %s", status, string(body))
+	return newProviderError(fmt.Sprintf("facebook publish (%d): %s", status, string(body)), map[string]any{
+		"provider":    "meta",
+		"http_status": status,
+	})
 }
 
 // fetchPageSelfID calls /me with a Page Access Token, which returns

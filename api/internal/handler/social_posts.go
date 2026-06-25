@@ -199,11 +199,15 @@ type postResultResponse struct {
 	FailureStage *string `json:"failure_stage,omitempty"`
 	// PlatformErrorCode is the provider's stable/near-stable error token
 	// when one is safely available, for example TikTok invalid_params.
-	PlatformErrorCode *string        `json:"platform_error_code,omitempty"`
-	IsRetriable       *bool          `json:"is_retriable,omitempty"`
-	NextAction        *string        `json:"next_action,omitempty"`
-	PublishedAt       *string        `json:"published_at,omitempty"`
-	PublishStatus     map[string]any `json:"publish_status,omitempty"`
+	PlatformErrorCode *string                     `json:"platform_error_code,omitempty"`
+	IsRetriable       *bool                       `json:"is_retriable,omitempty"`
+	NextAction        *string                     `json:"next_action,omitempty"`
+	ErrorSource       *string                     `json:"error_source,omitempty"`
+	ErrorTemporality  *string                     `json:"error_temporality,omitempty"`
+	ProviderError     *postfailures.ProviderError `json:"provider_error,omitempty"`
+	RetryPolicy       *retryPolicyResponse        `json:"retry_policy,omitempty"`
+	PublishedAt       *string                     `json:"published_at,omitempty"`
+	PublishStatus     map[string]any              `json:"publish_status,omitempty"`
 	// Warnings (Sprint 4 PR3) carries non-fatal issues that didn't
 	// prevent the main post from being published. The first user is
 	// first_comment failure: the parent post lands and reports
@@ -258,6 +262,7 @@ func postResultResponseFromDBResult(row db.SocialPostResult, account accountSumm
 	if row.NextAction.Valid {
 		resp.NextAction = &row.NextAction.String
 	}
+	applyFailureContractToResponse(&resp, row)
 	if row.PublishedAt.Valid {
 		t := row.PublishedAt.Time.Format(time.RFC3339)
 		resp.PublishedAt = &t
@@ -275,6 +280,10 @@ func clearPostResultFailureDetails(resp *postResultResponse) {
 	resp.PlatformErrorCode = nil
 	resp.IsRetriable = nil
 	resp.NextAction = nil
+	resp.ErrorSource = nil
+	resp.ErrorTemporality = nil
+	resp.ProviderError = nil
+	resp.RetryPolicy = nil
 }
 
 func applyPostFailureDetailsToResponse(resp *postResultResponse, failure db.CreatePostFailureParams) {
@@ -292,6 +301,18 @@ func applyPostFailureDetailsToResponse(resp *postResultResponse, failure db.Crea
 	if action := postfailures.NextActionForErrorCode(failure.ErrorCode); action != "" {
 		resp.NextAction = &action
 	}
+	if failure.ErrorSource.Valid {
+		resp.ErrorSource = &failure.ErrorSource.String
+	}
+	if failure.ErrorTemporality.Valid {
+		resp.ErrorTemporality = &failure.ErrorTemporality.String
+	}
+	if providerError := postfailures.ParseProviderErrorJSON(failure.ProviderError); providerError != nil {
+		resp.ProviderError = providerError
+	}
+	if policy := retryPolicyFromFailureDetails(resp.Status, failure); policy != nil {
+		resp.RetryPolicy = policy
+	}
 }
 
 func updateSocialPostResultFailureDetailsParams(resultID string, failure db.CreatePostFailureParams) db.UpdateSocialPostResultFailureDetailsParams {
@@ -302,6 +323,40 @@ func updateSocialPostResultFailureDetailsParams(resultID string, failure db.Crea
 		PlatformErrorCode: failure.PlatformErrorCode,
 		IsRetriable:       pgtype.Bool{Bool: failure.IsRetriable, Valid: true},
 		NextAction:        postfailures.ToText(postfailures.NextActionForErrorCode(failure.ErrorCode)),
+		ErrorSource:       failure.ErrorSource,
+		ErrorTemporality:  failure.ErrorTemporality,
+		ProviderError:     failure.ProviderError,
+	}
+}
+
+func applyFailureContractToResponse(resp *postResultResponse, row db.SocialPostResult) {
+	if !row.ErrorMessage.Valid && !row.ErrorCode.Valid && !row.ErrorSource.Valid && !row.ErrorTemporality.Valid && len(row.ProviderError) == 0 {
+		return
+	}
+	errorCode := ""
+	if row.ErrorCode.Valid {
+		errorCode = row.ErrorCode.String
+	}
+	message := ""
+	if row.ErrorMessage.Valid {
+		message = row.ErrorMessage.String
+	}
+	isRetriable := row.IsRetriable.Valid && row.IsRetriable.Bool
+	derived := postfailures.DeriveLegacyContract(errorCode, message, isRetriable)
+	if row.ErrorSource.Valid {
+		resp.ErrorSource = &row.ErrorSource.String
+	} else if derived.ErrorSource != "" {
+		resp.ErrorSource = &derived.ErrorSource
+	}
+	if row.ErrorTemporality.Valid {
+		resp.ErrorTemporality = &row.ErrorTemporality.String
+	} else if derived.ErrorTemporality != "" {
+		resp.ErrorTemporality = &derived.ErrorTemporality
+	}
+	if providerError := postfailures.ParseProviderErrorJSON(row.ProviderError); providerError != nil {
+		resp.ProviderError = providerError
+	} else if derived.ProviderError != nil {
+		resp.ProviderError = derived.ProviderError
 	}
 }
 
@@ -1134,14 +1189,14 @@ func (h *SocialPostHandler) executePublishLoop(
 			slog.Error("failed to save post result",
 				"error", dbErr, "account_id", parsed.Posts[i].AccountID, "dispatch_error", reason.Error())
 			allPublished = false
-			h.recordPostFailure(r.Context(), postfailures.BuildParams(
+			h.recordPostFailure(r.Context(), postfailures.BuildParamsFromError(
 				post.ID,
 				"",
 				workspaceID,
 				parsed.Posts[i].AccountID,
 				postfailures.FirstNonEmpty(oc.platform, accountMap[parsed.Posts[i].AccountID].Platform),
 				"result_persist",
-				reason.Error(),
+				reason,
 				dbErr.Error(),
 			))
 			continue
@@ -1149,14 +1204,14 @@ func (h *SocialPostHandler) executePublishLoop(
 
 		var failureDetails *db.CreatePostFailureParams
 		if status == "failed" && dbResult.ErrorMessage.Valid {
-			failure := postfailures.BuildParams(
+			failure := postfailures.BuildParamsFromError(
 				post.ID,
 				dbResult.ID,
 				workspaceID,
 				dbResult.SocialAccountID,
 				postfailures.FirstNonEmpty(oc.platform, accountMap[parsed.Posts[i].AccountID].Platform),
 				"dispatch",
-				dbResult.ErrorMessage.String,
+				oc.err,
 				dbResult.ErrorMessage.String,
 			)
 			failureDetails = &failure
@@ -2087,6 +2142,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 		if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 			rr.Submitted = sub
 		}
+		applyRetryPolicyToResponse(&rr, res, jobs)
 		resp.Results = append(resp.Results, rr)
 	}
 	applyQueueSummary(&resp, jobs)
@@ -2232,6 +2288,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		applyRetryPolicyToResponse(&rr, res, jobs)
 		responseResults = append(responseResults, rr)
 	}
 
@@ -2363,6 +2420,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 			if sub := submittedByAccount[res.SocialAccountID]; sub != nil {
 				rr.Submitted = sub
 			}
+			applyRetryPolicyToResponse(&rr, res, jobsByPost[p.ID])
 			responseResults = append(responseResults, rr)
 		}
 

@@ -30,6 +30,10 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "results[].platform_error_code", type: "string | null", description: "Provider-specific error code when UniPost can safely extract one, such as TikTok invalid_params." },
   { name: "results[].is_retriable", type: "boolean | null", description: "Whether retrying this result is expected to help." },
   { name: "results[].next_action", type: "string | null", description: "Stable action enum for UI and automation, such as review_platform_options, reconnect_account, or wait_and_retry." },
+  { name: "results[].error_source", type: "string | null", description: <>Where the failure originated.<EnumValues values={["unipost", "platform", "worker", "unknown"]} /></> },
+  { name: "results[].error_temporality", type: "string | null", description: <>Whether the condition is temporary, permanent, or unknown.<EnumValues values={["temporary", "permanent", "unknown"]} /></> },
+  { name: "results[].provider_error", type: "object | null", description: "Sanitized provider detail object. May include provider, http_status, code, subcode, type, reason, domain, quota_limit, quota_location, and is_transient." },
+  { name: "results[].retry_policy", type: "object | null", description: "Best-effort queue snapshot with is_retriable, will_retry, retry_state, next_run_at, attempts_made, max_attempts, attempts_remaining, manual_retry_allowed, and reason." },
   { name: "results[].debug_curl", type: "string | null", description: "Redacted failing curl trace for debugging, only on failed results." },
 ];
 
@@ -197,7 +201,17 @@ const POLLING_EXAMPLE_SNIPPETS = [
         "failure_stage": "publish",
         "platform_error_code": null,
         "is_retriable": false,
-        "next_action": "fix_request"
+        "next_action": "fix_request",
+        "error_source": "unipost",
+        "error_temporality": "permanent",
+        "provider_error": null,
+        "retry_policy": {
+          "is_retriable": false,
+          "will_retry": false,
+          "retry_state": "not_retriable",
+          "manual_retry_allowed": true,
+          "reason": "classification_not_retriable"
+        }
       }
     ]
   }
@@ -221,7 +235,16 @@ const POLLING_EXAMPLE_SNIPPETS = [
         "failure_stage": "publish",
         "platform_error_code": null,
         "is_retriable": false,
-        "next_action": "fix_media"
+        "next_action": "fix_media",
+        "error_source": "platform",
+        "error_temporality": "permanent",
+        "retry_policy": {
+          "is_retriable": false,
+          "will_retry": false,
+          "retry_state": "not_retriable",
+          "manual_retry_allowed": true,
+          "reason": "classification_not_retriable"
+        }
       },
       {
         "id": "spr_b",
@@ -233,7 +256,20 @@ const POLLING_EXAMPLE_SNIPPETS = [
         "failure_stage": "publish",
         "platform_error_code": "190",
         "is_retriable": false,
-        "next_action": "reconnect_account"
+        "next_action": "reconnect_account",
+        "error_source": "platform",
+        "error_temporality": "permanent",
+        "provider_error": {
+          "provider": "meta",
+          "code": "190"
+        },
+        "retry_policy": {
+          "is_retriable": false,
+          "will_retry": false,
+          "retry_state": "not_retriable",
+          "manual_retry_allowed": true,
+          "reason": "classification_not_retriable"
+        }
       }
     ]
   }
@@ -273,6 +309,9 @@ export default function GetPostPage() {
             </div>
             <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
               <strong style={{ color: "var(--docs-text)" }}>Use <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>results[]</code> for the truth per destination.</strong> Each result row is independent and tells you which account published, which one failed, and which public URL or error belongs to that account.
+            </div>
+            <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+              <strong style={{ color: "var(--docs-text)" }}>Read retry state from <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>retry_policy</code>.</strong> <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>is_retriable</code> means a retry may help; <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>will_retry</code> means UniPost has an automatic attempt scheduled or running. Treat this object as a best-effort queue snapshot and poll again before showing destructive actions. If a pending job has a past <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>next_run_at</code>, it is due now rather than invalid.
             </div>
             <div style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
               <strong style={{ color: "var(--docs-text)" }}>Stop polling when the parent status is final.</strong> In most clients that means polling until the post becomes <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>published</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>partial</code>, or <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>failed</code>.

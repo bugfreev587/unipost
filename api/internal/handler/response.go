@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 )
 
 type SuccessResponse struct {
@@ -25,14 +26,18 @@ type MetaResponse struct {
 }
 
 type ErrorBody struct {
-	Code           string           `json:"code"`
-	NormalizedCode string           `json:"normalized_code,omitempty"`
-	Message        string           `json:"message"`
-	Hint           string           `json:"hint,omitempty"`
-	NextAction     string           `json:"next_action,omitempty"`
-	IsRetriable    *bool            `json:"is_retriable,omitempty"`
-	DocsURL        string           `json:"docs_url,omitempty"`
-	Issues         []platform.Issue `json:"issues,omitempty"`
+	Code             string                      `json:"code"`
+	NormalizedCode   string                      `json:"normalized_code,omitempty"`
+	Message          string                      `json:"message"`
+	Hint             string                      `json:"hint,omitempty"`
+	NextAction       string                      `json:"next_action,omitempty"`
+	IsRetriable      *bool                       `json:"is_retriable,omitempty"`
+	ErrorSource      string                      `json:"error_source,omitempty"`
+	ErrorTemporality string                      `json:"error_temporality,omitempty"`
+	ProviderError    *postfailures.ProviderError `json:"provider_error,omitempty"`
+	RetryPolicy      *retryPolicyResponse        `json:"retry_policy,omitempty"`
+	DocsURL          string                      `json:"docs_url,omitempty"`
+	Issues           []platform.Issue            `json:"issues,omitempty"`
 }
 
 type ErrorResponse struct {
@@ -48,11 +53,15 @@ type legacyCursorSuccessResponse struct {
 }
 
 type ErrorDetails struct {
-	Hint        string
-	NextAction  string
-	IsRetriable *bool
-	DocsURL     string
-	Issues      []platform.Issue
+	Hint             string
+	NextAction       string
+	IsRetriable      *bool
+	ErrorSource      string
+	ErrorTemporality string
+	ProviderError    *postfailures.ProviderError
+	RetryPolicy      *retryPolicyResponse
+	DocsURL          string
+	Issues           []platform.Issue
 }
 
 const (
@@ -216,14 +225,18 @@ func writeErrorWithDetails(w http.ResponseWriter, status int, code, message stri
 	}
 	writeJSON(w, status, ErrorResponse{
 		Error: ErrorBody{
-			Code:           code,
-			NormalizedCode: normalizeErrorCode(code),
-			Message:        safeMessage,
-			Hint:           safeDetails.Hint,
-			NextAction:     safeDetails.NextAction,
-			IsRetriable:    safeDetails.IsRetriable,
-			DocsURL:        safeDetails.DocsURL,
-			Issues:         safeDetails.Issues,
+			Code:             code,
+			NormalizedCode:   normalizeErrorCode(code),
+			Message:          safeMessage,
+			Hint:             safeDetails.Hint,
+			NextAction:       safeDetails.NextAction,
+			IsRetriable:      safeDetails.IsRetriable,
+			ErrorSource:      safeDetails.ErrorSource,
+			ErrorTemporality: safeDetails.ErrorTemporality,
+			ProviderError:    safeDetails.ProviderError,
+			RetryPolicy:      safeDetails.RetryPolicy,
+			DocsURL:          safeDetails.DocsURL,
+			Issues:           safeDetails.Issues,
 		},
 		RequestID: requestID,
 	})
