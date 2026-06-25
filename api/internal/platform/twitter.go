@@ -581,13 +581,28 @@ func (a *TwitterAdapter) RefreshToken(ctx context.Context, refreshToken string) 
 		return "", "", time.Time{}, err
 	}
 	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", time.Time{}, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", "", time.Time{}, fmt.Errorf("twitter refresh (%d): %s", resp.StatusCode, string(body))
+	}
 
 	var tokenResp struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	if err := json.Unmarshal(body, &tokenResp); err != nil {
+		return "", "", time.Time{}, fmt.Errorf("twitter refresh decode: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return "", "", time.Time{}, fmt.Errorf("twitter refresh returned empty access_token: %s", string(body))
+	}
+	if tokenResp.ExpiresIn <= 0 {
+		return "", "", time.Time{}, fmt.Errorf("twitter refresh returned invalid expires_in %d: %s", tokenResp.ExpiresIn, string(body))
+	}
 
 	newRefresh := tokenResp.RefreshToken
 	if newRefresh == "" {
