@@ -565,16 +565,19 @@ func (a *TwitterAdapter) DeletePost(ctx context.Context, accessToken string, ext
 }
 
 func (a *TwitterAdapter) RefreshToken(ctx context.Context, refreshToken string) (string, string, time.Time, error) {
+	config := a.DefaultOAuthConfig("")
 	data := url.Values{
 		"grant_type":    {"refresh_token"},
 		"refresh_token": {refreshToken},
+		"client_id":     {config.ClientID},
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/oauth2/token", bytes.NewBufferString(data.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewBufferString(data.Encode()))
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth(config.ClientID, config.ClientSecret)
 
 	resp, err := a.client.Do(req)
 	if err != nil {
