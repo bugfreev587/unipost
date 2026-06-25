@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 )
 
 func TestNormalizeErrorCode(t *testing.T) {
@@ -186,10 +187,24 @@ func TestWriteErrorWithDetailsContract(t *testing.T) {
 	isRetriable := false
 
 	writeErrorWithDetails(rr, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "bad input", ErrorDetails{
-		Hint:        "Fix the listed fields and retry.",
-		NextAction:  "fix_request",
-		IsRetriable: &isRetriable,
-		DocsURL:     "https://unipost.dev/docs/api/posts/validate",
+		Hint:             "Fix the listed fields and retry.",
+		NextAction:       "fix_request",
+		IsRetriable:      &isRetriable,
+		DocsURL:          "https://unipost.dev/docs/api/posts/validate",
+		ErrorSource:      postfailures.ErrorSourceUnipost,
+		ErrorTemporality: postfailures.ErrorTemporalityPermanent,
+		ProviderError: &postfailures.ProviderError{
+			Provider:   "meta",
+			HTTPStatus: 400,
+			Code:       "100",
+		},
+		RetryPolicy: &retryPolicyResponse{
+			IsRetriable:        false,
+			WillRetry:          false,
+			RetryState:         "not_retriable",
+			ManualRetryAllowed: false,
+			Reason:             "classification_not_retriable",
+		},
 	})
 
 	if rr.Code != http.StatusUnprocessableEntity {
@@ -198,13 +213,27 @@ func TestWriteErrorWithDetailsContract(t *testing.T) {
 
 	var got struct {
 		Error struct {
-			Code           string `json:"code"`
-			NormalizedCode string `json:"normalized_code"`
-			Message        string `json:"message"`
-			Hint           string `json:"hint"`
-			NextAction     string `json:"next_action"`
-			IsRetriable    *bool  `json:"is_retriable"`
-			DocsURL        string `json:"docs_url"`
+			Code             string `json:"code"`
+			NormalizedCode   string `json:"normalized_code"`
+			Message          string `json:"message"`
+			Hint             string `json:"hint"`
+			NextAction       string `json:"next_action"`
+			IsRetriable      *bool  `json:"is_retriable"`
+			DocsURL          string `json:"docs_url"`
+			ErrorSource      string `json:"error_source"`
+			ErrorTemporality string `json:"error_temporality"`
+			ProviderError    struct {
+				Provider   string `json:"provider"`
+				HTTPStatus int    `json:"http_status"`
+				Code       string `json:"code"`
+			} `json:"provider_error"`
+			RetryPolicy struct {
+				IsRetriable        bool   `json:"is_retriable"`
+				WillRetry          bool   `json:"will_retry"`
+				RetryState         string `json:"retry_state"`
+				ManualRetryAllowed bool   `json:"manual_retry_allowed"`
+				Reason             string `json:"reason"`
+			} `json:"retry_policy"`
 		} `json:"error"`
 		RequestID string `json:"request_id"`
 	}
@@ -222,6 +251,15 @@ func TestWriteErrorWithDetailsContract(t *testing.T) {
 	}
 	if got.Error.DocsURL != "https://unipost.dev/docs/api/posts/validate" {
 		t.Fatalf("docs_url = %q, want validation docs URL", got.Error.DocsURL)
+	}
+	if got.Error.ErrorSource != "unipost" || got.Error.ErrorTemporality != "permanent" {
+		t.Fatalf("source/temporality = %q/%q, want unipost/permanent", got.Error.ErrorSource, got.Error.ErrorTemporality)
+	}
+	if got.Error.ProviderError.Provider != "meta" || got.Error.ProviderError.HTTPStatus != 400 || got.Error.ProviderError.Code != "100" {
+		t.Fatalf("provider_error = %#v", got.Error.ProviderError)
+	}
+	if got.Error.RetryPolicy.RetryState != "not_retriable" || got.Error.RetryPolicy.WillRetry {
+		t.Fatalf("retry_policy = %#v", got.Error.RetryPolicy)
 	}
 	if got.RequestID != "req_detailed_error" {
 		t.Fatalf("request_id = %q, want req_detailed_error", got.RequestID)

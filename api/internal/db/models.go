@@ -521,6 +521,9 @@ type PostFailure struct {
 	RawError           pgtype.Text        `json:"raw_error"`
 	IsRetriable        bool               `json:"is_retriable"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	ErrorSource        pgtype.Text        `json:"error_source"`
+	ErrorTemporality   pgtype.Text        `json:"error_temporality"`
+	ProviderError      []byte             `json:"provider_error"`
 }
 
 type Profile struct {
@@ -675,6 +678,9 @@ type SocialPostResult struct {
 	PlatformErrorCode pgtype.Text        `json:"platform_error_code"`
 	IsRetriable       pgtype.Bool        `json:"is_retriable"`
 	NextAction        pgtype.Text        `json:"next_action"`
+	ErrorSource       pgtype.Text        `json:"error_source"`
+	ErrorTemporality  pgtype.Text        `json:"error_temporality"`
+	ProviderError     []byte             `json:"provider_error"`
 }
 
 type Subscription struct {

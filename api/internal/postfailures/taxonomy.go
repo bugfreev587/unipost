@@ -13,6 +13,9 @@ type Classification struct {
 	ErrorCode         string
 	PlatformErrorCode string
 	IsRetriable       bool
+	ErrorSource       string
+	ErrorTemporality  string
+	ProviderError     *ProviderError
 }
 
 var (
@@ -25,8 +28,10 @@ func Classify(raw string) Classification {
 	s := strings.ToLower(strings.TrimSpace(raw))
 	if s == "" {
 		return Classification{
-			ErrorCode:   "unknown_error",
-			IsRetriable: false,
+			ErrorCode:        "unknown_error",
+			ErrorSource:      ErrorSourceUnknown,
+			ErrorTemporality: ErrorTemporalityUnknown,
+			IsRetriable:      false,
 		}
 	}
 
@@ -37,10 +42,19 @@ func Classify(raw string) Classification {
 
 	if code := extractMetaSubcode(raw); code != "" {
 		c.PlatformErrorCode = code
+	} else if code := extractMetaCode(raw); code != "" {
+		c.PlatformErrorCode = code
 	}
 	if strings.Contains(s, "tiktok") {
 		if code := extractTikTokProviderCode(raw); code != "" {
 			c.PlatformErrorCode = code
+		}
+	}
+	if strings.Contains(s, "youtube") {
+		if reason := regexpFirst(keyValueReasonPattern, raw); reason != "" {
+			c.PlatformErrorCode = reason
+		} else if reason := regexpFirst(youtubeJSONReasonPattern, raw); reason != "" {
+			c.PlatformErrorCode = reason
 		}
 	}
 
@@ -83,10 +97,10 @@ func Classify(raw string) Classification {
 		c.ErrorCode = "auth_token_invalid"
 	case strings.Contains(s, "disconnected") || strings.Contains(s, "reconnect"):
 		c.ErrorCode = "account_reconnect_required"
-	case strings.Contains(s, "permission") || strings.Contains(s, "scope"):
-		c.ErrorCode = "missing_permission"
 	case strings.Contains(s, "quota") || strings.Contains(s, "limit exceeded"):
 		c.ErrorCode = "quota_exceeded"
+	case strings.Contains(s, "permission") || strings.Contains(s, "scope"):
+		c.ErrorCode = "missing_permission"
 	case strings.Contains(s, "validation") || strings.Contains(s, "invalid request"):
 		c.ErrorCode = "validation_error"
 	case strings.Contains(s, "media"):
@@ -95,7 +109,7 @@ func Classify(raw string) Classification {
 		c.ErrorCode = "target_not_found"
 	}
 
-	return c
+	return enrichClassification(c, raw)
 }
 
 func ShouldMarkReconnectRequired(raw string) bool {
@@ -105,6 +119,22 @@ func ShouldMarkReconnectRequired(raw string) bool {
 	default:
 		return false
 	}
+}
+
+func DeriveLegacyContract(errorCode, message string, isRetriable bool) Classification {
+	if strings.TrimSpace(errorCode) == "" {
+		c := Classify(message)
+		if isRetriable {
+			c.IsRetriable = true
+		}
+		return c
+	}
+	c := Classification{
+		ErrorCode:     strings.TrimSpace(errorCode),
+		IsRetriable:   isRetriable,
+		ProviderError: ExtractProviderError(message),
+	}
+	return enrichClassification(c, message)
 }
 
 func isMetaOAuthReconnectError(s string) bool {
@@ -132,9 +162,15 @@ func isMetaTransientError(s string) bool {
 func extractMetaSubcode(raw string) string {
 	m := metaSubcodePattern.FindStringSubmatch(raw)
 	if len(m) == 2 {
-		return m[1]
+		if strings.TrimSpace(m[1]) != "0" {
+			return m[1]
+		}
 	}
 	return ""
+}
+
+func extractMetaCode(raw string) string {
+	return trimJSONScalar(regexpFirst(metaJSONCodePattern, raw))
 }
 
 func extractTikTokProviderCode(raw string) string {
@@ -195,6 +231,19 @@ func FirstNonEmpty(values ...string) string {
 
 func BuildParams(postID, socialPostResultID, workspaceID, socialAccountID, platform, failureStage, message, rawError string) db.CreatePostFailureParams {
 	classification := Classify(message)
+	return buildParamsFromClassification(postID, socialPostResultID, workspaceID, socialAccountID, platform, failureStage, message, rawError, classification)
+}
+
+func BuildParamsFromError(postID, socialPostResultID, workspaceID, socialAccountID, platform, failureStage string, err error, rawError string) db.CreatePostFailureParams {
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	classification := classifyError(message, err)
+	return buildParamsFromClassification(postID, socialPostResultID, workspaceID, socialAccountID, platform, failureStage, message, rawError, classification)
+}
+
+func buildParamsFromClassification(postID, socialPostResultID, workspaceID, socialAccountID, platform, failureStage, message, rawError string, classification Classification) db.CreatePostFailureParams {
 	return db.CreatePostFailureParams{
 		PostID:             postID,
 		SocialPostResultID: ToText(socialPostResultID),
@@ -207,5 +256,8 @@ func BuildParams(postID, socialPostResultID, workspaceID, socialAccountID, platf
 		Message:            message,
 		RawError:           ToText(rawError),
 		IsRetriable:        classification.IsRetriable,
+		ErrorSource:        ToText(classification.ErrorSource),
+		ErrorTemporality:   ToText(classification.ErrorTemporality),
+		ProviderError:      ProviderErrorJSON(classification.ProviderError),
 	}
 }

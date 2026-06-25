@@ -112,6 +112,7 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 	if job.Platform != "" {
 		rr.Platform = job.Platform
 	}
+	applyRetryPolicyToResponse(&rr, existing, []db.PostDeliveryJob{job})
 	writeSuccess(w, rr)
 }
 

@@ -548,6 +548,9 @@ export function CreatePostContent() {
               <strong style={{ color: "var(--docs-text)" }}>Poll Model:</strong> immediate publish returns <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>202</code> after UniPost accepts and queues delivery. Poll <ApiInlineLink endpoint="GET /v1/posts/:post_id" /> to read the final publishing result.
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Failure Model:</strong> failed result rows include <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>error_source</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>error_temporality</code>, <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>provider_error</code>, and <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>retry_policy</code>. Use <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>retry_policy.will_retry</code> for automatic retries and avoid parsing <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>error_message</code>.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
               <strong style={{ color: "var(--docs-text)" }}>Push Model:</strong> create a webhook subscription with <ApiInlineLink endpoint="POST /v1/webhooks" /> to receive final publishing events from UniPost.
             </p>
           </div>

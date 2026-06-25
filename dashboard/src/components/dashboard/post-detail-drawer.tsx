@@ -119,6 +119,7 @@ export function PostDetailDrawer({ post, onClose, onDuplicate }: Props) {
                       {failure ? <div className="pdd-result-error-title">{failure.title}</div> : null}
                       {failure ? <div className="pdd-result-error">{failure.message}</div> : r.error_message ? <div className="pdd-result-error">{r.error_message}</div> : null}
                       {failure?.nextActionLabel ? <div className="pdd-result-next">Next: {failure.nextActionLabel}</div> : null}
+                      {failure?.retryStatusLabel ? <div className="pdd-result-next">Retry: {failure.retryStatusLabel}</div> : null}
                       {(failure || r.error_message) && (
                         <Link
                           href={buildContactPageHref({

@@ -187,6 +187,14 @@ func TestWrapTikTokInitErrorIncludesSandboxGuidance(t *testing.T) {
 			t.Fatalf("error = %q, want to contain %q", got, want)
 		}
 	}
+	carrier, ok := err.(interface{ ProviderErrorFields() map[string]any })
+	if !ok {
+		t.Fatalf("error %T does not carry provider fields", err)
+	}
+	fields := carrier.ProviderErrorFields()
+	if fields["provider"] != "tiktok" || fields["http_status"] != http.StatusBadRequest || fields["code"] != "invalid_params" {
+		t.Fatalf("provider fields = %#v", fields)
+	}
 }
 
 func TestWrapTikTokInitErrorIncludesPhotoTitleGuidance(t *testing.T) {
