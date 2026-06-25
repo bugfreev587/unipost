@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { ChevronLeft, ChevronRight, ExternalLink, List, Loader2, Plus, Save, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ExternalLink, List, Loader2, Plus, Save, SlidersHorizontal, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -152,6 +152,7 @@ export function PostsCalendarView() {
   const [selectedPostTarget, setSelectedPostTarget] = useState<SelectedPostTarget | null>(null);
   const [editingPostTarget, setEditingPostTarget] = useState<SelectedPostTarget | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [calendarSnap, setCalendarSnap] = useState<CalendarSnapState | null>(null);
@@ -797,7 +798,12 @@ export function PostsCalendarView() {
   return (
     <section className="posts-calendar-fullheight" aria-label="Posts calendar">
       <style>{CALENDAR_CSS}</style>
-      <aside className="posts-calendar-sidebar" aria-label="Calendar filters">
+      <aside
+        id="posts-calendar-filters"
+        className="posts-calendar-sidebar"
+        data-mobile-open={mobileFiltersOpen ? "true" : "false"}
+        aria-label="Calendar filters"
+      >
         <div className="posts-calendar-sidebar-top">
           <div className="posts-calendar-sidebar-kicker">Posts</div>
           <div className="posts-calendar-sidebar-title">Calendar</div>
@@ -872,6 +878,17 @@ export function PostsCalendarView() {
           </div>
 
           <div className="posts-calendar-toolbar" aria-label="Calendar controls">
+            <button
+              type="button"
+              className="posts-calendar-filter-toggle"
+              aria-controls="posts-calendar-filters"
+              aria-expanded={mobileFiltersOpen}
+              onClick={() => setMobileFiltersOpen((open) => !open)}
+            >
+              <SlidersHorizontal size={16} />
+              Filters
+            </button>
+
             <div className="posts-calendar-segment" aria-label="Calendar view mode">
               <button
                 type="button"
@@ -2246,10 +2263,11 @@ const CALENDAR_CSS = `
 .posts-calendar-segment button.active{background:var(--surface-raised);color:var(--dtext);box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 70%,transparent)}
 .posts-calendar-segment button:disabled{cursor:not-allowed}
 .posts-calendar-month-nav{display:flex;align-items:center;gap:4px}
-.posts-calendar-month-nav button,.posts-calendar-list-link,.posts-calendar-create{height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--dborder);border-radius:999px;background:var(--surface2);color:var(--dtext);font:inherit;font-size:14px;font-weight:650;text-decoration:none;padding:0 12px;cursor:pointer;transition:background .12s,border-color .12s,transform .12s}
+.posts-calendar-month-nav button,.posts-calendar-list-link,.posts-calendar-create,.posts-calendar-filter-toggle{height:34px;display:inline-flex;align-items:center;justify-content:center;gap:7px;border:1px solid var(--dborder);border-radius:999px;background:var(--surface2);color:var(--dtext);font:inherit;font-size:14px;font-weight:650;text-decoration:none;padding:0 12px;cursor:pointer;transition:background .12s,border-color .12s,transform .12s}
+.posts-calendar-filter-toggle{display:none}
 .posts-calendar-month-nav button:first-child,.posts-calendar-month-nav button:last-child{width:34px;padding:0}
-.posts-calendar-month-nav button:hover,.posts-calendar-list-link:hover,.posts-calendar-create:hover{background:var(--surface3);border-color:var(--dborder2)}
-.posts-calendar-month-nav button:active,.posts-calendar-list-link:active,.posts-calendar-create:active{transform:translateY(1px)}
+.posts-calendar-month-nav button:hover,.posts-calendar-list-link:hover,.posts-calendar-create:hover,.posts-calendar-filter-toggle:hover{background:var(--surface3);border-color:var(--dborder2)}
+.posts-calendar-month-nav button:active,.posts-calendar-list-link:active,.posts-calendar-create:active,.posts-calendar-filter-toggle:active{transform:translateY(1px)}
 .posts-calendar-create{background:var(--daccent);border-color:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-error{margin:12px 18px 0;border:1px solid color-mix(in srgb,var(--danger) 24%,transparent);background:var(--danger-soft);color:var(--danger);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}
 .posts-calendar-view-stage{flex:1;min-height:0;display:flex;overflow:hidden;background:var(--surface)}
@@ -2408,6 +2426,6 @@ const CALENDAR_CSS = `
 .posts-calendar-edit-footer button.primary{border-color:var(--daccent);background:var(--daccent);color:var(--primary-foreground)}
 .posts-calendar-edit-footer button:disabled{opacity:.55;cursor:not-allowed}
 @media (max-width: 980px){.posts-calendar-fullheight{grid-template-columns:1fr}.posts-calendar-sidebar{border-right:0;border-bottom:1px solid var(--dborder);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));align-items:start}.posts-calendar-sidebar-top{grid-column:1/-1}.posts-calendar-topbar{align-items:flex-start;flex-direction:column}.posts-calendar-toolbar{justify-content:flex-start}.posts-calendar-month-shell{min-height:720px}.posts-calendar-month-days{grid-template-rows:repeat(6,minmax(114px,1fr))}}
-@media (max-width: 680px){.posts-calendar-fullheight{border-radius:12px}.posts-calendar-sidebar{grid-template-columns:1fr}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{overflow-x:auto}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:924px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-detail-grid{grid-template-columns:1fr}.posts-calendar-submitted-panel dl div{grid-template-columns:1fr}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
+@media (max-width: 680px){.posts-calendar-fullheight{position:relative;border-radius:12px;min-height:calc(100dvh - 80px)}.posts-calendar-main{min-height:0}.posts-calendar-filter-toggle{display:inline-flex}.posts-calendar-sidebar{position:absolute;left:10px;right:10px;top:76px;z-index:8;max-height:min(64dvh,520px);overflow:auto;border:1px solid var(--dborder);border-radius:14px;background:color-mix(in srgb,var(--surface-raised) 96%,var(--surface));box-shadow:0 18px 48px color-mix(in srgb,var(--shadow-color) 120%,transparent);grid-template-columns:1fr;padding:14px}.posts-calendar-sidebar:not([data-mobile-open="true"]){display:none}.posts-calendar-sidebar-top{padding:0}.posts-calendar-topbar{min-height:auto;padding:12px;gap:12px}.posts-calendar-title-block h1{font-size:26px}.posts-calendar-toolbar{gap:8px}.posts-calendar-segment button{min-width:54px}.posts-calendar-month-shell{min-height:520px;overflow:hidden;touch-action:pan-y}.posts-calendar-month-weekdays,.posts-calendar-month-days{min-width:0;width:100%}.posts-calendar-month-days,.posts-calendar-month-track{grid-template-rows:repeat(6,minmax(70px,1fr))}.posts-calendar-weekday{justify-content:center;padding:0;font-size:11px}.posts-calendar-day{min-height:70px;padding:5px 2px;gap:3px}.posts-calendar-day-number{height:18px;justify-content:center;font-size:12px}.posts-calendar-day.today .posts-calendar-day-number span{width:20px;height:20px;margin-top:-1px}.posts-calendar-events{align-items:center;gap:2px}.posts-calendar-event{width:16px;height:7px;min-height:7px;display:block;border-radius:999px;padding:0}.posts-calendar-event-rail,.posts-calendar-event-status,.posts-calendar-event-caption,.posts-calendar-event-time{display:none}.posts-calendar-more{height:15px;padding:0;text-align:center;font-size:10px}.posts-calendar-popover{width:min(360px,calc(100vw - 24px))}.posts-calendar-detail-grid{grid-template-columns:1fr}.posts-calendar-submitted-panel dl div{grid-template-columns:1fr}.posts-calendar-edit-inspector{width:min(420px,calc(100vw - 24px))}.posts-calendar-edit-account-grid{grid-template-columns:1fr}}
 @media (prefers-reduced-motion:reduce){.posts-calendar-popover,.posts-calendar-edit-inspector{animation:none}.posts-calendar-month-track,.posts-calendar-week-track{transition-duration:0ms}}
 `;

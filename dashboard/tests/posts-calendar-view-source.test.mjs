@@ -122,6 +122,22 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /resolvedOptions\(\)\.timeZone/);
 });
 
+test("Posts calendar mobile layout prioritizes the calendar over filters", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const mobileCss = source.slice(source.indexOf("@media (max-width: 680px)"));
+
+  assert.match(source, /mobileFiltersOpen/);
+  assert.match(source, /className="posts-calendar-filter-toggle"/);
+  assert.match(source, /aria-controls="posts-calendar-filters"/);
+  assert.match(source, /id="posts-calendar-filters"/);
+  assert.match(source, /data-mobile-open=\{mobileFiltersOpen \? "true" : "false"\}/);
+  assert.match(mobileCss, /\.posts-calendar-filter-toggle\{[^}]*display:inline-flex/);
+  assert.match(mobileCss, /\.posts-calendar-sidebar:not\(\[data-mobile-open="true"\]\)\{[^}]*display:none/);
+  assert.match(mobileCss, /\.posts-calendar-month-weekdays,\.posts-calendar-month-days\{[^}]*min-width:0[^}]*width:100%/);
+  assert.match(mobileCss, /\.posts-calendar-event-caption,\.posts-calendar-event-time\{[^}]*display:none/);
+  assert.doesNotMatch(mobileCss, /\.posts-calendar-month-weekdays,\.posts-calendar-month-days\{[^}]*min-width:924px/);
+});
+
 test("Posts calendar snap tracks keep fixed gutters outside moving date tracks", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const monthView = source.slice(source.indexOf("const renderMonthView"), source.indexOf("const renderWeekTimeGutter"));
