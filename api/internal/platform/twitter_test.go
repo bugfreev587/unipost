@@ -3,6 +3,7 @@ package platform
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,41 +27,56 @@ func TestTwitterUploadMediaChunkedNormalizesParameterizedVideoContentType(t *tes
 			return textResponse(http.StatusOK, "fake-mp4-bytes", map[string]string{
 				"Content-Type": "video/mp4;codecs=avc1",
 			}), nil
-		case req.URL.Host == "api.x.com" && req.URL.Path == "/2/media/upload":
+		case req.URL.Host == "api.x.com" && req.URL.Path == "/2/media/upload/initialize":
 			if req.URL.Query().Get("media_type") != "" || req.URL.Query().Get("media_category") != "" {
 				t.Fatalf("INIT metadata must not be sent as query params: %s", req.URL.RawQuery)
 			}
+			if got := req.Header.Get("Content-Type"); got != "application/json" {
+				t.Fatalf("INIT content type = %q, want application/json", got)
+			}
+			var initBody struct {
+				MediaType     string `json:"media_type"`
+				MediaCategory string `json:"media_category"`
+				TotalBytes    int    `json:"total_bytes"`
+			}
+			if err := json.NewDecoder(req.Body).Decode(&initBody); err != nil {
+				t.Fatalf("decode INIT JSON: %v", err)
+			}
+			sawInit = true
+			if initBody.MediaType != "video/mp4" {
+				t.Fatalf("media_type = %q, want video/mp4", initBody.MediaType)
+			}
+			if initBody.MediaCategory != "tweet_video" {
+				t.Fatalf("media_category = %q, want tweet_video", initBody.MediaCategory)
+			}
+			if initBody.TotalBytes != 14 {
+				t.Fatalf("total_bytes = %d, want 14", initBody.TotalBytes)
+			}
+			return jsonResponse(http.StatusOK, `{"data":{"id":"media123"}}`), nil
+		case req.URL.Host == "api.x.com" && req.URL.Path == "/2/media/upload/media123/append":
 			form, err := readMultipartFields(req)
 			if err != nil {
 				t.Fatalf("read multipart fields: %v", err)
 			}
-			switch form["command"] {
-			case "INIT":
-				sawInit = true
-				if got := form["media_type"]; got != "video/mp4" {
-					t.Fatalf("media_type = %q, want video/mp4", got)
-				}
-				if got := form["media_category"]; got != "tweet_video" {
-					t.Fatalf("media_category = %q, want tweet_video", got)
-				}
-				if got := form["total_bytes"]; got != "14" {
-					t.Fatalf("total_bytes = %q, want 14", got)
-				}
-				return jsonResponse(http.StatusOK, `{"data":{"id":"media123"}}`), nil
-			case "APPEND":
-				if got := form["media_id"]; got != "media123" {
-					t.Fatalf("append media_id = %q, want media123", got)
-				}
-				return jsonResponse(http.StatusOK, `{}`), nil
-			case "FINALIZE":
-				sawFinalize = true
-				if got := form["media_id"]; got != "media123" {
-					t.Fatalf("finalize media_id = %q, want media123", got)
-				}
-				return jsonResponse(http.StatusOK, `{"data":{"id":"media123"}}`), nil
-			default:
-				t.Fatalf("unexpected upload command %q", form["command"])
+			if form["command"] != "" || form["media_id"] != "" {
+				t.Fatalf("APPEND must not send legacy command/media_id fields: %+v", form)
 			}
+			if got := form["segment_index"]; got != "0" {
+				t.Fatalf("segment_index = %q, want 0", got)
+			}
+			if req.MultipartForm == nil || len(req.MultipartForm.File["media"]) != 1 {
+				t.Fatalf("APPEND media file count = %d, want 1", len(req.MultipartForm.File["media"]))
+			}
+			return jsonResponse(http.StatusOK, `{}`), nil
+		case req.URL.Host == "api.x.com" && req.URL.Path == "/2/media/upload/media123/finalize":
+			sawFinalize = true
+			if req.Body != nil {
+				body, _ := io.ReadAll(req.Body)
+				if len(strings.TrimSpace(string(body))) > 0 {
+					t.Fatalf("FINALIZE body = %q, want empty", string(body))
+				}
+			}
+			return jsonResponse(http.StatusOK, `{"data":{"id":"media123"}}`), nil
 		}
 		t.Fatalf("unexpected request: %s %s", req.Method, req.URL.String())
 		return nil, nil
