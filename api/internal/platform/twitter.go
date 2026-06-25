@@ -357,31 +357,24 @@ func (a *TwitterAdapter) uploadMediaSimple(ctx context.Context, accessToken stri
 
 // uploadMediaChunked performs the INIT/APPEND/FINALIZE/STATUS dance required
 // for video and GIF uploads. mediaCategory is the X-side category string
-// (tweet_video or tweet_gif).
+// (tweet_video or tweet_gif). X's v2 reference endpoints use JSON for
+// INIT, a per-media append endpoint, and a per-media finalize endpoint; the
+// legacy command fields only belong to the older quickstart shape.
 func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken string, data []byte, contentType, mediaCategory string) (string, error) {
 	contentType = normalizeTwitterMediaType(contentType, "video/mp4")
 
 	// INIT.
-	var initBuf bytes.Buffer
-	initForm := multipart.NewWriter(&initBuf)
-	if err := initForm.WriteField("command", "INIT"); err != nil {
+	initBodyBytes, err := json.Marshal(map[string]any{
+		"media_category": mediaCategory,
+		"media_type":     contentType,
+		"total_bytes":    len(data),
+	})
+	if err != nil {
 		return "", err
 	}
-	if err := initForm.WriteField("total_bytes", fmt.Sprintf("%d", len(data))); err != nil {
-		return "", err
-	}
-	if err := initForm.WriteField("media_type", contentType); err != nil {
-		return "", err
-	}
-	if err := initForm.WriteField("media_category", mediaCategory); err != nil {
-		return "", err
-	}
-	if err := initForm.Close(); err != nil {
-		return "", err
-	}
-	initReq, _ := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/media/upload", &initBuf)
+	initReq, _ := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/media/upload/initialize", bytes.NewReader(initBodyBytes))
 	initReq.Header.Set("Authorization", "Bearer "+accessToken)
-	initReq.Header.Set("Content-Type", initForm.FormDataContentType())
+	initReq.Header.Set("Content-Type", "application/json")
 	initResp, err := a.client.Do(initReq)
 	if err != nil {
 		return "", wrapTwitterStageError("upload_media_init", twitterChunkedUploadTimeout, err)
@@ -416,14 +409,13 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 
 		var buf bytes.Buffer
 		mw := multipart.NewWriter(&buf)
-		_ = mw.WriteField("command", "APPEND")
-		_ = mw.WriteField("media_id", mediaID)
 		_ = mw.WriteField("segment_index", fmt.Sprintf("%d", segment))
 		part, _ := mw.CreateFormFile("media", "chunk")
 		part.Write(data[i:end])
 		mw.Close()
 
-		req, _ := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/media/upload", &buf)
+		appendURL := "https://api.x.com/2/media/upload/" + url.PathEscape(mediaID) + "/append"
+		req, _ := http.NewRequestWithContext(ctx, "POST", appendURL, &buf)
 		req.Header.Set("Authorization", "Bearer "+accessToken)
 		req.Header.Set("Content-Type", mw.FormDataContentType())
 		resp, err := a.client.Do(req)
@@ -438,20 +430,9 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 	}
 
 	// FINALIZE.
-	var finBuf bytes.Buffer
-	finForm := multipart.NewWriter(&finBuf)
-	if err := finForm.WriteField("command", "FINALIZE"); err != nil {
-		return "", err
-	}
-	if err := finForm.WriteField("media_id", mediaID); err != nil {
-		return "", err
-	}
-	if err := finForm.Close(); err != nil {
-		return "", err
-	}
-	finReq, _ := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/media/upload", &finBuf)
+	finalizeURL := "https://api.x.com/2/media/upload/" + url.PathEscape(mediaID) + "/finalize"
+	finReq, _ := http.NewRequestWithContext(ctx, "POST", finalizeURL, nil)
 	finReq.Header.Set("Authorization", "Bearer "+accessToken)
-	finReq.Header.Set("Content-Type", finForm.FormDataContentType())
 	finResp, err := a.client.Do(finReq)
 	if err != nil {
 		return "", wrapTwitterStageError("upload_media_finalize", twitterChunkedUploadTimeout, err)
