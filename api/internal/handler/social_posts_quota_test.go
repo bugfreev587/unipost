@@ -30,15 +30,16 @@ func TestCreateScheduledPostReturnsQuotaExceededWhenFreePlanCapIncludesReservati
 
 	dbtx := &scheduledQuotaHTTPTestDB{}
 	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil)
-	body := strings.NewReader(`{
-		"scheduled_at": "2026-06-25T13:00:00Z",
-		"platform_posts": [
-			{
-				"account_id": "acct_linkedin",
-				"caption": "Codex regression coverage for free quota hard cap."
-			}
-		]
-	}`)
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	body := strings.NewReader(fmt.Sprintf(`{
+			"scheduled_at": %q,
+			"platform_posts": [
+				{
+					"account_id": "acct_linkedin",
+					"caption": "Codex regression coverage for free quota hard cap."
+				}
+			]
+		}`, scheduledAt.Format(time.RFC3339)))
 	req := httptest.NewRequest(http.MethodPost, "/v1/posts", body)
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
 	rr := httptest.NewRecorder()
@@ -95,20 +96,21 @@ func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
 		reserved:    0,
 		reservedSet: true,
 		createPost:  true,
-		createdPost: scheduledQuotaCreatedPost(t, time.Date(2026, 6, 25, 13, 0, 0, 0, time.UTC)),
 	}
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	dbtx.createdPost = scheduledQuotaCreatedPost(t, scheduledAt)
 	quotaEmail := &recordingQuotaEmailService{}
 	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil).
 		SetQuotaEmailService(quotaEmail)
-	body := strings.NewReader(`{
-		"scheduled_at": "2026-06-25T13:00:00Z",
-		"platform_posts": [
-			{
-				"account_id": "acct_linkedin",
-				"caption": "Codex regression coverage for free quota email trigger."
-			}
-		]
-	}`)
+	body := strings.NewReader(fmt.Sprintf(`{
+			"scheduled_at": %q,
+			"platform_posts": [
+				{
+					"account_id": "acct_linkedin",
+					"caption": "Codex regression coverage for free quota email trigger."
+				}
+			]
+		}`, scheduledAt.Format(time.RFC3339)))
 	req := httptest.NewRequest(http.MethodPost, "/v1/posts", body)
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
 	rr := httptest.NewRecorder()
@@ -128,8 +130,8 @@ func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
 	if got.WorkspaceID != "ws_1" {
 		t.Fatalf("workspace id = %q, want ws_1", got.WorkspaceID)
 	}
-	if got.Period != "2026-06" {
-		t.Fatalf("period = %q, want 2026-06", got.Period)
+	if got.Period != scheduledAt.Format("2006-01") {
+		t.Fatalf("period = %q, want %s", got.Period, scheduledAt.Format("2006-01"))
 	}
 	if got.Blocked {
 		t.Fatal("blocked = true, want false for an accepted scheduled post")

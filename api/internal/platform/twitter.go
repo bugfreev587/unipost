@@ -274,7 +274,7 @@ func (a *TwitterAdapter) uploadMedia(ctx context.Context, accessToken string, it
 		return "", wrapTwitterStageError("fetch_source_read", twitterFetchSourceTimeout, err)
 	}
 
-	contentType := srcResp.Header.Get("Content-Type")
+	contentType := normalizeTwitterMediaType(srcResp.Header.Get("Content-Type"), "")
 	kind := item.Kind
 	if kind == MediaKindUnknown {
 		kind = SniffMediaKind(item.URL)
@@ -304,9 +304,7 @@ func (a *TwitterAdapter) uploadMedia(ctx context.Context, accessToken string, it
 // "$.media_category: is missing but it is required" with HTTP 400.
 // "tweet_image" is the right category for inline post images.
 func (a *TwitterAdapter) uploadMediaSimple(ctx context.Context, accessToken string, data []byte, contentType string) (string, error) {
-	if contentType == "" {
-		contentType = "image/jpeg"
-	}
+	contentType = normalizeTwitterMediaType(contentType, "image/jpeg")
 
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -361,20 +359,29 @@ func (a *TwitterAdapter) uploadMediaSimple(ctx context.Context, accessToken stri
 // for video and GIF uploads. mediaCategory is the X-side category string
 // (tweet_video or tweet_gif).
 func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken string, data []byte, contentType, mediaCategory string) (string, error) {
-	if contentType == "" {
-		contentType = "video/mp4"
-	}
+	contentType = normalizeTwitterMediaType(contentType, "video/mp4")
 
 	// INIT.
-	initParams := url.Values{
-		"command":        {"INIT"},
-		"total_bytes":    {fmt.Sprintf("%d", len(data))},
-		"media_type":     {contentType},
-		"media_category": {mediaCategory},
+	var initBuf bytes.Buffer
+	initForm := multipart.NewWriter(&initBuf)
+	if err := initForm.WriteField("command", "INIT"); err != nil {
+		return "", err
 	}
-	initReq, _ := http.NewRequestWithContext(ctx, "POST",
-		"https://api.x.com/2/media/upload?"+initParams.Encode(), nil)
+	if err := initForm.WriteField("total_bytes", fmt.Sprintf("%d", len(data))); err != nil {
+		return "", err
+	}
+	if err := initForm.WriteField("media_type", contentType); err != nil {
+		return "", err
+	}
+	if err := initForm.WriteField("media_category", mediaCategory); err != nil {
+		return "", err
+	}
+	if err := initForm.Close(); err != nil {
+		return "", err
+	}
+	initReq, _ := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/media/upload", &initBuf)
 	initReq.Header.Set("Authorization", "Bearer "+accessToken)
+	initReq.Header.Set("Content-Type", initForm.FormDataContentType())
 	initResp, err := a.client.Do(initReq)
 	if err != nil {
 		return "", wrapTwitterStageError("upload_media_init", twitterChunkedUploadTimeout, err)
@@ -431,13 +438,20 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 	}
 
 	// FINALIZE.
-	finParams := url.Values{
-		"command":  {"FINALIZE"},
-		"media_id": {mediaID},
+	var finBuf bytes.Buffer
+	finForm := multipart.NewWriter(&finBuf)
+	if err := finForm.WriteField("command", "FINALIZE"); err != nil {
+		return "", err
 	}
-	finReq, _ := http.NewRequestWithContext(ctx, "POST",
-		"https://api.x.com/2/media/upload?"+finParams.Encode(), nil)
+	if err := finForm.WriteField("media_id", mediaID); err != nil {
+		return "", err
+	}
+	if err := finForm.Close(); err != nil {
+		return "", err
+	}
+	finReq, _ := http.NewRequestWithContext(ctx, "POST", "https://api.x.com/2/media/upload", &finBuf)
 	finReq.Header.Set("Authorization", "Bearer "+accessToken)
+	finReq.Header.Set("Content-Type", finForm.FormDataContentType())
 	finResp, err := a.client.Do(finReq)
 	if err != nil {
 		return "", wrapTwitterStageError("upload_media_finalize", twitterChunkedUploadTimeout, err)
@@ -513,11 +527,27 @@ func (a *TwitterAdapter) uploadMediaChunked(ctx context.Context, accessToken str
 		return "", fmt.Errorf("media still %s after polling timeout", pi.State)
 	}
 
-	// Suppress the "strings" import warning by using it in a no-op format
-	// path; the field tags above already pull it in for json, but we keep an
-	// explicit reference to make the import obvious to readers.
-	_ = strings.TrimSpace
 	return mediaID, nil
+}
+
+func normalizeTwitterMediaType(contentType, fallback string) string {
+	base := strings.ToLower(strings.TrimSpace(contentType))
+	if i := strings.Index(base, ";"); i >= 0 {
+		base = strings.TrimSpace(base[:i])
+	}
+	if base == "" {
+		return fallback
+	}
+	switch base {
+	case "image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/webm", "video/quicktime":
+		return base
+	case "image/jpg":
+		return "image/jpeg"
+	case "video/x-m4v":
+		return "video/mp4"
+	default:
+		return fallback
+	}
 }
 
 func wrapTwitterStageError(stage string, timeout time.Duration, err error) error {
