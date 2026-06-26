@@ -46,6 +46,7 @@ type LifecycleEvent struct {
 type Options struct {
 	Enabled          func(context.Context, DashboardUser) bool
 	TransactionalIDs TransactionalIDs
+	EmailAuditStore  EmailAuditStore
 }
 
 type TransactionalIDs struct {
@@ -65,6 +66,9 @@ type Syncer struct {
 }
 
 func NewSyncer(client LifecycleClient, opts Options) *Syncer {
+	if opts.EmailAuditStore != nil && client != nil {
+		client = NewAuditedClient(client, opts.EmailAuditStore)
+	}
 	enabled := opts.Enabled
 	if enabled == nil {
 		enabled = func(ctx context.Context, user DashboardUser) bool {
@@ -163,6 +167,7 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 			UserID:          event.UserID,
 			IdempotencyKey:  event.IdempotencyKey,
 			DataVariables:   lifecycleTransactionalDataVariables(event, props),
+			Audit:           lifecycleTransactionalAudit(event),
 		}); err != nil {
 			slog.Warn("loops: lifecycle transactional email failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
 		}
@@ -268,6 +273,8 @@ func lifecycleTransactionalDataVariables(event LifecycleEvent, props map[string]
 		addTransactionalValue(vars, "error_code", props["error_code"])
 		addTransactionalValue(vars, "dashboard_url", props["dashboard_url"])
 		addTransactionalValue(vars, "retriable", props["retriable"])
+	case "user_account_canceled":
+		addTransactionalValue(vars, "canceled_at", props["canceled_at"])
 	}
 	return vars
 }

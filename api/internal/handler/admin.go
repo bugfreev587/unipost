@@ -885,6 +885,7 @@ type adminBillingQuery struct {
 
 type adminEmailNotificationRow struct {
 	ID               string     `json:"id"`
+	EventKey         string     `json:"event_key"`
 	EventType        string     `json:"event_type"`
 	TriggerEvent     string     `json:"trigger_event"`
 	WorkspaceID      string     `json:"workspace_id"`
@@ -906,66 +907,233 @@ type adminEmailNotificationRow struct {
 	SentAt           *time.Time `json:"sent_at,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+	Provider         string     `json:"provider"`
+	DeliveryClass    string     `json:"delivery_class"`
+	TriggerSource    string     `json:"trigger_source"`
+	TriggerReference string     `json:"trigger_reference_id"`
+	SubjectSnapshot  string     `json:"subject_snapshot"`
 }
 
 type adminEmailNotificationsQuery struct {
 	Search    string
 	Status    string
+	Provider  string
+	EventKey  string
 	Threshold int
 	Period    string
 	Limit     int
 	Offset    int
 }
 
+const adminEmailNotificationsCTESQL = `
+WITH email_notifications AS (
+  SELECT
+    e.id,
+    e.event_key,
+    e.event_key AS event_type,
+    COALESCE(NULLIF(e.trigger_reference_id, ''), NULLIF(e.idempotency_key, ''), e.id) AS trigger_event,
+    COALESCE(e.workspace_id, '') AS workspace_id,
+    COALESCE(w.name, '') AS workspace_name,
+    COALESCE(e.recipient_user_id, '') AS user_id,
+    COALESCE(u.email, '') AS owner_email,
+    e.recipient_email AS email,
+    ''::TEXT AS period,
+    0::INTEGER AS threshold_percent,
+    e.status,
+    COALESCE(e.provider_template_id, '') AS transactional_id,
+    e.idempotency_key,
+    0::INTEGER AS effective_usage,
+    0::INTEGER AS completed_usage,
+    0::INTEGER AS reserved_usage,
+    0::INTEGER AS post_limit,
+    e.last_error AS failure_reason,
+    e.attempted_at,
+    e.sent_at,
+    e.created_at,
+    e.updated_at,
+    e.provider,
+    e.delivery_class,
+    COALESCE(e.trigger_source, '') AS trigger_source,
+    COALESCE(e.trigger_reference_id, '') AS trigger_reference_id,
+    COALESCE(e.subject_snapshot, '') AS subject_snapshot
+  FROM email_send_attempts e
+  LEFT JOIN workspaces w ON w.id = e.workspace_id
+  LEFT JOIN users u ON u.id = e.recipient_user_id
+
+  UNION ALL
+
+  SELECT
+    r.id,
+    'email.quota.free_plan_reminder.v1' AS event_key,
+    'free_plan_quota_reminder' AS event_type,
+    'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event,
+    r.workspace_id,
+    COALESCE(w.name, '') AS workspace_name,
+    r.user_id,
+    COALESCE(u.email, '') AS owner_email,
+    r.email,
+    r.period,
+    r.threshold_percent,
+    r.status,
+    r.transactional_id,
+    r.idempotency_key,
+    r.effective_usage,
+    r.completed_usage,
+    r.reserved_usage,
+    r.post_limit,
+    r.failure_reason,
+    r.attempted_at,
+    r.sent_at,
+    r.created_at,
+    r.updated_at,
+    'loops' AS provider,
+    'service_alert' AS delivery_class,
+    'quota threshold evaluator' AS trigger_source,
+    r.workspace_id || ':' || r.period || ':' || r.threshold_percent::TEXT AS trigger_reference_id,
+    '' AS subject_snapshot
+  FROM free_plan_quota_email_reminders r
+  LEFT JOIN workspaces w ON w.id = r.workspace_id
+  LEFT JOIN users u ON u.id = r.user_id
+
+  UNION ALL
+
+  SELECT
+    s.id,
+    'email.support.error_triage_follow_up.v1' AS event_key,
+    'error_triage_user_action' AS event_type,
+    s.item_id || ':' || s.recipient_scope_key AS trigger_event,
+    COALESCE(rec.workspace_id, '') AS workspace_id,
+    COALESCE(w.name, '') AS workspace_name,
+    s.recipient_user_id AS user_id,
+    COALESCE(u.email, '') AS owner_email,
+    s.recipient_email AS email,
+    ''::TEXT AS period,
+    0::INTEGER AS threshold_percent,
+    CASE s.provider_status WHEN 'succeeded' THEN 'sent' ELSE s.provider_status END AS status,
+    COALESCE(s.loops_transactional_id, '') AS transactional_id,
+    s.idempotency_key,
+    0::INTEGER AS effective_usage,
+    0::INTEGER AS completed_usage,
+    0::INTEGER AS reserved_usage,
+    0::INTEGER AS post_limit,
+    s.provider_error AS failure_reason,
+    s.created_at AS attempted_at,
+    s.sent_at,
+    s.created_at,
+    s.created_at AS updated_at,
+    'loops' AS provider,
+    'service_alert' AS delivery_class,
+    'admin error triage send' AS trigger_source,
+    s.item_id AS trigger_reference_id,
+    s.subject_snapshot
+  FROM error_triage_email_sends s
+  LEFT JOIN error_triage_item_recipients rec ON rec.id = s.recipient_id
+  LEFT JOIN workspaces w ON w.id = rec.workspace_id
+  LEFT JOIN users u ON u.id = s.recipient_user_id
+
+  UNION ALL
+
+  SELECT
+    d.id,
+    CASE d.event_type
+      WHEN 'post.failed' THEN 'email.post.failed.v1'
+      WHEN 'account.disconnected' THEN 'email.account.disconnected.v1'
+      WHEN 'billing.payment_failed' THEN 'email.billing.payment_failed.v1'
+      WHEN 'billing.usage_80pct' THEN 'email.quota.free_plan_reminder.v1'
+      ELSE d.event_type
+    END AS event_key,
+    d.event_type AS event_type,
+    d.event_id AS trigger_event,
+    COALESCE(c.workspace_id, '') AS workspace_id,
+    COALESCE(w.name, '') AS workspace_name,
+    c.user_id AS user_id,
+    COALESCE(u.email, '') AS owner_email,
+    COALESCE(c.config->>'address', '') AS email,
+    ''::TEXT AS period,
+    0::INTEGER AS threshold_percent,
+    CASE d.status WHEN 'dead' THEN 'failed' ELSE d.status END AS status,
+    '' AS transactional_id,
+    d.event_id || ':' || d.channel_id AS idempotency_key,
+    0::INTEGER AS effective_usage,
+    0::INTEGER AS completed_usage,
+    0::INTEGER AS reserved_usage,
+    0::INTEGER AS post_limit,
+    d.last_error AS failure_reason,
+    COALESCE(d.delivered_at, d.next_retry_at, d.created_at) AS attempted_at,
+    d.delivered_at AS sent_at,
+    d.created_at,
+    COALESCE(d.delivered_at, d.next_retry_at, d.created_at) AS updated_at,
+    CASE d.status WHEN 'skipped' THEN 'notification_system' ELSE 'resend_legacy' END AS provider,
+    CASE d.event_type WHEN 'billing.payment_failed' THEN 'critical_transactional' ELSE 'service_alert' END AS delivery_class,
+    'notification dispatcher' AS trigger_source,
+    d.event_id AS trigger_reference_id,
+    '' AS subject_snapshot
+  FROM notification_deliveries d
+  JOIN notification_channels c ON c.id = d.channel_id
+  LEFT JOIN workspaces w ON w.id = c.workspace_id
+  LEFT JOIN users u ON u.id = c.user_id
+  WHERE c.kind = 'email'
+)
+`
+
 const adminEmailNotificationsSelectSQL = `
 SELECT
-  r.id,
-  'free_plan_quota_reminder' AS event_type,
-  'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event,
-  r.workspace_id,
-  COALESCE(w.name, '') AS workspace_name,
-  r.user_id,
-  COALESCE(u.email, '') AS owner_email,
-  r.email,
-  r.period,
-  r.threshold_percent,
-  r.status,
-  r.transactional_id,
-  r.idempotency_key,
-  r.effective_usage,
-  r.completed_usage,
-  r.reserved_usage,
-  r.post_limit,
-  r.failure_reason,
-  r.attempted_at,
-  r.sent_at,
-  r.created_at,
-  r.updated_at
-FROM free_plan_quota_email_reminders r
-LEFT JOIN workspaces w ON w.id = r.workspace_id
-LEFT JOIN users u ON u.id = r.user_id
+  id,
+  event_key,
+  event_type,
+  trigger_event,
+  workspace_id,
+  workspace_name,
+  user_id,
+  owner_email,
+  email,
+  period,
+  threshold_percent,
+  status,
+  transactional_id,
+  idempotency_key,
+  effective_usage,
+  completed_usage,
+  reserved_usage,
+  post_limit,
+  failure_reason,
+  attempted_at,
+  sent_at,
+  created_at,
+  updated_at,
+  provider,
+  delivery_class,
+  trigger_source,
+  trigger_reference_id,
+  subject_snapshot
+FROM email_notifications
 `
 
 const adminEmailNotificationsWhereSQL = `
-WHERE ($1::TEXT = '' OR r.status = $1)
-  AND ($2::INT = 0 OR r.threshold_percent = $2)
-  AND ($3::TEXT = '' OR r.period = $3)
+WHERE ($1::TEXT = '' OR status = $1)
+  AND ($2::INT = 0 OR threshold_percent = $2)
+  AND ($3::TEXT = '' OR period = $3)
+  AND ($5::TEXT = '' OR provider = $5)
+  AND ($6::TEXT = '' OR event_key = $6)
   AND (
     $4::TEXT = ''
-    OR r.email ILIKE '%' || $4 || '%'
-    OR u.email ILIKE '%' || $4 || '%'
-    OR w.name ILIKE '%' || $4 || '%'
-    OR r.workspace_id ILIKE '%' || $4 || '%'
-    OR r.user_id ILIKE '%' || $4 || '%'
-    OR r.id ILIKE '%' || $4 || '%'
-    OR r.idempotency_key ILIKE '%' || $4 || '%'
-    OR ('usage_' || r.threshold_percent::TEXT || '_percent') ILIKE '%' || $4 || '%'
+    OR email ILIKE '%' || $4 || '%'
+    OR owner_email ILIKE '%' || $4 || '%'
+    OR workspace_name ILIKE '%' || $4 || '%'
+    OR workspace_id ILIKE '%' || $4 || '%'
+    OR user_id ILIKE '%' || $4 || '%'
+    OR id ILIKE '%' || $4 || '%'
+    OR event_key ILIKE '%' || $4 || '%'
+    OR event_type ILIKE '%' || $4 || '%'
+    OR trigger_event ILIKE '%' || $4 || '%'
+    OR idempotency_key ILIKE '%' || $4 || '%'
+    OR trigger_reference_id ILIKE '%' || $4 || '%'
   )
 `
 
 func adminEmailNotificationsBaseSelect() string {
-	return adminEmailNotificationsSelectSQL + adminEmailNotificationsWhereSQL + `
-ORDER BY r.attempted_at DESC, r.created_at DESC`
+	return adminEmailNotificationsCTESQL + adminEmailNotificationsSelectSQL + adminEmailNotificationsWhereSQL + `
+ORDER BY attempted_at DESC, created_at DESC`
 }
 
 func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
@@ -973,7 +1141,7 @@ func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
 	switch status {
 	case "", "all":
 		return "", true
-	case "pending", "sent", "failed":
+	case "pending", "sent", "failed", "skipped":
 		return status, true
 	default:
 		return "", false
@@ -1885,20 +2053,20 @@ func (h *AdminHandler) queryEmailNotifications(ctx context.Context, opts adminEm
 		opts.Threshold,
 		strings.TrimSpace(opts.Period),
 		strings.TrimSpace(opts.Search),
+		strings.TrimSpace(opts.Provider),
+		strings.TrimSpace(opts.EventKey),
 	}
 
 	var total int64
-	if err := h.pool.QueryRow(ctx, `
+	if err := h.pool.QueryRow(ctx, adminEmailNotificationsCTESQL+`
 SELECT COUNT(*)::BIGINT
-FROM free_plan_quota_email_reminders r
-LEFT JOIN workspaces w ON w.id = r.workspace_id
-LEFT JOIN users u ON u.id = r.user_id
+FROM email_notifications
 `+adminEmailNotificationsWhereSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 
 	rows, err := h.pool.Query(ctx, adminEmailNotificationsBaseSelect()+`
-LIMIT $5 OFFSET $6`, append(args, limit, offset)...)
+LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1911,6 +2079,7 @@ LIMIT $5 OFFSET $6`, append(args, limit, offset)...)
 		var sentAt *time.Time
 		if err := rows.Scan(
 			&item.ID,
+			&item.EventKey,
 			&item.EventType,
 			&item.TriggerEvent,
 			&item.WorkspaceID,
@@ -1932,6 +2101,11 @@ LIMIT $5 OFFSET $6`, append(args, limit, offset)...)
 			&sentAt,
 			&item.CreatedAt,
 			&item.UpdatedAt,
+			&item.Provider,
+			&item.DeliveryClass,
+			&item.TriggerSource,
+			&item.TriggerReference,
+			&item.SubjectSnapshot,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -1947,14 +2121,15 @@ LIMIT $5 OFFSET $6`, append(args, limit, offset)...)
 }
 
 // ListEmailNotifications serves GET /v1/admin/email-notifications.
-// It is the read-only operational view for free-plan quota reminder
-// emails sent through Loops.
+// It is the read-only operational view for user-facing email sends and
+// migration audit rows across Loops, quota, support, and legacy
+// notification-email paths.
 func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 
 	status, ok := normalizeAdminEmailNotificationStatus(q.Get("status"))
 	if !ok {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "status must be one of: all, pending, sent, failed")
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "status must be one of: all, pending, sent, failed, skipped")
 		return
 	}
 	threshold, ok := parseAdminEmailNotificationThreshold(q.Get("threshold"))
@@ -1974,6 +2149,8 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 	out, total, err := h.queryEmailNotifications(r.Context(), adminEmailNotificationsQuery{
 		Search:    q.Get("search"),
 		Status:    status,
+		Provider:  q.Get("provider"),
+		EventKey:  q.Get("event_key"),
 		Threshold: threshold,
 		Period:    q.Get("period"),
 		Limit:     limit,

@@ -250,7 +250,7 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 	h.syncLoopsDashboardUser(r.Context(), eventType, userData, email, name, workspaceID, workspaceName)
 
 	if eventType == "user.created" && createdWorkspace && email != "" {
-		h.sendWelcomeEmail(r.Context(), userData.ID, email, name, workspaceName)
+		h.sendWelcomeEmail(r.Context(), userData.ID, email, name, workspaceID, workspaceName)
 	}
 
 	log.Printf("Synced user %s (%s)", userData.ID, email)
@@ -275,7 +275,7 @@ func (h *WebhookHandler) syncLoopsDashboardUser(ctx context.Context, eventType s
 	}
 }
 
-func (h *WebhookHandler) sendWelcomeEmail(ctx context.Context, userID, email, recipientName, workspaceName string) {
+func (h *WebhookHandler) sendWelcomeEmail(ctx context.Context, userID, email, recipientName, workspaceID, workspaceName string) {
 	if h == nil || strings.TrimSpace(email) == "" {
 		return
 	}
@@ -306,6 +306,14 @@ func (h *WebhookHandler) sendWelcomeEmail(ctx context.Context, userID, email, re
 			"app_url":        appURL,
 			"connect_url":    appURL + "/projects",
 			"discord_url":    welcomeDiscordURL,
+		},
+		Audit: loops.EmailAudit{
+			EventKey:           "email.user.welcome.v1",
+			WorkspaceID:        workspaceID,
+			Provider:           "loops",
+			DeliveryClass:      "lifecycle",
+			TriggerSource:      "clerk user.created webhook after workspace creation",
+			TriggerReferenceID: userID,
 		},
 	}); err != nil {
 		slog.Warn("welcome email: Loops transactional send failed", "user_id", userID, "email", email, "workspace_name", workspaceName, "error", err)
