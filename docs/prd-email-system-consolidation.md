@@ -37,7 +37,7 @@ The recommended direction follows common SaaS email architecture:
 2. Define a target event taxonomy that separates lifecycle, transactional, billing, quota, product-alert, support, and notification-channel concerns.
 3. Move user-facing email rendering into Loops templates wherever practical.
 4. Keep backend-owned trigger logic, idempotency, auditability, and safety checks in UniPost.
-5. Remove or prevent duplicate email paths, especially for `post.failed` and plan upgrade events.
+5. Remove or prevent duplicate-capable email paths, especially for `post.failed`, welcome, and plan upgrade events where duplicate user sends depend on Resend, Loops template IDs, and Loops dashboard workflow configuration.
 6. Define missing events that should be added for a complete SaaS email lifecycle.
 7. Provide a phased migration plan that can ship safely through the normal UniPost dev -> staging -> production flow.
 
@@ -102,12 +102,12 @@ Current role:
 |---|---|---:|---|---|---|
 | Welcome email | Clerk `user.created` webhook after workspace creation | Resend | Backend `renderWelcomeEmail` | Active | Loops workflow or transactional template |
 | Loops signup event | Clerk `user.created` / `user.updated` webhook | Loops | Event `user_signed_up`; workflow depends on Loops config | Active contact/event sync | Loops lifecycle workflow |
-| Workspace invite | Workspace admin invites member | Resend | Backend `sendInviteEmail` | Active | Loops transactional template |
+| Workspace invite | UniPost workspace admin creates a `workspace_invites` row | Resend | Backend `sendInviteEmail` | Active; UniPost-owned invite path, not Clerk organization invite mail | Loops transactional template |
 | Paid activation | Stripe checkout from free or no plan to paid plan | Resend | Backend `renderPaidActivationEmail` | Active | Merge into Loops `billing.plan_changed` or a dedicated paid activation template |
 | Plan changed | Stripe checkout/subscription update with changed plan | Loops if template ID exists; else Loops event | `LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID` or event `plan_changed` | Active, but can duplicate paid activation | Loops transactional template |
 | Account canceled | User deletes UniPost account | Loops if template ID exists; else Loops event | `LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID` or event `user_account_canceled` | Active | Loops transactional template, with policy review |
 | Free plan quota reminder | Publish, schedule, or block path evaluates quota thresholds | Loops | `LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID` | Active | Keep Loops transactional, add registry/audit consistency |
-| Post failed notification | Publish/worker failure reaches terminal failure path | Resend notification system and Loops lifecycle path can both exist | Backend `renderEmail("post.failed")`; `LOOPS_POST_FAILED_TRANSACTIONAL_ID` or event | Duplicate-risk | Single Loops email path; notification system keeps Slack/Discord only |
+| Post failed notification | Publish/worker failure reaches terminal failure path | Resend notification system plus Loops `post_failed` lifecycle path when configured | Backend `renderEmail("post.failed")`; `LOOPS_POST_FAILED_TRANSACTIONAL_ID` or Loops event/workflow | Duplicate-capable depending on env vars and Loops dashboard config | Single Loops email path; notification system keeps Slack/Discord only |
 | Account disconnected notification | Manual disconnect or token refresh failure | Resend notification system for email; Slack/Discord also supported | Backend `renderEmail("account.disconnected")` | Active | Loops email template plus notification Slack/Discord |
 | Billing usage 80 percent | Notification catalog includes `billing.usage_80pct` | Resend if published | Backend `renderEmail("billing.usage_80pct")` | Dormant / legacy, superseded by quota reminder service | Remove or hide email event; map usage emails to quota service |
 | Billing payment failed | Stripe `invoice.payment_failed` | Resend notification system | Backend `renderEmail("billing.payment_failed")` | Active | Loops dunning transactional or workflow-backed template |
@@ -118,7 +118,9 @@ Current role:
 
 ### Duplicate or Competing Sends
 
-`post.failed` can be surfaced through both the legacy notification email path and the Loops lifecycle path. Plan upgrades can send a Resend paid activation email and a Loops plan changed email. These need one authoritative email-send decision per event.
+`post.failed` is not an unconditional duplicate send in source code. The backend notification path publishes `post.failed` and can send a Resend-backed notification email. Separately, the Loops lifecycle path emits `post_failed` and sends a Loops transactional email when `LOOPS_POST_FAILED_TRANSACTIONAL_ID` is configured, or may trigger a Loops-dashboard workflow when configured there. This makes `post.failed` duplicate-capable depending on environment and Loops dashboard configuration.
+
+Welcome has a similar risk: the backend sends `renderWelcomeEmail` through Resend after `user.created`, while the Loops path also emits `user_signed_up`, which can power a Loops onboarding workflow. Plan upgrades can send a Resend paid activation email and a Loops plan changed email when both paths are configured. These need one authoritative email-send decision per event plus a documented Loops-side workflow audit.
 
 ### Templates Are Scattered
 
@@ -152,12 +154,14 @@ Each registry entry should define:
 - `trigger_source`: webhook, handler, worker, scheduled job, admin action, or Loops workflow.
 - `provider`: default `loops`.
 - `template_id_env`: the expected Loops transactional template ID environment variable when applicable.
+- `external_loops_config`: expected Loops workflow or transactional-template behavior configured outside the repo.
 - `delivery_class`: `critical_transactional`, `service_alert`, `lifecycle`, `marketing`, or `test`.
 - `recipient_policy`: workspace owner, invited email, acting user, affected user, or admin-selected recipient.
 - `idempotency_policy`: deterministic key format.
 - `data_contract`: required and optional variables sent to Loops.
 - `audit_policy`: whether to write a durable send attempt row.
 - `fallback_policy`: none, retry, or Resend emergency fallback.
+- `retention_policy`: how long subject snapshots, variable snapshots, and provider errors are retained.
 
 ### 2. Loops as User Email Template Layer
 
@@ -203,14 +207,21 @@ Move user email rendering out of `worker/notification.go`. Email deliveries for 
 | `email.user.welcome.v1` | Clerk `user.created` after workspace creation | New user | `LOOPS_USER_WELCOME_TRANSACTIONAL_ID` | `recipient_name`, `workspace_name`, `app_url`, `connect_url`, `discord_url` | `user_welcome:{user_id}` |
 | `email.workspace.member_invited.v1` | Workspace invite created | Invited email | `LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID` | `workspace_name`, `role`, `accept_url`, `expires_at` | `workspace_invite:{invite_id}` |
 | `email.billing.plan_changed.v1` | Stripe checkout/subscription update changes plan | Workspace owner | `LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID` | `workspace_name`, `old_plan_id`, `new_plan_id`, `change_type`, `billing_url` | Existing plan change key |
-| `email.billing.payment_failed.v1` | Stripe `invoice.payment_failed` | Workspace owner | `LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID` | `workspace_name`, `plan_id`, `billing_url`, `retry_message` | `billing_payment_failed:{invoice_id_or_subscription_id}` |
+| `email.billing.payment_failed.v1` | Stripe `invoice.payment_failed` | Workspace owner | `LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID` | `workspace_name`, `plan_id`, `billing_url`, `retry_message`, `attempt_count`, `next_payment_attempt` | `billing_payment_failed:{invoice_id}:{attempt_count}` |
 | `email.billing.payment_recovered.v1` | Stripe payment succeeds after past-due status | Workspace owner | `LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID` | `workspace_name`, `plan_id`, `billing_url` | `billing_payment_recovered:{invoice_id}` |
 | `email.billing.subscription_canceled.v1` | Stripe subscription canceled or user cancels paid plan | Workspace owner | `LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID` | `workspace_name`, `plan_id`, `effective_at`, `billing_url` | `billing_subscription_canceled:{subscription_id}:{effective_at}` |
 | `email.quota.free_plan_reminder.v1` | Free workspace crosses 80/85/90/95/100 percent threshold | Workspace owner | `LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID` | Existing quota variables | Existing quota key |
 | `email.account.disconnected.v1` | Manual disconnect or token refresh permanently fails | Workspace owner | `LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID` | `workspace_name`, `platform`, `account_name`, `reconnect_url`, `reason` | `account_disconnected:{social_account_id}:{event_source}` |
 | `email.post.failed.v1` | Terminal publish failure after retry policy | Workspace owner | `LOOPS_POST_FAILED_TRANSACTIONAL_ID` | `workspace_name`, `post_id`, `platform`, `error_code`, `dashboard_url`, `retriable` | Existing post failed key, one send per terminal failure |
 | `email.support.error_triage_follow_up.v1` | Admin clicks send after reviewing AI-generated draft | Admin-selected affected dashboard user | `LOOPS_ERROR_TRIAGE_USER_ACTION_TRANSACTIONAL_ID` | `subject`, `body`, `cta_url` | Existing triage key |
-| `email.notification.test.v1` | User tests email channel | Authenticated user | `LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID` | `recipient_name`, `settings_url` | `notification_test:{user_id}:{timestamp_bucket}` |
+| `email.notification.test.v1` | User tests email channel | Authenticated user | `LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID` | `recipient_name`, `settings_url` | No suppression idempotency; allow repeated user-initiated tests |
+
+Billing dunning intent:
+
+- `email.billing.payment_failed.v1` should send at most once per Stripe invoice collection attempt, not once per webhook replay and not only once per subscription lifetime. Use Stripe invoice ID plus invoice attempt count when available. If attempt count is unavailable, use invoice ID plus `next_payment_attempt` or Stripe event ID as a fallback and document the behavior before implementation.
+- `email.billing.payment_recovered.v1` should send once per invoice after UniPost observes recovery from a prior failed or `past_due` state. A replayed Stripe success webhook must not resend the recovery email.
+- `email.billing.plan_changed.v1` should suppress overlapping paid activation copy. If the Loops template includes paid activation content, remove the Resend paid activation email for that transition.
+- `email.notification.test.v1` should not use a coarse time bucket that blocks repeat tests. It is explicitly user-initiated, so repeated clicks should produce repeated test emails while still logging attempts.
 
 ### Lifecycle Workflows
 
@@ -234,10 +245,12 @@ Loops workflows should own these non-critical lifecycle sequences after the back
 1. `email.user.welcome.v1`
    - Current welcome email is Resend/backend-rendered.
    - Move to Loops so copy and onboarding can be managed in one place.
+   - Migration must audit and disable overlapping Loops `user_signed_up` welcome workflows or the backend Resend welcome path before enabling the new Loops welcome template.
 
 2. `email.workspace.member_invited.v1`
    - Current invite email is Resend/backend-rendered.
    - This is a classic transactional email and should use a Loops template.
+   - The current invite path is UniPost-owned (`workspace_invites` plus an accept URL). If Clerk organization invitations are introduced later, this event must be revisited to avoid double invite emails.
 
 3. `email.billing.payment_failed.v1`
    - Current payment failure is a Resend notification email.
@@ -250,6 +263,7 @@ Loops workflows should own these non-critical lifecycle sequences after the back
 5. `email.post.failed.v1` single-owner decision
    - Keep only one customer email path.
    - Recommended: Loops transactional template for email, notification system for Slack/Discord.
+   - Audit Loops dashboard workflows and transactional-template configuration for `post_failed`; backend tests alone cannot prove that an external Loops workflow will not also send.
 
 6. `email.billing.payment_recovered.v1`
    - Missing today.
@@ -331,6 +345,8 @@ Minimum fields:
 
 Existing ledgers such as `free_plan_quota_email_reminders`, `error_triage_email_sends`, and `notification_deliveries` can remain initially. The PRD target is a consistent audit pattern, not necessarily a single table in the first migration.
 
+Snapshots can contain PII such as recipient names, workspace names, support context, subject lines, and CTA URLs. Implementations must define retention and redaction rules before storing broad `data_variables_snapshot` payloads. Support and triage email bodies should follow the stricter retention policy already planned for error triage artifacts.
+
 ## Template Contract Requirements
 
 Each Loops transactional template must have a documented contract:
@@ -346,6 +362,7 @@ Each Loops transactional template must have a documented contract:
 - Whether the template may include marketing content.
 - Whether a user can disable this class of email.
 - Production rollback action.
+- External Loops workflow dependencies, including whether a workflow listens for the same event and could send an additional email.
 
 All template IDs should be documented in `docs/feature-flags-unleash.md` or a new `docs/email-templates.md`. Since these are configuration dependencies rather than feature flags, a dedicated `docs/email-templates.md` is cleaner.
 
@@ -356,7 +373,9 @@ All template IDs should be documented in `docs/feature-flags-unleash.md` or a ne
 1. Add a backend email event registry with the target event keys and template ID environment names.
 2. Add `docs/email-templates.md` with each template contract.
 3. Add tests that fail if a configured event is missing a template contract or owner.
-4. Do not change sending behavior yet.
+4. Add tests that fail if a `LOOPS_*_TRANSACTIONAL_ID` variable wired in `api/cmd/api/main.go` has no registry entry or template contract.
+5. Add an explicit Loops dashboard configuration audit checklist for workflows that listen to `user_signed_up`, `post_failed`, `plan_changed`, or other lifecycle events.
+6. Do not change sending behavior yet.
 
 ### Phase 2 - Move Simple Resend Emails to Loops
 
@@ -371,9 +390,11 @@ All template IDs should be documented in `docs/feature-flags-unleash.md` or a ne
 2. Add `email.billing.payment_failed.v1`.
 3. Add `email.billing.payment_recovered.v1`.
 4. Add `email.billing.subscription_canceled.v1`.
-5. Ensure Stripe-triggered emails are idempotent by Stripe invoice/subscription/event IDs.
+5. Ensure Stripe-triggered payment failure emails are idempotent by invoice attempt, while recovery emails are idempotent by invoice recovery.
 
 ### Phase 4 - Product Alert De-Duplication
+
+Prerequisite: the normalized email audit path from Phase 6, or an event-specific durable ledger with equivalent fields, must exist before disabling email fanout from `notification_deliveries`. Otherwise UniPost loses per-recipient email observability while moving the send from the notification worker to Loops.
 
 1. Move account disconnected email to Loops.
 2. Move post failed email to one Loops path.
@@ -404,7 +425,8 @@ For each migrated email:
 4. Verify the email renders with correct variables and links.
 5. Verify idempotency by repeating the trigger.
 6. Verify no duplicate Resend email is sent for the same event.
-7. Promote through staging and production using the standard UniPost release flow when implementation begins.
+7. Verify Loops dashboard workflows do not send a second email for the same canonical event.
+8. Promote through staging and production using the standard UniPost release flow when implementation begins.
 
 ## Acceptance Criteria
 
@@ -412,12 +434,14 @@ For each migrated email:
 2. No user-facing email is hardcoded in arbitrary handlers after migration, except for explicit fallback paths.
 3. Welcome, invite, billing, quota, post failure, account disconnected, and support follow-up emails use Loops templates.
 4. Resend contacts are not synced.
-5. `post.failed` does not send both Resend and Loops emails.
-6. Paid plan activation does not send both a Resend paid activation email and a separate Loops plan changed email with overlapping content.
+5. `post.failed` has exactly one email owner after migration, and both repository configuration and Loops dashboard configuration are documented so it cannot send both Resend and Loops emails.
+6. Paid plan activation has exactly one email owner after migration, and Loops template/workflow configuration is audited so it cannot send overlapping paid activation and plan changed emails.
 7. Slack and Discord notification channels continue to work for supported events.
 8. Legacy `billing.usage_80pct` does not create duplicate quota emails.
 9. All migrated emails have deterministic idempotency keys.
-10. Admin/support can inspect failed user-email sends with provider error details.
+10. Stripe dunning sends are idempotent by invoice attempt, while Stripe recovery sends are idempotent by invoice recovery.
+11. Notification email migration does not remove per-recipient delivery observability; either a normalized audit row or equivalent event ledger exists before legacy email fanout is disabled.
+12. Admin/support can inspect failed user-email sends with provider error details.
 
 ## Risks and Mitigations
 
