@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
@@ -64,6 +65,65 @@ func (h *StripeWebhookHandler) syncLoopsPlanChanged(ctx context.Context, workspa
 	if err := h.loopsSyncer.SendLifecycleEvent(ctx, event); err != nil {
 		slog.Warn("loops: failed to send plan_changed", "workspace_id", workspaceID, "user_id", owner.ID, "error", err)
 	}
+}
+
+func (h *StripeWebhookHandler) syncLoopsBillingPaymentFailed(ctx context.Context, sub db.Subscription, invoice stripe.Invoice, stripeEventID string) {
+	if h == nil || h.loopsSyncer == nil || h.queries == nil {
+		return
+	}
+	workspace, owner, ok := h.billingEmailRecipient(ctx, sub.WorkspaceID, "payment_failed")
+	if !ok {
+		return
+	}
+	event := buildLoopsBillingPaymentFailedEvent(owner, workspace, sub, invoice, stripeEventID, h.appBaseURL)
+	if err := h.loopsSyncer.SendLifecycleEvent(ctx, event); err != nil {
+		slog.Warn("loops: failed to send billing_payment_failed", "workspace_id", sub.WorkspaceID, "user_id", owner.ID, "invoice_id", invoice.ID, "error", err)
+	}
+}
+
+func (h *StripeWebhookHandler) syncLoopsBillingPaymentRecovered(ctx context.Context, sub db.Subscription, invoice stripe.Invoice) {
+	if h == nil || h.loopsSyncer == nil || h.queries == nil {
+		return
+	}
+	workspace, owner, ok := h.billingEmailRecipient(ctx, sub.WorkspaceID, "payment_recovered")
+	if !ok {
+		return
+	}
+	event := buildLoopsBillingPaymentRecoveredEvent(owner, workspace, sub, invoice, h.appBaseURL)
+	if err := h.loopsSyncer.SendLifecycleEvent(ctx, event); err != nil {
+		slog.Warn("loops: failed to send billing_payment_recovered", "workspace_id", sub.WorkspaceID, "user_id", owner.ID, "invoice_id", invoice.ID, "error", err)
+	}
+}
+
+func (h *StripeWebhookHandler) syncLoopsBillingSubscriptionCanceled(ctx context.Context, localSub db.Subscription, stripeSub stripe.Subscription) {
+	if h == nil || h.loopsSyncer == nil || h.queries == nil {
+		return
+	}
+	workspace, owner, ok := h.billingEmailRecipient(ctx, localSub.WorkspaceID, "subscription_canceled")
+	if !ok {
+		return
+	}
+	event := buildLoopsBillingSubscriptionCanceledEvent(owner, workspace, localSub, stripeSub, h.appBaseURL)
+	if err := h.loopsSyncer.SendLifecycleEvent(ctx, event); err != nil {
+		slog.Warn("loops: failed to send billing_subscription_canceled", "workspace_id", localSub.WorkspaceID, "user_id", owner.ID, "subscription_id", stripeSub.ID, "error", err)
+	}
+}
+
+func (h *StripeWebhookHandler) billingEmailRecipient(ctx context.Context, workspaceID, eventName string) (db.Workspace, db.User, bool) {
+	workspace, err := h.queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		slog.Warn("loops: failed to load workspace for billing email", "workspace_id", workspaceID, "event", eventName, "error", err)
+		return db.Workspace{}, db.User{}, false
+	}
+	owner, err := h.queries.GetUser(ctx, workspace.UserID)
+	if err != nil {
+		slog.Warn("loops: failed to load workspace owner for billing email", "workspace_id", workspaceID, "user_id", workspace.UserID, "event", eventName, "error", err)
+		return db.Workspace{}, db.User{}, false
+	}
+	if strings.TrimSpace(owner.Email) == "" {
+		return db.Workspace{}, db.User{}, false
+	}
+	return workspace, owner, true
 }
 
 func (h *MeHandler) prepareLoopsAccountCanceled(ctx context.Context, userID string, canceledAt time.Time) (loops.LifecycleEvent, bool) {
@@ -133,6 +193,98 @@ func buildLoopsPlanChangedEvent(owner db.User, workspace db.Workspace, oldPlanID
 			"change_type": changeType,
 			"billing_url": normalizeAppBaseURL(appBaseURL) + "/settings/billing",
 		},
+	}
+}
+
+func buildLoopsBillingPaymentFailedEvent(owner db.User, workspace db.Workspace, sub db.Subscription, invoice stripe.Invoice, stripeEventID, appBaseURL string) loops.LifecycleEvent {
+	nextPaymentAttempt := "not_scheduled"
+	retryMessage := "Please update your billing details to keep UniPost active."
+	if invoice.NextPaymentAttempt > 0 {
+		nextPaymentAttempt = time.Unix(invoice.NextPaymentAttempt, 0).UTC().Format(time.RFC3339)
+		retryMessage = "Stripe will retry this payment automatically."
+	}
+	planID := normalizePlanID(sub.PlanID)
+	return loops.LifecycleEvent{
+		UserID:         owner.ID,
+		Email:          owner.Email,
+		Name:           userName(owner),
+		WorkspaceID:    workspace.ID,
+		WorkspaceName:  workspace.Name,
+		PlanID:         planID,
+		EventName:      "billing_payment_failed",
+		IdempotencyKey: fmt.Sprintf("billing_payment_failed:%s:%s", firstNonEmptyString(invoice.ID, "unknown_invoice"), billingPaymentFailedAttemptKey(invoice, stripeEventID)),
+		Properties: map[string]any{
+			"workspace_name":       workspace.Name,
+			"plan_id":              planID,
+			"billing_url":          normalizeAppBaseURL(appBaseURL) + "/settings/billing",
+			"retry_message":        retryMessage,
+			"attempt_count":        invoice.AttemptCount,
+			"next_payment_attempt": nextPaymentAttempt,
+		},
+	}
+}
+
+func buildLoopsBillingPaymentRecoveredEvent(owner db.User, workspace db.Workspace, sub db.Subscription, invoice stripe.Invoice, appBaseURL string) loops.LifecycleEvent {
+	planID := normalizePlanID(sub.PlanID)
+	return loops.LifecycleEvent{
+		UserID:         owner.ID,
+		Email:          owner.Email,
+		Name:           userName(owner),
+		WorkspaceID:    workspace.ID,
+		WorkspaceName:  workspace.Name,
+		PlanID:         planID,
+		EventName:      "billing_payment_recovered",
+		IdempotencyKey: "billing_payment_recovered:" + firstNonEmptyString(invoice.ID, "unknown_invoice"),
+		Properties: map[string]any{
+			"workspace_name": workspace.Name,
+			"plan_id":        planID,
+			"billing_url":    normalizeAppBaseURL(appBaseURL) + "/settings/billing",
+		},
+	}
+}
+
+func buildLoopsBillingSubscriptionCanceledEvent(owner db.User, workspace db.Workspace, localSub db.Subscription, stripeSub stripe.Subscription, appBaseURL string) loops.LifecycleEvent {
+	effectiveAt := subscriptionCanceledEffectiveAt(stripeSub).UTC().Format(time.RFC3339)
+	planID := normalizePlanID(localSub.PlanID)
+	return loops.LifecycleEvent{
+		UserID:         owner.ID,
+		Email:          owner.Email,
+		Name:           userName(owner),
+		WorkspaceID:    workspace.ID,
+		WorkspaceName:  workspace.Name,
+		PlanID:         planID,
+		EventName:      "billing_subscription_canceled",
+		IdempotencyKey: fmt.Sprintf("billing_subscription_canceled:%s:%s", firstNonEmptyString(stripeSub.ID, "unknown_subscription"), effectiveAt),
+		Properties: map[string]any{
+			"workspace_name": workspace.Name,
+			"plan_id":        planID,
+			"effective_at":   effectiveAt,
+			"billing_url":    normalizeAppBaseURL(appBaseURL) + "/settings/billing",
+		},
+	}
+}
+
+func billingPaymentFailedAttemptKey(invoice stripe.Invoice, stripeEventID string) string {
+	if invoice.AttemptCount > 0 {
+		return fmt.Sprint(invoice.AttemptCount)
+	}
+	if invoice.NextPaymentAttempt > 0 {
+		return fmt.Sprintf("next_%d", invoice.NextPaymentAttempt)
+	}
+	if strings.TrimSpace(stripeEventID) != "" {
+		return "event_" + strings.TrimSpace(stripeEventID)
+	}
+	return "attempt_unknown"
+}
+
+func subscriptionCanceledEffectiveAt(sub stripe.Subscription) time.Time {
+	switch {
+	case sub.EndedAt > 0:
+		return time.Unix(sub.EndedAt, 0)
+	case sub.CanceledAt > 0:
+		return time.Unix(sub.CanceledAt, 0)
+	default:
+		return time.Now().UTC()
 	}
 }
 

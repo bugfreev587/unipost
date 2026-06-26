@@ -199,11 +199,141 @@ func TestSyncerSendsPlanChangedTransactionalEmailWhenTemplateConfigured(t *testi
 	if client.lastTransactional.TransactionalID != "tmpl_plan_changed" {
 		t.Fatalf("transactional ID = %q, want tmpl_plan_changed", client.lastTransactional.TransactionalID)
 	}
+	assertProperty(t, client.lastTransactional.DataVariables, "workspace_name", "Alex Workspace")
 	assertProperty(t, client.lastTransactional.DataVariables, "old_plan_id", "free")
 	assertProperty(t, client.lastTransactional.DataVariables, "new_plan_id", "basic")
+	assertProperty(t, client.lastTransactional.DataVariables, "change_type", "upgrade")
+	assertProperty(t, client.lastTransactional.DataVariables, "billing_url", "https://app.unipost.dev/settings/billing")
 	assertMissingProperty(t, client.lastTransactional.DataVariables, "first_name")
-	assertMissingProperty(t, client.lastTransactional.DataVariables, "workspace_name")
-	assertMissingProperty(t, client.lastTransactional.DataVariables, "billing_url")
+}
+
+func TestSyncerSendsBillingPaymentFailedTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			BillingPaymentFailed: "tmpl_payment_failed",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		Name:           "Alex Smith",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		PlanID:         "growth",
+		EventName:      "billing_payment_failed",
+		IdempotencyKey: "billing_payment_failed:in_123:2",
+		Properties: map[string]any{
+			"workspace_name":       "Alex Workspace",
+			"plan_id":              "growth",
+			"billing_url":          "https://app.unipost.dev/settings/billing",
+			"retry_message":        "Stripe will retry this payment automatically.",
+			"attempt_count":        int64(2),
+			"next_payment_attempt": "2026-07-01T12:00:00Z",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_payment_failed" {
+		t.Fatalf("transactional ID = %q, want tmpl_payment_failed", client.lastTransactional.TransactionalID)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "workspace_name", "Alex Workspace")
+	assertProperty(t, client.lastTransactional.DataVariables, "plan_id", "growth")
+	assertProperty(t, client.lastTransactional.DataVariables, "billing_url", "https://app.unipost.dev/settings/billing")
+	assertProperty(t, client.lastTransactional.DataVariables, "retry_message", "Stripe will retry this payment automatically.")
+	assertProperty(t, client.lastTransactional.DataVariables, "attempt_count", float64(2))
+	assertProperty(t, client.lastTransactional.DataVariables, "next_payment_attempt", "2026-07-01T12:00:00Z")
+}
+
+func TestSyncerSendsBillingPaymentRecoveredTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			BillingPaymentRecovered: "tmpl_payment_recovered",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		PlanID:         "growth",
+		EventName:      "billing_payment_recovered",
+		IdempotencyKey: "billing_payment_recovered:in_123",
+		Properties: map[string]any{
+			"workspace_name": "Alex Workspace",
+			"plan_id":        "growth",
+			"billing_url":    "https://app.unipost.dev/settings/billing",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_payment_recovered" {
+		t.Fatalf("transactional ID = %q, want tmpl_payment_recovered", client.lastTransactional.TransactionalID)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "workspace_name", "Alex Workspace")
+	assertProperty(t, client.lastTransactional.DataVariables, "plan_id", "growth")
+	assertProperty(t, client.lastTransactional.DataVariables, "billing_url", "https://app.unipost.dev/settings/billing")
+}
+
+func TestSyncerSendsBillingSubscriptionCanceledTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			BillingSubscriptionCanceled: "tmpl_subscription_canceled",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		PlanID:         "growth",
+		EventName:      "billing_subscription_canceled",
+		IdempotencyKey: "billing_subscription_canceled:sub_123:2026-07-01T12:00:00Z",
+		Properties: map[string]any{
+			"workspace_name": "Alex Workspace",
+			"plan_id":        "growth",
+			"effective_at":   "2026-07-01T12:00:00Z",
+			"billing_url":    "https://app.unipost.dev/settings/billing",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_subscription_canceled" {
+		t.Fatalf("transactional ID = %q, want tmpl_subscription_canceled", client.lastTransactional.TransactionalID)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "workspace_name", "Alex Workspace")
+	assertProperty(t, client.lastTransactional.DataVariables, "plan_id", "growth")
+	assertProperty(t, client.lastTransactional.DataVariables, "effective_at", "2026-07-01T12:00:00Z")
+	assertProperty(t, client.lastTransactional.DataVariables, "billing_url", "https://app.unipost.dev/settings/billing")
 }
 
 func TestSyncerSendsAccountCanceledEventWithoutContactUpsert(t *testing.T) {
@@ -348,10 +478,12 @@ func TestSyncerSendsPostFailedTransactionalEmailWhenTemplateConfigured(t *testin
 	if client.lastTransactional.TransactionalID != "tmpl_post_failed" {
 		t.Fatalf("transactional ID = %q, want tmpl_post_failed", client.lastTransactional.TransactionalID)
 	}
+	assertProperty(t, client.lastTransactional.DataVariables, "workspace_name", "Alex Workspace")
+	assertProperty(t, client.lastTransactional.DataVariables, "post_id", "post_123")
 	assertProperty(t, client.lastTransactional.DataVariables, "platform", "youtube")
 	assertProperty(t, client.lastTransactional.DataVariables, "error_code", "quota_exceeded")
-	assertMissingProperty(t, client.lastTransactional.DataVariables, "dashboard_url")
-	assertMissingProperty(t, client.lastTransactional.DataVariables, "retriable")
+	assertProperty(t, client.lastTransactional.DataVariables, "dashboard_url", "https://app.unipost.dev/projects/profile_123/logs?post_id=post_123")
+	assertProperty(t, client.lastTransactional.DataVariables, "retriable", "false")
 	assertMissingProperty(t, client.lastTransactional.DataVariables, "attempts")
 }
 
