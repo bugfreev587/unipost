@@ -188,10 +188,11 @@ func buildLoopsPlanChangedEvent(owner db.User, workspace db.Workspace, oldPlanID
 		EventName:      "plan_changed",
 		IdempotencyKey: idempotencyKey,
 		Properties: map[string]any{
-			"old_plan_id": oldPlanID,
-			"new_plan_id": newPlanID,
-			"change_type": changeType,
-			"billing_url": normalizeAppBaseURL(appBaseURL) + "/settings/billing",
+			"workspace_name": workspace.Name,
+			"old_plan_id":    oldPlanID,
+			"new_plan_id":    newPlanID,
+			"change_type":    changeType,
+			"billing_url":    normalizeAppBaseURL(appBaseURL) + "/settings/billing",
 		},
 	}
 }
@@ -307,6 +308,7 @@ func buildLoopsAccountCanceledEvent(user db.User, workspace db.Workspace, cancel
 func buildLoopsPostFailedEvent(owner db.User, workspace db.Workspace, post db.SocialPost, res db.SocialPostResult, job db.PostDeliveryJob, failure db.CreatePostFailureParams, appBaseURL string) loops.LifecycleEvent {
 	platform := postfailures.FirstNonEmpty(failure.Platform, job.Platform, "unknown")
 	properties := map[string]any{
+		"workspace_name":    workspace.Name,
 		"post_id":           post.ID,
 		"result_id":         res.ID,
 		"social_account_id": res.SocialAccountID,

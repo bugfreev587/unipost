@@ -53,6 +53,7 @@ type TransactionalIDs struct {
 	BillingPaymentFailed        string
 	BillingPaymentRecovered     string
 	BillingSubscriptionCanceled string
+	AccountDisconnected         string
 	AccountCanceled             string
 	PostFailed                  string
 }
@@ -193,6 +194,8 @@ func (s *Syncer) transactionalIDFor(eventName string) string {
 		return strings.TrimSpace(s.transactionalIDs.BillingPaymentRecovered)
 	case "billing_subscription_canceled":
 		return strings.TrimSpace(s.transactionalIDs.BillingSubscriptionCanceled)
+	case "account_disconnected":
+		return strings.TrimSpace(s.transactionalIDs.AccountDisconnected)
 	case "user_account_canceled":
 		return strings.TrimSpace(s.transactionalIDs.AccountCanceled)
 	case "post_failed":
@@ -252,6 +255,12 @@ func lifecycleTransactionalDataVariables(event LifecycleEvent, props map[string]
 		addTransactionalValue(vars, "plan_id", props["plan_id"])
 		addTransactionalValue(vars, "effective_at", props["effective_at"])
 		addTransactionalValue(vars, "billing_url", props["billing_url"])
+	case "account_disconnected":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "platform", props["platform"])
+		addTransactionalValue(vars, "account_name", props["account_name"])
+		addTransactionalValue(vars, "reconnect_url", props["reconnect_url"])
+		addTransactionalValue(vars, "reason", props["reason"])
 	case "post_failed":
 		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
 		addTransactionalValue(vars, "post_id", props["post_id"])

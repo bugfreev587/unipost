@@ -323,6 +323,7 @@ func main() {
 				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
 				BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
 				BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
+				AccountDisconnected:         os.Getenv("LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID"),
 				AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
 				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
 			},
@@ -346,13 +347,14 @@ func main() {
 	}
 
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
+	loopsNotificationBus := worker.NewLoopsNotificationEmailBus(queries, loopsSyncer, os.Getenv("APP_BASE_URL"))
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
 	go notificationWorker.Start(workerCtx)
 
 	// One Publish() call feeds both the developer webhook system and
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
-	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
+	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).

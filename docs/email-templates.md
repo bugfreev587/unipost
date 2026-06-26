@@ -19,12 +19,15 @@ As of 2026-06-26, these paths are wired to Loops transactional templates in code
 - `email.billing.payment_failed.v1` via `LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID`.
 - `email.billing.payment_recovered.v1` via `LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID`.
 - `email.billing.subscription_canceled.v1` via `LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID`.
+- `email.account.disconnected.v1` via `LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID`.
 - `email.user.account_canceled.v1` via `LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID`.
 - `email.post.failed.v1` via `LOOPS_POST_FAILED_TRANSACTIONAL_ID`.
 
 Welcome and invite sends are best-effort and skipped when the Loops sender or template ID is missing. Notification test email returns a configuration error when the Loops test template is missing, because the user explicitly requested a provider test.
 
 Billing lifecycle events are emitted from Stripe webhook handling through the Loops lifecycle syncer. If a billing transactional template ID is missing, the syncer falls back to the matching Loops event path, so Loops dashboard workflows must be audited before enabling those event listeners. The old backend-rendered Resend paid activation email has been removed; paid activation copy should live in `email.billing.plan_changed.v1`.
+
+`post.failed` and `account.disconnected` email channels are now Loops-owned. The notification dispatcher preserves Slack and Discord delivery for those events, while email-channel notification rows are recorded as `skipped` audit rows instead of being sent through Resend. The legacy `billing.usage_80pct` notification setting is hidden; free-plan quota reminders use `email.quota.free_plan_reminder.v1` and the `free_plan_quota_email_reminders` ledger.
 
 ## Delivery Classes
 
@@ -225,6 +228,7 @@ Required audit keys:
 
 - `user_signed_up`: confirm whether a welcome/onboarding workflow already sends the first welcome email. If yes, disable the backend Resend welcome email before enabling `email.user.welcome.v1`, or keep the workflow as the owner and do not enable the transactional welcome template.
 - `post_failed`: confirm whether a workflow or transactional template already sends post failure email. Backend tests cannot see Loops dashboard workflows, so this audit must be recorded before moving `post.failed` email ownership.
+- `account_disconnected`: confirm whether a workflow already sends immediate reconnect email. Delayed reconnect reminders can remain lifecycle workflows, but the immediate service alert should have one owner.
 - `plan_changed`: confirm whether paid activation or plan-change copy exists in a Loops workflow. The Resend paid activation email must not overlap with a Loops plan changed email.
 - `billing_payment_failed`: confirm whether a Loops dunning workflow already sends payment failure email for the same Stripe invoice attempt.
 - `billing_payment_recovered`: confirm whether a Loops recovery workflow already sends payment recovered email for the same invoice.

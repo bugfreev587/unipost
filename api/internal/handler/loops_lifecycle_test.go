@@ -32,6 +32,7 @@ func TestBuildLoopsPlanChangedEvent(t *testing.T) {
 	if event.PlanID != "basic" {
 		t.Fatalf("plan id = %q, want basic", event.PlanID)
 	}
+	assertLifecycleProp(t, event.Properties, "workspace_name", "Alex Workspace")
 	assertLifecycleProp(t, event.Properties, "old_plan_id", "free")
 	assertLifecycleProp(t, event.Properties, "new_plan_id", "basic")
 	assertLifecycleProp(t, event.Properties, "change_type", "upgrade")
@@ -172,6 +173,7 @@ func TestBuildLoopsPostFailedEvent(t *testing.T) {
 	if event.IdempotencyKey != "post_failed:job_123:1" {
 		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
 	}
+	assertLifecycleProp(t, event.Properties, "workspace_name", "Alex Workspace")
 	assertLifecycleProp(t, event.Properties, "post_id", "post_123")
 	assertLifecycleProp(t, event.Properties, "result_id", "result_123")
 	assertLifecycleProp(t, event.Properties, "social_account_id", "acct_123")
