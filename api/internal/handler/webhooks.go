@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"html"
 	"io"
 	"log"
 	"log/slog"
@@ -22,16 +20,23 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
+const welcomeDiscordURL = "https://discord.gg/HDBAhYpuQu"
+
 type WebhookHandler struct {
-	queries     *db.Queries
-	mailer      mail.Mailer
-	appBaseURL  string
-	loopsSyncer loopsDashboardUserSyncer
+	queries                     *db.Queries
+	mailer                      mail.Mailer
+	appBaseURL                  string
+	loopsSyncer                 loopsDashboardUserSyncer
+	welcomeEmailSender          transactionalEmailSender
+	welcomeEmailTransactionalID string
 }
 
 func NewWebhookHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL string) *WebhookHandler {
 	if mailer == nil {
 		mailer = mail.NoopMailer{}
+	}
+	if strings.TrimSpace(appBaseURL) == "" {
+		appBaseURL = "https://app.unipost.dev"
 	}
 	return &WebhookHandler{
 		queries:    queries,
@@ -46,6 +51,12 @@ type loopsDashboardUserSyncer interface {
 
 func (h *WebhookHandler) SetLoopsSyncer(syncer loopsDashboardUserSyncer) *WebhookHandler {
 	h.loopsSyncer = syncer
+	return h
+}
+
+func (h *WebhookHandler) SetWelcomeEmailSender(sender transactionalEmailSender, transactionalID string) *WebhookHandler {
+	h.welcomeEmailSender = sender
+	h.welcomeEmailTransactionalID = strings.TrimSpace(transactionalID)
 	return h
 }
 
@@ -239,31 +250,7 @@ func (h *WebhookHandler) handleUserUpsert(w http.ResponseWriter, r *http.Request
 	h.syncLoopsDashboardUser(r.Context(), eventType, userData, email, name, workspaceID, workspaceName)
 
 	if eventType == "user.created" && createdWorkspace && email != "" {
-		slog.Info("welcome email: sending",
-			"user_id", userData.ID,
-			"email", email,
-			"workspace_name", workspaceName,
-			"event_type", eventType,
-			"template", "welcome_signup",
-		)
-		if err := h.mailer.Send(r.Context(), renderWelcomeEmail(email, name, workspaceName, h.appBaseURL)); err != nil {
-			slog.Warn("welcome email: send failed",
-				"user_id", userData.ID,
-				"email", email,
-				"workspace_name", workspaceName,
-				"event_type", eventType,
-				"template", "welcome_signup",
-				"error", err,
-			)
-		} else {
-			slog.Info("welcome email: sent",
-				"user_id", userData.ID,
-				"email", email,
-				"workspace_name", workspaceName,
-				"event_type", eventType,
-				"template", "welcome_signup",
-			)
-		}
+		h.sendWelcomeEmail(r.Context(), userData.ID, email, name, workspaceName)
 	}
 
 	log.Printf("Synced user %s (%s)", userData.ID, email)
@@ -288,47 +275,40 @@ func (h *WebhookHandler) syncLoopsDashboardUser(ctx context.Context, eventType s
 	}
 }
 
-func renderWelcomeEmail(to, userName, workspaceName, appBaseURL string) mail.Message {
-	if strings.TrimSpace(userName) == "" {
-		userName = "there"
+func (h *WebhookHandler) sendWelcomeEmail(ctx context.Context, userID, email, recipientName, workspaceName string) {
+	if h == nil || strings.TrimSpace(email) == "" {
+		return
 	}
-	if strings.TrimSpace(workspaceName) == "" {
+	if h.welcomeEmailSender == nil || h.welcomeEmailTransactionalID == "" {
+		slog.Info("welcome email skipped; Loops transactional template not configured", "user_id", userID, "email", email)
+		return
+	}
+	recipientName = strings.TrimSpace(recipientName)
+	if recipientName == "" {
+		recipientName = "there"
+	}
+	workspaceName = strings.TrimSpace(workspaceName)
+	if workspaceName == "" {
 		workspaceName = "your workspace"
 	}
-	if strings.TrimSpace(appBaseURL) == "" {
-		appBaseURL = "https://app.unipost.dev"
+	appURL := strings.TrimRight(strings.TrimSpace(h.appBaseURL), "/")
+	if appURL == "" {
+		appURL = "https://app.unipost.dev"
 	}
-
-	subject := "Welcome to UniPost"
-	htmlBody := fmt.Sprintf(
-		`<p>Hi %s,</p>
-<p>Welcome to UniPost — your workspace, <strong>%s</strong>, is now live and ready to use.</p>
-<p>To get started, here are the recommended next steps:</p>
-<ul>
-  <li>Connect your first social account</li>
-  <li>Create or schedule your first post</li>
-  <li>Invite teammates if you're setting up a shared workspace</li>
-</ul>
-<p>If you need setup assistance, integration help, or product support, feel free to join our Discord community:<br><a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
-<p><a href="%s">Open UniPost →</a></p>
-<p>We’re excited to have you on board and look forward to helping you streamline your social publishing workflow.</p>
-<p>Best,<br>The UniPost Team</p>`,
-		html.EscapeString(userName),
-		html.EscapeString(workspaceName),
-		appBaseURL,
-	)
-	textBody := fmt.Sprintf(
-		"Hi %s,\n\nWelcome to UniPost — your workspace, %s, is now live and ready to use.\n\nTo get started, here are the recommended next steps:\n- Connect your first social account\n- Create or schedule your first post\n- Invite teammates if you're setting up a shared workspace\n\nIf you need setup assistance, integration help, or product support, feel free to join our Discord community:\nhttps://discord.gg/HDBAhYpuQu\n\nOpen UniPost →\n%s\n\nWe're excited to have you on board and look forward to helping you streamline your social publishing workflow.\n\nBest,\nThe UniPost Team\n",
-		userName,
-		workspaceName,
-		appBaseURL,
-	)
-
-	return mail.Message{
-		To:      to,
-		Subject: subject,
-		HTML:    htmlBody,
-		Text:    textBody,
+	if err := h.welcomeEmailSender.SendTransactional(ctx, loops.TransactionalEmail{
+		TransactionalID: h.welcomeEmailTransactionalID,
+		Email:           email,
+		UserID:          userID,
+		IdempotencyKey:  "user_welcome:" + userID,
+		DataVariables: map[string]any{
+			"recipient_name": recipientName,
+			"workspace_name": workspaceName,
+			"app_url":        appURL,
+			"connect_url":    appURL + "/projects",
+			"discord_url":    welcomeDiscordURL,
+		},
+	}); err != nil {
+		slog.Warn("welcome email: Loops transactional send failed", "user_id", userID, "email", email, "workspace_name", workspaceName, "error", err)
 	}
 }
 

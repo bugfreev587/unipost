@@ -426,6 +426,9 @@ func main() {
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
+	if loopsClient != nil {
+		webhookHandler.SetWelcomeEmailSender(loopsClient, os.Getenv("LOOPS_USER_WELCOME_TRANSACTIONAL_ID"))
+	}
 	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
 	if storageClient != nil {
 		profileHandler.SetBrandingLogoStore(storageClient)
@@ -574,7 +577,13 @@ func main() {
 	// invited you to join as editor". The token in the URL is the only
 	// authentication; an invalid / expired / revoked token returns 404
 	// to avoid leaking which tokens existed.
-	publicMembersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+	configureMembersEmail := func(h *handler.MembersHandler) *handler.MembersHandler {
+		if loopsClient != nil {
+			return h.SetInviteEmailSender(loopsClient, os.Getenv("LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID"))
+		}
+		return h
+	}
+	publicMembersHandler := configureMembersEmail(handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL")))
 	r.Get("/v1/public/invites/{token}", publicMembersHandler.GetInvite)
 
 	// Sprint 3 PR5: Bluesky Connect form submission. Native HTML form
@@ -629,6 +638,9 @@ func main() {
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
 
 		notificationHandler := handler.NewNotificationHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
+		if loopsClient != nil {
+			notificationHandler.SetNotificationTestEmailSender(loopsClient, os.Getenv("LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID"))
+		}
 		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
 		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)
 		r.Post("/v1/me/notifications/channels", notificationHandler.CreateChannel)
@@ -648,7 +660,7 @@ func main() {
 		// user clicking the email link) but NOT a workspace context —
 		// they may not be a member of any workspace yet. The handler
 		// creates the membership and stamps the invite accepted.
-		clerkOnlyMembersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+		clerkOnlyMembersHandler := configureMembersEmail(handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL")))
 		r.Post("/v1/invites/{token}/accept", clerkOnlyMembersHandler.AcceptInvite)
 	})
 
@@ -944,7 +956,7 @@ func main() {
 		// outside this group below — it needs Clerk auth but no role
 		// (the user accepting may not yet be a member of any
 		// workspace).
-		membersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+		membersHandler := configureMembersEmail(handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL")))
 		r.Get("/v1/members", membersHandler.List)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/members/invite", membersHandler.Invite)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/members/invites/{id}", membersHandler.RevokeInvite)

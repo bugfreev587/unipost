@@ -18,6 +18,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
@@ -25,10 +26,12 @@ import (
 // notification system (migration 040). All routes are account-scoped
 // by the authenticated user — no workspace context needed.
 type NotificationHandler struct {
-	queries    *db.Queries
-	mailer     mail.Mailer
-	httpClient *http.Client
-	appBaseURL string
+	queries                            *db.Queries
+	mailer                             mail.Mailer
+	httpClient                         *http.Client
+	appBaseURL                         string
+	notificationTestEmailSender        transactionalEmailSender
+	notificationTestEmailTransactional string
 }
 
 func NewNotificationHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL string) *NotificationHandler {
@@ -41,6 +44,12 @@ func NewNotificationHandler(queries *db.Queries, mailer mail.Mailer, appBaseURL 
 		httpClient: &http.Client{Timeout: 10 * time.Second},
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 	}
+}
+
+func (h *NotificationHandler) SetNotificationTestEmailSender(sender transactionalEmailSender, transactionalID string) *NotificationHandler {
+	h.notificationTestEmailSender = sender
+	h.notificationTestEmailTransactional = strings.TrimSpace(transactionalID)
+	return h
 }
 
 // Static catalog of events the settings UI knows how to show. Kept in
@@ -454,13 +463,17 @@ func (h *NotificationHandler) sendTestChannel(ctx context.Context, c db.Notifica
 		if err := json.Unmarshal(c.Config, &cfg); err != nil || cfg.Address == "" {
 			return fmt.Errorf("invalid email channel config")
 		}
-		return h.mailer.Send(ctx, mail.Message{
-			To:      cfg.Address,
-			Subject: "[UniPost] Notification channel test",
-			HTML: fmt.Sprintf(`<p>This is a test notification from UniPost.</p>
-<p>Your email channel is connected and can receive alerts.</p>
-<p><a href="%s/settings/notifications">Manage notification settings →</a></p>`, h.appBaseURL),
-			Text: fmt.Sprintf("This is a test notification from UniPost.\n\nYour email channel is connected and can receive alerts.\n\nManage settings: %s/settings/notifications\n", h.appBaseURL),
+		if h.notificationTestEmailSender == nil || h.notificationTestEmailTransactional == "" {
+			return fmt.Errorf("Loops notification test email is not configured")
+		}
+		return h.notificationTestEmailSender.SendTransactional(ctx, loops.TransactionalEmail{
+			TransactionalID: h.notificationTestEmailTransactional,
+			Email:           cfg.Address,
+			UserID:          c.UserID,
+			DataVariables: map[string]any{
+				"recipient_name": "there",
+				"settings_url":   h.appBaseURL + "/settings/notifications",
+			},
 		})
 	case "slack_webhook":
 		var cfg struct {

@@ -8,6 +8,16 @@ This document is the human-readable contract for UniPost user-facing email templ
 
 The backend remains the authority for trigger conditions, recipient resolution, idempotency, and audit records. Loops owns rendering and lifecycle workflow orchestration where explicitly documented here. Resend contacts must not be synced for these templates.
 
+## Current Migration Status
+
+As of 2026-06-26, these Phase 2 paths are wired to Loops transactional templates in code and no longer fall back to backend-rendered Resend emails by default:
+
+- `email.user.welcome.v1` via `LOOPS_USER_WELCOME_TRANSACTIONAL_ID`.
+- `email.workspace.member_invited.v1` via `LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID`.
+- `email.notification.test.v1` via `LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID`.
+
+Welcome and invite sends are best-effort and skipped when the Loops sender or template ID is missing. Notification test email returns a configuration error when the Loops test template is missing, because the user explicitly requested a provider test.
+
 ## Delivery Classes
 
 | Class | Meaning |
