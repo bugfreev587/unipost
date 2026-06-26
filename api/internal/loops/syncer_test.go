@@ -379,6 +379,43 @@ func TestSyncerSendsAccountDisconnectedTransactionalEmailWhenTemplateConfigured(
 	assertProperty(t, client.lastTransactional.DataVariables, "reason", "token_refresh_failed")
 }
 
+func TestSyncerSendsLifecycleEventWhenNoTransactionalTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "first_account_connected",
+		IdempotencyKey: "first_account_connected:ws_123",
+		Properties: map[string]any{
+			"activation_state":         "has_account",
+			"connected_accounts_count": int32(1),
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.contacts != 1 {
+		t.Fatalf("contacts = %d, want 1", client.contacts)
+	}
+	if client.events != 1 {
+		t.Fatalf("events = %d, want 1", client.events)
+	}
+	if client.transactionals != 0 {
+		t.Fatalf("transactionals = %d, want 0", client.transactionals)
+	}
+	if client.lastEvent.Name != "first_account_connected" {
+		t.Fatalf("event name = %q, want first_account_connected", client.lastEvent.Name)
+	}
+	assertProperty(t, client.lastEvent.Properties, "activation_state", "has_account")
+	assertProperty(t, client.lastEvent.Properties, "connected_accounts_count", int32(1))
+}
+
 func TestSyncerSendsAccountCanceledEventWithoutContactUpsert(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	syncer := NewSyncer(client, Options{

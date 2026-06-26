@@ -29,6 +29,8 @@ Billing lifecycle events are emitted from Stripe webhook handling through the Lo
 
 `post.failed` and `account.disconnected` email channels are now Loops-owned. The notification dispatcher preserves Slack and Discord delivery for those events, while email-channel notification rows are recorded as `skipped` audit rows instead of being sent through Resend. The legacy `billing.usage_80pct` notification setting is hidden; free-plan quota reminders use `email.quota.free_plan_reminder.v1` and the `free_plan_quota_email_reminders` ledger.
 
+The backend also emits non-critical lifecycle events `first_account_connected` and `first_post_published` through the Loops lifecycle syncer. These events update contact properties such as `activation_state`, `connected_accounts_count`, and `published_posts_count`; Loops dashboard workflows own any follow-up nurture emails.
+
 ## Delivery Classes
 
 | Class | Meaning |
@@ -233,6 +235,8 @@ Required audit keys:
 - `billing_payment_failed`: confirm whether a Loops dunning workflow already sends payment failure email for the same Stripe invoice attempt.
 - `billing_payment_recovered`: confirm whether a Loops recovery workflow already sends payment recovered email for the same invoice.
 - `billing_subscription_canceled`: confirm whether a Loops cancellation workflow already sends cancellation email for the same subscription.
+- `first_account_connected`: confirm any workflow is a lifecycle nudge or celebration, not a duplicate immediate service alert.
+- `first_post_published`: confirm any workflow is lifecycle/activation messaging and is safe to skip without affecting service delivery.
 
 For every audit, record:
 

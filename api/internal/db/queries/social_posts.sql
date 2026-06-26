@@ -153,3 +153,9 @@ UPDATE social_posts
 SET status = 'cancelled'
 WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
 RETURNING *;
+
+-- name: CountPublishedPostsByWorkspace :one
+SELECT COUNT(*)::INTEGER
+FROM social_posts
+WHERE workspace_id = $1
+  AND status = 'published';
