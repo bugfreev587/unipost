@@ -143,6 +143,20 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 	return i, err
 }
 
+const countPublishedPostsByWorkspace = `-- name: CountPublishedPostsByWorkspace :one
+SELECT COUNT(*)::INTEGER
+FROM social_posts
+WHERE workspace_id = $1
+  AND status = 'published'
+`
+
+func (q *Queries) CountPublishedPostsByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countPublishedPostsByWorkspace, workspaceID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createSocialPost = `-- name: CreateSocialPost :one
 INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key, source, profile_ids)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
