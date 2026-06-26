@@ -2817,11 +2817,12 @@ export interface AdminPostsAggregates {
   events: AdminPostsEvent[];
 }
 
-export type AdminEmailNotificationStatus = "pending" | "sent" | "failed";
+export type AdminEmailNotificationStatus = "pending" | "sent" | "failed" | "skipped";
 
 export interface AdminEmailNotificationRow {
   id: string;
-  event_type: "free_plan_quota_reminder";
+  event_key: string;
+  event_type: string;
   trigger_event: string;
   workspace_id: string;
   workspace_name: string;
@@ -2842,11 +2843,18 @@ export interface AdminEmailNotificationRow {
   sent_at?: string;
   created_at: string;
   updated_at: string;
+  provider: string;
+  delivery_class: string;
+  trigger_source: string;
+  trigger_reference_id: string;
+  subject_snapshot: string;
 }
 
 export interface AdminEmailNotificationListParams {
   search?: string;
   status?: "all" | AdminEmailNotificationStatus;
+  provider?: "all" | string;
+  event_key?: string;
   threshold?: "all" | 80 | 85 | 90 | 95 | 100;
   period?: string;
   limit?: number;
@@ -3543,6 +3551,8 @@ export async function listAdminEmailNotifications(
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.status && params.status !== "all") qs.set("status", params.status);
+  if (params?.provider && params.provider !== "all") qs.set("provider", params.provider);
+  if (params?.event_key) qs.set("event_key", params.event_key);
   if (params?.threshold && params.threshold !== "all") qs.set("threshold", String(params.threshold));
   if (params?.period) qs.set("period", params.period);
   if (params?.limit != null) qs.set("limit", String(params.limit));

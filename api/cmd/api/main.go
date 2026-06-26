@@ -311,13 +311,15 @@ func main() {
 	}
 
 	var loopsClient *loops.Client
+	var auditedLoopsClient *loops.AuditedClient
 	var loopsSyncer *loops.Syncer
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
-		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
+		auditedLoopsClient = loops.NewAuditedClient(loopsClient, loops.NewPostgresEmailAuditStore(queries))
+		loopsSyncer = loops.NewSyncer(auditedLoopsClient, loops.Options{
 			TransactionalIDs: loops.TransactionalIDs{
 				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
 				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
@@ -431,8 +433,8 @@ func main() {
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
-	if loopsClient != nil {
-		webhookHandler.SetWelcomeEmailSender(loopsClient, os.Getenv("LOOPS_USER_WELCOME_TRANSACTIONAL_ID"))
+	if auditedLoopsClient != nil {
+		webhookHandler.SetWelcomeEmailSender(auditedLoopsClient, os.Getenv("LOOPS_USER_WELCOME_TRANSACTIONAL_ID"))
 	}
 	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
 	if storageClient != nil {
@@ -583,8 +585,8 @@ func main() {
 	// authentication; an invalid / expired / revoked token returns 404
 	// to avoid leaking which tokens existed.
 	configureMembersEmail := func(h *handler.MembersHandler) *handler.MembersHandler {
-		if loopsClient != nil {
-			return h.SetInviteEmailSender(loopsClient, os.Getenv("LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID"))
+		if auditedLoopsClient != nil {
+			return h.SetInviteEmailSender(auditedLoopsClient, os.Getenv("LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID"))
 		}
 		return h
 	}
@@ -643,8 +645,8 @@ func main() {
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
 
 		notificationHandler := handler.NewNotificationHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
-		if loopsClient != nil {
-			notificationHandler.SetNotificationTestEmailSender(loopsClient, os.Getenv("LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID"))
+		if auditedLoopsClient != nil {
+			notificationHandler.SetNotificationTestEmailSender(auditedLoopsClient, os.Getenv("LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID"))
 		}
 		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
 		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)

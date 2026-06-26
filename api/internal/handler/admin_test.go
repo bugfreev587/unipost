@@ -143,18 +143,33 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 
 	for _, want := range []string{
 		"free_plan_quota_email_reminders",
-		"'free_plan_quota_reminder' AS event_type",
+		"email_send_attempts",
+		"notification_deliveries",
+		"error_triage_email_sends",
+		"'email.quota.free_plan_reminder.v1' AS event_key",
 		"'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event",
-		"LEFT JOIN workspaces w ON w.id = r.workspace_id",
-		"LEFT JOIN users u ON u.id = r.user_id",
+		"provider",
+		"delivery_class",
+		"idempotency_key",
+		"failure_reason",
+		"trigger_source",
+		"trigger_reference_id",
+		"subject_snapshot",
 		"effective_usage",
 		"completed_usage",
 		"reserved_usage",
-		"ORDER BY r.attempted_at DESC, r.created_at DESC",
+		"ORDER BY attempted_at DESC, created_at DESC",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("admin email notifications SQL missing %q:\n%s", want, sql)
 		}
+	}
+}
+
+func TestNormalizeAdminEmailNotificationStatusAllowsSkipped(t *testing.T) {
+	got, ok := normalizeAdminEmailNotificationStatus("skipped")
+	if !ok || got != "skipped" {
+		t.Fatalf("normalize status = %q/%v, want skipped/true", got, ok)
 	}
 }
 

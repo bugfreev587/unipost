@@ -472,6 +472,14 @@ func (h *NotificationHandler) sendTestChannel(ctx context.Context, c db.Notifica
 				"recipient_name": "there",
 				"settings_url":   h.appBaseURL + "/settings/notifications",
 			},
+			Audit: loops.EmailAudit{
+				EventKey:           "email.notification.test.v1",
+				WorkspaceID:        textString(c.WorkspaceID),
+				Provider:           "loops",
+				DeliveryClass:      "test",
+				TriggerSource:      "notification channel test",
+				TriggerReferenceID: c.ID,
+			},
 		})
 	case "slack_webhook":
 		var cfg struct {

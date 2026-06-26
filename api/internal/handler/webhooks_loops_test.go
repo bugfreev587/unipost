@@ -45,7 +45,7 @@ func TestWebhookHandlerSendWelcomeEmailUsesLoopsTemplateWhenConfigured(t *testin
 	h := NewWebhookHandler(nil, mailer, "https://dev-app.unipost.dev").
 		SetWelcomeEmailSender(sender, "tmpl_user_welcome")
 
-	h.sendWelcomeEmail(context.Background(), "user_123", "alex@example.com", "Alex Smith", "Alex Workspace")
+	h.sendWelcomeEmail(context.Background(), "user_123", "alex@example.com", "Alex Smith", "ws_123", "Alex Workspace")
 
 	if sender.sent != 1 {
 		t.Fatalf("Loops transactional sends = %d, want 1", sender.sent)
@@ -71,13 +71,19 @@ func TestWebhookHandlerSendWelcomeEmailUsesLoopsTemplateWhenConfigured(t *testin
 	assertDataVariable(t, email.DataVariables, "app_url", "https://dev-app.unipost.dev")
 	assertDataVariable(t, email.DataVariables, "connect_url", "https://dev-app.unipost.dev/projects")
 	assertDataVariable(t, email.DataVariables, "discord_url", "https://discord.gg/HDBAhYpuQu")
+	if email.Audit.EventKey != "email.user.welcome.v1" {
+		t.Fatalf("audit event key = %q, want email.user.welcome.v1", email.Audit.EventKey)
+	}
+	if email.Audit.WorkspaceID != "ws_123" {
+		t.Fatalf("audit workspace = %q, want ws_123", email.Audit.WorkspaceID)
+	}
 }
 
 func TestWebhookHandlerSendWelcomeEmailDoesNotFallbackToResendWithoutLoopsTemplate(t *testing.T) {
 	mailer := &recordingMailer{}
 	h := NewWebhookHandler(nil, mailer, "https://dev-app.unipost.dev")
 
-	h.sendWelcomeEmail(context.Background(), "user_123", "alex@example.com", "Alex Smith", "Alex Workspace")
+	h.sendWelcomeEmail(context.Background(), "user_123", "alex@example.com", "Alex Smith", "ws_123", "Alex Workspace")
 
 	if mailer.sent != 0 {
 		t.Fatalf("Resend mailer sends = %d, want 0", mailer.sent)

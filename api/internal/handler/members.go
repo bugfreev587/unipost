@@ -667,6 +667,14 @@ func (h *MembersHandler) sendInviteEmail(ctx context.Context, invite db.Workspac
 			"accept_url":     acceptURL,
 			"expires_at":     expiresAt,
 		},
+		Audit: loops.EmailAudit{
+			EventKey:           "email.workspace.member_invited.v1",
+			WorkspaceID:        invite.WorkspaceID,
+			Provider:           "loops",
+			DeliveryClass:      "critical_transactional",
+			TriggerSource:      "workspace invite created",
+			TriggerReferenceID: invite.ID,
+		},
 	}); err != nil {
 		slog.Warn("workspace invite email: Loops transactional send failed", "invite_id", invite.ID, "workspace_id", invite.WorkspaceID, "email", invite.Email, "error", err)
 	}

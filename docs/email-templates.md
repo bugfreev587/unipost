@@ -1,7 +1,7 @@
 # UniPost Email Template Contracts
 
 **Owner:** Growth lifecycle / Notifications / Billing / Support
-**Status:** Phase 3 billing migration contract
+**Status:** Phase 6 audit/admin visibility contract
 **Source registry:** `api/internal/emailregistry`
 
 This document is the human-readable contract for UniPost user-facing email templates. It records the canonical email event key, Loops transactional template environment variable, required variables, idempotency policy, delivery class, preference behavior, and external Loops workflow audit requirement for each email event.
@@ -30,6 +30,19 @@ Billing lifecycle events are emitted from Stripe webhook handling through the Lo
 `post.failed` and `account.disconnected` email channels are now Loops-owned. The notification dispatcher preserves Slack and Discord delivery for those events, while email-channel notification rows are recorded as `skipped` audit rows instead of being sent through Resend. The legacy `billing.usage_80pct` notification setting is hidden; free-plan quota reminders use `email.quota.free_plan_reminder.v1` and the `free_plan_quota_email_reminders` ledger.
 
 The backend also emits non-critical lifecycle events `first_account_connected` and `first_post_published` through the Loops lifecycle syncer. These events update contact properties such as `activation_state`, `connected_accounts_count`, and `published_posts_count`; Loops dashboard workflows own any follow-up nurture emails.
+
+## Audit and Admin Visibility
+
+`email_send_attempts` is the normalized send-attempt ledger for Loops transactional emails triggered through the lifecycle syncer or direct user-email senders. It records event key, recipient snapshot, workspace, provider, template ID, idempotency key, delivery class, status, variable snapshot, trigger source/reference, and provider error.
+
+The admin endpoint `GET /v1/admin/email-notifications` and dashboard page `/admin/email` expose a unified operational view across:
+
+- `email_send_attempts` for welcome, invite, notification test, billing, account disconnected, post failed, and account canceled Loops transactionals.
+- `free_plan_quota_email_reminders` for quota reminder sends.
+- `error_triage_email_sends` for admin-reviewed support follow-ups.
+- `notification_deliveries` email-channel rows, including `skipped` rows created when legacy notification-email fanout is suppressed for Loops-owned alert emails.
+
+The admin view supports filtering by status, provider, event key, quota period/threshold, and free-text recipient/workspace/idempotency search.
 
 ## Delivery Classes
 

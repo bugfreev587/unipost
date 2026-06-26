@@ -150,6 +150,29 @@ type ConnectSession struct {
 	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
 }
 
+type EmailSendAttempt struct {
+	ID                    string             `json:"id"`
+	EventKey              string             `json:"event_key"`
+	RecipientUserID       pgtype.Text        `json:"recipient_user_id"`
+	RecipientEmail        string             `json:"recipient_email"`
+	WorkspaceID           pgtype.Text        `json:"workspace_id"`
+	Provider              string             `json:"provider"`
+	ProviderTemplateID    pgtype.Text        `json:"provider_template_id"`
+	IdempotencyKey        string             `json:"idempotency_key"`
+	DeliveryClass         string             `json:"delivery_class"`
+	Status                string             `json:"status"`
+	SubjectSnapshot       pgtype.Text        `json:"subject_snapshot"`
+	DataVariablesSnapshot []byte             `json:"data_variables_snapshot"`
+	TriggerSource         pgtype.Text        `json:"trigger_source"`
+	TriggerReferenceID    pgtype.Text        `json:"trigger_reference_id"`
+	AttemptCount          int32              `json:"attempt_count"`
+	LastError             pgtype.Text        `json:"last_error"`
+	AttemptedAt           pgtype.Timestamptz `json:"attempted_at"`
+	SentAt                pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+}
+
 type ErrorTriageEmailSend struct {
 	ID                   string             `json:"id"`
 	ItemID               string             `json:"item_id"`
