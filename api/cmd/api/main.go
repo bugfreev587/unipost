@@ -319,9 +319,12 @@ func main() {
 		})
 		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
 			TransactionalIDs: loops.TransactionalIDs{
-				PlanChanged:     os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
-				AccountCanceled: os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
-				PostFailed:      os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
+				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
+				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
+				BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
+				BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
+				AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
+				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
 			},
 		})
 		slog.Info("loops: lifecycle sync configured")
@@ -442,7 +445,7 @@ func main() {
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.

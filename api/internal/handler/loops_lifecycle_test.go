@@ -1,10 +1,12 @@
 package handler
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
@@ -33,6 +35,91 @@ func TestBuildLoopsPlanChangedEvent(t *testing.T) {
 	assertLifecycleProp(t, event.Properties, "old_plan_id", "free")
 	assertLifecycleProp(t, event.Properties, "new_plan_id", "basic")
 	assertLifecycleProp(t, event.Properties, "change_type", "upgrade")
+	assertLifecycleProp(t, event.Properties, "billing_url", "https://app.unipost.dev/settings/billing")
+}
+
+func TestBuildLoopsBillingPaymentFailedEvent(t *testing.T) {
+	nextAttempt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	event := buildLoopsBillingPaymentFailedEvent(
+		db.User{ID: "user_123", Email: "alex@example.com", Name: pgtype.Text{String: "Alex Smith", Valid: true}},
+		db.Workspace{ID: "ws_123", Name: "Alex Workspace"},
+		db.Subscription{PlanID: "growth"},
+		stripe.Invoice{ID: "in_123", AttemptCount: 2, NextPaymentAttempt: nextAttempt.Unix()},
+		"evt_123",
+		"https://app.unipost.dev",
+	)
+
+	if event.EventName != "billing_payment_failed" {
+		t.Fatalf("event name = %q, want billing_payment_failed", event.EventName)
+	}
+	if event.IdempotencyKey != "billing_payment_failed:in_123:2" {
+		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
+	}
+	assertLifecycleProp(t, event.Properties, "workspace_name", "Alex Workspace")
+	assertLifecycleProp(t, event.Properties, "plan_id", "growth")
+	assertLifecycleProp(t, event.Properties, "billing_url", "https://app.unipost.dev/settings/billing")
+	assertLifecycleProp(t, event.Properties, "retry_message", "Stripe will retry this payment automatically.")
+	assertLifecycleProp(t, event.Properties, "attempt_count", int64(2))
+	assertLifecycleProp(t, event.Properties, "next_payment_attempt", "2026-07-01T12:00:00Z")
+}
+
+func TestBuildLoopsBillingPaymentFailedEventFallsBackWhenAttemptCountMissing(t *testing.T) {
+	nextAttempt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	event := buildLoopsBillingPaymentFailedEvent(
+		db.User{ID: "user_123", Email: "alex@example.com"},
+		db.Workspace{ID: "ws_123", Name: "Alex Workspace"},
+		db.Subscription{PlanID: "growth"},
+		stripe.Invoice{ID: "in_123", NextPaymentAttempt: nextAttempt.Unix()},
+		"evt_123",
+		"https://app.unipost.dev",
+	)
+
+	wantKey := "billing_payment_failed:in_123:next_" + fmt.Sprint(nextAttempt.Unix())
+	if event.IdempotencyKey != wantKey {
+		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
+	}
+	assertLifecycleProp(t, event.Properties, "attempt_count", int64(0))
+}
+
+func TestBuildLoopsBillingPaymentRecoveredEvent(t *testing.T) {
+	event := buildLoopsBillingPaymentRecoveredEvent(
+		db.User{ID: "user_123", Email: "alex@example.com"},
+		db.Workspace{ID: "ws_123", Name: "Alex Workspace"},
+		db.Subscription{PlanID: "growth"},
+		stripe.Invoice{ID: "in_123"},
+		"https://app.unipost.dev",
+	)
+
+	if event.EventName != "billing_payment_recovered" {
+		t.Fatalf("event name = %q, want billing_payment_recovered", event.EventName)
+	}
+	if event.IdempotencyKey != "billing_payment_recovered:in_123" {
+		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
+	}
+	assertLifecycleProp(t, event.Properties, "workspace_name", "Alex Workspace")
+	assertLifecycleProp(t, event.Properties, "plan_id", "growth")
+	assertLifecycleProp(t, event.Properties, "billing_url", "https://app.unipost.dev/settings/billing")
+}
+
+func TestBuildLoopsBillingSubscriptionCanceledEvent(t *testing.T) {
+	endedAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	event := buildLoopsBillingSubscriptionCanceledEvent(
+		db.User{ID: "user_123", Email: "alex@example.com"},
+		db.Workspace{ID: "ws_123", Name: "Alex Workspace"},
+		db.Subscription{PlanID: "growth"},
+		stripe.Subscription{ID: "sub_123", EndedAt: endedAt.Unix()},
+		"https://app.unipost.dev",
+	)
+
+	if event.EventName != "billing_subscription_canceled" {
+		t.Fatalf("event name = %q, want billing_subscription_canceled", event.EventName)
+	}
+	if event.IdempotencyKey != "billing_subscription_canceled:sub_123:2026-07-01T12:00:00Z" {
+		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
+	}
+	assertLifecycleProp(t, event.Properties, "workspace_name", "Alex Workspace")
+	assertLifecycleProp(t, event.Properties, "plan_id", "growth")
+	assertLifecycleProp(t, event.Properties, "effective_at", "2026-07-01T12:00:00Z")
 	assertLifecycleProp(t, event.Properties, "billing_url", "https://app.unipost.dev/settings/billing")
 }
 
