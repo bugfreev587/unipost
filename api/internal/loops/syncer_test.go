@@ -336,6 +336,49 @@ func TestSyncerSendsBillingSubscriptionCanceledTransactionalEmailWhenTemplateCon
 	assertProperty(t, client.lastTransactional.DataVariables, "billing_url", "https://app.unipost.dev/settings/billing")
 }
 
+func TestSyncerSendsAccountDisconnectedTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			AccountDisconnected: "tmpl_account_disconnected",
+		},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "account_disconnected",
+		IdempotencyKey: "account_disconnected:acct_123:token_refresh_failed",
+		Properties: map[string]any{
+			"workspace_name": "Alex Workspace",
+			"platform":       "instagram",
+			"account_name":   "Alex Studio",
+			"reconnect_url":  "https://app.unipost.dev/projects/ws_123/accounts",
+			"reason":         "token_refresh_failed",
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_account_disconnected" {
+		t.Fatalf("transactional ID = %q, want tmpl_account_disconnected", client.lastTransactional.TransactionalID)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "workspace_name", "Alex Workspace")
+	assertProperty(t, client.lastTransactional.DataVariables, "platform", "instagram")
+	assertProperty(t, client.lastTransactional.DataVariables, "account_name", "Alex Studio")
+	assertProperty(t, client.lastTransactional.DataVariables, "reconnect_url", "https://app.unipost.dev/projects/ws_123/accounts")
+	assertProperty(t, client.lastTransactional.DataVariables, "reason", "token_refresh_failed")
+}
+
 func TestSyncerSendsAccountCanceledEventWithoutContactUpsert(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	syncer := NewSyncer(client, Options{

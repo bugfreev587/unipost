@@ -72,7 +72,6 @@ type eventDescriptor struct {
 var SupportedNotificationEvents = []eventDescriptor{
 	{Type: "post.failed", Label: "Post failed to publish", Description: "Get notified when a post can't be delivered to a platform.", Severity: "high", DefaultOn: true},
 	{Type: "account.disconnected", Label: "Account disconnected", Description: "A connected social account lost its token and can't post until reconnected.", Severity: "high", DefaultOn: true},
-	{Type: "billing.usage_80pct", Label: "Usage at 80% of plan limit", Description: "Heads-up before you hit the monthly post cap.", Severity: "medium", DefaultOn: true},
 }
 
 // ── Channels ─────────────────────────────────────────────────────────

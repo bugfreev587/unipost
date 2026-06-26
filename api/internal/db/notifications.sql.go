@@ -125,6 +125,33 @@ func (q *Queries) CreateNotificationSubscription(ctx context.Context, arg Create
 	return i, err
 }
 
+const createSkippedNotificationDelivery = `-- name: CreateSkippedNotificationDelivery :exec
+INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, event_id, payload, status, last_error, delivered_at)
+VALUES ($1, $2, $3, $4, $5, 'skipped', $6, NOW())
+ON CONFLICT (event_id, channel_id) DO NOTHING
+`
+
+type CreateSkippedNotificationDeliveryParams struct {
+	SubscriptionID string      `json:"subscription_id"`
+	ChannelID      string      `json:"channel_id"`
+	EventType      string      `json:"event_type"`
+	EventID        string      `json:"event_id"`
+	Payload        []byte      `json:"payload"`
+	LastError      pgtype.Text `json:"last_error"`
+}
+
+func (q *Queries) CreateSkippedNotificationDelivery(ctx context.Context, arg CreateSkippedNotificationDeliveryParams) error {
+	_, err := q.db.Exec(ctx, createSkippedNotificationDelivery,
+		arg.SubscriptionID,
+		arg.ChannelID,
+		arg.EventType,
+		arg.EventID,
+		arg.Payload,
+		arg.LastError,
+	)
+	return err
+}
+
 const deleteNotificationSubscription = `-- name: DeleteNotificationSubscription :exec
 DELETE FROM notification_subscriptions
 WHERE id = $1 AND user_id = $2
