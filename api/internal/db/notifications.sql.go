@@ -14,7 +14,7 @@ import (
 const createNotificationChannel = `-- name: CreateNotificationChannel :one
 
 
-INSERT INTO notification_channels (user_id, workspace_id, kind, config, label, verified_at)
+INSERT INTO unipost_notification_channels (user_id, workspace_id, kind, config, label, verified_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, user_id, workspace_id, kind, config, label, verified_at, created_at, deleted_at
 `
@@ -31,7 +31,7 @@ type CreateNotificationChannelParams struct {
 // Queries for the user-facing notification system.
 // See migration 040_notifications.sql for the schema.
 // ─── Channels ────────────────────────────────────────────────────────
-func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotificationChannelParams) (NotificationChannel, error) {
+func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotificationChannelParams) (UnipostNotificationChannel, error) {
 	row := q.db.QueryRow(ctx, createNotificationChannel,
 		arg.UserID,
 		arg.WorkspaceID,
@@ -40,7 +40,7 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 		arg.Label,
 		arg.VerifiedAt,
 	)
-	var i NotificationChannel
+	var i UnipostNotificationChannel
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -56,7 +56,7 @@ func (q *Queries) CreateNotificationChannel(ctx context.Context, arg CreateNotif
 }
 
 const createNotificationDelivery = `-- name: CreateNotificationDelivery :exec
-INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, event_id, payload)
+INSERT INTO unipost_notification_deliveries (subscription_id, channel_id, event_type, event_id, payload)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (event_id, channel_id) DO NOTHING
 `
@@ -85,7 +85,7 @@ func (q *Queries) CreateNotificationDelivery(ctx context.Context, arg CreateNoti
 
 const createNotificationSubscription = `-- name: CreateNotificationSubscription :one
 
-INSERT INTO notification_subscriptions (user_id, workspace_id, event_type, channel_id, enabled, filter)
+INSERT INTO unipost_notification_subscriptions (user_id, workspace_id, event_type, channel_id, enabled, filter)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_id, workspace_id, event_type, channel_id)
 DO UPDATE SET enabled = EXCLUDED.enabled, filter = EXCLUDED.filter
@@ -102,7 +102,7 @@ type CreateNotificationSubscriptionParams struct {
 }
 
 // ─── Subscriptions ───────────────────────────────────────────────────
-func (q *Queries) CreateNotificationSubscription(ctx context.Context, arg CreateNotificationSubscriptionParams) (NotificationSubscription, error) {
+func (q *Queries) CreateNotificationSubscription(ctx context.Context, arg CreateNotificationSubscriptionParams) (UnipostNotificationSubscription, error) {
 	row := q.db.QueryRow(ctx, createNotificationSubscription,
 		arg.UserID,
 		arg.WorkspaceID,
@@ -111,7 +111,7 @@ func (q *Queries) CreateNotificationSubscription(ctx context.Context, arg Create
 		arg.Enabled,
 		arg.Filter,
 	)
-	var i NotificationSubscription
+	var i UnipostNotificationSubscription
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -126,7 +126,7 @@ func (q *Queries) CreateNotificationSubscription(ctx context.Context, arg Create
 }
 
 const createSkippedNotificationDelivery = `-- name: CreateSkippedNotificationDelivery :exec
-INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, event_id, payload, status, last_error, delivered_at)
+INSERT INTO unipost_notification_deliveries (subscription_id, channel_id, event_type, event_id, payload, status, last_error, delivered_at)
 VALUES ($1, $2, $3, $4, $5, 'skipped', $6, NOW())
 ON CONFLICT (event_id, channel_id) DO NOTHING
 `
@@ -153,7 +153,7 @@ func (q *Queries) CreateSkippedNotificationDelivery(ctx context.Context, arg Cre
 }
 
 const deleteNotificationSubscription = `-- name: DeleteNotificationSubscription :exec
-DELETE FROM notification_subscriptions
+DELETE FROM unipost_notification_subscriptions
 WHERE id = $1 AND user_id = $2
 `
 
@@ -168,7 +168,7 @@ func (q *Queries) DeleteNotificationSubscription(ctx context.Context, arg Delete
 }
 
 const getNotificationChannel = `-- name: GetNotificationChannel :one
-SELECT id, user_id, workspace_id, kind, config, label, verified_at, created_at, deleted_at FROM notification_channels
+SELECT id, user_id, workspace_id, kind, config, label, verified_at, created_at, deleted_at FROM unipost_notification_channels
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 `
 
@@ -177,9 +177,9 @@ type GetNotificationChannelParams struct {
 	UserID string `json:"user_id"`
 }
 
-func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (NotificationChannel, error) {
+func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificationChannelParams) (UnipostNotificationChannel, error) {
 	row := q.db.QueryRow(ctx, getNotificationChannel, arg.ID, arg.UserID)
-	var i NotificationChannel
+	var i UnipostNotificationChannel
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
@@ -197,8 +197,8 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 const getPendingNotificationDeliveries = `-- name: GetPendingNotificationDeliveries :many
 
 SELECT d.id, d.subscription_id, d.channel_id, d.event_type, d.event_id, d.payload, d.status, d.attempts, d.next_retry_at, d.last_error, d.delivered_at, d.created_at, c.kind AS channel_kind, c.config AS channel_config, c.label AS channel_label
-FROM notification_deliveries d
-JOIN notification_channels c ON c.id = d.channel_id
+FROM unipost_notification_deliveries d
+JOIN unipost_notification_channels c ON c.id = d.channel_id
 WHERE d.status = 'pending'
   AND d.next_retry_at <= NOW()
   AND c.deleted_at IS NULL
@@ -262,20 +262,20 @@ func (q *Queries) GetPendingNotificationDeliveries(ctx context.Context) ([]GetPe
 }
 
 const listNotificationChannelsByUser = `-- name: ListNotificationChannelsByUser :many
-SELECT id, user_id, workspace_id, kind, config, label, verified_at, created_at, deleted_at FROM notification_channels
+SELECT id, user_id, workspace_id, kind, config, label, verified_at, created_at, deleted_at FROM unipost_notification_channels
 WHERE user_id = $1 AND deleted_at IS NULL
 ORDER BY created_at ASC
 `
 
-func (q *Queries) ListNotificationChannelsByUser(ctx context.Context, userID string) ([]NotificationChannel, error) {
+func (q *Queries) ListNotificationChannelsByUser(ctx context.Context, userID string) ([]UnipostNotificationChannel, error) {
 	rows, err := q.db.Query(ctx, listNotificationChannelsByUser, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []NotificationChannel{}
+	items := []UnipostNotificationChannel{}
 	for rows.Next() {
-		var i NotificationChannel
+		var i UnipostNotificationChannel
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -299,8 +299,8 @@ func (q *Queries) ListNotificationChannelsByUser(ctx context.Context, userID str
 
 const listNotificationSubscriptionsByUser = `-- name: ListNotificationSubscriptionsByUser :many
 SELECT s.id, s.user_id, s.workspace_id, s.event_type, s.channel_id, s.enabled, s.filter, s.created_at, c.kind AS channel_kind, c.config AS channel_config, c.label AS channel_label
-FROM notification_subscriptions s
-JOIN notification_channels c ON c.id = s.channel_id
+FROM unipost_notification_subscriptions s
+JOIN unipost_notification_channels c ON c.id = s.channel_id
 WHERE s.user_id = $1 AND c.deleted_at IS NULL
 ORDER BY s.event_type, s.created_at
 `
@@ -352,7 +352,7 @@ func (q *Queries) ListNotificationSubscriptionsByUser(ctx context.Context, userI
 }
 
 const markNotificationChannelVerified = `-- name: MarkNotificationChannelVerified :exec
-UPDATE notification_channels
+UPDATE unipost_notification_channels
 SET verified_at = NOW()
 WHERE id = $1 AND user_id = $2
 `
@@ -368,7 +368,7 @@ func (q *Queries) MarkNotificationChannelVerified(ctx context.Context, arg MarkN
 }
 
 const markNotificationDeliveryDead = `-- name: MarkNotificationDeliveryDead :exec
-UPDATE notification_deliveries
+UPDATE unipost_notification_deliveries
 SET status = 'dead', attempts = attempts + 1, last_error = $2, delivered_at = NOW()
 WHERE id = $1
 `
@@ -384,7 +384,7 @@ func (q *Queries) MarkNotificationDeliveryDead(ctx context.Context, arg MarkNoti
 }
 
 const markNotificationDeliverySent = `-- name: MarkNotificationDeliverySent :exec
-UPDATE notification_deliveries
+UPDATE unipost_notification_deliveries
 SET status = 'sent', attempts = attempts + 1, delivered_at = NOW(), last_error = NULL
 WHERE id = $1
 `
@@ -397,8 +397,8 @@ func (q *Queries) MarkNotificationDeliverySent(ctx context.Context, id string) e
 const resolveNotificationTargets = `-- name: ResolveNotificationTargets :many
 
 SELECT s.id AS subscription_id, s.channel_id, s.event_type, c.kind AS channel_kind
-FROM notification_subscriptions s
-JOIN notification_channels c ON c.id = s.channel_id
+FROM unipost_notification_subscriptions s
+JOIN unipost_notification_channels c ON c.id = s.channel_id
 JOIN workspaces w ON w.id = $2
 WHERE s.event_type = $1
   AND s.enabled = TRUE
@@ -453,7 +453,7 @@ func (q *Queries) ResolveNotificationTargets(ctx context.Context, arg ResolveNot
 }
 
 const scheduleNotificationDeliveryRetry = `-- name: ScheduleNotificationDeliveryRetry :exec
-UPDATE notification_deliveries
+UPDATE unipost_notification_deliveries
 SET attempts = attempts + 1, next_retry_at = $2, last_error = $3
 WHERE id = $1
 `
@@ -470,7 +470,7 @@ func (q *Queries) ScheduleNotificationDeliveryRetry(ctx context.Context, arg Sch
 }
 
 const setNotificationSubscriptionEnabled = `-- name: SetNotificationSubscriptionEnabled :exec
-UPDATE notification_subscriptions
+UPDATE unipost_notification_subscriptions
 SET enabled = $3
 WHERE id = $1 AND user_id = $2
 `
@@ -487,7 +487,7 @@ func (q *Queries) SetNotificationSubscriptionEnabled(ctx context.Context, arg Se
 }
 
 const softDeleteNotificationChannel = `-- name: SoftDeleteNotificationChannel :exec
-UPDATE notification_channels
+UPDATE unipost_notification_channels
 SET deleted_at = NOW()
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 `

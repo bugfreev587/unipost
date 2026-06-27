@@ -1068,8 +1068,8 @@ WITH email_notifications AS (
     'notification dispatcher' AS trigger_source,
     d.event_id AS trigger_reference_id,
     '' AS subject_snapshot
-  FROM notification_deliveries d
-  JOIN notification_channels c ON c.id = d.channel_id
+  FROM unipost_notification_deliveries d
+  JOIN unipost_notification_channels c ON c.id = d.channel_id
   LEFT JOIN workspaces w ON w.id = c.workspace_id
   LEFT JOIN users u ON u.id = c.user_id
   WHERE c.kind = 'email'

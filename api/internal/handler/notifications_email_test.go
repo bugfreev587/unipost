@@ -14,7 +14,7 @@ func TestNotificationHandlerSendEmailTestUsesLoopsTemplateWhenConfigured(t *test
 	handler := NewNotificationHandler(nil, mailer, "https://dev-app.unipost.dev").
 		SetNotificationTestEmailSender(sender, "tmpl_notification_test")
 
-	err := handler.sendTestChannel(context.Background(), db.NotificationChannel{
+	err := handler.sendTestChannel(context.Background(), db.UnipostNotificationChannel{
 		ID:     "ch_123",
 		UserID: "user_123",
 		Kind:   "email",
@@ -51,7 +51,7 @@ func TestNotificationHandlerSendEmailTestDoesNotFallbackToResendWithoutLoopsTemp
 	mailer := &recordingMailer{}
 	handler := NewNotificationHandler(nil, mailer, "https://dev-app.unipost.dev")
 
-	err := handler.sendTestChannel(context.Background(), db.NotificationChannel{
+	err := handler.sendTestChannel(context.Background(), db.UnipostNotificationChannel{
 		ID:     "ch_123",
 		UserID: "user_123",
 		Kind:   "email",

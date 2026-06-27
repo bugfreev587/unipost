@@ -144,7 +144,7 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 	for _, want := range []string{
 		"free_plan_quota_email_reminders",
 		"email_send_attempts",
-		"notification_deliveries",
+		"unipost_notification_deliveries",
 		"error_triage_email_sends",
 		"'email.quota.free_plan_reminder.v1' AS event_key",
 		"'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event",
