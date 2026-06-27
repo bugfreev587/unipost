@@ -29,6 +29,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/mail"
 	"strings"
@@ -41,18 +42,21 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/audit"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/loops"
 	mailpkg "github.com/xiaoboyu/unipost-api/internal/mail"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
-const inviteTokenBytes = 32           // 32 bytes → 43 base64url chars
+const inviteTokenBytes = 32          // 32 bytes → 43 base64url chars
 const inviteTTL = 7 * 24 * time.Hour // invites expire after 7 days
 
 type MembersHandler struct {
-	queries      *db.Queries
-	quota        *quota.Checker
-	mailer       mailpkg.Mailer
-	dashboardURL string
+	queries                    *db.Queries
+	quota                      *quota.Checker
+	mailer                     mailpkg.Mailer
+	dashboardURL               string
+	inviteEmailSender          transactionalEmailSender
+	inviteEmailTransactionalID string
 }
 
 func NewMembersHandler(queries *db.Queries, q *quota.Checker, m mailpkg.Mailer, dashboardURL string) *MembersHandler {
@@ -60,6 +64,16 @@ func NewMembersHandler(queries *db.Queries, q *quota.Checker, m mailpkg.Mailer, 
 		dashboardURL = "https://app.unipost.dev"
 	}
 	return &MembersHandler{queries: queries, quota: q, mailer: m, dashboardURL: dashboardURL}
+}
+
+type transactionalEmailSender interface {
+	SendTransactional(context.Context, loops.TransactionalEmail) error
+}
+
+func (h *MembersHandler) SetInviteEmailSender(sender transactionalEmailSender, transactionalID string) *MembersHandler {
+	h.inviteEmailSender = sender
+	h.inviteEmailTransactionalID = strings.TrimSpace(transactionalID)
+	return h
 }
 
 // ─── DTOs ────────────────────────────────────────────────────────────
@@ -182,7 +196,13 @@ func (h *MembersHandler) Invite(w http.ResponseWriter, r *http.Request) {
 	// has a fallback ("copy invite link" surfaces invite.url even when
 	// the email bounces). Mail failures log but don't fail the request.
 	acceptURL := h.dashboardURL + "/invite/" + token
-	go h.sendInviteEmail(context.Background(), invite, acceptURL)
+	workspaceName := "your UniPost workspace"
+	if workspace, err := h.queries.GetWorkspace(r.Context(), workspaceID); err == nil {
+		workspaceName = workspace.Name
+	} else {
+		slog.Warn("workspace invite email: failed to load workspace name", "workspace_id", workspaceID, "invite_id", invite.ID, "error", err)
+	}
+	go h.sendInviteEmail(context.Background(), invite, workspaceName, acceptURL)
 
 	audit.Log(r.Context(), h.queries, audit.Event{
 		WorkspaceID:  workspaceID,
@@ -306,9 +326,9 @@ func (h *MembersHandler) AcceptInvite(w http.ResponseWriter, r *http.Request) {
 		IPAddress:    r.RemoteAddr,
 		UserAgent:    r.UserAgent(),
 		After: map[string]any{
-			"role":          mem.Role,
-			"invite_id":     invite.ID,
-			"invited_by":    invite.InvitedBy,
+			"role":       mem.Role,
+			"invite_id":  invite.ID,
+			"invited_by": invite.InvitedBy,
 		},
 	})
 	writeSuccess(w, toMemberResponse(mem))
@@ -615,36 +635,49 @@ func toMemberResponse(m db.WorkspaceMember) memberResponse {
 	return resp
 }
 
-func (h *MembersHandler) sendInviteEmail(ctx context.Context, invite db.WorkspaceInvite, acceptURL string) {
-	if h.mailer == nil {
+func (h *MembersHandler) sendInviteEmail(ctx context.Context, invite db.WorkspaceInvite, workspaceName, acceptURL string) {
+	if h == nil {
 		return
 	}
-	subject := "You've been invited to a UniPost workspace"
+	if h.inviteEmailSender == nil || h.inviteEmailTransactionalID == "" {
+		slog.Info("workspace invite email skipped; Loops transactional template not configured", "invite_id", invite.ID, "workspace_id", invite.WorkspaceID)
+		return
+	}
+
 	roleLabel := invite.Role
 	if len(roleLabel) > 0 {
 		roleLabel = strings.ToUpper(roleLabel[:1]) + roleLabel[1:]
 	}
-	html := fmt.Sprintf(`<!doctype html>
-<html><body style="font-family:system-ui,sans-serif;max-width:560px;margin:24px auto;padding:24px;color:#0f172a;">
-  <h2 style="margin:0 0 16px">You've been invited</h2>
-  <p>You've been invited to join a UniPost workspace as <strong>%s</strong>.</p>
-  <p><a href="%s" style="display:inline-block;padding:10px 20px;background:#10b981;color:#fff;text-decoration:none;border-radius:8px">Accept invite</a></p>
-  <p style="color:#64748b;font-size:13px;margin-top:24px">This invitation expires on %s. If you don't have a UniPost account yet, you'll be prompted to sign up.</p>
-  <p style="color:#94a3b8;font-size:12px">If the button doesn't work, paste this URL into your browser:<br>%s</p>
-</body></html>`,
-		roleLabel,
-		acceptURL,
-		invite.ExpiresAt.Time.Format("Mon, Jan 2 2006"),
-		acceptURL)
-	text := fmt.Sprintf("You've been invited to join a UniPost workspace as %s.\n\nAccept here: %s\n\nThis invitation expires on %s.",
-		invite.Role, acceptURL, invite.ExpiresAt.Time.Format("Mon, Jan 2 2006"))
+	workspaceName = strings.TrimSpace(workspaceName)
+	if workspaceName == "" {
+		workspaceName = "your UniPost workspace"
+	}
+	expiresAt := ""
+	if invite.ExpiresAt.Valid {
+		expiresAt = invite.ExpiresAt.Time.UTC().Format(time.RFC3339)
+	}
 
-	_ = h.mailer.Send(ctx, mailpkg.Message{
-		To:      invite.Email,
-		Subject: subject,
-		HTML:    html,
-		Text:    text,
-	})
+	if err := h.inviteEmailSender.SendTransactional(ctx, loops.TransactionalEmail{
+		TransactionalID: h.inviteEmailTransactionalID,
+		Email:           invite.Email,
+		IdempotencyKey:  "workspace_invite:" + invite.ID,
+		DataVariables: map[string]any{
+			"workspace_name": workspaceName,
+			"role":           roleLabel,
+			"accept_url":     acceptURL,
+			"expires_at":     expiresAt,
+		},
+		Audit: loops.EmailAudit{
+			EventKey:           "email.workspace.member_invited.v1",
+			WorkspaceID:        invite.WorkspaceID,
+			Provider:           "loops",
+			DeliveryClass:      "critical_transactional",
+			TriggerSource:      "workspace invite created",
+			TriggerReferenceID: invite.ID,
+		},
+	}); err != nil {
+		slog.Warn("workspace invite email: Loops transactional send failed", "invite_id", invite.ID, "workspace_id", invite.WorkspaceID, "email", invite.Email, "error", err)
+	}
 }
 
 // ensureNoUnusedPgxImport keeps the pgx import live in case future

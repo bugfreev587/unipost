@@ -82,6 +82,11 @@ INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, ev
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (event_id, channel_id) DO NOTHING;
 
+-- name: CreateSkippedNotificationDelivery :exec
+INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, event_id, payload, status, last_error, delivered_at)
+VALUES ($1, $2, $3, $4, $5, 'skipped', $6, NOW())
+ON CONFLICT (event_id, channel_id) DO NOTHING;
+
 -- ─── Delivery worker ─────────────────────────────────────────────────
 
 -- name: GetPendingNotificationDeliveries :many

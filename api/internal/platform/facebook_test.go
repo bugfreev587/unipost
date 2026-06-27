@@ -78,6 +78,36 @@ func TestFacebookOAuthScopesIncludeAnalyticsScopes(t *testing.T) {
 	}
 }
 
+func TestFacebookAuthURLIncludesBusinessLoginConfigIDWhenConfigured(t *testing.T) {
+	t.Setenv("FACEBOOK_BUSINESS_LOGIN_CONFIG_ID", "1030431302798536")
+
+	adapter := NewFacebookAdapter()
+	config := adapter.DefaultOAuthConfig("https://dev-api.unipost.dev")
+	got := adapter.GetAuthURL(config, "state-1")
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := u.Query().Get("config_id"); q != "1030431302798536" {
+		t.Fatalf("config_id = %q, want 1030431302798536", q)
+	}
+}
+
+func TestFacebookAuthURLOmitsBusinessLoginConfigIDWhenUnset(t *testing.T) {
+	t.Setenv("FACEBOOK_BUSINESS_LOGIN_CONFIG_ID", "")
+
+	adapter := NewFacebookAdapter()
+	config := adapter.DefaultOAuthConfig("https://dev-api.unipost.dev")
+	got := adapter.GetAuthURL(config, "state-1")
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := u.Query()["config_id"]; ok {
+		t.Fatalf("config_id should be omitted when env is unset: %s", got)
+	}
+}
+
 func TestWrapFacebookPublishErrorCarriesProviderFields(t *testing.T) {
 	err := wrapFacebookPublishError(http.StatusInternalServerError, []byte(`{"error":{"message":"An unexpected error has occurred. Please retry your request later.","type":"OAuthException","is_transient":true,"code":2,"error_subcode":0,"fbtrace_id":"TRACE"}}`))
 	carrier, ok := err.(interface{ ProviderErrorFields() map[string]any })

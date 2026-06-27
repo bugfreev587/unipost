@@ -30,7 +30,7 @@ func TestMatchingAccountLevelSubscriptions(t *testing.T) {
 		},
 		{
 			ID:          "other-event",
-			EventType:   "billing.payment_failed",
+			EventType:   "account.disconnected",
 			ChannelID:   "channel-1",
 			WorkspaceID: pgtype.Text{},
 		},

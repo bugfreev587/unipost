@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
@@ -73,13 +74,27 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 	}
 
 	for _, t := range targets {
-		if err := d.queries.CreateNotificationDelivery(ctx, db.CreateNotificationDeliveryParams{
-			SubscriptionID: t.SubscriptionID,
-			ChannelID:      t.ChannelID,
-			EventType:      event,
-			EventID:        eventID,
-			Payload:        payload,
-		}); err != nil {
+		plan := notificationDeliveryPlan(event, t.ChannelKind)
+		var err error
+		if plan.Skipped {
+			err = d.queries.CreateSkippedNotificationDelivery(ctx, db.CreateSkippedNotificationDeliveryParams{
+				SubscriptionID: t.SubscriptionID,
+				ChannelID:      t.ChannelID,
+				EventType:      event,
+				EventID:        eventID,
+				Payload:        payload,
+				LastError:      pgtype.Text{String: plan.Reason, Valid: true},
+			})
+		} else {
+			err = d.queries.CreateNotificationDelivery(ctx, db.CreateNotificationDeliveryParams{
+				SubscriptionID: t.SubscriptionID,
+				ChannelID:      t.ChannelID,
+				EventType:      event,
+				EventID:        eventID,
+				Payload:        payload,
+			})
+		}
+		if err != nil {
 			slog.Error("notifications: create delivery failed",
 				"subscription_id", t.SubscriptionID,
 				"event", event,
@@ -88,6 +103,30 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 		}
 	}
 	return nil
+}
+
+type deliveryPlan struct {
+	Skipped bool
+	Reason  string
+}
+
+func notificationDeliveryPlan(event, channelKind string) deliveryPlan {
+	if channelKind == "email" && loopsOwnedEmailNotificationEvent(event) {
+		return deliveryPlan{
+			Skipped: true,
+			Reason:  "email delivery moved to Loops transactional template",
+		}
+	}
+	return deliveryPlan{}
+}
+
+func loopsOwnedEmailNotificationEvent(event string) bool {
+	switch event {
+	case events.EventPostFailed, events.EventAccountDisconnected:
+		return true
+	default:
+		return false
+	}
 }
 
 // ── Delivery worker ──────────────────────────────────────────────────

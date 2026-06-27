@@ -266,6 +266,7 @@ func (w *ManagedTokenRefreshWorker) markReconnectRequired(ctx context.Context, a
 	}
 	w.bus.Publish(ctx, workspaceID, events.EventAccountDisconnected, map[string]any{
 		"social_account_id": acc.ID,
+		"profile_id":        acc.ProfileID,
 		"platform":          acc.Platform,
 		"account_name":      accountName,
 		"external_user_id":  externalUserID,

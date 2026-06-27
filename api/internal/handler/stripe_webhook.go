@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"html"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,24 +15,19 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
-	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
 
 type StripeWebhookHandler struct {
 	queries     *db.Queries
 	stripe      *billing.Manager
 	bus         events.EventBus
-	mailer      mail.Mailer
 	appBaseURL  string
 	loopsSyncer loopsLifecycleSyncer
 }
 
-func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus, mailer mail.Mailer, appBaseURL string) *StripeWebhookHandler {
+func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus, appBaseURL string) *StripeWebhookHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
-	}
-	if mailer == nil {
-		mailer = mail.NoopMailer{}
 	}
 	if appBaseURL == "" {
 		appBaseURL = "https://app.unipost.dev"
@@ -42,7 +36,6 @@ func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bu
 		queries:    queries,
 		stripe:     stripeMgr,
 		bus:        bus,
-		mailer:     mailer,
 		appBaseURL: strings.TrimRight(appBaseURL, "/"),
 	}
 }
@@ -129,15 +122,6 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 
 	slog.Info("stripe webhook: subscription created", "workspace_id", workspaceID, "plan_id", planID, "customer", customerID)
 
-	if shouldSendPaidActivationEmail(previousSub, planID) {
-		if err := h.sendPaidActivationEmail(r, workspaceID, planID); err != nil {
-			slog.Warn("stripe webhook: failed to send paid activation email",
-				"workspace_id", workspaceID,
-				"plan_id", planID,
-				"error", err)
-		}
-	}
-
 	oldPlanID := "free"
 	if previousSub != nil {
 		oldPlanID = previousSub.PlanID
@@ -220,6 +204,11 @@ func (h *StripeWebhookHandler) handleSubscriptionDeleted(r *http.Request, event 
 		return
 	}
 
+	if localSub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true}); err == nil {
+		h.syncLoopsBillingSubscriptionCanceled(r.Context(), localSub, sub)
+	} else {
+		slog.Warn("stripe webhook: subscription row not found for cancellation email", "subscription_id", sub.ID, "error", err)
+	}
 	h.queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
 
 	slog.Info("stripe webhook: subscription canceled", "subscription_id", sub.ID)
@@ -233,19 +222,17 @@ func (h *StripeWebhookHandler) handlePaymentFailed(r *http.Request, event stripe
 
 	subID := h.getSubIDFromInvoice(&invoice)
 	if subID != "" {
+		localSub, subErr := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: subID, Valid: true})
 		h.queries.UpdateSubscriptionStatus(r.Context(), db.UpdateSubscriptionStatusParams{
 			StripeSubscriptionID: pgtype.Text{String: subID, Valid: true},
 			Status:               "past_due",
 		})
 		slog.Warn("stripe webhook: payment failed", "subscription_id", subID)
 
-		// Notify the workspace owner — critical event, per schema in
-		// events/bus.go + worker/notification.go renderer.
-		if sub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: subID, Valid: true}); err == nil {
-			h.bus.Publish(r.Context(), sub.WorkspaceID, events.EventBillingPaymentFailed, map[string]any{
-				"subscription_id": subID,
-				"plan_id":         sub.PlanID,
-			})
+		if subErr == nil {
+			h.syncLoopsBillingPaymentFailed(r.Context(), localSub, invoice, event.ID)
+		} else {
+			slog.Warn("stripe webhook: subscription row not found for payment_failed email", "subscription_id", subID, "invoice_id", invoice.ID, "error", subErr)
 		}
 	}
 }
@@ -258,11 +245,15 @@ func (h *StripeWebhookHandler) handlePaymentSucceeded(r *http.Request, event str
 
 	subID := h.getSubIDFromInvoice(&invoice)
 	if subID != "" {
+		localSub, subErr := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: subID, Valid: true})
 		h.queries.UpdateSubscriptionStatus(r.Context(), db.UpdateSubscriptionStatusParams{
 			StripeSubscriptionID: pgtype.Text{String: subID, Valid: true},
 			Status:               "active",
 		})
 		slog.Info("stripe webhook: payment succeeded", "subscription_id", subID)
+		if subErr == nil && shouldSendBillingPaymentRecovered(localSub.Status) {
+			h.syncLoopsBillingPaymentRecovered(r.Context(), localSub, invoice)
+		}
 	}
 }
 
@@ -271,6 +262,10 @@ func (h *StripeWebhookHandler) getSubIDFromInvoice(invoice *stripe.Invoice) stri
 		return invoice.Parent.SubscriptionDetails.Subscription.ID
 	}
 	return ""
+}
+
+func shouldSendBillingPaymentRecovered(previousStatus string) bool {
+	return strings.TrimSpace(previousStatus) == "past_due"
 }
 
 func isTrialCancellation(sub stripe.Subscription) bool {
@@ -355,59 +350,4 @@ func subscriptionCurrentPeriodEnd(sub *stripe.Subscription) int64 {
 		return 0
 	}
 	return sub.Items.Data[0].CurrentPeriodEnd
-}
-
-func shouldSendPaidActivationEmail(previous *db.Subscription, newPlanID string) bool {
-	if newPlanID == "" || newPlanID == "free" {
-		return false
-	}
-	if previous == nil {
-		return true
-	}
-	return previous.PlanID == "" || previous.PlanID == "free"
-}
-
-func (h *StripeWebhookHandler) sendPaidActivationEmail(r *http.Request, workspaceID, planID string) error {
-	workspace, err := h.queries.GetWorkspace(r.Context(), workspaceID)
-	if err != nil {
-		return fmt.Errorf("load workspace: %w", err)
-	}
-	owner, err := h.queries.GetUser(r.Context(), workspace.UserID)
-	if err != nil {
-		return fmt.Errorf("load workspace owner: %w", err)
-	}
-	if strings.TrimSpace(owner.Email) == "" {
-		return nil
-	}
-
-	planName := planID
-	if plan, err := h.queries.GetPlan(r.Context(), planID); err == nil && strings.TrimSpace(plan.Name) != "" {
-		planName = plan.Name
-	}
-
-	msg := renderPaidActivationEmail(owner.Email, workspace.Name, planName, h.appBaseURL)
-	return h.mailer.Send(r.Context(), msg)
-}
-
-func renderPaidActivationEmail(to, workspaceName, planName, appBaseURL string) mail.Message {
-	if strings.TrimSpace(planName) == "" {
-		planName = "paid"
-	}
-	if strings.TrimSpace(workspaceName) == "" {
-		workspaceName = "your workspace"
-	}
-
-	subject := fmt.Sprintf("[UniPost] Welcome to %s", planName)
-	html := fmt.Sprintf(`<p>Your UniPost <strong>%s</strong> plan is now active for <strong>%s</strong>.</p>
-<p>You can connect accounts, invite teammates, and start publishing right away.</p>
-<p>If you want faster setup help or product support, join our Discord support channel: <a href="https://discord.gg/HDBAhYpuQu">https://discord.gg/HDBAhYpuQu</a></p>
-<p><a href="%s/settings/billing">Open billing →</a></p>`, html.EscapeString(planName), html.EscapeString(workspaceName), appBaseURL)
-	text := fmt.Sprintf("Your UniPost %s plan is now active for %s.\n\nJoin our Discord support channel for faster help: https://discord.gg/HDBAhYpuQu\n\nOpen billing: %s/settings/billing\n", planName, workspaceName, appBaseURL)
-
-	return mail.Message{
-		To:      to,
-		Subject: subject,
-		HTML:    html,
-		Text:    text,
-	}
 }
