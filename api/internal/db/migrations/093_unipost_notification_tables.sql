@@ -56,6 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_unipost_notif_deliveries_pending
   ON unipost_notification_deliveries(next_retry_at)
   WHERE status = 'pending';
 
+-- +goose StatementBegin
 DO $$
 BEGIN
   IF to_regclass('public.notification_channels') IS NOT NULL
@@ -177,6 +178,7 @@ BEGIN
     $copy_deliveries$;
   END IF;
 END $$;
+-- +goose StatementEnd
 
 -- +goose Down
 

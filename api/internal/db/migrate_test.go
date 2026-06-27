@@ -49,3 +49,29 @@ func TestTeamPlanUnlimitedPostsMigrationExists(t *testing.T) {
 		t.Fatalf("team unlimited migration should include a down migration restoring 25000, got:\n%s", string(body))
 	}
 }
+
+func TestPostgresDoBlocksAreGooseStatementBlocks(t *testing.T) {
+	err := fs.WalkDir(migrations, "migrations", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".sql" {
+			return nil
+		}
+
+		body, err := fs.ReadFile(migrations, path)
+		if err != nil {
+			t.Fatalf("read migration %s: %v", path, err)
+		}
+		sql := string(body)
+		if strings.Contains(sql, "DO $$") &&
+			(!strings.Contains(sql, "-- +goose StatementBegin") ||
+				!strings.Contains(sql, "-- +goose StatementEnd")) {
+			t.Fatalf("%s contains a PostgreSQL DO block and must wrap it with goose StatementBegin/StatementEnd", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk migrations: %v", err)
+	}
+}
