@@ -21,6 +21,7 @@ func TestEmailSendServiceRetriesFailedRecipientWithStableIdempotencyKey(t *testi
 			},
 			Recipient: RecipientState{Status: RecipientStatusSendFailed},
 			Draft:     EmailDraft{Subject: "Reconnect Threads", Body: "Please reconnect Threads."},
+			CTAURL:    "https://app.unipost.dev/projects/ws_1/accounts",
 		},
 	}
 	sender := &fakeTransactionalSender{}
@@ -42,6 +43,9 @@ func TestEmailSendServiceRetriesFailedRecipientWithStableIdempotencyKey(t *testi
 	}
 	if sender.sent.Email != "fresh@example.com" {
 		t.Fatalf("email = %q, want current user email", sender.sent.Email)
+	}
+	if got := sender.sent.DataVariables["cta_url"]; got != "https://app.unipost.dev/projects/ws_1/accounts" {
+		t.Fatalf("cta_url = %#v, want configured CTA URL", got)
 	}
 }
 

@@ -49,6 +49,12 @@ func TestServiceSendsHighestUnsentThreshold(t *testing.T) {
 	if got := sender.sent[0].DataVariables["recipient_name"]; got != "Ada" {
 		t.Fatalf("recipient_name = %#v", got)
 	}
+	if got := sender.sent[0].DataVariables["pricing_url"]; got != "https://unipost.dev/pricing" {
+		t.Fatalf("pricing_url = %#v", got)
+	}
+	if got := sender.sent[0].DataVariables["billing_url"]; got != "https://dev-app.unipost.dev/settings/billing" {
+		t.Fatalf("billing_url = %#v", got)
+	}
 	if store.sentIDs[0] != store.created[0].ID {
 		t.Fatalf("sent id = %q, want %q", store.sentIDs[0], store.created[0].ID)
 	}

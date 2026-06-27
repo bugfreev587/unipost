@@ -133,7 +133,7 @@ var events = []Event{
 		DeliveryClass:       ServiceAlert,
 		RecipientPolicy:     "workspace owner",
 		IdempotencyPolicy:   "free_plan_quota:{workspace_id}:{period}:{threshold_percent}",
-		RequiredVariables:   []string{"subject", "preview_text", "headline", "recipient_name", "workspace_name", "body", "usage_percent", "posts_limit", "pricing_url"},
+		RequiredVariables:   []string{"subject", "preview_text", "headline", "recipient_name", "workspace_name", "body", "usage_percent", "posts_limit", "pricing_url", "billing_url"},
 		AuditPolicy:         "use free_plan_quota_email_reminders ledger",
 		FallbackPolicy:      "none by default",
 		RetentionPolicy:     "retain ledger and variable snapshots for 13 months",
