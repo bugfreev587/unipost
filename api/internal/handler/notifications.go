@@ -99,7 +99,7 @@ func matchingAccountLevelSubscriptions(rows []db.ListNotificationSubscriptionsBy
 	return out
 }
 
-func toChannelResponse(c db.NotificationChannel) channelResponse {
+func toChannelResponse(c db.UnipostNotificationChannel) channelResponse {
 	var cfg map[string]any
 	_ = json.Unmarshal(c.Config, &cfg)
 	if cfg == nil {
@@ -452,7 +452,7 @@ func isSupportedEvent(t string) bool {
 	return false
 }
 
-func (h *NotificationHandler) sendTestChannel(ctx context.Context, c db.NotificationChannel) error {
+func (h *NotificationHandler) sendTestChannel(ctx context.Context, c db.UnipostNotificationChannel) error {
 	switch c.Kind {
 	case "email":
 		var cfg struct {

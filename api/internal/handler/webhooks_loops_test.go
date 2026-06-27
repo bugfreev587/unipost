@@ -68,7 +68,7 @@ func TestWebhookHandlerSendWelcomeEmailUsesLoopsTemplateWhenConfigured(t *testin
 	}
 	assertDataVariable(t, email.DataVariables, "recipient_name", "Alex Smith")
 	assertDataVariable(t, email.DataVariables, "workspace_name", "Alex Workspace")
-	assertDataVariable(t, email.DataVariables, "app_url", "https://dev-app.unipost.dev")
+	assertDataVariable(t, email.DataVariables, "app_url", "https://dev-app.unipost.dev/projects")
 	assertDataVariable(t, email.DataVariables, "connect_url", "https://dev-app.unipost.dev/projects")
 	assertDataVariable(t, email.DataVariables, "discord_url", "https://discord.gg/HDBAhYpuQu")
 	if email.Audit.EventKey != "email.user.welcome.v1" {

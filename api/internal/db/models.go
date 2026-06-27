@@ -737,6 +737,44 @@ type SupportBundle struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type UnipostNotificationChannel struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"user_id"`
+	WorkspaceID pgtype.Text        `json:"workspace_id"`
+	Kind        string             `json:"kind"`
+	Config      []byte             `json:"config"`
+	Label       pgtype.Text        `json:"label"`
+	VerifiedAt  pgtype.Timestamptz `json:"verified_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	DeletedAt   pgtype.Timestamptz `json:"deleted_at"`
+}
+
+type UnipostNotificationDelivery struct {
+	ID             string             `json:"id"`
+	SubscriptionID string             `json:"subscription_id"`
+	ChannelID      string             `json:"channel_id"`
+	EventType      string             `json:"event_type"`
+	EventID        string             `json:"event_id"`
+	Payload        []byte             `json:"payload"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextRetryAt    pgtype.Timestamptz `json:"next_retry_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	DeliveredAt    pgtype.Timestamptz `json:"delivered_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type UnipostNotificationSubscription struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"user_id"`
+	WorkspaceID pgtype.Text        `json:"workspace_id"`
+	EventType   string             `json:"event_type"`
+	ChannelID   string             `json:"channel_id"`
+	Enabled     bool               `json:"enabled"`
+	Filter      []byte             `json:"filter"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type Usage struct {
 	ID          string             `json:"id"`
 	Period      string             `json:"period"`

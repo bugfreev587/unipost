@@ -70,6 +70,37 @@ func TestRegistryEntriesHaveRequiredContractFields(t *testing.T) {
 	}
 }
 
+func TestRegistryCoversTemplateLinkVariables(t *testing.T) {
+	events := byKey(t, Registry())
+	expected := map[string][]string{
+		"email.user.welcome.v1":                   {"app_url", "connect_url", "discord_url"},
+		"email.workspace.member_invited.v1":       {"accept_url"},
+		"email.billing.payment_failed.v1":         {"billing_url"},
+		"email.billing.payment_recovered.v1":      {"billing_url"},
+		"email.billing.subscription_canceled.v1":  {"billing_url"},
+		"email.quota.free_plan_reminder.v1":       {"pricing_url", "billing_url"},
+		"email.account.disconnected.v1":           {"reconnect_url"},
+		"email.support.error_triage_follow_up.v1": {"cta_url"},
+		"email.notification.test.v1":              {"settings_url"},
+	}
+
+	for key, vars := range expected {
+		event, ok := events[key]
+		if !ok {
+			t.Fatalf("registry missing %s", key)
+		}
+		required := map[string]bool{}
+		for _, name := range event.RequiredVariables {
+			required[name] = true
+		}
+		for _, name := range vars {
+			if !required[name] {
+				t.Fatalf("%s required variables missing template link variable %q", key, name)
+			}
+		}
+	}
+}
+
 func TestCurrentlyWiredLoopsTransactionalIDsHaveRegistryEntries(t *testing.T) {
 	mainSource, err := os.ReadFile("../../cmd/api/main.go")
 	if err != nil {

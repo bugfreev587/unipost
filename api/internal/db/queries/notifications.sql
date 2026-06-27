@@ -4,33 +4,33 @@
 -- ─── Channels ────────────────────────────────────────────────────────
 
 -- name: CreateNotificationChannel :one
-INSERT INTO notification_channels (user_id, workspace_id, kind, config, label, verified_at)
+INSERT INTO unipost_notification_channels (user_id, workspace_id, kind, config, label, verified_at)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: ListNotificationChannelsByUser :many
-SELECT * FROM notification_channels
+SELECT * FROM unipost_notification_channels
 WHERE user_id = $1 AND deleted_at IS NULL
 ORDER BY created_at ASC;
 
 -- name: GetNotificationChannel :one
-SELECT * FROM notification_channels
+SELECT * FROM unipost_notification_channels
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL;
 
 -- name: SoftDeleteNotificationChannel :exec
-UPDATE notification_channels
+UPDATE unipost_notification_channels
 SET deleted_at = NOW()
 WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL;
 
 -- name: MarkNotificationChannelVerified :exec
-UPDATE notification_channels
+UPDATE unipost_notification_channels
 SET verified_at = NOW()
 WHERE id = $1 AND user_id = $2;
 
 -- ─── Subscriptions ───────────────────────────────────────────────────
 
 -- name: CreateNotificationSubscription :one
-INSERT INTO notification_subscriptions (user_id, workspace_id, event_type, channel_id, enabled, filter)
+INSERT INTO unipost_notification_subscriptions (user_id, workspace_id, event_type, channel_id, enabled, filter)
 VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (user_id, workspace_id, event_type, channel_id)
 DO UPDATE SET enabled = EXCLUDED.enabled, filter = EXCLUDED.filter
@@ -38,18 +38,18 @@ RETURNING *;
 
 -- name: ListNotificationSubscriptionsByUser :many
 SELECT s.*, c.kind AS channel_kind, c.config AS channel_config, c.label AS channel_label
-FROM notification_subscriptions s
-JOIN notification_channels c ON c.id = s.channel_id
+FROM unipost_notification_subscriptions s
+JOIN unipost_notification_channels c ON c.id = s.channel_id
 WHERE s.user_id = $1 AND c.deleted_at IS NULL
 ORDER BY s.event_type, s.created_at;
 
 -- name: SetNotificationSubscriptionEnabled :exec
-UPDATE notification_subscriptions
+UPDATE unipost_notification_subscriptions
 SET enabled = $3
 WHERE id = $1 AND user_id = $2;
 
 -- name: DeleteNotificationSubscription :exec
-DELETE FROM notification_subscriptions
+DELETE FROM unipost_notification_subscriptions
 WHERE id = $1 AND user_id = $2;
 
 -- ─── Dispatch / fanout ───────────────────────────────────────────────
@@ -64,8 +64,8 @@ WHERE id = $1 AND user_id = $2;
 --
 -- name: ResolveNotificationTargets :many
 SELECT s.id AS subscription_id, s.channel_id, s.event_type, c.kind AS channel_kind
-FROM notification_subscriptions s
-JOIN notification_channels c ON c.id = s.channel_id
+FROM unipost_notification_subscriptions s
+JOIN unipost_notification_channels c ON c.id = s.channel_id
 JOIN workspaces w ON w.id = $2
 WHERE s.event_type = $1
   AND s.enabled = TRUE
@@ -78,12 +78,12 @@ WHERE s.event_type = $1
 -- enforces one delivery per logical event per channel.
 --
 -- name: CreateNotificationDelivery :exec
-INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, event_id, payload)
+INSERT INTO unipost_notification_deliveries (subscription_id, channel_id, event_type, event_id, payload)
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (event_id, channel_id) DO NOTHING;
 
 -- name: CreateSkippedNotificationDelivery :exec
-INSERT INTO notification_deliveries (subscription_id, channel_id, event_type, event_id, payload, status, last_error, delivered_at)
+INSERT INTO unipost_notification_deliveries (subscription_id, channel_id, event_type, event_id, payload, status, last_error, delivered_at)
 VALUES ($1, $2, $3, $4, $5, 'skipped', $6, NOW())
 ON CONFLICT (event_id, channel_id) DO NOTHING;
 
@@ -91,8 +91,8 @@ ON CONFLICT (event_id, channel_id) DO NOTHING;
 
 -- name: GetPendingNotificationDeliveries :many
 SELECT d.*, c.kind AS channel_kind, c.config AS channel_config, c.label AS channel_label
-FROM notification_deliveries d
-JOIN notification_channels c ON c.id = d.channel_id
+FROM unipost_notification_deliveries d
+JOIN unipost_notification_channels c ON c.id = d.channel_id
 WHERE d.status = 'pending'
   AND d.next_retry_at <= NOW()
   AND c.deleted_at IS NULL
@@ -100,16 +100,16 @@ ORDER BY d.created_at ASC
 LIMIT 100;
 
 -- name: MarkNotificationDeliverySent :exec
-UPDATE notification_deliveries
+UPDATE unipost_notification_deliveries
 SET status = 'sent', attempts = attempts + 1, delivered_at = NOW(), last_error = NULL
 WHERE id = $1;
 
 -- name: ScheduleNotificationDeliveryRetry :exec
-UPDATE notification_deliveries
+UPDATE unipost_notification_deliveries
 SET attempts = attempts + 1, next_retry_at = $2, last_error = $3
 WHERE id = $1;
 
 -- name: MarkNotificationDeliveryDead :exec
-UPDATE notification_deliveries
+UPDATE unipost_notification_deliveries
 SET status = 'dead', attempts = attempts + 1, last_error = $2, delivered_at = NOW()
 WHERE id = $1;
