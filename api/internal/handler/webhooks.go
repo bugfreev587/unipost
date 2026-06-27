@@ -303,7 +303,7 @@ func (h *WebhookHandler) sendWelcomeEmail(ctx context.Context, userID, email, re
 		DataVariables: map[string]any{
 			"recipient_name": recipientName,
 			"workspace_name": workspaceName,
-			"app_url":        appURL,
+			"app_url":        appURL + "/projects",
 			"connect_url":    appURL + "/projects",
 			"discord_url":    welcomeDiscordURL,
 		},
