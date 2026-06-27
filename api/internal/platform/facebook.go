@@ -128,7 +128,19 @@ func FacebookOAuthScopes() []string {
 }
 
 func (a *FacebookAdapter) GetAuthURL(config OAuthConfig, state string) string {
-	return BuildAuthURL(config.AuthURL, config.ClientID, config.RedirectURL, state, config.Scopes)
+	authURL := BuildAuthURL(config.AuthURL, config.ClientID, config.RedirectURL, state, config.Scopes)
+	configID := strings.TrimSpace(os.Getenv("FACEBOOK_BUSINESS_LOGIN_CONFIG_ID"))
+	if configID == "" {
+		return authURL
+	}
+	u, err := url.Parse(authURL)
+	if err != nil {
+		return authURL
+	}
+	q := u.Query()
+	q.Set("config_id", configID)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // ExchangeCode turns the OAuth code into a short-lived User Access

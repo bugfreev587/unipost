@@ -46,12 +46,17 @@ type LifecycleEvent struct {
 type Options struct {
 	Enabled          func(context.Context, DashboardUser) bool
 	TransactionalIDs TransactionalIDs
+	EmailAuditStore  EmailAuditStore
 }
 
 type TransactionalIDs struct {
-	PlanChanged     string
-	AccountCanceled string
-	PostFailed      string
+	PlanChanged                 string
+	BillingPaymentFailed        string
+	BillingPaymentRecovered     string
+	BillingSubscriptionCanceled string
+	AccountDisconnected         string
+	AccountCanceled             string
+	PostFailed                  string
 }
 
 type Syncer struct {
@@ -61,6 +66,9 @@ type Syncer struct {
 }
 
 func NewSyncer(client LifecycleClient, opts Options) *Syncer {
+	if opts.EmailAuditStore != nil && client != nil {
+		client = NewAuditedClient(client, opts.EmailAuditStore)
+	}
 	enabled := opts.Enabled
 	if enabled == nil {
 		enabled = func(ctx context.Context, user DashboardUser) bool {
@@ -159,6 +167,7 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 			UserID:          event.UserID,
 			IdempotencyKey:  event.IdempotencyKey,
 			DataVariables:   lifecycleTransactionalDataVariables(event, props),
+			Audit:           lifecycleTransactionalAudit(event),
 		}); err != nil {
 			slog.Warn("loops: lifecycle transactional email failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
 		}
@@ -184,6 +193,14 @@ func (s *Syncer) transactionalIDFor(eventName string) string {
 	switch strings.TrimSpace(eventName) {
 	case "plan_changed":
 		return strings.TrimSpace(s.transactionalIDs.PlanChanged)
+	case "billing_payment_failed":
+		return strings.TrimSpace(s.transactionalIDs.BillingPaymentFailed)
+	case "billing_payment_recovered":
+		return strings.TrimSpace(s.transactionalIDs.BillingPaymentRecovered)
+	case "billing_subscription_canceled":
+		return strings.TrimSpace(s.transactionalIDs.BillingSubscriptionCanceled)
+	case "account_disconnected":
+		return strings.TrimSpace(s.transactionalIDs.AccountDisconnected)
 	case "user_account_canceled":
 		return strings.TrimSpace(s.transactionalIDs.AccountCanceled)
 	case "post_failed":
@@ -222,11 +239,42 @@ func lifecycleTransactionalDataVariables(event LifecycleEvent, props map[string]
 	vars := map[string]any{}
 	switch strings.TrimSpace(event.EventName) {
 	case "plan_changed":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
 		addTransactionalValue(vars, "old_plan_id", props["old_plan_id"])
 		addTransactionalValue(vars, "new_plan_id", props["new_plan_id"])
+		addTransactionalValue(vars, "change_type", props["change_type"])
+		addTransactionalValue(vars, "billing_url", props["billing_url"])
+	case "billing_payment_failed":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "plan_id", props["plan_id"])
+		addTransactionalValue(vars, "billing_url", props["billing_url"])
+		addTransactionalValue(vars, "retry_message", props["retry_message"])
+		addTransactionalValue(vars, "attempt_count", props["attempt_count"])
+		addTransactionalValue(vars, "next_payment_attempt", props["next_payment_attempt"])
+	case "billing_payment_recovered":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "plan_id", props["plan_id"])
+		addTransactionalValue(vars, "billing_url", props["billing_url"])
+	case "billing_subscription_canceled":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "plan_id", props["plan_id"])
+		addTransactionalValue(vars, "effective_at", props["effective_at"])
+		addTransactionalValue(vars, "billing_url", props["billing_url"])
+	case "account_disconnected":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "platform", props["platform"])
+		addTransactionalValue(vars, "account_name", props["account_name"])
+		addTransactionalValue(vars, "reconnect_url", props["reconnect_url"])
+		addTransactionalValue(vars, "reason", props["reason"])
 	case "post_failed":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "post_id", props["post_id"])
 		addTransactionalValue(vars, "platform", props["platform"])
 		addTransactionalValue(vars, "error_code", props["error_code"])
+		addTransactionalValue(vars, "dashboard_url", props["dashboard_url"])
+		addTransactionalValue(vars, "retriable", props["retriable"])
+	case "user_account_canceled":
+		addTransactionalValue(vars, "canceled_at", props["canceled_at"])
 	}
 	return vars
 }

@@ -97,6 +97,7 @@ type TransactionalEmail struct {
 	UserID          string
 	IdempotencyKey  string
 	DataVariables   map[string]any
+	Audit           EmailAudit
 }
 
 func (c *Client) SendTransactional(ctx context.Context, email TransactionalEmail) error {

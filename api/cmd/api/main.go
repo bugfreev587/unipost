@@ -311,17 +311,23 @@ func main() {
 	}
 
 	var loopsClient *loops.Client
+	var auditedLoopsClient *loops.AuditedClient
 	var loopsSyncer *loops.Syncer
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
-		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
+		auditedLoopsClient = loops.NewAuditedClient(loopsClient, loops.NewPostgresEmailAuditStore(queries))
+		loopsSyncer = loops.NewSyncer(auditedLoopsClient, loops.Options{
 			TransactionalIDs: loops.TransactionalIDs{
-				PlanChanged:     os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
-				AccountCanceled: os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
-				PostFailed:      os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
+				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
+				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
+				BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
+				BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
+				AccountDisconnected:         os.Getenv("LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID"),
+				AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
+				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
 			},
 		})
 		slog.Info("loops: lifecycle sync configured")
@@ -343,13 +349,14 @@ func main() {
 	}
 
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
+	loopsNotificationBus := worker.NewLoopsNotificationEmailBus(queries, loopsSyncer, os.Getenv("APP_BASE_URL"))
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
 	go notificationWorker.Start(workerCtx)
 
 	// One Publish() call feeds both the developer webhook system and
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
-	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher)
+	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
@@ -426,6 +433,9 @@ func main() {
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
 	webhookHandler := handler.NewWebhookHandler(queries, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
+	if auditedLoopsClient != nil {
+		webhookHandler.SetWelcomeEmailSender(auditedLoopsClient, os.Getenv("LOOPS_USER_WELCOME_TRANSACTIONAL_ID"))
+	}
 	profileHandler := handler.NewProfileHandler(queries, quotaChecker)
 	if storageClient != nil {
 		profileHandler.SetBrandingLogoStore(storageClient)
@@ -439,7 +449,7 @@ func main() {
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, mailer, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.
@@ -574,7 +584,13 @@ func main() {
 	// invited you to join as editor". The token in the URL is the only
 	// authentication; an invalid / expired / revoked token returns 404
 	// to avoid leaking which tokens existed.
-	publicMembersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+	configureMembersEmail := func(h *handler.MembersHandler) *handler.MembersHandler {
+		if auditedLoopsClient != nil {
+			return h.SetInviteEmailSender(auditedLoopsClient, os.Getenv("LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID"))
+		}
+		return h
+	}
+	publicMembersHandler := configureMembersEmail(handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL")))
 	r.Get("/v1/public/invites/{token}", publicMembersHandler.GetInvite)
 
 	// Sprint 3 PR5: Bluesky Connect form submission. Native HTML form
@@ -629,6 +645,9 @@ func main() {
 		r.Post("/v1/me/activation/dismiss", activationHandler.Dismiss)
 
 		notificationHandler := handler.NewNotificationHandler(queries, mailer, os.Getenv("APP_BASE_URL"))
+		if auditedLoopsClient != nil {
+			notificationHandler.SetNotificationTestEmailSender(auditedLoopsClient, os.Getenv("LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID"))
+		}
 		r.Get("/v1/me/notifications/events", notificationHandler.ListEvents)
 		r.Get("/v1/me/notifications/channels", notificationHandler.ListChannels)
 		r.Post("/v1/me/notifications/channels", notificationHandler.CreateChannel)
@@ -648,7 +667,7 @@ func main() {
 		// user clicking the email link) but NOT a workspace context —
 		// they may not be a member of any workspace yet. The handler
 		// creates the membership and stamps the invite accepted.
-		clerkOnlyMembersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+		clerkOnlyMembersHandler := configureMembersEmail(handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL")))
 		r.Post("/v1/invites/{token}/accept", clerkOnlyMembersHandler.AcceptInvite)
 	})
 
@@ -944,7 +963,7 @@ func main() {
 		// outside this group below — it needs Clerk auth but no role
 		// (the user accepting may not yet be a member of any
 		// workspace).
-		membersHandler := handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL"))
+		membersHandler := configureMembersEmail(handler.NewMembersHandler(queries, quotaChecker, mailer, os.Getenv("NEXT_PUBLIC_APP_URL")))
 		r.Get("/v1/members", membersHandler.List)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Post("/v1/members/invite", membersHandler.Invite)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Delete("/v1/members/invites/{id}", membersHandler.RevokeInvite)
