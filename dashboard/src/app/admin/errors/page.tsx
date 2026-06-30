@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { Check, Copy, ExternalLink, X } from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
+  Suspense,
   useCallback,
   useEffect,
   useMemo,
@@ -26,12 +28,11 @@ const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", 
 const SOURCE_OPTIONS = ["all", "dashboard", "api", "mcp"] as const;
 const RANGE_OPTIONS = ["this_month", "7", "30", "90"] as const;
 type FailureRange = typeof RANGE_OPTIONS[number];
+type URLParamReader = {
+  get(name: string): string | null;
+};
 
-function initialFiltersFromURL() {
-  if (typeof window === "undefined") {
-    return { search: "", platform: "all" as const, source: "all" as const, range: "30" as FailureRange, userId: "" };
-  }
-  const params = new URLSearchParams(window.location.search);
+function filtersFromURLParams(params: URLParamReader) {
   const platformParam = params.get("platform");
   const sourceParam = params.get("source");
   const daysParam = params.get("days");
@@ -54,8 +55,16 @@ function initialFiltersFromURL() {
   };
 }
 
-export default function AdminErrorsPage() {
+function initialFiltersFromURL() {
+  if (typeof window === "undefined") {
+    return { search: "", platform: "all" as const, source: "all" as const, range: "30" as FailureRange, userId: "" };
+  }
+  return filtersFromURLParams(new URLSearchParams(window.location.search));
+}
+
+function AdminErrorsContent() {
   const { getToken } = useAuth();
+  const searchParams = useSearchParams();
   const [failures, setFailures] = useState<AdminUserPostFailure[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -63,7 +72,7 @@ export default function AdminErrorsPage() {
   const [initialFilters] = useState(() => initialFiltersFromURL());
   const [search, setSearch] = useState(initialFilters.search);
   const [searchInput, setSearchInput] = useState(initialFilters.search);
-  const [userIdFilter] = useState(initialFilters.userId);
+  const [userIdFilter, setUserIdFilter] = useState(initialFilters.userId);
   const [platform, setPlatform] = useState(initialFilters.platform);
   const [source, setSource] = useState(initialFilters.source);
   const [range, setRange] = useState<FailureRange>(initialFilters.range);
@@ -99,6 +108,17 @@ export default function AdminErrorsPage() {
   useEffect(() => {
     loadFailures();
   }, [loadFailures]);
+
+  useEffect(() => {
+    const nextFilters = filtersFromURLParams(searchParams);
+    setSearch(nextFilters.search);
+    setSearchInput(nextFilters.search);
+    setUserIdFilter(nextFilters.userId);
+    setPlatform(nextFilters.platform);
+    setSource(nextFilters.source);
+    setRange(nextFilters.range);
+    setSelectedFailureId(null);
+  }, [searchParams]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), 300);
@@ -402,6 +422,14 @@ export default function AdminErrorsPage() {
         ) : null}
       </div>
     </AdminShell>
+  );
+}
+
+export default function AdminErrorsPage() {
+  return (
+    <Suspense fallback={<AdminShell title="Errors" loading><div /></AdminShell>}>
+      <AdminErrorsContent />
+    </Suspense>
   );
 }
 
