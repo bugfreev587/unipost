@@ -431,20 +431,21 @@ LIMIT 1`, id)
 // ── User list ────────────────────────────────────────────────────────
 
 type adminUserRow struct {
-	ID             string     `json:"id"`
-	Email          string     `json:"email"`
-	CreatedAt      time.Time  `json:"created_at"`
-	SignupCountry  string     `json:"signup_country_code"`
-	WorkspaceCount int64      `json:"workspace_count"`
-	APIKeyCount    int64      `json:"api_key_count"`
-	PlatformCount  int64      `json:"platform_count"`
-	Platforms      []string   `json:"platforms"`
-	PostsUsed      int64      `json:"posts_used"`
-	ScheduledPosts int64      `json:"scheduled_posts"`
-	PostLimit      int64      `json:"post_limit"`
-	MRRCents       int64      `json:"mrr_cents"`
-	IsPaid         bool       `json:"is_paid"`
-	LastPostAt     *time.Time `json:"last_post_at"`
+	ID                   string     `json:"id"`
+	Email                string     `json:"email"`
+	CreatedAt            time.Time  `json:"created_at"`
+	SignupCountry        string     `json:"signup_country_code"`
+	WorkspaceCount       int64      `json:"workspace_count"`
+	APIKeyCount          int64      `json:"api_key_count"`
+	PlatformCount        int64      `json:"platform_count"`
+	Platforms            []string   `json:"platforms"`
+	PostsUsed            int64      `json:"posts_used"`
+	ScheduledPosts       int64      `json:"scheduled_posts"`
+	FailedPostsThisMonth int64      `json:"failed_posts_this_month"`
+	PostLimit            int64      `json:"post_limit"`
+	MRRCents             int64      `json:"mrr_cents"`
+	IsPaid               bool       `json:"is_paid"`
+	LastPostAt           *time.Time `json:"last_post_at"`
 }
 
 type adminCountryBreakdownRow struct {
@@ -556,6 +557,21 @@ WITH base AS (
        WHERE w.user_id = u.id
          AND sp.status = 'scheduled'
          AND sp.deleted_at IS NULL), 0) AS scheduled_posts,
+    COALESCE((SELECT COUNT(DISTINCT sp.id)::bigint
+       FROM social_posts sp
+       JOIN workspaces w ON w.id = sp.workspace_id
+       WHERE w.user_id = u.id
+         AND sp.deleted_at IS NULL
+         AND sp.created_at >= date_trunc('month', NOW())
+         AND (
+           sp.status = 'failed'
+           OR EXISTS (
+             SELECT 1
+             FROM social_post_results spr
+             WHERE spr.post_id = sp.id
+               AND spr.status = 'failed'
+           )
+         )), 0) AS failed_posts_this_month,
     CASE WHEN EXISTS(
        SELECT 1
        FROM subscriptions s
@@ -606,7 +622,7 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 			&u.SignupCountry,
 			&u.WorkspaceCount, &u.APIKeyCount, &u.PlatformCount,
 			&u.Platforms,
-			&u.PostsUsed, &u.ScheduledPosts, &u.PostLimit,
+			&u.PostsUsed, &u.ScheduledPosts, &u.FailedPostsThisMonth, &u.PostLimit,
 			&u.MRRCents, &u.IsPaid,
 			&lastPostAt,
 		); err != nil {
@@ -785,6 +801,7 @@ type adminPostFailureQuery struct {
 	Search   string
 	Platform string
 	Source   string
+	Period   string
 	Days     int
 	Limit    int
 	Excluded []string
@@ -1165,6 +1182,14 @@ func parseAdminEmailNotificationThreshold(raw string) (int, bool) {
 	}
 }
 
+func normalizeAdminPostFailurePeriod(raw string) string {
+	period := strings.TrimSpace(strings.ToLower(raw))
+	if period == "this_month" {
+		return period
+	}
+	return ""
+}
+
 func (h *AdminHandler) queryPostFailures(ctx context.Context, opts adminPostFailureQuery) ([]adminPostFailure, error) {
 	days := opts.Days
 	if days <= 0 || days > 365 {
@@ -1174,6 +1199,15 @@ func (h *AdminHandler) queryPostFailures(ctx context.Context, opts adminPostFail
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+
+	postDateFilterSQL := `(
+      ($8::TEXT = 'this_month' AND sp.created_at >= date_trunc('month', NOW()))
+      OR ($8::TEXT <> 'this_month' AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day'))
+    )`
+	failureEventDateFilterSQL := `(
+      ($8::TEXT = 'this_month' AND pf.created_at >= date_trunc('month', NOW()))
+      OR ($8::TEXT <> 'this_month' AND pf.created_at >= NOW() - ($2::INT * INTERVAL '1 day'))
+    )`
 
 	rows, err := h.pool.Query(ctx, `
 WITH failed_results AS (
@@ -1214,7 +1248,7 @@ WITH failed_results AS (
   WHERE ($1::TEXT = '' OR u.id = $1)
     AND u.id != ALL($7)
     AND sp.deleted_at IS NULL
-    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND `+postDateFilterSQL+`
     AND spr.status = 'failed'
     AND ($3::TEXT = '' OR sp.source = $3)
     AND ($4::TEXT = '' OR COALESCE(NULLIF(pf.platform, ''), sa.platform) = $4)
@@ -1256,7 +1290,7 @@ parent_failures AS (
   WHERE ($1::TEXT = '' OR u.id = $1)
     AND u.id != ALL($7)
     AND sp.deleted_at IS NULL
-    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND `+postDateFilterSQL+`
     AND sp.status = 'failed'
     AND ($3::TEXT = '' OR sp.source = $3)
     AND ($4::TEXT = '' OR pf.platform = $4)
@@ -1299,7 +1333,7 @@ linked_failure_events AS (
   WHERE ($1::TEXT = '' OR u.id = $1)
     AND u.id != ALL($7)
     AND sp.deleted_at IS NULL
-    AND pf.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND `+failureEventDateFilterSQL+`
     AND ($3::TEXT = '' OR sp.source = $3)
     AND ($4::TEXT = '' OR COALESCE(NULLIF(pf.platform, ''), sa.platform) = $4)
     AND $5::TEXT <> ''
@@ -1364,7 +1398,7 @@ WHERE (
 )
 ORDER BY created_at DESC
 LIMIT $6
-`, opts.UserID, days, opts.Source, opts.Platform, opts.Search, limit, opts.Excluded)
+`, opts.UserID, days, opts.Source, opts.Platform, opts.Search, limit, opts.Excluded, strings.TrimSpace(opts.Period))
 	if err != nil {
 		return nil, err
 	}
@@ -1924,6 +1958,7 @@ func (h *AdminHandler) ListUserPostFailures(w http.ResponseWriter, r *http.Reque
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	out, err := h.queryPostFailures(r.Context(), adminPostFailureQuery{
 		UserID:   userID,
+		Period:   normalizeAdminPostFailurePeriod(r.URL.Query().Get("period")),
 		Days:     days,
 		Limit:    limit,
 		Excluded: []string{},
@@ -1948,9 +1983,11 @@ func (h *AdminHandler) ListPostFailures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	out, err := h.queryPostFailures(r.Context(), adminPostFailureQuery{
+		UserID:   strings.TrimSpace(q.Get("user_id")),
 		Search:   q.Get("search"),
 		Platform: q.Get("platform"),
 		Source:   q.Get("source"),
+		Period:   normalizeAdminPostFailurePeriod(q.Get("period")),
 		Days:     days,
 		Limit:    limit,
 		Excluded: excluded,

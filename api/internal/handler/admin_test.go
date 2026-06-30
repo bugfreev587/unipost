@@ -117,6 +117,55 @@ func TestAdminPostFailuresSQLLinksHistoricalFailureEventsByConcreteID(t *testing
 	}
 }
 
+func TestAdminPostFailuresSQLSupportsExactUserAndThisMonthFilters(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		"Period   string",
+		`strings.TrimSpace(q.Get("user_id"))`,
+		`normalizeAdminPostFailurePeriod(q.Get("period"))`,
+		"period == \"this_month\"",
+		"sp.created_at >= date_trunc('month', NOW())",
+		"pf.created_at >= date_trunc('month', NOW())",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin post failures should support exact user/month filter %q", want)
+		}
+	}
+}
+
+func TestAdminPostFailuresThisMonthFilterKeepsDaysParameterTyped(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, forbidden := range []string{
+		`postDateFilterSQL = "sp.created_at >= date_trunc('month', NOW())"`,
+		`failureEventDateFilterSQL = "pf.created_at >= date_trunc('month', NOW())"`,
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("admin post failures this_month filter must not drop the typed $2 days parameter: %q", forbidden)
+		}
+	}
+
+	for _, want := range []string{
+		"$8::TEXT = 'this_month'",
+		"$8::TEXT <> 'this_month'",
+		"NOW() - ($2::INT * INTERVAL '1 day')",
+		"opts.Excluded, strings.TrimSpace(opts.Period))",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin post failures this_month filter should keep period and days parameters typed %q", want)
+		}
+	}
+}
+
 func TestAdminUsersListSQLIncludesScheduledPosts(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {
@@ -125,7 +174,7 @@ func TestAdminUsersListSQLIncludesScheduledPosts(t *testing.T) {
 	sql := string(source)
 
 	for _, want := range []string{
-		"ScheduledPosts int64",
+		"ScheduledPosts",
 		"`json:\"scheduled_posts\"`",
 		"AS scheduled_posts",
 		"sp.status = 'scheduled'",
@@ -134,6 +183,28 @@ func TestAdminUsersListSQLIncludesScheduledPosts(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("admin users list should include scheduled posts %q", want)
+		}
+	}
+}
+
+func TestAdminUsersListSQLIncludesFailedPostsThisMonth(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		"FailedPostsThisMonth int64",
+		"`json:\"failed_posts_this_month\"`",
+		"AS failed_posts_this_month",
+		"sp.created_at >= date_trunc('month', NOW())",
+		"spr.status = 'failed'",
+		"COUNT(DISTINCT sp.id)::bigint",
+		"&u.FailedPostsThisMonth",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin users list should include this-month failed posts %q", want)
 		}
 	}
 }
