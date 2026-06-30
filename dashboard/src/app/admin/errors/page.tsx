@@ -12,6 +12,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -79,9 +80,12 @@ function AdminErrorsContent() {
   const [selectedFailureId, setSelectedFailureId] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
   const [rawCopied, setRawCopied] = useState(false);
+  const loadRequestSeq = useRef(0);
   const limit = 100;
 
   const loadFailures = useCallback(async () => {
+    const requestSeq = loadRequestSeq.current + 1;
+    loadRequestSeq.current = requestSeq;
     setLoading(true);
     setError(null);
     try {
@@ -97,11 +101,15 @@ function AdminErrorsContent() {
         limit,
       };
       const res = await listAdminPostFailures(token, params);
+      if (requestSeq !== loadRequestSeq.current) return;
       setFailures(res.data);
     } catch (e) {
+      if (requestSeq !== loadRequestSeq.current) return;
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
-      setLoading(false);
+      if (requestSeq === loadRequestSeq.current) {
+        setLoading(false);
+      }
     }
   }, [getToken, platform, range, search, source, userIdFilter]);
 
