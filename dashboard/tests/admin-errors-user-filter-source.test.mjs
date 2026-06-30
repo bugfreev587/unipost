@@ -25,3 +25,16 @@ test("admin errors page reads user_id and period from URL", () => {
   assert.match(page, /period: range === "this_month" \? "this_month" : undefined/);
   assert.match(page, /value="this_month"/);
 });
+
+test("admin errors page syncs filters when URL params change client-side", () => {
+  const page = source("src/app/admin/errors/page.tsx");
+
+  assert.match(page, /useSearchParams/);
+  assert.match(page, /const searchParams = useSearchParams\(\)/);
+  assert.match(page, /<Suspense fallback=\{<AdminShell title="Errors" loading><div \/><\/AdminShell>\}>/);
+  assert.match(page, /const \[userIdFilter, setUserIdFilter\]/);
+  assert.match(page, /setSearchInput\(nextFilters\.search\)/);
+  assert.match(page, /setUserIdFilter\(nextFilters\.userId\)/);
+  assert.match(page, /setRange\(nextFilters\.range\)/);
+  assert.match(page, /\[searchParams\]/);
+});
