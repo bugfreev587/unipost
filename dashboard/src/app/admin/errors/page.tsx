@@ -24,27 +24,33 @@ import { SearchHistoryInput } from "../_components/search-history-input";
 
 const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky"] as const;
 const SOURCE_OPTIONS = ["all", "dashboard", "api", "mcp"] as const;
-const DAY_OPTIONS = [7, 30, 90] as const;
+const RANGE_OPTIONS = ["this_month", "7", "30", "90"] as const;
+type FailureRange = typeof RANGE_OPTIONS[number];
 
 function initialFiltersFromURL() {
   if (typeof window === "undefined") {
-    return { search: "", platform: "all" as const, source: "all" as const, days: 30 as const };
+    return { search: "", platform: "all" as const, source: "all" as const, range: "30" as FailureRange, userId: "" };
   }
   const params = new URLSearchParams(window.location.search);
   const platformParam = params.get("platform");
   const sourceParam = params.get("source");
-  const daysParam = Number(params.get("days"));
+  const daysParam = params.get("days");
+  const periodIsThisMonth = params.get("period") === "this_month";
+  const range = periodIsThisMonth
+    ? "this_month"
+    : RANGE_OPTIONS.includes(daysParam as FailureRange) && daysParam !== "this_month"
+      ? daysParam as FailureRange
+      : "30";
   return {
     search: params.get("search") || "",
+    userId: params.get("user_id") || "",
     platform: PLATFORM_OPTIONS.includes(platformParam as typeof PLATFORM_OPTIONS[number])
       ? platformParam as typeof PLATFORM_OPTIONS[number]
       : "all",
     source: SOURCE_OPTIONS.includes(sourceParam as typeof SOURCE_OPTIONS[number])
       ? sourceParam as typeof SOURCE_OPTIONS[number]
       : "all",
-    days: DAY_OPTIONS.includes(daysParam as typeof DAY_OPTIONS[number])
-      ? daysParam as typeof DAY_OPTIONS[number]
-      : 30,
+    range,
   };
 }
 
@@ -57,9 +63,10 @@ export default function AdminErrorsPage() {
   const [initialFilters] = useState(() => initialFiltersFromURL());
   const [search, setSearch] = useState(initialFilters.search);
   const [searchInput, setSearchInput] = useState(initialFilters.search);
+  const [userIdFilter] = useState(initialFilters.userId);
   const [platform, setPlatform] = useState(initialFilters.platform);
   const [source, setSource] = useState(initialFilters.source);
-  const [days, setDays] = useState(initialFilters.days);
+  const [range, setRange] = useState<FailureRange>(initialFilters.range);
   const [selectedFailureId, setSelectedFailureId] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
   const [rawCopied, setRawCopied] = useState(false);
@@ -73,9 +80,11 @@ export default function AdminErrorsPage() {
       if (!token) throw new Error("Not authenticated");
       const params: AdminPostFailureListParams = {
         search: search || undefined,
+        user_id: userIdFilter || undefined,
         platform: platform !== "all" ? platform : undefined,
         source: source !== "all" ? source : undefined,
-        days,
+        period: range === "this_month" ? "this_month" : undefined,
+        days: range !== "this_month" ? Number(range) : undefined,
         limit,
       };
       const res = await listAdminPostFailures(token, params);
@@ -85,7 +94,7 @@ export default function AdminErrorsPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, getToken, platform, search, source]);
+  }, [getToken, platform, range, search, source, userIdFilter]);
 
   useEffect(() => {
     loadFailures();
@@ -143,6 +152,7 @@ export default function AdminErrorsPage() {
   const stopLinkClick = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
     event.stopPropagation();
   }, []);
+  const rangeLabel = range === "this_month" ? "this month" : `the last ${range} days`;
 
   return (
     <AdminShell title="Errors" loading={loading} onRefresh={loadFailures}>
@@ -154,7 +164,9 @@ export default function AdminErrorsPage() {
 
       <div className="ad-section-header">
         <div className="ad-section-title">Publishing failures</div>
-        <div className="ad-section-meta">Cross-tenant errors from the last {days} days</div>
+        <div className="ad-section-meta">
+          Cross-tenant errors from {rangeLabel}{userIdFilter ? ` for ${userIdFilter.slice(0, 16)}` : ""}
+        </div>
       </div>
 
       <div className="ad-stat-grid">
@@ -192,13 +204,19 @@ export default function AdminErrorsPage() {
             </option>
           ))}
         </select>
-        <select value={days} onChange={(e) => setDays(Number(e.target.value) as typeof days)}>
-          {DAY_OPTIONS.map((value) => (
+        <select value={range} onChange={(e) => setRange(e.target.value as FailureRange)}>
+          <option value="this_month">This Month</option>
+          {RANGE_OPTIONS.filter((value) => value !== "this_month").map((value) => (
             <option key={value} value={value}>
               Last {value} days
             </option>
           ))}
         </select>
+        {userIdFilter ? (
+          <span className="ad-badge ad-b-gray" title={userIdFilter}>
+            User: {userIdFilter.slice(0, 16)}
+          </span>
+        ) : null}
       </div>
 
       <div style={errorsConsoleStyle}>

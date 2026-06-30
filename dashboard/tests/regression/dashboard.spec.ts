@@ -133,7 +133,10 @@ test.describe("admin errors details drawer", () => {
     expect(pageSource).toContain("useState(initialFilters.search)");
     expect(pageSource).toContain("useState(initialFilters.platform)");
     expect(pageSource).toContain("useState(initialFilters.source)");
-    expect(pageSource).toContain("useState(initialFilters.days)");
+    expect(pageSource).toContain("useState<FailureRange>(initialFilters.range)");
+    expect(pageSource).toContain("useState(initialFilters.userId)");
+    expect(pageSource).toContain('params.get("period") === "this_month"');
+    expect(pageSource).toContain('params.get("user_id")');
     expect(pageSource).not.toContain("const initial = initialFiltersFromURL();");
   });
 });
