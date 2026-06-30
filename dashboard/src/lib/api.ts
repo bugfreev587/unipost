@@ -2538,6 +2538,7 @@ export interface AdminUserRow {
   platforms: string[];
   posts_used: number;
   scheduled_posts?: number;
+  failed_posts_this_month: number;
   post_limit: number;
   mrr_cents: number;
   is_paid: boolean;
@@ -2759,8 +2760,10 @@ export interface AdminUserListParams {
 
 export interface AdminPostFailureListParams {
   search?: string;
+  user_id?: string;
   platform?: string;
   source?: string;
+  period?: "this_month";
   days?: number;
   limit?: number;
 }
@@ -3350,8 +3353,10 @@ export async function listAdminPostFailures(
 ): Promise<ApiResponse<AdminUserPostFailure[]>> {
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
+  if (params?.user_id) qs.set("user_id", params.user_id);
   if (params?.platform) qs.set("platform", params.platform);
   if (params?.source) qs.set("source", params.source);
+  if (params?.period) qs.set("period", params.period);
   if (params?.days != null) qs.set("days", String(params.days));
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();

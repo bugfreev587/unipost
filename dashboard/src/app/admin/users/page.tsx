@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -35,6 +36,10 @@ function CountryBadge({ code }: { code?: string | null }) {
   const name = countryNameFromCode(code);
   if (!name) return <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>;
   return <span className="ad-badge ad-b-gray" title={countryDisplay(code)}>{name}</span>;
+}
+
+function adminUserFailedPostsHref(userId: string) {
+  return `/admin/errors?user_id=${encodeURIComponent(userId)}&period=this_month`;
 }
 
 export default function AdminUsersPage() {
@@ -239,7 +244,7 @@ export default function AdminUsersPage() {
         </select>
       </div>
 
-      <div className="ad-tbl-wrap" style={{ position: "relative" }}>
+      <div className="ad-tbl-wrap ad-tbl-static" style={{ position: "relative" }}>
         <table>
           <thead>
             <tr>
@@ -252,6 +257,7 @@ export default function AdminUsersPage() {
               <th>API Keys</th>
               <th>Platforms</th>
               <th>Scheduled</th>
+              <th>Failed</th>
               <th>Posts Used</th>
               <th>Last Active</th>
               <th></th>
@@ -259,15 +265,15 @@ export default function AdminUsersPage() {
           </thead>
           <tbody>
             {loading && users.length === 0 ? (
-              <tr><td colSpan={12} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={13} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : users.length === 0 ? (
-              <tr><td colSpan={12} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
+              <tr><td colSpan={13} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No users found</td></tr>
             ) : (
               users.map((u) => {
                 const usagePct = usagePercentage(u.posts_used, u.post_limit);
                 const usageClass = usagePct >= 90 ? "ad-uf-r" : usagePct >= 70 ? "ad-uf-a" : "ad-uf-g";
                 return (
-                  <tr key={u.id} onClick={() => openUser(u.id)}>
+                  <tr key={u.id}>
                     <td>
                       <div style={{ fontWeight: 500 }}>{u.email}</div>
                       <div className="ad-mono">{u.id.slice(0, 16)}</div>
@@ -305,6 +311,15 @@ export default function AdminUsersPage() {
                       )}
                     </td>
                     <td>{fmtNumber(u.scheduled_posts ?? 0)}</td>
+                    <td>
+                      {u.failed_posts_this_month > 0 ? (
+                        <Link href={adminUserFailedPostsHref(u.id)} className="ad-link au-failed-link">
+                          {fmtNumber(u.failed_posts_this_month)}
+                        </Link>
+                      ) : (
+                        <span className="au-failed-zero">0</span>
+                      )}
+                    </td>
                     <td>
                       <div style={{ fontSize: 11.5 }}>{formatPostUsage(u.posts_used, u.post_limit || 100)}</div>
                       <div className="ad-usage-bar">
@@ -494,6 +509,13 @@ const usersCss = `
 }
 .au-chart-body {
   height: 230px;
+}
+.au-failed-link {
+  color: var(--danger);
+  font-weight: 650;
+}
+.au-failed-zero {
+  color: var(--dmuted2);
 }
 @media (max-width: 1120px) {
   .au-signup-grid {

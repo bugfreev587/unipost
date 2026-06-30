@@ -14,6 +14,13 @@ test("admin users API row allows scheduled post counts to be absent during API r
   assert.match(api, /scheduled_posts\?: number;/);
 });
 
+test("admin users API row exposes failed posts this month", () => {
+  const api = source("src/lib/api.ts");
+
+  assert.match(api, /export interface AdminUserRow/);
+  assert.match(api, /failed_posts_this_month: number;/);
+});
+
 test("admin users table shows Scheduled before Posts Used", () => {
   const page = source("src/app/admin/users/page.tsx");
   const scheduledHeader = page.indexOf("<th>Scheduled</th>");
@@ -23,5 +30,21 @@ test("admin users table shows Scheduled before Posts Used", () => {
   assert.ok(postsUsedHeader > -1, "Posts Used header should be present");
   assert.ok(scheduledHeader < postsUsedHeader, "Scheduled should appear before Posts Used");
   assert.match(page, /fmtNumber\(u\.scheduled_posts \?\? 0\)/);
-  assert.match(page, /colSpan=\{12\}/);
+  assert.match(page, /colSpan=\{13\}/);
+});
+
+test("admin users table links failed counts and only View opens detail", () => {
+  const page = source("src/app/admin/users/page.tsx");
+  const scheduledHeader = page.indexOf("<th>Scheduled</th>");
+  const failedHeader = page.indexOf("<th>Failed</th>");
+  const postsUsedHeader = page.indexOf("<th>Posts Used</th>");
+
+  assert.ok(failedHeader > scheduledHeader, "Failed should appear after Scheduled");
+  assert.ok(failedHeader < postsUsedHeader, "Failed should appear before Posts Used");
+  assert.match(page, /failed_posts_this_month/);
+  assert.match(page, /adminUserFailedPostsHref\(u\.id\)/);
+  assert.match(page, /period=this_month/);
+  assert.match(page, /ad-tbl-wrap ad-tbl-static/);
+  assert.doesNotMatch(page, /<tr key=\{u\.id\} onClick=/);
+  assert.match(page, /colSpan=\{13\}/);
 });
