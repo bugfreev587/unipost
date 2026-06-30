@@ -2537,7 +2537,7 @@ export interface AdminUserRow {
   platform_count: number;
   platforms: string[];
   posts_used: number;
-  scheduled_posts: number;
+  scheduled_posts?: number;
   failed_posts_this_month: number;
   post_limit: number;
   mrr_cents: number;

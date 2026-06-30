@@ -310,7 +310,7 @@ export default function AdminUsersPage() {
                         <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
                       )}
                     </td>
-                    <td>{fmtNumber(u.scheduled_posts)}</td>
+                    <td>{fmtNumber(u.scheduled_posts ?? 0)}</td>
                     <td>
                       {u.failed_posts_this_month > 0 ? (
                         <Link href={adminUserFailedPostsHref(u.id)} className="ad-link au-failed-link">
