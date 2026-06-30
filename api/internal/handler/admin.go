@@ -1200,12 +1200,14 @@ func (h *AdminHandler) queryPostFailures(ctx context.Context, opts adminPostFail
 		limit = 50
 	}
 
-	postDateFilterSQL := "sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')"
-	failureEventDateFilterSQL := "pf.created_at >= NOW() - ($2::INT * INTERVAL '1 day')"
-	if opts.Period == "this_month" {
-		postDateFilterSQL = "sp.created_at >= date_trunc('month', NOW())"
-		failureEventDateFilterSQL = "pf.created_at >= date_trunc('month', NOW())"
-	}
+	postDateFilterSQL := `(
+      ($8::TEXT = 'this_month' AND sp.created_at >= date_trunc('month', NOW()))
+      OR ($8::TEXT <> 'this_month' AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day'))
+    )`
+	failureEventDateFilterSQL := `(
+      ($8::TEXT = 'this_month' AND pf.created_at >= date_trunc('month', NOW()))
+      OR ($8::TEXT <> 'this_month' AND pf.created_at >= NOW() - ($2::INT * INTERVAL '1 day'))
+    )`
 
 	rows, err := h.pool.Query(ctx, `
 WITH failed_results AS (
@@ -1396,7 +1398,7 @@ WHERE (
 )
 ORDER BY created_at DESC
 LIMIT $6
-`, opts.UserID, days, opts.Source, opts.Platform, opts.Search, limit, opts.Excluded)
+`, opts.UserID, days, opts.Source, opts.Platform, opts.Search, limit, opts.Excluded, strings.TrimSpace(opts.Period))
 	if err != nil {
 		return nil, err
 	}

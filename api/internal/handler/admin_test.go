@@ -138,6 +138,34 @@ func TestAdminPostFailuresSQLSupportsExactUserAndThisMonthFilters(t *testing.T) 
 	}
 }
 
+func TestAdminPostFailuresThisMonthFilterKeepsDaysParameterTyped(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, forbidden := range []string{
+		`postDateFilterSQL = "sp.created_at >= date_trunc('month', NOW())"`,
+		`failureEventDateFilterSQL = "pf.created_at >= date_trunc('month', NOW())"`,
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("admin post failures this_month filter must not drop the typed $2 days parameter: %q", forbidden)
+		}
+	}
+
+	for _, want := range []string{
+		"$8::TEXT = 'this_month'",
+		"$8::TEXT <> 'this_month'",
+		"NOW() - ($2::INT * INTERVAL '1 day')",
+		"opts.Excluded, strings.TrimSpace(opts.Period))",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin post failures this_month filter should keep period and days parameters typed %q", want)
+		}
+	}
+}
+
 func TestAdminUsersListSQLIncludesScheduledPosts(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {
