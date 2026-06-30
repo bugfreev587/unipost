@@ -10,6 +10,10 @@ function dashCell() {
   return <span className="docs-matrix-dash">—</span>;
 }
 
+function partialCell() {
+  return <span className="docs-matrix-partial">Limited</span>;
+}
+
 const PLATFORM_API_NAMES = [
   ["Twitter / X", <code key="twitter">twitter</code>],
   ["LinkedIn", <code key="linkedin">linkedin</code>],
@@ -65,7 +69,7 @@ const PLATFORM_QUICK_REFERENCE = [
     checkCell(),
     checkCell(),
     dashCell(),
-    dashCell(),
+    partialCell(),
     <Link key="tiktok-guide" href="/docs/platforms/tiktok">View</Link>,
   ],
   [
@@ -74,7 +78,7 @@ const PLATFORM_QUICK_REFERENCE = [
     dashCell(),
     checkCell(),
     dashCell(),
-    checkCell(),
+    partialCell(),
     <Link key="youtube-guide" href="/docs/platforms/youtube">View</Link>,
   ],
   [
@@ -83,7 +87,7 @@ const PLATFORM_QUICK_REFERENCE = [
     checkCell(),
     checkCell(),
     dashCell(),
-    checkCell(),
+    partialCell(),
     <Link key="pinterest-guide" href="/docs/platforms/pinterest">View</Link>,
   ],
   [
@@ -92,7 +96,7 @@ const PLATFORM_QUICK_REFERENCE = [
     checkCell(),
     checkCell(),
     checkCell(),
-    dashCell(),
+    partialCell(),
     <Link key="bluesky-guide" href="/docs/platforms/bluesky">View</Link>,
   ],
   [
@@ -101,7 +105,7 @@ const PLATFORM_QUICK_REFERENCE = [
     checkCell(),
     checkCell(),
     dashCell(),
-    dashCell(),
+    partialCell(),
     <Link key="facebook-guide" href="/docs/platforms/facebook">View</Link>,
   ],
 ] as const;
@@ -115,19 +119,19 @@ const PLATFORM_FEATURES = [
   ["YouTube", dashCell(), dashCell(), dashCell(), checkCell(), dashCell()],
   ["Pinterest", dashCell(), checkCell(), checkCell(), dashCell(), dashCell()],
   ["Bluesky", dashCell(), checkCell(), dashCell(), dashCell(), checkCell()],
-  ["Facebook (Beta)", dashCell(), dashCell(), dashCell(), dashCell(), dashCell()],
+  ["Facebook (Beta)", dashCell(), dashCell(), checkCell(), dashCell(), dashCell()],
 ] as const;
 
 const ANALYTICS_COVERAGE = [
   ["Twitter/X", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-twitter" href="/docs/api/analytics">View</Link>],
   ["LinkedIn", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-linkedin" href="/docs/api/analytics">View</Link>],
-  ["Instagram", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-instagram" href="/docs/api/analytics">View</Link>],
+  ["Instagram", dashCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-instagram" href="/docs/api/analytics">View</Link>],
   ["Threads", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-threads" href="/docs/api/analytics">View</Link>],
-  ["TikTok", dashCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
-  ["YouTube", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-youtube" href="/docs/api/analytics">View</Link>],
-  ["Pinterest", checkCell(), dashCell(), checkCell(), checkCell(), checkCell(), <Link key="analytics-pinterest" href="/docs/api/analytics">View</Link>],
-  ["Bluesky", checkCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-bluesky" href="/docs/api/analytics">View</Link>],
-  ["Facebook (Beta)", dashCell(), dashCell(), dashCell(), dashCell(), dashCell(), <Link key="analytics-facebook" href="/docs/api/analytics">View</Link>],
+  ["TikTok", dashCell(), dashCell(), checkCell(), checkCell(), checkCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
+  ["YouTube", dashCell(), dashCell(), checkCell(), checkCell(), checkCell(), <Link key="analytics-youtube" href="/docs/api/analytics">View</Link>],
+  ["Pinterest", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-pinterest" href="/docs/api/analytics">View</Link>],
+  ["Bluesky", dashCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-bluesky" href="/docs/api/analytics">View</Link>],
+  ["Facebook (Beta)", dashCell(), dashCell(), checkCell(), checkCell(), checkCell(), <Link key="analytics-facebook" href="/docs/api/analytics">View</Link>],
 ] as const;
 
 const CONNECT_SNIPPET = `curl -X POST "https://api.unipost.dev/v1/accounts/connect" \\
