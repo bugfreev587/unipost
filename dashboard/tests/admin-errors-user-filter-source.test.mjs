@@ -38,3 +38,14 @@ test("admin errors page syncs filters when URL params change client-side", () =>
   assert.match(page, /setRange\(nextFilters\.range\)/);
   assert.match(page, /\[searchParams\]/);
 });
+
+test("admin errors page ignores stale failure loads after URL filter changes", () => {
+  const page = source("src/app/admin/errors/page.tsx");
+
+  assert.match(page, /useRef/);
+  assert.match(page, /const loadRequestSeq = useRef\(0\)/);
+  assert.match(page, /const requestSeq = loadRequestSeq\.current \+ 1/);
+  assert.match(page, /loadRequestSeq\.current = requestSeq/);
+  assert.match(page, /if \(requestSeq !== loadRequestSeq\.current\) return;\s+setFailures\(res\.data\)/);
+  assert.match(page, /if \(requestSeq === loadRequestSeq\.current\) \{\s+setLoading\(false\)/);
+});
