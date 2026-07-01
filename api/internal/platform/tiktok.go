@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -110,9 +109,6 @@ func (a *TikTokAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 
 func tiktokOAuthScopes() []string {
 	scopes := append([]string(nil), tiktokLegacyScopes...)
-	if !featureflags.Enabled(context.Background(), featureflags.TikTokAnalyticsScopes, featureflags.Target{}) {
-		return scopes
-	}
 	return append(scopes, tiktokAnalyticsScopes...)
 }
 

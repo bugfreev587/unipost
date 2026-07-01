@@ -322,20 +322,6 @@ func (s *Service) resolveEnv(surface Surface) (EffectiveConfig, error) {
 			Model:      s.envChatModel(surface),
 			Surface:    surface,
 		}, nil
-	case SurfaceAppReviewAI:
-		apiKey := strings.TrimSpace(s.lookup("ANTHROPIC_API_KEY"))
-		if apiKey == "" {
-			return EffectiveConfig{}, ErrProviderNotConfigured
-		}
-		return EffectiveConfig{
-			Provider:   ProviderAnthropic,
-			Source:     SourceEnv,
-			ClientKind: ClientKindMessages,
-			APIKey:     apiKey,
-			BaseURL:    DefaultAnthropicBaseURL,
-			Model:      s.envMessagesModel(surface),
-			Surface:    surface,
-		}, nil
 	default:
 		return EffectiveConfig{}, ErrSurfaceUnsupported
 	}
@@ -372,7 +358,7 @@ func (s *Service) ListStatus(ctx context.Context) (StatusResponse, error) {
 	}
 
 	effective := map[Surface]RouteStatus{}
-	for _, surface := range []Surface{SurfacePostAssist, SurfaceErrorTriage, SurfaceAppReviewAI} {
+	for _, surface := range []Surface{SurfacePostAssist, SurfaceErrorTriage} {
 		cfg, err := s.Resolve(ctx, surface)
 		if err != nil {
 			effective[surface] = RouteStatus{Surface: surface, Source: SourceNone}
@@ -463,14 +449,6 @@ func (s *Service) envProviderStatus(provider Provider) ProviderStatus {
 			status.KeyTail = keyTail(apiKey)
 			status.ChatModel = s.envChatModel(SurfacePostAssist)
 		}
-	case ProviderAnthropic:
-		if apiKey := strings.TrimSpace(s.lookup("ANTHROPIC_API_KEY")); apiKey != "" {
-			status.Configured = true
-			status.Enabled = true
-			status.Source = SourceEnv
-			status.KeyTail = keyTail(apiKey)
-			status.MessagesModel = s.envMessagesModel(SurfaceAppReviewAI)
-		}
 	case ProviderTokenGate:
 	}
 	return status
@@ -518,8 +496,6 @@ func normalizeSurface(surface Surface) (Surface, error) {
 		return SurfacePostAssist, nil
 	case SurfaceErrorTriage:
 		return SurfaceErrorTriage, nil
-	case SurfaceAppReviewAI:
-		return SurfaceAppReviewAI, nil
 	default:
 		return "", ErrSurfaceUnsupported
 	}
@@ -540,8 +516,6 @@ func surfaceCompatible(surface Surface, clientKind ClientKind) bool {
 	switch surface {
 	case SurfacePostAssist, SurfaceErrorTriage:
 		return clientKind == ClientKindChatCompletions
-	case SurfaceAppReviewAI:
-		return clientKind == ClientKindMessages
 	default:
 		return false
 	}

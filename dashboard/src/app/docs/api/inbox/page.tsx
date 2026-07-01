@@ -129,7 +129,7 @@ const RESPONSE_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, FEATURE_DISABLED, or VALIDATION_ERROR." },
+  { name: "error.code", type: "string", description: "UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];

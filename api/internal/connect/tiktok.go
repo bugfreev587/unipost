@@ -9,8 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"time"
-
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 const (
@@ -265,17 +263,7 @@ func tiktokConnectScopes() []string {
 
 func tiktokConnectScopesForSession(session SessionView) []string {
 	scopes := append([]string(nil), tiktokConnectBaseScopes...)
-	if isTikTokAppReviewSession(session) {
-		return scopes
-	}
-	if featureflags.Enabled(context.Background(), featureflags.TikTokAnalyticsScopes, featureflags.Target{}) {
-		scopes = append(scopes, tiktokConnectAnalyticsScopes...)
-	}
-	return scopes
-}
-
-func isTikTokAppReviewSession(session SessionView) bool {
-	return strings.HasPrefix(strings.TrimSpace(session.ExternalUserID), "app-review:")
+	return append(scopes, tiktokConnectAnalyticsScopes...)
 }
 
 func firstNonEmpty(values ...string) string {

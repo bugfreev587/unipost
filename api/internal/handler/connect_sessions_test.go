@@ -310,7 +310,6 @@ func TestCreateConnectSession_OAuthMissingWhiteLabelCreds(t *testing.T) {
 
 func TestConnectAuthorize_ResolvesOAuthConnectors(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
 
 	cases := []struct {
 		platform string

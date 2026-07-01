@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 type QuotaStatus struct {
@@ -127,11 +126,6 @@ func (c *Checker) FreePlanHardBlockGateForPeriod(ctx context.Context, workspaceI
 	status := c.CheckForPeriod(ctx, workspaceID, period)
 	gate := FreePlanHardBlockGate{Status: status}
 	if status.Limit < 0 {
-		return gate
-	}
-	if !featureflags.Enabled(ctx, featureflags.FreePlanHardPostQuota, featureflags.Target{
-		WorkspaceID: workspaceID,
-	}) {
 		return gate
 	}
 	gate.enabled = true
