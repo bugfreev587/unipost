@@ -99,7 +99,7 @@ type SessionView struct {
 	OAuthState     string
 	PKCEVerifier   string // empty for non-PKCE platforms
 	RedirectURI    string // the callback URL we registered with the platform
-	ExternalUserID string // customer-provided user id; app review sessions use the app-review: prefix
+	ExternalUserID string // customer-provided user id
 }
 
 // Registry holds all available connectors keyed by Platform().

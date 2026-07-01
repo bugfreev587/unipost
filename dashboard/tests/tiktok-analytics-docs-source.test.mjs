@@ -30,13 +30,12 @@ test("TikTok Analytics docs are not promoted as a separate primary Analytics API
 });
 
 test("TikTok Analytics endpoint pages document production readiness and scopes", async () => {
-  const [overview, profile, metrics, videos, platformData, featureFlagDocs] = await Promise.all([
+  const [overview, profile, metrics, videos, platformData] = await Promise.all([
     source("src/app/docs/api/analytics/tiktok/page.tsx"),
     source("src/app/docs/api/analytics/tiktok/profile/page.tsx"),
     source("src/app/docs/api/analytics/tiktok/account-metrics/page.tsx"),
     source("src/app/docs/api/analytics/tiktok/videos/page.tsx"),
     source("src/app/docs/platforms/[platform]/_data.tsx"),
-    readFile(join(root, "../docs/feature-flags-unleash.md"), "utf8"),
   ]);
 
   for (const page of [overview, profile, metrics, videos]) {
@@ -45,7 +44,7 @@ test("TikTok Analytics endpoint pages document production readiness and scopes",
     assert.match(page, /optional native drilldown|native drilldown/i);
     assert.match(page, /user\.info\.(profile|stats)|video\.list/);
     assert.match(page, /reconnect|newly connected|connected accounts/i);
-    assert.doesNotMatch(page, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|feature flag/i);
+    assert.doesNotMatch(page, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|FEATURE_DISABLED|feature flag/i);
     assert.doesNotMatch(page, /until (TikTok approves|approval is complete)|Keep the flag off in production/i);
   }
 
@@ -53,9 +52,6 @@ test("TikTok Analytics endpoint pages document production readiness and scopes",
   assert.match(metrics, /\/v1\/accounts\/:account_id\/metrics/);
   assert.match(videos, /\/v1\/accounts\/:account_id\/tiktok\/videos/);
   assert.match(platformData, /analytics scopes are approved/i);
-  assert.doesNotMatch(platformData, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|feature flag/i);
-  assert.match(featureFlagDocs, /production:\s*on/i);
-  assert.match(featureFlagDocs, /TikTok approved/i);
+  assert.doesNotMatch(platformData, /tiktok\.analytics_scopes|FEATURE_TIKTOK_ANALYTICS_SCOPES|FEATURE_DISABLED|feature flag/i);
   assert.doesNotMatch(platformData, /until TikTok approves/i);
-  assert.doesNotMatch(featureFlagDocs, /until TikTok approves/i);
 });

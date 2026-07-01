@@ -8,22 +8,17 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const postsPagePath = path.join(root, "src/app/(dashboard)/projects/[id]/posts/page.tsx");
 const postsListPagePath = path.join(root, "src/app/(dashboard)/projects/[id]/posts/list/page.tsx");
 const legacyViewPath = path.join(root, "src/components/posts/list/posts-legacy-list-view.tsx");
-const featureFlagsPath = path.join(root, "src/lib/feature-flags.ts");
 
-test("Posts routes are feature-flagged between calendar and legacy list", async () => {
-  const [postsPage, postsListPage, legacyView, featureFlags] = await Promise.all([
+test("Posts routes use calendar by default and keep the legacy list route", async () => {
+  const [postsPage, postsListPage, legacyView] = await Promise.all([
     readFile(postsPagePath, "utf8"),
     readFile(postsListPagePath, "utf8"),
     readFile(legacyViewPath, "utf8"),
-    readFile(featureFlagsPath, "utf8"),
   ]);
 
-  assert.match(featureFlags, /postsCalendarViewV1:\s*"posts\.calendar_view_v1"/);
-  assert.match(postsPage, /useFeatureFlags/);
-  assert.match(postsPage, /FEATURE_FLAG_KEYS\.postsCalendarViewV1/);
   assert.match(postsPage, /PostsCalendarView/);
-  assert.match(postsPage, /PostsLegacyListView/);
-  assert.match(postsListPage, /router\.replace\(`\/projects\/\$\{params\.id\}\/posts`\)/);
+  assert.doesNotMatch(postsPage, /useFeatureFlags|FEATURE_FLAG_KEYS|PostsLegacyListView/);
+  assert.doesNotMatch(postsListPage, /router\.replace|useFeatureFlags|FEATURE_FLAG_KEYS/);
   assert.match(postsListPage, /PostsLegacyListView showCalendarLink/);
   assert.match(legacyView, /showCalendarLink/);
   assert.match(legacyView, /Calendar View/);

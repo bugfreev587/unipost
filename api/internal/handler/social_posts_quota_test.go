@@ -17,17 +17,12 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
 
 func TestCreateScheduledPostReturnsQuotaExceededWhenFreePlanCapIncludesReservations(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
-
 	dbtx := &scheduledQuotaHTTPTestDB{}
 	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil)
 	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
@@ -87,10 +82,6 @@ func TestCreateScheduledPostReturnsQuotaExceededWhenFreePlanCapIncludesReservati
 }
 
 func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
-
 	dbtx := &scheduledQuotaHTTPTestDB{
 		usage:       79,
 		reserved:    0,
@@ -139,10 +130,6 @@ func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
 }
 
 func TestEnqueueScheduledPostBlocksFreePlanQuotaAtExecution(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
-
 	dbtx := &scheduledExecutionQuotaTestDB{}
 	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil)
 

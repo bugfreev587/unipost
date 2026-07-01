@@ -2,11 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
-import { getFeatureFlags } from "@/lib/api";
+import { getPlanGates } from "@/lib/api";
 
-export function useFeatureFlags() {
+export function usePlanGates() {
   const { getToken } = useAuth();
-  const [flags, setFlags] = useState<Record<string, boolean>>({});
   const [planGates, setPlanGates] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
 
@@ -18,22 +17,13 @@ export function useFeatureFlags() {
         setLoading(true);
         const token = await getToken();
         if (!token) {
-          if (!cancelled) {
-            setFlags({});
-            setPlanGates({});
-          }
+          if (!cancelled) setPlanGates({});
           return;
         }
-        const res = await getFeatureFlags(token);
-        if (!cancelled) {
-          setFlags(res.data.flags || {});
-          setPlanGates(res.data.plan_gates || {});
-        }
+        const res = await getPlanGates(token);
+        if (!cancelled) setPlanGates(res.data.plan_gates || {});
       } catch {
-        if (!cancelled) {
-          setFlags({});
-          setPlanGates({});
-        }
+        if (!cancelled) setPlanGates({});
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -44,5 +34,5 @@ export function useFeatureFlags() {
     };
   }, [getToken]);
 
-  return { flags, planGates, loading };
+  return { planGates, loading };
 }

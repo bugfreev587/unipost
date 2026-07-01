@@ -29,10 +29,8 @@
 //     refresh_token, so the same access token is reused as the
 //     "refresh token" stored in the social_accounts row.
 //
-// Feature flag: the Connect Session handler gates new hosted
-// Instagram sessions via Unleash. This connector is still registered
-// whenever credentials exist so an approved flag rollout does not
-// require an API restart.
+// The Connect Session handler registers hosted Instagram sessions
+// whenever credentials exist.
 
 package connect
 

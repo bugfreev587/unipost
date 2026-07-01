@@ -69,7 +69,6 @@ const PROVIDERS: Array<{
 const SURFACES: Array<{ id: AdminAISurface; label: string; clientKind: AdminAIClientKind }> = [
   { id: "post_assist", label: "Post Assist", clientKind: "chat_completions" },
   { id: "error_triage", label: "Error Triage", clientKind: "chat_completions" },
-  { id: "app_review_ai", label: "App Review", clientKind: "messages" },
 ];
 
 const providerLabels: Record<AdminAIProvider, string> = {
@@ -81,7 +80,6 @@ const providerLabels: Record<AdminAIProvider, string> = {
 const surfaceLabels: Record<AdminAISurface, string> = {
   post_assist: "Post Assist",
   error_triage: "Error Triage",
-  app_review_ai: "App Review",
 };
 
 function providerMeta(provider: AdminAIProvider) {

@@ -3,7 +3,6 @@ package quota
 import (
 	"context"
 	"errors"
-	"os"
 	"strings"
 	"testing"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 func TestShouldHardBlockFreePlanQuota(t *testing.T) {
@@ -32,73 +30,36 @@ func TestShouldHardBlockFreePlanQuota(t *testing.T) {
 	}
 }
 
-func TestFreePlanHardBlockStatusHonorsFeatureFlag(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-
+func TestFreePlanHardBlockStatusAlwaysBlocksProjectedFreePlanOverage(t *testing.T) {
 	checker := NewChecker(db.New(&fakeQuotaDB{
 		planID: "free",
 		limit:  100,
 		usage:  99,
 	}))
 
-	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
 	status, blocked := checker.FreePlanHardBlockStatus(context.Background(), "ws_123", 2)
 	if !blocked {
-		t.Fatal("expected flag-enabled free plan to block projected overage")
+		t.Fatal("expected free plan to block projected overage")
 	}
 	if status.Usage != 99 || status.Limit != 100 {
 		t.Fatalf("status = usage %d limit %d, want 99/100", status.Usage, status.Limit)
 	}
+}
 
-	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "false")
-	_, blocked = checker.FreePlanHardBlockStatus(context.Background(), "ws_123", 2)
+func TestFreePlanHardBlockStatusKeepsPaidPlansSoftOverage(t *testing.T) {
+	checker := NewChecker(db.New(&fakeQuotaDB{
+		planID: "api",
+		limit:  100,
+		usage:  99,
+	}))
+
+	_, blocked := checker.FreePlanHardBlockStatus(context.Background(), "ws_123", 2)
 	if blocked {
-		t.Fatal("expected explicit flag=false to keep soft-overage behavior")
+		t.Fatal("expected API plan to keep soft-overage behavior")
 	}
-}
-
-func TestFreePlanHardBlockStatusDefaultsOnWhenFlagMissing(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	unsetenv(t, "FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA")
-	t.Setenv("UNIPOST_ENV", "production")
-
-	checker := NewChecker(db.New(&fakeQuotaDB{
-		planID: "free",
-		limit:  100,
-		usage:  99,
-	}))
-
-	status, blocked := checker.FreePlanHardBlockStatus(context.Background(), "ws_123", 2)
-	if !blocked {
-		t.Fatal("expected free plan hard cap to block by default when the remote flag is missing")
-	}
-	if status.Usage != 99 || status.Limit != 100 {
-		t.Fatalf("status = usage %d limit %d, want 99/100", status.Usage, status.Limit)
-	}
-}
-
-func unsetenv(t *testing.T, name string) {
-	t.Helper()
-	old, ok := os.LookupEnv(name)
-	if err := os.Unsetenv(name); err != nil {
-		t.Fatalf("unset %s: %v", name, err)
-	}
-	t.Cleanup(func() {
-		if ok {
-			_ = os.Setenv(name, old)
-		} else {
-			_ = os.Unsetenv(name)
-		}
-	})
 }
 
 func TestFreePlanHardBlockStatusIncludesScheduledReservations(t *testing.T) {
-	featureflags.SetProvider(featureflags.EnvProvider{})
-	t.Cleanup(func() { featureflags.SetProvider(featureflags.EnvProvider{}) })
-	t.Setenv("FEATURE_BILLING_FREE_PLAN_HARD_POST_QUOTA", "true")
-
 	checker := NewChecker(db.New(&fakeQuotaDB{
 		planID:         "free",
 		limit:          100,
