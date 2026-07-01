@@ -11,8 +11,6 @@ import (
 )
 
 func TestTikTokAuthorizeURL(t *testing.T) {
-	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "false")
-
 	c := NewTikTokConnector("client-key", "secretXYZ", "https://api.example.com")
 	if c == nil {
 		t.Fatal("constructor returned nil")
@@ -33,7 +31,7 @@ func TestTikTokAuthorizeURL(t *testing.T) {
 		"response_type": "code",
 		"client_key":    "client-key",
 		"redirect_uri":  "https://api.example.com/v1/connect/callback/tiktok",
-		"scope":         "video.publish,video.upload,user.info.basic",
+		"scope":         "video.publish,video.upload,user.info.basic,user.info.profile,user.info.stats,video.list",
 		"state":         "state-abc",
 	}
 	for k, want := range checks {
@@ -43,14 +41,12 @@ func TestTikTokAuthorizeURL(t *testing.T) {
 	}
 }
 
-func TestTikTokAuthorizeURL_AppReviewSessionIgnoresAnalyticsScopes(t *testing.T) {
-	t.Setenv("FEATURE_TIKTOK_ANALYTICS_SCOPES", "true")
-
+func TestTikTokAuthorizeURLExternalUserIDDoesNotAffectScopes(t *testing.T) {
 	c := NewTikTokConnector("client-key", "secretXYZ", "https://api.example.com")
 	if c == nil {
 		t.Fatal("constructor returned nil")
 	}
-	got, err := c.AuthorizeURL(SessionView{OAuthState: "state-abc", ExternalUserID: "app-review:rvjob_1"})
+	got, err := c.AuthorizeURL(SessionView{OAuthState: "state-abc", ExternalUserID: "customer-user-1"})
 	if err != nil {
 		t.Fatalf("AuthorizeURL: %v", err)
 	}
@@ -58,7 +54,7 @@ func TestTikTokAuthorizeURL_AppReviewSessionIgnoresAnalyticsScopes(t *testing.T)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if scope := u.Query().Get("scope"); scope != "video.publish,video.upload,user.info.basic" {
+	if scope := u.Query().Get("scope"); scope != "video.publish,video.upload,user.info.basic,user.info.profile,user.info.stats,video.list" {
 		t.Fatalf("scope = %q", scope)
 	}
 }

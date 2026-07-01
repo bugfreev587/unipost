@@ -16,7 +16,6 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
@@ -120,50 +119,61 @@ func (h *MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, resp)
 }
 
-type featureFlagsResponse struct {
+type planGatesResponse struct {
+	PlanGates map[string]bool `json:"plan_gates"`
+}
+
+type featureFlagsCompatResponse struct {
 	Environment string          `json:"environment"`
 	Provider    string          `json:"provider"`
 	Flags       map[string]bool `json:"flags"`
 	PlanGates   map[string]bool `json:"plan_gates,omitempty"`
 }
 
-// Features returns the current authenticated user's effective feature
-// visibility. The browser uses this for UI only; risky behavior remains gated
-// again inside the backend path that performs the action.
-func (h *MeHandler) Features(w http.ResponseWriter, r *http.Request) {
+// PlanGates returns authenticated user's product-package gates. These are plan
+// entitlements, not rollout flags.
+func (h *MeHandler) PlanGates(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
 		return
 	}
 
-	target := featureflags.Target{UserID: userID, Env: runtimeenv.Current()}
-	if user, err := h.queries.GetUser(r.Context(), userID); err == nil {
-		target.UserEmail = user.Email
-	}
-	if mem, err := h.queries.GetActiveMembership(r.Context(), userID); err == nil {
-		target.WorkspaceID = mem.WorkspaceID
-	} else if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
-		target.WorkspaceID = workspaces[0].ID
+	writeSuccess(w, planGatesResponse{PlanGates: h.planGatesForUser(r, userID)})
+}
+
+// FeatureFlagsCompat keeps the old /v1/me/features response shape stable during
+// rolling deployments. It does not evaluate remote flags.
+func (h *MeHandler) FeatureFlagsCompat(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
 	}
 
-	flags := make(map[string]bool, len(featureflags.Definitions()))
-	for _, def := range featureflags.Definitions() {
-		flags[string(def.Flag)] = featureflags.Enabled(r.Context(), def.Flag, target)
+	writeSuccess(w, featureFlagsCompatResponse{
+		Environment: runtimeenv.Current(),
+		Provider:    "removed",
+		Flags:       map[string]bool{},
+		PlanGates:   h.planGatesForUser(r, userID),
+	})
+}
+
+func (h *MeHandler) planGatesForUser(r *http.Request, userID string) map[string]bool {
+	workspaceID := ""
+	if mem, err := h.queries.GetActiveMembership(r.Context(), userID); err == nil {
+		workspaceID = mem.WorkspaceID
+	} else if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
+		workspaceID = workspaces[0].ID
 	}
 	planGates := map[string]bool{
 		"inbox": false,
 	}
-	if target.WorkspaceID != "" {
-		planGates["inbox"] = h.quotaChecker == nil || h.quotaChecker.PlanAllowsInbox(r.Context(), target.WorkspaceID)
+	if workspaceID != "" {
+		planGates["inbox"] = h.quotaChecker == nil || h.quotaChecker.PlanAllowsInbox(r.Context(), workspaceID)
 	}
 
-	writeSuccess(w, featureFlagsResponse{
-		Environment: target.Env,
-		Provider:    featureflags.ProviderName(),
-		Flags:       flags,
-		PlanGates:   planGates,
-	})
+	return planGates
 }
 
 // SetIntent handles PATCH /v1/me/intent.

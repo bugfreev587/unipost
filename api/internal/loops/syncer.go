@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 type LifecycleClient interface {
@@ -71,12 +69,8 @@ func NewSyncer(client LifecycleClient, opts Options) *Syncer {
 	}
 	enabled := opts.Enabled
 	if enabled == nil {
-		enabled = func(ctx context.Context, user DashboardUser) bool {
-			return featureflags.Enabled(ctx, featureflags.LoopsIntegrationV1, featureflags.Target{
-				UserID:      user.ID,
-				UserEmail:   user.Email,
-				WorkspaceID: user.WorkspaceID,
-			})
+		enabled = func(context.Context, DashboardUser) bool {
+			return true
 		}
 	}
 	return &Syncer{client: client, enabled: enabled, transactionalIDs: opts.TransactionalIDs}

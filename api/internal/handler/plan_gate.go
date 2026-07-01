@@ -4,9 +4,7 @@ import (
 	"net/http"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
-	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
 
 // plan_gate.go houses chi-style middleware that enforce the
@@ -45,32 +43,6 @@ func RequirePlanInbox(q *quota.Checker) func(http.Handler) http.Handler {
 					"Inbox requires the Basic plan or higher — upgrade at unipost.dev/pricing")
 				return
 			}
-			next.ServeHTTP(w, r)
-		})
-	}
-}
-
-// RequireFeatureFlag blocks a route group when its remote feature flag is
-// disabled. This is separate from plan gates: flags control rollout and
-// emergency shutdown, while plan gates control packaging.
-func RequireFeatureFlag(flag featureflags.Flag) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			workspaceID := auth.GetWorkspaceID(r.Context())
-			if workspaceID == "" {
-				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
-				return
-			}
-
-			if !featureflags.Enabled(r.Context(), flag, featureflags.Target{
-				UserID:      auth.GetUserID(r.Context()),
-				WorkspaceID: workspaceID,
-				Env:         runtimeenv.Current(),
-			}) {
-				writeError(w, http.StatusForbidden, "FEATURE_DISABLED", "This feature is currently disabled.")
-				return
-			}
-
 			next.ServeHTTP(w, r)
 		})
 	}

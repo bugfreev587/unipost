@@ -29,10 +29,8 @@
 //     access token is reused as the "refresh token" stored in the
 //     social_accounts row.
 //
-// Feature flag: the Connect Session handler gates new hosted Threads
-// sessions via Unleash. This connector is still registered whenever
-// credentials exist so an approved flag rollout does not require an
-// API restart.
+// The Connect Session handler registers hosted Threads sessions
+// whenever credentials exist.
 
 package connect
 

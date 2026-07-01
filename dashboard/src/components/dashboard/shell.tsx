@@ -7,8 +7,7 @@ import { useAuth, useUser, useClerk } from "@clerk/nextjs";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { useTheme } from "@/components/theme-provider";
 import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
-import { FEATURE_FLAG_KEYS } from "@/lib/feature-flags";
-import { useFeatureFlags } from "@/lib/use-feature-flags";
+import { usePlanGates } from "@/lib/use-plan-gates";
 import { getCanonicalProjectPath } from "@/lib/profile-route";
 import { getDashboardDocsHref } from "@/lib/dashboard-docs-link";
 import {
@@ -54,9 +53,6 @@ type NavSubItem = {
   href: string;
   label: string;
   exactMatch?: boolean;
-  backendFlag?: string;
-  backendFlagsAny?: string[];
-  showWhenAdmin?: boolean;
 };
 
 type NavItem = {
@@ -64,13 +60,9 @@ type NavItem = {
   label: string;
   icon: LucideIcon;
   exactMatch?: boolean;
-  backendFlag?: string;
-  backendFlagsAny?: string[];
-  showWhenAdmin?: boolean;
   submenu?: NavSubItem[];
 };
 
-// Items with `backendFlag` are gated by /v1/me/features.
 const ALL_NAV_ITEMS: NavItem[] = [
   { href: "/profile", label: "Profiles", icon: Layers },
   { href: "/accounts", label: "Connections", icon: Cable, exactMatch: true },
@@ -84,7 +76,6 @@ const ALL_NAV_ITEMS: NavItem[] = [
     { href: "/users", label: "App Users" },
     { href: "/webhooks", label: "Webhooks" },
     { href: "/logs", label: "Logs" },
-    { href: "/accounts/app-review", label: "App Review", backendFlag: FEATURE_FLAG_KEYS.appReviewAutopilotV1 },
   ]},
   { href: "/analytics", label: "Analytics", icon: BarChart3, submenu: [
     { href: "/analytics", label: "Posts", exactMatch: true },
@@ -117,21 +108,10 @@ function getServerOriginSnapshot(): string | undefined {
   return undefined;
 }
 
-// Filter nav items based on backend feature flags plus internal admin-only surfaces.
-function filterNavItems(backendFlags?: Record<string, boolean>, isAdmin = false) {
-  return ALL_NAV_ITEMS.filter((item) => {
-    const adminAllowed = isAdmin && item.showWhenAdmin;
-    if (item.backendFlag && !backendFlags?.[item.backendFlag] && !adminAllowed) return false;
-    if (item.backendFlagsAny && !item.backendFlagsAny.some((flag) => backendFlags?.[flag]) && !adminAllowed) return false;
-    return true;
-  }).map((item) => {
+function filterNavItems() {
+  return ALL_NAV_ITEMS.map((item) => {
     if (!item.submenu) return item;
-    const filteredSub = item.submenu.filter((sub) => {
-      const adminAllowed = isAdmin && sub.showWhenAdmin;
-      if (sub.backendFlag && !backendFlags?.[sub.backendFlag] && !adminAllowed) return false;
-      if (sub.backendFlagsAny && !sub.backendFlagsAny.some((flag) => backendFlags?.[flag]) && !adminAllowed) return false;
-      return true;
-    });
+    const filteredSub = item.submenu;
     return { ...item, submenu: filteredSub.length > 0 ? filteredSub : undefined };
   }).filter((item) => item.submenu === undefined || item.submenu.length > 0);
 }
@@ -147,7 +127,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   const { user } = useUser();
   const { signOut } = useClerk();
   const { resolvedTheme, setTheme } = useTheme();
-  const { flags: backendFeatureFlags, planGates } = useFeatureFlags();
+  const { planGates } = usePlanGates();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profilesLoaded, setProfilesLoaded] = useState(false);
   const [billing, setBilling] = useState<BillingInfo | null>(null);
@@ -176,7 +156,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
 
   // Global inbox unread badge: the Inbox surface is public, but the
   // unread network work should only start once the current plan allows
-  // Inbox. /v1/me/features already carries this plan gate, so the shell
+  // Inbox. /v1/me/plan-gates carries this plan gate, so the shell
   // avoids adding a /v1/limits waterfall to every dashboard page.
   // Disabled = 0 returned, no network calls, no WS connection.
   const planAllowsInbox = planGates.inbox ?? false;
@@ -184,7 +164,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
     shouldLoadGlobalInboxUnreadCount({ profileId, planAllowsInbox }),
   );
 
-  const navItems = filterNavItems(backendFeatureFlags, isAdmin);
+  const navItems = filterNavItems();
 
   // Auto-expand the submenu that matches the current URL on navigation,
   // but only when the pathname actually changes — not on every render.

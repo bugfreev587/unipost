@@ -14,7 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 )
 
 type landingSourceConfig struct {
@@ -205,18 +204,9 @@ func (h *LandingAttributionHandler) RecordVisit(w http.ResponseWriter, r *http.R
 
 	countryCode := landingCountryCodeFromRequest(r, body.CountryCode)
 
-	utmEnabled := featureflags.Enabled(r.Context(), featureflags.AttributionUTMSignupBindingV1, featureflags.Target{
-		SessionID: sessionID,
-	})
-
-	attribution := map[string]string{}
-	rawQuery := ""
-	sourceCode := h.resolveSource(body.Source, referer)
-	if utmEnabled {
-		attribution = sanitizeLandingAttribution(body.Attribution)
-		rawQuery = sanitizeLandingText(body.RawQuery, 1024)
-		sourceCode = h.resolveSourceWithAttribution(body.Source, referer, attribution)
-	}
+	attribution := sanitizeLandingAttribution(body.Attribution)
+	rawQuery := sanitizeLandingText(body.RawQuery, 1024)
+	sourceCode := h.resolveSourceWithAttribution(body.Source, referer, attribution)
 	attributionJSON, err := json.Marshal(attribution)
 	if err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid attribution")
@@ -252,12 +242,6 @@ func (h *LandingAttributionHandler) BindSessionToUser(w http.ResponseWriter, r *
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
-		return
-	}
-	if !featureflags.Enabled(r.Context(), featureflags.AttributionUTMSignupBindingV1, featureflags.Target{
-		UserID: userID,
-	}) {
-		writeSuccess(w, map[string]bool{"bound": false})
 		return
 	}
 
