@@ -21,7 +21,6 @@ type Surface string
 const (
 	SurfacePostAssist  Surface = "post_assist"
 	SurfaceErrorTriage Surface = "error_triage"
-	SurfaceAppReviewAI Surface = "app_review_ai"
 )
 
 type ClientKind string

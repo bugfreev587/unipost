@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -39,43 +38,8 @@ func TestBuildTikTokPostInfoIncludesRequiredToggles(t *testing.T) {
 	}
 }
 
-func TestTikTokOAuthScopesDefaultToApprovedProductionSet(t *testing.T) {
-	t.Setenv("UNIPOST_ENV", "production")
-	unsetenv(t, "TIKTOK_ANALYTICS_SCOPES_ENABLED")
-
-	adapter := NewTikTokAdapter()
-	config := adapter.DefaultOAuthConfig("https://api.unipost.dev")
-	got := adapter.GetAuthURL(config, "state-1")
-	u, err := url.Parse(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "video.publish,video.upload,user.info.basic"
-	if q := u.Query().Get("scope"); q != want {
-		t.Fatalf("scope = %q, want %q", q, want)
-	}
-}
-
-func TestTikTokOAuthScopesIncludeAnalyticsWhenEnabled(t *testing.T) {
-	t.Setenv("UNIPOST_ENV", "production")
-	t.Setenv("TIKTOK_ANALYTICS_SCOPES_ENABLED", "true")
-
-	adapter := NewTikTokAdapter()
-	config := adapter.DefaultOAuthConfig("https://api.unipost.dev")
-	got := adapter.GetAuthURL(config, "state-1")
-	u, err := url.Parse(got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "video.publish,video.upload,user.info.basic,user.info.profile,user.info.stats,video.list"
-	if q := u.Query().Get("scope"); q != want {
-		t.Fatalf("scope = %q, want %q", q, want)
-	}
-}
-
-func TestTikTokOAuthScopesIncludeAnalyticsByDefaultOutsideProduction(t *testing.T) {
+func TestTikTokOAuthScopesIncludeAnalyticsScopes(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
-	unsetenv(t, "TIKTOK_ANALYTICS_SCOPES_ENABLED")
 
 	adapter := NewTikTokAdapter()
 	config := adapter.DefaultOAuthConfig("https://dev-api.unipost.dev")
@@ -88,21 +52,6 @@ func TestTikTokOAuthScopesIncludeAnalyticsByDefaultOutsideProduction(t *testing.
 	if q := u.Query().Get("scope"); q != want {
 		t.Fatalf("scope = %q, want %q", q, want)
 	}
-}
-
-func unsetenv(t *testing.T, name string) {
-	t.Helper()
-	old, ok := os.LookupEnv(name)
-	if err := os.Unsetenv(name); err != nil {
-		t.Fatalf("unset %s: %v", name, err)
-	}
-	t.Cleanup(func() {
-		if ok {
-			_ = os.Setenv(name, old)
-		} else {
-			_ = os.Unsetenv(name)
-		}
-	})
 }
 
 func TestTikTokBasicUserInfoFieldsStayWithinBasicScope(t *testing.T) {

@@ -161,7 +161,7 @@ test.describe("admin email notifications", () => {
 test.describe("authenticated dashboard smoke", () => {
   test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
 
-  test("core dashboard routes load and preserve feature-flag gating", async ({ page }) => {
+  test("core dashboard routes load and preserve plan-gated navigation", async ({ page }) => {
     await signIn(page, testEmail!, testPassword!);
     const profileId = configuredProfileId || await resolveProfileId(page);
 
@@ -172,7 +172,7 @@ test.describe("authenticated dashboard smoke", () => {
     await expectDashboardRoute(page, `/projects/${profileId}/settings`);
 
     await page.goto(`/projects/${profileId}/analytics/platforms/tiktok`, { waitUntil: "networkidle" });
-    await expect(page.getByText(/TikTok Analytics|TikTok analytics is disabled/).first()).toBeVisible();
+    await expect(page.getByText("TikTok Analytics").first()).toBeVisible();
   });
 });
 

@@ -29,7 +29,6 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/errortriage"
 	"github.com/xiaoboyu/unipost-api/internal/events"
-	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
@@ -41,7 +40,6 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
-	"github.com/xiaoboyu/unipost-api/internal/reviewai"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
@@ -65,18 +63,6 @@ func main() {
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
 	slog.Info("runtime environment detected", "env", runtimeenv.Current(), "production", runtimeenv.IsProduction())
-	if flagProvider, flagErr := featureflags.NewProviderFromEnv(); flagErr != nil {
-		slog.Error("feature flags provider init failed; falling back to env provider", "error", flagErr)
-		featureflags.SetProvider(featureflags.EnvProvider{})
-	} else {
-		featureflags.SetProvider(flagProvider)
-	}
-	defer func() {
-		if err := featureflags.Close(); err != nil {
-			slog.Warn("feature flags provider close failed", "error", err)
-		}
-	}()
-	slog.Info("feature flags provider initialized", "provider", featureflags.ProviderName())
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -505,13 +491,6 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	reviewHandler := handler.NewReviewHandler(queries).
-		WithAPIBaseURL(apiBaseURL).
-		WithReviewCnameTarget(os.Getenv("APP_REVIEW_CNAME_TARGET")).
-		WithArtifactStorage(storageClient).
-		WithEncryptor(encryptor).
-		WithTikTokTestVideoURL(os.Getenv("APP_REVIEW_TIKTOK_TEST_VIDEO_URL")).
-		WithAIPlanner(reviewai.NewProviderPlanner(aiProviderService))
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
@@ -570,14 +549,6 @@ func main() {
 	// hosted dashboard page reads it via ?state=<oauth_state> as the
 	// bearer. Returns a minimal projection of the session.
 	r.Get("/v1/public/connect/sessions/{id}", connectSessionHandler.PublicGet)
-	r.Get("/v1/review/agent/script", reviewHandler.GetAgentJobScript)
-	r.Post("/v1/review/agent/next-action", reviewHandler.NextAgentAction)
-	r.Post("/v1/review/agent/events", reviewHandler.RecordAgentEvent)
-	r.Post("/v1/review/agent/complete", reviewHandler.CompleteAgentJob)
-	r.Post("/v1/review/agent/fail", reviewHandler.FailAgentJob)
-	r.Post("/v1/review/agent/artifacts", reviewHandler.CreateAgentArtifactUpload)
-	r.Get("/v1/review/session", reviewHandler.GetPublicReviewSession)
-	r.Post("/v1/review/session/tiktok/publish", reviewHandler.PublishReviewTikTokPost)
 
 	// RBAC Phase 4: invite preview. The dashboard's /invite/{token}
 	// page calls this BEFORE the user signs in to display "Acme Inc.
@@ -632,7 +603,8 @@ func main() {
 		r.Use(auth.ClerkSessionMiddleware)
 
 		r.Get("/v1/me", meHandler.Get)
-		r.Get("/v1/me/features", meHandler.Features)
+		r.Get("/v1/me/plan-gates", meHandler.PlanGates)
+		r.Get("/v1/me/features", meHandler.FeatureFlagsCompat)
 		r.Get("/v1/me/bootstrap", meHandler.Bootstrap)
 		r.Post("/v1/me/landing-attribution", landingAttributionHandler.BindSessionToUser)
 		r.Patch("/v1/me/onboarding", meHandler.CompleteOnboarding)
@@ -855,22 +827,6 @@ func main() {
 			Post("/v1/platform-credentials", platformCredHandler.Create)
 		r.With(auth.RequireRole(auth.RoleAdmin)).
 			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
-
-		// App Review Autopilot. Beta-gated separately from white-label
-		// credentials so we can keep production closed while the review
-		// recording flow is being hardened.
-		r.Route("/v1/review", func(r chi.Router) {
-			r.Use(handler.RequireFeatureFlag(featureflags.AppReviewAutopilotV1))
-			r.Get("/state", reviewHandler.GetState)
-			r.Get("/tiktok/scope-templates", reviewHandler.GetTikTokScopeTemplates)
-			r.Post("/tiktok/demo-plan", reviewHandler.CreateTikTokDemoPlan)
-			r.Post("/domains", reviewHandler.CreateDomain)
-			r.Post("/domains/{id}/verify", reviewHandler.VerifyDomain)
-			r.Post("/kits", reviewHandler.CreateKit)
-			r.Post("/jobs", reviewHandler.CreateJob)
-			r.Get("/jobs/{id}", reviewHandler.GetJob)
-			r.Get("/jobs/{id}/script", reviewHandler.GetJobScript)
-		})
 
 		// Posts.
 		r.Get("/v1/posts", socialPostHandler.List)

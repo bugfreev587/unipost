@@ -26,7 +26,7 @@ const RESPONSE_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: 'UNAUTHORIZED, FEATURE_DISABLED, NOT_FOUND, WRONG_PLATFORM, NEEDS_RECONNECT, or TIKTOK_ERROR.' },
+  { name: "error.code", type: "string", description: 'UNAUTHORIZED, NOT_FOUND, WRONG_PLATFORM, NEEDS_RECONNECT, or TIKTOK_ERROR.' },
   { name: "error.normalized_code", type: "string", description: "Lowercase error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
@@ -72,12 +72,12 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
-    label: "403",
+    label: "409",
     code: `{
   "error": {
-    "code": "FEATURE_DISABLED",
-    "normalized_code": "feature_disabled",
-    "message": "TikTok analytics is not enabled in this environment."
+    "code": "NEEDS_RECONNECT",
+    "normalized_code": "needs_reconnect",
+    "message": "Reconnect TikTok to enable analytics."
   },
   "request_id": "req_123"
 }`,

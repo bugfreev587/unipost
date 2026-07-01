@@ -101,7 +101,7 @@ export function useGlobalInboxUnreadCount(enabled: boolean): number {
   );
 
   // Returning `enabled ? count : 0` keeps the rendered value at zero
-  // when the hook is disabled (e.g. feature flag off, no profile yet),
+  // when the hook is disabled (e.g. plan gate closed, no profile yet),
   // without resetting `count` synchronously inside the effect. The
   // synchronous-setState-in-effect pattern triggers cascading renders;
   // a derived return is the cheaper, lint-clean equivalent.
