@@ -12,6 +12,7 @@ import (
 
 type emailAuditQueries interface {
 	CreateEmailSendAttemptAudit(ctx context.Context, arg db.CreateEmailSendAttemptAuditParams) (db.EmailSendAttempt, error)
+	CreateSkippedEmailSendAttemptAudit(ctx context.Context, arg db.CreateSkippedEmailSendAttemptAuditParams) (db.EmailSendAttempt, error)
 	MarkEmailSendAttemptAuditSent(ctx context.Context, id string) error
 	MarkEmailSendAttemptAuditFailed(ctx context.Context, arg db.MarkEmailSendAttemptAuditFailedParams) error
 }
@@ -49,6 +50,39 @@ func (s *PostgresEmailAuditStore) CreateEmailSendAttempt(ctx context.Context, at
 		DataVariablesSnapshot: raw,
 		TriggerSource:         attempt.TriggerSource,
 		TriggerReferenceID:    attempt.TriggerReferenceID,
+	})
+	if err != nil {
+		return EmailSendAttemptRecord{}, err
+	}
+	return EmailSendAttemptRecord{ID: row.ID}, nil
+}
+
+func (s *PostgresEmailAuditStore) CreateSkippedEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt, reason string) (EmailSendAttemptRecord, error) {
+	if s == nil || s.queries == nil {
+		return EmailSendAttemptRecord{}, fmt.Errorf("email audit store is not configured")
+	}
+	vars := attempt.DataVariables
+	if vars == nil {
+		vars = map[string]any{}
+	}
+	raw, err := json.Marshal(vars)
+	if err != nil {
+		return EmailSendAttemptRecord{}, fmt.Errorf("marshal skipped email audit variables: %w", err)
+	}
+	row, err := s.queries.CreateSkippedEmailSendAttemptAudit(ctx, db.CreateSkippedEmailSendAttemptAuditParams{
+		EventKey:              attempt.EventKey,
+		RecipientUserID:       attempt.RecipientUserID,
+		RecipientEmail:        attempt.RecipientEmail,
+		WorkspaceID:           attempt.WorkspaceID,
+		Provider:              firstNonEmpty(attempt.Provider, "loops"),
+		ProviderTemplateID:    attempt.ProviderTemplateID,
+		IdempotencyKey:        attempt.IdempotencyKey,
+		DeliveryClass:         attempt.DeliveryClass,
+		SubjectSnapshot:       attempt.SubjectSnapshot,
+		DataVariablesSnapshot: raw,
+		TriggerSource:         attempt.TriggerSource,
+		TriggerReferenceID:    attempt.TriggerReferenceID,
+		LastError:             pgtype.Text{String: reason, Valid: true},
 	})
 	if err != nil {
 		return EmailSendAttemptRecord{}, err

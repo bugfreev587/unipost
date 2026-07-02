@@ -150,6 +150,17 @@ type ConnectSession struct {
 	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
 }
 
+type EmailPreference struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"user_id"`
+	Email       string             `json:"email"`
+	CategoryKey string             `json:"category_key"`
+	Enabled     bool               `json:"enabled"`
+	Source      string             `json:"source"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type EmailSendAttempt struct {
 	ID                    string             `json:"id"`
 	EventKey              string             `json:"event_key"`

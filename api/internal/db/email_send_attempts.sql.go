@@ -127,6 +127,124 @@ func (q *Queries) CreateEmailSendAttemptAudit(ctx context.Context, arg CreateEma
 	return i, err
 }
 
+const createSkippedEmailSendAttemptAudit = `-- name: CreateSkippedEmailSendAttemptAudit :one
+INSERT INTO email_send_attempts (
+  event_key,
+  recipient_user_id,
+  recipient_email,
+  workspace_id,
+  provider,
+  provider_template_id,
+  idempotency_key,
+  delivery_class,
+  status,
+  subject_snapshot,
+  data_variables_snapshot,
+  trigger_source,
+  trigger_reference_id,
+  attempt_count,
+  last_error,
+  attempted_at,
+  sent_at
+)
+VALUES (
+  $1,
+  NULLIF($2, ''),
+  $3,
+  NULLIF($4, ''),
+  $5,
+  NULLIF($6, ''),
+  $7,
+  $8,
+  'skipped',
+  NULLIF($9, ''),
+  COALESCE($10::JSONB, '{}'::JSONB),
+  NULLIF($11, ''),
+  NULLIF($12, ''),
+  1,
+  $13,
+  NOW(),
+  NULL
+)
+ON CONFLICT (provider, idempotency_key) WHERE idempotency_key <> ''
+DO UPDATE SET
+  event_key = EXCLUDED.event_key,
+  recipient_user_id = EXCLUDED.recipient_user_id,
+  recipient_email = EXCLUDED.recipient_email,
+  workspace_id = EXCLUDED.workspace_id,
+  provider_template_id = EXCLUDED.provider_template_id,
+  delivery_class = EXCLUDED.delivery_class,
+  status = 'skipped',
+  subject_snapshot = EXCLUDED.subject_snapshot,
+  data_variables_snapshot = EXCLUDED.data_variables_snapshot,
+  trigger_source = EXCLUDED.trigger_source,
+  trigger_reference_id = EXCLUDED.trigger_reference_id,
+  attempt_count = email_send_attempts.attempt_count + 1,
+  last_error = EXCLUDED.last_error,
+  attempted_at = NOW(),
+  sent_at = NULL,
+  updated_at = NOW()
+RETURNING id, event_key, recipient_user_id, recipient_email, workspace_id, provider, provider_template_id, idempotency_key, delivery_class, status, subject_snapshot, data_variables_snapshot, trigger_source, trigger_reference_id, attempt_count, last_error, attempted_at, sent_at, created_at, updated_at
+`
+
+type CreateSkippedEmailSendAttemptAuditParams struct {
+	EventKey              string      `json:"event_key"`
+	RecipientUserID       interface{} `json:"recipient_user_id"`
+	RecipientEmail        string      `json:"recipient_email"`
+	WorkspaceID           interface{} `json:"workspace_id"`
+	Provider              string      `json:"provider"`
+	ProviderTemplateID    interface{} `json:"provider_template_id"`
+	IdempotencyKey        string      `json:"idempotency_key"`
+	DeliveryClass         string      `json:"delivery_class"`
+	SubjectSnapshot       interface{} `json:"subject_snapshot"`
+	DataVariablesSnapshot []byte      `json:"data_variables_snapshot"`
+	TriggerSource         interface{} `json:"trigger_source"`
+	TriggerReferenceID    interface{} `json:"trigger_reference_id"`
+	LastError             pgtype.Text `json:"last_error"`
+}
+
+func (q *Queries) CreateSkippedEmailSendAttemptAudit(ctx context.Context, arg CreateSkippedEmailSendAttemptAuditParams) (EmailSendAttempt, error) {
+	row := q.db.QueryRow(ctx, createSkippedEmailSendAttemptAudit,
+		arg.EventKey,
+		arg.RecipientUserID,
+		arg.RecipientEmail,
+		arg.WorkspaceID,
+		arg.Provider,
+		arg.ProviderTemplateID,
+		arg.IdempotencyKey,
+		arg.DeliveryClass,
+		arg.SubjectSnapshot,
+		arg.DataVariablesSnapshot,
+		arg.TriggerSource,
+		arg.TriggerReferenceID,
+		arg.LastError,
+	)
+	var i EmailSendAttempt
+	err := row.Scan(
+		&i.ID,
+		&i.EventKey,
+		&i.RecipientUserID,
+		&i.RecipientEmail,
+		&i.WorkspaceID,
+		&i.Provider,
+		&i.ProviderTemplateID,
+		&i.IdempotencyKey,
+		&i.DeliveryClass,
+		&i.Status,
+		&i.SubjectSnapshot,
+		&i.DataVariablesSnapshot,
+		&i.TriggerSource,
+		&i.TriggerReferenceID,
+		&i.AttemptCount,
+		&i.LastError,
+		&i.AttemptedAt,
+		&i.SentAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const markEmailSendAttemptAuditFailed = `-- name: MarkEmailSendAttemptAuditFailed :exec
 UPDATE email_send_attempts
 SET status = 'failed',
