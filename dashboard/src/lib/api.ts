@@ -2389,6 +2389,14 @@ export interface AdminUserDetail {
   workspaces: AdminUserWorkspace[];
 }
 
+export interface AdminUserScheduledPost {
+  post_id: string;
+  title: string;
+  created_at: string;
+  scheduled_at: string | null;
+  platforms: string[];
+}
+
 export interface AdminUserPostFailure {
   post_id: string;
   post_failure_id?: string;
@@ -3133,6 +3141,13 @@ export async function getAdminUser(
   id: string
 ): Promise<ApiResponse<AdminUserDetail>> {
   return request(`/v1/admin/users/${id}`, token);
+}
+
+export async function getAdminUserScheduledPosts(
+  token: string,
+  id: string
+): Promise<ApiResponse<AdminUserScheduledPost[]>> {
+  return request(`/v1/admin/users/${id}/scheduled-posts`, token);
 }
 
 export async function getAdminUserPostFailures(

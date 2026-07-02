@@ -701,6 +701,7 @@ func main() {
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/signups", adminHandler.GetUserSignups)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
+		r.Get("/v1/admin/users/{id}/scheduled-posts", adminHandler.ListUserScheduledPosts)
 		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)
 		r.Get("/v1/admin/api-metrics/overall", adminAPIMetricsHandler.Overall)
 		r.Get("/v1/admin/api-metrics/summary", adminAPIMetricsHandler.Summary)

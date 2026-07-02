@@ -187,6 +187,67 @@ func TestAdminUsersListSQLIncludesScheduledPosts(t *testing.T) {
 	}
 }
 
+func TestAdminUserScheduledPostsEndpointContract(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		"type adminUserScheduledPost struct",
+		"`json:\"post_id\"`",
+		"`json:\"title\"`",
+		"`json:\"created_at\"`",
+		"`json:\"scheduled_at\"`",
+		"`json:\"platforms\"`",
+		"func (h *AdminHandler) ListUserScheduledPosts",
+		"sp.status = 'scheduled'",
+		"sp.deleted_at IS NULL",
+		"w.user_id = $1",
+		"ORDER BY sp.scheduled_at ASC NULLS LAST, sp.created_at DESC",
+		"adminScheduledPostTitle",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin user scheduled posts endpoint missing %q", want)
+		}
+	}
+}
+
+func TestAdminUserScheduledPostsRouteIsRegistered(t *testing.T) {
+	source, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(source), `r.Get("/v1/admin/users/{id}/scheduled-posts", adminHandler.ListUserScheduledPosts)`) {
+		t.Fatalf("admin user scheduled posts route is not registered")
+	}
+}
+
+func TestAdminScheduledPostTitleDerivesFromCaption(t *testing.T) {
+	longTitle := strings.Repeat("a", 90)
+	for _, tt := range []struct {
+		name    string
+		caption *string
+		want    string
+	}{
+		{name: "nil caption", caption: nil, want: "Untitled scheduled post"},
+		{name: "blank caption", caption: ptrString("  \n\t"), want: "Untitled scheduled post"},
+		{name: "first non-empty line", caption: ptrString("\n  Launch notes\nSecond line"), want: "Launch notes"},
+		{name: "truncates long first line", caption: ptrString(longTitle), want: strings.Repeat("a", 80)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := adminScheduledPostTitle(tt.caption); got != tt.want {
+				t.Fatalf("adminScheduledPostTitle() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func ptrString(s string) *string {
+	return &s
+}
+
 func TestAdminUsersListSQLIncludesFailedPostsThisMonth(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {
