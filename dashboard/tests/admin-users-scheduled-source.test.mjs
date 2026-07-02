@@ -14,6 +14,19 @@ test("admin users API row allows scheduled post counts to be absent during API r
   assert.match(api, /scheduled_posts\?: number;/);
 });
 
+test("admin users API exposes scheduled post drawer endpoint", () => {
+  const api = source("src/lib/api.ts");
+
+  assert.match(api, /export interface AdminUserScheduledPost/);
+  assert.match(api, /post_id: string;/);
+  assert.match(api, /title: string;/);
+  assert.match(api, /created_at: string;/);
+  assert.match(api, /scheduled_at: string \| null;/);
+  assert.match(api, /platforms: string\[\];/);
+  assert.match(api, /export async function getAdminUserScheduledPosts/);
+  assert.match(api, /\/v1\/admin\/users\/\$\{id\}\/scheduled-posts/);
+});
+
 test("admin users API row exposes failed posts this month", () => {
   const api = source("src/lib/api.ts");
 
@@ -47,4 +60,21 @@ test("admin users table links failed counts and only View opens detail", () => {
   assert.match(page, /ad-tbl-wrap ad-tbl-static/);
   assert.doesNotMatch(page, /<tr key=\{u\.id\} onClick=/);
   assert.match(page, /colSpan=\{13\}/);
+});
+
+test("admin users scheduled counts open a scheduled-posts drawer", () => {
+  const page = source("src/app/admin/users/page.tsx");
+
+  assert.match(page, /getAdminUserScheduledPosts/);
+  assert.match(page, /type AdminUserScheduledPost/);
+  assert.match(page, /scheduledDrawerUser/);
+  assert.match(page, /scheduledDrawerLoading/);
+  assert.match(page, /scheduledDrawerError/);
+  assert.match(page, /function openScheduledPosts\(u: AdminUserRow\)/);
+  assert.match(page, /openScheduledPosts\(u\)/);
+  assert.match(page, /className="[^"]*au-scheduled-link/);
+  assert.match(page, /className="au-scheduled-drawer"/);
+  assert.match(page, /scheduledPosts\.length === 0/);
+  assert.match(page, /post\.platforms\.map/);
+  assert.match(page, /PlatformIcon key=\{platform\} platform=\{platform\}/);
 });
