@@ -769,6 +769,14 @@ type adminUserDetailResponse struct {
 	Workspaces         []adminUserWorkspace `json:"workspaces"`
 }
 
+type adminUserScheduledPost struct {
+	PostID      string     `json:"post_id"`
+	Title       string     `json:"title"`
+	CreatedAt   time.Time  `json:"created_at"`
+	ScheduledAt *time.Time `json:"scheduled_at"`
+	Platforms   []string   `json:"platforms"`
+}
+
 type adminPostFailure struct {
 	PostID             string    `json:"post_id"`
 	PostFailureID      *string   `json:"post_failure_id,omitempty"`
@@ -1948,6 +1956,76 @@ ORDER BY w.created_at DESC
 	}
 
 	writeSuccess(w, d)
+}
+
+func adminScheduledPostTitle(caption *string) string {
+	if caption == nil {
+		return "Untitled scheduled post"
+	}
+	for _, line := range strings.Split(*caption, "\n") {
+		title := strings.TrimSpace(line)
+		if title == "" {
+			continue
+		}
+		const maxRunes = 80
+		runes := []rune(title)
+		if len(runes) > maxRunes {
+			return string(runes[:maxRunes])
+		}
+		return title
+	}
+	return "Untitled scheduled post"
+}
+
+func (h *AdminHandler) ListUserScheduledPosts(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	platformsSQL := adminPostPlatformsSQL("sp")
+
+	rows, err := h.pool.Query(r.Context(), `
+SELECT
+  sp.id,
+  NULLIF(sp.caption, '') AS caption,
+  sp.created_at,
+  sp.scheduled_at,
+  `+platformsSQL+` AS platforms
+FROM social_posts sp
+JOIN workspaces w ON w.id = sp.workspace_id
+WHERE w.user_id = $1
+  AND sp.status = 'scheduled'
+  AND sp.deleted_at IS NULL
+ORDER BY sp.scheduled_at ASC NULLS LAST, sp.created_at DESC
+`, userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load scheduled posts: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := make([]adminUserScheduledPost, 0)
+	for rows.Next() {
+		var item adminUserScheduledPost
+		var caption *string
+		var scheduledAt *time.Time
+		if err := rows.Scan(
+			&item.PostID,
+			&caption,
+			&item.CreatedAt,
+			&scheduledAt,
+			&item.Platforms,
+		); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to scan scheduled post: "+err.Error())
+			return
+		}
+		item.Title = adminScheduledPostTitle(caption)
+		item.ScheduledAt = scheduledAt
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to iterate scheduled posts: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
 }
 
 func (h *AdminHandler) ListUserPostFailures(w http.ResponseWriter, r *http.Request) {
