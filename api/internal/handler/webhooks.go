@@ -295,18 +295,19 @@ func (h *WebhookHandler) sendWelcomeEmail(ctx context.Context, userID, email, re
 	if appURL == "" {
 		appURL = "https://app.unipost.dev"
 	}
+	dataVariables := emailFooterVariables(ctx, "email.user.welcome.v1", userID, email, appURL, map[string]any{
+		"recipient_name": recipientName,
+		"workspace_name": workspaceName,
+		"app_url":        appURL + "/projects",
+		"connect_url":    appURL + "/projects",
+		"discord_url":    welcomeDiscordURL,
+	})
 	if err := h.welcomeEmailSender.SendTransactional(ctx, loops.TransactionalEmail{
 		TransactionalID: h.welcomeEmailTransactionalID,
 		Email:           email,
 		UserID:          userID,
 		IdempotencyKey:  "user_welcome:" + userID,
-		DataVariables: map[string]any{
-			"recipient_name": recipientName,
-			"workspace_name": workspaceName,
-			"app_url":        appURL + "/projects",
-			"connect_url":    appURL + "/projects",
-			"discord_url":    welcomeDiscordURL,
-		},
+		DataVariables:   dataVariables,
 		Audit: loops.EmailAudit{
 			EventKey:           "email.user.welcome.v1",
 			WorkspaceID:        workspaceID,

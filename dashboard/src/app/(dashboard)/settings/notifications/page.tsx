@@ -11,9 +11,12 @@ import {
   deleteNotificationChannel,
   testNotificationChannel,
   upsertNotificationSubscription,
+  listEmailPreferences,
+  updateEmailPreference,
   type NotificationEvent,
   type NotificationChannel,
   type NotificationSubscription,
+  type EmailPreferenceCategory,
 } from "@/lib/api";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
@@ -39,6 +42,11 @@ const CHANNEL_LABELS: Record<string, string> = {
   discord_webhook: "Discord",
 };
 
+const EMAIL_PREFERENCE_FALLBACK_LABELS: Record<string, string> = {
+  publishing_failures: "Publishing failure alerts",
+  account_connection_alerts: "Account connection alerts",
+};
+
 function channelDisplayName(c: NotificationChannel): string {
   return c.config.address || c.config.url || c.label || CHANNEL_LABELS[c.kind] || c.kind;
 }
@@ -54,9 +62,11 @@ export default function NotificationsSettingsPage() {
   const [events, setEvents] = useState<NotificationEvent[]>([]);
   const [channels, setChannels] = useState<NotificationChannel[]>([]);
   const [subs, setSubs] = useState<NotificationSubscription[]>([]);
+  const [emailPreferences, setEmailPreferences] = useState<EmailPreferenceCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
+  const [emailPreferenceBusy, setEmailPreferenceBusy] = useState<Record<string, boolean>>({});
   const [addKind, setAddKind] = useState<AddChannelKind>(null);
   const [addInput, setAddInput] = useState("");
   const [addLabel, setAddLabel] = useState("");
@@ -71,14 +81,16 @@ export default function NotificationsSettingsPage() {
     const token = await getToken();
     if (!token) return;
     try {
-      const [ev, ch, su] = await Promise.all([
+      const [ev, ch, su, emailPrefs] = await Promise.all([
         listNotificationEvents(token),
         listNotificationChannels(token),
         listNotificationSubscriptions(token),
+        listEmailPreferences(token),
       ]);
       setEvents(ev.data || []);
       setChannels(ch.data || []);
       setSubs(su.data || []);
+      setEmailPreferences(emailPrefs.data || []);
       setErr(null);
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -105,6 +117,26 @@ export default function NotificationsSettingsPage() {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy((p) => ({ ...p, [key]: false }));
+    }
+  }
+
+  async function handleEmailPreferenceToggle(categoryKey: string, enabled: boolean) {
+    setEmailPreferenceBusy((p) => ({ ...p, [categoryKey]: true }));
+    const token = await getToken();
+    if (!token) {
+      setEmailPreferenceBusy((p) => ({ ...p, [categoryKey]: false }));
+      return;
+    }
+    try {
+      const res = await updateEmailPreference(token, categoryKey, !enabled);
+      setEmailPreferences((items) => items.map((item) => (
+        item.category_key === categoryKey ? res.data : item
+      )));
+      setErr(null);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setEmailPreferenceBusy((p) => ({ ...p, [categoryKey]: false }));
     }
   }
 
@@ -183,6 +215,7 @@ export default function NotificationsSettingsPage() {
   }
 
   const verifiedChannels = channels.filter((c) => c.verified);
+  const matrixChannels = verifiedChannels.filter((channel) => channel.kind !== "email");
   const signupEmail = user?.primaryEmailAddress?.emailAddress;
 
   const addPlaceholder: Record<Exclude<AddChannelKind, null>, string> = {
@@ -418,6 +451,87 @@ export default function NotificationsSettingsPage() {
         )}
       </section>
 
+      {/* ── Email preferences ── */}
+      <section>
+        <div style={{ marginBottom: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, color: "var(--dtext)", marginBottom: 4 }}>
+            Email preferences
+          </div>
+          <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
+            Manage optional UniPost emails by category.
+          </div>
+        </div>
+
+        {emailPreferences.length === 0 ? (
+          <div style={emptyBox}>
+            Email preferences are not available yet.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {emailPreferences.map((pref) => {
+              const label = pref.label || EMAIL_PREFERENCE_FALLBACK_LABELS[pref.category_key] || pref.category_key;
+              const isBusy = !!emailPreferenceBusy[pref.category_key];
+              return (
+                <div
+                  key={pref.category_key}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "12px 14px",
+                    borderRadius: 8,
+                    border: "1px solid var(--dborder)",
+                    background: "var(--surface)",
+                  }}
+                >
+                  <Mail style={{ width: 15, height: 15, color: "var(--dmuted2)", flex: "0 0 auto" }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                      <div style={{ fontSize: 13, color: "var(--dtext)", fontWeight: 600 }}>
+                        {label}
+                      </div>
+                      {pref.locked ? (
+                        <span style={{ fontSize: 10, fontWeight: 600, padding: "2px 6px", borderRadius: 4, color: "var(--dmuted)", background: "var(--surface2)" }}>
+                          Required
+                        </span>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 3, lineHeight: 1.45 }}>
+                      {pref.description}
+                    </div>
+                  </div>
+                  <label
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
+                      color: pref.locked ? "var(--dmuted2)" : "var(--dtext)",
+                      fontSize: 12,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={pref.enabled}
+                      disabled={pref.locked || isBusy}
+                      onChange={() => handleEmailPreferenceToggle(pref.category_key, pref.enabled)}
+                      style={{
+                        width: 18,
+                        height: 18,
+                        accentColor: "var(--daccent)",
+                        cursor: pref.locked ? "not-allowed" : "pointer",
+                        opacity: isBusy ? 0.5 : 1,
+                      }}
+                    />
+                    {pref.enabled ? "On" : "Off"}
+                  </label>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
       {/* ── Subscriptions matrix ── */}
       <section>
         <div style={{ marginBottom: 10 }}>
@@ -425,20 +539,20 @@ export default function NotificationsSettingsPage() {
             Subscriptions
           </div>
           <div style={{ fontSize: 13, color: "var(--dmuted)" }}>
-            Pick which events get delivered to which channels.
+            Pick which events get delivered to shared channels.
           </div>
         </div>
 
-        {verifiedChannels.length === 0 ? (
+        {matrixChannels.length === 0 ? (
           <div style={emptyBox}>
-            Add and verify a channel above before subscribing to events.
+            Add and verify Slack or Discord above before subscribing to shared alerts.
           </div>
         ) : (
           <div style={{ border: "1px solid var(--dborder)", borderRadius: 10, overflow: "hidden" }}>
             <div
               style={{
                 display: "grid",
-                gridTemplateColumns: `1fr repeat(${verifiedChannels.length}, minmax(100px, auto))`,
+                gridTemplateColumns: `1fr repeat(${matrixChannels.length}, minmax(100px, auto))`,
                 alignItems: "center",
                 padding: "10px 14px",
                 background: "var(--surface2)",
@@ -448,7 +562,7 @@ export default function NotificationsSettingsPage() {
               }}
             >
               <div>Event</div>
-              {verifiedChannels.map((c) => (
+              {matrixChannels.map((c) => (
                 <div key={c.id} style={{ textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
                   {CHANNEL_ICONS[c.kind]}
                   <span style={{ fontSize: 10, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -463,7 +577,7 @@ export default function NotificationsSettingsPage() {
                 key={ev.event_type}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: `1fr repeat(${verifiedChannels.length}, minmax(100px, auto))`,
+                  gridTemplateColumns: `1fr repeat(${matrixChannels.length}, minmax(100px, auto))`,
                   alignItems: "center",
                   padding: "14px",
                   borderBottom: idx === events.length - 1 ? "none" : "1px solid var(--dborder)",
@@ -487,7 +601,7 @@ export default function NotificationsSettingsPage() {
                     {ev.description}
                   </div>
                 </div>
-                {verifiedChannels.map((c) => {
+                {matrixChannels.map((c) => {
                   const sub = findSub(ev.event_type, c.id);
                   const enabled = !!sub?.enabled;
                   const key = `${ev.event_type}:${c.id}`;

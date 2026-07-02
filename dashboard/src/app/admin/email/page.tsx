@@ -289,12 +289,24 @@ export default function AdminEmailPage() {
                           <div className="ad-mono" style={{ marginTop: 3 }}>
                             done {fmtNumber(row.completed_usage)} + reserved {fmtNumber(row.reserved_usage)}
                           </div>
+                          <div className="ad-mono" style={{ marginTop: 3 }}>
+                            {row.preference_category || "no preference category"}
+                          </div>
+                          <div className="ad-mono" style={{ marginTop: 3 }}>
+                            {row.preference_decision || row.footer_policy || "no policy decision"}
+                          </div>
                         </>
                       ) : (
                         <>
                           <div>{row.delivery_class || "unclassified"}</div>
                           <div className="ad-mono ae-idempotency" style={{ marginTop: 3 }}>
                             {row.idempotency_key || "repeatable test send"}
+                          </div>
+                          <div className="ad-mono" style={{ marginTop: 3 }}>
+                            {row.preference_category || "no preference category"}
+                          </div>
+                          <div className="ad-mono" style={{ marginTop: 3 }}>
+                            {row.preference_decision || row.footer_policy || "no policy decision"}
                           </div>
                         </>
                       )}
@@ -311,7 +323,11 @@ export default function AdminEmailPage() {
                       {row.status === "failed" ? (
                         <div className="ae-failure">{row.failure_reason || "No failure reason captured"}</div>
                       ) : row.status === "skipped" ? (
-                        <div className="ad-mono">Skipped by migration policy</div>
+                        <div className="ad-mono">
+                          {row.preference_decision === "skipped_preference_disabled"
+                            ? "Skipped by user email preference"
+                            : "Skipped by migration policy"}
+                        </div>
                       ) : row.sent_at ? (
                         <>
                           <div>{fmtRelative(row.sent_at)}</div>

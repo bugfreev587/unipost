@@ -282,6 +282,9 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 		"'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event",
 		"provider",
 		"delivery_class",
+		"preference_category",
+		"footer_policy",
+		"preference_decision",
 		"idempotency_key",
 		"failure_reason",
 		"trigger_source",
@@ -294,6 +297,30 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("admin email notifications SQL missing %q:\n%s", want, sql)
+		}
+	}
+}
+
+func TestAdminEmailNotificationsResponseExposesPreferencePolicy(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		"PreferenceCategory",
+		"`json:\"preference_category\"`",
+		"FooterPolicy",
+		"`json:\"footer_policy\"`",
+		"PreferenceDecision",
+		"`json:\"preference_decision\"`",
+		"&item.PreferenceCategory",
+		"&item.FooterPolicy",
+		"&item.PreferenceDecision",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin email notification response missing policy field %q", want)
 		}
 	}
 }

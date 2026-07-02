@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/xiaoboyu/unipost-api/internal/emailpolicy"
 )
 
 type LifecycleClient interface {
@@ -45,6 +47,11 @@ type Options struct {
 	Enabled          func(context.Context, DashboardUser) bool
 	TransactionalIDs TransactionalIDs
 	EmailAuditStore  EmailAuditStore
+	EmailPolicy      EmailPolicy
+}
+
+type EmailPolicy interface {
+	Prepare(context.Context, emailpolicy.Request) (emailpolicy.Decision, error)
 }
 
 type TransactionalIDs struct {
@@ -61,6 +68,8 @@ type Syncer struct {
 	client           LifecycleClient
 	enabled          func(context.Context, DashboardUser) bool
 	transactionalIDs TransactionalIDs
+	emailAuditStore  EmailAuditStore
+	emailPolicy      EmailPolicy
 }
 
 func NewSyncer(client LifecycleClient, opts Options) *Syncer {
@@ -73,7 +82,13 @@ func NewSyncer(client LifecycleClient, opts Options) *Syncer {
 			return true
 		}
 	}
-	return &Syncer{client: client, enabled: enabled, transactionalIDs: opts.TransactionalIDs}
+	return &Syncer{
+		client:           client,
+		enabled:          enabled,
+		transactionalIDs: opts.TransactionalIDs,
+		emailAuditStore:  opts.EmailAuditStore,
+		emailPolicy:      opts.EmailPolicy,
+	}
 }
 
 func (s *Syncer) SyncDashboardUser(ctx context.Context, user DashboardUser) error {
@@ -155,13 +170,39 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 	}
 
 	if transactionalID := s.transactionalIDFor(event.EventName); transactionalID != "" {
+		dataVariables := lifecycleTransactionalDataVariables(event, props)
+		audit := lifecycleTransactionalAudit(event)
+		if s.emailPolicy != nil && strings.TrimSpace(audit.EventKey) != "" {
+			decision, err := s.emailPolicy.Prepare(ctx, emailpolicy.Request{
+				EventKey:      audit.EventKey,
+				UserID:        event.UserID,
+				Email:         event.Email,
+				DataVariables: dataVariables,
+			})
+			if err != nil {
+				slog.Warn("loops: lifecycle transactional email policy failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
+				return nil
+			}
+			dataVariables = decision.DataVariables
+			if !decision.ShouldSend {
+				s.createSkippedTransactionalAudit(ctx, TransactionalEmail{
+					TransactionalID: transactionalID,
+					Email:           event.Email,
+					UserID:          event.UserID,
+					IdempotencyKey:  event.IdempotencyKey,
+					DataVariables:   dataVariables,
+					Audit:           audit,
+				}, decision.SkipReason)
+				return nil
+			}
+		}
 		if err := s.client.SendTransactional(ctx, TransactionalEmail{
 			TransactionalID: transactionalID,
 			Email:           event.Email,
 			UserID:          event.UserID,
 			IdempotencyKey:  event.IdempotencyKey,
-			DataVariables:   lifecycleTransactionalDataVariables(event, props),
-			Audit:           lifecycleTransactionalAudit(event),
+			DataVariables:   dataVariables,
+			Audit:           audit,
 		}); err != nil {
 			slog.Warn("loops: lifecycle transactional email failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
 		}
@@ -201,6 +242,35 @@ func (s *Syncer) transactionalIDFor(eventName string) string {
 		return strings.TrimSpace(s.transactionalIDs.PostFailed)
 	default:
 		return ""
+	}
+}
+
+func (s *Syncer) createSkippedTransactionalAudit(ctx context.Context, email TransactionalEmail, reason string) {
+	if s == nil || s.emailAuditStore == nil || strings.TrimSpace(email.Audit.EventKey) == "" {
+		return
+	}
+	provider := strings.TrimSpace(email.Audit.Provider)
+	if provider == "" {
+		provider = "loops"
+	}
+	if strings.TrimSpace(reason) == "" {
+		reason = "skipped"
+	}
+	if _, err := s.emailAuditStore.CreateSkippedEmailSendAttempt(ctx, EmailSendAttempt{
+		EventKey:           email.Audit.EventKey,
+		RecipientUserID:    email.UserID,
+		RecipientEmail:     email.Email,
+		WorkspaceID:        email.Audit.WorkspaceID,
+		Provider:           provider,
+		ProviderTemplateID: email.TransactionalID,
+		IdempotencyKey:     email.IdempotencyKey,
+		DeliveryClass:      email.Audit.DeliveryClass,
+		SubjectSnapshot:    email.Audit.Subject,
+		DataVariables:      email.DataVariables,
+		TriggerSource:      email.Audit.TriggerSource,
+		TriggerReferenceID: email.Audit.TriggerReferenceID,
+	}, reason); err != nil {
+		slog.Warn("loops: skipped email audit create failed", "event_key", email.Audit.EventKey, "email", email.Email, "reason", reason, "error", err)
 	}
 }
 

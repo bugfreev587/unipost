@@ -2659,6 +2659,9 @@ export interface AdminEmailNotificationRow {
   updated_at: string;
   provider: string;
   delivery_class: string;
+  preference_category: string;
+  footer_policy: string;
+  preference_decision: string;
   trigger_source: string;
   trigger_reference_id: string;
   subject_snapshot: string;
@@ -3768,6 +3771,17 @@ export interface NotificationSubscription {
   created_at: string;
 }
 
+export interface EmailPreferenceCategory {
+  category_key: string;
+  label: string;
+  description: string;
+  default_enabled: boolean;
+  locked: boolean;
+  enabled: boolean;
+  source: string;
+  updated_at?: string;
+}
+
 export async function listNotificationEvents(
   token: string
 ): Promise<ApiResponse<NotificationEvent[]>> {
@@ -3830,5 +3844,22 @@ export async function deleteNotificationSubscription(
 ): Promise<void> {
   await request(`/v1/me/notifications/subscriptions/${id}`, token, {
     method: "DELETE",
+  });
+}
+
+export async function listEmailPreferences(
+  token: string
+): Promise<ApiResponse<EmailPreferenceCategory[]>> {
+  return request(`/v1/me/notifications/email-preferences`, token);
+}
+
+export async function updateEmailPreference(
+  token: string,
+  categoryKey: string,
+  enabled: boolean
+): Promise<ApiResponse<EmailPreferenceCategory>> {
+  return request(`/v1/me/notifications/email-preferences/${encodeURIComponent(categoryKey)}`, token, {
+    method: "PUT",
+    body: JSON.stringify({ enabled }),
   });
 }

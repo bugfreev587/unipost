@@ -48,16 +48,18 @@ func TestRegistryEntriesHaveRequiredContractFields(t *testing.T) {
 		seen[event.Key] = true
 
 		required := map[string]string{
-			"domain":             event.Domain,
-			"provider":           event.Provider,
-			"template_env":       event.TemplateEnv,
-			"delivery_class":     string(event.DeliveryClass),
-			"recipient_policy":   event.RecipientPolicy,
-			"idempotency_policy": event.IdempotencyPolicy,
-			"audit_policy":       event.AuditPolicy,
-			"fallback_policy":    event.FallbackPolicy,
-			"retention_policy":   event.RetentionPolicy,
-			"owner_area":         event.OwnerArea,
+			"domain":              event.Domain,
+			"provider":            event.Provider,
+			"template_env":        event.TemplateEnv,
+			"delivery_class":      string(event.DeliveryClass),
+			"recipient_policy":    event.RecipientPolicy,
+			"idempotency_policy":  event.IdempotencyPolicy,
+			"audit_policy":        event.AuditPolicy,
+			"fallback_policy":     event.FallbackPolicy,
+			"retention_policy":    event.RetentionPolicy,
+			"owner_area":          event.OwnerArea,
+			"preference_category": string(event.PreferenceCategory),
+			"footer_policy":       string(event.FooterPolicy),
 		}
 		for name, value := range required {
 			if strings.TrimSpace(value) == "" {
@@ -67,6 +69,90 @@ func TestRegistryEntriesHaveRequiredContractFields(t *testing.T) {
 		if len(event.RequiredVariables) == 0 {
 			t.Fatalf("%s missing required variables", event.Key)
 		}
+		if event.PreferenceGated && !event.CanManagePreferences() {
+			t.Fatalf("%s is preference gated but not manageable", event.Key)
+		}
+		if event.DeliveryClass == CriticalTransactional && strings.TrimSpace(event.RequiredReason) == "" {
+			t.Fatalf("%s critical email missing required reason", event.Key)
+		}
+	}
+}
+
+func TestRegistryDefinesPolicyForServiceAlertPreferences(t *testing.T) {
+	events := byKey(t, Registry())
+
+	for _, tc := range []struct {
+		key      string
+		category PreferenceCategory
+		loops    string
+	}{
+		{key: "email.post.failed.v1", category: PublishingFailures, loops: "post_failed"},
+		{key: "email.account.disconnected.v1", category: AccountConnectionAlerts, loops: "account_disconnected"},
+	} {
+		event := events[tc.key]
+		if event.DeliveryClass != ServiceAlert {
+			t.Fatalf("%s class = %q, want service_alert", tc.key, event.DeliveryClass)
+		}
+		if event.PreferenceCategory != tc.category {
+			t.Fatalf("%s category = %q, want %q", tc.key, event.PreferenceCategory, tc.category)
+		}
+		if !event.PreferenceGated {
+			t.Fatalf("%s should be preference gated", tc.key)
+		}
+		if event.FooterPolicy != FooterManagePreferences {
+			t.Fatalf("%s footer policy = %q, want manage_preferences", tc.key, event.FooterPolicy)
+		}
+		if event.LoopsEventName != tc.loops {
+			t.Fatalf("%s loops event = %q, want %q", tc.key, event.LoopsEventName, tc.loops)
+		}
+	}
+}
+
+func TestLookupByLoopsEventNameUsesRegistryDeliveryClass(t *testing.T) {
+	event, ok := LookupByLoopsEventName("post_failed")
+	if !ok {
+		t.Fatal("post_failed missing from Loops event lookup")
+	}
+	if event.Key != "email.post.failed.v1" {
+		t.Fatalf("event key = %q, want email.post.failed.v1", event.Key)
+	}
+	if event.DeliveryClass != ServiceAlert {
+		t.Fatalf("delivery class = %q, want service_alert", event.DeliveryClass)
+	}
+
+	event, ok = LookupByLoopsEventName("billing_payment_failed")
+	if !ok {
+		t.Fatal("billing_payment_failed missing from Loops event lookup")
+	}
+	if event.Key != "email.billing.payment_failed.v1" {
+		t.Fatalf("event key = %q, want email.billing.payment_failed.v1", event.Key)
+	}
+	if event.DeliveryClass != CriticalTransactional {
+		t.Fatalf("delivery class = %q, want critical_transactional", event.DeliveryClass)
+	}
+}
+
+func TestEmailPreferenceCategoriesExposeUserControls(t *testing.T) {
+	categories := EmailPreferenceCategories()
+	byCategory := map[PreferenceCategory]EmailPreferenceCategory{}
+	for _, category := range categories {
+		if strings.TrimSpace(string(category.Key)) == "" {
+			t.Fatal("category missing key")
+		}
+		if strings.TrimSpace(category.Label) == "" {
+			t.Fatalf("%s missing label", category.Key)
+		}
+		byCategory[category.Key] = category
+	}
+
+	if !byCategory[PublishingFailures].DefaultEnabled || byCategory[PublishingFailures].Locked {
+		t.Fatalf("publishing failures should default on and be user-manageable: %+v", byCategory[PublishingFailures])
+	}
+	if !byCategory[AccountConnectionAlerts].DefaultEnabled || byCategory[AccountConnectionAlerts].Locked {
+		t.Fatalf("account connection alerts should default on and be user-manageable: %+v", byCategory[AccountConnectionAlerts])
+	}
+	if !byCategory[EssentialAccountBilling].Locked {
+		t.Fatalf("essential account/billing category should be locked")
 	}
 }
 

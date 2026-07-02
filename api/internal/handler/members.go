@@ -656,17 +656,18 @@ func (h *MembersHandler) sendInviteEmail(ctx context.Context, invite db.Workspac
 	if invite.ExpiresAt.Valid {
 		expiresAt = invite.ExpiresAt.Time.UTC().Format(time.RFC3339)
 	}
+	dataVariables := emailFooterVariables(ctx, "email.workspace.member_invited.v1", "", invite.Email, h.dashboardURL, map[string]any{
+		"workspace_name": workspaceName,
+		"role":           roleLabel,
+		"accept_url":     acceptURL,
+		"expires_at":     expiresAt,
+	})
 
 	if err := h.inviteEmailSender.SendTransactional(ctx, loops.TransactionalEmail{
 		TransactionalID: h.inviteEmailTransactionalID,
 		Email:           invite.Email,
 		IdempotencyKey:  "workspace_invite:" + invite.ID,
-		DataVariables: map[string]any{
-			"workspace_name": workspaceName,
-			"role":           roleLabel,
-			"accept_url":     acceptURL,
-			"expires_at":     expiresAt,
-		},
+		DataVariables:   dataVariables,
 		Audit: loops.EmailAudit{
 			EventKey:           "email.workspace.member_invited.v1",
 			WorkspaceID:        invite.WorkspaceID,

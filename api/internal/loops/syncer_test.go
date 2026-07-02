@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/xiaoboyu/unipost-api/internal/emailpolicy"
+	"github.com/xiaoboyu/unipost-api/internal/emailregistry"
 )
 
 func TestSyncerSkipsWhenFlagDisabled(t *testing.T) {
@@ -565,6 +568,125 @@ func TestSyncerSendsPostFailedTransactionalEmailWhenTemplateConfigured(t *testin
 	assertMissingProperty(t, client.lastTransactional.DataVariables, "attempts")
 }
 
+func TestSyncerAppliesEmailPolicyFooterVariablesBeforeTransactionalSend(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	policy := &fakeEmailPolicy{
+		decision: emailpolicy.Decision{
+			ShouldSend: true,
+			DataVariables: map[string]any{
+				"workspace_name":            "Alex Workspace",
+				"post_id":                   "post_123",
+				"platform":                  "youtube",
+				"error_code":                "quota_exceeded",
+				"dashboard_url":             "https://app.unipost.dev/projects/profile_123/logs?post_id=post_123",
+				"retriable":                 "false",
+				"footer_policy":             string(emailregistry.FooterManagePreferences),
+				"manage_preferences_url":    "https://app.unipost.dev/settings/notifications",
+				"preference_category_label": "Publishing failure alerts",
+			},
+		},
+	}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			PostFailed: "tmpl_post_failed",
+		},
+		EmailPolicy: policy,
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "post_failed",
+		IdempotencyKey: "post_failed:job_123",
+		Properties: map[string]any{
+			"post_id":       "post_123",
+			"platform":      "youtube",
+			"error_code":    "quota_exceeded",
+			"dashboard_url": "https://app.unipost.dev/projects/profile_123/logs?post_id=post_123",
+			"retriable":     false,
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if policy.calls != 1 {
+		t.Fatalf("policy calls = %d, want 1", policy.calls)
+	}
+	if policy.lastRequest.EventKey != "email.post.failed.v1" {
+		t.Fatalf("policy event key = %q, want email.post.failed.v1", policy.lastRequest.EventKey)
+	}
+	if client.transactionals != 1 {
+		t.Fatalf("transactionals = %d, want 1", client.transactionals)
+	}
+	assertProperty(t, client.lastTransactional.DataVariables, "footer_policy", string(emailregistry.FooterManagePreferences))
+	assertProperty(t, client.lastTransactional.DataVariables, "manage_preferences_url", "https://app.unipost.dev/settings/notifications")
+	assertProperty(t, client.lastTransactional.DataVariables, "preference_category_label", "Publishing failure alerts")
+}
+
+func TestSyncerSkipsPreferenceDisabledTransactionalEmailAndAuditsSkipped(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	audit := &fakeEmailAuditStore{}
+	policy := &fakeEmailPolicy{
+		decision: emailpolicy.Decision{
+			ShouldSend: false,
+			SkipReason: emailpolicy.SkipReasonPreferenceDisabled,
+			DataVariables: map[string]any{
+				"workspace_name":            "Alex Workspace",
+				"preference_category_label": "Publishing failure alerts",
+			},
+		},
+	}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			PostFailed: "tmpl_post_failed",
+		},
+		EmailAuditStore: audit,
+		EmailPolicy:     policy,
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID:         "user_123",
+		Email:          "alex@example.com",
+		WorkspaceID:    "ws_123",
+		WorkspaceName:  "Alex Workspace",
+		EventName:      "post_failed",
+		IdempotencyKey: "post_failed:job_123",
+		Properties: map[string]any{
+			"post_id":       "post_123",
+			"platform":      "youtube",
+			"error_code":    "quota_exceeded",
+			"dashboard_url": "https://app.unipost.dev/projects/profile_123/logs?post_id=post_123",
+			"retriable":     false,
+		},
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.transactionals != 0 {
+		t.Fatalf("transactionals = %d, want 0", client.transactionals)
+	}
+	if client.events != 0 {
+		t.Fatalf("events = %d, want 0", client.events)
+	}
+	if audit.skipped != 1 {
+		t.Fatalf("skipped audit rows = %d, want 1", audit.skipped)
+	}
+	if audit.skippedReason != emailpolicy.SkipReasonPreferenceDisabled {
+		t.Fatalf("skipped reason = %q, want %q", audit.skippedReason, emailpolicy.SkipReasonPreferenceDisabled)
+	}
+	if audit.lastAttempt.EventKey != "email.post.failed.v1" {
+		t.Fatalf("audit event key = %q, want email.post.failed.v1", audit.lastAttempt.EventKey)
+	}
+	if audit.lastAttempt.ProviderTemplateID != "tmpl_post_failed" {
+		t.Fatalf("audit template = %q, want tmpl_post_failed", audit.lastAttempt.ProviderTemplateID)
+	}
+	assertProperty(t, audit.lastAttempt.DataVariables, "preference_category_label", "Publishing failure alerts")
+}
+
 func TestSyncerAuditsLifecycleTransactionalEmailSuccess(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	audit := &fakeEmailAuditStore{}
@@ -709,16 +831,25 @@ func (f *fakeLifecycleClient) SendTransactional(_ context.Context, email Transac
 }
 
 type fakeEmailAuditStore struct {
-	created      int
-	markedSent   int
-	markedFailed int
-	lastAttempt  EmailSendAttempt
-	failedReason string
+	created       int
+	skipped       int
+	markedSent    int
+	markedFailed  int
+	lastAttempt   EmailSendAttempt
+	failedReason  string
+	skippedReason string
 }
 
 func (f *fakeEmailAuditStore) CreateEmailSendAttempt(_ context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error) {
 	f.created++
 	f.lastAttempt = attempt
+	return EmailSendAttemptRecord{ID: "audit_123"}, nil
+}
+
+func (f *fakeEmailAuditStore) CreateSkippedEmailSendAttempt(_ context.Context, attempt EmailSendAttempt, reason string) (EmailSendAttemptRecord, error) {
+	f.skipped++
+	f.lastAttempt = attempt
+	f.skippedReason = reason
 	return EmailSendAttemptRecord{ID: "audit_123"}, nil
 }
 
@@ -737,6 +868,22 @@ func (f *fakeEmailAuditStore) MarkEmailSendAttemptFailed(_ context.Context, id, 
 	f.markedFailed++
 	f.failedReason = reason
 	return nil
+}
+
+type fakeEmailPolicy struct {
+	decision    emailpolicy.Decision
+	err         error
+	calls       int
+	lastRequest emailpolicy.Request
+}
+
+func (f *fakeEmailPolicy) Prepare(_ context.Context, request emailpolicy.Request) (emailpolicy.Decision, error) {
+	f.calls++
+	f.lastRequest = request
+	if f.err != nil {
+		return emailpolicy.Decision{}, f.err
+	}
+	return f.decision, nil
 }
 
 func assertProperty(t *testing.T, props map[string]any, key string, want any) {

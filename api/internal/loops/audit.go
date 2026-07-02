@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	"github.com/xiaoboyu/unipost-api/internal/emailregistry"
 )
 
 type EmailAudit struct {
@@ -39,6 +41,7 @@ type EmailSendAttemptRecord struct {
 
 type EmailAuditStore interface {
 	CreateEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error)
+	CreateSkippedEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt, reason string) (EmailSendAttemptRecord, error)
 	MarkEmailSendAttemptSent(ctx context.Context, id string) error
 	MarkEmailSendAttemptFailed(ctx context.Context, id, reason string) error
 }
@@ -122,11 +125,18 @@ func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEm
 }
 
 func lifecycleTransactionalAudit(event LifecycleEvent) EmailAudit {
+	registryEvent, ok := emailregistry.LookupByLoopsEventName(strings.TrimSpace(event.EventName))
+	eventKey := lifecycleEventKey(event.EventName)
+	deliveryClass := lifecycleDeliveryClass(event.EventName)
+	if ok {
+		eventKey = registryEvent.Key
+		deliveryClass = string(registryEvent.DeliveryClass)
+	}
 	return EmailAudit{
-		EventKey:           lifecycleEventKey(event.EventName),
+		EventKey:           eventKey,
 		WorkspaceID:        event.WorkspaceID,
 		Provider:           "loops",
-		DeliveryClass:      lifecycleDeliveryClass(event.EventName),
+		DeliveryClass:      deliveryClass,
 		TriggerSource:      lifecycleTriggerSource(event.EventName),
 		TriggerReferenceID: lifecycleTriggerReferenceID(event),
 	}
