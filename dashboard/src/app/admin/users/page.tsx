@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { XIcon } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -18,12 +19,14 @@ import {
   getAdminUserSignups,
   getAdminUser,
   getAdminUserPostFailures,
+  getAdminUserScheduledPosts,
   listAdminUsers,
   type AdminUserDetail,
   type AdminUserSignupTrend,
   type AdminUserListParams,
   type AdminUserPostFailure,
   type AdminUserRow,
+  type AdminUserScheduledPost,
 } from "@/lib/api";
 import { formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { countryDisplay, countryNameFromCode } from "@/lib/countries";
@@ -61,6 +64,10 @@ export default function AdminUsersPage() {
   const [detail, setDetail] = useState<AdminUserDetail | null>(null);
   const [postFailures, setPostFailures] = useState<AdminUserPostFailure[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [scheduledDrawerUser, setScheduledDrawerUser] = useState<AdminUserRow | null>(null);
+  const [scheduledPosts, setScheduledPosts] = useState<AdminUserScheduledPost[]>([]);
+  const [scheduledDrawerLoading, setScheduledDrawerLoading] = useState(false);
+  const [scheduledDrawerError, setScheduledDrawerError] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -130,6 +137,30 @@ export default function AdminUsersPage() {
     setSelectedUserId(null);
     setDetail(null);
     setPostFailures([]);
+  }
+
+  async function openScheduledPosts(u: AdminUserRow) {
+    setScheduledDrawerUser(u);
+    setScheduledPosts([]);
+    setScheduledDrawerError(null);
+    setScheduledDrawerLoading(true);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const res = await getAdminUserScheduledPosts(token, u.id);
+      setScheduledPosts(res.data);
+    } catch (e) {
+      setScheduledDrawerError(e instanceof Error ? e.message : "Failed to load scheduled posts");
+    } finally {
+      setScheduledDrawerLoading(false);
+    }
+  }
+
+  function closeScheduledPosts() {
+    setScheduledDrawerUser(null);
+    setScheduledPosts([]);
+    setScheduledDrawerError(null);
+    setScheduledDrawerLoading(false);
   }
 
   const selectedRangeLabel = useMemo(() => {
@@ -272,6 +303,7 @@ export default function AdminUsersPage() {
               users.map((u) => {
                 const usagePct = usagePercentage(u.posts_used, u.post_limit);
                 const usageClass = usagePct >= 90 ? "ad-uf-r" : usagePct >= 70 ? "ad-uf-a" : "ad-uf-g";
+                const scheduledCount = u.scheduled_posts ?? 0;
                 return (
                   <tr key={u.id}>
                     <td>
@@ -310,7 +342,23 @@ export default function AdminUsersPage() {
                         <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
                       )}
                     </td>
-                    <td>{fmtNumber(u.scheduled_posts ?? 0)}</td>
+                    <td>
+                      {scheduledCount > 0 ? (
+                        <button
+                          type="button"
+                          className="ad-link au-scheduled-link"
+                          aria-label={`View ${fmtNumber(u.scheduled_posts ?? 0)} scheduled posts for ${u.email}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void openScheduledPosts(u);
+                          }}
+                        >
+                          {fmtNumber(u.scheduled_posts ?? 0)}
+                        </button>
+                      ) : (
+                        <span className="au-scheduled-zero">{fmtNumber(u.scheduled_posts ?? 0)}</span>
+                      )}
+                    </td>
                     <td>
                       {u.failed_posts_this_month > 0 ? (
                         <Link href={adminUserFailedPostsHref(u.id)} className="ad-link au-failed-link">
@@ -466,6 +514,89 @@ export default function AdminUsersPage() {
         )}
       </div>
 
+      {scheduledDrawerUser ? (
+        <div className="au-scheduled-layer">
+          <button
+            type="button"
+            className="au-scheduled-backdrop"
+            aria-label="Close scheduled posts drawer"
+            onClick={closeScheduledPosts}
+          />
+          <aside
+            className="au-scheduled-drawer"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="au-scheduled-title"
+          >
+            <div className="au-scheduled-drawer-header">
+              <div>
+                <div id="au-scheduled-title" className="au-scheduled-drawer-title">Scheduled posts</div>
+                <div className="au-scheduled-drawer-subtitle">{scheduledDrawerUser.email}</div>
+              </div>
+              <button
+                type="button"
+                className="ad-close-btn au-scheduled-close"
+                aria-label="Close scheduled posts drawer"
+                onClick={closeScheduledPosts}
+              >
+                <XIcon size={14} aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="au-scheduled-drawer-body">
+              {scheduledDrawerLoading ? (
+                <div className="au-scheduled-skeleton-list" aria-label="Loading scheduled posts">
+                  {[0, 1, 2].map((item) => (
+                    <div key={item} className="au-scheduled-skeleton">
+                      <div />
+                      <span />
+                      <span />
+                    </div>
+                  ))}
+                </div>
+              ) : scheduledDrawerError ? (
+                <div className="au-scheduled-state au-scheduled-error">
+                  {scheduledDrawerError}
+                </div>
+              ) : scheduledPosts.length === 0 ? (
+                <div className="au-scheduled-state">
+                  No scheduled posts found for this user.
+                </div>
+              ) : (
+                <div className="au-scheduled-list">
+                  {scheduledPosts.map((post) => (
+                    <div key={post.post_id} className="au-scheduled-post">
+                      <div className="au-scheduled-post-head">
+                        <div className="au-scheduled-post-title">{post.title}</div>
+                        <div className="au-scheduled-platforms" aria-label="Platforms">
+                          {post.platforms.length > 0 ? (
+                            post.platforms.map((platform) => (
+                              <PlatformIcon key={platform} platform={platform} size={14} />
+                            ))
+                          ) : (
+                            <span className="au-scheduled-no-platform">—</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="au-scheduled-post-meta">
+                        <div>
+                          <span>Created</span>
+                          <strong>{formatDateTime(post.created_at)}</strong>
+                        </div>
+                        <div>
+                          <span>Publishes</span>
+                          <strong>{formatDateTime(post.scheduled_at)}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, padding: "0 2px" }}>
         <span style={{ fontSize: 12, color: "var(--dmuted)" }}>
           Showing {selectedRangeLabel} of {fmtNumber(total)} users
@@ -493,6 +624,11 @@ export default function AdminUsersPage() {
   );
 }
 
+function formatDateTime(value?: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString();
+}
+
 const usersCss = `
 .au-signup-grid {
   display: grid;
@@ -510,12 +646,198 @@ const usersCss = `
 .au-chart-body {
   height: 230px;
 }
+.au-scheduled-link {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  color: var(--daccent);
+  font-weight: 650;
+}
+.au-scheduled-link:active {
+  transform: translateY(1px);
+}
+.au-scheduled-zero {
+  color: var(--dmuted2);
+}
 .au-failed-link {
   color: var(--danger);
   font-weight: 650;
 }
 .au-failed-zero {
   color: var(--dmuted2);
+}
+.au-scheduled-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+.au-scheduled-backdrop {
+  position: absolute;
+  inset: 0;
+  pointer-events: auto;
+  border: 0;
+  padding: 0;
+  background: rgba(8, 8, 8, 0.38);
+  animation: au-scheduled-fade-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.au-scheduled-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: min(460px, calc(100vw - 24px));
+  height: 100dvh;
+  pointer-events: auto;
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border-left: 1px solid var(--dborder);
+  box-shadow: -24px 0 52px -28px rgba(0, 0, 0, 0.7);
+  padding: 18px;
+  animation: au-scheduled-drawer-in 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+.au-scheduled-drawer-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--dborder);
+}
+.au-scheduled-drawer-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--dtext);
+  line-height: 1.25;
+}
+.au-scheduled-drawer-subtitle {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--dmuted);
+  word-break: break-word;
+}
+.au-scheduled-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+}
+.au-scheduled-drawer-body {
+  padding-top: 14px;
+}
+.au-scheduled-list,
+.au-scheduled-skeleton-list {
+  display: grid;
+  gap: 10px;
+}
+.au-scheduled-post {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--dborder);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.au-scheduled-post-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.au-scheduled-post-title {
+  min-width: 0;
+  color: var(--dtext);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.au-scheduled-platforms {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 5px;
+  min-width: 56px;
+  color: var(--dtext);
+}
+.au-scheduled-no-platform {
+  color: var(--dmuted2);
+  font-size: 12px;
+}
+.au-scheduled-post-meta {
+  display: grid;
+  gap: 6px;
+}
+.au-scheduled-post-meta > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11.5px;
+}
+.au-scheduled-post-meta span {
+  color: var(--dmuted);
+}
+.au-scheduled-post-meta strong {
+  color: var(--dtext);
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 500;
+  text-align: right;
+}
+.au-scheduled-state {
+  border: 1px solid var(--dborder);
+  border-radius: 8px;
+  padding: 14px;
+  background: var(--surface);
+  color: var(--dmuted);
+  font-size: 13px;
+}
+.au-scheduled-error {
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 20%, transparent);
+}
+.au-scheduled-skeleton {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dborder);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.au-scheduled-skeleton div,
+.au-scheduled-skeleton span {
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--surface2), var(--dborder), var(--surface2));
+  background-size: 200% 100%;
+  animation: au-scheduled-shimmer 1.1s ease-in-out infinite;
+}
+.au-scheduled-skeleton div {
+  width: 76%;
+}
+.au-scheduled-skeleton span {
+  width: 52%;
+}
+.au-scheduled-skeleton span:last-child {
+  width: 68%;
+}
+@keyframes au-scheduled-drawer-in {
+  from { transform: translateX(28px); opacity: 0.86; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes au-scheduled-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes au-scheduled-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
 }
 @media (max-width: 1120px) {
   .au-signup-grid {
