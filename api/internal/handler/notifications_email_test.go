@@ -45,6 +45,8 @@ func TestNotificationHandlerSendEmailTestUsesLoopsTemplateWhenConfigured(t *test
 	}
 	assertDataVariable(t, email.DataVariables, "recipient_name", "there")
 	assertDataVariable(t, email.DataVariables, "settings_url", "https://dev-app.unipost.dev/settings/notifications")
+	assertDataVariable(t, email.DataVariables, "footer_policy", "test_notice")
+	assertDataVariable(t, email.DataVariables, "manage_preferences_url", "https://dev-app.unipost.dev/settings/notifications")
 }
 
 func TestNotificationHandlerSendEmailTestDoesNotFallbackToResendWithoutLoopsTemplate(t *testing.T) {

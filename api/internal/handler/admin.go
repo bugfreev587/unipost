@@ -909,34 +909,37 @@ type adminBillingQuery struct {
 }
 
 type adminEmailNotificationRow struct {
-	ID               string     `json:"id"`
-	EventKey         string     `json:"event_key"`
-	EventType        string     `json:"event_type"`
-	TriggerEvent     string     `json:"trigger_event"`
-	WorkspaceID      string     `json:"workspace_id"`
-	WorkspaceName    string     `json:"workspace_name"`
-	UserID           string     `json:"user_id"`
-	OwnerEmail       string     `json:"owner_email"`
-	Email            string     `json:"email"`
-	Period           string     `json:"period"`
-	ThresholdPercent int32      `json:"threshold_percent"`
-	Status           string     `json:"status"`
-	TransactionalID  string     `json:"transactional_id"`
-	IdempotencyKey   string     `json:"idempotency_key"`
-	EffectiveUsage   int32      `json:"effective_usage"`
-	CompletedUsage   int32      `json:"completed_usage"`
-	ReservedUsage    int32      `json:"reserved_usage"`
-	PostLimit        int32      `json:"post_limit"`
-	FailureReason    *string    `json:"failure_reason,omitempty"`
-	AttemptedAt      time.Time  `json:"attempted_at"`
-	SentAt           *time.Time `json:"sent_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
-	Provider         string     `json:"provider"`
-	DeliveryClass    string     `json:"delivery_class"`
-	TriggerSource    string     `json:"trigger_source"`
-	TriggerReference string     `json:"trigger_reference_id"`
-	SubjectSnapshot  string     `json:"subject_snapshot"`
+	ID                 string     `json:"id"`
+	EventKey           string     `json:"event_key"`
+	EventType          string     `json:"event_type"`
+	TriggerEvent       string     `json:"trigger_event"`
+	WorkspaceID        string     `json:"workspace_id"`
+	WorkspaceName      string     `json:"workspace_name"`
+	UserID             string     `json:"user_id"`
+	OwnerEmail         string     `json:"owner_email"`
+	Email              string     `json:"email"`
+	Period             string     `json:"period"`
+	ThresholdPercent   int32      `json:"threshold_percent"`
+	Status             string     `json:"status"`
+	TransactionalID    string     `json:"transactional_id"`
+	IdempotencyKey     string     `json:"idempotency_key"`
+	EffectiveUsage     int32      `json:"effective_usage"`
+	CompletedUsage     int32      `json:"completed_usage"`
+	ReservedUsage      int32      `json:"reserved_usage"`
+	PostLimit          int32      `json:"post_limit"`
+	FailureReason      *string    `json:"failure_reason,omitempty"`
+	AttemptedAt        time.Time  `json:"attempted_at"`
+	SentAt             *time.Time `json:"sent_at,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
+	UpdatedAt          time.Time  `json:"updated_at"`
+	Provider           string     `json:"provider"`
+	DeliveryClass      string     `json:"delivery_class"`
+	PreferenceCategory string     `json:"preference_category"`
+	FooterPolicy       string     `json:"footer_policy"`
+	PreferenceDecision string     `json:"preference_decision"`
+	TriggerSource      string     `json:"trigger_source"`
+	TriggerReference   string     `json:"trigger_reference_id"`
+	SubjectSnapshot    string     `json:"subject_snapshot"`
 }
 
 type adminEmailNotificationsQuery struct {
@@ -978,6 +981,28 @@ WITH email_notifications AS (
     e.updated_at,
     e.provider,
     e.delivery_class,
+    CASE e.event_key
+      WHEN 'email.post.failed.v1' THEN 'publishing_failures'
+      WHEN 'email.account.disconnected.v1' THEN 'account_connection_alerts'
+      WHEN 'email.quota.free_plan_reminder.v1' THEN 'usage_quota_alerts'
+      WHEN 'email.support.error_triage_follow_up.v1' THEN 'support_follow_ups'
+      WHEN 'email.user.welcome.v1' THEN 'onboarding_tips'
+      WHEN 'email.notification.test.v1' THEN 'test_emails'
+      ELSE 'essential_account_billing'
+    END AS preference_category,
+    CASE e.delivery_class
+      WHEN 'critical_transactional' THEN 'required_notice'
+      WHEN 'lifecycle' THEN 'unsubscribe'
+      WHEN 'test' THEN 'test_notice'
+      ELSE 'manage_preferences'
+    END AS footer_policy,
+    CASE
+      WHEN e.status = 'skipped' AND e.last_error = 'preference_disabled' THEN 'skipped_preference_disabled'
+      WHEN e.delivery_class = 'critical_transactional' THEN 'required'
+      WHEN e.delivery_class = 'lifecycle' THEN 'unsubscribe_eligible'
+      WHEN e.delivery_class = 'test' THEN 'user_initiated'
+      ELSE 'preference_checked'
+    END AS preference_decision,
     COALESCE(e.trigger_source, '') AS trigger_source,
     COALESCE(e.trigger_reference_id, '') AS trigger_reference_id,
     COALESCE(e.subject_snapshot, '') AS subject_snapshot
@@ -1013,6 +1038,9 @@ WITH email_notifications AS (
     r.updated_at,
     'loops' AS provider,
     'service_alert' AS delivery_class,
+    'usage_quota_alerts' AS preference_category,
+    'manage_preferences' AS footer_policy,
+    'preference_documented' AS preference_decision,
     'quota threshold evaluator' AS trigger_source,
     r.workspace_id || ':' || r.period || ':' || r.threshold_percent::TEXT AS trigger_reference_id,
     '' AS subject_snapshot
@@ -1048,6 +1076,9 @@ WITH email_notifications AS (
     s.created_at AS updated_at,
     'loops' AS provider,
     'service_alert' AS delivery_class,
+    'support_follow_ups' AS preference_category,
+    'manage_preferences' AS footer_policy,
+    'admin_reviewed' AS preference_decision,
     'admin error triage send' AS trigger_source,
     s.item_id AS trigger_reference_id,
     s.subject_snapshot
@@ -1090,6 +1121,18 @@ WITH email_notifications AS (
     COALESCE(d.delivered_at, d.next_retry_at, d.created_at) AS updated_at,
     CASE d.status WHEN 'skipped' THEN 'notification_system' ELSE 'resend_legacy' END AS provider,
     CASE d.event_type WHEN 'billing.payment_failed' THEN 'critical_transactional' ELSE 'service_alert' END AS delivery_class,
+    CASE d.event_type
+      WHEN 'post.failed' THEN 'publishing_failures'
+      WHEN 'account.disconnected' THEN 'account_connection_alerts'
+      WHEN 'billing.usage_80pct' THEN 'usage_quota_alerts'
+      ELSE 'essential_account_billing'
+    END AS preference_category,
+    CASE d.event_type WHEN 'billing.payment_failed' THEN 'required_notice' ELSE 'manage_preferences' END AS footer_policy,
+    CASE
+      WHEN d.status = 'skipped' THEN 'migrated_to_loops'
+      WHEN d.event_type = 'billing.payment_failed' THEN 'required'
+      ELSE 'legacy_notification_path'
+    END AS preference_decision,
     'notification dispatcher' AS trigger_source,
     d.event_id AS trigger_reference_id,
     '' AS subject_snapshot
@@ -1128,6 +1171,9 @@ SELECT
   updated_at,
   provider,
   delivery_class,
+  preference_category,
+  footer_policy,
+  preference_decision,
   trigger_source,
   trigger_reference_id,
   subject_snapshot
@@ -2218,6 +2264,9 @@ LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
 			&item.UpdatedAt,
 			&item.Provider,
 			&item.DeliveryClass,
+			&item.PreferenceCategory,
+			&item.FooterPolicy,
+			&item.PreferenceDecision,
 			&item.TriggerSource,
 			&item.TriggerReference,
 			&item.SubjectSnapshot,

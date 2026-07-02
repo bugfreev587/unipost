@@ -27,6 +27,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/emailpolicy"
 	"github.com/xiaoboyu/unipost-api/internal/errortriage"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
@@ -304,8 +305,9 @@ func main() {
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
-		auditedLoopsClient = loops.NewAuditedClient(loopsClient, loops.NewPostgresEmailAuditStore(queries))
-		loopsSyncer = loops.NewSyncer(auditedLoopsClient, loops.Options{
+		emailAuditStore := loops.NewPostgresEmailAuditStore(queries)
+		auditedLoopsClient = loops.NewAuditedClient(loopsClient, emailAuditStore)
+		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
 			TransactionalIDs: loops.TransactionalIDs{
 				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
 				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
@@ -315,6 +317,11 @@ func main() {
 				AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
 				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
 			},
+			EmailAuditStore: emailAuditStore,
+			EmailPolicy: emailpolicy.NewService(
+				emailpolicy.NewPostgresPreferenceReader(queries),
+				os.Getenv("APP_BASE_URL"),
+			),
 		})
 		slog.Info("loops: lifecycle sync configured")
 	} else {
@@ -628,6 +635,8 @@ func main() {
 		r.Get("/v1/me/notifications/subscriptions", notificationHandler.ListSubscriptions)
 		r.Put("/v1/me/notifications/subscriptions", notificationHandler.UpsertSubscription)
 		r.Delete("/v1/me/notifications/subscriptions/{id}", notificationHandler.DeleteSubscription)
+		r.Get("/v1/me/notifications/email-preferences", notificationHandler.ListEmailPreferences)
+		r.Put("/v1/me/notifications/email-preferences/{category}", notificationHandler.UpdateEmailPreference)
 
 		tutorialsHandler := handler.NewTutorialsHandler(queries)
 		r.Get("/v1/me/tutorials", tutorialsHandler.List)

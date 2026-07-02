@@ -18,6 +18,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/emailregistry"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
 )
@@ -297,6 +298,17 @@ type subscriptionResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type emailPreferenceResponse struct {
+	CategoryKey    string `json:"category_key"`
+	Label          string `json:"label"`
+	Description    string `json:"description"`
+	DefaultEnabled bool   `json:"default_enabled"`
+	Locked         bool   `json:"locked"`
+	Enabled        bool   `json:"enabled"`
+	Source         string `json:"source"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+}
+
 // ListSubscriptions — GET /v1/me/notifications/subscriptions
 func (h *NotificationHandler) ListSubscriptions(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
@@ -435,6 +447,102 @@ func (h *NotificationHandler) DeleteSubscription(w http.ResponseWriter, r *http.
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ListEmailPreferences — GET /v1/me/notifications/email-preferences
+func (h *NotificationHandler) ListEmailPreferences(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	rows, err := h.queries.ListEmailPreferencesByUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email preferences")
+		return
+	}
+	byCategory := make(map[string]db.EmailPreference, len(rows))
+	for _, row := range rows {
+		byCategory[row.CategoryKey] = row
+	}
+	out := make([]emailPreferenceResponse, 0, len(emailregistry.EmailPreferenceCategories()))
+	for _, category := range emailregistry.EmailPreferenceCategories() {
+		if category.Key == emailregistry.TestEmails {
+			continue
+		}
+		item := emailPreferenceResponse{
+			CategoryKey:    string(category.Key),
+			Label:          category.Label,
+			Description:    category.Description,
+			DefaultEnabled: category.DefaultEnabled,
+			Locked:         category.Locked,
+			Enabled:        category.DefaultEnabled,
+			Source:         "default",
+		}
+		if row, ok := byCategory[string(category.Key)]; ok {
+			item.Enabled = row.Enabled
+			item.Source = row.Source
+			item.UpdatedAt = row.UpdatedAt.Time.Format("2006-01-02T15:04:05Z07:00")
+		}
+		out = append(out, item)
+	}
+	writeSuccess(w, out)
+}
+
+// UpdateEmailPreference — PUT /v1/me/notifications/email-preferences/{category}
+func (h *NotificationHandler) UpdateEmailPreference(w http.ResponseWriter, r *http.Request) {
+	userID := auth.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Not authenticated")
+		return
+	}
+	categoryKey := emailregistry.PreferenceCategory(strings.TrimSpace(chi.URLParam(r, "category")))
+	category, ok := emailregistry.LookupPreferenceCategory(categoryKey)
+	if !ok || category.Key == emailregistry.TestEmails {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Unsupported email preference category")
+		return
+	}
+	if category.Locked {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "This email category cannot be disabled")
+		return
+	}
+	var body struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	if body.Enabled == nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "enabled required")
+		return
+	}
+	user, err := h.queries.GetUser(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user")
+		return
+	}
+	row, err := h.queries.UpsertEmailPreference(r.Context(), db.UpsertEmailPreferenceParams{
+		UserID:      userID,
+		Email:       user.Email,
+		CategoryKey: string(categoryKey),
+		Enabled:     *body.Enabled,
+		Source:      "settings",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save email preference")
+		return
+	}
+	writeSuccess(w, emailPreferenceResponse{
+		CategoryKey:    string(category.Key),
+		Label:          category.Label,
+		Description:    category.Description,
+		DefaultEnabled: category.DefaultEnabled,
+		Locked:         category.Locked,
+		Enabled:        row.Enabled,
+		Source:         row.Source,
+		UpdatedAt:      row.UpdatedAt.Time.Format("2006-01-02T15:04:05Z07:00"),
+	})
+}
+
 // ── Events catalog ───────────────────────────────────────────────────
 
 // ListEvents — GET /v1/me/notifications/events
@@ -464,14 +572,15 @@ func (h *NotificationHandler) sendTestChannel(ctx context.Context, c db.UnipostN
 		if h.notificationTestEmailSender == nil || h.notificationTestEmailTransactional == "" {
 			return fmt.Errorf("Loops notification test email is not configured")
 		}
+		dataVariables := emailFooterVariables(ctx, "email.notification.test.v1", c.UserID, cfg.Address, h.appBaseURL, map[string]any{
+			"recipient_name": "there",
+			"settings_url":   h.appBaseURL + "/settings/notifications",
+		})
 		return h.notificationTestEmailSender.SendTransactional(ctx, loops.TransactionalEmail{
 			TransactionalID: h.notificationTestEmailTransactional,
 			Email:           cfg.Address,
 			UserID:          c.UserID,
-			DataVariables: map[string]any{
-				"recipient_name": "there",
-				"settings_url":   h.appBaseURL + "/settings/notifications",
-			},
+			DataVariables:   dataVariables,
 			Audit: loops.EmailAudit{
 				EventKey:           "email.notification.test.v1",
 				WorkspaceID:        textString(c.WorkspaceID),

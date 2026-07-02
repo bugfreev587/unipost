@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -42,5 +44,45 @@ func TestMatchingAccountLevelSubscriptions(t *testing.T) {
 	}
 	if got[0].ID != "acct-1" || got[1].ID != "acct-2" {
 		t.Fatalf("unexpected match order/ids: %+v", got)
+	}
+}
+
+func TestEmailPreferenceRoutesAreRegistered(t *testing.T) {
+	source, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		`r.Get("/v1/me/notifications/email-preferences", notificationHandler.ListEmailPreferences)`,
+		`r.Put("/v1/me/notifications/email-preferences/{category}", notificationHandler.UpdateEmailPreference)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("notification email preference route missing %q", want)
+		}
+	}
+}
+
+func TestNotificationHandlerExposesEmailPreferenceContract(t *testing.T) {
+	source, err := os.ReadFile("notifications.go")
+	if err != nil {
+		t.Fatalf("read notifications.go: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		"type emailPreferenceResponse struct",
+		"`json:\"category_key\"`",
+		"`json:\"locked\"`",
+		"`json:\"enabled\"`",
+		"func (h *NotificationHandler) ListEmailPreferences",
+		"func (h *NotificationHandler) UpdateEmailPreference",
+		"emailregistry.EmailPreferenceCategories()",
+		"UpsertEmailPreference",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("notification email preference contract missing %q", want)
+		}
 	}
 }
