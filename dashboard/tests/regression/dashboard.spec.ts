@@ -23,6 +23,10 @@ const publicRoutes = [
   { path: "/docs/api/analytics/rollup", marker: /Analytics rollup|GET\s+\/v1\/analytics\/rollup/i },
   { path: "/docs/api/analytics/platforms", marker: /Platform capabilities|GET\s+\/v1\/analytics\/platforms/i },
   { path: "/docs/api/analytics/platforms/detail", marker: /Get platform summary|GET\s+\/v1\/analytics\/platforms\/\{platform\}/i },
+  { path: "/docs/api/analytics/youtube", marker: /YouTube Analytics|yt-analytics\.readonly/i },
+  { path: "/docs/api/analytics/youtube/summary", marker: /Get YouTube analytics summary|GET\s+\/v1\/accounts\/:account_id\/youtube\/analytics\/summary/i },
+  { path: "/docs/api/analytics/youtube/trend", marker: /Get YouTube analytics trend|GET\s+\/v1\/accounts\/:account_id\/youtube\/analytics\/trend/i },
+  { path: "/docs/api/analytics/youtube/videos", marker: /Get YouTube analytics top videos|GET\s+\/v1\/accounts\/:account_id\/youtube\/analytics\/videos/i },
   { path: "/docs/api/analytics/refresh", marker: /Request analytics refresh|POST\s+\/v1\/analytics\/refresh/i },
   { path: "/docs/api/api-metrics", marker: /API Metrics|GET\s+\/v1\/api-metrics\/overall/i },
   { path: "/docs/api/api-metrics/overall", marker: /Overall|GET\s+\/v1\/api-metrics\/overall/i },
@@ -173,6 +177,9 @@ test.describe("authenticated dashboard smoke", () => {
 
     await page.goto(`/projects/${profileId}/analytics/platforms/tiktok`, { waitUntil: "networkidle" });
     await expect(page.getByText("TikTok Analytics").first()).toBeVisible();
+
+    await page.goto(`/projects/${profileId}/analytics/platforms/youtube`, { waitUntil: "networkidle" });
+    await expect(page.getByText("YouTube Analytics").first()).toBeVisible();
   });
 });
 

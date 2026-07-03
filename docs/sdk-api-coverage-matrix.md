@@ -96,10 +96,10 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 
 | API surface | Current validation status | Notes |
 | --- | --- | --- |
-| `GET /v1/accounts/{id}/metrics` | No direct live fixture | Backend supports X, Instagram, Threads, TikTok, and YouTube; live validation should become conditional on a safe connected account fixture. |
-| `GET /v1/accounts/{id}/youtube/analytics/summary` | No | YouTube Analytics V2 endpoint; should be conditional on a connected YouTube fixture with `yt-analytics.readonly`. |
-| `GET /v1/accounts/{id}/youtube/analytics/trend` | No | YouTube Analytics V2 endpoint; should be conditional on a connected YouTube fixture with `yt-analytics.readonly`. |
-| `GET /v1/accounts/{id}/youtube/analytics/videos` | No | YouTube Analytics V2 endpoint; should be conditional on a connected YouTube fixture with `yt-analytics.readonly`. |
+| `GET /v1/accounts/{id}/metrics` | Optional smoke | Covered for YouTube when `YOUTUBE_METRICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_METRICS_ACCOUNT_ID` is configured. Other platform fixtures remain conditional. |
+| `GET /v1/accounts/{id}/youtube/analytics/summary` | Optional smoke | Covered when `YOUTUBE_ANALYTICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID` points at a connected YouTube fixture with `yt-analytics.readonly`. |
+| `GET /v1/accounts/{id}/youtube/analytics/trend` | Optional smoke | Covered when `YOUTUBE_ANALYTICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID` points at a connected YouTube fixture with `yt-analytics.readonly`. |
+| `GET /v1/accounts/{id}/youtube/analytics/videos` | Optional smoke | Covered when `YOUTUBE_ANALYTICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID` points at a connected YouTube fixture with `yt-analytics.readonly`. |
 | `GET /v1/accounts/{id}/tiktok/profile` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/tiktok/videos` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/facebook/page-analytics` | No | Dashboard aggregate endpoint; should be conditional on a connected Facebook Page fixture and admin allowlist access. |

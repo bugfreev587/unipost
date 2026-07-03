@@ -56,6 +56,10 @@ export default function AccountMetricsGuidePage() {
         <code>post_count</code>. If subscribers are hidden, <code>follower_count</code> is <code>0</code> and{" "}
         <code>platform_specific.hidden_subscriber_count</code> is <code>true</code>.
       </p>
+      <p>
+        For richer YouTube reporting, use <Link href="/docs/api/analytics/youtube">YouTube Analytics V2</Link>. In the dashboard,
+        Analytics - Platforms - YouTube combines this V1 channel snapshot with V2 summary, daily trend, and top video reports.
+      </p>
       <p>X account metrics depend on X API availability and rate limits for the connected account.</p>
       <p>Unsupported platforms return <code>NOT_SUPPORTED</code> instead of an empty success response.</p>
 

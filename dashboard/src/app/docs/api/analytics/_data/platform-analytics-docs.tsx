@@ -10,7 +10,10 @@ export type PlatformAnalyticsEndpointId =
   | "boards"
   | "pageAnalytics"
   | "pageInsights"
-  | "postAnalytics";
+  | "postAnalytics"
+  | "youtubeSummary"
+  | "youtubeTrend"
+  | "youtubeVideos";
 
 type Method = "GET" | "POST" | "PATCH" | "DELETE";
 
@@ -29,7 +32,7 @@ export type PlatformAnalyticsEndpointDoc = {
 };
 
 export type PlatformAnalyticsDoc = {
-  slug: "instagram" | "threads" | "pinterest" | "facebook";
+  slug: "instagram" | "threads" | "pinterest" | "facebook" | "youtube";
   label: string;
   platformName: string;
   title: string;
@@ -62,6 +65,16 @@ const DAYS_QUERY_FIELDS: ApiFieldItem[] = [
 const DAYS_AND_LIMIT_QUERY_FIELDS: ApiFieldItem[] = [
   { name: "days?", type: "number", description: "Lookback window in days. Defaults to 28 and caps at 92." },
   { name: "limit?", type: "number", description: "Maximum Page posts to return. Defaults to 12 and caps at 50." },
+];
+
+const DATE_RANGE_QUERY_FIELDS: ApiFieldItem[] = [
+  { name: "from?", type: "YYYY-MM-DD", description: "Report start date. Aliases: start_date and startDate." },
+  { name: "to?", type: "YYYY-MM-DD", description: "Report end date. Aliases: end_date and endDate." },
+];
+
+const DATE_RANGE_AND_LIMIT_QUERY_FIELDS: ApiFieldItem[] = [
+  ...DATE_RANGE_QUERY_FIELDS,
+  { name: "limit?", type: "number", description: "Maximum video rows to return. Defaults to 25 and caps at 200." },
 ];
 
 const ACCOUNT_METRICS_RESPONSE_FIELDS: ApiFieldItem[] = [
@@ -203,6 +216,81 @@ function postAnalyticsEndpoint(platform: string, href: string, label: string, sa
     ],
   };
 }
+
+function youtubeAnalyticsEndpoint(
+  id: "youtubeSummary" | "youtubeTrend" | "youtubeVideos",
+  label: string,
+  href: string,
+  path: string,
+  description: string,
+  queryItems: ApiFieldItem[],
+  responseFields: ApiFieldItem[],
+  responseCode: string
+): PlatformAnalyticsEndpointDoc {
+  return {
+    id,
+    label,
+    href,
+    method: "GET",
+    path,
+    description,
+    scopeNote: "Requires yt-analytics.readonly. Existing YouTube accounts connected before that scope was granted must reconnect for V2 reports.",
+    requestSections: [...authAndAccount("YouTube"), { title: "Query Params", items: queryItems }],
+    responses: [
+      { code: "200", fields: responseFields },
+      { code: "401", fields: ERROR_FIELDS },
+      { code: "404", fields: ERROR_FIELDS },
+      { code: "409", fields: ERROR_FIELDS },
+      { code: "422", fields: ERROR_FIELDS },
+      { code: "502", fields: ERROR_FIELDS },
+    ],
+    snippets: [
+      { lang: "curl", label: "cURL", code: curl(path.replace(":account_id", "sa_youtube_123")) },
+      { lang: "js", label: "Node.js", code: fetchSnippet(path.replace(":account_id", "sa_youtube_123"), "analytics") },
+    ],
+    responseSnippets: [
+      {
+        lang: "json",
+        label: "200",
+        code: responseCode,
+      },
+    ],
+  };
+}
+
+const YOUTUBE_SUMMARY_RESPONSE_FIELDS: ApiFieldItem[] = [
+  { name: "social_account_id", type: "string", description: "UniPost account ID." },
+  { name: "platform", type: "youtube", description: "Always youtube." },
+  { name: "start_date", type: "string", description: "Applied report start date." },
+  { name: "end_date", type: "string", description: "Applied report end date." },
+  { name: "metrics.views", type: "number", description: "Views in the report range." },
+  { name: "metrics.estimated_minutes_watched", type: "number", description: "Estimated watch time in minutes." },
+  { name: "metrics.average_view_duration", type: "number", description: "Average view duration in seconds." },
+  { name: "metrics.subscribers_gained", type: "number", description: "Subscribers gained in the report range." },
+  { name: "required_scopes[]", type: "string[]", description: "Required provider scopes, including yt-analytics.readonly." },
+  { name: "fetched_at", type: "string", description: "UTC fetch timestamp." },
+];
+
+const YOUTUBE_TREND_RESPONSE_FIELDS: ApiFieldItem[] = [
+  { name: "social_account_id", type: "string", description: "UniPost account ID." },
+  { name: "platform", type: "youtube", description: "Always youtube." },
+  { name: "rows[]", type: "array", description: "Daily report rows sorted by day." },
+  { name: "rows[].date", type: "string", description: "Day in YYYY-MM-DD format." },
+  { name: "rows[].metrics", type: "object", description: "Non-monetary YouTube Analytics metrics for the day." },
+  { name: "required_scopes[]", type: "string[]", description: "Required provider scopes, including yt-analytics.readonly." },
+  { name: "fetched_at", type: "string", description: "UTC fetch timestamp." },
+];
+
+const YOUTUBE_VIDEOS_RESPONSE_FIELDS: ApiFieldItem[] = [
+  { name: "social_account_id", type: "string", description: "UniPost account ID." },
+  { name: "platform", type: "youtube", description: "Always youtube." },
+  { name: "videos[]", type: "array", description: "Top video rows sorted by views descending." },
+  { name: "videos[].video_id", type: "string", description: "YouTube video ID." },
+  { name: "videos[].metrics", type: "object", description: "Non-monetary YouTube Analytics metrics for the video." },
+  { name: "limit", type: "number", description: "Limit applied to the request." },
+  { name: "required_scopes[]", type: "string[]", description: "Required provider scopes, including yt-analytics.readonly." },
+  { name: "fetched_at", type: "string", description: "UTC fetch timestamp." },
+];
 
 export const platformAnalyticsDocs: Record<PlatformAnalyticsDoc["slug"], PlatformAnalyticsDoc> = {
   instagram: {
@@ -496,6 +584,102 @@ export const platformAnalyticsDocs: Record<PlatformAnalyticsDoc["slug"], Platfor
         ],
       },
       postAnalyticsEndpoint("Pinterest", "/docs/api/analytics/pinterest/post-analytics", "Pinterest post analytics", "pinterest"),
+    ],
+  },
+  youtube: {
+    slug: "youtube",
+    label: "YouTube Analytics",
+    platformName: "YouTube",
+    title: "YouTube Analytics",
+    description: "Optional native drilldown for YouTube V1 channel statistics and V2 owner-authorized YouTube Analytics reports, including summary, daily trend, and top videos.",
+    productionReadiness: "Public-ready for connected YouTube channels. V1 account metrics require youtube.readonly; V2 reports require yt-analytics.readonly.",
+    scopes: ["youtube.readonly", "yt-analytics.readonly"],
+    endpoints: [
+      accountMetricsEndpoint("YouTube", "/docs/api/accounts/metrics", "Get YouTube account metrics", "V1 requires youtube.readonly and reads YouTube Data API channel statistics.", "youtube"),
+      youtubeAnalyticsEndpoint(
+        "youtubeSummary",
+        "Get YouTube analytics summary",
+        "/docs/api/analytics/youtube/summary",
+        "/v1/accounts/:account_id/youtube/analytics/summary",
+        "Returns non-monetary channel-level YouTube Analytics totals for a date range.",
+        DATE_RANGE_QUERY_FIELDS,
+        YOUTUBE_SUMMARY_RESPONSE_FIELDS,
+        `{
+  "data": {
+    "social_account_id": "sa_youtube_123",
+    "platform": "youtube",
+    "start_date": "2026-07-01",
+    "end_date": "2026-07-28",
+    "metrics": {
+      "views": 1200,
+      "estimated_minutes_watched": 5400,
+      "average_view_duration": 84,
+      "subscribers_gained": 31
+    },
+    "required_scopes": ["https://www.googleapis.com/auth/yt-analytics.readonly"],
+    "fetched_at": "2026-07-29T18:30:00Z"
+  }
+}`
+      ),
+      youtubeAnalyticsEndpoint(
+        "youtubeTrend",
+        "Get YouTube analytics trend",
+        "/docs/api/analytics/youtube/trend",
+        "/v1/accounts/:account_id/youtube/analytics/trend",
+        "Returns daily YouTube Analytics rows for a date range.",
+        DATE_RANGE_QUERY_FIELDS,
+        YOUTUBE_TREND_RESPONSE_FIELDS,
+        `{
+  "data": {
+    "social_account_id": "sa_youtube_123",
+    "platform": "youtube",
+    "rows": [
+      {
+        "date": "2026-07-01",
+        "metrics": {
+          "views": 120,
+          "estimated_minutes_watched": 540,
+          "likes": 8,
+          "comments": 2
+        }
+      }
+    ],
+    "required_scopes": ["https://www.googleapis.com/auth/yt-analytics.readonly"],
+    "fetched_at": "2026-07-29T18:30:00Z"
+  }
+}`
+      ),
+      youtubeAnalyticsEndpoint(
+        "youtubeVideos",
+        "Get YouTube analytics top videos",
+        "/docs/api/analytics/youtube/videos",
+        "/v1/accounts/:account_id/youtube/analytics/videos",
+        "Returns top YouTube video Analytics rows ranked by views.",
+        DATE_RANGE_AND_LIMIT_QUERY_FIELDS,
+        YOUTUBE_VIDEOS_RESPONSE_FIELDS,
+        `{
+  "data": {
+    "social_account_id": "sa_youtube_123",
+    "platform": "youtube",
+    "videos": [
+      {
+        "video_id": "abc123",
+        "metrics": {
+          "views": 300,
+          "estimated_minutes_watched": 1200,
+          "average_view_duration": 92,
+          "likes": 24,
+          "comments": 6,
+          "shares": 4
+        }
+      }
+    ],
+    "limit": 25,
+    "required_scopes": ["https://www.googleapis.com/auth/yt-analytics.readonly"],
+    "fetched_at": "2026-07-29T18:30:00Z"
+  }
+}`
+      ),
     ],
   },
   facebook: {

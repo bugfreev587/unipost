@@ -84,6 +84,23 @@ const platformDocs = [
       "/v1/posts/:post_id/analytics",
     ],
   },
+  {
+    label: "YouTube Analytics",
+    slug: "youtube",
+    paths: [
+      "/docs/api/analytics/youtube",
+      "/docs/api/analytics/youtube/summary",
+      "/docs/api/analytics/youtube/trend",
+      "/docs/api/analytics/youtube/videos",
+    ],
+    scopes: ["youtube.readonly", "yt-analytics.readonly"],
+    routes: [
+      "/v1/accounts/:account_id/metrics",
+      "/v1/accounts/:account_id/youtube/analytics/summary",
+      "/v1/accounts/:account_id/youtube/analytics/trend",
+      "/v1/accounts/:account_id/youtube/analytics/videos",
+    ],
+  },
 ];
 
 test("Analytics docs stay unified-first instead of exposing each platform as a primary API category", async () => {
