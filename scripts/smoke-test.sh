@@ -12,6 +12,10 @@
 #                If unset, the script auto-picks the first account from
 #                /v1/accounts. Tests that need a specific account
 #                will skip when the auto-pick fails.
+#   YOUTUBE_METRICS_ACCOUNT_ID — Optional connected YouTube account fixture
+#                for GET /v1/accounts/{id}/metrics live regression.
+#   YOUTUBE_ANALYTICS_ACCOUNT_ID — Optional connected YouTube account fixture
+#                with yt-analytics.readonly for YouTube Analytics API reports.
 #
 # What this script does NOT do:
 #   - Actually publish to real social platforms (use the dashboard or
@@ -27,6 +31,8 @@ set -uo pipefail
 
 API_KEY="${API_KEY:-}"
 BASE_URL="${BASE_URL:-https://api.unipost.dev}"
+YOUTUBE_METRICS_ACCOUNT_ID="${YOUTUBE_METRICS_ACCOUNT_ID:-}"
+YOUTUBE_ANALYTICS_ACCOUNT_ID="${YOUTUBE_ANALYTICS_ACCOUNT_ID:-}"
 
 # ── Output helpers ────────────────────────────────────────────────────
 
@@ -736,6 +742,53 @@ if [[ -n "$ANY_ID" ]]; then
     assert_jq_truthy '.data.schema_version' 'schema version present'
   fi
   assert_jq_truthy '.data.platform' 'platform present'
+fi
+
+# ── YouTube Metrics / Analytics regression fixtures ───────────────────
+
+section "YouTube metrics and Analytics regression"
+
+if [[ -n "$YOUTUBE_METRICS_ACCOUNT_ID" ]]; then
+  api GET "/v1/accounts/${YOUTUBE_METRICS_ACCOUNT_ID}/metrics"
+  assert_status "200" "GET /v1/accounts/{id}/metrics (YouTube fixture)"
+  if [[ "$RESP_STATUS" == "200" ]]; then
+    assert_jq '.data.platform' 'youtube' 'youtube metrics platform'
+    assert_jq_truthy '.data.follower_count | type == "number"' 'youtube subscriber count present'
+    assert_jq_truthy '.data.post_count | type == "number"' 'youtube public video count present'
+    assert_jq_truthy '.data.platform_specific.view_count | type == "number"' 'youtube platform_specific.view_count present'
+    assert_jq '.data.platform_specific.post_count_public_only' 'true' 'youtube post_count is documented as public-only'
+  fi
+else
+  skip "YouTube V1 account metrics live regression" "YOUTUBE_METRICS_ACCOUNT_ID not set"
+fi
+
+if [[ -n "$YOUTUBE_ANALYTICS_ACCOUNT_ID" ]]; then
+  api GET "/v1/accounts/${YOUTUBE_ANALYTICS_ACCOUNT_ID}/youtube/analytics/summary"
+  assert_status "200" "GET /v1/accounts/{id}/youtube/analytics/summary (YouTube fixture)"
+  if [[ "$RESP_STATUS" == "200" ]]; then
+    assert_jq '.data.platform' 'youtube' 'youtube analytics summary platform'
+    assert_jq_truthy '.data.metrics.views | type == "number"' 'youtube summary metrics.views present'
+    assert_jq_truthy '.data.metrics.estimated_minutes_watched | type == "number"' 'youtube summary metrics.estimated_minutes_watched present'
+    assert_jq_truthy '.data.required_scopes[]? | select(test("yt-analytics\\.readonly"))' 'youtube summary required_scopes include yt-analytics.readonly'
+  fi
+
+  api GET "/v1/accounts/${YOUTUBE_ANALYTICS_ACCOUNT_ID}/youtube/analytics/trend"
+  assert_status "200" "GET /v1/accounts/{id}/youtube/analytics/trend (YouTube fixture)"
+  if [[ "$RESP_STATUS" == "200" ]]; then
+    assert_jq '.data.platform' 'youtube' 'youtube analytics trend platform'
+    assert_jq_truthy '.data.rows | type == "array"' 'youtube analytics trend rows present'
+    assert_jq_truthy '.data.required_scopes[]? | select(test("yt-analytics\\.readonly"))' 'youtube trend required_scopes include yt-analytics.readonly'
+  fi
+
+  api GET "/v1/accounts/${YOUTUBE_ANALYTICS_ACCOUNT_ID}/youtube/analytics/videos?limit=5"
+  assert_status "200" "GET /v1/accounts/{id}/youtube/analytics/videos (YouTube fixture)"
+  if [[ "$RESP_STATUS" == "200" ]]; then
+    assert_jq '.data.platform' 'youtube' 'youtube analytics videos platform'
+    assert_jq_truthy '.data.videos | type == "array"' 'youtube analytics videos present'
+    assert_jq_truthy '.data.required_scopes[]? | select(test("yt-analytics\\.readonly"))' 'youtube videos required_scopes include yt-analytics.readonly'
+  fi
+else
+  skip "YouTube Analytics API live regression" "YOUTUBE_ANALYTICS_ACCOUNT_ID not set"
 fi
 
 # ── Sprint 1 PR8 — Webhook secret server-generated ────────────────────

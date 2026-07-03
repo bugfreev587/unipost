@@ -183,6 +183,44 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
         </div>
       </Link>
 
+      <Link
+        href={`/projects/${profileId}/analytics/platforms/youtube`}
+        style={{
+          display: "block",
+          textDecoration: "none",
+          color: "inherit",
+          border: "1px solid var(--dborder)",
+          borderRadius: 8,
+          background: "var(--surface1)",
+          padding: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 18 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div className="platform-icon-wrap"><PlatformIcon platform="youtube" /></div>
+            <div>
+              <div style={{ color: "var(--dtext)", fontWeight: 700 }}>YouTube</div>
+              <div style={{ color: "var(--dmuted)", fontSize: 12 }}>Channel metrics and Analytics reports</div>
+            </div>
+          </div>
+          <ArrowRight style={{ width: 16, height: 16, color: "var(--dmuted2)" }} />
+        </div>
+        <div style={{ display: "grid", gap: 9, fontSize: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <CheckCircle2 style={{ width: 14, height: 14, color: "var(--success)" }} />
+            youtube.readonly / yt-analytics.readonly
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <Video style={{ width: 14, height: 14 }} />
+            Subscribers, channel views, watch time, and top videos
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--dmuted)" }}>
+            <Clock style={{ width: 14, height: 14 }} />
+            V1 metrics plus V2 date-ranged reports
+          </div>
+        </div>
+      </Link>
+
       {facebookEnabled ? (
         <Link
           href={`/projects/${profileId}/analytics/platforms/facebook`}
@@ -229,7 +267,7 @@ export function PlatformAnalyticsList({ profileId }: { profileId: string }) {
           <div style={{ color: "var(--dtext)", fontWeight: 700 }}>More platforms</div>
         </div>
         <div style={{ fontSize: 13, lineHeight: 1.55 }}>
-          YouTube channel stats and X account metrics can use this same drilldown pattern later.
+          X account metrics can use this same drilldown pattern later.
         </div>
       </div>
     </div>
