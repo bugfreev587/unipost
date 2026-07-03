@@ -16,7 +16,7 @@ const (
 	youtubeTokenEndpoint     = "https://oauth2.googleapis.com/token"
 	youtubeChannelsEndpoint  = "https://www.googleapis.com/youtube/v3/channels"
 
-	youtubeScopes = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"
+	youtubeScopes = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly"
 )
 
 type YouTubeConnector struct {
@@ -35,13 +35,13 @@ func NewYouTubeConnector(clientID, clientSecret, callbackBaseURL string) *YouTub
 		return nil
 	}
 	return &YouTubeConnector{
-		clientID:           clientID,
-		clientSecret:       clientSecret,
-		redirectURI:        strings.TrimRight(callbackBaseURL, "/") + "/v1/connect/callback/youtube",
-		httpClient:         &http.Client{Timeout: 15 * time.Second},
-		AuthorizeEndpoint:  youtubeAuthorizeEndpoint,
-		TokenEndpoint:      youtubeTokenEndpoint,
-		ChannelsEndpoint:   youtubeChannelsEndpoint,
+		clientID:          clientID,
+		clientSecret:      clientSecret,
+		redirectURI:       strings.TrimRight(callbackBaseURL, "/") + "/v1/connect/callback/youtube",
+		httpClient:        &http.Client{Timeout: 15 * time.Second},
+		AuthorizeEndpoint: youtubeAuthorizeEndpoint,
+		TokenEndpoint:     youtubeTokenEndpoint,
+		ChannelsEndpoint:  youtubeChannelsEndpoint,
 	}
 }
 

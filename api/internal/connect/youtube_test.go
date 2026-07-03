@@ -57,7 +57,7 @@ func TestYouTubeExchangeCode_HappyPath(t *testing.T) {
 		if _, _, ok := r.BasicAuth(); ok {
 			t.Error("YouTube must NOT use HTTP basic auth")
 		}
-		_, _ = io.WriteString(w, `{"access_token":"AT-1","refresh_token":"RT-1","expires_in":3600,"scope":"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"}`)
+		_, _ = io.WriteString(w, `{"access_token":"AT-1","refresh_token":"RT-1","expires_in":3600,"scope":"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly https://www.googleapis.com/auth/yt-analytics.readonly"}`)
 	}))
 	defer mock.Close()
 
@@ -71,8 +71,11 @@ func TestYouTubeExchangeCode_HappyPath(t *testing.T) {
 	if tokens.AccessToken != "AT-1" || tokens.RefreshToken != "RT-1" {
 		t.Errorf("tokens: %+v", tokens)
 	}
-	if len(tokens.Scopes) != 2 {
+	if len(tokens.Scopes) != 3 {
 		t.Errorf("scopes: %v", tokens.Scopes)
+	}
+	if !containsString(tokens.Scopes, "https://www.googleapis.com/auth/yt-analytics.readonly") {
+		t.Errorf("scopes missing yt-analytics.readonly: %v", tokens.Scopes)
 	}
 }
 
@@ -135,6 +138,7 @@ func TestYouTubeScopes_LockExpectedSet(t *testing.T) {
 	for _, want := range []string{
 		"https://www.googleapis.com/auth/youtube.upload",
 		"https://www.googleapis.com/auth/youtube.readonly",
+		"https://www.googleapis.com/auth/yt-analytics.readonly",
 	} {
 		if !strings.Contains(youtubeScopes, want) {
 			t.Errorf("youtubeScopes missing %q", want)
