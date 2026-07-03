@@ -78,3 +78,17 @@ test("admin users scheduled counts open a scheduled-posts drawer", () => {
   assert.match(page, /post\.platforms\.map/);
   assert.match(page, /PlatformIcon key=\{platform\} platform=\{platform\}/);
 });
+
+test("admin users page exposes active users filter and filtered total copy", () => {
+  const page = source("src/app/admin/users/page.tsx");
+  const api = source("src/lib/api.ts");
+
+  assert.match(api, /activity\?: "all" \| "active";/);
+  assert.match(api, /params\?\.activity && params\.activity !== "all"/);
+  assert.match(api, /qs\.set\("activity", params\.activity\)/);
+  assert.match(page, /const \[activity, setActivity\]/);
+  assert.match(page, /listAdminUsers\(token, \{ search, plan, activity, sort, limit, offset \}\)/);
+  assert.match(page, /<option value="active">Active Users<\/option>/);
+  assert.match(page, /activity === "active" \? "active users" : "users"/);
+  assert.match(page, /}, \[activity, plan, sort\]\)/);
+});

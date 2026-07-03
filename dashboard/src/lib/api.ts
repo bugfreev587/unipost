@@ -2564,6 +2564,7 @@ export interface ErrorTriageSendResult {
 export interface AdminUserListParams {
   search?: string;
   plan?: "all" | "free" | "paid";
+  activity?: "all" | "active";
   sort?: "newest" | "mrr" | "usage" | "last_active";
   limit?: number;
   offset?: number;
@@ -3125,6 +3126,7 @@ export async function listAdminUsers(
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.plan && params.plan !== "all") qs.set("plan", params.plan);
+  if (params?.activity && params.activity !== "all") qs.set("activity", params.activity);
   if (params?.sort) qs.set("sort", params.sort);
   if (params?.limit != null) qs.set("limit", String(params.limit));
   if (params?.offset != null) qs.set("offset", String(params.offset));
