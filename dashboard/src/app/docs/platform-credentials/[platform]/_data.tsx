@@ -749,7 +749,8 @@ export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide>
                 lang: "text",
                 label: "Required YouTube scopes",
                 code: `https://www.googleapis.com/auth/youtube.readonly
-https://www.googleapis.com/auth/youtube.upload`,
+https://www.googleapis.com/auth/youtube.upload
+https://www.googleapis.com/auth/yt-analytics.readonly`,
               },
             ],
           },

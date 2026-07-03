@@ -14,7 +14,7 @@ export default function AccountMetricsGuidePage() {
       <p>
         Use <ApiInlineLink endpoint="GET /v1/accounts/{account_id}/metrics" /> when your product needs account-level metrics such as
         followers, following, lifetime post count, or platform-specific account stats. This is the normalized UniPost path for X,
-        Instagram, Threads, and TikTok when the connected account has the required platform scopes.
+        Instagram, Threads, TikTok, and YouTube when the connected account has the required platform scopes.
       </p>
 
       <h2 id="steps">Steps</h2>
@@ -49,6 +49,13 @@ export default function AccountMetricsGuidePage() {
       <h2 id="platform-notes">Platform notes</h2>
       <p>TikTok followers require <code>user.info.stats</code>; likes count appears in <code>platform_specific.likes_count</code>.</p>
       <p>Instagram and Threads require the approved account insight scopes documented in platform capabilities.</p>
+      <p>
+        YouTube account metrics use the YouTube Data API channel statistics available through <code>youtube.readonly</code>. UniPost maps{" "}
+        <code>subscriberCount</code> to <code>follower_count</code>, returns <code>following_count</code> as <code>0</code> with{" "}
+        <code>platform_specific.following_count_supported</code> set to <code>false</code>, and maps <code>videoCount</code> to{" "}
+        <code>post_count</code>. If subscribers are hidden, <code>follower_count</code> is <code>0</code> and{" "}
+        <code>platform_specific.hidden_subscriber_count</code> is <code>true</code>.
+      </p>
       <p>X account metrics depend on X API availability and rate limits for the connected account.</p>
       <p>Unsupported platforms return <code>NOT_SUPPORTED</code> instead of an empty success response.</p>
 

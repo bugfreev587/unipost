@@ -773,6 +773,9 @@ func main() {
 		r.Get("/v1/accounts/{id}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/accounts/{id}/tiktok/profile", socialAccountHandler.TikTokProfile)
 		r.Get("/v1/accounts/{id}/tiktok/videos", socialAccountHandler.TikTokVideos)
+		r.Get("/v1/accounts/{id}/youtube/analytics/summary", socialAccountHandler.YouTubeAnalyticsSummary)
+		r.Get("/v1/accounts/{id}/youtube/analytics/trend", socialAccountHandler.YouTubeAnalyticsTrend)
+		r.Get("/v1/accounts/{id}/youtube/analytics/videos", socialAccountHandler.YouTubeAnalyticsVideos)
 		r.With(handler.RequirePlanAnalytics(quotaChecker), auth.AdminMiddleware(adminChecker)).
 			Get("/v1/accounts/{id}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/accounts/{id}/pinterest/boards", socialAccountHandler.PinterestBoards)
@@ -800,6 +803,9 @@ func main() {
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/creator-info", socialAccountHandler.TikTokCreatorInfo)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/profile", socialAccountHandler.TikTokProfile)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/tiktok/videos", socialAccountHandler.TikTokVideos)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/youtube/analytics/summary", socialAccountHandler.YouTubeAnalyticsSummary)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/youtube/analytics/trend", socialAccountHandler.YouTubeAnalyticsTrend)
+		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/youtube/analytics/videos", socialAccountHandler.YouTubeAnalyticsVideos)
 		r.With(handler.RequirePlanAnalytics(quotaChecker), auth.AdminMiddleware(adminChecker)).
 			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-analytics", socialAccountHandler.FacebookPageAnalytics)
 		r.Get("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.PinterestBoards)
