@@ -470,6 +470,46 @@ var adminUserSortOrders = map[string]string{
 	"last_active": "last_post_at DESC NULLS LAST, created_at DESC",
 }
 
+func adminUserPlanFilterSQL(plan string) string {
+	switch plan {
+	case "paid":
+		return `AND EXISTS(
+			SELECT 1 FROM subscriptions s
+			JOIN plans pl ON pl.id = s.plan_id
+			JOIN workspaces w ON w.id = s.workspace_id
+			WHERE w.user_id = u.id AND s.status='active' AND pl.price_cents > 0
+		)`
+	case "free":
+		return `AND NOT EXISTS(
+			SELECT 1 FROM subscriptions s
+			JOIN plans pl ON pl.id = s.plan_id
+			JOIN workspaces w ON w.id = s.workspace_id
+			WHERE w.user_id = u.id AND s.status='active' AND pl.price_cents > 0
+		)`
+	default:
+		return ""
+	}
+}
+
+func adminUserActivityFilterSQL(activity string) string {
+	switch activity {
+	case "active":
+		return `AND EXISTS(
+			SELECT 1 FROM social_posts sp
+			JOIN workspaces w ON w.id = sp.workspace_id
+			WHERE w.user_id = u.id
+			  AND sp.deleted_at IS NULL
+			  AND sp.published_at >= NOW() - INTERVAL '30 days'
+		)`
+	default:
+		return ""
+	}
+}
+
+func adminUserFiltersSQL(plan, activity string) string {
+	return adminUserPlanFilterSQL(plan) + adminUserActivityFilterSQL(activity)
+}
+
 func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	search := q.Get("search")
@@ -477,6 +517,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	if plan == "" {
 		plan = "all"
 	}
+	activity := q.Get("activity")
 	sortKey := q.Get("sort")
 	if sortKey == "" {
 		sortKey = "newest"
@@ -495,23 +536,7 @@ func (h *AdminHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		offset = 0
 	}
 
-	planFilter := ""
-	switch plan {
-	case "paid":
-		planFilter = `AND EXISTS(
-			SELECT 1 FROM subscriptions s
-			JOIN plans pl ON pl.id = s.plan_id
-			JOIN workspaces w ON w.id = s.workspace_id
-			WHERE w.user_id = u.id AND s.status='active' AND pl.price_cents > 0
-		)`
-	case "free":
-		planFilter = `AND NOT EXISTS(
-			SELECT 1 FROM subscriptions s
-			JOIN plans pl ON pl.id = s.plan_id
-			JOIN workspaces w ON w.id = s.workspace_id
-			WHERE w.user_id = u.id AND s.status='active' AND pl.price_cents > 0
-		)`
-	}
+	filtersSQL := adminUserFiltersSQL(plan, activity)
 
 	excluded, err := h.excludedUserIDs(r.Context())
 	if err != nil {
@@ -602,7 +627,7 @@ WITH base AS (
   FROM users u
   WHERE ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.id ILIKE '%' || $1 || '%')
     AND u.id != ALL($4)
-  ` + planFilter + `
+  ` + filtersSQL + `
 )
 SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 
@@ -634,10 +659,13 @@ SELECT * FROM base ORDER BY ` + orderBy + ` LIMIT $2 OFFSET $3`
 	}
 
 	var total int64
-	_ = h.pool.QueryRow(r.Context(),
-		`SELECT COUNT(*) FROM users u
+	totalSQL := `SELECT COUNT(*) FROM users u
 		 WHERE ($1 = '' OR u.email ILIKE '%' || $1 || '%' OR u.id ILIKE '%' || $1 || '%')
-		   AND u.id != ALL($2)`,
+		   AND u.id != ALL($2)
+		   ` + filtersSQL + `
+		   `
+	_ = h.pool.QueryRow(r.Context(),
+		totalSQL,
 		search, excluded,
 	).Scan(&total)
 

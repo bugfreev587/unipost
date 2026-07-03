@@ -56,6 +56,7 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [plan, setPlan] = useState<NonNullable<AdminUserListParams["plan"]>>("all");
+  const [activity, setActivity] = useState<NonNullable<AdminUserListParams["activity"]>>("all");
   const [sort, setSort] = useState<NonNullable<AdminUserListParams["sort"]>>("newest");
   const [offset, setOffset] = useState(0);
   const limit = 50;
@@ -76,7 +77,7 @@ export default function AdminUsersPage() {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       const [usersRes, signupsRes] = await Promise.all([
-        listAdminUsers(token, { search, plan, sort, limit, offset }),
+        listAdminUsers(token, { search, plan, activity, sort, limit, offset }),
         getAdminUserSignups(token, 30),
       ]);
       setUsers(usersRes.data);
@@ -87,7 +88,7 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [getToken, limit, offset, plan, search, sort]);
+  }, [activity, getToken, limit, offset, plan, search, sort]);
 
   useEffect(() => {
     loadUsers();
@@ -110,7 +111,7 @@ export default function AdminUsersPage() {
 
   useEffect(() => {
     setOffset(0);
-  }, [plan, sort]);
+  }, [activity, plan, sort]);
 
   async function openUser(id: string) {
     setSelectedUserId(id);
@@ -167,6 +168,7 @@ export default function AdminUsersPage() {
     if (users.length === 0) return "0";
     return `${offset + 1}–${offset + users.length}`;
   }, [offset, users.length]);
+  const totalUserLabel = activity === "active" ? "active users" : "users";
 
   // Bucket the raw signup timestamps into local-day buckets so a 11pm
   // PT signup shows up under the same day a Pacific viewer would expect,
@@ -266,6 +268,10 @@ export default function AdminUsersPage() {
           <option value="all">All Plans</option>
           <option value="free">Free</option>
           <option value="paid">Paid</option>
+        </select>
+        <select value={activity} onChange={(e) => setActivity(e.target.value as typeof activity)}>
+          <option value="all">All Users</option>
+          <option value="active">Active Users</option>
         </select>
         <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
           <option value="newest">Sort: Newest</option>
@@ -599,7 +605,7 @@ export default function AdminUsersPage() {
 
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 12, padding: "0 2px" }}>
         <span style={{ fontSize: 12, color: "var(--dmuted)" }}>
-          Showing {selectedRangeLabel} of {fmtNumber(total)} users
+          Showing {selectedRangeLabel} of {fmtNumber(total)} {totalUserLabel}
         </span>
         <div style={{ display: "flex", gap: 6 }}>
           <button
