@@ -12,8 +12,9 @@ const publicRoutes = [
   { path: "/docs/guides/analytics", marker: /Analytics Guides|Unified-first Analytics/i },
   { path: "/docs/guides/analytics/tiktok-followers", marker: /Get TikTok followers|user\.info\.stats/i },
   { path: "/pricing", marker: /Free|Basic|Growth|Team/i },
-  { path: "/tools", marker: /TikTok Analytics|Instagram Analytics|Threads Analytics|Pinterest Analytics/i },
+  { path: "/tools", marker: /TikTok Analytics|YouTube Analytics|Instagram Analytics|Threads Analytics|Pinterest Analytics/i },
   { path: "/tools/tiktok-analytics", marker: /TikTok Analytics/i },
+  { path: "/tools/youtube-analytics", marker: /YouTube Analytics/i },
   { path: "/tools/instagram-analytics", marker: /Instagram Analytics/i },
   { path: "/tools/threads-analytics", marker: /Threads Analytics/i },
   { path: "/tools/pinterest-analytics", marker: /Pinterest Analytics/i },
@@ -55,6 +56,7 @@ test.describe("public dashboard surfaces", () => {
   test("/tools only shows live tools", async ({ page }) => {
     await page.goto("/tools", { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("link", { name: /TikTok Analytics/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /YouTube Analytics/i })).toBeVisible();
     await expect(page.getByRole("link", { name: /Instagram Analytics/i })).toBeVisible();
     await expect(page.getByRole("link", { name: /Threads Analytics/i })).toBeVisible();
     await expect(page.getByRole("link", { name: /Pinterest Analytics/i })).toBeVisible();

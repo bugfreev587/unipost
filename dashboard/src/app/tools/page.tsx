@@ -38,6 +38,13 @@ const TOOLS: ToolCardData[] = [
     status: "live",
   },
   {
+    icon: "youtube",
+    name: "YouTube Analytics",
+    description: "Preview YouTube channel, trend, and top video reports",
+    href: "/tools/youtube-analytics",
+    status: "live",
+  },
+  {
     icon: "instagram",
     name: "Instagram Analytics",
     description: "Preview Instagram Business media and post insights",

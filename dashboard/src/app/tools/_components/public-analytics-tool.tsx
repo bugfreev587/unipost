@@ -3,7 +3,7 @@ import Link from "next/link";
 import { ArrowRight, BarChart3, CheckCircle2, ExternalLink } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
 
-export type AnalyticsToolSlug = "tiktok" | "instagram" | "threads" | "pinterest";
+export type AnalyticsToolSlug = "tiktok" | "youtube" | "instagram" | "threads" | "pinterest";
 
 export type AnalyticsMetric = {
   label: string;
@@ -73,6 +73,49 @@ export const analyticsTools: Record<AnalyticsToolSlug, AnalyticsToolConfig> = {
         rows: [
           ["Product launch recap", "Published", "7350123456789012345", "8.2k", "612", "91"],
           ["Creator API tutorial", "Published", "7350123456789012311", "5.7k", "433", "64"],
+        ],
+      },
+    ],
+  },
+  youtube: {
+    slug: "youtube",
+    platform: "YouTube",
+    href: "/tools/youtube-analytics",
+    title: "YouTube Analytics",
+    seoTitle: "YouTube Analytics API and Dashboard Tool | UniPost",
+    description:
+      "Preview YouTube channel metrics, date-ranged Analytics API reports, daily trends, and top video performance with UniPost.",
+    eyebrow: "Channel and Video Analytics",
+    summary:
+      "Use UniPost to inspect YouTube Data API channel totals beside YouTube Analytics API reports for views, watch time, subscribers, and top videos.",
+    accent: "#c4302b",
+    scopes: ["youtube.readonly", "yt-analytics.readonly"],
+    docsHref: "/docs/api/analytics/youtube",
+    metrics: [
+      { label: "Subscribers", value: "123k", note: "V1 channel metrics" },
+      { label: "Channel Views", value: "9.8m", note: "YouTube Data API" },
+      { label: "Watch Time", value: "42.6k min", note: "yt-analytics.readonly" },
+      { label: "Top Videos", value: "25", note: "Date-ranged report rows" },
+    ],
+    tables: [
+      {
+        title: "YouTube Analytics Summary",
+        description: "Owner-authorized non-monetary totals from the YouTube Analytics API.",
+        headers: ["Window", "Views", "Watch Time", "Avg Duration", "Subscribers Gained", "Subscribers Lost"],
+        rows: [
+          ["Jun 1-28, 2026", "84.2k", "42.6k min", "3:02", "1,248", "184"],
+          ["May 1-28, 2026", "77.9k", "38.4k min", "2:58", "1,104", "171"],
+          ["Apr 1-28, 2026", "69.3k", "33.8k min", "2:55", "927", "149"],
+        ],
+      },
+      {
+        title: "Top YouTube Videos",
+        description: "Top video rows sorted by views for the selected analytics window.",
+        headers: ["Video", "Video ID", "Views", "Likes", "Comments", "Watch Time"],
+        rows: [
+          ["Launch walkthrough", "yt_demo_001", "28.4k", "1.9k", "146", "14.1k min"],
+          ["API publishing tutorial", "yt_demo_002", "21.7k", "1.4k", "98", "10.6k min"],
+          ["Scheduling Shorts with UniPost", "yt_demo_003", "17.9k", "1.1k", "74", "8.2k min"],
         ],
       },
     ],
