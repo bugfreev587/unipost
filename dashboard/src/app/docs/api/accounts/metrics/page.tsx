@@ -50,7 +50,7 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     name: "platform_specific",
     type: "object",
     description:
-      "Untransformed platform-native fields. On X: tweet_count, listed_count. On TikTok, after analytics scopes are approved and enabled, likes_count is included. When the upstream call fails (rate-limited, tier-restricted, missing scope, etc.), follower/following/post counts come back as 0 and platform_specific carries upstream_status (HTTP code from the platform) and upstream_error (response body) — branch on the presence of upstream_status to distinguish a real zero account from an upstream failure.",
+      "Untransformed platform-native fields. On X: tweet_count, listed_count. On TikTok, likes_count is included when analytics scopes are granted. On YouTube, view_count, hidden_subscriber_count, following_count_supported, subscriber_count_rounded, and post_count_public_only describe channel-statistics semantics. Some platforms can return upstream_status and upstream_error for recoverable upstream failures.",
   },
   {
     name: "fetched_at",
@@ -64,7 +64,7 @@ const ERROR_FIELDS: ApiFieldItem[] = [
     name: "error.code",
     type: "string",
     description:
-      'Possible values: "UNAUTHORIZED", "NOT_FOUND", "ACCOUNT_DISCONNECTED" (409), "NOT_SUPPORTED" (501 — platform has no metrics endpoint), "UPSTREAM_ERROR" (502 — platform fetch failed), "INTERNAL_ERROR".',
+      'Possible values: "UNAUTHORIZED", "NOT_FOUND", "ACCOUNT_DISCONNECTED" (409), "NEEDS_RECONNECT" (409 — provider credentials, scopes, or channel identity must be refreshed), "NOT_SUPPORTED" (501 — platform has no metrics endpoint), "UPSTREAM_ERROR" (502 — platform fetch failed), "INTERNAL_ERROR".',
   },
   {
     name: "error.normalized_code",
@@ -142,6 +142,27 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
+    label: "200 (YouTube)",
+    code: `{
+  "data": {
+    "social_account_id": "sa_youtube_1",
+    "platform": "youtube",
+    "follower_count": 123000,
+    "following_count": 0,
+    "post_count": 42,
+    "platform_specific": {
+      "view_count": 9876543,
+      "hidden_subscriber_count": false,
+      "following_count_supported": false,
+      "subscriber_count_rounded": true,
+      "post_count_public_only": true
+    },
+    "fetched_at": "2026-07-03T18:30:00Z"
+  }
+}`,
+  },
+  {
+    lang: "json",
     label: "200 (upstream rate-limited)",
     code: `{
   "data": {
@@ -160,12 +181,24 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
+    label: "409",
+    code: `{
+  "error": {
+    "code": "NEEDS_RECONNECT",
+    "normalized_code": "needs_reconnect",
+    "message": "Reconnect YouTube to enable analytics."
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
     label: "501",
     code: `{
   "error": {
     "code": "NOT_SUPPORTED",
     "normalized_code": "not_supported",
-    "message": "Account metrics are not available for instagram yet"
+    "message": "Account metrics are not available for linkedin yet"
   },
   "request_id": "req_123"
 }`,
@@ -189,7 +222,7 @@ export default function AccountMetricsPage() {
     <SingleEndpointReferencePage
       section="accounts"
       title="Get account metrics"
-      description="Returns follower / following / post counts for one connected social account, fetched live from the platform's API. Currently supported on X, Instagram, Threads, and TikTok when the relevant platform scopes are granted. Other platforms return 501 NOT_SUPPORTED. Not cached — every call hits the upstream API, so prefer caching client-side if your dashboard polls frequently."
+      description="Returns follower / following / post counts for one connected social account, fetched live from the platform's API. Currently supported on X, Instagram, Threads, TikTok, and YouTube when the relevant platform scopes are granted. Other platforms return 501 NOT_SUPPORTED. Not cached — every call hits the upstream API, so prefer caching client-side if your dashboard polls frequently."
       method="GET"
       path="/v1/accounts/:account_id/metrics"
       requestSections={[
