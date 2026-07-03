@@ -19,6 +19,8 @@ jobs:
         env:
           UNIPOST_API_KEY: ${{ secrets.UNIPOST_REGRESSION_API_KEY }}
           TEST_ACCOUNT_ID: ${{ secrets.REGRESSION_TEST_ACCOUNT_ID }}
+          YOUTUBE_METRICS_ACCOUNT_ID: ${{ secrets.REGRESSION_YOUTUBE_METRICS_ACCOUNT_ID }}
+          YOUTUBE_ANALYTICS_ACCOUNT_ID: ${{ secrets.REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID }}
           BASE_URL: ${{ vars.UNIPOST_API_BASE_URL }}
           LOG_DIR: ${{ github.workspace }}/artifacts/regression
         run: scripts/regression/run-suite.sh smoke

@@ -14,12 +14,14 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -95,14 +97,51 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	// Close the race with background token refresh workers: if the token expired
+	// between ticks, refresh inline before hitting the provider metrics endpoint.
+	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid && acc.RefreshToken.String != "" {
+		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
+			newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshTok)
+			if refErr != nil {
+				slog.Warn("account metrics: token refresh failed",
+					"account_id", acc.ID, "platform", acc.Platform, "err", refErr)
+			} else if newAccess == "" {
+				slog.Warn("account metrics: token refresh returned empty access token",
+					"account_id", acc.ID, "platform", acc.Platform)
+			} else {
+				encAccess, encErr := h.encryptor.Encrypt(newAccess)
+				var encRefresh string
+				var encRefreshErr error
+				if newRefresh != "" {
+					encRefresh, encRefreshErr = h.encryptor.Encrypt(newRefresh)
+				}
+				if encErr != nil || encRefreshErr != nil {
+					slog.Error("account metrics: encrypt refreshed tokens failed",
+						"account_id", acc.ID, "platform", acc.Platform,
+						"access_err", encErr, "refresh_err", encRefreshErr)
+				} else {
+					accessToken = newAccess
+					if updateErr := h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+						ID:             acc.ID,
+						AccessToken:    encAccess,
+						RefreshToken:   accountMetricsRefreshTokenForUpdate(acc.RefreshToken, encRefresh),
+						TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: !expiresAt.IsZero()},
+					}); updateErr != nil {
+						slog.Error("account metrics: update refreshed tokens failed",
+							"account_id", acc.ID, "platform", acc.Platform, "err", updateErr)
+					}
+				}
+			}
+		} else {
+			slog.Warn("account metrics: decrypt refresh token failed",
+				"account_id", acc.ID, "platform", acc.Platform, "err", decErr)
+		}
+	}
+
 	metrics, err := metricsAdapter.GetAccountMetrics(r.Context(), accessToken, acc.ExternalAccountID)
 	if err != nil {
-		if acc.Platform == "tiktok" && (looksLikeTikTokAuthError(err) || looksLikeTikTokMissingScopeError(err)) {
-			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect TikTok to enable analytics.")
-			return
-		}
-		if (acc.Platform == "instagram" || acc.Platform == "threads") && looksLikeMetaAuthOrScopeError(err) {
-			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect "+acc.Platform+" to enable analytics.")
+		if status, code, message, ok := accountMetricsPlatformErrorResponse(acc.Platform, err); ok {
+			writeError(w, status, code, message)
 			return
 		}
 		// Bubble up upstream errors as 502 — the request was valid,
@@ -127,4 +166,46 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 		PlatformSpecific: metrics.PlatformSpecific,
 		FetchedAt:        time.Now().UTC(),
 	})
+}
+
+func accountMetricsPlatformErrorResponse(platformName string, err error) (int, string, string, bool) {
+	if err == nil {
+		return 0, "", "", false
+	}
+	if errors.Is(err, platform.ErrNeedsReconnect) || errors.Is(err, platform.ErrYouTubeNoChannel) {
+		return accountMetricsNeedsReconnectResponse(platformName)
+	}
+	if platformName == "tiktok" && (looksLikeTikTokAuthError(err) || looksLikeTikTokMissingScopeError(err)) {
+		return accountMetricsNeedsReconnectResponse(platformName)
+	}
+	if (platformName == "instagram" || platformName == "threads") && looksLikeMetaAuthOrScopeError(err) {
+		return accountMetricsNeedsReconnectResponse(platformName)
+	}
+	return 0, "", "", false
+}
+
+func accountMetricsNeedsReconnectResponse(platformName string) (int, string, string, bool) {
+	return http.StatusConflict, "NEEDS_RECONNECT", "Reconnect " + accountMetricsPlatformDisplayName(platformName) + " to enable analytics.", true
+}
+
+func accountMetricsPlatformDisplayName(platformName string) string {
+	switch platformName {
+	case "youtube":
+		return "YouTube"
+	case "tiktok":
+		return "TikTok"
+	case "instagram":
+		return "Instagram"
+	case "threads":
+		return "Threads"
+	default:
+		return platformName
+	}
+}
+
+func accountMetricsRefreshTokenForUpdate(existing pgtype.Text, encryptedNewRefresh string) pgtype.Text {
+	if encryptedNewRefresh == "" {
+		return existing
+	}
+	return pgtype.Text{String: encryptedNewRefresh, Valid: true}
 }

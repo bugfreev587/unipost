@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -103,6 +104,12 @@ func NewYouTubeAdapter() *YouTubeAdapter {
 
 func (a *YouTubeAdapter) Platform() string { return "youtube" }
 
+var youtubeOAuthScopes = []string{
+	"https://www.googleapis.com/auth/youtube.upload",
+	"https://www.googleapis.com/auth/youtube.readonly",
+	"https://www.googleapis.com/auth/yt-analytics.readonly",
+}
+
 func (a *YouTubeAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig {
 	return OAuthConfig{
 		ClientID:     os.Getenv("YOUTUBE_CLIENT_ID"),
@@ -110,16 +117,20 @@ func (a *YouTubeAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/youtube",
-		Scopes:       []string{"https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"},
+		Scopes:       append([]string(nil), youtubeOAuthScopes...),
 	}
 }
 
 func (a *YouTubeAdapter) GetAuthURL(config OAuthConfig, state string) string {
+	scopes := config.Scopes
+	if len(scopes) == 0 {
+		scopes = youtubeOAuthScopes
+	}
 	params := url.Values{
 		"client_id":     {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
 		"response_type": {"code"},
-		"scope":         {"https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly"},
+		"scope":         {strings.Join(scopes, " ")},
 		"state":         {state},
 		"access_type":   {"offline"},
 		"prompt":        {"consent"},
@@ -152,8 +163,16 @@ func (a *YouTubeAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
 	}
 	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	scopes := strings.Fields(tokenResp.Scope)
+	if len(scopes) == 0 {
+		scopes = append([]string(nil), config.Scopes...)
+	}
+	if len(scopes) == 0 {
+		scopes = append([]string(nil), youtubeOAuthScopes...)
+	}
 
 	// Get channel info
 	channel, err := a.getChannel(ctx, tokenResp.AccessToken)
@@ -168,6 +187,7 @@ func (a *YouTubeAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		ExternalAccountID: channel.id,
 		AccountName:       channel.title,
 		AvatarURL:         channel.thumbnailURL,
+		Scopes:            scopes,
 		Metadata: map[string]any{
 			"channel_id": channel.id,
 			"title":      channel.title,
@@ -575,6 +595,296 @@ func (a *YouTubeAdapter) GetAnalytics(ctx context.Context, accessToken string, e
 		Likes:      parseInt64(s.LikeCount),
 		Comments:   parseInt64(s.CommentCount),
 	}, nil
+}
+
+// GetAccountMetrics fetches basic channel statistics from YouTube Data API.
+func (a *YouTubeAdapter) GetAccountMetrics(ctx context.Context, accessToken, externalAccountID string) (*AccountMetrics, error) {
+	params := url.Values{}
+	params.Set("part", "statistics")
+	params.Set("id", externalAccountID)
+	req, err := http.NewRequestWithContext(ctx, "GET",
+		"https://www.googleapis.com/youtube/v3/channels?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if isYouTubeMetricsReconnectStatus(resp.StatusCode, body) {
+			return nil, fmt.Errorf("%w: youtube channel metrics auth failed (%d): %s", ErrNeedsReconnect, resp.StatusCode, string(body))
+		}
+		return nil, fmt.Errorf("youtube channel metrics failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Items []struct {
+			Statistics struct {
+				ViewCount             string `json:"viewCount"`
+				SubscriberCount       string `json:"subscriberCount"`
+				HiddenSubscriberCount bool   `json:"hiddenSubscriberCount"`
+				VideoCount            string `json:"videoCount"`
+			} `json:"statistics"`
+		} `json:"items"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+	if len(result.Items) == 0 {
+		return nil, fmt.Errorf("%w: %w", ErrNeedsReconnect, ErrYouTubeNoChannel)
+	}
+
+	stats := result.Items[0].Statistics
+	followerCount := parseInt64(stats.SubscriberCount)
+	if stats.HiddenSubscriberCount {
+		followerCount = 0
+	}
+	return &AccountMetrics{
+		FollowerCount:  followerCount,
+		FollowingCount: 0,
+		PostCount:      parseInt64(stats.VideoCount),
+		PlatformSpecific: map[string]any{
+			"view_count":                parseInt64(stats.ViewCount),
+			"hidden_subscriber_count":   stats.HiddenSubscriberCount,
+			"following_count_supported": false,
+			"subscriber_count_rounded":  true,
+			"post_count_public_only":    true,
+		},
+	}, nil
+}
+
+func isYouTubeMetricsReconnectStatus(status int, body []byte) bool {
+	if status == http.StatusUnauthorized {
+		return true
+	}
+	if status != http.StatusForbidden {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "insufficient") ||
+		strings.Contains(lower, "permission") ||
+		strings.Contains(lower, "forbidden") ||
+		strings.Contains(lower, "auth")
+}
+
+type YouTubeAnalyticsMetrics struct {
+	Views                   int64   `json:"views"`
+	Likes                   int64   `json:"likes"`
+	Comments                int64   `json:"comments"`
+	Shares                  int64   `json:"shares"`
+	EstimatedMinutesWatched int64   `json:"estimated_minutes_watched"`
+	AverageViewDuration     int64   `json:"average_view_duration"`
+	AverageViewPercentage   float64 `json:"average_view_percentage"`
+	SubscribersGained       int64   `json:"subscribers_gained"`
+	SubscribersLost         int64   `json:"subscribers_lost"`
+}
+
+type YouTubeAnalyticsSummary struct {
+	Metrics YouTubeAnalyticsMetrics `json:"metrics"`
+}
+
+type YouTubeAnalyticsTrendRow struct {
+	Date    string                  `json:"date"`
+	Metrics YouTubeAnalyticsMetrics `json:"metrics"`
+}
+
+type YouTubeAnalyticsVideoRow struct {
+	VideoID string                  `json:"video_id"`
+	Metrics YouTubeAnalyticsMetrics `json:"metrics"`
+}
+
+const youtubeAnalyticsReportsEndpoint = "https://youtubeanalytics.googleapis.com/v2/reports"
+
+var youtubeAnalyticsNonMonetaryMetrics = []string{
+	"views",
+	"likes",
+	"comments",
+	"shares",
+	"estimatedMinutesWatched",
+	"averageViewDuration",
+	"averageViewPercentage",
+	"subscribersGained",
+	"subscribersLost",
+}
+
+func (a *YouTubeAdapter) GetYouTubeAnalyticsSummary(ctx context.Context, accessToken, channelID string, startDate, endDate time.Time) (*YouTubeAnalyticsSummary, error) {
+	report, err := a.queryYouTubeAnalyticsReport(ctx, accessToken, channelID, startDate, endDate, "", "", 0)
+	if err != nil {
+		return nil, err
+	}
+	if len(report.Rows) == 0 {
+		return &YouTubeAnalyticsSummary{}, nil
+	}
+	return &YouTubeAnalyticsSummary{Metrics: youtubeAnalyticsMetricsFromRow(report, report.Rows[0])}, nil
+}
+
+func (a *YouTubeAdapter) GetYouTubeAnalyticsTrend(ctx context.Context, accessToken, channelID string, startDate, endDate time.Time) ([]YouTubeAnalyticsTrendRow, error) {
+	report, err := a.queryYouTubeAnalyticsReport(ctx, accessToken, channelID, startDate, endDate, "day", "day", 0)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]YouTubeAnalyticsTrendRow, 0, len(report.Rows))
+	for _, row := range report.Rows {
+		values := report.rowValues(row)
+		rows = append(rows, YouTubeAnalyticsTrendRow{
+			Date:    youtubeAnalyticsString(values["day"]),
+			Metrics: youtubeAnalyticsMetricsFromValues(values),
+		})
+	}
+	return rows, nil
+}
+
+func (a *YouTubeAdapter) GetYouTubeAnalyticsVideos(ctx context.Context, accessToken, channelID string, startDate, endDate time.Time, limit int) ([]YouTubeAnalyticsVideoRow, error) {
+	report, err := a.queryYouTubeAnalyticsReport(ctx, accessToken, channelID, startDate, endDate, "video", "-views", clampYouTubeAnalyticsLimit(limit))
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]YouTubeAnalyticsVideoRow, 0, len(report.Rows))
+	for _, row := range report.Rows {
+		values := report.rowValues(row)
+		rows = append(rows, YouTubeAnalyticsVideoRow{
+			VideoID: youtubeAnalyticsString(values["video"]),
+			Metrics: youtubeAnalyticsMetricsFromValues(values),
+		})
+	}
+	return rows, nil
+}
+
+func (a *YouTubeAdapter) queryYouTubeAnalyticsReport(ctx context.Context, accessToken, channelID string, startDate, endDate time.Time, dimensions, sort string, maxResults int) (*youTubeAnalyticsReport, error) {
+	params := url.Values{}
+	params.Set("ids", "channel=="+channelID)
+	params.Set("startDate", startDate.Format("2006-01-02"))
+	params.Set("endDate", endDate.Format("2006-01-02"))
+	params.Set("metrics", strings.Join(youtubeAnalyticsNonMonetaryMetrics, ","))
+	if dimensions != "" {
+		params.Set("dimensions", dimensions)
+	}
+	if sort != "" {
+		params.Set("sort", sort)
+	}
+	if maxResults > 0 {
+		params.Set("maxResults", strconv.Itoa(maxResults))
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, youtubeAnalyticsReportsEndpoint+"?"+params.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		if isYouTubeMetricsReconnectStatus(resp.StatusCode, body) {
+			return nil, fmt.Errorf("%w: youtube analytics report auth failed (%d): %s", ErrNeedsReconnect, resp.StatusCode, string(body))
+		}
+		return nil, fmt.Errorf("youtube analytics report failed (%d): %s", resp.StatusCode, string(body))
+	}
+
+	var report youTubeAnalyticsReport
+	dec := json.NewDecoder(resp.Body)
+	dec.UseNumber()
+	if err := dec.Decode(&report); err != nil {
+		return nil, err
+	}
+	return &report, nil
+}
+
+type youTubeAnalyticsReport struct {
+	ColumnHeaders []struct {
+		Name string `json:"name"`
+	} `json:"columnHeaders"`
+	Rows [][]any `json:"rows"`
+}
+
+func (r *youTubeAnalyticsReport) rowValues(row []any) map[string]any {
+	values := make(map[string]any, len(r.ColumnHeaders))
+	for i, header := range r.ColumnHeaders {
+		if i < len(row) {
+			values[header.Name] = row[i]
+		}
+	}
+	return values
+}
+
+func youtubeAnalyticsMetricsFromRow(report *youTubeAnalyticsReport, row []any) YouTubeAnalyticsMetrics {
+	return youtubeAnalyticsMetricsFromValues(report.rowValues(row))
+}
+
+func youtubeAnalyticsMetricsFromValues(values map[string]any) YouTubeAnalyticsMetrics {
+	return YouTubeAnalyticsMetrics{
+		Views:                   youtubeAnalyticsInt(values["views"]),
+		Likes:                   youtubeAnalyticsInt(values["likes"]),
+		Comments:                youtubeAnalyticsInt(values["comments"]),
+		Shares:                  youtubeAnalyticsInt(values["shares"]),
+		EstimatedMinutesWatched: youtubeAnalyticsInt(values["estimatedMinutesWatched"]),
+		AverageViewDuration:     youtubeAnalyticsInt(values["averageViewDuration"]),
+		AverageViewPercentage:   youtubeAnalyticsFloat(values["averageViewPercentage"]),
+		SubscribersGained:       youtubeAnalyticsInt(values["subscribersGained"]),
+		SubscribersLost:         youtubeAnalyticsInt(values["subscribersLost"]),
+	}
+}
+
+func youtubeAnalyticsInt(value any) int64 {
+	switch v := value.(type) {
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i
+		}
+		if f, err := v.Float64(); err == nil {
+			return int64(f)
+		}
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	}
+	return 0
+}
+
+func youtubeAnalyticsFloat(value any) float64 {
+	switch v := value.(type) {
+	case json.Number:
+		f, _ := v.Float64()
+		return f
+	case float64:
+		return v
+	case int:
+		return float64(v)
+	case int64:
+		return float64(v)
+	}
+	return 0
+}
+
+func youtubeAnalyticsString(value any) string {
+	if s, ok := value.(string); ok {
+		return s
+	}
+	return ""
+}
+
+func clampYouTubeAnalyticsLimit(limit int) int {
+	if limit < 1 {
+		return 25
+	}
+	if limit > 200 {
+		return 200
+	}
+	return limit
 }
 
 func parseInt64(s string) int64 {

@@ -2,10 +2,15 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"path"
 	"strings"
 	"time"
 )
+
+// ErrNeedsReconnect is returned by adapters when the provider rejects
+// credentials or scopes in a way the user can resolve by reconnecting.
+var ErrNeedsReconnect = errors.New("platform account needs reconnect")
 
 // MediaKind classifies a single piece of media that an adapter receives.
 // Adapters use this to decide which API path to take (e.g. Instagram chooses

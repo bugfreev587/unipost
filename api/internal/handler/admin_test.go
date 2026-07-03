@@ -270,6 +270,50 @@ func TestAdminUsersListSQLIncludesFailedPostsThisMonth(t *testing.T) {
 	}
 }
 
+func TestAdminUserActivityFilterSQL(t *testing.T) {
+	if got := adminUserActivityFilterSQL("all"); got != "" {
+		t.Fatalf("all activity filter should not constrain users:\n%s", got)
+	}
+	if got := adminUserActivityFilterSQL("unknown"); got != "" {
+		t.Fatalf("unknown activity filter should fall back to all users:\n%s", got)
+	}
+
+	filter := adminUserActivityFilterSQL("active")
+	for _, want := range []string{
+		"EXISTS(",
+		"FROM social_posts sp",
+		"JOIN workspaces w ON w.id = sp.workspace_id",
+		"w.user_id = u.id",
+		"sp.deleted_at IS NULL",
+		"sp.published_at >= NOW() - INTERVAL '30 days'",
+	} {
+		if !strings.Contains(filter, want) {
+			t.Fatalf("active user filter missing %q:\n%s", want, filter)
+		}
+	}
+}
+
+func TestAdminUsersListAppliesReusableFiltersToRowsAndTotal(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	sql := string(source)
+
+	for _, want := range []string{
+		`activity := q.Get("activity")`,
+		`filtersSQL := adminUserFiltersSQL(plan, activity)`,
+		`adminUserActivityFilterSQL(activity)`,
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin users list should support filtered active totals %q", want)
+		}
+	}
+	if count := strings.Count(sql, "+ filtersSQL +"); count < 2 {
+		t.Fatalf("admin users rows and total should share filtersSQL, found %d uses", count)
+	}
+}
+
 func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 	sql := adminEmailNotificationsBaseSelect()
 

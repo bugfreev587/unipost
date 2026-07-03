@@ -936,6 +936,116 @@ export async function getAccountMetrics(
   );
 }
 
+export interface YouTubeAnalyticsMetrics {
+  views: number;
+  likes: number;
+  comments: number;
+  shares: number;
+  estimated_minutes_watched: number;
+  average_view_duration: number;
+  average_view_percentage: number;
+  subscribers_gained: number;
+  subscribers_lost: number;
+}
+
+export interface YouTubeAnalyticsRangeParams {
+  from?: string;
+  to?: string;
+  start_date?: string;
+  end_date?: string;
+}
+
+export interface YouTubeAnalyticsSummary {
+  social_account_id: string;
+  platform: "youtube";
+  start_date: string;
+  end_date: string;
+  metrics: YouTubeAnalyticsMetrics;
+  fetched_at: string;
+  required_scopes: string[];
+  granted_scopes?: string[];
+}
+
+export interface YouTubeAnalyticsTrendRow {
+  date: string;
+  metrics: YouTubeAnalyticsMetrics;
+}
+
+export interface YouTubeAnalyticsTrend {
+  social_account_id: string;
+  platform: "youtube";
+  start_date: string;
+  end_date: string;
+  rows: YouTubeAnalyticsTrendRow[];
+  fetched_at: string;
+  required_scopes: string[];
+  granted_scopes?: string[];
+}
+
+export interface YouTubeAnalyticsVideoRow {
+  video_id: string;
+  metrics: YouTubeAnalyticsMetrics;
+}
+
+export interface YouTubeAnalyticsVideos {
+  social_account_id: string;
+  platform: "youtube";
+  start_date: string;
+  end_date: string;
+  videos: YouTubeAnalyticsVideoRow[];
+  limit: number;
+  fetched_at: string;
+  required_scopes: string[];
+  granted_scopes?: string[];
+}
+
+function youtubeAnalyticsQuery(params: YouTubeAnalyticsRangeParams & { limit?: number } = {}) {
+  const q = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value).trim() !== "") {
+      q.set(key, String(value));
+    }
+  }
+  const suffix = q.toString();
+  return suffix ? `?${suffix}` : "";
+}
+
+export async function getYouTubeAnalyticsSummary(
+  token: string,
+  profileId: string,
+  accountId: string,
+  params: YouTubeAnalyticsRangeParams = {}
+): Promise<ApiResponse<YouTubeAnalyticsSummary>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/youtube/analytics/summary${youtubeAnalyticsQuery(params)}`,
+    token
+  );
+}
+
+export async function getYouTubeAnalyticsTrend(
+  token: string,
+  profileId: string,
+  accountId: string,
+  params: YouTubeAnalyticsRangeParams = {}
+): Promise<ApiResponse<YouTubeAnalyticsTrend>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/youtube/analytics/trend${youtubeAnalyticsQuery(params)}`,
+    token
+  );
+}
+
+export async function getYouTubeAnalyticsVideos(
+  token: string,
+  profileId: string,
+  accountId: string,
+  params: YouTubeAnalyticsRangeParams & { limit?: number } = {}
+): Promise<ApiResponse<YouTubeAnalyticsVideos>> {
+  return request(
+    `/v1/profiles/${profileId}/accounts/${accountId}/youtube/analytics/videos${youtubeAnalyticsQuery(params)}`,
+    token
+  );
+}
+
 export interface TikTokProfile {
   social_account_id: string;
   platform: string;
@@ -2564,6 +2674,7 @@ export interface ErrorTriageSendResult {
 export interface AdminUserListParams {
   search?: string;
   plan?: "all" | "free" | "paid";
+  activity?: "all" | "active";
   sort?: "newest" | "mrr" | "usage" | "last_active";
   limit?: number;
   offset?: number;
@@ -3125,6 +3236,7 @@ export async function listAdminUsers(
   const qs = new URLSearchParams();
   if (params?.search) qs.set("search", params.search);
   if (params?.plan && params.plan !== "all") qs.set("plan", params.plan);
+  if (params?.activity && params.activity !== "all") qs.set("activity", params.activity);
   if (params?.sort) qs.set("sort", params.sort);
   if (params?.limit != null) qs.set("limit", String(params.limit));
   if (params?.offset != null) qs.set("offset", String(params.offset));

@@ -27,6 +27,7 @@ Legend:
 | `DELETE /v1/accounts/{id}` | Yes | Yes | Yes | Yes | No direct live delete |
 | `GET /v1/accounts/{id}/capabilities` | Yes | Yes | Yes | Yes | Yes |
 | `GET /v1/accounts/{id}/health` | Yes | Yes | Yes | Yes | Yes |
+| `GET /v1/accounts/{id}/metrics` | Yes | Yes | Yes | Yes | No direct live fixture |
 | `GET /v1/accounts/{id}/tiktok/creator-info` | Yes | Yes | Yes | Yes | Conditional |
 | `GET /v1/accounts/{id}/facebook/page-insights` | Yes | Yes | Yes | Yes | Conditional |
 | `POST /v1/media` | Yes | Yes | Yes | Yes | Yes |
@@ -95,7 +96,10 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 
 | API surface | Current validation status | Notes |
 | --- | --- | --- |
-| `GET /v1/accounts/{id}/metrics` | No | Useful for platform analytics dashboard coverage. |
+| `GET /v1/accounts/{id}/metrics` | Optional smoke | Covered for YouTube when `YOUTUBE_METRICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_METRICS_ACCOUNT_ID` is configured. Other platform fixtures remain conditional. |
+| `GET /v1/accounts/{id}/youtube/analytics/summary` | Optional smoke | Covered when `YOUTUBE_ANALYTICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID` points at a connected YouTube fixture with `yt-analytics.readonly`. |
+| `GET /v1/accounts/{id}/youtube/analytics/trend` | Optional smoke | Covered when `YOUTUBE_ANALYTICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID` points at a connected YouTube fixture with `yt-analytics.readonly`. |
+| `GET /v1/accounts/{id}/youtube/analytics/videos` | Optional smoke | Covered when `YOUTUBE_ANALYTICS_ACCOUNT_ID` / `REGRESSION_YOUTUBE_ANALYTICS_ACCOUNT_ID` points at a connected YouTube fixture with `yt-analytics.readonly`. |
 | `GET /v1/accounts/{id}/tiktok/profile` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/tiktok/videos` | No | Should be conditional on a connected TikTok fixture. |
 | `GET /v1/accounts/{id}/facebook/page-analytics` | No | Dashboard aggregate endpoint; should be conditional on a connected Facebook Page fixture and admin allowlist access. |

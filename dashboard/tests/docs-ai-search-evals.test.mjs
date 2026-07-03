@@ -92,6 +92,15 @@ test("TikTok followers questions answer with unified account metrics", () => {
   assert.equal(answer.sources[0]?.path, "/docs/guides/analytics/tiktok-followers");
 });
 
+test("YouTube Analytics report questions answer with V2 endpoints", () => {
+  const { answer } = answerFor("How do I get YouTube watch time trend and top videos?");
+
+  assert.match(answer.answer, /\/youtube\/analytics\/summary/);
+  assert.match(answer.answer, /\/youtube\/analytics\/trend/);
+  assert.match(answer.answer, /\/youtube\/analytics\/videos/);
+  assert.match(answer.answer, /yt-analytics\.readonly/);
+});
+
 test("video.list followers questions explain that video.list is not the follower source", () => {
   const { answer } = answerFor("Does video.list give followers?");
 

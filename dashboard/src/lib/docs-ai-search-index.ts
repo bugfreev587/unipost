@@ -340,7 +340,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     primary_nav: "Guides",
     section_title: "Fields to read",
     product_area: "analytics",
-    tags: ["analytics", "accounts", "followers", "following", "post count", "metrics"],
+    tags: ["analytics", "accounts", "followers", "subscribers", "following", "post count", "metrics", "youtube"],
     intent_tags: ["analytics"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/metrics",
@@ -348,9 +348,9 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
       "GET /v1/accounts/:account_id/metrics",
       "GET /v1/accounts/:id/metrics",
     ],
-    platforms: ["instagram", "threads", "tiktok", "twitter"],
+    platforms: ["instagram", "threads", "tiktok", "twitter", "youtube"],
     content:
-      "Use GET /v1/accounts/{account_id}/metrics for account-level metrics such as data.follower_count, data.following_count, data.post_count, and data.platform_specific. List accounts with GET /v1/accounts, choose the connected account id, then call account metrics. Unsupported platforms return NOT_SUPPORTED instead of an empty success response.",
+      "Use GET /v1/accounts/{account_id}/metrics for account-level metrics such as data.follower_count, data.following_count, data.post_count, and data.platform_specific. Supported platforms include X, Instagram, Threads, TikTok, and YouTube. YouTube V1 account metrics use youtube.readonly and map channel subscriberCount to follower_count, videoCount to post_count, and viewCount to platform_specific.view_count. Unsupported platforms return NOT_SUPPORTED instead of an empty success response.",
   }),
   chunk({
     id: "api-reference-account-metrics",
@@ -360,7 +360,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     primary_nav: "API Reference",
     section_title: "GET account metrics",
     product_area: "accounts",
-    tags: ["api reference", "account metrics", "followers", "account_id"],
+    tags: ["api reference", "account metrics", "followers", "subscribers", "account_id", "youtube"],
     intent_tags: ["analytics", "reference"],
     endpoint_aliases: [
       "GET /v1/accounts/{account_id}/metrics",
@@ -368,9 +368,66 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
       "GET /v1/accounts/:account_id/metrics",
       "GET /v1/accounts/:id/metrics",
     ],
-    platforms: ["instagram", "threads", "tiktok", "twitter"],
+    platforms: ["instagram", "threads", "tiktok", "twitter", "youtube"],
     content:
-      "GET /v1/accounts/{account_id}/metrics returns normalized account metrics for one connected social account. The response includes data.social_account_id, data.platform, data.follower_count, data.following_count, data.post_count, data.platform_specific, and data.fetched_at.",
+      "GET /v1/accounts/{account_id}/metrics returns normalized account metrics for one connected social account. The response includes data.social_account_id, data.platform, data.follower_count, data.following_count, data.post_count, data.platform_specific, and data.fetched_at. For YouTube, follower_count comes from channel subscriberCount, post_count comes from videoCount, following_count is 0 with following_count_supported=false, and platform_specific includes view_count and hidden_subscriber_count.",
+  }),
+  chunk({
+    id: "analytics-youtube-v2-overview",
+    title: "YouTube Analytics",
+    path: "/docs/api/analytics/youtube",
+    section_id: "overview",
+    primary_nav: "API Reference",
+    section_title: "Overview",
+    product_area: "analytics",
+    tags: ["analytics", "youtube", "reports", "yt-analytics.readonly", "summary", "trend", "videos"],
+    intent_tags: ["analytics", "reference"],
+    endpoint_aliases: [
+      "GET /v1/accounts/{account_id}/youtube/analytics/summary",
+      "GET /v1/accounts/{account_id}/youtube/analytics/trend",
+      "GET /v1/accounts/{account_id}/youtube/analytics/videos",
+    ],
+    platforms: ["youtube"],
+    content:
+      "YouTube Analytics V2 uses the YouTube Analytics API for owner-authorized, non-monetary reports. Endpoints include GET /v1/accounts/{account_id}/youtube/analytics/summary, GET /v1/accounts/{account_id}/youtube/analytics/trend, and GET /v1/accounts/{account_id}/youtube/analytics/videos. Required provider scope: https://www.googleapis.com/auth/yt-analytics.readonly. Monetary reports are not included and yt-analytics-monetary.readonly is not required.",
+  }),
+  chunk({
+    id: "analytics-youtube-v2-summary",
+    title: "Get YouTube analytics summary",
+    path: "/docs/api/analytics/youtube/summary",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "GET YouTube analytics summary",
+    product_area: "analytics",
+    tags: ["analytics", "youtube", "summary", "views", "subscribers", "watch time"],
+    intent_tags: ["analytics", "reference"],
+    endpoint_aliases: [
+      "GET /v1/accounts/{account_id}/youtube/analytics/summary",
+      "GET /v1/accounts/{id}/youtube/analytics/summary",
+    ],
+    platforms: ["youtube"],
+    content:
+      "GET /v1/accounts/{account_id}/youtube/analytics/summary returns channel-level YouTube Analytics totals for a date range. Metrics include views, likes, comments, shares, estimated_minutes_watched, average_view_duration, average_view_percentage, subscribers_gained, and subscribers_lost. Defaults to the last 28 complete UTC days.",
+  }),
+  chunk({
+    id: "analytics-youtube-v2-trend-videos",
+    title: "Get YouTube analytics trend and videos",
+    path: "/docs/api/analytics/youtube/trend",
+    section_id: "endpoint",
+    primary_nav: "API Reference",
+    section_title: "GET YouTube analytics trend and videos",
+    product_area: "analytics",
+    tags: ["analytics", "youtube", "trend", "daily", "top videos"],
+    intent_tags: ["analytics", "reference"],
+    endpoint_aliases: [
+      "GET /v1/accounts/{account_id}/youtube/analytics/trend",
+      "GET /v1/accounts/{account_id}/youtube/analytics/videos",
+      "GET /v1/accounts/{id}/youtube/analytics/trend",
+      "GET /v1/accounts/{id}/youtube/analytics/videos",
+    ],
+    platforms: ["youtube"],
+    content:
+      "GET /v1/accounts/{account_id}/youtube/analytics/trend returns daily YouTube Analytics rows. GET /v1/accounts/{account_id}/youtube/analytics/videos returns top video rows sorted by views, with limit default 25 and cap 200.",
   }),
   chunk({
     id: "analytics-guide-export-posts",
@@ -443,9 +500,9 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
       "GET /v1/accounts/:account_id/health",
       "GET /v1/accounts",
     ],
-    platforms: ["instagram", "threads", "pinterest", "tiktok", "facebook"],
+    platforms: ["instagram", "threads", "pinterest", "tiktok", "youtube", "facebook"],
     content:
-      "If an account was connected before analytics scopes were granted, reconnect it so the token includes the new platform scopes. TikTok analytics scopes include user.info.profile, user.info.stats, and video.list. Use account health or account listing state to identify accounts that need reconnect before relying on live analytics metrics.",
+      "If an account was connected before analytics scopes were granted, reconnect it so the token includes the new platform scopes. TikTok analytics scopes include user.info.profile, user.info.stats, and video.list. YouTube V1 account metrics use youtube.readonly. YouTube Analytics V2 reports use yt-analytics.readonly through the YouTube Analytics API. Use account health or account listing state to identify accounts that need reconnect before relying on live analytics metrics.",
   }),
   chunk({
     id: "analytics-tiktok-native-drilldown",
@@ -563,11 +620,16 @@ function detectIntent(query: string): DocsAiIntent {
     /\bmetrics?\b/,
     /\bfollowers?\b/,
     /\bfans?\b/,
+    /\bsubscribers?\b/,
     /\bfollower_count\b/,
     /\bviews?\b/,
     /\blikes?\b/,
     /\bcomments?\b/,
     /\bshares?\b/,
+    /\breports?\b/,
+    /\btrend\b/,
+    /\btop videos?\b/,
+    /\bwatch time\b/,
     /\bexport\b/,
     /\bcsv\b/,
     /\bvideo\.list\b/,
@@ -882,6 +944,32 @@ function answerForAnalyticsTask(query: string) {
         "If the account predates analytics scope approval, reconnect it so user.info.stats is on the token.",
         "Call GET /v1/accounts/{account_id}/metrics.",
         "Read data.follower_count from the response.",
+      ],
+    };
+  }
+
+  if (normalizedQuery.includes("youtube") && /analytics api|yt-analytics|reports?|trend|top videos?|watch time|summary/.test(normalizedQuery)) {
+    return {
+      answer:
+        "Use the YouTube Analytics V2 endpoints for owner-authorized YouTube reports: GET /v1/accounts/{account_id}/youtube/analytics/summary for channel totals, GET /v1/accounts/{account_id}/youtube/analytics/trend for daily rows, and GET /v1/accounts/{account_id}/youtube/analytics/videos for top videos. These endpoints require https://www.googleapis.com/auth/yt-analytics.readonly; monetary reports are not included.",
+      steps: [
+        "List accounts with GET /v1/accounts and choose the connected YouTube account id.",
+        "Use summary for date-ranged channel totals, trend for daily rows, or videos for top video rows.",
+        "Pass from and to as YYYY-MM-DD dates, or omit them to use the last 28 complete UTC days.",
+        "If the API returns NEEDS_RECONNECT, reconnect the YouTube account so the token includes yt-analytics.readonly.",
+      ],
+    };
+  }
+
+  if (normalizedQuery.includes("youtube") && /metric|subscriber|follower|scope|analytics?/.test(normalizedQuery)) {
+    return {
+      answer:
+        "Use GET /v1/accounts/{account_id}/metrics for YouTube V1 account metrics. This uses the existing youtube.readonly OAuth scope and does not require a new UniPost API key scope. Read data.follower_count for subscribers, data.post_count for public video count, and data.platform_specific.view_count for channel views. Use the separate YouTube Analytics V2 endpoints when you need date-ranged reports.",
+      steps: [
+        "List accounts with GET /v1/accounts and choose the connected YouTube account id.",
+        "Call GET /v1/accounts/{account_id}/metrics.",
+        "Read data.follower_count, data.post_count, and data.platform_specific.view_count.",
+        "If you need summary, daily trend, or top-video reports, use /youtube/analytics/summary, /youtube/analytics/trend, or /youtube/analytics/videos with yt-analytics.readonly.",
       ],
     };
   }
