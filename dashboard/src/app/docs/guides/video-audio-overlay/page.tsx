@@ -6,7 +6,7 @@ const WORKFLOW_SNIPPETS = [
   {
     label: "cURL",
     lang: "bash",
-    code: `# Step 1: Reserve and upload the video input.
+    code: `# Step 1: Upload the video input.
 # POST /v1/media creates a media row and returns a presigned upload_url.
 curl -X POST "https://api.unipost.dev/v1/media" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
@@ -16,12 +16,13 @@ curl -X POST "https://api.unipost.dev/v1/media" \\
     "content_type": "video/mp4"
   }'
 
-# PUT the video bytes to data.upload_url, then poll GET /v1/media/{media_id}
-# until UniPost marks the video as uploaded.
+# Upload the video file bytes to data.upload_url, then poll GET /v1/media/{media_id}
+# until UniPost marks the video as uploaded. upload_url is the file upload destination,
+# not another UniPost JSON endpoint.
 curl "https://api.unipost.dev/v1/media/media_video_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"
 
-# Step 2: Reserve and upload the audio input.
+# Step 2: Upload the audio input.
 # Audio media is an input for processing; do not publish the raw audio media_id.
 curl -X POST "https://api.unipost.dev/v1/media" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
@@ -31,9 +32,9 @@ curl -X POST "https://api.unipost.dev/v1/media" \\
     "content_type": "audio/mpeg"
   }'
 
-# PUT the audio bytes to data.upload_url, then poll GET /v1/media/{media_id}.
+# Upload the audio file bytes to data.upload_url, then poll GET /v1/media/{media_id}.
 
-# Step 3: Create the audio overlay job.
+# Step 3: Generate the overlay video.
 # mode=mix keeps some original video sound; mode=replace removes it.
 curl -X POST "https://api.unipost.dev/v1/media/audio-overlays" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
@@ -48,12 +49,12 @@ curl -X POST "https://api.unipost.dev/v1/media/audio-overlays" \\
     "fit": "loop_to_video"
   }'
 
-# Step 4: Poll the processing job until it finishes.
-# When status is succeeded, keep data.output_media_id for publishing.
+# Poll the processing job until it finishes. When status is succeeded,
+# keep data.output_media_id for publishing.
 curl "https://api.unipost.dev/v1/media/audio-overlays/mpj_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"
 
-# Step 5: Publish the processed output video.
+# Step 4: Publish the processed video.
 # output_media_id is a normal video media_id for POST /v1/posts.
 curl -X POST "https://api.unipost.dev/v1/posts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
@@ -85,7 +86,7 @@ async function uploadAndWait({ path, filename, contentType }) {
     contentType,
   });
 
-  // PUT raw bytes to the presigned upload_url returned by UniPost.
+  // Upload raw bytes to the presigned upload_url returned by UniPost.
   await fetch(uploadUrl, {
     method: "PUT",
     headers: { "Content-Type": contentType },
@@ -106,21 +107,21 @@ async function uploadAndWait({ path, filename, contentType }) {
   return mediaId;
 }
 
-// Step 1: Reserve and upload the video input.
+// Step 1: Upload the video input.
 const videoMediaId = await uploadAndWait({
   path: "./launch-clip.mp4",
   filename: "launch-clip.mp4",
   contentType: "video/mp4",
 });
 
-// Step 2: Reserve and upload the audio input.
+// Step 2: Upload the audio input.
 const audioMediaId = await uploadAndWait({
   path: "./voiceover.mp3",
   filename: "voiceover.mp3",
   contentType: "audio/mpeg",
 });
 
-// Step 3: Create the audio overlay job.
+// Step 3: Generate the overlay video.
 const job = await client.media.audioOverlays.create({
   videoMediaId,
   audioMediaId,
@@ -132,7 +133,7 @@ const job = await client.media.audioOverlays.create({
   idempotencyKey: "overlay-user-42-launch-clip",
 });
 
-// Step 4: Poll the processing job until it finishes.
+// Poll the processing job until it finishes.
 let current = job;
 while (current.status === "queued" || current.status === "processing") {
   await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -143,7 +144,7 @@ if (current.status !== "succeeded" || !current.outputMediaId) {
   throw new Error(current.error?.message || "Audio overlay failed");
 }
 
-// Step 5: Publish the processed output video.
+// Step 4: Publish the processed video.
 await client.posts.create({
   caption: "Video with custom audio",
   platformPosts: [{
@@ -172,7 +173,7 @@ def upload_and_wait(path: str, content_type: str) -> str:
         content_type=content_type,
     )
 
-    # PUT raw bytes to the presigned upload_url returned by UniPost.
+    # Upload raw bytes to the presigned upload_url returned by UniPost.
     requests.put(
         reservation.upload_url,
         data=file_path.read_bytes(),
@@ -190,13 +191,13 @@ def upload_and_wait(path: str, content_type: str) -> str:
 
     return reservation.media_id
 
-# Step 1: Reserve and upload the video input.
+# Step 1: Upload the video input.
 video_media_id = upload_and_wait("./launch-clip.mp4", "video/mp4")
 
-# Step 2: Reserve and upload the audio input.
+# Step 2: Upload the audio input.
 audio_media_id = upload_and_wait("./voiceover.mp3", "audio/mpeg")
 
-# Step 3: Create the audio overlay job.
+# Step 3: Generate the overlay video.
 job = client.media.audio_overlays.create(
     video_media_id=video_media_id,
     audio_media_id=audio_media_id,
@@ -207,7 +208,7 @@ job = client.media.audio_overlays.create(
     idempotency_key="overlay-user-42-launch-clip",
 )
 
-# Step 4: Poll the processing job until it finishes.
+# Poll the processing job until it finishes.
 while job.status in ("queued", "processing"):
     sleep(1.5)
     job = client.media.audio_overlays.get(job.id)
@@ -215,7 +216,7 @@ while job.status in ("queued", "processing"):
 if job.status != "succeeded" or not job.output_media_id:
     raise RuntimeError(job.error.message if job.error else "Audio overlay failed")
 
-# Step 5: Publish the processed output video.
+# Step 4: Publish the processed video.
 client.posts.create(
     caption="Video with custom audio",
     platform_posts=[
@@ -258,7 +259,7 @@ func uploadAndWait(ctx context.Context, client *unipost.Client, path string, con
     return "", err
   }
 
-  // PUT raw bytes to the presigned upload_url returned by UniPost.
+  // Upload raw bytes to the presigned upload_url returned by UniPost.
   req, err := http.NewRequestWithContext(ctx, http.MethodPut, reserved.UploadURL, bytes.NewReader(data))
   if err != nil {
     return "", err
@@ -298,13 +299,13 @@ func main() {
   ctx := context.Background()
   client := unipost.NewClient()
 
-  // Step 1: Reserve and upload the video input.
+  // Step 1: Upload the video input.
   videoMediaID, err := uploadAndWait(ctx, client, "launch-clip.mp4", "video/mp4")
   if err != nil {
     panic(err)
   }
 
-  // Step 2: Reserve and upload the audio input.
+  // Step 2: Upload the audio input.
   audioMediaID, err := uploadAndWait(ctx, client, "voiceover.mp3", "audio/mpeg")
   if err != nil {
     panic(err)
@@ -313,7 +314,7 @@ func main() {
   videoVolume := int32(35)
   audioVolume := int32(100)
 
-  // Step 3: Create the audio overlay job.
+  // Step 3: Generate the overlay video.
   job, err := client.Media.AudioOverlays.Create(ctx, &unipost.AudioOverlayCreateRequest{
     VideoMediaID: videoMediaID,
     AudioMediaID: audioMediaID,
@@ -326,7 +327,7 @@ func main() {
     panic(err)
   }
 
-  // Step 4: Poll the processing job until it finishes.
+  // Poll the processing job until it finishes.
   for job.Status == "queued" || job.Status == "processing" {
     time.Sleep(1500 * time.Millisecond)
     job, err = client.Media.AudioOverlays.Get(ctx, job.ID)
@@ -338,7 +339,7 @@ func main() {
     panic("audio overlay failed")
   }
 
-  // Step 5: Publish the processed output video.
+  // Step 4: Publish the processed video.
   _, err = client.Posts.Create(ctx, &unipost.CreatePostParams{
     Caption: "Video with custom audio",
     PlatformPosts: []unipost.CreatePostPlatform{{
@@ -383,7 +384,7 @@ String uploadAndWait(String path, String contentType) throws Exception {
         mediaId = reservation.path("id").asText();
     }
 
-    // PUT raw bytes to the presigned upload_url returned by UniPost.
+    // Upload raw bytes to the presigned upload_url returned by UniPost.
     http.send(
         HttpRequest.newBuilder(URI.create(reservation.path("upload_url").asText()))
             .header("Content-Type", contentType)
@@ -405,13 +406,13 @@ String uploadAndWait(String path, String contentType) throws Exception {
     return mediaId;
 }
 
-// Step 1: Reserve and upload the video input.
+// Step 1: Upload the video input.
 String videoMediaId = uploadAndWait("launch-clip.mp4", "video/mp4");
 
-// Step 2: Reserve and upload the audio input.
+// Step 2: Upload the audio input.
 String audioMediaId = uploadAndWait("voiceover.mp3", "audio/mpeg");
 
-// Step 3: Create the audio overlay job.
+// Step 3: Generate the overlay video.
 JsonNode job = client.media().audioOverlays().create(Map.of(
     "video_media_id", videoMediaId,
     "audio_media_id", audioMediaId,
@@ -421,7 +422,7 @@ JsonNode job = client.media().audioOverlays().create(Map.of(
     "fit", "loop_to_video"
 ), "overlay-user-42-launch-clip");
 
-// Step 4: Poll the processing job until it finishes.
+// Poll the processing job until it finishes.
 while (job.path("status").asText().equals("queued") ||
        job.path("status").asText().equals("processing")) {
     Thread.sleep(1500);
@@ -431,7 +432,7 @@ if (!job.path("status").asText().equals("succeeded")) {
     throw new IllegalStateException("Audio overlay failed");
 }
 
-// Step 5: Publish the processed output video.
+// Step 4: Publish the processed video.
 client.posts().create(Map.of(
     "caption", "Video with custom audio",
     "platform_posts", List.of(Map.of(
@@ -485,10 +486,11 @@ export default function VideoAudioOverlayGuidePage() {
           ],
           [
             "Upload the video",
-            "Keep the UI in an upload state until the video is usable. Do not ask the user to calculate file size.",
+            "Keep the UI in an upload state until the video is usable. File size is optional: provide it when your app already knows the byte length, or omit it when your app does not know it yet.",
             <>
-              Reserve with <ApiInlineLink endpoint="POST /v1/media" />, PUT bytes to <code>upload_url</code>, then poll{" "}
-              <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until the media is uploaded.
+              Reserve with <ApiInlineLink endpoint="POST /v1/media" />, upload bytes to the returned <code>upload_url</code>,
+              then poll <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until the media is
+              uploaded. The returned upload_url is not another UniPost JSON endpoint; it is the presigned file upload destination.
             </>,
           ],
           [
@@ -558,32 +560,41 @@ export default function VideoAudioOverlayGuidePage() {
       />
 
       <h2 id="steps">API steps</h2>
-      <ol className="docs-step-list">
-        <li>
-          Reserve a video upload with <ApiInlineLink endpoint="POST /v1/media" />. The request can omit <code>size_bytes</code>;
-          UniPost hydrates size after the upload lands.
-        </li>
-        <li>
-          PUT the raw video bytes to the returned <code>upload_url</code>, then poll{" "}
-          <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until the video is uploaded.
-        </li>
-        <li>
-          Reserve and upload the audio file with the same media upload flow. Keep the returned audio <code>media_id</code> for
-          processing only.
-        </li>
-        <li>
-          Create the audio overlay job with <ApiInlineLink endpoint="POST /v1/media/audio-overlays" />. Use an{" "}
-          <code>Idempotency-Key</code> tied to the user's generate action so browser retries do not create duplicate jobs.
-        </li>
-        <li>
-          Poll <code>GET /v1/media/audio-overlays/&#123;id&#125;</code>. When <code>status</code> is <code>succeeded</code>,
-          read <code>output_media_id</code>.
-        </li>
-        <li>
-          Publish the final video by passing <code>output_media_id</code> in <code>media_ids</code> on{" "}
-          <ApiInlineLink endpoint="POST /v1/posts" />.
-        </li>
-      </ol>
+      <h3 id="step-1-upload-video">Step 1: Upload the video input</h3>
+      <p>
+        Reserve a video upload with <ApiInlineLink endpoint="POST /v1/media" />. File size is optional: provide it when your app
+        already knows the byte length, or omit it when your app does not know it yet. UniPost hydrates <code>size_bytes</code>{" "}
+        after the upload lands.
+      </p>
+      <p>
+        Upload the raw video bytes to the returned <code>upload_url</code>, then poll{" "}
+        <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until the video is uploaded. The returned
+        upload_url is not another UniPost JSON endpoint; it is the presigned destination for the actual file bytes.
+      </p>
+
+      <h3 id="step-2-upload-audio">Step 2: Upload the audio input</h3>
+      <p>
+        Reserve and upload the audio file with the same media upload flow and an audio MIME type such as <code>audio/mpeg</code>{" "}
+        or <code>audio/wav</code>. Keep the returned audio <code>media_id</code> for processing only; do not publish the raw audio
+        media as the post asset.
+      </p>
+
+      <h3 id="step-3-generate-overlay">Step 3: Generate the overlay video</h3>
+      <p>
+        Create the audio overlay job with <ApiInlineLink endpoint="POST /v1/media/audio-overlays" />. Use <code>mode: "mix"</code>{" "}
+        to keep some original video sound, or <code>mode: "replace"</code> to remove the original sound. Use an{" "}
+        <code>Idempotency-Key</code> tied to the user's generate action so browser retries do not create duplicate jobs.
+      </p>
+      <p>
+        Poll <code>GET /v1/media/audio-overlays/&#123;id&#125;</code>. When <code>status</code> is <code>succeeded</code>, read{" "}
+        <code>output_media_id</code>. That media ID points to the processed video that already contains the requested audio.
+      </p>
+
+      <h3 id="step-4-publish-post">Step 4: Publish the processed video</h3>
+      <p>
+        Publish the final video by passing <code>output_media_id</code> in <code>media_ids</code> on{" "}
+        <ApiInlineLink endpoint="POST /v1/posts" />. From the publish API's perspective, this is a regular video media asset.
+      </p>
 
       <h2 id="example">Example workflow</h2>
       <DocsCodeTabs snippets={WORKFLOW_SNIPPETS} />
