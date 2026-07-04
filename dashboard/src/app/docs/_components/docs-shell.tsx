@@ -502,6 +502,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           children: [
             { label: "Reserve upload", href: "/docs/api/media/reserve", method: "POST" },
             { label: "Get media", href: "/docs/api/media/get", method: "GET" },
+            { label: "Create audio overlay", href: "/docs/api/media/audio-overlays", method: "POST" },
           ],
         },
       ],

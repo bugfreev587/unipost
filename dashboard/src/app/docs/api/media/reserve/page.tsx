@@ -8,8 +8,8 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "filename", type: "string", description: "Original file name for the asset." },
-  { name: "content_type", type: "string", description: "MIME type such as image/jpeg or video/mp4." },
-  { name: "size_bytes", type: "number", description: <>Required upload size in bytes. Must be greater than <code>0</code>; use the raw file byte length before calling this endpoint. If the asset already has a public URL, skip <ApiInlineLink endpoint="POST /v1/media" /> and send that URL in <code>platform_posts[].media_urls</code> on <ApiInlineLink endpoint="POST /v1/posts" />.</> },
+  { name: "content_type", type: "string", description: <>MIME type such as <code>image/jpeg</code>, <code>video/mp4</code>, or <code>audio/mpeg</code>. Audio uploads are accepted as media-processing inputs; publish the processed video output, not the raw audio media ID.</> },
+  { name: "size_bytes?", type: "number", description: <>Optional upload size in bytes. If provided, it must be greater than <code>0</code>. If your client does not know the byte length yet, omit <code>size_bytes</code>; UniPost hydrates the actual size from storage after upload. If the asset already has a public URL, skip <ApiInlineLink endpoint="POST /v1/media" /> and send that URL in <code>platform_posts[].media_urls</code> on <ApiInlineLink endpoint="POST /v1/posts" />.</> },
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "media_id", type: "string", description: "Media library ID to use in later publish calls." },
@@ -31,8 +31,7 @@ const SNIPPETS = [
   -H "Content-Type: application/json" \\
   -d '{
     "filename": "photo.jpg",
-    "content_type": "image/jpeg",
-    "size_bytes": 284192
+    "content_type": "image/jpeg"
   }'`,
   },
   {
@@ -47,7 +46,6 @@ const fileBuffer = await readFile("photo.jpg");
 const { mediaId, uploadUrl } = await client.media.upload({
   filename: "photo.jpg",
   contentType: "image/jpeg",
-  sizeBytes: fileBuffer.byteLength,
 });
 
 await fetch(uploadUrl, {
@@ -79,7 +77,6 @@ client = UniPost()
 reservation = client.media.upload(
   filename="photo.jpg",
   content_type="image/jpeg",
-  size_bytes=284192,
 )
 
 with open("photo.jpg", "rb") as f:
@@ -110,7 +107,6 @@ func main() {
   reservation, err := client.Media.Upload(context.Background(), &unipost.MediaUploadRequest{
     Filename:    "photo.jpg",
     ContentType: "image/jpeg",
-    SizeBytes:   284192,
   })
   if err != nil {
     log.Fatal(err)
@@ -138,8 +134,7 @@ UniPost client = new UniPost();
 
 var reservation = client.media().upload(Map.of(
     "filename", "photo.jpg",
-    "content_type", "image/jpeg",
-    "size_bytes", 284192
+    "content_type", "image/jpeg"
 ));
 
 var mediaId = reservation.get("media_id").asText();
@@ -187,12 +182,12 @@ const RESPONSE_SNIPPETS = [
   "error": {
     "code": "VALIDATION_ERROR",
     "normalized_code": "validation_error",
-    "message": "size_bytes must be greater than 0 when reserving an upload with POST /v1/media. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts.",
+    "message": "size_bytes, when provided, must be greater than 0 when reserving an upload with POST /v1/media. If you do not know the raw byte length yet, omit size_bytes; UniPost will hydrate it from storage after upload.",
     "issues": [
       {
         "field": "size_bytes",
-        "code": "missing_required",
-        "message": "size_bytes must be greater than 0 when reserving an upload with POST /v1/media. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts.",
+        "code": "below_min_length",
+        "message": "size_bytes, when provided, must be greater than 0 when reserving an upload with POST /v1/media. If you do not know the raw byte length yet, omit size_bytes; UniPost will hydrate it from storage after upload.",
         "actual": 0,
         "limit": 1,
         "severity": "error"
@@ -227,6 +222,11 @@ export default function ReserveMediaPage() {
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
     >
+      <InfoBox>
+        <strong>Size is optional:</strong> clients no longer need to calculate file length before reserving an upload.
+        When <code>size_bytes</code> is omitted, the pending media response can show <code>size_bytes: 0</code>;
+        <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> returns the hydrated size after the PUT lands.
+      </InfoBox>
       <InfoBox>
         <strong>TikTok file_upload note:</strong> upload the complete video file to UniPost with this
         endpoint, then publish with <code>media_ids</code>. UniPost handles TikTok&apos;s downstream
