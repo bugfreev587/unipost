@@ -393,6 +393,15 @@ func (h *MediaHandler) tryHydrate(r *http.Request, row db.Media) (db.Media, bool
 	return hydrateMediaRow(r.Context(), h.queries, h.storage, row)
 }
 
+type mediaHydrationQueries interface {
+	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
+}
+
+type mediaHydrationStorage interface {
+	Head(context.Context, string) (storage.HeadResult, error)
+	ProbeVideo(context.Context, string) (storage.VideoMetadata, error)
+}
+
 // hydrateMediaRow is the publish-path equivalent of an R2 upload-
 // complete webhook. HEAD the object; on a successful response, copy
 // the authoritative size + content type from R2 into the row and flip
@@ -409,10 +418,11 @@ func (h *MediaHandler) tryHydrate(r *http.Request, row db.Media) (db.Media, bool
 // tryHydrate that lived inline on MediaHandler.
 //
 // Lives at package scope (not on MediaHandler) so the publish path's
-// resolveMediaIDsToURLs can call it with its own *db.Queries +
-// *storage.Client without coupling to the media handler.
-func hydrateMediaRow(ctx context.Context, q *db.Queries, s *storage.Client, row db.Media) (db.Media, bool) {
-	if s == nil {
+// resolveMediaIDsToURLs and other media input flows can call it with
+// their own query + storage dependencies without coupling to the media
+// handler.
+func hydrateMediaRow(ctx context.Context, q mediaHydrationQueries, s mediaHydrationStorage, row db.Media) (db.Media, bool) {
+	if q == nil || s == nil {
 		return row, false
 	}
 	head, err := s.Head(ctx, row.StorageKey)

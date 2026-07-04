@@ -130,6 +130,83 @@ func TestCreateAudioOverlayJobIdempotencyConflict(t *testing.T) {
 	}
 }
 
+func TestCreateAudioOverlayJobLazyHydratesPendingInputs(t *testing.T) {
+	store := newFakeAudioOverlayQueries()
+	store.media["med_video"] = overlayMediaWithStatus(store.media["med_video"], "pending")
+	store.media["med_audio"] = overlayMediaWithStatus(store.media["med_audio"], "pending")
+	objectStore := &fakeAudioOverlayObjectStore{
+		heads: map[string]storage.HeadResult{
+			"media/vid.mp4":   {Exists: true, ContentType: "video/mp4", SizeBytes: 41_000_000},
+			"media/audio.mp3": {Exists: true, ContentType: "audio/mpeg", SizeBytes: 6_000_000},
+		},
+		videoMeta: map[string]storage.VideoMetadata{
+			"media/vid.mp4": {Width: 1080, Height: 1920, DurationMS: 31_000},
+		},
+	}
+	h := NewMediaAudioOverlayHandler(store, objectStore)
+
+	rr := httptest.NewRecorder()
+	h.Create(rr, audioOverlayRequest(t, `{"video_media_id":"med_video","audio_media_id":"med_audio"}`))
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body: %s", rr.Code, rr.Body.String())
+	}
+	if len(store.markUploadedParams) != 2 {
+		t.Fatalf("MarkMediaUploaded calls = %d, want 2", len(store.markUploadedParams))
+	}
+	if len(store.createParams) != 1 {
+		t.Fatalf("CreateMediaProcessingJob calls = %d, want 1", len(store.createParams))
+	}
+	if got := store.media["med_video"]; got.Status != "uploaded" || got.SizeBytes != 41_000_000 || got.DurationMs.Int32 != 31_000 {
+		t.Fatalf("hydrated video = %#v, want uploaded row with R2 metadata", got)
+	}
+	if got := store.media["med_audio"]; got.Status != "uploaded" || got.SizeBytes != 6_000_000 {
+		t.Fatalf("hydrated audio = %#v, want uploaded row with R2 metadata", got)
+	}
+}
+
+func TestCreateAudioOverlayJobPendingInputWithoutObjectReturnsMediaNotUploaded(t *testing.T) {
+	store := newFakeAudioOverlayQueries()
+	store.media["med_audio"] = overlayMediaWithStatus(store.media["med_audio"], "pending")
+	h := NewMediaAudioOverlayHandler(store, &fakeAudioOverlayObjectStore{heads: map[string]storage.HeadResult{
+		"media/vid.mp4": {Exists: true, ContentType: "video/mp4", SizeBytes: 40_000_000},
+	}})
+
+	rr := httptest.NewRecorder()
+	h.Create(rr, audioOverlayRequest(t, `{"video_media_id":"med_video","audio_media_id":"med_audio"}`))
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body: %s", rr.Code, rr.Body.String())
+	}
+	if len(store.createParams) != 0 {
+		t.Fatalf("CreateMediaProcessingJob calls = %d, want 0", len(store.createParams))
+	}
+	var got ErrorResponse
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if len(got.Error.Issues) != 1 {
+		t.Fatalf("issues = %#v, want one media_not_uploaded issue", got.Error.Issues)
+	}
+	issue := got.Error.Issues[0]
+	if issue.Code != "media_not_uploaded" || issue.Field != "audio_media_id" {
+		t.Fatalf("issue = %#v, want audio media_not_uploaded", issue)
+	}
+	actual, ok := issue.Actual.(map[string]any)
+	if !ok {
+		t.Fatalf("issue actual = %#v, want structured details", issue.Actual)
+	}
+	if actual["media_id"] != "med_audio" || actual["media_status"] != "pending" {
+		t.Fatalf("issue actual media details = %#v, want pending med_audio", actual)
+	}
+	if actual["next_step"] != "PUT bytes to upload_url, then poll GET /v1/media/{media_id} until status=uploaded" {
+		t.Fatalf("next_step = %#v, want upload/poll guidance", actual["next_step"])
+	}
+	if actual["docs_url"] != "https://unipost.dev/docs/api/media/reserve" {
+		t.Fatalf("docs_url = %#v, want reserve docs", actual["docs_url"])
+	}
+}
+
 func TestCreateAudioOverlayJobRejectsInvalidInputs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -222,6 +299,7 @@ type fakeAudioOverlayQueries struct {
 	media                 map[string]db.Media
 	createParams          []db.CreateMediaProcessingJobParams
 	cleanupParams         []db.ScheduleMediaCleanupParams
+	markUploadedParams    []db.MarkMediaUploadedParams
 	existingByIdempotency *db.MediaProcessingJob
 	jobByID               db.MediaProcessingJob
 }
@@ -284,9 +362,27 @@ func (f *fakeAudioOverlayQueries) ScheduleMediaCleanup(_ context.Context, arg db
 	return nil
 }
 
+func (f *fakeAudioOverlayQueries) MarkMediaUploaded(_ context.Context, arg db.MarkMediaUploadedParams) (db.Media, error) {
+	f.markUploadedParams = append(f.markUploadedParams, arg)
+	row, ok := f.media[arg.ID]
+	if !ok {
+		return db.Media{}, pgx.ErrNoRows
+	}
+	row.Status = "uploaded"
+	row.SizeBytes = arg.SizeBytes
+	row.ContentType = arg.ContentType
+	row.Width = arg.Width
+	row.Height = arg.Height
+	row.DurationMs = arg.DurationMs
+	row.UploadedAt = pgtype.Timestamptz{Time: time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC), Valid: true}
+	f.media[arg.ID] = row
+	return row, nil
+}
+
 type fakeAudioOverlayObjectStore struct {
-	heads map[string]storage.HeadResult
-	err   error
+	heads     map[string]storage.HeadResult
+	videoMeta map[string]storage.VideoMetadata
+	err       error
 }
 
 func (f *fakeAudioOverlayObjectStore) Head(_ context.Context, key string) (storage.HeadResult, error) {
@@ -298,6 +394,21 @@ func (f *fakeAudioOverlayObjectStore) Head(_ context.Context, key string) (stora
 		return storage.HeadResult{}, nil
 	}
 	return head, nil
+}
+
+func (f *fakeAudioOverlayObjectStore) ProbeVideo(_ context.Context, key string) (storage.VideoMetadata, error) {
+	if f.err != nil {
+		return storage.VideoMetadata{}, f.err
+	}
+	return f.videoMeta[key], nil
+}
+
+func overlayMediaWithStatus(row db.Media, status string) db.Media {
+	row.Status = status
+	if status == "pending" {
+		row.UploadedAt = pgtype.Timestamptz{}
+	}
+	return row
 }
 
 func overlayJobFromParams(arg db.CreateMediaProcessingJobParams) db.MediaProcessingJob {

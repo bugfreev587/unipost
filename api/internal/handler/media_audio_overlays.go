@@ -41,6 +41,7 @@ const (
 
 type mediaAudioOverlayQueries interface {
 	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
+	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
 	GetMediaProcessingJobByIdempotencyKey(context.Context, db.GetMediaProcessingJobByIdempotencyKeyParams) (db.MediaProcessingJob, error)
 	CreateMediaProcessingJob(context.Context, db.CreateMediaProcessingJobParams) (db.MediaProcessingJob, error)
 	GetMediaProcessingJobByIDAndWorkspace(context.Context, db.GetMediaProcessingJobByIDAndWorkspaceParams) (db.MediaProcessingJob, error)
@@ -49,6 +50,7 @@ type mediaAudioOverlayQueries interface {
 
 type mediaAudioOverlayObjectStore interface {
 	Head(context.Context, string) (storage.HeadResult, error)
+	ProbeVideo(context.Context, string) (storage.VideoMetadata, error)
 }
 
 type MediaAudioOverlayHandler struct {
@@ -301,12 +303,15 @@ func (h *MediaAudioOverlayHandler) loadAndValidateInputs(w http.ResponseWriter, 
 		return db.Media{}, db.Media{}, false
 	}
 
+	video = h.hydratePendingOverlayMedia(r, video)
+	audio = h.hydratePendingOverlayMedia(r, audio)
+
 	if !isUsableOverlayMediaStatus(video.Status) {
-		writeAudioOverlayValidationError(w, []platform.Issue{audioOverlayIssue("video_media_id", "media_not_uploaded", "video_media_id must reference uploaded media")})
+		writeAudioOverlayValidationError(w, []platform.Issue{audioOverlayMediaNotUploadedIssue("video_media_id", video)})
 		return db.Media{}, db.Media{}, false
 	}
 	if !isUsableOverlayMediaStatus(audio.Status) {
-		writeAudioOverlayValidationError(w, []platform.Issue{audioOverlayIssue("audio_media_id", "media_not_uploaded", "audio_media_id must reference uploaded media")})
+		writeAudioOverlayValidationError(w, []platform.Issue{audioOverlayMediaNotUploadedIssue("audio_media_id", audio)})
 		return db.Media{}, db.Media{}, false
 	}
 	if MediaKind := platform.MediaFromContentType(video.ContentType).Kind; MediaKind != platform.MediaKindVideo {
@@ -335,6 +340,17 @@ func (h *MediaAudioOverlayHandler) loadAndValidateInputs(w http.ResponseWriter, 
 		return db.Media{}, db.Media{}, false
 	}
 	return video, audio, true
+}
+
+func (h *MediaAudioOverlayHandler) hydratePendingOverlayMedia(r *http.Request, row db.Media) db.Media {
+	if row.Status != "pending" {
+		return row
+	}
+	hydrated, ok := hydrateMediaRow(r.Context(), h.queries, h.objectStore, row)
+	if !ok {
+		return row
+	}
+	return hydrated
 }
 
 func (h *MediaAudioOverlayHandler) loadOverlayMedia(w http.ResponseWriter, r *http.Request, workspaceID, mediaID, field string) (db.Media, bool) {
@@ -445,6 +461,17 @@ func audioOverlayIssue(field, code, message string) platform.Issue {
 		Message:  message,
 		Severity: platform.SeverityError,
 	}
+}
+
+func audioOverlayMediaNotUploadedIssue(field string, media db.Media) platform.Issue {
+	issue := audioOverlayIssue(field, "media_not_uploaded", field+" must reference uploaded media")
+	issue.Actual = map[string]any{
+		"media_id":     media.ID,
+		"media_status": media.Status,
+		"next_step":    "PUT bytes to upload_url, then poll GET /v1/media/{media_id} until status=uploaded",
+		"docs_url":     "https://unipost.dev/docs/api/media/reserve",
+	}
+	return issue
 }
 
 func audioOverlayFormatBytes(size int64) string {
