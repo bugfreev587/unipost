@@ -450,6 +450,7 @@ func main() {
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
 	platformHandler := handler.NewPlatformHandler(queries)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
+	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
 	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
 	adminSearchHistoryHandler := handler.NewAdminSearchHistoryHandler(queries, superAdminChecker)
@@ -820,6 +821,8 @@ func main() {
 		// Media — two-step upload (POST returns presigned URL, client
 		// PUTs to R2 directly), then reference the media_id in
 		// platform_posts[].media_ids on subsequent /v1/posts.
+		r.Post("/v1/media/audio-overlays", mediaAudioOverlayHandler.Create)
+		r.Get("/v1/media/audio-overlays/{id}", mediaAudioOverlayHandler.Get)
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)
