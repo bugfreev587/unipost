@@ -47,6 +47,23 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "audio-overlay-api",
+    date: "2026-07-03",
+    displayDate: "July 3, 2026",
+    title: "Audio overlay API for media processing",
+    summary: "Added audio overlay job API to process custom audio overlays on media files.",
+    category: "api",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit d31bbf8", href: "https://github.com/bugfreev587/unipost/commit/d31bbf8f235cf20f3e1cc66497c2778f77554b85" },
+    { label: "Commit 58a21ab", href: "https://github.com/bugfreev587/unipost/commit/58a21ab2e26b76a758745e5d4e4c1cba3593f201" },
+    { label: "Commit 6ab75e3", href: "https://github.com/bugfreev587/unipost/commit/6ab75e3b4373756bdd25ce43e1f0704b2ccdcdab" },
+    { label: "Commit 0c4b013", href: "https://github.com/bugfreev587/unipost/commit/0c4b0134b43f0cc6315622af55ba5b64812031c4" },
+  ],
+  },
+  {
     id: "video-audio-overlay-api",
     date: "2026-07-04",
     displayDate: "July 4, 2026",
