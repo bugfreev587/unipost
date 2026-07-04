@@ -221,9 +221,10 @@ const (
 	CodeThreadMixedWithSingle        = "thread_mixed_with_single"
 
 	// Sprint 2 media library codes.
-	CodeMediaIDNotFound       = "media_id_not_found"
-	CodeMediaIDNotInWorkspace = "media_id_not_in_workspace"
-	CodeMediaNotUploaded      = "media_not_uploaded"
+	CodeMediaIDNotFound          = "media_id_not_found"
+	CodeMediaIDNotInWorkspace    = "media_id_not_in_workspace"
+	CodeMediaNotUploaded         = "media_not_uploaded"
+	CodeAudioMediaNotPublishable = "audio_media_not_publishable"
 
 	// Sprint 4 PR3: first_comment field codes.
 	CodeFirstCommentUnsupported         = "first_comment_unsupported"
@@ -1461,6 +1462,24 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 			}
 
 			kind := MediaFromContentType(m.ContentType).Kind
+			if kind == MediaKindAudio {
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "media_ids",
+					Code:              CodeAudioMediaNotPublishable,
+					Message:           "media_id " + mid + " is an audio asset. Audio media can be used as a media processing input but cannot be published directly; use the processed video media_id instead.",
+					Actual: map[string]any{
+						"media_id":      mid,
+						"content_type":  m.ContentType,
+						"next_step":     "create an audio overlay job and publish the output video media_id",
+						"overlay_route": "POST /v1/media/audio-overlays",
+					},
+					Severity: SeverityError,
+				})
+				continue
+			}
 			allowedFormats := mediaAllowedFormats(kind, cap)
 			if len(allowedFormats) > 0 && !intersectsFormats(contentTypeFormats(m.ContentType), allowedFormats) {
 				label := mediaLabel(kind)

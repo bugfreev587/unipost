@@ -55,6 +55,7 @@ func TestAllowedMimeTypes(t *testing.T) {
 	required := []string{
 		"image/jpeg", "image/png", "image/webp", "image/gif",
 		"video/mp4", "video/quicktime", "video/webm",
+		"audio/mpeg", "audio/wav", "audio/x-wav", "audio/aac", "audio/mp4", "audio/x-m4a",
 	}
 	for _, m := range required {
 		if !allowedMimeTypes[m] {
@@ -63,7 +64,17 @@ func TestAllowedMimeTypes(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsMissingSizeWithActionableIssue(t *testing.T) {
+func TestMediaCreateSizeBytesAllowsOmittedSize(t *testing.T) {
+	got, ok := mediaCreateSizeBytes(nil)
+	if !ok {
+		t.Fatal("omitted size_bytes should be accepted")
+	}
+	if got != 0 {
+		t.Fatalf("size = %d, want 0 until storage hydration", got)
+	}
+}
+
+func TestCreateRejectsExplicitNonPositiveSizeWithActionableIssue(t *testing.T) {
 	h := NewMediaHandler(nil, &storage.Client{})
 	body := strings.NewReader(`{"filename":"photo.jpg","content_type":"image/jpeg","size_bytes":0}`)
 	req := httptest.NewRequest(http.MethodPost, "/v1/media", body)
@@ -90,13 +101,13 @@ func TestCreateRejectsMissingSizeWithActionableIssue(t *testing.T) {
 		t.Fatalf("issues = %#v, want one structured issue", got.Error.Issues)
 	}
 	issue := got.Error.Issues[0]
-	if issue.Field != "size_bytes" || issue.Code != platform.CodeMissingRequired {
-		t.Fatalf("issue = %#v, want missing_required size_bytes issue", issue)
+	if issue.Field != "size_bytes" || issue.Code != platform.CodeBelowMinLength {
+		t.Fatalf("issue = %#v, want below_min_length size_bytes issue", issue)
 	}
 	if issue.Actual != float64(0) || issue.Limit != float64(1) {
 		t.Fatalf("issue actual/limit = %#v/%#v, want 0/1", issue.Actual, issue.Limit)
 	}
-	if !strings.Contains(issue.Message, "platform_posts[].media_urls") {
-		t.Fatalf("issue message = %q, want create-post media_urls guidance", issue.Message)
+	if !strings.Contains(issue.Message, "omit size_bytes") {
+		t.Fatalf("issue message = %q, want optional size guidance", issue.Message)
 	}
 }
