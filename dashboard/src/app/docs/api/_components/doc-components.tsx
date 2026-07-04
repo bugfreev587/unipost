@@ -101,6 +101,7 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^PATCH \/v1\/webhooks\/[^/]+$/i, href: "/docs/api/webhooks/update" },
   { match: /^DELETE \/v1\/webhooks\/[^/]+$/i, href: "/docs/api/webhooks/get" },
   { match: /^POST \/v1\/webhooks\/[^/]+\/rotate$/i, href: "/docs/api/webhooks/rotate" },
+  { match: /^POST \/v1\/media\/audio-overlays$/i, href: "/docs/api/media/audio-overlays" },
   { match: /^POST \/v1\/media$/i, href: "/docs/api/media" },
   { match: /^GET \/v1\/users/i, href: "/docs/api/users" },
   // Legacy workspace-scoped Platform Credentials paths.

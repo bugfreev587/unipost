@@ -40,6 +40,10 @@ test("changelog data keeps verified release metadata and SDK ecosystem fields", 
   assert.match(releases, /dev\.unipost:sdk-java:0\.4\.0/);
   assert.doesNotMatch(releases, /@unipost\/sdk-js/);
   assert.match(releases, /sourceLinks/);
+  assert.match(releases, /video-audio-overlay-api/);
+  assert.match(releases, /Video \+ audio overlay API/);
+  assert.match(releases, /\/docs\/api\/media\/audio-overlays/);
+  assert.match(releases, /\/docs\/guides\/video-audio-overlay/);
   assert.match(releases, /Developer Logs API/);
   assert.match(releases, /Agent Debug Kit/);
   assert.match(releases, /Local Connect testing/);

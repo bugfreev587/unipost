@@ -50,6 +50,24 @@ func TestTeamPlanUnlimitedPostsMigrationExists(t *testing.T) {
 	}
 }
 
+func TestMediaProcessingJobsMigrationPreservesMediaCleanup(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/096_media_processing_jobs.sql")
+	if err != nil {
+		t.Fatalf("read media processing jobs migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	if !strings.Contains(sql, "create table media_processing_jobs") {
+		t.Fatalf("media processing jobs migration should create table, got:\n%s", string(body))
+	}
+	if strings.Contains(sql, "references media(") || strings.Contains(sql, "references media (") {
+		t.Fatalf("media processing jobs must not add media(id) foreign keys; media cleanup hard-deletes rows, got:\n%s", string(body))
+	}
+	if !strings.Contains(sql, "idempotency_key") || !strings.Contains(sql, "request_hash") {
+		t.Fatalf("media processing jobs migration should include idempotency fields, got:\n%s", string(body))
+	}
+}
+
 func TestPostgresDoBlocksAreGooseStatementBlocks(t *testing.T) {
 	err := fs.WalkDir(migrations, "migrations", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

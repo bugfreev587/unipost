@@ -8,6 +8,7 @@ export type ToolIconKey =
   | "agentpost"
   | "character-counter"
   | "tiktok"
+  | "youtube"
   | "instagram"
   | "threads"
   | "pinterest";
@@ -53,7 +54,7 @@ export function ToolCard({ tool }: { tool: ToolCardData }) {
 
 function ToolIcon({ icon }: { icon: ToolIconKey }) {
   const Icon = ICONS[icon] || BarChart3;
-  if (icon === "tiktok" || icon === "instagram" || icon === "threads" || icon === "pinterest") {
+  if (icon === "tiktok" || icon === "youtube" || icon === "instagram" || icon === "threads" || icon === "pinterest") {
     return <PlatformIcon platform={icon} size={24} />;
   }
   return <Icon aria-hidden="true" />;

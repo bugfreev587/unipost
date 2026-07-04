@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -94,6 +95,42 @@ func (c *Client) PutObject(ctx context.Context, key string, body io.Reader, cont
 		return fmt.Errorf("storage: put object: %w", err)
 	}
 	return nil
+}
+
+func (c *Client) DownloadObject(ctx context.Context, key, dstPath string) error {
+	if c == nil {
+		return ErrNotConfigured
+	}
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: get object %s: %w", key, err)
+	}
+	defer out.Body.Close()
+
+	dst, err := os.Create(dstPath)
+	if err != nil {
+		return fmt.Errorf("storage: create destination %s: %w", dstPath, err)
+	}
+	defer dst.Close()
+	if _, err := io.Copy(dst, out.Body); err != nil {
+		return fmt.Errorf("storage: write destination %s: %w", dstPath, err)
+	}
+	return nil
+}
+
+func (c *Client) PutFile(ctx context.Context, key, srcPath, contentType, cacheControl string) error {
+	if c == nil {
+		return ErrNotConfigured
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return fmt.Errorf("storage: open source %s: %w", srcPath, err)
+	}
+	defer src.Close()
+	return c.PutObject(ctx, key, src, contentType, cacheControl)
 }
 
 // PresignPut returns a presigned URL the client can PUT bytes to.

@@ -47,6 +47,27 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "video-audio-overlay-api",
+    date: "2026-07-04",
+    displayDate: "July 4, 2026",
+    title: "Video + audio overlay API",
+    summary:
+      "The Media API now creates asynchronous audio overlay jobs that combine one uploaded video with one uploaded audio file, then return a processed video media ID that can be published like any other UniPost video.",
+    category: "api",
+    impact: "new",
+    isBreaking: false,
+    links: [
+      { label: "Create audio overlay API", href: "/docs/api/media/audio-overlays" },
+      { label: "Video + audio overlay guide", href: "/docs/guides/video-audio-overlay" },
+    ],
+    sourceLinks: [
+      { label: "Job API", href: "https://github.com/bugfreev587/unipost/commit/58a21ab2e26b76a758745e5d4e4c1cba3593f201" },
+      { label: "Processing worker", href: "https://github.com/bugfreev587/unipost/commit/d31bbf8f235cf20f3e1cc66497c2778f77554b85" },
+      { label: "API docs", href: "https://github.com/bugfreev587/unipost/commit/76597bb694d548bd0a54755b1cede3dd3590aa5f" },
+      { label: "Deploy runtime", href: "https://github.com/bugfreev587/unipost/commit/02a8ae11d907dbfe22f040e64fb061e32846e1e9" },
+    ],
+  },
+  {
     id: "cli-0-3-1-agent-context-auth-reuse",
     date: "2026-06-18",
     displayDate: "June 18, 2026",

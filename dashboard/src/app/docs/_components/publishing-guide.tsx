@@ -481,7 +481,7 @@ export function PublishingInputModeCards() {
         <p>
           Use this when your app has raw file bytes. Reserve media, PUT the bytes,
           poll until uploaded, then publish with <code>platform_posts[].media_ids</code>.
-          The reservation requires <code>size_bytes</code> greater than <code>0</code>.
+          You can omit <code>size_bytes</code>; UniPost hydrates the actual size after upload.
         </p>
         <a className="docs-decision-link" href="#local-file-flow">
           See the 7-step flow

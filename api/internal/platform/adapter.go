@@ -21,6 +21,7 @@ const (
 	MediaKindImage   MediaKind = "image"
 	MediaKindVideo   MediaKind = "video"
 	MediaKindGIF     MediaKind = "gif"
+	MediaKindAudio   MediaKind = "audio"
 	MediaKindUnknown MediaKind = ""
 )
 
@@ -80,6 +81,8 @@ func MediaFromContentType(contentType string) MediaItem {
 	switch {
 	case strings.HasPrefix(ct, "video/"):
 		return MediaItem{Kind: MediaKindVideo}
+	case strings.HasPrefix(ct, "audio/"):
+		return MediaItem{Kind: MediaKindAudio}
 	case ct == "image/gif":
 		return MediaItem{Kind: MediaKindGIF}
 	case strings.HasPrefix(ct, "image/"):

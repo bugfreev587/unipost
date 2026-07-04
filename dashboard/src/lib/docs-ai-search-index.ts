@@ -61,7 +61,7 @@ export type GroundedDocsAnswer = {
   coverage_reason?: string;
 };
 
-const LAST_INDEXED_AT = "2026-06-19T00:00:00.000Z";
+const LAST_INDEXED_AT = "2026-07-04T00:00:00.000Z";
 
 function chunk(input: Omit<DocsAiChunk, "last_indexed_at">): DocsAiChunk {
   return { ...input, last_indexed_at: LAST_INDEXED_AT };
@@ -309,6 +309,44 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     platforms: ALL_PUBLISH_PLATFORMS,
     content:
       "After an account is connected, publish by creating posts with connected account ids in platform_posts or account_ids. For local files, upload media with POST /v1/media, then publish with media_ids. TikTok publishing requires video or image carousel media and uses platform_options.tiktok for privacy and upload controls.",
+  }),
+  chunk({
+    id: "guide-video-audio-overlay",
+    title: "Overlay user audio onto a video",
+    path: "/docs/guides/video-audio-overlay",
+    section_id: "steps",
+    primary_nav: "Guides",
+    section_title: "API steps",
+    product_area: "publishing",
+    tags: [
+      "audio overlay",
+      "custom audio",
+      "combine video and audio",
+      "video audio",
+      "media processing",
+      "upload audio",
+      "voiceover",
+      "music",
+      "sdk 0.5.0",
+      "size_bytes",
+      "sizeBytes",
+      "tiktok",
+      "instagram",
+    ],
+    intent_tags: ["posting"],
+    endpoint_aliases: [
+      "POST /v1/media",
+      "GET /v1/media/{media_id}",
+      "GET /v1/media/:media_id",
+      "POST /v1/media/audio-overlays",
+      "GET /v1/media/audio-overlays/{id}",
+      "GET /v1/media/audio-overlays/:id",
+      "POST /v1/posts",
+      "/v1/media/audio-overlays",
+    ],
+    platforms: ALL_PUBLISH_PLATFORMS,
+    content:
+      "Use the Video + audio overlay guide when a user uploads one video file and one separate audio file, such as narration, music, or voiceover. Use UniPost SDK version 0.5.0 or later because official SDKs starting in 0.5.0 no longer force callers to provide sizeBytes or size_bytes when reserving uploads with POST /v1/media. File size is optional: send it when the app already knows the byte length, or omit it when the app does not know it yet. Step 1: upload the video input with POST /v1/media, upload bytes to upload_url, then poll GET /v1/media/{media_id}; upload_url is a presigned file upload destination, not another UniPost JSON endpoint. Step 2: upload the audio input with the same flow. Step 3: generate the overlay video by calling POST /v1/media/audio-overlays with video_media_id, audio_media_id, mode mix or replace, optional volumes, and fit trim_to_video or loop_to_video, then poll GET /v1/media/audio-overlays/{id} until status is succeeded. Step 4: publish output_media_id as a normal video media_id with POST /v1/posts. This is not platform music-library attachment for image or carousel posts; UniPost creates a processed video output before publishing.",
   }),
   chunk({
     id: "analytics-guide-tiktok-followers",

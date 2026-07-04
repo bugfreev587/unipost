@@ -10,6 +10,10 @@ export default function GuidesIndexPage() {
       className="docs-page-wide"
     >
       <div className="docs-grid">
+        <Link href="/docs/guides/video-audio-overlay" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Video + audio overlay</div>
+          <p>Upload a user's video and audio, generate a combined video, then publish the processed output.</p>
+        </Link>
         <Link href="/docs/guides/analytics" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Analytics guides</div>
           <p>Get account metrics, TikTok followers, UniPost-published post analytics, exports, and reconnect guidance.</p>
@@ -32,6 +36,13 @@ export default function GuidesIndexPage() {
       <p>
         Guides answer workflow questions first, then link back to API Reference for exact request, response, and error details.
         If you already know the endpoint, start in <Link href="/docs/api">API Reference</Link>.
+      </p>
+
+      <h2 id="start-with-publishing">Start with publishing workflows</h2>
+      <p>
+        If a user brings their own video and audio files, start with{" "}
+        <Link href="/docs/guides/video-audio-overlay">Video + audio overlay</Link>. It shows how the upload, processing,
+        and publish APIs fit together from the user's point of view.
       </p>
 
       <h2 id="start-with-analytics">Start with Analytics</h2>

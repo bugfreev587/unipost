@@ -404,6 +404,32 @@ type Media struct {
 	DurationMs     pgtype.Int4        `json:"duration_ms"`
 }
 
+type MediaProcessingJob struct {
+	ID                string             `json:"id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Kind              string             `json:"kind"`
+	Status            string             `json:"status"`
+	InputVideoMediaID string             `json:"input_video_media_id"`
+	InputAudioMediaID string             `json:"input_audio_media_id"`
+	OutputMediaID     pgtype.Text        `json:"output_media_id"`
+	Mode              string             `json:"mode"`
+	Fit               string             `json:"fit"`
+	VideoVolume       int32              `json:"video_volume"`
+	AudioVolume       int32              `json:"audio_volume"`
+	AudioStartMs      int32              `json:"audio_start_ms"`
+	Request           []byte             `json:"request"`
+	IdempotencyKey    pgtype.Text        `json:"idempotency_key"`
+	RequestHash       pgtype.Text        `json:"request_hash"`
+	ErrorCode         pgtype.Text        `json:"error_code"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	Retryable         bool               `json:"retryable"`
+	Attempts          int32              `json:"attempts"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+}
+
 type MetaUserToken struct {
 	WorkspaceID             string             `json:"workspace_id"`
 	MetaUserID              string             `json:"meta_user_id"`
