@@ -370,7 +370,14 @@ export interface ApiFieldItem {
   type?: string;
   description: React.ReactNode;
   meta?: string;
+  defaultValue?: React.ReactNode;
+  optional?: boolean;
 }
+
+export type ApiGuideLink = {
+  label: string;
+  href: string;
+};
 
 export function EnumValues({
   values,
@@ -1339,12 +1346,14 @@ export function ApiReferencePage({
   section: _section,
   title,
   description,
+  guideLinks = [],
   children,
 }: {
   breadcrumbItems?: { label: string; href?: string }[];
   section: string;
   title: string;
   description: React.ReactNode;
+  guideLinks?: ApiGuideLink[];
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
@@ -1354,8 +1363,73 @@ export function ApiReferencePage({
     <article className="docs-page docs-page-api" style={{ width: "100%" }}>
       <DocsContentBreadcrumb items={resolvedBreadcrumbItems} />
       <div className="api-reference-page-header" style={{ padding: "10px 0 22px", borderBottom: "1px solid var(--docs-border)", marginBottom: 26 }}>
+        <style
+          dangerouslySetInnerHTML={{
+            __html: `
+              .api-reference-guide-links{
+                display:flex;
+                flex-wrap:wrap;
+                gap:8px;
+                margin-top:14px;
+              }
+              .api-reference-guide-link{
+                display:inline-flex;
+                align-items:center;
+                gap:8px;
+                max-width:100%;
+                border:1px solid color-mix(in srgb, #0f766e 26%, var(--docs-border));
+                border-radius:999px;
+                background:color-mix(in srgb, #0f766e 10%, var(--docs-bg-elevated));
+                color:color-mix(in srgb, #0f766e 86%, var(--docs-text))!important;
+                padding:5px 10px 5px 8px;
+                font-size:12.5px;
+                line-height:1.1;
+                font-weight:650;
+                text-decoration:none!important;
+                transition:background .16s ease,border-color .16s ease,transform .16s ease;
+              }
+              .api-reference-guide-link:hover{
+                background:color-mix(in srgb, #0f766e 15%, var(--docs-bg-elevated));
+                border-color:color-mix(in srgb, #0f766e 38%, var(--docs-border));
+                transform:translateY(-1px);
+              }
+              .api-reference-guide-kicker{
+                border-radius:999px;
+                background:color-mix(in srgb, #0f766e 18%, transparent);
+                color:color-mix(in srgb, #0f766e 88%, var(--docs-text));
+                padding:2px 6px;
+                font-family:var(--docs-mono);
+                font-size:10.5px;
+                font-weight:760;
+                letter-spacing:0;
+                text-transform:uppercase;
+              }
+              .api-reference-guide-label{
+                overflow:hidden;
+                text-overflow:ellipsis;
+                white-space:nowrap;
+              }
+              html.dark .api-reference-guide-link{
+                border-color:color-mix(in srgb, #34d399 30%, var(--docs-border));
+                background:color-mix(in srgb, #34d399 10%, var(--docs-bg-elevated));
+                color:color-mix(in srgb, #a7f3d0 78%, var(--docs-text))!important;
+              }
+            `,
+          }}
+        />
         <h1 style={{ fontSize: 42, lineHeight: 1.06, letterSpacing: "-0.045em", fontWeight: 740, margin: 0, color: "var(--docs-text)" }}>{title}</h1>
         <div style={{ fontSize: 17, lineHeight: 1.75, color: "var(--docs-text-soft)", marginTop: 18, maxWidth: "96ch" }}>{description}</div>
+        {guideLinks.length > 0 ? (
+          <div className="api-reference-guide-links" aria-label="Related guides">
+            {guideLinks.map((guide) => (
+              <Link key={guide.href} href={guide.href} className="api-reference-guide-link">
+                <span className="api-reference-guide-kicker">Guide</span>
+                <span className="api-reference-guide-label">{guide.label}</span>
+                <ChevronRight size={14} strokeWidth={2.2} aria-hidden="true" />
+              </Link>
+            ))}
+          </div>
+        ) : null}
       </div>
       {children}
     </article>
@@ -1595,16 +1669,23 @@ export function ApiFieldList({
     <div className="api-field-list">
       {title ? <h3 style={{ fontSize: 16, fontWeight: 700, color: "var(--docs-text)", margin: "0 0 14px" }}>{title}</h3> : null}
       <div className="api-field-list-items" style={{ display: "grid", gap: 14 }}>
-        {items.map((item) => (
-          <div key={item.name} className="api-field-row">
-            <div className="api-field-row-heading" style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
-              <span className="api-field-name" style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#f04d23" }}>{item.name}</span>
-              {item.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-muted)" }}>{item.type}</span> : null}
-              {item.meta ? <span style={{ fontSize: 12.5, color: "var(--docs-text-faint)" }}>{item.meta}</span> : null}
+        {items.map((item) => {
+          const normalized = normalizeConfigFieldName(item.name);
+          const isOptional = item.optional ?? normalized.optional;
+
+          return (
+            <div key={item.name} className="api-field-row">
+              <div className="api-field-row-heading" style={{ display: "flex", alignItems: "baseline", gap: 10, flexWrap: "wrap", marginBottom: 6 }}>
+                <span className="api-field-name" style={{ fontFamily: "var(--docs-mono)", fontSize: 15, fontWeight: 700, color: "#f04d23" }}>{normalized.label}</span>
+                {isOptional ? <span className="api-field-chip">Optional</span> : null}
+                {item.defaultValue !== undefined ? <span className="api-field-chip api-field-chip-default">Default: {item.defaultValue}</span> : null}
+                {item.type ? <span style={{ fontFamily: "var(--docs-mono)", fontSize: 13, color: "var(--docs-text-muted)" }}>{item.type}</span> : null}
+                {item.meta ? <span style={{ fontSize: 12.5, color: "var(--docs-text-faint)" }}>{item.meta}</span> : null}
+              </div>
+              <div className="api-field-description" style={{ fontSize: 15, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>{item.description}</div>
             </div>
-            <div className="api-field-description" style={{ fontSize: 15, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>{item.description}</div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
