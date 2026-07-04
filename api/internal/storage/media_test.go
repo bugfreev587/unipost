@@ -54,6 +54,12 @@ func TestNilClient(t *testing.T) {
 	if _, err := c.UploadFromURL(ctx, "https://x.com/y.jpg"); err != ErrNotConfigured {
 		t.Errorf("UploadFromURL on nil: want ErrNotConfigured, got %v", err)
 	}
+	if err := c.DownloadObject(ctx, "media/in.mp4", "/tmp/in.mp4"); err != ErrNotConfigured {
+		t.Errorf("DownloadObject on nil: want ErrNotConfigured, got %v", err)
+	}
+	if err := c.PutFile(ctx, "media/out.mp4", "/tmp/out.mp4", "video/mp4", "public, max-age=1"); err != ErrNotConfigured {
+		t.Errorf("PutFile on nil: want ErrNotConfigured, got %v", err)
+	}
 }
 
 func TestBrandingLogoKey(t *testing.T) {
