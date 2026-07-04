@@ -32,7 +32,8 @@ curl -X POST "https://api.unipost.dev/v1/media" \\
     "content_type": "audio/mpeg"
   }'
 
-# Upload the audio file bytes to data.upload_url, then poll GET /v1/media/{media_id}.
+# Upload the audio file bytes to data.upload_url, then poll GET /v1/media/{media_id}
+# until UniPost marks the audio as uploaded.
 
 # Step 3: Generate the overlay video.
 # mode=mix keeps some original video sound; mode=replace removes it.
@@ -498,7 +499,8 @@ export default function VideoAudioOverlayGuidePage() {
             "Treat audio as an input file, not a publishable asset. Label it as the audio track for the generated video.",
             <>
               Use the same <ApiInlineLink endpoint="POST /v1/media" /> upload flow with an audio MIME type such as{" "}
-              <code>audio/mpeg</code> or <code>audio/wav</code>.
+              <code>audio/mpeg</code> or <code>audio/wav</code>, then poll{" "}
+              <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> until the audio media is uploaded.
             </>,
           ],
           [

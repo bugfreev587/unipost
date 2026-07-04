@@ -50,6 +50,7 @@ test("video and audio overlay guide explains the user workflow and API sequence"
   assert.match(guide, /Step 2: Upload the audio input/);
   assert.match(guide, /Step 3: Generate the overlay video/);
   assert.match(guide, /Step 4: Publish the processed video/);
+  assert.match(guide, /poll[\s\S]{0,120}GET \/v1\/media\/:media_id[\s\S]{0,160}audio[\s\S]{0,120}uploaded/i);
   assert.doesNotMatch(guide, /Step 5:/);
   assert.match(guide, /client\.media\.audio_overlays\.create/);
   assert.match(guide, /client\.Media\.AudioOverlays\.Create/);
