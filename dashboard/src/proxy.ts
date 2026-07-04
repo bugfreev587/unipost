@@ -1,5 +1,5 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
-import { NextResponse } from "next/server";
+import { type NextFetchEvent, type NextRequest, NextResponse } from "next/server";
 
 const APP_HOST = process.env.NEXT_PUBLIC_APP_HOST || "app.unipost.dev";
 const COUNTRY_COOKIE = "unipost_country";
@@ -30,18 +30,16 @@ function withCountryCookie(response: NextResponse, request: Request) {
   return response;
 }
 
-export default clerkMiddleware(async (auth, request) => {
-  const hostname = request.headers.get("host") || "";
-  const { pathname } = request.nextUrl;
-
-  // Determine if this is the dashboard domain (app.unipost.dev)
-  const isDashboard =
+function isDashboardHost(hostname: string) {
+  return (
     hostname === APP_HOST ||
     hostname === "localhost:3000" ||
-    hostname.startsWith("localhost:");
+    hostname.startsWith("localhost:")
+  );
+}
 
-  // Public pages (no auth, available on both domains)
-  const isPublicPage =
+function isPublicPagePath(pathname: string) {
+  return (
     pathname === "/terms" ||
     pathname === "/privacy" ||
     pathname === "/sitemap.xml" ||
@@ -64,11 +62,32 @@ export default clerkMiddleware(async (auth, request) => {
     // `session=<id>&state=<oauth_state>` pair in the URL (verified
     // server-side against /v1/public/connect/sessions).
     pathname.startsWith("/connect") ||
-    pathname.endsWith("-api"); // platform landing pages: /twitter-api, /instagram-api, etc.
+    pathname.endsWith("-api")
+  ); // platform landing pages: /twitter-api, /instagram-api, etc.
+}
 
-  const isPublicDocsApi =
+function isPublicDocsApiPath(pathname: string) {
+  return (
     pathname === "/api/docs/answer" ||
-    pathname === "/api/docs/feedback";
+    pathname === "/api/docs/feedback"
+  );
+}
+
+const protectedProxy = clerkMiddleware(async (auth) => {
+  await auth.protect();
+});
+
+export default function proxy(request: NextRequest, event: NextFetchEvent) {
+  const hostname = request.headers.get("host") || "";
+  const { pathname } = request.nextUrl;
+
+  // Determine if this is the dashboard domain (app.unipost.dev)
+  const isDashboard = isDashboardHost(hostname);
+
+  // Public pages (no auth, available on both domains)
+  const isPublicPage = isPublicPagePath(pathname);
+
+  const isPublicDocsApi = isPublicDocsApiPath(pathname);
 
   if (isPublicPage || isPublicDocsApi) {
     return withCountryCookie(NextResponse.next(), request);
@@ -93,9 +112,9 @@ export default clerkMiddleware(async (auth, request) => {
     return NextResponse.redirect(url);
   }
 
-  // Dashboard domain — require auth for all routes
-  await auth.protect();
-});
+  // Dashboard domain — require auth for all remaining routes.
+  return protectedProxy(request, event);
+}
 
 export const config = {
   matcher: [
