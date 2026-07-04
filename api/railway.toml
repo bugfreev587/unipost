@@ -1,4 +1,5 @@
 [build]
+builder = "nixpacks"
 buildCommand = "go build -o bin/api ./cmd/api"
 
 [deploy]
