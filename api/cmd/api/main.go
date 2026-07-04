@@ -378,6 +378,9 @@ func main() {
 	mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
 	go mediaCleanupWorker.Start(workerCtx)
 
+	mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
+	go mediaAudioOverlayWorker.Start(workerCtx)
+
 	logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
 	go logRetentionWorker.Start(workerCtx)
 
