@@ -327,6 +327,9 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
       "upload audio",
       "voiceover",
       "music",
+      "sdk 0.5.0",
+      "size_bytes",
+      "sizeBytes",
       "tiktok",
       "instagram",
     ],
@@ -343,7 +346,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     ],
     platforms: ALL_PUBLISH_PLATFORMS,
     content:
-      "Use the Video + audio overlay guide when a user uploads one video file and one separate audio file, such as narration, music, or voiceover. First upload both files with POST /v1/media and PUT the bytes to each upload_url. Poll GET /v1/media/{media_id} until each input is uploaded. Then call POST /v1/media/audio-overlays with video_media_id, audio_media_id, mode mix or replace, optional volumes, and fit trim_to_video or loop_to_video. Poll GET /v1/media/audio-overlays/{id} until status is succeeded, then publish output_media_id as a normal video media_id with POST /v1/posts. This is not platform music-library attachment for image or carousel posts; UniPost creates a processed video output before publishing.",
+      "Use the Video + audio overlay guide when a user uploads one video file and one separate audio file, such as narration, music, or voiceover. Use UniPost SDK version 0.5.0 or later because official SDKs starting in 0.5.0 no longer force callers to provide sizeBytes or size_bytes when reserving uploads with POST /v1/media. First upload both files with POST /v1/media and PUT the bytes to each upload_url. Poll GET /v1/media/{media_id} until each input is uploaded. Then call POST /v1/media/audio-overlays with video_media_id, audio_media_id, mode mix or replace, optional volumes, and fit trim_to_video or loop_to_video. Poll GET /v1/media/audio-overlays/{id} until status is succeeded, then publish output_media_id as a normal video media_id with POST /v1/posts. This is not platform music-library attachment for image or carousel posts; UniPost creates a processed video output before publishing.",
   }),
   chunk({
     id: "analytics-guide-tiktok-followers",
