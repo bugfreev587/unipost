@@ -40,7 +40,7 @@ test("publish workflow and daily workflow exist with safe triggers", async () =>
   assert.doesNotMatch(daily, /timezone:/);
   assert.match(daily, /cron:\s*"0 15 \* \* \*"/);
   assert.match(daily, /cron:\s*"0 16 \* \* \*"/);
-  assert.match(daily, /CHANGELOG_REQUIRE_LA_HOUR/);
+  assert.doesNotMatch(daily, /CHANGELOG_REQUIRE_LA_HOUR/);
   assert.match(daily, /scripts\/changelog-automation\/daily\.mjs/);
   assert.match(daily, /CHANGELOG_ANTHROPIC_API_KEY/);
   assert.match(daily, /CHANGELOG_ANTHROPIC_MODEL/);
@@ -50,4 +50,13 @@ test("publish workflow and daily workflow exist with safe triggers", async () =>
   assert.match(publish, /workflow_dispatch/);
   assert.match(publish, /candidate_id/);
   assert.match(publish, /CHANGELOG_RELEASE_GITHUB_TOKEN/);
+});
+
+test("publish promotion waits for pull request checks before watching them", async () => {
+  const promote = await source("scripts/changelog-automation/promote-release.sh");
+
+  assert.match(promote, /wait_for_pr_checks/);
+  assert.match(promote, /gh pr checks "\$pr_number" --watch/);
+  assert.match(promote, /No checks reported for .* before timeout/);
+  assert.doesNotMatch(promote, /pr_number="\$\{pr_url##\/\}"\n\s+gh pr checks "\$pr_number" --watch/);
 });

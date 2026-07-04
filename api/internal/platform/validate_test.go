@@ -818,6 +818,27 @@ func TestValidate_MediaIDUnsupportedFormat(t *testing.T) {
 	hasError(t, res, 0, CodeUnsupportedFormat)
 }
 
+func TestValidate_AudioMediaIDCannotPublishDirectly(t *testing.T) {
+	res := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(),
+		Accounts:     stubAccounts(),
+		Media: map[string]ValidateMedia{
+			"med_audio": {
+				Status:      "uploaded",
+				ContentType: "audio/mpeg",
+				SizeBytes:   512_000,
+			},
+		},
+		Posts: []PlatformPostInput{
+			{AccountID: "acc_tiktok", Caption: "x", MediaIDs: []string{"med_audio"}},
+		},
+		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
+	})
+
+	hasError(t, res, 0, CodeAudioMediaNotPublishable)
+	hasNoError(t, res, CodeUnsupportedFormat)
+}
+
 func TestValidate_TikTokPhotoTitleLengthIsActionable(t *testing.T) {
 	res := ValidatePlatformPosts(ValidateOptions{
 		Capabilities: stubCapabilities(),

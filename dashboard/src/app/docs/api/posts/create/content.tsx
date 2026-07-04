@@ -534,7 +534,7 @@ export function CreatePostContent() {
               <strong style={{ color: "var(--docs-text)" }}>Hosted URL:</strong> if your image or video is already publicly reachable, send it in <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_urls</code>. Do not call <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" /> for this path.
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
-              <strong style={{ color: "var(--docs-text)" }}>Local file bytes:</strong> reserve an upload with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, pass a <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>size_bytes</code> value greater than <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>0</code>, PUT the bytes to the returned upload URL, then publish with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_ids</code>.
+              <strong style={{ color: "var(--docs-text)" }}>Local file bytes:</strong> reserve an upload with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, PUT the bytes to the returned upload URL, then publish with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_ids</code>. <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>size_bytes</code> is optional; UniPost hydrates the actual byte length after upload.
             </p>
           </div>
         </section>

@@ -45,7 +45,6 @@ jobs:
       CHANGELOG_DASHBOARD_BASE_URL: ${{ vars.CHANGELOG_DASHBOARD_BASE_URL || 'https://app.unipost.dev' }}
       CHANGELOG_DISCORD_WEBHOOK_URL: ${{ secrets.CHANGELOG_DISCORD_WEBHOOK_URL || secrets.REGRESSION_ALERT_WEBHOOK_URL }}
       CHANGELOG_REPO: ${{ github.repository }}
-      CHANGELOG_REQUIRE_LA_HOUR: ${{ github.event_name == 'schedule' && '8' || '' }}
       CHANGELOG_WINDOW_START: ${{ inputs.window_start }}
       CHANGELOG_WINDOW_END: ${{ inputs.window_end }}
       CHANGELOG_WEBHOOK_TEST: ${{ inputs.webhook_test }}

@@ -62,7 +62,7 @@ func NewMediaHandler(queries *db.Queries, store *storage.Client) *MediaHandler {
 // consumed it, keeping R2 occupancy near zero for large files.
 const MediaSizeHardCap = 4 * 1024 * 1024 * 1024
 
-const mediaSizeBytesRequiredMessage = "size_bytes must be greater than 0 when reserving an upload with POST /v1/media. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts."
+const mediaSizeBytesInvalidMessage = "size_bytes, when provided, must be greater than 0 when reserving an upload with POST /v1/media. If you do not know the raw byte length yet, omit size_bytes; UniPost will hydrate it from storage after upload. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts."
 
 // allowedMimeTypes is the union of every adapter's accepted formats.
 // We could derive this from the capabilities map but a static set
@@ -79,6 +79,12 @@ var allowedMimeTypes = map[string]bool{
 	"video/quicktime": true,
 	"video/webm":      true,
 	"video/x-m4v":     true,
+	"audio/mpeg":      true,
+	"audio/wav":       true,
+	"audio/x-wav":     true,
+	"audio/aac":       true,
+	"audio/mp4":       true,
+	"audio/x-m4a":     true,
 }
 
 type mediaResponse struct {
@@ -138,7 +144,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Filename    string `json:"filename"`
 		ContentType string `json:"content_type"`
-		SizeBytes   int64  `json:"size_bytes"`
+		SizeBytes   *int64 `json:"size_bytes"`
 		ContentHash string `json:"content_hash"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -152,11 +158,12 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("content_type %q is not allowed", body.ContentType))
 		return
 	}
-	if body.SizeBytes <= 0 {
-		writeMediaSizeBytesRequiredError(w, body.SizeBytes)
+	sizeBytes, validSize := mediaCreateSizeBytes(body.SizeBytes)
+	if !validSize {
+		writeMediaSizeBytesInvalidError(w, sizeBytes)
 		return
 	}
-	if body.SizeBytes > MediaSizeHardCap {
+	if sizeBytes > MediaSizeHardCap {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 			fmt.Sprintf("size_bytes exceeds the global hard cap of %d", MediaSizeHardCap))
 		return
@@ -214,7 +221,7 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 		StorageKey:  placeholderKey, // overwritten just below
 		ContentType: body.ContentType,
-		SizeBytes:   body.SizeBytes,
+		SizeBytes:   sizeBytes,
 		Status:      "pending",
 		ContentHash: pgtype.Text{String: body.ContentHash, Valid: body.ContentHash != ""},
 	})
@@ -263,7 +270,17 @@ func (h *MediaHandler) Create(w http.ResponseWriter, r *http.Request) {
 	writeCreated(w, resp)
 }
 
-func writeMediaSizeBytesRequiredError(w http.ResponseWriter, actual int64) {
+func mediaCreateSizeBytes(value *int64) (int64, bool) {
+	if value == nil {
+		return 0, true
+	}
+	if *value <= 0 {
+		return *value, false
+	}
+	return *value, true
+}
+
+func writeMediaSizeBytesInvalidError(w http.ResponseWriter, actual int64) {
 	// Keep this envelope local instead of using ErrorResponse/ErrorBody:
 	// ErrorBody.Issues is []platform.Issue, whose platform_post_index field
 	// is intentionally always serialized for post validation. This media
@@ -292,12 +309,12 @@ func writeMediaSizeBytesRequiredError(w http.ResponseWriter, actual int64) {
 		Error: fieldValidationErrorBody{
 			Code:           "VALIDATION_ERROR",
 			NormalizedCode: normalizeErrorCode("VALIDATION_ERROR"),
-			Message:        mediaSizeBytesRequiredMessage,
+			Message:        mediaSizeBytesInvalidMessage,
 			Issues: []fieldValidationIssue{
 				{
 					Field:    "size_bytes",
-					Code:     platform.CodeMissingRequired,
-					Message:  mediaSizeBytesRequiredMessage,
+					Code:     platform.CodeBelowMinLength,
+					Message:  mediaSizeBytesInvalidMessage,
 					Actual:   actual,
 					Limit:    int64(1),
 					Severity: platform.SeverityError,
@@ -376,6 +393,15 @@ func (h *MediaHandler) tryHydrate(r *http.Request, row db.Media) (db.Media, bool
 	return hydrateMediaRow(r.Context(), h.queries, h.storage, row)
 }
 
+type mediaHydrationQueries interface {
+	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
+}
+
+type mediaHydrationStorage interface {
+	Head(context.Context, string) (storage.HeadResult, error)
+	ProbeVideo(context.Context, string) (storage.VideoMetadata, error)
+}
+
 // hydrateMediaRow is the publish-path equivalent of an R2 upload-
 // complete webhook. HEAD the object; on a successful response, copy
 // the authoritative size + content type from R2 into the row and flip
@@ -392,10 +418,11 @@ func (h *MediaHandler) tryHydrate(r *http.Request, row db.Media) (db.Media, bool
 // tryHydrate that lived inline on MediaHandler.
 //
 // Lives at package scope (not on MediaHandler) so the publish path's
-// resolveMediaIDsToURLs can call it with its own *db.Queries +
-// *storage.Client without coupling to the media handler.
-func hydrateMediaRow(ctx context.Context, q *db.Queries, s *storage.Client, row db.Media) (db.Media, bool) {
-	if s == nil {
+// resolveMediaIDsToURLs and other media input flows can call it with
+// their own query + storage dependencies without coupling to the media
+// handler.
+func hydrateMediaRow(ctx context.Context, q mediaHydrationQueries, s mediaHydrationStorage, row db.Media) (db.Media, bool) {
+	if q == nil || s == nil {
 		return row, false
 	}
 	head, err := s.Head(ctx, row.StorageKey)
@@ -476,6 +503,14 @@ func pickExt(filename, contentType string) string {
 		return ".mov"
 	case "video/webm":
 		return ".webm"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/wav", "audio/x-wav":
+		return ".wav"
+	case "audio/aac":
+		return ".aac"
+	case "audio/mp4", "audio/x-m4a":
+		return ".m4a"
 	}
 	return ".bin"
 }

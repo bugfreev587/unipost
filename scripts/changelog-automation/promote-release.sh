@@ -30,6 +30,27 @@ wait_for_pr_merged() {
   exit 1
 }
 
+wait_for_pr_checks() {
+  local pr_number="$1"
+  local label="$2"
+  local output
+
+  for _ in $(seq 1 60); do
+    if output="$(gh pr checks "$pr_number" 2>&1)"; then
+      if [ -n "$output" ]; then
+        return 0
+      fi
+    elif ! printf "%s" "$output" | grep -qi "no checks"; then
+      echo "$output"
+      exit 1
+    fi
+    sleep 10
+  done
+
+  echo "No checks reported for $label PR #$pr_number before timeout"
+  exit 1
+}
+
 open_and_merge_pr() {
   local base="$1"
   local head="$2"
@@ -40,6 +61,7 @@ open_and_merge_pr() {
   git fetch origin "$base"
   pr_url="$(gh pr create --base "$base" --head "$head" --title "$title" --body "$body")"
   pr_number="${pr_url##*/}"
+  wait_for_pr_checks "$pr_number" "$label"
   gh pr checks "$pr_number" --watch
   gh pr merge "$pr_number" --squash
   wait_for_pr_merged "$pr_number" "$label"

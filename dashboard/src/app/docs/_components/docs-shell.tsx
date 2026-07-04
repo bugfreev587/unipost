@@ -397,6 +397,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Publishing Guides",
       items: [
+        { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
         { label: "Publishing guide", href: "/docs/publishing" },
         { label: "Connect Sessions", href: "/docs/connect-sessions" },
       ],
@@ -502,6 +503,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           children: [
             { label: "Reserve upload", href: "/docs/api/media/reserve", method: "POST" },
             { label: "Get media", href: "/docs/api/media/get", method: "GET" },
+            { label: "Create audio overlay", href: "/docs/api/media/audio-overlays", method: "POST" },
           ],
         },
       ],
