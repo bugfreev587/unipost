@@ -95,4 +95,9 @@ test("Docs AI browser routes stay public for unauthenticated docs visitors", asy
   assert.match(proxy, /\/api\/docs\/feedback/);
   assert.match(proxy, /isPublicDocsApi/);
   assert.match(proxy, /isPublicPage \|\| isPublicDocsApi/);
+  assert.equal(proxy.includes("export default clerkMiddleware("), false);
+  assert.ok(
+    proxy.indexOf("if (isPublicPage || isPublicDocsApi)") < proxy.indexOf("return protectedProxy(request, event)"),
+    "public docs routes should bypass Clerk middleware before auth is initialized",
+  );
 });

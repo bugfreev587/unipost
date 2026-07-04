@@ -8,6 +8,7 @@ import {
   ApiFieldList,
   ApiRequestConfigCard,
   CodeTabs,
+  type ApiGuideLink,
   type ApiFieldItem,
 } from "./doc-components";
 
@@ -36,6 +37,116 @@ const METHOD_COLORS: Record<Method, string> = {
   PATCH: "#a855f7",
   DELETE: "#ef4444",
 };
+
+const ENDPOINT_GUIDE_LINKS: Array<{
+  method: Method;
+  path: RegExp;
+  guides: ApiGuideLink[];
+}> = [
+  {
+    method: "POST",
+    path: /^\/v1\/media\/audio-overlays$/,
+    guides: [{ label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" }],
+  },
+  {
+    method: "POST",
+    path: /^\/v1\/media$/,
+    guides: [{ label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" }],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/media\/:[^/]+$/,
+    guides: [{ label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" }],
+  },
+  {
+    method: "POST",
+    path: /^\/v1\/posts$/,
+    guides: [
+      { label: "Publishing guide", href: "/docs/publishing" },
+      { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
+    ],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/posts\/:[^/]+$/,
+    guides: [{ label: "Publishing guide", href: "/docs/publishing" }],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/accounts$/,
+    guides: [
+      { label: "Get account metrics", href: "/docs/guides/analytics/account-metrics" },
+      { label: "Get TikTok followers", href: "/docs/guides/analytics/tiktok-followers" },
+    ],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/accounts\/:[^/]+\/metrics$/,
+    guides: [
+      { label: "Get account metrics", href: "/docs/guides/analytics/account-metrics" },
+      { label: "Get TikTok followers", href: "/docs/guides/analytics/tiktok-followers" },
+      { label: "Reconnect analytics scopes", href: "/docs/guides/analytics/reconnect-analytics-scopes" },
+    ],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/posts\/:[^/]+\/analytics$/,
+    guides: [{ label: "Get post analytics", href: "/docs/guides/analytics/post-analytics" }],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/analytics\/posts\/export$/,
+    guides: [{ label: "Export post analytics rows", href: "/docs/guides/analytics/export-post-analytics" }],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/accounts\/:[^/]+\/health$/,
+    guides: [{ label: "Reconnect analytics scopes", href: "/docs/guides/analytics/reconnect-analytics-scopes" }],
+  },
+  {
+    method: "POST",
+    path: /^\/v1\/oauth\/connect$/,
+    guides: [
+      { label: "Publishing guide", href: "/docs/publishing" },
+      { label: "Reconnect analytics scopes", href: "/docs/guides/analytics/reconnect-analytics-scopes" },
+    ],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/analytics\/platforms$/,
+    guides: [{ label: "Analytics guides", href: "/docs/guides/analytics" }],
+  },
+  {
+    method: "POST",
+    path: /^\/v1\/connect\/sessions$/,
+    guides: [
+      { label: "Connect Sessions guide", href: "/docs/connect-sessions" },
+      { label: "Local Connect testing", href: "/docs/local-connect-test" },
+    ],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/connect\/sessions\/:[^/]+$/,
+    guides: [
+      { label: "Connect Sessions guide", href: "/docs/connect-sessions" },
+      { label: "Local Connect testing", href: "/docs/local-connect-test" },
+    ],
+  },
+  {
+    method: "GET",
+    path: /^\/v1\/accounts\/:[^/]+\/youtube\/analytics\/(?:summary|trend|videos)$/,
+    guides: [{ label: "Reconnect analytics scopes", href: "/docs/guides/analytics/reconnect-analytics-scopes" }],
+  },
+];
+
+function normalizeEndpointPathForGuideLookup(path: string) {
+  return path.replace(/\{[^}]+\}/g, ":id");
+}
+
+function resolveEndpointGuideLinks(method: Method, path: string) {
+  const normalizedPath = normalizeEndpointPathForGuideLookup(path);
+  return ENDPOINT_GUIDE_LINKS.find((item) => item.method === method && item.path.test(normalizedPath))?.guides || [];
+}
 
 function normalizeSectionTitle(title: string) {
   return title.trim().toLowerCase();
@@ -156,12 +267,14 @@ export function SingleEndpointReferencePage({
   responses,
   snippets,
   responseSnippets,
+  guideLinks,
   children,
 }: {
   breadcrumbItems?: { label: string; href?: string }[];
   section: string;
   title: string;
   description: React.ReactNode;
+  guideLinks?: ApiGuideLink[];
   method: Method;
   path: string;
   requestSections: RequestSection[];
@@ -179,9 +292,10 @@ export function SingleEndpointReferencePage({
   const resolvedResponseSnippets = responses.map((response) => (
     providedResponseSnippets.get(response.code) ?? buildDefaultResponseSnippet(response)
   ));
+  const resolvedGuideLinks = guideLinks ?? resolveEndpointGuideLinks(method, path);
 
   return (
-    <ApiReferencePage breadcrumbItems={breadcrumbItems} section={section} title={title} description={description}>
+    <ApiReferencePage breadcrumbItems={breadcrumbItems} section={section} title={title} description={description} guideLinks={resolvedGuideLinks}>
       <ApiReferenceGrid
         left={
           <div className="api-reference-left-flow" style={{ display: "grid", gap: 16 }}>
