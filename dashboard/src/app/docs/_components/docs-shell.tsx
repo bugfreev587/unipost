@@ -2265,6 +2265,26 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-shell-api-create-post .docs-page-api .api-field-name{
   color:#e6401a!important;
 }
+.docs-shell-api-create-post .docs-page-api .api-field-chip{
+  display:inline-flex;
+  align-items:center;
+  border:1px solid color-mix(in srgb, var(--docs-border) 72%, transparent);
+  border-radius:999px;
+  background:color-mix(in srgb, var(--docs-bg-elevated) 84%, #f8fafc);
+  color:var(--docs-text-muted);
+  padding:2px 7px;
+  font-size:10.5px;
+  line-height:1.15;
+  font-family:var(--docs-mono);
+  font-weight:740;
+  letter-spacing:0;
+  text-transform:none;
+}
+.docs-shell-api-create-post .docs-page-api .api-field-chip-default{
+  border-color:color-mix(in srgb, #0f766e 24%, var(--docs-border));
+  background:color-mix(in srgb, #0f766e 9%, var(--docs-bg-elevated));
+  color:color-mix(in srgb, #0f766e 82%, var(--docs-text));
+}
 .docs-shell-api-create-post .docs-page-api .api-field-description{
   max-width:78ch;
   font-size:15.5px!important;
@@ -2450,6 +2470,14 @@ html.dark .docs-shell-guide-redesign .docs-page-guide-redesign .docs-step-number
   --docs-guide-step-number-bg:#2a2230;
   --docs-guide-step-number-border:#3a2b42;
   --docs-guide-step-number-text:#e6c7eb;
+}
+html.dark .docs-shell-api-create-post .docs-page-api .api-field-chip{
+  background:color-mix(in srgb, var(--docs-bg-elevated) 80%, #111827);
+}
+html.dark .docs-shell-api-create-post .docs-page-api .api-field-chip-default{
+  border-color:color-mix(in srgb, #34d399 26%, var(--docs-border));
+  background:color-mix(in srgb, #34d399 10%, var(--docs-bg-elevated));
+  color:color-mix(in srgb, #a7f3d0 78%, var(--docs-text));
 }
 html.dark .docs-shell-api-create-post .docs-page-api .docs-api-inline-method{
   color:#7cb2ff;

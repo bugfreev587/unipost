@@ -11,11 +11,11 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "video_media_id", type: "string", description: <>Uploaded video media ID from <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />. Must reference a video in the same workspace.</> },
   { name: "audio_media_id", type: "string", description: <>Uploaded audio media ID from <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />. Audio files are processing inputs and cannot be published directly.</> },
-  { name: "mode?", type: "string", description: <>How UniPost combines audio.<EnumValues values={["mix", "replace"]} /></> },
-  { name: "video_volume?", type: "number", description: "Original video audio volume from 0 to 100. Default: 100. Used in mix mode." },
-  { name: "audio_volume?", type: "number", description: "Uploaded audio volume from 0 to 100. Default: 100." },
-  { name: "audio_start_ms?", type: "number", description: "Offset into the uploaded audio before mixing. Default: 0." },
-  { name: "fit?", type: "string", description: <>How uploaded audio is fitted to the video duration.<EnumValues values={["trim_to_video", "loop_to_video"]} /></> },
+  { name: "mode?", type: "string", defaultValue: "mix", description: <>How UniPost combines audio. Omit it to mix the uploaded audio with the video's original audio.<EnumValues values={["mix", "replace"]} /></> },
+  { name: "video_volume?", type: "number", defaultValue: "100", description: "Original video audio volume from 0 to 100. Used in mix mode." },
+  { name: "audio_volume?", type: "number", defaultValue: "100", description: "Uploaded audio volume from 0 to 100." },
+  { name: "audio_start_ms?", type: "number", defaultValue: "0", description: "Offset into the uploaded audio before mixing." },
+  { name: "fit?", type: "string", defaultValue: "trim_to_video", description: <>How uploaded audio is fitted to the video duration.<EnumValues values={["trim_to_video", "loop_to_video"]} /></> },
 ];
 
 const RESPONSE_FIELDS: ApiFieldItem[] = [
@@ -185,6 +185,7 @@ export default function AudioOverlayPage() {
       section="publishing"
       title="Create audio overlay"
       description={<>Creates an async media-processing job that combines one uploaded video with one uploaded audio file. Poll the job until it returns <code>status: "succeeded"</code>, then publish <code>output_media_id</code> with <ApiInlineLink endpoint="POST /v1/posts" />.</>}
+      guideLinks={[{ label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" }]}
       method="POST"
       path="/v1/media/audio-overlays"
       requestSections={[
