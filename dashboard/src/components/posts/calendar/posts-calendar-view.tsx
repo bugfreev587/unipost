@@ -59,6 +59,7 @@ import {
   getCalendarPostMinuteOfDay,
   getCalendarStatusColor,
   getContinuousCalendarSnapOffset,
+  getMonthDayPostLayout,
   getPostStatusGroup,
   getProfileCalendarColor,
   getTimedEventLayouts,
@@ -86,6 +87,7 @@ const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
   TIMELINE_END_PADDING,
 );
 const POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 560, height: 560 };
+const DAY_OVERFLOW_POPOVER_FALLBACK_SIZE: CalendarPopoverSize = { width: 380, height: 360 };
 const SNAP_TRANSITION_MS = 260;
 const WHEEL_SNAP_IDLE_MS = 110;
 const MONTH_VISIBLE_WEEKS = 6;
@@ -94,6 +96,13 @@ const WEEK_BUFFER_DAYS = 1;
 
 type SelectedPostTarget = {
   postId: string;
+  anchorRect: CalendarPopoverRect;
+  boundsRect: CalendarPopoverRect;
+};
+
+type DayOverflowTarget = {
+  dateKey: string;
+  dayLabel: string;
   anchorRect: CalendarPopoverRect;
   boundsRect: CalendarPopoverRect;
 };
@@ -150,6 +159,7 @@ export function PostsCalendarView() {
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [filtersInitialized, setFiltersInitialized] = useState(false);
   const [selectedPostTarget, setSelectedPostTarget] = useState<SelectedPostTarget | null>(null);
+  const [dayOverflowTarget, setDayOverflowTarget] = useState<DayOverflowTarget | null>(null);
   const [editingPostTarget, setEditingPostTarget] = useState<SelectedPostTarget | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
@@ -338,6 +348,10 @@ export function PostsCalendarView() {
     () => posts.find((post) => post.id === selectedPostId) || null,
     [posts, selectedPostId],
   );
+  const dayOverflowPosts = useMemo(() => {
+    if (!dayOverflowTarget) return [];
+    return getMonthDayPostLayout(postsByDate.get(dayOverflowTarget.dateKey) || []).hiddenPosts;
+  }, [dayOverflowTarget, postsByDate]);
   const editingPostId = editingPostTarget?.postId || null;
   const editingPost = useMemo(
     () => posts.find((post) => post.id === editingPostId) || null,
@@ -583,6 +597,7 @@ export function PostsCalendarView() {
   }, []);
 
   const handleSelectPost = useCallback((postId: string, target: HTMLElement) => {
+    setDayOverflowTarget(null);
     setSelectedPostTarget({
       postId,
       anchorRect: getElementRect(target),
@@ -590,8 +605,36 @@ export function PostsCalendarView() {
     });
   }, []);
 
+  const handleSelectDayOverflow = useCallback((dateKey: string, date: Date, target: HTMLElement) => {
+    const hiddenPosts = getMonthDayPostLayout(postsByDate.get(dateKey) || []).hiddenPosts;
+    if (hiddenPosts.length === 0) return;
+
+    setSelectedPostTarget(null);
+    setDayOverflowTarget({
+      dateKey,
+      dayLabel: formatOverflowDayLabel(date),
+      anchorRect: getElementRect(target),
+      boundsRect: getCalendarEditorBoundsRect(target),
+    });
+  }, [postsByDate]);
+
+  const handleSelectOverflowPost = useCallback((postId: string, target: HTMLElement) => {
+    if (!dayOverflowTarget) return;
+
+    setDayOverflowTarget(null);
+    setSelectedPostTarget({
+      postId,
+      anchorRect: getElementRect(target),
+      boundsRect: dayOverflowTarget.boundsRect,
+    });
+  }, [dayOverflowTarget]);
+
   const closeSelectedPost = useCallback(() => {
     setSelectedPostTarget(null);
+  }, []);
+
+  const closeDayOverflow = useCallback(() => {
+    setDayOverflowTarget(null);
   }, []);
 
   const closeEditPost = useCallback(() => {
@@ -630,7 +673,7 @@ export function PostsCalendarView() {
     <div className={className}>
       {cells.map((cell) => {
         const dayPosts = postsByDate.get(cell.dateKey) || [];
-        const visibleDayPosts = dayPosts.slice(0, 4);
+        const dayLayout = getMonthDayPostLayout(dayPosts);
         return (
           <div
             key={cell.dateKey}
@@ -640,7 +683,7 @@ export function PostsCalendarView() {
               <span>{cell.dayOfMonth}</span>
             </div>
             <div className="posts-calendar-events">
-              {visibleDayPosts.map((post) => (
+              {dayLayout.visiblePosts.map((post) => (
                 <CalendarEventButton
                   key={post.id}
                   post={post}
@@ -650,13 +693,16 @@ export function PostsCalendarView() {
                   onClick={(event) => handleSelectPost(post.id, event.currentTarget)}
                 />
               ))}
-              {dayPosts.length > visibleDayPosts.length ? (
+              {dayLayout.hiddenCount > 0 ? (
                 <button
                   type="button"
                   className="posts-calendar-more"
-                  onClick={(event) => handleSelectPost(dayPosts[4].id, event.currentTarget)}
+                  aria-haspopup="dialog"
+                  aria-expanded={dayOverflowTarget?.dateKey === cell.dateKey}
+                  aria-label={`${dayLayout.hiddenCount} more posts on ${formatOverflowDayLabel(cell.date)}`}
+                  onClick={(event) => handleSelectDayOverflow(cell.dateKey, cell.date, event.currentTarget)}
                 >
-                  + {dayPosts.length - visibleDayPosts.length} more
+                  + {dayLayout.hiddenCount} more
                 </button>
               ) : null}
             </div>
@@ -893,18 +939,20 @@ export function PostsCalendarView() {
               <button
                 type="button"
                 className={calendarMode === "day" ? "active" : ""}
-                aria-disabled="true"
-                disabled
-                title="Day view is not available in v1"
+                onClick={() => {
+                  replaceCalendarMode("day");
+                  setVisibleMonth(startOfMonth(visibleDate));
+                }}
               >
                 Day
               </button>
               <button
                 type="button"
                 className={calendarMode === "week" ? "active" : ""}
-                aria-disabled="true"
-                disabled
-                title="Week view is not available in v1"
+                onClick={() => {
+                  replaceCalendarMode("week");
+                  setVisibleMonth(startOfMonth(visibleDate));
+                }}
               >
                 Week
               </button>
@@ -950,6 +998,20 @@ export function PostsCalendarView() {
           {calendarMode === "day" ? renderDayView() : null}
         </div>
       </div>
+
+      {dayOverflowTarget && dayOverflowPosts.length > 0 ? (
+        <DayOverflowPopover
+          dateLabel={dayOverflowTarget.dayLabel}
+          posts={dayOverflowPosts}
+          anchorRect={dayOverflowTarget.anchorRect}
+          boundsRect={dayOverflowTarget.boundsRect}
+          profilesById={profilesById}
+          profileColors={profileColors}
+          timezone={timezone}
+          onClose={closeDayOverflow}
+          onSelectPost={handleSelectOverflowPost}
+        />
+      ) : null}
 
       {selectedPost && selectedPostTarget ? (
         <EventPopover
@@ -1163,6 +1225,120 @@ function TimedPostButton({
         <span className="posts-calendar-timed-meta">{meta.short}{time ? ` - ${time}` : ""}</span>
       </span>
     </button>
+  );
+}
+
+function DayOverflowPopover({
+  dateLabel,
+  posts,
+  anchorRect,
+  boundsRect,
+  profilesById,
+  profileColors,
+  timezone,
+  onClose,
+  onSelectPost,
+}: {
+  dateLabel: string;
+  posts: SocialPost[];
+  anchorRect: CalendarPopoverRect;
+  boundsRect: CalendarPopoverRect;
+  profilesById: Map<string, Profile>;
+  profileColors: Map<string, string>;
+  timezone: string;
+  onClose: () => void;
+  onSelectPost: (postId: string, target: HTMLElement) => void;
+}) {
+  const popoverRef = useRef<HTMLElement | null>(null);
+  const [viewportSize, setViewportSize] = useState<CalendarPopoverSize>(() => getViewportSize());
+  const [popoverSize, setPopoverSize] = useState<CalendarPopoverSize>(DAY_OVERFLOW_POPOVER_FALLBACK_SIZE);
+
+  useLayoutEffect(() => {
+    const updateGeometry = () => {
+      setViewportSize(getViewportSize());
+      const rect = popoverRef.current?.getBoundingClientRect();
+      if (rect && rect.width > 0 && rect.height > 0) {
+        setPopoverSize({ width: rect.width, height: rect.height });
+      }
+    };
+
+    updateGeometry();
+    const resizeObserver = typeof ResizeObserver === "undefined" || !popoverRef.current
+      ? null
+      : new ResizeObserver(updateGeometry);
+    if (popoverRef.current) resizeObserver?.observe(popoverRef.current);
+    window.addEventListener("resize", updateGeometry);
+
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", updateGeometry);
+    };
+  }, [posts.length]);
+
+  const placement = useMemo(
+    () => getBoundedCalendarPopoverPlacement({
+      anchor: anchorRect,
+      viewport: viewportSize,
+      popover: popoverSize,
+      bounds: boundsRect,
+      verticalStrategy: "anchor",
+    }),
+    [anchorRect, boundsRect, popoverSize, viewportSize],
+  );
+  const popoverStyle = {
+    "--event-profile-color": "#8b8b93",
+    "--event-status-color": "#475569",
+    "--popover-left": `${placement.left}px`,
+    "--popover-top": `${placement.top}px`,
+    "--popover-available-height": `${placement.availableHeight}px`,
+    "--popover-arrow-x": `${placement.arrowX}px`,
+    "--popover-arrow-y": `${placement.arrowY}px`,
+    "--popover-transform-origin": placement.transformOrigin,
+  } as CSSProperties;
+
+  return (
+    <div className="posts-calendar-popover-layer" role="presentation" onMouseDown={onClose}>
+      <article
+        ref={popoverRef}
+        className="posts-calendar-popover posts-calendar-more-popover"
+        data-side={placement.side}
+        role="dialog"
+        aria-label={`More posts on ${dateLabel}`}
+        onMouseDown={(event) => event.stopPropagation()}
+        style={popoverStyle}
+      >
+        <div className="posts-calendar-popover-content">
+          <div className="posts-calendar-popover-head">
+            <div>
+              <div className="posts-calendar-popover-profile">
+                <span />
+                {dateLabel}
+              </div>
+              <h2>More posts</h2>
+              <p className="posts-calendar-more-summary">
+                {posts.length} hidden post{posts.length === 1 ? "" : "s"}
+              </p>
+            </div>
+            <button type="button" aria-label="Close more posts" onClick={onClose}>
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="posts-calendar-more-list">
+            {posts.map((post) => (
+              <CalendarEventButton
+                key={post.id}
+                post={post}
+                profilesById={profilesById}
+                profileColors={profileColors}
+                timezone={timezone}
+                onClick={(event) => onSelectPost(post.id, event.currentTarget)}
+              />
+            ))}
+          </div>
+        </div>
+      </article>
+    </div>
   );
 }
 
@@ -2009,6 +2185,14 @@ function formatPostDateTime(post: SocialPost): string {
   });
 }
 
+function formatOverflowDayLabel(date: Date): string {
+  return date.toLocaleDateString("en-US", {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 function formatCalendarDetailDate(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
@@ -2278,13 +2462,13 @@ const CALENDAR_CSS = `
 .posts-calendar-month-track{width:100%;height:100%;flex:0 0 auto;grid-template-rows:repeat(6,minmax(104px,1fr));will-change:transform;contain:layout paint;backface-visibility:hidden;transform:translate3d(0,var(--calendar-snap-offset),0);transition:transform var(--calendar-snap-duration) cubic-bezier(.16,1,.3,1)}
 .posts-calendar-weekday{background:transparent;display:flex;align-items:center;justify-content:flex-end;padding:0 12px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-weekday.weekend{background:var(--calendar-weekend-surface)}
-.posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px}
+.posts-calendar-day{background:var(--surface);min-width:0;min-height:104px;padding:8px 6px 7px;display:flex;flex-direction:column;gap:5px;overflow:hidden}
 .posts-calendar-day.outside{background:color-mix(in srgb,var(--surface2) 42%,var(--surface));color:var(--dmuted2)}
 .posts-calendar-day.weekend{--calendar-event-surface:var(--calendar-weekend-surface);background:var(--calendar-weekend-surface)}
 .posts-calendar-day.outside.weekend{background:color-mix(in srgb,var(--calendar-weekend-surface) 72%,var(--surface2))}
 .posts-calendar-day-number{display:flex;justify-content:flex-end;height:22px;font-size:16px;color:var(--dmuted);font-weight:600}
 .posts-calendar-day.today .posts-calendar-day-number span{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:999px;background:var(--danger);color:white;margin-top:-2px}
-.posts-calendar-events{display:flex;flex-direction:column;gap:4px;min-width:0}
+.posts-calendar-events{flex:1;display:flex;flex-direction:column;gap:4px;min-width:0;overflow:hidden}
 .posts-calendar-event{--event-profile-color:#8b8b93;--event-status-color:#475569;position:relative;display:grid;grid-template-columns:3px auto minmax(0,1fr) auto;align-items:center;gap:5px;width:100%;min-height:22px;border:1px solid color-mix(in srgb,var(--event-profile-color) 20%,transparent);border-radius:6px;background:color-mix(in srgb,var(--event-profile-color) 15%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:2px 6px 2px 4px;cursor:pointer;overflow:hidden}
 .posts-calendar-event:hover{border-color:color-mix(in srgb,var(--event-profile-color) 42%,var(--dborder));background:color-mix(in srgb,var(--event-profile-color) 22%,var(--calendar-event-surface,var(--surface)))}
 .posts-calendar-event-rail{width:3px;align-self:stretch;border-radius:99px;background:var(--event-status-color)}
@@ -2340,6 +2524,10 @@ const CALENDAR_CSS = `
 .posts-calendar-popover-head button{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--dborder);border-radius:999px;background:var(--surface2);color:var(--dmuted);cursor:pointer}
 .posts-calendar-popover-profile{display:inline-flex;align-items:center;gap:7px;color:var(--dmuted);font-size:13px;font-weight:650}
 .posts-calendar-popover-profile span{width:9px;height:9px;border-radius:999px;background:var(--event-profile-color)}
+.posts-calendar-more-popover{width:min(380px,calc(100vw - 24px))}
+.posts-calendar-more-summary{margin:5px 0 0;color:var(--dmuted2);font-size:13px;line-height:1.35}
+.posts-calendar-more-list{display:flex;flex-direction:column;gap:7px;max-height:min(380px,calc(var(--popover-available-height,calc(100dvh - 24px)) - 96px));overflow:auto;padding-right:2px}
+.posts-calendar-more-list .posts-calendar-event{min-height:30px;border-radius:8px;padding:4px 7px 4px 5px}
 .posts-calendar-popover-meta{display:grid;gap:12px;margin:0}
 .posts-calendar-popover-meta div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:12px;align-items:flex-start}
 .posts-calendar-popover-meta dt{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dmuted2)}

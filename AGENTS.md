@@ -4,6 +4,7 @@
 
 - This rule applies to every development task and must not be skipped: if the task's expected final outcome is unclear, ask the user for the target outcome before starting implementation. Do not infer, invent, or assume the final goal.
 - After any change is pushed to `origin/dev`, Codex must wait for the triggered development deployment to finish, then perform self-acceptance in the real dev environment against the expected outcome. Codex may report the task complete only after the real dev environment matches the expected outcome.
+- When checking current production behavior, production code state, or whether a live production claim is true, fetch `origin` and inspect the latest `origin/main` / `main` branch first. `main` is the production branch; `origin/dev` represents the development environment and may not accurately reflect production.
 
 ## Default branch flow
 
