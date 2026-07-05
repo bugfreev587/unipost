@@ -6,6 +6,7 @@ import {
   buildRollingWeekDays,
   buildWeekDays,
   bucketPostByLocalDay,
+  getMonthDayPostLayout,
   getCalendarPostMinuteOfDay,
   getAnchoredPopoverPlacement,
   getBoundedCalendarPopoverPlacement,
@@ -283,12 +284,22 @@ test("continuous calendar snap offsets recycle whole date lines without waiting 
   assert.deepEqual(getContinuousCalendarSnapOffset(0, 100), { steps: 0, offsetPx: 0 });
 });
 
-test("parseCalendarViewMode keeps v1 scoped to month", () => {
-  assert.equal(parseCalendarViewMode("day"), "month");
-  assert.equal(parseCalendarViewMode("week"), "month");
+test("parseCalendarViewMode accepts enabled day, week, and month views", () => {
+  assert.equal(parseCalendarViewMode("day"), "day");
+  assert.equal(parseCalendarViewMode("week"), "week");
   assert.equal(parseCalendarViewMode("month"), "month");
   assert.equal(parseCalendarViewMode("agenda"), "month");
   assert.equal(parseCalendarViewMode(null), "month");
+});
+
+test("getMonthDayPostLayout keeps month cells bounded and exposes hidden posts", () => {
+  const posts = ["first", "second", "third", "fourth", "fifth"];
+  const layout = getMonthDayPostLayout(posts);
+
+  assert.deepEqual(layout.visiblePosts, ["first", "second", "third"]);
+  assert.deepEqual(layout.hiddenPosts, ["fourth", "fifth"]);
+  assert.equal(layout.hiddenCount, 2);
+  assert.deepEqual(posts, ["first", "second", "third", "fourth", "fifth"]);
 });
 
 test("getAnchoredPopoverPlacement keeps details beside the selected post when space allows", () => {

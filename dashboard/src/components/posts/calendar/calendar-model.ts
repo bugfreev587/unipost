@@ -20,7 +20,9 @@ export type CalendarModelPost = {
   archived_at?: string | null;
 };
 
-const CALENDAR_VIEW_MODES = new Set<CalendarViewMode>(["month"]);
+export const MONTH_DAY_VISIBLE_POST_LIMIT = 3;
+
+const CALENDAR_VIEW_MODES = new Set<CalendarViewMode>(["day", "week", "month"]);
 
 export type CalendarModelProfile = {
   id: string;
@@ -113,6 +115,22 @@ const STATUS_COLOR_PALETTE: Record<CalendarStatusGroup, string> = {
 
 export function buildMonthGrid(monthDate: Date, today = new Date()): CalendarDayCell[] {
   return buildRollingMonthGrid(monthDate, 0, 6, 0, today);
+}
+
+export function getMonthDayPostLayout<T>(
+  posts: readonly T[],
+  visibleLimit = MONTH_DAY_VISIBLE_POST_LIMIT,
+): {
+  visiblePosts: T[];
+  hiddenPosts: T[];
+  hiddenCount: number;
+} {
+  const safeLimit = Math.max(0, Math.floor(visibleLimit));
+  return {
+    visiblePosts: posts.slice(0, safeLimit),
+    hiddenPosts: posts.slice(safeLimit),
+    hiddenCount: Math.max(0, posts.length - safeLimit),
+  };
 }
 
 export function buildRollingMonthGrid(
