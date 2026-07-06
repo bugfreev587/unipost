@@ -15,12 +15,12 @@ export default function DocsPricingPage() {
       <DocsTable
         columns={["Tier", "Price", "Posts/mo", "Media retention", "Active scheduled", "What it unlocks"]}
         rows={[
-          ["Free",   "$0",     "100",    "1d success / 2d failed", "50", "API + dashboard + 8 platforms (no X). Try without a credit card."],
-          ["API",    "$10",    "1,000",  "2d success / 4d failed", "Unlimited", "Dashboard + API + MCP, all 9 platforms incl. X, and read-only Analytics API. Inbox is not included."],
-          ["Basic",  "$19",    "2,500",  "4d success / 8d failed", "Unlimited", "Adds one shared custom platform slot for Hosted Connect branding and Platform Credentials, plus Inbox (DMs + comments) and full Analytics. Hosted onboarding still shows Powered by UniPost."],
-          ["Growth", "$59",    "7,500",  "15d success / 30d failed", "Unlimited", "Adds Hosted Connect branding and Platform Credentials across all supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
-          ["Team",   "$149",   "Unlimited", "30d success / 60d failed", "Unlimited", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
-          ["Enterprise", "Custom", "Custom", "30d success / 60d failed by default", "Unlimited", "SLA, dedicated support, security review, and contract flexibility. Contact us."],
+          ["Free",   "$0",     "100",    "1d success / 2d failed, partial, or cancelled", "50", "API + dashboard + 8 platforms (no X). Try without a credit card."],
+          ["API",    "$10",    "1,000",  "2d success / 4d failed, partial, or cancelled", "Unlimited", "Dashboard + API + MCP, all 9 platforms incl. X, and read-only Analytics API. Inbox is not included."],
+          ["Basic",  "$19",    "2,500",  "4d success / 8d failed, partial, or cancelled", "Unlimited", "Adds one shared custom platform slot for Hosted Connect branding and Platform Credentials, plus Inbox (DMs + comments) and full Analytics. Hosted onboarding still shows Powered by UniPost."],
+          ["Growth", "$59",    "7,500",  "15d success / 30d failed, partial, or cancelled", "Unlimited", "Adds Hosted Connect branding and Platform Credentials across all supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
+          ["Team",   "$149",   "Unlimited", "30d success / 60d failed, partial, or cancelled", "Unlimited", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
+          ["Enterprise", "Custom", "Custom", "30d success / 60d failed, partial, or cancelled", "Unlimited", "SLA, dedicated support, security review, and contract flexibility. Contact us."],
         ]}
       />
 
@@ -41,8 +41,8 @@ export default function DocsPricingPage() {
       <p>These controls apply across plans:</p>
       <ul>
         <li><strong>Monthly post quota</strong> — Free, API, Basic, and Growth use the post number in the table above. Free is a hard cap: once a Free workspace reaches 100 posts/month, new publish requests are rejected until the next month or an upgrade. API, Basic, and Growth use soft overage: posting continues over the cap, but sustained overage triggers an upgrade conversation. Team includes unlimited monthly posts. No surprise billing.</li>
-        <li><strong>Active scheduled posts</strong> — Free workspaces can hold up to 50 scheduled parent posts waiting for future delivery. Paid plans do not cap active scheduled backlog. Published, failed, partial, draft, and cancelled posts do not count toward this scheduled-post cap.</li>
-        <li><strong>Media retention</strong> — scheduled, draft, queued, publishing, and processing posts keep their uploaded media. After the parent post reaches a final status, UniPost keeps media by plan: Free 1 day after success or 2 days after failed/partial; API 2/4 days; Basic 4/8 days; Growth 15/30 days; Team and Enterprise 30/60 days.</li>
+        <li><strong>Active scheduled posts</strong> — Free workspaces can hold up to 50 undeleted parent posts in scheduled status. Paid plans do not cap active scheduled backlog. Published, failed, partial, draft, and cancelled posts do not count toward this scheduled-post cap.</li>
+        <li><strong>Media retention</strong> — scheduled, draft, queued, publishing, and processing posts keep their uploaded media. After the parent post reaches a final status, UniPost keeps media by plan: Free 1 day after success or 2 days after failed/partial/cancelled; API 2/4 days; Basic 4/8 days; Growth 15/30 days; Team and Enterprise 30/60 days.</li>
         <li><strong>Per-account daily safety caps</strong> — each connected account has a daily ceiling to keep it from being flagged as a spam bot by the platform itself: X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. UTC-day window. Failed posts don&apos;t count.</li>
       </ul>
 

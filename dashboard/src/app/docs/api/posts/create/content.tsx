@@ -57,7 +57,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "scheduled_at?",
     type: "string",
-    description: "ISO-8601 timestamp. If present, UniPost stores the post in scheduled state and the scheduler enqueues delivery later. Free workspaces can hold up to 50 active scheduled parent posts at once; paid plans do not cap active scheduled backlog.",
+    description: "ISO-8601 timestamp. If present, UniPost stores the post in scheduled state and the scheduler enqueues delivery later. Free workspaces can hold up to 50 undeleted parent posts in scheduled status at once; paid plans do not cap active scheduled backlog.",
   },
   {
     name: "idempotency_key?",
@@ -504,7 +504,7 @@ const RESPONSE_SNIPPETS = [
   "error": {
     "code": "PLAN_SCHEDULED_POST_LIMIT_EXCEEDED",
     "normalized_code": "plan_scheduled_post_limit_exceeded",
-    "message": "Free plan active scheduled post limit exceeded. You already have 50 active scheduled posts; Free allows up to 50. Upgrade to schedule more future posts."
+    "message": "Free plan active scheduled post limit exceeded. You already have 50 active scheduled posts; Free allows up to 50. Upgrade to schedule more posts."
   },
   "request_id": "req_123"
 }`,
@@ -557,10 +557,10 @@ export function CreatePostContent() {
           </h2>
           <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
-              <strong style={{ color: "var(--docs-text)" }}>Free active backlog:</strong> Free workspaces can keep up to 50 active scheduled parent posts waiting for future delivery. Exceeding that cap returns <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>PLAN_SCHEDULED_POST_LIMIT_EXCEEDED</code>. The existing 100 posts/month quota still applies when posts are created and delivered. Paid plans do not cap active scheduled backlog.
+              <strong style={{ color: "var(--docs-text)" }}>Free active backlog:</strong> Free workspaces can keep up to 50 undeleted parent posts in scheduled status. Exceeding that cap returns <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>PLAN_SCHEDULED_POST_LIMIT_EXCEEDED</code>. The existing 100 posts/month quota still applies when posts are created and delivered. Paid plans do not cap active scheduled backlog.
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
-              <strong style={{ color: "var(--docs-text)" }}>Media retention:</strong> scheduled posts keep uploaded media until they reach a final status. After success, failed, or partial completion, UniPost retains media according to the workspace plan before cleanup.
+              <strong style={{ color: "var(--docs-text)" }}>Media retention:</strong> scheduled posts keep uploaded media until they reach a final status. After success, failed, partial, or cancellation, UniPost retains media according to the workspace plan before cleanup.
             </p>
           </div>
         </section>

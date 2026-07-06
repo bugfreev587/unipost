@@ -3,6 +3,35 @@ INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, s
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
+-- name: CreateSocialPostWithActiveScheduledCap :one
+WITH scheduled_cap_lock AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtext(sqlc.arg(workspace_id)::text), 20260706)
+),
+scheduled_cap_slot AS MATERIALIZED (
+  SELECT 1
+  FROM scheduled_cap_lock
+  WHERE (
+    SELECT COUNT(*)::integer
+    FROM social_posts
+    WHERE workspace_id = sqlc.arg(workspace_id)
+      AND status = 'scheduled'
+      AND deleted_at IS NULL
+  ) < sqlc.arg(active_scheduled_limit)::integer
+)
+INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key, source, profile_ids)
+SELECT
+  sqlc.arg(workspace_id),
+  sqlc.arg(caption),
+  sqlc.arg(media_urls),
+  sqlc.arg(status),
+  sqlc.arg(metadata),
+  sqlc.arg(scheduled_at),
+  sqlc.arg(idempotency_key),
+  sqlc.arg(source),
+  sqlc.arg(profile_ids)
+FROM scheduled_cap_slot
+RETURNING *;
+
 -- name: SetSocialPostProfileIDs :exec
 -- Lazy-populate profile_ids on posts that were created before the
 -- source/profile_ids migration landed. Called from the publish/claim

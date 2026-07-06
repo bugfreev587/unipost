@@ -342,6 +342,7 @@ func (h *SocialPostHandler) cancelSocialPost(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel post")
 		return
 	}
+	h.syncPostMediaRetention(r.Context(), cancelled, cancelled.Status)
 	writeSuccess(w, socialPostResponseFromRow(cancelled))
 }
 

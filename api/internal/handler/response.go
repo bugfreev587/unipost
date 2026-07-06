@@ -108,7 +108,8 @@ var normalizedErrorCodeMap = map[string]string{
 	// Free plan monthly quota gate: paid plans keep soft overage
 	// behavior, but Free workspaces cannot accept new publish work
 	// once doing so would exceed their monthly quota.
-	"PLAN_POST_QUOTA_EXCEEDED": "plan_post_quota_exceeded",
+	"PLAN_POST_QUOTA_EXCEEDED":           "plan_post_quota_exceeded",
+	"PLAN_SCHEDULED_POST_LIMIT_EXCEEDED": "plan_scheduled_post_limit_exceeded",
 	// Profile-create cap (migration 059, PR-B): workspace already at
 	// the per-plan profile cap. 402 with the cap value in the
 	// message so clients can render an exact upgrade prompt.
