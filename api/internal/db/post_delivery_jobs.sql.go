@@ -836,6 +836,7 @@ SET state = $2,
       ELSE finished_at
     END
 WHERE id = $1
+  AND state IN ('running', 'retrying')
 RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
 `
 
@@ -897,6 +898,7 @@ SET state = 'succeeded',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
+  AND state IN ('running', 'retrying')
 RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at
 `
 
