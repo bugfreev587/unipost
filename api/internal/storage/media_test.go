@@ -28,6 +28,19 @@ func TestMediaKey(t *testing.T) {
 	}
 }
 
+func TestPullObjectKeyForSource(t *testing.T) {
+	got := PullObjectKeyForSource("media/media_123.mp4")
+	if !strings.HasPrefix(got, "pull/") {
+		t.Fatalf("PullObjectKeyForSource prefix = %q, want pull/", got)
+	}
+	if !strings.HasSuffix(got, ".mp4") {
+		t.Fatalf("PullObjectKeyForSource suffix = %q, want .mp4", got)
+	}
+	if got != PullObjectKeyForSource("media/media_123.mp4") {
+		t.Fatal("PullObjectKeyForSource must be stable for cleanup")
+	}
+}
+
 // TestNilClient covers the documented "nil *Client is a valid value"
 // contract. Every public method on a nil receiver should return
 // ErrNotConfigured rather than panicking, so callers can pass a nil
