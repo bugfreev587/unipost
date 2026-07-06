@@ -68,6 +68,28 @@ func TestMediaProcessingJobsMigrationPreservesMediaCleanup(t *testing.T) {
 	}
 }
 
+func TestMediaPostUsageRetentionMigrationExists(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/097_media_post_usage_retention.sql")
+	if err != nil {
+		t.Fatalf("read media post usage retention migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"create table media_post_usages",
+		"media_id",
+		"post_id",
+		"post_status",
+		"cleanup_after_at",
+		"media_post_usages_cleanup_due_idx",
+		"update media set cleanup_after_at = null",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("media post usage migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
 func TestPostgresDoBlocksAreGooseStatementBlocks(t *testing.T) {
 	err := fs.WalkDir(migrations, "migrations", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

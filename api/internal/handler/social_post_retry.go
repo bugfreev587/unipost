@@ -177,6 +177,7 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 	})
 	post.Status = newStatus
 	post.PublishedAt = newPublishedAt
+	h.syncPostMediaRetention(ctx, post, newStatus)
 	// If we just flipped off of "failed", clear the metadata error
 	// summary so the posts list doesn't keep showing stale copy.
 	if newStatus != "failed" {

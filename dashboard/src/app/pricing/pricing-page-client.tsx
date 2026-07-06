@@ -37,7 +37,8 @@ const TIERS: Tier[] = [
       { kind: "headline", text: "Dashboard + API" },
       { kind: "include", text: "8 platforms (excludes X)" },
       { kind: "include", text: "MCP server (AI agent ready)" },
-      { kind: "include", text: "Webhooks + scheduling" },
+      { kind: "include", text: "Webhooks + scheduling (50 active)" },
+      { kind: "include", text: "Media kept 1d / 2d after finish" },
       { kind: "include", text: "1 profile · 1 user" },
       { kind: "exclude", text: "Inbox" },
       { kind: "exclude", text: "Analytics" },
@@ -54,6 +55,7 @@ const TIERS: Tier[] = [
       { kind: "include", text: "All 9 platforms incl. X" },
       { kind: "include", text: "Read-only Analytics API" },
       { kind: "include", text: "Webhooks + scheduling" },
+      { kind: "include", text: "Media kept 2d / 4d after finish" },
       { kind: "include", text: "2 profiles · 1 user" },
       { kind: "exclude", text: "Inbox" },
     ],
@@ -71,6 +73,7 @@ const TIERS: Tier[] = [
       { kind: "include", text: "Inbox: DMs + comments" },
       { kind: "include", text: "Full Analytics suite" },
       { kind: "include", text: "Hosted Connect + credentials for 1 platform" },
+      { kind: "include", text: "Media kept 4d / 8d after finish" },
       { kind: "include", text: "5 profiles · 1 user" },
       { kind: "exclude", text: "Hide Powered by UniPost" },
     ],
@@ -87,6 +90,7 @@ const TIERS: Tier[] = [
       { kind: "include", text: "Hosted Connect + credentials on all supported platforms" },
       { kind: "include", text: "Optional removal of Powered by UniPost" },
       { kind: "include", text: "Branded OAuth flow" },
+      { kind: "include", text: "Media kept 15d / 30d after finish" },
       { kind: "include", text: "25 profiles · 3 users" },
     ],
   },
@@ -101,6 +105,7 @@ const TIERS: Tier[] = [
       { kind: "include", text: "Everything in Growth" },
       { kind: "include", text: "Roles: owner / admin / editor" },
       { kind: "include", text: "Audit log" },
+      { kind: "include", text: "Media kept 30d / 60d after finish" },
       { kind: "include", text: "Unlimited profiles · unlimited users" },
       { kind: "include", text: "Priority support" },
     ],
@@ -131,6 +136,9 @@ const COMPARE_ROWS: CompareRow[] = [
   { name: "MCP server", sub: "AI agent integration via MCP protocol", free: true, api: true, basic: true, growth: true, team: true },
   { name: "Webhooks", sub: "Real-time event notifications", free: true, api: true, basic: true, growth: true, team: true },
   { name: "Scheduling", sub: "Post at a future time", free: true, api: true, basic: true, growth: true, team: true },
+  { name: "Active scheduled posts", sub: "Scheduled parent posts waiting for future delivery. Paid plans do not cap active scheduled backlog.", free: "50", api: "Unlimited", basic: "Unlimited", growth: "Unlimited", team: "Unlimited" },
+  { name: "Media retention after success", sub: "Uploaded UniPost media is kept after the parent post publishes successfully, then cleaned from storage.", free: "1 day", api: "2 days", basic: "4 days", growth: "15 days", team: "30 days" },
+  { name: "Media retention after failed/partial", sub: "Failed and partial posts share the same longer troubleshooting window. Scheduled, draft, and in-flight posts are retained.", free: "2 days", api: "4 days", basic: "8 days", growth: "30 days", team: "60 days" },
   { name: "Dashboard UI", sub: "Compose, account management, analytics, and workspace settings in browser", free: true, api: true, basic: true, growth: true, team: true },
   { name: "Inbox", sub: "DMs and comments from connected accounts", free: false, api: false, basic: true, growth: true, team: true },
   { name: "Analytics", sub: "Reach, impressions, engagement", free: false, api: "read-only API", basic: true, growth: true, team: true },
@@ -148,6 +156,8 @@ const FAQS = [
   { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
   { q: "What happens if I go over my monthly post quota?", a: "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. API, Basic, and Growth keep soft overage behavior: posting continues for now, with usage warnings and upgrade guidance instead of surprise billing. Team includes unlimited monthly posts. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
+  { q: "Can I schedule posts on the Free plan?", a: "Yes. Free workspaces can schedule posts, but they can hold up to 50 active scheduled parent posts at once. Published, failed, partial, draft, and cancelled posts do not count toward that active scheduled backlog. Paid plans do not have an active scheduled-post cap." },
+  { q: "How long does UniPost keep uploaded media after a post finishes?", a: "Scheduled, draft, queued, publishing, and processing posts keep their media. Once the parent post reaches a final state, uploaded media is retained by plan: Free 1 day after success or 2 days after failed/partial; API 2/4 days; Basic 4/8 days; Growth 15/30 days; Team 30/60 days." },
   { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
   { q: "When do I need Growth?", a: "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
@@ -297,7 +307,7 @@ export default function PricingPage() {
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><circle cx="8" cy="8" r="6.5" /><path d="M8 5v3M8 10v1" /></svg></div>
           <div>
             <div className="pr-soft-title">Free has a clear cap. Paid plans stay flexible.</div>
-            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month. API, Basic, and Growth keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. Team includes unlimited monthly posts. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
+            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 active scheduled posts at once. API, Basic, and Growth keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. Team includes unlimited monthly posts. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
           </div>
         </div>
 

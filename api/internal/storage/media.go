@@ -243,8 +243,7 @@ func (c *Client) StageObjectForPull(ctx context.Context, key string) (string, er
 	if c == nil {
 		return "", ErrNotConfigured
 	}
-	sum := sha256.Sum256([]byte(key))
-	dstKey := path.Join("pull", hex.EncodeToString(sum[:])+path.Ext(key))
+	dstKey := PullObjectKeyForSource(key)
 	copySource := url.PathEscape(c.bucket + "/" + key)
 
 	_, err := c.s3.CopyObject(ctx, &s3.CopyObjectInput{
@@ -257,6 +256,14 @@ func (c *Client) StageObjectForPull(ctx context.Context, key string) (string, er
 		return "", fmt.Errorf("storage: stage object for pull: %w", err)
 	}
 	return c.publicBase + "/" + dstKey, nil
+}
+
+// PullObjectKeyForSource returns the deterministic public pull-copy key
+// used by StageObjectForPull. Cleanup can delete this key alongside the
+// source media object without storing an extra row.
+func PullObjectKeyForSource(key string) string {
+	sum := sha256.Sum256([]byte(key))
+	return path.Join("pull", hex.EncodeToString(sum[:])+path.Ext(key))
 }
 
 // Delete removes an object from R2. Used by the media sweeper for
