@@ -32,7 +32,7 @@ import {
 } from "@/lib/api";
 import { adminUserIdentifierLabel } from "@/lib/admin-privacy";
 
-import { AdminShell, StatCard, bucketByLocalDay, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { AdminShell, StatCard, bucketByLocalDayRange, fmtNumber, fmtRelative } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
 import { fmtAdminPostTimelineDate, getAdminPostPublishTimeline } from "./timeline";
 
@@ -40,7 +40,92 @@ const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", 
 const RESULT_STATUS_OPTIONS = ["all", "failed"] as const;
 const PLATFORM_OPTIONS = ["all", "twitter", "linkedin", "instagram", "threads", "tiktok", "youtube", "bluesky", "facebook"] as const;
 const SOURCE_OPTIONS = ["all", "ui", "dashboard", "api", "mcp"] as const;
-const DAY_OPTIONS = [7, 30, 90] as const;
+
+const PERIOD_OPTIONS = [
+  { value: "today", label: "Today" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "90d", label: "Last 90 days" },
+  { value: "this_month", label: "This Month" },
+  { value: "last_month", label: "Last Month" },
+  { value: "all", label: "All" },
+] as const;
+
+type PeriodValue = (typeof PERIOD_OPTIONS)[number]["value"];
+
+// Card / section-meta wording for each period ("Last 30 days" etc.).
+const PERIOD_SUBS: Record<PeriodValue, string> = {
+  today: "Today",
+  "7d": "Last 7 days",
+  "30d": "Last 30 days",
+  "90d": "Last 90 days",
+  this_month: "This month",
+  last_month: "Last month",
+  all: "All time",
+};
+
+// Calendar periods send absolute [start, end) bounds computed in the
+// admin's local timezone — the server can't know where local midnight
+// or the first of the month falls. Rolling periods keep the days param.
+function periodToRequestParams(period: PeriodValue): Pick<AdminPostListParams, "days" | "start_at" | "end_at" | "all"> {
+  const now = new Date();
+  switch (period) {
+    case "7d":
+      return { days: 7 };
+    case "30d":
+      return { days: 30 };
+    case "90d":
+      return { days: 90 };
+    case "today": {
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+      return { start_at: start.toISOString() };
+    }
+    case "this_month":
+      return { start_at: new Date(now.getFullYear(), now.getMonth(), 1).toISOString() };
+    case "last_month":
+      return {
+        start_at: new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString(),
+        end_at: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(),
+      };
+    case "all":
+      return { all: true };
+  }
+}
+
+// Inclusive local-day range the chart should render for a period. "All"
+// stretches back to the earliest event so no data falls off the chart.
+function periodChartRange(period: PeriodValue, events: Array<{ created_at: string }>): { start: Date; end: Date } {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  switch (period) {
+    case "today":
+      return { start: today, end: today };
+    case "7d":
+    case "30d":
+    case "90d": {
+      const days = period === "7d" ? 7 : period === "30d" ? 30 : 90;
+      const start = new Date(today);
+      start.setDate(start.getDate() - (days - 1));
+      return { start, end: today };
+    }
+    case "this_month":
+      return { start: new Date(today.getFullYear(), today.getMonth(), 1), end: today };
+    case "last_month":
+      return {
+        start: new Date(today.getFullYear(), today.getMonth() - 1, 1),
+        end: new Date(today.getFullYear(), today.getMonth(), 0),
+      };
+    case "all": {
+      let start = today;
+      for (const e of events) {
+        const d = new Date(e.created_at);
+        if (d < start) start = d;
+      }
+      return { start, end: today };
+    }
+  }
+}
 
 const PLATFORM_COLORS: Record<string, string> = {
   twitter: "#0f172a",
@@ -68,7 +153,7 @@ export default function AdminPostsPage() {
   const [source, setSource] = useState<(typeof SOURCE_OPTIONS)[number]>("all");
   const [userId, setUserId] = useState<string>("");
   const [workspaceId, setWorkspaceId] = useState<string>("");
-  const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(30);
+  const [period, setPeriod] = useState<PeriodValue>("30d");
   const [hideUsers, setHideUsers] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
@@ -94,7 +179,7 @@ export default function AdminPostsPage() {
         source: source !== "all" ? source : undefined,
         user_id: userId || undefined,
         workspace_id: workspaceId || undefined,
-        days,
+        ...periodToRequestParams(period),
       };
       // Issue both calls in parallel — same filter set, separate
       // round trips because the row list is LIMITed but the
@@ -110,7 +195,7 @@ export default function AdminPostsPage() {
     } finally {
       setLoading(false);
     }
-  }, [days, getToken, platform, resultStatus, search, source, status, userId, workspaceId]);
+  }, [getToken, period, platform, resultStatus, search, source, status, userId, workspaceId]);
 
   useEffect(() => {
     loadAll();
@@ -153,9 +238,11 @@ export default function AdminPostsPage() {
   // late-evening publish doesn't land on the next UTC date in the chart.
   const dailyRows = useMemo(() => {
     if (!aggregates) return [] as { date: string; published: number; failed: number }[];
-    return bucketByLocalDay(
+    const { start, end } = periodChartRange(period, aggregates.events);
+    return bucketByLocalDayRange(
       aggregates.events,
-      days,
+      start,
+      end,
       (date) => ({ date, published: 0, failed: 0 }),
       (b, e) => {
         if (e.status === "published") b.published += 1;
@@ -163,7 +250,7 @@ export default function AdminPostsPage() {
       },
       (e) => e.created_at,
     );
-  }, [aggregates, days]);
+  }, [aggregates, period]);
 
   const selectedPost = useMemo(() => {
     if (!selectedPostId) return null;
@@ -273,10 +360,10 @@ export default function AdminPostsPage() {
             <option key={w.id} value={w.id}>{`Workspace: ${w.name}`}</option>
           ))}
         </select>
-        <select value={days} onChange={(e) => setDays(Number(e.target.value) as typeof days)}>
-          {DAY_OPTIONS.map((value) => (
+        <select value={period} onChange={(e) => setPeriod(e.target.value as PeriodValue)}>
+          {PERIOD_OPTIONS.map(({ value, label }) => (
             <option key={value} value={value}>
-              Last {value} days
+              {label}
             </option>
           ))}
         </select>
@@ -287,7 +374,7 @@ export default function AdminPostsPage() {
       </div>
 
       <div className="ad-stat-grid">
-        <StatCard label="Posts" value={fmtNumber(total)} sub={`Last ${days} days`} />
+        <StatCard label="Posts" value={fmtNumber(total)} sub={PERIOD_SUBS[period]} />
         <StatCard
           label="Published"
           value={fmtNumber(published)}
@@ -355,7 +442,7 @@ export default function AdminPostsPage() {
         <>
           <div className="ad-section-header" style={{ marginTop: 24 }}>
             <div className="ad-section-title" style={{ fontSize: 14 }}>Posts per day</div>
-            <div className="ad-section-meta">Published vs failed, last {days} days</div>
+            <div className="ad-section-meta">Published vs failed, {PERIOD_SUBS[period].toLowerCase()}</div>
           </div>
           <div
             style={{
