@@ -870,8 +870,48 @@ type adminPostsQuery struct {
 	UserID       string
 	WorkspaceID  string
 	Days         int
-	Limit        int
-	Excluded     []string
+	// StartAt/EndAt are absolute [start, end) bounds sent by the
+	// dashboard for calendar periods (today, this month, last month) —
+	// computed client-side so the boundaries follow the admin's local
+	// timezone, not the server's. They take precedence over Days.
+	StartAt *time.Time
+	EndAt   *time.Time
+	// All disables the time filter entirely ("All" period option).
+	All      bool
+	Limit    int
+	Excluded []string
+}
+
+// adminPostsWindow resolves the query's time filter to absolute
+// [start, end) bounds. nil means unbounded on that side: All returns
+// (nil, nil), explicit StartAt/EndAt pass through, otherwise Days
+// (default 30, capped at 365) anchors to the current instant.
+func adminPostsWindow(opts adminPostsQuery) (start, end *time.Time) {
+	if opts.All {
+		return nil, nil
+	}
+	if opts.StartAt != nil {
+		return opts.StartAt, opts.EndAt
+	}
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 30
+	}
+	s := time.Now().AddDate(0, 0, -days)
+	return &s, nil
+}
+
+// parseAdminTimeParam parses an RFC3339 query param, returning nil for
+// empty or malformed values so bad input degrades to the default window.
+func parseAdminTimeParam(value string) *time.Time {
+	if value == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return nil
+	}
+	return &t
 }
 
 // adminPostsAggregatesResponse drives the four headline cards, the
@@ -1579,10 +1619,7 @@ func adminPostPlatformFilterSQL(postAlias, param string) string {
 }
 
 func (h *AdminHandler) queryPosts(ctx context.Context, opts adminPostsQuery) ([]adminPostRow, error) {
-	days := opts.Days
-	if days <= 0 || days > 365 {
-		days = 30
-	}
+	startAt, endAt := adminPostsWindow(opts)
 	limit := opts.Limit
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -1613,7 +1650,8 @@ WITH post_rollup AS (
   LEFT JOIN social_post_results spr ON spr.post_id = sp.id
   WHERE u.id != ALL($1)
     AND sp.deleted_at IS NULL
-    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND ($2::TIMESTAMPTZ IS NULL OR sp.created_at >= $2)
+    AND ($11::TIMESTAMPTZ IS NULL OR sp.created_at < $11)
     AND ($3::TEXT = '' OR sp.status = $3)
     AND ($4::TEXT = '' OR sp.source = $4)
     AND ($8::TEXT = '' OR u.id = $8)
@@ -1650,7 +1688,7 @@ WHERE ($5::TEXT = '' OR $5 = ANY(platforms))
   )
 ORDER BY created_at DESC
 LIMIT $7
-`, opts.Excluded, days, opts.Status, opts.Source, opts.Platform, opts.Search, limit, opts.UserID, opts.WorkspaceID, opts.ResultStatus)
+`, opts.Excluded, startAt, opts.Status, opts.Source, opts.Platform, opts.Search, limit, opts.UserID, opts.WorkspaceID, opts.ResultStatus, endAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1702,10 +1740,7 @@ LIMIT $7
 // can't share the scan across them anyway. Total round-trip stays
 // under ~50 ms on the indexes we already have on social_posts.
 func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPostsQuery) (*adminPostsAggregatesResponse, error) {
-	days := opts.Days
-	if days <= 0 || days > 365 {
-		days = 30
-	}
+	startAt, endAt := adminPostsWindow(opts)
 
 	// Common WHERE used by all three queries. Parameter ordering must
 	// match every Query() call below.
@@ -1713,7 +1748,8 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
 	commonWhere := `
   WHERE u.id != ALL($1)
     AND sp.deleted_at IS NULL
-    AND sp.created_at >= NOW() - ($2::INT * INTERVAL '1 day')
+    AND ($2::TIMESTAMPTZ IS NULL OR sp.created_at >= $2)
+    AND ($10::TIMESTAMPTZ IS NULL OR sp.created_at < $10)
     AND ($3::TEXT = '' OR sp.status = $3)
     AND ($4::TEXT = '' OR sp.source = $4)
     AND ($5::TEXT = '' OR u.id = $5)
@@ -1732,11 +1768,11 @@ func (h *AdminHandler) queryPostsAggregates(ctx context.Context, opts adminPosts
     )`
 
 	args := []any{
-		opts.Excluded, days,
+		opts.Excluded, startAt,
 		opts.Status, opts.Source,
 		opts.UserID, opts.WorkspaceID,
 		opts.Platform, opts.Search,
-		opts.ResultStatus,
+		opts.ResultStatus, endAt,
 	}
 
 	out := &adminPostsAggregatesResponse{
@@ -2157,6 +2193,9 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 	days, _ := strconv.Atoi(q.Get("days"))
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	resultStatus := normalizeAdminPostResultStatus(q.Get("result_status"))
+	startAt := parseAdminTimeParam(q.Get("start_at"))
+	endAt := parseAdminTimeParam(q.Get("end_at"))
+	all := q.Get("all") == "true"
 
 	excluded, err := h.excludedUserIDs(r.Context())
 	if err != nil {
@@ -2173,6 +2212,9 @@ func (h *AdminHandler) ListPosts(w http.ResponseWriter, r *http.Request) {
 		UserID:       q.Get("user_id"),
 		WorkspaceID:  q.Get("workspace_id"),
 		Days:         days,
+		StartAt:      startAt,
+		EndAt:        endAt,
+		All:          all,
 		Limit:        limit,
 		Excluded:     excluded,
 	})
@@ -2191,6 +2233,9 @@ func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Reques
 	q := r.URL.Query()
 	days, _ := strconv.Atoi(q.Get("days"))
 	resultStatus := normalizeAdminPostResultStatus(q.Get("result_status"))
+	startAt := parseAdminTimeParam(q.Get("start_at"))
+	endAt := parseAdminTimeParam(q.Get("end_at"))
+	all := q.Get("all") == "true"
 
 	excluded, err := h.excludedUserIDs(r.Context())
 	if err != nil {
@@ -2207,6 +2252,9 @@ func (h *AdminHandler) ListPostsAggregates(w http.ResponseWriter, r *http.Reques
 		UserID:       q.Get("user_id"),
 		WorkspaceID:  q.Get("workspace_id"),
 		Days:         days,
+		StartAt:      startAt,
+		EndAt:        endAt,
+		All:          all,
 		Excluded:     excluded,
 	})
 	if err != nil {

@@ -63,16 +63,35 @@ export function bucketByLocalDay<E, R extends { date: string }>(
   reduce: (bucket: R, event: E) => void,
   getTimestamp: (event: E) => string,
 ): R[] {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  const end = new Date();
+  end.setHours(0, 0, 0, 0);
+  const start = new Date(end);
+  start.setDate(start.getDate() - (days - 1));
+  return bucketByLocalDayRange(events, start, end, initBucket, reduce, getTimestamp);
+}
+
+// bucketByLocalDayRange is bucketByLocalDay for an arbitrary inclusive
+// [start, end] day range — used by calendar periods (this month, last
+// month, all time) whose windows don't end today.
+export function bucketByLocalDayRange<E, R extends { date: string }>(
+  events: E[],
+  start: Date,
+  end: Date,
+  initBucket: (date: string) => R,
+  reduce: (bucket: R, event: E) => void,
+  getTimestamp: (event: E) => string,
+): R[] {
   const rows: R[] = [];
   const indexByDate = new Map<string, number>();
-  for (let i = days - 1; i >= 0; i--) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const key = localDayKey(d);
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const last = new Date(end);
+  last.setHours(0, 0, 0, 0);
+  while (cursor <= last) {
+    const key = localDayKey(cursor);
     indexByDate.set(key, rows.length);
     rows.push(initBucket(key));
+    cursor.setDate(cursor.getDate() + 1);
   }
   for (const e of events) {
     const ts = getTimestamp(e);

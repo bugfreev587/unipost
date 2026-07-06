@@ -2717,6 +2717,12 @@ export interface AdminPostListParams {
   user_id?: string;
   workspace_id?: string;
   days?: number;
+  // Absolute [start, end) bounds (RFC3339) for calendar periods —
+  // computed in the admin's local timezone; take precedence over days.
+  start_at?: string;
+  end_at?: string;
+  // Disables the time filter entirely ("All" period option).
+  all?: boolean;
   limit?: number;
 }
 
@@ -3457,6 +3463,9 @@ export async function listAdminPosts(
   if (params?.user_id) qs.set("user_id", params.user_id);
   if (params?.workspace_id) qs.set("workspace_id", params.workspace_id);
   if (params?.days != null) qs.set("days", String(params.days));
+  if (params?.start_at) qs.set("start_at", params.start_at);
+  if (params?.end_at) qs.set("end_at", params.end_at);
+  if (params?.all) qs.set("all", "true");
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/posts${s ? `?${s}` : ""}`, token);
@@ -3475,6 +3484,9 @@ export async function listAdminPostsAggregates(
   if (params?.user_id) qs.set("user_id", params.user_id);
   if (params?.workspace_id) qs.set("workspace_id", params.workspace_id);
   if (params?.days != null) qs.set("days", String(params.days));
+  if (params?.start_at) qs.set("start_at", params.start_at);
+  if (params?.end_at) qs.set("end_at", params.end_at);
+  if (params?.all) qs.set("all", "true");
   const s = qs.toString();
   return request(`/v1/admin/posts/aggregates${s ? `?${s}` : ""}`, token);
 }
