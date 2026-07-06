@@ -149,17 +149,15 @@ export default function ConnectSessionsGuidePage() {
       title="Connect Sessions"
       lead="Create hosted account-connection flows for end users. Connect Sessions can use UniPost's shared OAuth apps or workspace platform credentials, depending on credential availability and allow_quickstart_creds."
     >
-      <style dangerouslySetInnerHTML={{ __html: styles }} />
-
-      <div className="cs-badges">
-        <span className="cs-badge">Customer-owned accounts</span>
-        <span className="cs-badge">Hosted OAuth</span>
-        <span className="cs-badge">Shared UniPost OAuth app</span>
-        <span className="cs-badge">Workspace platform credentials</span>
+      <div className="docs-guide-badges">
+        <span className="docs-guide-badge">Customer-owned accounts</span>
+        <span className="docs-guide-badge">Hosted OAuth</span>
+        <span className="docs-guide-badge">Shared UniPost OAuth app</span>
+        <span className="docs-guide-badge">Workspace platform credentials</span>
       </div>
 
       <h2 id="when-to-use">When to use Connect Sessions</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         Use Connect Sessions when your product needs to send an end user through
         account authorization and then publish on behalf of the account they
         connected. Use <ApiInlineLink endpoint="POST /v1/oauth/connect" /> when
@@ -179,7 +177,7 @@ export default function ConnectSessionsGuidePage() {
       />
 
       <h2 id="credential-modes">Credential sources</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         The endpoint is the same in both modes. The difference is which OAuth app
         the platform sees during authorization. If you omit{" "}
         <code>allow_quickstart_creds</code>, it defaults to <code>false</code>,
@@ -202,25 +200,25 @@ export default function ConnectSessionsGuidePage() {
           ],
         ]}
       />
-      <p className="cs-note">
+      <p className="docs-guide-note">
         If a workspace has platform credentials for the requested platform, UniPost
         uses those credentials. <code>allow_quickstart_creds=true</code> only
         permits fallback to UniPost&apos;s shared app when workspace credentials are
         missing.
       </p>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         On Basic, workspace Platform Credentials are active only for the workspace&apos;s
         shared custom platform slot. Growth, Team, and Enterprise can use workspace
         Platform Credentials across all supported OAuth platforms.
       </p>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         These credential modes apply to OAuth platforms. Bluesky uses app
         passwords instead of OAuth apps, so <code>allow_quickstart_creds</code>{" "}
         does not change the Bluesky Connect Session path.
       </p>
 
       <h2 id="quickstart-session">Shared-app fallback session</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         Pass <code>allow_quickstart_creds=true</code> when you want hosted
         customer onboarding without requiring workspace-owned Platform
         Credentials first.
@@ -228,7 +226,7 @@ export default function ConnectSessionsGuidePage() {
       <DocsCodeTabs snippets={QUICKSTART_SESSION_SNIPPETS} />
 
       <h2 id="white-label-session">Workspace-credential session</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         Upload workspace Platform Credentials first, then create sessions with{" "}
         <code>allow_quickstart_creds=false</code> so missing credentials fail
         immediately instead of silently falling back to UniPost&apos;s shared app.
@@ -236,7 +234,7 @@ export default function ConnectSessionsGuidePage() {
       <DocsCodeTabs snippets={WHITE_LABEL_SESSION_SNIPPETS} />
 
       <h2 id="callback-vs-return-url">Callback URL vs return_url</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         These names are easy to mix up, but they control different redirects.
       </p>
       <DocsTable
@@ -254,14 +252,14 @@ export default function ConnectSessionsGuidePage() {
           ],
         ]}
       />
-      <p className="cs-note">
+      <p className="docs-guide-note">
         For workspace Platform Credentials, copy callback URLs from the platform guides under{" "}
         <Link href="/docs/platform-credentials">Platform Credentials</Link>. Do not replace
         them with your <code>return_url</code>.
       </p>
 
       <h2 id="completion">Handle completion</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         The hosted URL is browser-facing. Your backend should subscribe to the{" "}
         <code>account.connected</code> webhook and store the returned{" "}
         <code>social_account_id</code> as the account id for future publishing.
@@ -269,13 +267,13 @@ export default function ConnectSessionsGuidePage() {
         as soon as the account is connected.
       </p>
       <DocsCodeTabs snippets={WEBHOOK_SNIPPETS} />
-      <p className="cs-note">
+      <p className="docs-guide-note">
         See <Link href="/docs/api/webhooks">Developer webhooks</Link> for
         subscription setup, signatures, and retry behavior.
       </p>
 
       <h2 id="polling-fallback">Poll as a fallback</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         Poll <ApiInlineLink endpoint="GET /v1/connect/sessions/:session_id" />{" "}
         for local development, CLI demos, or integrations that cannot receive
         webhooks. Stop polling on every terminal state:
@@ -285,7 +283,7 @@ export default function ConnectSessionsGuidePage() {
       <DocsCodeTabs snippets={POLLING_SNIPPETS} />
 
       <h2 id="cloudflare-workers">Cloudflare Workers and Wrangler</h2>
-      <p className="cs-note">
+      <p className="docs-guide-note">
         If you call Connect Sessions from Cloudflare Workers or local{" "}
         <code>wrangler dev</code> and see an error like{" "}
         <code>internal error; reference = ...</code>, the request may be
@@ -295,61 +293,45 @@ export default function ConnectSessionsGuidePage() {
         else.
       </p>
       <DocsCodeTabs snippets={CLOUDFLARE_WORKERS_SNIPPETS} />
-      <p className="cs-note">
+      <p className="docs-guide-note">
         No cache clearing is normally required. If the error persists after
         switching <code>baseUrl</code>, restart <code>wrangler dev</code> once
         so workerd picks up the new hostname resolution.
       </p>
 
       <h2 id="next-steps">Next steps</h2>
-      <div className="cs-next">
-        <Link href="/docs/api/connect/sessions/create" className="cs-next-card">
-          <div className="cs-next-kicker">API reference</div>
-          <div className="cs-next-title">Create session</div>
-          <div className="cs-next-body">Full request and response schema for <code>POST /v1/connect/sessions</code>.</div>
+      <div className="docs-guide-next">
+        <Link href="/docs/api/connect/sessions/create" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">API reference</div>
+          <div className="docs-guide-next-title">Create session</div>
+          <div className="docs-guide-next-body">Full request and response schema for <code>POST /v1/connect/sessions</code>.</div>
         </Link>
-        <Link href="/docs/api/connect/sessions/get" className="cs-next-card">
-          <div className="cs-next-kicker">API reference</div>
-          <div className="cs-next-title">Get session</div>
-          <div className="cs-next-body">Fallback polling for status and the completed managed account id.</div>
+        <Link href="/docs/api/connect/sessions/get" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">API reference</div>
+          <div className="docs-guide-next-title">Get session</div>
+          <div className="docs-guide-next-body">Fallback polling for status and the completed managed account id.</div>
         </Link>
-        <Link href="/docs/local-connect-test" className="cs-next-card">
-          <div className="cs-next-kicker">Local testing</div>
-          <div className="cs-next-title">Run Connect from your terminal</div>
-          <div className="cs-next-body">Download the helper script and copy the returned hosted OAuth URL into a browser.</div>
+        <Link href="/docs/local-connect-test" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Local testing</div>
+          <div className="docs-guide-next-title">Run Connect from your terminal</div>
+          <div className="docs-guide-next-body">Download the helper script and copy the returned hosted OAuth URL into a browser.</div>
         </Link>
-        <Link href="/docs/platform-credentials" className="cs-next-card">
-          <div className="cs-next-kicker">Developer apps</div>
-          <div className="cs-next-title">Platform Credentials</div>
-          <div className="cs-next-body">Upload platform credentials and copy exact OAuth callback URLs.</div>
+        <Link href="/docs/platform-credentials" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Developer apps</div>
+          <div className="docs-guide-next-title">Platform Credentials</div>
+          <div className="docs-guide-next-body">Upload platform credentials and copy exact OAuth callback URLs.</div>
         </Link>
-        <Link href="/docs/white-label" className="cs-next-card">
-          <div className="cs-next-kicker">Branding</div>
-          <div className="cs-next-title">Hosted Connect</div>
-          <div className="cs-next-body">Configure the white-label page shown before platform OAuth.</div>
+        <Link href="/docs/white-label" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Branding</div>
+          <div className="docs-guide-next-title">Hosted Connect</div>
+          <div className="docs-guide-next-body">Configure the white-label page shown before platform OAuth.</div>
         </Link>
-        <Link href="/docs/publishing" className="cs-next-card">
-          <div className="cs-next-kicker">After connection</div>
-          <div className="cs-next-title">Publishing guide</div>
-          <div className="cs-next-body">Use the connected account id to publish with hosted URLs or uploaded media.</div>
+        <Link href="/docs/publishing" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">After connection</div>
+          <div className="docs-guide-next-title">Publishing guide</div>
+          <div className="docs-guide-next-body">Use the connected account id to publish with hosted URLs or uploaded media.</div>
         </Link>
       </div>
     </DocsPage>
   );
 }
-
-const styles = `
-.cs-badges{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 28px}
-.cs-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:6px;background:#f8fafc;border:1px solid #e5e9f0;color:#4d5565;font-size:11.5px;font-weight:650;letter-spacing:0}
-.cs-note{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:8px 0 16px;max-width:820px}
-.cs-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
-.cs-next-card{display:flex;min-height:138px;flex-direction:column;padding:16px;border:1px solid #e5e9f0;border-radius:8px;background:#ffffff;text-decoration:none;color:inherit;box-shadow:0 1px 0 rgba(15,23,42,.02);transition:border-color .14s ease,background .14s ease,transform .14s ease}
-.cs-next-card:hover{border-color:#ccd4df;background:#fbfcfe;transform:translateY(-1px);text-decoration:none!important}
-.cs-next-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:#6f7685;margin-bottom:10px}
-.cs-next-title{font-size:15px;font-weight:720;color:var(--docs-text);margin-bottom:7px;letter-spacing:-.01em}
-.cs-next-body{font-size:13px;line-height:1.58;color:var(--docs-text-soft)}
-.cs-next-body code{font-family:var(--docs-mono);font-size:12px}
-@media (max-width:760px){
-  .cs-next{grid-template-columns:1fr}
-}
-`;

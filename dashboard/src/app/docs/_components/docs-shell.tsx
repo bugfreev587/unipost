@@ -1550,6 +1550,16 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-screenshot-step-body code{font-family:var(--docs-mono);font-size:12.5px}
 .docs-screenshot-step-image{margin-left:52px;border:1px solid var(--docs-border);border-radius:10px;overflow:hidden;background:var(--docs-bg-muted)}
 .docs-screenshot-step-image img{display:block;width:100%;height:auto}
+.docs-guide-badges{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 28px}
+.docs-guide-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:6px;background:color-mix(in srgb, var(--docs-bg-muted) 78%, var(--docs-bg-elevated));border:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent);color:var(--docs-text-muted);font-size:11.5px;font-weight:650;letter-spacing:0}
+.docs-guide-note{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:8px 0 16px;max-width:820px}
+.docs-guide-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+.docs-guide-next-card{display:flex;min-height:138px;flex-direction:column;padding:16px;border:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent);border-radius:8px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;box-shadow:0 1px 0 rgba(15,23,42,.02);transition:border-color .14s ease,background .14s ease,transform .14s ease}
+.docs-guide-next-card:hover{border-color:color-mix(in srgb, var(--docs-border-strong) 70%, var(--docs-link));background:color-mix(in srgb, var(--docs-bg-elevated) 92%, var(--docs-bg-muted));transform:translateY(-1px);text-decoration:none!important}
+.docs-guide-next-kicker{font-size:10.5px;font-weight:760;letter-spacing:.08em;text-transform:uppercase;color:var(--docs-text-faint);margin-bottom:10px}
+.docs-guide-next-title{font-size:15px;font-weight:720;color:var(--docs-text);margin-bottom:7px;letter-spacing:-.01em}
+.docs-guide-next-body{font-size:13px;line-height:1.58;color:var(--docs-text-soft)}
+.docs-guide-next-body code{font-family:var(--docs-mono);font-size:12px}
 .docs-badge-row{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 26px}
 .docs-badge{display:inline-flex;align-items:center;padding:4px 11px;border-radius:999px;background:var(--docs-bg-muted);border:1px solid var(--docs-border);color:var(--docs-text);font-size:11.5px;font-weight:600;letter-spacing:.01em}
 .docs-badge-accent{background:color-mix(in srgb, var(--docs-link) 12%, var(--docs-bg-muted));border-color:color-mix(in srgb, var(--docs-link) 30%, var(--docs-border));color:var(--docs-link)}
@@ -1593,6 +1603,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-checklist li code{font-family:var(--docs-mono);font-size:12.5px}
 .docs-checklist.docs-checklist-2col{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
 @media (max-width:960px){.docs-checklist.docs-checklist-2col,.docs-next-grid,.docs-decision-grid{grid-template-columns:1fr}.docs-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.docs-summary-card-wide{grid-column:span 2}}
+@media (max-width:760px){.docs-guide-next{grid-template-columns:1fr}}
 @media (max-width:640px){.docs-summary-grid{grid-template-columns:1fr}.docs-summary-card-wide{grid-column:span 1}.docs-guide-intro{display:block}.docs-guide-intro-icon{margin-bottom:12px}.docs-screenshot-step-body,.docs-screenshot-step-image{margin-left:0}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
@@ -1960,6 +1971,12 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-shell-guide-redesign .docs-page-guide-redesign p{
   font-size:15.5px;
   line-height:1.74;
+}
+.docs-shell-guide-redesign .docs-page-guide-redesign .docs-guide-note{
+  max-width:820px;
+  margin:8px 0 16px;
+  font-size:15px;
+  line-height:1.72;
 }
 .docs-shell-guide-redesign .docs-page-guide-redesign .docs-checklist{
   gap:9px;
@@ -2767,6 +2784,7 @@ function isOverviewGuidePath(current: string) {
     || current === "/docs/quickstart"
     || current === "/docs/connect-sessions"
     || current === "/docs/local-connect-test"
+    || current === "/docs/pricing"
     || current === "/docs/publishing"
     || current === "/docs/guides"
     || current.startsWith("/docs/guides/")
