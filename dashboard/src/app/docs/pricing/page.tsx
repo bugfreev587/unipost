@@ -1,60 +1,174 @@
 import Link from "next/link";
 import { DocsPage, DocsTable } from "../_components/docs-shell";
+import { ApiInlineLink } from "../api/_components/doc-components";
 
 export default function DocsPricingPage() {
   return (
     <DocsPage
-      eyebrow="Get Started"
-      title="Pricing"
-      lead="UniPost is priced by product stage, not raw post volume. Pick the tier that matches how you use the product — Free / API / Basic / Growth / Team / Enterprise — then scale within it."
+      breadcrumbItems={[
+        { label: "Using the API", href: "/docs/quickstart" },
+        { label: "Plans and limits" },
+      ]}
+      title="Plans and limits"
+      lead="Use this reference to understand how UniPost plans affect API behavior: monthly post quotas, active scheduled backlog, media retention, platform access, and the errors your integration should handle."
+      className="docs-page-guide-redesign"
     >
-      <h2 id="when-to-read">When to read this page</h2>
-      <p>Pricing influences architecture decisions: which surfaces you build against, whether you need Hosted Connect branding, Platform Credentials, and how you split traffic across plans. Read this early if you&apos;re evaluating where UniPost fits in your product.</p>
+      <div className="docs-callout docs-callout-tip">
+        <strong>This is the developer reference.</strong>
+        For buyer-facing plan comparison, price cards, and upgrade decisions, open the{" "}
+        <Link href="/pricing">full pricing page</Link>.
+      </div>
 
-      <h2 id="ladder">The ladder</h2>
+      <div className="docs-summary-grid">
+        <div className="docs-summary-card">
+          <div className="docs-summary-label">Free quota</div>
+          <div className="docs-summary-value">100 posts/month</div>
+          <div className="docs-summary-copy">Hard cap. New publish requests stop until reset or upgrade.</div>
+        </div>
+        <div className="docs-summary-card">
+          <div className="docs-summary-label">Free scheduled</div>
+          <div className="docs-summary-value">50 active posts</div>
+          <div className="docs-summary-copy">Undeleted parent posts still in scheduled status.</div>
+        </div>
+        <div className="docs-summary-card">
+          <div className="docs-summary-label">Media retention</div>
+          <div className="docs-summary-value">Status driven</div>
+          <div className="docs-summary-copy">Scheduled, draft, queued, publishing, and processing posts keep media.</div>
+        </div>
+        <div className="docs-summary-card">
+          <div className="docs-summary-label">Paid scheduled</div>
+          <div className="docs-summary-value">Unlimited</div>
+          <div className="docs-summary-copy">API, Basic, Growth, Team, and Enterprise do not cap active scheduled backlog.</div>
+        </div>
+      </div>
+
+      <h2 id="plan-behavior">Plan behavior</h2>
+      <p>
+        The public pricing page explains who each plan is for. This table focuses on
+        the behavior your application sees when it calls the API.
+      </p>
       <DocsTable
-        columns={["Tier", "Price", "Posts/mo", "Media retention", "Active scheduled", "What it unlocks"]}
+        columns={["Plan", "Posts/month", "Quota behavior", "Active scheduled", "API behavior"]}
         rows={[
-          ["Free",   "$0",     "100",    "1d success / 2d failed, partial, or cancelled", "50", "API + dashboard + 8 platforms (no X). Try without a credit card."],
-          ["API",    "$10",    "1,000",  "2d success / 4d failed, partial, or cancelled", "Unlimited", "Dashboard + API + MCP, all 9 platforms incl. X, and read-only Analytics API. Inbox is not included."],
-          ["Basic",  "$19",    "2,500",  "4d success / 8d failed, partial, or cancelled", "Unlimited", "Adds one shared custom platform slot for Hosted Connect branding and Platform Credentials, plus Inbox (DMs + comments) and full Analytics. Hosted onboarding still shows Powered by UniPost."],
-          ["Growth", "$59",    "7,500",  "15d success / 30d failed, partial, or cancelled", "Unlimited", "Adds Hosted Connect branding and Platform Credentials across all supported platforms plus optional removal of Powered by UniPost. 25 profiles, 3 team members."],
-          ["Team",   "$149",   "Unlimited", "30d success / 60d failed, partial, or cancelled", "Unlimited", "Adds RBAC (owner/admin/editor), per-member API keys, audit log, unlimited profiles + members."],
-          ["Enterprise", "Custom", "Custom", "30d success / 60d failed, partial, or cancelled", "Unlimited", "SLA, dedicated support, security review, and contract flexibility. Contact us."],
+          ["Free", "100", "Hard cap", "50", "Dashboard + API. Publishing to X is not available on Free."],
+          ["API", "1,000", "Soft overage", "Unlimited", "Dashboard + API + MCP, all 9 platforms including X, read-only Analytics API."],
+          ["Basic", "2,500", "Soft overage", "Unlimited", "Adds Inbox, full Analytics, and one shared custom platform slot."],
+          ["Growth", "7,500", "Soft overage", "Unlimited", "Adds Hosted Connect branding and Platform Credentials across supported platforms."],
+          ["Team", "Unlimited", "Unlimited", "Unlimited", "Adds RBAC, per-member API keys, audit log, unlimited profiles and members."],
+          ["Enterprise", "Custom", "Contract", "Unlimited", "SLA, dedicated support, security review, and contract flexibility."],
         ]}
       />
 
-      <h2 id="picking-a-tier">Picking a tier</h2>
-      <DocsTable
-        columns={["You are", "Tier"]}
-        rows={[
-          ["Evaluating UniPost or building a hobby project", <span key="f">Free</span>],
-          ["Building with the dashboard, REST API, MCP, and lightweight analytics", <span key="a">API</span>],
-          ["Running UniPost as your day-to-day operating console (compose, Inbox, Analytics)", <span key="b">Basic</span>],
-          ["Embedding UniPost into your own SaaS with one shared custom platform", <span key="b2">Basic</span>],
-          ["Embedding UniPost into your own SaaS across multiple custom platforms or without UniPost attribution", <span key="g">Growth</span>],
-          ["Running an agency or multi-operator team with role-based access", <span key="t">Team</span>],
-        ]}
-      />
-
-      <h2 id="usage-controls">Usage and safety controls</h2>
-      <p>These controls apply across plans:</p>
-      <ul>
-        <li><strong>Monthly post quota</strong> — Free, API, Basic, and Growth use the post number in the table above. Free is a hard cap: once a Free workspace reaches 100 posts/month, new publish requests are rejected until the next month or an upgrade. API, Basic, and Growth use soft overage: posting continues over the cap, but sustained overage triggers an upgrade conversation. Team includes unlimited monthly posts. No surprise billing.</li>
-        <li><strong>Active scheduled posts</strong> — Free workspaces can hold up to 50 undeleted parent posts in scheduled status. Paid plans do not cap active scheduled backlog. Published, failed, partial, draft, and cancelled posts do not count toward this scheduled-post cap.</li>
-        <li><strong>Media retention</strong> — scheduled, draft, queued, publishing, and processing posts keep their uploaded media. After the parent post reaches a final status, UniPost keeps media by plan: Free 1 day after success or 2 days after failed/partial/cancelled; API 2/4 days; Basic 4/8 days; Growth 15/30 days; Team and Enterprise 30/60 days.</li>
-        <li><strong>Per-account daily safety caps</strong> — each connected account has a daily ceiling to keep it from being flagged as a spam bot by the platform itself: X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. UTC-day window. Failed posts don&apos;t count.</li>
+      <h2 id="usage-limits">Usage limits</h2>
+      <p>
+        Free workspaces enforce hard limits. Paid self-serve plans are designed to
+        keep production integrations running while usage is reviewed.
+      </p>
+      <ul className="docs-checklist">
+        <li>
+          <strong>Monthly post quota:</strong> Free stops accepting new publish
+          requests after 100 posts/month. API, Basic, and Growth use soft overage:
+          posting continues for now, with usage warnings and upgrade guidance
+          instead of surprise billing.
+        </li>
+        <li>
+          <strong>Active scheduled posts:</strong> Free workspaces can hold up to
+          50 undeleted parent posts in scheduled status. Published, failed,
+          partial, draft, and cancelled posts do not count toward this cap.
+        </li>
+        <li>
+          <strong>Paid scheduling:</strong> API, Basic, Growth, Team, and
+          Enterprise do not cap active scheduled backlog.
+        </li>
+        <li>
+          <strong>Safety caps:</strong> each connected account still has a daily
+          platform-safety ceiling. Failed posts do not count toward these safety
+          caps.
+        </li>
       </ul>
 
-      <h2 id="free-plan">Free plan and trials</h2>
-      <p>The Free plan is the public trial path: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial; upgrade when you need X publishing, higher volume, Inbox, Analytics, custom Hosted Connect, Platform Credentials, or team workflows.</p>
+      <h2 id="media-retention">Media retention</h2>
+      <p>
+        UniPost keeps media while a post can still need it. Cleanup starts only
+        after the parent post reaches a final status, and reused media is deleted
+        only after all post usages for that media are due.
+      </p>
+      <DocsTable
+        columns={["Plan", "After success", "After failed, partial, or cancelled"]}
+        rows={[
+          ["Free", "1 day", "2 days"],
+          ["API", "2 days", "4 days"],
+          ["Basic", "4 days", "8 days"],
+          ["Growth", "15 days", "30 days"],
+          ["Team", "30 days", "60 days"],
+          ["Enterprise", "30 days", "60 days unless your contract says otherwise"],
+        ]}
+      />
+      <div className="docs-callout">
+        <strong>Scheduled posts keep their media.</strong>
+        R2 cleanup is driven by UniPost post state, not by object age. Scheduled,
+        draft, queued, publishing, and processing posts keep uploaded media until
+        they finish.
+      </div>
 
-      <h2 id="full-pricing">Full pricing</h2>
-      <p>Side-by-side feature comparison and FAQs:</p>
-      <p><Link href="/pricing">Open the full pricing page</Link></p>
+      <h2 id="api-errors">API errors to handle</h2>
+      <p>
+        Plan limits surface as normalized API errors. Your integration should
+        branch on <code>normalized_code</code>, not only on the human-readable
+        message.
+      </p>
+      <DocsTable
+        columns={["Scenario", "HTTP", "Normalized code", "Where it appears"]}
+        rows={[
+          [
+            "Free monthly post quota exceeded",
+            "402",
+            "`plan_limit_exceeded`",
+            <ApiInlineLink key="quota" endpoint="POST /v1/posts" />,
+          ],
+          [
+            "Free active scheduled backlog exceeded",
+            "402",
+            "`plan_scheduled_post_limit_exceeded`",
+            <ApiInlineLink key="scheduled" endpoint="POST /v1/posts" />,
+          ],
+        ]}
+      />
+      <p>
+        See <Link href="/docs/api/posts/create#errors">Create post errors</Link>{" "}
+        for response examples and the scheduled-post idempotency behavior.
+      </p>
 
-      <h2 id="changing-tiers">Changing tiers</h2>
-      <p>Upgrades take effect immediately and prorate. Downgrades take effect at the start of the next billing cycle. Plan changes do not invalidate API keys or disconnect social accounts.</p>
+      <h2 id="changing-plans">Changing plans</h2>
+      <p>
+        Upgrades take effect immediately and prorate. Downgrades take effect at
+        the start of the next billing cycle. Plan changes do not invalidate API
+        keys or disconnect social accounts.
+      </p>
+
+      <h2 id="next-steps">Next steps</h2>
+      <div className="docs-next-grid">
+        <Link href="/pricing" className="docs-next-card">
+          <div className="docs-next-kicker">Pricing</div>
+          <div className="docs-next-title">Compare plan prices</div>
+          <div className="docs-next-body">Open the buyer-facing pricing page for plan cards and FAQs.</div>
+        </Link>
+        <Link href="/docs/api/posts/create#errors" className="docs-next-card">
+          <div className="docs-next-kicker">API</div>
+          <div className="docs-next-title">Create post errors</div>
+          <div className="docs-next-body">Handle monthly quota and Free scheduled cap errors.</div>
+        </Link>
+        <Link href="/docs/api/media/reserve" className="docs-next-card">
+          <div className="docs-next-kicker">Media</div>
+          <div className="docs-next-title">Reserve uploads</div>
+          <div className="docs-next-body">Upload local media and understand status-driven retention.</div>
+        </Link>
+        <Link href="/docs/publishing" className="docs-next-card">
+          <div className="docs-next-kicker">Guide</div>
+          <div className="docs-next-title">Publishing guide</div>
+          <div className="docs-next-body">Follow the end-to-end publish path for hosted URLs and media IDs.</div>
+        </Link>
+      </div>
     </DocsPage>
   );
 }

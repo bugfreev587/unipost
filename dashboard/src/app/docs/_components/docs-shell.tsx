@@ -333,6 +333,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         { label: "Quickstart Mode", href: "/docs/quickstart" },
         { label: "Connect Sessions", href: "/docs/connect-sessions" },
         { label: "Local Connect testing", href: "/docs/local-connect-test" },
+        { label: "Plans and limits", href: "/docs/pricing" },
         { label: "Hosted Connect (White-label branding)", href: "/docs/white-label" },
         {
           label: "Platform Credentials",
@@ -467,6 +468,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Revoke API key", href: "/docs/api/api-keys/delete", method: "DELETE" },
           ],
         },
+        { label: "Plans and limits", href: "/docs/pricing" },
         {
           label: "Platform Credentials",
           children: [
@@ -583,6 +585,7 @@ const DOCS_METHOD_COLORS: Record<NonNullable<NavLeaf["method"]>, string> = {
 };
 
 const SIDEBAR_LABEL_CASE_OVERRIDES: Record<string, string> = {
+  and: "and",
   api: "API",
   apis: "APIs",
   cli: "CLI",
