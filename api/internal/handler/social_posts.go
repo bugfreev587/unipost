@@ -1314,6 +1314,9 @@ func (h *SocialPostHandler) executePublishLoop(
 }
 
 func (h *SocialPostHandler) recordPostFailure(ctx context.Context, arg db.CreatePostFailureParams) {
+	arg.Message = sanitizeDeliveryErrorText(arg.Message)
+	arg.RawError = sanitizeDeliveryErrorTextValue(arg.RawError)
+	arg.PlatformErrorCode = sanitizeDeliveryErrorTextValue(arg.PlatformErrorCode)
 	if arg.SocialPostResultID.Valid && strings.TrimSpace(arg.SocialPostResultID.String) != "" {
 		if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(arg.SocialPostResultID.String, arg)); err != nil {
 			slog.Warn("failed to persist structured result failure fields",
@@ -2649,6 +2652,12 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete post")
 		return
+	}
+	if err := h.queries.CancelActivePostDeliveryJobsByPost(r.Context(), db.CancelActivePostDeliveryJobsByPostParams{
+		PostID:      postID,
+		WorkspaceID: workspaceID,
+	}); err != nil {
+		slog.Warn("delete post: cancel active delivery jobs failed", "post_id", postID, "workspace_id", workspaceID, "error", err)
 	}
 
 	writeSuccess(w, map[string]bool{"deleted": true})

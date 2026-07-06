@@ -2,12 +2,14 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -620,7 +622,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 }
 
 func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.PostDeliveryJob, res db.SocialPostResult, post db.SocialPost, dispatchErr error) error {
-	msg := dispatchErr.Error()
+	msg := sanitizeDeliveryErrorText(dispatchErr.Error())
 	_, _ = h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
 		ID:           res.ID,
 		Status:       "failed",
@@ -669,10 +671,10 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 }
 
 func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post db.SocialPost, res db.SocialPostResult, job db.PostDeliveryJob, oc publishOneOutcome) error {
-	errMsg := oc.err.Error()
+	errMsg := sanitizeDeliveryErrorText(oc.err.Error())
 	debugCurl := pgtype.Text{}
-	if oc.debugCurl != "" {
-		debugCurl = pgtype.Text{String: oc.debugCurl, Valid: true}
+	if sanitizedDebugCurl := sanitizeDeliveryErrorText(oc.debugCurl); sanitizedDebugCurl != "" {
+		debugCurl = pgtype.Text{String: sanitizedDebugCurl, Valid: true}
 	}
 	failureStage := inferDispatchFailureStage(errMsg)
 
@@ -692,6 +694,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 		oc.err,
 		errMsg,
 	)
+	failure.PlatformErrorCode = sanitizeDeliveryErrorTextValue(failure.PlatformErrorCode)
 	anotherAttempt := failure.IsRetriable && (job.Kind == "dispatch" || job.Attempts < job.MaxAttempts)
 	resultStatus := "failed"
 	if anotherAttempt {
@@ -857,6 +860,9 @@ func (h *SocialPostHandler) RecoverStaleDeliveryJobs(ctx context.Context, maxAge
 func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
 	post, err := h.queries.GetSocialPostByID(ctx, job.PostID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return h.cancelStaleDeliveryJobForDeletedPost(ctx, job)
+		}
 		return err
 	}
 	result, err := h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
@@ -964,6 +970,40 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	return nil
+}
+
+func (h *SocialPostHandler) cancelStaleDeliveryJobForDeletedPost(ctx context.Context, job db.PostDeliveryJob) error {
+	msg := "delivery job cancelled because its parent post was deleted"
+	_, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
+		ID:                job.ID,
+		State:             "cancelled",
+		FailureStage:      pgtype.Text{String: "post_deleted", Valid: true},
+		ErrorCode:         pgtype.Text{String: "post_deleted", Valid: true},
+		PlatformErrorCode: pgtype.Text{},
+		LastError:         pgtype.Text{String: msg, Valid: true},
+		NextRunAt:         pgtype.Timestamptz{},
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func sanitizeDeliveryErrorText(s string) string {
+	if s == "" {
+		return ""
+	}
+	s = strings.ToValidUTF8(s, "")
+	return strings.ReplaceAll(s, "\x00", "")
+}
+
+func sanitizeDeliveryErrorTextValue(v pgtype.Text) pgtype.Text {
+	if !v.Valid {
+		return v
+	}
+	v.String = sanitizeDeliveryErrorText(v.String)
+	v.Valid = strings.TrimSpace(v.String) != ""
+	return v
 }
 
 func (h *SocialPostHandler) RequeueDeliveryJob(ctx context.Context, workspaceID, jobID string) (db.PostDeliveryJob, error) {

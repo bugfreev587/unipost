@@ -5,8 +5,13 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
+	"unicode/utf8"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -94,6 +99,106 @@ func TestPostFailureShouldMarkReconnectRequired(t *testing.T) {
 	}
 }
 
+func TestSanitizeDeliveryErrorTextRemovesNULAndInvalidUTF8(t *testing.T) {
+	got := sanitizeDeliveryErrorText("tiktok upload failed:\x00" + string([]byte{0xff, 0xfe}) + "done")
+
+	if strings.Contains(got, "\x00") {
+		t.Fatalf("sanitized error still contains NUL: %q", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("sanitized error is not valid UTF-8: %q", got)
+	}
+	if !strings.Contains(got, "tiktok upload failed:done") {
+		t.Fatalf("sanitized error = %q, want stable surrounding text", got)
+	}
+}
+
+func TestRecoverStaleDeliveryJobsCancelsJobWhenParentPostIsDeleted(t *testing.T) {
+	staleAt := time.Now().Add(-10 * time.Minute)
+	job := db.PostDeliveryJob{
+		ID:                 "job_stale_deleted",
+		PostID:             "post_deleted",
+		SocialPostResultID: "result_deleted",
+		WorkspaceID:        "ws_1",
+		SocialAccountID:    "acct_tiktok",
+		Platform:           "tiktok",
+		PostInputIndex:     0,
+		Kind:               "dispatch",
+		State:              "running",
+		Attempts:           1,
+		MaxAttempts:        5,
+		LastAttemptAt:      pgtype.Timestamptz{Time: staleAt, Valid: true},
+	}
+	dbtx := &staleDeletedPostQueueDB{staleJob: job}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+
+	if err := h.RecoverStaleDeliveryJobs(context.Background(), 5*time.Minute); err != nil {
+		t.Fatalf("RecoverStaleDeliveryJobs returned error: %v", err)
+	}
+
+	if dbtx.markedJobID != job.ID {
+		t.Fatalf("marked job id = %q, want %q", dbtx.markedJobID, job.ID)
+	}
+	if dbtx.markedState != "cancelled" {
+		t.Fatalf("marked state = %q, want cancelled", dbtx.markedState)
+	}
+	if dbtx.markedFailureStage != "post_deleted" {
+		t.Fatalf("failure stage = %q, want post_deleted", dbtx.markedFailureStage)
+	}
+	if dbtx.createdRetryJob {
+		t.Fatal("deleted post recovery must not create a retry job")
+	}
+}
+
+func TestDeletePostCancelsActiveDeliveryJobs(t *testing.T) {
+	dbtx := &deletePostQueueDB{post: db.SocialPost{
+		ID:          "post_delete",
+		WorkspaceID: "ws_1",
+		Status:      "publishing",
+		CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+	req := httptest.NewRequest(http.MethodDelete, "/v1/posts/post_delete", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withChiParam(req, "id", "post_delete")
+	rr := httptest.NewRecorder()
+
+	h.Delete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if !dbtx.cancelActiveCalled {
+		t.Fatal("delete should cancel active delivery jobs for the post")
+	}
+}
+
+func TestDeletePostSucceedsWhenActiveDeliveryCancelFailsAfterSoftDelete(t *testing.T) {
+	dbtx := &deletePostQueueDB{
+		post: db.SocialPost{
+			ID:          "post_delete",
+			WorkspaceID: "ws_1",
+			Status:      "publishing",
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+		cancelActiveErr: errors.New("database temporarily unavailable"),
+	}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+	req := httptest.NewRequest(http.MethodDelete, "/v1/posts/post_delete", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withChiParam(req, "id", "post_delete")
+	rr := httptest.NewRecorder()
+
+	h.Delete(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 after soft delete succeeded; body=%s", rr.Code, rr.Body.String())
+	}
+	if !dbtx.cancelActiveCalled {
+		t.Fatal("delete should still attempt to cancel active delivery jobs")
+	}
+}
+
 func TestInlineRefreshFailureShouldAbortPublish(t *testing.T) {
 	if !inlineRefreshFailureShouldAbortPublish(errors.New(`refresh failed (400): {"error":{"message":"Error validating access token: Session has expired","type":"OAuthException","code":190}}`)) {
 		t.Fatal("expected expired Meta OAuth refresh failure to abort publish")
@@ -106,4 +211,160 @@ func TestInlineRefreshFailureShouldAbortPublish(t *testing.T) {
 	if inlineRefreshFailureShouldAbortPublish(nil) {
 		t.Fatal("nil refresh error should not abort publish")
 	}
+}
+
+type deletePostQueueDB struct {
+	post               db.SocialPost
+	cancelActiveCalled bool
+	cancelActiveErr    error
+}
+
+func (f *deletePostQueueDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: CancelActivePostDeliveryJobsByPost"):
+		if got := args[0].(string); got != f.post.ID {
+			return pgconn.CommandTag{}, errors.New("cancel active called with wrong post id")
+		}
+		if got := args[1].(string); got != f.post.WorkspaceID {
+			return pgconn.CommandTag{}, errors.New("cancel active called with wrong workspace id")
+		}
+		f.cancelActiveCalled = true
+		return pgconn.CommandTag{}, f.cancelActiveErr
+	default:
+		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
+	}
+}
+
+func (f *deletePostQueueDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *deletePostQueueDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: SoftDeleteSocialPost"):
+		return socialPostScanRow(f.post)
+	default:
+		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
+type staleDeletedPostQueueDB struct {
+	staleJob db.PostDeliveryJob
+
+	markedJobID        string
+	markedState        string
+	markedFailureStage string
+	createdRetryJob    bool
+}
+
+func (f *staleDeletedPostQueueDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (f *staleDeletedPostQueueDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	switch {
+	case strings.Contains(query, "-- name: ListStaleActivePostDeliveryJobs"):
+		return &queueRows{values: [][]any{postDeliveryJobValues(f.staleJob)}}, nil
+	default:
+		return nil, errors.New("unexpected Query: " + query)
+	}
+}
+
+func (f *staleDeletedPostQueueDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetSocialPostByID"):
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
+		f.markedJobID = args[0].(string)
+		f.markedState = args[1].(string)
+		f.markedFailureStage = args[2].(pgtype.Text).String
+		updated := f.staleJob
+		updated.State = f.markedState
+		updated.FailureStage = args[2].(pgtype.Text)
+		updated.ErrorCode = args[3].(pgtype.Text)
+		updated.PlatformErrorCode = args[4].(pgtype.Text)
+		updated.LastError = args[5].(pgtype.Text)
+		updated.NextRunAt = args[6].(pgtype.Timestamptz)
+		return postDeliveryJobScanRow(updated)
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		f.createdRetryJob = true
+		return scanRow{err: errors.New("deleted post recovery should not create retry jobs")}
+	default:
+		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
+type queueRows struct {
+	values [][]any
+	index  int
+}
+
+func (r *queueRows) Close()                                       {}
+func (r *queueRows) Err() error                                   { return nil }
+func (r *queueRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (r *queueRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (r *queueRows) Next() bool {
+	if r.index >= len(r.values) {
+		return false
+	}
+	r.index++
+	return true
+}
+func (r *queueRows) Scan(dest ...any) error {
+	if r.index == 0 || r.index > len(r.values) {
+		return errors.New("Scan called without current row")
+	}
+	return scanRow{values: r.values[r.index-1]}.Scan(dest...)
+}
+func (r *queueRows) Values() ([]any, error) { return r.values[r.index-1], nil }
+func (r *queueRows) RawValues() [][]byte    { return nil }
+func (r *queueRows) Conn() *pgx.Conn        { return nil }
+
+func postDeliveryJobScanRow(job db.PostDeliveryJob) scanRow {
+	return scanRow{values: postDeliveryJobValues(job)}
+}
+
+func postDeliveryJobValues(job db.PostDeliveryJob) []any {
+	return []any{
+		job.ID,
+		job.PostID,
+		job.SocialPostResultID,
+		job.WorkspaceID,
+		job.SocialAccountID,
+		job.Platform,
+		job.PostInputIndex,
+		job.Kind,
+		job.State,
+		job.Attempts,
+		job.MaxAttempts,
+		job.FailureStage,
+		job.ErrorCode,
+		job.PlatformErrorCode,
+		job.LastError,
+		job.NextRunAt,
+		job.LastAttemptAt,
+		job.CreatedAt,
+		job.UpdatedAt,
+		job.FinishedAt,
+		job.DismissedAt,
+	}
+}
+
+func socialPostScanRow(post db.SocialPost) scanRow {
+	return scanRow{values: []any{
+		post.ID,
+		post.Caption,
+		post.MediaUrls,
+		post.Status,
+		post.ScheduledAt,
+		post.PublishedAt,
+		post.CreatedAt,
+		post.Metadata,
+		post.IdempotencyKey,
+		post.WorkspaceID,
+		post.ArchivedAt,
+		post.DeletedAt,
+		post.Source,
+		post.ProfileIds,
+	}}
 }

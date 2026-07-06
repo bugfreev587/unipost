@@ -246,6 +246,7 @@ SET state = 'succeeded',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
+  AND state IN ('running', 'retrying')
 RETURNING *;
 
 -- name: MarkPostDeliveryJobFailed :one
@@ -262,6 +263,7 @@ SET state = $2,
       ELSE finished_at
     END
 WHERE id = $1
+  AND state IN ('running', 'retrying')
 RETURNING *;
 
 -- name: CancelPostDeliveryJob :one
