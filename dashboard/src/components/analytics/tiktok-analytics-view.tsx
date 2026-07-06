@@ -24,7 +24,7 @@ import {
   getTikTokProfile,
   getTikTokVideos,
   listSocialAccounts,
-  listSocialPosts,
+  listAllSocialPosts,
   type AccountMetrics,
   type SocialAccount,
   type TikTokProfile,
@@ -194,7 +194,7 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
         getTikTokProfile(token, profileId, account.id),
         getAccountMetrics(token, profileId, account.id),
         getTikTokVideos(token, profileId, account.id, { limit: 20 }),
-        listSocialPosts(token),
+        listAllSocialPosts(token),
       ]);
 
       setProfile(profileRes.data);

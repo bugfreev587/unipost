@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialPosts,
+  listAllSocialPosts,
   getPostAnalytics,
   getAnalyticsSummary,
   getAnalyticsTrend,
@@ -156,6 +156,21 @@ function sumPostMetrics(rows: PostAnalytics[]) {
   return { ...acc, engagement_rate: eng };
 }
 
+function postMatchesPlatform(post: SocialPost, platform: string): boolean {
+  if (platform === "all") return true;
+  return Boolean(
+    post.target_platforms?.includes(platform) ||
+    post.results?.some((result) => result.platform === platform)
+  );
+}
+
+function postPlatformLabels(post: SocialPost): string[] {
+  return Array.from(new Set([
+    ...(post.target_platforms || []),
+    ...((post.results || []).map((result) => result.platform).filter(Boolean) as string[]),
+  ]));
+}
+
 // ─── Page ──────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 20;
@@ -246,7 +261,7 @@ function AnalyticsPageInner() {
         // On a normal load we don't need this ordering, since aggregations
         // and per-post both serve from the same cached table.
         if (forceRefresh) {
-          const postsRes = await listSocialPosts(token);
+          const postsRes = await listAllSocialPosts(token);
           const published = (postsRes.data || []).filter((p) => p.status === "published");
           const results = await Promise.allSettled(
             published.map((p) => getPostAnalytics(token, p.id, { refresh: true }))
@@ -268,7 +283,7 @@ function AnalyticsPageInner() {
             metric: "posts,impressions,likes,comments,shares",
           }),
           getAnalyticsByPlatform(token, apiRange),
-          listSocialPosts(token),
+          listAllSocialPosts(token),
         ]);
 
         setSummary(summaryRes.data);
@@ -319,9 +334,7 @@ function AnalyticsPageInner() {
       filtered = filtered.filter((p) => p.status === statusFilter);
     }
     if (platformFilter !== "all") {
-      filtered = filtered.filter((p) =>
-        p.results?.some((r) => r.platform === platformFilter)
-      );
+      filtered = filtered.filter((p) => postMatchesPlatform(p, platformFilter));
     }
 
     const rows = filtered.map((post) => {
@@ -1002,7 +1015,7 @@ function PostsTable({
             <tbody>
               {rows.map(({ post, metrics, perAccount }) => {
                 const isExpanded = expanded.has(post.id);
-                const platforms = Array.from(new Set((post.results || []).map((r) => r.platform).filter(Boolean) as string[]));
+                const platforms = postPlatformLabels(post);
                 return (
                   <FragmentRow
                     key={post.id}

@@ -1454,10 +1454,63 @@ export interface SocialPostQueueResponse {
   jobs: PostDeliveryJob[];
 }
 
+export interface ListSocialPostsParams {
+  status?: string;
+  from?: string;
+  to?: string;
+  limit?: number;
+  cursor?: string;
+}
+
+const POSTS_LIST_PAGE_SIZE = 100;
+
+function socialPostsQuery(params?: ListSocialPostsParams): string {
+  if (!params) return "";
+  const qs = new URLSearchParams();
+  if (params.status && params.status !== "all") qs.set("status", params.status);
+  if (params.from) qs.set("from", params.from);
+  if (params.to) qs.set("to", params.to);
+  if (typeof params.limit === "number") qs.set("limit", String(params.limit));
+  if (params.cursor) qs.set("cursor", params.cursor);
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 export async function listSocialPosts(
   token: string,
+  params?: ListSocialPostsParams,
 ): Promise<ApiResponse<SocialPost[]>> {
-  return request(`/v1/posts`, token);
+  return request(`/v1/posts${socialPostsQuery(params)}`, token);
+}
+
+export async function listAllSocialPosts(
+  token: string,
+  params?: Omit<ListSocialPostsParams, "limit" | "cursor">,
+): Promise<ApiResponse<SocialPost[]>> {
+  const data: SocialPost[] = [];
+  let cursor: string | undefined;
+  let page: ApiResponse<SocialPost[]>;
+
+  do {
+    page = await listSocialPosts(token, {
+      ...params,
+      limit: POSTS_LIST_PAGE_SIZE,
+      cursor,
+    });
+    data.push(...(page.data || []));
+    cursor = page.meta?.next_cursor || undefined;
+  } while (cursor);
+
+  return {
+    ...page!,
+    data,
+    meta: {
+      ...page!.meta,
+      has_more: false,
+      next_cursor: "",
+      total: data.length,
+    },
+  };
 }
 
 export async function listSocialPostSummaries(
