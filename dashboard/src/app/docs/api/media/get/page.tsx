@@ -1,6 +1,6 @@
 "use client";
 
-import { EnumValues, type ApiFieldItem } from "../../_components/doc-components";
+import { EnumValues, InfoBox, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -132,6 +132,13 @@ export default function GetMediaPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <InfoBox>
+        <strong>Deleted media:</strong> after a post reaches a final status, UniPost keeps uploaded media
+        for the plan retention window, then removes the R2 object and the media row after every usage
+        for that media is due. Scheduled, draft, queued, publishing, and processing posts keep their
+        media until they finish.
+      </InfoBox>
+    </SingleEndpointReferencePage>
   );
 }

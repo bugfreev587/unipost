@@ -171,6 +171,69 @@ func (h *SocialPostHandler) rejectFreePlanPostQuotaExceededForPeriod(w http.Resp
 	return true
 }
 
+func (h *SocialPostHandler) rejectFreePlanActiveScheduledPostsExceeded(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	if h == nil || h.queries == nil {
+		return false
+	}
+	planID := h.planIDForWorkspace(r.Context(), workspaceID)
+	if !planHasActiveScheduledPostCap(planID) {
+		return false
+	}
+	current, ok := h.countActiveScheduledPosts(r.Context(), workspaceID)
+	if !ok {
+		return false
+	}
+	if !quota.ShouldBlockActiveScheduledPosts(planID, int(current), 1) {
+		return false
+	}
+	writeFreePlanActiveScheduledPostsExceeded(w, current)
+	return true
+}
+
+func (h *SocialPostHandler) planIDForWorkspace(ctx context.Context, workspaceID string) string {
+	if h != nil && h.quota != nil {
+		return h.quota.PlanIDFor(ctx, workspaceID)
+	}
+	return "free"
+}
+
+func planHasActiveScheduledPostCap(planID string) bool {
+	switch planID {
+	case "api", "basic", "growth", "team", "enterprise":
+		return false
+	default:
+		return true
+	}
+}
+
+func (h *SocialPostHandler) countActiveScheduledPosts(ctx context.Context, workspaceID string) (int32, bool) {
+	if h == nil || h.queries == nil {
+		return 0, false
+	}
+	current, err := h.queries.CountActiveScheduledPostsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		slog.Warn("free scheduled cap: count failed", "workspace_id", workspaceID, "error", err)
+		return 0, false
+	}
+	return current, true
+}
+
+func (h *SocialPostHandler) activeScheduledPostsForCapError(ctx context.Context, workspaceID string) int32 {
+	if current, ok := h.countActiveScheduledPosts(ctx, workspaceID); ok {
+		return current
+	}
+	return quota.FreePlanActiveScheduledPostLimit
+}
+
+func writeFreePlanActiveScheduledPostsExceeded(w http.ResponseWriter, current int32) {
+	writeError(
+		w,
+		http.StatusPaymentRequired,
+		"PLAN_SCHEDULED_POST_LIMIT_EXCEEDED",
+		fmt.Sprintf("Free plan active scheduled post limit exceeded. You already have %d active scheduled posts; Free allows up to %d. Upgrade to schedule more posts.", current, quota.FreePlanActiveScheduledPostLimit),
+	)
+}
+
 func writeFreePlanPostQuotaExceeded(w http.ResponseWriter, status quota.QuotaStatus, requestedUnits int) {
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", status.Usage, status.Limit))
 	w.Header().Set("X-UniPost-Warning", "over_limit")
@@ -701,6 +764,9 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		if h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
 			return
 		}
+		if h.rejectFreePlanActiveScheduledPostsExceeded(w, r, workspaceID) {
+			return
+		}
 		quotaPeriod := quota.PeriodForTime(*parsed.ScheduledAt)
 		if h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap), quotaPeriod) {
 			return
@@ -767,7 +833,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		canonicalMedia = []string{}
 	}
 
-	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
+	createParams := db.CreateSocialPostParams{
 		WorkspaceID:    workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
@@ -777,14 +843,20 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
 		Source:         resolveSource(r.Context()),
 		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
-	})
+	}
+	post, err := h.createScheduledSocialPost(r.Context(), workspaceID, createParams)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeFreePlanActiveScheduledPostsExceeded(w, h.activeScheduledPostsForCapError(r.Context(), workspaceID))
+			return
+		}
 		if isScheduledIdempotencyUniqueViolation(err) && h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create scheduled post")
 		return
 	}
+	h.syncPostMediaRetention(r.Context(), post, post.Status)
 	if parsed.ScheduledAt != nil {
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 			Period: quota.PeriodForTime(*parsed.ScheduledAt),
@@ -823,6 +895,24 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		ProfileIDs:    post.ProfileIds,
 		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
 	})
+}
+
+func (h *SocialPostHandler) createScheduledSocialPost(ctx context.Context, workspaceID string, params db.CreateSocialPostParams) (db.SocialPost, error) {
+	if planHasActiveScheduledPostCap(h.planIDForWorkspace(ctx, workspaceID)) {
+		return h.queries.CreateSocialPostWithActiveScheduledCap(ctx, db.CreateSocialPostWithActiveScheduledCapParams{
+			WorkspaceID:          params.WorkspaceID,
+			ActiveScheduledLimit: int32(quota.FreePlanActiveScheduledPostLimit),
+			Caption:              params.Caption,
+			MediaUrls:            params.MediaUrls,
+			Status:               params.Status,
+			Metadata:             params.Metadata,
+			ScheduledAt:          params.ScheduledAt,
+			IdempotencyKey:       params.IdempotencyKey,
+			Source:               params.Source,
+			ProfileIds:           params.ProfileIds,
+		})
+	}
+	return h.queries.CreateSocialPost(ctx, params)
 }
 
 func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) bool {
@@ -1689,18 +1779,6 @@ func (h *SocialPostHandler) publishOneContext(
 	oc.err = err
 	oc.debugCurl = debugRec.Serialize()
 
-	// Sprint 5: schedule R2 cleanup for any large media this publish
-	// consumed. Push-mode adapters (Twitter, LinkedIn, YouTube,
-	// Bluesky) have already finished pulling the bytes; pull-mode
-	// adapters (Instagram, Facebook, Threads, TikTok) handed the URL
-	// to the platform but the platform may async-fetch for several
-	// minutes — the 2 hour window in scheduleLargeMediaCleanup
-	// covers both. Best-effort: a failure here doesn't fail the
-	// publish, the abandoned-pending sweeper is still the safety net.
-	if err == nil && postResult != nil && len(pp.MediaIDs) > 0 {
-		h.scheduleLargeMediaCleanup(ctx, pp.MediaIDs)
-	}
-
 	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
 	// post succeeded AND the adapter implements FirstCommentAdapter
 	// (validator already rejected first_comment on platforms that
@@ -1720,54 +1798,6 @@ func (h *SocialPostHandler) publishOneContext(
 		}
 	}
 	return
-}
-
-// LargeMediaThresholdBytes is the size at which a successfully-
-// published media row gets a cleanup_after_at timestamp. Anything
-// smaller stays in the user's library indefinitely; anything bigger
-// is hard-deleted by MediaCleanupWorker on its next 5-minute tick
-// after the publish-relative window elapses.
-//
-// 200 MB matches the founder hand-off — covers casual photos and
-// short-form video without nagging cleanup, but catches every
-// upload that meaningfully consumes the 10 GB R2 bucket.
-const LargeMediaThresholdBytes = 200 * 1024 * 1024
-
-// publishCleanupWindow is how long after a successful adapter.Post
-// we keep large media in R2. Two hours is a deliberately generous
-// safety margin for pull-mode platforms (Instagram, Facebook,
-// Threads, TikTok) whose async fetch can run for 10-20 minutes for
-// large videos. Push-mode platforms don't need it, but a few extra
-// hours of storage on already-uploaded files is cheap compared to
-// the unrecoverable failure of deleting mid-fetch.
-const publishCleanupWindow = 2 * time.Hour
-
-// scheduleLargeMediaCleanup tags every supplied media_id whose
-// stored size meets LargeMediaThresholdBytes for hard delete by
-// the MediaCleanupWorker once publishCleanupWindow elapses. Best-
-// effort: nothing here fails the publish, since the abandoned-
-// pending sweeper still catches uncleaned rows on its weekly tick.
-func (h *SocialPostHandler) scheduleLargeMediaCleanup(ctx context.Context, mediaIDs []string) {
-	if h.queries == nil || len(mediaIDs) == 0 {
-		return
-	}
-	deadline := pgtype.Timestamptz{Time: time.Now().Add(publishCleanupWindow), Valid: true}
-	for _, id := range mediaIDs {
-		row, err := h.queries.GetMedia(ctx, id)
-		if err != nil {
-			slog.Warn("media cleanup schedule: row lookup failed", "media_id", id, "err", err)
-			continue
-		}
-		if row.SizeBytes < LargeMediaThresholdBytes {
-			continue
-		}
-		if err := h.queries.ScheduleMediaCleanup(ctx, db.ScheduleMediaCleanupParams{
-			ID:             id,
-			CleanupAfterAt: deadline,
-		}); err != nil {
-			slog.Warn("media cleanup schedule: update failed", "media_id", id, "err", err)
-		}
-	}
 }
 
 // resolveMediaIDsToURLs is the publish-time half of the media library

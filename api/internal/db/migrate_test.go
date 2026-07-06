@@ -68,6 +68,71 @@ func TestMediaProcessingJobsMigrationPreservesMediaCleanup(t *testing.T) {
 	}
 }
 
+func TestMediaPostUsageRetentionMigrationExists(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/097_media_post_usage_retention.sql")
+	if err != nil {
+		t.Fatalf("read media post usage retention migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"create table media_post_usages",
+		"media_id",
+		"post_id",
+		"post_status",
+		"cleanup_after_at",
+		"media_post_usages_cleanup_due_idx",
+		"jsonb_array_elements_text",
+		"sp.status in ('published', 'partial', 'failed', 'cancelled')",
+		"on conflict (media_id, post_id) do update",
+		"update media set cleanup_after_at = null",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("media post usage migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+	if !strings.Contains(sql, "where cleanup_after_at is not null") ||
+		!strings.Contains(sql, "post_status in ('published', 'partial', 'failed', 'cancelled')") {
+		t.Fatalf("media post usage cleanup index should include every terminal retention status, got:\n%s", string(body))
+	}
+}
+
+func TestMediaRetentionReviewFixMigrationBackfillsTerminalUsage(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/098_media_retention_review_fixes.sql")
+	if err != nil {
+		t.Fatalf("read media retention review fix migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"drop index if exists media_post_usages_cleanup_due_idx",
+		"post_status in ('published', 'partial', 'failed', 'cancelled')",
+		"jsonb_array_elements_text",
+		"sp.status in ('published', 'partial', 'failed', 'cancelled')",
+		"on conflict (media_id, post_id) do update",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("media retention review fix migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
+func TestCreateSocialPostWithActiveScheduledCapIsAtomic(t *testing.T) {
+	sql := strings.ToLower(createSocialPostWithActiveScheduledCap)
+	for _, want := range []string{
+		"pg_advisory_xact_lock",
+		"count(*)::integer",
+		"status = 'scheduled'",
+		"deleted_at is null",
+		"insert into social_posts",
+		"returning",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("active scheduled cap create query missing %q, got:\n%s", want, createSocialPostWithActiveScheduledCap)
+		}
+	}
+}
+
 func TestPostgresDoBlocksAreGooseStatementBlocks(t *testing.T) {
 	err := fs.WalkDir(migrations, "migrations", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
