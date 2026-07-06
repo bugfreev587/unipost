@@ -47,28 +47,38 @@ export default function DocsPricingPage() {
         Free workspaces enforce hard limits. Paid self-serve plans are designed to
         keep production integrations running while usage is reviewed.
       </p>
-      <ul className="docs-checklist">
-        <li>
-          <strong>Monthly post quota:</strong> Free stops accepting new publish
-          requests after 100 posts/month. API, Basic, and Growth use soft overage:
-          posting continues for now, with usage warnings and upgrade guidance
-          instead of surprise billing.
-        </li>
-        <li>
-          <strong>Active scheduled posts:</strong> Free workspaces can hold up to
-          50 undeleted parent posts in scheduled status. Published, failed,
-          partial, draft, and cancelled posts do not count toward this cap.
-        </li>
-        <li>
-          <strong>Paid scheduling:</strong> API, Basic, Growth, Team, and
-          Enterprise do not cap active scheduled backlog.
-        </li>
-        <li>
-          <strong>Safety caps:</strong> each connected account still has a daily
-          platform-safety ceiling. Failed posts do not count toward these safety
-          caps.
-        </li>
-      </ul>
+      <dl className="docs-guide-key-values">
+        <div className="docs-guide-key-item">
+          <dt className="docs-guide-key-label">Monthly post quota</dt>
+          <dd className="docs-guide-key-copy">
+            Free stops accepting new publish requests after 100 posts/month. API,
+            Basic, and Growth use soft overage: posting continues for now, with
+            usage warnings and upgrade guidance instead of surprise billing.
+          </dd>
+        </div>
+        <div className="docs-guide-key-item">
+          <dt className="docs-guide-key-label">Active scheduled posts</dt>
+          <dd className="docs-guide-key-copy">
+            Free workspaces can hold up to 50 undeleted parent posts in scheduled
+            status. Published, failed, partial, draft, and cancelled posts do not
+            count toward this cap.
+          </dd>
+        </div>
+        <div className="docs-guide-key-item">
+          <dt className="docs-guide-key-label">Paid scheduling</dt>
+          <dd className="docs-guide-key-copy">
+            API, Basic, Growth, Team, and Enterprise do not cap active scheduled
+            backlog.
+          </dd>
+        </div>
+        <div className="docs-guide-key-item">
+          <dt className="docs-guide-key-label">Safety caps</dt>
+          <dd className="docs-guide-key-copy">
+            Each connected account still has a daily platform-safety ceiling.
+            Failed posts do not count toward these safety caps.
+          </dd>
+        </div>
+      </dl>
 
       <h2 id="media-retention">Media retention</h2>
       <p className="docs-guide-note">

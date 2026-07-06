@@ -163,6 +163,10 @@ function getDocsTableColumnWidths(columns: readonly string[]) {
       return ["24%", "18%", "30%", "28%"];
     case "layer|what it controls|default if unset":
       return ["30%", "38%", "32%"];
+    case "plan|posts/month|quota behavior|active scheduled|api behavior":
+      return ["16%", "16%", "18%", "18%", "32%"];
+    case "plan|after success|after failed, partial, or cancelled":
+      return ["20%", "22%", "58%"];
     case "platform|text|images|video|threads|analytics|guide":
       return ["20%", "12%", "12%", "12%", "12%", "12%", "20%"];
     case "platform|first comment|audience / privacy|surface controls|playlist / tags|direct credentials":
@@ -223,6 +227,9 @@ function isNoWrapDocsTableColumn(columns: readonly string[], columnIndex: number
     case "pattern|api path|when to use it":
     case "step|api call|purpose":
       return columnIndex === 1;
+    case "plan|posts/month|quota behavior|active scheduled|api behavior":
+    case "plan|after success|after failed, partial, or cancelled":
+      return columnIndex === 0;
     default:
       return false;
   }
@@ -1553,6 +1560,11 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-guide-badges{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 28px}
 .docs-guide-badge{display:inline-flex;align-items:center;height:26px;padding:0 10px;border-radius:6px;background:color-mix(in srgb, var(--docs-bg-muted) 78%, var(--docs-bg-elevated));border:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent);color:var(--docs-text-muted);font-size:11.5px;font-weight:650;letter-spacing:0}
 .docs-guide-note{font-size:15px;line-height:1.72;color:var(--docs-text-soft);margin:8px 0 16px;max-width:820px}
+.docs-guide-key-values{display:grid;grid-template-columns:1fr;gap:16px;margin:20px 0 10px;padding:0;max-width:820px}
+.docs-guide-key-item{display:grid;grid-template-columns:10px minmax(140px, 176px) minmax(0, 1fr);column-gap:16px;align-items:start;margin:0}
+.docs-guide-key-item::before{content:"";width:6px;height:6px;border-radius:999px;background:color-mix(in srgb, var(--docs-link) 70%, var(--docs-border-strong));transform:translateY(10px)}
+.docs-guide-key-label{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0;color:var(--docs-text);font-size:15px;font-weight:740;line-height:1.38;letter-spacing:-.012em}
+.docs-guide-key-copy{margin:0;color:var(--docs-text-soft);font-size:15px;line-height:1.72;min-width:0}
 .docs-guide-next{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
 .docs-guide-next-card{display:flex;min-height:138px;flex-direction:column;padding:16px;border:1px solid color-mix(in srgb, var(--docs-border) 86%, transparent);border-radius:8px;background:var(--docs-bg-elevated);text-decoration:none;color:inherit;box-shadow:0 1px 0 rgba(15,23,42,.02);transition:border-color .14s ease,background .14s ease,transform .14s ease}
 .docs-guide-next-card:hover{border-color:color-mix(in srgb, var(--docs-border-strong) 70%, var(--docs-link));background:color-mix(in srgb, var(--docs-bg-elevated) 92%, var(--docs-bg-muted));transform:translateY(-1px);text-decoration:none!important}
@@ -1604,7 +1616,7 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-checklist.docs-checklist-2col{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px 22px}
 @media (max-width:960px){.docs-checklist.docs-checklist-2col,.docs-next-grid,.docs-decision-grid{grid-template-columns:1fr}.docs-summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.docs-summary-card-wide{grid-column:span 2}}
 @media (max-width:760px){.docs-guide-next{grid-template-columns:1fr}}
-@media (max-width:640px){.docs-summary-grid{grid-template-columns:1fr}.docs-summary-card-wide{grid-column:span 1}.docs-guide-intro{display:block}.docs-guide-intro-icon{margin-bottom:12px}.docs-screenshot-step-body,.docs-screenshot-step-image{margin-left:0}}
+@media (max-width:640px){.docs-summary-grid{grid-template-columns:1fr}.docs-summary-card-wide{grid-column:span 1}.docs-guide-key-values{gap:18px}.docs-guide-key-item{grid-template-columns:10px minmax(0,1fr);column-gap:12px}.docs-guide-key-label,.docs-guide-key-copy{grid-column:2}.docs-guide-key-copy{margin-top:3px}.docs-guide-intro{display:block}.docs-guide-intro-icon{margin-bottom:12px}.docs-screenshot-step-body,.docs-screenshot-step-image{margin-left:0}}
 .docs-topbar .theme-picker{margin-right:2px}
 .docs-topbar .theme-picker-trigger{height:35px;border-radius:10px}
 .docs-shell-redesign{
