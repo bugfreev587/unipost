@@ -228,6 +228,12 @@ export default function ReserveMediaPage() {
         <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> returns the hydrated size after the PUT lands.
       </InfoBox>
       <InfoBox>
+        <strong>Retention follows post status:</strong> UniPost keeps uploaded media for scheduled, draft,
+        queued, publishing, and processing posts. After the parent post finishes, media is retained by plan:
+        Free 1 day after success or 2 days after failed/partial/cancelled, API 2/4 days, Basic 4/8 days,
+        Growth 15/30 days, and Team 30/60 days. Reused media is deleted only after all post usages are due.
+      </InfoBox>
+      <InfoBox>
         <strong>TikTok file_upload note:</strong> upload the complete video file to UniPost with this
         endpoint, then publish with <code>media_ids</code>. UniPost handles TikTok&apos;s downstream
         chunk sizing and sequential transfer automatically, including videos larger than <code>64 MB</code>.

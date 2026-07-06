@@ -279,48 +279,6 @@ func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorks
 	return items, nil
 }
 
-const listMediaDueForCleanup = `-- name: ListMediaDueForCleanup :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media
-WHERE cleanup_after_at IS NOT NULL
-  AND cleanup_after_at <= NOW()
-  AND status != 'deleted'
-LIMIT 100
-`
-
-func (q *Queries) ListMediaDueForCleanup(ctx context.Context) ([]Media, error) {
-	rows, err := q.db.Query(ctx, listMediaDueForCleanup)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Media{}
-	for rows.Next() {
-		var i Media
-		if err := rows.Scan(
-			&i.ID,
-			&i.StorageKey,
-			&i.ContentType,
-			&i.SizeBytes,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UploadedAt,
-			&i.WorkspaceID,
-			&i.ContentHash,
-			&i.CleanupAfterAt,
-			&i.Width,
-			&i.Height,
-			&i.DurationMs,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const markMediaUploaded = `-- name: MarkMediaUploaded :one
 UPDATE media
 SET status = 'uploaded',
@@ -374,28 +332,6 @@ func (q *Queries) MarkMediaUploaded(ctx context.Context, arg MarkMediaUploadedPa
 		&i.DurationMs,
 	)
 	return i, err
-}
-
-const scheduleMediaCleanup = `-- name: ScheduleMediaCleanup :exec
-UPDATE media
-SET cleanup_after_at = GREATEST(cleanup_after_at, $2)
-WHERE id = $1
-  AND status != 'deleted'
-`
-
-type ScheduleMediaCleanupParams struct {
-	ID             string             `json:"id"`
-	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
-}
-
-// Sets cleanup_after_at on a media row so the MediaCleanupWorker
-// will hard-delete it on its next tick after the timestamp passes.
-// Idempotent — taking the GREATEST of current and incoming means
-// when a single media is consumed by multiple parallel publishes,
-// the slowest platform's window wins.
-func (q *Queries) ScheduleMediaCleanup(ctx context.Context, arg ScheduleMediaCleanupParams) error {
-	_, err := q.db.Exec(ctx, scheduleMediaCleanup, arg.ID, arg.CleanupAfterAt)
-	return err
 }
 
 const softDeleteMedia = `-- name: SoftDeleteMedia :exec

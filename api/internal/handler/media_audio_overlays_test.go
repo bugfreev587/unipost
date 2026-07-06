@@ -57,9 +57,6 @@ func TestCreateAudioOverlayJobDefaultsAndQueues(t *testing.T) {
 	if params.IdempotencyKey.Valid {
 		t.Fatalf("idempotency key should be null when header omitted: %#v", params.IdempotencyKey)
 	}
-	if len(store.cleanupParams) != 2 {
-		t.Fatalf("ScheduleMediaCleanup calls = %d, want 2", len(store.cleanupParams))
-	}
 
 	var got audioOverlaySuccessEnvelope
 	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
@@ -298,7 +295,6 @@ func audioOverlayRequest(t *testing.T, body string) *http.Request {
 type fakeAudioOverlayQueries struct {
 	media                 map[string]db.Media
 	createParams          []db.CreateMediaProcessingJobParams
-	cleanupParams         []db.ScheduleMediaCleanupParams
 	markUploadedParams    []db.MarkMediaUploadedParams
 	existingByIdempotency *db.MediaProcessingJob
 	jobByID               db.MediaProcessingJob
@@ -355,11 +351,6 @@ func (f *fakeAudioOverlayQueries) GetMediaProcessingJobByIDAndWorkspace(_ contex
 		return db.MediaProcessingJob{}, pgx.ErrNoRows
 	}
 	return f.jobByID, nil
-}
-
-func (f *fakeAudioOverlayQueries) ScheduleMediaCleanup(_ context.Context, arg db.ScheduleMediaCleanupParams) error {
-	f.cleanupParams = append(f.cleanupParams, arg)
-	return nil
 }
 
 func (f *fakeAudioOverlayQueries) MarkMediaUploaded(_ context.Context, arg db.MarkMediaUploadedParams) (db.Media, error) {

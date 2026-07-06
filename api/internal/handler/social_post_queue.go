@@ -254,6 +254,9 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	}); err != nil {
 		return nil, nil, err
 	}
+	post.Status = newStatus
+	post.PublishedAt = pgtype.Timestamptz{}
+	h.syncPostMediaRetention(ctx, post, newStatus)
 	if newStatus == "failed" && len(failureSummaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
@@ -357,6 +360,9 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 			Status:      "failed",
 			PublishedAt: pgtype.Timestamptz{},
 		})
+		post.Status = "failed"
+		post.PublishedAt = pgtype.Timestamptz{}
+		h.syncPostMediaRetention(ctx, post, post.Status)
 		return fmt.Errorf("decode post metadata: %w", err)
 	}
 
@@ -422,6 +428,9 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 	}); err != nil {
 		return err
 	}
+	post.Status = "failed"
+	post.PublishedAt = pgtype.Timestamptz{}
+	h.syncPostMediaRetention(ctx, post, post.Status)
 	if len(summaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
@@ -1037,7 +1046,7 @@ func (h *SocialPostHandler) RequeueDeliveryJob(ctx context.Context, workspaceID,
 	if result.Status != "failed" {
 		return db.PostDeliveryJob{}, fmt.Errorf("only failed deliveries can be retried")
 	}
-	return h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
+	job, err = h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
 		PostID:             post.ID,
 		SocialPostResultID: result.ID,
 		WorkspaceID:        post.WorkspaceID,
@@ -1050,6 +1059,11 @@ func (h *SocialPostHandler) RequeueDeliveryJob(ctx context.Context, workspaceID,
 		MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
 		NextRunAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	})
+	if err != nil {
+		return db.PostDeliveryJob{}, err
+	}
+	h.syncPostMediaRetention(ctx, post, "publishing")
+	return job, nil
 }
 
 func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspaceID, postID, resultID string) (db.PostDeliveryJob, error) {

@@ -31,7 +31,6 @@ const (
 	audioOverlayMaxVideoSizeBytes    = 500 * 1024 * 1024
 	audioOverlayMaxAudioSizeBytes    = 100 * 1024 * 1024
 	audioOverlayMaxVideoDurationMS   = 10 * 60 * 1000
-	audioOverlayInputHoldWindow      = 2 * time.Hour
 	audioOverlayDefaultVideoVolume   = 100
 	audioOverlayDefaultAudioVolume   = 100
 	audioOverlayDefaultAudioStartMS  = 0
@@ -45,7 +44,6 @@ type mediaAudioOverlayQueries interface {
 	GetMediaProcessingJobByIdempotencyKey(context.Context, db.GetMediaProcessingJobByIdempotencyKeyParams) (db.MediaProcessingJob, error)
 	CreateMediaProcessingJob(context.Context, db.CreateMediaProcessingJobParams) (db.MediaProcessingJob, error)
 	GetMediaProcessingJobByIDAndWorkspace(context.Context, db.GetMediaProcessingJobByIDAndWorkspaceParams) (db.MediaProcessingJob, error)
-	ScheduleMediaCleanup(context.Context, db.ScheduleMediaCleanupParams) error
 }
 
 type mediaAudioOverlayObjectStore interface {
@@ -56,14 +54,12 @@ type mediaAudioOverlayObjectStore interface {
 type MediaAudioOverlayHandler struct {
 	queries     mediaAudioOverlayQueries
 	objectStore mediaAudioOverlayObjectStore
-	holdWindow  time.Duration
 }
 
 func NewMediaAudioOverlayHandler(queries mediaAudioOverlayQueries, objectStore mediaAudioOverlayObjectStore) *MediaAudioOverlayHandler {
 	return &MediaAudioOverlayHandler{
 		queries:     queries,
 		objectStore: objectStore,
-		holdWindow:  audioOverlayInputHoldWindow,
 	}
 }
 
@@ -161,9 +157,6 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if ok := h.verifyInputObjects(w, r, video, audio); !ok {
-		return
-	}
-	if ok := h.holdInputMedia(w, r, video.ID, audio.ID); !ok {
 		return
 	}
 
@@ -384,20 +377,6 @@ func (h *MediaAudioOverlayHandler) verifyInputObjects(w http.ResponseWriter, r *
 		head, err := h.objectStore.Head(r.Context(), item.row.StorageKey)
 		if err != nil || !head.Exists {
 			writeAudioOverlayValidationError(w, []platform.Issue{audioOverlayIssue(item.field, "input_media_unavailable", item.field+" object is no longer available in storage")})
-			return false
-		}
-	}
-	return true
-}
-
-func (h *MediaAudioOverlayHandler) holdInputMedia(w http.ResponseWriter, r *http.Request, mediaIDs ...string) bool {
-	holdUntil := pgtype.Timestamptz{Time: time.Now().Add(h.holdWindow), Valid: true}
-	for _, mediaID := range mediaIDs {
-		if err := h.queries.ScheduleMediaCleanup(r.Context(), db.ScheduleMediaCleanupParams{
-			ID:             mediaID,
-			CleanupAfterAt: holdUntil,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to hold input media for processing")
 			return false
 		}
 	}

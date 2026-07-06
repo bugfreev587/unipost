@@ -57,7 +57,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   {
     name: "scheduled_at?",
     type: "string",
-    description: "ISO-8601 timestamp. If present, UniPost stores the post in scheduled state and the scheduler enqueues delivery later.",
+    description: "ISO-8601 timestamp. If present, UniPost stores the post in scheduled state and the scheduler enqueues delivery later. Free workspaces can hold up to 50 undeleted parent posts in scheduled status at once; paid plans do not cap active scheduled backlog.",
   },
   {
     name: "idempotency_key?",
@@ -487,12 +487,24 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
-    label: "402",
+    label: "402 quota",
     code: `{
   "error": {
     "code": "PLAN_POST_QUOTA_EXCEEDED",
     "normalized_code": "plan_post_quota_exceeded",
     "message": "Free plan monthly post quota exceeded. You have used 100 of 100 posts this month, and this request needs 1 more. Upgrade to continue posting."
+  },
+  "request_id": "req_123"
+}`,
+  },
+  {
+    lang: "json",
+    label: "402 scheduled cap",
+    code: `{
+  "error": {
+    "code": "PLAN_SCHEDULED_POST_LIMIT_EXCEEDED",
+    "normalized_code": "plan_scheduled_post_limit_exceeded",
+    "message": "Free plan active scheduled post limit exceeded. You already have 50 active scheduled posts; Free allows up to 50. Upgrade to schedule more posts."
   },
   "request_id": "req_123"
 }`,
@@ -535,6 +547,20 @@ export function CreatePostContent() {
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
               <strong style={{ color: "var(--docs-text)" }}>Local file bytes:</strong> reserve an upload with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, PUT the bytes to the returned upload URL, then publish with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_ids</code>. <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>size_bytes</code> is optional; UniPost hydrates the actual byte length after upload.
+            </p>
+          </div>
+        </section>
+
+        <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+          <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
+            Scheduling Limits
+          </h2>
+          <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Free active backlog:</strong> Free workspaces can keep up to 50 undeleted parent posts in scheduled status. Exceeding that cap returns <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>PLAN_SCHEDULED_POST_LIMIT_EXCEEDED</code>. The existing 100 posts/month quota still applies when posts are created and delivered. Paid plans do not cap active scheduled backlog.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>Media retention:</strong> scheduled posts keep uploaded media until they reach a final status. After success, failed, partial, or cancellation, UniPost retains media according to the workspace plan before cleanup.
             </p>
           </div>
         </section>

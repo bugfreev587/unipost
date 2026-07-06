@@ -404,6 +404,17 @@ type Media struct {
 	DurationMs     pgtype.Int4        `json:"duration_ms"`
 }
 
+type MediaPostUsage struct {
+	ID             string             `json:"id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	MediaID        string             `json:"media_id"`
+	PostID         string             `json:"post_id"`
+	PostStatus     string             `json:"post_status"`
+	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type MediaProcessingJob struct {
 	ID                string             `json:"id"`
 	WorkspaceID       string             `json:"workspace_id"`

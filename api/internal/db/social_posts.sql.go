@@ -207,6 +207,82 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 	return i, err
 }
 
+const createSocialPostWithActiveScheduledCap = `-- name: CreateSocialPostWithActiveScheduledCap :one
+WITH scheduled_cap_lock AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtext($1::text), 20260706)
+),
+scheduled_cap_slot AS MATERIALIZED (
+  SELECT 1
+  FROM scheduled_cap_lock
+  WHERE (
+    SELECT COUNT(*)::integer
+    FROM social_posts
+    WHERE workspace_id = $1
+      AND status = 'scheduled'
+      AND deleted_at IS NULL
+  ) < $10::integer
+)
+INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key, source, profile_ids)
+SELECT
+  $1,
+  $2,
+  $3,
+  $4,
+  $5,
+  $6,
+  $7,
+  $8,
+  $9
+FROM scheduled_cap_slot
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+`
+
+type CreateSocialPostWithActiveScheduledCapParams struct {
+	WorkspaceID          string             `json:"workspace_id"`
+	Caption              pgtype.Text        `json:"caption"`
+	MediaUrls            []string           `json:"media_urls"`
+	Status               string             `json:"status"`
+	Metadata             []byte             `json:"metadata"`
+	ScheduledAt          pgtype.Timestamptz `json:"scheduled_at"`
+	IdempotencyKey       pgtype.Text        `json:"idempotency_key"`
+	Source               string             `json:"source"`
+	ProfileIds           []string           `json:"profile_ids"`
+	ActiveScheduledLimit int32              `json:"active_scheduled_limit"`
+}
+
+func (q *Queries) CreateSocialPostWithActiveScheduledCap(ctx context.Context, arg CreateSocialPostWithActiveScheduledCapParams) (SocialPost, error) {
+	row := q.db.QueryRow(ctx, createSocialPostWithActiveScheduledCap,
+		arg.WorkspaceID,
+		arg.Caption,
+		arg.MediaUrls,
+		arg.Status,
+		arg.Metadata,
+		arg.ScheduledAt,
+		arg.IdempotencyKey,
+		arg.Source,
+		arg.ProfileIds,
+		arg.ActiveScheduledLimit,
+	)
+	var i SocialPost
+	err := row.Scan(
+		&i.ID,
+		&i.Caption,
+		&i.MediaUrls,
+		&i.Status,
+		&i.ScheduledAt,
+		&i.PublishedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.IdempotencyKey,
+		&i.WorkspaceID,
+		&i.ArchivedAt,
+		&i.DeletedAt,
+		&i.Source,
+		&i.ProfileIds,
+	)
+	return i, err
+}
+
 const deleteDraft = `-- name: DeleteDraft :exec
 UPDATE social_posts
 SET deleted_at = NOW(),

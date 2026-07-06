@@ -93,6 +93,7 @@ func (h *SocialPostHandler) createDraft(
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create draft")
 		return
 	}
+	h.syncPostMediaRetention(r.Context(), post, post.Status)
 
 	resp := draftResponse{
 		socialPostResponse: socialPostResponseFromRow(post),
@@ -341,6 +342,7 @@ func (h *SocialPostHandler) cancelSocialPost(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to cancel post")
 		return
 	}
+	h.syncPostMediaRetention(r.Context(), cancelled, cancelled.Status)
 	writeSuccess(w, socialPostResponseFromRow(cancelled))
 }
 
@@ -598,6 +600,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 			Period: quota.PeriodForTime(updated.ScheduledAt.Time),
 		})
 	}
+	h.syncPostMediaRetention(r.Context(), updated, updated.Status)
 
 	// Re-run validation against the new content so the editor sees
 	// fresh diagnostics in the response.
