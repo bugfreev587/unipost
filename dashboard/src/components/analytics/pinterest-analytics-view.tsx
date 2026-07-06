@@ -20,7 +20,7 @@ import {
   getPostAnalytics,
   listPinterestBoards,
   listSocialAccounts,
-  listSocialPosts,
+  listAllSocialPosts,
   type ApiResponse,
   type PinterestBoard,
   type PostAnalytics,
@@ -167,7 +167,7 @@ export function PinterestAnalyticsView({ profileId }: { profileId: string }) {
 
       const [boardsRes, postsRes] = await Promise.allSettled([
         listPinterestBoards(token, profileId, account.id),
-        listSocialPosts(token),
+        listAllSocialPosts(token),
       ]);
 
       const nextNotices: string[] = [];
@@ -226,7 +226,7 @@ export function PinterestAnalyticsView({ profileId }: { profileId: string }) {
             <div className="dt-page-title">Pinterest Analytics</div>
           </div>
           <div className="dt-subtitle" style={{ maxWidth: 760 }}>
-            Connected boards plus UniPost-published Pin performance from Pinterest's production analytics API.
+            Connected boards plus UniPost-published Pin performance from Pinterest&apos;s production analytics API.
           </div>
         </div>
         <button className="dbtn dbtn-ghost" type="button" onClick={() => loadData({ refreshAnalytics: true })} disabled={refreshing}>
@@ -383,13 +383,12 @@ function ProfilePanel({ account }: { account: SocialAccount }) {
 }
 
 function ProfileAvatar({ src, label }: { src: string; label: string }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  const showImage = src && !failed;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImage = src && failedSrc !== src;
   return (
     <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg, #7f1d1d, #be123c)", display: "grid", placeItems: "center", color: "white", fontWeight: 700, overflow: "hidden", flexShrink: 0 }}>
       {showImage ? (
-        <img src={src} alt="" onError={() => setFailed(true)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <img src={src} alt="" onError={() => setFailedSrc(src)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       ) : (
         <span>{label.replace(/^@/, "").slice(0, 1).toUpperCase() || "P"}</span>
       )}

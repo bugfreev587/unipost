@@ -34,7 +34,7 @@ import {
   getPlatformCapabilities,
   listProfiles,
   listSocialAccounts,
-  listSocialPosts,
+  listAllSocialPosts,
   updateSocialPost,
   validateSocialPost,
   type CreateSocialPostPayload,
@@ -208,7 +208,7 @@ export function PostsCalendarView() {
         return;
       }
       const [postRes, profileRes] = await Promise.all([
-        listSocialPosts(token),
+        listAllSocialPosts(token),
         listProfiles(token),
       ]);
       const loadedProfiles = profileRes.data || [];

@@ -25,7 +25,7 @@ import {
   getThreadsPosts,
   getThreadsProfile,
   listSocialAccounts,
-  listSocialPosts,
+  listAllSocialPosts,
   type AccountMetrics,
   type ApiResponse,
   type InstagramMedia,
@@ -203,7 +203,7 @@ export function MetaPlatformAnalyticsView({
         profilePromise,
         getAccountMetrics(token, profileId, account.id),
         contentPromise,
-        listSocialPosts(token),
+        listAllSocialPosts(token),
       ]);
 
       const nextNotices: string[] = [];
@@ -465,13 +465,12 @@ function ProfilePanel({
 }
 
 function ProfileAvatar({ src, label }: { src: string; label: string }) {
-  const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [src]);
-  const showImage = src && !failed;
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImage = src && failedSrc !== src;
   return (
     <div style={{ width: 48, height: 48, borderRadius: "50%", background: "linear-gradient(135deg, #0f172a, #0f766e)", display: "grid", placeItems: "center", color: "white", fontWeight: 700, overflow: "hidden", flexShrink: 0 }}>
       {showImage ? (
-        <img src={src} alt="" onError={() => setFailed(true)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+        <img src={src} alt="" onError={() => setFailedSrc(src)} style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
       ) : (
         <span>{label.replace(/^@/, "").slice(0, 1).toUpperCase() || "U"}</span>
       )}
