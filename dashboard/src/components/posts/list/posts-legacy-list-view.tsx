@@ -6,7 +6,7 @@ import { useParams, useSearchParams, useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import {
-  listSocialAccounts, listSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost, retrySocialPostResult, rescheduleSocialPost,
+  listSocialAccounts, listAllSocialPosts, cancelSocialPost, archiveSocialPost, restoreSocialPost, deleteSocialPost, retrySocialPostResult, rescheduleSocialPost,
   getActivation, getSocialPostQueue, listProfiles,
   type SocialAccount, type SocialPost, type Profile, type PostDeliveryJob,
 } from "@/lib/api";
@@ -277,7 +277,7 @@ export function PostsLegacyListView({ showCalendarLink = false }: PostsLegacyLis
       if (!token) return;
       const [a, p, pr] = await Promise.all([
         listSocialAccounts(token, profileId),
-        listSocialPosts(token),
+        listAllSocialPosts(token),
         listProfiles(token).catch(() => ({ data: [] as Profile[] })),
       ]);
       setAccounts(a.data);
