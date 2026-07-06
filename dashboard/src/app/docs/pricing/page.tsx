@@ -13,37 +13,20 @@ export default function DocsPricingPage() {
       lead="Use this reference to understand how UniPost plans affect API behavior: monthly post quotas, active scheduled backlog, media retention, platform access, and the errors your integration should handle."
       className="docs-page-guide-redesign"
     >
-      <div className="docs-callout docs-callout-tip">
-        <strong>This is the developer reference.</strong>
-        For buyer-facing plan comparison, price cards, and upgrade decisions, open the{" "}
-        <Link href="/pricing">full pricing page</Link>.
+      <div className="docs-guide-badges">
+        <span className="docs-guide-badge">Free quota: 100 posts/month</span>
+        <span className="docs-guide-badge">Free scheduled: 50 active posts</span>
+        <span className="docs-guide-badge">Media retention: status driven</span>
+        <span className="docs-guide-badge">Paid scheduled: unlimited</span>
       </div>
-
-      <div className="docs-summary-grid">
-        <div className="docs-summary-card">
-          <div className="docs-summary-label">Free quota</div>
-          <div className="docs-summary-value">100 posts/month</div>
-          <div className="docs-summary-copy">Hard cap. New publish requests stop until reset or upgrade.</div>
-        </div>
-        <div className="docs-summary-card">
-          <div className="docs-summary-label">Free scheduled</div>
-          <div className="docs-summary-value">50 active posts</div>
-          <div className="docs-summary-copy">Undeleted parent posts still in scheduled status.</div>
-        </div>
-        <div className="docs-summary-card">
-          <div className="docs-summary-label">Media retention</div>
-          <div className="docs-summary-value">Status driven</div>
-          <div className="docs-summary-copy">Scheduled, draft, queued, publishing, and processing posts keep media.</div>
-        </div>
-        <div className="docs-summary-card">
-          <div className="docs-summary-label">Paid scheduled</div>
-          <div className="docs-summary-value">Unlimited</div>
-          <div className="docs-summary-copy">API, Basic, Growth, Team, and Enterprise do not cap active scheduled backlog.</div>
-        </div>
-      </div>
+      <p className="docs-guide-note">
+        <strong>This is the developer reference.</strong>{" "}
+        For buyer-facing plan comparison, price cards, and upgrade decisions,
+        open the <Link href="/pricing">full pricing page</Link>.
+      </p>
 
       <h2 id="plan-behavior">Plan behavior</h2>
-      <p>
+      <p className="docs-guide-note">
         The public pricing page explains who each plan is for. This table focuses on
         the behavior your application sees when it calls the API.
       </p>
@@ -60,7 +43,7 @@ export default function DocsPricingPage() {
       />
 
       <h2 id="usage-limits">Usage limits</h2>
-      <p>
+      <p className="docs-guide-note">
         Free workspaces enforce hard limits. Paid self-serve plans are designed to
         keep production integrations running while usage is reviewed.
       </p>
@@ -88,7 +71,7 @@ export default function DocsPricingPage() {
       </ul>
 
       <h2 id="media-retention">Media retention</h2>
-      <p>
+      <p className="docs-guide-note">
         UniPost keeps media while a post can still need it. Cleanup starts only
         after the parent post reaches a final status, and reused media is deleted
         only after all post usages for that media are due.
@@ -104,15 +87,15 @@ export default function DocsPricingPage() {
           ["Enterprise", "30 days", "60 days unless your contract says otherwise"],
         ]}
       />
-      <div className="docs-callout">
+      <p className="docs-guide-note">
         <strong>Scheduled posts keep their media.</strong>
         R2 cleanup is driven by UniPost post state, not by object age. Scheduled,
         draft, queued, publishing, and processing posts keep uploaded media until
         they finish.
-      </div>
+      </p>
 
       <h2 id="api-errors">API errors to handle</h2>
-      <p>
+      <p className="docs-guide-note">
         Plan limits surface as normalized API errors. Your integration should
         branch on <code>normalized_code</code>, not only on the human-readable
         message.
@@ -134,39 +117,39 @@ export default function DocsPricingPage() {
           ],
         ]}
       />
-      <p>
+      <p className="docs-guide-note">
         See <Link href="/docs/api/posts/create#errors">Create post errors</Link>{" "}
         for response examples and the scheduled-post idempotency behavior.
       </p>
 
       <h2 id="changing-plans">Changing plans</h2>
-      <p>
+      <p className="docs-guide-note">
         Upgrades take effect immediately and prorate. Downgrades take effect at
         the start of the next billing cycle. Plan changes do not invalidate API
         keys or disconnect social accounts.
       </p>
 
       <h2 id="next-steps">Next steps</h2>
-      <div className="docs-next-grid">
-        <Link href="/pricing" className="docs-next-card">
-          <div className="docs-next-kicker">Pricing</div>
-          <div className="docs-next-title">Compare plan prices</div>
-          <div className="docs-next-body">Open the buyer-facing pricing page for plan cards and FAQs.</div>
+      <div className="docs-guide-next">
+        <Link href="/pricing" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Pricing</div>
+          <div className="docs-guide-next-title">Compare plan prices</div>
+          <div className="docs-guide-next-body">Open the buyer-facing pricing page for plan cards and FAQs.</div>
         </Link>
-        <Link href="/docs/api/posts/create#errors" className="docs-next-card">
-          <div className="docs-next-kicker">API</div>
-          <div className="docs-next-title">Create post errors</div>
-          <div className="docs-next-body">Handle monthly quota and Free scheduled cap errors.</div>
+        <Link href="/docs/api/posts/create#errors" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">API</div>
+          <div className="docs-guide-next-title">Create post errors</div>
+          <div className="docs-guide-next-body">Handle monthly quota and Free scheduled cap errors.</div>
         </Link>
-        <Link href="/docs/api/media/reserve" className="docs-next-card">
-          <div className="docs-next-kicker">Media</div>
-          <div className="docs-next-title">Reserve uploads</div>
-          <div className="docs-next-body">Upload local media and understand status-driven retention.</div>
+        <Link href="/docs/api/media/reserve" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Media</div>
+          <div className="docs-guide-next-title">Reserve uploads</div>
+          <div className="docs-guide-next-body">Upload local media and understand status-driven retention.</div>
         </Link>
-        <Link href="/docs/publishing" className="docs-next-card">
-          <div className="docs-next-kicker">Guide</div>
-          <div className="docs-next-title">Publishing guide</div>
-          <div className="docs-next-body">Follow the end-to-end publish path for hosted URLs and media IDs.</div>
+        <Link href="/docs/publishing" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Guide</div>
+          <div className="docs-guide-next-title">Publishing guide</div>
+          <div className="docs-guide-next-body">Follow the end-to-end publish path for hosted URLs and media IDs.</div>
         </Link>
       </div>
     </DocsPage>
