@@ -14,10 +14,11 @@ test("Admin posts table opens a detail drawer with copyable raw JSON", async () 
   assert.match(source, /const \[drawerTab,\s*setDrawerTab\]\s*=\s*useState<"attributes" \| "raw">\("attributes"\)/);
   assert.match(source, /const \[rawCopied,\s*setRawCopied\]/);
   assert.match(source, /const selectedPost = useMemo/);
+  assert.match(source, /const selectedPostForDisplay = useMemo/);
   assert.match(source, /function postKey\(post: AdminPostRow,\s*idx: number\)/);
   assert.match(source, /const openPostDetail = useCallback/);
   assert.match(source, /const copyRawPost = useCallback/);
-  assert.match(source, /navigator\.clipboard\.writeText\(JSON\.stringify\(selectedPost,\s*null,\s*2\)\)/);
+  assert.match(source, /navigator\.clipboard\.writeText\(JSON\.stringify\(selectedPostForDisplay,\s*null,\s*2\)\)/);
 
   const tableBody = source.slice(source.indexOf("<tbody>"), source.indexOf("</tbody>"));
   assert.match(tableBody, /role="button"/);
@@ -31,7 +32,7 @@ test("Admin posts table opens a detail drawer with copyable raw JSON", async () 
   assert.match(source, /aria-label="Post detail"/);
   assert.match(source, /<DrawerTabs\s+active=\{drawerTab\}/);
   assert.match(source, /aria-label="Copy raw post JSON"/);
-  assert.match(source, /<pre style=\{drawerRawJsonStyle\}>\{JSON\.stringify\(selectedPost,\s*null,\s*2\)\}<\/pre>/);
+  assert.match(source, /<pre style=\{drawerRawJsonStyle\}>\{JSON\.stringify\(selectedPostForDisplay,\s*null,\s*2\)\}<\/pre>/);
   assert.match(source, /function DrawerTabs/);
   assert.match(source, /function FieldChip/);
   assert.match(source, /function handlePostKeyDown/);
