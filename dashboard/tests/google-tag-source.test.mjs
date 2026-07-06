@@ -24,4 +24,13 @@ describe("sitewide Google tag", () => {
     assert.match(source, /<Script[\s\S]*id="google-tag-init"[\s\S]*strategy="afterInteractive"/);
     assert.equal((source.match(/GOOGLE_TAG_ID/g) || []).length, 3);
   });
+
+  it("loads the CookieYes consent banner before interactive scripts", () => {
+    const source = read("src/app/layout.tsx");
+
+    assert.match(source, /const COOKIEYES_SCRIPT_SRC = "https:\/\/cdn-cookieyes\.com\/client_data\/2e7c92a4d9dcb072ba8cdf03\/script\.js";/);
+    assert.match(source, /<Script[\s\S]*id="cookieyes"[\s\S]*type="text\/javascript"[\s\S]*src=\{COOKIEYES_SCRIPT_SRC\}[\s\S]*strategy="beforeInteractive"/);
+    assert.equal((source.match(/id="cookieyes"/g) || []).length, 1);
+    assert.ok(source.indexOf('id="cookieyes"') < source.indexOf('id="google-tag-loader"'));
+  });
 });
