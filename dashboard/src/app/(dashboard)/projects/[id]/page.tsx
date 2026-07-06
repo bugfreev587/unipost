@@ -8,7 +8,7 @@ import {
   getProfile,
   getBilling,
   listSocialAccounts,
-  listSocialPosts,
+  listAllSocialPosts,
   listApiKeys,
   type Profile,
   type BillingInfo,
@@ -50,7 +50,7 @@ export default function ProfileOverviewPage() {
           await Promise.all([
             getBilling(token).catch(() => null),
             listSocialAccounts(token, id).catch(() => ({ data: [] as SocialAccount[] })),
-            listSocialPosts(token).catch(() => ({ data: [] as SocialPost[] })),
+            listAllSocialPosts(token).catch(() => ({ data: [] as SocialPost[] })),
             listApiKeys(token).catch(() => ({ data: [] as ApiKey[] })),
           ]);
         if (billingRes) setBilling(billingRes.data);
