@@ -557,7 +557,7 @@ export function CreatePostContent() {
           </h2>
           <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
-              <strong style={{ color: "var(--docs-text)" }}>Free active backlog:</strong> Free workspaces can keep up to 50 active scheduled parent posts waiting for future delivery. The existing 100 posts/month quota still applies when posts are created and delivered. Paid plans do not cap active scheduled backlog.
+              <strong style={{ color: "var(--docs-text)" }}>Free active backlog:</strong> Free workspaces can keep up to 50 active scheduled parent posts waiting for future delivery. Exceeding that cap returns <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>PLAN_SCHEDULED_POST_LIMIT_EXCEEDED</code>. The existing 100 posts/month quota still applies when posts are created and delivered. Paid plans do not cap active scheduled backlog.
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
               <strong style={{ color: "var(--docs-text)" }}>Media retention:</strong> scheduled posts keep uploaded media until they reach a final status. After success, failed, or partial completion, UniPost retains media according to the workspace plan before cleanup.
