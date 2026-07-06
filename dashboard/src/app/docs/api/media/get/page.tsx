@@ -135,8 +135,9 @@ export default function GetMediaPage() {
     >
       <InfoBox>
         <strong>Deleted media:</strong> after a post reaches a final status, UniPost keeps uploaded media
-        for the plan retention window, then removes the R2 object and the media row. Scheduled, draft,
-        queued, publishing, and processing posts keep their media until they finish.
+        for the plan retention window, then removes the R2 object and the media row after every usage
+        for that media is due. Scheduled, draft, queued, publishing, and processing posts keep their
+        media until they finish.
       </InfoBox>
     </SingleEndpointReferencePage>
   );

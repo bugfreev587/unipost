@@ -27,7 +27,7 @@ func RetentionForPlanStatus(planID, postStatus string) (time.Duration, bool) {
 	switch postStatus {
 	case "published":
 		return w.published, true
-	case "failed", "partial":
+	case "failed", "partial", "cancelled":
 		return w.failed, true
 	default:
 		return 0, false

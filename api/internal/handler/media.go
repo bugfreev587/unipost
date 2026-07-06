@@ -56,10 +56,10 @@ func NewMediaHandler(queries *db.Queries, store *storage.Client) *MediaHandler {
 // than each network's own cap (Twitter 512 MB, IG Reels 1 GB, etc.)
 // before we get anywhere near a wasted upload.
 //
-// Storage cost is bounded by the post-publish cleanup_after_at
-// sweeper (worker.MediaCleanupWorker): every media >= 200 MB gets
-// scheduled for hard delete two hours after the publish that
-// consumed it, keeping R2 occupancy near zero for large files.
+// Storage cost is bounded by the media_post_usages retention ledger:
+// scheduled and in-flight posts keep their media, while terminal
+// posts set plan/status-specific cleanup deadlines that the daily
+// media cleanup worker enforces.
 const MediaSizeHardCap = 4 * 1024 * 1024 * 1024
 
 const mediaSizeBytesInvalidMessage = "size_bytes, when provided, must be greater than 0 when reserving an upload with POST /v1/media. If you do not know the raw byte length yet, omit size_bytes; UniPost will hydrate it from storage after upload. Use POST /v1/media only for raw file bytes; if your media already has a public URL, skip this endpoint and send the URL in platform_posts[].media_urls on POST /v1/posts."

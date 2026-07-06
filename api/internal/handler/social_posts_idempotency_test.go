@@ -178,6 +178,36 @@ func TestCreateScheduledPostRecoversUniqueViolationWithReplay(t *testing.T) {
 	assertScheduledReplayResponse(t, rr, existing.ID)
 }
 
+func TestCreateScheduledPostReturnsFreeScheduledCapWhenAtomicInsertFindsNoSlot(t *testing.T) {
+	scheduledAt := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	posts := []platform.PlatformPostInput{{AccountID: "sa_threads", Caption: "Launching today"}}
+	dbtx := &scheduledIdempotencyTestDB{
+		createErr:            pgx.ErrNoRows,
+		activeScheduledCount: 50,
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	rr := httptest.NewRecorder()
+	handler.createScheduledPost(rr, httptest.NewRequest(http.MethodPost, "/v1/social-posts", nil), "ws_1", scheduledIdempotencyParsed(posts, scheduledAt))
+
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402; body: %s", rr.Code, rr.Body.String())
+	}
+	var envelope ErrorResponse
+	if err := json.NewDecoder(rr.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Error.Code != "PLAN_SCHEDULED_POST_LIMIT_EXCEEDED" {
+		t.Fatalf("error code = %q", envelope.Error.Code)
+	}
+	if envelope.Error.NormalizedCode != "plan_scheduled_post_limit_exceeded" {
+		t.Fatalf("normalized code = %q", envelope.Error.NormalizedCode)
+	}
+	if dbtx.createCalls != 1 {
+		t.Fatalf("atomic create calls = %d, want 1", dbtx.createCalls)
+	}
+}
+
 func TestApplyIdempotencyKeyHeaderFallback(t *testing.T) {
 	t.Run("uses header when body omitted key", func(t *testing.T) {
 		parsed := parsedRequest{}
@@ -282,11 +312,12 @@ func assertScheduledReplayResponse(t *testing.T, rr *httptest.ResponseRecorder, 
 }
 
 type scheduledIdempotencyTestDB struct {
-	existing          db.SocialPost
-	existingErr       error
-	createErr         error
-	createCalls       int
-	getScheduledCalls int
+	existing             db.SocialPost
+	existingErr          error
+	createErr            error
+	createCalls          int
+	getScheduledCalls    int
+	activeScheduledCount int32
 }
 
 func (f *scheduledIdempotencyTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -299,6 +330,8 @@ func (f *scheduledIdempotencyTestDB) Query(context.Context, string, ...interface
 
 func (f *scheduledIdempotencyTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
+	case strings.Contains(query, "-- name: CountActiveScheduledPostsByWorkspace"):
+		return scheduledIdempotencyRow{values: []any{f.activeScheduledCount}}
 	case strings.Contains(query, "-- name: CreateSocialPost"):
 		f.createCalls++
 		if f.createErr != nil {

@@ -12,11 +12,12 @@ import (
 
 func TestNormalizeErrorCode(t *testing.T) {
 	tests := map[string]string{
-		"VALIDATION_ERROR":       "validation_error",
-		"UNAUTHORIZED":           "unauthorized",
-		"NEEDS_RECONNECT":        "needs_reconnect",
-		"QUEUE_JOB_ACTIVE":       "queue_job_active",
-		"SOME_FUTURE_ERROR_CODE": "some_future_error_code",
+		"VALIDATION_ERROR":                   "validation_error",
+		"UNAUTHORIZED":                       "unauthorized",
+		"NEEDS_RECONNECT":                    "needs_reconnect",
+		"QUEUE_JOB_ACTIVE":                   "queue_job_active",
+		"PLAN_SCHEDULED_POST_LIMIT_EXCEEDED": "plan_scheduled_post_limit_exceeded",
+		"SOME_FUTURE_ERROR_CODE":             "some_future_error_code",
 	}
 
 	for input, want := range tests {

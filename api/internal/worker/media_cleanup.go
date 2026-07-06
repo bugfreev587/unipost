@@ -23,12 +23,25 @@ import (
 // A nil storage Client makes Start a no-op so a server without R2
 // (or a test env) doesn't trip on the missing client.
 type MediaCleanupWorker struct {
-	queries *db.Queries
-	storage *storage.Client
+	queries mediaCleanupQueries
+	storage mediaCleanupStorage
 }
 
 func NewMediaCleanupWorker(queries *db.Queries, store *storage.Client) *MediaCleanupWorker {
-	return &MediaCleanupWorker{queries: queries, storage: store}
+	var cleanupStore mediaCleanupStorage
+	if store != nil {
+		cleanupStore = store
+	}
+	return &MediaCleanupWorker{queries: queries, storage: cleanupStore}
+}
+
+type mediaCleanupQueries interface {
+	ListMediaDueForRetentionCleanup(context.Context, int32) ([]db.Media, error)
+	HardDeleteMedia(context.Context, string) error
+}
+
+type mediaCleanupStorage interface {
+	Delete(context.Context, string) error
 }
 
 // mediaCleanupInterval is how often the worker checks for due rows.
@@ -79,6 +92,7 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 		}
 		slog.Info("media cleanup: processing due rows", "count", len(rows))
 
+		deletedCount := 0
 		for _, row := range rows {
 			// R2 delete first; if R2 already lost the object the storage
 			// layer treats a missing object as success, so we always advance
@@ -109,8 +123,9 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 				"media_id", row.ID,
 				"size_bytes", row.SizeBytes,
 				"content_type", row.ContentType)
+			deletedCount++
 		}
-		if len(rows) < mediaCleanupBatchSize {
+		if len(rows) < mediaCleanupBatchSize || deletedCount == 0 {
 			return
 		}
 	}

@@ -16,6 +16,7 @@ func TestRetentionForPlanStatus(t *testing.T) {
 		{"free published", "free", "published", 24 * time.Hour, true},
 		{"free failed", "free", "failed", 48 * time.Hour, true},
 		{"free partial", "free", "partial", 48 * time.Hour, true},
+		{"free cancelled", "free", "cancelled", 48 * time.Hour, true},
 		{"api published", "api", "published", 2 * 24 * time.Hour, true},
 		{"api failed", "api", "failed", 4 * 24 * time.Hour, true},
 		{"basic published", "basic", "published", 4 * 24 * time.Hour, true},

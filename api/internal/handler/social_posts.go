@@ -175,29 +175,63 @@ func (h *SocialPostHandler) rejectFreePlanActiveScheduledPostsExceeded(w http.Re
 	if h == nil || h.queries == nil {
 		return false
 	}
-	planID := "free"
-	if h.quota != nil {
-		planID = h.quota.PlanIDFor(r.Context(), workspaceID)
-	}
-	switch planID {
-	case "api", "basic", "growth", "team", "enterprise":
+	planID := h.planIDForWorkspace(r.Context(), workspaceID)
+	if !planHasActiveScheduledPostCap(planID) {
 		return false
 	}
-	current, err := h.queries.CountActiveScheduledPostsByWorkspace(r.Context(), workspaceID)
-	if err != nil {
-		slog.Warn("free scheduled cap: count failed", "workspace_id", workspaceID, "error", err)
+	current, ok := h.countActiveScheduledPosts(r.Context(), workspaceID)
+	if !ok {
 		return false
 	}
 	if !quota.ShouldBlockActiveScheduledPosts(planID, int(current), 1) {
 		return false
 	}
+	writeFreePlanActiveScheduledPostsExceeded(w, current)
+	return true
+}
+
+func (h *SocialPostHandler) planIDForWorkspace(ctx context.Context, workspaceID string) string {
+	if h != nil && h.quota != nil {
+		return h.quota.PlanIDFor(ctx, workspaceID)
+	}
+	return "free"
+}
+
+func planHasActiveScheduledPostCap(planID string) bool {
+	switch planID {
+	case "api", "basic", "growth", "team", "enterprise":
+		return false
+	default:
+		return true
+	}
+}
+
+func (h *SocialPostHandler) countActiveScheduledPosts(ctx context.Context, workspaceID string) (int32, bool) {
+	if h == nil || h.queries == nil {
+		return 0, false
+	}
+	current, err := h.queries.CountActiveScheduledPostsByWorkspace(ctx, workspaceID)
+	if err != nil {
+		slog.Warn("free scheduled cap: count failed", "workspace_id", workspaceID, "error", err)
+		return 0, false
+	}
+	return current, true
+}
+
+func (h *SocialPostHandler) activeScheduledPostsForCapError(ctx context.Context, workspaceID string) int32 {
+	if current, ok := h.countActiveScheduledPosts(ctx, workspaceID); ok {
+		return current
+	}
+	return quota.FreePlanActiveScheduledPostLimit
+}
+
+func writeFreePlanActiveScheduledPostsExceeded(w http.ResponseWriter, current int32) {
 	writeError(
 		w,
 		http.StatusPaymentRequired,
 		"PLAN_SCHEDULED_POST_LIMIT_EXCEEDED",
-		fmt.Sprintf("Free plan active scheduled post limit exceeded. You already have %d active scheduled posts; Free allows up to %d. Upgrade to schedule more future posts.", current, quota.FreePlanActiveScheduledPostLimit),
+		fmt.Sprintf("Free plan active scheduled post limit exceeded. You already have %d active scheduled posts; Free allows up to %d. Upgrade to schedule more posts.", current, quota.FreePlanActiveScheduledPostLimit),
 	)
-	return true
 }
 
 func writeFreePlanPostQuotaExceeded(w http.ResponseWriter, status quota.QuotaStatus, requestedUnits int) {
@@ -799,7 +833,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		canonicalMedia = []string{}
 	}
 
-	post, err := h.queries.CreateSocialPost(r.Context(), db.CreateSocialPostParams{
+	createParams := db.CreateSocialPostParams{
 		WorkspaceID:    workspaceID,
 		Caption:        canonicalCaption,
 		MediaUrls:      canonicalMedia,
@@ -809,8 +843,13 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		IdempotencyKey: idempotencyKeyParam(parsed.IdempotencyKey),
 		Source:         resolveSource(r.Context()),
 		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
-	})
+	}
+	post, err := h.createScheduledSocialPost(r.Context(), workspaceID, createParams)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeFreePlanActiveScheduledPostsExceeded(w, h.activeScheduledPostsForCapError(r.Context(), workspaceID))
+			return
+		}
 		if isScheduledIdempotencyUniqueViolation(err) && h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
 			return
 		}
@@ -856,6 +895,24 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		ProfileIDs:    post.ProfileIds,
 		PlatformPosts: buildEditablePlatformPosts(post.Metadata, derefText(post.Caption)),
 	})
+}
+
+func (h *SocialPostHandler) createScheduledSocialPost(ctx context.Context, workspaceID string, params db.CreateSocialPostParams) (db.SocialPost, error) {
+	if planHasActiveScheduledPostCap(h.planIDForWorkspace(ctx, workspaceID)) {
+		return h.queries.CreateSocialPostWithActiveScheduledCap(ctx, db.CreateSocialPostWithActiveScheduledCapParams{
+			WorkspaceID:          params.WorkspaceID,
+			ActiveScheduledLimit: int32(quota.FreePlanActiveScheduledPostLimit),
+			Caption:              params.Caption,
+			MediaUrls:            params.MediaUrls,
+			Status:               params.Status,
+			Metadata:             params.Metadata,
+			ScheduledAt:          params.ScheduledAt,
+			IdempotencyKey:       params.IdempotencyKey,
+			Source:               params.Source,
+			ProfileIds:           params.ProfileIds,
+		})
+	}
+	return h.queries.CreateSocialPost(ctx, params)
 }
 
 func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) bool {
