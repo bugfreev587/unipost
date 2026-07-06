@@ -28,6 +28,7 @@ import {
   type AdminUserRow,
   type AdminUserScheduledPost,
 } from "@/lib/api";
+import { adminUserIdentifierLabel } from "@/lib/admin-privacy";
 import { formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { countryDisplay, countryNameFromCode } from "@/lib/countries";
 
@@ -58,6 +59,7 @@ export default function AdminUsersPage() {
   const [plan, setPlan] = useState<NonNullable<AdminUserListParams["plan"]>>("all");
   const [activity, setActivity] = useState<NonNullable<AdminUserListParams["activity"]>>("all");
   const [sort, setSort] = useState<NonNullable<AdminUserListParams["sort"]>>("newest");
+  const [hideUsers, setHideUsers] = useState(false);
   const [offset, setOffset] = useState(0);
   const limit = 50;
 
@@ -279,6 +281,10 @@ export default function AdminUsersPage() {
           <option value="usage">Sort: Usage ↓</option>
           <option value="last_active">Sort: Last Active</option>
         </select>
+        <select value={hideUsers ? "hide" : "show"} onChange={(e) => setHideUsers(e.target.value === "hide")}>
+          <option value="show">Privacy: Show Users</option>
+          <option value="hide">Privacy: Hide Users</option>
+        </select>
       </div>
 
       <div className="ad-tbl-wrap ad-tbl-static" style={{ position: "relative" }}>
@@ -313,8 +319,8 @@ export default function AdminUsersPage() {
                 return (
                   <tr key={u.id}>
                     <td>
-                      <div style={{ fontWeight: 500 }}>{u.email}</div>
-                      <div className="ad-mono">{u.id.slice(0, 16)}</div>
+                      <div style={{ fontWeight: 500 }}>{adminUserIdentifierLabel(u.email, hideUsers)}</div>
+                      <div className="ad-mono">{adminUserIdentifierLabel(u.id.slice(0, 16), hideUsers)}</div>
                     </td>
                     <td style={{ color: "var(--dmuted)", fontSize: 11.5 }}>
                       <div>{fmtDate(u.created_at)}</div>
@@ -353,7 +359,7 @@ export default function AdminUsersPage() {
                         <button
                           type="button"
                           className="ad-link au-scheduled-link"
-                          aria-label={`View ${fmtNumber(u.scheduled_posts ?? 0)} scheduled posts for ${u.email}`}
+                          aria-label={`View ${fmtNumber(u.scheduled_posts ?? 0)} scheduled posts for ${adminUserIdentifierLabel(u.email, hideUsers)}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             void openScheduledPosts(u);
@@ -403,7 +409,7 @@ export default function AdminUsersPage() {
         {selectedUserId && (
           <div className="ad-detail-panel">
             <div className="ad-panel-header">
-              <div className="ad-panel-title">{detail?.email || "Loading…"}</div>
+              <div className="ad-panel-title">{detail?.email ? adminUserIdentifierLabel(detail.email, hideUsers) : "Loading…"}</div>
               <button className="ad-close-btn" onClick={closeDetail}>✕</button>
             </div>
 
@@ -413,10 +419,10 @@ export default function AdminUsersPage() {
               <>
                 <div className="ad-panel-section">
                   <div className="ad-panel-section-title">Account</div>
-                  <PanelRow k="User ID" v={<span className="ad-mono">{detail.id}</span>} />
+                  <PanelRow k="User ID" v={<span className="ad-mono">{adminUserIdentifierLabel(detail.id, hideUsers)}</span>} />
                   <PanelRow k="Signed up" v={fmtDate(detail.created_at)} />
                   <PanelRow k="Signup country" v={countryDisplay(detail.signup_country_code)} />
-                  {detail.name ? <PanelRow k="Name" v={detail.name} /> : null}
+                  {detail.name ? <PanelRow k="Name" v={adminUserIdentifierLabel(detail.name, hideUsers)} /> : null}
                   <PanelRow k="Last post" v={fmtRelative(detail.last_post_at)} />
                 </div>
 
@@ -537,7 +543,7 @@ export default function AdminUsersPage() {
             <div className="au-scheduled-drawer-header">
               <div>
                 <div id="au-scheduled-title" className="au-scheduled-drawer-title">Scheduled posts</div>
-                <div className="au-scheduled-drawer-subtitle">{scheduledDrawerUser.email}</div>
+                <div className="au-scheduled-drawer-subtitle">{adminUserIdentifierLabel(scheduledDrawerUser.email, hideUsers)}</div>
               </div>
               <button
                 type="button"

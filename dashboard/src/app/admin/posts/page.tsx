@@ -30,6 +30,7 @@ import {
   type AdminPostRow,
   type AdminPostsAggregates,
 } from "@/lib/api";
+import { adminUserIdentifierLabel } from "@/lib/admin-privacy";
 
 import { AdminShell, StatCard, bucketByLocalDayRange, fmtNumber, fmtRelative } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
@@ -153,6 +154,7 @@ export default function AdminPostsPage() {
   const [userId, setUserId] = useState<string>("");
   const [workspaceId, setWorkspaceId] = useState<string>("");
   const [period, setPeriod] = useState<PeriodValue>("30d");
+  const [hideUsers, setHideUsers] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [drawerTab, setDrawerTab] = useState<"attributes" | "raw">("attributes");
   const [rawCopied, setRawCopied] = useState(false);
@@ -254,6 +256,14 @@ export default function AdminPostsPage() {
     if (!selectedPostId) return null;
     return posts.find((post, idx) => postKey(post, idx) === selectedPostId) ?? null;
   }, [posts, selectedPostId]);
+  const selectedPostForDisplay = useMemo(() => {
+    if (!selectedPost || !hideUsers) return selectedPost;
+    return {
+      ...selectedPost,
+      user_id: adminUserIdentifierLabel(selectedPost.user_id, hideUsers),
+      user_email: adminUserIdentifierLabel(selectedPost.user_email, hideUsers),
+    };
+  }, [hideUsers, selectedPost]);
 
   useEffect(() => {
     if (selectedPostId && !selectedPost) {
@@ -273,11 +283,11 @@ export default function AdminPostsPage() {
   }, []);
 
   const copyRawPost = useCallback(async () => {
-    if (!selectedPost) return;
-    await navigator.clipboard.writeText(JSON.stringify(selectedPost, null, 2));
+    if (!selectedPostForDisplay) return;
+    await navigator.clipboard.writeText(JSON.stringify(selectedPostForDisplay, null, 2));
     setRawCopied(true);
     window.setTimeout(() => setRawCopied(false), 1200);
-  }, [selectedPost]);
+  }, [selectedPostForDisplay]);
 
   const stopLinkClick = useCallback((event: MouseEvent<HTMLAnchorElement>) => {
     event.stopPropagation();
@@ -341,7 +351,7 @@ export default function AdminPostsPage() {
         <select value={userId} onChange={(e) => setUserId(e.target.value)}>
           <option value="">All Users</option>
           {userOptions.map((u) => (
-            <option key={u.id} value={u.id}>{`User: ${u.email}`}</option>
+            <option key={u.id} value={u.id}>{`User: ${adminUserIdentifierLabel(u.email, hideUsers)}`}</option>
           ))}
         </select>
         <select value={workspaceId} onChange={(e) => setWorkspaceId(e.target.value)}>
@@ -356,6 +366,10 @@ export default function AdminPostsPage() {
               {label}
             </option>
           ))}
+        </select>
+        <select value={hideUsers ? "hide" : "show"} onChange={(e) => setHideUsers(e.target.value === "hide")}>
+          <option value="show">Privacy: Show Users</option>
+          <option value="hide">Privacy: Hide Users</option>
         </select>
       </div>
 
@@ -563,7 +577,7 @@ export default function AdminPostsPage() {
                     <td>{post.workspace_name}</td>
                     <td>
                       <Link href={`/admin/users?user=${post.user_id}`} className="ad-link" onClick={stopLinkClick}>
-                        {post.user_email}
+                        {adminUserIdentifierLabel(post.user_email, hideUsers)}
                       </Link>
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
@@ -651,7 +665,7 @@ export default function AdminPostsPage() {
           />
 
           {drawerTab === "raw" ? (
-            <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedPost, null, 2)}</pre>
+            <pre style={drawerRawJsonStyle}>{JSON.stringify(selectedPostForDisplay, null, 2)}</pre>
           ) : (
             <div style={{ display: "grid", gap: 14 }}>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
@@ -671,8 +685,8 @@ export default function AdminPostsPage() {
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                   <FieldChip label="workspace" value={selectedPost.workspace_id} />
                   <FieldChip label="workspace_name" value={selectedPost.workspace_name} />
-                  <FieldChip label="user" value={selectedPost.user_id} />
-                  <FieldChip label="owner" value={selectedPost.user_email} />
+                  <FieldChip label="user" value={adminUserIdentifierLabel(selectedPost.user_id, hideUsers)} />
+                  <FieldChip label="owner" value={adminUserIdentifierLabel(selectedPost.user_email, hideUsers)} />
                   <FieldChip label="post_id" value={selectedPost.post_id} />
                 </div>
                 <div style={{ marginTop: 12 }}>
