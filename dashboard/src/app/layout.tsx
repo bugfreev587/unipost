@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
 import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
@@ -35,6 +36,14 @@ const inter = Inter({
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
+const GOOGLE_TAG_ID = "G-W2D6215V56";
+
+const googleTagInitScript = `
+window.dataLayer = window.dataLayer || [];
+function gtag() { window.dataLayer.push(arguments); }
+gtag("js", new Date());
+gtag("config", "${GOOGLE_TAG_ID}");
+`;
 
 const themeInitScript = `
 (() => {
@@ -182,6 +191,14 @@ export default function RootLayout({
             {children}
             <SiteFooterGate />
           </ThemeProvider>
+          <Script
+            id="google-tag-loader"
+            src={`https://www.googletagmanager.com/gtag/js?id=${GOOGLE_TAG_ID}`}
+            strategy="afterInteractive"
+          />
+          <Script id="google-tag-init" strategy="afterInteractive">
+            {googleTagInitScript}
+          </Script>
         </body>
       </html>
     </ClerkProvider>
