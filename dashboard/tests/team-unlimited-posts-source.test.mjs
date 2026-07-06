@@ -10,7 +10,7 @@ async function source(path) {
 }
 
 test("public pricing presents Team as unlimited posts", async () => {
-  const pricing = await source("src/app/pricing/page.tsx");
+  const pricing = await source("src/app/pricing/pricing-page-client.tsx");
 
   assert.match(pricing, /posts:\s*"Unlimited posts\/mo"/);
   assert.match(pricing, /team:\s*"Unlimited"/);
@@ -27,7 +27,7 @@ test("billing settings and docs no longer describe Team as a 25,000 post plan", 
   assert.match(billing, /id:\s*"team"[^}]*post_limit:\s*-1/s);
   assert.doesNotMatch(billing, /Need more than 25,000 posts\/month or custom terms/);
 
-  assert.match(docsPricing, /\["Team",\s*"\$149",\s*"Unlimited"/);
+  assert.match(docsPricing, /\["Team",\s*"Unlimited",\s*"Unlimited",\s*"Unlimited"/);
   assert.match(unipostData, /label:\s*"Team"[^}]*posts:\s*"Unlimited"/s);
   assert.doesNotMatch(terms, /Each plan includes a monthly post limit/);
 });
