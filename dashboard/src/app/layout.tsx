@@ -37,6 +37,7 @@ const inter = Inter({
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const SIGN_UP_REDIRECT_URL = `${APP_URL}/welcome`;
 const GOOGLE_TAG_ID = "G-W2D6215V56";
+const COOKIEYES_SCRIPT_SRC = "https://cdn-cookieyes.com/client_data/2e7c92a4d9dcb072ba8cdf03/script.js";
 
 const googleTagInitScript = `
 window.dataLayer = window.dataLayer || [];
@@ -183,6 +184,12 @@ export default function RootLayout({
         style={{ fontFamily: "var(--font-dm-sans), system-ui, sans-serif" }}
       >
         <head>
+          <Script
+            id="cookieyes"
+            type="text/javascript"
+            src={COOKIEYES_SCRIPT_SRC}
+            strategy="beforeInteractive"
+          />
           <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         </head>
         <body className="min-h-full flex flex-col bg-[var(--app-bg)] text-[var(--text)]">
