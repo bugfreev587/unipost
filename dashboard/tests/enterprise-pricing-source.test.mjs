@@ -20,6 +20,14 @@ test("pricing page keeps Enterprise out of the self-serve card grid", async () =
   assert.match(pricing, /Team has no monthly UniPost post quota/);
   assert.match(pricing, /Contact sales/);
   assert.doesNotMatch(pricing, /Reserved capacity, SLA, and custom platform-volume terms for high-scale teams\./);
+
+  const cardsIndex = pricing.indexOf("{/* CARDS */}");
+  const enterpriseIndex = pricing.indexOf("{/* Enterprise */}");
+  const compareIndex = pricing.indexOf("{/* Compare */}");
+
+  assert.ok(cardsIndex >= 0, "pricing cards marker should exist");
+  assert.ok(enterpriseIndex > cardsIndex, "Enterprise should render after pricing cards");
+  assert.ok(compareIndex > enterpriseIndex, "Enterprise should render before the comparison chart");
 });
 
 test("pricing FAQ explains Team unlimited and Enterprise Custom semantics", async () => {
