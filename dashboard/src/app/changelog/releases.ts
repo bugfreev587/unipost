@@ -47,6 +47,22 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "enterprise-pricing-launch",
+    date: "2026-07-06",
+    displayDate: "July 6, 2026",
+    title: "Enterprise pricing positioning launched",
+    summary: "Enterprise pricing tier is now available with dedicated positioning and documentation.",
+    category: "platform",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 81fcd68", href: "https://github.com/bugfreev587/unipost/commit/81fcd68b9d6747e1f5e8b9c9a270f01cf57a0c6f" },
+    { label: "Commit 0bb851f", href: "https://github.com/bugfreev587/unipost/commit/0bb851fa739fdf1f4b7852b838161860d8148096" },
+    { label: "Commit 07024d9", href: "https://github.com/bugfreev587/unipost/commit/07024d91ff29ed2d36ffe53ba955ff6cbdcd3dc3" },
+  ],
+  },
+  {
     id: "video-audio-overlay-api",
     date: "2026-07-04",
     displayDate: "July 4, 2026",
