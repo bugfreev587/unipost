@@ -129,7 +129,7 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /resolvedOptions\(\)\.timeZone/);
 });
 
-test("Posts calendar week and day views show two same-hour posts plus an overflow pill", async () => {
+test("Posts calendar week and day views show one same-hour post plus an overflow pill", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const timedColumn = source.slice(
     source.indexOf("function TimedPostColumn"),
@@ -146,6 +146,7 @@ test("Posts calendar week and day views show two same-hour posts plus an overflo
 
   assert.match(source, /getTimedPostGroups/);
   assert.match(source, /TIMED_GROUP_VISIBLE_POST_LIMIT/);
+  assert.match(source, /const TIMED_GROUP_VISIBLE_POST_LIMIT = 1;/);
   assert.match(source, /timedOverflowTarget/);
   assert.match(source, /handleSelectTimedOverflow/);
   assert.match(source, /handleSelectTimedOverflowPost/);
@@ -153,8 +154,12 @@ test("Posts calendar week and day views show two same-hour posts plus an overflo
   assert.match(timedColumn, /const timedGroups = getTimedPostGroups/);
   assert.match(timedColumn, /const visibleGroupPosts = groupPosts\.slice\(0, TIMED_GROUP_VISIBLE_POST_LIMIT\)/);
   assert.match(timedColumn, /const overflowCount = Math\.max\(0, groupPosts\.length - TIMED_GROUP_VISIBLE_POST_LIMIT\)/);
+  assert.doesNotMatch(timedColumn, /return \[\.\.\.visibleInputs, \{ id: getTimedOverflowLayoutId/);
+  assert.match(timedColumn, /const overflowLayout = visibleGroupPosts\.length > 0\s*\? eventLayouts\.get\(visibleGroupPosts\[0\]\.id\)\s*:\s*undefined/);
   assert.match(timedColumn, /<TimedOverflowButton/);
+  assert.match(timedColumn, /hasOverflow=\{overflowCount > 0\}/);
   assert.match(timedColumn, /onSelectTimedOverflow\(groupPosts, event\.currentTarget\)/);
+  assert.match(timedButton, /hasOverflow/);
   assert.doesNotMatch(timedButton, /overflowCount/);
   assert.doesNotMatch(timedButton, /posts-calendar-timed-count/);
   assert.match(timedOverflowButton, /className="posts-calendar-timed-overflow posts-calendar-more-pill"/);
