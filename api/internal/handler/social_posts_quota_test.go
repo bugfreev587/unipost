@@ -129,6 +129,46 @@ func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
 	}
 }
 
+func TestCreateScheduledPostUsesTemporaryActiveScheduledCapOverride(t *testing.T) {
+	dbtx := &scheduledQuotaHTTPTestDB{
+		usage:                  10,
+		reserved:               0,
+		reservedSet:            true,
+		activeScheduled:        60,
+		activeScheduledSet:     true,
+		activeLimitOverride:    250,
+		activeLimitOverrideSet: true,
+		createPost:             true,
+	}
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	dbtx.createdPost = scheduledQuotaCreatedPost(t, scheduledAt)
+	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil)
+	body := strings.NewReader(fmt.Sprintf(`{
+			"scheduled_at": %q,
+			"platform_posts": [
+				{
+					"account_id": "acct_linkedin",
+					"caption": "Temporary active scheduled cap override."
+				}
+			]
+		}`, scheduledAt.Format(time.RFC3339)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/posts", body)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rr := httptest.NewRecorder()
+
+	handler.Create(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rr.Code, rr.Body.String())
+	}
+	if dbtx.createSocialPostCalls != 1 {
+		t.Fatalf("CreateSocialPost calls = %d, want 1", dbtx.createSocialPostCalls)
+	}
+	if dbtx.createActiveScheduledLimit != 250 {
+		t.Fatalf("active scheduled limit passed to insert = %d, want 250", dbtx.createActiveScheduledLimit)
+	}
+}
+
 func TestEnqueueScheduledPostBlocksFreePlanQuotaAtExecution(t *testing.T) {
 	dbtx := &scheduledExecutionQuotaTestDB{}
 	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil)
@@ -161,12 +201,17 @@ func TestEnqueueScheduledPostBlocksFreePlanQuotaAtExecution(t *testing.T) {
 }
 
 type scheduledQuotaHTTPTestDB struct {
-	createSocialPostCalls int
-	usage                 int32
-	reserved              int32
-	reservedSet           bool
-	createPost            bool
-	createdPost           db.SocialPost
+	createSocialPostCalls      int
+	createActiveScheduledLimit int32
+	usage                      int32
+	reserved                   int32
+	reservedSet                bool
+	activeScheduled            int32
+	activeScheduledSet         bool
+	activeLimitOverride        int32
+	activeLimitOverrideSet     bool
+	createPost                 bool
+	createdPost                db.SocialPost
 }
 
 func (f *scheduledQuotaHTTPTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -238,6 +283,16 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 		}}
 	case strings.Contains(query, "-- name: GetScheduledSocialPostByIdempotencyKey"):
 		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: GetActiveScheduledPostLimitOverride"):
+		if f.activeLimitOverrideSet {
+			return scanRow{values: []any{f.activeLimitOverride}}
+		}
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: CountActiveScheduledPostsByWorkspace"):
+		if f.activeScheduledSet {
+			return scanRow{values: []any{f.activeScheduled}}
+		}
+		return scanRow{values: []any{int32(0)}}
 	case strings.Contains(query, "FROM social_posts sp") && strings.Contains(query, "sp.status = 'scheduled'"):
 		reserved := f.reserved
 		if !f.reservedSet {
@@ -246,6 +301,9 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 		return scanRow{values: []any{reserved}}
 	case strings.Contains(query, "-- name: CreateSocialPost"):
 		f.createSocialPostCalls++
+		if len(args) >= 10 {
+			f.createActiveScheduledLimit = args[9].(int32)
+		}
 		if f.createPost {
 			return scheduledIdempotencySocialPostRow(f.createdPost)
 		}
