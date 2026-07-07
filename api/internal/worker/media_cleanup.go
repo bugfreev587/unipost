@@ -2,8 +2,14 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
@@ -36,6 +42,9 @@ func NewMediaCleanupWorker(queries *db.Queries, store *storage.Client) *MediaCle
 }
 
 type mediaCleanupQueries interface {
+	MarkStaleMediaCleanupRunsFailed(context.Context, db.MarkStaleMediaCleanupRunsFailedParams) (int64, error)
+	CreateMediaCleanupRun(context.Context, db.CreateMediaCleanupRunParams) (db.MediaCleanupRun, error)
+	CompleteMediaCleanupRun(context.Context, db.CompleteMediaCleanupRunParams) (db.MediaCleanupRun, error)
 	ListMediaDueForRetentionCleanup(context.Context, int32) ([]db.Media, error)
 	HardDeleteMedia(context.Context, string) error
 }
@@ -50,6 +59,12 @@ type mediaCleanupStorage interface {
 const mediaCleanupInterval = 24 * time.Hour
 
 const mediaCleanupBatchSize = 500
+const mediaCleanupWorkerName = "media_cleanup"
+const mediaCleanupRunCompleted = "completed"
+const mediaCleanupRunCompletedWithErrors = "completed_with_errors"
+const mediaCleanupRunFailed = "failed"
+
+const mediaCleanupStaleRunningAfter = 2 * mediaCleanupInterval
 
 func (w *MediaCleanupWorker) Start(ctx context.Context) {
 	if w.storage == nil {
@@ -81,16 +96,43 @@ func (w *MediaCleanupWorker) Start(ctx context.Context) {
 // each one's R2 object before hard-deleting the row. R2 delete
 // errors leave the row in place so the next tick can retry.
 func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
+	startedAt := time.Now().UTC()
+	if _, err := w.queries.MarkStaleMediaCleanupRunsFailed(ctx, db.MarkStaleMediaCleanupRunsFailedParams{
+		WorkerName: mediaCleanupWorkerName,
+		StartedAt:  pgtype.Timestamptz{Time: startedAt.Add(-mediaCleanupStaleRunningAfter), Valid: true},
+	}); err != nil {
+		slog.Warn("media cleanup: stale run recovery failed", "error", err)
+	}
+
+	run, err := w.queries.CreateMediaCleanupRun(ctx, db.CreateMediaCleanupRunParams{
+		WorkerName: mediaCleanupWorkerName,
+		StartedAt:  pgtype.Timestamptz{Time: startedAt, Valid: true},
+		NextRunAt:  pgtype.Timestamptz{Time: startedAt.Add(mediaCleanupInterval), Valid: true},
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			slog.Info("media cleanup: another active run exists, skipping")
+			return
+		}
+		slog.Error("media cleanup: failed to create run", "error", err)
+		return
+	}
+
+	stats := mediaCleanupRunStats{}
+	status := mediaCleanupRunCompleted
 	for {
 		rows, err := w.queries.ListMediaDueForRetentionCleanup(ctx, mediaCleanupBatchSize)
 		if err != nil {
 			slog.Error("media cleanup: failed to list due rows", "error", err)
-			return
+			status = mediaCleanupRunFailed
+			stats.addError("list due rows failed", err)
+			break
 		}
 		if len(rows) == 0 {
-			return
+			break
 		}
 		slog.Info("media cleanup: processing due rows", "count", len(rows))
+		stats.scanned += int32(len(rows))
 
 		deletedCount := 0
 		for _, row := range rows {
@@ -98,6 +140,7 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 			// layer treats a missing object as success, so we always advance
 			// the row after successful API calls.
 			if err := w.storage.Delete(ctx, row.StorageKey); err != nil {
+				stats.recordFailure(row, "r2 delete failed", err)
 				slog.Warn("media cleanup: r2 delete failed",
 					"media_id", row.ID,
 					"size_bytes", row.SizeBytes,
@@ -106,6 +149,7 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 			}
 			if pullKey := storage.PullObjectKeyForSource(row.StorageKey); pullKey != "" {
 				if err := w.storage.Delete(ctx, pullKey); err != nil {
+					stats.recordFailure(row, "r2 pull-copy delete failed", err)
 					slog.Warn("media cleanup: r2 pull-copy delete failed",
 						"media_id", row.ID,
 						"pull_key", pullKey,
@@ -114,11 +158,14 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 				}
 			}
 			if err := w.queries.HardDeleteMedia(ctx, row.ID); err != nil {
+				stats.recordFailure(row, "db delete failed", err)
 				slog.Warn("media cleanup: db delete failed",
 					"media_id", row.ID,
 					"error", err)
 				continue
 			}
+			stats.deletedObjects++
+			stats.deletedBytes += row.SizeBytes
 			slog.Info("media cleanup: deleted",
 				"media_id", row.ID,
 				"size_bytes", row.SizeBytes,
@@ -126,7 +173,74 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 			deletedCount++
 		}
 		if len(rows) < mediaCleanupBatchSize || deletedCount == 0 {
-			return
+			break
 		}
 	}
+	if stats.failedObjects > 0 && status == mediaCleanupRunCompleted {
+		status = mediaCleanupRunCompletedWithErrors
+	}
+	w.completeRun(ctx, run.ID, status, stats)
+}
+
+func (w *MediaCleanupWorker) completeRun(ctx context.Context, runID, status string, stats mediaCleanupRunStats) {
+	if _, err := w.queries.CompleteMediaCleanupRun(ctx, db.CompleteMediaCleanupRunParams{
+		ID:             runID,
+		Status:         status,
+		FinishedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		ScannedObjects: stats.scanned,
+		DeletedObjects: stats.deletedObjects,
+		DeletedBytes:   stats.deletedBytes,
+		FailedObjects:  stats.failedObjects,
+		FailedBytes:    stats.failedBytes,
+		ErrorSummary:   textOrNull(stats.summary()),
+	}); err != nil {
+		slog.Error("media cleanup: failed to complete run", "run_id", runID, "error", err)
+	}
+}
+
+type mediaCleanupRunStats struct {
+	scanned        int32
+	deletedObjects int32
+	deletedBytes   int64
+	failedObjects  int32
+	failedBytes    int64
+	errors         []string
+}
+
+func (s *mediaCleanupRunStats) recordFailure(row db.Media, label string, err error) {
+	s.failedObjects++
+	s.failedBytes += row.SizeBytes
+	s.addError(label, err)
+}
+
+func (s *mediaCleanupRunStats) addError(label string, err error) {
+	if len(s.errors) >= 3 {
+		return
+	}
+	s.errors = append(s.errors, fmt.Sprintf("%s: %v", label, err))
+}
+
+func (s mediaCleanupRunStats) summary() string {
+	return strings.Join(s.errors, "; ")
+}
+
+func textOrNull(value string) pgtype.Text {
+	if strings.TrimSpace(value) == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: value, Valid: true}
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "23505"
+	}
+	message := err.Error()
+	return strings.Contains(message, "SQLSTATE 23505") ||
+		strings.Contains(message, "duplicate key") ||
+		strings.Contains(message, "media_cleanup_runs_one_running_idx")
 }

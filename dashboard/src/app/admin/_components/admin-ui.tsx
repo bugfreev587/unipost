@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   CreditCard,
   FileText,
+  HardDrive,
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
@@ -34,6 +35,19 @@ export const fmtCents = (cents: number) => {
 };
 
 export const fmtNumber = (n: number) => n.toLocaleString("en-US");
+
+export const fmtBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+};
 
 export const fmtRelative = (iso: string | null | undefined) => {
   if (!iso) return "Never";
@@ -117,6 +131,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Users", href: "/admin/users", section: "Overview", enabled: true, icon: Users },
   { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true, icon: Send },
   { label: "Email", href: "/admin/email", section: "Overview", enabled: true, icon: Mail },
+  { label: "Object Storage", href: "/admin/object-storage", section: "Overview", enabled: true, icon: HardDrive },
   { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true, icon: CreditCard },
   { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true, icon: TrendingUp },
   { label: "Logs", href: "/admin/logs", section: "System", enabled: true, icon: FileText },
