@@ -133,6 +133,28 @@ func TestCreateSocialPostWithActiveScheduledCapIsAtomic(t *testing.T) {
 	}
 }
 
+func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/102_workspace_active_scheduled_limits.sql")
+	if err != nil {
+		t.Fatalf("read workspace active scheduled limits migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"create table if not exists workspace_active_scheduled_limits",
+		"limit_count integer not null check (limit_count > 0)",
+		"expires_at",
+		"corcodelgabrielaaa@gmail.com",
+		"250",
+		"2026-08-01 00:00:00+00",
+		"on conflict (workspace_id) do update",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("workspace active scheduled limits migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
 func TestPostgresDoBlocksAreGooseStatementBlocks(t *testing.T) {
 	err := fs.WalkDir(migrations, "migrations", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

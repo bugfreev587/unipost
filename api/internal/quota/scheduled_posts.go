@@ -6,6 +6,10 @@ const FreePlanActiveScheduledPostLimit = 50
 // many future scheduled parent posts. Paid plans are intentionally
 // unrestricted.
 func ShouldBlockActiveScheduledPosts(planID string, current, additional int) bool {
+	return ShouldBlockActiveScheduledPostsWithLimit(planID, current, additional, FreePlanActiveScheduledPostLimit)
+}
+
+func ShouldBlockActiveScheduledPostsWithLimit(planID string, current, additional, limit int) bool {
 	if additional <= 0 {
 		return false
 	}
@@ -15,5 +19,8 @@ func ShouldBlockActiveScheduledPosts(planID string, current, additional int) boo
 			return false
 		}
 	}
-	return current+additional > FreePlanActiveScheduledPostLimit
+	if limit <= 0 {
+		limit = FreePlanActiveScheduledPostLimit
+	}
+	return current+additional > limit
 }
