@@ -31,3 +31,30 @@ func TestFreePlanActiveScheduledPostCap(t *testing.T) {
 		})
 	}
 }
+
+func TestFreePlanActiveScheduledPostCapOverride(t *testing.T) {
+	tests := []struct {
+		name       string
+		planID     string
+		current    int
+		additional int
+		limit      int
+		want       bool
+	}{
+		{"free below temporary limit", "free", 249, 1, 250, false},
+		{"free over temporary limit", "free", 250, 1, 250, true},
+		{"unknown plan follows temporary limit", "unknown", 249, 1, 250, false},
+		{"paid plan ignores temporary limit", "api", 250, 1, 250, false},
+		{"invalid limit falls back to default", "free", 50, 1, 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ShouldBlockActiveScheduledPostsWithLimit(tt.planID, tt.current, tt.additional, tt.limit)
+			if got != tt.want {
+				t.Fatalf("ShouldBlockActiveScheduledPostsWithLimit(%q, %d, %d, %d) = %v, want %v",
+					tt.planID, tt.current, tt.additional, tt.limit, got, tt.want)
+			}
+		})
+	}
+}
