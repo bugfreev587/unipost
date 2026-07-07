@@ -38,7 +38,7 @@ export default function DocsPricingPage() {
           ["Basic", "2,500", "Soft overage", "Unlimited", "Adds Inbox, full Analytics, and one shared custom platform slot."],
           ["Growth", "7,500", "Soft overage", "Unlimited", "Adds Hosted Connect branding and Platform Credentials across supported platforms."],
           ["Team", "Unlimited", "Unlimited", "Unlimited", "Adds RBAC, per-member API keys, audit log, unlimited profiles and members."],
-          ["Enterprise", "Custom", "Contract", "Unlimited", "SLA, dedicated support, security review, and contract flexibility."],
+          ["Enterprise", "Custom", "Contract", "Unlimited", "Contract-defined usage terms, capacity planning, SLA, dedicated support, and security review."],
         ]}
       />
 
@@ -54,6 +54,7 @@ export default function DocsPricingPage() {
             Free stops accepting new publish requests after 100 posts/month. API,
             Basic, and Growth use soft overage: posting continues for now, with
             usage warnings and upgrade guidance instead of surprise billing.
+            Team has no monthly UniPost post quota. Enterprise Custom means contract-defined terms and may include no UniPost monthly post quota, custom capacity terms, or account-specific guarantees.
           </dd>
         </div>
         <div className="docs-guide-key-item">
@@ -75,7 +76,7 @@ export default function DocsPricingPage() {
           <dt className="docs-guide-key-label">Safety caps</dt>
           <dd className="docs-guide-key-copy">
             Each connected account still has a daily platform-safety ceiling.
-            Failed posts do not count toward these safety caps.
+            Failed posts do not count toward these safety caps. Enterprise contracts can plan around high-volume platform usage, but they cannot override platform-owned rate limits, app review, spam controls, or content policy enforcement.
           </dd>
         </div>
       </dl>
