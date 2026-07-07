@@ -449,6 +449,7 @@ func socialPostResultScanRow(result db.SocialPostResult) scanRow {
 		result.ErrorSource,
 		result.ErrorTemporality,
 		result.ProviderError,
+		result.PublishToken,
 	}}
 }
 
