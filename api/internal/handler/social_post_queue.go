@@ -521,6 +521,36 @@ func workerPublishingEvent(e integrationlogs.Event) integrationlogs.Event {
 	return e
 }
 
+// attachPublishTokenResume wires idempotent-publish options onto pp for this
+// delivery attempt: a resume token persisted by a prior attempt (if any), and
+// a persistence hook the adapter calls the moment it obtains its intermediate
+// platform token (IG creation_id / TikTok publish_id). Only the IG and TikTok
+// adapters read these keys; every other adapter ignores them, so this is a
+// no-op for them.
+func (h *SocialPostHandler) attachPublishTokenResume(ctx context.Context, pp *platform.PlatformPostInput, res db.SocialPostResult) {
+	if h == nil || h.queries == nil || pp == nil {
+		return
+	}
+	if pp.PlatformOptions == nil {
+		pp.PlatformOptions = map[string]any{}
+	}
+	if res.PublishToken.Valid && res.PublishToken.String != "" {
+		pp.PlatformOptions[platform.OptResumePublishToken] = res.PublishToken.String
+	}
+	resultID := res.ID
+	pp.PlatformOptions[platform.OptOnPublishToken] = func(token string) {
+		if token == "" {
+			return
+		}
+		if err := h.queries.SetSocialPostResultPublishToken(ctx, db.SetSocialPostResultPublishTokenParams{
+			ID:           resultID,
+			PublishToken: pgtype.Text{String: token, Valid: true},
+		}); err != nil {
+			slog.Warn("publish token persist failed", "result_id", resultID, "error", err)
+		}
+	}
+}
+
 func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
 	// Pre-publish guard against double-publish. A claimed job can sit in the
 	// worker's serial processing queue for minutes; meanwhile the stale
@@ -601,6 +631,12 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 			Disconnected: acc.DisconnectedAt.Valid,
 		}
 	}
+
+	// Idempotent-publish wiring (IG/TikTok). Let the adapter resume from a
+	// token a prior attempt persisted, and persist the token this attempt
+	// obtains, so a crash between "media uploaded" and "external_id recorded"
+	// re-uses the same container/publish_id instead of duplicating the post.
+	h.attachPublishTokenResume(ctx, &pp, res)
 
 	oc := h.publishOneContext(
 		ctx,

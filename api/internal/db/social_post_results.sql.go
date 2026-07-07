@@ -87,7 +87,7 @@ func (q *Queries) CountPublishedTodayByAccount(ctx context.Context, socialAccoun
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
 INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token
 `
 
 type CreateSocialPostResultParams struct {
@@ -138,6 +138,7 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.ErrorSource,
 		&i.ErrorTemporality,
 		&i.ProviderError,
+		&i.PublishToken,
 	)
 	return i, err
 }
@@ -152,7 +153,7 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 }
 
 const getSocialPostResultByIDAndPost = `-- name: GetSocialPostResultByIDAndPost :one
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error FROM social_post_results WHERE id = $1 AND post_id = $2
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token FROM social_post_results WHERE id = $1 AND post_id = $2
 `
 
 type GetSocialPostResultByIDAndPostParams struct {
@@ -184,6 +185,7 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 		&i.ErrorSource,
 		&i.ErrorTemporality,
 		&i.ProviderError,
+		&i.PublishToken,
 	)
 	return i, err
 }
@@ -312,7 +314,7 @@ func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg 
 }
 
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2
@@ -359,6 +361,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 			&i.ErrorSource,
 			&i.ErrorTemporality,
 			&i.ProviderError,
+			&i.PublishToken,
 		); err != nil {
 			return nil, err
 		}
@@ -371,7 +374,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -404,6 +407,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.ErrorSource,
 			&i.ErrorTemporality,
 			&i.ProviderError,
+			&i.PublishToken,
 		); err != nil {
 			return nil, err
 		}
@@ -416,7 +420,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 }
 
 const listSocialPostResultsByPostIDs = `-- name: ListSocialPostResultsByPostIDs :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token FROM social_post_results
 WHERE post_id = ANY($1::text[])
 `
 
@@ -450,6 +454,7 @@ func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 [
 			&i.ErrorSource,
 			&i.ErrorTemporality,
 			&i.ProviderError,
+			&i.PublishToken,
 		); err != nil {
 			return nil, err
 		}
@@ -485,6 +490,24 @@ func (q *Queries) MarkSocialPostResultRemotelyDeleted(ctx context.Context, arg M
 	return err
 }
 
+const setSocialPostResultPublishToken = `-- name: SetSocialPostResultPublishToken :exec
+UPDATE social_post_results
+SET publish_token = $1
+WHERE id = $2
+`
+
+type SetSocialPostResultPublishTokenParams struct {
+	PublishToken pgtype.Text `json:"publish_token"`
+	ID           string      `json:"id"`
+}
+
+// Persist the platform intermediate publish token (IG creation_id /
+// TikTok publish_id) so a retry can resume instead of re-uploading.
+func (q *Queries) SetSocialPostResultPublishToken(ctx context.Context, arg SetSocialPostResultPublishTokenParams) error {
+	_, err := q.db.Exec(ctx, setSocialPostResultPublishToken, arg.PublishToken, arg.ID)
+	return err
+}
+
 const updateSocialPostResultAfterRetry = `-- name: UpdateSocialPostResultAfterRetry :one
 UPDATE social_post_results
 SET
@@ -503,7 +526,7 @@ SET
   error_temporality = NULL,
   provider_error = NULL
 WHERE id = $1
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token
 `
 
 type UpdateSocialPostResultAfterRetryParams struct {
@@ -553,6 +576,7 @@ func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg Upda
 		&i.ErrorSource,
 		&i.ErrorTemporality,
 		&i.ProviderError,
+		&i.PublishToken,
 	)
 	return i, err
 }
