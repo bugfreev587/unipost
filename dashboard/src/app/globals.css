@@ -317,6 +317,10 @@
   }
 }
 
+.cky-btn-revisit-wrapper {
+  display: none !important;
+}
+
 .dashboard-typography {
   font-family: var(--font-inter), var(--font-dm-sans), system-ui, sans-serif;
   font-size: 15px;
