@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -521,6 +522,27 @@ func workerPublishingEvent(e integrationlogs.Event) integrationlogs.Event {
 }
 
 func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
+	// Pre-publish guard against double-publish. A claimed job can sit in the
+	// worker's serial processing queue for minutes; meanwhile the stale
+	// recovery sweep (RecoverStaleDeliveryJobs) may have already marked this
+	// job failed and queued a fresh retry. Publishing now would create a
+	// duplicate on the platform because the retry publishes too. Re-read the
+	// job's current state and only proceed if this job is still the active
+	// owner (running/retrying). On any uncertainty, skip: leaving the job be
+	// defers to stale recovery rather than risking a second platform call.
+	if current, err := h.queries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
+		ID:          job.ID,
+		WorkspaceID: job.WorkspaceID,
+	}); err != nil {
+		slog.Warn("delivery job: pre-publish state check failed, skipping to avoid duplicate publish",
+			"job_id", job.ID, "error", err)
+		return nil
+	} else if current.State != "running" && current.State != "retrying" {
+		slog.Info("delivery job: no longer active, skipping publish",
+			"job_id", job.ID, "state", current.State, "post_id", job.PostID)
+		return nil
+	}
+
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     job.WorkspaceID,
 		Level:           integrationlogs.LevelInfo,
@@ -880,6 +902,18 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 	})
 	if err != nil {
 		return err
+	}
+
+	// If a prior attempt already published this result, do not re-queue a
+	// retry: doing so would duplicate the post on the platform. Close the
+	// stale job out as succeeded to reflect reality instead.
+	if result.Status == "published" {
+		slog.Info("stale recovery: result already published, closing job without retry",
+			"job_id", job.ID, "post_id", job.PostID, "result_id", result.ID)
+		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, job.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return nil
 	}
 
 	errMsg := fmt.Sprintf("delivery attempt stalled after %s and was re-queued automatically", staleDeliveryAttemptTimeout.Round(time.Second))

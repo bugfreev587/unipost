@@ -368,3 +368,159 @@ func socialPostScanRow(post db.SocialPost) scanRow {
 		post.ProfileIds,
 	}}
 }
+
+// --- Double-publish hotfix regression tests ---
+//
+// Root cause: a claimed delivery job can wait minutes in the worker's serial
+// processing queue. Meanwhile the stale-recovery sweep marks it failed and
+// queues a retry. Without a guard, the original worker still publishes when it
+// finally runs, and the retry publishes too -> the same scheduled post is
+// delivered to the platform multiple times.
+
+func baseDeliveryJob() db.PostDeliveryJob {
+	return db.PostDeliveryJob{
+		ID:                 "job_1",
+		PostID:             "post_1",
+		SocialPostResultID: "result_1",
+		WorkspaceID:        "ws_1",
+		SocialAccountID:    "acct_ig",
+		Platform:           "instagram",
+		Kind:               "dispatch",
+		State:              "running",
+		Attempts:           1,
+		MaxAttempts:        5,
+	}
+}
+
+// guardedDeliveryDB answers the pre-publish state read and treats any other
+// query as "advanced past the guard toward publishing".
+type guardedDeliveryDB struct {
+	current            db.PostDeliveryJob
+	getJobCalls        int
+	reachedPublishPath bool
+}
+
+func (f *guardedDeliveryDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	f.reachedPublishPath = true
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (f *guardedDeliveryDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	f.reachedPublishPath = true
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *guardedDeliveryDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
+		f.getJobCalls++
+		return postDeliveryJobScanRow(f.current)
+	default:
+		f.reachedPublishPath = true
+		return scanRow{err: errors.New("advanced past guard: " + query)}
+	}
+}
+
+func TestProcessPostDeliveryJobSkipsWhenStaleRecoveryAlreadyFailedIt(t *testing.T) {
+	claimed := baseDeliveryJob() // worker still holds its in-memory "running" copy
+	current := baseDeliveryJob()
+	current.State = "failed" // DB now reports stale recovery already re-queued it
+	dbtx := &guardedDeliveryDB{current: current}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+
+	if err := h.ProcessPostDeliveryJob(context.Background(), claimed); err != nil {
+		t.Fatalf("ProcessPostDeliveryJob returned error: %v", err)
+	}
+	if dbtx.getJobCalls != 1 {
+		t.Fatalf("pre-publish guard read count = %d, want 1", dbtx.getJobCalls)
+	}
+	if dbtx.reachedPublishPath {
+		t.Fatal("worker reached the publish path for a job that is no longer active (double-publish risk)")
+	}
+}
+
+func TestProcessPostDeliveryJobProceedsWhenStillActive(t *testing.T) {
+	claimed := baseDeliveryJob()
+	current := baseDeliveryJob() // DB still reports running -> guard must let it through
+	dbtx := &guardedDeliveryDB{current: current}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+
+	err := h.ProcessPostDeliveryJob(context.Background(), claimed)
+	if err == nil {
+		t.Fatal("expected job to advance past the guard and fail on the stub publish path")
+	}
+	if !dbtx.reachedPublishPath {
+		t.Fatal("guard blocked an active job from publishing")
+	}
+}
+
+// stalePublishedResultDB drives recoverStaleDeliveryJob for a result that a
+// prior attempt already published.
+type stalePublishedResultDB struct {
+	staleJob          db.PostDeliveryJob
+	post              db.SocialPost
+	result            db.SocialPostResult
+	markedSucceededID string
+	createdRetryJob   bool
+}
+
+func (f *stalePublishedResultDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (f *stalePublishedResultDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	if strings.Contains(query, "-- name: ListStaleActivePostDeliveryJobs") {
+		return &queueRows{values: [][]any{postDeliveryJobValues(f.staleJob)}}, nil
+	}
+	return nil, errors.New("unexpected Query: " + query)
+}
+
+func (f *stalePublishedResultDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetSocialPostByID"):
+		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
+		return socialPostResultScanRow(f.result)
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobSucceeded"):
+		f.markedSucceededID = args[0].(string)
+		succeeded := f.staleJob
+		succeeded.State = "succeeded"
+		return postDeliveryJobScanRow(succeeded)
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		f.createdRetryJob = true
+		return scanRow{err: errors.New("must not create a retry job when result already published")}
+	default:
+		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
+	}
+}
+
+func TestRecoverStaleDeliveryJobSkipsRetryWhenResultAlreadyPublished(t *testing.T) {
+	job := baseDeliveryJob()
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now().Add(-10 * time.Minute), Valid: true}
+	dbtx := &stalePublishedResultDB{
+		staleJob: job,
+		post: db.SocialPost{
+			ID:          job.PostID,
+			WorkspaceID: job.WorkspaceID,
+			Status:      "publishing",
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+		result: db.SocialPostResult{
+			ID:              job.SocialPostResultID,
+			PostID:          job.PostID,
+			SocialAccountID: job.SocialAccountID,
+			Status:          "published",
+		},
+	}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+
+	if err := h.RecoverStaleDeliveryJobs(context.Background(), 5*time.Minute); err != nil {
+		t.Fatalf("RecoverStaleDeliveryJobs returned error: %v", err)
+	}
+	if dbtx.markedSucceededID != job.ID {
+		t.Fatalf("marked-succeeded job id = %q, want %q", dbtx.markedSucceededID, job.ID)
+	}
+	if dbtx.createdRetryJob {
+		t.Fatal("stale recovery created a retry for an already-published result (double-publish risk)")
+	}
+}
