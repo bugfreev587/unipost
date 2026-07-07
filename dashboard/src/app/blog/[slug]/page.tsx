@@ -266,6 +266,10 @@ function renderInline(input: string): ReactNode {
           return <strong key={key}>{segment.text}</strong>;
         }
 
+        if (segment.type === "emphasis") {
+          return <em key={key}>{segment.text}</em>;
+        }
+
         if (segment.type === "code") {
           return <code key={key}>{segment.text}</code>;
         }

@@ -16,3 +16,9 @@ test("parseInlineMarkdown identifies strong text while preserving links and code
     ],
   );
 });
+
+test("parseInlineMarkdown identifies emphasis text", () => {
+  assert.deepEqual(parseInlineMarkdown("*This brief is source-backed.*"), [
+    { type: "emphasis", text: "This brief is source-backed." },
+  ]);
+});

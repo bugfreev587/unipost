@@ -1,10 +1,11 @@
 export type BlogInlineSegment =
   | { type: "text"; text: string }
   | { type: "strong"; text: string }
+  | { type: "emphasis"; text: string }
   | { type: "link"; text: string; href: string }
   | { type: "code"; text: string };
 
-const inlinePattern = /\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`|\*\*([^*\n]+)\*\*/g;
+const inlinePattern = /\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`|\*\*([^*\n]+)\*\*|\*([^*\n]+)\*/g;
 
 export function parseInlineMarkdown(input: string): BlogInlineSegment[] {
   const segments: BlogInlineSegment[] = [];
@@ -22,6 +23,8 @@ export function parseInlineMarkdown(input: string): BlogInlineSegment[] {
       segments.push({ type: "code", text: match[3] });
     } else if (match[4]) {
       segments.push({ type: "strong", text: match[4] });
+    } else if (match[5]) {
+      segments.push({ type: "emphasis", text: match[5] });
     }
 
     last = inlinePattern.lastIndex;

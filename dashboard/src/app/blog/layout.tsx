@@ -43,6 +43,7 @@ const CSS = `
 .blog-body ul{list-style:disc;margin:4px 0 30px;padding-left:22px;color:var(--blog-copy)}
 .blog-body li{font-size:16.5px;line-height:1.72;margin-bottom:10px;padding-left:4px}
 .blog-body strong{font-weight:800;color:var(--blog-text)}
+.blog-body em{color:var(--blog-copy)}
 .blog-divider{border:0;border-top:1px solid var(--blog-border);margin:42px 0}
 .blog-quote{margin:30px 0;padding:18px 22px;border-left:3px solid var(--blog-accent);background:var(--blog-s2);border-radius:0 10px 10px 0}.blog-quote p{margin:0;color:var(--blog-text)}
 .blog-code{background:var(--blog-code-bg);border:1px solid var(--blog-code-border);border-radius:12px;padding:22px;overflow:auto;margin:28px 0 34px;box-shadow:var(--blog-shadow)}
