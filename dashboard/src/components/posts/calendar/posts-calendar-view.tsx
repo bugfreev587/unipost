@@ -82,7 +82,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const HOUR_HEIGHT = 64;
 const TIMED_EVENT_MIN_HEIGHT = 38;
-const TIMED_GROUP_VISIBLE_POST_LIMIT = 2;
+const TIMED_GROUP_VISIBLE_POST_LIMIT = 1;
 const TIMELINE_END_PADDING = 8;
 const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
   HOUR_HEIGHT,
@@ -1281,14 +1281,10 @@ function TimedPostColumn({
   );
   const timedLayoutInputs = timedGroups.flatMap((group) => {
     const visiblePostIds = group.postIds.slice(0, TIMED_GROUP_VISIBLE_POST_LIMIT);
-    const visibleInputs = visiblePostIds.flatMap((postId) => {
+    return visiblePostIds.flatMap((postId) => {
       const minuteOfDay = postTimesById.get(postId);
       return minuteOfDay === undefined ? [] : [{ id: postId, minuteOfDay }];
     });
-    if (group.postIds.length <= TIMED_GROUP_VISIBLE_POST_LIMIT) return visibleInputs;
-
-    const overflowMinuteOfDay = visibleInputs[visibleInputs.length - 1]?.minuteOfDay ?? group.minuteOfDay;
-    return [...visibleInputs, { id: getTimedOverflowLayoutId(group.id), minuteOfDay: overflowMinuteOfDay }];
   });
   const eventLayouts = getTimedEventLayouts(
     timedLayoutInputs,
@@ -1306,7 +1302,9 @@ function TimedPostColumn({
         if (groupPosts.length === 0) return null;
         const visibleGroupPosts = groupPosts.slice(0, TIMED_GROUP_VISIBLE_POST_LIMIT);
         const overflowCount = Math.max(0, groupPosts.length - TIMED_GROUP_VISIBLE_POST_LIMIT);
-        const overflowLayout = eventLayouts.get(getTimedOverflowLayoutId(group.id));
+        const overflowLayout = visibleGroupPosts.length > 0
+          ? eventLayouts.get(visibleGroupPosts[0].id)
+          : undefined;
         return (
           <Fragment key={group.id}>
             {visibleGroupPosts.map((post) => {
@@ -1320,6 +1318,7 @@ function TimedPostColumn({
                   profileColors={profileColors}
                   layout={layout}
                   timezone={timezone}
+                  hasOverflow={overflowCount > 0}
                   onClick={(event) => onSelectPost(post.id, event.currentTarget)}
                 />
               );
@@ -1345,6 +1344,7 @@ function TimedPostButton({
   profileColors,
   layout,
   timezone,
+  hasOverflow,
   onClick,
 }: {
   post: SocialPost;
@@ -1352,6 +1352,7 @@ function TimedPostButton({
   profileColors: Map<string, string>;
   layout: TimedCalendarEventLayout;
   timezone: string;
+  hasOverflow: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
@@ -1364,7 +1365,7 @@ function TimedPostButton({
   return (
     <button
       type="button"
-      className="posts-calendar-timed-event"
+      className={`posts-calendar-timed-event ${hasOverflow ? "has-overflow-pill" : ""}`}
       style={{
         "--event-profile-color": color,
         "--event-status-color": statusColor,
@@ -1406,8 +1407,8 @@ function TimedOverflowButton({
       className="posts-calendar-timed-overflow posts-calendar-more-pill"
       style={{
         "--event-status-color": statusColor,
-        top: `${Math.max(4, layout.top)}px`,
-        left: `calc(${layout.leftPercent}% + 6px)`,
+        top: `${Math.max(4, layout.top + 8)}px`,
+        right: `calc(${100 - layout.leftPercent - layout.widthPercent}% + 8px)`,
         zIndex: layout.lane + 12,
       } as CSSProperties}
       onClick={onClick}
@@ -1417,10 +1418,6 @@ function TimedOverflowButton({
       +{overflowCount}
     </button>
   );
-}
-
-function getTimedOverflowLayoutId(groupId: string): string {
-  return `${groupId}__overflow`;
 }
 
 function DayOverflowPopover({
@@ -2712,6 +2709,7 @@ const CALENDAR_CSS = `
 .posts-calendar-time-column{--calendar-event-surface:var(--surface);position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
 .posts-calendar-time-column.weekend{--calendar-event-surface:var(--calendar-weekend-surface);background-color:var(--calendar-weekend-surface)}
 .posts-calendar-timed-event{--event-profile-color:#8b8b93;--event-status-color:#475569;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-profile-color) 24%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-profile-color) 17%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
+.posts-calendar-timed-event.has-overflow-pill{padding-right:48px}
 .posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-profile-color) 48%,var(--dborder));background:color-mix(in srgb,var(--event-profile-color) 24%,var(--calendar-event-surface,var(--surface)))}
 .posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
