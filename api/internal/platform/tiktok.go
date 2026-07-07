@@ -408,13 +408,24 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 		publishID string
 		initErr   error
 	)
-	if uploadMode == "pull_from_url" {
-		publishID, initErr = a.initVideoPull(ctx, accessToken, text, privacyLevel, videoURL, opts)
+	if resume := resumePublishToken(opts); resume != "" {
+		// Idempotent resume: a prior attempt already submitted this video.
+		// Poll the existing publish_id instead of re-uploading — waitForPublish
+		// returns the finished post if it already completed, so we never
+		// submit the same video twice.
+		publishID = resume
+		slog.Info("tiktok post: resuming from persisted publish_id", "publish_id", publishID)
 	} else {
-		publishID, initErr = a.initAndPushVideoFile(ctx, accessToken, text, privacyLevel, videoURL, opts)
-	}
-	if initErr != nil {
-		return nil, initErr
+		if uploadMode == "pull_from_url" {
+			publishID, initErr = a.initVideoPull(ctx, accessToken, text, privacyLevel, videoURL, opts)
+		} else {
+			publishID, initErr = a.initAndPushVideoFile(ctx, accessToken, text, privacyLevel, videoURL, opts)
+		}
+		if initErr != nil {
+			return nil, initErr
+		}
+		// Persist before polling so a crash during the poll resumes here.
+		persistPublishToken(opts, publishID)
 	}
 
 	slog.Info("tiktok post: video submitted, polling status", "publish_id", publishID)
@@ -429,6 +440,14 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 func (a *TikTokAdapter) postPhoto(ctx context.Context, accessToken, text string, images []MediaItem, opts map[string]any) (*PostResult, error) {
 	if len(images) == 0 {
 		return nil, fmt.Errorf("tiktok photo post requires at least one image")
+	}
+
+	// Idempotent resume: a prior attempt already submitted this carousel.
+	// Poll the existing publish_id instead of re-staging images to R2 and
+	// re-initiating, so we never submit the same carousel twice.
+	if resume := resumePublishToken(opts); resume != "" {
+		slog.Info("tiktok photo post: resuming from persisted publish_id", "publish_id", resume)
+		return a.waitForPublish(ctx, accessToken, resume)
 	}
 
 	privacyLevel := optString(opts, "privacy_level")
@@ -531,6 +550,9 @@ func (a *TikTokAdapter) initPhotoContentWithPrivacy(ctx context.Context, accessT
 	if result.Data.PublishID == "" {
 		return nil, fmt.Errorf("tiktok photo init: empty publish_id")
 	}
+
+	// Persist before polling so a crash during the poll resumes here.
+	persistPublishToken(opts, result.Data.PublishID)
 
 	slog.Info("tiktok photo post: submitted, polling status", "publish_id", result.Data.PublishID)
 	return a.waitForPublish(ctx, accessToken, result.Data.PublishID)

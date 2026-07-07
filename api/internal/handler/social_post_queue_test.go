@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
 func TestRetryDeliveryJobNowMarksDeprecated(t *testing.T) {
@@ -523,6 +524,69 @@ func TestProcessPostDeliveryJobSkipsWhenResultAlreadyPublished(t *testing.T) {
 	}
 	if dbtx.reachedPublishPath {
 		t.Fatal("retry reached the publish path for an already-published result (double-publish risk)")
+	}
+}
+
+// publishTokenDB captures SetSocialPostResultPublishToken persistence.
+type publishTokenDB struct {
+	setID    string
+	setToken string
+}
+
+func (f *publishTokenDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: SetSocialPostResultPublishToken") {
+		for _, a := range args {
+			switch v := a.(type) {
+			case string:
+				f.setID = v
+			case pgtype.Text:
+				f.setToken = v.String
+			}
+		}
+		return pgconn.CommandTag{}, nil
+	}
+	return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
+}
+func (f *publishTokenDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+func (f *publishTokenDB) QueryRow(context.Context, string, ...interface{}) pgx.Row {
+	return scanRow{err: errors.New("unexpected QueryRow")}
+}
+
+func TestAttachPublishTokenResumeInjectsResumeAndPersist(t *testing.T) {
+	fake := &publishTokenDB{}
+	h := &SocialPostHandler{queries: db.New(fake)}
+	pp := platform.PlatformPostInput{AccountID: "acct_ig"}
+	res := db.SocialPostResult{ID: "res_1", PublishToken: pgtype.Text{String: "creation_123", Valid: true}}
+
+	h.attachPublishTokenResume(context.Background(), &pp, res)
+
+	if got := pp.PlatformOptions[platform.OptResumePublishToken]; got != "creation_123" {
+		t.Fatalf("resume token = %v, want creation_123", got)
+	}
+	fn, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string))
+	if !ok {
+		t.Fatal("persist callback not injected into opts")
+	}
+	fn("new_token_456")
+	if fake.setID != "res_1" || fake.setToken != "new_token_456" {
+		t.Fatalf("persist callback stored id=%q token=%q, want res_1/new_token_456", fake.setID, fake.setToken)
+	}
+}
+
+func TestAttachPublishTokenResumeOmitsResumeWhenNoPriorToken(t *testing.T) {
+	h := &SocialPostHandler{queries: db.New(&publishTokenDB{})}
+	pp := platform.PlatformPostInput{AccountID: "acct_ig"}
+	res := db.SocialPostResult{ID: "res_1"} // no prior token
+
+	h.attachPublishTokenResume(context.Background(), &pp, res)
+
+	if _, present := pp.PlatformOptions[platform.OptResumePublishToken]; present {
+		t.Fatal("resume token must not be injected when no prior token exists")
+	}
+	if _, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string)); !ok {
+		t.Fatal("persist callback should still be injected on a first attempt")
 	}
 }
 

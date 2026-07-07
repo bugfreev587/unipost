@@ -765,6 +765,7 @@ type SocialPostResult struct {
 	ErrorSource       pgtype.Text        `json:"error_source"`
 	ErrorTemporality  pgtype.Text        `json:"error_temporality"`
 	ProviderError     []byte             `json:"provider_error"`
+	PublishToken      pgtype.Text        `json:"publish_token"`
 }
 
 type Subscription struct {
