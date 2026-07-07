@@ -180,6 +180,9 @@ const MOBILE_CSS = `
 .pr-ent{margin-bottom:18px}
 .pr-ent-copy{flex:1;min-width:0}
 .pr-ent-desc{max-width:none}
+.pr-ent+.pr-soft{margin-bottom:18px}
+.pr-ent-chip{background:color-mix(in srgb,var(--pr-accent) 10%,#fff);border-color:color-mix(in srgb,var(--pr-accent) 28%,var(--pr-border));color:color-mix(in srgb,var(--pr-text) 72%,var(--pr-accent));font-weight:650;box-shadow:inset 0 1px 0 rgba(255,255,255,.72)}
+.pr-ent-chip svg{color:var(--pr-accent)}
 .pr-compare-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media(max-width:680px){
   :root{--pr-px:18px}
