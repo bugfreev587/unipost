@@ -129,6 +129,29 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /resolvedOptions\(\)\.timeZone/);
 });
 
+test("Posts calendar week and day views collapse same-time posts behind a more-posts popover", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const timedColumn = source.slice(
+    source.indexOf("function TimedPostColumn"),
+    source.indexOf("function TimedPostButton"),
+  );
+  const timedButton = source.slice(
+    source.indexOf("function TimedPostButton"),
+    source.indexOf("function DayOverflowPopover"),
+  );
+
+  assert.match(source, /getTimedPostGroups/);
+  assert.match(source, /timedOverflowTarget/);
+  assert.match(source, /handleSelectTimedOverflow/);
+  assert.match(source, /handleSelectTimedOverflowPost/);
+  assert.match(source, /timedOverflowPosts/);
+  assert.match(timedColumn, /const timedGroups = getTimedPostGroups/);
+  assert.match(timedColumn, /timedGroups\.map/);
+  assert.match(timedButton, /overflowCount/);
+  assert.match(timedButton, /posts-calendar-timed-count/);
+  assert.match(timedButton, /const overflowAccessibleLabel = `\$\{overflowCount\} more posts at/);
+});
+
 test("Posts calendar mobile layout prioritizes the calendar over filters", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const mobileCss = source.slice(source.indexOf("@media (max-width: 680px)"));

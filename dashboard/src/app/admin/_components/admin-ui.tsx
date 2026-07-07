@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   CreditCard,
   FileText,
+  HardDrive,
   KeyRound,
   LayoutDashboard,
   LifeBuoy,
@@ -35,10 +36,31 @@ export const fmtCents = (cents: number) => {
 
 export const fmtNumber = (n: number) => n.toLocaleString("en-US");
 
+export const fmtBytes = (bytes: number) => {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  const digits = value >= 100 || unitIndex === 0 ? 0 : value >= 10 ? 1 : 2;
+  return `${value.toFixed(digits)} ${units[unitIndex]}`;
+};
+
 export const fmtRelative = (iso: string | null | undefined) => {
   if (!iso) return "Never";
   const then = new Date(iso).getTime();
   const diff = Date.now() - then;
+  if (diff < 0) {
+    const ahead = Math.abs(diff);
+    if (ahead < 60_000) return "in <1m";
+    if (ahead < 3_600_000) return `in ${Math.ceil(ahead / 60_000)}m`;
+    if (ahead < 86_400_000) return `in ${Math.ceil(ahead / 3_600_000)}h`;
+    if (ahead < 30 * 86_400_000) return `in ${Math.ceil(ahead / 86_400_000)}d`;
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
@@ -117,6 +139,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Users", href: "/admin/users", section: "Overview", enabled: true, icon: Users },
   { label: "Posts", href: "/admin/posts", section: "Overview", enabled: true, icon: Send },
   { label: "Email", href: "/admin/email", section: "Overview", enabled: true, icon: Mail },
+  { label: "Object Storage", href: "/admin/object-storage", section: "Overview", enabled: true, icon: HardDrive },
   { label: "Billing", href: "/admin/billing", section: "Revenue", enabled: true, icon: CreditCard },
   { label: "MRR", href: "/admin/mrr", section: "Revenue", enabled: true, icon: TrendingUp },
   { label: "Logs", href: "/admin/logs", section: "System", enabled: true, icon: FileText },
