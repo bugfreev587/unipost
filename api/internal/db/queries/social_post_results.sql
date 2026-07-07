@@ -13,6 +13,13 @@ WHERE post_id = ANY($1::text[]);
 -- name: GetSocialPostResultByIDAndPost :one
 SELECT * FROM social_post_results WHERE id = $1 AND post_id = $2;
 
+-- name: SetSocialPostResultPublishToken :exec
+-- Persist the platform intermediate publish token (IG creation_id /
+-- TikTok publish_id) so a retry can resume instead of re-uploading.
+UPDATE social_post_results
+SET publish_token = sqlc.arg('publish_token')
+WHERE id = sqlc.arg('id');
+
 -- name: UpdateSocialPostResultAfterRetry :one
 -- Overwrites the diagnostic columns on a failed result row after a
 -- successful or failed per-platform retry, reusing the same row so

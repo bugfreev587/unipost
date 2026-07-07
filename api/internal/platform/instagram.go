@@ -144,27 +144,39 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 	//                  each child container is created beforehand with
 	//                  is_carousel_item=true.
 	var creationID string
-	switch mediaType {
-	case "story":
-		if len(media) != 1 {
-			return nil, fmt.Errorf("instagram stories require exactly one image or video")
-		}
-		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
-	case "reels":
-		if len(media) != 1 {
-			return nil, fmt.Errorf("instagram reels require exactly one video")
-		}
-		creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
-	default:
-		switch {
-		case len(media) == 1:
+	if resume := resumePublishToken(opts); resume != "" {
+		// Idempotent resume: a prior attempt already created (and uploaded)
+		// this container but may have crashed before media_publish. Re-use it
+		// instead of building a new one, so we publish the same container once
+		// rather than duplicating the post.
+		creationID = resume
+		slog.Info("instagram post: resuming from persisted container", "creation_id", creationID)
+	} else {
+		switch mediaType {
+		case "story":
+			if len(media) != 1 {
+				return nil, fmt.Errorf("instagram stories require exactly one image or video")
+			}
+			creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
+		case "reels":
+			if len(media) != 1 {
+				return nil, fmt.Errorf("instagram reels require exactly one video")
+			}
 			creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
 		default:
-			creationID, err = a.createCarouselContainer(ctx, accessToken, igUserID, text, media)
+			switch {
+			case len(media) == 1:
+				creationID, err = a.createSingleContainer(ctx, accessToken, igUserID, text, media[0], false, mediaType)
+			default:
+				creationID, err = a.createCarouselContainer(ctx, accessToken, igUserID, text, media)
+			}
 		}
-	}
-	if err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		// Persist the container id before publishing so a crash between here
+		// and media_publish resumes with this same container.
+		persistPublishToken(opts, creationID)
 	}
 
 	if err := a.waitForContainer(ctx, accessToken, creationID); err != nil {
