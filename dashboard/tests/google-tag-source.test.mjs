@@ -33,4 +33,11 @@ describe("sitewide Google tag", () => {
     assert.equal((source.match(/id="cookieyes"/g) || []).length, 1);
     assert.ok(source.indexOf('id="cookieyes"') < source.indexOf('id="google-tag-loader"'));
   });
+
+  it("hides the CookieYes revisit control after consent is recorded", () => {
+    const source = read("src/app/globals.css");
+
+    assert.match(source, /\.cky-btn-revisit-wrapper\s*\{/);
+    assert.match(source, /display:\s*none\s*!important;/);
+  });
 });

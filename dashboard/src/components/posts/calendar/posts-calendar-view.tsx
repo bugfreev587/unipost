@@ -359,7 +359,7 @@ export function PostsCalendarView() {
   );
   const dayOverflowPosts = useMemo(() => {
     if (!dayOverflowTarget) return [];
-    return getMonthDayPostLayout(postsByDate.get(dayOverflowTarget.dateKey) || []).hiddenPosts;
+    return postsByDate.get(dayOverflowTarget.dateKey) || [];
   }, [dayOverflowTarget, postsByDate]);
   const timedOverflowPosts = useMemo(() => {
     if (!timedOverflowTarget) return [];
@@ -728,6 +728,7 @@ export function PostsCalendarView() {
       {cells.map((cell) => {
         const dayPosts = postsByDate.get(cell.dateKey) || [];
         const dayLayout = getMonthDayPostLayout(dayPosts);
+        const overflowStatusColor = getOverflowStatusColor(dayLayout.hiddenPosts);
         return (
           <div
             key={cell.dateKey}
@@ -750,13 +751,14 @@ export function PostsCalendarView() {
               {dayLayout.hiddenCount > 0 ? (
                 <button
                   type="button"
-                  className="posts-calendar-more"
+                  className="posts-calendar-more posts-calendar-more-pill"
+                  style={{ "--event-status-color": overflowStatusColor } as CSSProperties}
                   aria-haspopup="dialog"
                   aria-expanded={dayOverflowTarget?.dateKey === cell.dateKey}
                   aria-label={`${dayLayout.hiddenCount} more posts on ${formatOverflowDayLabel(cell.date)}`}
                   onClick={(event) => handleSelectDayOverflow(cell.dateKey, cell.date, event.currentTarget)}
                 >
-                  + {dayLayout.hiddenCount} more
+                  +{dayLayout.hiddenCount}
                 </button>
               ) : null}
             </div>
@@ -1058,6 +1060,7 @@ export function PostsCalendarView() {
       {dayOverflowTarget && dayOverflowPosts.length > 0 ? (
         <DayOverflowPopover
           dateLabel={dayOverflowTarget.dayLabel}
+          summaryLabel={`${dayOverflowPosts.length} post${dayOverflowPosts.length === 1 ? "" : "s"} on this day`}
           posts={dayOverflowPosts}
           anchorRect={dayOverflowTarget.anchorRect}
           boundsRect={dayOverflowTarget.boundsRect}
@@ -2241,6 +2244,11 @@ function getPostColor(post: SocialPost, profilesById: Map<string, Profile>, prof
   return profile ? getProfileCalendarColor(profile) : "#8b8b93";
 }
 
+function getOverflowStatusColor(posts: SocialPost[]): string {
+  const post = posts[0];
+  return post ? getCalendarStatusColor(getPostStatusGroup(post)) : getCalendarStatusColor("unknown");
+}
+
 function getPostPlatforms(post: SocialPost): string[] {
   const platforms = new Set<string>();
   for (const platform of post.target_platforms || []) {
@@ -2574,6 +2582,8 @@ const CALENDAR_CSS = `
 .posts-calendar-event-time{font-size:11px;color:var(--dmuted2);white-space:nowrap}
 .posts-calendar-more{height:22px;border:0;border-radius:6px;background:transparent;color:var(--dmuted);font:inherit;font-size:12px;font-weight:650;text-align:left;padding:0 7px;cursor:pointer}
 .posts-calendar-more:hover{background:var(--surface2);color:var(--dtext)}
+.posts-calendar-more-pill{--event-status-color:#475569;align-self:flex-start;min-width:28px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--event-status-color);color:white;text-align:center;line-height:1;padding:0 8px;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 80%,transparent)}
+.posts-calendar-more-pill:hover{background:color-mix(in srgb,var(--event-status-color) 88%,var(--dtext));color:white}
 .posts-calendar-week-shell,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-snap-offset:0px;--calendar-snap-duration:0ms;--calendar-week-template:repeat(9,minmax(var(--calendar-week-day-min),1fr));--calendar-week-min-width:calc(var(--calendar-week-day-min) * 7 + var(--calendar-scrollbar-gutter));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
 .posts-calendar-week-shell{overscroll-behavior:contain;overflow:hidden;touch-action:pan-y}
 .posts-calendar-week-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface);overflow:hidden}
