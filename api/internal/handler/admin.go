@@ -805,6 +805,15 @@ type adminUserScheduledPost struct {
 	Platforms   []string   `json:"platforms"`
 }
 
+type adminUserQuotaResetResponse struct {
+	UserID             string    `json:"user_id"`
+	Period             string    `json:"period"`
+	QuotaKind          string    `json:"quota_kind"`
+	AffectedWorkspaces int64     `json:"affected_workspaces"`
+	PreviousUsage      int64     `json:"previous_usage"`
+	ResetAt            time.Time `json:"reset_at"`
+}
+
 type adminPostFailure struct {
 	PostID             string    `json:"post_id"`
 	PostFailureID      *string   `json:"post_failure_id,omitempty"`
@@ -1970,6 +1979,198 @@ LIMIT $6
 	}
 
 	return out, nil
+}
+
+func (h *AdminHandler) adminUserExists(ctx context.Context, userID string) (bool, error) {
+	var exists bool
+	if err := h.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)`, userID).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
+}
+
+func (h *AdminHandler) ResetUserPostQuota(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	exists, err := h.adminUserExists(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user: "+err.Error())
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "User not found")
+		return
+	}
+
+	var out adminUserQuotaResetResponse
+	err = h.pool.QueryRow(r.Context(), `
+WITH target_workspaces AS (
+  SELECT w.id
+  FROM workspaces w
+  WHERE w.user_id = $1
+),
+current_usage AS (
+  SELECT COALESCE(SUM(usg.post_count), 0)::BIGINT AS previous_usage
+  FROM usage usg
+  JOIN target_workspaces tw ON tw.id = usg.workspace_id
+  WHERE usg.period = to_char(NOW(), 'YYYY-MM')
+),
+reset_usage AS (
+  UPDATE usage
+  SET post_count = 0,
+      updated_at = NOW()
+  WHERE workspace_id IN (SELECT id FROM target_workspaces)
+    AND period = to_char(NOW(), 'YYYY-MM')
+  RETURNING workspace_id
+),
+reset_usage_count AS (
+  SELECT COUNT(*)::BIGINT AS reset_rows
+  FROM reset_usage
+),
+reset_markers AS (
+  INSERT INTO admin_post_quota_resets (
+    user_id,
+    workspace_id,
+    period,
+    quota_kind,
+    reset_at
+  )
+  SELECT
+    $1,
+    tw.id,
+    to_char(NOW(), 'YYYY-MM'),
+    'post',
+    NOW()
+  FROM target_workspaces tw
+  ON CONFLICT (user_id, workspace_id, period, quota_kind)
+  DO UPDATE SET reset_at = EXCLUDED.reset_at,
+                updated_at = NOW()
+  RETURNING workspace_id, reset_at
+)
+SELECT
+  $1::TEXT AS user_id,
+  to_char(NOW(), 'YYYY-MM') AS period,
+  'post'::TEXT AS quota_kind,
+  COUNT(reset_markers.workspace_id)::BIGINT AS affected_workspaces,
+  current_usage.previous_usage,
+  COALESCE(MAX(reset_markers.reset_at), NOW()) AS reset_at
+FROM current_usage
+CROSS JOIN reset_usage_count
+LEFT JOIN reset_markers ON TRUE
+GROUP BY current_usage.previous_usage
+`, userID).Scan(
+		&out.UserID,
+		&out.Period,
+		&out.QuotaKind,
+		&out.AffectedWorkspaces,
+		&out.PreviousUsage,
+		&out.ResetAt,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reset post quota: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
+}
+
+func (h *AdminHandler) ResetUserScheduledQuota(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "id")
+	exists, err := h.adminUserExists(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load user: "+err.Error())
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "User not found")
+		return
+	}
+
+	var out adminUserQuotaResetResponse
+	err = h.pool.QueryRow(r.Context(), `
+WITH target_workspaces AS (
+  SELECT w.id
+  FROM workspaces w
+  WHERE w.user_id = $1
+),
+reset_baselines AS (
+  SELECT workspace_id, MAX(reset_at) AS reset_at
+  FROM admin_post_quota_resets
+  WHERE user_id = $1
+    AND period = to_char(NOW(), 'YYYY-MM')
+    AND quota_kind = 'scheduled'
+  GROUP BY workspace_id
+),
+current_usage AS (
+  SELECT COALESCE(SUM(
+    CASE
+      WHEN jsonb_typeof(sp.metadata->'platform_posts') = 'array' THEN (
+        SELECT COUNT(*)::INTEGER
+        FROM jsonb_array_elements(sp.metadata->'platform_posts') AS pp
+        JOIN social_accounts sa ON sa.id = pp->>'account_id'
+        WHERE sa.disconnected_at IS NULL
+      )
+      WHEN jsonb_typeof(sp.metadata->'account_ids') = 'array' THEN (
+        SELECT COUNT(*)::INTEGER
+        FROM jsonb_array_elements_text(sp.metadata->'account_ids') AS account_id
+        JOIN social_accounts sa ON sa.id = account_id
+        WHERE sa.disconnected_at IS NULL
+      )
+      ELSE 1
+    END
+  ), 0)::BIGINT AS previous_usage
+  FROM social_posts sp
+  JOIN target_workspaces tw ON tw.id = sp.workspace_id
+  LEFT JOIN reset_baselines rb ON rb.workspace_id = sp.workspace_id
+  WHERE sp.status = 'scheduled'
+    AND sp.deleted_at IS NULL
+    AND sp.scheduled_at >= (to_char(NOW(), 'YYYY-MM') || '-01')::DATE
+    AND sp.scheduled_at < ((to_char(NOW(), 'YYYY-MM') || '-01')::DATE + INTERVAL '1 month')
+    AND sp.created_at > COALESCE(rb.reset_at, '-infinity'::timestamptz)
+),
+reset_markers AS (
+  INSERT INTO admin_post_quota_resets (
+    user_id,
+    workspace_id,
+    period,
+    quota_kind,
+    reset_at
+  )
+  SELECT
+    $1,
+    tw.id,
+    to_char(NOW(), 'YYYY-MM'),
+    'scheduled',
+    NOW()
+  FROM target_workspaces tw
+  ON CONFLICT (user_id, workspace_id, period, quota_kind)
+  DO UPDATE SET reset_at = EXCLUDED.reset_at,
+                updated_at = NOW()
+  RETURNING workspace_id, reset_at
+)
+SELECT
+  $1::TEXT AS user_id,
+  to_char(NOW(), 'YYYY-MM') AS period,
+  'scheduled'::TEXT AS quota_kind,
+  COUNT(reset_markers.workspace_id)::BIGINT AS affected_workspaces,
+  current_usage.previous_usage,
+  COALESCE(MAX(reset_markers.reset_at), NOW()) AS reset_at
+FROM current_usage
+LEFT JOIN reset_markers ON TRUE
+GROUP BY current_usage.previous_usage
+`, userID).Scan(
+		&out.UserID,
+		&out.Period,
+		&out.QuotaKind,
+		&out.AffectedWorkspaces,
+		&out.PreviousUsage,
+		&out.ResetAt,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reset scheduled quota: "+err.Error())
+		return
+	}
+
+	writeSuccess(w, out)
 }
 
 func (h *AdminHandler) GetUser(w http.ResponseWriter, r *http.Request) {

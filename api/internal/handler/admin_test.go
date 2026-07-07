@@ -224,6 +224,51 @@ func TestAdminUserScheduledPostsRouteIsRegistered(t *testing.T) {
 	}
 }
 
+func TestAdminUserQuotaResetEndpointContract(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		"type adminUserQuotaResetResponse struct",
+		"`json:\"quota_kind\"`",
+		"`json:\"affected_workspaces\"`",
+		"`json:\"previous_usage\"`",
+		"`json:\"reset_at\"`",
+		"func (h *AdminHandler) ResetUserPostQuota",
+		"func (h *AdminHandler) ResetUserScheduledQuota",
+		"quota_kind = 'scheduled'",
+		"admin_post_quota_resets",
+		"UPDATE usage",
+		"post_count = 0",
+		"WHERE w.user_id = $1",
+		"to_char(NOW(), 'YYYY-MM')",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin user quota reset endpoint contract missing %q", want)
+		}
+	}
+}
+
+func TestAdminUserQuotaResetRoutesAreRegistered(t *testing.T) {
+	source, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		`r.Post("/v1/admin/users/{id}/quota/post/reset", adminHandler.ResetUserPostQuota)`,
+		`r.Post("/v1/admin/users/{id}/quota/scheduled/reset", adminHandler.ResetUserScheduledQuota)`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin user quota reset route missing %q", want)
+		}
+	}
+}
+
 func TestAdminScheduledPostTitleDerivesFromCaption(t *testing.T) {
 	longTitle := strings.Repeat("a", 90)
 	for _, tt := range []struct {

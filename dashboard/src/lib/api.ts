@@ -2560,6 +2560,15 @@ export interface AdminUserScheduledPost {
   platforms: string[];
 }
 
+export interface AdminUserQuotaResetResult {
+  user_id: string;
+  period: string;
+  quota_kind: "post" | "scheduled";
+  affected_workspaces: number;
+  previous_usage: number;
+  reset_at: string;
+}
+
 export interface AdminUserPostFailure {
   post_id: string;
   post_failure_id?: string;
@@ -3322,6 +3331,20 @@ export async function getAdminUserScheduledPosts(
   id: string
 ): Promise<ApiResponse<AdminUserScheduledPost[]>> {
   return request(`/v1/admin/users/${id}/scheduled-posts`, token);
+}
+
+export async function resetAdminUserPostQuota(
+  token: string,
+  id: string
+): Promise<ApiResponse<AdminUserQuotaResetResult>> {
+  return request(`/v1/admin/users/${id}/quota/post/reset`, token, { method: "POST" });
+}
+
+export async function resetAdminUserScheduledQuota(
+  token: string,
+  id: string
+): Promise<ApiResponse<AdminUserQuotaResetResult>> {
+  return request(`/v1/admin/users/${id}/quota/scheduled/reset`, token, { method: "POST" });
 }
 
 export async function getAdminUserPostFailures(
