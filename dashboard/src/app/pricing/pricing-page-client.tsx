@@ -161,6 +161,9 @@ const FAQS = [
   { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
   { q: "When do I need Growth?", a: "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
+  { q: "What does unlimited Team usage mean?", a: "Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply. Customers needing capacity planning, SLA, or custom platform-volume terms should use Enterprise." },
+  { q: "When do I need Enterprise instead of Team?", a: "Use Enterprise when you need priority support, capacity planning, custom platform-volume terms, SLA, security review, procurement, or dedicated support. It is a sales-led contract plan, not a sixth self-serve card." },
+  { q: "Can Enterprise increase third-party platform quotas?", a: "Enterprise can help plan, isolate, and contract around usage, but it cannot override platform-owned rate limits, app review, spam controls, or content policy enforcement. Custom means contract-defined terms and is not a smaller quota than Team." },
   { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. For an embedded app with 100 end users connecting 2 social accounts each, UniPost Growth is $59/mo if total usage fits under 7,500 posts/month; Zernio's current account-meter pricing is $418/mo for those 200 connected accounts. PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
 
@@ -307,7 +310,7 @@ export default function PricingPage() {
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><circle cx="8" cy="8" r="6.5" /><path d="M8 5v3M8 10v1" /></svg></div>
           <div>
             <div className="pr-soft-title">Free has a clear cap. Paid plans stay flexible.</div>
-            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 undeleted parent posts in scheduled status at once. API, Basic, and Growth keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. Team includes unlimited monthly posts. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
+            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 undeleted parent posts in scheduled status at once. API, Basic, and Growth keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
           </div>
         </div>
 
@@ -347,11 +350,11 @@ export default function PricingPage() {
         {/* Enterprise */}
         <div className="pr-ent">
           <div>
-            <div className="pr-ent-title">Need custom terms, SLA, or dedicated support?</div>
-            <div className="pr-ent-desc">Enterprise plans cover dedicated support, SLA guarantees, security review, and contract flexibility. Get in touch and we&apos;ll size it to your needs.</div>
-            <div className="pr-ent-chips">{["Custom terms", "99.9% SLA", "Dedicated support", "Security review", "On-premise option"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
+            <div className="pr-ent-title">Enterprise</div>
+            <div className="pr-ent-desc">Priority support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.</div>
+            <div className="pr-ent-chips">{["Capacity planning", "Platform-volume terms", "SLA and security", "Dedicated support"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
           </div>
-          <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact Sales →</a>
+          <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact sales</a>
         </div>
 
         {/* FAQ */}
