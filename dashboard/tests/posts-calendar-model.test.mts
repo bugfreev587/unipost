@@ -213,6 +213,23 @@ test("timed event layouts place same and nearby posts in horizontal lanes", () =
   });
 });
 
+test("timed post groups collapse same-minute posts into one visible event", async () => {
+  const model = await import("../src/components/posts/calendar/calendar-model.ts");
+
+  assert.equal(typeof model.getTimedPostGroups, "function");
+
+  const groups = model.getTimedPostGroups([
+    { id: "third", minuteOfDay: 10 * 60 + 30 },
+    { id: "first", minuteOfDay: 10 * 60 + 15 },
+    { id: "second", minuteOfDay: 10 * 60 + 15 },
+  ]);
+
+  assert.deepEqual(groups, [
+    { id: "first", minuteOfDay: 615, postIds: ["first", "second"] },
+    { id: "third", minuteOfDay: 630, postIds: ["third"] },
+  ]);
+});
+
 test("wheel navigation follows Apple Calendar style directions per view", () => {
   assert.equal(getWheelNavigationIntent("month", 0, 160), 1);
   assert.equal(getWheelNavigationIntent("month", 0, -160), -1);

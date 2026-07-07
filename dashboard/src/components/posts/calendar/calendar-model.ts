@@ -75,6 +75,12 @@ export type TimedCalendarEventInput = {
   minuteOfDay: number;
 };
 
+export type TimedCalendarPostGroup = {
+  id: string;
+  minuteOfDay: number;
+  postIds: string[];
+};
+
 export type TimedCalendarEventLayout = {
   id: string;
   top: number;
@@ -226,6 +232,33 @@ export function getTimedTimelineContentHeight(
   bottomPadding: number,
 ): number {
   return 24 * hourHeight + eventMinHeight + bottomPadding;
+}
+
+export function getTimedPostGroups(events: TimedCalendarEventInput[]): TimedCalendarPostGroup[] {
+  const sortedEvents = events
+    .filter((event) => Number.isFinite(event.minuteOfDay))
+    .map((event) => ({
+      id: event.id,
+      minuteOfDay: Math.floor(event.minuteOfDay),
+    }))
+    .sort((a, b) => a.minuteOfDay - b.minuteOfDay);
+  const groups: TimedCalendarPostGroup[] = [];
+
+  for (const event of sortedEvents) {
+    const current = groups[groups.length - 1];
+    if (current && current.minuteOfDay === event.minuteOfDay) {
+      current.postIds.push(event.id);
+      continue;
+    }
+
+    groups.push({
+      id: event.id,
+      minuteOfDay: event.minuteOfDay,
+      postIds: [event.id],
+    });
+  }
+
+  return groups;
 }
 
 export function getTimedEventLayouts(
