@@ -454,6 +454,76 @@ func TestProcessPostDeliveryJobProceedsWhenStillActive(t *testing.T) {
 	}
 }
 
+// retryAfterPublishedDB models the residual race: the retry job is still
+// "retrying" (so it clears the job-state guard), but a concurrent original
+// attempt already published the result while the retry waited.
+type retryAfterPublishedDB struct {
+	job               db.PostDeliveryJob
+	result            db.SocialPostResult
+	markedSucceededID string
+	reachedPublishPath bool
+}
+
+func (f *retryAfterPublishedDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	f.reachedPublishPath = true
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (f *retryAfterPublishedDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	f.reachedPublishPath = true
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *retryAfterPublishedDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
+		return postDeliveryJobScanRow(f.job) // still active -> passes job-state guard
+	case strings.Contains(query, "-- name: GetSocialPostByID"):
+		return socialPostScanRow(db.SocialPost{
+			ID:          f.job.PostID,
+			WorkspaceID: f.job.WorkspaceID,
+			Status:      "publishing",
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		})
+	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
+		return socialPostResultScanRow(f.result) // already published
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobSucceeded"):
+		f.markedSucceededID = args[0].(string)
+		succeeded := f.job
+		succeeded.State = "succeeded"
+		return postDeliveryJobScanRow(succeeded)
+	default:
+		f.reachedPublishPath = true
+		return scanRow{err: errors.New("advanced toward publish path: " + query)}
+	}
+}
+
+func TestProcessPostDeliveryJobSkipsWhenResultAlreadyPublished(t *testing.T) {
+	job := baseDeliveryJob()
+	job.Kind = "retry"
+	job.State = "retrying"
+	dbtx := &retryAfterPublishedDB{
+		job: job,
+		result: db.SocialPostResult{
+			ID:              job.SocialPostResultID,
+			PostID:          job.PostID,
+			SocialAccountID: job.SocialAccountID,
+			Status:          "published",
+		},
+	}
+	h := &SocialPostHandler{queries: db.New(dbtx)}
+
+	if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
+		t.Fatalf("ProcessPostDeliveryJob returned error: %v", err)
+	}
+	if dbtx.markedSucceededID != job.ID {
+		t.Fatalf("marked-succeeded job id = %q, want %q", dbtx.markedSucceededID, job.ID)
+	}
+	if dbtx.reachedPublishPath {
+		t.Fatal("retry reached the publish path for an already-published result (double-publish risk)")
+	}
+}
+
 // stalePublishedResultDB drives recoverStaleDeliveryJob for a result that a
 // prior attempt already published.
 type stalePublishedResultDB struct {
