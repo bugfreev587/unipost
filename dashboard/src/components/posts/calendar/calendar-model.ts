@@ -20,7 +20,7 @@ export type CalendarModelPost = {
   archived_at?: string | null;
 };
 
-export const MONTH_DAY_VISIBLE_POST_LIMIT = 3;
+export const MONTH_DAY_VISIBLE_POST_LIMIT = 2;
 
 const CALENDAR_VIEW_MODES = new Set<CalendarViewMode>(["day", "week", "month"]);
 

@@ -21,6 +21,7 @@ import {
   getWheelNavigationIntent,
   getPostStatusGroup,
   getProfileCalendarColor,
+  MONTH_DAY_VISIBLE_POST_LIMIT,
   shiftCalendarDateBySwipe,
   shiftCalendarDateBySnapSteps,
   parseCalendarViewMode,
@@ -313,9 +314,10 @@ test("getMonthDayPostLayout keeps month cells bounded and exposes hidden posts",
   const posts = ["first", "second", "third", "fourth", "fifth"];
   const layout = getMonthDayPostLayout(posts);
 
-  assert.deepEqual(layout.visiblePosts, ["first", "second", "third"]);
-  assert.deepEqual(layout.hiddenPosts, ["fourth", "fifth"]);
-  assert.equal(layout.hiddenCount, 2);
+  assert.equal(MONTH_DAY_VISIBLE_POST_LIMIT, 2);
+  assert.deepEqual(layout.visiblePosts, ["first", "second"]);
+  assert.deepEqual(layout.hiddenPosts, ["third", "fourth", "fifth"]);
+  assert.equal(layout.hiddenCount, 3);
   assert.deepEqual(posts, ["first", "second", "third", "fourth", "fifth"]);
 });
 
