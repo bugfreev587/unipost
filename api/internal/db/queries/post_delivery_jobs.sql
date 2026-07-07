@@ -42,11 +42,30 @@ WHERE social_post_result_id = $1
 ORDER BY created_at DESC;
 
 -- name: ListStaleActivePostDeliveryJobs :many
+-- Reap active jobs whose lease has expired (the owning worker died or
+-- stopped renewing). The lease_expires_at IS NULL branch is a fallback for
+-- jobs claimed before the lease migration deployed: those keep the old
+-- static last_attempt_at cutoff until they drain.
 SELECT * FROM post_delivery_jobs
 WHERE state IN ('running', 'retrying')
-  AND last_attempt_at IS NOT NULL
-  AND last_attempt_at <= sqlc.arg('stale_before')::timestamptz
-ORDER BY last_attempt_at ASC, id ASC;
+  AND (
+    lease_expires_at <= NOW()
+    OR (
+      lease_expires_at IS NULL
+      AND last_attempt_at IS NOT NULL
+      AND last_attempt_at <= sqlc.arg('stale_before')::timestamptz
+    )
+  )
+ORDER BY COALESCE(lease_expires_at, last_attempt_at) ASC, id ASC;
+
+-- name: RenewPostDeliveryJobLease :exec
+-- Heartbeat: extend the lease while the worker still owns and is working
+-- the job. Only touches jobs still in an active state.
+UPDATE post_delivery_jobs
+SET lease_expires_at = NOW() + make_interval(secs => sqlc.arg('lease_seconds')::int),
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')
+  AND state IN ('running', 'retrying');
 
 -- name: ListPostDeliveryJobsByWorkspace :many
 -- Hide dead/failed jobs whose social_post_result has already moved
@@ -167,6 +186,8 @@ UPDATE post_delivery_jobs j
 SET state = 'running',
     attempts = j.attempts + 1,
     last_attempt_at = NOW(),
+    lease_expires_at = NOW() + make_interval(secs => sqlc.arg('lease_seconds')::int),
+    lease_owner = sqlc.arg('lease_owner'),
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
@@ -230,6 +251,8 @@ UPDATE post_delivery_jobs j
 SET state = 'retrying',
     attempts = j.attempts + 1,
     last_attempt_at = NOW(),
+    lease_expires_at = NOW() + make_interval(secs => sqlc.arg('lease_seconds')::int),
+    lease_owner = sqlc.arg('lease_owner'),
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
