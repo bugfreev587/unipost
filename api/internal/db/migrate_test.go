@@ -2,6 +2,7 @@ package db
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -151,6 +152,62 @@ func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("workspace active scheduled limits migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
+func TestMediaCleanupRunsMigrationAndQueriesExist(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/103_media_cleanup_runs.sql")
+	if err != nil {
+		t.Fatalf("read media cleanup runs migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	sqlCompact := strings.Join(strings.Fields(sql), " ")
+	for _, want := range []string{
+		"create table media_cleanup_runs",
+		"worker_name",
+		"status text not null",
+		"status in ('running', 'completed', 'completed_with_errors', 'failed', 'skipped')",
+		"next_run_at",
+		"scanned_objects integer not null default 0",
+		"deleted_objects integer not null default 0",
+		"deleted_bytes bigint not null default 0",
+		"failed_objects integer not null default 0",
+		"failed_bytes bigint not null default 0",
+		"media_cleanup_runs_started_at_idx",
+		"media_cleanup_runs_finished_at_idx",
+		"media_cleanup_runs_status_idx",
+		"media_cleanup_runs_one_running_idx",
+		"where status = 'running'",
+	} {
+		if !strings.Contains(sqlCompact, want) {
+			t.Fatalf("media cleanup runs migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+
+	queries, err := os.ReadFile("queries/media_cleanup_runs.sql")
+	if err != nil {
+		t.Fatalf("read media cleanup run queries: %v", err)
+	}
+	querySQL := string(queries)
+	for _, want := range []string{
+		"-- name: CreateMediaCleanupRun :one",
+		"-- name: CompleteMediaCleanupRun :one",
+		"-- name: MarkStaleMediaCleanupRunsFailed :execrows",
+		"-- name: GetAdminObjectStorageCurrent :one",
+		"-- name: GetAdminObjectStoragePeriodAdditions :one",
+		"-- name: GetAdminObjectStorageDueBacklog :one",
+		"-- name: GetAdminObjectStorageReferencedObjects :one",
+		"-- name: GetAdminObjectStorageNextCleanupDeadline :one",
+		"-- name: GetAdminObjectStoragePeriodCleanupRuns :one",
+		"-- name: GetAdminObjectStorageRunningSummary :one",
+		"-- name: ListAdminObjectStorageRecentRuns :many",
+		"-- name: GetAdminObjectStorageContentTypes :many",
+		"-- name: GetAdminObjectStorageStatusBreakdown :many",
+	} {
+		if !strings.Contains(querySQL, want) {
+			t.Fatalf("media cleanup run queries missing %q, got:\n%s", want, querySQL)
 		}
 	}
 }

@@ -3711,6 +3711,95 @@ export interface AdminAPIMetricsWorkspaceRow {
   slowest_endpoint_p95_ms: number;
 }
 
+export type AdminObjectStoragePeriod =
+  | "yesterday"
+  | "last_7_days"
+  | "last_month"
+  | "this_week"
+  | "this_month"
+  | "this_year";
+
+export interface AdminObjectStorageCurrent {
+  tracked_objects: number;
+  confirmed_tracked_bytes: number;
+  pending_objects: number;
+  uploaded_objects: number;
+  referenced_objects: number;
+}
+
+export interface AdminObjectStorageWorker {
+  last_run_started_at: string | null;
+  last_run_finished_at: string | null;
+  last_run_status: string | null;
+  estimated_next_run_at: string | null;
+  last_deleted_objects: number;
+  last_deleted_bytes: number;
+  last_failed_objects: number;
+  active_run_started_at: string | null;
+  stale_running_runs: number;
+}
+
+export interface AdminObjectStoragePeriodMetrics {
+  added_objects: number;
+  added_confirmed_bytes: number;
+  deleted_objects: number;
+  deleted_bytes: number;
+  cleanup_runs: number;
+  failed_object_count: number;
+  failed_run_count: number;
+}
+
+export interface AdminObjectStorageBacklog {
+  due_objects: number;
+  due_bytes: number;
+  next_cleanup_deadline_at: string | null;
+}
+
+export interface AdminObjectStorageBucket {
+  bucket_name: string;
+  tracked_objects: number;
+  confirmed_tracked_bytes: number;
+  pending_objects: number;
+  uploaded_objects: number;
+  referenced_objects: number;
+  due_objects: number;
+  due_bytes: number;
+}
+
+export interface AdminObjectStorageBreakdownRow {
+  content_type?: string;
+  status?: string;
+  tracked_objects: number;
+  confirmed_tracked_bytes: number;
+}
+
+export interface AdminObjectStorageRun {
+  id: string;
+  status: string;
+  started_at: string | null;
+  finished_at: string | null;
+  deleted_objects: number;
+  deleted_bytes: number;
+  failed_objects: number;
+  error_summary: string;
+}
+
+export interface AdminObjectStorageResponse {
+  period: {
+    key: AdminObjectStoragePeriod;
+    from: string;
+    to: string;
+  };
+  current: AdminObjectStorageCurrent;
+  worker: AdminObjectStorageWorker;
+  period_metrics: AdminObjectStoragePeriodMetrics;
+  backlog: AdminObjectStorageBacklog;
+  buckets: AdminObjectStorageBucket[];
+  content_types: AdminObjectStorageBreakdownRow[];
+  status_breakdown: AdminObjectStorageBreakdownRow[];
+  recent_runs: AdminObjectStorageRun[];
+}
+
 export interface APIMetricsQueryParams {
   from: string;
   to: string;
@@ -3806,6 +3895,14 @@ export async function getAdminAPIMetricsWorkspaces(
   params: APIMetricsQueryParams
 ): Promise<ApiResponse<AdminAPIMetricsWorkspaceRow[]>> {
   return request(`/v1/admin/api-metrics/workspaces?${apiMetricsQuery(params)}`, token);
+}
+
+export async function getAdminObjectStorage(
+  token: string,
+  period: AdminObjectStoragePeriod = "last_7_days",
+): Promise<ApiResponse<AdminObjectStorageResponse>> {
+  const qs = new URLSearchParams({ period });
+  return request(`/v1/admin/object-storage?${qs.toString()}`, token);
 }
 
 export async function getAdminChangelogCandidate(

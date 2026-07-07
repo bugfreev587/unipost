@@ -415,6 +415,23 @@ type Media struct {
 	DurationMs     pgtype.Int4        `json:"duration_ms"`
 }
 
+type MediaCleanupRun struct {
+	ID             string             `json:"id"`
+	WorkerName     string             `json:"worker_name"`
+	Status         string             `json:"status"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	NextRunAt      pgtype.Timestamptz `json:"next_run_at"`
+	ScannedObjects int32              `json:"scanned_objects"`
+	DeletedObjects int32              `json:"deleted_objects"`
+	DeletedBytes   int64              `json:"deleted_bytes"`
+	FailedObjects  int32              `json:"failed_objects"`
+	FailedBytes    int64              `json:"failed_bytes"`
+	ErrorSummary   pgtype.Text        `json:"error_summary"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type MediaPostUsage struct {
 	ID             string             `json:"id"`
 	WorkspaceID    string             `json:"workspace_id"`
@@ -903,6 +920,16 @@ type Workspace struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	UsageModes             []string           `json:"usage_modes"`
 	CustomPlatformSlot     pgtype.Text        `json:"custom_platform_slot"`
+}
+
+type WorkspaceActiveScheduledLimit struct {
+	ID          string             `json:"id"`
+	WorkspaceID string             `json:"workspace_id"`
+	LimitCount  int32              `json:"limit_count"`
+	Reason      string             `json:"reason"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkspaceInvite struct {
