@@ -30,6 +30,14 @@ test("pricing page keeps Enterprise out of the self-serve card grid", async () =
   assert.ok(compareIndex > enterpriseIndex, "Enterprise should render before the comparison chart");
 });
 
+test("pricing page styles Enterprise benefits and nearby cards as one group", async () => {
+  const pricing = await source("src/app/pricing/pricing-page-client.tsx");
+
+  assert.match(pricing, /\.pr-ent-chip\{[^}]*background:color-mix\(in srgb,var\(--pr-accent\) 10%,#fff\)/);
+  assert.match(pricing, /\.pr-ent-chip\{[^}]*font-weight:650/);
+  assert.match(pricing, /\.pr-ent\+\.pr-soft\{margin-bottom:18px\}/);
+});
+
 test("pricing FAQ explains Team unlimited and Enterprise Custom semantics", async () => {
   const pricing = await source("src/app/pricing/pricing-page-client.tsx");
 
