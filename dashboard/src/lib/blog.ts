@@ -6,6 +6,8 @@ export type BlogBlock =
   | { type: "summary"; title?: string; items: string[] }
   | { type: "paragraph"; text: string }
   | { type: "heading"; text: string }
+  | { type: "divider" }
+  | { type: "blockquote"; text: string }
   | { type: "list"; items: string[] }
   | { type: "code"; language: string; code: string }
   | { type: "note"; title: string; text: string }
@@ -853,6 +855,27 @@ function parseMarkdownBlocks(markdown: string, title: string): BlogBlock[] {
       continue;
     }
 
+    if (/^([-*_])(?:\s*\1){2,}$/.test(trimmed)) {
+      flushParagraph();
+      blocks.push({ type: "divider" });
+      continue;
+    }
+
+    if (trimmed.startsWith(">")) {
+      flushParagraph();
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith(">")) {
+        quoteLines.push(lines[i].trim().replace(/^>\s?/, "").trim());
+        i++;
+      }
+      i--;
+      const text = quoteLines.join(" ").replace(/\s+/g, " ").trim();
+      if (text) {
+        blocks.push({ type: "blockquote", text });
+      }
+      continue;
+    }
+
     if (/^[-*]\s+/.test(trimmed)) {
       flushParagraph();
       const items: string[] = [];
@@ -915,6 +938,8 @@ export function countBlogWords(post: BlogPost): number {
     if (block.type === "lead" || block.type === "paragraph") {
       words += block.text.split(/\s+/).filter(Boolean).length;
     } else if (block.type === "heading") {
+      words += block.text.split(/\s+/).filter(Boolean).length;
+    } else if (block.type === "blockquote") {
       words += block.text.split(/\s+/).filter(Boolean).length;
     } else if (block.type === "list" || block.type === "summary") {
       for (const item of block.items) {

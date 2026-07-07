@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type ReactNode } from "react";
 import { BlogCover } from "@/app/blog/_components/blog-cover";
+import { parseInlineMarkdown } from "@/lib/blog-inline";
 import { blogPosts, countBlogWords, getBlogPost, type BlogBlock, type BlogPost } from "@/lib/blog";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
@@ -179,6 +180,18 @@ function BlogContentBlock({ block }: { block: BlogBlock }) {
     );
   }
 
+  if (block.type === "divider") {
+    return <hr className="blog-divider" aria-hidden="true" />;
+  }
+
+  if (block.type === "blockquote") {
+    return (
+      <blockquote className="blog-quote">
+        <p>{renderInline(block.text)}</p>
+      </blockquote>
+    );
+  }
+
   if (block.type === "code") {
     return (
       <pre className="blog-code" aria-label={`${block.language} code example`}>
@@ -234,49 +247,55 @@ function BlogContentBlock({ block }: { block: BlogBlock }) {
   );
 }
 
-// Tiny inline renderer: parses [text](url) markdown-style links and `code` spans.
+// Tiny inline renderer for generated blog Markdown.
 // Internal links (starting with "/") render as Next.js <Link>; others render as <a>.
 function renderInline(input: string): ReactNode {
-  const tokens: ReactNode[] = [];
-  const pattern = /\[([^\]]+)\]\(([^)]+)\)|`([^`]+)`/g;
-  let last = 0;
-  let key = 0;
-  let match: RegExpExecArray | null;
+  const segments = parseInlineMarkdown(input);
+  if (segments.length === 1 && segments[0].type === "text") {
+    return segments[0].text;
+  }
 
-  while ((match = pattern.exec(input)) !== null) {
-    if (match.index > last) {
-      tokens.push(<Fragment key={key++}>{input.slice(last, match.index)}</Fragment>);
-    }
-    if (match[1] && match[2]) {
-      const text = match[1];
-      const href = match[2];
-      if (href.startsWith("/")) {
-        tokens.push(
-          <Link href={href} key={key++}>
-            {text}
-          </Link>,
-        );
-      } else {
+  return (
+    <>
+      {segments.map((segment, key) => {
+        if (segment.type === "text") {
+          return <Fragment key={key}>{segment.text}</Fragment>;
+        }
+
+        if (segment.type === "strong") {
+          return <strong key={key}>{segment.text}</strong>;
+        }
+
+        if (segment.type === "emphasis") {
+          return <em key={key}>{segment.text}</em>;
+        }
+
+        if (segment.type === "code") {
+          return <code key={key}>{segment.text}</code>;
+        }
+
+        const { text, href } = segment;
+        if (href.startsWith("/")) {
+          return (
+            <Link href={href} key={key}>
+              {text}
+            </Link>
+          );
+        }
+
         const isExternal = /^https?:\/\//.test(href);
-        tokens.push(
+        return (
           <a
             href={href}
-            key={key++}
+            key={key}
             {...(isExternal ? { target: "_blank", rel: "noopener noreferrer" } : {})}
           >
             {text}
-          </a>,
+          </a>
         );
-      }
-    } else if (match[3]) {
-      tokens.push(<code key={key++}>{match[3]}</code>);
-    }
-    last = pattern.lastIndex;
-  }
-  if (last < input.length) {
-    tokens.push(<Fragment key={key++}>{input.slice(last)}</Fragment>);
-  }
-  return tokens.length > 0 ? <>{tokens}</> : input;
+      })}
+    </>
+  );
 }
 
 function buildFaqJsonLd(post: BlogPost) {
