@@ -2,8 +2,13 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
+	"sync"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
@@ -15,6 +20,84 @@ type PostDispatchWorker struct {
 }
 
 const staleDeliveryAttemptTimeout = 5 * time.Minute
+
+// Lease/heartbeat. A claimed job holds a lease that the owning worker
+// renews while it still owns and is working the job (including jobs waiting
+// their turn in the serial processing loop). Stale recovery only reaps jobs
+// whose lease has actually expired, so a slow-but-alive worker is never
+// mistaken for a dead one. leaseRenewInterval must be comfortably below
+// deliveryJobLeaseTTL so a single missed tick doesn't drop the lease.
+const (
+	deliveryJobLeaseTTL = 90 * time.Second
+	leaseRenewInterval  = 30 * time.Second
+)
+
+// deliveryWorkerOwner identifies this process in lease_owner for debugging
+// (which instance holds a job). Not used for correctness — lease expiry is.
+var deliveryWorkerOwner = func() string {
+	host, _ := os.Hostname()
+	return fmt.Sprintf("%s/%d", host, os.Getpid())
+}()
+
+func leaseSecondsArg() int32 { return int32(deliveryJobLeaseTTL / time.Second) }
+
+func leaseOwnerArg() pgtype.Text {
+	return pgtype.Text{String: deliveryWorkerOwner, Valid: true}
+}
+
+// leaseHeartbeat renews the leases of the jobs a worker claimed until each
+// is processed (removed via done) or the batch finishes (stop). This keeps
+// owned jobs — including those still queued behind others — out of reach of
+// stale recovery while the worker is alive.
+type leaseHeartbeat struct {
+	cancel    context.CancelFunc
+	mu        sync.Mutex
+	remaining map[string]bool
+}
+
+func startLeaseHeartbeat(ctx context.Context, queries *db.Queries, jobs []db.PostDeliveryJob) *leaseHeartbeat {
+	hbCtx, cancel := context.WithCancel(ctx)
+	hb := &leaseHeartbeat{cancel: cancel, remaining: make(map[string]bool, len(jobs))}
+	for _, j := range jobs {
+		hb.remaining[j.ID] = true
+	}
+	go func() {
+		ticker := time.NewTicker(leaseRenewInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-ticker.C:
+				hb.mu.Lock()
+				ids := make([]string, 0, len(hb.remaining))
+				for id := range hb.remaining {
+					ids = append(ids, id)
+				}
+				hb.mu.Unlock()
+				for _, id := range ids {
+					if err := queries.RenewPostDeliveryJobLease(hbCtx, db.RenewPostDeliveryJobLeaseParams{
+						ID:           id,
+						LeaseSeconds: leaseSecondsArg(),
+					}); err != nil {
+						slog.Warn("delivery lease renew failed", "job_id", id, "error", err)
+					}
+				}
+			}
+		}
+	}()
+	return hb
+}
+
+// done marks a job as no longer needing lease renewal (it has been processed).
+func (hb *leaseHeartbeat) done(jobID string) {
+	hb.mu.Lock()
+	delete(hb.remaining, jobID)
+	hb.mu.Unlock()
+}
+
+// stop ends the heartbeat goroutine.
+func (hb *leaseHeartbeat) stop() { hb.cancel() }
 
 // claimBatchLimit is the per-tick claim count. Conservative —
 // platforms tolerate parallel publish but the per-account
@@ -60,15 +143,23 @@ func (w *PostDispatchWorker) runOnce(ctx context.Context) {
 	jobs, err := w.queries.ClaimPostDispatchJobs(ctx, db.ClaimPostDispatchJobsParams{
 		BatchLimit:             claimBatchLimit,
 		WorkspaceConcurrentCap: workspaceConcurrentDispatchCap,
+		LeaseSeconds:           leaseSecondsArg(),
+		LeaseOwner:             leaseOwnerArg(),
 	})
 	if err != nil {
 		slog.Error("post dispatch worker: claim failed", "error", err)
 		return
 	}
+	if len(jobs) == 0 {
+		return
+	}
+	hb := startLeaseHeartbeat(ctx, w.queries, jobs)
+	defer hb.stop()
 	for _, job := range jobs {
 		if err := w.postHandler.ProcessPostDeliveryJob(ctx, job); err != nil {
 			slog.Error("post dispatch worker: process failed", "job_id", job.ID, "error", err)
 		}
+		hb.done(job.ID)
 	}
 }
 
@@ -104,15 +195,23 @@ func (w *PostRetryWorker) runOnce(ctx context.Context) {
 	jobs, err := w.queries.ClaimPostRetryJobs(ctx, db.ClaimPostRetryJobsParams{
 		BatchLimit:             claimBatchLimit,
 		WorkspaceConcurrentCap: workspaceConcurrentDispatchCap,
+		LeaseSeconds:           leaseSecondsArg(),
+		LeaseOwner:             leaseOwnerArg(),
 	})
 	if err != nil {
 		slog.Error("post retry worker: claim failed", "error", err)
 		return
 	}
+	if len(jobs) == 0 {
+		return
+	}
+	hb := startLeaseHeartbeat(ctx, w.queries, jobs)
+	defer hb.stop()
 	for _, job := range jobs {
 		if err := w.postHandler.ProcessPostDeliveryJob(ctx, job); err != nil {
 			slog.Error("post retry worker: process failed", "job_id", job.ID, "error", err)
 		}
+		hb.done(job.ID)
 	}
 }
 
