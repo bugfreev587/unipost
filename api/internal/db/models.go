@@ -37,6 +37,17 @@ type AdminAiProviderKey struct {
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AdminPostQuotaReset struct {
+	ID          string             `json:"id"`
+	UserID      string             `json:"user_id"`
+	WorkspaceID string             `json:"workspace_id"`
+	Period      string             `json:"period"`
+	QuotaKind   string             `json:"quota_kind"`
+	ResetAt     pgtype.Timestamptz `json:"reset_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AdminSearchHistory struct {
 	ID              string             `json:"id"`
 	AdminUserID     string             `json:"admin_user_id"`
@@ -576,6 +587,8 @@ type PostDeliveryJob struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
 	DismissedAt        pgtype.Timestamptz `json:"dismissed_at"`
+	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
+	LeaseOwner         pgtype.Text        `json:"lease_owner"`
 }
 
 type PostFailure struct {
