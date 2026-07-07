@@ -169,9 +169,17 @@ test("Posts calendar month view shows two posts and opens all day posts from the
 
   assert.match(dayOverflowPosts, /return postsByDate\.get\(dayOverflowTarget\.dateKey\) \|\| \[\]/);
   assert.doesNotMatch(dayOverflowPosts, /\.hiddenPosts/);
+  assert.match(source, /function getOverflowStatusColor\(posts: SocialPost\[\]\)/);
+  assert.match(source, /const post = posts\[0\];/);
+  assert.match(source, /return post \? getCalendarStatusColor\(getPostStatusGroup\(post\)\) : getCalendarStatusColor\("unknown"\)/);
+  assert.match(monthDayGrid, /const overflowStatusColor = getOverflowStatusColor\(dayLayout\.hiddenPosts\)/);
+  assert.doesNotMatch(monthDayGrid, /getPostStatusGroup\(dayLayout\.hiddenPosts\[0\]\)/);
+  assert.match(monthDayGrid, /className="posts-calendar-more posts-calendar-more-pill"/);
+  assert.match(monthDayGrid, /"--event-status-color": overflowStatusColor/);
   assert.match(monthDayGrid, />\s*\+\{dayLayout\.hiddenCount\}\s*</);
   assert.match(dayOverflowPopover, /summaryLabel=\{`\$\{dayOverflowPosts\.length\} post/);
   assert.match(dayOverflowPopover, /on this day`/);
+  assert.match(source, /\.posts-calendar-more-pill\{[^}]*border-radius:999px[^}]*background:var\(--event-status-color\)[^}]*color:white/);
 });
 
 test("Posts calendar mobile layout prioritizes the calendar over filters", async () => {
