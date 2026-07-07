@@ -571,6 +571,23 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		return err
 	}
 
+	// Second double-publish guard, at the result level. The job-state guard
+	// above cannot catch this ordering: the original job passes it and starts
+	// publishing, stale recovery then queues a retry, and the original
+	// finishes and marks the result published. The retry is legitimately
+	// "retrying" so it clears the job-state guard too. Re-reading the result
+	// here (fresh from the DB, so it reflects the original's just-committed
+	// success) lets us skip the platform call when the result is already
+	// published, closing the job as succeeded instead of duplicating.
+	if res.Status == "published" {
+		slog.Info("delivery job: result already published, skipping duplicate publish",
+			"job_id", job.ID, "post_id", job.PostID, "result_id", res.ID)
+		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, job.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return nil
+	}
+
 	pp, err := platformPostInputAtIndex(post, int(job.PostInputIndex))
 	if err != nil {
 		return h.finalizeJobLoadFailure(ctx, job, res, post, err)
