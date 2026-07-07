@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { XIcon } from "lucide-react";
+import { RotateCcwIcon, XIcon } from "lucide-react";
 import {
   Bar,
   BarChart,
@@ -21,7 +21,10 @@ import {
   getAdminUserPostFailures,
   getAdminUserScheduledPosts,
   listAdminUsers,
+  resetAdminUserPostQuota,
+  resetAdminUserScheduledQuota,
   type AdminUserDetail,
+  type AdminUserQuotaResetResult,
   type AdminUserSignupTrend,
   type AdminUserListParams,
   type AdminUserPostFailure,
@@ -71,6 +74,8 @@ export default function AdminUsersPage() {
   const [scheduledPosts, setScheduledPosts] = useState<AdminUserScheduledPost[]>([]);
   const [scheduledDrawerLoading, setScheduledDrawerLoading] = useState(false);
   const [scheduledDrawerError, setScheduledDrawerError] = useState<string | null>(null);
+  const [quotaResetPending, setQuotaResetPending] = useState<AdminUserQuotaResetResult["quota_kind"] | null>(null);
+  const [quotaResetMessage, setQuotaResetMessage] = useState<string | null>(null);
 
   const loadUsers = useCallback(async () => {
     setLoading(true);
@@ -119,6 +124,7 @@ export default function AdminUsersPage() {
     setSelectedUserId(id);
     setDetail(null);
     setPostFailures([]);
+    setQuotaResetMessage(null);
     setDetailLoading(true);
     try {
       const token = await getToken();
@@ -140,6 +146,30 @@ export default function AdminUsersPage() {
     setSelectedUserId(null);
     setDetail(null);
     setPostFailures([]);
+    setQuotaResetPending(null);
+    setQuotaResetMessage(null);
+  }
+
+  async function handleQuotaReset(kind: AdminUserQuotaResetResult["quota_kind"]) {
+    if (!selectedUserId) return;
+    setQuotaResetPending(kind);
+    setQuotaResetMessage(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const reset =
+        kind === "scheduled"
+          ? await resetAdminUserScheduledQuota(token, selectedUserId)
+          : await resetAdminUserPostQuota(token, selectedUserId);
+      const label = kind === "scheduled" ? "Schedule quota" : "Post quota";
+      const message = `${label} reset for ${reset.data.period}. Previous usage: ${fmtNumber(reset.data.previous_usage)} across ${fmtNumber(reset.data.affected_workspaces)} workspaces.`;
+      await Promise.all([openUser(selectedUserId), loadUsers()]);
+      setQuotaResetMessage(message);
+    } catch (e) {
+      setQuotaResetMessage(e instanceof Error ? e.message : "Failed to reset quota");
+    } finally {
+      setQuotaResetPending(null);
+    }
   }
 
   async function openScheduledPosts(u: AdminUserRow) {
@@ -439,6 +469,33 @@ export default function AdminUsersPage() {
                 </div>
 
                 <div className="ad-panel-section">
+                  <div className="ad-panel-section-title">Posts quota reset</div>
+                  <div className="au-quota-reset-actions">
+                    <button
+                      type="button"
+                      className="ad-btn ad-btn-ghost au-quota-reset-btn"
+                      disabled={quotaResetPending !== null}
+                      onClick={() => void handleQuotaReset("scheduled")}
+                    >
+                      <RotateCcwIcon size={13} aria-hidden="true" />
+                      {quotaResetPending === "scheduled" ? "Resetting schedule..." : "Reset schedule quota"}
+                    </button>
+                    <button
+                      type="button"
+                      className="ad-btn ad-btn-ghost au-quota-reset-btn"
+                      disabled={quotaResetPending !== null}
+                      onClick={() => void handleQuotaReset("post")}
+                    >
+                      <RotateCcwIcon size={13} aria-hidden="true" />
+                      {quotaResetPending === "post" ? "Resetting posts..." : "Reset post quota"}
+                    </button>
+                  </div>
+                  {quotaResetMessage ? (
+                    <div className="au-quota-reset-message">{quotaResetMessage}</div>
+                  ) : null}
+                </div>
+
+                <div className="ad-panel-section">
                   <div className="ad-panel-section-title">Usage</div>
                   <PanelRow k="Workspaces" v={String(detail.workspace_count)} />
                   <PanelRow k="API Keys" v={String(detail.api_key_count)} />
@@ -680,6 +737,34 @@ const usersCss = `
 }
 .au-failed-zero {
   color: var(--dmuted2);
+}
+.au-quota-reset-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.au-quota-reset-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 5px 8px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.au-quota-reset-btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+.au-quota-reset-message {
+  margin-top: 8px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--success) 24%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--success) 11%, transparent);
+  color: var(--dtext);
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 .au-scheduled-layer {
   position: fixed;
