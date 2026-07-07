@@ -347,6 +347,8 @@ func postDeliveryJobValues(job db.PostDeliveryJob) []any {
 		job.UpdatedAt,
 		job.FinishedAt,
 		job.DismissedAt,
+		job.LeaseExpiresAt,
+		job.LeaseOwner,
 	}
 }
 
