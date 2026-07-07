@@ -20,6 +20,13 @@ test("admin nav shows Object Storage immediately after Email", () => {
   assert.match(adminUI, /export const fmtBytes/);
 });
 
+test("admin relative formatter handles future timestamps", () => {
+  const adminUI = source("src/app/admin/_components/admin-ui.tsx");
+
+  assert.match(adminUI, /diff < 0/);
+  assert.match(adminUI, /Math\.ceil\(ahead/);
+});
+
 test("admin object storage API client uses the shared admin endpoint", () => {
   const api = source("src/lib/api.ts");
 

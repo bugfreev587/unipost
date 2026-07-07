@@ -53,6 +53,14 @@ export const fmtRelative = (iso: string | null | undefined) => {
   if (!iso) return "Never";
   const then = new Date(iso).getTime();
   const diff = Date.now() - then;
+  if (diff < 0) {
+    const ahead = Math.abs(diff);
+    if (ahead < 60_000) return "in <1m";
+    if (ahead < 3_600_000) return `in ${Math.ceil(ahead / 60_000)}m`;
+    if (ahead < 86_400_000) return `in ${Math.ceil(ahead / 3_600_000)}h`;
+    if (ahead < 30 * 86_400_000) return `in ${Math.ceil(ahead / 86_400_000)}d`;
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  }
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
