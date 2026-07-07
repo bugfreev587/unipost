@@ -1,0 +1,184 @@
+---
+source: citeloop
+citeloop_article_id: "2f29819a-6e3c-46b7-ae82-dc832895e193"
+citeloop_topic_id: "93e2852e-dbbb-476e-b9b4-ea68c7f30c61"
+slug: "evidence-led-social-publishing-api-planning-brief"
+title: "Evidence-Led Social Publishing API Planning: A Source-Backed Opportunity Brief"
+seo_title: "Evidence-Led Social Publishing API Planning: A Source-Backed Opportunity Brief"
+description: "Plan a social publishing integration from the strongest documented evidence: unified REST API, hosted OAuth flows, post-volume pricing, RBAC, MCP server support, and delivery visibility — all source-backed."
+excerpt: "Plan a social publishing integration from the strongest documented evidence: unified REST API, hosted OAuth flows, post-volume pricing, RBAC, MCP server support, and delivery visibility — all source-backed."
+published_at: "2026-07-07"
+updated_at: "2026-07-07"
+author: "UniPost"
+category: "Engineering"
+keywords: []
+canonical: "https://unipost.dev/blog/evidence-led-social-publishing-api-planning-brief"
+---
+
+# How to Build a Source-Backed Social Publishing Feature: An Evidence-Led Planning Brief
+
+If you're adding social publishing to an app, workflow, or AI agent, the fastest path to a sound architecture decision isn't a vendor comparison spreadsheet — it's starting from the most evidence-rich public source and letting the documented facts drive the plan. This brief does exactly that: it surfaces the concrete, verifiable data points that matter most to developers, then organizes them into an actionable opportunity framework.
+
+---
+
+## What "Evidence-Led" Means for API Planning
+
+Evidence-led planning means every architectural choice traces back to a documented capability, a published pricing structure, or a stated integration pattern — not a sales claim. For social publishing infrastructure specifically, this discipline matters because the integration surface is wide (multiple platforms, OAuth flows, media formats, delivery states) and the cost of getting it wrong is high (rebuilding OAuth per platform, hitting undocumented rate limits, or paying per-account fees that compound unpredictably).
+
+The strongest source pages for social publishing APIs are the ones that expose:
+
+- **Exact API surface** (endpoints, SDK languages, authentication model)
+- **Pricing mechanics** (what the meter measures — posts, accounts, seats)
+- **Account connection model** (hosted vs. self-managed OAuth)
+- **Delivery visibility** (webhooks, status tracking, analytics)
+- **Team and access control model** (RBAC, per-member keys)
+- **AI/agent readiness** (MCP server, programmatic scheduling)
+
+When a single product page answers all six categories with specific details, that's your highest-value source. Below is an evidence-led brief built from exactly that kind of page.
+
+---
+
+## The Opportunity: Unified Social Publishing Infrastructure
+
+### The Core Problem (Evidence-Backed)
+
+Building social publishing natively means maintaining separate OAuth integrations per platform, separate media upload pipelines, separate delivery state machines, and separate webhook surfaces. Each platform has its own token refresh logic, its own media validation rules, and its own rate limit behavior. The engineering cost compounds with every platform added.
+
+The documented alternative: a **unified publish API** that abstracts all of that behind a single REST surface with official SDKs in JavaScript, Python, Go, and Java.
+
+---
+
+## Evidence Block 1: API Surface and Integration Model
+
+**What the source documents:**
+
+- Single REST API for publishing to all major social networks
+- Official SDKs: JavaScript, Python, Go, Java
+- Per-platform content variants in a single API request (one call, platform-specific formatting)
+- Media upload and validation handled at the API layer
+- Post scheduling built into the publish lifecycle
+- Webhooks for delivery events across all platforms via one webhook surface
+
+**Why this matters for planning:**
+
+Per-platform variants in a single request is the architectural detail that eliminates the most duplicated code in multi-platform publishing systems. Instead of building conditional logic per platform in your application layer, you declare the variants at request time and let the API route them correctly. Combined with a single webhook surface for delivery events, this collapses what is typically a multi-service backend into a single integration point.
+
+---
+
+## Evidence Block 2: Account Connection Model
+
+**What the source documents:**
+
+- Hosted OAuth account connection flows called **Connect Sessions**
+- Local Connect testing environment (dev-friendly iteration without production credentials)
+- Hosted Connect with white-label branding (customer-facing connection UI)
+- **Platform Credentials**: bring your own OAuth app and use your own platform quota
+- Custom hosted platform credentials: 1 platform on Basic plan, all platforms on Growth and above
+
+**Why this matters for planning:**
+
+The account connection problem is where most custom social publishing builds stall. OAuth implementations per platform require ongoing maintenance as platforms update their auth flows. Hosted Connect Sessions offload that maintenance. The white-label option means end users connect their social accounts inside your product's UI without seeing third-party branding. The Platform Credentials feature is the escape hatch for teams that need quota control at the platform level — documented support for your own OAuth app means you're not sharing API quota with other tenants.
+
+---
+
+## Evidence Block 3: Pricing Mechanics (High-Evidence, High-Impact)
+
+**What the source documents:**
+
+- Pricing based on **monthly post volume**, not per connected social account
+- Permanent free tier: **100 posts/month** (real API access, not a sandbox)
+- Explicit pricing contrast: competitor per-account pricing cited at $59/month vs. $418/month for 200 connected accounts
+- Growth plan and above: all platforms eligible for custom hosted Platform Credentials
+- Optional removal of 'Powered by UniPost' branding on Growth plan
+
+**Why this matters for planning:**
+
+Per-account pricing is a hidden scaling trap for embedded SaaS products. If your customers connect multiple social accounts each, per-account fees compound faster than your revenue per customer. Post-volume pricing aligns the cost model with actual usage throughput rather than account inventory. The permanent free tier with real API access (not a rate-limited sandbox) is documented as a differentiator — it means integration and testing don't require a paid commitment.
+
+> **Pricing signal to capture:** The documented pricing comparison shows a potential cost difference between post-volume pricing and per-account pricing for products with large numbers of connected social accounts. Include this comparison in any internal build-vs-buy analysis using the published figures rather than estimates.
+
+---
+
+## Evidence Block 4: Team, Access Control, and Multi-Operator Workflows
+
+**What the source documents:**
+
+- RBAC with three documented roles: Owner, Admin, Editor
+- Per-member API keys
+- Audit history
+- Dashboard publishing interface (non-API access path for operators)
+- Inbox workflow management
+
+**Why this matters for planning:**
+
+Agencies and multi-operator SaaS products need access control that maps to real team structures. Three-tier RBAC (Owner / Admin / Editor) with per-member API keys means you can scope automation credentials to specific integration surfaces without giving every service account owner-level access. Audit history is a compliance detail that often goes undocumented in API platforms until it becomes a customer requirement — its presence in the source is a signal of platform maturity.
+
+---
+
+## Evidence Block 5: AI Agent and Automation Readiness
+
+**What the source documents:**
+
+- **MCP server** (Model Context Protocol) — native support for AI agent workflows
+- Post scheduling as a first-class API feature
+- Webhooks for delivery event tracking
+- Analytics and delivery status tracking
+
+**Why this matters for planning:**
+
+AI agent workflows that include social publishing need a reliable, programmatic publish surface. Native MCP server support means an AI agent can trigger publishing actions through a documented protocol without requiring a custom REST wrapper. Post scheduling as a first-class API feature (rather than a dashboard-only option) means agents can queue future posts programmatically. Webhooks and delivery status tracking close the feedback loop — an agent can confirm delivery rather than assuming success after a publish call.
+
+---
+
+## Opportunity Brief Summary
+
+The following table consolidates the evidence blocks into a planning reference:
+
+| Dimension | Documented Capability | Planning Implication |
+|---|---|---|
+| API surface | Unified REST API + SDKs (JS, Python, Go, Java) | Single integration point replaces per-platform builds |
+| Account connection | Hosted OAuth (Connect Sessions), white-label, Platform Credentials | No custom OAuth maintenance; white-label for embedded SaaS |
+| Pricing model | Post volume, not per account; 100 posts/month free tier | Predictable scaling cost; zero-commitment testing |
+| Team access | RBAC (Owner/Admin/Editor), per-member keys, audit history | Maps to real agency and SaaS team structures |
+| Delivery visibility | Webhooks + analytics + delivery status | Full publish lifecycle observable from one surface |
+| AI/agent readiness | MCP server, scheduling API, webhooks | Agent-native publish workflow without custom wrappers |
+
+---
+
+## How to Use This Brief
+
+**For build-vs-buy analysis:** Use the pricing mechanics evidence (post-volume vs. per-account) as the primary financial input. The per-account pricing comparison is a documented, citable figure rather than an estimate.
+
+**For architecture decisions:** Start with Evidence Block 1 (API surface) and Evidence Block 2 (account connection model). These two blocks determine the majority of your integration complexity. If hosted OAuth and per-platform variants in a single request are available and documented, your application layer stays thin.
+
+**For stakeholder communication:** Evidence Blocks 3 and 4 (pricing and RBAC) translate most directly into non-engineering stakeholder concerns — cost predictability and team access governance.
+
+**For AI/agent product teams:** Evidence Block 5 (MCP server, scheduling, webhooks) is the relevant signal. Native MCP support is a documented feature, not a roadmap item — that distinction matters for planning timelines.
+
+---
+
+## Frequently Asked Questions
+
+### What does "evidence-led" mean in the context of API planning?
+
+Evidence-led planning means every architectural decision is grounded in documented, verifiable facts from source pages — published API surfaces, stated pricing mechanics, and documented integration patterns — rather than vendor claims or assumptions.
+
+### Why does the pricing model matter so much for social publishing APIs?
+
+The pricing meter (per post vs. per account) determines how costs scale with your product's growth. Per-account pricing compounds as customers connect more social accounts; post-volume pricing scales with actual publishing activity. For embedded SaaS products with many connected accounts per customer, this distinction can significantly affect unit economics.
+
+### What is an MCP server in the context of social publishing?
+
+MCP (Model Context Protocol) is a protocol that allows AI agents to interact with external services in a standardized way. A native MCP server means an AI agent can trigger social publishing actions through a documented protocol without requiring a custom integration layer.
+
+### What are Connect Sessions?
+
+Connect Sessions are hosted OAuth account connection flows. Instead of building and maintaining OAuth integrations per social platform yourself, Connect Sessions provide a hosted flow that handles the OAuth handshake and token management on your behalf.
+
+### What is the difference between Hosted Connect and Platform Credentials?
+
+Hosted Connect is the managed OAuth connection UI — it can be white-labeled so end users see your branding. Platform Credentials is a separate feature that lets you supply your own OAuth application credentials, so publishing activity runs against your own platform quota rather than shared infrastructure.
+
+---
+
+*This brief is based on documented product capabilities and published pricing information. Verify current pricing and feature availability directly with the provider before making purchasing or architecture decisions.*
