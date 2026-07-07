@@ -359,7 +359,7 @@ export function PostsCalendarView() {
   );
   const dayOverflowPosts = useMemo(() => {
     if (!dayOverflowTarget) return [];
-    return getMonthDayPostLayout(postsByDate.get(dayOverflowTarget.dateKey) || []).hiddenPosts;
+    return postsByDate.get(dayOverflowTarget.dateKey) || [];
   }, [dayOverflowTarget, postsByDate]);
   const timedOverflowPosts = useMemo(() => {
     if (!timedOverflowTarget) return [];
@@ -756,7 +756,7 @@ export function PostsCalendarView() {
                   aria-label={`${dayLayout.hiddenCount} more posts on ${formatOverflowDayLabel(cell.date)}`}
                   onClick={(event) => handleSelectDayOverflow(cell.dateKey, cell.date, event.currentTarget)}
                 >
-                  + {dayLayout.hiddenCount} more
+                  +{dayLayout.hiddenCount}
                 </button>
               ) : null}
             </div>
@@ -1058,6 +1058,7 @@ export function PostsCalendarView() {
       {dayOverflowTarget && dayOverflowPosts.length > 0 ? (
         <DayOverflowPopover
           dateLabel={dayOverflowTarget.dayLabel}
+          summaryLabel={`${dayOverflowPosts.length} post${dayOverflowPosts.length === 1 ? "" : "s"} on this day`}
           posts={dayOverflowPosts}
           anchorRect={dayOverflowTarget.anchorRect}
           boundsRect={dayOverflowTarget.boundsRect}

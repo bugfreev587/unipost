@@ -152,6 +152,28 @@ test("Posts calendar week and day views collapse same-time posts behind a more-p
   assert.match(timedButton, /const overflowAccessibleLabel = `\$\{overflowCount\} more posts at/);
 });
 
+test("Posts calendar month view shows two posts and opens all day posts from the overflow row", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const dayOverflowPosts = source.slice(
+    source.indexOf("const dayOverflowPosts = useMemo"),
+    source.indexOf("const timedOverflowPosts = useMemo"),
+  );
+  const monthDayGrid = source.slice(
+    source.indexOf("const renderMonthDayGrid"),
+    source.indexOf("const renderMonthView"),
+  );
+  const dayOverflowPopover = source.slice(
+    source.indexOf("{dayOverflowTarget && dayOverflowPosts.length > 0"),
+    source.indexOf("{timedOverflowTarget && timedOverflowPosts.length > 0"),
+  );
+
+  assert.match(dayOverflowPosts, /return postsByDate\.get\(dayOverflowTarget\.dateKey\) \|\| \[\]/);
+  assert.doesNotMatch(dayOverflowPosts, /\.hiddenPosts/);
+  assert.match(monthDayGrid, />\s*\+\{dayLayout\.hiddenCount\}\s*</);
+  assert.match(dayOverflowPopover, /summaryLabel=\{`\$\{dayOverflowPosts\.length\} post/);
+  assert.match(dayOverflowPopover, /on this day`/);
+});
+
 test("Posts calendar mobile layout prioritizes the calendar over filters", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const mobileCss = source.slice(source.indexOf("@media (max-width: 680px)"));
