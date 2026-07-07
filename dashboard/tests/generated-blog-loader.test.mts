@@ -55,6 +55,44 @@ console.log("hello");
   assert.deepEqual(post.blocks[4], { type: "code", language: "ts", code: 'console.log("hello");' });
 });
 
+test("parseGeneratedBlogPostFromSource keeps generated markdown block semantics", () => {
+  const post = parseGeneratedBlogPostFromSource(
+    "content/citeloop/blog/markdown-blocks.mdx",
+    `---
+source: citeloop
+slug: "markdown-blocks"
+title: "Markdown Blocks"
+description: "Generated article description."
+---
+
+# Markdown Blocks
+
+Intro paragraph.
+
+- **Exact API surface** (endpoints, SDK languages, authentication model)
+- **Pricing mechanics** (posts, accounts, seats)
+
+---
+
+> **Pricing signal to watch:** Per-account fees compound quickly.
+`,
+  );
+
+  assert.ok(post);
+  assert.deepEqual(post.blocks, [
+    { type: "lead", text: "Intro paragraph." },
+    {
+      type: "list",
+      items: [
+        "**Exact API surface** (endpoints, SDK languages, authentication model)",
+        "**Pricing mechanics** (posts, accounts, seats)",
+      ],
+    },
+    { type: "divider" },
+    { type: "blockquote", text: "**Pricing signal to watch:** Per-account fees compound quickly." },
+  ]);
+});
+
 test("parseGeneratedBlogPostFromSource rejects unsafe generated MDX", () => {
   assert.equal(
     parseGeneratedBlogPostFromSource(
