@@ -79,6 +79,33 @@ test("admin users scheduled counts open a scheduled-posts drawer", () => {
   assert.match(page, /PlatformIcon key=\{platform\} platform=\{platform\}/);
 });
 
+test("admin users API exposes quota reset endpoints", () => {
+  const api = source("src/lib/api.ts");
+
+  assert.match(api, /export interface AdminUserQuotaResetResult/);
+  assert.match(api, /quota_kind: "post" \| "scheduled";/);
+  assert.match(api, /affected_workspaces: number;/);
+  assert.match(api, /previous_usage: number;/);
+  assert.match(api, /export async function resetAdminUserPostQuota/);
+  assert.match(api, /export async function resetAdminUserScheduledQuota/);
+  assert.match(api, /\/v1\/admin\/users\/\$\{id\}\/quota\/post\/reset/);
+  assert.match(api, /\/v1\/admin\/users\/\$\{id\}\/quota\/scheduled\/reset/);
+});
+
+test("admin users detail exposes post quota reset actions", () => {
+  const page = source("src/app/admin/users/page.tsx");
+
+  assert.match(page, /resetAdminUserPostQuota/);
+  assert.match(page, /resetAdminUserScheduledQuota/);
+  assert.match(page, /Posts quota reset/);
+  assert.match(page, /Reset schedule quota/);
+  assert.match(page, /Reset post quota/);
+  assert.match(page, /quotaResetPending/);
+  assert.match(page, /quotaResetMessage/);
+  assert.match(page, /handleQuotaReset\("scheduled"\)/);
+  assert.match(page, /handleQuotaReset\("post"\)/);
+});
+
 test("admin users page exposes active users filter and filtered total copy", () => {
   const page = source("src/app/admin/users/page.tsx");
   const api = source("src/lib/api.ts");

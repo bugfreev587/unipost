@@ -714,6 +714,8 @@ func main() {
 		r.Get("/v1/admin/users", adminHandler.ListUsers)
 		r.Get("/v1/admin/users/signups", adminHandler.GetUserSignups)
 		r.Get("/v1/admin/users/{id}", adminHandler.GetUser)
+		r.Post("/v1/admin/users/{id}/quota/post/reset", adminHandler.ResetUserPostQuota)
+		r.Post("/v1/admin/users/{id}/quota/scheduled/reset", adminHandler.ResetUserScheduledQuota)
 		r.Get("/v1/admin/users/{id}/scheduled-posts", adminHandler.ListUserScheduledPosts)
 		r.Get("/v1/admin/users/{id}/post-failures", adminHandler.ListUserPostFailures)
 		r.Get("/v1/admin/api-metrics/overall", adminAPIMetricsHandler.Overall)

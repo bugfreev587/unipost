@@ -8,6 +8,13 @@ type CountScheduledQuotaUnitsByWorkspaceAndPeriodParams struct {
 }
 
 const countScheduledQuotaUnitsByWorkspaceAndPeriod = `
+WITH reset_baseline AS (
+  SELECT MAX(reset_at) AS reset_at
+  FROM admin_post_quota_resets
+  WHERE workspace_id = $1
+    AND period = $2
+    AND quota_kind = 'scheduled'
+)
 SELECT COALESCE(SUM(
   CASE
     WHEN jsonb_typeof(sp.metadata->'platform_posts') = 'array' THEN (
@@ -26,11 +33,13 @@ SELECT COALESCE(SUM(
   END
 ), 0)::INTEGER
 FROM social_posts sp
+CROSS JOIN reset_baseline rb
 WHERE sp.workspace_id = $1
   AND sp.status = 'scheduled'
   AND sp.deleted_at IS NULL
   AND sp.scheduled_at >= ($2 || '-01')::DATE
   AND sp.scheduled_at < (($2 || '-01')::DATE + INTERVAL '1 month')
+  AND sp.created_at > COALESCE(rb.reset_at, '-infinity'::timestamptz)
 `
 
 func (q *Queries) CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx context.Context, arg CountScheduledQuotaUnitsByWorkspaceAndPeriodParams) (int32, error) {
