@@ -113,7 +113,7 @@ const TIERS: Tier[] = [
 ];
 
 // Comparison matrix for the table further down. Columns are aligned
-// with TIERS minus Enterprise (which lives in its own footer banner).
+// with TIERS minus Enterprise (which lives in its own section below pricing cards).
 type CompareCell = string | boolean;
 type CompareRow = {
   name: string;
@@ -177,6 +177,9 @@ const CSS = `:root{--pr-bg:var(--app-bg);--pr-s1:var(--marketing-surface);--pr-s
 const MOBILE_CSS = `
 .pr-page{overflow-x:hidden}
 .pr-btn{max-width:100%}
+.pr-ent{margin-bottom:18px}
+.pr-ent-copy{flex:1;min-width:0}
+.pr-ent-desc{max-width:none}
 .pr-compare-wrap{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
 @media(max-width:680px){
   :root{--pr-px:18px}
@@ -296,6 +299,16 @@ export default function PricingPage() {
           })}
         </div>
 
+        {/* Enterprise */}
+        <div className="pr-ent">
+          <div className="pr-ent-copy">
+            <div className="pr-ent-title">Enterprise</div>
+            <div className="pr-ent-desc">Priority support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.</div>
+            <div className="pr-ent-chips">{["Capacity planning", "Platform-volume terms", "SLA and security", "Dedicated support"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
+          </div>
+          <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact sales</a>
+        </div>
+
         {/* Embedded apps */}
         <div className="pr-soft">
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><path d="M4 8h8M8 4v8" /><circle cx="8" cy="8" r="6.5" /></svg></div>
@@ -345,16 +358,6 @@ export default function PricingPage() {
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Enterprise */}
-        <div className="pr-ent">
-          <div>
-            <div className="pr-ent-title">Enterprise</div>
-            <div className="pr-ent-desc">Priority support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.</div>
-            <div className="pr-ent-chips">{["Capacity planning", "Platform-volume terms", "SLA and security", "Dedicated support"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
-          </div>
-          <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact sales</a>
         </div>
 
         {/* FAQ */}
