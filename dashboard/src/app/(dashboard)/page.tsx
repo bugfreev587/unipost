@@ -1,9 +1,33 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
+import { FolderOpen, RefreshCw } from "lucide-react";
 import { getBootstrap } from "@/lib/api";
+
+const AUTH_LOAD_TIMEOUT_MS = 4500;
+const BOOTSTRAP_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 // Dashboard root resolver. Routes the user to the project they were
 // last working on (or their auto-created Default if it's their first
@@ -19,17 +43,44 @@ import { getBootstrap } from "@/lib/api";
 export default function DashboardRootPage() {
   const router = useRouter();
   const { getToken, isLoaded, isSignedIn } = useAuth();
+  const [authTimedOut, setAuthTimedOut] = useState(false);
+  const [bootstrapTimedOut, setBootstrapTimedOut] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
+
+  useEffect(() => {
+    if (isLoaded) {
+      setAuthTimedOut(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAuthTimedOut(true);
+    }, AUTH_LOAD_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [isLoaded, retryCount]);
 
   useEffect(() => {
     if (!isLoaded) return;
-    if (!isSignedIn) return;
+
+    setAuthTimedOut(false);
+    setBootstrapTimedOut(false);
+
+    if (!isSignedIn) {
+      setAuthTimedOut(true);
+      return;
+    }
 
     let cancelled = false;
     (async () => {
       try {
-        const token = await getToken();
-        if (!token || cancelled) return;
-        const res = await getBootstrap(token);
+        const token = await withTimeout(getToken(), BOOTSTRAP_TIMEOUT_MS, "Clerk token");
+        if (cancelled) return;
+        if (!token) {
+          router.replace("/projects");
+          return;
+        }
+        const res = await withTimeout(getBootstrap(token), BOOTSTRAP_TIMEOUT_MS, "Dashboard bootstrap");
         if (cancelled) return;
         // Intent-collection redesign: onboarding is no longer a blocking
         // step. The Welcome modal on the dashboard handles intent collection
@@ -40,15 +91,57 @@ export default function DashboardRootPage() {
         } else {
           router.replace("/projects");
         }
-      } catch {
-        if (!cancelled) router.replace("/projects");
+      } catch (error) {
+        if (cancelled) return;
+        if (error instanceof Error && error.message.includes("timed out")) {
+          setBootstrapTimedOut(true);
+          return;
+        }
+        router.replace("/projects");
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [isLoaded, isSignedIn, getToken, router]);
+  }, [isLoaded, isSignedIn, getToken, router, retryCount]);
+
+  if (authTimedOut || bootstrapTimedOut) {
+    return (
+      <div
+        aria-live="polite"
+        style={{
+          maxWidth: 520,
+          border: "1px solid var(--dborder)",
+          borderRadius: 8,
+          background: "var(--surface)",
+          padding: 18,
+          color: "var(--dtext)",
+        }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 650, marginBottom: 6 }}>Dashboard is taking longer than expected</div>
+        <div style={{ color: "var(--dmuted)", fontSize: 13, lineHeight: "20px", marginBottom: 14 }}>
+          Your session is still protected, but the dashboard could not finish loading this route.
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <button
+            type="button"
+            className="dbtn"
+            onClick={() => {
+              setAuthTimedOut(false);
+              setBootstrapTimedOut(false);
+              setRetryCount((count) => count + 1);
+            }}
+          >
+            <RefreshCw style={{ width: 13, height: 13 }} /> Retry loading dashboard
+          </button>
+          <Link href="/projects" className="dbtn dbtn-primary">
+            <FolderOpen style={{ width: 13, height: 13 }} /> Open profiles
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ color: "var(--dmuted)", fontSize: 14, lineHeight: "20px" }}>Loading...</div>
