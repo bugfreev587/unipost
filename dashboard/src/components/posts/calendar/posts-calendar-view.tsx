@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight, ExternalLink, List, Loader2, Plus, Save, Sli
 import Link from "next/link";
 import { usePathname, useParams, useRouter, useSearchParams } from "next/navigation";
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -81,6 +82,7 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 const HOUR_HEIGHT = 64;
 const TIMED_EVENT_MIN_HEIGHT = 38;
+const TIMED_GROUP_VISIBLE_POST_LIMIT = 1;
 const TIMELINE_END_PADDING = 8;
 const TIMELINE_CONTENT_HEIGHT = getTimedTimelineContentHeight(
   HOUR_HEIGHT,
@@ -179,6 +181,7 @@ export function PostsCalendarView() {
   const wheelSnapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const snapTransitionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const touchStartRef = useRef<CalendarTouchState | null>(null);
+  const weekShellRef = useRef<HTMLDivElement | null>(null);
   const weekTimeScrollRef = useRef<HTMLDivElement | null>(null);
   const weekTimeGutterScrollRef = useRef<HTMLDivElement | null>(null);
   const [weekScrollbarWidth, setWeekScrollbarWidth] = useState(0);
@@ -275,6 +278,46 @@ export function PostsCalendarView() {
     return () => {
       resizeObserver.disconnect();
       window.removeEventListener("resize", updateScrollbarWidth);
+    };
+  }, [calendarMode]);
+
+  useEffect(() => {
+    if (calendarMode !== "week") return;
+    const node = weekShellRef.current;
+    if (!node) return;
+
+    const preventWeekBrowserNavigation = (event: Event) => {
+      if (!event.cancelable) return;
+
+      if (typeof globalThis.WheelEvent !== "undefined" && event instanceof globalThis.WheelEvent) {
+        const horizontalDelta = Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+          ? event.deltaX
+          : event.shiftKey
+            ? event.deltaY
+            : 0;
+        if (horizontalDelta !== 0) event.preventDefault();
+        return;
+      }
+
+      if (typeof globalThis.TouchEvent !== "undefined" && event instanceof globalThis.TouchEvent) {
+        const start = touchStartRef.current;
+        const touch = event.touches[0];
+        if (!start || start.mode !== "week" || !touch) return;
+
+        const deltaX = touch.clientX - start.startX;
+        const deltaY = touch.clientY - start.startY;
+        if (Math.abs(deltaX) > 8 && Math.abs(deltaX) > Math.abs(deltaY)) {
+          event.preventDefault();
+        }
+      }
+    };
+
+    node.addEventListener("wheel", preventWeekBrowserNavigation, { passive: false });
+    node.addEventListener("touchmove", preventWeekBrowserNavigation, { passive: false });
+
+    return () => {
+      node.removeEventListener("wheel", preventWeekBrowserNavigation);
+      node.removeEventListener("touchmove", preventWeekBrowserNavigation);
     };
   }, [calendarMode]);
 
@@ -861,6 +904,7 @@ export function PostsCalendarView() {
     }: { interactive?: boolean; attachScrollbarRef?: boolean; ariaLabel?: string } = {},
   ) => (
     <div
+      ref={interactive ? weekShellRef : null}
       className="posts-calendar-week-shell"
       aria-label={ariaLabel}
       onWheel={interactive ? handleCalendarWheel : undefined}
@@ -1227,14 +1271,23 @@ function TimedPostColumn({
   onSelectTimedOverflow: (posts: SocialPost[], target: HTMLElement) => void;
 }) {
   const postsById = new Map(posts.map((post) => [post.id, post]));
+  const postTimesById = new Map<string, number>();
   const timedGroups = getTimedPostGroups(
     posts.flatMap((post) => {
       const minute = getCalendarPostMinuteOfDay(post);
+      if (minute !== null) postTimesById.set(post.id, minute);
       return minute === null ? [] : [{ id: post.id, minuteOfDay: minute }];
     }),
   );
+  const timedLayoutInputs = timedGroups.flatMap((group) => {
+    const visiblePostIds = group.postIds.slice(0, TIMED_GROUP_VISIBLE_POST_LIMIT);
+    return visiblePostIds.flatMap((postId) => {
+      const minuteOfDay = postTimesById.get(postId);
+      return minuteOfDay === undefined ? [] : [{ id: postId, minuteOfDay }];
+    });
+  });
   const eventLayouts = getTimedEventLayouts(
-    timedGroups.map((group) => ({ id: group.id, minuteOfDay: group.minuteOfDay })),
+    timedLayoutInputs,
     HOUR_HEIGHT,
     TIMED_EVENT_MIN_HEIGHT,
   );
@@ -1242,31 +1295,43 @@ function TimedPostColumn({
   return (
     <div className={`posts-calendar-time-column ${isWeekend ? "weekend" : ""}`}>
       {timedGroups.map((group) => {
-        const post = postsById.get(group.id);
         const groupPosts = group.postIds.flatMap((postId) => {
           const groupedPost = postsById.get(postId);
           return groupedPost ? [groupedPost] : [];
         });
-        if (!post || groupPosts.length === 0) return null;
-        const layout = eventLayouts.get(group.id);
-        if (!layout) return null;
+        if (groupPosts.length === 0) return null;
+        const visibleGroupPosts = groupPosts.slice(0, TIMED_GROUP_VISIBLE_POST_LIMIT);
+        const overflowCount = Math.max(0, groupPosts.length - TIMED_GROUP_VISIBLE_POST_LIMIT);
+        const overflowLayout = visibleGroupPosts.length > 0
+          ? eventLayouts.get(visibleGroupPosts[0].id)
+          : undefined;
         return (
-          <TimedPostButton
-            key={group.id}
-            post={post}
-            profilesById={profilesById}
-            profileColors={profileColors}
-            layout={layout}
-            timezone={timezone}
-            overflowCount={Math.max(0, groupPosts.length - 1)}
-            onClick={(event) => {
-              if (groupPosts.length > 1) {
-                onSelectTimedOverflow(groupPosts, event.currentTarget);
-                return;
-              }
-              onSelectPost(post.id, event.currentTarget);
-            }}
-          />
+          <Fragment key={group.id}>
+            {visibleGroupPosts.map((post) => {
+              const layout = eventLayouts.get(post.id);
+              if (!layout) return null;
+              return (
+                <TimedPostButton
+                  key={post.id}
+                  post={post}
+                  profilesById={profilesById}
+                  profileColors={profileColors}
+                  layout={layout}
+                  timezone={timezone}
+                  hasOverflow={overflowCount > 0}
+                  onClick={(event) => onSelectPost(post.id, event.currentTarget)}
+                />
+              );
+            })}
+            {overflowCount > 0 && overflowLayout ? (
+              <TimedOverflowButton
+                groupPosts={groupPosts}
+                layout={overflowLayout}
+                overflowCount={overflowCount}
+                onClick={(event) => onSelectTimedOverflow(groupPosts, event.currentTarget)}
+              />
+            ) : null}
+          </Fragment>
         );
       })}
     </div>
@@ -1279,7 +1344,7 @@ function TimedPostButton({
   profileColors,
   layout,
   timezone,
-  overflowCount,
+  hasOverflow,
   onClick,
 }: {
   post: SocialPost;
@@ -1287,7 +1352,7 @@ function TimedPostButton({
   profileColors: Map<string, string>;
   layout: TimedCalendarEventLayout;
   timezone: string;
-  overflowCount: number;
+  hasOverflow: boolean;
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const status = getPostStatusGroup(post);
@@ -1297,11 +1362,10 @@ function TimedPostButton({
   const statusColor = getCalendarStatusColor(status);
   const time = formatPostTime(post);
   const accessibleLabel = getCalendarEventAccessibleLabel(post, meta, profile, timezone);
-  const overflowAccessibleLabel = `${overflowCount} more posts at ${time || "this time"}. ${accessibleLabel}`;
   return (
     <button
       type="button"
-      className={`posts-calendar-timed-event ${overflowCount > 0 ? "has-overflow" : ""}`}
+      className={`posts-calendar-timed-event ${hasOverflow ? "has-overflow-pill" : ""}`}
       style={{
         "--event-profile-color": color,
         "--event-status-color": statusColor,
@@ -1311,15 +1375,47 @@ function TimedPostButton({
         zIndex: layout.lane + 1,
       } as CSSProperties}
       onClick={onClick}
-      aria-label={overflowCount > 0 ? overflowAccessibleLabel : accessibleLabel}
-      title={overflowCount > 0 ? overflowAccessibleLabel : accessibleLabel}
+      aria-label={accessibleLabel}
+      title={accessibleLabel}
     >
       <span className="posts-calendar-event-rail" />
       <span className="posts-calendar-timed-content">
         <span className="posts-calendar-timed-title">{post.caption || "No title"}</span>
         <span className="posts-calendar-timed-meta">{meta.short}{time ? ` - ${time}` : ""}</span>
       </span>
-      {overflowCount > 0 ? <span className="posts-calendar-timed-count">+{overflowCount}</span> : null}
+    </button>
+  );
+}
+
+function TimedOverflowButton({
+  groupPosts,
+  layout,
+  overflowCount,
+  onClick,
+}: {
+  groupPosts: SocialPost[];
+  layout: TimedCalendarEventLayout;
+  overflowCount: number;
+  onClick: (event: MouseEvent<HTMLButtonElement>) => void;
+}) {
+  const statusColor = getOverflowStatusColor(groupPosts.slice(TIMED_GROUP_VISIBLE_POST_LIMIT));
+  const time = formatPostTime(groupPosts[TIMED_GROUP_VISIBLE_POST_LIMIT] || groupPosts[0]);
+  const label = `${overflowCount} more posts at ${time || "this hour"}`;
+  return (
+    <button
+      type="button"
+      className="posts-calendar-timed-overflow posts-calendar-more-pill"
+      style={{
+        "--event-status-color": statusColor,
+        top: `${Math.max(4, layout.top + 8)}px`,
+        right: `calc(${100 - layout.leftPercent - layout.widthPercent}% + 8px)`,
+        zIndex: layout.lane + 12,
+      } as CSSProperties}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      +{overflowCount}
     </button>
   );
 }
@@ -2585,7 +2681,7 @@ const CALENDAR_CSS = `
 .posts-calendar-more-pill{--event-status-color:#475569;align-self:flex-start;min-width:28px;height:20px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--event-status-color);color:white;text-align:center;line-height:1;padding:0 8px;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 80%,transparent)}
 .posts-calendar-more-pill:hover{background:color-mix(in srgb,var(--event-status-color) 88%,var(--dtext));color:white}
 .posts-calendar-week-shell,.posts-calendar-day-grid{--calendar-time-gutter:76px;--calendar-week-day-min:132px;--calendar-scrollbar-gutter:0px;--calendar-snap-offset:0px;--calendar-snap-duration:0ms;--calendar-week-template:repeat(9,minmax(var(--calendar-week-day-min),1fr));--calendar-week-min-width:calc(var(--calendar-week-day-min) * 7 + var(--calendar-scrollbar-gutter));flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface)}
-.posts-calendar-week-shell{overscroll-behavior:contain;overflow:hidden;touch-action:pan-y}
+.posts-calendar-week-shell{overscroll-behavior:contain;overscroll-behavior-x:contain;overflow:hidden;touch-action:pan-y}
 .posts-calendar-week-grid{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;background:var(--surface);overflow:hidden}
 .posts-calendar-week-header{flex:0 0 44px;height:44px;display:grid;grid-template-columns:var(--calendar-time-gutter) minmax(0,1fr);background:var(--surface);min-width:0}
 .posts-calendar-week-header-gutter{background:var(--surface)}
@@ -2613,12 +2709,13 @@ const CALENDAR_CSS = `
 .posts-calendar-time-column{--calendar-event-surface:var(--surface);position:relative;height:var(--calendar-timeline-height,calc(24 * var(--hour-height,64px)));background-color:var(--surface);background-image:repeating-linear-gradient(to bottom,transparent 0 calc(var(--hour-height,64px) - 1px),var(--dborder) calc(var(--hour-height,64px) - 1px) var(--hour-height,64px));overflow:hidden}
 .posts-calendar-time-column.weekend{--calendar-event-surface:var(--calendar-weekend-surface);background-color:var(--calendar-weekend-surface)}
 .posts-calendar-timed-event{--event-profile-color:#8b8b93;--event-status-color:#475569;position:absolute;min-height:var(--calendar-timed-event-min-height,38px);border:1px solid color-mix(in srgb,var(--event-profile-color) 24%,transparent);border-radius:7px;background:color-mix(in srgb,var(--event-profile-color) 17%,var(--calendar-event-surface,var(--surface)));color:var(--dtext);font:inherit;text-align:left;padding:5px 7px 5px 5px;display:grid;grid-template-columns:3px minmax(0,1fr);gap:7px;cursor:pointer;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 52%,transparent);overflow:hidden}
-.posts-calendar-timed-event.has-overflow{padding-right:32px}
+.posts-calendar-timed-event.has-overflow-pill{padding-right:48px}
 .posts-calendar-timed-event:hover{border-color:color-mix(in srgb,var(--event-profile-color) 48%,var(--dborder));background:color-mix(in srgb,var(--event-profile-color) 24%,var(--calendar-event-surface,var(--surface)))}
 .posts-calendar-timed-content{min-width:0;display:flex;flex-direction:column;gap:2px}
 .posts-calendar-timed-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;font-weight:760;line-height:1.15}
 .posts-calendar-timed-meta{font-size:11px;color:var(--event-status-color);font-weight:700;line-height:1.15;white-space:nowrap}
-.posts-calendar-timed-count{position:absolute;right:6px;top:6px;min-width:20px;height:18px;display:inline-flex;align-items:center;justify-content:center;border-radius:999px;background:var(--event-status-color);color:white;font-size:10px;font-weight:820;line-height:1;padding:0 6px;box-shadow:0 1px 0 color-mix(in srgb,var(--shadow-color) 80%,transparent)}
+.posts-calendar-timed-overflow{position:absolute;border:0;font:inherit;font-size:11px;font-weight:820;cursor:pointer}
+.posts-calendar-timed-overflow.posts-calendar-more-pill{align-self:auto;min-width:34px;height:22px}
 .posts-calendar-popover-layer{position:fixed;inset:0;background:transparent;z-index:90}
 .posts-calendar-popover{position:fixed;left:var(--popover-left);top:var(--popover-top);box-sizing:border-box;width:min(560px,calc(100vw - 24px));max-height:min(calc(100dvh - 24px),var(--popover-available-height,calc(100dvh - 24px)));background:var(--surface-raised);border:1px solid var(--dborder);border-radius:16px;box-shadow:0 24px 70px color-mix(in srgb,var(--shadow-color) 160%,transparent);transform-origin:var(--popover-transform-origin);animation:posts-calendar-popover-open .18s cubic-bezier(.16,1,.3,1);overflow:visible}
 .posts-calendar-popover-content{box-sizing:border-box;max-height:min(calc(100dvh - 26px),calc(var(--popover-available-height,calc(100dvh - 24px)) - 2px));overflow:auto;padding:16px;border-radius:inherit}

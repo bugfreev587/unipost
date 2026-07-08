@@ -52,11 +52,14 @@ test("publish workflow and daily workflow exist with safe triggers", async () =>
   assert.match(publish, /CHANGELOG_RELEASE_GITHUB_TOKEN/);
 });
 
-test("publish promotion waits for pull request checks before watching them", async () => {
+test("publish promotion polls pull request checks until they pass", async () => {
   const promote = await source("scripts/changelog-automation/promote-release.sh");
 
   assert.match(promote, /wait_for_pr_checks/);
-  assert.match(promote, /gh pr checks "\$pr_number" --watch/);
+  assert.match(promote, /--json name,bucket,state,link/);
+  assert.match(promote, /status="\$\?"/);
+  assert.match(promote, /"pending"\)/);
+  assert.match(promote, /"failed"\|"cancelled"\)/);
   assert.match(promote, /No checks reported for .* before timeout/);
-  assert.doesNotMatch(promote, /pr_number="\$\{pr_url##\/\}"\n\s+gh pr checks "\$pr_number" --watch/);
+  assert.doesNotMatch(promote, /gh pr checks "\$pr_number" --watch/);
 });

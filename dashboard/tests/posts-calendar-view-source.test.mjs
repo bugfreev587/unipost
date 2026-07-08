@@ -129,7 +129,7 @@ test("Posts calendar view keeps the requested calendar controls and drawer integ
   assert.match(source, /resolvedOptions\(\)\.timeZone/);
 });
 
-test("Posts calendar week and day views collapse same-time posts behind a more-posts popover", async () => {
+test("Posts calendar week and day views show one same-hour post plus an overflow pill", async () => {
   const source = await readFile(calendarViewPath, "utf8");
   const timedColumn = source.slice(
     source.indexOf("function TimedPostColumn"),
@@ -137,19 +137,33 @@ test("Posts calendar week and day views collapse same-time posts behind a more-p
   );
   const timedButton = source.slice(
     source.indexOf("function TimedPostButton"),
+    source.indexOf("function TimedOverflowButton"),
+  );
+  const timedOverflowButton = source.slice(
+    source.indexOf("function TimedOverflowButton"),
     source.indexOf("function DayOverflowPopover"),
   );
 
   assert.match(source, /getTimedPostGroups/);
+  assert.match(source, /TIMED_GROUP_VISIBLE_POST_LIMIT/);
+  assert.match(source, /const TIMED_GROUP_VISIBLE_POST_LIMIT = 1;/);
   assert.match(source, /timedOverflowTarget/);
   assert.match(source, /handleSelectTimedOverflow/);
   assert.match(source, /handleSelectTimedOverflowPost/);
   assert.match(source, /timedOverflowPosts/);
   assert.match(timedColumn, /const timedGroups = getTimedPostGroups/);
-  assert.match(timedColumn, /timedGroups\.map/);
-  assert.match(timedButton, /overflowCount/);
-  assert.match(timedButton, /posts-calendar-timed-count/);
-  assert.match(timedButton, /const overflowAccessibleLabel = `\$\{overflowCount\} more posts at/);
+  assert.match(timedColumn, /const visibleGroupPosts = groupPosts\.slice\(0, TIMED_GROUP_VISIBLE_POST_LIMIT\)/);
+  assert.match(timedColumn, /const overflowCount = Math\.max\(0, groupPosts\.length - TIMED_GROUP_VISIBLE_POST_LIMIT\)/);
+  assert.doesNotMatch(timedColumn, /return \[\.\.\.visibleInputs, \{ id: getTimedOverflowLayoutId/);
+  assert.match(timedColumn, /const overflowLayout = visibleGroupPosts\.length > 0\s*\? eventLayouts\.get\(visibleGroupPosts\[0\]\.id\)\s*:\s*undefined/);
+  assert.match(timedColumn, /<TimedOverflowButton/);
+  assert.match(timedColumn, /hasOverflow=\{overflowCount > 0\}/);
+  assert.match(timedColumn, /onSelectTimedOverflow\(groupPosts, event\.currentTarget\)/);
+  assert.match(timedButton, /hasOverflow/);
+  assert.doesNotMatch(timedButton, /overflowCount/);
+  assert.doesNotMatch(timedButton, /posts-calendar-timed-count/);
+  assert.match(timedOverflowButton, /className="posts-calendar-timed-overflow posts-calendar-more-pill"/);
+  assert.match(timedOverflowButton, /\+\{overflowCount\}/);
 });
 
 test("Posts calendar month view shows two posts and opens all day posts from the overflow row", async () => {
@@ -337,6 +351,28 @@ test("Posts calendar swipe handlers avoid passive listener preventDefault warnin
 
   assert.doesNotMatch(wheelHandler, /preventDefault\(/);
   assert.doesNotMatch(touchEndHandler, /preventDefault\(/);
+});
+
+test("Posts calendar week view installs non-passive swipe guards to prevent browser history navigation", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const swipeGuard = source.slice(
+    source.indexOf("const weekShellRef"),
+    source.indexOf("const currentProfileAccounts"),
+  );
+  const weekView = source.slice(
+    source.indexOf("const renderWeekView"),
+    source.indexOf("const renderDayView"),
+  );
+
+  assert.match(swipeGuard, /weekShellRef/);
+  assert.match(swipeGuard, /preventWeekBrowserNavigation/);
+  assert.match(swipeGuard, /addEventListener\("wheel", preventWeekBrowserNavigation, \{ passive: false \}\)/);
+  assert.match(swipeGuard, /addEventListener\("touchmove", preventWeekBrowserNavigation, \{ passive: false \}\)/);
+  assert.match(swipeGuard, /event\.preventDefault\(\)/);
+  assert.match(swipeGuard, /removeEventListener\("wheel", preventWeekBrowserNavigation\)/);
+  assert.match(swipeGuard, /removeEventListener\("touchmove", preventWeekBrowserNavigation\)/);
+  assert.match(weekView, /ref=\{interactive \? weekShellRef : null\}/);
+  assert.match(source, /\.posts-calendar-week-shell\{[^}]*overscroll-behavior-x:contain/);
 });
 
 test("Posts calendar edit inspector keeps fixed actions visible and profile beside the title", async () => {

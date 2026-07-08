@@ -15,6 +15,7 @@ import {
   getCalendarSnapSteps,
   getContinuousCalendarSnapOffset,
   getTimedEventLayouts,
+  getTimedPostGroups,
   getSwipeNavigationIntent,
   getTimedEventTop,
   getTimedTimelineContentHeight,
@@ -214,20 +215,17 @@ test("timed event layouts place same and nearby posts in horizontal lanes", () =
   });
 });
 
-test("timed post groups collapse same-minute posts into one visible event", async () => {
-  const model = await import("../src/components/posts/calendar/calendar-model.ts");
-
-  assert.equal(typeof model.getTimedPostGroups, "function");
-
-  const groups = model.getTimedPostGroups([
+test("timed post groups collect same-hour posts for weekly overflow", () => {
+  const groups = getTimedPostGroups([
     { id: "third", minuteOfDay: 10 * 60 + 30 },
     { id: "first", minuteOfDay: 10 * 60 + 15 },
     { id: "second", minuteOfDay: 10 * 60 + 15 },
+    { id: "next-hour", minuteOfDay: 11 * 60 },
   ]);
 
   assert.deepEqual(groups, [
-    { id: "first", minuteOfDay: 615, postIds: ["first", "second"] },
-    { id: "third", minuteOfDay: 630, postIds: ["third"] },
+    { id: "first", minuteOfDay: 615, postIds: ["first", "second", "third"] },
+    { id: "next-hour", minuteOfDay: 660, postIds: ["next-hour"] },
   ]);
 });
 
