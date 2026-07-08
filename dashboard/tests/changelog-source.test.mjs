@@ -35,11 +35,15 @@ test("changelog data keeps verified release metadata and SDK ecosystem fields", 
   assert.match(releases, /packageName:\s*"unipost"/);
   assert.match(releases, /packageName:\s*"github\.com\/unipost-dev\/sdk-go"/);
   assert.match(releases, /packageName:\s*"dev\.unipost:sdk-java"/);
-  assert.match(releases, /pip install unipost==0\.4\.0/);
-  assert.match(releases, /go get github\.com\/unipost-dev\/sdk-go@v0\.4\.0/);
-  assert.match(releases, /dev\.unipost:sdk-java:0\.4\.0/);
+  assert.match(releases, /pip install unipost==0\.5\.0/);
+  assert.match(releases, /go get github\.com\/unipost-dev\/sdk-go@v0\.5\.0/);
+  assert.match(releases, /dev\.unipost:sdk-java:0\.5\.0/);
   assert.doesNotMatch(releases, /@unipost\/sdk-js/);
   assert.match(releases, /sourceLinks/);
+  assert.match(releases, /enterprise-pricing-launch/);
+  assert.match(releases, /Enterprise pricing positioning launched/);
+  assert.match(releases, /sdk-0-5-0/);
+  assert.match(releases, /Multi-language SDKs 0\.5\.0/);
   assert.match(releases, /video-audio-overlay-api/);
   assert.match(releases, /Video \+ audio overlay API/);
   assert.match(releases, /\/docs\/api\/media\/audio-overlays/);
@@ -64,6 +68,13 @@ test("changelog page renders table, impact badges, SDK versions, and release lin
   assert.match(page, /sdkVersions/);
   assert.match(page, /sourceLinks/);
   assert.match(page, /changelogReleaseRows/);
+});
+
+test("SDK docs show the current Java SDK install version", async () => {
+  const sdkPage = await source("src/app/docs/sdk/page.tsx");
+
+  assert.match(sdkPage, /dev\.unipost:sdk-java:0\.5\.0/);
+  assert.doesNotMatch(sdkPage, /dev\.unipost:sdk-java:0\.4\.0/);
 });
 
 test("sitemap includes one canonical changelog page and no hash anchors", async () => {

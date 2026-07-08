@@ -246,7 +246,7 @@ export function getTimedPostGroups(events: TimedCalendarEventInput[]): TimedCale
 
   for (const event of sortedEvents) {
     const current = groups[groups.length - 1];
-    if (current && current.minuteOfDay === event.minuteOfDay) {
+    if (current && Math.floor(current.minuteOfDay / 60) === Math.floor(event.minuteOfDay / 60)) {
       current.postIds.push(event.id);
       continue;
     }
