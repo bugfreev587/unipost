@@ -62,6 +62,18 @@ test("admin users table links failed counts and only View opens detail", () => {
   assert.match(page, /colSpan=\{13\}/);
 });
 
+test("admin users detail panel keeps usable height for single-row result sets", () => {
+  const page = source("src/app/admin/users/page.tsx");
+
+  assert.match(
+    page,
+    /className=\{`ad-tbl-wrap ad-tbl-static au-users-table-wrap \$\{selectedUserId \? "au-users-table-wrap-detail-open" : ""\}`\}/,
+  );
+  assert.match(page, /\.au-users-table-wrap\s*\{\s*position: relative;/);
+  assert.match(page, /\.au-users-table-wrap-detail-open\s*\{\s*min-height: clamp\(420px, calc\(100dvh - 260px\), 640px\);/);
+  assert.match(page, /@media \(max-width: 860px\) \{[\s\S]*\.au-users-table-wrap-detail-open\s*\{\s*min-height: 0;/);
+});
+
 test("admin users scheduled counts open a scheduled-posts drawer", () => {
   const page = source("src/app/admin/users/page.tsx");
 

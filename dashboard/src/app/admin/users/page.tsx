@@ -317,7 +317,7 @@ export default function AdminUsersPage() {
         </select>
       </div>
 
-      <div className="ad-tbl-wrap ad-tbl-static" style={{ position: "relative" }}>
+      <div className={`ad-tbl-wrap ad-tbl-static au-users-table-wrap ${selectedUserId ? "au-users-table-wrap-detail-open" : ""}`}>
         <table>
           <thead>
             <tr>
@@ -715,6 +715,12 @@ const usersCss = `
 .au-chart-body {
   height: 230px;
 }
+.au-users-table-wrap {
+  position: relative;
+}
+.au-users-table-wrap-detail-open {
+  min-height: clamp(420px, calc(100dvh - 260px), 640px);
+}
 .au-scheduled-link {
   appearance: none;
   background: transparent;
@@ -939,6 +945,11 @@ const usersCss = `
 @media (max-width: 1120px) {
   .au-signup-grid {
     grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 860px) {
+  .au-users-table-wrap-detail-open {
+    min-height: 0;
   }
 }
 `;
