@@ -13,18 +13,19 @@ import { PublicSiteHeader } from "@/components/marketing/nav";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const START_BUILDING_URL = `${APP_URL}/welcome`;
+const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
+const HOMEPAGE_DESCRIPTION =
+  "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
 
 export const metadata: Metadata = {
-  title: "UniPost | Unified Social Media Posting API for Developers",
-  description:
-    "UniPost is a unified social media posting API for developers building customer account connection, media uploads, scheduling, webhooks, analytics, inbox, and delivery across nine social platforms.",
+  title: HOMEPAGE_TITLE,
+  description: HOMEPAGE_DESCRIPTION,
   alternates: {
     canonical: "https://unipost.dev/",
   },
   openGraph: {
-    title: "UniPost | Unified Social Media Posting API for Developers",
-    description:
-      "Build social publishing into your product with one API for account connection, media uploads, scheduling, webhooks, analytics, inbox, and delivery across nine social platforms.",
+    title: HOMEPAGE_TITLE,
+    description: HOMEPAGE_DESCRIPTION,
     url: "https://unipost.dev/",
     siteName: "UniPost",
     type: "website",
