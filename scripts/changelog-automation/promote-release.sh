@@ -34,16 +34,51 @@ wait_for_pr_checks() {
   local pr_number="$1"
   local label="$2"
   local output
+  local status
+  local state
 
   for _ in $(seq 1 60); do
-    if output="$(gh pr checks "$pr_number" 2>&1)"; then
-      if [ -n "$output" ]; then
-        return 0
-      fi
-    elif ! printf "%s" "$output" | grep -qi "no checks"; then
+    set +e
+    output="$(gh pr checks "$pr_number" --json name,bucket,state,link --jq '
+      if length == 0 then "none"
+      elif any(.[]; .bucket == "fail") then "failed"
+      elif any(.[]; .bucket == "cancel") then "cancelled"
+      elif any(.[]; .bucket == "pending") then "pending"
+      else "passed"
+      end
+    ' 2>&1)"
+    status="$?"
+    set -e
+
+    if [ "$status" -eq 0 ] || [ "$status" -eq 8 ]; then
+      state="$(printf "%s" "$output" | tail -n 1)"
+      case "$state" in
+        "passed")
+          echo "$label PR #$pr_number checks passed"
+          return 0
+          ;;
+        "pending")
+          echo "$label PR #$pr_number checks pending"
+          ;;
+        "none")
+          ;;
+        "failed"|"cancelled")
+          echo "$label PR #$pr_number checks $state"
+          gh pr checks "$pr_number" || true
+          exit 1
+          ;;
+        *)
+          echo "$output"
+          exit 1
+          ;;
+      esac
+    elif printf "%s" "$output" | grep -qi "no checks"; then
+      :
+    else
       echo "$output"
       exit 1
     fi
+
     sleep 10
   done
 
@@ -62,7 +97,6 @@ open_and_merge_pr() {
   pr_url="$(gh pr create --base "$base" --head "$head" --title "$title" --body "$body")"
   pr_number="${pr_url##*/}"
   wait_for_pr_checks "$pr_number" "$label"
-  gh pr checks "$pr_number" --watch
   gh pr merge "$pr_number" --squash
   wait_for_pr_merged "$pr_number" "$label"
 }

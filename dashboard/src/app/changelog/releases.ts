@@ -47,6 +47,81 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "enterprise-pricing-launch",
+    date: "2026-07-06",
+    displayDate: "July 6, 2026",
+    title: "Enterprise pricing positioning launched",
+    summary:
+      "Enterprise pricing is now available with dedicated positioning and documentation for teams that need platform support, higher limits, and custom contracts.",
+    category: "platform",
+    impact: "new",
+    isBreaking: false,
+    links: [
+      { label: "Pricing", href: "/pricing" },
+      { label: "Pricing docs", href: "/docs/pricing" },
+    ],
+    sourceLinks: [
+      { label: "Enterprise positioning", href: "https://github.com/bugfreev587/unipost/commit/81fcd68b9d6747e1f5e8b9c9a270f01cf57a0c6f" },
+      { label: "Pricing docs", href: "https://github.com/bugfreev587/unipost/commit/0bb851fa739fdf1f4b7852b838161860d8148096" },
+      { label: "Launch follow-up", href: "https://github.com/bugfreev587/unipost/commit/07024d91ff29ed2d36ffe53ba955ff6cbdcd3dc3" },
+    ],
+  },
+  {
+    id: "sdk-0-5-0",
+    date: "2026-07-04",
+    displayDate: "July 4, 2026",
+    title: "Multi-language SDKs 0.5.0",
+    summary:
+      "The official JavaScript, Python, Go, and Java SDKs reached 0.5.0 across public registries, adding the media and audio-overlay client coverage used by the latest publishing workflows.",
+    category: "sdk",
+    impact: "improved",
+    isBreaking: false,
+    sdkVersions: [
+      {
+        ecosystem: "npm",
+        packageName: "@unipost/sdk",
+        version: "0.5.0",
+        href: "https://www.npmjs.com/package/@unipost/sdk/v/0.5.0",
+        installCommand: "npm install @unipost/sdk@0.5.0",
+      },
+      {
+        ecosystem: "pip",
+        packageName: "unipost",
+        version: "0.5.0",
+        href: "https://pypi.org/project/unipost/0.5.0/",
+        installCommand: "pip install unipost==0.5.0",
+      },
+      {
+        ecosystem: "go",
+        packageName: "github.com/unipost-dev/sdk-go",
+        version: "0.5.0",
+        href: "https://pkg.go.dev/github.com/unipost-dev/sdk-go@v0.5.0",
+        installCommand: "go get github.com/unipost-dev/sdk-go@v0.5.0",
+      },
+      {
+        ecosystem: "maven",
+        packageName: "dev.unipost:sdk-java",
+        version: "0.5.0",
+        href: "https://repo1.maven.org/maven2/dev/unipost/sdk-java/0.5.0/",
+        installCommand: 'implementation("dev.unipost:sdk-java:0.5.0")',
+      },
+    ],
+    links: [
+      { label: "SDK docs", href: "/docs/sdk" },
+      { label: "Video + audio overlay guide", href: "/docs/guides/video-audio-overlay" },
+      { label: "npm package", href: "https://www.npmjs.com/package/@unipost/sdk/v/0.5.0" },
+      { label: "PyPI package", href: "https://pypi.org/project/unipost/0.5.0/" },
+      { label: "Go package", href: "https://pkg.go.dev/github.com/unipost-dev/sdk-go@v0.5.0" },
+      { label: "Maven artifact", href: "https://repo1.maven.org/maven2/dev/unipost/sdk-java/0.5.0/" },
+    ],
+    sourceLinks: [
+      { label: "npm version", href: "https://www.npmjs.com/package/@unipost/sdk/v/0.5.0" },
+      { label: "PyPI release", href: "https://pypi.org/project/unipost/0.5.0/" },
+      { label: "Go module tag", href: "https://github.com/unipost-dev/sdk-go/tree/v0.5.0" },
+      { label: "Maven Central", href: "https://repo1.maven.org/maven2/dev/unipost/sdk-java/0.5.0/" },
+    ],
+  },
+  {
     id: "video-audio-overlay-api",
     date: "2026-07-04",
     displayDate: "July 4, 2026",
