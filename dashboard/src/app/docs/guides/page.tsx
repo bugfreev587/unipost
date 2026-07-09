@@ -10,6 +10,10 @@ export default function GuidesIndexPage() {
       className="docs-page-wide"
     >
       <div className="docs-grid">
+        <Link href="/docs/guides/instagram-stories" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Instagram Stories</div>
+          <p>Publish a single Instagram Story with the strict platform_posts[] shape and avoid feed-post fallback.</p>
+        </Link>
         <Link href="/docs/guides/video-audio-overlay" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Video + audio overlay</div>
           <p>Upload a user's video and audio, generate a combined video, then publish the processed output.</p>
@@ -40,7 +44,12 @@ export default function GuidesIndexPage() {
 
       <h2 id="start-with-publishing">Start with publishing workflows</h2>
       <p>
-        If a user brings their own video and audio files, start with{" "}
+        If a user wants an Instagram Story rather than a normal feed post, start with{" "}
+        <Link href="/docs/guides/instagram-stories">Instagram Stories</Link>. It shows the strict request shape,
+        validation behavior, and common error codes for story publishing.
+      </p>
+      <p>
+        If a user brings their own video and audio files, use{" "}
         <Link href="/docs/guides/video-audio-overlay">Video + audio overlay</Link>. It shows how the upload, processing,
         and publish APIs fit together from the user's point of view.
       </p>

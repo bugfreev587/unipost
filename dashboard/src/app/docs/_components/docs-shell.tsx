@@ -405,6 +405,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Publishing Guides",
       items: [
+        { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
         { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
         { label: "Publishing guide", href: "/docs/publishing" },
         { label: "Connect Sessions", href: "/docs/connect-sessions" },

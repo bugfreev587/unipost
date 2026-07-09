@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ApiInlineLink, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -161,6 +162,11 @@ const ERROR_FIELDS: ApiFieldItem[] = [
     name: "error.next_action?",
     type: "string",
     description: 'Stable action enum. Request-shape validation errors use "fix_request".',
+  },
+  {
+    name: "error.is_retriable?",
+    type: "boolean",
+    description: "Whether the same request should be retried without changing the payload. Request-shape errors are false.",
   },
   {
     name: "error.docs_url?",
@@ -394,9 +400,28 @@ export default function ValidatePage() {
       responseSnippets={RESPONSE_SNIPPETS}
     >
       <section className="api-field-section">
+        <h2 className="api-field-section-title">Status Code Boundary</h2>
+        <p>
+          <code>POST /v1/posts/validate</code> separates request-shape errors from publishability checks. A request that
+          follows the API contract returns <code>200</code>; read <code>data.valid</code>, <code>data.errors</code>, and{" "}
+          <code>data.warnings</code> to decide whether the content can be published.
+        </p>
+        <p>
+          UniPost returns <code>422</code> when the JSON request is outside the API contract, including mixed legacy and
+          new publishing shapes. For example, <code>platform_posts[].platform_options.instagram</code> is invalid because
+          the recommended <code>platform_posts[]</code> shape expects flat destination options.
+        </p>
+      </section>
+      <section className="api-field-section">
         <h2 className="api-field-section-title">Platform Options Shape</h2>
         <p>
           Use one request shape at a time. The legacy <code>account_ids</code> shape accepts top-level platform-scoped options such as <code>platform_options.instagram.mediaType</code>. The recommended <code>platform_posts[]</code> shape is already scoped to one destination, so each <code>platform_posts[].platform_options</code> object must be flat, such as <code>{'{"mediaType":"story"}'}</code>.
+        </p>
+        <p>
+          For Instagram Stories in the recommended shape, send <code>{'{"mediaType":"story"}'}</code> directly under{" "}
+          <code>platform_posts[].platform_options</code>. Do not send <code>{'{"instagram":{"mediaType":"story"}}'}</code>{" "}
+          there; that nested object is only valid in the legacy top-level <code>platform_options</code> shape. See{" "}
+          <Link href="/docs/guides/instagram-stories">Publish Instagram Stories</Link> for examples.
         </p>
       </section>
     </SingleEndpointReferencePage>
