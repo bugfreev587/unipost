@@ -703,7 +703,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	parsed, status, msg := parsePublishRequest(body)
 	if status != 0 {
-		writeError(w, status, "VALIDATION_ERROR", msg)
+		writePublishRequestValidationError(w, status, msg)
 		return
 	}
 	applyIdempotencyKeyHeaderFallback(&parsed, r.Header.Get("Idempotency-Key"))
@@ -2127,7 +2127,7 @@ func writeValidationErrors(w http.ResponseWriter, errs []platform.Issue) {
 			Hint:           "Fix the listed validation issues and retry.",
 			NextAction:     "fix_request",
 			IsRetriable:    &isRetriable,
-			DocsURL:        "https://unipost.dev/docs/api/posts/validate",
+			DocsURL:        postValidateDocsURL,
 			Issues:         errs,
 		},
 		RequestID: requestIDFromResponse(w),

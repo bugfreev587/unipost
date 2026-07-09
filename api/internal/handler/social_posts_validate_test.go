@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
@@ -50,6 +52,74 @@ func TestParsedRequestResolveLegacyPlatformOptions(t *testing.T) {
 	}
 	if tiktokOpts["title"] != nil {
 		t.Fatalf("tiktok options should not include YouTube title: %#v", tiktokOpts)
+	}
+}
+
+func TestParsePublishRequestRejectsPlatformScopedOptionsInPlatformPosts(t *testing.T) {
+	body := publishRequestBody{
+		PlatformPosts: []platformPostBody{
+			{
+				AccountID: "acc_instagram",
+				Caption:   "story",
+				PlatformOptions: map[string]any{
+					"instagram": map[string]any{"mediaType": "story"},
+				},
+			},
+		},
+	}
+
+	_, status, msg := parsePublishRequest(body)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("parse status = %d, want 422", status)
+	}
+	if !strings.Contains(msg, "platform_posts[0].platform_options.instagram") ||
+		!strings.Contains(msg, "new platform_posts shape") ||
+		!strings.Contains(msg, "flat") {
+		t.Fatalf("parse message = %q, want field-specific strict-format guidance", msg)
+	}
+}
+
+func TestParsePublishRequestRejectsTopLevelPlatformOptionsWithPlatformPosts(t *testing.T) {
+	body := publishRequestBody{
+		PlatformOptions: map[string]map[string]any{
+			"instagram": {"mediaType": "story"},
+		},
+		PlatformPosts: []platformPostBody{
+			{
+				AccountID: "acc_instagram",
+				Caption:   "story",
+			},
+		},
+	}
+
+	_, status, msg := parsePublishRequest(body)
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("parse status = %d, want 422", status)
+	}
+	if !strings.Contains(msg, "top-level platform_options") || !strings.Contains(msg, "platform_posts[].platform_options") {
+		t.Fatalf("parse message = %q, want top-level platform_options guidance", msg)
+	}
+}
+
+func TestParsePublishRequestAllowsFlatPlatformOptionsInPlatformPosts(t *testing.T) {
+	body := publishRequestBody{
+		PlatformPosts: []platformPostBody{
+			{
+				AccountID: "acc_instagram",
+				Caption:   "story",
+				PlatformOptions: map[string]any{
+					"mediaType": "story",
+				},
+			},
+		},
+	}
+
+	parsed, status, msg := parsePublishRequest(body)
+	if status != 0 {
+		t.Fatalf("parse status = %d, msg = %q", status, msg)
+	}
+	if len(parsed.Posts) != 1 || parsed.Posts[0].PlatformOptions["mediaType"] != "story" {
+		t.Fatalf("parsed posts = %#v, want flat mediaType option preserved", parsed.Posts)
 	}
 }
 
