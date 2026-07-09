@@ -500,7 +500,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     requirements: [
       ["media_urls or media_ids", "Required", "1 image, 1 video, or 2-10 carousel items", "Media is required. Use `media_urls` for hosted assets, or upload local files with `POST /v1/media` and wait until the media row is `uploaded` before publishing with `media_ids`."],
       ["caption", "Optional", "2,200 chars", "Commonly sent with media"],
-      ["platform_options.instagram.mediaType", "Optional", "feed / reels / story", "Defaults to `feed`. Use it to force Reels or Story behavior and trigger Instagram-specific preflight validation."],
+      ["platform_options.mediaType", "Optional", "feed / reels / story", "Defaults to `feed`. In the recommended `platform_posts[]` shape, set this as a flat destination option. Legacy `account_ids` requests use top-level `platform_options.instagram.mediaType`."],
       ["first_comment", "Optional", "text", "Supported after publish"],
       ["reels", "Exactly 1 video", "Required", "Reels do not accept images or carousels"],
       ["story", "Exactly 1 media item", "Required", "Stories accept one image or one video"],
@@ -535,7 +535,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       },
       {
         surface: "Reels",
-        description: "Short-form vertical video. UniPost targets this surface when `platform_options.instagram.mediaType = \"reels\"`.",
+        description: "Short-form vertical video. UniPost targets this surface when `platform_options.mediaType = \"reels\"` in the recommended platform_posts[] shape.",
         text: [
           ["Caption", "2,200 chars"],
         ],
@@ -593,7 +593,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       },
     ],
     options: [
-      ["platform_options.instagram.mediaType", "feed / reels / story", "Selects which Instagram publish surface UniPost should target."],
+      ["platform_options.mediaType", "feed / reels / story", "Selects which Instagram publish surface UniPost should target in the recommended platform_posts[] shape."],
     ],
     analytics: [
       ["Reach", yes, "Supported"],
@@ -642,13 +642,17 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
 }`,
       },
       {
-        title: "Story",
+        title: "Story (recommended platform_posts)",
         body: `{
-  "account_ids": ["sa_instagram_1"],
-  "media_urls": ["https://cdn.example.com/story.jpg"],
-  "platform_options": {
-    "instagram": { "mediaType": "story" }
-  }
+  "platform_posts": [
+    {
+      "account_id": "sa_instagram_1",
+      "media_urls": ["https://cdn.example.com/story.jpg"],
+      "platform_options": {
+        "mediaType": "story"
+      }
+    }
+  ]
 }`,
       },
       {
