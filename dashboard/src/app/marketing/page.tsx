@@ -13,7 +13,7 @@ import { PublicSiteHeader } from "@/components/marketing/nav";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const START_BUILDING_URL = `${APP_URL}/welcome`;
-const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
+const HOMEPAGE_TITLE = "Rewrite homepage title and meta description for query relevance";
 const HOMEPAGE_DESCRIPTION =
   "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
 
