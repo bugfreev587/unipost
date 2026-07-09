@@ -108,7 +108,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].platform_options?",
     type: "object",
-    description: "Platform-specific options such as Instagram media type or YouTube metadata.",
+    description: "Flat destination options for this platform post, such as { \"mediaType\": \"story\" } for Instagram. Do not nest by platform name inside platform_posts; { \"instagram\": { \"mediaType\": \"story\" } } is only valid in the legacy account_ids shape.",
   },
 ];
 

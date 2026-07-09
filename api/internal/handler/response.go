@@ -66,6 +66,7 @@ type ErrorDetails struct {
 
 const (
 	apiErrorsDocsURL        = "https://unipost.dev/docs/api/errors"
+	postValidateDocsURL     = "https://unipost.dev/docs/api/posts/validate"
 	internalErrorMessage    = "UniPost could not complete the request because of an internal error."
 	upstreamErrorMessage    = "A downstream service could not complete the request."
 	internalErrorHint       = "Retry the request. If it continues, contact support with the request_id."
@@ -211,6 +212,16 @@ func writeSuccessWithLegacyCursor(w http.ResponseWriter, data any, nextCursor st
 
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeErrorWithDetails(w, status, code, message, ErrorDetails{})
+}
+
+func writePublishRequestValidationError(w http.ResponseWriter, status int, message string) {
+	isRetriable := false
+	writeErrorWithDetails(w, status, "VALIDATION_ERROR", message, ErrorDetails{
+		Hint:        "Use either the legacy account_ids shape or the new platform_posts shape exactly as documented, then retry.",
+		NextAction:  "fix_request",
+		IsRetriable: &isRetriable,
+		DocsURL:     postValidateDocsURL,
+	})
 }
 
 func writeErrorWithDetails(w http.ResponseWriter, status int, code, message string, details ErrorDetails) {

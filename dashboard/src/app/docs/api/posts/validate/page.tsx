@@ -59,7 +59,7 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].platform_options?",
     type: "object",
-    description: "Platform-specific options such as Instagram media type or Pinterest board selection.",
+    description: "Flat destination options for this platform post, such as { \"mediaType\": \"story\" } for Instagram. Do not nest these by platform name inside platform_posts; { \"instagram\": { \"mediaType\": \"story\" } } is legacy-only syntax.",
   },
 ];
 
@@ -151,6 +151,21 @@ const ERROR_FIELDS: ApiFieldItem[] = [
     name: "error.message",
     type: "string",
     description: "Human-readable error message.",
+  },
+  {
+    name: "error.hint?",
+    type: "string",
+    description: "Remediation guidance for request-shape errors.",
+  },
+  {
+    name: "error.next_action?",
+    type: "string",
+    description: 'Stable action enum. Request-shape validation errors use "fix_request".',
+  },
+  {
+    name: "error.docs_url?",
+    type: "string",
+    description: "API reference URL for correcting the request.",
   },
   {
     name: "error.issues?",
@@ -345,7 +360,11 @@ const RESPONSE_SNIPPETS = [
   "error": {
     "code": "VALIDATION_ERROR",
     "normalized_code": "validation_error",
-    "message": "either platform_posts or account_ids is required"
+    "message": "platform_posts[0].platform_options.instagram uses legacy platform-scoped options inside the new platform_posts shape. In platform_posts, platform_options must be flat, for example {\"mediaType\":\"story\"}; use top-level account_ids with platform_options.instagram only for the legacy shape.",
+    "hint": "Use either the legacy account_ids shape or the new platform_posts shape exactly as documented, then retry.",
+    "next_action": "fix_request",
+    "is_retriable": false,
+    "docs_url": "https://unipost.dev/docs/api/posts/validate"
   },
   "request_id": "req_123"
 }`,
@@ -373,6 +392,13 @@ export default function ValidatePage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
-    />
+    >
+      <section className="api-field-section">
+        <h2 className="api-field-section-title">Platform Options Shape</h2>
+        <p>
+          Use one request shape at a time. The legacy <code>account_ids</code> shape accepts top-level platform-scoped options such as <code>platform_options.instagram.mediaType</code>. The recommended <code>platform_posts[]</code> shape is already scoped to one destination, so each <code>platform_posts[].platform_options</code> object must be flat, such as <code>{'{"mediaType":"story"}'}</code>.
+        </p>
+      </section>
+    </SingleEndpointReferencePage>
   );
 }
