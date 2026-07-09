@@ -13,9 +13,9 @@ import { PublicSiteHeader } from "@/components/marketing/nav";
 
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
 const START_BUILDING_URL = `${APP_URL}/welcome`;
-const HOMEPAGE_TITLE = "Rewrite homepage title and meta description for query relevance";
+const HOMEPAGE_TITLE = "Unipost";
 const HOMEPAGE_DESCRIPTION =
-  "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
+  "Unipost helps you publish and manage posts across your channels from one place. Learn what Unipost offers and get started.";
 
 export const metadata: Metadata = {
   title: HOMEPAGE_TITLE,
