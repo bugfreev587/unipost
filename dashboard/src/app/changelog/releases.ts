@@ -47,6 +47,21 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "admin-storage-metrics",
+    date: "2026-07-07",
+    displayDate: "July 7, 2026",
+    title: "Admin object storage metrics",
+    summary: "Added object storage metrics display in admin panel with relative time formatting for future dates.",
+    category: "dashboard",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 06efd39", href: "https://github.com/bugfreev587/unipost/commit/06efd39f2cc9bd9c92b757f7f670a8cfa98eed68" },
+    { label: "Commit 1c10b60", href: "https://github.com/bugfreev587/unipost/commit/1c10b60736af5184b24edc66885777a4f2e72a7b" },
+  ],
+  },
+  {
     id: "enterprise-pricing-launch",
     date: "2026-07-06",
     displayDate: "July 6, 2026",
