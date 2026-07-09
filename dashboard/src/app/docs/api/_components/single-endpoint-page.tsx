@@ -63,7 +63,16 @@ const ENDPOINT_GUIDE_LINKS: Array<{
     path: /^\/v1\/posts$/,
     guides: [
       { label: "Publishing guide", href: "/docs/publishing" },
+      { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
       { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
+    ],
+  },
+  {
+    method: "POST",
+    path: /^\/v1\/posts\/validate$/,
+    guides: [
+      { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
+      { label: "Publishing guide", href: "/docs/publishing" },
     ],
   },
   {
