@@ -47,6 +47,24 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "calendar-overflow-fixes",
+    date: "2026-07-07",
+    displayDate: "July 7, 2026",
+    title: "Calendar overflow and display improvements",
+    summary: "Fixed post overflow handling in month, week, and weekly calendar views with improved styling and swipe interactions.",
+    category: "dashboard",
+    impact: "fixed",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit e3703fe", href: "https://github.com/bugfreev587/unipost/commit/e3703fe7be0144792e1abf9534763fc3fb1ed4c5" },
+    { label: "Commit 1fb692b", href: "https://github.com/bugfreev587/unipost/commit/1fb692b67b4292b70046254894d77c2136239555" },
+    { label: "Commit 345297d", href: "https://github.com/bugfreev587/unipost/commit/345297d884926ed2216c784d87237489fa4c156f" },
+    { label: "Commit 010170b", href: "https://github.com/bugfreev587/unipost/commit/010170b4b60b5d16c49a86bc48f952aeeba207c4" },
+    { label: "Commit 23524a6", href: "https://github.com/bugfreev587/unipost/commit/23524a66843333cf244db18847b85b51cfa9a449" },
+  ],
+  },
+  {
     id: "admin-storage-metrics",
     date: "2026-07-07",
     displayDate: "July 7, 2026",
