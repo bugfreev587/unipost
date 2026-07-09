@@ -118,6 +118,28 @@ func clonePlatformOptions(in map[string]any) map[string]any {
 	return out
 }
 
+var platformScopedOptionKeys = map[string]struct{}{
+	"bluesky":   {},
+	"facebook":  {},
+	"instagram": {},
+	"linkedin":  {},
+	"pinterest": {},
+	"threads":   {},
+	"tiktok":    {},
+	"twitter":   {},
+	"youtube":   {},
+}
+
+func firstPlatformScopedOptionKey(opts map[string]any) string {
+	for key := range opts {
+		normalized := strings.ToLower(strings.TrimSpace(key))
+		if _, ok := platformScopedOptionKeys[normalized]; ok {
+			return key
+		}
+	}
+	return ""
+}
+
 func summarizePublishRequest(body publishRequestBody, parsed parsedRequest) map[string]any {
 	return map[string]any{
 		"legacy_account_count": len(body.AccountIDs),
@@ -176,11 +198,19 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 	}
 
 	if hasNew {
+		if len(body.PlatformOptions) > 0 {
+			return parsedRequest{}, http.StatusUnprocessableEntity,
+				"top-level platform_options belongs to the legacy account_ids request shape. When using platform_posts, move destination options into platform_posts[].platform_options as a flat object."
+		}
 		pr.Posts = make([]platform.PlatformPostInput, 0, len(body.PlatformPosts))
 		for i, pp := range body.PlatformPosts {
 			if pp.ScheduledAt != nil && *pp.ScheduledAt != "" {
 				return parsedRequest{}, http.StatusUnprocessableEntity,
 					fmt.Sprintf("platform_posts[%d].scheduled_at is not supported in v1; use the top-level scheduled_at", i)
+			}
+			if key := firstPlatformScopedOptionKey(pp.PlatformOptions); key != "" {
+				return parsedRequest{}, http.StatusUnprocessableEntity,
+					fmt.Sprintf("platform_posts[%d].platform_options.%s uses legacy platform-scoped options inside the new platform_posts shape. In platform_posts, platform_options must be flat, for example {\"mediaType\":\"story\"}; use top-level account_ids with platform_options.%s only for the legacy shape.", i, key, strings.ToLower(strings.TrimSpace(key)))
 			}
 			pr.Posts = append(pr.Posts, platform.PlatformPostInput{
 				AccountID:       pp.AccountID,
@@ -439,7 +469,7 @@ func (h *SocialPostHandler) Validate(w http.ResponseWriter, r *http.Request) {
 
 	parsed, status, msg := parsePublishRequest(body)
 	if status != 0 {
-		writeError(w, status, "VALIDATION_ERROR", msg)
+		writePublishRequestValidationError(w, status, msg)
 		return
 	}
 

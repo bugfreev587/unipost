@@ -267,6 +267,51 @@ func TestWriteErrorWithDetailsContract(t *testing.T) {
 	}
 }
 
+func TestWritePublishRequestValidationErrorIncludesDocsURL(t *testing.T) {
+	rr := httptest.NewRecorder()
+	rr.Header().Set("X-Request-Id", "req_publish_shape")
+
+	writePublishRequestValidationError(rr, http.StatusUnprocessableEntity, "bad platform_options shape")
+
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("writePublishRequestValidationError status = %d, want 422", rr.Code)
+	}
+
+	var got struct {
+		Error struct {
+			Code           string `json:"code"`
+			NormalizedCode string `json:"normalized_code"`
+			Message        string `json:"message"`
+			Hint           string `json:"hint"`
+			NextAction     string `json:"next_action"`
+			IsRetriable    *bool  `json:"is_retriable"`
+			DocsURL        string `json:"docs_url"`
+		} `json:"error"`
+		RequestID string `json:"request_id"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Error.Code != "VALIDATION_ERROR" || got.Error.NormalizedCode != "validation_error" {
+		t.Fatalf("error identifiers = %#v, want validation error contract", got.Error)
+	}
+	if got.Error.Message != "bad platform_options shape" {
+		t.Fatalf("message = %q, want parser message", got.Error.Message)
+	}
+	if got.Error.Hint == "" || got.Error.NextAction != "fix_request" {
+		t.Fatalf("remediation = hint:%q next_action:%q, want fix_request", got.Error.Hint, got.Error.NextAction)
+	}
+	if got.Error.IsRetriable == nil || *got.Error.IsRetriable {
+		t.Fatalf("is_retriable = %#v, want explicit false", got.Error.IsRetriable)
+	}
+	if got.Error.DocsURL != "https://unipost.dev/docs/api/posts/validate" {
+		t.Fatalf("docs_url = %q, want validate docs URL", got.Error.DocsURL)
+	}
+	if got.RequestID != "req_publish_shape" {
+		t.Fatalf("request_id = %q, want req_publish_shape", got.RequestID)
+	}
+}
+
 func TestWriteErrorSanitizesInternalServerDetails(t *testing.T) {
 	rr := httptest.NewRecorder()
 	rr.Header().Set("X-Request-Id", "req_internal")
