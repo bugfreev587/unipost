@@ -54,6 +54,30 @@ func TestAdminPostsSQLSupportsFailedResultFiltering(t *testing.T) {
 	}
 }
 
+func TestAdminPostsSQLIncludesAllPublishedDurationSeconds(t *testing.T) {
+	source, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		"DurationSeconds      *int64",
+		"`json:\"duration_seconds,omitempty\"`",
+		"COUNT(spr.id) > 0",
+		"COUNT(*) FILTER (WHERE spr.status = 'published' AND spr.published_at IS NOT NULL) = COUNT(spr.id)",
+		"MAX(spr.published_at) >= COALESCE(sp.scheduled_at, sp.created_at)",
+		"EXTRACT(EPOCH FROM (MAX(spr.published_at) - COALESCE(sp.scheduled_at, sp.created_at)))",
+		"AS duration_seconds",
+		"&durationSeconds",
+		"item.DurationSeconds = durationSeconds",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("admin post duration contract missing %q", want)
+		}
+	}
+}
+
 func TestAdminPostsPageExposesPartialAndFailedAttemptFilters(t *testing.T) {
 	pageSource, err := os.ReadFile("../../../dashboard/src/app/admin/posts/page.tsx")
 	if err != nil {

@@ -56,6 +56,23 @@ func TestPostDeliveryJobPhaseTimestampQueryContract(t *testing.T) {
 	}
 }
 
+func TestPostDeliveryJobSuccessUsesCapturedFinishedAt(t *testing.T) {
+	source, err := os.ReadFile("post_delivery_jobs.sql.go")
+	if err != nil {
+		t.Fatalf("read generated post delivery jobs: %v", err)
+	}
+	body := string(source)
+
+	for _, want := range []string{
+		"finished_at = $1",
+		"FinishedAt    pgtype.Timestamptz",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("successful completion timestamp contract missing %q", want)
+		}
+	}
+}
+
 func TestPostDeliveryJobFairClaimQueryContract(t *testing.T) {
 	source, err := os.ReadFile("post_delivery_jobs.sql.go")
 	if err != nil {

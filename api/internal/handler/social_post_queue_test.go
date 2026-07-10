@@ -52,6 +52,20 @@ func TestWorkerPublishingEventSourceIsWorker(t *testing.T) {
 	}
 }
 
+func TestMarkDeliveryJobSucceededParamsUsesCapturedFinishedAt(t *testing.T) {
+	finishedAt := time.Date(2026, 7, 10, 18, 30, 0, 125000000, time.UTC)
+	job := db.PostDeliveryJob{
+		ID:            "job_1",
+		LeaseOwner:    pgtype.Text{String: "worker_1", Valid: true},
+		LastAttemptAt: pgtype.Timestamptz{Time: finishedAt.Add(-time.Minute), Valid: true},
+	}
+
+	params := markDeliveryJobSucceededParams(job, finishedAt)
+	if !params.FinishedAt.Valid || !params.FinishedAt.Time.Equal(finishedAt) {
+		t.Fatalf("finished_at = %#v, want %s", params.FinishedAt, finishedAt)
+	}
+}
+
 func TestResolvePublishingEventSourcePreservesExplicitSource(t *testing.T) {
 	got := resolvePublishingEventSource(context.Background(), integrationlogs.Event{
 		Source: integrationlogs.SourceWorker,
@@ -735,9 +749,11 @@ func (f *retryAfterPublishedDB) QueryRow(_ context.Context, query string, args .
 	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
 		return socialPostResultScanRow(f.result) // already published
 	case strings.Contains(query, "-- name: MarkPostDeliveryJobSucceeded"):
-		f.markedSucceededID = args[0].(string)
+		finishedAt := args[0].(pgtype.Timestamptz)
+		f.markedSucceededID = args[1].(string)
 		succeeded := f.job
 		succeeded.State = "succeeded"
+		succeeded.FinishedAt = finishedAt
 		return postDeliveryJobScanRow(succeeded)
 	default:
 		f.reachedPublishPath = true
@@ -862,9 +878,11 @@ func (f *stalePublishedResultDB) QueryRow(_ context.Context, query string, args 
 	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
 		return socialPostResultScanRow(f.result)
 	case strings.Contains(query, "-- name: MarkPostDeliveryJobSucceeded"):
-		f.markedSucceededID = args[0].(string)
+		finishedAt := args[0].(pgtype.Timestamptz)
+		f.markedSucceededID = args[1].(string)
 		succeeded := f.staleJob
 		succeeded.State = "succeeded"
+		succeeded.FinishedAt = finishedAt
 		return postDeliveryJobScanRow(succeeded)
 	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
 		f.createdRetryJob = true

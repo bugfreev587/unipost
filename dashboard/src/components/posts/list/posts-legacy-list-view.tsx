@@ -19,6 +19,7 @@ import {
   consumeStoredQuickstartSelectedAccountId,
 } from "@/components/tutorials/quickstart-selection-storage";
 import { describePostResultFailure } from "@/lib/post-result-errors";
+import { TimeMetricsPanel } from "./time-metrics-panel";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 
@@ -167,6 +168,24 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-submitted-row{display:contents}
 .posts-submitted-row dt{font-size:11.5px;color:var(--dmuted2);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
 .posts-submitted-row dd{font-size:13px;color:var(--dtext);margin:0;word-break:break-word;white-space:pre-wrap;line-height:1.55}
+.posts-time-metrics-panel{border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);overflow:hidden}
+.posts-time-metrics-toggle{justify-content:flex-start}
+.posts-time-metrics-total{margin-left:auto;padding:3px 7px;border-radius:999px;background:color-mix(in srgb,var(--daccent) 12%,var(--surface2));color:var(--daccent);font-size:11px;letter-spacing:0;text-transform:none}
+.posts-time-metrics-body{border-top:1px solid var(--dborder);padding:12px}
+.posts-time-metrics-notice{margin-bottom:10px;padding:8px 10px;border:1px solid var(--dborder);border-radius:8px;background:var(--surface2);color:var(--dmuted);font-size:12px;line-height:1.5}
+.posts-time-metrics-summary{display:grid;grid-template-columns:minmax(0,1.4fr) repeat(2,minmax(0,1fr));gap:10px;margin-bottom:14px}
+.posts-time-metrics-summary>div{border-left:2px solid color-mix(in srgb,var(--daccent) 34%,var(--dborder));padding-left:9px;min-width:0}
+.posts-time-metrics-summary span{display:block;margin-bottom:3px;color:var(--dmuted2);font-size:10px;font-weight:650;letter-spacing:.07em;text-transform:uppercase}
+.posts-time-metrics-summary strong{display:block;color:var(--dtext);font-family:var(--font-geist-mono),monospace;font-size:12px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.posts-time-metrics-timeline{position:relative;display:flex;flex-direction:column}
+.posts-time-metrics-timeline::before{content:"";position:absolute;top:12px;bottom:12px;left:4px;width:1px;background:var(--dborder)}
+.posts-time-metrics-event{position:relative;display:grid;grid-template-columns:10px minmax(0,1fr) max-content;gap:9px;align-items:center;min-height:38px}
+.posts-time-metrics-dot{position:relative;z-index:1;width:7px;height:7px;border:2px solid var(--surface1);border-radius:999px;background:var(--dmuted2);box-shadow:0 0 0 1px var(--dmuted2)}
+.posts-time-metrics-event.is-final .posts-time-metrics-dot{background:var(--success);box-shadow:0 0 0 1px var(--success)}
+.posts-time-metrics-event-copy{display:flex;flex-direction:column;gap:2px;min-width:0}
+.posts-time-metrics-event-label{color:var(--dtext);font-size:11.5px;font-weight:650}
+.posts-time-metrics-event-time{overflow:hidden;color:var(--dmuted2);font-family:var(--font-geist-mono),monospace;font-size:10.5px;text-overflow:ellipsis;white-space:nowrap}
+.posts-time-metrics-gap{padding:3px 6px;border-radius:6px;background:var(--surface2);color:var(--dmuted);font-family:var(--font-geist-mono),monospace;font-size:10.5px;white-space:nowrap}
 .posts-queue-panel{border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);margin-top:10px}
 .posts-queue-body{border-top:1px solid var(--dborder);padding:11px 12px}
 .posts-queue-grid{display:grid;grid-template-columns:max-content 1fr;gap:6px 14px;margin:0}
@@ -203,7 +222,7 @@ const CSS = `.dbadge-gray{background:color-mix(in srgb,var(--surface2) 82%,white
 .posts-dialog-input:focus{border-color:var(--daccent)}
 .posts-dialog-error{margin:-6px 0 16px;font-size:12.5px;color:var(--danger);line-height:1.55}
 .posts-dialog-actions{display:flex;justify-content:flex-end;gap:10px}
-@media (max-width: 900px){.posts-expand-cell{padding:14px 16px}.posts-results-grid{grid-template-columns:1fr}}
+@media (max-width: 900px){.posts-expand-cell{padding:14px 16px}.posts-results-grid{grid-template-columns:1fr}.posts-time-metrics-summary{grid-template-columns:1fr}.posts-time-metrics-event{grid-template-columns:10px minmax(0,1fr)}}
 `;
 
 type ConfirmAction =
@@ -902,16 +921,13 @@ function PostResultsGrid({
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const results = post.results || [];
+  const shouldLoadQueue = results.length > 0;
+  const resultQueueSignature = results
+    .map((result) => `${result.id || result.social_account_id}:${result.status}:${result.published_at || ""}`)
+    .join("|");
 
   useEffect(() => {
     let cancelled = false;
-    const shouldLoadQueue =
-      post.status === "queued" ||
-      post.status === "dispatching" ||
-      post.status === "retrying" ||
-      post.status === "failed" ||
-      post.status === "partial" ||
-      results.some((result) => result.status === "processing" || result.status === "failed");
     if (!shouldLoadQueue) {
       setJobs(null);
       setJobsError(null);
@@ -947,7 +963,8 @@ function PostResultsGrid({
     post.queued_results_count,
     post.retrying_count,
     post.dead_count,
-    results,
+    shouldLoadQueue,
+    resultQueueSignature,
   ]);
 
   if (results.length === 0) {
@@ -1104,6 +1121,7 @@ function PostResultCard({
           ) : null}
           {result.debug_curl ? <DebugCurlPanel curl={result.debug_curl} /> : null}
           <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} />
+          <TimeMetricsPanel post={post} result={result} jobs={jobs} loading={jobsLoading} error={jobsError} />
           {result.submitted ? (
             <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
           ) : null}
@@ -1118,6 +1136,7 @@ function PostResultCard({
             <FacebookProcessingPanel publishStatus={result.publish_status} />
           ) : null}
           <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} />
+          <TimeMetricsPanel post={post} result={result} jobs={jobs} loading={jobsLoading} error={jobsError} />
           {result.submitted ? (
             <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} />
           ) : null}

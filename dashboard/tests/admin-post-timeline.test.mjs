@@ -16,7 +16,7 @@ async function loadTimelineModule() {
   return import(dataUrl);
 }
 
-const { getAdminPostPublishTimeline } = await loadTimelineModule();
+const { getAdminPostPublishTimeline, formatAdminDurationSeconds } = await loadTimelineModule();
 
 test("scheduled admin posts use their scheduled publish time", () => {
   assert.deepEqual(
@@ -49,4 +49,12 @@ test("admin posts without a publish timeline render no value", () => {
     }),
     null,
   );
+});
+
+test("admin duration renders integer seconds and rejects invalid values", () => {
+  assert.equal(formatAdminDurationSeconds(98), "98 s");
+  assert.equal(formatAdminDurationSeconds(0), "0 s");
+  assert.equal(formatAdminDurationSeconds(undefined), "—");
+  assert.equal(formatAdminDurationSeconds(-1), "—");
+  assert.equal(formatAdminDurationSeconds(Number.NaN), "—");
 });
