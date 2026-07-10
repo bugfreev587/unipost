@@ -3792,6 +3792,12 @@ export interface AdminObjectStorageRun {
   error_summary: string;
 }
 
+export interface AdminObjectStorageDailyActivity {
+  date: string;
+  confirmed_bytes: number;
+  deleted_bytes: number;
+}
+
 export interface AdminObjectStorageResponse {
   period: {
     key: AdminObjectStoragePeriod;
@@ -3806,6 +3812,7 @@ export interface AdminObjectStorageResponse {
   content_types: AdminObjectStorageBreakdownRow[];
   status_breakdown: AdminObjectStorageBreakdownRow[];
   recent_runs: AdminObjectStorageRun[];
+  daily_activity: AdminObjectStorageDailyActivity[];
 }
 
 export interface APIMetricsQueryParams {

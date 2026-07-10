@@ -201,6 +201,7 @@ func TestMediaCleanupRunsMigrationAndQueriesExist(t *testing.T) {
 		"-- name: GetAdminObjectStorageReferencedObjects :one",
 		"-- name: GetAdminObjectStorageNextCleanupDeadline :one",
 		"-- name: GetAdminObjectStoragePeriodCleanupRuns :one",
+		"-- name: ListAdminObjectStorageDailyActivity :many",
 		"-- name: GetAdminObjectStorageRunningSummary :one",
 		"-- name: ListAdminObjectStorageRecentRuns :many",
 		"-- name: GetAdminObjectStorageContentTypes :many",

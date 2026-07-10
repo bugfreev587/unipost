@@ -100,6 +100,39 @@ FROM media_cleanup_runs
 WHERE finished_at >= $1
   AND finished_at < $2;
 
+-- name: ListAdminObjectStorageDailyActivity :many
+WITH confirmed AS (
+  SELECT
+    (uploaded_at AT TIME ZONE 'UTC')::date AS day,
+    COALESCE(SUM(size_bytes), 0)::bigint AS confirmed_bytes,
+    0::bigint AS deleted_bytes
+  FROM media
+  WHERE status = 'uploaded'
+    AND uploaded_at >= sqlc.arg(period_from)::timestamptz
+    AND uploaded_at < sqlc.arg(period_to)::timestamptz
+  GROUP BY 1
+), deleted AS (
+  SELECT
+    (finished_at AT TIME ZONE 'UTC')::date AS day,
+    0::bigint AS confirmed_bytes,
+    COALESCE(SUM(deleted_bytes), 0)::bigint AS deleted_bytes
+  FROM media_cleanup_runs
+  WHERE finished_at >= sqlc.arg(period_from)::timestamptz
+    AND finished_at < sqlc.arg(period_to)::timestamptz
+  GROUP BY 1
+)
+SELECT
+  day,
+  SUM(confirmed_bytes)::bigint AS confirmed_bytes,
+  SUM(deleted_bytes)::bigint AS deleted_bytes
+FROM (
+  SELECT * FROM confirmed
+  UNION ALL
+  SELECT * FROM deleted
+) activity
+GROUP BY day
+ORDER BY day ASC;
+
 -- name: GetAdminObjectStorageRunningSummary :one
 SELECT
   MIN(started_at) FILTER (WHERE started_at >= $1)::timestamptz AS active_run_started_at,
