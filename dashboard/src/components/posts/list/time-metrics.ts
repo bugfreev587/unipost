@@ -91,9 +91,7 @@ export function buildTimeMetricPhases(
       if (previousMs !== null && currentMs >= previousMs) {
         durationFromPreviousMs = currentMs - previousMs;
       }
-      if (previousMs === null || currentMs >= previousMs) {
-        previousMs = currentMs;
-      }
+      previousMs = currentMs;
     }
     return { ...phase, durationFromPreviousMs };
   });

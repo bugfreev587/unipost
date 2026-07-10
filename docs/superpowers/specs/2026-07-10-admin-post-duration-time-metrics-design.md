@@ -1,7 +1,7 @@
 # Admin Post Duration and Time Metrics Design
 
-**Date:** 2026-07-10  
-**Branch:** `dev-admin-post-duration-metrics`  
+**Date:** 2026-07-10
+**Branch:** `dev-admin-post-duration-metrics`
 **Status:** Approved for implementation
 
 ## Goal

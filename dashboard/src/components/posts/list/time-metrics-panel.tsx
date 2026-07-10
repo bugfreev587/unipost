@@ -20,11 +20,14 @@ type TimeMetricsPanelProps = {
   error: string | null;
 };
 
+const JOB_TIMING_PHASES = new Set(["queued", "claimed", "platform_started", "finished"]);
+
 export function TimeMetricsPanel({ post, result, jobs, loading, error }: TimeMetricsPanelProps) {
   const [open, setOpen] = useState(false);
   const totalMs = getPlatformPostTotalDurationMs(post, result);
   const phases = buildTimeMetricPhases(post, result, jobs);
   const retryCount = getRetryCount(jobs);
+  const jobTimingUnavailable = Boolean(error);
 
   return (
     <div className="posts-time-metrics-panel" style={{ marginTop: 10 }}>
@@ -59,23 +62,28 @@ export function TimeMetricsPanel({ post, result, jobs, loading, error }: TimeMet
             </div>
             <div>
               <span>Retry count</span>
-              <strong>{retryCount}</strong>
+              <strong>{error ? "Unavailable" : retryCount}</strong>
             </div>
           </div>
 
           <div className="posts-time-metrics-timeline">
-            {phases.map((phase) => (
-              <div key={phase.key} className={`posts-time-metrics-event${phase.key === "published" ? " is-final" : ""}`}>
-                <span className="posts-time-metrics-dot" aria-hidden="true" />
-                <div className="posts-time-metrics-event-copy">
-                  <span className="posts-time-metrics-event-label">{phase.label}</span>
-                  <span className="posts-time-metrics-event-time">{formatTimeMetricTimestamp(phase.at)}</span>
+            {phases.map((phase) => {
+              const unavailable = jobTimingUnavailable && JOB_TIMING_PHASES.has(phase.key);
+              return (
+                <div key={phase.key} className={`posts-time-metrics-event${phase.key === "published" ? " is-final" : ""}`}>
+                  <span className="posts-time-metrics-dot" aria-hidden="true" />
+                  <div className="posts-time-metrics-event-copy">
+                    <span className="posts-time-metrics-event-label">{phase.label}</span>
+                    <span className="posts-time-metrics-event-time">
+                      {unavailable ? "Unavailable" : formatTimeMetricTimestamp(phase.at)}
+                    </span>
+                  </div>
+                  <span className="posts-time-metrics-gap">
+                    {unavailable ? "—" : formatTimeMetricDuration(phase.durationFromPreviousMs)}
+                  </span>
                 </div>
-                <span className="posts-time-metrics-gap">
-                  {formatTimeMetricDuration(phase.durationFromPreviousMs)}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : null}

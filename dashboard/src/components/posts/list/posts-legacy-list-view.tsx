@@ -921,10 +921,13 @@ function PostResultsGrid({
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
   const results = post.results || [];
+  const shouldLoadQueue = results.length > 0;
+  const resultQueueSignature = results
+    .map((result) => `${result.id || result.social_account_id}:${result.status}:${result.published_at || ""}`)
+    .join("|");
 
   useEffect(() => {
     let cancelled = false;
-    const shouldLoadQueue = results.length > 0;
     if (!shouldLoadQueue) {
       setJobs(null);
       setJobsError(null);
@@ -960,7 +963,8 @@ function PostResultsGrid({
     post.queued_results_count,
     post.retrying_count,
     post.dead_count,
-    results,
+    shouldLoadQueue,
+    resultQueueSignature,
   ]);
 
   if (results.length === 0) {

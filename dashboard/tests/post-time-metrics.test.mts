@@ -116,6 +116,7 @@ test("missing phases stay visible and negative gaps are never rendered", () => {
   assert.equal(phases.find((phase) => phase.key === "claimed")?.at, null);
   assert.equal(phases.find((phase) => phase.key === "platform_started")?.at, null);
   assert.equal(phases.find((phase) => phase.key === "queued")?.durationFromPreviousMs, null);
+  assert.equal(phases.find((phase) => phase.key === "finished")?.durationFromPreviousMs, 59_000);
   assert.equal(formatTimeMetricTimestamp(null), "Not recorded");
 });
 

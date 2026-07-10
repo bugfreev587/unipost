@@ -26,4 +26,15 @@ test("every platform result renders Time Metrics immediately above Submitted Set
 
 test("expanded published tasks load queue timing data", () => {
   assert.match(list, /const shouldLoadQueue = results\.length > 0/);
+  assert.match(list, /const resultQueueSignature = results/);
+  assert.match(list, /resultQueueSignature,/);
+  assert.doesNotMatch(list, /\n\s+results,\n\s+\]\);/);
+});
+
+test("queue failures do not report retry or job timing as recorded zeroes", () => {
+  assert.ok(existsSync(panelPath), "Time Metrics panel component should exist");
+  const panel = readFileSync(panelPath, "utf8");
+
+  assert.match(panel, /error \? "Unavailable" : retryCount/);
+  assert.match(panel, /jobTimingUnavailable/);
 });
