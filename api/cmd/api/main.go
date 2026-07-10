@@ -446,7 +446,7 @@ func main() {
 	}
 
 	if processMode == processModePostDeliveryWorker {
-		waitForProcessShutdown("post delivery worker", workerCancel)
+		waitForProcessShutdown("post delivery worker", workerCancel, port)
 		return
 	}
 
@@ -1135,14 +1135,39 @@ func shouldStartPostDeliveryWorkers(mode string) bool {
 	return !strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY"), "true")
 }
 
-func waitForProcessShutdown(name string, cancel context.CancelFunc) {
+func newWorkerHealthHandler() http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","version":"0.1.0"}`))
+	})
+	return mux
+}
+
+func waitForProcessShutdown(name string, cancel context.CancelFunc, port string) {
 	slog.Info(name + " process started")
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: newWorkerHealthHandler(),
+	}
+	go func() {
+		slog.Info(name+" health server starting", "port", port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error(name+" health server failed", "error", err)
+		}
+	}()
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	slog.Info("shutting down " + name + " process")
 	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error(name+" health server shutdown failed", "error", err)
+	}
 	slog.Info(name + " process stopped")
 }
 

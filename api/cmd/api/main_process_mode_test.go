@@ -1,6 +1,9 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/xiaoboyu/unipost-api/internal/worker"
@@ -75,5 +78,26 @@ func TestProcessModeCanDisableAPIDeliveryWorkersAfterDedicatedWorkerIsEnabled(t 
 	t.Setenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY", "true")
 	if shouldStartPostDeliveryWorkers(processModeAPI) {
 		t.Fatal("api mode should stop post delivery workers when the dedicated worker disable switch is set")
+	}
+}
+
+func TestWorkerHealthHandlerOnlyExposesHealth(t *testing.T) {
+	handler := newWorkerHealthHandler()
+
+	healthReq := httptest.NewRequest(http.MethodGet, "/health", nil)
+	healthResp := httptest.NewRecorder()
+	handler.ServeHTTP(healthResp, healthReq)
+	if healthResp.Code != http.StatusOK {
+		t.Fatalf("/health status = %d, want 200", healthResp.Code)
+	}
+	if !strings.Contains(healthResp.Body.String(), `"status":"ok"`) {
+		t.Fatalf("/health body = %q, want status ok", healthResp.Body.String())
+	}
+
+	apiReq := httptest.NewRequest(http.MethodGet, "/v1/me", nil)
+	apiResp := httptest.NewRecorder()
+	handler.ServeHTTP(apiResp, apiReq)
+	if apiResp.Code != http.StatusNotFound {
+		t.Fatalf("/v1/me status = %d, want 404 from worker-only health handler", apiResp.Code)
 	}
 }
