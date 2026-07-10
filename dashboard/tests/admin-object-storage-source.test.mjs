@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import test from "node:test";
 
@@ -43,6 +43,29 @@ test("admin object storage API client uses the shared admin endpoint", () => {
   assert.match(api, /stale_running_runs/);
 });
 
+test("admin object storage API client exposes daily confirmed and deleted sizes", () => {
+  const api = source("src/lib/api.ts");
+
+  assert.match(api, /export interface AdminObjectStorageDailyActivity/);
+  assert.match(api, /date: string/);
+  assert.match(api, /confirmed_bytes: number/);
+  assert.match(api, /deleted_bytes: number/);
+  assert.match(api, /daily_activity: AdminObjectStorageDailyActivity\[\]/);
+});
+
+test("object storage daily chart exposes paired accessible bars", () => {
+  const chartPath = "src/app/admin/object-storage/object-storage-daily-chart.tsx";
+  assert.ok(existsSync(resolve(chartPath)), "daily chart component should exist");
+
+  const chart = source(chartPath);
+  assert.match(chart, /Confirm size/);
+  assert.match(chart, /DELETE size/);
+  assert.match(chart, /aria-label/);
+  assert.match(chart, /No Confirm or DELETE activity in this period/);
+  assert.match(chart, /aos-chart-confirm/);
+  assert.match(chart, /aos-chart-delete/);
+});
+
 test("admin object storage page exposes PRD periods and labels", () => {
   const page = source("src/app/admin/object-storage/page.tsx");
 
@@ -68,4 +91,9 @@ test("admin object storage page exposes PRD periods and labels", () => {
   assert.match(page, /getAdminObjectStorage/);
   assert.match(page, /AdminShell title="Object Storage"/);
   assert.match(page, /fmtBytes/);
+  assert.match(page, /import \{ ObjectStorageDailyChart \} from "\.\/object-storage-daily-chart"/);
+  assert.match(page, /Daily storage movement/);
+  assert.match(page, /rows=\{data\?\.daily_activity \?\? \[\]\}/);
+  assert.match(page, /#ef4444/);
+  assert.match(page, /#22c55e/);
 });

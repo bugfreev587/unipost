@@ -28,6 +28,7 @@ type adminObjectStorageStore interface {
 	GetAdminObjectStorageReferencedObjects(context.Context) (int64, error)
 	GetAdminObjectStorageNextCleanupDeadline(context.Context) (pgtype.Timestamptz, error)
 	GetAdminObjectStoragePeriodCleanupRuns(context.Context, db.GetAdminObjectStoragePeriodCleanupRunsParams) (db.GetAdminObjectStoragePeriodCleanupRunsRow, error)
+	ListAdminObjectStorageDailyActivity(context.Context, db.ListAdminObjectStorageDailyActivityParams) ([]db.ListAdminObjectStorageDailyActivityRow, error)
 	GetAdminObjectStorageRunningSummary(context.Context, db.GetAdminObjectStorageRunningSummaryParams) (db.GetAdminObjectStorageRunningSummaryRow, error)
 	ListAdminObjectStorageRecentRuns(context.Context, int32) ([]db.MediaCleanupRun, error)
 	GetAdminObjectStorageContentTypes(context.Context, int32) ([]db.GetAdminObjectStorageContentTypesRow, error)
@@ -67,6 +68,7 @@ type adminObjectStorageResponse struct {
 	ContentTypes    []adminObjectStorageContentTypeResponse     `json:"content_types"`
 	StatusBreakdown []adminObjectStorageStatusBreakdownResponse `json:"status_breakdown"`
 	RecentRuns      []adminObjectStorageRunResponse             `json:"recent_runs"`
+	DailyActivity   []adminObjectStorageDailyActivityResponse   `json:"daily_activity"`
 }
 
 type adminObjectStorageCurrentResponse struct {
@@ -139,6 +141,12 @@ type adminObjectStorageRunResponse struct {
 	ErrorSummary   string  `json:"error_summary"`
 }
 
+type adminObjectStorageDailyActivityResponse struct {
+	Date           string `json:"date"`
+	ConfirmedBytes int64  `json:"confirmed_bytes"`
+	DeletedBytes   int64  `json:"deleted_bytes"`
+}
+
 func (h *AdminObjectStorageHandler) Get(w http.ResponseWriter, r *http.Request) {
 	period, err := parseAdminObjectStoragePeriod(r.URL.Query().Get("period"), h.now())
 	if err != nil {
@@ -182,6 +190,14 @@ func (h *AdminObjectStorageHandler) Get(w http.ResponseWriter, r *http.Request) 
 	})
 	if err != nil {
 		h.writeQueryError(w, "period cleanup runs", err)
+		return
+	}
+	dailyActivity, err := h.store.ListAdminObjectStorageDailyActivity(r.Context(), db.ListAdminObjectStorageDailyActivityParams{
+		PeriodFrom: from,
+		PeriodTo:   to,
+	})
+	if err != nil {
+		h.writeQueryError(w, "daily activity", err)
 		return
 	}
 	runningSummary, err := h.store.GetAdminObjectStorageRunningSummary(r.Context(), db.GetAdminObjectStorageRunningSummaryParams{
@@ -251,6 +267,7 @@ func (h *AdminObjectStorageHandler) Get(w http.ResponseWriter, r *http.Request) 
 		ContentTypes:    adminObjectStorageContentTypes(contentTypes),
 		StatusBreakdown: adminObjectStorageStatusBreakdown(statusBreakdown),
 		RecentRuns:      adminObjectStorageRuns(recentRuns),
+		DailyActivity:   adminObjectStorageDailyActivity(dailyActivity, period.From, period.To),
 	})
 }
 
@@ -340,6 +357,35 @@ func adminObjectStorageRuns(rows []db.MediaCleanupRun) []adminObjectStorageRunRe
 			FailedObjects:  row.FailedObjects,
 			ErrorSummary:   errorSummary,
 		})
+	}
+	return out
+}
+
+func adminObjectStorageDailyActivity(rows []db.ListAdminObjectStorageDailyActivityRow, from, to time.Time) []adminObjectStorageDailyActivityResponse {
+	totals := make(map[string]adminObjectStorageDailyActivityResponse, len(rows))
+	for _, row := range rows {
+		if !row.Day.Valid {
+			continue
+		}
+		key := row.Day.Time.UTC().Format("2006-01-02")
+		totals[key] = adminObjectStorageDailyActivityResponse{
+			Date:           key,
+			ConfirmedBytes: row.ConfirmedBytes,
+			DeletedBytes:   row.DeletedBytes,
+		}
+	}
+
+	start := time.Date(from.UTC().Year(), from.UTC().Month(), from.UTC().Day(), 0, 0, 0, 0, time.UTC)
+	inclusiveEnd := to.UTC().Add(-time.Nanosecond)
+	end := time.Date(inclusiveEnd.Year(), inclusiveEnd.Month(), inclusiveEnd.Day(), 0, 0, 0, 0, time.UTC)
+	out := make([]adminObjectStorageDailyActivityResponse, 0, int(end.Sub(start).Hours()/24)+1)
+	for day := start; !day.After(end); day = day.AddDate(0, 0, 1) {
+		key := day.Format("2006-01-02")
+		if row, ok := totals[key]; ok {
+			out = append(out, row)
+			continue
+		}
+		out = append(out, adminObjectStorageDailyActivityResponse{Date: key})
 	}
 	return out
 }

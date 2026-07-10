@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,8 @@ import (
 type PostDispatchWorker struct {
 	queries     *db.Queries
 	postHandler *handler.SocialPostHandler
+	config      PostDeliveryWorkerConfig
+	executor    *postDeliveryExecutor
 }
 
 const staleDeliveryAttemptTimeout = 5 * time.Minute
@@ -52,14 +56,14 @@ func leaseOwnerArg() pgtype.Text {
 type leaseHeartbeat struct {
 	cancel    context.CancelFunc
 	mu        sync.Mutex
-	remaining map[string]bool
+	remaining map[string]db.PostDeliveryJob
 }
 
 func startLeaseHeartbeat(ctx context.Context, queries *db.Queries, jobs []db.PostDeliveryJob) *leaseHeartbeat {
 	hbCtx, cancel := context.WithCancel(ctx)
-	hb := &leaseHeartbeat{cancel: cancel, remaining: make(map[string]bool, len(jobs))}
+	hb := &leaseHeartbeat{cancel: cancel, remaining: make(map[string]db.PostDeliveryJob, len(jobs))}
 	for _, j := range jobs {
-		hb.remaining[j.ID] = true
+		hb.remaining[j.ID] = j
 	}
 	go func() {
 		ticker := time.NewTicker(leaseRenewInterval)
@@ -70,17 +74,19 @@ func startLeaseHeartbeat(ctx context.Context, queries *db.Queries, jobs []db.Pos
 				return
 			case <-ticker.C:
 				hb.mu.Lock()
-				ids := make([]string, 0, len(hb.remaining))
-				for id := range hb.remaining {
-					ids = append(ids, id)
+				jobs := make([]db.PostDeliveryJob, 0, len(hb.remaining))
+				for _, job := range hb.remaining {
+					jobs = append(jobs, job)
 				}
 				hb.mu.Unlock()
-				for _, id := range ids {
+				for _, job := range jobs {
 					if err := queries.RenewPostDeliveryJobLease(hbCtx, db.RenewPostDeliveryJobLeaseParams{
-						ID:           id,
-						LeaseSeconds: leaseSecondsArg(),
+						ID:            job.ID,
+						LeaseSeconds:  leaseSecondsArg(),
+						LeaseOwner:    job.LeaseOwner,
+						LastAttemptAt: job.LastAttemptAt,
 					}); err != nil {
-						slog.Warn("delivery lease renew failed", "job_id", id, "error", err)
+						slog.Warn("delivery lease renew failed", "job_id", job.ID, "error", err)
 					}
 				}
 			}
@@ -117,14 +123,34 @@ const claimBatchLimit = 20
 const workspaceConcurrentDispatchCap = 30
 
 func NewPostDispatchWorker(queries *db.Queries, postHandler *handler.SocialPostHandler) *PostDispatchWorker {
-	return &PostDispatchWorker{queries: queries, postHandler: postHandler}
+	return NewPostDispatchWorkerWithConfig(queries, postHandler, DefaultPostDeliveryWorkerConfigFromEnv())
+}
+
+func NewPostDispatchWorkerWithConfig(queries *db.Queries, postHandler *handler.SocialPostHandler, config PostDeliveryWorkerConfig) *PostDispatchWorker {
+	config = normalizePostDeliveryWorkerConfig(config)
+	executor := NewPostDeliveryExecutor(queries, postHandler, config)
+	return NewPostDispatchWorkerWithExecutor(queries, postHandler, config, executor)
+}
+
+func NewPostDispatchWorkerWithExecutor(queries *db.Queries, postHandler *handler.SocialPostHandler, config PostDeliveryWorkerConfig, executor *postDeliveryExecutor) *PostDispatchWorker {
+	config = normalizePostDeliveryWorkerConfig(config)
+	return &PostDispatchWorker{
+		queries:     queries,
+		postHandler: postHandler,
+		config:      config,
+		executor:    executor,
+	}
 }
 
 func (w *PostDispatchWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
-	slog.Info("post dispatch worker started")
+	slog.Info("post dispatch worker started",
+		"claim_batch_limit", w.config.ClaimBatchLimit,
+		"workspace_concurrent_cap", w.config.WorkspaceConcurrentCap,
+		"global_concurrency", w.config.GlobalConcurrency,
+		"platform_concurrency_caps", w.config.PlatformConcurrencyCaps)
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,36 +166,75 @@ func (w *PostDispatchWorker) runOnce(ctx context.Context) {
 	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
 		slog.Error("post dispatch worker: stale recovery failed", "error", err)
 	}
+	claimLimit := w.executor.reserveSlots(w.config.ClaimBatchLimit)
+	if claimLimit <= 0 {
+		return
+	}
 	jobs, err := w.queries.ClaimPostDispatchJobs(ctx, db.ClaimPostDispatchJobsParams{
-		BatchLimit:             claimBatchLimit,
-		WorkspaceConcurrentCap: workspaceConcurrentDispatchCap,
+		BatchLimit:             claimLimit,
+		WorkspaceConcurrentCap: w.config.WorkspaceConcurrentCap,
 		LeaseSeconds:           leaseSecondsArg(),
 		LeaseOwner:             leaseOwnerArg(),
 	})
 	if err != nil {
+		w.executor.releaseReservedSlots(int(claimLimit))
 		slog.Error("post dispatch worker: claim failed", "error", err)
 		return
 	}
 	if len(jobs) == 0 {
+		w.executor.releaseReservedSlots(int(claimLimit))
 		return
 	}
-	processClaimedPostDeliveryJobs(ctx, w.queries, w.postHandler, jobs, "post dispatch worker")
+	if unused := int(claimLimit) - len(jobs); unused > 0 {
+		w.executor.releaseReservedSlots(unused)
+	}
+	w.executor.submitReserved(ctx, jobs)
+	slog.Info("post dispatch worker: claimed jobs",
+		"claim_batch_size", len(jobs),
+		"active_worker_slots", w.executor.activeSlots(),
+		"reserved_worker_slots", w.executor.reservedSlotsCount(),
+		"jobs_waiting_inside_worker", w.executor.waitingSlots(),
+		"free_worker_slots", w.executor.freeGlobalSlots(),
+		"per_platform_active", w.executor.platformActiveCounts(),
+		"per_workspace_active", w.executor.workspaceActiveCounts())
 }
 
 type PostRetryWorker struct {
 	queries     *db.Queries
 	postHandler *handler.SocialPostHandler
+	config      PostDeliveryWorkerConfig
+	executor    *postDeliveryExecutor
 }
 
 func NewPostRetryWorker(queries *db.Queries, postHandler *handler.SocialPostHandler) *PostRetryWorker {
-	return &PostRetryWorker{queries: queries, postHandler: postHandler}
+	return NewPostRetryWorkerWithConfig(queries, postHandler, DefaultPostDeliveryWorkerConfigFromEnv())
+}
+
+func NewPostRetryWorkerWithConfig(queries *db.Queries, postHandler *handler.SocialPostHandler, config PostDeliveryWorkerConfig) *PostRetryWorker {
+	config = normalizePostDeliveryWorkerConfig(config)
+	executor := NewPostDeliveryExecutor(queries, postHandler, config)
+	return NewPostRetryWorkerWithExecutor(queries, postHandler, config, executor)
+}
+
+func NewPostRetryWorkerWithExecutor(queries *db.Queries, postHandler *handler.SocialPostHandler, config PostDeliveryWorkerConfig, executor *postDeliveryExecutor) *PostRetryWorker {
+	config = normalizePostDeliveryWorkerConfig(config)
+	return &PostRetryWorker{
+		queries:     queries,
+		postHandler: postHandler,
+		config:      config,
+		executor:    executor,
+	}
 }
 
 func (w *PostRetryWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
-	slog.Info("post retry worker started")
+	slog.Info("post retry worker started",
+		"claim_batch_limit", w.config.ClaimBatchLimit,
+		"workspace_concurrent_cap", w.config.WorkspaceConcurrentCap,
+		"global_concurrency", w.config.GlobalConcurrency,
+		"platform_concurrency_caps", w.config.PlatformConcurrencyCaps)
 	for {
 		select {
 		case <-ctx.Done():
@@ -185,38 +250,277 @@ func (w *PostRetryWorker) runOnce(ctx context.Context) {
 	if err := w.postHandler.RecoverStaleDeliveryJobs(ctx, staleDeliveryAttemptTimeout); err != nil {
 		slog.Error("post retry worker: stale recovery failed", "error", err)
 	}
+	claimLimit := w.executor.reserveSlots(w.config.ClaimBatchLimit)
+	if claimLimit <= 0 {
+		return
+	}
 	jobs, err := w.queries.ClaimPostRetryJobs(ctx, db.ClaimPostRetryJobsParams{
-		BatchLimit:             claimBatchLimit,
-		WorkspaceConcurrentCap: workspaceConcurrentDispatchCap,
+		BatchLimit:             claimLimit,
+		WorkspaceConcurrentCap: w.config.WorkspaceConcurrentCap,
 		LeaseSeconds:           leaseSecondsArg(),
 		LeaseOwner:             leaseOwnerArg(),
 	})
 	if err != nil {
+		w.executor.releaseReservedSlots(int(claimLimit))
 		slog.Error("post retry worker: claim failed", "error", err)
 		return
 	}
 	if len(jobs) == 0 {
+		w.executor.releaseReservedSlots(int(claimLimit))
 		return
 	}
-	processClaimedPostDeliveryJobs(ctx, w.queries, w.postHandler, jobs, "post retry worker")
+	if unused := int(claimLimit) - len(jobs); unused > 0 {
+		w.executor.releaseReservedSlots(unused)
+	}
+	w.executor.submitReserved(ctx, jobs)
+	slog.Info("post retry worker: claimed jobs",
+		"claim_batch_size", len(jobs),
+		"active_worker_slots", w.executor.activeSlots(),
+		"reserved_worker_slots", w.executor.reservedSlotsCount(),
+		"jobs_waiting_inside_worker", w.executor.waitingSlots(),
+		"free_worker_slots", w.executor.freeGlobalSlots(),
+		"per_platform_active", w.executor.platformActiveCounts(),
+		"per_workspace_active", w.executor.workspaceActiveCounts())
 }
 
-func processClaimedPostDeliveryJobs(ctx context.Context, queries *db.Queries, postHandler *handler.SocialPostHandler, jobs []db.PostDeliveryJob, workerName string) {
-	hb := startLeaseHeartbeat(ctx, queries, jobs)
-	defer hb.stop()
-	var wg sync.WaitGroup
+type PostDeliveryWorkerConfig struct {
+	ClaimBatchLimit         int32
+	WorkspaceConcurrentCap  int32
+	GlobalConcurrency       int
+	PlatformConcurrencyCaps map[string]int
+}
+
+func DefaultPostDeliveryWorkerConfigFromEnv() PostDeliveryWorkerConfig {
+	return normalizePostDeliveryWorkerConfig(PostDeliveryWorkerConfig{
+		ClaimBatchLimit:        int32(envInt("POST_DELIVERY_CLAIM_BATCH_LIMIT", claimBatchLimit)),
+		WorkspaceConcurrentCap: int32(envInt("POST_DELIVERY_WORKSPACE_CONCURRENT_CAP", workspaceConcurrentDispatchCap)),
+		GlobalConcurrency:      envInt("POST_DELIVERY_GLOBAL_CONCURRENCY", 10),
+		PlatformConcurrencyCaps: map[string]int{
+			"instagram": envInt("POST_DELIVERY_PLATFORM_CAP_INSTAGRAM", 3),
+			"tiktok":    envInt("POST_DELIVERY_PLATFORM_CAP_TIKTOK", 3),
+			"twitter":   envInt("POST_DELIVERY_PLATFORM_CAP_TWITTER", 5),
+		},
+	})
+}
+
+func normalizePostDeliveryWorkerConfig(config PostDeliveryWorkerConfig) PostDeliveryWorkerConfig {
+	if config.ClaimBatchLimit <= 0 {
+		config.ClaimBatchLimit = claimBatchLimit
+	}
+	if config.WorkspaceConcurrentCap < 0 {
+		config.WorkspaceConcurrentCap = 0
+	}
+	if config.GlobalConcurrency <= 0 {
+		config.GlobalConcurrency = 10
+	}
+	normalizedCaps := map[string]int{}
+	for platform, cap := range config.PlatformConcurrencyCaps {
+		if cap > 0 {
+			normalizedCaps[strings.ToLower(strings.TrimSpace(platform))] = cap
+		}
+	}
+	config.PlatformConcurrencyCaps = normalizedCaps
+	return config
+}
+
+func envInt(name string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil {
+		slog.Warn("invalid integer env value; using default", "name", name, "value", raw, "default", fallback)
+		return fallback
+	}
+	return value
+}
+
+type postDeliveryJobProcessor interface {
+	ProcessPostDeliveryJob(context.Context, db.PostDeliveryJob) error
+}
+
+type postDeliveryExecutor struct {
+	queries       *db.Queries
+	processor     postDeliveryJobProcessor
+	config        PostDeliveryWorkerConfig
+	workerName    string
+	reservedSlots chan struct{}
+	globalSlots   chan struct{}
+	platformCaps  map[string]chan struct{}
+
+	mu                sync.Mutex
+	activeByPlatform  map[string]int
+	activeByWorkspace map[string]int
+}
+
+func newPostDeliveryExecutor(queries *db.Queries, processor postDeliveryJobProcessor, config PostDeliveryWorkerConfig, workerName string) *postDeliveryExecutor {
+	config = normalizePostDeliveryWorkerConfig(config)
+	platformCaps := make(map[string]chan struct{}, len(config.PlatformConcurrencyCaps))
+	for platform, cap := range config.PlatformConcurrencyCaps {
+		platformCaps[platform] = make(chan struct{}, cap)
+	}
+	return &postDeliveryExecutor{
+		queries:           queries,
+		processor:         processor,
+		config:            config,
+		workerName:        workerName,
+		reservedSlots:     make(chan struct{}, config.GlobalConcurrency),
+		globalSlots:       make(chan struct{}, config.GlobalConcurrency),
+		platformCaps:      platformCaps,
+		activeByPlatform:  map[string]int{},
+		activeByWorkspace: map[string]int{},
+	}
+}
+
+func NewPostDeliveryExecutor(queries *db.Queries, postHandler *handler.SocialPostHandler, config PostDeliveryWorkerConfig) *postDeliveryExecutor {
+	return newPostDeliveryExecutor(queries, postHandler, config, "post delivery worker")
+}
+
+func (e *postDeliveryExecutor) submitReserved(ctx context.Context, jobs []db.PostDeliveryJob) {
 	for _, job := range jobs {
 		job := job
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer hb.done(job.ID)
-			if err := postHandler.ProcessPostDeliveryJob(ctx, job); err != nil {
-				slog.Error(workerName+": process failed", "job_id", job.ID, "error", err)
-			}
-		}()
+		go e.process(ctx, job)
 	}
-	wg.Wait()
+}
+
+func (e *postDeliveryExecutor) process(ctx context.Context, job db.PostDeliveryJob) {
+	defer e.releaseReservedSlots(1)
+	hb := startLeaseHeartbeat(ctx, e.queries, []db.PostDeliveryJob{job})
+	defer hb.stop()
+	defer hb.done(job.ID)
+
+	releasePlatform, ok := e.acquirePlatform(ctx, job.Platform)
+	if !ok {
+		return
+	}
+	defer releasePlatform()
+
+	select {
+	case e.globalSlots <- struct{}{}:
+		defer func() { <-e.globalSlots }()
+	case <-ctx.Done():
+		return
+	}
+
+	e.incrementPlatform(job.Platform)
+	defer e.decrementPlatform(job.Platform)
+	e.incrementWorkspace(job.WorkspaceID)
+	defer e.decrementWorkspace(job.WorkspaceID)
+
+	if err := e.processor.ProcessPostDeliveryJob(ctx, job); err != nil {
+		slog.Error(e.workerName+": process failed", "job_id", job.ID, "error", err)
+	}
+}
+
+func (e *postDeliveryExecutor) acquirePlatform(ctx context.Context, platform string) (func(), bool) {
+	sem, ok := e.platformCaps[strings.ToLower(strings.TrimSpace(platform))]
+	if !ok {
+		return func() {}, true
+	}
+	select {
+	case sem <- struct{}{}:
+		return func() { <-sem }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+func (e *postDeliveryExecutor) reserveSlots(max int32) int32 {
+	var reserved int32
+	for reserved < max {
+		select {
+		case e.reservedSlots <- struct{}{}:
+			reserved++
+		default:
+			return reserved
+		}
+	}
+	return reserved
+}
+
+func (e *postDeliveryExecutor) releaseReservedSlots(count int) {
+	for i := 0; i < count; i++ {
+		select {
+		case <-e.reservedSlots:
+		default:
+			return
+		}
+	}
+}
+
+func (e *postDeliveryExecutor) freeGlobalSlots() int {
+	return cap(e.reservedSlots) - len(e.reservedSlots)
+}
+
+func (e *postDeliveryExecutor) activeSlots() int {
+	return len(e.globalSlots)
+}
+
+func (e *postDeliveryExecutor) reservedSlotsCount() int {
+	return len(e.reservedSlots)
+}
+
+func (e *postDeliveryExecutor) waitingSlots() int {
+	waiting := len(e.reservedSlots) - len(e.globalSlots)
+	if waiting < 0 {
+		return 0
+	}
+	return waiting
+}
+
+func (e *postDeliveryExecutor) incrementPlatform(platform string) {
+	key := strings.ToLower(strings.TrimSpace(platform))
+	e.mu.Lock()
+	e.activeByPlatform[key]++
+	e.mu.Unlock()
+}
+
+func (e *postDeliveryExecutor) incrementWorkspace(workspaceID string) {
+	e.mu.Lock()
+	e.activeByWorkspace[workspaceID]++
+	e.mu.Unlock()
+}
+
+func (e *postDeliveryExecutor) decrementPlatform(platform string) {
+	key := strings.ToLower(strings.TrimSpace(platform))
+	e.mu.Lock()
+	if e.activeByPlatform[key] <= 1 {
+		delete(e.activeByPlatform, key)
+	} else {
+		e.activeByPlatform[key]--
+	}
+	e.mu.Unlock()
+}
+
+func (e *postDeliveryExecutor) decrementWorkspace(workspaceID string) {
+	e.mu.Lock()
+	if e.activeByWorkspace[workspaceID] <= 1 {
+		delete(e.activeByWorkspace, workspaceID)
+	} else {
+		e.activeByWorkspace[workspaceID]--
+	}
+	e.mu.Unlock()
+}
+
+func (e *postDeliveryExecutor) platformActiveCounts() map[string]int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]int, len(e.activeByPlatform))
+	for platform, count := range e.activeByPlatform {
+		out[platform] = count
+	}
+	return out
+}
+
+func (e *postDeliveryExecutor) workspaceActiveCounts() map[string]int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make(map[string]int, len(e.activeByWorkspace))
+	for workspaceID, count := range e.activeByWorkspace {
+		out[workspaceID] = count
+	}
+	return out
 }
 
 type PostDeliveryCleanupWorker struct {

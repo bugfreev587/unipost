@@ -113,8 +113,14 @@ func TestAdminObjectStorageReturnsSummary(t *testing.T) {
 			TrackedObjects:        10,
 			ConfirmedTrackedBytes: 4096,
 		}},
+		dailyActivity: []db.ListAdminObjectStorageDailyActivityRow{
+			{Day: pgtype.Date{Time: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), Valid: true}, ConfirmedBytes: 1024},
+			{Day: pgtype.Date{Time: time.Date(2026, 7, 3, 0, 0, 0, 0, time.UTC), Valid: true}, DeletedBytes: 2048},
+			{Day: pgtype.Date{Time: time.Date(2026, 7, 4, 0, 0, 0, 0, time.UTC), Valid: true}, ConfirmedBytes: 512, DeletedBytes: 256},
+		},
 	}
 	h := NewAdminObjectStorageHandler(store, "unipost-media")
+	h.now = func() time.Time { return time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC) }
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/object-storage?period=this_month", nil)
 	rr := httptest.NewRecorder()
 
@@ -144,6 +150,15 @@ func TestAdminObjectStorageReturnsSummary(t *testing.T) {
 	if got.Data.PeriodMetrics.FailedObjectCount != 1 || got.Data.PeriodMetrics.FailedRunCount != 1 {
 		t.Fatalf("period metrics = %#v, want separate failure counts", got.Data.PeriodMetrics)
 	}
+	if len(got.Data.DailyActivity) != 4 {
+		t.Fatalf("daily activity length = %d, want 4", len(got.Data.DailyActivity))
+	}
+	if day := got.Data.DailyActivity[1]; day.Date != "2026-07-02" || day.ConfirmedBytes != 0 || day.DeletedBytes != 0 {
+		t.Fatalf("daily activity[1] = %#v, want zero-filled July 2", day)
+	}
+	if day := got.Data.DailyActivity[3]; day.Date != "2026-07-04" || day.ConfirmedBytes != 512 || day.DeletedBytes != 256 {
+		t.Fatalf("daily activity[3] = %#v, want paired July 4 values", day)
+	}
 }
 
 func TestAdminObjectStorageRouteIsRegistered(t *testing.T) {
@@ -160,6 +175,24 @@ func TestAdminObjectStorageRouteIsRegistered(t *testing.T) {
 	}
 }
 
+func TestAdminObjectStorageDailyActivityFillsHalfOpenPeriod(t *testing.T) {
+	from := time.Date(2026, 7, 6, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 7, 7, 0, 0, 0, 0, time.UTC)
+	rows := []db.ListAdminObjectStorageDailyActivityRow{{
+		Day:            pgtype.Date{Time: from, Valid: true},
+		ConfirmedBytes: 1024,
+	}}
+
+	got := adminObjectStorageDailyActivity(rows, from, to)
+
+	if len(got) != 1 {
+		t.Fatalf("daily activity length = %d, want 1", len(got))
+	}
+	if got[0].Date != "2026-07-06" || got[0].ConfirmedBytes != 1024 || got[0].DeletedBytes != 0 {
+		t.Fatalf("daily activity = %#v, want only July 6 confirmation", got)
+	}
+}
+
 type fakeAdminObjectStorageStore struct {
 	current           db.GetAdminObjectStorageCurrentRow
 	additions         db.GetAdminObjectStoragePeriodAdditionsRow
@@ -171,6 +204,7 @@ type fakeAdminObjectStorageStore struct {
 	recentRuns        []db.MediaCleanupRun
 	contentTypes      []db.GetAdminObjectStorageContentTypesRow
 	statusBreakdown   []db.GetAdminObjectStorageStatusBreakdownRow
+	dailyActivity     []db.ListAdminObjectStorageDailyActivityRow
 }
 
 func (f *fakeAdminObjectStorageStore) GetAdminObjectStorageCurrent(context.Context) (db.GetAdminObjectStorageCurrentRow, error) {
@@ -211,4 +245,8 @@ func (f *fakeAdminObjectStorageStore) GetAdminObjectStorageContentTypes(context.
 
 func (f *fakeAdminObjectStorageStore) GetAdminObjectStorageStatusBreakdown(context.Context, int32) ([]db.GetAdminObjectStorageStatusBreakdownRow, error) {
 	return f.statusBreakdown, nil
+}
+
+func (f *fakeAdminObjectStorageStore) ListAdminObjectStorageDailyActivity(context.Context, db.ListAdminObjectStorageDailyActivityParams) ([]db.ListAdminObjectStorageDailyActivityRow, error) {
+	return f.dailyActivity, nil
 }

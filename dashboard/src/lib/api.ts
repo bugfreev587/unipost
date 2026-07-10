@@ -1429,6 +1429,7 @@ export interface PostDeliveryJob {
   platform: string;
   kind: "dispatch" | "retry";
   state: "pending" | "running" | "retrying" | "succeeded" | "failed" | "dead" | "cancelled";
+  delivery_phase?: "queued" | "waiting_retry" | "queued_retry" | "reserved" | "dispatching" | "retrying" | "published" | "failed" | "cancelled";
   attempts: number;
   max_attempts: number;
   failure_stage?: string;
@@ -1437,6 +1438,13 @@ export interface PostDeliveryJob {
   last_error?: string;
   next_run_at?: string;
   last_attempt_at?: string;
+  first_claimed_at?: string;
+  platform_started_at?: string;
+  finished_at?: string;
+  queued_at?: string;
+  queue_wait_ms?: number;
+  worker_wait_ms?: number;
+  platform_duration_ms?: number;
   created_at: string;
   updated_at: string;
 }
@@ -3784,6 +3792,12 @@ export interface AdminObjectStorageRun {
   error_summary: string;
 }
 
+export interface AdminObjectStorageDailyActivity {
+  date: string;
+  confirmed_bytes: number;
+  deleted_bytes: number;
+}
+
 export interface AdminObjectStorageResponse {
   period: {
     key: AdminObjectStoragePeriod;
@@ -3798,6 +3812,7 @@ export interface AdminObjectStorageResponse {
   content_types: AdminObjectStorageBreakdownRow[];
   status_breakdown: AdminObjectStorageBreakdownRow[];
   recent_runs: AdminObjectStorageRun[];
+  daily_activity: AdminObjectStorageDailyActivity[];
 }
 
 export interface APIMetricsQueryParams {

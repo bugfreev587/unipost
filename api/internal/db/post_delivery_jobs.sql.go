@@ -35,7 +35,7 @@ SET state = 'cancelled',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
 func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDeliveryJob, error) {
@@ -65,6 +65,8 @@ func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDel
 		&i.DismissedAt,
 		&i.LeaseExpiresAt,
 		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
 	)
 	return i, err
 }
@@ -81,6 +83,7 @@ ranked AS (
     j.id,
     j.created_at,
     j.workspace_id,
+    j.social_account_id,
     ROW_NUMBER() OVER (PARTITION BY j.workspace_id ORDER BY j.created_at, j.id) AS rn,
     COALESCE(a.cnt, 0) AS active_cnt
   FROM post_delivery_jobs j
@@ -106,23 +109,50 @@ ranked AS (
     )
 ),
 eligible AS (
-  SELECT id FROM ranked
+  SELECT id, social_account_id, created_at, rn FROM ranked
   WHERE $3::int = 0
      OR active_cnt + rn <= $3::int
-  ORDER BY created_at ASC, id ASC
+  ORDER BY rn ASC, created_at ASC, id ASC
   LIMIT $4::int
+),
+locked_jobs AS (
+  SELECT j.id, j.social_account_id
+  FROM post_delivery_jobs j
+  JOIN eligible e ON e.id = j.id
+  WHERE j.kind = 'dispatch'
+    AND j.state = 'pending'
+  ORDER BY e.rn ASC, e.created_at ASC, e.id ASC
+  FOR UPDATE OF j SKIP LOCKED
+),
+locked_accounts AS (
+  SELECT sa.id
+  FROM social_accounts sa
+  WHERE EXISTS (
+    SELECT 1
+    FROM locked_jobs
+    WHERE locked_jobs.social_account_id = sa.id
+  )
+  ORDER BY sa.id
   FOR UPDATE SKIP LOCKED
+),
+claimable AS (
+  SELECT locked_jobs.id
+  FROM locked_jobs
+  JOIN locked_accounts ON locked_accounts.id = locked_jobs.social_account_id
 )
 UPDATE post_delivery_jobs j
 SET state = 'running',
     attempts = j.attempts + 1,
+    first_claimed_at = COALESCE(j.first_claimed_at, NOW()),
     last_attempt_at = NOW(),
+    platform_started_at = NULL,
+    finished_at = NULL,
     lease_expires_at = NOW() + make_interval(secs => $1::int),
     lease_owner = $2,
     updated_at = NOW()
-FROM eligible
-WHERE j.id = eligible.id
-RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner
+FROM claimable
+WHERE j.id = claimable.id
+RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at
 `
 
 type ClaimPostDispatchJobsParams struct {
@@ -182,6 +212,8 @@ func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, arg ClaimPostDispat
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -205,6 +237,7 @@ ranked AS (
     j.id,
     COALESCE(j.next_run_at, j.created_at) AS sort_key,
     j.workspace_id,
+    j.social_account_id,
     ROW_NUMBER() OVER (
       PARTITION BY j.workspace_id
       ORDER BY COALESCE(j.next_run_at, j.created_at), j.id
@@ -238,23 +271,51 @@ ranked AS (
     )
 ),
 eligible AS (
-  SELECT id FROM ranked
+  SELECT id, social_account_id, sort_key, rn FROM ranked
   WHERE $3::int = 0
      OR active_cnt + rn <= $3::int
-  ORDER BY sort_key ASC, id ASC
+  ORDER BY rn ASC, sort_key ASC, id ASC
   LIMIT $4::int
+),
+locked_jobs AS (
+  SELECT j.id, j.social_account_id
+  FROM post_delivery_jobs j
+  JOIN eligible e ON e.id = j.id
+  WHERE j.kind = 'retry'
+    AND j.state = 'pending'
+    AND (j.next_run_at IS NULL OR j.next_run_at <= NOW())
+  ORDER BY e.rn ASC, e.sort_key ASC, e.id ASC
+  FOR UPDATE OF j SKIP LOCKED
+),
+locked_accounts AS (
+  SELECT sa.id
+  FROM social_accounts sa
+  WHERE EXISTS (
+    SELECT 1
+    FROM locked_jobs
+    WHERE locked_jobs.social_account_id = sa.id
+  )
+  ORDER BY sa.id
   FOR UPDATE SKIP LOCKED
+),
+claimable AS (
+  SELECT locked_jobs.id
+  FROM locked_jobs
+  JOIN locked_accounts ON locked_accounts.id = locked_jobs.social_account_id
 )
 UPDATE post_delivery_jobs j
 SET state = 'retrying',
     attempts = j.attempts + 1,
+    first_claimed_at = COALESCE(j.first_claimed_at, NOW()),
     last_attempt_at = NOW(),
+    platform_started_at = NULL,
+    finished_at = NULL,
     lease_expires_at = NOW() + make_interval(secs => $1::int),
     lease_owner = $2,
     updated_at = NOW()
-FROM eligible
-WHERE j.id = eligible.id
-RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner
+FROM claimable
+WHERE j.id = claimable.id
+RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at
 `
 
 type ClaimPostRetryJobsParams struct {
@@ -304,6 +365,8 @@ func (q *Queries) ClaimPostRetryJobs(ctx context.Context, arg ClaimPostRetryJobs
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -355,7 +418,7 @@ INSERT INTO post_delivery_jobs (
 ) VALUES (
   $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
 )
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
 type CreatePostDeliveryJobParams struct {
@@ -423,6 +486,8 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 		&i.DismissedAt,
 		&i.LeaseExpiresAt,
 		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
 	)
 	return i, err
 }
@@ -445,7 +510,7 @@ SET dismissed_at = COALESCE(dismissed_at, NOW()),
 WHERE id = $1
   AND workspace_id = $2
   AND state IN ('dead', 'failed', 'cancelled')
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
 type DismissPostDeliveryJobParams struct {
@@ -484,12 +549,14 @@ func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDel
 		&i.DismissedAt,
 		&i.LeaseExpiresAt,
 		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
 	)
 	return i, err
 }
 
 const getPostDeliveryJobByIDAndWorkspace = `-- name: GetPostDeliveryJobByIDAndWorkspace :one
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -525,6 +592,8 @@ func (q *Queries) GetPostDeliveryJobByIDAndWorkspace(ctx context.Context, arg Ge
 		&i.DismissedAt,
 		&i.LeaseExpiresAt,
 		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
 	)
 	return i, err
 }
@@ -575,7 +644,7 @@ func (q *Queries) GetPostDeliveryJobsSummaryByWorkspace(ctx context.Context, wor
 }
 
 const listPostDeliveryJobsByPost = `-- name: ListPostDeliveryJobsByPost :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
 WHERE post_id = $1
 ORDER BY created_at DESC
 `
@@ -613,6 +682,8 @@ func (q *Queries) ListPostDeliveryJobsByPost(ctx context.Context, postID string)
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -625,7 +696,7 @@ func (q *Queries) ListPostDeliveryJobsByPost(ctx context.Context, postID string)
 }
 
 const listPostDeliveryJobsByPostIDs = `-- name: ListPostDeliveryJobsByPostIDs :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
 WHERE post_id = ANY($1::text[])
 ORDER BY created_at DESC
 `
@@ -663,6 +734,8 @@ func (q *Queries) ListPostDeliveryJobsByPostIDs(ctx context.Context, dollar_1 []
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -675,7 +748,7 @@ func (q *Queries) ListPostDeliveryJobsByPostIDs(ctx context.Context, dollar_1 []
 }
 
 const listPostDeliveryJobsByResult = `-- name: ListPostDeliveryJobsByResult :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
 WHERE social_post_result_id = $1
 ORDER BY created_at DESC
 `
@@ -713,6 +786,8 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -725,7 +800,7 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 }
 
 const listPostDeliveryJobsByWorkspace = `-- name: ListPostDeliveryJobsByWorkspace :many
-SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner FROM post_delivery_jobs j
+SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at FROM post_delivery_jobs j
 LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
 WHERE j.workspace_id = $1
   AND (
@@ -799,6 +874,8 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -811,7 +888,7 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 }
 
 const listStaleActivePostDeliveryJobs = `-- name: ListStaleActivePostDeliveryJobs :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
 WHERE state IN ('running', 'retrying')
   AND (
     lease_expires_at <= NOW()
@@ -861,6 +938,8 @@ func (q *Queries) ListStaleActivePostDeliveryJobs(ctx context.Context, staleBefo
 			&i.DismissedAt,
 			&i.LeaseExpiresAt,
 			&i.LeaseOwner,
+			&i.FirstClaimedAt,
+			&i.PlatformStartedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -874,41 +953,47 @@ func (q *Queries) ListStaleActivePostDeliveryJobs(ctx context.Context, staleBefo
 
 const markPostDeliveryJobFailed = `-- name: MarkPostDeliveryJobFailed :one
 UPDATE post_delivery_jobs
-SET state = $2,
-    failure_stage = $3,
-    error_code = $4,
-    platform_error_code = $5,
-    last_error = $6,
-    next_run_at = $7,
+SET state = $1,
+    failure_stage = $2,
+    error_code = $3,
+    platform_error_code = $4,
+    last_error = $5,
+    next_run_at = $6,
     updated_at = NOW(),
     finished_at = CASE
-      WHEN $2 IN ('dead', 'cancelled') THEN NOW()
+      WHEN $1 IN ('pending', 'failed', 'dead', 'cancelled') THEN NOW()
       ELSE finished_at
     END
-WHERE id = $1
+WHERE id = $7
   AND state IN ('running', 'retrying')
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner
+  AND lease_owner IS NOT DISTINCT FROM $8
+  AND last_attempt_at IS NOT DISTINCT FROM $9::timestamptz
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
 type MarkPostDeliveryJobFailedParams struct {
-	ID                string             `json:"id"`
 	State             string             `json:"state"`
 	FailureStage      pgtype.Text        `json:"failure_stage"`
 	ErrorCode         pgtype.Text        `json:"error_code"`
 	PlatformErrorCode pgtype.Text        `json:"platform_error_code"`
 	LastError         pgtype.Text        `json:"last_error"`
 	NextRunAt         pgtype.Timestamptz `json:"next_run_at"`
+	ID                string             `json:"id"`
+	LeaseOwner        pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt     pgtype.Timestamptz `json:"last_attempt_at"`
 }
 
 func (q *Queries) MarkPostDeliveryJobFailed(ctx context.Context, arg MarkPostDeliveryJobFailedParams) (PostDeliveryJob, error) {
 	row := q.db.QueryRow(ctx, markPostDeliveryJobFailed,
-		arg.ID,
 		arg.State,
 		arg.FailureStage,
 		arg.ErrorCode,
 		arg.PlatformErrorCode,
 		arg.LastError,
 		arg.NextRunAt,
+		arg.ID,
+		arg.LeaseOwner,
+		arg.LastAttemptAt,
 	)
 	var i PostDeliveryJob
 	err := row.Scan(
@@ -935,6 +1020,58 @@ func (q *Queries) MarkPostDeliveryJobFailed(ctx context.Context, arg MarkPostDel
 		&i.DismissedAt,
 		&i.LeaseExpiresAt,
 		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
+	)
+	return i, err
+}
+
+const markPostDeliveryJobPlatformStarted = `-- name: MarkPostDeliveryJobPlatformStarted :one
+UPDATE post_delivery_jobs
+SET platform_started_at = COALESCE(platform_started_at, NOW()),
+    updated_at = NOW()
+WHERE id = $1
+  AND state IN ('running', 'retrying')
+  AND lease_owner IS NOT DISTINCT FROM $2
+  AND last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+`
+
+type MarkPostDeliveryJobPlatformStartedParams struct {
+	ID            string             `json:"id"`
+	LeaseOwner    pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+}
+
+func (q *Queries) MarkPostDeliveryJobPlatformStarted(ctx context.Context, arg MarkPostDeliveryJobPlatformStartedParams) (PostDeliveryJob, error) {
+	row := q.db.QueryRow(ctx, markPostDeliveryJobPlatformStarted, arg.ID, arg.LeaseOwner, arg.LastAttemptAt)
+	var i PostDeliveryJob
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialPostResultID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.Platform,
+		&i.PostInputIndex,
+		&i.Kind,
+		&i.State,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.FailureStage,
+		&i.ErrorCode,
+		&i.PlatformErrorCode,
+		&i.LastError,
+		&i.NextRunAt,
+		&i.LastAttemptAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.DismissedAt,
+		&i.LeaseExpiresAt,
+		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
 	)
 	return i, err
 }
@@ -951,11 +1088,19 @@ SET state = 'succeeded',
     finished_at = NOW()
 WHERE id = $1
   AND state IN ('running', 'retrying')
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner
+  AND lease_owner IS NOT DISTINCT FROM $2
+  AND last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
-func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, id string) (PostDeliveryJob, error) {
-	row := q.db.QueryRow(ctx, markPostDeliveryJobSucceeded, id)
+type MarkPostDeliveryJobSucceededParams struct {
+	ID            string             `json:"id"`
+	LeaseOwner    pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+}
+
+func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, arg MarkPostDeliveryJobSucceededParams) (PostDeliveryJob, error) {
+	row := q.db.QueryRow(ctx, markPostDeliveryJobSucceeded, arg.ID, arg.LeaseOwner, arg.LastAttemptAt)
 	var i PostDeliveryJob
 	err := row.Scan(
 		&i.ID,
@@ -981,6 +1126,8 @@ func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, id string) (
 		&i.DismissedAt,
 		&i.LeaseExpiresAt,
 		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
 	)
 	return i, err
 }
@@ -991,16 +1138,25 @@ SET lease_expires_at = NOW() + make_interval(secs => $1::int),
     updated_at = NOW()
 WHERE id = $2
   AND state IN ('running', 'retrying')
+  AND lease_owner IS NOT DISTINCT FROM $3
+  AND last_attempt_at IS NOT DISTINCT FROM $4::timestamptz
 `
 
 type RenewPostDeliveryJobLeaseParams struct {
-	LeaseSeconds int32  `json:"lease_seconds"`
-	ID           string `json:"id"`
+	LeaseSeconds  int32              `json:"lease_seconds"`
+	ID            string             `json:"id"`
+	LeaseOwner    pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
 }
 
 // Heartbeat: extend the lease while the worker still owns and is working
 // the job. Only touches jobs still in an active state.
 func (q *Queries) RenewPostDeliveryJobLease(ctx context.Context, arg RenewPostDeliveryJobLeaseParams) error {
-	_, err := q.db.Exec(ctx, renewPostDeliveryJobLease, arg.LeaseSeconds, arg.ID)
+	_, err := q.db.Exec(ctx, renewPostDeliveryJobLease,
+		arg.LeaseSeconds,
+		arg.ID,
+		arg.LeaseOwner,
+		arg.LastAttemptAt,
+	)
 	return err
 }
