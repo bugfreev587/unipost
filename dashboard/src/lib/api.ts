@@ -2772,6 +2772,7 @@ export interface AdminPostRow {
   created_at: string;
   scheduled_at?: string;
   published_at?: string;
+  duration_seconds?: number;
   platforms: string[];
   result_count: number;
   published_result_count: number;

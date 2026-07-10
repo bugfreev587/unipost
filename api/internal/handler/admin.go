@@ -864,6 +864,7 @@ type adminPostRow struct {
 	CreatedAt            time.Time  `json:"created_at"`
 	ScheduledAt          *time.Time `json:"scheduled_at,omitempty"`
 	PublishedAt          *time.Time `json:"published_at,omitempty"`
+	DurationSeconds      *int64     `json:"duration_seconds,omitempty"`
 	Platforms            []string   `json:"platforms"`
 	ResultCount          int64      `json:"result_count"`
 	PublishedResultCount int64      `json:"published_result_count"`
@@ -1649,6 +1650,13 @@ WITH post_rollup AS (
     sp.created_at,
     sp.scheduled_at,
     sp.published_at,
+    CASE
+      WHEN COUNT(spr.id) > 0
+       AND COUNT(*) FILTER (WHERE spr.status = 'published' AND spr.published_at IS NOT NULL) = COUNT(spr.id)
+       AND MAX(spr.published_at) >= COALESCE(sp.scheduled_at, sp.created_at)
+      THEN FLOOR(EXTRACT(EPOCH FROM (MAX(spr.published_at) - COALESCE(sp.scheduled_at, sp.created_at))))::BIGINT
+      ELSE NULL
+    END AS duration_seconds,
     `+platformsSQL+` AS platforms,
     COUNT(spr.id)::BIGINT AS result_count,
     COUNT(*) FILTER (WHERE spr.status = 'published')::BIGINT AS published_result_count,
@@ -1681,6 +1689,7 @@ SELECT
   created_at,
   scheduled_at,
   published_at,
+  duration_seconds,
   platforms,
   result_count,
   published_result_count,
@@ -1708,6 +1717,7 @@ LIMIT $7
 		var item adminPostRow
 		var caption *string
 		var scheduledAt, publishedAt *time.Time
+		var durationSeconds *int64
 		if err := rows.Scan(
 			&item.PostID,
 			&item.UserID,
@@ -1720,6 +1730,7 @@ LIMIT $7
 			&item.CreatedAt,
 			&scheduledAt,
 			&publishedAt,
+			&durationSeconds,
 			&item.Platforms,
 			&item.ResultCount,
 			&item.PublishedResultCount,
@@ -1730,6 +1741,7 @@ LIMIT $7
 		item.Caption = caption
 		item.ScheduledAt = scheduledAt
 		item.PublishedAt = publishedAt
+		item.DurationSeconds = durationSeconds
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
