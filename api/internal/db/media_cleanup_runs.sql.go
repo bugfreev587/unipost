@@ -373,6 +373,71 @@ func (q *Queries) GetAdminObjectStorageStatusBreakdown(ctx context.Context, limi
 	return items, nil
 }
 
+const listAdminObjectStorageDailyActivity = `-- name: ListAdminObjectStorageDailyActivity :many
+WITH confirmed AS (
+  SELECT
+    (uploaded_at AT TIME ZONE 'UTC')::date AS day,
+    COALESCE(SUM(size_bytes), 0)::bigint AS confirmed_bytes,
+    0::bigint AS deleted_bytes
+  FROM media
+  WHERE status = 'uploaded'
+    AND uploaded_at >= $1::timestamptz
+    AND uploaded_at < $2::timestamptz
+  GROUP BY 1
+), deleted AS (
+  SELECT
+    (finished_at AT TIME ZONE 'UTC')::date AS day,
+    0::bigint AS confirmed_bytes,
+    COALESCE(SUM(deleted_bytes), 0)::bigint AS deleted_bytes
+  FROM media_cleanup_runs
+  WHERE finished_at >= $1::timestamptz
+    AND finished_at < $2::timestamptz
+  GROUP BY 1
+)
+SELECT
+  day,
+  SUM(confirmed_bytes)::bigint AS confirmed_bytes,
+  SUM(deleted_bytes)::bigint AS deleted_bytes
+FROM (
+  SELECT day, confirmed_bytes, deleted_bytes FROM confirmed
+  UNION ALL
+  SELECT day, confirmed_bytes, deleted_bytes FROM deleted
+) activity
+GROUP BY day
+ORDER BY day ASC
+`
+
+type ListAdminObjectStorageDailyActivityParams struct {
+	PeriodFrom pgtype.Timestamptz `json:"period_from"`
+	PeriodTo   pgtype.Timestamptz `json:"period_to"`
+}
+
+type ListAdminObjectStorageDailyActivityRow struct {
+	Day            pgtype.Date `json:"day"`
+	ConfirmedBytes int64       `json:"confirmed_bytes"`
+	DeletedBytes   int64       `json:"deleted_bytes"`
+}
+
+func (q *Queries) ListAdminObjectStorageDailyActivity(ctx context.Context, arg ListAdminObjectStorageDailyActivityParams) ([]ListAdminObjectStorageDailyActivityRow, error) {
+	rows, err := q.db.Query(ctx, listAdminObjectStorageDailyActivity, arg.PeriodFrom, arg.PeriodTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAdminObjectStorageDailyActivityRow{}
+	for rows.Next() {
+		var i ListAdminObjectStorageDailyActivityRow
+		if err := rows.Scan(&i.Day, &i.ConfirmedBytes, &i.DeletedBytes); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAdminObjectStorageRecentRuns = `-- name: ListAdminObjectStorageRecentRuns :many
 SELECT id, worker_name, status, started_at, finished_at, next_run_at, scanned_objects, deleted_objects, deleted_bytes, failed_objects, failed_bytes, error_summary, created_at, updated_at
 FROM media_cleanup_runs

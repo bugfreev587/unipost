@@ -113,7 +113,8 @@
           totals[row.Day.Time.UTC().Format("2006-01-02")] = row
       }
       start := time.Date(from.UTC().Year(), from.UTC().Month(), from.UTC().Day(), 0, 0, 0, 0, time.UTC)
-      end := time.Date(to.UTC().Year(), to.UTC().Month(), to.UTC().Day(), 0, 0, 0, 0, time.UTC)
+      inclusiveEnd := to.UTC().Add(-time.Nanosecond)
+      end := time.Date(inclusiveEnd.Year(), inclusiveEnd.Month(), inclusiveEnd.Day(), 0, 0, 0, 0, time.UTC)
       out := make([]adminObjectStorageDailyActivityResponse, 0, int(end.Sub(start).Hours()/24)+1)
       for day := start; !day.After(end); day = day.AddDate(0, 0, 1) {
           key := day.Format("2006-01-02")
