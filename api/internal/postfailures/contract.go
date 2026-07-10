@@ -76,7 +76,7 @@ func enrichClassification(c Classification, raw string) Classification {
 		c.ProviderError = ExtractProviderError(raw)
 	}
 	if c.PlatformErrorCode == "" && c.ProviderError != nil {
-		c.PlatformErrorCode = FirstNonEmpty(c.ProviderError.Subcode, c.ProviderError.Code, c.ProviderError.Reason)
+		c.PlatformErrorCode = FirstNonEmpty(c.ProviderError.Code, c.ProviderError.Subcode, c.ProviderError.Reason)
 	}
 	c.ErrorSource = errorSourceFor(c, raw)
 	c.ErrorTemporality = errorTemporalityFor(c)
