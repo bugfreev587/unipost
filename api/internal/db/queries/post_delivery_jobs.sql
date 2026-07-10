@@ -65,7 +65,9 @@ UPDATE post_delivery_jobs
 SET lease_expires_at = NOW() + make_interval(secs => sqlc.arg('lease_seconds')::int),
     updated_at = NOW()
 WHERE id = sqlc.arg('id')
-  AND state IN ('running', 'retrying');
+  AND state IN ('running', 'retrying')
+  AND lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+  AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz;
 
 -- name: ListPostDeliveryJobsByWorkspace :many
 -- Hide dead/failed jobs whose social_post_result has already moved
@@ -150,6 +152,7 @@ ranked AS (
     j.id,
     j.created_at,
     j.workspace_id,
+    j.social_account_id,
     ROW_NUMBER() OVER (PARTITION BY j.workspace_id ORDER BY j.created_at, j.id) AS rn,
     COALESCE(a.cnt, 0) AS active_cnt
   FROM post_delivery_jobs j
@@ -175,22 +178,45 @@ ranked AS (
     )
 ),
 eligible AS (
-  SELECT id FROM ranked
+  SELECT id, social_account_id, created_at, rn FROM ranked
   WHERE sqlc.arg('workspace_concurrent_cap')::int = 0
      OR active_cnt + rn <= sqlc.arg('workspace_concurrent_cap')::int
-  ORDER BY created_at ASC, id ASC
+  ORDER BY rn ASC, created_at ASC, id ASC
   LIMIT sqlc.arg('batch_limit')::int
+),
+locked_jobs AS (
+  SELECT j.id, j.social_account_id
+  FROM post_delivery_jobs j
+  JOIN eligible e ON e.id = j.id
+  WHERE j.kind = 'dispatch'
+    AND j.state = 'pending'
+  ORDER BY e.rn ASC, e.created_at ASC, e.id ASC
+  FOR UPDATE OF j SKIP LOCKED
+),
+locked_accounts AS (
+  SELECT sa.id
+  FROM social_accounts sa
+  JOIN (SELECT DISTINCT social_account_id FROM locked_jobs) e ON e.social_account_id = sa.id
+  ORDER BY sa.id
   FOR UPDATE SKIP LOCKED
+),
+claimable AS (
+  SELECT locked_jobs.id
+  FROM locked_jobs
+  JOIN locked_accounts ON locked_accounts.id = locked_jobs.social_account_id
 )
 UPDATE post_delivery_jobs j
 SET state = 'running',
     attempts = j.attempts + 1,
+    first_claimed_at = COALESCE(j.first_claimed_at, NOW()),
     last_attempt_at = NOW(),
+    platform_started_at = NULL,
+    finished_at = NULL,
     lease_expires_at = NOW() + make_interval(secs => sqlc.arg('lease_seconds')::int),
     lease_owner = sqlc.arg('lease_owner'),
     updated_at = NOW()
-FROM eligible
-WHERE j.id = eligible.id
+FROM claimable
+WHERE j.id = claimable.id
 RETURNING j.*;
 
 -- name: ClaimPostRetryJobs :many
@@ -207,6 +233,7 @@ ranked AS (
     j.id,
     COALESCE(j.next_run_at, j.created_at) AS sort_key,
     j.workspace_id,
+    j.social_account_id,
     ROW_NUMBER() OVER (
       PARTITION BY j.workspace_id
       ORDER BY COALESCE(j.next_run_at, j.created_at), j.id
@@ -240,23 +267,57 @@ ranked AS (
     )
 ),
 eligible AS (
-  SELECT id FROM ranked
+  SELECT id, social_account_id, sort_key, rn FROM ranked
   WHERE sqlc.arg('workspace_concurrent_cap')::int = 0
      OR active_cnt + rn <= sqlc.arg('workspace_concurrent_cap')::int
-  ORDER BY sort_key ASC, id ASC
+  ORDER BY rn ASC, sort_key ASC, id ASC
   LIMIT sqlc.arg('batch_limit')::int
+),
+locked_jobs AS (
+  SELECT j.id, j.social_account_id
+  FROM post_delivery_jobs j
+  JOIN eligible e ON e.id = j.id
+  WHERE j.kind = 'retry'
+    AND j.state = 'pending'
+    AND (j.next_run_at IS NULL OR j.next_run_at <= NOW())
+  ORDER BY e.rn ASC, e.sort_key ASC, e.id ASC
+  FOR UPDATE OF j SKIP LOCKED
+),
+locked_accounts AS (
+  SELECT sa.id
+  FROM social_accounts sa
+  JOIN (SELECT DISTINCT social_account_id FROM locked_jobs) e ON e.social_account_id = sa.id
+  ORDER BY sa.id
   FOR UPDATE SKIP LOCKED
+),
+claimable AS (
+  SELECT locked_jobs.id
+  FROM locked_jobs
+  JOIN locked_accounts ON locked_accounts.id = locked_jobs.social_account_id
 )
 UPDATE post_delivery_jobs j
 SET state = 'retrying',
     attempts = j.attempts + 1,
+    first_claimed_at = COALESCE(j.first_claimed_at, NOW()),
     last_attempt_at = NOW(),
+    platform_started_at = NULL,
+    finished_at = NULL,
     lease_expires_at = NOW() + make_interval(secs => sqlc.arg('lease_seconds')::int),
     lease_owner = sqlc.arg('lease_owner'),
     updated_at = NOW()
-FROM eligible
-WHERE j.id = eligible.id
+FROM claimable
+WHERE j.id = claimable.id
 RETURNING j.*;
+
+-- name: MarkPostDeliveryJobPlatformStarted :one
+UPDATE post_delivery_jobs
+SET platform_started_at = COALESCE(platform_started_at, NOW()),
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')
+  AND state IN ('running', 'retrying')
+  AND lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+  AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
+RETURNING *;
 
 -- name: MarkPostDeliveryJobSucceeded :one
 UPDATE post_delivery_jobs
@@ -268,25 +329,29 @@ SET state = 'succeeded',
     next_run_at = NULL,
     updated_at = NOW(),
     finished_at = NOW()
-WHERE id = $1
+WHERE id = sqlc.arg('id')
   AND state IN ('running', 'retrying')
+  AND lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+  AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
 RETURNING *;
 
 -- name: MarkPostDeliveryJobFailed :one
 UPDATE post_delivery_jobs
-SET state = $2,
-    failure_stage = $3,
-    error_code = $4,
-    platform_error_code = $5,
-    last_error = $6,
-    next_run_at = $7,
+SET state = sqlc.arg('state'),
+    failure_stage = sqlc.arg('failure_stage'),
+    error_code = sqlc.arg('error_code'),
+    platform_error_code = sqlc.arg('platform_error_code'),
+    last_error = sqlc.arg('last_error'),
+    next_run_at = sqlc.arg('next_run_at'),
     updated_at = NOW(),
     finished_at = CASE
-      WHEN $2 IN ('dead', 'cancelled') THEN NOW()
+      WHEN sqlc.arg('state') IN ('pending', 'failed', 'dead', 'cancelled') THEN NOW()
       ELSE finished_at
     END
-WHERE id = $1
+WHERE id = sqlc.arg('id')
   AND state IN ('running', 'retrying')
+  AND lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+  AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
 RETURNING *;
 
 -- name: CancelPostDeliveryJob :one

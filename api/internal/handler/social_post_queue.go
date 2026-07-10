@@ -527,6 +527,36 @@ func workerPublishingEvent(e integrationlogs.Event) integrationlogs.Event {
 	return e
 }
 
+func markDeliveryJobPlatformStartedParams(job db.PostDeliveryJob) db.MarkPostDeliveryJobPlatformStartedParams {
+	return db.MarkPostDeliveryJobPlatformStartedParams{
+		ID:            job.ID,
+		LeaseOwner:    job.LeaseOwner,
+		LastAttemptAt: job.LastAttemptAt,
+	}
+}
+
+func markDeliveryJobSucceededParams(job db.PostDeliveryJob) db.MarkPostDeliveryJobSucceededParams {
+	return db.MarkPostDeliveryJobSucceededParams{
+		ID:            job.ID,
+		LeaseOwner:    job.LeaseOwner,
+		LastAttemptAt: job.LastAttemptAt,
+	}
+}
+
+func markDeliveryJobFailedParams(job db.PostDeliveryJob, state string, failureStage, errorCode, platformErrorCode, lastError pgtype.Text, nextRunAt pgtype.Timestamptz) db.MarkPostDeliveryJobFailedParams {
+	return db.MarkPostDeliveryJobFailedParams{
+		ID:                job.ID,
+		State:             state,
+		FailureStage:      failureStage,
+		ErrorCode:         errorCode,
+		PlatformErrorCode: platformErrorCode,
+		LastError:         lastError,
+		NextRunAt:         nextRunAt,
+		LeaseOwner:        job.LeaseOwner,
+		LastAttemptAt:     job.LastAttemptAt,
+	}
+}
+
 // attachPublishTokenResume wires idempotent-publish options onto pp for this
 // delivery attempt: a resume token persisted by a prior attempt (if any), and
 // a persistence hook the adapter calls the moment it obtains its intermediate
@@ -579,22 +609,6 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		return nil
 	}
 
-	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
-		WorkspaceID:     job.WorkspaceID,
-		Level:           integrationlogs.LevelInfo,
-		Status:          integrationlogs.StatusSuccess,
-		Action:          integrationlogs.ActionPostPublishPlatformStarted,
-		Message:         "Started platform delivery job.",
-		PostID:          job.PostID,
-		SocialAccountID: job.SocialAccountID,
-		Platform:        job.Platform,
-		Metadata: map[string]any{
-			"job_id":           job.ID,
-			"attempt":          job.Attempts,
-			"post_input_index": job.PostInputIndex,
-		},
-	}))
-
 	post, err := h.queries.GetSocialPostByID(ctx, job.PostID)
 	if err != nil {
 		return err
@@ -618,7 +632,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if res.Status == "published" {
 		slog.Info("delivery job: result already published, skipping duplicate publish",
 			"job_id", job.ID, "post_id", job.PostID, "result_id", res.ID)
-		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, job.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		return nil
@@ -643,6 +657,32 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	// obtains, so a crash between "media uploaded" and "external_id recorded"
 	// re-uses the same container/publish_id instead of duplicating the post.
 	h.attachPublishTokenResume(ctx, &pp, res)
+
+	startedJob, err := h.queries.MarkPostDeliveryJobPlatformStarted(ctx, markDeliveryJobPlatformStartedParams(job))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Info("delivery job: no longer active before platform dispatch, skipping publish",
+				"job_id", job.ID, "post_id", job.PostID)
+			return nil
+		}
+		return err
+	}
+	job = startedJob
+	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
+		WorkspaceID:     job.WorkspaceID,
+		Level:           integrationlogs.LevelInfo,
+		Status:          integrationlogs.StatusSuccess,
+		Action:          integrationlogs.ActionPostPublishPlatformStarted,
+		Message:         "Started platform delivery job.",
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Platform:        job.Platform,
+		Metadata: map[string]any{
+			"job_id":           job.ID,
+			"attempt":          job.Attempts,
+			"post_input_index": job.PostInputIndex,
+		},
+	}))
 
 	oc := h.publishOneContext(
 		ctx,
@@ -683,7 +723,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if err != nil {
 		return err
 	}
-	if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, job.ID); err != nil {
+	if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job)); err != nil {
 		return err
 	}
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
@@ -722,15 +762,15 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		Url:          pgtype.Text{},
 		DebugCurl:    pgtype.Text{},
 	})
-	_, _ = h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-		ID:                job.ID,
-		State:             "dead",
-		FailureStage:      pgtype.Text{String: "dispatch_prepare", Valid: true},
-		ErrorCode:         pgtype.Text{String: "validation_error", Valid: true},
-		PlatformErrorCode: pgtype.Text{},
-		LastError:         pgtype.Text{String: msg, Valid: true},
-		NextRunAt:         pgtype.Timestamptz{},
-	})
+	_, _ = h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+		job,
+		"dead",
+		pgtype.Text{String: "dispatch_prepare", Valid: true},
+		pgtype.Text{String: "validation_error", Valid: true},
+		pgtype.Text{},
+		pgtype.Text{String: msg, Valid: true},
+		pgtype.Timestamptz{},
+	))
 	failure := postfailures.BuildParams(
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
 	)
@@ -806,15 +846,15 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 
 	if failure.IsRetriable {
 		if job.Kind == "dispatch" {
-			if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-				ID:                job.ID,
-				State:             "failed",
-				FailureStage:      pgtype.Text{String: failure.FailureStage, Valid: true},
-				ErrorCode:         pgtype.Text{String: failure.ErrorCode, Valid: true},
-				PlatformErrorCode: failure.PlatformErrorCode,
-				LastError:         pgtype.Text{String: errMsg, Valid: true},
-				NextRunAt:         pgtype.Timestamptz{},
-			}); err != nil {
+			if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+				job,
+				"failed",
+				pgtype.Text{String: failure.FailureStage, Valid: true},
+				pgtype.Text{String: failure.ErrorCode, Valid: true},
+				failure.PlatformErrorCode,
+				pgtype.Text{String: errMsg, Valid: true},
+				pgtype.Timestamptz{},
+			)); err != nil {
 				return err
 			}
 			if _, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
@@ -843,28 +883,28 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 				state = "dead"
 				nextRunAt = pgtype.Timestamptz{}
 			}
-			if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-				ID:                job.ID,
-				State:             state,
-				FailureStage:      pgtype.Text{String: failure.FailureStage, Valid: true},
-				ErrorCode:         pgtype.Text{String: failure.ErrorCode, Valid: true},
-				PlatformErrorCode: failure.PlatformErrorCode,
-				LastError:         pgtype.Text{String: errMsg, Valid: true},
-				NextRunAt:         nextRunAt,
-			}); err != nil {
+			if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+				job,
+				state,
+				pgtype.Text{String: failure.FailureStage, Valid: true},
+				pgtype.Text{String: failure.ErrorCode, Valid: true},
+				failure.PlatformErrorCode,
+				pgtype.Text{String: errMsg, Valid: true},
+				nextRunAt,
+			)); err != nil {
 				return err
 			}
 		}
 	} else {
-		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-			ID:                job.ID,
-			State:             "dead",
-			FailureStage:      pgtype.Text{String: failure.FailureStage, Valid: true},
-			ErrorCode:         pgtype.Text{String: failure.ErrorCode, Valid: true},
-			PlatformErrorCode: failure.PlatformErrorCode,
-			LastError:         pgtype.Text{String: errMsg, Valid: true},
-			NextRunAt:         pgtype.Timestamptz{},
-		}); err != nil {
+		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+			job,
+			"dead",
+			pgtype.Text{String: failure.FailureStage, Valid: true},
+			pgtype.Text{String: failure.ErrorCode, Valid: true},
+			failure.PlatformErrorCode,
+			pgtype.Text{String: errMsg, Valid: true},
+			pgtype.Timestamptz{},
+		)); err != nil {
 			return err
 		}
 	}
@@ -969,7 +1009,7 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 	if result.Status == "published" {
 		slog.Info("stale recovery: result already published, closing job without retry",
 			"job_id", job.ID, "post_id", job.PostID, "result_id", result.ID)
-		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, job.ID); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		return nil
@@ -1009,15 +1049,15 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 
 	switch job.Kind {
 	case "dispatch":
-		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-			ID:                job.ID,
-			State:             "failed",
-			FailureStage:      failureStage,
-			ErrorCode:         errorCode,
-			PlatformErrorCode: pgtype.Text{},
-			LastError:         lastError,
-			NextRunAt:         pgtype.Timestamptz{},
-		}); err != nil {
+		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+			job,
+			"failed",
+			failureStage,
+			errorCode,
+			pgtype.Text{},
+			lastError,
+			pgtype.Timestamptz{},
+		)); err != nil {
 			return err
 		}
 		if _, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
@@ -1046,15 +1086,15 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 			state = "dead"
 			nextRunAt = pgtype.Timestamptz{}
 		}
-		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-			ID:                job.ID,
-			State:             state,
-			FailureStage:      failureStage,
-			ErrorCode:         errorCode,
-			PlatformErrorCode: pgtype.Text{},
-			LastError:         lastError,
-			NextRunAt:         nextRunAt,
-		}); err != nil {
+		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+			job,
+			state,
+			failureStage,
+			errorCode,
+			pgtype.Text{},
+			lastError,
+			nextRunAt,
+		)); err != nil {
 			return err
 		}
 	}
@@ -1076,15 +1116,15 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 
 func (h *SocialPostHandler) cancelStaleDeliveryJobForDeletedPost(ctx context.Context, job db.PostDeliveryJob) error {
 	msg := "delivery job cancelled because its parent post was deleted"
-	_, err := h.queries.MarkPostDeliveryJobFailed(ctx, db.MarkPostDeliveryJobFailedParams{
-		ID:                job.ID,
-		State:             "cancelled",
-		FailureStage:      pgtype.Text{String: "post_deleted", Valid: true},
-		ErrorCode:         pgtype.Text{String: "post_deleted", Valid: true},
-		PlatformErrorCode: pgtype.Text{},
-		LastError:         pgtype.Text{String: msg, Valid: true},
-		NextRunAt:         pgtype.Timestamptz{},
-	})
+	_, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+		job,
+		"cancelled",
+		pgtype.Text{String: "post_deleted", Valid: true},
+		pgtype.Text{String: "post_deleted", Valid: true},
+		pgtype.Text{},
+		pgtype.Text{String: msg, Valid: true},
+		pgtype.Timestamptz{},
+	))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -1287,6 +1327,7 @@ type postDeliveryJobResponse struct {
 	Platform           string     `json:"platform"`
 	Kind               string     `json:"kind"`
 	State              string     `json:"state"`
+	DeliveryPhase      string     `json:"delivery_phase"`
 	Attempts           int32      `json:"attempts"`
 	MaxAttempts        int32      `json:"max_attempts"`
 	FailureStage       *string    `json:"failure_stage,omitempty"`
@@ -1295,11 +1336,22 @@ type postDeliveryJobResponse struct {
 	LastError          *string    `json:"last_error,omitempty"`
 	NextRunAt          *time.Time `json:"next_run_at,omitempty"`
 	LastAttemptAt      *time.Time `json:"last_attempt_at,omitempty"`
+	FirstClaimedAt     *time.Time `json:"first_claimed_at,omitempty"`
+	PlatformStartedAt  *time.Time `json:"platform_started_at,omitempty"`
+	FinishedAt         *time.Time `json:"finished_at,omitempty"`
+	QueueWaitMS        *int64     `json:"queue_wait_ms,omitempty"`
+	WorkerWaitMS       *int64     `json:"worker_wait_ms,omitempty"`
+	PlatformDurationMS *int64     `json:"platform_duration_ms,omitempty"`
+	QueuedAt           time.Time  `json:"queued_at"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`
 }
 
 func postDeliveryJobResponseFromRow(row db.PostDeliveryJob) postDeliveryJobResponse {
+	return postDeliveryJobResponseFromRowAt(row, time.Now())
+}
+
+func postDeliveryJobResponseFromRowAt(row db.PostDeliveryJob, now time.Time) postDeliveryJobResponse {
 	resp := postDeliveryJobResponse{
 		ID:                 row.ID,
 		PostID:             row.PostID,
@@ -1308,8 +1360,10 @@ func postDeliveryJobResponseFromRow(row db.PostDeliveryJob) postDeliveryJobRespo
 		Platform:           row.Platform,
 		Kind:               row.Kind,
 		State:              row.State,
+		DeliveryPhase:      deriveDeliveryPhase(row, now),
 		Attempts:           row.Attempts,
 		MaxAttempts:        row.MaxAttempts,
+		QueuedAt:           row.CreatedAt.Time,
 		CreatedAt:          row.CreatedAt.Time,
 		UpdatedAt:          row.UpdatedAt.Time,
 	}
@@ -1331,7 +1385,95 @@ func postDeliveryJobResponseFromRow(row db.PostDeliveryJob) postDeliveryJobRespo
 	if row.LastAttemptAt.Valid {
 		resp.LastAttemptAt = &row.LastAttemptAt.Time
 	}
+	if row.FirstClaimedAt.Valid {
+		resp.FirstClaimedAt = &row.FirstClaimedAt.Time
+	}
+	if row.PlatformStartedAt.Valid {
+		resp.PlatformStartedAt = &row.PlatformStartedAt.Time
+	}
+	if row.FinishedAt.Valid {
+		resp.FinishedAt = &row.FinishedAt.Time
+	}
+	resp.QueueWaitMS = queueWaitMS(row, now)
+	resp.WorkerWaitMS = workerWaitMS(row, now)
+	resp.PlatformDurationMS = platformDurationMS(row, now)
 	return resp
+}
+
+func deriveDeliveryPhase(row db.PostDeliveryJob, now time.Time) string {
+	switch row.State {
+	case "succeeded":
+		return "published"
+	case "failed", "dead":
+		return "failed"
+	case "cancelled":
+		return "cancelled"
+	case "pending":
+		if row.Kind == "retry" {
+			if row.NextRunAt.Valid && row.NextRunAt.Time.After(now) {
+				return "waiting_retry"
+			}
+			return "queued_retry"
+		}
+		return "queued"
+	case "running":
+		if row.PlatformStartedAt.Valid {
+			return "dispatching"
+		}
+		return "reserved"
+	case "retrying":
+		if row.PlatformStartedAt.Valid {
+			return "retrying"
+		}
+		return "reserved"
+	default:
+		return row.State
+	}
+}
+
+func queueWaitMS(row db.PostDeliveryJob, now time.Time) *int64 {
+	if !row.CreatedAt.Valid {
+		return nil
+	}
+	start := row.CreatedAt.Time
+	if row.Kind == "retry" && row.NextRunAt.Valid {
+		start = row.NextRunAt.Time
+	}
+	end := now
+	if row.LastAttemptAt.Valid {
+		end = row.LastAttemptAt.Time
+	}
+	return durationMSPtr(start, end)
+}
+
+func workerWaitMS(row db.PostDeliveryJob, now time.Time) *int64 {
+	if !row.LastAttemptAt.Valid {
+		return nil
+	}
+	end := now
+	if row.PlatformStartedAt.Valid {
+		end = row.PlatformStartedAt.Time
+	}
+	return durationMSPtr(row.LastAttemptAt.Time, end)
+}
+
+func platformDurationMS(row db.PostDeliveryJob, now time.Time) *int64 {
+	if !row.PlatformStartedAt.Valid {
+		return nil
+	}
+	end := now
+	if row.FinishedAt.Valid {
+		end = row.FinishedAt.Time
+	}
+	return durationMSPtr(row.PlatformStartedAt.Time, end)
+}
+
+func durationMSPtr(start, end time.Time) *int64 {
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return nil
+	}
+	ms := int64(end.Sub(start) / time.Millisecond)
+	return &ms
 }
 
 func (h *SocialPostHandler) ListDeliveryJobs(w http.ResponseWriter, r *http.Request) {
