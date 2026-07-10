@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -47,6 +49,11 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
 
+const (
+	processModeAPI                = "api"
+	processModePostDeliveryWorker = "post-delivery-worker"
+)
+
 func main() {
 	_ = godotenv.Load()
 
@@ -63,7 +70,13 @@ func main() {
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
-	slog.Info("runtime environment detected", "env", runtimeenv.Current(), "production", runtimeenv.IsProduction())
+	processMode, err := normalizeProcessMode(os.Getenv("UNIPOST_PROCESS"))
+	if err != nil {
+		slog.Error("invalid process mode", "error", err)
+		os.Exit(1)
+	}
+	deliveryWorkerConfig := worker.DefaultPostDeliveryWorkerConfigFromEnv()
+	slog.Info("runtime environment detected", "env", runtimeenv.Current(), "production", runtimeenv.IsProduction(), "process_mode", processMode)
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -154,7 +167,14 @@ func main() {
 		slog.Info("youtube adapter registered")
 	}
 
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		slog.Error("unable to parse database config", "error", err)
+		os.Exit(1)
+	}
+	poolConfig.MaxConns = dbPoolMaxConnsForMode(processMode, deliveryWorkerConfig)
+	slog.Info("database pool configured", "process_mode", processMode, "max_conns", poolConfig.MaxConns)
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
 	if err != nil {
 		slog.Error("unable to connect to database", "error", err)
 		os.Exit(1)
@@ -229,8 +249,10 @@ func main() {
 
 	go integrationLogger.Start(workerCtx)
 
-	tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
-	go tokenWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
+		go tokenWorker.Start(workerCtx)
+	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
 	// the managed token refresh worker can take it as a dependency.
@@ -279,7 +301,9 @@ func main() {
 	// for the publish path. Constructed before the scheduler /
 	// handlers so they can be wired with it as their bus dependency.
 	webhookWorker := worker.NewWebhookDeliveryWorker(queries, integrationLogger)
-	go webhookWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		go webhookWorker.Start(workerCtx)
+	}
 
 	// User-facing notifications (migration 040). Dispatcher receives
 	// events alongside the webhook bus via events.MultiBus below; the
@@ -344,7 +368,9 @@ func main() {
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
 	loopsNotificationBus := worker.NewLoopsNotificationEmailBus(queries, loopsSyncer, os.Getenv("APP_BASE_URL"))
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
-	go notificationWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		go notificationWorker.Start(workerCtx)
+	}
 
 	// One Publish() call feeds both the developer webhook system and
 	// the user notification system. Handler code depends on
@@ -357,32 +383,41 @@ func main() {
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
-	managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL)
-	go managedTokenWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL)
+		go managedTokenWorker.Start(workerCtx)
+	}
 
-	schedulerWorker := worker.NewSchedulerWorker(queries, socialPostHandler)
-	go schedulerWorker.Start(workerCtx)
+	if processMode == processModeAPI || strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_RUN_SCHEDULER"), "true") {
+		schedulerWorker := worker.NewSchedulerWorker(queries, socialPostHandler)
+		go schedulerWorker.Start(workerCtx)
+	}
 
-	dispatchWorker := worker.NewPostDispatchWorker(queries, socialPostHandler)
-	go dispatchWorker.Start(workerCtx)
+	if shouldStartPostDeliveryWorkers(processMode) {
+		deliveryExecutor := worker.NewPostDeliveryExecutor(queries, socialPostHandler, deliveryWorkerConfig)
+		dispatchWorker := worker.NewPostDispatchWorkerWithExecutor(queries, socialPostHandler, deliveryWorkerConfig, deliveryExecutor)
+		go dispatchWorker.Start(workerCtx)
 
-	retryWorker := worker.NewPostRetryWorker(queries, socialPostHandler)
-	go retryWorker.Start(workerCtx)
+		retryWorker := worker.NewPostRetryWorkerWithExecutor(queries, socialPostHandler, deliveryWorkerConfig, deliveryExecutor)
+		go retryWorker.Start(workerCtx)
 
-	postDeliveryCleanupWorker := worker.NewPostDeliveryCleanupWorker(socialPostHandler)
-	go postDeliveryCleanupWorker.Start(workerCtx)
+		postDeliveryCleanupWorker := worker.NewPostDeliveryCleanupWorker(socialPostHandler)
+		go postDeliveryCleanupWorker.Start(workerCtx)
+	}
 
-	analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
-	go analyticsRefreshWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
+		go analyticsRefreshWorker.Start(workerCtx)
 
-	mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
-	go mediaCleanupWorker.Start(workerCtx)
+		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
+		go mediaCleanupWorker.Start(workerCtx)
 
-	mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
-	go mediaAudioOverlayWorker.Start(workerCtx)
+		mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
+		go mediaAudioOverlayWorker.Start(workerCtx)
 
-	logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
-	go logRetentionWorker.Start(workerCtx)
+		logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
+		go logRetentionWorker.Start(workerCtx)
+	}
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
 	errorTriageAnalyzer := errortriage.NewProviderAnalyzer(aiProviderService, errortriage.DeterministicAnalyzer{})
@@ -392,19 +427,28 @@ func main() {
 		errortriage.NewLoopsSender(loopsClient),
 		os.Getenv("LOOPS_ERROR_TRIAGE_USER_ACTION_TRANSACTIONAL_ID"),
 	)
-	errorTriageWorker := worker.NewErrorTriageWorker(errorTriageService)
-	go errorTriageWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		errorTriageWorker := worker.NewErrorTriageWorker(errorTriageService)
+		go errorTriageWorker.Start(workerCtx)
+	}
 
 	// Facebook's /videos endpoint returns a video_id immediately and
 	// finishes asynchronously. The initial publish poll waits 60s;
 	// beyond that the row sits in `processing` until someone opens the
 	// post in the dashboard. This worker picks up the slack so the
 	// flip to published/failed happens on its own.
-	facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor)
-	go facebookVideoStatusWorker.Start(workerCtx)
+	if processMode == processModeAPI {
+		facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor)
+		go facebookVideoStatusWorker.Start(workerCtx)
 
-	inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)
-	go inboxSyncWorker.Start(workerCtx)
+		inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)
+		go inboxSyncWorker.Start(workerCtx)
+	}
+
+	if processMode == processModePostDeliveryWorker {
+		waitForProcessShutdown("post delivery worker", workerCancel)
+		return
+	}
 
 	// WebSocket hubs for real-time inbox and logs delivery.
 	inboxHub := ws.NewHub()
@@ -1034,6 +1078,72 @@ func corsAllowedOrigins() []string {
 	}
 
 	return origins
+}
+
+func normalizeProcessMode(raw string) (string, error) {
+	mode := strings.ToLower(strings.TrimSpace(raw))
+	if mode == "" {
+		mode = processModeAPI
+	}
+	switch mode {
+	case processModeAPI, processModePostDeliveryWorker:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("UNIPOST_PROCESS must be %q or %q, got %q", processModeAPI, processModePostDeliveryWorker, raw)
+	}
+}
+
+func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorkerConfig) int32 {
+	defaultMax := 20
+	envNames := []string{"DATABASE_MAX_CONNS"}
+	if mode == processModePostDeliveryWorker {
+		concurrency := deliveryConfig.GlobalConcurrency
+		if concurrency <= 0 {
+			concurrency = 10
+		}
+		defaultMax = concurrency + 5
+		envNames = append([]string{"POST_DELIVERY_WORKER_DATABASE_MAX_CONNS"}, envNames...)
+	} else {
+		envNames = append([]string{"API_DATABASE_MAX_CONNS"}, envNames...)
+	}
+	for _, name := range envNames {
+		raw := strings.TrimSpace(os.Getenv(name))
+		if raw == "" {
+			continue
+		}
+		value, err := strconv.Atoi(raw)
+		if err != nil || value <= 0 {
+			slog.Warn("invalid database pool max env; using default", "name", name, "value", raw, "default", defaultMax)
+			return int32(defaultMax)
+		}
+		return int32(value)
+	}
+	return int32(defaultMax)
+}
+
+func shouldStartHTTPServer(mode string) bool {
+	return mode == processModeAPI
+}
+
+func shouldStartPostDeliveryWorkers(mode string) bool {
+	if mode == processModePostDeliveryWorker {
+		return true
+	}
+	if mode != processModeAPI {
+		return false
+	}
+	return !strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY"), "true")
+}
+
+func waitForProcessShutdown(name string, cancel context.CancelFunc) {
+	slog.Info(name + " process started")
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	slog.Info("shutting down " + name + " process")
+	cancel()
+	slog.Info(name + " process stopped")
 }
 
 func firstNonEmpty(values ...string) string {

@@ -26,6 +26,9 @@ const STATUS_BADGE: Record<string, { cls: string; label: string }> = {
   published: { cls: "dbadge-green", label: "published" },
   scheduled: { cls: "dbadge-blue", label: "scheduled" },
   queued: { cls: "dbadge-blue", label: "queued" },
+  queued_retry: { cls: "dbadge-amber", label: "queued retry" },
+  waiting_retry: { cls: "dbadge-amber", label: "waiting retry" },
+  reserved: { cls: "dbadge-blue", label: "reserved" },
   dispatching: { cls: "dbadge-blue", label: "dispatching" },
   retrying: { cls: "dbadge-amber", label: "retrying" },
   processing: { cls: "dbadge-blue", label: "processing" },
@@ -1269,10 +1272,14 @@ function QueueDiagnostics({
           <dl className="posts-queue-grid">
             <dt>Current state</dt>
             <dd>{latest.state}</dd>
+            <dt>Delivery phase</dt>
+            <dd>{humanizeCode(latest.delivery_phase || latest.state)}</dd>
             <dt>Queue lane</dt>
             <dd>{latest.kind === "retry" ? "Retry queue" : "Initial dispatch"}</dd>
             <dt>Attempts</dt>
             <dd>{latest.attempts}/{latest.max_attempts}</dd>
+            <dt>Queued at</dt>
+            <dd>{formatLongDate(latest.queued_at || latest.created_at)}</dd>
             <dt>Last update</dt>
             <dd>{formatLongDate(latest.updated_at)}</dd>
             {latest.next_run_at ? (
@@ -1285,6 +1292,42 @@ function QueueDiagnostics({
               <>
                 <dt>Last attempt</dt>
                 <dd>{formatLongDate(latest.last_attempt_at)}</dd>
+              </>
+            ) : null}
+            {latest.first_claimed_at ? (
+              <>
+                <dt>First claimed</dt>
+                <dd>{formatLongDate(latest.first_claimed_at)}</dd>
+              </>
+            ) : null}
+            {latest.platform_started_at ? (
+              <>
+                <dt>Platform started</dt>
+                <dd>{formatLongDate(latest.platform_started_at)}</dd>
+              </>
+            ) : null}
+            {latest.finished_at ? (
+              <>
+                <dt>Finished</dt>
+                <dd>{formatLongDate(latest.finished_at)}</dd>
+              </>
+            ) : null}
+            {typeof latest.queue_wait_ms === "number" ? (
+              <>
+                <dt>Queue wait</dt>
+                <dd>{formatDurationMs(latest.queue_wait_ms)}</dd>
+              </>
+            ) : null}
+            {typeof latest.worker_wait_ms === "number" ? (
+              <>
+                <dt>Worker wait</dt>
+                <dd>{formatDurationMs(latest.worker_wait_ms)}</dd>
+              </>
+            ) : null}
+            {typeof latest.platform_duration_ms === "number" ? (
+              <>
+                <dt>Platform duration</dt>
+                <dd>{formatDurationMs(latest.platform_duration_ms)}</dd>
               </>
             ) : null}
             {latest.failure_stage ? (
@@ -1318,7 +1361,7 @@ function QueueDiagnostics({
               {timeline.map((job) => (
                 <div key={job.id} className="posts-queue-event">
                   <div className="posts-queue-event-top">
-                    <span>{statusBadge(job.state)}</span>
+                    <span>{statusBadge(job.delivery_phase || job.state)}</span>
                     <span className="posts-queue-event-meta">
                       {job.kind === "retry" ? "retry" : "dispatch"} · {formatLongDate(job.updated_at)}
                     </span>
@@ -1558,6 +1601,19 @@ function formatLongDate(iso: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)} sec`;
+  const minutes = Math.floor(seconds / 60);
+  const remaining = Math.round(seconds % 60);
+  if (minutes < 60) return remaining > 0 ? `${minutes}m ${remaining}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  return remMinutes > 0 ? `${hours}h ${remMinutes}m` : `${hours}h`;
 }
 
 function humanizeCode(value: string): string {

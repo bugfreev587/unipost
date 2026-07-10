@@ -606,6 +606,8 @@ type PostDeliveryJob struct {
 	DismissedAt        pgtype.Timestamptz `json:"dismissed_at"`
 	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
 	LeaseOwner         pgtype.Text        `json:"lease_owner"`
+	FirstClaimedAt     pgtype.Timestamptz `json:"first_claimed_at"`
+	PlatformStartedAt  pgtype.Timestamptz `json:"platform_started_at"`
 }
 
 type PostFailure struct {
