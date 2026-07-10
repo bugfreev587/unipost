@@ -1671,7 +1671,7 @@ func (h *SocialPostHandler) publishOneContext(
 		oc.accountName = acc.AccountName.String
 	}
 
-	if acc.DisconnectedAt.Valid {
+	if socialAccountDisconnectedForPublish(acc, true) {
 		oc.err = fmt.Errorf("account is disconnected")
 		return
 	}

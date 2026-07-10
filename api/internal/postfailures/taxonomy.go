@@ -40,9 +40,9 @@ func Classify(raw string) Classification {
 		IsRetriable: false,
 	}
 
-	if code := extractMetaSubcode(raw); code != "" {
+	if code := extractMetaCode(raw); code != "" {
 		c.PlatformErrorCode = code
-	} else if code := extractMetaCode(raw); code != "" {
+	} else if code := extractMetaSubcode(raw); code != "" {
 		c.PlatformErrorCode = code
 	}
 	if strings.Contains(s, "tiktok") {

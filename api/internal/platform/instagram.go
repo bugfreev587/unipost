@@ -937,8 +937,12 @@ func (a *InstagramAdapter) ListMedia(ctx context.Context, accessToken string, li
 }
 
 func (a *InstagramAdapter) getIGUserID(ctx context.Context, accessToken string) (string, error) {
+	params := url.Values{}
+	params.Set("fields", "id")
+	params.Set("access_token", accessToken)
+
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://graph.instagram.com/v21.0/me?fields=id&access_token="+accessToken, nil)
+		"https://graph.instagram.com/v21.0/me?"+params.Encode(), nil)
 	if err != nil {
 		return "", err
 	}
@@ -949,12 +953,20 @@ func (a *InstagramAdapter) getIGUserID(ctx context.Context, accessToken string) 
 	}
 	defer resp.Body.Close()
 
+	body, _ := io.ReadAll(resp.Body)
+	bodyText := strings.TrimSpace(string(body))
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("instagram get user id failed (%d): %s", resp.StatusCode, bodyText)
+	}
+
 	var result struct {
 		ID string `json:"id"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if result.ID == "" {
-		return "", fmt.Errorf("failed to get Instagram user ID")
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("instagram get user id decode failed: %w", err)
+	}
+	if strings.TrimSpace(result.ID) == "" {
+		return "", fmt.Errorf("instagram get user id missing id: %s", bodyText)
 	}
 	return result.ID, nil
 }

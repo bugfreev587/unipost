@@ -114,6 +114,43 @@ func TestSanitizeDeliveryErrorTextRemovesNULAndInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestSanitizeDeliveryErrorTextRedactsTokens(t *testing.T) {
+	got := sanitizeDeliveryErrorText(`instagram get user id failed: GET https://graph.instagram.com/v21.0/me?fields=id&access_token=secret-query-token Authorization: Bearer secret-bearer-token`)
+
+	if strings.Contains(got, "secret-query-token") || strings.Contains(got, "secret-bearer-token") {
+		t.Fatalf("sanitized error leaked token: %q", got)
+	}
+	for _, want := range []string{
+		"access_token=[REDACTED]",
+		"Authorization: Bearer [REDACTED]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sanitized error = %q, want to contain %q", got, want)
+		}
+	}
+}
+
+func TestSocialAccountDisconnectedForPublishTreatsReconnectRequiredAsDisconnected(t *testing.T) {
+	if !socialAccountDisconnectedForPublish(db.SocialAccount{Status: "reconnect_required"}, true) {
+		t.Fatal("reconnect_required account should be unavailable for publish")
+	}
+	if !socialAccountDisconnectedForPublish(db.SocialAccount{Status: " RECONNECT_REQUIRED "}, true) {
+		t.Fatal("reconnect_required check should ignore case and surrounding spaces")
+	}
+	if !socialAccountDisconnectedForPublish(db.SocialAccount{
+		Status:         "active",
+		DisconnectedAt: pgtype.Timestamptz{Valid: true},
+	}, true) {
+		t.Fatal("disconnected_at account should remain unavailable for publish")
+	}
+	if socialAccountDisconnectedForPublish(db.SocialAccount{Status: "active"}, true) {
+		t.Fatal("active connected account should be available for publish")
+	}
+	if socialAccountDisconnectedForPublish(db.SocialAccount{Status: "reconnect_required"}, false) {
+		t.Fatal("missing account should stay missing so validation can report account ownership")
+	}
+}
+
 func TestRecoverStaleDeliveryJobsCancelsJobWhenParentPostIsDeleted(t *testing.T) {
 	staleAt := time.Now().Add(-10 * time.Minute)
 	job := db.PostDeliveryJob{
@@ -461,9 +498,9 @@ func TestProcessPostDeliveryJobProceedsWhenStillActive(t *testing.T) {
 // "retrying" (so it clears the job-state guard), but a concurrent original
 // attempt already published the result while the retry waited.
 type retryAfterPublishedDB struct {
-	job               db.PostDeliveryJob
-	result            db.SocialPostResult
-	markedSucceededID string
+	job                db.PostDeliveryJob
+	result             db.SocialPostResult
+	markedSucceededID  string
 	reachedPublishPath bool
 }
 
