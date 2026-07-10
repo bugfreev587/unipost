@@ -535,8 +535,9 @@ func markDeliveryJobPlatformStartedParams(job db.PostDeliveryJob) db.MarkPostDel
 	}
 }
 
-func markDeliveryJobSucceededParams(job db.PostDeliveryJob) db.MarkPostDeliveryJobSucceededParams {
+func markDeliveryJobSucceededParams(job db.PostDeliveryJob, finishedAt time.Time) db.MarkPostDeliveryJobSucceededParams {
 	return db.MarkPostDeliveryJobSucceededParams{
+		FinishedAt:    pgtype.Timestamptz{Time: finishedAt, Valid: true},
 		ID:            job.ID,
 		LeaseOwner:    job.LeaseOwner,
 		LastAttemptAt: job.LastAttemptAt,
@@ -632,7 +633,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if res.Status == "published" {
 		slog.Info("delivery job: result already published, skipping duplicate publish",
 			"job_id", job.ID, "post_id", job.PostID, "result_id", res.ID)
-		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		return nil
@@ -697,6 +698,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		return h.handleJobDispatchFailure(ctx, post, res, job, oc)
 	}
 
+	completedAt := time.Now()
 	status := "published"
 	var externalID, postURL pgtype.Text
 	var publishedAt pgtype.Timestamptz
@@ -707,9 +709,9 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		}
 		externalID = pgtype.Text{String: oc.result.ExternalID, Valid: oc.result.ExternalID != ""}
 		postURL = pgtype.Text{String: oc.result.URL, Valid: oc.result.URL != ""}
-		if status == "published" {
-			publishedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		}
+	}
+	if status == "published" {
+		publishedAt = pgtype.Timestamptz{Time: completedAt, Valid: true}
 	}
 	updated, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
 		ID:           res.ID,
@@ -723,7 +725,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if err != nil {
 		return err
 	}
-	if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job)); err != nil {
+	if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, completedAt)); err != nil {
 		return err
 	}
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
@@ -1009,7 +1011,7 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 	if result.Status == "published" {
 		slog.Info("stale recovery: result already published, closing job without retry",
 			"job_id", job.ID, "post_id", job.PostID, "result_id", result.ID)
-		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return err
 		}
 		return nil

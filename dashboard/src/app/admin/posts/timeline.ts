@@ -26,3 +26,8 @@ export function fmtAdminPostTimelineDate(iso: string) {
     minute: "2-digit",
   });
 }
+
+export function formatAdminDurationSeconds(value?: number | null) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return "—";
+  return `${Math.floor(value)} s`;
+}

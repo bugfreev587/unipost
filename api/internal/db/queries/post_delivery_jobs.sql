@@ -336,7 +336,7 @@ SET state = 'succeeded',
     platform_error_code = NULL,
     next_run_at = NULL,
     updated_at = NOW(),
-    finished_at = NOW()
+    finished_at = sqlc.arg('finished_at')
 WHERE id = sqlc.arg('id')
   AND state IN ('running', 'retrying')
   AND lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
