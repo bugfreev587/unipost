@@ -34,7 +34,7 @@ import { adminUserIdentifierLabel } from "@/lib/admin-privacy";
 
 import { AdminShell, StatCard, bucketByLocalDayRange, fmtNumber, fmtRelative } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
-import { fmtAdminPostTimelineDate, getAdminPostPublishTimeline } from "./timeline";
+import { fmtAdminPostTimelineDate, formatAdminDurationSeconds, getAdminPostPublishTimeline } from "./timeline";
 
 const STATUS_OPTIONS = ["all", "draft", "scheduled", "publishing", "published", "partial", "failed", "canceled", "archived"] as const;
 const RESULT_STATUS_OPTIONS = ["all", "failed"] as const;
@@ -505,8 +505,8 @@ export default function AdminPostsPage() {
         </div>
         <div className="ad-section-meta">Most recent first</div>
       </div>
-      <div className="ad-tbl-wrap ad-tbl-static">
-        <table>
+      <div className="ad-tbl-wrap ad-tbl-static" style={{ overflowX: "auto" }}>
+        <table style={{ minWidth: 1500 }}>
           <thead>
             <tr>
               <th>Post</th>
@@ -516,15 +516,17 @@ export default function AdminPostsPage() {
               <th>Workspace</th>
               <th>User</th>
               <th>Created</th>
+              <th>Scheduled</th>
+              <th>Duration</th>
               <th>Publish Time</th>
               <th>Delivery</th>
             </tr>
           </thead>
           <tbody>
             {loading && posts.length === 0 ? (
-              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : posts.length === 0 ? (
-              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No posts matched the current filters.</td></tr>
+              <tr><td colSpan={11} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No posts matched the current filters.</td></tr>
             ) : (
               posts.map((post, idx) => {
                 const id = postKey(post, idx);
@@ -549,7 +551,7 @@ export default function AdminPostsPage() {
                       background: selected ? "color-mix(in srgb, var(--daccent) 9%, var(--surface))" : undefined,
                     }}
                   >
-                    <td style={{ minWidth: 280 }}>
+                    <td style={{ minWidth: 210, width: 210, maxWidth: 210 }}>
                       <div style={{ fontWeight: 500 }}>
                         {post.caption?.slice(0, 110) || "No caption"}
                       </div>
@@ -582,6 +584,16 @@ export default function AdminPostsPage() {
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       <div>{fmtRelative(post.created_at)}</div>
+                    </td>
+                    <td style={{ whiteSpace: "nowrap", minWidth: 132 }}>
+                      {post.scheduled_at ? (
+                        fmtAdminPostTimelineDate(post.scheduled_at)
+                      ) : (
+                        <span style={{ color: "var(--dmuted2)", fontSize: 11 }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ whiteSpace: "nowrap", minWidth: 88, fontFamily: "var(--font-geist-mono), monospace" }}>
+                      {formatAdminDurationSeconds(post.duration_seconds)}
                     </td>
                     <td style={{ whiteSpace: "nowrap", minWidth: 132 }}>
                       {publishTimeline ? (
