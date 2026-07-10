@@ -8,8 +8,8 @@ restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
 
 # Dedicated post delivery worker services use the same build artifact and
-# startCommand with UNIPOST_PROCESS=post-delivery-worker. Configure those
-# Railway services without the HTTP healthcheck because worker mode does not
-# start the API server. Keep API-mode delivery workers enabled as the rollout
-# fallback until the dedicated worker service is verified, then set
+# startCommand with UNIPOST_PROCESS=post-delivery-worker. Worker mode serves
+# only the /health check, not the API routes. Keep API-mode delivery workers
+# enabled as the rollout fallback until the dedicated worker service is
+# verified, then set
 # POST_DELIVERY_WORKER_DISABLE_API_DELIVERY=true on API services.
