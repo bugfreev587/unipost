@@ -258,11 +258,18 @@ func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, workspaceID st
 	for _, a := range accounts {
 		out[a.ID] = platform.ValidateAccount{
 			Platform:       a.Platform,
-			Disconnected:   a.DisconnectedAt.Valid,
+			Disconnected:   socialAccountDisconnectedForPublish(a, true),
 			ConnectionType: a.ConnectionType,
 		}
 	}
 	return out, nil
+}
+
+func socialAccountDisconnectedForPublish(acc db.SocialAccount, ok bool) bool {
+	if !ok {
+		return false
+	}
+	return acc.DisconnectedAt.Valid || strings.EqualFold(strings.TrimSpace(acc.Status), "reconnect_required")
 }
 
 // loadValidateMedia loads each referenced media_id from the workspace's

@@ -153,6 +153,34 @@ func TestInstagramWaitForContainerDecodeErrorIsDiagnosable(t *testing.T) {
 	}
 }
 
+func TestInstagramGetIGUserIDErrorIncludesMetaBodyWithoutToken(t *testing.T) {
+	const token = "secret_ig_token"
+	adapter := &InstagramAdapter{client: &http.Client{Transport: &instagramSequenceTransport{
+		responses: []instagramHTTPResponse{{
+			status: http.StatusBadRequest,
+			body:   `{"error":{"message":"The user must log in again.","type":"OAuthException","code":190,"error_subcode":460}}`,
+		}},
+	}}}
+
+	_, err := adapter.getIGUserID(context.Background(), token)
+	if err == nil {
+		t.Fatal("expected get user id error")
+	}
+	got := err.Error()
+	for _, want := range []string{
+		"instagram get user id failed (400)",
+		`"code":190`,
+		`"error_subcode":460`,
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("error = %q, want to contain %q", got, want)
+		}
+	}
+	if strings.Contains(got, token) || strings.Contains(strings.ToLower(got), "access_token=") {
+		t.Fatalf("error leaked request token details: %q", got)
+	}
+}
+
 func withInstagramPollConfig(t *testing.T, attempts int, interval time.Duration) {
 	t.Helper()
 	oldAttempts := instagramContainerPollAttempts

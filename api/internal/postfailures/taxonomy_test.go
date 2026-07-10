@@ -69,6 +69,18 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable:         false,
 		},
 		{
+			name:              "instagram get user id oauth 190 login challenge",
+			raw:               `instagram get user id failed (400): {"error":{"message":"The user must log in again.","type":"OAuthException","code":190,"error_subcode":460}}`,
+			code:              "account_reconnect_required",
+			source:            ErrorSourcePlatform,
+			temporality:       ErrorTemporalityPermanent,
+			platformErrorCode: "190",
+			provider:          "meta",
+			providerCode:      "190",
+			httpStatus:        400,
+			retriable:         false,
+		},
+		{
 			name:              "meta oauth 190 refresh expired token",
 			raw:               `refresh failed (400): {"error":{"message":"Error validating access token: Session has expired on Sunday, 10-May-26 10:00:00 PDT.","type":"OAuthException","code":190,"error_subcode":0}}`,
 			code:              "account_reconnect_required",

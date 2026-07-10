@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -24,6 +25,11 @@ import (
 const (
 	defaultDeliveryJobMaxAttempts = 5
 	staleDeliveryAttemptTimeout   = 5 * time.Minute
+)
+
+var (
+	deliveryAccessTokenParamPattern = regexp.MustCompile(`(?i)(access_token=)[^&\s"'<>]+`)
+	deliveryBearerTokenPattern      = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)[^\s"'<>]+`)
 )
 
 type postQueueSummary struct {
@@ -143,7 +149,7 @@ func (h *SocialPostHandler) loadDBAccountsByIDs(ctx context.Context, workspaceID
 func summarizeAccountValidation(dbAcc db.SocialAccount, ok bool, fallback platform.ValidateAccount) (platformName string, err error) {
 	if ok {
 		platformName = dbAcc.Platform
-		if dbAcc.DisconnectedAt.Valid {
+		if socialAccountDisconnectedForPublish(dbAcc, true) {
 			return platformName, fmt.Errorf("account is disconnected")
 		}
 		return platformName, nil
@@ -373,7 +379,7 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 		acc, ok := dbAccounts[pp.AccountID]
 		accountMap[pp.AccountID] = platform.ValidateAccount{
 			Platform:     acc.Platform,
-			Disconnected: ok && acc.DisconnectedAt.Valid,
+			Disconnected: socialAccountDisconnectedForPublish(acc, ok),
 		}
 	}
 	quotaUnits := countPublishQuotaUnits(parsed, accountMap)
@@ -628,7 +634,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if acc, ok := dbAccounts[pp.AccountID]; ok {
 		accountMap[pp.AccountID] = platform.ValidateAccount{
 			Platform:     acc.Platform,
-			Disconnected: acc.DisconnectedAt.Valid,
+			Disconnected: socialAccountDisconnectedForPublish(acc, true),
 		}
 	}
 
@@ -1090,7 +1096,10 @@ func sanitizeDeliveryErrorText(s string) string {
 		return ""
 	}
 	s = strings.ToValidUTF8(s, "")
-	return strings.ReplaceAll(s, "\x00", "")
+	s = strings.ReplaceAll(s, "\x00", "")
+	s = deliveryAccessTokenParamPattern.ReplaceAllString(s, `${1}[REDACTED]`)
+	s = deliveryBearerTokenPattern.ReplaceAllString(s, `${1}[REDACTED]`)
+	return s
 }
 
 func sanitizeDeliveryErrorTextValue(v pgtype.Text) pgtype.Text {
