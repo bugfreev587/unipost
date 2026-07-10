@@ -50,10 +50,13 @@ func TestLeaseHeartbeatRenewsOwnedJobsUntilDone(t *testing.T) {
 
 	hb.mu.Lock()
 	defer hb.mu.Unlock()
-	if hb.remaining["b"] {
+	if _, ok := hb.remaining["b"]; ok {
 		t.Fatal("a processed job must stop being renewed")
 	}
-	if !hb.remaining["a"] || !hb.remaining["c"] {
+	if _, ok := hb.remaining["a"]; !ok {
+		t.Fatal("jobs still owned (queued/in-flight) must keep their lease renewed")
+	}
+	if _, ok := hb.remaining["c"]; !ok {
 		t.Fatal("jobs still owned (queued/in-flight) must keep their lease renewed")
 	}
 }

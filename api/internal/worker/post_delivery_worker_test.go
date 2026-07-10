@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -137,6 +138,8 @@ func scanPostDeliveryJob(dest []interface{}, job db.PostDeliveryJob) error {
 		job.DismissedAt,
 		job.LeaseExpiresAt,
 		job.LeaseOwner,
+		job.FirstClaimedAt,
+		job.PlatformStartedAt,
 	}
 	if len(dest) != len(values) {
 		return errors.New("unexpected post_delivery_jobs scan shape")
@@ -208,4 +211,179 @@ func TestPostDispatchWorkerProcessesClaimedJobsConcurrently(t *testing.T) {
 
 	close(dbtx.release)
 	<-done
+}
+
+func TestPostDispatchWorkerRunOnceDoesNotWaitForClaimedJobsToFinish(t *testing.T) {
+	dbtx := &dispatchWorkerDB{
+		jobs: []db.PostDeliveryJob{
+			dispatchWorkerTestJob("one"),
+		},
+		started: make(chan string, 1),
+		release: make(chan struct{}),
+	}
+	queries := db.New(dbtx)
+	worker := NewPostDispatchWorkerWithConfig(
+		queries,
+		handler.NewSocialPostHandler(queries, nil, nil, nil, nil, nil, nil),
+		PostDeliveryWorkerConfig{
+			ClaimBatchLimit:        20,
+			WorkspaceConcurrentCap: 30,
+			GlobalConcurrency:      10,
+		},
+	)
+
+	done := make(chan struct{})
+	go func() {
+		worker.runOnce(context.Background())
+		close(done)
+	}()
+
+	select {
+	case <-dbtx.started:
+	case <-time.After(time.Second):
+		close(dbtx.release)
+		t.Fatal("claimed job never reached the publish path")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(250 * time.Millisecond):
+		close(dbtx.release)
+		t.Fatal("runOnce waited for the claimed job to finish before returning")
+	}
+
+	close(dbtx.release)
+}
+
+type blockingDeliveryProcessor struct {
+	started chan string
+	release chan string
+
+	mu       sync.Mutex
+	blockers map[string]chan struct{}
+}
+
+func newBlockingDeliveryProcessor() *blockingDeliveryProcessor {
+	return &blockingDeliveryProcessor{
+		started:  make(chan string, 8),
+		release:  make(chan string, 8),
+		blockers: map[string]chan struct{}{},
+	}
+}
+
+func (p *blockingDeliveryProcessor) ProcessPostDeliveryJob(_ context.Context, job db.PostDeliveryJob) error {
+	ch := make(chan struct{})
+	p.mu.Lock()
+	p.blockers[job.ID] = ch
+	p.mu.Unlock()
+
+	p.started <- job.ID
+	<-ch
+	return nil
+}
+
+func (p *blockingDeliveryProcessor) unblock(jobID string) {
+	p.mu.Lock()
+	ch := p.blockers[jobID]
+	p.mu.Unlock()
+	if ch != nil {
+		close(ch)
+	}
+}
+
+func TestPostDeliveryExecutorRespectsGlobalConcurrency(t *testing.T) {
+	processor := newBlockingDeliveryProcessor()
+	executor := newPostDeliveryExecutor(
+		db.New(leaseNoopDB{}),
+		processor,
+		PostDeliveryWorkerConfig{GlobalConcurrency: 1},
+		"test worker",
+	)
+	executor.submitReserved(context.Background(), []db.PostDeliveryJob{
+		dispatchWorkerTestJob("one"),
+		dispatchWorkerTestJob("two"),
+	})
+
+	first := waitStarted(t, processor.started)
+	if first != "one" && first != "two" {
+		t.Fatalf("first started job = %q, want one or two", first)
+	}
+	select {
+	case got := <-processor.started:
+		t.Fatalf("job %q started while the single global slot was full", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	processor.unblock(first)
+	secondWant := "one"
+	if first == "one" {
+		secondWant = "two"
+	}
+	if got := waitStarted(t, processor.started); got != secondWant {
+		t.Fatalf("second started job = %q, want %q", got, secondWant)
+	}
+	processor.unblock(secondWant)
+}
+
+func TestPostDeliveryExecutorRespectsPlatformConcurrencyWithoutBlockingOtherPlatforms(t *testing.T) {
+	processor := newBlockingDeliveryProcessor()
+	executor := newPostDeliveryExecutor(
+		db.New(leaseNoopDB{}),
+		processor,
+		PostDeliveryWorkerConfig{
+			GlobalConcurrency: 2,
+			PlatformConcurrencyCaps: map[string]int{
+				"instagram": 1,
+				"twitter":   1,
+			},
+		},
+		"test worker",
+	)
+	igOne := dispatchWorkerTestJob("ig-one")
+	igOne.Platform = "instagram"
+	igTwo := dispatchWorkerTestJob("ig-two")
+	igTwo.Platform = "instagram"
+	twitter := dispatchWorkerTestJob("twitter-one")
+	twitter.Platform = "twitter"
+
+	executor.submitReserved(context.Background(), []db.PostDeliveryJob{igOne, igTwo, twitter})
+
+	first := waitStarted(t, processor.started)
+	second := waitStarted(t, processor.started)
+	started := map[string]bool{first: true, second: true}
+	var startedIG string
+	var waitingIG string
+	switch {
+	case started["ig-one"] && started["twitter-one"]:
+		startedIG = "ig-one"
+		waitingIG = "ig-two"
+	case started["ig-two"] && started["twitter-one"]:
+		startedIG = "ig-two"
+		waitingIG = "ig-one"
+	default:
+		t.Fatalf("started jobs = %v, want one instagram job and twitter-one while the other instagram waits", started)
+	}
+	select {
+	case got := <-processor.started:
+		t.Fatalf("job %q started while instagram cap was full", got)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	processor.unblock(startedIG)
+	if got := waitStarted(t, processor.started); got != waitingIG {
+		t.Fatalf("job after releasing instagram cap = %q, want %q", got, waitingIG)
+	}
+	processor.unblock(waitingIG)
+	processor.unblock("twitter-one")
+}
+
+func waitStarted(t *testing.T, started <-chan string) string {
+	t.Helper()
+	select {
+	case id := <-started:
+		return id
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for job to start")
+		return ""
+	}
 }

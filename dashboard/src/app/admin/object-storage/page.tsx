@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 
 import { AdminShell, StatCard, fmtBytes, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
+import { ObjectStorageDailyChart } from "./object-storage-daily-chart";
 
 const PERIOD_OPTIONS: Array<{ value: AdminObjectStoragePeriod; label: string }> = [
   { value: "yesterday", label: "Yesterday" },
@@ -92,6 +93,22 @@ export default function AdminObjectStoragePage() {
         <span>Next cleanup deadline</span>
         <strong>{backlog?.next_cleanup_deadline_at ? formatDateTime(backlog.next_cleanup_deadline_at) : "No future deadline"}</strong>
       </div>
+
+      <section className="aos-chart-card" aria-labelledby="daily-storage-movement-title">
+        <div className="ad-section-header aos-chart-header">
+          <div>
+            <div id="daily-storage-movement-title" className="ad-section-title">Daily storage movement</div>
+            <div className="ad-section-meta">Confirmed R2 uploads and completed cleanup deletions by UTC day</div>
+          </div>
+        </div>
+        {loading && !data ? (
+          <div className="aos-chart-skeleton" aria-label="Loading daily storage movement"><i /><i /><i /><i /><i /><i /><i /></div>
+        ) : data ? (
+          <ObjectStorageDailyChart rows={data?.daily_activity ?? []} />
+        ) : (
+          <div className="aos-chart-empty">Daily activity is unavailable until object storage metrics load.</div>
+        )}
+      </section>
 
       <div className="ad-section-header" style={{ marginTop: 22 }}>
         <div className="ad-section-title">Buckets</div>
@@ -294,6 +311,159 @@ const objectStorageCss = `
   font-size: 11px;
   margin-right: 10px;
 }
+.aos-chart-card {
+  border: 1px solid var(--dborder);
+  border-radius: 10px;
+  background: var(--surface1);
+  padding: 14px 16px 12px;
+  margin-bottom: 22px;
+}
+.aos-chart-header { margin-bottom: 12px; }
+.aos-chart {
+  min-width: 0;
+}
+.aos-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-bottom: 12px;
+  color: var(--dmuted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.aos-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.aos-chart-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+.aos-chart-confirm { background: #ef4444; }
+.aos-chart-delete { background: #22c55e; }
+.aos-chart-scroll {
+  display: grid;
+  grid-template-columns: 52px minmax(520px, 1fr);
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.aos-chart-axis {
+  display: grid;
+  grid-template-rows: repeat(5, 1fr);
+  min-height: 220px;
+  color: var(--dmuted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  text-align: right;
+}
+.aos-chart-axis span {
+  transform: translateY(-7px);
+  white-space: nowrap;
+}
+.aos-chart-axis span:last-child { transform: translateY(5px); }
+.aos-chart-plot {
+  position: relative;
+  min-height: 220px;
+}
+.aos-chart-gridlines {
+  position: absolute;
+  inset: 0 0 32px;
+  display: grid;
+  grid-template-rows: repeat(4, 1fr);
+  pointer-events: none;
+}
+.aos-chart-gridlines i { border-top: 1px solid color-mix(in srgb, var(--dborder) 85%, transparent); }
+.aos-chart-gridlines i:last-child { border-bottom: 1px solid color-mix(in srgb, var(--dborder) 85%, transparent); }
+.aos-chart-groups {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  height: 220px;
+  gap: 6px;
+}
+.aos-chart-group {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 24px;
+  gap: 8px;
+  min-width: 0;
+}
+.aos-chart-bars {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 3px;
+  min-height: 0;
+}
+.aos-chart-bar {
+  width: 100%;
+  min-height: 0;
+  align-self: end;
+  border: 0;
+  border-radius: 3px 3px 0 0;
+  cursor: pointer;
+  transform-origin: bottom;
+  transition: transform .15s ease, filter .15s ease;
+}
+.aos-chart-bar:hover,
+.aos-chart-bar:focus-visible {
+  filter: brightness(1.12);
+  transform: scaleX(.94);
+  outline: 2px solid var(--dtext);
+  outline-offset: 2px;
+}
+.aos-chart-bar[data-empty="true"] {
+  min-height: 12px;
+  background: transparent;
+}
+.aos-chart-date {
+  overflow: hidden;
+  color: var(--dmuted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aos-chart-tooltip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 10px;
+  color: var(--dmuted);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+}
+.aos-chart-tooltip strong { color: var(--dtext); }
+.aos-chart-empty {
+  display: grid;
+  min-height: 220px;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--dborder) 85%, transparent);
+  border-radius: 8px;
+  color: var(--dmuted);
+  font-size: 12px;
+  text-align: center;
+}
+.aos-chart-skeleton {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: end;
+  gap: 10px;
+  min-height: 220px;
+  padding: 20px 12px 32px 64px;
+}
+.aos-chart-skeleton i {
+  display: block;
+  min-height: 28px;
+  border-radius: 3px 3px 0 0;
+  background: color-mix(in srgb, var(--dborder) 60%, transparent);
+}
+.aos-chart-skeleton i:nth-child(2n) { min-height: 76px; }
+.aos-chart-skeleton i:nth-child(3n) { min-height: 118px; }
 .aos-two-col {
   display: grid;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr);
@@ -313,5 +483,8 @@ const objectStorageCss = `
   .aos-stat-grid { grid-template-columns: 1fr; }
   .aos-filter { width: 100%; }
   .aos-filter select { width: 100%; }
+  .aos-chart-card { padding: 14px 12px 12px; }
+  .aos-chart-scroll { grid-template-columns: 44px minmax(480px, 1fr); }
+  .aos-chart-axis { font-size: 9px; }
 }
 `;

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,203 @@ func TestResolvePublishingEventSourceDefaultsToDashboard(t *testing.T) {
 
 	if got != integrationlogs.SourceDashboard {
 		t.Fatalf("source = %q, want %q", got, integrationlogs.SourceDashboard)
+	}
+}
+
+func TestPostDeliveryJobResponseDerivesDeliveryPhase(t *testing.T) {
+	now := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	created := pgtype.Timestamptz{Time: now.Add(-10 * time.Minute), Valid: true}
+	firstClaimed := pgtype.Timestamptz{Time: now.Add(-8 * time.Minute), Valid: true}
+	lastAttempt := pgtype.Timestamptz{Time: now.Add(-7 * time.Minute), Valid: true}
+	platformStarted := pgtype.Timestamptz{Time: now.Add(-6 * time.Minute), Valid: true}
+	finished := pgtype.Timestamptz{Time: now.Add(-4 * time.Minute), Valid: true}
+	futureRetry := pgtype.Timestamptz{Time: now.Add(5 * time.Minute), Valid: true}
+	dueRetry := pgtype.Timestamptz{Time: now.Add(-1 * time.Minute), Valid: true}
+
+	base := db.PostDeliveryJob{
+		ID:                 "job_1",
+		PostID:             "post_1",
+		SocialPostResultID: "result_1",
+		SocialAccountID:    "acct_1",
+		WorkspaceID:        "ws_1",
+		Platform:           "twitter",
+		Kind:               "dispatch",
+		State:              "pending",
+		CreatedAt:          created,
+		UpdatedAt:          created,
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*db.PostDeliveryJob)
+		want   string
+	}{
+		{name: "pending dispatch without claim is queued", want: "queued"},
+		{
+			name: "pending retry scheduled in future is waiting retry",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.Kind = "retry"
+				job.NextRunAt = futureRetry
+			},
+			want: "waiting_retry",
+		},
+		{
+			name: "pending retry due now is queued retry",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.Kind = "retry"
+				job.NextRunAt = dueRetry
+			},
+			want: "queued_retry",
+		},
+		{
+			name: "running before platform start is reserved",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.State = "running"
+				job.FirstClaimedAt = firstClaimed
+				job.LastAttemptAt = lastAttempt
+			},
+			want: "reserved",
+		},
+		{
+			name: "running after platform start is dispatching",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.State = "running"
+				job.FirstClaimedAt = firstClaimed
+				job.LastAttemptAt = lastAttempt
+				job.PlatformStartedAt = platformStarted
+			},
+			want: "dispatching",
+		},
+		{
+			name: "retrying after platform start is retrying",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.Kind = "retry"
+				job.State = "retrying"
+				job.FirstClaimedAt = firstClaimed
+				job.LastAttemptAt = lastAttempt
+				job.PlatformStartedAt = platformStarted
+			},
+			want: "retrying",
+		},
+		{
+			name: "succeeded is published",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.State = "succeeded"
+				job.FinishedAt = finished
+			},
+			want: "published",
+		},
+		{
+			name: "dead is failed",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.State = "dead"
+				job.FinishedAt = finished
+			},
+			want: "failed",
+		},
+		{
+			name: "cancelled remains cancelled",
+			mutate: func(job *db.PostDeliveryJob) {
+				job.State = "cancelled"
+				job.FinishedAt = finished
+			},
+			want: "cancelled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			job := base
+			if tt.mutate != nil {
+				tt.mutate(&job)
+			}
+
+			resp := postDeliveryJobResponseFromRowAt(job, now)
+
+			if resp.DeliveryPhase != tt.want {
+				t.Fatalf("delivery phase = %q, want %q", resp.DeliveryPhase, tt.want)
+			}
+			if resp.QueuedAt != created.Time {
+				t.Fatalf("queued_at = %s, want %s", resp.QueuedAt, created.Time)
+			}
+		})
+	}
+}
+
+func TestPostDeliveryJobResponseCalculatesWaitDurations(t *testing.T) {
+	created := time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC)
+	firstClaimed := created.Add(30 * time.Second)
+	lastAttempt := created.Add(2 * time.Minute)
+	platformStarted := created.Add(3 * time.Minute)
+	finished := created.Add(5 * time.Minute)
+	job := db.PostDeliveryJob{
+		ID:                 "job_1",
+		PostID:             "post_1",
+		SocialPostResultID: "result_1",
+		SocialAccountID:    "acct_1",
+		WorkspaceID:        "ws_1",
+		Platform:           "twitter",
+		Kind:               "dispatch",
+		State:              "succeeded",
+		CreatedAt:          pgtype.Timestamptz{Time: created, Valid: true},
+		UpdatedAt:          pgtype.Timestamptz{Time: finished, Valid: true},
+		FirstClaimedAt:     pgtype.Timestamptz{Time: firstClaimed, Valid: true},
+		LastAttemptAt:      pgtype.Timestamptz{Time: lastAttempt, Valid: true},
+		PlatformStartedAt:  pgtype.Timestamptz{Time: platformStarted, Valid: true},
+		FinishedAt:         pgtype.Timestamptz{Time: finished, Valid: true},
+	}
+
+	resp := postDeliveryJobResponseFromRowAt(job, finished)
+
+	if resp.QueueWaitMS == nil || *resp.QueueWaitMS != int64(lastAttempt.Sub(created)/time.Millisecond) {
+		t.Fatalf("queue_wait_ms = %v, want %d", resp.QueueWaitMS, int64(lastAttempt.Sub(created)/time.Millisecond))
+	}
+	if resp.WorkerWaitMS == nil || *resp.WorkerWaitMS != int64(platformStarted.Sub(lastAttempt)/time.Millisecond) {
+		t.Fatalf("worker_wait_ms = %v, want %d", resp.WorkerWaitMS, int64(platformStarted.Sub(lastAttempt)/time.Millisecond))
+	}
+	if resp.PlatformDurationMS == nil || *resp.PlatformDurationMS != int64(finished.Sub(platformStarted)/time.Millisecond) {
+		t.Fatalf("platform_duration_ms = %v, want %d", resp.PlatformDurationMS, int64(finished.Sub(platformStarted)/time.Millisecond))
+	}
+}
+
+func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatalf("read social_post_queue.go: %v", err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) ProcessPostDeliveryJob")
+	if start < 0 {
+		t.Fatal("ProcessPostDeliveryJob not found")
+	}
+	end := strings.Index(text[start:], "func (h *SocialPostHandler) finalizeJobLoadFailure")
+	if end < 0 {
+		t.Fatal("finalizeJobLoadFailure boundary not found")
+	}
+	fn := text[start : start+end]
+
+	resultGuard := strings.Index(fn, `if res.Status == "published"`)
+	platformInput := strings.Index(fn, "platformPostInputAtIndex")
+	markStarted := strings.Index(fn, "MarkPostDeliveryJobPlatformStarted")
+	dispatch := strings.Index(fn, "h.publishOneContext(")
+	for name, idx := range map[string]int{
+		"result duplicate guard":     resultGuard,
+		"platform input preparation": platformInput,
+		"platform started marker":    markStarted,
+		"publishOneContext dispatch": dispatch,
+	} {
+		if idx < 0 {
+			t.Fatalf("%s not found in ProcessPostDeliveryJob", name)
+		}
+	}
+	if markStarted < resultGuard {
+		t.Fatal("platform_started_at must not be written before the result duplicate guard")
+	}
+	if markStarted < platformInput {
+		t.Fatal("platform_started_at must not be written before platform input preparation")
+	}
+	if markStarted > dispatch {
+		t.Fatal("platform_started_at must be written before publishOneContext dispatch")
 	}
 }
 
@@ -313,16 +511,16 @@ func (f *staleDeletedPostQueueDB) QueryRow(_ context.Context, query string, args
 	case strings.Contains(query, "-- name: GetSocialPostByID"):
 		return scanRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
-		f.markedJobID = args[0].(string)
-		f.markedState = args[1].(string)
-		f.markedFailureStage = args[2].(pgtype.Text).String
+		f.markedState = args[0].(string)
+		f.markedFailureStage = args[1].(pgtype.Text).String
+		f.markedJobID = args[6].(string)
 		updated := f.staleJob
 		updated.State = f.markedState
-		updated.FailureStage = args[2].(pgtype.Text)
-		updated.ErrorCode = args[3].(pgtype.Text)
-		updated.PlatformErrorCode = args[4].(pgtype.Text)
-		updated.LastError = args[5].(pgtype.Text)
-		updated.NextRunAt = args[6].(pgtype.Timestamptz)
+		updated.FailureStage = args[1].(pgtype.Text)
+		updated.ErrorCode = args[2].(pgtype.Text)
+		updated.PlatformErrorCode = args[3].(pgtype.Text)
+		updated.LastError = args[4].(pgtype.Text)
+		updated.NextRunAt = args[5].(pgtype.Timestamptz)
 		return postDeliveryJobScanRow(updated)
 	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
 		f.createdRetryJob = true
@@ -387,6 +585,8 @@ func postDeliveryJobValues(job db.PostDeliveryJob) []any {
 		job.DismissedAt,
 		job.LeaseExpiresAt,
 		job.LeaseOwner,
+		job.FirstClaimedAt,
+		job.PlatformStartedAt,
 	}
 }
 
@@ -437,6 +637,7 @@ func baseDeliveryJob() db.PostDeliveryJob {
 type guardedDeliveryDB struct {
 	current            db.PostDeliveryJob
 	getJobCalls        int
+	platformStartedID  string
 	reachedPublishPath bool
 }
 
@@ -450,10 +651,13 @@ func (f *guardedDeliveryDB) Query(context.Context, string, ...interface{}) (pgx.
 	return nil, errors.New("unexpected Query")
 }
 
-func (f *guardedDeliveryDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+func (f *guardedDeliveryDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
 		f.getJobCalls++
+		return postDeliveryJobScanRow(f.current)
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobPlatformStarted"):
+		f.platformStartedID = args[0].(string)
 		return postDeliveryJobScanRow(f.current)
 	default:
 		f.reachedPublishPath = true
@@ -476,6 +680,9 @@ func TestProcessPostDeliveryJobSkipsWhenStaleRecoveryAlreadyFailedIt(t *testing.
 	}
 	if dbtx.reachedPublishPath {
 		t.Fatal("worker reached the publish path for a job that is no longer active (double-publish risk)")
+	}
+	if dbtx.platformStartedID != "" {
+		t.Fatalf("stale job wrote platform_started_at for %q", dbtx.platformStartedID)
 	}
 }
 
