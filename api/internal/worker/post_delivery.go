@@ -153,14 +153,7 @@ func (w *PostDispatchWorker) runOnce(ctx context.Context) {
 	if len(jobs) == 0 {
 		return
 	}
-	hb := startLeaseHeartbeat(ctx, w.queries, jobs)
-	defer hb.stop()
-	for _, job := range jobs {
-		if err := w.postHandler.ProcessPostDeliveryJob(ctx, job); err != nil {
-			slog.Error("post dispatch worker: process failed", "job_id", job.ID, "error", err)
-		}
-		hb.done(job.ID)
-	}
+	processClaimedPostDeliveryJobs(ctx, w.queries, w.postHandler, jobs, "post dispatch worker")
 }
 
 type PostRetryWorker struct {
@@ -205,14 +198,25 @@ func (w *PostRetryWorker) runOnce(ctx context.Context) {
 	if len(jobs) == 0 {
 		return
 	}
-	hb := startLeaseHeartbeat(ctx, w.queries, jobs)
+	processClaimedPostDeliveryJobs(ctx, w.queries, w.postHandler, jobs, "post retry worker")
+}
+
+func processClaimedPostDeliveryJobs(ctx context.Context, queries *db.Queries, postHandler *handler.SocialPostHandler, jobs []db.PostDeliveryJob, workerName string) {
+	hb := startLeaseHeartbeat(ctx, queries, jobs)
 	defer hb.stop()
+	var wg sync.WaitGroup
 	for _, job := range jobs {
-		if err := w.postHandler.ProcessPostDeliveryJob(ctx, job); err != nil {
-			slog.Error("post retry worker: process failed", "job_id", job.ID, "error", err)
-		}
-		hb.done(job.ID)
+		job := job
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer hb.done(job.ID)
+			if err := postHandler.ProcessPostDeliveryJob(ctx, job); err != nil {
+				slog.Error(workerName+": process failed", "job_id", job.ID, "error", err)
+			}
+		}()
 	}
+	wg.Wait()
 }
 
 type PostDeliveryCleanupWorker struct {
