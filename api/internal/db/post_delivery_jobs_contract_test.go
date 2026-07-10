@@ -69,12 +69,17 @@ func TestPostDeliveryJobFairClaimQueryContract(t *testing.T) {
 		"ORDER BY rn ASC, sort_key ASC, id ASC",
 		"active_cnt + rn <= $",
 		"locked_jobs AS",
+		"locked_accounts AS",
+		"WHERE EXISTS (",
 		"FOR UPDATE OF j SKIP LOCKED",
-		"JOIN (SELECT DISTINCT social_account_id FROM locked_jobs)",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("fair claim query contract missing %q", want)
 		}
+	}
+
+	if strings.Contains(sql, "SELECT DISTINCT social_account_id FROM locked_jobs") {
+		t.Fatalf("fair claim query must not combine DISTINCT with FOR UPDATE")
 	}
 }
 

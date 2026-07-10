@@ -127,7 +127,11 @@ locked_jobs AS (
 locked_accounts AS (
   SELECT sa.id
   FROM social_accounts sa
-  JOIN (SELECT DISTINCT social_account_id FROM locked_jobs) e ON e.social_account_id = sa.id
+  WHERE EXISTS (
+    SELECT 1
+    FROM locked_jobs
+    WHERE locked_jobs.social_account_id = sa.id
+  )
   ORDER BY sa.id
   FOR UPDATE SKIP LOCKED
 ),
@@ -286,7 +290,11 @@ locked_jobs AS (
 locked_accounts AS (
   SELECT sa.id
   FROM social_accounts sa
-  JOIN (SELECT DISTINCT social_account_id FROM locked_jobs) e ON e.social_account_id = sa.id
+  WHERE EXISTS (
+    SELECT 1
+    FROM locked_jobs
+    WHERE locked_jobs.social_account_id = sa.id
+  )
   ORDER BY sa.id
   FOR UPDATE SKIP LOCKED
 ),
