@@ -1085,22 +1085,28 @@ SET state = 'succeeded',
     platform_error_code = NULL,
     next_run_at = NULL,
     updated_at = NOW(),
-    finished_at = NOW()
-WHERE id = $1
+    finished_at = $1
+WHERE id = $2
   AND state IN ('running', 'retrying')
-  AND lease_owner IS NOT DISTINCT FROM $2
-  AND last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
+  AND lease_owner IS NOT DISTINCT FROM $3
+  AND last_attempt_at IS NOT DISTINCT FROM $4::timestamptz
 RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
 type MarkPostDeliveryJobSucceededParams struct {
+	FinishedAt    pgtype.Timestamptz `json:"finished_at"`
 	ID            string             `json:"id"`
 	LeaseOwner    pgtype.Text        `json:"lease_owner"`
 	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
 }
 
 func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, arg MarkPostDeliveryJobSucceededParams) (PostDeliveryJob, error) {
-	row := q.db.QueryRow(ctx, markPostDeliveryJobSucceeded, arg.ID, arg.LeaseOwner, arg.LastAttemptAt)
+	row := q.db.QueryRow(ctx, markPostDeliveryJobSucceeded,
+		arg.FinishedAt,
+		arg.ID,
+		arg.LeaseOwner,
+		arg.LastAttemptAt,
+	)
 	var i PostDeliveryJob
 	err := row.Scan(
 		&i.ID,
