@@ -19,7 +19,7 @@ import {
   consumeStoredQuickstartSelectedAccountId,
 } from "@/components/tutorials/quickstart-selection-storage";
 import { describePostResultFailure } from "@/lib/post-result-errors";
-import { TimeMetricsPanel } from "./time-metrics-panel";
+import { TimeMetricsPanel } from "../details/time-metrics-panel";
 
 type FilterTab = "all" | "published" | "scheduled" | "failed" | "draft" | "archived";
 

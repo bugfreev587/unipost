@@ -4,7 +4,8 @@ import { resolve } from "node:path";
 import test from "node:test";
 
 const listPath = resolve("src/components/posts/list/posts-legacy-list-view.tsx");
-const panelPath = resolve("src/components/posts/list/time-metrics-panel.tsx");
+const panelPath = resolve("src/components/posts/details/time-metrics-panel.tsx");
+const sharedPath = resolve("src/components/posts/details/post-platform-results.tsx");
 const list = readFileSync(listPath, "utf8");
 
 test("Time Metrics panel is default-collapsed and exposes summary fields", () => {
@@ -18,17 +19,27 @@ test("Time Metrics panel is default-collapsed and exposes summary fields", () =>
   assert.match(panel, />Retry count</);
 });
 
-test("every platform result renders Time Metrics immediately above Submitted Settings", () => {
-  const renderedPanels = list.match(/<TimeMetricsPanel/g) || [];
-  assert.equal(renderedPanels.length, 2);
-  assert.match(list, /<TimeMetricsPanel[\s\S]*?<SubmittedSettingsPanel/);
+test("shared platform results own diagnostics, metrics, settings, and retry", () => {
+  assert.ok(existsSync(sharedPath), "shared platform results component should exist");
+  const shared = readFileSync(sharedPath, "utf8");
+
+  assert.match(shared, /export function PostPlatformResults/);
+  assert.match(shared, /layout: "grid" \| "stack"/);
+  assert.match(shared, /getSocialPostQueue/);
+  assert.match(shared, /retrySocialPostResult/);
+  assert.match(shared, /getJobsForResult/);
+  assert.match(shared, /<QueueDiagnostics/);
+  assert.match(shared, /<TimeMetricsPanel[\s\S]*?<SubmittedSettingsPanel/);
 });
 
 test("expanded published tasks load queue timing data", () => {
-  assert.match(list, /const shouldLoadQueue = results\.length > 0/);
-  assert.match(list, /const resultQueueSignature = results/);
-  assert.match(list, /resultQueueSignature,/);
-  assert.doesNotMatch(list, /\n\s+results,\n\s+\]\);/);
+  assert.ok(existsSync(sharedPath), "shared platform results component should exist");
+  const shared = readFileSync(sharedPath, "utf8");
+
+  assert.match(shared, /const shouldLoadQueue = results\.length > 0/);
+  assert.match(shared, /const resultQueueSignature = results/);
+  assert.match(shared, /resultQueueSignature,/);
+  assert.doesNotMatch(shared, /\n\s+results,\n\s+\]\);/);
 });
 
 test("queue failures do not report retry or job timing as recorded zeroes", () => {
