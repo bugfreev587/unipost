@@ -518,7 +518,7 @@ test("Posts calendar details popover mirrors list view post details", async () =
   const detailsHelpers = source.slice(source.indexOf("function CalendarPostDetailGrid"));
 
   assert.match(popover, /<CalendarPostDetailGrid post=\{post\} meta=\{meta\} \/>/);
-  assert.match(popover, /<CalendarPostResults post=\{post\} \/>/);
+  assert.match(popover, /<PostPlatformResults[\s\S]*?post=\{post\}[\s\S]*?workspaceId=\{profileId\}[\s\S]*?layout="stack"[\s\S]*?onRetryComplete=\{onRetryComplete\}/);
   assert.match(popover, /href=\{`\/projects\/\$\{profileId\}\/posts\/list\?post=\$\{encodeURIComponent\(post\.id\)\}`\}/);
   assert.match(popover, />\s*Open in List\s*</);
   assert.match(detailsHelpers, /function CalendarPostDetailGrid/);
@@ -527,17 +527,21 @@ test("Posts calendar details popover mirrors list view post details", async () =
   assert.match(detailsHelpers, /Created/);
   assert.match(detailsHelpers, /Scheduled/);
   assert.match(detailsHelpers, /Published/);
-  assert.match(detailsHelpers, /function CalendarPostResults/);
-  assert.match(detailsHelpers, /function CalendarPostResultCard/);
-  assert.match(detailsHelpers, /title="Open original post"/);
-  assert.match(detailsHelpers, /postUrlFor\(result\.platform/);
-  assert.match(detailsHelpers, /Published successfully\./);
-  assert.match(detailsHelpers, /Submitted settings/);
-  assert.match(detailsHelpers, /buildSubmittedRows/);
+  assert.match(source, /import \{ PostPlatformResults \} from "\.\.\/details\/post-platform-results"/);
+  assert.doesNotMatch(detailsHelpers, /function CalendarPostResults/);
+  assert.doesNotMatch(detailsHelpers, /function CalendarPostResultCard/);
+  assert.doesNotMatch(detailsHelpers, /buildSubmittedRows/);
   assert.match(source, /\.posts-calendar-detail-grid\{display:grid;grid-template-columns:repeat\(3,minmax\(0,1fr\)\)/);
   assert.doesNotMatch(detailsHelpers, /label="Caption"[^\n]+wide/);
-  assert.match(source, /\.posts-calendar-result-card/);
-  assert.match(source, /\.posts-calendar-submitted-panel/);
+  assert.doesNotMatch(source, /\.posts-calendar-result-card/);
+  assert.doesNotMatch(source, /\.posts-calendar-submitted-panel/);
+});
+
+test("Posts calendar refreshes the selected post after a platform retry", async () => {
+  const source = await readFile(calendarViewPath, "utf8");
+  const selectedPopover = source.slice(source.indexOf("{selectedPost && selectedPostTarget ?"), source.indexOf("{editingPost && editingPostTarget ?"));
+
+  assert.match(selectedPopover, /onRetryComplete=\{loadData\}/);
 });
 
 test("Posts calendar details popover preserves platform icon rendering inside chips", async () => {

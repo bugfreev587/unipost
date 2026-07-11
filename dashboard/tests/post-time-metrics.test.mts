@@ -5,7 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 
 async function loadTimeMetricsModule() {
-  const source = readFileSync(resolve("src/components/posts/list/time-metrics.ts"), "utf8");
+  const source = readFileSync(resolve("src/components/posts/details/time-metrics.ts"), "utf8");
   const compiled = ts.transpileModule(source, {
     compilerOptions: {
       module: ts.ModuleKind.ES2022,
