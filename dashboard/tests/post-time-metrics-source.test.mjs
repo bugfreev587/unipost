@@ -64,3 +64,11 @@ test("queue failures do not report retry or job timing as recorded zeroes", () =
   assert.match(panel, /error \? "Unavailable" : retryCount/);
   assert.match(panel, /jobTimingUnavailable/);
 });
+
+test("Time Metrics dots align with phase titles and connect dot-to-dot", () => {
+  const shared = readFileSync(sharedPath, "utf8");
+
+  assert.match(shared, /\.posts-time-metrics-dot\{[^}]*align-self:start[^}]*margin-top:3px/);
+  assert.match(shared, /\.posts-time-metrics-event:not\(:last-child\)::before\{[^}]*top:7px[^}]*bottom:-7px/);
+  assert.doesNotMatch(shared, /\.posts-time-metrics-timeline::before/);
+});
