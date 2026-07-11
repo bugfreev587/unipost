@@ -47,6 +47,24 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "admin-post-timing-metrics",
+    date: "2026-07-10",
+    displayDate: "July 10, 2026",
+    title: "Admin posts now show timing and delivery metrics",
+    summary: "Admin post view displays scheduled time, duration, and platform post time metrics.",
+    category: "dashboard",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit db0a525", href: "https://github.com/bugfreev587/unipost/commit/db0a5257f0299f34f777966be53a4a6a421795bf" },
+    { label: "Commit fdba158", href: "https://github.com/bugfreev587/unipost/commit/fdba158c31bd9bc38fc86fd0d9f543cbdad56729" },
+    { label: "Commit 8202a65", href: "https://github.com/bugfreev587/unipost/commit/8202a652a7192ba12208732da1ff8cecc495f1ad" },
+    { label: "Commit d510f54", href: "https://github.com/bugfreev587/unipost/commit/d510f54fedd26b1c895bcf7b19a3c5ff2e028851" },
+    { label: "Commit b6ce4ed", href: "https://github.com/bugfreev587/unipost/commit/b6ce4ed1df22b1222b29256f2adbdd8cb6802346" },
+  ],
+  },
+  {
     id: "calendar-overflow-fixes",
     date: "2026-07-07",
     displayDate: "July 7, 2026",
