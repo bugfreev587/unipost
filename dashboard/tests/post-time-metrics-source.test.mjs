@@ -8,6 +8,13 @@ const panelPath = resolve("src/components/posts/details/time-metrics-panel.tsx")
 const sharedPath = resolve("src/components/posts/details/post-platform-results.tsx");
 const list = readFileSync(listPath, "utf8");
 
+test("list view renders the shared platform results grid", () => {
+  assert.match(list, /import \{ PostPlatformResults \} from "\.\.\/details\/post-platform-results"/);
+  assert.match(list, /<PostPlatformResults[\s\S]*?layout="grid"/);
+  assert.doesNotMatch(list, /function PostResultsGrid\(/);
+  assert.doesNotMatch(list, /function QueueDiagnostics\(/);
+});
+
 test("Time Metrics panel is default-collapsed and exposes summary fields", () => {
   assert.ok(existsSync(panelPath), "Time Metrics panel component should exist");
   const panel = readFileSync(panelPath, "utf8");
