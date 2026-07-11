@@ -8,6 +8,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const postsPagePath = path.join(root, "src/app/(dashboard)/projects/[id]/posts/page.tsx");
 const postsListPagePath = path.join(root, "src/app/(dashboard)/projects/[id]/posts/list/page.tsx");
 const legacyViewPath = path.join(root, "src/components/posts/list/posts-legacy-list-view.tsx");
+const platformResultsPath = path.join(root, "src/components/posts/details/post-platform-results.tsx");
 
 test("Posts routes use calendar by default and keep the legacy list route", async () => {
   const [postsPage, postsListPage, legacyView] = await Promise.all([
@@ -28,7 +29,10 @@ test("Posts routes use calendar by default and keep the legacy list route", asyn
 });
 
 test("Legacy posts list keeps management workflows after route split", async () => {
-  const legacyView = await readFile(legacyViewPath, "utf8");
+  const [legacyView, platformResults] = await Promise.all([
+    readFile(legacyViewPath, "utf8"),
+    readFile(platformResultsPath, "utf8"),
+  ]);
 
   assert.match(legacyView, /\(\["all", "published", "scheduled", "failed", "draft", "archived"\] as FilterTab\[\]\)/);
   assert.match(legacyView, /placeholder="Search posts\.\.\."/);
@@ -42,8 +46,8 @@ test("Legacy posts list keeps management workflows after route split", async () 
   assert.match(legacyView, /deleteSocialPost\(token, id\)/);
   assert.match(legacyView, /setExpandedPostId\(\(current\) => current === post\.id \? null : post\.id\)/);
   assert.match(legacyView, /Platform Results/);
-  assert.match(legacyView, /PostResultsGrid/);
-  assert.match(legacyView, /retrySocialPostResult\(token, post\.id, result\.id\)/);
+  assert.match(legacyView, /PostPlatformResults/);
+  assert.match(platformResults, /retrySocialPostResult\(token, post\.id, result\.id\)/);
   assert.match(legacyView, /onRetryComplete=\{async \(\) => \{\s*await loadData\(\);\s*\}\}/);
   assert.match(legacyView, /openRescheduleDialog\(post\)/);
   assert.match(legacyView, /rescheduleSocialPost\(token, reschedulePost\.id, nextTime\.toISOString\(\)\)/);
