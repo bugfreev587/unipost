@@ -3,7 +3,7 @@
 import { useAuth } from "@clerk/nextjs";
 import { ChevronDown, ChevronRight, Copy, ExternalLink, RotateCcw } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import {
@@ -34,13 +34,25 @@ export function PostPlatformResults({
   const [jobs, setJobs] = useState<PostDeliveryJob[]>([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState<string | null>(null);
+  const queueRequestRef = useRef(0);
   const results = post.results || [];
   const shouldLoadQueue = results.length > 0;
   const resultQueueSignature = results
     .map((result) => `${result.id || result.social_account_id}:${result.status}:${result.published_at || ""}`)
     .join("|");
+  const queueRefreshSignature = [
+    post.status,
+    post.queued_results_count,
+    post.retrying_count,
+    post.dead_count,
+    resultQueueSignature,
+  ].join("|");
 
-  const loadQueue = useCallback(async () => {
+  const loadQueue = useCallback(async (refreshSignature?: string) => {
+    // The effect passes this key so queue-status changes deliberately
+    // trigger a fresh request without coupling the request body to UI state.
+    void refreshSignature;
+    const requestId = ++queueRequestRef.current;
     if (!shouldLoadQueue) {
       setJobs([]);
       setJobsError(null);
@@ -48,31 +60,32 @@ export function PostPlatformResults({
       return;
     }
     setJobsLoading(true);
+    setJobsError(null);
     try {
       const token = await getToken();
-      if (!token) return;
+      if (!token || requestId !== queueRequestRef.current) return;
       const response = await getSocialPostQueue(token, post.id);
+      if (requestId !== queueRequestRef.current) return;
       setJobs(response.data.jobs || []);
       setJobsError(null);
     } catch (error) {
+      if (requestId !== queueRequestRef.current) return;
       setJobsError(error instanceof Error ? error.message : "Failed to load queue details");
     } finally {
-      setJobsLoading(false);
+      if (requestId === queueRequestRef.current) setJobsLoading(false);
     }
   }, [
     getToken,
     post.id,
-    post.status,
-    post.queued_results_count,
-    post.retrying_count,
-    post.dead_count,
     shouldLoadQueue,
-    resultQueueSignature,
   ]);
 
   useEffect(() => {
-    void loadQueue();
-  }, [loadQueue]);
+    void loadQueue(queueRefreshSignature);
+    return () => {
+      queueRequestRef.current += 1;
+    };
+  }, [loadQueue, queueRefreshSignature]);
 
   return (
     <>
@@ -80,9 +93,9 @@ export function PostPlatformResults({
         <div className="posts-result-text">No platform results yet.</div>
       ) : (
         <div className={`posts-results-grid${layout === "stack" ? " is-stack" : ""}`}>
-          {results.map((result) => (
+          {results.map((result, index) => (
             <PostResultCard
-              key={result.id || result.social_account_id}
+              key={result.id || result.social_account_id || `${result.platform || "platform"}-${index}`}
               post={post}
               result={result}
               workspaceId={workspaceId}
@@ -90,8 +103,8 @@ export function PostPlatformResults({
               jobsLoading={jobsLoading}
               jobsError={jobsError}
               onRetryComplete={async () => {
-                await onRetryComplete?.();
                 await loadQueue();
+                await onRetryComplete?.();
               }}
             />
           ))}
@@ -216,11 +229,11 @@ function PostResultCard({
                 <RotateCcw className={retrying ? "is-spinning" : undefined} aria-hidden="true" />
                 {retrying ? "Retrying…" : "Retry"}
               </button>
-              {retryError ? <span className="posts-retry-error">{retryError}</span> : null}
+              {retryError ? <span className="posts-retry-error" role="alert">{retryError}</span> : null}
             </div>
           ) : null}
           {result.debug_curl ? <DebugCurlPanel curl={result.debug_curl} /> : null}
-          <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} />
+          <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} resultStatus={result.status} />
           <TimeMetricsPanel post={post} result={result} jobs={jobs} loading={jobsLoading} error={jobsError} />
           {result.submitted ? <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} /> : null}
         </>
@@ -237,7 +250,7 @@ function PostResultCard({
           {result.status === "processing" && result.platform === "facebook" ? (
             <FacebookProcessingPanel publishStatus={result.publish_status} />
           ) : null}
-          <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} />
+          <QueueDiagnostics jobs={jobs} loading={jobsLoading} error={jobsError} resultStatus={result.status} />
           <TimeMetricsPanel post={post} result={result} jobs={jobs} loading={jobsLoading} error={jobsError} />
           {result.submitted ? <SubmittedSettingsPanel platform={result.platform || ""} submitted={result.submitted} /> : null}
         </>
@@ -307,9 +320,19 @@ function DebugCurlPanel({ curl }: { curl: string }) {
   );
 }
 
-function QueueDiagnostics({ jobs, loading, error }: { jobs: PostDeliveryJob[]; loading: boolean; error: string | null }) {
+function QueueDiagnostics({
+  jobs,
+  loading,
+  error,
+  resultStatus,
+}: {
+  jobs: PostDeliveryJob[];
+  loading: boolean;
+  error: string | null;
+  resultStatus: string;
+}) {
   const [open, setOpen] = useState(false);
-  const state = getQueueDiagnosticsState(jobs, loading, error);
+  const state = getQueueDiagnosticsState(jobs, loading, error, resultStatus);
   const sorted = [...jobs].sort((a, b) => (Date.parse(b.updated_at) || 0) - (Date.parse(a.updated_at) || 0));
   const active = sorted.find((job) => ["pending", "running", "retrying"].includes(job.state));
   const latest = active || sorted[0];
@@ -323,6 +346,7 @@ function QueueDiagnostics({ jobs, loading, error }: { jobs: PostDeliveryJob[]; l
           {state.kind === "loading" ? <div className="posts-queue-loading">Loading queue details…</div> : null}
           {state.kind === "unavailable" ? <div className="posts-queue-empty">{error}</div> : null}
           {state.kind === "not_queued" ? <div className="posts-queue-empty">No delivery job has been queued for this result.</div> : null}
+          {state.kind === "no_history" ? <div className="posts-queue-empty">No delivery job history is available for this result.</div> : null}
           {state.kind === "ready" && latest ? (
             <>
               <dl className="posts-queue-grid">

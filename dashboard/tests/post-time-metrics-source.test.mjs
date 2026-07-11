@@ -49,6 +49,14 @@ test("expanded published tasks load queue timing data", () => {
   assert.doesNotMatch(shared, /\n\s+results,\n\s+\]\);/);
 });
 
+test("queue requests ignore stale responses after a post change or unmount", () => {
+  const shared = readFileSync(sharedPath, "utf8");
+
+  assert.match(shared, /const queueRequestRef = useRef\(0\)/);
+  assert.match(shared, /if \(requestId !== queueRequestRef\.current\) return/);
+  assert.match(shared, /return \(\) => \{\s*queueRequestRef\.current \+= 1;\s*\}/);
+});
+
 test("queue failures do not report retry or job timing as recorded zeroes", () => {
   assert.ok(existsSync(panelPath), "Time Metrics panel component should exist");
   const panel = readFileSync(panelPath, "utf8");

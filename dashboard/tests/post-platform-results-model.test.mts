@@ -36,29 +36,43 @@ test("partitions jobs without leaking other platform jobs", { skip: !model }, ()
 });
 
 test("describes loading diagnostics", { skip: !model }, () => {
-  assert.deepEqual(model!.getQueueDiagnosticsState([], true, null), {
+  assert.deepEqual(model!.getQueueDiagnosticsState([], true, null, "pending"), {
     kind: "loading",
     label: "Queue diagnostics",
   });
 });
 
 test("describes unavailable diagnostics", { skip: !model }, () => {
-  assert.deepEqual(model!.getQueueDiagnosticsState([], false, "network failed"), {
+  assert.deepEqual(model!.getQueueDiagnosticsState([], false, "network failed", "published"), {
     kind: "unavailable",
     label: "Queue diagnostics · Unavailable",
   });
 });
 
 test("describes scheduled results that are not queued yet", { skip: !model }, () => {
-  assert.deepEqual(model!.getQueueDiagnosticsState([], false, null), {
+  assert.deepEqual(model!.getQueueDiagnosticsState([], false, null, "pending"), {
     kind: "not_queued",
     label: "Queue diagnostics · Not queued yet",
   });
 });
 
 test("describes populated diagnostics with a job count", { skip: !model }, () => {
-  assert.deepEqual(model!.getQueueDiagnosticsState([{ id: "job-1" }], false, null), {
+  assert.deepEqual(model!.getQueueDiagnosticsState([{ id: "job-1" }], false, null, "published"), {
     kind: "ready",
     label: "Queue diagnostics (1)",
+  });
+});
+
+test("does not call a historical result not queued when job history expired", { skip: !model }, () => {
+  assert.deepEqual(model!.getQueueDiagnosticsState([], false, null, "published"), {
+    kind: "no_history",
+    label: "Queue diagnostics · No history",
+  });
+});
+
+test("queue errors take priority over stale jobs from an earlier request", { skip: !model }, () => {
+  assert.deepEqual(model!.getQueueDiagnosticsState([{ id: "stale-job" }], false, "network failed", "published"), {
+    kind: "unavailable",
+    label: "Queue diagnostics · Unavailable",
   });
 });
