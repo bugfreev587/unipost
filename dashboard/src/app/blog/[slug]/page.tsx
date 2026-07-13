@@ -3,11 +3,9 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment, type ReactNode } from "react";
 import { BlogCover } from "@/app/blog/_components/blog-cover";
+import { MarketingCTA } from "@/components/marketing/nav";
 import { parseInlineMarkdown } from "@/lib/blog-inline";
 import { blogPosts, countBlogWords, getBlogPost, type BlogBlock, type BlogPost } from "@/lib/blog";
-
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
-const START_BUILDING_URL = `${APP_URL}/welcome`;
 
 type BlogPostPageProps = {
   params: Promise<{ slug: string }>;
@@ -136,7 +134,7 @@ export default async function BlogPostPage({ params }: BlogPostPageProps) {
           publishing, delivery status, and webhooks through one API.
         </p>
         <div className="blog-cta-actions">
-          <a href={START_BUILDING_URL} className="lp-btn lp-btn-primary lp-btn-lg">Start Building</a>
+          <MarketingCTA label="Start Building" />
           <Link href="/docs" className="lp-btn lp-btn-outline lp-btn-lg">Read Docs</Link>
         </div>
       </aside>
