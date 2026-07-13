@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
-import { BookOpen, ChevronDown, History } from "lucide-react";
+import { ArrowRight, BookOpen, ChevronDown, History } from "lucide-react";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { LandingAttribution } from "@/components/marketing/landing-attribution";
 import { appendLandingSessionId } from "@/lib/landing-attribution";
@@ -168,7 +168,15 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
   );
 }
 
-export function MarketingCTA({ className = "lp-btn lp-btn-primary lp-btn-lg" }: { className?: string } = {}) {
+export function MarketingCTA({
+  className = "lp-btn lp-btn-primary lp-btn-lg",
+  label = "Get Started Free",
+  showArrow = false,
+}: {
+  className?: string;
+  label?: string;
+  showArrow?: boolean;
+} = {}) {
   const { isSignedIn, isLoaded } = useAuth();
   const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
 
@@ -178,6 +186,7 @@ export function MarketingCTA({ className = "lp-btn lp-btn-primary lp-btn-lg" }: 
     return (
       <a href={appUrl} className={className}>
         Go to Dashboard
+        {showArrow ? <ArrowRight size={17} aria-hidden="true" /> : null}
       </a>
     );
   }
@@ -185,7 +194,8 @@ export function MarketingCTA({ className = "lp-btn lp-btn-primary lp-btn-lg" }: 
   return (
     <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className={className} style={{ cursor: "pointer" }}>
-        Get Started Free
+        {label}
+        {showArrow ? <ArrowRight size={17} aria-hidden="true" /> : null}
       </button>
     </SignUpButton>
   );

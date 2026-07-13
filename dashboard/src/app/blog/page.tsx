@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { BlogCover } from "@/app/blog/_components/blog-cover";
+import { MarketingCTA } from "@/components/marketing/nav";
 import { blogPosts } from "@/lib/blog";
 
 export const metadata: Metadata = {
@@ -60,7 +61,7 @@ export default function BlogIndexPage() {
           without rebuilding every integration yourself.
         </p>
         <div className="blog-index-cta-actions">
-          <a href="https://app.unipost.dev/welcome" className="lp-btn lp-btn-primary lp-btn-lg">Start Building</a>
+          <MarketingCTA label="Start Building" />
           <Link href="/docs" className="lp-btn lp-btn-outline lp-btn-lg">Read Docs</Link>
         </div>
       </section>
