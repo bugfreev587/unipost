@@ -9,10 +9,8 @@ import {
   Plug,
 } from "lucide-react";
 import { PlatformIcon } from "@/components/platform-icons";
-import { PublicSiteHeader } from "@/components/marketing/nav";
+import { MarketingCTA, PublicSiteHeader } from "@/components/marketing/nav";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://app.unipost.dev";
-const START_BUILDING_URL = `${APP_URL}/welcome`;
 const HOMEPAGE_TITLE = "Unipost";
 const HOMEPAGE_DESCRIPTION =
   "Unipost helps you publish and manage posts across your channels from one place. Learn what Unipost offers and get started.";
@@ -845,10 +843,11 @@ export default function LandingPage() {
                     Instagram, TikTok, Threads, YouTube, and more through one unified API.
                   </p>
                   <div className="lp-hero-actions">
-                    <a href={START_BUILDING_URL} className="lp-btn lp-btn-primary">
-                      Start Building
-                      <ArrowRight size={17} />
-                    </a>
+                    <MarketingCTA
+                      className="lp-btn lp-btn-primary"
+                      label="Start Building"
+                      showArrow
+                    />
                     <Link href="/docs" className="lp-btn lp-btn-outline">
                       <BookOpen size={17} />
                       View Docs
@@ -1027,10 +1026,11 @@ export default function LandingPage() {
                 without maintaining every social integration yourself.
               </p>
               <div className="lp-cta-actions">
-                <a href={START_BUILDING_URL} className="lp-btn lp-btn-primary">
-                  Start Building
-                  <ArrowRight size={17} />
-                </a>
+                <MarketingCTA
+                  className="lp-btn lp-btn-primary"
+                  label="Start Building"
+                  showArrow
+                />
                 <Link href="/alternatives/zernio" className="lp-btn lp-btn-outline">
                   Compare alternatives
                 </Link>

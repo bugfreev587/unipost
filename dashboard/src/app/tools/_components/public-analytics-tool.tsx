@@ -1,6 +1,7 @@
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { ArrowRight, BarChart3, CheckCircle2, ExternalLink } from "lucide-react";
+import { MarketingCTA } from "@/components/marketing/nav";
 import { PlatformIcon } from "@/components/platform-icons";
 
 export type AnalyticsToolSlug = "tiktok" | "youtube" | "instagram" | "threads" | "pinterest";
@@ -271,9 +272,7 @@ export function PublicAnalyticsToolPage({ tool }: { tool: AnalyticsToolConfig })
           <h1>{tool.title} for UniPost developers</h1>
           <p>{tool.summary}</p>
           <div className="at-actions">
-            <a href="https://app.unipost.dev/welcome" className="lp-btn lp-btn-primary lp-btn-lg">
-              Start Building
-            </a>
+            <MarketingCTA label="Start Building" />
             <Link href={tool.docsHref} className="lp-btn lp-btn-outline lp-btn-lg">
               Read Analytics Docs
             </Link>
@@ -397,9 +396,7 @@ export function PublicAnalyticsToolPage({ tool }: { tool: AnalyticsToolConfig })
           </p>
         </div>
         <div className="at-actions">
-          <a href="https://app.unipost.dev/welcome" className="lp-btn lp-btn-primary lp-btn-lg">
-            Start Building
-          </a>
+          <MarketingCTA label="Start Building" />
           <Link href="/docs/api/analytics" className="lp-btn lp-btn-outline lp-btn-lg">
             Analytics API
             <ExternalLink aria-hidden="true" />
