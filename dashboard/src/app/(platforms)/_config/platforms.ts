@@ -188,7 +188,7 @@ print(data['id'])  # post_abc123`,
     { q: "How do I publish a local image or video file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "How long does setup take?", a: "In Quickstart mode: about 5 minutes. Connect your Instagram Business account via OAuth and you're ready to post via API." },
     { q: "What happens when my token expires?", a: "UniPost's background worker automatically refreshes Meta tokens before they expire (every 60 days). You don't need to do anything." },
-    { q: "Can I post Instagram Stories?", a: "Not yet. Currently supports feed posts, videos, and Reels. Story support is on the roadmap." },
+    { q: "Can I post Instagram Stories?", a: "Yes. Send one image or video and set platform_options.instagram.mediaType to story. Feed posts, Reels, and carousels remain available through the same publish endpoint." },
     { q: "Is Instagram included in the free plan?", a: "Yes. The free plan includes 100 posts/month across the 8 Free-tier platforms including Instagram. No credit card required." },
   ],
 
@@ -302,14 +302,10 @@ response = requests.post(
     nativeFeats: ["OAuth shows your app name", "Complete credential ownership", "Paid plans only"],
   },
 
-  // Validated: impressions, reach, likes, comments, shares, clicks
+  // Production socialActions coverage: likes and comments.
   metrics: [
-    { label: "Impressions", sampleValue: "24.1k" },
-    { label: "Reach", sampleValue: "18.7k" },
     { label: "Likes", sampleValue: "1.4k" },
     { label: "Comments", sampleValue: "312" },
-    { label: "Shares", sampleValue: "189" },
-    { label: "Clicks", sampleValue: "2.3k" },
   ],
 
   faq: [
@@ -432,16 +428,17 @@ response = requests.post(
     nativeFeats: ["OAuth shows your app name", "Complete credential ownership", "Paid plans only"],
   },
 
-  // Validated: impressions, likes, comments, shares
+  // Production coverage: impressions, likes, comments, shares, and bookmarks.
   metrics: [
     { label: "Impressions", sampleValue: "52.8k" },
     { label: "Likes", sampleValue: "3.1k" },
     { label: "Comments", sampleValue: "892" },
     { label: "Shares", sampleValue: "1.4k" },
+    { label: "Bookmarks", sampleValue: "426" },
   ],
 
   faq: [
-    { q: "What Twitter API access does UniPost use?", a: "Twitter API access is included in your UniPost subscription. No separate Twitter developer plan required." },
+    { q: "What Twitter API access does UniPost use?", a: "Quickstart uses UniPost's managed X app, so you do not need a separate X developer plan. If you save your own Platform Credentials, your X app's access tier and quota apply." },
     { q: "Can I post Twitter threads with UniPost?", a: "Yes. Use thread_position 1, 2, 3... to create threaded tweets. Each tweet is linked automatically." },
     { q: "How do I publish a local image, video, or GIF file?", a: "If the asset already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need my own Twitter developer account?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Twitter app credentials." },
@@ -453,7 +450,7 @@ response = requests.post(
 
   seo: {
     title: "Twitter API for Developers — Post Tweets & Threads | UniPost",
-    description: "Post tweets, threads, images, videos, and GIFs to X/Twitter programmatically. UniPost handles OAuth 2.0 PKCE, token refresh, and rate limits. Free plan available.",
+    description: "Post tweets, threads, images, videos, and GIFs to X/Twitter programmatically. UniPost handles OAuth 2.0 PKCE, token refresh, and rate limits. A paid UniPost plan is required.",
     keywords: ["twitter api for developers", "post to twitter api", "tweet api", "twitter api python", "twitter api nodejs", "x api"],
   },
 };
@@ -689,16 +686,19 @@ response = requests.post(
     nativeFeats: ["OAuth shows your app name", "Complete credential ownership", "Paid plans only"],
   },
 
-  // Validated: likes, comments, video_views
+  // Post analytics plus the dedicated YouTube Analytics explorer.
   metrics: [
     { label: "Video Views", sampleValue: "89.2k" },
     { label: "Likes", sampleValue: "4.7k" },
     { label: "Comments", sampleValue: "623" },
+    { label: "Watch Time", sampleValue: "18.6k min" },
+    { label: "Avg. View Duration", sampleValue: "2m 41s" },
+    { label: "Subscribers Gained", sampleValue: "+184" },
   ],
 
   faq: [
     { q: "Can I upload videos longer than 15 minutes?", a: "Yes, if your YouTube account is verified for long-form content. UniPost does not impose additional length limits." },
-    { q: "Does UniPost support YouTube Shorts?", a: "Yes. Shorts are vertical videos under 60 seconds uploaded via the same API endpoint." },
+    { q: "Does UniPost support YouTube Shorts?", a: "Yes. Publish a vertical video up to 3 minutes through the same endpoint and set platform_options.youtube.shorts to true." },
     { q: "How do I publish a local video file?", a: "If the video already has a public URL, send it in media_urls. If it lives on disk, first upload it with POST /v1/media, PUT the bytes to the returned upload_url, then publish with media_ids." },
     { q: "Do I need Google developer access?", a: "In Quickstart mode, no. UniPost handles everything. In White-label mode, you'll need your own Google OAuth app." },
     { q: "How long does setup take?", a: "About 5 minutes in Quickstart mode. Connect your YouTube channel via OAuth and start uploading." },

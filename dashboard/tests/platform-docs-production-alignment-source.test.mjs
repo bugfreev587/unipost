@@ -20,6 +20,9 @@ test("platform docs do not retain obsolete production claims", async () => {
   assert.match(platformDocs, /Watch time/);
   assert.match(platformDocs, /Subscribers gained/);
   assert.doesNotMatch(marketingConfig, /X\/Twitter[^\n]+Free plan available/);
+  assert.match(marketingConfig, /Quickstart uses UniPost's managed X app/);
+  assert.doesNotMatch(marketingConfig, /Validated: impressions, reach, likes, comments, shares, clicks/);
+  assert.match(marketingConfig, /Production socialActions coverage: likes and comments/);
   assert.doesNotMatch(marketingConfig, /Can I post Instagram Stories\?", a: "Not yet/);
   assert.doesNotMatch(marketingConfig, /Shorts are vertical videos under 60 seconds/);
   assert.match(marketingPage, />9 platforms supported</);

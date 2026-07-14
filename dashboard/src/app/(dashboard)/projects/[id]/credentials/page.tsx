@@ -22,7 +22,7 @@ const CRED_PLATFORMS = [
   { id: "threads", name: "Threads", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/platform-credentials/meta", developerPortal: "https://developers.facebook.com" },
   { id: "facebook", name: "Facebook Page", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/platform-credentials/meta", developerPortal: "https://developers.facebook.com" },
   { id: "linkedin", name: "LinkedIn", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/platform-credentials/linkedin", developerPortal: "https://developer.linkedin.com" },
-  { id: "pinterest", name: "Pinterest", idLabel: "App ID", secretLabel: "App Secret", docs: null, developerPortal: "https://developers.pinterest.com" },
+  { id: "pinterest", name: "Pinterest", idLabel: "App ID", secretLabel: "App Secret", docs: "/docs/platform-credentials/pinterest", developerPortal: "https://developers.pinterest.com" },
   { id: "tiktok", name: "TikTok", idLabel: "Client Key", secretLabel: "Client Secret", docs: "/docs/platform-credentials/tiktok", developerPortal: "https://developers.tiktok.com" },
   { id: "youtube", name: "YouTube", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/platform-credentials/youtube", developerPortal: "https://console.cloud.google.com" },
   { id: "twitter", name: "X / Twitter", idLabel: "Client ID", secretLabel: "Client Secret", docs: "/docs/platform-credentials/twitter", developerPortal: "https://developer.x.com" },

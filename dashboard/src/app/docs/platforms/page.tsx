@@ -124,7 +124,7 @@ const PLATFORM_FEATURES = [
 
 const ANALYTICS_COVERAGE = [
   ["Twitter/X", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-twitter" href="/docs/api/analytics">View</Link>],
-  ["LinkedIn", checkCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-linkedin" href="/docs/api/analytics">View</Link>],
+  ["LinkedIn", dashCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-linkedin" href="/docs/api/analytics">View</Link>],
   ["Instagram", dashCell(), checkCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-instagram" href="/docs/api/analytics">View</Link>],
   ["Threads", checkCell(), dashCell(), checkCell(), checkCell(), dashCell(), <Link key="analytics-threads" href="/docs/api/analytics">View</Link>],
   ["TikTok", dashCell(), dashCell(), checkCell(), checkCell(), checkCell(), <Link key="analytics-tiktok" href="/docs/api/analytics">View</Link>],
