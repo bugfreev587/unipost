@@ -119,7 +119,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       scheduling: "full",
       analytics: "full",
       inbox: "none",
-      connection: "Native credentials today — requires your X paid tier",
+      connection: "OAuth — Quickstart and Platform Credentials supported; paid plan required",
     },
     capabilities: [
       ["Text posts", yes, "Up to 280 characters"],
@@ -150,7 +150,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
         image: [
           ["Formats", "JPG, PNG, WebP, animated GIF"],
           ["Max per post", "4 images (mutually exclusive with video or GIF)"],
-          ["Max file size", "5 MB per image, 15 MB per GIF"],
+          ["Max file size", "5 MB per image or GIF (UniPost validation cap)"],
           ["Dimensions", "Min 4 × 4 px, max 8,192 × 8,192 px"],
           ["GIF dimensions", "Max 1,280 × 1,080 px"],
           ["Recommended ratios", "16:9 (1,200 × 675), 1:1 (1,200 × 1,200), 4:5 (1,080 × 1,350)"],
@@ -175,12 +175,12 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Comments / replies", yes, "Supported"],
       ["Shares / reposts", yes, "Supported"],
       ["Reach", no, "Not exposed by the X API"],
-      ["Saves / bookmarks", no, "Not exposed by the X API"],
+      ["Saves / bookmarks", yes, "Supported"],
       ["Video views", no, "Not exposed for org accounts today"],
     ],
     setup: [
       modeTwitterNative,
-      ["Quickstart", "Not available — X removed the shared app path", "—", "—"],
+      ["Quickstart", "Use UniPost's shared X OAuth app", "UniPost-managed app", "Requires any paid plan"],
       modeWhitelabel,
     ],
     examples: [
@@ -222,7 +222,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     limitations: [
       ["Daily safety cap", "20 publishes/day per connected X account (UTC reset). Protects accounts from being flagged for spam — failed posts do not count."],
       ["Paid plan required", "X publishing and new connections require any paid plan ($10/mo and up); the Free plan covers the other 8 platforms."],
-      ["No shared Quickstart app", "X removed the managed developer path — every workspace connects with its own keys"],
+      ["Credential choice", "Quickstart uses UniPost's shared X OAuth app; Platform Credentials use your own X app identity and quota"],
       ["Inbox is not supported", "UniPost inbox covers Meta and Threads today"],
       ["Rate limits follow your X tier", "Free X-API tier is not enough for production publish volume"],
     ],
@@ -347,11 +347,11 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     icon: icons.linkedin,
     tagline: "Long-form text, multi-image, and first-comment posts with audience controls.",
     lead: "LinkedIn is where you usually want cleaner formatting, longer copy, and explicit audience controls. UniPost keeps that complexity under `platform_options.linkedin` while preserving one core publish shape.",
-    badges: ["Publishing", "Scheduling", "Analytics scopes gated", "White-label"],
+    badges: ["Publishing", "Scheduling", "Analytics", "White-label"],
     summary: {
       publishing: "full",
       scheduling: "full",
-      analytics: "full",
+      analytics: "limited",
       inbox: "none",
       connection: "OAuth — Quickstart and White-label both supported",
     },
@@ -417,12 +417,12 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["platform_options.linkedin.visibility", "anyone / connections", "Set post audience visibility"],
     ],
     analytics: [
-      ["Impressions", yes, "Supported"],
-      ["Reach", yes, "Supported"],
+      ["Impressions", no, "Requires LinkedIn Marketing Developer Platform access; not exposed by UniPost's production connection"],
+      ["Reach", no, "Requires LinkedIn Marketing Developer Platform access; not exposed by UniPost's production connection"],
       ["Likes", yes, "Supported"],
       ["Comments", yes, "Supported"],
-      ["Shares", yes, "Supported"],
-      ["Clicks", yes, "Supported"],
+      ["Shares", no, "Not returned by LinkedIn's production socialActions endpoint"],
+      ["Clicks", no, "Requires LinkedIn Marketing Developer Platform access"],
       ["Saves", no, "Not exposed by LinkedIn"],
       ["Video views", no, "Not exposed per-post today"],
     ],
@@ -515,7 +515,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
           ["@mentions", "≤ 20 per caption"],
         ],
         image: [
-          ["Formats", "JPEG only — Graph API rejects PNG, WebP, HEIC"],
+          ["Formats", "JPEG, PNG (UniPost production validation accepts both; WebP and HEIC are rejected)"],
           ["Max file size", "8 MB"],
           ["Width", "Min 320 px, max 1,440 px; 1,080 px recommended"],
           ["Aspect ratio", "4:5 to 1.91:1 (0.8 – 1.91)"],
@@ -580,7 +580,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
         ],
         image: [
           ["Item count", "2 – 10 children"],
-          ["Per-item format", "JPEG only"],
+          ["Per-item format", "JPEG, PNG"],
           ["Per-item max size", "8 MB"],
           ["Aspect ratio", "Derived from first child (1:1 or 4:5 most reliable)"],
         ],
@@ -724,7 +724,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
           ["Per thread entry", "500 chars each"],
         ],
         image: [
-          ["Formats", "JPEG, PNG (WebP and GIF accepted but may fail — prefer JPEG/PNG)"],
+          ["Formats", "JPEG, PNG"],
           ["Max per post", "1 (single) or up to 20 children in a carousel"],
           ["Max file size", "8 MB per image"],
           ["Min width", "320 px"],
@@ -957,7 +957,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Shorts", yes, "Use `platform_options.youtube.shorts`"],
       ["Scheduling", yes, "Use `scheduled_at` or `platform_options.youtube.publish_at`"],
       ["Playlist insertion", yes, "Use `platform_options.youtube.playlist_id`"],
-      ["Analytics", partial, "Likes, comments, and view count today"],
+      ["Analytics", partial, "Post analytics include views, likes, and comments; the YouTube Analytics explorer adds shares, watch time, average view duration/percentage, and subscriber changes"],
       ["Text-only posts", no, "Video-first platform"],
       ["Image posts", no, "Not a native publish target"],
       ["Inbox / comments", no, "Not part of the UniPost inbox today"],
@@ -1033,9 +1033,12 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Video views", yes, "Supported"],
       ["Likes", yes, "Supported"],
       ["Comments", yes, "Supported"],
+      ["Shares", yes, "Supported through the YouTube Analytics explorer"],
+      ["Watch time", yes, "Estimated minutes watched through the YouTube Analytics explorer"],
+      ["Average view duration / percentage", yes, "Supported through the YouTube Analytics explorer"],
+      ["Subscribers gained / lost", yes, "Supported through the YouTube Analytics explorer"],
       ["Impressions", no, "YouTube Data API does not expose impressions per video"],
       ["Reach", no, "Not exposed by YouTube Data API"],
-      ["Shares", no, "Not exposed by YouTube Data API"],
       ["Saves", no, "Not exposed by YouTube Data API"],
     ],
     setup: [
@@ -1255,7 +1258,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Text posts", yes, "Up to 63,206 characters"],
       ["Image posts", partial, "Exactly 1 image (v1 scope — no carousel yet)"],
       ["Video posts", partial, "Exactly 1 video (non-resumable, ≤ 1 GB in v1)"],
-      ["Reels", yes, "Vertical video via `platform_options.facebook.mediaType=\"reel\"` (requires `FEATURE_FACEBOOK_REELS`)"],
+      ["Reels", yes, "Vertical video via `platform_options.facebook.mediaType=\"reel\"`; enabled in production"],
       ["Link posts", yes, "Provide the URL in caption"],
       ["Scheduling", yes, "Use `scheduled_at`"],
       ["Inbox (comments + DMs)", yes, "Routed into UniPost inbox"],
@@ -1301,7 +1304,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       },
       {
         surface: "Reels",
-        description: "Vertical short-form publish. UniPost targets this via the 3-phase `/{page_id}/video_reels` flow when `platform_options.facebook.mediaType = \"reel\"` and `FEATURE_FACEBOOK_REELS=true`.",
+        description: "Vertical short-form publish. UniPost targets this via the production 3-phase `/{page_id}/video_reels` flow when `platform_options.facebook.mediaType = \"reel\"`.",
         text: [
           ["Caption / description", "Up to 2,200 chars (Reels caption surface)"],
           ["Title", "Supplied via `platform_options.facebook.title`"],
@@ -1403,7 +1406,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     }
   }
 }`,
-        note: "Reels run through `/{page_id}/video_reels` (3 phases: start → transfer → finish). Vertical video required; link attachments are not supported. Requires `FEATURE_FACEBOOK_REELS=true` on the API.",
+        note: "Reels run through `/{page_id}/video_reels` (3 phases: start → transfer → finish). This path is enabled in production. Vertical video is required and link attachments are not supported.",
       },
     ],
     errors: [
@@ -1411,14 +1414,12 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["mixed_media_unsupported", "Facebook v1 accepts one photo or one video per post"],
       ["link_with_media_unsupported", "Link and media cannot be combined in the same post"],
       ["invalid_facebook_media_type", "`mediaType` must be `feed` or `reel`"],
-      ["facebook_reels_unsupported", "Reels publishing requires `FEATURE_FACEBOOK_REELS` to be enabled"],
     ],
     limitations: [
       ["Daily safety cap", "100 publishes/day per connected Facebook Page (UTC reset). Protects pages from being flagged for spam — failed posts do not count."],
       ["No carousels in v1", "Facebook `batch_publish` is on the roadmap"],
       ["No resumable uploads yet", "Videos must be ≤ 1 GB until Phase 2.5"],
       ["Post analytics are available", "UniPost surfaces reactions, comments, shares, clicks, and video views when Meta returns them. Post-level impressions and reach are unavailable in Graph v22.0."],
-      ["Reels are feature-flagged", "Set `FEATURE_FACEBOOK_REELS=true` to enable the `/video_reels` publish path"],
     ],
   },
 };

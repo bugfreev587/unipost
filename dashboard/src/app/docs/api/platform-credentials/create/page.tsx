@@ -16,7 +16,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
       <>
         Platform key for the upstream OAuth app.
         <br />
-        Values: <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>.
+        Values: <code>facebook</code>, <code>instagram</code>, <code>linkedin</code>, <code>pinterest</code>, <code>threads</code>, <code>tiktok</code>, <code>youtube</code>, or <code>twitter</code>.
       </>
     ),
   },

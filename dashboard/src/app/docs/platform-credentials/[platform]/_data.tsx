@@ -1,5 +1,5 @@
 export type PlatformCredentialGuide = {
-  slug: "meta" | "linkedin" | "tiktok" | "youtube" | "twitter";
+  slug: "meta" | "linkedin" | "pinterest" | "tiktok" | "youtube" | "twitter";
   name: string;
   title: string;
   lead: string;
@@ -444,8 +444,11 @@ export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide>
     clientSecretLabel: "App Secret",
     callbacks: [
       "https://api.unipost.dev/v1/oauth/callback/instagram",
+      "https://api.unipost.dev/v1/connect/callback/instagram",
       "https://api.unipost.dev/v1/oauth/callback/threads",
+      "https://api.unipost.dev/v1/connect/callback/threads",
       "https://api.unipost.dev/v1/oauth/callback/facebook",
+      "https://api.unipost.dev/v1/connect/callback/facebook",
     ],
     bestFor: "Products onboarding customer-owned Instagram, Threads, or Facebook assets with a single branded Meta app.",
     appReview: "Plan for App Review / Advanced Access before broad production rollout, especially if you need public customer onboarding.",
@@ -524,7 +527,10 @@ export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide>
     dashboardCard: "LinkedIn",
     clientIdLabel: "Client ID",
     clientSecretLabel: "Client Secret",
-    callbacks: ["https://api.unipost.dev/v1/oauth/callback/linkedin"],
+    callbacks: [
+      "https://api.unipost.dev/v1/oauth/callback/linkedin",
+      "https://api.unipost.dev/v1/connect/callback/linkedin",
+    ],
     bestFor: "B2B products that need a low-friction first workspace-owned credential rollout.",
     appReview: "The basic OIDC + posting flow is comparatively straightforward. Higher-tier LinkedIn products are where approval gets slower.",
     beforeYouStart: [
@@ -596,7 +602,10 @@ export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide>
     dashboardCard: "TikTok",
     clientIdLabel: "Client Key",
     clientSecretLabel: "Client Secret",
-    callbacks: ["https://api.unipost.dev/v1/connect/callback/tiktok"],
+    callbacks: [
+      "https://api.unipost.dev/v1/oauth/callback/tiktok",
+      "https://api.unipost.dev/v1/connect/callback/tiktok",
+    ],
     bestFor: "Products that need customer TikTok connections and are ready for a more compliance-heavy setup than LinkedIn.",
     appReview: "Expect more scrutiny than LinkedIn. Build time for audit / review into the rollout plan, not after engineering is done.",
     beforeYouStart: [
@@ -668,7 +677,10 @@ export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide>
     dashboardCard: "YouTube",
     clientIdLabel: "Client ID",
     clientSecretLabel: "Client Secret",
-    callbacks: ["https://api.unipost.dev/v1/connect/callback/youtube"],
+    callbacks: [
+      "https://api.unipost.dev/v1/oauth/callback/youtube",
+      "https://api.unipost.dev/v1/connect/callback/youtube",
+    ],
     bestFor: "Products connecting customer-owned YouTube channels while keeping the Google consent experience under your brand.",
     appReview: "Scope verification may be needed depending on your rollout shape. Even before formal verification, start by proving the OAuth wiring with one real channel owner.",
     beforeYouStart: [
@@ -707,8 +719,8 @@ export const PLATFORM_CREDENTIAL_GUIDES: Record<string, PlatformCredentialGuide>
             image: "/docs/white-label/youtube/step4.png",
           },
           {
-            title: "Step 5: choose `Web application` and add UniPost's redirect URI",
-            caption: "Authorized redirect URI: `https://api.unipost.dev/v1/connect/callback/youtube`",
+            title: "Step 5: choose `Web application` and add both UniPost redirect URIs",
+            caption: "Add the workspace OAuth and Connect Session callback URLs listed on this page. The screenshot shows the Connect callback field; add the workspace callback as a second entry.",
             image: "/docs/white-label/youtube/step5.png",
           },
           {
@@ -779,8 +791,8 @@ https://www.googleapis.com/auth/yt-analytics.readonly`,
         body: "Inside `Google Auth Platform`, open `Clients`, click `Create client`, and choose `Web application` as the application type. Name it something obvious such as `UniPost YouTube OAuth` so teammates can find it later.",
       },
       {
-        title: "Add UniPost's redirect URI",
-        body: "In the `Authorized redirect URIs` section, add the exact UniPost callback URL shown below: `https://api.unipost.dev/v1/connect/callback/youtube`. Copy and paste it exactly; a redirect typo will break the flow even if the rest of the setup is correct.",
+        title: "Add both UniPost redirect URIs",
+        body: "In the `Authorized redirect URIs` section, add both exact callback URLs listed below. The `/v1/oauth/callback/youtube` path serves workspace OAuth and `/v1/connect/callback/youtube` serves Connect Sessions; a typo or missing path will break that entry point.",
       },
       {
         title: "Create and copy the credentials immediately",
@@ -1189,6 +1201,81 @@ System.out.println(accounts);`,
     relatedPlatformHref: "/docs/platforms/youtube",
     relatedPlatformTitle: "YouTube platform guide",
   },
+  pinterest: {
+    slug: "pinterest",
+    name: "Pinterest",
+    title: "Pinterest Platform Credential Setup",
+    lead: "Use your own Pinterest app when customer connections should show your brand and consume your Pinterest app's access and quota. Register both UniPost callback URLs before testing either connection entry point.",
+    portalName: "Pinterest Developers",
+    portalUrl: "https://developers.pinterest.com",
+    dashboardCard: "Pinterest",
+    clientIdLabel: "App ID",
+    clientSecretLabel: "App Secret",
+    callbacks: [
+      "https://api.unipost.dev/v1/oauth/callback/pinterest",
+      "https://api.unipost.dev/v1/connect/callback/pinterest",
+    ],
+    bestFor: "Products connecting customer-owned Pinterest business accounts and boards with their own app identity.",
+    appReview: "Pinterest access tiers control which accounts and data your app can reach. Prove the flow with approved test accounts, then complete the access review required for your production rollout.",
+    beforeYouStart: [
+      "A company-owned Pinterest developer account.",
+      "A Pinterest business account and board you can use for the first connection and publish test.",
+      "Your production privacy-policy and terms URLs for the app submission.",
+      "An internal owner for access review, app credentials, and future secret rotation.",
+    ],
+    steps: [
+      {
+        title: "Create or open the Pinterest app your company will operate",
+        body: "In Pinterest Developers, use a company-owned app rather than an individual engineer's long-term test app. Record the app owner and current access tier before you wire the credentials into UniPost.",
+      },
+      {
+        title: "Register both UniPost redirect URIs",
+        body: "Add every callback URL listed below exactly. The `/v1/oauth/callback/pinterest` URL serves workspace OAuth, while `/v1/connect/callback/pinterest` serves customer-facing Connect Sessions.",
+      },
+      {
+        title: "Save the App ID and App Secret in UniPost",
+        body: "Open Developer → Platform Credentials, choose Pinterest, and paste the App ID and App Secret. UniPost stores these workspace credentials for new Pinterest OAuth attempts.",
+      },
+      {
+        title: "Test with an account allowed by your current access tier",
+        body: "Start a fresh connection after saving the credentials. If authorization succeeds but account or board access is restricted, confirm the Pinterest app's access tier and approved test-account list before changing the redirect configuration.",
+      },
+      {
+        title: "Run a board and Pin smoke test",
+        body: "After the account appears in UniPost, confirm its boards can be listed and publish one controlled Pin. That validates app access, OAuth, board permissions, and publishing together.",
+      },
+    ],
+    fieldMap: [
+      ["Pinterest app field", "UniPost field", "Notes"],
+      ["App ID", "App ID", "Use the identifier shown for the same Pinterest app whose redirects you configured."],
+      ["App Secret", "App Secret", "Treat it as a production secret and rotate it through the same dashboard row."],
+      ["Redirect URIs", "Callback URLs below", "Pinterest requires exact matches; register both UniPost connection paths."],
+    ],
+    apiWorkflow: buildConnectThroughAppWorkflow({
+      title: "Connect a Pinterest account through your app",
+      platform: "pinterest",
+      platformName: "Pinterest",
+      sessionTitle: "a Pinterest Connect session",
+      accountNoun: "Pinterest account",
+      credentialOwner: "Pinterest app",
+      returnPath: "/settings/integrations/pinterest/done",
+      firstTestNote: "Use an account allowed by the Pinterest app's current access tier so an access restriction is not mistaken for an OAuth wiring problem.",
+      finalTestNote: "From here, list boards and publish a controlled Pin to validate the production workflow end to end.",
+    }),
+    gotchas: [
+      ["Only one callback registered", "Workspace OAuth and Connect Sessions use different UniPost paths. Register both URLs even if you plan to launch one entry point first."],
+      ["Access-tier restrictions", "A correct OAuth setup can still be limited to approved test accounts until Pinterest grants the access needed for production."],
+      ["App ID naming", "Pinterest calls the public identifier an App ID. Store it in UniPost's App ID field; do not substitute an account or board ID."],
+    ],
+    doneChecklist: [
+      "Both UniPost Pinterest callback URLs are registered exactly.",
+      "Pinterest consent shows the intended app identity.",
+      "A permitted Pinterest business account connects successfully.",
+      "Boards can be listed and a controlled Pin can be published.",
+    ],
+    relatedPlatformHref: "/docs/platforms/pinterest",
+    relatedPlatformTitle: "Pinterest platform guide",
+  },
   twitter: {
     slug: "twitter",
     name: "X / Twitter",
@@ -1199,7 +1286,10 @@ System.out.println(accounts);`,
     dashboardCard: "X / Twitter",
     clientIdLabel: "Client ID",
     clientSecretLabel: "Client Secret",
-    callbacks: ["https://api.unipost.dev/v1/oauth/callback/twitter"],
+    callbacks: [
+      "https://api.unipost.dev/v1/oauth/callback/twitter",
+      "https://api.unipost.dev/v1/connect/callback/twitter",
+    ],
     bestFor: "Products that need customer X connections and are comfortable planning around X's tier and access constraints.",
     appReview: "Access and feature availability are tier-dependent. Treat billing / plan approval as part of setup, not an afterthought.",
     beforeYouStart: [
@@ -1266,6 +1356,7 @@ System.out.println(accounts);`,
 export const PLATFORM_CREDENTIAL_GUIDE_ORDER: PlatformCredentialGuide["slug"][] = [
   "meta",
   "linkedin",
+  "pinterest",
   "tiktok",
   "youtube",
   "twitter",

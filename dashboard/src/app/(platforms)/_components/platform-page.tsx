@@ -226,6 +226,9 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
   const [activeLang, setActiveLang] = useState<string>("js");
   const others = ALL_PLATFORMS.filter((p) => p.slug !== cfg.slug);
   const isWaitlist = cfg.waitlist && process.env.NEXT_PUBLIC_INSTAGRAM_ENABLED !== "true";
+  const requiresPaidPlan = cfg.slug === "twitter";
+  const primaryPlanMessage = requiresPaidPlan ? "Paid plan required" : "Free 100 posts/month";
+  const secondaryPlanMessage = requiresPaidPlan ? "Managed X OAuth included" : "No credit card required";
 
   return (
     <>
@@ -253,7 +256,7 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
             <div className="pp-plat-icon" style={{ background: cfg.brandColor + "15" }}>{PLATFORM_ICONS[cfg.slug] ?? cfg.icon}</div>
             <span>{cfg.name} API</span>
             <span style={{ color: "var(--muted2)" }}>·</span>
-            <span style={{ color: "var(--accent)", fontSize: 12, fontFamily: "var(--mono)" }}>8 platforms supported</span>
+            <span style={{ color: "var(--accent)", fontSize: 12, fontFamily: "var(--mono)" }}>9 platforms supported</span>
           </div>
 
           {isWaitlist && (
@@ -283,11 +286,11 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
           <div className="pp-hero-meta">
             <div className="pp-hero-meta-item">
               <CheckIcon color="var(--accent)" />
-              Free 100 posts/month
+              {primaryPlanMessage}
             </div>
             <div className="pp-hero-meta-item">
               <CheckIcon color="var(--accent)" />
-              No credit card required
+              {secondaryPlanMessage}
             </div>
             <div className="pp-hero-meta-item">
               <CheckIcon color="var(--accent)" />
@@ -539,7 +542,11 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
           <div className="pp-cta-inner">
             <div className="pp-cta-glow" />
             <h2 className="pp-cta-title">Start posting to {cfg.name} today</h2>
-            <p className="pp-cta-sub">Free plan includes 100 posts/month. No credit card required.</p>
+            <p className="pp-cta-sub">
+              {requiresPaidPlan
+                ? "X publishing and new connections require any paid UniPost plan."
+                : "Free plan includes 100 posts/month. No credit card required."}
+            </p>
             <div className="pp-cta-actions">
               {isWaitlist ? (
                 <a href={`${LANDING}/contact`} className="lp-btn lp-btn-primary lp-btn-lg">Join Waitlist</a>
