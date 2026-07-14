@@ -11,9 +11,9 @@ import {
 import { PlatformIcon } from "@/components/platform-icons";
 import { MarketingCTA, PublicSiteHeader } from "@/components/marketing/nav";
 
-const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
+const HOMEPAGE_TITLE = "Unipost";
 const HOMEPAGE_DESCRIPTION =
-  "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
+  "Unipost helps you publish and manage posts across your channels from one place. Learn what Unipost offers and get started.";
 
 export const metadata: Metadata = {
   title: HOMEPAGE_TITLE,
