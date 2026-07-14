@@ -226,6 +226,9 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
   const [activeLang, setActiveLang] = useState<string>("js");
   const others = ALL_PLATFORMS.filter((p) => p.slug !== cfg.slug);
   const isWaitlist = cfg.waitlist && process.env.NEXT_PUBLIC_INSTAGRAM_ENABLED !== "true";
+  const requiresPaidPlan = cfg.slug === "twitter";
+  const primaryPlanMessage = requiresPaidPlan ? "Paid plan required" : "Free 100 posts/month";
+  const secondaryPlanMessage = requiresPaidPlan ? "Managed X OAuth included" : "No credit card required";
 
   return (
     <>
@@ -283,11 +286,11 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
           <div className="pp-hero-meta">
             <div className="pp-hero-meta-item">
               <CheckIcon color="var(--accent)" />
-              Free 100 posts/month
+              {primaryPlanMessage}
             </div>
             <div className="pp-hero-meta-item">
               <CheckIcon color="var(--accent)" />
-              No credit card required
+              {secondaryPlanMessage}
             </div>
             <div className="pp-hero-meta-item">
               <CheckIcon color="var(--accent)" />
@@ -539,7 +542,11 @@ export default function PlatformPage({ cfg }: { cfg: PlatformConfig }) {
           <div className="pp-cta-inner">
             <div className="pp-cta-glow" />
             <h2 className="pp-cta-title">Start posting to {cfg.name} today</h2>
-            <p className="pp-cta-sub">Free plan includes 100 posts/month. No credit card required.</p>
+            <p className="pp-cta-sub">
+              {requiresPaidPlan
+                ? "X publishing and new connections require any paid UniPost plan."
+                : "Free plan includes 100 posts/month. No credit card required."}
+            </p>
             <div className="pp-cta-actions">
               {isWaitlist ? (
                 <a href={`${LANDING}/contact`} className="lp-btn lp-btn-primary lp-btn-lg">Join Waitlist</a>

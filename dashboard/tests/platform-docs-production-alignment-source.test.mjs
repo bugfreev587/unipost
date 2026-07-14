@@ -20,6 +20,9 @@ test("platform docs do not retain obsolete production claims", async () => {
   assert.match(platformDocs, /Watch time/);
   assert.match(platformDocs, /Subscribers gained/);
   assert.doesNotMatch(marketingConfig, /X\/Twitter[^\n]+Free plan available/);
+  assert.doesNotMatch(marketingPage, />\s*Free 100 posts\/month\s*</);
+  assert.match(marketingPage, /requiresPaidPlan = cfg\.slug === "twitter"/);
+  assert.match(marketingPage, /X publishing and new connections require any paid UniPost plan/);
   assert.match(marketingConfig, /Quickstart uses UniPost's managed X app/);
   assert.doesNotMatch(marketingConfig, /Validated: impressions, reach, likes, comments, shares, clicks/);
   assert.match(marketingConfig, /Production socialActions coverage: likes and comments/);
@@ -37,7 +40,7 @@ test("connection guides keep OAuth and app-password modes distinct", async () =>
     read("src/app/docs/platforms/[platform]/_data.tsx"),
   ]);
 
-  assert.match(quickstart, /X/);
+  assert.match(quickstart, /OAuth platforms like LinkedIn, X, YouTube, Instagram, Threads, TikTok, Pinterest, and Facebook Page/);
   assert.match(connectSessions, /allow_quickstart_creds=true/);
   assert.match(platformCredentials, /shared OAuth app/);
   assert.match(whiteLabel, /shared OAuth app/);
