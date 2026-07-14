@@ -5,6 +5,7 @@ import { PLATFORM_CREDENTIAL_GUIDES, PLATFORM_CREDENTIAL_GUIDE_ORDER } from "./[
 const platformGuideHrefs = {
   meta: "/docs/platform-credentials/meta",
   linkedin: "/docs/platform-credentials/linkedin",
+  pinterest: "/docs/platform-credentials/pinterest",
   tiktok: "/docs/platform-credentials/tiktok",
   youtube: "/docs/platform-credentials/youtube",
   twitter: "/docs/platform-credentials/twitter",
@@ -70,7 +71,7 @@ export default function PlatformCredentialsOverviewPage() {
           <div className="docs-step-number">2</div>
           <div>
             <div className="docs-step-title">Allow-list UniPost callback URLs</div>
-            <div className="docs-step-copy">Each OAuth platform has exact callback URLs. Copy them from the platform guide or from the dashboard row.</div>
+            <div className="docs-step-copy">Each OAuth platform has exact workspace OAuth and Connect Session callback URLs. Copy both from the platform guide; the dashboard row also shows the Connect callback for convenience.</div>
           </div>
         </div>
         <div className="docs-step-row">
