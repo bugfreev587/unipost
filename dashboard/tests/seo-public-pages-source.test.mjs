@@ -261,12 +261,12 @@ describe("crawl surfaces are explicit", () => {
 });
 
 describe("homepage and about page carry entity SEO intent", () => {
-  it("homepage metadata owns brand plus one-api positioning", () => {
+  it("homepage metadata matches the current production brand positioning", () => {
     const source = read("src/app/marketing/page.tsx");
-    assert.match(source, /UniPost \| Social Media Posting API for Developers/);
+    assert.match(source, /const HOMEPAGE_TITLE = "Unipost"/);
     assert.match(
       source,
-      /UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms\./,
+      /Unipost helps you publish and manage posts across your channels from one place\. Learn what Unipost offers and get started\./,
     );
     assert.match(source, /canonical:\s*"https:\/\/unipost\.dev\/"/);
     assert.match(source, /Post to every social platform with one API/);
