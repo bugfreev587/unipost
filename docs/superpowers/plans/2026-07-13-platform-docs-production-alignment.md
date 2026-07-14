@@ -265,4 +265,3 @@ Wait until GitHub Actions, Vercel `unipost-dev`, Railway development, and any ot
 - [ ] **Step 5: Perform real development acceptance**
 
 Open `https://dev.unipost.dev` in a real browser and verify the platform overview, all nine platform docs, Quickstart, Connect Sessions, Platform Credentials, White-label, X marketing, and representative non-X marketing pages. Confirm the corrected facts render without layout or routing regressions.
-
