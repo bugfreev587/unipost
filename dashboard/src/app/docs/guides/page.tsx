@@ -10,6 +10,10 @@ export default function GuidesIndexPage() {
       className="docs-page-wide"
     >
       <div className="docs-grid">
+        <Link href="/docs/guides/platform-options" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Platform options examples</div>
+          <p>Copy safe platform_posts[] options for YouTube, Instagram, TikTok, Facebook, and Pinterest.</p>
+        </Link>
         <Link href="/docs/guides/instagram-stories" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Instagram Stories</div>
           <p>Publish a single Instagram Story with the strict platform_posts[] shape and avoid feed-post fallback.</p>

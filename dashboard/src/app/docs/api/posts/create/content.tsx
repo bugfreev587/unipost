@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   ApiInlineLink,
   EnumValues,
@@ -108,7 +109,11 @@ const PLATFORM_POST_FIELDS: ApiFieldItem[] = [
   {
     name: "platform_posts[].platform_options?",
     type: "object",
-    description: "Flat destination options for this platform post, such as { \"mediaType\": \"story\" } for Instagram. Do not nest by platform name inside platform_posts; { \"instagram\": { \"mediaType\": \"story\" } } is only valid in the legacy account_ids shape.",
+    description: <>
+      Flat destination options for this platform post. Do not nest by platform name inside <code>platform_posts</code>;
+      platform-scoped nesting belongs only to the legacy <code>account_ids</code> shape. See{" "}
+      <Link href="/docs/guides/platform-options">common platform options examples</Link> for YouTube, Instagram, TikTok, Facebook, and Pinterest.
+    </>,
   },
 ];
 
