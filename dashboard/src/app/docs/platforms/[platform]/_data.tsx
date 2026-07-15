@@ -967,7 +967,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["caption", "Optional", "5,000 chars", "Used as YouTube description text."],
       ["platform_options.youtube.title", "Required", "max 100 chars", "Required video title. This does not fall back to `caption`."],
       ["platform_options.youtube.made_for_kids", "Required", "boolean", "Explicit audience selection required before publish."],
-      ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "Dashboard defaults to `public`, but YouTube may still force private for unverified API projects."],
+      ["platform_options.youtube.privacy_status", "Optional", "private / public / unlisted", "API requests default to `private` when omitted. The Dashboard sends `public` by default. Unverified Google API projects may still force uploads to private."],
       ["platform_options.youtube.shorts", "Optional", "boolean", "Routes the upload toward Shorts behavior"],
     ],
     mediaSpecs: [
