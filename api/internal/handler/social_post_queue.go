@@ -687,6 +687,8 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 
 	oc := h.publishOneContext(
 		ctx,
+		post.WorkspaceID,
+		xUsageKeyForResult(res.ID),
 		pp,
 		dbAccounts,
 		accountMap,
@@ -714,13 +716,26 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		publishedAt = pgtype.Timestamptz{Time: completedAt, Valid: true}
 	}
 	updated, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       status,
-		ExternalID:   externalID,
-		ErrorMessage: pgtype.Text{},
-		PublishedAt:  publishedAt,
-		Url:          postURL,
-		DebugCurl:    debugCurl,
+		ID:              res.ID,
+		Status:          status,
+		ExternalID:      externalID,
+		ErrorMessage:    pgtype.Text{},
+		PublishedAt:     publishedAt,
+		Url:             postURL,
+		DebugCurl:       debugCurl,
+		XCreditsCounted: oc.xCreditsCounted,
+		XCreditOperation: pgtype.Text{
+			String: oc.xCreditOperation,
+			Valid:  oc.xCreditOperation != "",
+		},
+		XCreditCatalogVersion: pgtype.Text{
+			String: oc.xCreditCatalog,
+			Valid:  oc.xCreditCatalog != "",
+		},
+		XCreditBillingMode: pgtype.Text{
+			String: oc.xCreditBillingMode,
+			Valid:  oc.xCreditBillingMode != "",
+		},
 	})
 	if err != nil {
 		return err
@@ -834,13 +849,26 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	}
 
 	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       resultStatus,
-		ExternalID:   pgtype.Text{},
-		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-		PublishedAt:  pgtype.Timestamptz{},
-		Url:          pgtype.Text{},
-		DebugCurl:    debugCurl,
+		ID:              res.ID,
+		Status:          resultStatus,
+		ExternalID:      pgtype.Text{},
+		ErrorMessage:    pgtype.Text{String: errMsg, Valid: true},
+		PublishedAt:     pgtype.Timestamptz{},
+		Url:             pgtype.Text{},
+		DebugCurl:       debugCurl,
+		XCreditsCounted: oc.xCreditsCounted,
+		XCreditOperation: pgtype.Text{
+			String: oc.xCreditOperation,
+			Valid:  oc.xCreditOperation != "",
+		},
+		XCreditCatalogVersion: pgtype.Text{
+			String: oc.xCreditCatalog,
+			Valid:  oc.xCreditCatalog != "",
+		},
+		XCreditBillingMode: pgtype.Text{
+			String: oc.xCreditBillingMode,
+			Valid:  oc.xCreditBillingMode != "",
+		},
 	}); err != nil {
 		return err
 	}

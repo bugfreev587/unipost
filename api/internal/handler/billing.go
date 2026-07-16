@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/stripe/stripe-go/v82"
 
@@ -11,16 +13,27 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
 
 type BillingHandler struct {
-	queries *db.Queries
-	quota   *quota.Checker
-	stripe  *billing.Manager
+	queries  *db.Queries
+	quota    *quota.Checker
+	stripe   *billing.Manager
+	xCredits xCreditsSnapshotService
+}
+
+type xCreditsSnapshotService interface {
+	Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
 }
 
 func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeMgr *billing.Manager) *BillingHandler {
 	return &BillingHandler{queries: queries, quota: quotaChecker, stripe: stripeMgr}
+}
+
+func (h *BillingHandler) SetXCreditsService(service xCreditsSnapshotService) *BillingHandler {
+	h.xCredits = service
+	return h
 }
 
 type billingResponse struct {
@@ -240,6 +253,80 @@ func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type xCreditsAllowanceResponse struct {
+	Mode               string    `json:"mode"`
+	PlanID             string    `json:"plan_id"`
+	MonthlyAllowance   *int64    `json:"monthly_allowance"`
+	MonthlyUsed        int64     `json:"monthly_used"`
+	MonthlyRemaining   *int64    `json:"monthly_remaining"`
+	BillingPeriodStart time.Time `json:"billing_period_start"`
+	BillingPeriodEnd   time.Time `json:"billing_period_end"`
+	CatalogVersion     string    `json:"catalog_version"`
+	InboundDailyUsage  int64     `json:"inbound_daily_usage"`
+	InboundDailyLimit  *int64    `json:"inbound_daily_limit"`
+	ConnectionModeNote string    `json:"connection_mode_note"`
+}
+
+// GetXCredits handles GET /v1/billing/x-credits.
+func (h *BillingHandler) GetXCredits(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if h.xCredits == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X Credits service is not configured")
+		return
+	}
+
+	snapshot, err := h.xCredits.Snapshot(r.Context(), workspaceID, time.Now().UTC())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load X Credits allowance")
+		return
+	}
+
+	writeSuccess(w, xCreditsAllowanceResponse{
+		Mode:               "monthly_allowance",
+		PlanID:             snapshot.PlanID,
+		MonthlyAllowance:   snapshot.MonthlyAllowance,
+		MonthlyUsed:        snapshot.MonthlyUsed,
+		MonthlyRemaining:   snapshot.MonthlyRemaining,
+		BillingPeriodStart: snapshot.PeriodStart,
+		BillingPeriodEnd:   snapshot.PeriodEnd,
+		CatalogVersion:     snapshot.CatalogVersion,
+		InboundDailyUsage:  snapshot.InboundDailyUsed,
+		InboundDailyLimit:  snapshot.InboundDailyLimit,
+		ConnectionModeNote: "Managed X connections consume this allowance. Bring-your-own X API connections do not consume UniPost X Credits.",
+	})
+}
+
+type planResponse struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	PriceCents   *int32 `json:"price_cents"`
+	PostLimit    int32  `json:"post_limit"`
+	PricingModel string `json:"pricing_model"`
+}
+
+func planResponseFromDB(plan db.Plan) planResponse {
+	if plan.ID == "enterprise" {
+		return planResponse{
+			ID:           plan.ID,
+			Name:         plan.Name,
+			PostLimit:    plan.PostLimit,
+			PricingModel: "custom",
+		}
+	}
+	priceCents := plan.PriceCents
+	return planResponse{
+		ID:           plan.ID,
+		Name:         plan.Name,
+		PriceCents:   &priceCents,
+		PostLimit:    plan.PostLimit,
+		PricingModel: "fixed",
+	}
+}
+
 // ListPlans handles GET /v1/plans
 func (h *BillingHandler) ListPlans(w http.ResponseWriter, r *http.Request) {
 	plans, err := h.queries.ListPlans(r.Context())
@@ -248,21 +335,9 @@ func (h *BillingHandler) ListPlans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	type planResponse struct {
-		ID         string `json:"id"`
-		Name       string `json:"name"`
-		PriceCents int32  `json:"price_cents"`
-		PostLimit  int32  `json:"post_limit"`
-	}
-
 	result := make([]planResponse, len(plans))
 	for i, p := range plans {
-		result[i] = planResponse{
-			ID:         p.ID,
-			Name:       p.Name,
-			PriceCents: p.PriceCents,
-			PostLimit:  p.PostLimit,
-		}
+		result[i] = planResponseFromDB(p)
 	}
 
 	writeSuccess(w, result)

@@ -6,6 +6,7 @@ export type DocsAiProductArea =
   | "accounts"
   | "analytics"
   | "auth"
+  | "billing"
   | "connect"
   | "credentials"
   | "platforms"
@@ -97,6 +98,36 @@ const platformCapabilitySummary = Object.entries(PLATFORM_METRICS)
   .join("\n");
 
 export const DOCS_AI_INDEX: DocsAiChunk[] = [
+  chunk({
+    id: "guide-x-credits",
+    title: "Plan and monitor X Credits",
+    path: "/docs/guides/x/credits",
+    section_id: "estimate",
+    primary_nav: "Guides",
+    section_title: "Estimate managed-X usage",
+    product_area: "billing",
+    tags: ["x credits", "twitter credits", "allowance", "usage", "hard limit", "billing period", "managed x", "byo"],
+    intent_tags: ["posting", "reference"],
+    endpoint_aliases: ["GET /v1/billing/x-credits", "/v1/billing/x-credits"],
+    platforms: ["twitter"],
+    content:
+      "X Credits are a weighted managed-X allowance separate from posts/month. The allowance resets each billing period. Use GET /v1/billing/x-credits to read monthly_allowance, monthly_used, monthly_remaining, billing_period_end, inbound_daily_usage, and inbound_daily_limit. Managed X operations stop at the hard limit. BYO X API connections do not consume UniPost X Credits. Validation does not consume X Credits, and the independent 20 X posts per account per UTC day safety cap still applies.",
+  }),
+  chunk({
+    id: "api-reference-x-credits",
+    title: "X Credits allowance",
+    path: "/docs/api/x-credits",
+    section_id: "response",
+    primary_nav: "API Reference",
+    section_title: "GET X Credits allowance",
+    product_area: "billing",
+    tags: ["x credits api", "twitter usage api", "monthly allowance", "remaining credits", "catalog version"],
+    intent_tags: ["reference", "posting"],
+    endpoint_aliases: ["GET /v1/billing/x-credits", "/v1/billing/x-credits"],
+    platforms: ["twitter"],
+    content:
+      "GET /v1/billing/x-credits returns mode monthly_allowance, plan_id, monthly_allowance, monthly_used, monthly_remaining, billing_period_start, billing_period_end, catalog_version, inbound_daily_usage, inbound_daily_limit, and a managed-versus-BYO note. Enterprise limits are null because they are contract-defined. x_monthly_usage_limit_exceeded means managed-X work reached the billing-period hard limit.",
+  }),
   chunk({
     id: "guide-connect-sessions-overview",
     title: "Connect Sessions",

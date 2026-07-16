@@ -85,13 +85,13 @@ func enrichClassification(c Classification, raw string) Classification {
 
 func errorSourceFor(c Classification, raw string) string {
 	switch c.ErrorCode {
-	case "validation_error":
+	case "validation_error", "x_monthly_usage_limit_exceeded":
 		return ErrorSourceUnipost
 	case "worker_stalled":
 		return ErrorSourceWorker
 	case "unknown_error":
 		return ErrorSourceUnknown
-	case "temporary_platform_error", "rate_limit", "platform_request_invalid", "account_reconnect_required", "auth_token_invalid", "missing_permission", "target_not_found", "platform_error":
+	case "temporary_platform_error", "rate_limit", "platform_request_invalid", "account_reconnect_required", "auth_token_invalid", "missing_permission", "target_not_found", "platform_error", "x_write_outcome_pending_reconciliation":
 		return ErrorSourcePlatform
 	case "media_error":
 		if hasProviderSignal(c, raw) {
@@ -118,9 +118,9 @@ func errorTemporalityFor(c Classification) string {
 	switch c.ErrorCode {
 	case "temporary_platform_error", "rate_limit", "worker_stalled":
 		return ErrorTemporalityTemporary
-	case "validation_error", "platform_request_invalid", "media_error", "quota_exceeded", "account_reconnect_required", "auth_token_invalid", "missing_permission", "target_not_found":
+	case "validation_error", "platform_request_invalid", "media_error", "quota_exceeded", "x_monthly_usage_limit_exceeded", "account_reconnect_required", "auth_token_invalid", "missing_permission", "target_not_found":
 		return ErrorTemporalityPermanent
-	case "platform_error", "unknown_error":
+	case "platform_error", "unknown_error", "x_write_outcome_pending_reconciliation":
 		return ErrorTemporalityUnknown
 	default:
 		return ErrorTemporalityUnknown

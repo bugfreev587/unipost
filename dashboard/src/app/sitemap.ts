@@ -17,6 +17,8 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/compare/social-media-apis", changeFrequency: "monthly", priority: 0.8 },
     { path: "/blog", changeFrequency: "weekly", priority: 0.7 },
     { path: "/docs", changeFrequency: "weekly", priority: 0.9 },
+    { path: "/docs/api/x-credits", changeFrequency: "monthly", priority: 0.7 },
+    { path: "/docs/guides/x/credits", changeFrequency: "monthly", priority: 0.7 },
     { path: "/changelog", changeFrequency: "weekly", priority: 0.7 },
     { path: "/solutions", changeFrequency: "monthly", priority: 0.7 },
     { path: "/resources", changeFrequency: "monthly", priority: 0.7 },
