@@ -62,7 +62,9 @@ func (q *Queries) DeleteOAuthState(ctx context.Context, state string) error {
 }
 
 const getOAuthState = `-- name: GetOAuthState :one
-SELECT state, profile_id, platform, redirect_url, expires_at, created_at FROM oauth_states WHERE state = $1 AND expires_at > NOW()
+SELECT state, profile_id, platform, redirect_url, expires_at, created_at
+FROM oauth_states
+WHERE state = $1 AND expires_at > NOW()
 `
 
 func (q *Queries) GetOAuthState(ctx context.Context, state string) (OauthState, error) {

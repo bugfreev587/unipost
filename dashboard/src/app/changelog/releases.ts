@@ -47,6 +47,21 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "platform-options-guide",
+    date: "2026-07-15",
+    displayDate: "July 15, 2026",
+    title: "Platform options examples guide",
+    summary: "Added comprehensive guide documenting platform options with examples.",
+    category: "dx",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 36969ee", href: "https://github.com/bugfreev587/unipost/commit/36969ee0dff1760c245b04d0f617b547900af17a" },
+    { label: "Commit d5e16d6", href: "https://github.com/bugfreev587/unipost/commit/d5e16d662ed89ef4dbaeab480bb09096b27c1827" },
+  ],
+  },
+  {
     id: "admin-post-timing-metrics",
     date: "2026-07-10",
     displayDate: "July 10, 2026",
