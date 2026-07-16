@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestXInboxOperationsReconciliationEmitsBoundedMetrics(t *testing.T) {
@@ -55,6 +57,8 @@ func TestXInboxOperationsReconciliationEmitsBoundedMetrics(t *testing.T) {
 	logs := output.String()
 	for _, want := range []string{
 		`"event":"x_inbox_operations_snapshot"`,
+		`"evidence_day_start":"2026-07-15T00:00:00Z"`,
+		`"evidence_day_end":"2026-07-16T00:00:00Z"`,
 		`"provisional_usage_events":7`,
 		`"stale_provisional_usage_events":2`,
 		`"reversed_usage_events":3`,
@@ -79,6 +83,12 @@ func TestXInboxOperationsReconciliationEmitsBoundedMetrics(t *testing.T) {
 	}
 	if store.now != now {
 		t.Fatalf("snapshot time = %s, want %s", store.now, now)
+	}
+	if want := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC); store.dayStart != want {
+		t.Fatalf("snapshot dayStart = %s, want %s", store.dayStart, want)
+	}
+	if want := time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC); store.dayEnd != want {
+		t.Fatalf("snapshot dayEnd = %s, want %s", store.dayEnd, want)
 	}
 }
 
@@ -266,6 +276,60 @@ func TestXInboxCapacityReconciliationQueryKeepsApplicationsSeparated(t *testing.
 	}
 }
 
+func TestXInboxPromotionEvidenceUsesOneCompletedSettlementDay(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("x_inbox_reconciliation.go")
+	if err != nil {
+		t.Fatalf("read reconciliation source: %v", err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"dayEnd := now.Truncate(24 * time.Hour)",
+		"dayStart := dayEnd.Add(-24 * time.Hour)",
+		"WHERE status IN ('finalized', 'reversed')",
+		"AND updated_at >= $2 AND updated_at < $4",
+		"AND updated_at >= $1 AND updated_at < $2",
+		"WHERE status = 'provisional'",
+		"WHERE o.status NOT IN ('completed', 'succeeded')",
+		"WHERE status NOT IN ('finalized', 'released')",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("completed-day/current-state query contract missing %q", want)
+		}
+	}
+	if strings.Contains(text, "windowStart") || strings.Contains(text, "MetricsWindow") {
+		t.Fatal("rolling reconciliation window remains in completed-day evidence")
+	}
+}
+
+func TestXInboxReconciliationSnapshotQueryFreshSchema(t *testing.T) {
+	databaseURL := os.Getenv("X_INBOX_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("X_INBOX_TEST_DATABASE_URL is not configured")
+	}
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := &postgresXInboxOperationsReconciliationStore{
+		pool:       pool,
+		staleAfter: 10 * time.Minute,
+	}
+	if _, err := store.Snapshot(
+		ctx,
+		now,
+		time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
+		time.Date(2026, 7, 16, 0, 0, 0, 0, time.UTC),
+	); err != nil {
+		t.Fatalf("Snapshot() on fresh schema: %v", err)
+	}
+}
+
 func TestXInboxCapacityReconciliationThresholds(t *testing.T) {
 	t.Parallel()
 
@@ -323,6 +387,8 @@ type xInboxReconciliationFakeStore struct {
 	snapshot XInboxOperationsSnapshot
 	err      error
 	now      time.Time
+	dayStart time.Time
+	dayEnd   time.Time
 }
 
 type xInboxDailyCostFakeInput struct {
@@ -334,7 +400,14 @@ func (i *xInboxDailyCostFakeInput) DailyCost(context.Context, time.Time) (XInbox
 	return i.value, i.err
 }
 
-func (s *xInboxReconciliationFakeStore) Snapshot(_ context.Context, now time.Time) (XInboxOperationsSnapshot, error) {
+func (s *xInboxReconciliationFakeStore) Snapshot(
+	_ context.Context,
+	now time.Time,
+	dayStart time.Time,
+	dayEnd time.Time,
+) (XInboxOperationsSnapshot, error) {
 	s.now = now
+	s.dayStart = dayStart
+	s.dayEnd = dayEnd
 	return s.snapshot, s.err
 }

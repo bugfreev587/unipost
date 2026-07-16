@@ -55,12 +55,12 @@ Before deployment:
 1. Confirm the callback and webhook URLs are development URLs only.
 2. Confirm the X application has the OAuth scopes required for post reads/writes, offline access, and DMs.
 3. Confirm the X API subscription, spend limit, and resource capacities with `<X_BILLING_OWNER>`.
-4. Run migrations through the latest X Inbox migration and verify the delivery, receipt, notification, durable-operation, exposure-reservation, and cleanup-intent tables exist.
+4. Run migrations through migration 116 and verify the delivery, receipt, notification, durable-operation, exposure-reservation, cleanup-intent tables, current-state partial indexes, and completed-day evidence indexes exist.
 5. Redeploy the API, then verify one `x_inbox_operations_snapshot` event arrives without customer identifiers or content.
 
 ## Safe observability contract
 
-The reconciliation worker emits aggregate JSON events once per minute:
+The reconciliation worker emits aggregate JSON events once per minute. Current nonterminal state is separate from promotion evidence. Promotion evidence always covers the previous completed UTC day, from `evidence_day_start` inclusive to `evidence_day_end` exclusive; it is never a rolling 24-hour window.
 
 - `x_inbox_operations_snapshot`: provisional/stale/reversed usage; durable outbound, confirmation, and exposure states; cap suppression; notifications; pause/restore; webhook and paid-backfill latency; deduplication; outbound success; aggregate customer demand; and cleanup state;
 - `x_inbox_capacity_metric` / `x_inbox_capacity_alert`: opaque application scope, resource type, used/capacity, and the highest crossed 70/85/95 threshold—never a cross-application total;
@@ -98,7 +98,9 @@ Live resources and durable cleanup intents are de-duplicated by exact upstream r
 
 ## Promotion-gate monitoring and daily cost input
 
-Review a complete UTC-day window before promotion. The gate requires operation/catalog usage, finalized and reversed usage, paid-backfill confirmation count and duration, paid-backfill dedup rate (`duplicates / read` from persisted completed results), webhook delivery latency, outbound completion rate, distinct-workspace demand, and every durable uncertain/stale state. Zero traffic is reported as zero, not silently treated as a successful demand or latency sample.
+Review the previous completed UTC-day window before promotion. The gate requires operation/catalog usage, finalized and reversed usage, paid-backfill confirmation count and duration, paid-backfill dedup rate (`duplicates / read` from persisted completed results), webhook delivery latency, outbound completion rate, distinct-workspace demand, and every durable uncertain/stale state. Zero traffic is reported as zero, not silently treated as a successful demand or latency sample.
+
+Finalized/reversed totals and every operation/catalog row use the same settlement cohort: `x_usage_events.updated_at >= evidence_day_start AND updated_at < evidence_day_end`, restricted to the terminal `finalized` and `reversed` statuses. Do not compare a created-at breakdown with settled totals. Current provisional, outbound, confirmation, exposure, notification, pause, delivery, and cleanup health remain point-in-time signals backed by partial current-state indexes.
 
 X console/export cost is external; UniPost does not claim a live cost comparison when it is absent. The injected daily-cost boundary must supply both provider cost in micros and expected cost in micros computed from finalized usage with the approved catalog cost mapping. Until an authorized adapter supplies that UTC-day record, `daily_cost_input_missing` is expected and promotion is blocked.
 

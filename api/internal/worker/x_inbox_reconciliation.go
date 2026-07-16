@@ -17,7 +17,6 @@ import (
 
 const (
 	defaultXInboxOperationsReconciliationInterval = time.Minute
-	defaultXInboxOperationsMetricsWindow          = 24 * time.Hour
 	defaultXInboxOperationsStaleAfter             = 10 * time.Minute
 )
 
@@ -109,12 +108,11 @@ type XInboxDailyCostInput interface {
 }
 
 type XInboxOperationsReconciliationStore interface {
-	Snapshot(context.Context, time.Time) (XInboxOperationsSnapshot, error)
+	Snapshot(context.Context, time.Time, time.Time, time.Time) (XInboxOperationsSnapshot, error)
 }
 
 type XInboxOperationsReconciliationConfig struct {
 	Interval                            time.Duration
-	MetricsWindow                       time.Duration
 	StaleAfter                          time.Duration
 	ManagedFilteredStreamRuleCapacity   int64
 	ManagedActivitySubscriptionCapacity int64
@@ -165,17 +163,13 @@ func NewPostgresXInboxOperationsReconciliationWorker(
 	logger *slog.Logger,
 	config XInboxOperationsReconciliationConfig,
 ) *XInboxOperationsReconciliationWorker {
-	if config.MetricsWindow <= 0 {
-		config.MetricsWindow = defaultXInboxOperationsMetricsWindow
-	}
 	if config.StaleAfter <= 0 {
 		config.StaleAfter = defaultXInboxOperationsStaleAfter
 	}
 	return NewXInboxOperationsReconciliationWorker(
 		&postgresXInboxOperationsReconciliationStore{
-			pool:          pool,
-			metricsWindow: config.MetricsWindow,
-			staleAfter:    config.StaleAfter,
+			pool:       pool,
+			staleAfter: config.StaleAfter,
 		},
 		logger,
 		config,
@@ -211,7 +205,9 @@ func (w *XInboxOperationsReconciliationWorker) RunOnce(ctx context.Context) erro
 		return nil
 	}
 	now := w.now().UTC()
-	snapshot, err := w.store.Snapshot(ctx, now)
+	dayEnd := now.Truncate(24 * time.Hour)
+	dayStart := dayEnd.Add(-24 * time.Hour)
+	snapshot, err := w.store.Snapshot(ctx, now, dayStart, dayEnd)
 	if err != nil {
 		w.logger.Warn("X Inbox operations snapshot failed",
 			"event", "x_inbox_reconciliation_failed",
@@ -221,6 +217,8 @@ func (w *XInboxOperationsReconciliationWorker) RunOnce(ctx context.Context) erro
 
 	w.logger.Info("X Inbox operations snapshot",
 		"event", "x_inbox_operations_snapshot",
+		"evidence_day_start", dayStart.Format(time.RFC3339),
+		"evidence_day_end", dayEnd.Format(time.RFC3339),
 		"provisional_usage_events", snapshot.ProvisionalUsageEvents,
 		"stale_provisional_usage_events", snapshot.StaleProvisionalUsageEvents,
 		"reversed_usage_events", snapshot.ReversedUsageEvents,
@@ -285,7 +283,7 @@ func (w *XInboxOperationsReconciliationWorker) RunOnce(ctx context.Context) erro
 			"events", usage.Events,
 			"weighted_units", usage.WeightedUnits)
 	}
-	w.logDailyCost(ctx, now, snapshot)
+	w.logDailyCost(ctx, dayStart, snapshot)
 	w.logReconciliationAlerts(snapshot)
 	return nil
 }
@@ -475,35 +473,41 @@ func safeMetricLabel(value string) string {
 }
 
 type postgresXInboxOperationsReconciliationStore struct {
-	pool          *pgxpool.Pool
-	metricsWindow time.Duration
-	staleAfter    time.Duration
+	pool       *pgxpool.Pool
+	staleAfter time.Duration
 }
 
 func (s *postgresXInboxOperationsReconciliationStore) Snapshot(
 	ctx context.Context,
 	now time.Time,
+	dayStart time.Time,
+	dayEnd time.Time,
 ) (XInboxOperationsSnapshot, error) {
 	if s == nil || s.pool == nil {
 		return XInboxOperationsSnapshot{}, errors.New("X Inbox reconciliation database is unavailable")
 	}
-	windowStart := now.Add(-s.metricsWindow)
 	staleBefore := now.Add(-s.staleAfter)
 	row := s.pool.QueryRow(ctx, `
-WITH usage_metrics AS (
+WITH usage_current AS (
   SELECT
-    COUNT(*) FILTER (WHERE status = 'provisional')::BIGINT AS provisional,
-    COUNT(*) FILTER (WHERE status = 'provisional' AND created_at < $3)::BIGINT AS stale_provisional,
-    COUNT(*) FILTER (WHERE status = 'reversed' AND updated_at >= $2)::BIGINT AS reversed,
-    COUNT(*) FILTER (WHERE status = 'finalized' AND updated_at >= $2)::BIGINT AS finalized_events,
-    COALESCE(SUM(weighted_units) FILTER (WHERE status = 'finalized' AND updated_at >= $2), 0)::BIGINT AS finalized_units
+    COUNT(*)::BIGINT AS provisional,
+    COUNT(*) FILTER (WHERE created_at < $3)::BIGINT AS stale_provisional
   FROM x_usage_events
+  WHERE status = 'provisional'
+), usage_settled AS (
+  SELECT
+    COUNT(*) FILTER (WHERE status = 'reversed')::BIGINT AS reversed,
+    COUNT(*) FILTER (WHERE status = 'finalized')::BIGINT AS finalized_events,
+    COALESCE(SUM(weighted_units) FILTER (WHERE status = 'finalized'), 0)::BIGINT AS finalized_units
+  FROM x_usage_events
+  WHERE status IN ('finalized', 'reversed')
+    AND updated_at >= $2 AND updated_at < $4
 ), receipt_metrics AS (
   SELECT
     COUNT(*) FILTER (WHERE decision = 'suppressed_daily_cap')::BIGINT AS suppressed_cap,
     COUNT(*) FILTER (WHERE decision = 'suppressed_monthly_allowance')::BIGINT AS suppressed_allowance
   FROM x_inbound_event_receipts
-  WHERE created_at >= $2
+  WHERE created_at >= $2 AND created_at < $4
 ), delivery_metrics AS (
   SELECT
     COUNT(*) FILTER (WHERE delivery_status IN ('paused_cap', 'paused_allowance', 'paused_plan'))::BIGINT AS paused_sources,
@@ -535,67 +539,71 @@ WITH usage_metrics AS (
     COUNT(*) FILTER (WHERE lease_until < $1)::BIGINT AS stale_leases,
     COALESCE(EXTRACT(EPOCH FROM ($1 - MIN(created_at))), 0)::BIGINT AS oldest_age_seconds
   FROM x_inbox_delivery_cleanup_intents
-), outbound_metrics AS (
+), outbound_current AS (
   SELECT
     COUNT(*) FILTER (WHERE o.status = 'outcome_unknown')::BIGINT AS outcome_unknown,
     COUNT(*) FILTER (WHERE o.status = 'needs_reconciliation')::BIGINT AS needs_reconciliation,
     COUNT(*) FILTER (WHERE o.status = 'remote_succeeded')::BIGINT AS remote_succeeded,
-    COUNT(*) FILTER (
-      WHERE o.status NOT IN ('completed', 'succeeded') AND o.updated_at < $3
-    )::BIGINT AS stale_operations,
+    COUNT(*) FILTER (WHERE o.updated_at < $3)::BIGINT AS stale_operations,
     COUNT(*) FILTER (
       WHERE sa.x_app_mode = 'workspace_x_app'
         AND o.status IN ('outcome_unknown', 'needs_reconciliation')
         AND o.usage_event_id IS NULL
-    )::BIGINT AS byo_unmetered_uncertain,
-    COUNT(*) FILTER (WHERE o.created_at >= $2)::BIGINT AS requests,
-    COUNT(*) FILTER (
-      WHERE o.created_at >= $2 AND o.status IN ('completed', 'succeeded')
-    )::BIGINT AS completed
+    )::BIGINT AS byo_unmetered_uncertain
   FROM x_inbox_outbound_requests o
   JOIN social_accounts sa ON sa.id = o.social_account_id
-), confirmation_metrics AS (
+  WHERE o.status NOT IN ('completed', 'succeeded')
+), outbound_day AS (
   SELECT
-    COUNT(*) FILTER (WHERE created_at >= $2)::BIGINT AS created,
-    COUNT(*) FILTER (WHERE created_at >= $2 AND status = 'completed')::BIGINT AS completed,
-    COUNT(*) FILTER (WHERE created_at >= $2 AND status = 'failed')::BIGINT AS failed,
-    COUNT(*) FILTER (WHERE created_at >= $2 AND status = 'expired')::BIGINT AS expired,
-    COUNT(*) FILTER (
-      WHERE (status = 'running' AND execution_lease_expires_at < $1)
-         OR (status = 'pending' AND expires_at < $1)
-    )::BIGINT AS stale,
-    COALESCE(SUM(estimated_x_credits) FILTER (WHERE created_at >= $2), 0)::BIGINT AS estimated_credits,
+    COUNT(*)::BIGINT AS requests,
+    COUNT(*) FILTER (WHERE status IN ('completed', 'succeeded'))::BIGINT AS completed
+  FROM x_inbox_outbound_requests
+  WHERE created_at >= $2 AND created_at < $4
+), confirmation_current AS (
+  SELECT
+    (SELECT COUNT(*) FROM x_inbox_backfill_confirmation_operations
+      WHERE status = 'running' AND execution_lease_expires_at < $1)
+    +
+    (SELECT COUNT(*) FROM x_inbox_backfill_confirmation_operations
+      WHERE status = 'pending' AND expires_at < $1) AS stale
+), confirmation_created_day AS (
+  SELECT
+    COUNT(*)::BIGINT AS created,
+    COUNT(*) FILTER (WHERE status = 'failed')::BIGINT AS failed,
+    COUNT(*) FILTER (WHERE status = 'expired')::BIGINT AS expired,
+    COALESCE(SUM(estimated_x_credits), 0)::BIGINT AS estimated_credits
+  FROM x_inbox_backfill_confirmation_operations
+  WHERE created_at >= $2 AND created_at < $4
+), confirmation_completed_day AS (
+  SELECT
+    COUNT(*)::BIGINT AS completed,
     COALESCE(SUM(
       CASE WHEN result->>'read' ~ '^[0-9]+$' THEN (result->>'read')::BIGINT ELSE 0 END
-    ) FILTER (WHERE created_at >= $2 AND status = 'completed'), 0)::BIGINT AS dedup_observed,
+    ), 0)::BIGINT AS dedup_observed,
     COALESCE(SUM(
       CASE WHEN result->>'duplicates' ~ '^[0-9]+$' THEN (result->>'duplicates')::BIGINT ELSE 0 END
-    ) FILTER (WHERE created_at >= $2 AND status = 'completed'), 0)::BIGINT AS deduplicated,
+    ), 0)::BIGINT AS deduplicated,
     COUNT(*) FILTER (
-      WHERE created_at >= $2 AND status = 'completed'
-        AND started_at IS NOT NULL AND completed_at IS NOT NULL
+      WHERE started_at IS NOT NULL AND completed_at IS NOT NULL
     )::BIGINT AS latency_observed,
     COALESCE(ROUND(AVG(GREATEST(0, EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)) FILTER (
-      WHERE created_at >= $2 AND status = 'completed'
-        AND started_at IS NOT NULL AND completed_at IS NOT NULL
+      WHERE started_at IS NOT NULL AND completed_at IS NOT NULL
     )), 0)::BIGINT AS average_latency_ms,
     COALESCE(ROUND(MAX(GREATEST(0, EXTRACT(EPOCH FROM (completed_at - started_at)) * 1000)) FILTER (
-      WHERE created_at >= $2 AND status = 'completed'
-        AND started_at IS NOT NULL AND completed_at IS NOT NULL
+      WHERE started_at IS NOT NULL AND completed_at IS NOT NULL
     )), 0)::BIGINT AS max_latency_ms
   FROM x_inbox_backfill_confirmation_operations
-), exposure_metrics AS (
+  WHERE status = 'completed' AND completed_at >= $2 AND completed_at < $4
+), exposure_current AS (
   SELECT
     COUNT(*) FILTER (WHERE status = 'reserved')::BIGINT AS reserved,
     COUNT(*) FILTER (WHERE status = 'read_started')::BIGINT AS read_started,
     COUNT(*) FILTER (WHERE status = 'finalize_pending')::BIGINT AS finalize_pending,
     COUNT(*) FILTER (WHERE status = 'release_pending')::BIGINT AS release_pending,
     COUNT(*) FILTER (WHERE status = 'needs_reconciliation')::BIGINT AS needs_reconciliation,
-    COUNT(*) FILTER (
-      WHERE status NOT IN ('finalized', 'released')
-        AND (updated_at < $3 OR reconciliation_deadline < $1)
-    )::BIGINT AS stale
+    COUNT(*) FILTER (WHERE updated_at < $3 OR reconciliation_deadline < $1)::BIGINT AS stale
   FROM x_inbox_backfill_exposure_reservations
+  WHERE status NOT IN ('finalized', 'released')
 ), latency_metrics AS (
   SELECT
     COUNT(*) FILTER (WHERE metadata->>'backfill' IS DISTINCT FROM 'true')::BIGINT AS webhook_items,
@@ -606,21 +614,22 @@ WITH usage_metrics AS (
       WHERE metadata->>'backfill' IS DISTINCT FROM 'true'
     )), 0)::BIGINT AS webhook_max_ms
   FROM inbox_items
-  WHERE source IN ('x_reply', 'x_dm') AND created_at >= $2
+  WHERE source IN ('x_reply', 'x_dm')
+    AND created_at >= $2 AND created_at < $4
 ), demand_metrics AS (
   SELECT COUNT(DISTINCT workspace_id)::BIGINT AS workspaces
   FROM (
-    SELECT workspace_id FROM x_inbound_event_receipts WHERE created_at >= $2
+    SELECT workspace_id FROM x_inbound_event_receipts WHERE created_at >= $2 AND created_at < $4
     UNION
-    SELECT workspace_id FROM x_inbox_outbound_requests WHERE created_at >= $2
+    SELECT workspace_id FROM x_inbox_outbound_requests WHERE created_at >= $2 AND created_at < $4
     UNION
-    SELECT workspace_id FROM x_inbox_backfill_confirmation_operations WHERE created_at >= $2
+    SELECT workspace_id FROM x_inbox_backfill_confirmation_operations WHERE created_at >= $2 AND created_at < $4
   ) demand
 )
 SELECT
-  usage_metrics.provisional,
-  usage_metrics.stale_provisional,
-  usage_metrics.reversed,
+  usage_current.provisional,
+  usage_current.stale_provisional,
+  usage_settled.reversed,
   receipt_metrics.suppressed_cap,
   receipt_metrics.suppressed_allowance,
   notification_metrics.claims_80,
@@ -637,40 +646,41 @@ SELECT
   cleanup_metrics.overdue,
   cleanup_metrics.stale_leases,
 	cleanup_metrics.oldest_age_seconds,
-	outbound_metrics.outcome_unknown,
-	outbound_metrics.needs_reconciliation,
-	outbound_metrics.remote_succeeded,
-	outbound_metrics.stale_operations,
-	outbound_metrics.byo_unmetered_uncertain,
-	outbound_metrics.requests,
-	outbound_metrics.completed,
-	confirmation_metrics.created,
-	confirmation_metrics.completed,
-	confirmation_metrics.failed,
-	confirmation_metrics.expired,
-	confirmation_metrics.stale,
-	confirmation_metrics.estimated_credits,
-	confirmation_metrics.dedup_observed,
-	confirmation_metrics.deduplicated,
-	exposure_metrics.reserved,
-	exposure_metrics.read_started,
-	exposure_metrics.finalize_pending,
-	exposure_metrics.release_pending,
-	exposure_metrics.needs_reconciliation,
-	exposure_metrics.stale,
+	outbound_current.outcome_unknown,
+	outbound_current.needs_reconciliation,
+	outbound_current.remote_succeeded,
+	outbound_current.stale_operations,
+	outbound_current.byo_unmetered_uncertain,
+	outbound_day.requests,
+	outbound_day.completed,
+	confirmation_created_day.created,
+	confirmation_completed_day.completed,
+	confirmation_created_day.failed,
+	confirmation_created_day.expired,
+	confirmation_current.stale,
+	confirmation_created_day.estimated_credits,
+	confirmation_completed_day.dedup_observed,
+	confirmation_completed_day.deduplicated,
+	exposure_current.reserved,
+	exposure_current.read_started,
+	exposure_current.finalize_pending,
+	exposure_current.release_pending,
+	exposure_current.needs_reconciliation,
+	exposure_current.stale,
 	latency_metrics.webhook_items,
 	latency_metrics.webhook_average_ms,
 	latency_metrics.webhook_max_ms,
-	confirmation_metrics.latency_observed,
-	confirmation_metrics.average_latency_ms,
-	confirmation_metrics.max_latency_ms,
+	confirmation_completed_day.latency_observed,
+	confirmation_completed_day.average_latency_ms,
+	confirmation_completed_day.max_latency_ms,
 	demand_metrics.workspaces,
-	usage_metrics.finalized_events,
-	usage_metrics.finalized_units
-FROM usage_metrics, receipt_metrics, delivery_metrics, notification_metrics,
-     cleanup_metrics, outbound_metrics, confirmation_metrics, exposure_metrics,
-     latency_metrics, demand_metrics`,
-		now, windowStart, staleBefore)
+	usage_settled.finalized_events,
+	usage_settled.finalized_units
+FROM usage_current, usage_settled, receipt_metrics, delivery_metrics, notification_metrics,
+	 cleanup_metrics, outbound_current, outbound_day, confirmation_current,
+	 confirmation_created_day, confirmation_completed_day, exposure_current,
+	 latency_metrics, demand_metrics`,
+		now, dayStart, staleBefore, dayEnd)
 
 	var snapshot XInboxOperationsSnapshot
 	err := row.Scan(
@@ -732,9 +742,10 @@ FROM usage_metrics, receipt_metrics, delivery_metrics, notification_metrics,
 SELECT operation_key, catalog_version, status,
        COUNT(*)::BIGINT, COALESCE(SUM(weighted_units), 0)::BIGINT
 FROM x_usage_events
-WHERE created_at >= $1
+WHERE status IN ('finalized', 'reversed')
+  AND updated_at >= $1 AND updated_at < $2
 GROUP BY operation_key, catalog_version, status
-ORDER BY operation_key, catalog_version, status`, windowStart)
+ORDER BY operation_key, catalog_version, status`, dayStart, dayEnd)
 	if err != nil {
 		return XInboxOperationsSnapshot{}, err
 	}
