@@ -251,7 +251,7 @@ func TestXInboxDeliveryCancelsRemovedStreamBeforeBudgetedCleanup(t *testing.T) {
 
 	select {
 	case stopped := <-runner.stops:
-		if stopped != "managed-client-id" {
+		if stopped != safeAppIdentity("managed-route-key") {
 			t.Fatalf("stopped = %q", stopped)
 		}
 	case <-time.After(250 * time.Millisecond):
@@ -324,7 +324,7 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 		WorkspaceID:              "workspace-1",
 		Handle:                   "UniPostDev",
 		ExternalUserID:           "2244994945",
-		AppClientID:              "managed-client-id",
+		WebhookRouteKey:          "managed-route-key",
 		AccessTokenEncrypted:     "encrypted-user-token",
 		AppMode:                  xinbox.AppModeUniPostManaged,
 		ConsumerSecretConfigured: true,
@@ -365,7 +365,7 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	if want := []string{"user-oauth-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
 		t.Fatalf("subscription tokens = %v, want connected user OAuth token", api.subscriptionTokens)
 	}
-	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-client-id"}; !reflect.DeepEqual(api.webhookURLs, want) {
+	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
 		t.Fatalf("webhook URLs = %v, want app-specific URL %v", api.webhookURLs, want)
 	}
 }
@@ -404,7 +404,7 @@ func TestXInboxDeliveryPersistsRuleBeforeSubscriptionFailure(t *testing.T) {
 func TestXInboxDeliveryAfterConsumerSecretRemovalCleansAndDoesNotRecreate(t *testing.T) {
 	account := activeManagedXInboxAccount()
 	account.AppMode = xinbox.AppModeWorkspace
-	account.AppClientID = "workspace-client-id"
+	account.WebhookRouteKey = "workspace-route-key"
 	account.AppBearerTokenEncrypted = "workspace-encrypted-bearer"
 	account.ConsumerSecretConfigured = false
 	store := &fakeXInboxDeliveryStore{
@@ -767,13 +767,13 @@ func TestXInboxDeliveryKeepsWorkspaceXAppsIsolated(t *testing.T) {
 	first.SocialAccountID = "account-1"
 	first.WorkspaceID = "workspace-1"
 	first.AppMode = xinbox.AppModeWorkspace
-	first.AppClientID = "workspace-client-one"
+	first.WebhookRouteKey = "workspace-route-one"
 	first.AppBearerTokenEncrypted = "encrypted-app-one"
 	first.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
 	second := first
 	second.SocialAccountID = "account-2"
 	second.WorkspaceID = "workspace-2"
-	second.AppClientID = "workspace-client-two"
+	second.WebhookRouteKey = "workspace-route-two"
 	second.AppBearerTokenEncrypted = "encrypted-app-two"
 
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{first, second}}
@@ -799,8 +799,8 @@ func TestXInboxDeliveryKeepsWorkspaceXAppsIsolated(t *testing.T) {
 		got[app.Identity] = app.BearerToken
 	}
 	want := map[string]string{
-		"workspace-client-one": "workspace-app-token-one",
-		"workspace-client-two": "workspace-app-token-two",
+		safeAppIdentity("workspace-route-one"): "workspace-app-token-one",
+		safeAppIdentity("workspace-route-two"): "workspace-app-token-two",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("apps = %v, want isolated workspace apps %v", got, want)
@@ -862,6 +862,39 @@ func (r *blockingStreamRunner) Run(context.Context, string, string, func(xinbox.
 	}
 	<-r.release
 	return nil
+}
+
+type routingStreamRunner struct{}
+
+func (routingStreamRunner) Run(
+	_ context.Context,
+	_ string,
+	_ string,
+	handler func(xinbox.StreamEvent) error,
+) error {
+	return handler(xinbox.StreamEvent{})
+}
+
+func TestXInboxDeliveryPassesSecretBoundRouteKeyToStreamIngestion(t *testing.T) {
+	var gotRouteKey string
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Leader: &sharedTestLeader{},
+		Stream: routingStreamRunner{},
+	}).SetEventHandler(func(_ context.Context, routeKey string, _ xinbox.StreamEvent) error {
+		gotRouteKey = routeKey
+		return nil
+	})
+	routeKey := "secret-bound-route-key"
+	if err := worker.runAppStream(context.Background(), XInboxAppStream{
+		Identity:        safeAppIdentity(routeKey),
+		WebhookRouteKey: routeKey,
+		BearerToken:     "app-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if gotRouteKey != routeKey {
+		t.Fatalf("ingestion route key = %q, want %q", gotRouteKey, routeKey)
+	}
 }
 
 func TestXInboxDeliveryAdvisoryLeaderAllowsOneStreamAcrossReplicas(t *testing.T) {
@@ -1031,7 +1064,7 @@ func TestXInboxDeliveryMissingWorkspaceCredentialCancelsDesiredStream(t *testing
 	}
 	account := activeManagedXInboxAccount()
 	account.AppMode = xinbox.AppModeWorkspace
-	account.AppClientID = "workspace-client-id"
+	account.WebhookRouteKey = "workspace-route-key"
 	account.AppBearerTokenEncrypted = "encrypted-workspace-token"
 	account.FilteredStreamRuleID = "rule-existing"
 	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
@@ -1056,7 +1089,7 @@ func TestXInboxDeliveryMissingWorkspaceCredentialCancelsDesiredStream(t *testing
 	store.accounts[0].FilteredStreamRuleID = ""
 	store.mu.Unlock()
 	worker.reconcileAndStartStreams(ctx)
-	if stopped := <-runner.stops; stopped != "workspace-client-id" {
+	if stopped := <-runner.stops; stopped != safeAppIdentity("workspace-route-key") {
 		t.Fatalf("stopped = %q", stopped)
 	}
 }

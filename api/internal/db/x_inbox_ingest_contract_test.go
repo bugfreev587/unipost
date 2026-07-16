@@ -18,7 +18,7 @@ func TestXInboxIngestQueriesPreserveAppAndPlanIsolation(t *testing.T) {
 		"-- name: FindXInboxAccountsForExternalUserApp :many",
 		"sa.x_app_mode = 'unipost_managed_app'",
 		"sa.x_app_mode = 'workspace_x_app'",
-		"pc.client_id = sqlc.arg(app_client_id)::TEXT",
+		"pc.webhook_route_key = sqlc.arg(webhook_route_key)::TEXT",
 		"COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox",
 		"sa.scope",
 		"sa.connection_type",
@@ -32,7 +32,7 @@ func TestXInboxIngestQueriesPreserveAppAndPlanIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(credentialsSQL), "-- name: ListTwitterConsumerSecretsByClientID :many") {
-		t.Fatal("platform credential queries must resolve workspace consumer secrets by public app client id")
+	if !strings.Contains(string(credentialsSQL), "-- name: ListTwitterConsumerSecretsByWebhookRouteKey :many") {
+		t.Fatal("platform credential queries must resolve workspace consumer secrets by unguessable webhook route key")
 	}
 }

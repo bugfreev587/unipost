@@ -14,6 +14,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type PlatformCredentialHandler struct {
@@ -142,6 +143,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 
 	appBearerToken := pgtype.Text{}
 	consumerSecret := pgtype.Text{}
+	webhookRouteKey := pgtype.Text{}
 	if body.Platform == "twitter" {
 		if body.AppBearerToken != nil {
 			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.AppBearerToken))
@@ -152,12 +154,15 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 			appBearerToken = pgtype.Text{String: encrypted, Valid: true}
 		}
 		if body.ConsumerSecret != nil {
-			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.ConsumerSecret))
+			plainConsumerSecret := strings.TrimSpace(*body.ConsumerSecret)
+			encrypted, encryptErr := h.encryptor.Encrypt(plainConsumerSecret)
 			if encryptErr != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encrypt credentials")
 				return
 			}
 			consumerSecret = pgtype.Text{String: encrypted, Valid: true}
+			routeKey := xinbox.WebhookRouteKey(plainConsumerSecret, body.ClientID)
+			webhookRouteKey = pgtype.Text{String: routeKey, Valid: routeKey != ""}
 		}
 	}
 
@@ -168,6 +173,7 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		ClientSecret:           encSecret,
 		AppBearerToken:         appBearerToken,
 		ConsumerSecret:         consumerSecret,
+		WebhookRouteKey:        webhookRouteKey,
 		AppBearerTokenSupplied: body.AppBearerToken != nil,
 		ConsumerSecretSupplied: body.ConsumerSecret != nil,
 	})

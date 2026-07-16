@@ -17,11 +17,11 @@ func TestXInboxDeliveryWorkerWiringUsesDevSafeEnvironmentContracts(t *testing.T)
 		"databaseURL,",
 		`os.Getenv("TWITTER_BEARER_TOKEN")`,
 		`strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != ""`,
-		`os.Getenv("TWITTER_CLIENT_ID")`,
+		`managedXWebhookRouteKey`,
 		`os.Getenv("X_INBOX_WEBHOOK_URL")`,
 		`.SetEventHandler(xIngestionService.IngestStreamEvent)`,
-		`r.Get("/v1/webhooks/twitter/{app_client_id}", xWebhookHandler.CRC)`,
-		`r.Post("/v1/webhooks/twitter/{app_client_id}", xWebhookHandler.Handle)`,
+		`r.Get("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.CRC)`,
+		`r.Post("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.Handle)`,
 		"go xInboxDeliveryWorker.Start(workerCtx)",
 	} {
 		if !strings.Contains(text, required) {

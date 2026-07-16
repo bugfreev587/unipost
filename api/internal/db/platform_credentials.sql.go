@@ -14,24 +14,29 @@ import (
 const createPlatformCredential = `-- name: CreatePlatformCredential :one
 INSERT INTO platform_credentials (
   workspace_id, platform, client_id, client_secret,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (workspace_id, platform) DO UPDATE
 SET client_id = EXCLUDED.client_id,
     client_secret = EXCLUDED.client_secret,
     app_bearer_token = CASE
-      WHEN $7::BOOLEAN THEN EXCLUDED.app_bearer_token
+      WHEN $8::BOOLEAN THEN EXCLUDED.app_bearer_token
       WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.app_bearer_token
       ELSE NULL
     END,
     consumer_secret = CASE
-      WHEN $8::BOOLEAN THEN EXCLUDED.consumer_secret
+      WHEN $9::BOOLEAN THEN EXCLUDED.consumer_secret
       WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.consumer_secret
+      ELSE NULL
+    END,
+    webhook_route_key = CASE
+      WHEN $9::BOOLEAN THEN EXCLUDED.webhook_route_key
+      WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.webhook_route_key
       ELSE NULL
     END
 RETURNING id, platform, client_id, client_secret, created_at, workspace_id,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 `
 
 type CreatePlatformCredentialParams struct {
@@ -41,6 +46,7 @@ type CreatePlatformCredentialParams struct {
 	ClientSecret           string      `json:"client_secret"`
 	AppBearerToken         pgtype.Text `json:"app_bearer_token"`
 	ConsumerSecret         pgtype.Text `json:"consumer_secret"`
+	WebhookRouteKey        pgtype.Text `json:"webhook_route_key"`
 	AppBearerTokenSupplied bool        `json:"app_bearer_token_supplied"`
 	ConsumerSecretSupplied bool        `json:"consumer_secret_supplied"`
 }
@@ -53,6 +59,7 @@ func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatfo
 		arg.ClientSecret,
 		arg.AppBearerToken,
 		arg.ConsumerSecret,
+		arg.WebhookRouteKey,
 		arg.AppBearerTokenSupplied,
 		arg.ConsumerSecretSupplied,
 	)
@@ -66,6 +73,7 @@ func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatfo
 		&i.WorkspaceID,
 		&i.AppBearerToken,
 		&i.ConsumerSecret,
+		&i.WebhookRouteKey,
 	)
 	return i, err
 }
@@ -87,7 +95,7 @@ func (q *Queries) DeletePlatformCredential(ctx context.Context, arg DeletePlatfo
 
 const getPlatformCredential = `-- name: GetPlatformCredential :one
 SELECT id, platform, client_id, client_secret, created_at, workspace_id,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2
 `
@@ -109,13 +117,14 @@ func (q *Queries) GetPlatformCredential(ctx context.Context, arg GetPlatformCred
 		&i.WorkspaceID,
 		&i.AppBearerToken,
 		&i.ConsumerSecret,
+		&i.WebhookRouteKey,
 	)
 	return i, err
 }
 
 const listPlatformCredentialsByWorkspace = `-- name: ListPlatformCredentialsByWorkspace :many
 SELECT id, platform, client_id, client_secret, created_at, workspace_id,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 FROM platform_credentials
 WHERE workspace_id = $1
 ORDER BY platform
@@ -139,6 +148,7 @@ func (q *Queries) ListPlatformCredentialsByWorkspace(ctx context.Context, worksp
 			&i.WorkspaceID,
 			&i.AppBearerToken,
 			&i.ConsumerSecret,
+			&i.WebhookRouteKey,
 		); err != nil {
 			return nil, err
 		}
@@ -150,21 +160,18 @@ func (q *Queries) ListPlatformCredentialsByWorkspace(ctx context.Context, worksp
 	return items, nil
 }
 
-const listTwitterConsumerSecretsByClientID = `-- name: ListTwitterConsumerSecretsByClientID :many
+const listTwitterConsumerSecretsByWebhookRouteKey = `-- name: ListTwitterConsumerSecretsByWebhookRouteKey :many
 SELECT consumer_secret
 FROM platform_credentials
 WHERE platform = 'twitter'
-  AND client_id = $1
+  AND webhook_route_key = $1
   AND consumer_secret IS NOT NULL
   AND consumer_secret <> ''
 ORDER BY workspace_id
 `
 
-// A workspace X app can be reused by more than one UniPost workspace. The
-// resolver decrypts all matching rows and fails closed if their plaintext
-// consumer secrets disagree.
-func (q *Queries) ListTwitterConsumerSecretsByClientID(ctx context.Context, clientID string) ([]pgtype.Text, error) {
-	rows, err := q.db.Query(ctx, listTwitterConsumerSecretsByClientID, clientID)
+func (q *Queries) ListTwitterConsumerSecretsByWebhookRouteKey(ctx context.Context, webhookRouteKey pgtype.Text) ([]pgtype.Text, error) {
+	rows, err := q.db.Query(ctx, listTwitterConsumerSecretsByWebhookRouteKey, webhookRouteKey)
 	if err != nil {
 		return nil, err
 	}
@@ -181,4 +188,60 @@ func (q *Queries) ListTwitterConsumerSecretsByClientID(ctx context.Context, clie
 		return nil, err
 	}
 	return items, nil
+}
+
+const listTwitterCredentialsMissingWebhookRouteKey = `-- name: ListTwitterCredentialsMissingWebhookRouteKey :many
+SELECT workspace_id, client_id, consumer_secret
+FROM platform_credentials
+WHERE platform = 'twitter'
+  AND webhook_route_key IS NULL
+  AND consumer_secret IS NOT NULL
+  AND consumer_secret <> ''
+ORDER BY workspace_id
+`
+
+type ListTwitterCredentialsMissingWebhookRouteKeyRow struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	ClientID       string      `json:"client_id"`
+	ConsumerSecret pgtype.Text `json:"consumer_secret"`
+}
+
+func (q *Queries) ListTwitterCredentialsMissingWebhookRouteKey(ctx context.Context) ([]ListTwitterCredentialsMissingWebhookRouteKeyRow, error) {
+	rows, err := q.db.Query(ctx, listTwitterCredentialsMissingWebhookRouteKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTwitterCredentialsMissingWebhookRouteKeyRow{}
+	for rows.Next() {
+		var i ListTwitterCredentialsMissingWebhookRouteKeyRow
+		if err := rows.Scan(&i.WorkspaceID, &i.ClientID, &i.ConsumerSecret); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setTwitterWebhookRouteKeyIfMissing = `-- name: SetTwitterWebhookRouteKeyIfMissing :exec
+UPDATE platform_credentials
+SET webhook_route_key = $3
+WHERE workspace_id = $1
+  AND platform = 'twitter'
+  AND client_id = $2
+  AND webhook_route_key IS NULL
+`
+
+type SetTwitterWebhookRouteKeyIfMissingParams struct {
+	WorkspaceID     string      `json:"workspace_id"`
+	ClientID        string      `json:"client_id"`
+	WebhookRouteKey pgtype.Text `json:"webhook_route_key"`
+}
+
+func (q *Queries) SetTwitterWebhookRouteKeyIfMissing(ctx context.Context, arg SetTwitterWebhookRouteKeyIfMissingParams) error {
+	_, err := q.db.Exec(ctx, setTwitterWebhookRouteKeyIfMissing, arg.WorkspaceID, arg.ClientID, arg.WebhookRouteKey)
+	return err
 }

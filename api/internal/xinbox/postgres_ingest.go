@@ -12,26 +12,26 @@ import (
 )
 
 type PostgresIngestionStore struct {
-	queries            *db.Queries
-	managedAppClientID string
+	queries                *db.Queries
+	managedWebhookRouteKey string
 }
 
-func NewPostgresIngestionStore(queries *db.Queries, managedAppClientID string) *PostgresIngestionStore {
+func NewPostgresIngestionStore(queries *db.Queries, managedWebhookRouteKey string) *PostgresIngestionStore {
 	return &PostgresIngestionStore{
-		queries:            queries,
-		managedAppClientID: managedAppClientID,
+		queries:                queries,
+		managedWebhookRouteKey: managedWebhookRouteKey,
 	}
 }
 
 func (s *PostgresIngestionStore) AccountForApp(
 	ctx context.Context,
-	appClientID string,
+	routeKey string,
 	accountID string,
 ) (InboxAccount, error) {
 	row, err := s.queries.FindXInboxAccountForApp(ctx, db.FindXInboxAccountForAppParams{
-		AccountID:          accountID,
-		AppClientID:        appClientID,
-		ManagedAppClientID: s.managedAppClientID,
+		AccountID:              accountID,
+		WebhookRouteKey:        routeKey,
+		ManagedWebhookRouteKey: s.managedWebhookRouteKey,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return InboxAccount{}, ErrInboxAccountNotFound
@@ -55,15 +55,15 @@ func (s *PostgresIngestionStore) AccountForApp(
 
 func (s *PostgresIngestionStore) AccountsForExternalUser(
 	ctx context.Context,
-	appClientID string,
+	routeKey string,
 	externalUserID string,
 ) ([]InboxAccount, error) {
 	rows, err := s.queries.FindXInboxAccountsForExternalUserApp(
 		ctx,
 		db.FindXInboxAccountsForExternalUserAppParams{
-			ExternalUserID:     nullableText(externalUserID),
-			AppClientID:        appClientID,
-			ManagedAppClientID: s.managedAppClientID,
+			ExternalUserID:         nullableText(externalUserID),
+			WebhookRouteKey:        routeKey,
+			ManagedWebhookRouteKey: s.managedWebhookRouteKey,
 		},
 	)
 	if err != nil {
@@ -95,6 +95,25 @@ func (s *PostgresIngestionStore) InsertInboxItem(
 	ctx context.Context,
 	item InboxItem,
 ) (InboxItem, bool, error) {
+	return insertInboxItem(ctx, s.queries, item)
+}
+
+func (s *PostgresIngestionStore) InsertInboxItemTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	item InboxItem,
+) (InboxItem, bool, error) {
+	if tx == nil {
+		return InboxItem{}, false, errors.New("X inbox transaction is not configured")
+	}
+	return insertInboxItem(ctx, db.New(tx), item)
+}
+
+func insertInboxItem(
+	ctx context.Context,
+	queries *db.Queries,
+	item InboxItem,
+) (InboxItem, bool, error) {
 	metadata := item.Metadata
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -103,7 +122,7 @@ func (s *PostgresIngestionStore) InsertInboxItem(
 	if err != nil {
 		return InboxItem{}, false, err
 	}
-	row, err := s.queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
+	row, err := queries.UpsertInboxItem(ctx, db.UpsertInboxItemParams{
 		SocialAccountID:  item.SocialAccountID,
 		WorkspaceID:      item.WorkspaceID,
 		Source:           item.Source,
@@ -132,9 +151,9 @@ func (s *PostgresIngestionStore) InsertInboxItem(
 
 func (s *PostgresIngestionStore) EncryptedConsumerSecrets(
 	ctx context.Context,
-	appClientID string,
+	routeKey string,
 ) ([]string, error) {
-	rows, err := s.queries.ListTwitterConsumerSecretsByClientID(ctx, appClientID)
+	rows, err := s.queries.ListTwitterConsumerSecretsByWebhookRouteKey(ctx, nullableText(routeKey))
 	if err != nil {
 		return nil, err
 	}
@@ -145,6 +164,43 @@ func (s *PostgresIngestionStore) EncryptedConsumerSecrets(
 		}
 	}
 	return secrets, nil
+}
+
+func (s *PostgresIngestionStore) BackfillWebhookRouteKeys(
+	ctx context.Context,
+	decrypt func(string) (string, error),
+) error {
+	if decrypt == nil {
+		return errors.New("X webhook route-key backfill decryptor is not configured")
+	}
+	rows, err := s.queries.ListTwitterCredentialsMissingWebhookRouteKey(ctx)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if !row.ConsumerSecret.Valid {
+			continue
+		}
+		secret, err := decrypt(row.ConsumerSecret.String)
+		if err != nil {
+			return err
+		}
+		routeKey := WebhookRouteKey(secret, row.ClientID)
+		if routeKey == "" {
+			continue
+		}
+		if err := s.queries.SetTwitterWebhookRouteKeyIfMissing(
+			ctx,
+			db.SetTwitterWebhookRouteKeyIfMissingParams{
+				WorkspaceID:     row.WorkspaceID,
+				ClientID:        row.ClientID,
+				WebhookRouteKey: nullableText(routeKey),
+			},
+		); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func inboxAccountFromRow(

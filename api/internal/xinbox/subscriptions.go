@@ -32,20 +32,20 @@ func DMSubscriptionTag(accountID string) string {
 	return "unipost:x:dm:" + strings.TrimSpace(accountID)
 }
 
-func AppWebhookURL(baseURL, appClientID string) (string, error) {
+func AppWebhookURL(baseURL, webhookRouteKey string) (string, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
-	appClientID = strings.TrimSpace(appClientID)
+	webhookRouteKey = strings.TrimSpace(webhookRouteKey)
 	if baseURL == "" {
 		return "", errors.New("X_INBOX_WEBHOOK_URL is not configured")
 	}
-	if appClientID == "" {
-		return "", errors.New("X app client id is not configured")
+	if webhookRouteKey == "" {
+		return "", errors.New("X webhook route key is not configured")
 	}
 	parsed, err := url.Parse(baseURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
 		return "", errors.New("X_INBOX_WEBHOOK_URL must be an absolute HTTPS URL")
 	}
-	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + url.PathEscape(appClientID)
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + url.PathEscape(webhookRouteKey)
 	return parsed.String(), nil
 }
 

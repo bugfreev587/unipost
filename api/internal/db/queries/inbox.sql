@@ -281,11 +281,11 @@ WHERE sa.id = sqlc.arg(account_id)
   AND (
     (
       sa.x_app_mode = 'unipost_managed_app'
-      AND sqlc.arg(app_client_id)::TEXT = sqlc.arg(managed_app_client_id)::TEXT
+      AND sqlc.arg(webhook_route_key)::TEXT = sqlc.arg(managed_webhook_route_key)::TEXT
     )
     OR (
       sa.x_app_mode = 'workspace_x_app'
-      AND pc.client_id = sqlc.arg(app_client_id)::TEXT
+      AND pc.webhook_route_key = sqlc.arg(webhook_route_key)::TEXT
     )
   )
 LIMIT 1;
@@ -318,11 +318,11 @@ WHERE sa.platform = 'twitter'
   AND (
     (
       sa.x_app_mode = 'unipost_managed_app'
-      AND sqlc.arg(app_client_id)::TEXT = sqlc.arg(managed_app_client_id)::TEXT
+      AND sqlc.arg(webhook_route_key)::TEXT = sqlc.arg(managed_webhook_route_key)::TEXT
     )
     OR (
       sa.x_app_mode = 'workspace_x_app'
-      AND pc.client_id = sqlc.arg(app_client_id)::TEXT
+      AND pc.webhook_route_key = sqlc.arg(webhook_route_key)::TEXT
     )
   )
 ORDER BY sa.connected_at DESC, sa.id;

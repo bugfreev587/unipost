@@ -331,16 +331,16 @@ WHERE sa.id = $1
     )
     OR (
       sa.x_app_mode = 'workspace_x_app'
-      AND pc.client_id = $2::TEXT
+      AND pc.webhook_route_key = $2::TEXT
     )
   )
 LIMIT 1
 `
 
 type FindXInboxAccountForAppParams struct {
-	AccountID          string `json:"account_id"`
-	AppClientID        string `json:"app_client_id"`
-	ManagedAppClientID string `json:"managed_app_client_id"`
+	AccountID              string `json:"account_id"`
+	WebhookRouteKey        string `json:"webhook_route_key"`
+	ManagedWebhookRouteKey string `json:"managed_webhook_route_key"`
 }
 
 type FindXInboxAccountForAppRow struct {
@@ -357,7 +357,7 @@ type FindXInboxAccountForAppRow struct {
 }
 
 func (q *Queries) FindXInboxAccountForApp(ctx context.Context, arg FindXInboxAccountForAppParams) (FindXInboxAccountForAppRow, error) {
-	row := q.db.QueryRow(ctx, findXInboxAccountForApp, arg.AccountID, arg.AppClientID, arg.ManagedAppClientID)
+	row := q.db.QueryRow(ctx, findXInboxAccountForApp, arg.AccountID, arg.WebhookRouteKey, arg.ManagedWebhookRouteKey)
 	var i FindXInboxAccountForAppRow
 	err := row.Scan(
 		&i.ID,
@@ -406,16 +406,16 @@ WHERE sa.platform = 'twitter'
     )
     OR (
       sa.x_app_mode = 'workspace_x_app'
-      AND pc.client_id = $2::TEXT
+      AND pc.webhook_route_key = $2::TEXT
     )
   )
 ORDER BY sa.connected_at DESC, sa.id
 `
 
 type FindXInboxAccountsForExternalUserAppParams struct {
-	ExternalUserID     pgtype.Text `json:"external_user_id"`
-	AppClientID        string      `json:"app_client_id"`
-	ManagedAppClientID string      `json:"managed_app_client_id"`
+	ExternalUserID         pgtype.Text `json:"external_user_id"`
+	WebhookRouteKey        string      `json:"webhook_route_key"`
+	ManagedWebhookRouteKey string      `json:"managed_webhook_route_key"`
 }
 
 type FindXInboxAccountsForExternalUserAppRow struct {
@@ -432,7 +432,7 @@ type FindXInboxAccountsForExternalUserAppRow struct {
 }
 
 func (q *Queries) FindXInboxAccountsForExternalUserApp(ctx context.Context, arg FindXInboxAccountsForExternalUserAppParams) ([]FindXInboxAccountsForExternalUserAppRow, error) {
-	rows, err := q.db.Query(ctx, findXInboxAccountsForExternalUserApp, arg.ExternalUserID, arg.AppClientID, arg.ManagedAppClientID)
+	rows, err := q.db.Query(ctx, findXInboxAccountsForExternalUserApp, arg.ExternalUserID, arg.WebhookRouteKey, arg.ManagedWebhookRouteKey)
 	if err != nil {
 		return nil, err
 	}

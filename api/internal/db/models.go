@@ -606,14 +606,15 @@ type Plan struct {
 }
 
 type PlatformCredential struct {
-	ID             string             `json:"id"`
-	Platform       string             `json:"platform"`
-	ClientID       string             `json:"client_id"`
-	ClientSecret   string             `json:"client_secret"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	WorkspaceID    string             `json:"workspace_id"`
-	AppBearerToken pgtype.Text        `json:"app_bearer_token"`
-	ConsumerSecret pgtype.Text        `json:"consumer_secret"`
+	ID              string             `json:"id"`
+	Platform        string             `json:"platform"`
+	ClientID        string             `json:"client_id"`
+	ClientSecret    string             `json:"client_secret"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID     string             `json:"workspace_id"`
+	AppBearerToken  pgtype.Text        `json:"app_bearer_token"`
+	ConsumerSecret  pgtype.Text        `json:"consumer_secret"`
+	WebhookRouteKey pgtype.Text        `json:"webhook_route_key"`
 }
 
 type PostAnalytic struct {

@@ -195,8 +195,8 @@ func TestXIngestDoesNotNotifyWhenInsertFails(t *testing.T) {
 	notified := false
 	service := NewIngestionService(IngestionConfig{
 		Store: store,
-		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
-			return InboundAdmission{Accepted: true}, nil
+		AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			return InboundAdmission{}, InboxItem{}, false, errors.New("database unavailable")
 		},
 		Notify: func(context.Context, string, InboxItem) { notified = true },
 	})
@@ -206,6 +206,46 @@ func TestXIngestDoesNotNotifyWhenInsertFails(t *testing.T) {
 	}
 	if notified {
 		t.Fatal("notified after failed insert")
+	}
+}
+
+func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"route-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1", ExternalUserID: "owner-1",
+				AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+	}
+	atomicCalls := 0
+	notified := 0
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		AtomicProcess: func(_ context.Context, req InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			atomicCalls++
+			if req.UpstreamResourceID != item.ExternalID {
+				t.Fatalf("request/item mismatch: req=%+v item=%+v", req, item)
+			}
+			item.ID = "inbox-1"
+			return InboundAdmission{Accepted: true}, item, true, nil
+		},
+		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+			t.Fatal("split admission path must not run when atomic processor is configured")
+			return InboundAdmission{}, nil
+		},
+		Notify: func(context.Context, string, InboxItem) { notified++ },
+	})
+	err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
+		AccountID: "account-1", ExternalID: "dm-1", ConversationID: "conversation-1",
+		SenderID: "sender-1", RecipientID: "owner-1", Text: "private",
+		CreatedAt: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atomicCalls != 1 || notified != 1 || len(store.inserted) != 0 {
+		t.Fatalf("atomicCalls=%d notified=%d split inserts=%d", atomicCalls, notified, len(store.inserted))
 	}
 }
 
@@ -274,16 +314,18 @@ type fakeSecretStore struct {
 	values map[string][]string
 }
 
-func (f fakeSecretStore) EncryptedConsumerSecrets(_ context.Context, appClientID string) ([]string, error) {
-	return f.values[appClientID], nil
+func (f fakeSecretStore) EncryptedConsumerSecrets(_ context.Context, routeKey string) ([]string, error) {
+	return f.values[routeKey], nil
 }
 
 func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T) {
+	managedRoute := WebhookRouteKey("managed-secret", "managed-client")
+	workspaceRoute := WebhookRouteKey("workspace-secret", "workspace-client")
 	resolver := NewAppSecretResolver(AppSecretResolverConfig{
-		ManagedAppClientID: "managed-client",
-		ManagedSecret:      "managed-secret",
+		ManagedRouteKey: managedRoute,
+		ManagedSecret:   "managed-secret",
 		Store: fakeSecretStore{values: map[string][]string{
-			"workspace-client": {"encrypted-one", "encrypted-two"},
+			workspaceRoute: {"encrypted-one", "encrypted-two"},
 		}},
 		Decrypt: func(value string) (string, error) {
 			switch value {
@@ -294,19 +336,39 @@ func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T)
 			}
 		},
 	})
-	if got, err := resolver.ConsumerSecret(context.Background(), "managed-client"); err != nil || got != "managed-secret" {
+	if got, err := resolver.ConsumerSecret(context.Background(), managedRoute); err != nil || got != "managed-secret" {
 		t.Fatalf("managed secret = %q err=%v", got, err)
 	}
-	if got, err := resolver.ConsumerSecret(context.Background(), "workspace-client"); err != nil || got != "workspace-secret" {
+	if got, err := resolver.ConsumerSecret(context.Background(), workspaceRoute); err != nil || got != "workspace-secret" {
 		t.Fatalf("workspace secret = %q err=%v", got, err)
 	}
-	if _, err := resolver.ConsumerSecret(context.Background(), "other-client"); !errors.Is(err, ErrAppSecretNotFound) {
+	if _, err := resolver.ConsumerSecret(context.Background(), "other-route"); !errors.Is(err, ErrAppSecretNotFound) {
 		t.Fatalf("missing app err = %v", err)
+	}
+
+	attackerRoute := WebhookRouteKey("attacker-secret", "workspace-client")
+	if attackerRoute == workspaceRoute {
+		t.Fatal("copied client id with a different consumer secret reused victim route")
+	}
+	isolated := NewAppSecretResolver(AppSecretResolverConfig{
+		Store: fakeSecretStore{values: map[string][]string{
+			workspaceRoute: {"victim-ciphertext"},
+			attackerRoute:  {"attacker-ciphertext"},
+		}},
+		Decrypt: func(value string) (string, error) {
+			if value == "victim-ciphertext" {
+				return "workspace-secret", nil
+			}
+			return "attacker-secret", nil
+		},
+	})
+	if got, err := isolated.ConsumerSecret(context.Background(), workspaceRoute); err != nil || got != "workspace-secret" {
+		t.Fatalf("victim route affected by attacker: secret=%q err=%v", got, err)
 	}
 
 	conflicting := NewAppSecretResolver(AppSecretResolverConfig{
 		Store: fakeSecretStore{values: map[string][]string{
-			"workspace-client": {"encrypted-one", "encrypted-conflict"},
+			workspaceRoute: {"encrypted-one", "encrypted-conflict"},
 		}},
 		Decrypt: func(value string) (string, error) {
 			if value == "encrypted-one" {
@@ -315,7 +377,41 @@ func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T)
 			return "different-secret", nil
 		},
 	})
-	if _, err := conflicting.ConsumerSecret(context.Background(), "workspace-client"); err == nil {
+	if _, err := conflicting.ConsumerSecret(context.Background(), workspaceRoute); err == nil {
 		t.Fatal("expected conflicting workspace secrets to fail closed")
+	}
+}
+
+func TestWebhookRouteKeyIsDeterministicAndSecretBound(t *testing.T) {
+	first := WebhookRouteKey("consumer-secret", "client-id")
+	if first == "" || first != WebhookRouteKey("consumer-secret", "client-id") {
+		t.Fatalf("route key is not deterministic: %q", first)
+	}
+	if first == WebhookRouteKey("other-secret", "client-id") {
+		t.Fatal("route key was not bound to consumer secret")
+	}
+	if first == WebhookRouteKey("consumer-secret", "other-client") {
+		t.Fatal("route key was not bound to client id")
+	}
+}
+
+func TestXIngestRejectsRecognizedMalformedEvents(t *testing.T) {
+	service := NewIngestionService(IngestionConfig{Store: &fakeIngestStore{}})
+	stream := StreamEvent{}
+	stream.Data.ID = "tweet-1"
+	stream.MatchingRules = []StreamRule{{Tag: FilteredStreamRuleTag("account-1")}}
+	if err := service.IngestStreamEvent(context.Background(), "route", stream); !errors.Is(err, ErrMalformedEvent) {
+		t.Fatalf("malformed stream error = %v", err)
+	}
+
+	for _, body := range [][]byte{
+		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"tag":"unipost:x:dm:account","payload":{"sender_id":"sender","created_at":"2026-07-16T12:00:00Z"}}}`),
+		[]byte(`{"data":{"event_type":"dm.received","tag":"unipost:x:dm:account","payload":{"id":"dm","sender_id":"sender","created_at":"2026-07-16T12:00:00Z"}}}`),
+		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"tag":"unipost:x:dm:account","payload":{"id":"dm","sender_id":"sender"}}}`),
+		[]byte(`{"for_user_id":"owner","direct_message_events":[{"type":"message_create","created_timestamp":"1784212800000","message_create":{"target":{"recipient_id":"owner"},"sender_id":"sender"}}]}`),
+	} {
+		if _, err := ParseActivityEvents(body); !errors.Is(err, ErrMalformedEvent) {
+			t.Fatalf("malformed activity error = %v body=%s", err, body)
+		}
 	}
 }

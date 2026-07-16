@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/go-chi/chi/v5"
@@ -414,11 +415,20 @@ func main() {
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
 	xCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
-	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, os.Getenv("TWITTER_CLIENT_ID"))
+	managedXWebhookRouteKey := xinbox.WebhookRouteKey(
+		os.Getenv("TWITTER_CONSUMER_SECRET"),
+		os.Getenv("TWITTER_CLIENT_ID"),
+	)
+	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, managedXWebhookRouteKey)
+	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx, encryptor.Decrypt); err != nil {
+		slog.Error("failed to backfill X webhook route keys")
+	}
 	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
 		Store: xIngestionStore,
-		Admit: func(ctx context.Context, req xinbox.InboundAdmissionRequest) (xinbox.InboundAdmission, error) {
-			admission, err := xCreditsService.AdmitInbound(ctx, xcredits.InboundRequest{
+		AtomicProcess: func(ctx context.Context, req xinbox.InboundAdmissionRequest, item xinbox.InboxItem) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
+			var insertedItem xinbox.InboxItem
+			var inserted bool
+			admission, err := xCreditsService.AdmitInboundWithMutation(ctx, xcredits.InboundRequest{
 				WorkspaceID:          req.WorkspaceID,
 				SocialAccountID:      req.SocialAccountID,
 				AppMode:              req.AppMode,
@@ -427,6 +437,10 @@ func main() {
 				UpstreamResourceType: req.UpstreamResourceType,
 				UpstreamResourceID:   req.UpstreamResourceID,
 				Now:                  req.Now,
+			}, func(ctx context.Context, tx pgx.Tx) error {
+				var insertErr error
+				insertedItem, inserted, insertErr = xIngestionStore.InsertInboxItemTx(ctx, tx, item)
+				return insertErr
 			})
 			switch admission.Decision {
 			case xcredits.InboundDecisionSuppressedDailyCap,
@@ -434,25 +448,25 @@ func main() {
 				return xinbox.InboundAdmission{
 					Suppressed: true,
 					Duplicate:  admission.Duplicate,
-				}, nil
+				}, xinbox.InboxItem{}, false, nil
 			}
 			if err != nil {
-				return xinbox.InboundAdmission{}, err
+				return xinbox.InboundAdmission{}, xinbox.InboxItem{}, false, err
 			}
 			return xinbox.InboundAdmission{
 				Accepted:  admission.Decision == xcredits.InboundDecisionAccepted,
 				Duplicate: admission.Duplicate,
-			}, nil
+			}, insertedItem, inserted, nil
 		},
 		Notify: func(ctx context.Context, workspaceID string, item xinbox.InboxItem) {
 			ws.Notify(ctx, pool, workspaceID, item)
 		},
 	})
 	xAppSecretResolver := xinbox.NewAppSecretResolver(xinbox.AppSecretResolverConfig{
-		ManagedAppClientID: os.Getenv("TWITTER_CLIENT_ID"),
-		ManagedSecret:      os.Getenv("TWITTER_CONSUMER_SECRET"),
-		Store:              xIngestionStore,
-		Decrypt:            encryptor.Decrypt,
+		ManagedRouteKey: managedXWebhookRouteKey,
+		ManagedSecret:   os.Getenv("TWITTER_CONSUMER_SECRET"),
+		Store:           xIngestionStore,
+		Decrypt:         encryptor.Decrypt,
 	})
 	if processMode == processModeAPI {
 		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
@@ -464,7 +478,7 @@ func main() {
 			xinbox.NewClient(xinbox.ClientConfig{}),
 			os.Getenv("TWITTER_BEARER_TOKEN"),
 			strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
-			os.Getenv("TWITTER_CLIENT_ID"),
+			managedXWebhookRouteKey,
 			os.Getenv("X_INBOX_WEBHOOK_URL"),
 		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
@@ -646,9 +660,9 @@ func main() {
 		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
 	)
 	xWebhookHandler := handler.NewXWebhookHandler(handler.XWebhookConfig{
-		Secrets:            xAppSecretResolver,
-		Ingestor:           xIngestionService,
-		ManagedAppClientID: os.Getenv("TWITTER_CLIENT_ID"),
+		Secrets:         xAppSecretResolver,
+		Ingestor:        xIngestionService,
+		ManagedRouteKey: managedXWebhookRouteKey,
 	})
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
@@ -699,8 +713,8 @@ func main() {
 	r.Post("/webhooks/meta", metaWebhookHandler.Handle)
 	r.Get("/v1/webhooks/twitter", xWebhookHandler.CRC)
 	r.Post("/v1/webhooks/twitter", xWebhookHandler.Handle)
-	r.Get("/v1/webhooks/twitter/{app_client_id}", xWebhookHandler.CRC)
-	r.Post("/v1/webhooks/twitter/{app_client_id}", xWebhookHandler.Handle)
+	r.Get("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.CRC)
+	r.Post("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.Handle)
 
 	// WebSocket — auth via ?token= query param (browser WS API
 	// doesn't support custom headers). Handler validates Clerk JWT.

@@ -14,6 +14,7 @@ import (
 var (
 	ErrInboxAccountNotFound = errors.New("X inbox account not found")
 	ErrAppSecretNotFound    = errors.New("X app consumer secret not found")
+	ErrMalformedEvent       = errors.New("malformed recognized X inbox event")
 )
 
 type InboxAccount struct {
@@ -107,15 +108,17 @@ type IngestionStore interface {
 }
 
 type IngestionConfig struct {
-	Store  IngestionStore
-	Admit  func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
-	Notify func(context.Context, string, InboxItem)
-	Now    func() time.Time
+	Store         IngestionStore
+	Admit         func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
+	AtomicProcess func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
+	Notify        func(context.Context, string, InboxItem)
+	Now           func() time.Time
 }
 
 type IngestionService struct {
 	store  IngestionStore
 	admit  func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
+	atomic func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
 	notify func(context.Context, string, InboxItem)
 	now    func() time.Time
 }
@@ -128,6 +131,7 @@ func NewIngestionService(config IngestionConfig) *IngestionService {
 	return &IngestionService{
 		store:  config.Store,
 		admit:  config.Admit,
+		atomic: config.AtomicProcess,
 		notify: config.Notify,
 		now:    now,
 	}
@@ -138,8 +142,13 @@ func (s *IngestionService) IngestStreamEvent(ctx context.Context, appClientID st
 		return errors.New("X inbox ingestion store is not configured")
 	}
 	accountIDs := streamAccountIDs(event.MatchingRules)
-	if len(accountIDs) == 0 || strings.TrimSpace(event.Data.ID) == "" {
-		return nil
+	if len(accountIDs) == 0 ||
+		strings.TrimSpace(event.Data.ID) == "" ||
+		strings.TrimSpace(event.Data.AuthorID) == "" ||
+		strings.TrimSpace(event.Data.CreatedAt) == "" ||
+		parseRFC3339(event.Data.CreatedAt).IsZero() ||
+		strings.TrimSpace(event.Data.ConversationID) == "" {
+		return fmt.Errorf("%w: filtered stream event is missing id, account route, author, conversation, or timestamp", ErrMalformedEvent)
 	}
 	authorName, authorAvatar := streamAuthor(event)
 	receivedAt := parseRFC3339(event.Data.CreatedAt)
@@ -247,17 +256,31 @@ func (s *IngestionService) admitAndInsert(
 	if item.ExternalID == "" {
 		return nil
 	}
+	request := InboundAdmissionRequest{
+		WorkspaceID:          account.WorkspaceID,
+		SocialAccountID:      account.ID,
+		AppMode:              string(account.AppMode),
+		OperationKey:         operationKey,
+		Source:               source,
+		UpstreamResourceType: item.Source,
+		UpstreamResourceID:   item.ExternalID,
+		Now:                  item.ReceivedAt,
+	}
+	if s.atomic != nil {
+		admission, insertedItem, inserted, err := s.atomic(ctx, request, item)
+		if err != nil {
+			return err
+		}
+		if (!admission.Accepted || admission.Suppressed) && inserted {
+			return errors.New("X atomic inbound processor inserted a suppressed event")
+		}
+		if inserted && s.notify != nil {
+			s.notify(ctx, account.WorkspaceID, insertedItem)
+		}
+		return nil
+	}
 	if s.admit != nil {
-		admission, err := s.admit(ctx, InboundAdmissionRequest{
-			WorkspaceID:          account.WorkspaceID,
-			SocialAccountID:      account.ID,
-			AppMode:              string(account.AppMode),
-			OperationKey:         operationKey,
-			Source:               source,
-			UpstreamResourceType: item.Source,
-			UpstreamResourceID:   item.ExternalID,
-			Now:                  item.ReceivedAt,
-		})
+		admission, err := s.admit(ctx, request)
 		if err != nil {
 			return err
 		}
@@ -336,7 +359,7 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 				}
 			}
 		}
-		events = append(events, ActivityEvent{
+		event := ActivityEvent{
 			AccountID:      activityAccountID(envelope.Data.Tag),
 			ExternalUserID: envelope.Data.Filter.UserID,
 			ExternalID:     firstNonEmptyString(payload.ID, payload.DMEventID),
@@ -345,15 +368,22 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 			RecipientID:    recipientID,
 			Text:           payload.Text,
 			CreatedAt:      parseRFC3339(firstNonEmptyString(payload.CreatedAt, envelope.Data.CreatedAt)),
-		})
+		}
+		if event.ExternalID == "" || event.ExternalUserID == "" || event.SenderID == "" ||
+			event.CreatedAt.IsZero() || (event.ConversationID == "" && event.RecipientID == "") {
+			return nil, fmt.Errorf("%w: dm.received is missing event id, routing user, participants, conversation, or timestamp", ErrMalformedEvent)
+		}
+		events = append(events, event)
+	} else if envelope.Data.EventType == "dm.received" {
+		return nil, fmt.Errorf("%w: dm.received payload is missing", ErrMalformedEvent)
 	}
 
 	for _, dm := range envelope.DirectMessageEvents {
-		if dm.Type != "message_create" || dm.ID == "" {
+		if dm.Type != "message_create" {
 			continue
 		}
 		sender := envelope.Users[dm.MessageCreate.SenderID]
-		events = append(events, ActivityEvent{
+		event := ActivityEvent{
 			ExternalUserID:  envelope.ForUserID,
 			ExternalID:      dm.ID,
 			SenderID:        dm.MessageCreate.SenderID,
@@ -362,7 +392,12 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 			SenderAvatarURL: sender.ProfileImageURLHTTP,
 			Text:            dm.MessageCreate.MessageData.Text,
 			CreatedAt:       parseUnixMilliseconds(dm.CreatedTimestamp),
-		})
+		}
+		if event.ExternalUserID == "" || event.ExternalID == "" || event.SenderID == "" ||
+			event.RecipientID == "" || event.CreatedAt.IsZero() {
+			return nil, fmt.Errorf("%w: direct_message_events message_create is missing event id, routing user, participants, or timestamp", ErrMalformedEvent)
+		}
+		events = append(events, event)
 	}
 	return events, nil
 }

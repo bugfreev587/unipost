@@ -1,9 +1,9 @@
 -- name: CreatePlatformCredential :one
 INSERT INTO platform_credentials (
   workspace_id, platform, client_id, client_secret,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 )
-VALUES ($1, $2, $3, $4, $5, $6)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 ON CONFLICT (workspace_id, platform) DO UPDATE
 SET client_id = EXCLUDED.client_id,
     client_secret = EXCLUDED.client_secret,
@@ -16,19 +16,24 @@ SET client_id = EXCLUDED.client_id,
       WHEN sqlc.arg(consumer_secret_supplied)::BOOLEAN THEN EXCLUDED.consumer_secret
       WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.consumer_secret
       ELSE NULL
+    END,
+    webhook_route_key = CASE
+      WHEN sqlc.arg(consumer_secret_supplied)::BOOLEAN THEN EXCLUDED.webhook_route_key
+      WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.webhook_route_key
+      ELSE NULL
     END
 RETURNING id, platform, client_id, client_secret, created_at, workspace_id,
-  app_bearer_token, consumer_secret;
+  app_bearer_token, consumer_secret, webhook_route_key;
 
 -- name: GetPlatformCredential :one
 SELECT id, platform, client_id, client_secret, created_at, workspace_id,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2;
 
 -- name: ListPlatformCredentialsByWorkspace :many
 SELECT id, platform, client_id, client_secret, created_at, workspace_id,
-  app_bearer_token, consumer_secret
+  app_bearer_token, consumer_secret, webhook_route_key
 FROM platform_credentials
 WHERE workspace_id = $1
 ORDER BY platform;
@@ -37,14 +42,28 @@ ORDER BY platform;
 DELETE FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2;
 
--- name: ListTwitterConsumerSecretsByClientID :many
--- A workspace X app can be reused by more than one UniPost workspace. The
--- resolver decrypts all matching rows and fails closed if their plaintext
--- consumer secrets disagree.
+-- name: ListTwitterConsumerSecretsByWebhookRouteKey :many
 SELECT consumer_secret
 FROM platform_credentials
 WHERE platform = 'twitter'
-  AND client_id = $1
+  AND webhook_route_key = $1
   AND consumer_secret IS NOT NULL
   AND consumer_secret <> ''
 ORDER BY workspace_id;
+
+-- name: ListTwitterCredentialsMissingWebhookRouteKey :many
+SELECT workspace_id, client_id, consumer_secret
+FROM platform_credentials
+WHERE platform = 'twitter'
+  AND webhook_route_key IS NULL
+  AND consumer_secret IS NOT NULL
+  AND consumer_secret <> ''
+ORDER BY workspace_id;
+
+-- name: SetTwitterWebhookRouteKeyIfMissing :exec
+UPDATE platform_credentials
+SET webhook_route_key = $3
+WHERE workspace_id = $1
+  AND platform = 'twitter'
+  AND client_id = $2
+  AND webhook_route_key IS NULL;

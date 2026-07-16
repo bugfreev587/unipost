@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 )
 
 type fakeInboundStore struct {
@@ -37,7 +39,6 @@ func (s *fakeInboundStore) AdmitInbound(_ context.Context, req StoreInboundReque
 		req.SocialAccountID,
 		req.UpstreamResourceType,
 		req.UpstreamResourceID,
-		req.UTCDate.Format("2006-01-02"),
 	}, ":")
 	if existing, ok := s.receipts[key]; ok {
 		existing.Duplicate = true
@@ -87,6 +88,48 @@ func (s *fakeInboundStore) AdmitInbound(_ context.Context, req StoreInboundReque
 	}
 	s.receipts[key] = admission
 	return admission, nil
+}
+
+func (s *fakeInboundStore) AdmitInboundWithMutation(
+	ctx context.Context,
+	req StoreInboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
+	s.mu.Lock()
+	receiptsBefore := make(map[string]InboundAdmission, len(s.receipts))
+	for key, receipt := range s.receipts {
+		receiptsBefore[key] = receipt
+	}
+	usedBefore := s.used
+	dailyBefore := s.dailyUsed
+	acceptedBefore := s.accepted
+	suppressedBefore := s.suppressed
+	s.mu.Unlock()
+
+	admission, err := s.AdmitInbound(ctx, req)
+	if err != nil {
+		return InboundAdmission{}, err
+	}
+	if admission.Decision == InboundDecisionAccepted && mutation != nil {
+		if err := mutation(ctx, nil); err != nil {
+			s.mu.Lock()
+			s.receipts = receiptsBefore
+			s.used = usedBefore
+			s.dailyUsed = dailyBefore
+			s.accepted = acceptedBefore
+			s.suppressed = suppressedBefore
+			s.mu.Unlock()
+			return InboundAdmission{}, err
+		}
+	}
+	return admission, nil
+}
+
+func (s *fakeInboundStore) RunInboundMutation(ctx context.Context, mutation InboundMutation) error {
+	if mutation == nil {
+		return nil
+	}
+	return mutation(ctx, nil)
 }
 
 func (s *fakeInboundStore) UpdateInboundCap(_ context.Context, req StoreUpdateInboundCapRequest) (InboundCapSetting, error) {
@@ -179,6 +222,89 @@ func TestInboundAdmissionConcurrentDuplicateChargesExactlyOnce(t *testing.T) {
 	}
 	if store.used != 10 || store.dailyUsed != 10 || store.accepted != 1 || store.suppressed != 0 {
 		t.Fatalf("used=%d daily=%d accepted=%d suppressed=%d", store.used, store.dailyUsed, store.accepted, store.suppressed)
+	}
+}
+
+func TestInboundAdmissionReplayOnNextUTCDateChargesExactlyOnce(t *testing.T) {
+	now := time.Date(2026, 7, 16, 23, 59, 0, 0, time.UTC)
+	store := newFakeInboundStore("basic", now)
+	service := NewService(store)
+	request := InboundRequest{
+		WorkspaceID: "ws_1", SocialAccountID: "sa_1", AppMode: "unipost_managed_app",
+		OperationKey: "dm.received", Source: "webhook",
+		UpstreamResourceType: "x_dm", UpstreamResourceID: "dm_same",
+		Now: now,
+	}
+	first, err := service.AdmitInbound(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Now = now.Add(2 * time.Minute)
+	second, err := service.AdmitInbound(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Duplicate || !second.Duplicate {
+		t.Fatalf("first=%+v second=%+v", first, second)
+	}
+	if store.used != 10 || store.accepted != 1 {
+		t.Fatalf("used=%d accepted=%d, replay charged twice", store.used, store.accepted)
+	}
+}
+
+func TestAtomicInboundMutationRollsBackChargeAndReceiptOnInsertFailure(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := newFakeInboundStore("basic", now)
+	service := NewService(store)
+	request := InboundRequest{
+		WorkspaceID: "ws_1", SocialAccountID: "sa_1", AppMode: "unipost_managed_app",
+		OperationKey: "dm.received", Source: "webhook",
+		UpstreamResourceType: "x_dm", UpstreamResourceID: "dm_atomic", Now: now,
+	}
+	insertErr := errors.New("inbox insert failed")
+	if _, err := service.AdmitInboundWithMutation(
+		context.Background(),
+		request,
+		func(context.Context, pgx.Tx) error { return insertErr },
+	); !errors.Is(err, insertErr) {
+		t.Fatalf("error = %v, want insert failure", err)
+	}
+	if store.used != 0 || store.dailyUsed != 0 || store.accepted != 0 || len(store.receipts) != 0 {
+		t.Fatalf(
+			"failed insert leaked charge/receipt: used=%d daily=%d accepted=%d receipts=%d",
+			store.used, store.dailyUsed, store.accepted, len(store.receipts),
+		)
+	}
+
+	mutations := 0
+	first, err := service.AdmitInboundWithMutation(
+		context.Background(),
+		request,
+		func(context.Context, pgx.Tx) error {
+			mutations++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Now = request.Now.Add(24 * time.Hour)
+	second, err := service.AdmitInboundWithMutation(
+		context.Background(),
+		request,
+		func(context.Context, pgx.Tx) error {
+			mutations++
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Duplicate || !second.Duplicate || mutations != 2 {
+		t.Fatalf("first=%+v second=%+v mutations=%d", first, second, mutations)
+	}
+	if store.used != 10 || store.accepted != 1 {
+		t.Fatalf("used=%d accepted=%d, duplicate mutation charged twice", store.used, store.accepted)
 	}
 }
 
@@ -427,7 +553,9 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"INSERT INTO x_inbound_event_receipts",
-		"ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id, utc_date) DO NOTHING",
+		"ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id) DO NOTHING",
+		"AdmitInboundWithMutation",
+		"RunInboundMutation",
 		"admissionFromReceipt",
 		"monthly_used_after",
 		"monthly_remaining_after",
@@ -451,6 +579,9 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 	duplicateSource := text[duplicateStart:duplicateEnd]
 	if strings.Contains(duplicateSource, "FROM x_usage_periods") {
 		t.Fatal("duplicate replay must reconstruct from its receipt, not the caller's current billing period")
+	}
+	if strings.Contains(duplicateSource, "utc_date =") {
+		t.Fatal("duplicate replay identity must remain stable across UTC dates")
 	}
 	updateStart := strings.Index(text, "func (s *PostgresStore) UpdateInboundCap")
 	snapshotStart := strings.Index(text, "func (s *PostgresStore) Snapshot")

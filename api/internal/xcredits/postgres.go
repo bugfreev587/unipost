@@ -264,6 +264,37 @@ func (s *PostgresStore) Reverse(ctx context.Context, eventID string) error {
 }
 
 func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundRequest) (InboundAdmission, error) {
+	return s.admitInbound(ctx, req, nil)
+}
+
+func (s *PostgresStore) AdmitInboundWithMutation(
+	ctx context.Context,
+	req StoreInboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
+	return s.admitInbound(ctx, req, mutation)
+}
+
+func (s *PostgresStore) RunInboundMutation(ctx context.Context, mutation InboundMutation) error {
+	if mutation == nil {
+		return nil
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := mutation(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresStore) admitInbound(
+	ctx context.Context,
+	req StoreInboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return InboundAdmission{}, err
@@ -289,7 +320,7 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 			period_end,
 			reset_at
 		) VALUES ($1, $2, $3, $4, $5, 'accepted', $6, $7, $8, $9)
-		ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id, utc_date) DO NOTHING
+		ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id) DO NOTHING
 		RETURNING TRUE
 	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
 		req.UTCDate, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
@@ -298,6 +329,11 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 		admission, loadErr := loadDuplicateInboundAdmission(ctx, tx, req)
 		if loadErr != nil {
 			return InboundAdmission{}, loadErr
+		}
+		if admission.Decision == InboundDecisionAccepted && mutation != nil {
+			if err := mutation(ctx, tx); err != nil {
+				return InboundAdmission{}, err
+			}
 		}
 		if err := tx.Commit(ctx); err != nil {
 			return InboundAdmission{}, err
@@ -415,11 +451,10 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 				return InboundAdmission{}, err
 			}
 			inboundID := fmt.Sprintf(
-				"inbound:%s:%s:%s:%s",
+				"inbound:%s:%s:%s",
 				req.SocialAccountID,
 				req.UpstreamResourceType,
 				req.UpstreamResourceID,
-				req.UTCDate.Format("2006-01-02"),
 			)
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO x_usage_events (
@@ -478,30 +513,34 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 
 	if _, err := tx.Exec(ctx, `
 		UPDATE x_inbound_event_receipts
-		SET decision = $6,
-		    weighted_units = $7,
-		    period_start = $8,
-		    period_end = $9,
-		    monthly_used_after = $10,
-		    monthly_remaining_after = $11,
-		    inbound_daily_used_after = $12,
-		    inbound_daily_limit = $13,
-		    events_accepted_after = $14,
-		    events_suppressed_after = $15,
-		    pause_paid_sources = $16,
-		    pause_reason = $17,
-		    reset_at = $18
+		SET decision = $5,
+		    weighted_units = $6,
+		    period_start = $7,
+		    period_end = $8,
+		    monthly_used_after = $9,
+		    monthly_remaining_after = $10,
+		    inbound_daily_used_after = $11,
+		    inbound_daily_limit = $12,
+		    events_accepted_after = $13,
+		    events_suppressed_after = $14,
+		    pause_paid_sources = $15,
+		    pause_reason = $16,
+		    reset_at = $17
 		WHERE workspace_id = $1
 		  AND social_account_id = $2
 		  AND upstream_resource_type = $3
 		  AND upstream_resource_id = $4
-		  AND utc_date = $5
 	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
-		req.UTCDate, admission.Decision, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
+		admission.Decision, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
 		admission.MonthlyUsed, admission.MonthlyRemaining, admission.InboundDailyUsed,
 		admission.InboundDailyLimit, admission.EventsAccepted, admission.EventsSuppressed,
 		admission.PausePaidSources, admission.PauseReason, admission.ResetAt); err != nil {
 		return InboundAdmission{}, err
+	}
+	if admission.Decision == InboundDecisionAccepted && mutation != nil {
+		if err := mutation(ctx, tx); err != nil {
+			return InboundAdmission{}, err
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -532,10 +571,9 @@ func loadDuplicateInboundAdmission(ctx context.Context, tx pgx.Tx, req StoreInbo
 		  AND social_account_id = $2
 		  AND upstream_resource_type = $3
 		  AND upstream_resource_id = $4
-		  AND utc_date = $5
 		FOR UPDATE
 	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
-		req.UTCDate).Scan(
+	).Scan(
 		&receipt.Decision,
 		&receipt.WeightedUnits,
 		&receipt.PeriodStart,

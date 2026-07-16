@@ -19,6 +19,7 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 func TestPlatformCredentials_BasicRejectsNonSlotPlatform(t *testing.T) {
@@ -112,6 +113,9 @@ func TestPlatformCredentialsTwitterEncryptsAppSecretsAndReturnsOnlyCompletenessF
 	gotConsumer, err := encryptor.Decrypt(store.consumerSecret.String)
 	if err != nil || gotConsumer != "twitter-consumer-secret" {
 		t.Fatalf("decrypt consumer secret = %q, %v", gotConsumer, err)
+	}
+	if want := xinbox.WebhookRouteKey("twitter-consumer-secret", "twitter-client"); store.webhookRouteKey.String != want {
+		t.Fatalf("webhook route key = %q, want deterministic HMAC route", store.webhookRouteKey.String)
 	}
 	if strings.Contains(rec.Body.String(), "twitter-bearer-secret") || strings.Contains(rec.Body.String(), "twitter-consumer-secret") {
 		t.Fatalf("response leaked an X secret: %s", rec.Body.String())
@@ -295,19 +299,21 @@ func TestPlatformCredentialsUpdateReportsTransactionalCleanupFailure(t *testing.
 }
 
 type platformCredentialTestDB struct {
-	planID                 string
-	customPlatformSlot     string
-	createCalls            int
-	getCalls               int
-	existingPlatform       string
-	existingAppBearerToken pgtype.Text
-	existingConsumerSecret pgtype.Text
-	appBearerToken         pgtype.Text
-	consumerSecret         pgtype.Text
-	appBearerTokenSupplied bool
-	consumerSecretSupplied bool
-	createErr              error
-	deleteErr              error
+	planID                  string
+	customPlatformSlot      string
+	createCalls             int
+	getCalls                int
+	existingPlatform        string
+	existingAppBearerToken  pgtype.Text
+	existingConsumerSecret  pgtype.Text
+	existingWebhookRouteKey pgtype.Text
+	appBearerToken          pgtype.Text
+	consumerSecret          pgtype.Text
+	webhookRouteKey         pgtype.Text
+	appBearerTokenSupplied  bool
+	consumerSecretSupplied  bool
+	createErr               error
+	deleteErr               error
 }
 
 func (f *platformCredentialTestDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -388,11 +394,12 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 			return scanRow{err: pgx.ErrNoRows}
 		}
 		return platformCredentialScanRow{
-			platform:       f.existingPlatform,
-			clientID:       "existing-client",
-			clientSecret:   "existing-encrypted-client-secret",
-			appBearerToken: f.existingAppBearerToken,
-			consumerSecret: f.existingConsumerSecret,
+			platform:        f.existingPlatform,
+			clientID:        "existing-client",
+			clientSecret:    "existing-encrypted-client-secret",
+			appBearerToken:  f.existingAppBearerToken,
+			consumerSecret:  f.existingConsumerSecret,
+			webhookRouteKey: f.existingWebhookRouteKey,
 		}
 	case strings.Contains(query, "-- name: CreatePlatformCredential"):
 		f.createCalls++
@@ -409,10 +416,13 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 			f.consumerSecret, _ = args[5].(pgtype.Text)
 		}
 		if len(args) > 6 {
-			f.appBearerTokenSupplied, _ = args[6].(bool)
+			f.webhookRouteKey, _ = args[6].(pgtype.Text)
 		}
 		if len(args) > 7 {
-			f.consumerSecretSupplied, _ = args[7].(bool)
+			f.appBearerTokenSupplied, _ = args[7].(bool)
+		}
+		if len(args) > 8 {
+			f.consumerSecretSupplied, _ = args[8].(bool)
 		}
 		if !f.appBearerTokenSupplied {
 			if clientID == "existing-client" {
@@ -424,16 +434,19 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 		if !f.consumerSecretSupplied {
 			if clientID == "existing-client" {
 				f.consumerSecret = f.existingConsumerSecret
+				f.webhookRouteKey = f.existingWebhookRouteKey
 			} else {
 				f.consumerSecret = pgtype.Text{}
+				f.webhookRouteKey = pgtype.Text{}
 			}
 		}
 		return platformCredentialScanRow{
-			platform:       platform,
-			clientID:       clientID,
-			clientSecret:   clientSecret,
-			appBearerToken: f.appBearerToken,
-			consumerSecret: f.consumerSecret,
+			platform:        platform,
+			clientID:        clientID,
+			clientSecret:    clientSecret,
+			appBearerToken:  f.appBearerToken,
+			consumerSecret:  f.consumerSecret,
+			webhookRouteKey: f.webhookRouteKey,
 		}
 	default:
 		return scanRow{err: pgx.ErrNoRows}
@@ -441,18 +454,19 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 }
 
 type platformCredentialScanRow struct {
-	platform       string
-	clientID       string
-	clientSecret   string
-	appBearerToken pgtype.Text
-	consumerSecret pgtype.Text
+	platform        string
+	clientID        string
+	clientSecret    string
+	appBearerToken  pgtype.Text
+	consumerSecret  pgtype.Text
+	webhookRouteKey pgtype.Text
 }
 
 func (r platformCredentialScanRow) Scan(dest ...any) error {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	values := []any{"pc_1", r.platform, r.clientID, r.clientSecret, now, "ws_1"}
-	if len(dest) == 8 {
-		values = []any{"pc_1", r.platform, r.clientID, r.clientSecret, now, "ws_1", r.appBearerToken, r.consumerSecret}
+	if len(dest) == 9 {
+		values = []any{"pc_1", r.platform, r.clientID, r.clientSecret, now, "ws_1", r.appBearerToken, r.consumerSecret, r.webhookRouteKey}
 	}
 	return scanRow{values: values}.Scan(dest...)
 }

@@ -67,7 +67,7 @@ type XInboxDeliveryStore interface {
 type XInboxDeliveryAccount struct {
 	SocialAccountID          string
 	WorkspaceID              string
-	AppClientID              string
+	WebhookRouteKey          string
 	Handle                   string
 	ExternalUserID           string
 	AccessTokenEncrypted     string
@@ -108,6 +108,7 @@ type XInboxCleanupIntent struct {
 
 type XInboxAppStream struct {
 	Identity                 string
+	WebhookRouteKey          string
 	BearerToken              string
 	ConsumerSecretConfigured bool
 }
@@ -188,13 +189,13 @@ func NewPostgresXInboxDeliveryWorker(
 	client *xinbox.Client,
 	managedAppBearer string,
 	managedConsumerSecretConfigured bool,
-	managedAppClientID string,
+	managedWebhookRouteKey string,
 	webhookURL string,
 ) *XInboxDeliveryWorker {
 	store := &postgresXInboxDeliveryStore{
-		pool:               pool,
-		queries:            queries,
-		managedAppClientID: strings.TrimSpace(managedAppClientID),
+		pool:                   pool,
+		queries:                queries,
+		managedWebhookRouteKey: strings.TrimSpace(managedWebhookRouteKey),
 	}
 	return NewXInboxDeliveryWorker(XInboxDeliveryConfig{
 		Store:                           store,
@@ -377,9 +378,10 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	targetStatus := xinbox.DeliveryStatusPending
 	commentsDesired := account.AccountActive && account.PlanAllowsInbox && hasXInboxScopes(account.Scopes, "tweet.read", "tweet.write", "users.read")
 	dmsDesired := commentsDesired && hasXInboxScopes(account.Scopes, "dm.read", "dm.write")
-	appBearerToken, appIdentity, consumerSecretConfigured, appTokenErr := w.resolveAccountAppToken(account)
+	appBearerToken, webhookRouteKey, consumerSecretConfigured, appTokenErr := w.resolveAccountAppToken(account)
 	app := XInboxAppStream{
-		Identity:                 appIdentity,
+		Identity:                 safeAppIdentity(webhookRouteKey),
+		WebhookRouteKey:          webhookRouteKey,
 		BearerToken:              appBearerToken,
 		ConsumerSecretConfigured: consumerSecretConfigured,
 	}
@@ -470,7 +472,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		if w.webhookURL == "" {
 			return fail(errors.New("X_INBOX_WEBHOOK_URL is not configured"))
 		}
-		appWebhookURL, err := xinbox.AppWebhookURL(w.webhookURL, account.AppClientID)
+		appWebhookURL, err := xinbox.AppWebhookURL(w.webhookURL, account.WebhookRouteKey)
 		if err != nil {
 			return fail(err)
 		}
@@ -617,10 +619,10 @@ func (w *XInboxDeliveryWorker) resolveAccountAppToken(
 		if w.managedAppBearer == "" {
 			return "", "", w.managedConsumerSecretConfigured, errors.New("TWITTER_BEARER_TOKEN is not configured")
 		}
-		if account.AppClientID == "" {
-			return "", "", w.managedConsumerSecretConfigured, errors.New("TWITTER_CLIENT_ID is not configured")
+		if account.WebhookRouteKey == "" {
+			return "", "", w.managedConsumerSecretConfigured, errors.New("managed X webhook route key is not configured")
 		}
-		return w.managedAppBearer, account.AppClientID, w.managedConsumerSecretConfigured, nil
+		return w.managedAppBearer, account.WebhookRouteKey, w.managedConsumerSecretConfigured, nil
 	case xinbox.AppModeWorkspace:
 		if account.AppBearerTokenEncrypted == "" {
 			return "", "", account.ConsumerSecretConfigured, errors.New("workspace X app bearer token is not configured")
@@ -629,10 +631,10 @@ func (w *XInboxDeliveryWorker) resolveAccountAppToken(
 		if err != nil {
 			return "", "", account.ConsumerSecretConfigured, fmt.Errorf("decrypt workspace X app bearer token: %w", err)
 		}
-		if account.AppClientID == "" {
-			return "", "", account.ConsumerSecretConfigured, errors.New("workspace X app client_id is not configured")
+		if account.WebhookRouteKey == "" {
+			return "", "", account.ConsumerSecretConfigured, errors.New("workspace X app webhook route key is not configured")
 		}
-		return token, account.AppClientID, account.ConsumerSecretConfigured, nil
+		return token, account.WebhookRouteKey, account.ConsumerSecretConfigured, nil
 	default:
 		return "", "", false, fmt.Errorf("unsupported X app mode %q", account.AppMode)
 	}
@@ -778,7 +780,7 @@ func (w *XInboxDeliveryWorker) runAppStreamWithCancel(
 		if w.eventHandler == nil {
 			return nil
 		}
-		return w.eventHandler(ctx, app.Identity, event)
+		return w.eventHandler(ctx, app.WebhookRouteKey, event)
 	}
 	return w.stream.Run(ctx, app.Identity, app.BearerToken, handler)
 }
@@ -800,10 +802,15 @@ func bearerFingerprint(bearer string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func safeAppIdentity(webhookRouteKey string) string {
+	sum := sha256.Sum256([]byte(webhookRouteKey))
+	return "x-app:" + hex.EncodeToString(sum[:])
+}
+
 type postgresXInboxDeliveryStore struct {
-	pool               *pgxpool.Pool
-	queries            *db.Queries
-	managedAppClientID string
+	pool                   *pgxpool.Pool
+	queries                *db.Queries
+	managedWebhookRouteKey string
 }
 
 func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInboxDeliveryAccount, error) {
@@ -813,7 +820,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			p.workspace_id,
 			CASE
 			  WHEN COALESCE(sa.x_app_mode, 'legacy_unknown') = 'unipost_managed_app' THEN $1
-			  ELSE COALESCE(pc.client_id, '')
+			  ELSE COALESCE(pc.webhook_route_key, '')
 			END,
 			COALESCE(sa.account_name, ''),
 			COALESCE(sa.external_user_id, ''),
@@ -840,7 +847,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 		    OR r.activity_dm_subscription_id IS NOT NULL
 		  )
 		ORDER BY sa.id
-	`, s.managedAppClientID)
+	`, s.managedWebhookRouteKey)
 	if err != nil {
 		return nil, err
 	}
@@ -852,7 +859,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 		if err := rows.Scan(
 			&account.SocialAccountID,
 			&account.WorkspaceID,
-			&account.AppClientID,
+			&account.WebhookRouteKey,
 			&account.Handle,
 			&account.ExternalUserID,
 			&account.AccessTokenEncrypted,

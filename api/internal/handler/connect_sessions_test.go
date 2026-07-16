@@ -1149,7 +1149,10 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 			secret = "encrypted-secret"
 		}
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		return scanRow{values: []any{"pc_1", f.platform, "client-id", secret, now, "ws_1"}}
+		return scanRow{values: []any{
+			"pc_1", f.platform, "client-id", secret, now, "ws_1",
+			pgtype.Text{}, pgtype.Text{}, pgtype.Text{},
+		}}
 	case strings.Contains(query, "-- name: CreateConnectSession"):
 		f.createConnectSessionCalls++
 		platform, _ := args[1].(string)

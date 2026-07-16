@@ -7,8 +7,11 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -21,7 +24,12 @@ const (
 	defaultXWebhookMaxEventAge        = 7 * 24 * time.Hour
 	xWebhookFutureTolerance           = 5 * time.Minute
 	xWebhookProcessingTimeout         = 9 * time.Second
+	defaultXCRCRateLimit              = 30
+	defaultXCRCRateWindow             = time.Minute
+	defaultXCRCMaxRateLimitKeys       = 10000
 )
+
+var xCRCTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 
 type XWebhookSecretResolver interface {
 	ConsumerSecret(context.Context, string) (string, error)
@@ -32,21 +40,25 @@ type XWebhookIngestor interface {
 }
 
 type XWebhookConfig struct {
-	Secrets            XWebhookSecretResolver
-	Ingestor           XWebhookIngestor
-	ManagedAppClientID string
-	MaxBodyBytes       int64
-	MaxEventAge        time.Duration
-	Now                func() time.Time
+	Secrets          XWebhookSecretResolver
+	Ingestor         XWebhookIngestor
+	ManagedRouteKey  string
+	MaxBodyBytes     int64
+	MaxEventAge      time.Duration
+	Now              func() time.Time
+	CRCRateLimit     int
+	CRCRateWindow    time.Duration
+	MaxRateLimitKeys int
 }
 
 type XWebhookHandler struct {
-	secrets            XWebhookSecretResolver
-	ingestor           XWebhookIngestor
-	managedAppClientID string
-	maxBodyBytes       int64
-	maxEventAge        time.Duration
-	now                func() time.Time
+	secrets         XWebhookSecretResolver
+	ingestor        XWebhookIngestor
+	managedRouteKey string
+	maxBodyBytes    int64
+	maxEventAge     time.Duration
+	now             func() time.Time
+	crcLimiter      *xCRCLimiter
 }
 
 func NewXWebhookHandler(config XWebhookConfig) *XWebhookHandler {
@@ -62,30 +74,54 @@ func NewXWebhookHandler(config XWebhookConfig) *XWebhookHandler {
 	if now == nil {
 		now = time.Now
 	}
+	rateLimit := config.CRCRateLimit
+	if rateLimit <= 0 {
+		rateLimit = defaultXCRCRateLimit
+	}
+	rateWindow := config.CRCRateWindow
+	if rateWindow <= 0 {
+		rateWindow = defaultXCRCRateWindow
+	}
+	maxRateLimitKeys := config.MaxRateLimitKeys
+	if maxRateLimitKeys <= 0 {
+		maxRateLimitKeys = defaultXCRCMaxRateLimitKeys
+	}
 	return &XWebhookHandler{
-		secrets:            config.Secrets,
-		ingestor:           config.Ingestor,
-		managedAppClientID: strings.TrimSpace(config.ManagedAppClientID),
-		maxBodyBytes:       maxBodyBytes,
-		maxEventAge:        maxEventAge,
-		now:                now,
+		secrets:         config.Secrets,
+		ingestor:        config.Ingestor,
+		managedRouteKey: strings.TrimSpace(config.ManagedRouteKey),
+		maxBodyBytes:    maxBodyBytes,
+		maxEventAge:     maxEventAge,
+		now:             now,
+		crcLimiter: &xCRCLimiter{
+			limit:      rateLimit,
+			window:     rateWindow,
+			maxEntries: maxRateLimitKeys,
+			entries:    make(map[[32]byte]xCRCLimitEntry),
+		},
 	}
 }
 
 func (h *XWebhookHandler) CRC(w http.ResponseWriter, r *http.Request) {
 	requestCtx, cancel := context.WithTimeout(r.Context(), xWebhookProcessingTimeout)
 	defer cancel()
-	appClientID := h.appClientID(r)
-	if appClientID == "" {
+	routeKey := h.routeKey(r)
+	if routeKey == "" {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X webhook app was not found")
 		return
 	}
-	crcToken := r.URL.Query().Get("crc_token")
-	if crcToken == "" {
+	values := r.URL.Query()
+	crcTokens, ok := values["crc_token"]
+	if !ok || len(values) != 1 || len(crcTokens) != 1 || !xCRCTokenPattern.MatchString(crcTokens[0]) {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "crc_token is required")
 		return
 	}
-	secret, err := h.resolveSecret(requestCtx, appClientID)
+	crcToken := crcTokens[0]
+	if !h.crcLimiter.Allow(routeKey, requestIP(r), h.now()) {
+		writeError(w, http.StatusTooManyRequests, "RATE_LIMITED", "Too many CRC requests")
+		return
+	}
+	secret, err := h.resolveSecret(requestCtx, routeKey)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X webhook app was not found")
 		return
@@ -100,12 +136,12 @@ func (h *XWebhookHandler) CRC(w http.ResponseWriter, r *http.Request) {
 func (h *XWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	requestCtx, cancel := context.WithTimeout(r.Context(), xWebhookProcessingTimeout)
 	defer cancel()
-	appClientID := h.appClientID(r)
-	if appClientID == "" {
+	routeKey := h.routeKey(r)
+	if routeKey == "" {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X webhook app was not found")
 		return
 	}
-	secret, err := h.resolveSecret(requestCtx, appClientID)
+	secret, err := h.resolveSecret(requestCtx, routeKey)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X webhook app was not found")
 		return
@@ -141,7 +177,7 @@ func (h *XWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if h.ingestor != nil {
-			if err := h.ingestor.IngestActivityEvent(requestCtx, appClientID, event); err != nil {
+			if err := h.ingestor.IngestActivityEvent(requestCtx, routeKey, event); err != nil {
 				if errors.Is(err, xinbox.ErrInboxAccountNotFound) {
 					continue
 				}
@@ -153,21 +189,21 @@ func (h *XWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *XWebhookHandler) appClientID(r *http.Request) string {
-	if appClientID := strings.TrimSpace(chi.URLParam(r, "app_client_id")); appClientID != "" {
-		return appClientID
+func (h *XWebhookHandler) routeKey(r *http.Request) string {
+	if routeKey := strings.TrimSpace(chi.URLParam(r, "webhook_route_key")); routeKey != "" {
+		return routeKey
 	}
 	// The legacy base path is intentionally limited to the one configured
 	// UniPost-managed app. Workspace apps always require their app-specific
 	// path, so an ambiguous or unconfigured base route fails closed.
-	return h.managedAppClientID
+	return h.managedRouteKey
 }
 
-func (h *XWebhookHandler) resolveSecret(ctx context.Context, appClientID string) (string, error) {
+func (h *XWebhookHandler) resolveSecret(ctx context.Context, routeKey string) (string, error) {
 	if h == nil || h.secrets == nil {
 		return "", xinbox.ErrAppSecretNotFound
 	}
-	secret, err := h.secrets.ConsumerSecret(ctx, appClientID)
+	secret, err := h.secrets.ConsumerSecret(ctx, routeKey)
 	if err != nil {
 		return "", err
 	}
@@ -185,4 +221,56 @@ func verifyXWebhookSignature(body []byte, signatureHeader, secret string) bool {
 	_, _ = mac.Write(body)
 	expected := "sha256=" + base64.StdEncoding.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(expected), []byte(signatureHeader))
+}
+
+type xCRCLimitEntry struct {
+	windowStart time.Time
+	count       int
+}
+
+type xCRCLimiter struct {
+	mu         sync.Mutex
+	limit      int
+	window     time.Duration
+	maxEntries int
+	entries    map[[32]byte]xCRCLimitEntry
+}
+
+func (l *xCRCLimiter) Allow(routeKey, ip string, now time.Time) bool {
+	if l == nil {
+		return true
+	}
+	key := sha256.Sum256([]byte(routeKey + "\x00" + ip))
+	now = now.UTC()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	entry, exists := l.entries[key]
+	if !exists || now.Sub(entry.windowStart) >= l.window || now.Before(entry.windowStart) {
+		if !exists && len(l.entries) >= l.maxEntries {
+			for existingKey, existing := range l.entries {
+				if now.Sub(existing.windowStart) >= l.window {
+					delete(l.entries, existingKey)
+				}
+			}
+			if len(l.entries) >= l.maxEntries {
+				return false
+			}
+		}
+		l.entries[key] = xCRCLimitEntry{windowStart: now, count: 1}
+		return true
+	}
+	if entry.count >= l.limit {
+		return false
+	}
+	entry.count++
+	l.entries[key] = entry
+	return true
+}
+
+func requestIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(r.RemoteAddr))
+	if err == nil {
+		return host
+	}
+	return strings.TrimSpace(r.RemoteAddr)
 }

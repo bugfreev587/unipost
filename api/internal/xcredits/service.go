@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -227,6 +229,13 @@ type InboundStore interface {
 	UpdateInboundCap(context.Context, StoreUpdateInboundCapRequest) (InboundCapSetting, error)
 }
 
+type InboundMutation func(context.Context, pgx.Tx) error
+
+type AtomicInboundStore interface {
+	AdmitInboundWithMutation(context.Context, StoreInboundRequest, InboundMutation) (InboundAdmission, error)
+	RunInboundMutation(context.Context, InboundMutation) error
+}
+
 type Service struct {
 	store      Store
 	inbound    InboundStore
@@ -337,11 +346,42 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string, now time.Tim
 }
 
 func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {
+	return s.admitInbound(ctx, req, nil)
+}
+
+func (s *Service) AdmitInboundWithMutation(
+	ctx context.Context,
+	req InboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
+	if mutation == nil {
+		return s.AdmitInbound(ctx, req)
+	}
+	return s.admitInbound(ctx, req, mutation)
+}
+
+func (s *Service) admitInbound(
+	ctx context.Context,
+	req InboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
 	appMode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
 	if err != nil {
 		return InboundAdmission{}, err
 	}
 	if appMode != xinbox.AppModeUniPostManaged {
+		if mutation != nil {
+			if s == nil {
+				return InboundAdmission{}, errors.New("x inbound atomic store is not configured")
+			}
+			atomicStore, ok := s.inbound.(AtomicInboundStore)
+			if !ok {
+				return InboundAdmission{}, errors.New("x inbound atomic store is not configured")
+			}
+			if err := atomicStore.RunInboundMutation(ctx, mutation); err != nil {
+				return InboundAdmission{}, err
+			}
+		}
 		return InboundAdmission{
 			Decision: InboundDecisionAccepted,
 			Bypassed: true,
@@ -382,7 +422,7 @@ func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (Inbound
 	utcDate := req.Now.UTC()
 	utcDate = time.Date(utcDate.Year(), utcDate.Month(), utcDate.Day(), 0, 0, 0, 0, time.UTC)
 
-	admission, err := s.inbound.AdmitInbound(ctx, StoreInboundRequest{
+	storeReq := StoreInboundRequest{
 		WorkspaceID:          req.WorkspaceID,
 		SocialAccountID:      req.SocialAccountID,
 		AppMode:              string(appMode),
@@ -398,7 +438,17 @@ func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (Inbound
 		PeriodEnd:            period.End,
 		UTCDate:              utcDate,
 		CapManagementURL:     s.appBaseURL + "/settings/billing#x-inbound-cap",
-	})
+	}
+	var admission InboundAdmission
+	if mutation != nil {
+		atomicStore, ok := s.inbound.(AtomicInboundStore)
+		if !ok {
+			return InboundAdmission{}, errors.New("x inbound atomic store is not configured")
+		}
+		admission, err = atomicStore.AdmitInboundWithMutation(ctx, storeReq, mutation)
+	} else {
+		admission, err = s.inbound.AdmitInbound(ctx, storeReq)
+	}
 	if err != nil {
 		return InboundAdmission{}, err
 	}

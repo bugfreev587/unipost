@@ -2,7 +2,10 @@ package xinbox
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"strings"
 )
@@ -12,34 +15,46 @@ type EncryptedConsumerSecretStore interface {
 }
 
 type AppSecretResolverConfig struct {
-	ManagedAppClientID string
-	ManagedSecret      string
-	Store              EncryptedConsumerSecretStore
-	Decrypt            func(string) (string, error)
+	ManagedRouteKey string
+	ManagedSecret   string
+	Store           EncryptedConsumerSecretStore
+	Decrypt         func(string) (string, error)
 }
 
 type AppSecretResolver struct {
-	managedAppClientID string
-	managedSecret      string
-	store              EncryptedConsumerSecretStore
-	decrypt            func(string) (string, error)
+	managedRouteKey string
+	managedSecret   string
+	store           EncryptedConsumerSecretStore
+	decrypt         func(string) (string, error)
 }
 
 func NewAppSecretResolver(config AppSecretResolverConfig) *AppSecretResolver {
 	return &AppSecretResolver{
-		managedAppClientID: strings.TrimSpace(config.ManagedAppClientID),
-		managedSecret:      strings.TrimSpace(config.ManagedSecret),
-		store:              config.Store,
-		decrypt:            config.Decrypt,
+		managedRouteKey: strings.TrimSpace(config.ManagedRouteKey),
+		managedSecret:   strings.TrimSpace(config.ManagedSecret),
+		store:           config.Store,
+		decrypt:         config.Decrypt,
 	}
 }
 
-func (r *AppSecretResolver) ConsumerSecret(ctx context.Context, appClientID string) (string, error) {
-	appClientID = strings.TrimSpace(appClientID)
-	if r == nil || appClientID == "" {
+func WebhookRouteKey(consumerSecret, clientID string) string {
+	consumerSecret = strings.TrimSpace(consumerSecret)
+	clientID = strings.TrimSpace(clientID)
+	if consumerSecret == "" || clientID == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(consumerSecret))
+	_, _ = mac.Write([]byte("unipost:x:webhook-route:v1\x00"))
+	_, _ = mac.Write([]byte(clientID))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func (r *AppSecretResolver) ConsumerSecret(ctx context.Context, routeKey string) (string, error) {
+	routeKey = strings.TrimSpace(routeKey)
+	if r == nil || routeKey == "" {
 		return "", ErrAppSecretNotFound
 	}
-	if appClientID == r.managedAppClientID {
+	if routeKey == r.managedRouteKey {
 		if r.managedSecret == "" {
 			return "", ErrAppSecretNotFound
 		}
@@ -48,7 +63,7 @@ func (r *AppSecretResolver) ConsumerSecret(ctx context.Context, appClientID stri
 	if r.store == nil || r.decrypt == nil {
 		return "", ErrAppSecretNotFound
 	}
-	encrypted, err := r.store.EncryptedConsumerSecrets(ctx, appClientID)
+	encrypted, err := r.store.EncryptedConsumerSecrets(ctx, routeKey)
 	if err != nil {
 		return "", err
 	}
@@ -69,7 +84,7 @@ func (r *AppSecretResolver) ConsumerSecret(ctx context.Context, appClientID stri
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(resolved), []byte(secret)) != 1 {
-			return "", errors.New("conflicting consumer secrets for X app client id")
+			return "", errors.New("conflicting consumer secrets for X webhook route key")
 		}
 	}
 	if resolved == "" {

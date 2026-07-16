@@ -48,15 +48,15 @@ func xSignature(body []byte, secret string) string {
 func xWebhookRequest(method, target, appClientID string, body []byte) *http.Request {
 	req := httptest.NewRequest(method, target, bytes.NewReader(body))
 	routeContext := chi.NewRouteContext()
-	routeContext.URLParams.Add("app_client_id", appClientID)
+	routeContext.URLParams.Add("webhook_route_key", appClientID)
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
 }
 
 func TestXWebhookCRCUsesAppSpecificConsumerSecret(t *testing.T) {
 	handler := NewXWebhookHandler(XWebhookConfig{
-		Secrets: fakeXWebhookSecrets{secrets: map[string]string{"client-1": "consumer-secret"}},
+		Secrets: fakeXWebhookSecrets{secrets: map[string]string{"route-1": "consumer-secret"}},
 	})
-	req := xWebhookRequest(http.MethodGet, "/v1/webhooks/twitter/client-1?crc_token=challenge", "client-1", nil)
+	req := xWebhookRequest(http.MethodGet, "/v1/webhooks/twitter/route-1?crc_token=challenge", "route-1", nil)
 	rec := httptest.NewRecorder()
 	handler.CRC(rec, req)
 
@@ -70,7 +70,7 @@ func TestXWebhookCRCUsesAppSpecificConsumerSecret(t *testing.T) {
 }
 
 func TestXWebhookPOSTVerifiesRawBodyBeforeParsing(t *testing.T) {
-	body := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner-1"},"tag":"unipost:x:dm:account-1","payload":{"id":"dm-1","dm_conversation_id":"c-1","sender_id":"sender-1","text":"private"}}}`)
+	body := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner-1"},"tag":"unipost:x:dm:account-1","payload":{"id":"dm-1","dm_conversation_id":"c-1","sender_id":"sender-1","created_at":"2026-07-16T12:00:00Z","text":"private"}}}`)
 	ingestor := &fakeXWebhookIngestor{}
 	handler := NewXWebhookHandler(XWebhookConfig{
 		Secrets:  fakeXWebhookSecrets{secrets: map[string]string{"client-1": "consumer-secret"}},
@@ -148,5 +148,52 @@ func TestXWebhookLegacyBaseFailsClosedWithoutSingleManagedApp(t *testing.T) {
 	handler.CRC(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+func TestXWebhookCRCRejectsSigningOracleInputsAndRateLimitsRouteIP(t *testing.T) {
+	handler := NewXWebhookHandler(XWebhookConfig{
+		Secrets:          fakeXWebhookSecrets{secrets: map[string]string{"route-1": "consumer-secret"}},
+		CRCRateLimit:     2,
+		CRCRateWindow:    time.Minute,
+		MaxRateLimitKeys: 10,
+	})
+	for _, target := range []string{
+		"/v1/webhooks/twitter/route-1?crc_token=%7B%22data%22%3A%7B%7D%7D",
+		"/v1/webhooks/twitter/route-1?crc_token=one&crc_token=two",
+		"/v1/webhooks/twitter/route-1?crc_token=ok&extra=value",
+		"/v1/webhooks/twitter/route-1?crc_token=",
+	} {
+		req := xWebhookRequest(http.MethodGet, target, "route-1", nil)
+		req.RemoteAddr = "203.0.113.10:1234"
+		rec := httptest.NewRecorder()
+		handler.CRC(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("target %q status = %d body=%s", target, rec.Code, rec.Body.String())
+		}
+	}
+
+	for i, want := range []int{http.StatusOK, http.StatusOK, http.StatusTooManyRequests} {
+		req := xWebhookRequest(http.MethodGet, "/v1/webhooks/twitter/route-1?crc_token=challenge_"+string(rune('a'+i)), "route-1", nil)
+		req.RemoteAddr = "203.0.113.10:1234"
+		rec := httptest.NewRecorder()
+		handler.CRC(rec, req)
+		if rec.Code != want {
+			t.Fatalf("rate request %d status = %d, want %d", i, rec.Code, want)
+		}
+	}
+}
+
+func TestXWebhookAuthenticatedMalformedDMReturnsNon2xx(t *testing.T) {
+	body := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner-1"},"tag":"unipost:x:dm:account-1","payload":{"sender_id":"sender-1","created_at":"2026-07-16T12:00:00Z"}}}`)
+	handler := NewXWebhookHandler(XWebhookConfig{
+		Secrets: fakeXWebhookSecrets{secrets: map[string]string{"route-1": "consumer-secret"}},
+	})
+	req := xWebhookRequest(http.MethodPost, "/v1/webhooks/twitter/route-1", "route-1", body)
+	req.Header.Set("x-twitter-webhooks-signature", xSignature(body, "consumer-secret"))
+	rec := httptest.NewRecorder()
+	handler.Handle(rec, req)
+	if rec.Code < 400 {
+		t.Fatalf("status = %d, malformed recognized delivery was acknowledged", rec.Code)
 	}
 }
