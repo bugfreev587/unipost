@@ -6,9 +6,8 @@ CREATE TABLE x_inbox_delivery_cleanup_intents (
   id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
   social_account_id           TEXT NOT NULL UNIQUE,
   x_app_mode                  TEXT NOT NULL
-    CHECK (x_app_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown')),
+    CHECK (x_app_mode IN ('unipost_managed_app', 'workspace_x_app')),
   app_bearer_token            TEXT,
-  user_access_token           TEXT NOT NULL,
   filtered_stream_rule_id     TEXT,
   activity_dm_subscription_id TEXT,
   attempts                    INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
@@ -18,6 +17,9 @@ CREATE TABLE x_inbox_delivery_cleanup_intents (
   CHECK (
     filtered_stream_rule_id IS NOT NULL
     OR activity_dm_subscription_id IS NOT NULL
+  ),
+  CHECK (
+    x_app_mode = 'unipost_managed_app' OR app_bearer_token IS NOT NULL
   )
 );
 
@@ -33,15 +35,13 @@ BEGIN
     social_account_id,
     x_app_mode,
     app_bearer_token,
-    user_access_token,
     filtered_stream_rule_id,
     activity_dm_subscription_id
   )
   SELECT
     OLD.id,
-    COALESCE(OLD.x_app_mode, 'legacy_unknown'),
+    OLD.x_app_mode,
     pc.app_bearer_token,
-    OLD.access_token,
     r.filtered_stream_rule_id,
     r.activity_dm_subscription_id
   FROM profiles p
@@ -51,6 +51,11 @@ BEGIN
     ON pc.workspace_id = p.workspace_id
    AND pc.platform = 'twitter'
   WHERE p.id = OLD.profile_id
+    AND OLD.x_app_mode IN ('unipost_managed_app', 'workspace_x_app')
+    AND (
+      OLD.x_app_mode = 'unipost_managed_app'
+      OR pc.app_bearer_token IS NOT NULL
+    )
     AND (
       r.filtered_stream_rule_id IS NOT NULL
       OR r.activity_dm_subscription_id IS NOT NULL
@@ -58,7 +63,6 @@ BEGIN
   ON CONFLICT (social_account_id) DO UPDATE
   SET x_app_mode = EXCLUDED.x_app_mode,
       app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
-      user_access_token = EXCLUDED.user_access_token,
       filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
       activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
       last_error = NULL,
@@ -86,15 +90,13 @@ BEGIN
     social_account_id,
     x_app_mode,
     app_bearer_token,
-    user_access_token,
     filtered_stream_rule_id,
     activity_dm_subscription_id
   )
   SELECT
     sa.id,
-    COALESCE(sa.x_app_mode, 'legacy_unknown'),
+    sa.x_app_mode,
     OLD.app_bearer_token,
-    sa.access_token,
     r.filtered_stream_rule_id,
     r.activity_dm_subscription_id
   FROM profiles p
@@ -104,6 +106,8 @@ BEGIN
   JOIN x_inbox_delivery_resources r
     ON r.social_account_id = sa.id
   WHERE p.workspace_id = OLD.workspace_id
+    AND sa.x_app_mode = 'workspace_x_app'
+    AND OLD.app_bearer_token IS NOT NULL
     AND (
       r.filtered_stream_rule_id IS NOT NULL
       OR r.activity_dm_subscription_id IS NOT NULL
@@ -111,7 +115,6 @@ BEGIN
   ON CONFLICT (social_account_id) DO UPDATE
   SET x_app_mode = EXCLUDED.x_app_mode,
       app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
-      user_access_token = EXCLUDED.user_access_token,
       filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
       activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
       last_error = NULL,

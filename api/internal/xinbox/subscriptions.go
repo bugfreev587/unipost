@@ -52,17 +52,31 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 			if !webhook.Valid {
 				var response struct {
 					Data struct {
-						Valid bool `json:"valid"`
+						Attempted bool `json:"attempted"`
 					} `json:"data"`
 				}
 				path := "/2/webhooks/" + url.PathEscape(webhook.ID)
 				if err := c.doJSON(ctx, http.MethodPut, path, appBearerToken, nil, &response); err != nil {
 					return Webhook{}, err
 				}
-				webhook.Valid = response.Data.Valid
-				if !webhook.Valid {
-					return Webhook{}, errors.New("X webhook CRC revalidation did not mark webhook valid")
+				if !response.Data.Attempted {
+					return Webhook{}, errors.New("X webhook CRC revalidation was not attempted")
 				}
+				for poll := 0; poll < c.webhookValidationPolls; poll++ {
+					if err := c.sleep(ctx, c.webhookValidationBackoff); err != nil {
+						return Webhook{}, err
+					}
+					current, err := c.ListWebhooks(ctx, appBearerToken)
+					if err != nil {
+						return Webhook{}, err
+					}
+					for _, candidate := range current {
+						if candidate.ID == webhook.ID && candidate.URL == configuredURL && candidate.Valid {
+							return candidate, nil
+						}
+					}
+				}
+				return Webhook{}, errors.New("X webhook CRC revalidation did not become valid before polling limit")
 			}
 			return webhook, nil
 		}
@@ -107,18 +121,49 @@ func (c *Client) ListActivitySubscriptions(
 	ctx context.Context,
 	userAccessToken string,
 ) ([]ActivitySubscription, error) {
-	var response struct {
-		Data []ActivitySubscription `json:"data"`
+	const selfServeSubscriptionLimit = 1000
+	subscriptions := make([]ActivitySubscription, 0)
+	nextToken := ""
+	seenTokens := make(map[string]struct{})
+	for page := 0; page < selfServeSubscriptionLimit && len(subscriptions) < selfServeSubscriptionLimit; page++ {
+		query := url.Values{"max_results": {"1000"}}
+		if nextToken != "" {
+			query.Set("pagination_token", nextToken)
+		}
+		var response struct {
+			Data []ActivitySubscription `json:"data"`
+			Meta struct {
+				NextToken string `json:"next_token"`
+			} `json:"meta"`
+		}
+		path := "/2/activity/subscriptions?" + query.Encode()
+		if err := c.doJSON(ctx, http.MethodGet, path, userAccessToken, nil, &response); err != nil {
+			return nil, err
+		}
+		remaining := selfServeSubscriptionLimit - len(subscriptions)
+		if len(response.Data) > remaining {
+			response.Data = response.Data[:remaining]
+		}
+		subscriptions = append(subscriptions, response.Data...)
+		nextToken = response.Meta.NextToken
+		if nextToken == "" {
+			break
+		}
+		if _, duplicate := seenTokens[nextToken]; duplicate {
+			return nil, errors.New("X activity subscription pagination repeated next_token")
+		}
+		seenTokens[nextToken] = struct{}{}
 	}
-	if err := c.doJSON(ctx, http.MethodGet, "/2/activity/subscriptions", userAccessToken, nil, &response); err != nil {
-		return nil, err
+	if nextToken != "" && len(subscriptions) < selfServeSubscriptionLimit {
+		return nil, errors.New("X activity subscription pagination exceeded self-serve bound")
 	}
-	return response.Data, nil
+	return subscriptions, nil
 }
 
 func (c *Client) EnsureDMSubscription(
 	ctx context.Context,
 	userAccessToken string,
+	appBearerToken string,
 	accountID string,
 	userID string,
 	webhookID string,
@@ -135,7 +180,7 @@ func (c *Client) EnsureDMSubscription(
 				subscription.WebhookID == webhookID {
 				return subscription, nil
 			}
-			if err := c.DeleteActivitySubscription(ctx, userAccessToken, subscription.ID); err != nil {
+			if err := c.DeleteActivitySubscription(ctx, appBearerToken, subscription.ID); err != nil {
 				return ActivitySubscription{}, err
 			}
 			break
@@ -185,11 +230,17 @@ func (c *Client) EnsureDMSubscription(
 
 func (c *Client) DeleteActivitySubscription(
 	ctx context.Context,
-	userAccessToken string,
+	appBearerToken string,
 	subscriptionID string,
 ) error {
 	path := "/2/activity/subscriptions/" + url.PathEscape(subscriptionID)
-	status, err := c.do(ctx, http.MethodDelete, path, userAccessToken, nil, nil)
+	var response struct {
+		Data struct {
+			Deleted bool `json:"deleted"`
+		} `json:"data"`
+		Errors []APIError `json:"errors"`
+	}
+	status, err := c.do(ctx, http.MethodDelete, path, appBearerToken, nil, &response)
 	if err != nil {
 		return err
 	}
@@ -198,6 +249,15 @@ func (c *Client) DeleteActivitySubscription(
 	}
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("X delete activity subscription returned HTTP %d", status)
+	}
+	if len(response.Errors) > 0 {
+		if allErrorsAlreadyMissing(response.Errors, subscriptionID) {
+			return nil
+		}
+		return errors.New("X delete activity subscription returned errors without confirmed deletion")
+	}
+	if !response.Data.Deleted {
+		return errors.New("X delete activity subscription response did not confirm deleted=true")
 	}
 	return nil
 }

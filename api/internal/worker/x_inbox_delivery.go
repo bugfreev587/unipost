@@ -28,7 +28,7 @@ type XInboxDeliveryAPI interface {
 	EnsureFilteredStreamRule(context.Context, string, string, string) (xinbox.StreamRule, error)
 	DeleteFilteredStreamRule(context.Context, string, string) error
 	EnsureWebhook(context.Context, string, string) (xinbox.Webhook, error)
-	EnsureDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
+	EnsureDMSubscription(context.Context, string, string, string, string, string) (xinbox.ActivitySubscription, error)
 	DeleteActivitySubscription(context.Context, string, string) error
 }
 
@@ -85,7 +85,6 @@ type XInboxCleanupIntent struct {
 	SocialAccountID          string
 	AppMode                  xinbox.AppMode
 	AppBearerTokenEncrypted  string
-	UserAccessTokenEncrypted string
 	FilteredStreamRuleID     string
 	ActivityDMSubscriptionID string
 	LastError                string
@@ -292,7 +291,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		return XInboxAppStream{}, false, w.saveAccountError(ctx, state, appTokenErr)
 	}
 	var userAccessToken string
-	if state.ActivityDMSubscriptionID != "" || dmsDesired {
+	if dmsDesired {
 		var err error
 		userAccessToken, err = w.cipher.Decrypt(account.AccessTokenEncrypted)
 		if err != nil {
@@ -311,7 +310,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		}
 	}
 	if !dmsDesired && state.ActivityDMSubscriptionID != "" {
-		if err := w.api.DeleteActivitySubscription(ctx, userAccessToken, state.ActivityDMSubscriptionID); err != nil {
+		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
 			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
 		}
 		state.ActivityDMSubscriptionID = ""
@@ -345,6 +344,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		subscription, err := w.api.EnsureDMSubscription(
 			ctx,
 			userAccessToken,
+			appBearerToken,
 			account.SocialAccountID,
 			account.ExternalUserID,
 			webhook.ID,
@@ -386,7 +386,7 @@ func (w *XInboxDeliveryWorker) saveAccountError(
 
 func (w *XInboxDeliveryWorker) reconcileCleanupIntent(ctx context.Context, intent XInboxCleanupIntent) error {
 	appToken, err := w.resolveCleanupAppToken(intent)
-	if err != nil && intent.FilteredStreamRuleID != "" {
+	if err != nil && (intent.FilteredStreamRuleID != "" || intent.ActivityDMSubscriptionID != "") {
 		intent.LastError = err.Error()
 		_ = w.store.SaveCleanupIntent(ctx, intent)
 		return fmt.Errorf("cleanup X inbox account %s: %w", intent.SocialAccountID, err)
@@ -407,13 +407,7 @@ func (w *XInboxDeliveryWorker) reconcileCleanupIntent(ctx context.Context, inten
 		}
 	}
 	if intent.ActivityDMSubscriptionID != "" {
-		userToken, err := w.cipher.Decrypt(intent.UserAccessTokenEncrypted)
-		if err != nil {
-			intent.LastError = err.Error()
-			_ = w.store.SaveCleanupIntent(ctx, intent)
-			return fmt.Errorf("decrypt cleanup X user token for account %s: %w", intent.SocialAccountID, err)
-		}
-		if err := w.api.DeleteActivitySubscription(ctx, userToken, intent.ActivityDMSubscriptionID); err != nil {
+		if err := w.api.DeleteActivitySubscription(ctx, appToken, intent.ActivityDMSubscriptionID); err != nil {
 			intent.LastError = err.Error()
 			_ = w.store.SaveCleanupIntent(ctx, intent)
 			return fmt.Errorf("cleanup X inbox subscription for account %s: %w", intent.SocialAccountID, err)
@@ -607,7 +601,6 @@ func (s *postgresXInboxDeliveryStore) ListCleanupIntents(ctx context.Context) ([
 			social_account_id,
 			x_app_mode,
 			COALESCE(app_bearer_token, ''),
-			user_access_token,
 			COALESCE(filtered_stream_rule_id, ''),
 			COALESCE(activity_dm_subscription_id, ''),
 			COALESCE(last_error, '')
@@ -628,7 +621,6 @@ func (s *postgresXInboxDeliveryStore) ListCleanupIntents(ctx context.Context) ([
 			&intent.SocialAccountID,
 			&appMode,
 			&intent.AppBearerTokenEncrypted,
-			&intent.UserAccessTokenEncrypted,
 			&intent.FilteredStreamRuleID,
 			&intent.ActivityDMSubscriptionID,
 			&intent.LastError,

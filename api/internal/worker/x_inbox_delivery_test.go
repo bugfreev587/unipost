@@ -40,6 +40,7 @@ type fakeXInboxDeliveryAPI struct {
 	subscriptionTokens []string
 	deletedRules       []string
 	deletedSubs        []string
+	deletedSubTokens   []string
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
@@ -68,11 +69,12 @@ func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, _ string, confi
 
 func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
 	_ context.Context,
-	token, accountID, userID, webhookID string,
+	userToken, _ string,
+	accountID, userID, webhookID string,
 ) (xinbox.ActivitySubscription, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.subscriptionTokens = append(f.subscriptionTokens, token)
+	f.subscriptionTokens = append(f.subscriptionTokens, userToken)
 	if f.subscriptionErr != nil {
 		return xinbox.ActivitySubscription{}, f.subscriptionErr
 	}
@@ -85,10 +87,11 @@ func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
 	}, nil
 }
 
-func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, _ string, subscriptionID string) error {
+func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, appToken string, subscriptionID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedSubs = append(f.deletedSubs, subscriptionID)
+	f.deletedSubTokens = append(f.deletedSubTokens, appToken)
 	return nil
 }
 
@@ -229,7 +232,6 @@ func TestXInboxDeliveryCleanupIntentUsesExactStoredIDsAndIsIdempotent(t *testing
 		SocialAccountID:          "deleted-account",
 		AppMode:                  xinbox.AppModeWorkspace,
 		AppBearerTokenEncrypted:  "encrypted-app-token",
-		UserAccessTokenEncrypted: "encrypted-user-token",
 		FilteredStreamRuleID:     "rule-exact",
 		ActivityDMSubscriptionID: "subscription-exact",
 	}}}
@@ -238,8 +240,7 @@ func TestXInboxDeliveryCleanupIntentUsesExactStoredIDsAndIsIdempotent(t *testing
 		Store: store,
 		API:   api,
 		Cipher: fakeXInboxCipher{values: map[string]string{
-			"encrypted-app-token":  "workspace-app-token",
-			"encrypted-user-token": "user-oauth-token",
+			"encrypted-app-token": "workspace-app-token",
 		}},
 	})
 
@@ -254,6 +255,9 @@ func TestXInboxDeliveryCleanupIntentUsesExactStoredIDsAndIsIdempotent(t *testing
 	}
 	if want := []string{"subscription-exact"}; !reflect.DeepEqual(api.deletedSubs, want) {
 		t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
+	}
+	if want := []string{"workspace-app-token"}; !reflect.DeepEqual(api.deletedSubTokens, want) {
+		t.Fatalf("subscription delete tokens = %v, want workspace app bearer %v", api.deletedSubTokens, want)
 	}
 	if len(store.cleanups) != 0 {
 		t.Fatalf("cleanup intents = %+v, want empty", store.cleanups)
@@ -284,6 +288,9 @@ func TestXInboxDeliveryDailyAllowancePauseRemovesPaidSources(t *testing.T) {
 	}
 	if got.DeliveryStatus != xinbox.DeliveryStatusPausedAllowance {
 		t.Fatalf("delivery status = %q", got.DeliveryStatus)
+	}
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.deletedSubTokens, want) {
+		t.Fatalf("subscription delete tokens = %v, want managed app bearer %v", api.deletedSubTokens, want)
 	}
 }
 

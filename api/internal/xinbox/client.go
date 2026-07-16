@@ -23,15 +23,21 @@ const (
 var ErrStreamDisconnected = errors.New("X filtered stream disconnected")
 
 type ClientConfig struct {
-	BaseURL           string
-	HTTPClient        *http.Client
-	StreamIdleTimeout time.Duration
+	BaseURL                  string
+	HTTPClient               *http.Client
+	StreamIdleTimeout        time.Duration
+	WebhookValidationPolls   int
+	WebhookValidationBackoff time.Duration
+	Sleep                    func(context.Context, time.Duration) error
 }
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
-	streamIdle time.Duration
+	baseURL                  string
+	httpClient               *http.Client
+	streamIdle               time.Duration
+	webhookValidationPolls   int
+	webhookValidationBackoff time.Duration
+	sleep                    func(context.Context, time.Duration) error
 }
 
 type StreamRule struct {
@@ -58,6 +64,14 @@ type ReferencedTweet struct {
 	ID   string `json:"id"`
 }
 
+type APIError struct {
+	ResourceID string `json:"resource_id"`
+	Title      string `json:"title"`
+	Type       string `json:"type"`
+	Detail     string `json:"detail"`
+	Status     int    `json:"status"`
+}
+
 func NewClient(config ClientConfig) *Client {
 	baseURL := strings.TrimRight(strings.TrimSpace(config.BaseURL), "/")
 	if baseURL == "" {
@@ -71,7 +85,26 @@ func NewClient(config ClientConfig) *Client {
 	if streamIdle <= 0 {
 		streamIdle = defaultStreamIdle
 	}
-	return &Client{baseURL: baseURL, httpClient: httpClient, streamIdle: streamIdle}
+	webhookValidationPolls := config.WebhookValidationPolls
+	if webhookValidationPolls <= 0 {
+		webhookValidationPolls = 5
+	}
+	webhookValidationBackoff := config.WebhookValidationBackoff
+	if webhookValidationBackoff <= 0 {
+		webhookValidationBackoff = 500 * time.Millisecond
+	}
+	sleep := config.Sleep
+	if sleep == nil {
+		sleep = sleepContext
+	}
+	return &Client{
+		baseURL:                  baseURL,
+		httpClient:               httpClient,
+		streamIdle:               streamIdle,
+		webhookValidationPolls:   webhookValidationPolls,
+		webhookValidationBackoff: webhookValidationBackoff,
+		sleep:                    sleep,
+	}
 }
 
 func FilteredStreamRuleTag(accountID string) string {
@@ -149,7 +182,11 @@ func (c *Client) DeleteFilteredStreamRule(ctx context.Context, bearerToken, rule
 		} `json:"delete"`
 	}{}
 	request.Delete.IDs = []string{ruleID}
-	status, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, nil)
+	var response struct {
+		Data   []StreamRule `json:"data"`
+		Errors []APIError   `json:"errors"`
+	}
+	status, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, &response)
 	if err != nil {
 		return err
 	}
@@ -159,7 +196,18 @@ func (c *Client) DeleteFilteredStreamRule(ctx context.Context, bearerToken, rule
 	if status < 200 || status >= 300 {
 		return fmt.Errorf("X delete filtered stream rule returned HTTP %d", status)
 	}
-	return nil
+	if len(response.Errors) > 0 {
+		if allErrorsAlreadyMissing(response.Errors, ruleID) {
+			return nil
+		}
+		return errors.New("X delete filtered stream rule returned errors without confirmed deletion")
+	}
+	for _, rule := range response.Data {
+		if rule.ID == ruleID {
+			return nil
+		}
+	}
+	return errors.New("X delete filtered stream rule response did not confirm the requested rule id")
 }
 
 func (c *Client) ConsumeFilteredStream(
@@ -325,4 +373,24 @@ func (c *Client) newRequest(
 
 func isIdempotentDeleteStatus(status int) bool {
 	return status == http.StatusNotFound || status == http.StatusGone
+}
+
+func allErrorsAlreadyMissing(apiErrors []APIError, resourceID string) bool {
+	if len(apiErrors) == 0 {
+		return false
+	}
+	for _, apiErr := range apiErrors {
+		errorType := strings.ToLower(apiErr.Type)
+		title := strings.ToLower(apiErr.Title)
+		if !strings.Contains(errorType, "resource-not-found") &&
+			!strings.Contains(title, "not found") &&
+			apiErr.Status != http.StatusNotFound &&
+			apiErr.Status != http.StatusGone {
+			return false
+		}
+		if apiErr.ResourceID != "" && apiErr.ResourceID != resourceID {
+			return false
+		}
+	}
+	return true
 }

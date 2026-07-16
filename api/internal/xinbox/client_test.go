@@ -97,7 +97,7 @@ func TestXClientEnsureFilteredStreamRuleReplacesStaleHandleRule(t *testing.T) {
 			if want := []string{"rule-old"}; !reflect.DeepEqual(body.Delete.IDs, want) {
 				t.Fatalf("delete ids = %v, want %v", body.Delete.IDs, want)
 			}
-			_, _ = w.Write([]byte(`{"meta":{"summary":{"deleted":1}}}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"rule-old"}],"meta":{"summary":{"deleted":1}}}`))
 		case 3:
 			_, _ = w.Write([]byte(`{"data":[{"id":"rule-new","value":"(@newhandle OR to:newhandle) -is:retweet","tag":"unipost:x:account:account-123"}]}`))
 		default:
@@ -129,6 +129,47 @@ func TestXClientDeleteFilteredStreamRuleIsIdempotent(t *testing.T) {
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	if err := client.DeleteFilteredStreamRule(context.Background(), "app-token", "rule-missing"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestXClientDeleteFilteredStreamRuleRequiresConfirmedRuleID(t *testing.T) {
+	tests := []struct {
+		name    string
+		body    string
+		wantErr bool
+	}{
+		{
+			name: "confirmed exact id",
+			body: `{"data":[{"id":"rule-1"}],"meta":{"summary":{"deleted":1}}}`,
+		},
+		{
+			name:    "partial 200 error",
+			body:    `{"data":[],"errors":[{"title":"Invalid Request","type":"https://api.x.com/2/problems/invalid-request","detail":"not deleted","status":400}]}`,
+			wantErr: true,
+		},
+		{
+			name:    "unconfirmed empty 200",
+			body:    `{"data":[],"meta":{"summary":{"deleted":0}}}`,
+			wantErr: true,
+		},
+		{
+			name: "explicit already missing",
+			body: `{"errors":[{"resource_id":"rule-1","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"rule missing","status":404}]}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			err := client.DeleteFilteredStreamRule(context.Background(), "app-token", "rule-1")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
 	}
 }
 

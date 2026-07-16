@@ -1078,6 +1078,19 @@ type XInboundEventReceipt struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
+type XInboxDeliveryCleanupIntent struct {
+	ID                       string             `json:"id"`
+	SocialAccountID          string             `json:"social_account_id"`
+	XAppMode                 string             `json:"x_app_mode"`
+	AppBearerToken           pgtype.Text        `json:"app_bearer_token"`
+	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
+	Attempts                 int32              `json:"attempts"`
+	LastError                pgtype.Text        `json:"last_error"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+}
+
 type XInboxDeliveryResource struct {
 	SocialAccountID          string             `json:"social_account_id"`
 	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
