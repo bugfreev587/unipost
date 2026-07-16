@@ -1,6 +1,6 @@
 # UniPost X Credits, Comments, and DMs PRD
 
-**Status:** Draft for product review
+**Status:** Draft — strategic sequencing decision required before implementation planning
 
 **Date:** 2026-07-15
 
@@ -31,6 +31,8 @@ The product rollout has two messaging phases:
 
 This PRD also requires new API Reference pages and task-oriented Guidance pages. Every new Reference page must link to its relevant Guidance page, and every Guidance page must link back to the exact API Reference endpoints it uses.
 
+This document specifies the complete target state. Section 2.3 records a required product decision about whether the full Credits ledger ships before X Inbox or is deferred until bounded Inbox usage produces real cost data.
+
 ## 2. Background
 
 ### 2.1 Current UniPost behavior
@@ -42,6 +44,7 @@ As of this PRD:
 - UniPost Inbox does not ingest X comments/replies or X DMs.
 - The current X OAuth 2.0 flow requests publishing and read scopes, but not DM scopes.
 - X publishing and new X connections require a paid UniPost plan.
+- X publishing already has a per-connected-account safety cap of 20 successful publishes per UTC day.
 - Inbox requires Basic or higher.
 - UniPost has monthly post quotas and Stripe subscription billing, but no customer-facing variable-cost credit ledger or one-time top-up product.
 
@@ -49,11 +52,38 @@ As of this PRD:
 
 X charges for API resources rather than providing a predictable flat allowance. Current published examples include charges for creating posts, reading posts, reading DM events, sending DMs, and receiving private activity events. A post containing a URL is materially more expensive than a normal post.
 
-If UniPost hides all X variable cost inside a flat subscription, a small number of X-heavy customers can make lower-priced plans unprofitable. If UniPost passes through X's invoice at cost, it has no room for payment fees, infrastructure, reconciliation variance, support, bad debt, refunds, or pricing changes.
+The existing paid-plan gate and 20-publishes-per-account-per-day safety cap materially bound today's outbound X publishing exposure. The immediate unbounded risk introduced by this project is inbound Activity/webhook traffic: a viral post can generate paid reply or DM events without the customer explicitly initiating each cost.
 
-The proposed credit model makes cost visible, keeps the base plans simple, and creates a controlled top-up margin.
+The full credit model remains useful at larger scale because it makes variable usage visible, keeps the base plans simple, and creates a controlled Top-up margin. It is not assumed to be the only safe first release strategy.
 
-### 2.3 Official X references
+### 2.3 Required sequencing decision
+
+Product must approve one of these approaches before an implementation plan is written:
+
+#### Option A — Full Credits foundation first
+
+- Build the ledger, included grants, reservations, manual Top-ups, reconciliation, and customer surfaces before launching X comments and DMs.
+- Strongest long-term accounting and monetization model.
+- Highest initial engineering cost and longest time before customers receive X Inbox value.
+
+#### Option B — Bounded X Inbox first (recommended for approval)
+
+- Launch X comments/replies and legacy DMs with a billing-grade per-plan monthly weighted X-usage counter and a hard per-workspace daily inbound-spend cap.
+- Reuse existing quota/gate patterns where practical, but make the new counter atomic rather than copying the current best-effort publish safety tracker.
+- Do not launch purchased Top-ups or Auto top-up in this stage.
+- Collect real per-operation cost, webhook volume, block rate, and customer-demand data.
+- Promote the full ledger and Top-up system only when measured usage, customer requests, or margin thresholds justify it.
+
+Option B is the review recommendation because the current outbound exposure is already bounded. This PRD retains the complete Credits design so it is implementation-ready if Option A is chosen or when Option B reaches its promotion gate. The product owner must explicitly choose; the document does not silently override the previously approved Credits direction.
+
+Suggested promotion triggers from bounded usage to the full ledger are any of:
+
+- Managed X cost exceeds 15% of paid subscription revenue for two consecutive months.
+- At least five paying workspaces hit an X usage cap in one month and request additional capacity.
+- At least three paying workspaces request purchasable Top-ups or Auto top-up.
+- Manual support exceptions for X capacity exceed two hours per month.
+
+### 2.4 Official X references
 
 The implementation and final public copy must be checked against the then-current official documentation before launch:
 
@@ -102,7 +132,7 @@ X pricing and access rules are external dependencies. The values in this PRD are
 
 | Term | Definition |
 |---|---|
-| X Credit | UniPost usage unit for managed X API operations. It is not currency and has no cash value. |
+| X Credit | Publicly, an abstract UniPost usage unit for managed X operations. It is not currency and has no cash value. The internal cost-accounting mapping is confidential. |
 | Included credits | Credits granted by a paid plan for the current billing period. They expire at the end of that period and do not roll over. |
 | Top-up credits | Credits purchased separately through manual or automatic Top-up. They have no time-based expiration and remain until consumed or reversed because of a refund or chargeback. |
 | Managed X app | UniPost's shared X developer app. UniPost pays X for its usage. |
@@ -112,20 +142,31 @@ X pricing and access rules are external dependencies. The values in this PRD are
 | XChat | X's newer encrypted chat product and `/2/chat/*` APIs. It is a separate later-phase integration. |
 | Pricing catalog | Versioned mapping from a UniPost X operation to X Credits consumed. |
 
+### 5.1 Public versus internal pricing information
+
+The PRD contains confidential unit-economics fields for finance and engineering. Public Pricing, Billing, API Reference, Guidance, receipts, marketing copy, metadata, and examples must not disclose:
+
+- X's upstream dollar price per resource.
+- The internal `$0.001` reference cost represented by one Credit.
+- UniPost gross profit or gross-margin percentages.
+- Maximum upstream cost represented by a plan allowance.
+
+Public surfaces may disclose plan allowances, Credits consumed by a UniPost operation, Top-up price, base/bonus/total Credits, non-expiration, and conservative examples of how many operations a balance can support. Internal-only tables must be clearly labeled and excluded from public source data or generated customer-facing artifacts.
+
 ## 6. Commercial model
 
 ### 6.1 Included credits by plan
 
-| UniPost plan | Monthly price | Existing post capacity | Included X Credits / billing cycle | Maximum upstream cost represented | Inbox eligibility |
-|---|---:|---:|---:|---:|---|
-| Free | $0 | 100 | 0 | $0.00 | No |
-| API | $10 | 1,000 | 1,500 | $1.50 | No |
-| Basic | $19 | 2,500 | 4,000 | $4.00 | Yes |
-| Growth | $59 | 7,500 | 12,000 | $12.00 | Yes |
-| Team | $149 | Unlimited | 30,000 | $30.00 | Yes |
-| Enterprise | Custom | Custom | Contract-defined | Contract-defined | Contract-defined |
+| UniPost plan | Monthly price | Existing post capacity | Included X Credits / billing cycle | Inbox eligibility |
+|---|---:|---:|---:|---|
+| Free | $0 | 100 | 0 | No |
+| API | $10 | 1,000 | 1,500 | No |
+| Basic | $19 | 2,500 | 4,000 | Yes |
+| Growth | $59 | 7,500 | 12,000 | Yes |
+| Team | $149 | Unlimited | 30,000 | Yes |
+| Enterprise | Custom | Custom | Contract-defined | Contract-defined |
 
-These allowances keep the maximum represented upstream X cost near 15% to 21% of self-serve subscription revenue while still providing meaningful trial capacity.
+**Internal-only unit economics:** these allowances represent a maximum reference upstream X cost near 15% to 21% of self-serve subscription revenue while still providing meaningful trial capacity. Do not include this sentence or its derivation in public copy.
 
 Included X Credits are granted at the start of the Stripe subscription billing period, not on the first day of the calendar month. Free has no X Credits because it cannot newly connect or publish to X.
 
@@ -161,6 +202,8 @@ The Pricing page, Plans and limits docs, Billing UI, and API Reference must deri
 
 ### 6.3 Top-up conversion
 
+**Internal only:** the conversion and margin calculations in Sections 6.3 and the finance columns of 6.4 are confidential. Public surfaces use the pack price, base Credits, bonus, total Credits, non-expiration, and operation examples only.
+
 The base conversion before volume bonus is:
 
 ```text
@@ -184,6 +227,8 @@ The volume discount intentionally reduces theoretical gross margin as purchase s
 
 ### 6.4 Top-up SKUs
 
+**Internal finance table — do not publish the cost, profit, or margin columns:**
+
 | SKU | Price | Base Credits | Bonus | Total Credits | Reference upstream cost | Reference gross profit | Theoretical gross margin |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | `topup_5` | $5 | 2,000 | 0% / 0 | 2,000 | $2.00 | $3.00 | 60% |
@@ -193,6 +238,8 @@ The volume discount intentionally reduces theoretical gross margin as purchase s
 | `topup_100` | $100 | 40,000 | 20% / 8,000 | 48,000 | $48.00 | $52.00 | 52% |
 
 The self-serve minimum is $5 and maximum single purchase is $100. A customer can make another purchase after the first completes. Larger Enterprise commitments require a custom quote and explicit margin review. No self-serve pack may exceed a 20% bonus or reduce theoretical gross margin below 52% without a new product decision.
+
+The customer-facing pack selector contains only: price, base Credits, bonus percentage/amount, total Credits, and `Never expires`.
 
 The Billing and Pricing surfaces should also translate each pack into conservative, single-operation examples:
 
@@ -231,12 +278,12 @@ Included and Top-up Credits form one workspace balance usable by both Dashboard 
 
 ## 7. Launch pricing catalog
 
-The launch catalog uses the official X resource prices available when this PRD was written. Engineering must verify the catalog immediately before production release.
+The launch catalog uses the official X resource prices available when this PRD was written. Engineering must verify the catalog immediately before production release. The upstream-resource and effective-price columns below are internal-only; public docs expose the UniPost operation and Credits consumed, not X's dollar price or UniPost margin.
 
 | UniPost operation | Upstream X resource | Managed-app credits | Effective customer price across $5-$100 packs | Notes |
 |---|---|---:|---:|---|
 | Create normal X post | Post Create | 15 | $0.0313-$0.0375 | Includes a public reply when X classifies it as normal create. |
-| Create post containing URL | Post Create with URL | 200 | $0.4167-$0.5000 | Determine URL classification before reservation. |
+| Create post containing URL | Post Create with URL | 200 | $0.4167-$0.5000 | Use the conservative URL classifier in Section 7.2 and reserve 200 before the call. |
 | Create summoned reply | Post Create summoned | 10 | $0.0208-$0.0250 | Use only when the request qualifies under X's definition. |
 | Read public post | Post Read | 5 / newly billable resource | $0.0104-$0.0125 | Local daily deduplication applies. |
 | Read app-owner post | Owned Post Read | 1 / newly billable resource | $0.0021-$0.0025 | Use only when X's ownership conditions are conclusively met. Otherwise charge Post Read. |
@@ -258,6 +305,19 @@ The launch catalog uses the official X resource prices available when this PRD w
 - If X adds or changes a resource price, UniPost can publish a new catalog. Customer-facing changes require updated pricing/docs and reasonable notice unless an emergency upstream change would otherwise create immediate material loss.
 - Existing purchased credits retain their numeric balance. The number of credits charged by a future operation can change only through a new published catalog version.
 
+### 7.2 X URL-post classification and reservation
+
+UniPost must never reserve 15 Credits and later discover it owes the 200-Credit URL operation. Before a create-post or public-reply request:
+
+1. Parse the final text after templates, variables, tracking parameters, and link rewriting are applied.
+2. Classify any `http://` or `https://` token, `www.` URL, `t.co` URL, shortened/redirect URL, or X post/profile URL included in the text as a URL candidate.
+3. A quote-post link included in text is a URL candidate. Mentions, hashtags, uploaded-media source URLs, and UniPost's internal media IDs are not text URLs by themselves.
+4. If parsing is ambiguous or a redirect/link expander fails, choose the 200-Credit URL operation.
+5. Reserve 200 Credits for a URL candidate and 15 only when the final text is conclusively URL-free.
+6. Settle using X's actual billed classification when available. Release the difference to the originating bucket. If actual classification is not available synchronously, settle the conservative amount and let reconciliation release a verified over-reservation; never add a surprise debit that makes available balance negative.
+
+The classifier is versioned and covered by fixtures for plain URLs, Unicode/punctuation boundaries, `t.co`, common shorteners, X quote links, media-only posts, and rewritten tracking URLs.
+
 ## 8. Charging and ledger design
 
 ### 8.1 Data model
@@ -270,10 +330,13 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 - `included_available`
 - `topup_available`
 - `reserved_total`
+- `recovery_debt`: non-spendable Credits owed after a refund or chargeback exceeds the remaining purchased balance
 - `billing_period_start`
 - `billing_period_end`
 - `plan_id`
 - `updated_at`
+
+`x_credit_accounts` is a materialized cache for fast reads. It is not the accounting authority.
 
 #### `x_credit_buckets`
 
@@ -282,10 +345,14 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 - `bucket_type`: `monthly_grant` or `topup`
 - `granted_credits`
 - `available_credits`
+- `reserved_credits`
+- `status`: `active`, `expired`, or `closed`
 - `starts_at`
 - `expires_at`: required for `monthly_grant`; always `NULL` for `topup`, enforced by a database constraint
 - `source_id`: subscription period, Stripe Checkout Session, manual adjustment, or refund
 - `created_at`
+
+The immutable ledger plus bucket rows are authoritative. `x_credit_accounts` is rebuilt from them and checked by an automated consistency job. A mismatch blocks new managed-X reservations for that workspace, emits an alert, and is repaired from the ledger rather than trusting the cache.
 
 #### `x_credit_ledger`
 
@@ -294,7 +361,7 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 - `social_account_id`
 - `connection_mode`: `managed` or `platform_credentials`
 - `bucket_id`
-- `entry_type`: `grant`, `reserve`, `settle`, `release`, `topup`, `refund`, `expire`, or `adjustment`
+- `entry_type`: `grant`, `reserve`, `settle`, `release`, `topup`, `refund_reversal`, `recovery_debt_open`, `recovery_debt_offset`, `expire`, or `adjustment`
 - `operation_key`
 - `catalog_version`
 - `credits`
@@ -309,6 +376,15 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 
 - Unique key on `(workspace_id, social_account_id, upstream_resource_type, upstream_resource_id, utc_date)`
 - Records whether a read or inbound event was already charged under UniPost's daily deduplication contract.
+
+#### `x_credit_inbound_daily_usage`
+
+- Unique key on `(workspace_id, utc_date)`
+- `credits_consumed`
+- `credits_limit`
+- `events_accepted`
+- `events_suppressed`
+- Used for the hard inbound-spend cap in Section 8.3.
 
 #### `x_credit_topups`
 
@@ -331,15 +407,24 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 ### 8.2 Write charging
 
 1. Resolve connection mode. BYO returns a zero-credit estimate and bypasses the credit ledger.
-2. Determine the operation key and maximum credit cost before the upstream request.
+2. Determine the operation key and maximum credit cost before the upstream request. URL candidates follow Section 7.2.
 3. For immediate writes, atomically reserve credits before calling X.
 4. Call X with a stable request idempotency key when supported.
 5. On success, settle the reservation exactly once.
 6. On a confirmed failure where X did not accept the resource, release the reservation.
-7. On an unknown timeout, keep the reservation pending and reconcile against X before settling or releasing it.
+7. On an unknown timeout, mark the reservation `pending_unknown` and start the reservation TTL workflow below.
 8. Duplicate API retries with the same UniPost idempotency key return the original result and do not create a second charge.
 
 For scheduled posts, UniPost returns an estimate when the schedule is created but reserves credits only when the worker is ready to publish. If the workspace lacks credits at execution time, the X target fails with normalized code `x_credits_exhausted`, other platform targets continue, and UniPost sends a low-balance/failure notification with a top-up link.
+
+Reservation TTL and reconciliation SLA:
+
+- Normal in-flight reservation TTL: 15 minutes.
+- Reconcile unknown outcomes after approximately 1, 5, and 15 minutes using request idempotency, stored response identifiers, and any available X lookup.
+- At 15 minutes, a confirmed success settles and a confirmed failure releases.
+- If still inconclusive, release the customer-facing reservation so it cannot lock the balance indefinitely, record an internal `unbilled_pending` exposure, and complete finance reconciliation within 24 hours.
+- Do not retroactively make the customer balance negative. Repeated inconclusive outcomes on the same account trip an operational circuit breaker and pause new managed-X writes for review.
+- Expired or released reservations are excluded before evaluating Auto top-up.
 
 ### 8.3 Read and webhook charging
 
@@ -350,15 +435,43 @@ For scheduled posts, UniPost returns an estimate when the schedule is created bu
 - Automated background sync stops before it would make the balance negative.
 - Customer-facing ledger entries identify whether consumption came from a webhook, polling, backfill, publish, or reply.
 
+Inbound cost protection is mandatory before enabling X Activity subscriptions:
+
+- Each workspace has a hard UTC-day inbound-spend cap measured in Credits across `post.mention.create`, `dm.received`, later `chat.received`, and paid recovery reads caused by those events.
+- Default cap for an Inbox-eligible self-serve plan is `max(100, floor(plan_monthly_included_credits * 10%))`: Basic 400, Growth 1,200, Team 3,000. Enterprise is contract-defined. Free and API have an effective cap of 0 because Inbox is unavailable.
+- The cap is independent of total balance. A large Top-up cannot be silently drained by a viral post unless the owner explicitly raises the inbound cap.
+- Billing lets an Owner/Admin lower the cap or raise it up to the current available balance after acknowledging the estimated exposure.
+- At 80% of the inbound cap, notify the workspace. Define a subscription-removal safety buffer of `max(20 Credits, 10% of the daily cap)`; when remaining cap reaches that buffer, stop billable polling/backfill and begin removing or pausing paid Activity subscriptions before the nominal cap is exhausted. At 100%, suppress all optional downstream paid work and send the cap-reached notification.
+- Events suppressed after the cap are counted without storing private bodies where feasible. Restoring delivery requires the next UTC day or an explicit cap increase; any paid backfill requires a displayed estimate and confirmation.
+- Keep an operational buffer and alert because subscription removal is not instantaneous and X may continue billing events during propagation.
+
 ### 8.4 Balance invariants
 
 - Available balance can never be negative.
 - A successful managed-app write has exactly one settlement.
 - A failed pre-upstream validation has no reservation and no charge.
-- A released reservation returns credits to the same originating bucket.
+- A released reservation returns Credits to the same originating bucket only while that bucket remains active. If an included bucket's billing period has ended, release converts directly to an `expire` entry and does not become spendable.
+- At a billing-period boundary, expire only unreserved included Credits. Reserved Credits move to an `expired_pending_settlement` state until they settle or release under the TTL. A successful settlement consumes them; a release expires them immediately.
+- A refund or chargeback first reverses unspent Credits from the purchased bucket. If the purchased Credits were already consumed, keep spendable balance at zero and record the shortfall in `recovery_debt` rather than violating the non-negative invariant.
+- While `recovery_debt > 0`, managed-X operations are blocked. Future purchased or included grants offset the debt before becoming spendable, unless an audited admin adjustment waives it. The UI and API show a payment/review state without describing the debt as credit expiration.
 - Top-up webhook handling is idempotent on Stripe Checkout Session or Payment Intent.
 - Granting or consuming credits uses a database transaction and row-level locking or an equivalent atomic mechanism.
 - Admin adjustments require an actor, reason, and audit log entry.
+
+### 8.5 Option B bounded-usage implementation
+
+Option B does not implement buckets, purchased balances, refunds, reservations, or a customer transaction ledger. It implements the smallest billing-grade control needed to launch bounded X Inbox safely:
+
+- `x_usage_periods`: one row per workspace and subscription billing period with `weighted_units_used`, `weighted_units_limit`, period boundaries, and timestamps.
+- Operation weights reuse the managed-app Credit catalog numbers so collected data remains comparable with the later ledger.
+- An atomic conditional increment succeeds only when `used + requested <= limit`; concurrency across workers/replicas cannot overspend the plan allowance.
+- Inbound events also pass the Section 8.3 daily inbound-spend counter before the monthly increment.
+- BYO X Platform Credentials bypass the managed-X usage counter because the customer pays X directly.
+- At the period boundary, create a new usage row; do not mutate historical periods.
+- Expose usage/limit/reset information in Billing and API, but do not call the value a purchased balance and do not offer Top-up Checkout.
+- Return `x_monthly_usage_limit_exceeded` with upgrade/contact guidance when the hard monthly limit is reached.
+
+This counter is intentionally not presented as the final ledger. Migration to the full system seeds the first included bucket from remaining period allowance and preserves historical usage rows for analytics.
 
 ## 9. Customer experience
 
@@ -370,6 +483,8 @@ Add an **X Credits** section to workspace Billing showing:
 - Included balance and top-up balance separately.
 - Current plan's monthly allowance.
 - Billing-period reset date.
+- Existing X publish safety usage: successful publishes today out of 20 for each connected X account, resetting at 00:00 UTC.
+- Workspace inbound-spend usage and daily cap, including controls to lower or explicitly raise the cap.
 - Estimated examples such as normal posts, URL posts, DM sends, and post reads.
 - Last 30 days of consumption by operation.
 - Top-up cards for all five SKUs, showing base Credits, bonus percentage, bonus Credits, final Credits, and `Never expires`.
@@ -386,14 +501,19 @@ Non-expiration must be visible without opening terms or a tooltip:
 - In the order summary: for example, **11,000 X Credits · Includes 10% bonus · Never expires**.
 - On the payment-success page and email receipt: final base/bonus breakdown and **Purchased credits never expire**.
 - On the balance card: **Included credits — resets on {date}** and **Top-up credits — never expire** as separate labels.
+- When the workspace is Free: **Your purchased Credits are still yours and never expire, but managed X operations require a paid plan. Upgrade to use this balance.**
+
+The non-expiration promise requires legal review for supported jurisdictions before launch because purchased, non-expiring usage units can create stored-value or gift-card questions even when they are non-transferable, non-refundable by default, and have no cash value.
 
 ### 9.2 Low-balance states
 
-- At 80% of included allowance consumed: dashboard notice and in-product usage indicator.
-- At 95%: email and dashboard warning.
-- At 100% of total available balance: blocking warning, top-up CTA, and API error documentation link.
-- Notifications are deduplicated per workspace, billing period, and threshold.
+- All low-balance evaluation uses `available_to_spend = included + topup - active reservations`; included-bucket consumption alone never triggers a warning while the workspace still has a large Top-up balance.
+- Dashboard notice when `available_to_spend` falls to or below 20% of the current plan's monthly included grant.
+- Email and dashboard warning when it falls to or below 5% of the current plan's monthly included grant.
+- At `available_to_spend = 0`: blocking warning, Top-up CTA, and API error documentation link.
+- Notifications are deduplicated per workspace, billing period, and threshold crossing. A balance increase above a threshold rearms that threshold.
 - Low-balance notices state which scheduled X posts are at risk before their execution time.
+- Inbound-spend-cap warnings are separate from balance warnings so a workspace can understand “Credits available, but today's inbound protection limit is reached.”
 
 ### 9.3 Top-up Checkout
 
@@ -404,12 +524,12 @@ Non-expiration must be visible without opening terms or a tooltip:
 - The success page polls the UniPost balance until the idempotent webhook grant is visible.
 - Payment failure or Checkout cancellation grants no credits.
 - Refunds create reversing ledger entries. They must never silently delete ledger history.
-- Manual and Auto top-ups use the same SKU, bonus, margin, and non-expiration rules.
+- Manual and Auto top-ups use the same SKU, bonus, and non-expiration rules. Margin remains an internal finance metric.
 - A paid workspace can use the resulting balance from Dashboard or API operations allowed by its plan. Top-up purchase never bypasses the Free X gate or the Basic Inbox gate.
 
-### 9.4 Auto top-up fast-follow
+### 9.4 Auto top-up — explicitly post-MVP
 
-Auto top-up is not required for the first public release, but the data model and API must not prevent it. When enabled, the workspace owner chooses:
+Auto top-up is not part of MVP. It may ship only after manual Top-up, ledger reconciliation, refund recovery, and duplicate-charge monitoring are stable in production. The data model and API must not prevent the later phase. When enabled, the workspace owner chooses:
 
 - A custom trigger threshold in whole Credits. UniPost may recommend a value based on the plan, but the recommendation must remain editable.
 - One of the approved SKUs.
@@ -460,10 +580,14 @@ Minimum response fields:
 - `data.topup_available`
 - `data.topup_expires_at`: always `null`
 - `data.reserved`
+- `data.available_to_spend`
+- `data.recovery_debt`
 - `data.plan_monthly_grant`
 - `data.billing_period_start`
 - `data.billing_period_end`
 - `data.catalog_version`
+- `data.inbound_daily_usage`
+- `data.inbound_daily_limit`
 - `data.connection_mode_note`
 - `request_id`
 
@@ -491,7 +615,7 @@ Owner/admin or an explicitly `billing:write`-scoped API key only. Accepts one en
 }
 ```
 
-The endpoint requires `Idempotency-Key`. The API derives price, base Credits, bonus, total Credits, and margin from the server-side SKU catalog. It must never trust client-supplied amount or credit quantity.
+The endpoint requires `Idempotency-Key`. The API derives price, base Credits, bonus, and total Credits from the server-side SKU catalog. Internal margin is not returned. It must never trust client-supplied amount or credit quantity.
 
 ```json
 {
@@ -544,6 +668,10 @@ The endpoint requires `Idempotency-Key`. The response returns the saved configur
 | Scenario | HTTP | Normalized code | Behavior |
 |---|---:|---|---|
 | Total X balance is insufficient before an immediate write | 402 | `x_credits_exhausted` | No upstream request is made. |
+| Existing 20/day X publish safety cap reached | 429 | `per_platform_daily_cap_exceeded` | No X request and no Credit reservation; reset at 00:00 UTC. |
+| Option B monthly weighted X allowance reached | 402 | `x_monthly_usage_limit_exceeded` | No paid managed-X work; return billing-period reset and upgrade/contact guidance. |
+| Workspace X inbound-spend cap reached | 429 | `x_inbound_daily_cap_exceeded` | Pause paid inbound work and provide reset/cap-management guidance. |
+| Refund/chargeback recovery debt exists | 402 | `x_credit_recovery_required` | Block managed-X spend until the debt is offset or waived. |
 | Top-up SKU is invalid | 422 | `validation_error` | No Checkout Session is created. |
 | Stripe top-up is unavailable | 503 | `billing_unavailable` | Existing balance remains unchanged. |
 | Auto top-up requires customer action | 409 | `auto_topup_action_required` | Pause automatic charges and return the Stripe recovery URL. |
@@ -554,6 +682,23 @@ The endpoint requires `Idempotency-Key`. The response returns the saved configur
 | XChat is not enabled for the account | 422 | `x_chat_not_supported` | Legacy DM support remains unaffected. |
 
 All new errors follow the existing UniPost error envelope and include `request_id`.
+
+### 10.4 Gate ordering and coexistence with existing limits
+
+X Credits do not replace the existing per-account 20-successful-publishes-per-UTC-day safety cap.
+
+For an outbound managed-X target, apply gates in this order:
+
+1. Plan/platform eligibility.
+2. Payload and scope validation, including URL classification.
+3. Existing per-account daily publish safety cap.
+4. Recovery-debt check.
+5. Credit reservation.
+6. Upstream X request.
+
+A target rejected by steps 1-4 consumes no Credits. The final result and Billing UI can therefore show `Credits available` and `20/20 X publishes used today` at the same time. The Dashboard must display both constraints rather than implying that purchasing Credits overrides platform-safety limits.
+
+For inbound activity, apply account/plan eligibility, event deduplication, workspace inbound-spend cap, and available balance before any optional paid enrichment or backfill. Webhook receipt itself must respond within X's required deadline even when downstream ingestion is suppressed.
 
 ## 11. X comments/replies
 
@@ -692,7 +837,7 @@ For XChat beta, evaluate:
 - `chat.received`
 - `chat.sent` only if required for cross-client consistency
 
-X currently documents self-serve Activity subscription capacity limits. If each connected account needs multiple subscriptions, UniPost must alert before 70%, 85%, and 95% of the app limit and pursue higher capacity before onboarding would exceed it. At three subscriptions per account, a 1,500-subscription limit represents only about 500 fully subscribed accounts.
+X currently documents self-serve Activity subscription capacity limits. The MVP requests two event subscriptions per eligible connected account (`post.mention.create` and `dm.received`), so a 1,500-subscription limit represents about 750 fully subscribed accounts. Alert before 70%, 85%, and 95% and pursue higher capacity before onboarding would exceed it. This is a capacity-monitoring requirement, not an initial launch blocker at current scale. If later XChat adds a third subscription, capacity falls to about 500 accounts and must be recalculated in the runbook.
 
 ### 14.5 Developer access request narrative
 
@@ -701,6 +846,19 @@ Use the following substance in any X access, capacity, or support application:
 > UniPost is a multi-tenant social publishing and customer-engagement platform. A customer explicitly connects an X account through OAuth and authorizes UniPost to publish, receive replies or messages addressed to that account, and send replies on the account owner's behalf. UniPost uses X data only to provide the connected customer's publishing, Inbox, support, and analytics workflows. We do not sell X content, build surveillance profiles, or use private messages to train public models. Access is workspace-scoped, tokens are encrypted, webhook signatures are verified, sensitive message bodies are excluded from logs, disconnect removes activity subscriptions, and workspace deletion follows our documented data-deletion process. We apply least-privilege scopes, usage limits, abuse controls, and customer-visible cost accounting.
 
 The actual application must include current traffic estimates, projected connected X accounts, event volume, retention policy, privacy URL, terms URL, security contact, and the requested Activity subscription capacity.
+
+### 14.6 Verified repository prerequisites and implementation traps
+
+The implementation plan must include these current-code prerequisites verified against `origin/main` on 2026-07-15:
+
+1. **Two X OAuth implementations must stay aligned.** Hosted Connect uses `api/internal/connect/twitter.go` and already uses S256 PKCE. Platform Credentials/native OAuth uses `api/internal/platform/twitter.go`, where `DefaultOAuthConfig.Scopes` and `GetAuthURL` currently duplicate scope values. Add `dm.read` and `dm.write` to both connection modes and make `GetAuthURL` derive the scope parameter from `config.Scopes` instead of another hard-coded string.
+2. **Upgrade Platform Credentials PKCE.** `api/internal/platform/twitter.go` currently uses `code_challenge_method=plain` and derives the verifier from state. Replace it with a cryptographically random stored verifier and RFC 7636 S256 challenge before granting DM permissions. Do not weaken the already-correct Hosted Connect S256 path.
+3. **Expand Inbox account queries.** `api/internal/db/queries/inbox.sql` currently limits background/sync account selection to `instagram`, `threads`, and `facebook`. Add `twitter` to the relevant query paths and regenerate sqlc.
+4. **Expand normalized source handling.** Add `x_reply` and `x_dm` across backend dispatch, response models, Dashboard types, grouping, icons, filters, unread counts, websocket validation, and reply routing. “Reuse the existing Inbox model” does not mean adapter-only work.
+5. **Correct existing Inbox documentation drift.** Before adding X, `/docs/api/inbox` must describe the sources actually implemented in production: `ig_comment`, `ig_dm`, `threads_reply`, `fb_comment`, and `fb_dm`. Remove `youtube_comment` from the documented supported set unless backend ingestion is implemented and verified; add the missing Facebook sources.
+6. **Create one plan/catalog source of truth.** Plan prices, quotas, feature gates, and future X allowance/catalog values are currently repeated across DB migrations and multiple Dashboard/docs files. The implementation includes a plan/catalog registry or generated artifact consumed by Pricing, Plans and limits, Billing, API Reference, operation-capacity tables, and source tests. Database plan rows remain runtime authority; generated public data must be checked against them.
+7. **Fix Enterprise plan serialization.** Enterprise currently stores `price_cents=0`, and `GET /v1/plans` serializes that as `$0` semantics. Add an explicit custom/contact-sales representation such as `price_cents: null` or `pricing_model: "custom"` before using the endpoint as the shared Pricing source.
+8. **Preserve existing daily safety behavior.** The 20/day X publish cap is a best-effort account-safety belt today, not a billing-grade counter. Ensure its rejection occurs before Credit reservation, and do not claim Credits allow customers to bypass it.
 
 ## 15. Documentation requirements
 
@@ -712,18 +870,18 @@ Create these pages using the existing API Reference components and navigation:
 
 | Route | Purpose | Must link to |
 |---|---|---|
-| `/docs/api/x-credits` | X Credits overview, catalog, managed vs BYO behavior | X Credits guide; Plans and limits |
+| `/docs/api/x-credits` | X Credits overview, public operation-to-Credits catalog, managed vs BYO behavior; no upstream dollar cost or margin | X Credits guide; Plans and limits |
 | `/docs/api/x-credits/balance` | `GET /v1/billing/x-credits` request/response | X Credits guide |
 | `/docs/api/x-credits/transactions` | `GET /v1/billing/x-credits/transactions` filters and ledger fields | X Credits guide |
 | `/docs/api/x-credits/top-up` | Manual Top-up Checkout, five SKUs, bonus fields, idempotency, and non-expiration | X Credits guide |
-| `/docs/api/x-credits/auto-top-up` | Payment-method setup and user-configured Auto top-up API | X Credits guide |
+| `/docs/api/x-credits/auto-top-up` | Post-MVP payment-method setup and user-configured Auto top-up API; publish only when the feature ships | X Credits guide |
 | `/docs/api/inbox/list` | Dedicated `GET /v1/inbox` contract including `x_reply` and `x_dm` | X comments guide; X DMs guide |
 | `/docs/api/inbox/reply` | Dedicated `POST /v1/inbox/{id}/reply` contract and X credit result fields | X comments guide; X DMs guide |
 | `/docs/api/inbox/sync` | Dedicated `POST /v1/inbox/sync`, estimates, backfill, and credit behavior | X comments guide; X DMs guide |
 
 Also update:
 
-- `/docs/api/inbox` to list `x_reply`, `x_dm`, and later `x_chat` only when that phase ships.
+- `/docs/api/inbox` first to correct its production baseline to `ig_comment`, `ig_dm`, `threads_reply`, `fb_comment`, and `fb_dm`; remove the unsupported documented `youtube_comment`. Then add `x_reply`, `x_dm`, and later `x_chat` only when each phase ships.
 - `/docs/api/posts/create` and `/docs/api/posts/validate` for estimates, actual-charge fields, BYO behavior, and `x_credits_exhausted`.
 - `/docs/api/billing` to link to the X Credits API family.
 - `/docs/api/errors` with every normalized error in Section 10.3.
@@ -735,7 +893,7 @@ Create task-oriented Guidance pages:
 
 | Route | User task | Must link back to |
 |---|---|---|
-| `/docs/guides/x/credits-and-top-ups` | Estimate X cost, inspect balance, buy discounted non-expiring Top-ups, configure Auto top-up, and handle exhaustion | Balance, transactions, manual/Auto top-up, create-post, and validate references |
+| `/docs/guides/x/credits-and-top-ups` | Estimate Credits, inspect balance, buy discounted non-expiring Top-ups, and handle exhaustion; add Auto top-up instructions only in its post-MVP release | Balance, transactions, manual Top-up, later Auto top-up, create-post, and validate references |
 | `/docs/guides/x/comments` | Connect X, receive comments/replies, list threads, and reply | Inbox list, reply, and sync references |
 | `/docs/guides/x/direct-messages` | Request scopes, reconnect, sync DMs, and send a reply | Inbox list, reply, sync, and X Credits references |
 | `/docs/guides/x/reconnect-permissions` | Add DM scopes to managed or BYO X apps and reconnect existing accounts | Account connect/capabilities, Inbox, and X Credits references |
@@ -753,11 +911,12 @@ The Guides sidebar gains an **X Guides** section. Each guide must be procedural,
   - Explain that BYO X app usage is billed directly by X and does not consume UniPost X Credits.
   - Link to reconnect guidance and the X Inbox guides.
 - `/docs/pricing`
-  - Add included credits by plan, reset behavior, the five-pack Top-up ladder, 0%-20% bonus, 60%-52% theoretical margin model, non-expiration, and separate post/X-credit enforcement.
+  - Add included credits by plan, reset behavior, the five-pack Top-up ladder, 0%-20% bonus, non-expiration, and separate post/X-credit enforcement.
   - Mirror the operation-capacity table and calculation definitions from Section 6.2.
   - Mirror the Top-up operation examples from Section 6.4 and explain that each example spends the whole pack on one operation type.
+  - Do not disclose X's upstream dollar prices, the internal cost represented by one Credit, gross profit, gross margin, or maximum upstream cost represented by a plan.
 - `/pricing`
-  - Add one concise X Credits allowance line per plan and a Top-up FAQ covering the five packs, volume bonus, manual/API purchase, Auto top-up, and non-expiration.
+  - Add one concise X Credits allowance line per plan and a Top-up FAQ covering the five packs, volume bonus, manual/API purchase, and non-expiration. Add Auto top-up copy only when that post-MVP feature ships.
   - Add **What your included X Credits can do** directly below the plan cards, showing normal posts, URL posts, complete comment interactions, and complete DM interactions for every plan.
   - Show `Inbox not included` for API comments and DMs rather than displaying a misleading theoretical capacity.
   - Explain that each maximum assumes the full shared balance is spent on one operation type and that mixed usage reduces every individual maximum.
@@ -777,6 +936,7 @@ The documentation build is incomplete unless all of the following are true:
 6. Automated source tests assert both directions for every required pair and fail on missing routes.
 7. Search indexing and sitemap generation include all new pages.
 8. No page describes XChat as shipped until its later-phase acceptance gate passes.
+9. Public documentation and marketing source tests fail if upstream X dollar prices, internal Credit cost mapping, gross profit, gross margin, or maximum upstream plan cost appear outside explicitly internal documentation.
 
 ### 15.5 Required link matrix
 
@@ -798,10 +958,14 @@ Track and alert on:
 - UniPost credits settled by operation and catalog version.
 - Daily upstream-cost-to-ledger variance.
 - Negative or inconsistent materialized balances; expected value is zero occurrences.
-- Pending reservations older than the reconciliation SLA.
+- Pending reservations approaching or exceeding the 15-minute customer-facing TTL.
+- Reservations reaching the defined 15-minute TTL, `unbilled_pending` exposure, and the 24-hour finance-reconciliation deadline.
+- Ledger/bucket authority versus `x_credit_accounts` cache mismatches and repair outcomes.
+- Refund/chargeback recovery debt and time to resolution.
 - Duplicate webhook event attempts and deduplication rate.
 - Activity subscription capacity at 70%, 85%, and 95%.
 - Low-balance blocks and successful top-ups after a block.
+- Inbound daily-cap usage, 80%/100% notifications, suppressed events, subscription-removal latency, and paid backfill confirmations.
 - Manual and automatic Top-up attempts, failures, customer-action requirements, monthly-cap pauses, and duplicate-prevention outcomes.
 - DM/reply webhook latency, backfill lag, and reply success rate.
 - Gross margin for included allowance and Top-ups separately, broken down by SKU and manual versus automatic purchase mode.
@@ -813,62 +977,58 @@ Track and alert on:
 - Do not retroactively charge customers for an internal UniPost bug without an explicit reviewed policy.
 - Undercharging caused by a catalog or integration bug is absorbed until a corrected catalog is published.
 - Overcharging is corrected with an auditable credit adjustment.
-- Pending timeout reservations reconcile automatically; unresolved cases enter an admin review queue.
+- Pending timeout reservations follow the 1/5/15-minute workflow. Any `unbilled_pending` item unresolved at 24 hours enters an admin review queue and pages the billing owner.
 
 ### 16.3 Cost controls
 
 - Set X-side spending limits per environment.
 - Development and staging must use non-production apps or separately bounded credentials where possible.
+- Preserve the existing 20-successful-X-publishes-per-account-per-UTC-day safety cap independently of Credits.
+- Enforce the workspace inbound daily-spend cap before optional enrichment or backfill can consume Credits.
 - Stop optional polling before essential outbound writes when a workspace balance is low.
-- Unsubscribe or pause paid private events when a workspace has zero balance and no viable top-up, if X supports doing so without losing required account state.
+- Unsubscribe or pause paid private events when the inbound cap or workspace balance is exhausted, if X supports doing so without losing required account state.
 - Restore subscriptions and offer bounded backfill after balance is replenished.
 - Cache public data and authors within allowed policy windows.
 
 ## 17. Rollout plan
 
-No feature flag is required by default. Use normal environment promotion, plan gates, capability checks, and explicit beta eligibility.
+No feature flag is required by default. Use normal environment promotion, plan gates, capability checks, and explicit beta eligibility. Phase order depends on the Section 2.3 decision.
 
-### Phase 0 — X access and pricing validation
+### Common Phase 0 — prerequisites
 
-- Confirm current X pricing.
+- Confirm current X pricing internally without publishing the upstream dollar amounts or UniPost margin.
 - Add X API funds and spending limits.
+- Complete the OAuth, PKCE, Inbox-source, documentation-baseline, plan/catalog-source, and Enterprise serialization prerequisites in Section 14.6.
 - Configure scopes, callbacks, webhook, CRC, and signatures.
-- Submit capacity/access request if projected subscriptions exceed self-serve limits.
+- Validate the 20/day outbound safety-cap interaction and the new inbound daily-spend cap.
+- Submit capacity/access request only when projections approach the monitored threshold.
 - Validate developer, staging, and production app separation.
 
-### Phase 1 — Credits foundation
+### Option A sequence — full Credits first
 
-- Ledger, buckets, grants, reservations, settlement, reconciliation.
-- Balance and transaction APIs.
-- Billing UI and manual Stripe top-ups.
-- Managed-vs-BYO branching.
-- Publish estimate and actual-charge metadata.
-- Low-balance notifications and hard block.
-- API Reference and X Credits Guidance pages.
+1. Ledger, buckets, grants, reservation TTL, refund recovery, settlement, and reconciliation.
+2. Balance/transaction APIs, Billing UI, and manual Stripe Top-ups.
+3. Managed-vs-BYO branching, estimates, low-balance states, and public documentation without internal unit economics.
+4. X public comments/replies.
+5. Legacy X DMs and reconnect flow.
 
-### Phase 1B — Auto top-up fast-follow
+### Option B sequence — bounded Inbox first (recommended for approval)
+
+1. Add an atomic per-workspace monthly weighted X-usage counter with the approved operation weights, but no purchased buckets, Stripe Top-ups, or customer ledger.
+2. Add the hard per-workspace daily inbound-spend cap, notifications, suppression, and bounded backfill.
+3. Ship X public comments/replies and legacy X DMs with plan allowance enforcement.
+4. Measure cost, inbound volume, cap hits, and demand against the Section 2.3 promotion triggers.
+5. Build the full Credits ledger and manual Top-ups only after a trigger or explicit product decision.
+
+### Post-MVP — Auto top-up
 
 - Explicit opt-in and Stripe reusable-payment-method setup.
 - User-defined threshold, selected SKU, and required monthly spend cap.
 - Off-session payment, 3DS/customer-action recovery, notifications, and anti-loop behavior.
 - Auto top-up API Reference and updated X Credits Guidance.
-- This phase is not included in the MVP total unless product explicitly promotes Auto top-up to launch scope.
+- Auto top-up is not part of either MVP sequence.
 
-### Phase 2 — X public comments/replies
-
-- Activity/webhook ingestion and backfill.
-- `x_reply` normalization and Inbox UI.
-- Outbound public replies.
-- Dedicated Inbox Reference pages and X comments Guidance.
-
-### Phase 3 — Legacy X DMs
-
-- OAuth reconnect for new scopes.
-- DM subscriptions, initial sync, and outbound replies.
-- `x_dm` Inbox source.
-- X DMs and reconnect Guidance.
-
-### Phase 4 — XChat proof of concept
+### Later — XChat proof of concept
 
 - Internal-only technical validation.
 - Security review and cost reconciliation.
@@ -883,15 +1043,19 @@ The estimate assumes one backend engineer and one frontend/full-stack engineer w
 | Credits ledger, grants, reservation/settlement, reconciliation | 3-4 engineer-weeks |
 | Stripe top-ups, billing APIs, Billing UI, notifications | 2-3 engineer-weeks |
 | Auto top-up, saved payment method, off-session recovery, and configurable threshold | 1-2 engineer-weeks as fast-follow |
+| Atomic bounded-usage counter and inbound daily-spend protection | 1.5-2.5 engineer-weeks |
 | X developer setup, webhooks, Activity subscriptions, reconnect scopes | 1-2 engineer-weeks plus external X approval time |
 | X comments/replies ingestion, normalization, UI, outbound replies | 2-3 engineer-weeks |
 | Legacy X DM sync, UI integration, outbound replies, privacy hardening | 2-3 engineer-weeks |
 | API Reference, Guidance, links, tests, and launch copy | 1-1.5 engineer-weeks |
+| Plan/catalog source-of-truth refactor and Enterprise serialization fix | 1.25-2.5 engineer-weeks |
 | End-to-end QA, billing reconciliation, and rollout hardening | 1.5-2 engineer-weeks |
 
-**MVP total:** approximately **12.5-18.5 engineer-weeks**, or roughly **7-10 calendar weeks** with two engineers and no external X approval delay.
+**Option A full Credits-first MVP:** approximately **13.75-21 engineer-weeks**, or roughly **8-11 calendar weeks** with two engineers and no external X approval delay.
 
-**Auto top-up fast-follow:** add approximately **1-2 engineer-weeks**. If promoted into MVP, add this range to the MVP total and release schedule.
+**Option B bounded-Inbox-first MVP:** approximately **7.75-13.25 engineer-weeks**, or roughly **4-7 calendar weeks** with two engineers. The later ledger/manual-Top-up phase adds approximately **6-9 engineer-weeks**, informed by real usage data.
+
+**Auto top-up post-MVP:** add approximately **1-2 engineer-weeks** after manual Top-up stability criteria are met.
 
 **XChat later phase:** add approximately **4-8+ engineer-weeks** after official tooling and permission feasibility are proven. This range is intentionally separate because encrypted key management and evolving XChat APIs are the largest uncertainty.
 
@@ -899,6 +1063,8 @@ The estimate assumes one backend engineer and one frontend/full-stack engineer w
 
 - Managed X gross margin stays within the approved floor by plan and in aggregate.
 - Top-up theoretical gross margin matches the approved SKU ladder and never falls below 52% before payment and operating costs under the launch catalog.
+- Option B, if selected, reports monthly weighted-usage utilization, inbound-cap hits, suppressed events, and customer requests needed for the Section 2.3 promotion decision.
+- Paid inbound work beyond a workspace's hard daily cap: zero confirmed incidents, excluding documented X subscription-removal propagation exposure.
 - Duplicate customer charges: zero confirmed incidents.
 - Successful top-up grant after verified Stripe payment: at least 99.9%.
 - X reply and legacy DM outbound success rate: at least 98%, excluding platform policy/rate-limit failures.
@@ -906,10 +1072,27 @@ The estimate assumes one backend engineer and one frontend/full-stack engineer w
 - Daily X invoice-to-ledger variance: below the finance-defined materiality threshold, with all larger variances explained.
 - At least 90% of `x_credits_exhausted` responses include an actionable balance/top-up link.
 - Documentation bidirectional-link tests pass in CI.
+- Customer-facing source tests report zero disclosures of upstream X dollar prices or UniPost margin.
 
 ## 20. Acceptance criteria
 
-The MVP is complete only when:
+### 20.1 Option B bounded X Inbox MVP
+
+If Option B is approved, its MVP is complete only when:
+
+1. X public replies and legacy DMs are available on Basic, Growth, Team, and eligible Enterprise workspaces through Dashboard and Inbox API.
+2. The monthly weighted X-usage counter and daily inbound-spend cap are atomic across workers/replicas and hard-block before additional paid work.
+3. A viral inbound event burst cannot consume beyond the configured daily inbound cap without explicit Owner/Admin action.
+4. The existing 20/day per-account X publish safety cap remains independent, visible, and checked before any X usage reservation/count increment.
+5. OAuth scope updates, Platform Credentials S256 PKCE, reconnect behavior, Inbox query/source expansion, and real dev-environment verification pass.
+6. `/docs/api/inbox` correctly documents the production baseline sources and the shipped X sources, with no unsupported `youtube_comment` claim.
+7. Pricing and docs describe included operation capacity and hard caps, but do not advertise purchased Top-ups before they ship.
+8. The Section 15 Reference/Guidance links for the shipped Inbox surface pass in both directions.
+9. Cost, cap-hit, suppression, backfill, and customer-demand metrics required by the Section 2.3 promotion gate are live.
+
+### 20.2 Full Credits and manual Top-ups
+
+If Option A is approved, or when Option B is promoted to the full system, the release is complete only when:
 
 1. Paid plans receive exactly the approved included credit amounts at the correct Stripe billing-period boundary.
 2. Manual Top-ups grant exactly 2,000, 4,200, 11,000, 23,000, or 48,000 Credits for the five approved SKUs after a verified successful payment and never before it. The ledger and API preserve base, bonus, and total Credits separately.
@@ -922,12 +1105,25 @@ The MVP is complete only when:
 9. Basic, Growth, Team, and eligible Enterprise workspaces can receive and reply to `x_reply` and `x_dm` items after granting the required permissions.
 10. Existing X publishing remains functional when an account has not yet reconnected for DM scopes.
 11. X developer callbacks, scopes, webhook CRC/signature verification, subscription limits, spending alerts, and ownership runbook are verified per environment.
-12. The Pricing page and Plans and limits docs accurately show allowances, the five-pack graduated Top-up ladder, 0%-20% bonus, 60%-52% theoretical margin range, non-expiration, separate quota behavior, and the complete Section 6.2 and 6.4 operation-capacity tables. Desktop tables and mobile cards are generated from versioned allowance/catalog data, use floor rounding, label API Inbox operations unavailable, and pass source tests for every displayed number.
+12. The Pricing page and Plans and limits docs accurately show allowances, the five-pack graduated Top-up ladder, 0%-20% bonus, non-expiration, separate quota behavior, and the complete Section 6.2 and 6.4 operation-capacity tables. Desktop tables and mobile cards are generated from versioned allowance/catalog data, use floor rounding, label API Inbox operations unavailable, and pass source tests for every displayed number.
 13. All new API Reference and Guidance pages in Section 15 exist, are in navigation/search/sitemap, and pass the bidirectional linking tests.
 14. XChat is not presented as generally available.
 15. Local CI-equivalent checks, development deployment, and real development-environment acceptance pass before the implementation is reported complete.
 16. `POST /v1/billing/x-credits/top-up/checkout` requires Owner/Admin or explicit `billing:write`, requires `Idempotency-Key`, returns server-derived base/bonus/total fields with `expires_at: null`, and never grants Credits before the verified Stripe webhook.
 17. Billing, Checkout summary, payment success, email receipt, Pricing, and Plans and limits surfaces visibly state that purchased Credits never expire; this promise is not hidden only in a tooltip or legal terms.
+18. Public pages and APIs expose Credits and operation examples without exposing X upstream dollar pricing, internal Credit cost mapping, gross profit, gross margin, or maximum upstream plan cost.
+19. Refunds and chargebacks that exceed remaining purchased Credits create `recovery_debt` while spendable balance remains non-negative; subsequent grants offset the debt according to Section 8.4.
+20. URL candidate posts reserve 200 Credits under the versioned Section 7.2 classifier; final settlement never produces a surprise negative balance.
+21. Included buckets with in-flight reservations cross billing periods using `expired_pending_settlement`; released Credits from an ended period expire rather than reappearing as spendable.
+22. The ledger and bucket rows are authoritative, `x_credit_accounts` is a rebuildable cache, and consistency mismatch tests block new reservations and repair from the ledger.
+23. Unknown write reservations follow the 1/5/15-minute workflow, release customer-facing balance after the TTL if still inconclusive, and enter the 24-hour internal reconciliation path.
+24. The existing 20/day publish safety cap and the inbound daily-spend cap coexist with Credits using the Section 10.4 gate order and distinct error/UI states.
+25. Legal review approves the non-expiring, non-transferable, no-cash-value Top-up terms and the Free-plan retained-balance copy for launch jurisdictions.
+26. Enterprise is represented as custom/contact-sales rather than `$0`, and public plan/catalog values are generated from a checked source of truth.
+
+### 20.3 Auto top-up post-MVP
+
+Auto top-up has a separate release gate and cannot be marked complete merely because manual Top-up ships. It requires at least 30 days of stable manual-payment reconciliation with zero unresolved duplicate-charge incidents, explicit opt-in, saved-payment-method consent, user-defined threshold, mandatory monthly cap, one in-flight payment, rearm behavior, 3DS recovery, and dedicated Reference/Guidance documentation.
 
 ## 21. Risks and mitigations
 
@@ -936,16 +1132,23 @@ The MVP is complete only when:
 | X changes prices without long notice | Margin compression | Versioned catalog, spending cap, daily reconciliation, emergency operations pause. |
 | URL posts cost far more than normal posts | Customer surprise | Preflight estimate, clear examples, validation response, Billing breakdown. |
 | Duplicate events or retries | Double charge and trust loss | Immutable ledger, unique idempotency keys, daily resource deduplication. |
+| Viral post drains balance through unsolicited inbound events | Unexpected spend and trust loss | Hard workspace daily inbound-spend cap, 80%/100% warnings, rapid subscription pause, and opt-in estimated backfill. |
 | Scheduled post executes after balance is depleted | Failed scheduled X target | Estimate at schedule time, low-balance warnings, execution-time reserve, top-up CTA. |
+| Unknown reservations lock balance indefinitely | Silent capacity loss and false Auto top-up triggers | 15-minute TTL, 1/5/15-minute reconciliation, customer-facing release, and 24-hour internal review SLA. |
 | New DM scopes break existing X connections | Publishing regression | Capability-specific reconnect; keep existing publishing scopes operational. |
 | Activity subscription ceiling is reached | New accounts lack real-time Inbox | Capacity monitoring and early higher-capacity application. |
 | DM content appears in logs | Privacy/security incident | Payload redaction, log tests, token encryption, restricted support tooling. |
 | XChat encryption/API instability | Delayed or unreliable feature | Separate POC and GA gate; ship legacy DM independently. |
 | Top-up refunds create inconsistent balance | Financial mismatch | Reversing ledger entries and admin review when balance is already consumed. |
+| Non-expiring purchased Credits trigger stored-value obligations or customer confusion on Free | Legal or chargeback exposure | Legal review, non-transferable/no-cash-value terms, explicit Free-plan usability copy, and retained `expires_at = null`. |
+| Customers assume Credits override the existing 20/day X safety cap | Support burden and failed publishes | Distinct usage meters, gate ordering, normalized errors, and Pricing/Billing copy that both limits apply. |
+| Public copy exposes UniPost unit economics | Pricing and negotiation harm | Internal/public data separation and source tests banning upstream dollar costs and margin from customer-facing surfaces. |
 | Auto top-up repeatedly charges a customer | Financial and trust incident | Explicit opt-in, user-defined threshold, required monthly cap, one in-flight payment, threshold-crossing rearm, and no chained purchases. |
 | Docs claim more than production supports | Customer confusion | Environment acceptance and source tests; phase-aware XChat copy. |
 
 ## 22. Product decisions recorded
+
+The upstream-cost and margin bullets in this section are confidential internal decisions and must not be copied into public surfaces.
 
 - Package model: **included monthly allowance plus purchasable top-ups**.
 - Credit accounting unit: **1 credit represents $0.001 upstream X reference cost**.
@@ -959,6 +1162,7 @@ The MVP is complete only when:
 - Manual and Auto top-ups use the same SKU bonus and non-expiration rules.
 - Top-up purchase is available through Billing UI and API with `billing:write`, but does not unlock Free X access or API-plan Inbox.
 - Auto top-up uses a user-defined editable threshold and required monthly spend cap; no plan-locked threshold is permitted.
+- Auto top-up is explicitly post-MVP and ships only after manual Top-up stability gates pass.
 - X Credits are separate from posts/month.
 - Managed app consumes X Credits; BYO X app does not.
 - X comments/replies and legacy DMs are the MVP.
@@ -967,4 +1171,4 @@ The MVP is complete only when:
 
 ## 23. Open product decision
 
-- **Auto top-up launch phase:** the design is complete and currently scheduled as Phase 1B fast-follow. Product must explicitly decide whether to promote it into MVP; until then, it is not included in the 12.5-18.5 engineer-week MVP estimate.
+- **Implementation sequence:** approve Option A (full Credits foundation first) or Option B (recommended bounded-Inbox-first sequence) from Section 2.3. Auto top-up is no longer an open MVP question; it is post-MVP in both options.
