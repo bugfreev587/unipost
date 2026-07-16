@@ -24,6 +24,7 @@ import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 import { buildContactPageHref } from "@/lib/support";
 import { PlanGate } from "@/components/dashboard/plan-gate";
 import { PlatformIcon } from "@/components/platform-icons";
+import { isMetaDMReplyWindowClosed } from "./reply-window";
 import {
   AlertTriangle,
   Archive,
@@ -1788,16 +1789,13 @@ function InboxPageInner() {
               </div>
 
               {isDMSource(selectedGroup.source) ? (() => {
-                // Messenger enforces a 24-hour reply window: Pages
-                // can only send a response within 24h of the user's
-                // last inbound message. Computing this client-side
-                // and disabling the Send button is kinder than
-                // surfacing Meta's opaque rejection after the user
-                // types + hits Enter. IG doesn't have this rule so
-                // the check is fb_dm-only.
+                // Meta enforces the standard 24-hour reply window for
+                // both Instagram and Facebook DMs. Keep the dashboard
+                // aligned with the backend guard so users see the
+                // actionable state before attempting a send.
                 const lastInbound = [...selectedGroup.items].reverse().find((i) => !i.is_own);
-                const windowClosed = selectedGroup.source === "fb_dm" && lastInbound
-                  ? (Date.now() - new Date(lastInbound.received_at).getTime()) > 24 * 60 * 60 * 1000
+                const windowClosed = lastInbound
+                  ? isMetaDMReplyWindowClosed(selectedGroup.source, lastInbound.received_at)
                   : false;
                 const draftReady = (replyDrafts["__dm_bottom__"] || "").trim().length > 0;
                 const sendAllowed = !windowClosed && draftReady && !!lastInbound;
@@ -1812,14 +1810,14 @@ function InboxPageInner() {
                         lineHeight: 1.45,
                         color: "var(--dtext)",
                       }}>
-                        Reply window closed — this user last messaged over 24 hours ago. They need to message your Page again before you can reply.
+                        Reply window closed — this person last messaged over 24 hours ago. They need to message this account again before you can reply.
                       </div>
                     ) : null}
                     <div style={{ padding: "10px 14px", display: "flex", alignItems: "center", gap: 8 }}>
                       <input
                         value={replyDrafts["__dm_bottom__"] || ""}
                         onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
-                        placeholder={windowClosed ? "Messenger's 24h window is closed" : "Message..."}
+                        placeholder={windowClosed ? "24h reply window is closed" : "Message..."}
                         disabled={windowClosed}
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
