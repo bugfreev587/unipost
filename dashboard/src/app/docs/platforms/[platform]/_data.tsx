@@ -37,6 +37,7 @@ export type PlatformDoc = {
   inbox?: {
     note?: string;
     rows: readonly (readonly string[])[];
+    links?: ReadonlyArray<{ label: string; href: string; description: string }>;
   };
   setup: readonly (readonly ReactNode[])[];
   setupNote?: ReactNode;
@@ -179,6 +180,24 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Saves / bookmarks", yes, "Supported"],
       ["Video views", no, "Not exposed for org accounts today"],
     ],
+    inbox: {
+      note: "Start with the unified Inbox overview, then use the endpoint reference for contracts and the X guides for complete workflows.",
+      rows: [
+        ["Public replies", yes, "Normalized as x_reply when the author summons the connected account"],
+        ["Legacy direct messages", yes, "Normalized as x_dm when dm.read and dm.write are granted"],
+      ],
+      links: [
+        { label: "Inbox overview", href: "/docs/api/inbox", description: "Supported sources and normalized Inbox fields." },
+        { label: "List Inbox API", href: "/docs/api/inbox/list", description: "Filter x_reply and x_dm items." },
+        { label: "Reply API", href: "/docs/api/inbox/reply", description: "Send an idempotent public reply or direct message." },
+        { label: "Sync API", href: "/docs/api/inbox/sync", description: "Run bounded reply and DM backfills." },
+        { label: "X comments guide", href: "/docs/guides/x/comments", description: "Receive, list, reply, and backfill public replies." },
+        { label: "X direct messages guide", href: "/docs/guides/x/direct-messages", description: "Operate private legacy DM threads safely." },
+        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions", description: "Restore scopes and workspace-app delivery credentials." },
+        { label: "X Credits reference", href: "/docs/api/x-credits", description: "Inspect allowance and inbound cap fields." },
+        { label: "X Credits guide", href: "/docs/guides/x/credits", description: "Plan the weighted managed-X operation mix." },
+      ],
+    },
     setup: [
       modeTwitterNative,
       ["Quickstart", "Use UniPost's shared X OAuth app", "UniPost-managed app", "Requires any paid plan"],

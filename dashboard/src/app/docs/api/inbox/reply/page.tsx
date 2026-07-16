@@ -14,7 +14,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.source", type: "string", description: "x_reply or x_dm for an X response." },
   { name: "data.is_own", type: "boolean", description: "true for the sent item." },
   { name: "data.x_credits_counted", type: "integer", description: "Weighted units charged. It is zero for workspace_x_app." },
-  { name: "data.x_credit_operation", type: "string", description: "post.reply_summoned for eligible replies or dm.send for direct messages." },
+  { name: "data.x_credit_operation", type: "string", description: "A URL-free X reply uses post.reply_summoned and costs 10 managed-X Credits. A reply containing a URL or domain-like candidate uses post.create_url and costs 200. A direct message uses dm.send and costs 15." },
   { name: "data.x_credit_billing_mode", type: "string", description: "unipost_managed_app or workspace_x_app." },
 ];
 const ERRORS: ApiFieldItem[] = [
@@ -47,8 +47,8 @@ export default function InboxReplyPage() {
     "source": "x_reply",
     "body": "Release notes are available at docs.example.com/releases.",
     "is_own": true,
-    "x_credits_counted": 10,
-    "x_credit_operation": "post.reply_summoned",
+    "x_credits_counted": 200,
+    "x_credit_operation": "post.create_url",
     "x_credit_billing_mode": "unipost_managed_app"
   }
 }` }, { lang: "json", label: "202", code: `{ "error": { "code": "X_REMOTE_ACCEPTED_RECONCILING", "message": "X accepted the reply; UniPost is reconciling the local Inbox result" } }` }, { lang: "json", label: "402", code: `{ "error": { "code": "X_MONTHLY_USAGE_LIMIT_EXCEEDED", "normalized_code": "x_monthly_usage_limit_exceeded" } }` }, { lang: "json", label: "409", code: `{ "error": { "code": "X_RECONNECT_REQUIRED", "message": "Reconnect the X account to grant missing scopes" } }` }]}

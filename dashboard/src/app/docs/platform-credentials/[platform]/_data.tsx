@@ -43,6 +43,7 @@ export type PlatformCredentialGuide = {
   doneChecklist: string[];
   relatedPlatformHref: string;
   relatedPlatformTitle: string;
+  relatedLinks?: Array<{ label: string; href: string; description: string }>;
 };
 
 type ApiWorkflowConfig = {
@@ -1356,6 +1357,17 @@ System.out.println(accounts);`,
     ],
     relatedPlatformHref: "/docs/platforms/twitter",
     relatedPlatformTitle: "X / Twitter platform guide",
+    relatedLinks: [
+      { label: "Inbox overview", href: "/docs/api/inbox", description: "See normalized sources and the shared Inbox contract." },
+      { label: "List Inbox API", href: "/docs/api/inbox/list", description: "Filter connected-account replies and direct messages." },
+      { label: "Reply API", href: "/docs/api/inbox/reply", description: "Send an idempotent X response." },
+      { label: "Sync API", href: "/docs/api/inbox/sync", description: "Run a bounded X history backfill." },
+      { label: "X comments guide", href: "/docs/guides/x/comments", description: "Operate eligible public reply workflows." },
+      { label: "X direct messages guide", href: "/docs/guides/x/direct-messages", description: "Operate private legacy DM workflows." },
+      { label: "Reconnect permissions", href: "/docs/guides/x/reconnect-permissions", description: "Grant current scopes after app credentials are complete." },
+      { label: "X Credits reference", href: "/docs/api/x-credits", description: "Inspect managed-X allowance and inbound cap fields." },
+      { label: "X Credits guide", href: "/docs/guides/x/credits", description: "Estimate and monitor managed-X usage." },
+    ],
   },
 };
 

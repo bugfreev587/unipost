@@ -15,6 +15,14 @@ curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"x_backfill":{"account_id":"sa_x_01","lookback_days":7,"max_items":50,"include_replies":true,"include_dms":false}}'`;
+const CONFIRMED_SYNC = `# Repeat the exact request when confirmation_required is true.
+CONFIRMATION_TOKEN="paste-confirmation-token"
+curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  --data-binary @- <<JSON
+{"x_backfill":{"account_id":"sa_x_01","lookback_days":7,"max_items":50,"include_replies":true,"include_dms":false,"confirmation_token":"$CONFIRMATION_TOKEN"}}
+JSON`;
 
 export default function XCommentsGuidePage() {
   return (
@@ -65,7 +73,10 @@ export default function XCommentsGuidePage() {
         response has <code>confirmation_required: true</code>, repeat the exact account, lookback, maximum, and include
         fields with the returned confirmation token before it expires.
       </p>
-      <DocsCodeTabs snippets={[{ lang: "curl", label: "Sync", code: SYNC }]} />
+      <DocsCodeTabs snippets={[
+        { lang: "curl", label: "Estimate", code: SYNC },
+        { lang: "curl", label: "Confirm", code: CONFIRMED_SYNC },
+      ]} />
 
       <h2 id="limits">5. Handle allowance and cap boundaries</h2>
       <ul className="docs-checklist">
@@ -74,6 +85,15 @@ export default function XCommentsGuidePage() {
         <li><code>x_write_outcome_pending</code>: do not resend with a new key; poll or retry with the original key.</li>
         <li><code>x_reconnect_required</code>: reconnect with tweet.read, tweet.write, users.read, and offline.access.</li>
       </ul>
+
+      <h2 id="related">Related Inbox and X Credits docs</h2>
+      <p>
+        Start from the <Link href="/docs/api/inbox">Inbox API overview</Link>. For private conversations, continue to
+        the <Link href="/docs/guides/x/direct-messages">X direct messages guide</Link>. Use the{" "}
+        <Link href="/docs/api/x-credits">X Credits API reference</Link> for live allowance fields and the{" "}
+        <Link href="/docs/guides/x/credits">X Credits guide</Link> for operation planning. Permission problems belong
+        in the <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>.
+      </p>
     </DocsPage>
   );
 }

@@ -15,6 +15,14 @@ curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"x_backfill":{"account_id":"sa_x_01","lookback_days":30,"max_items":50,"include_replies":false,"include_dms":true}}'`;
+const CONFIRMED_SYNC = `# Repeat the exact request when confirmation_required is true.
+CONFIRMATION_TOKEN="paste-confirmation-token"
+curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  --data-binary @- <<JSON
+{"x_backfill":{"account_id":"sa_x_01","lookback_days":30,"max_items":50,"include_replies":false,"include_dms":true,"confirmation_token":"$CONFIRMATION_TOKEN"}}
+JSON`;
 
 export default function XDirectMessagesGuidePage() {
   return (
@@ -65,7 +73,10 @@ export default function XDirectMessagesGuidePage() {
         high managed-X estimate returns a confirmation token before any paid read. Repeat the exact request with that
         token; changing the account set or request invalidates confirmation.
       </p>
-      <DocsCodeTabs snippets={[{ lang: "curl", label: "Sync", code: SYNC }]} />
+      <DocsCodeTabs snippets={[
+        { lang: "curl", label: "Estimate", code: SYNC },
+        { lang: "curl", label: "Confirm", code: CONFIRMED_SYNC },
+      ]} />
 
       <h2 id="limits">5. Branch on stable conditions</h2>
       <ul className="docs-checklist">
@@ -75,6 +86,15 @@ export default function XDirectMessagesGuidePage() {
         <li><code>x_reconnect_required</code>: reconnect and grant the missing DM permissions.</li>
         <li><code>x_write_outcome_pending</code>: reuse the original idempotency key; never blindly resend.</li>
       </ul>
+
+      <h2 id="related">Related Inbox and X Credits docs</h2>
+      <p>
+        Start from the <Link href="/docs/api/inbox">Inbox API overview</Link>. For public conversations, use the{" "}
+        <Link href="/docs/guides/x/comments">X comments guide</Link>. Diagnose missing access with the{" "}
+        <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>. Inspect live allowance fields in the{" "}
+        <Link href="/docs/api/x-credits">X Credits API reference</Link> and plan the operation mix with the{" "}
+        <Link href="/docs/guides/x/credits">X Credits guide</Link>.
+      </p>
     </DocsPage>
   );
 }

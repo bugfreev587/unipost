@@ -72,6 +72,83 @@ test("X Inbox references and guides link to each other in both directions", asyn
   }
 });
 
+test("X platform, credential, and workflow pages expose the complete Inbox discovery matrix", async () => {
+  const [platformData, platformPage, credentialData, credentialPage, comments, directMessages, reconnect] = await Promise.all([
+    source("src/app/docs/platforms/[platform]/_data.tsx"),
+    source("src/app/docs/platforms/[platform]/page.tsx"),
+    source("src/app/docs/platform-credentials/[platform]/_data.tsx"),
+    source("src/app/docs/platform-credentials/[platform]/page.tsx"),
+    source(guidePages[0]),
+    source(guidePages[1]),
+    source(guidePages[2]),
+  ]);
+  const requiredReferences = [
+    "/docs/api/inbox",
+    "/docs/api/inbox/list",
+    "/docs/api/inbox/reply",
+    "/docs/api/inbox/sync",
+    "/docs/api/x-credits",
+    "/docs/guides/x/credits",
+  ];
+  const surfaces = [
+    ["X platform page", platformData + platformPage, [
+      ...requiredReferences,
+      "/docs/guides/x/comments",
+      "/docs/guides/x/direct-messages",
+      "/docs/guides/x/reconnect-permissions",
+    ]],
+    ["X credential page", credentialData + credentialPage, [
+      ...requiredReferences,
+      "/docs/guides/x/comments",
+      "/docs/guides/x/direct-messages",
+      "/docs/guides/x/reconnect-permissions",
+    ]],
+    ["X comments guide", comments, [
+      ...requiredReferences,
+      "/docs/guides/x/direct-messages",
+      "/docs/guides/x/reconnect-permissions",
+    ]],
+    ["X direct-message guide", directMessages, [
+      ...requiredReferences,
+      "/docs/guides/x/comments",
+      "/docs/guides/x/reconnect-permissions",
+    ]],
+    ["X reconnect guide", reconnect, [
+      ...requiredReferences,
+      "/docs/guides/x/comments",
+      "/docs/guides/x/direct-messages",
+    ]],
+  ];
+  for (const [label, corpus, paths] of surfaces) {
+    for (const path of paths) {
+      assert.match(corpus, new RegExp(path.replaceAll("/", "\\/")), label + " is missing " + path);
+    }
+  }
+  assert.match(platformPage, /data\.inbox\.links\.map/);
+  assert.match(credentialPage, /guide\.relatedLinks\.map/);
+});
+
+test("X comments and DM guides show the complete confirmation follow-up request", async () => {
+  for (const path of [guidePages[0], guidePages[1]]) {
+    const guide = await source(path);
+    assert.ok(
+      guide.match(/curl -X POST "https:\/\/api\.unipost\.dev\/v1\/inbox\/sync"/g)?.length >= 2,
+      path + " must show both estimate and confirmed sync calls",
+    );
+    assert.match(guide, /confirmation_token/);
+    assert.match(guide, /CONFIRMATION_TOKEN/);
+  }
+});
+
+test("X reply reference documents URL and URL-free billing operations exactly", async () => {
+  const reply = await source("src/app/docs/api/inbox/reply/page.tsx");
+  assert.match(reply, /post\.reply_summoned[^\n]{0,160}10/);
+  assert.match(reply, /post\.create_url[^\n]{0,160}200/);
+  assert.match(reply, /docs\.example\.com\/releases/);
+  assert.match(reply, /"x_credits_counted": 200/);
+  assert.match(reply, /"x_credit_operation": "post\.create_url"/);
+});
+
 test("X Inbox pages are registered in sidebar, indexes, search, and sitemap", async () => {
   const [shell, apiIndex, guideIndex, searchIndex, sitemap] = await Promise.all([
     source("src/app/docs/_components/docs-shell.tsx"),

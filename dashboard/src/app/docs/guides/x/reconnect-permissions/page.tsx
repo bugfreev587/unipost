@@ -67,6 +67,15 @@ export default function XReconnectPermissionsGuidePage() {
         mode consumes UniPost X Credits; <code>workspace_x_app</code> uses your X app access and bypasses the UniPost
         allowance.
       </p>
+
+      <h2 id="related">Related Inbox and X Credits docs</h2>
+      <p>
+        Review the <Link href="/docs/api/inbox">Inbox API overview</Link>, then choose the{" "}
+        <Link href="/docs/guides/x/comments">X comments guide</Link> or{" "}
+        <Link href="/docs/guides/x/direct-messages">X direct messages guide</Link>. Use the{" "}
+        <Link href="/docs/api/x-credits">X Credits API reference</Link> to inspect current boundaries and the{" "}
+        <Link href="/docs/guides/x/credits">X Credits guide</Link> to plan managed-X usage.
+      </p>
     </DocsPage>
   );
 }
