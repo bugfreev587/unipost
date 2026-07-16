@@ -102,6 +102,37 @@ func TestReserveManagedXUsageUsesCatalogWeight(t *testing.T) {
 	}
 }
 
+func TestReserveManagedXOperationUsesFirstCommentWeight(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := &SocialPostHandler{xUsage: fake}
+	account := db.SocialAccount{
+		ID:             "sa_1",
+		Platform:       "twitter",
+		ConnectionType: "managed",
+	}
+
+	_, err := h.reserveManagedXOperation(
+		context.Background(),
+		"ws_1",
+		"job_1:1:first-comment",
+		account,
+		"post.create",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.requests) != 1 {
+		t.Fatalf("reserve requests = %d, want 1", len(fake.requests))
+	}
+	req := fake.requests[0]
+	if req.OperationKey != "post.create" || req.RequestedUnits != 15 {
+		t.Fatalf("request = %+v", req)
+	}
+	if req.IdempotencyKey != "job_1:1:first-comment" {
+		t.Fatalf("idempotency key = %q", req.IdempotencyKey)
+	}
+}
+
 func TestPublishGateOrdersDailyCapBeforeXUsage(t *testing.T) {
 	source, err := os.ReadFile("social_posts.go")
 	if err != nil {

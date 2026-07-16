@@ -392,7 +392,8 @@ export default function PricingPage() {
           </div>
           <p className="pr-xcredits-note">
             Enterprise X Credits and inbound limits are contract-defined. The independent safety cap of 20 X posts
-            per connected account per UTC day still applies on every plan.
+            per connected account per UTC day still applies on every plan. Comment and DM figures are capacity
+            planning for phased X Inbox support; they do not indicate API availability before that phase ships.
           </p>
         </section>
 

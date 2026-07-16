@@ -1843,7 +1843,7 @@ func (h *SocialPostHandler) publishOneContext(
 	// back the main post — it's recorded as a warning instead.
 	if err == nil && postResult != nil && pp.FirstComment != "" {
 		if commenter, ok := adapter.(platform.FirstCommentAdapter); ok {
-			commentEvent, reserveErr := h.reserveManagedXUsage(ctx, workspaceID, usageKey+":first-comment", acc, pp.FirstComment)
+			commentEvent, reserveErr := h.reserveManagedXOperation(ctx, workspaceID, usageKey+":first-comment", acc, "post.create")
 			if reserveErr != nil {
 				oc.firstCommentWarning = reserveErr.Error()
 				return
@@ -1883,10 +1883,19 @@ func (h *SocialPostHandler) reserveManagedXUsage(
 	account db.SocialAccount,
 	text string,
 ) (xcredits.UsageEvent, error) {
+	return h.reserveManagedXOperation(ctx, workspaceID, usageKey, account, xOperationForText(text))
+}
+
+func (h *SocialPostHandler) reserveManagedXOperation(
+	ctx context.Context,
+	workspaceID string,
+	usageKey string,
+	account db.SocialAccount,
+	operation string,
+) (xcredits.UsageEvent, error) {
 	if h == nil || h.xUsage == nil || account.Platform != "twitter" || account.ConnectionType != "managed" {
 		return xcredits.UsageEvent{}, nil
 	}
-	operation := xOperationForText(text)
 	return h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
 		WorkspaceID:     workspaceID,
 		SocialAccountID: account.ID,

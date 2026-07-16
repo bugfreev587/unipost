@@ -419,7 +419,8 @@ function BillingSettingsContent() {
 
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--dborder)", fontSize: 12, lineHeight: 1.6, color: "var(--dmuted)" }}>
           Managed-X work stops at the hard limit. The independent safety cap of 20 X posts per connected account per UTC day still applies.
-          Bring-your-own X API connections do not consume this allowance.
+          Bring-your-own X API connections do not consume this allowance. Comment and DM examples are capacity
+          planning for the phased X Inbox rollout.
         </div>
       </section>
 
