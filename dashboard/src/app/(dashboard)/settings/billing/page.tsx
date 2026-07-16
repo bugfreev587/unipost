@@ -152,9 +152,14 @@ function BillingSettingsContent() {
     return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
   }
 
-  const used = billing?.usage ?? 0;
+  const used = billing?.completed_usage ?? billing?.usage ?? 0;
+  const scheduled = billing?.scheduled_usage ?? 0;
+  const held = billing?.quota_hold_usage ?? 0;
+  const effectiveUsage = billing?.effective_usage ?? used + scheduled;
   const limit = billing?.limit ?? 100;
-  const pct = billing ? Math.round(usagePercentage(used, limit)) : 0;
+  const pct = billing
+    ? Math.round(billing.effective_percentage ?? usagePercentage(effectiveUsage, limit))
+    : 0;
   const barClass = pct >= 100 ? "bar-red" : pct >= 80 ? "bar-amber" : "bar-green";
   const xPlan = X_CREDIT_PLANS.find((plan) => plan.id === xCredits?.plan_id);
   const xAllowance = xCredits?.monthly_allowance;
@@ -263,11 +268,11 @@ function BillingSettingsContent() {
         <div className="stat-card">
           <div className="dt-label" style={{ marginBottom: 8 }}>
 
-            Posts This Month
+            Effective Monthly Usage
           </div>
           <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
 
-            {used.toLocaleString()}
+            {effectiveUsage.toLocaleString()}
           </div>
           <div style={{ margin: "8px 0 4px" }}>
             <div className="usage-bar-track">
@@ -283,8 +288,13 @@ function BillingSettingsContent() {
               color: pct >= 80 ? "var(--warning)" : "var(--dmuted)",
             }}
           >
-            {formatPostUsage(used, limit)}
+            {formatPostUsage(effectiveUsage, limit)}
             {limit > 0 ? <> &middot; {pct}%</> : null}
+          </div>
+          <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: "6px 14px", fontSize: 11, color: "var(--dmuted)" }}>
+            <span>Published {used.toLocaleString()}</span>
+            <span>Committed schedule {scheduled.toLocaleString()}</span>
+            {held > 0 ? <span style={{ color: "var(--warning)" }}>On quota hold {held.toLocaleString()}</span> : null}
           </div>
         </div>
         <div className="stat-card">
@@ -303,14 +313,16 @@ function BillingSettingsContent() {
         <div className="stat-card">
           <div className="dt-label" style={{ marginBottom: 8 }}>
 
-            Status
+            Scheduling
           </div>
           <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 600, letterSpacing: -0.5 }}>
 
-            {billing?.status || "active"}
+            {billing?.scheduling_allowed === false ? "Paused" : "Available"}
           </div>
           <div style={{ fontSize: 12, color: "var(--dmuted)", marginTop: 4 }}>
-            Unlimited accounts
+            {billing?.scheduling_allowed === false
+              ? "Publish now remains available"
+              : `Subscription ${billing?.status || "active"}`}
           </div>
         </div>
       </div>
@@ -321,20 +333,24 @@ function BillingSettingsContent() {
             padding: "10px 14px",
             borderRadius: 6,
             marginBottom: 20,
-            background: billing.warning === "over_limit" ? "#ef444410" : "#f59e0b10",
+            background: billing.warning === "scheduled_quota_reached" || billing.warning === "over_limit" ? "#ef444410" : "#f59e0b10",
             border: `1px solid ${
-              billing.warning === "over_limit" ? "#ef444425" : "#f59e0b25"
+              billing.warning === "scheduled_quota_reached" || billing.warning === "over_limit" ? "#ef444425" : "#f59e0b25"
             }`,
             fontSize: 13,
             color:
-              billing.warning === "over_limit" ? "var(--danger)" : "var(--warning)",
+              billing.warning === "scheduled_quota_reached" || billing.warning === "over_limit" ? "var(--danger)" : "var(--warning)",
           }}
         >
-          {billing.warning === "over_limit"
+          {billing.warning === "scheduled_quota_reached"
+            ? billing.quota_hold_usage > 0
+              ? `${billing.quota_hold_usage.toLocaleString()} scheduled units are on quota hold and will not publish automatically. Upgrade, cancel them, move them into a month with capacity, or publish them manually. New scheduled posts remain paused until the holds are resolved.`
+              : `Monthly scheduling capacity is full. New scheduled posts are paused until ${billing.resets_at ? new Date(billing.resets_at).toLocaleDateString() : "the next billing month"} or until you upgrade. Immediate publishing remains available.`
+            : billing.warning === "over_limit"
             ? billing.plan === "free"
               ? "Free monthly post quota reached. Upgrade to keep posting this month."
-              : "Monthly post quota exceeded. Posting continues for now — sustained overage will require an upgrade."
-            : `${pct}% of monthly post quota used. Consider upgrading.`}
+              : "Monthly post quota exceeded. Immediate publishing remains available, but new scheduled posts require available capacity."
+            : `${pct}% of effective monthly quota is committed. Review upcoming posts or upgrade before scheduling capacity fills.`}
         </div>
       )}
 

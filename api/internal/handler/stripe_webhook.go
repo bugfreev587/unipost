@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,14 +16,128 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 )
 
 type StripeWebhookHandler struct {
-	queries     *db.Queries
-	stripe      *billing.Manager
-	bus         events.EventBus
-	appBaseURL  string
-	loopsSyncer loopsLifecycleSyncer
+	queries            *db.Queries
+	stripe             *billing.Manager
+	bus                events.EventBus
+	appBaseURL         string
+	loopsSyncer        loopsLifecycleSyncer
+	holdReconciler     paidquota.HoldReconciler
+	paidQuotaEvaluator paidQuotaEvaluationService
+}
+
+func (h *StripeWebhookHandler) SetHoldReconciler(reconciler paidquota.HoldReconciler) *StripeWebhookHandler {
+	h.holdReconciler = reconciler
+	return h
+}
+
+func (h *StripeWebhookHandler) SetPaidQuotaEvaluator(evaluator paidQuotaEvaluationService) *StripeWebhookHandler {
+	h.paidQuotaEvaluator = evaluator
+	return h
+}
+
+func (h *StripeWebhookHandler) evaluatePaidQuotaHorizon(ctx context.Context, workspaceID string) {
+	if h == nil || h.paidQuotaEvaluator == nil {
+		return
+	}
+	now := time.Now().UTC()
+	end := now.AddDate(0, 0, 90)
+	for cursor := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC); !cursor.After(end); cursor = cursor.AddDate(0, 1, 0) {
+		period := cursor.Format("2006-01")
+		if err := h.paidQuotaEvaluator.Evaluate(ctx, workspaceID, period); err != nil {
+			slog.Warn("stripe webhook: paid quota evaluation failed", "workspace_id", workspaceID, "period", period, "error", err)
+		}
+		if resolver, ok := h.paidQuotaEvaluator.(interface {
+			ResolveFollowUpsBelowLimit(context.Context, string, string) error
+		}); ok {
+			if err := resolver.ResolveFollowUpsBelowLimit(ctx, workspaceID, period); err != nil {
+				slog.Warn("stripe webhook: paid quota follow-up resolution failed", "workspace_id", workspaceID, "period", period, "error", err)
+			}
+		}
+	}
+}
+
+func (h *StripeWebhookHandler) reconcileQuotaHoldsForPlanChange(
+	ctx context.Context,
+	workspaceID string,
+	currentPlan db.Plan,
+	nextPlan db.Plan,
+	effectiveAt time.Time,
+) error {
+	if h == nil || h.holdReconciler == nil || currentPlan.ID == nextPlan.ID {
+		return nil
+	}
+	if isPlanCapacityDowngrade(currentPlan, nextPlan) {
+		return h.holdReconciler.ReconcileWorkspaceForPlan(
+			ctx,
+			workspaceID,
+			nextPlan.ID,
+			int(nextPlan.PostLimit),
+			"plan_downgrade",
+			effectiveAt,
+		)
+	}
+	return h.holdReconciler.ReconcileWorkspaceForPlan(
+		ctx,
+		workspaceID,
+		nextPlan.ID,
+		int(nextPlan.PostLimit),
+		"plan_upgrade",
+		time.Time{},
+	)
+}
+
+func (h *StripeWebhookHandler) applyPlanChangeMutation(
+	ctx context.Context,
+	workspaceID string,
+	currentPlan db.Plan,
+	nextPlan db.Plan,
+	effectiveAt time.Time,
+	mutation paidquota.PlanChangeMutation,
+) error {
+	if currentPlan.ID == nextPlan.ID || h == nil || h.holdReconciler == nil {
+		if mutation != nil {
+			return mutation(h.queries)
+		}
+		return nil
+	}
+	reason := "plan_upgrade"
+	downgradeEffectiveAt := time.Time{}
+	if isPlanCapacityDowngrade(currentPlan, nextPlan) {
+		reason = "plan_downgrade"
+		downgradeEffectiveAt = effectiveAt
+	}
+	return h.holdReconciler.ApplyPlanChange(
+		ctx,
+		workspaceID,
+		nextPlan.ID,
+		int(nextPlan.PostLimit),
+		reason,
+		downgradeEffectiveAt,
+		mutation,
+	)
+}
+
+func stripeEventEffectiveAt(event stripe.Event) time.Time {
+	if event.Created > 0 {
+		return time.Unix(event.Created, 0).UTC()
+	}
+	return time.Now().UTC()
+}
+
+func isPlanCapacityDowngrade(currentPlan, nextPlan db.Plan) bool {
+	currentLimit := int(currentPlan.PostLimit)
+	nextLimit := int(nextPlan.PostLimit)
+	if nextLimit < 0 {
+		return false
+	}
+	if currentLimit < 0 {
+		return true
+	}
+	return nextLimit < currentLimit
 }
 
 func NewStripeWebhookHandler(queries *db.Queries, stripeMgr *billing.Manager, bus events.EventBus, appBaseURL string) *StripeWebhookHandler {
@@ -65,11 +180,23 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 
 	switch event.Type {
 	case "checkout.session.completed":
-		h.handleCheckoutCompleted(r, event)
+		if err := h.handleCheckoutCompleted(r, event); err != nil {
+			slog.Error("stripe webhook: checkout completion failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply checkout")
+			return
+		}
 	case "customer.subscription.updated":
-		h.handleSubscriptionUpdated(r, event)
+		if err := h.handleSubscriptionUpdated(r, event); err != nil {
+			slog.Error("stripe webhook: subscription update failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply subscription update")
+			return
+		}
 	case "customer.subscription.deleted":
-		h.handleSubscriptionDeleted(r, event)
+		if err := h.handleSubscriptionDeleted(r, event); err != nil {
+			slog.Error("stripe webhook: subscription cancellation failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply subscription cancellation")
+			return
+		}
 	case "invoice.payment_failed":
 		h.handlePaymentFailed(r, event)
 	case "invoice.payment_succeeded":
@@ -79,18 +206,18 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event stripe.Event) {
+func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event stripe.Event) error {
 	var session stripe.CheckoutSession
 	if err := json.Unmarshal(event.Data.Raw, &session); err != nil {
 		slog.Error("stripe webhook: failed to parse checkout session", "error", err)
-		return
+		return err
 	}
 
 	workspaceID := session.Metadata["workspace_id"]
 	planID := session.Metadata["plan_id"]
 	if workspaceID == "" || planID == "" {
 		slog.Error("stripe webhook: missing metadata", "workspace_id", workspaceID, "plan_id", planID)
-		return
+		return fmt.Errorf("checkout session missing workspace_id or plan_id metadata")
 	}
 
 	var previousSub *db.Subscription
@@ -107,25 +234,42 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 		subscriptionID = session.Subscription.ID
 	}
 
-	// Use upsert to handle both new and existing subscription rows
-	_, err := h.queries.CreateSubscription(r.Context(), db.CreateSubscriptionParams{
-		WorkspaceID:          workspaceID,
-		PlanID:               planID,
-		StripeCustomerID:     pgtype.Text{String: customerID, Valid: customerID != ""},
-		StripeSubscriptionID: pgtype.Text{String: subscriptionID, Valid: subscriptionID != ""},
-		Status:               "active",
-	})
-	if err != nil {
-		slog.Error("stripe webhook: failed to upsert subscription", "error", err, "workspace_id", workspaceID)
-		return
-	}
-
-	slog.Info("stripe webhook: subscription created", "workspace_id", workspaceID, "plan_id", planID, "customer", customerID)
-
 	oldPlanID := "free"
 	if previousSub != nil {
 		oldPlanID = previousSub.PlanID
 	}
+	currentPlan, err := h.queries.GetPlan(r.Context(), oldPlanID)
+	if err != nil {
+		return fmt.Errorf("load checkout current plan for quota reconciliation: %w", err)
+	}
+	nextPlan, err := h.queries.GetPlan(r.Context(), planID)
+	if err != nil {
+		return fmt.Errorf("load checkout target plan for quota reconciliation: %w", err)
+	}
+
+	if err := h.applyPlanChangeMutation(
+		r.Context(),
+		workspaceID,
+		currentPlan,
+		nextPlan,
+		stripeEventEffectiveAt(event),
+		func(queries *db.Queries) error {
+			_, err := queries.CreateSubscription(r.Context(), db.CreateSubscriptionParams{
+				WorkspaceID:          workspaceID,
+				PlanID:               planID,
+				StripeCustomerID:     pgtype.Text{String: customerID, Valid: customerID != ""},
+				StripeSubscriptionID: pgtype.Text{String: subscriptionID, Valid: subscriptionID != ""},
+				Status:               "active",
+			})
+			return err
+		},
+	); err != nil {
+		slog.Error("stripe webhook: failed to upsert subscription", "error", err, "workspace_id", workspaceID)
+		return err
+	}
+
+	slog.Info("stripe webhook: subscription created", "workspace_id", workspaceID, "plan_id", planID, "customer", customerID)
+
 	h.syncLoopsPlanChanged(
 		r.Context(),
 		workspaceID,
@@ -133,28 +277,48 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 		planID,
 		fmt.Sprintf("plan_changed:stripe.checkout.completed:%s:%s:%s", session.ID, normalizePlanID(oldPlanID), normalizePlanID(planID)),
 	)
+	h.evaluatePaidQuotaHorizon(r.Context(), workspaceID)
+	return nil
 }
 
-func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) {
+func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) error {
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		slog.Error("stripe webhook: failed to parse subscription", "error", err)
-		return
+		return err
 	}
 
 	localSub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
 	if err != nil {
 		slog.Error("stripe webhook: subscription row not found", "subscription_id", sub.ID, "error", err)
-		return
+		return err
 	}
 
 	if isTrialCancellation(sub) {
-		if err := h.queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true}); err != nil {
-			slog.Error("stripe webhook: failed to stop trialing subscription immediately", "subscription_id", sub.ID, "error", err)
-			return
+		currentPlan, err := h.queries.GetPlan(r.Context(), localSub.PlanID)
+		if err != nil {
+			return fmt.Errorf("load trial plan for quota reconciliation: %w", err)
 		}
+		freePlan, err := h.queries.GetPlan(r.Context(), "free")
+		if err != nil {
+			return fmt.Errorf("load free plan for trial cancellation reconciliation: %w", err)
+		}
+		if err := h.applyPlanChangeMutation(
+			r.Context(),
+			localSub.WorkspaceID,
+			currentPlan,
+			freePlan,
+			stripeEventEffectiveAt(event),
+			func(queries *db.Queries) error {
+				return queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
+			},
+		); err != nil {
+			slog.Error("stripe webhook: failed to stop trialing subscription immediately", "subscription_id", sub.ID, "error", err)
+			return err
+		}
+		h.evaluatePaidQuotaHorizon(r.Context(), localSub.WorkspaceID)
 		slog.Info("stripe webhook: trialing subscription canceled immediately", "subscription_id", sub.ID, "workspace_id", localSub.WorkspaceID)
-		return
+		return nil
 	}
 
 	planID := localSub.PlanID
@@ -166,7 +330,8 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 	}
 
 	status := string(sub.Status)
-	if err := h.queries.UpdateSubscriptionStripe(r.Context(), db.UpdateSubscriptionStripeParams{
+	planChanged := planID != localSub.PlanID
+	updateParams := db.UpdateSubscriptionStripeParams{
 		WorkspaceID:          localSub.WorkspaceID,
 		StripeCustomerID:     stripeCustomerID(sub.Customer),
 		StripeSubscriptionID: pgtype.Text{String: sub.ID, Valid: true},
@@ -175,9 +340,31 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 		CurrentPeriodStart:   stripeUnixToTimestamptz(subscriptionCurrentPeriodStart(&sub)),
 		CurrentPeriodEnd:     stripeUnixToTimestamptz(subscriptionCurrentPeriodEnd(&sub)),
 		CancelAtPeriodEnd:    pgtype.Bool{Bool: sub.CancelAtPeriodEnd, Valid: true},
-	}); err != nil {
+	}
+	if planChanged {
+		currentPlan, err := h.queries.GetPlan(r.Context(), localSub.PlanID)
+		if err != nil {
+			return fmt.Errorf("load current plan for quota reconciliation: %w", err)
+		}
+		nextPlan, err := h.queries.GetPlan(r.Context(), planID)
+		if err != nil {
+			return fmt.Errorf("load next plan for quota reconciliation: %w", err)
+		}
+		if err := h.applyPlanChangeMutation(
+			r.Context(),
+			localSub.WorkspaceID,
+			currentPlan,
+			nextPlan,
+			stripeEventEffectiveAt(event),
+			func(queries *db.Queries) error {
+				return queries.UpdateSubscriptionStripe(r.Context(), updateParams)
+			},
+		); err != nil {
+			return fmt.Errorf("reconcile quota holds: %w", err)
+		}
+	} else if err := h.queries.UpdateSubscriptionStripe(r.Context(), updateParams); err != nil {
 		slog.Error("stripe webhook: failed to sync subscription state", "subscription_id", sub.ID, "error", err)
-		return
+		return err
 	}
 
 	slog.Info(
@@ -195,23 +382,56 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 		planID,
 		fmt.Sprintf("plan_changed:stripe.subscription.updated:%s:%s:%s:%d", sub.ID, normalizePlanID(localSub.PlanID), normalizePlanID(planID), subscriptionCurrentPeriodStart(&sub)),
 	)
+
+	if planChanged {
+		h.evaluatePaidQuotaHorizon(r.Context(), localSub.WorkspaceID)
+	}
+	return nil
 }
 
-func (h *StripeWebhookHandler) handleSubscriptionDeleted(r *http.Request, event stripe.Event) {
+func (h *StripeWebhookHandler) handleSubscriptionDeleted(r *http.Request, event stripe.Event) error {
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		slog.Error("stripe webhook: failed to parse subscription", "error", err)
-		return
+		return err
 	}
 
-	if localSub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true}); err == nil {
+	localSub, localSubErr := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
+	if localSubErr == nil {
 		h.syncLoopsBillingSubscriptionCanceled(r.Context(), localSub, sub)
 	} else {
-		slog.Warn("stripe webhook: subscription row not found for cancellation email", "subscription_id", sub.ID, "error", err)
+		slog.Warn("stripe webhook: subscription row not found for cancellation email", "subscription_id", sub.ID, "error", localSubErr)
 	}
-	h.queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
+	if localSubErr == nil {
+		currentPlan, err := h.queries.GetPlan(r.Context(), localSub.PlanID)
+		if err != nil {
+			return fmt.Errorf("load canceled plan for quota reconciliation: %w", err)
+		}
+		freePlan, err := h.queries.GetPlan(r.Context(), "free")
+		if err != nil {
+			return fmt.Errorf("load free plan for quota reconciliation: %w", err)
+		}
+		if err := h.applyPlanChangeMutation(
+			r.Context(),
+			localSub.WorkspaceID,
+			currentPlan,
+			freePlan,
+			stripeEventEffectiveAt(event),
+			func(queries *db.Queries) error {
+				return queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
+			},
+		); err != nil {
+			return fmt.Errorf("reconcile canceled subscription quota holds: %w", err)
+		}
+	} else if err := h.queries.CancelSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true}); err != nil {
+		return err
+	}
+	if localSubErr == nil {
+		h.evaluatePaidQuotaHorizon(r.Context(), localSub.WorkspaceID)
+	}
 
 	slog.Info("stripe webhook: subscription canceled", "subscription_id", sub.ID)
+	return nil
 }
 
 func (h *StripeWebhookHandler) handlePaymentFailed(r *http.Request, event stripe.Event) {

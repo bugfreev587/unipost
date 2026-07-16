@@ -9,7 +9,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -250,7 +252,14 @@ func parsePublishRequest(body publishRequestBody) (parsedRequest, int, string) {
 // — workspaces rarely have more than a few dozen accounts) so the
 // validator can resolve any account_id without a per-id round trip.
 func (h *SocialPostHandler) loadValidateAccounts(r *http.Request, workspaceID string) (map[string]platform.ValidateAccount, error) {
-	accounts, err := h.queries.ListSocialAccountsByWorkspace(r.Context(), workspaceID)
+	return loadValidateAccountsWithQueries(r.Context(), h.queries, workspaceID)
+}
+
+func loadValidateAccountsWithQueries(ctx context.Context, queries *db.Queries, workspaceID string) (map[string]platform.ValidateAccount, error) {
+	if queries == nil {
+		return nil, errors.New("social account queries are not configured")
+	}
+	accounts, err := queries.ListSocialAccountsByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}

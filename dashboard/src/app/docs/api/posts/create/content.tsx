@@ -244,10 +244,11 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "Machine-readable error code." },
+  { name: "error.code", type: "string", description: 'Machine-readable error code. Paid scheduling capacity uses "PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED" with HTTP 402.' },
   { name: "error.normalized_code", type: "string", description: "Lowercase compatibility alias for the error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "error.issues?", type: "array", description: "Structured pre-publish validation issues such as media_not_uploaded." },
+  { name: "error.details?", type: "object", description: "For paid scheduling capacity errors: plan, period, completed/scheduled/held/effective usage, limit, projected usage, requested units, reset time, and scheduling_allowed=false." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 

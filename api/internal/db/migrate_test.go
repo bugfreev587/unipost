@@ -134,6 +134,46 @@ func TestCreateSocialPostWithActiveScheduledCapIsAtomic(t *testing.T) {
 	}
 }
 
+func TestCommittedScheduledQuotaQueryCountsPublishingAndQuotaHold(t *testing.T) {
+	sql := strings.ToLower(countScheduledQuotaUnitsByWorkspaceAndPeriod)
+	for _, want := range []string{
+		"status in ('scheduled', 'quota_hold')",
+		"status = 'publishing'",
+		"scheduled_at is not null",
+		"deleted_at is null",
+		"disconnected_at is null",
+		"admin_post_quota_resets",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("committed scheduled quota query missing %q, got:\n%s", want, countScheduledQuotaUnitsByWorkspaceAndPeriod)
+		}
+	}
+}
+
+func TestQuotaHoldLifecycleQueriesAllowRecoveryWithoutDispatch(t *testing.T) {
+	rescheduleSQL := strings.ToLower(rescheduleSocialPost)
+	for _, want := range []string{
+		"status in ('scheduled', 'quota_hold')",
+		"status = 'scheduled'",
+		"quota_hold_reason = null",
+		"quota_hold_at = null",
+	} {
+		if !strings.Contains(rescheduleSQL, want) {
+			t.Fatalf("reschedule query missing %q, got:\n%s", want, rescheduleSocialPost)
+		}
+	}
+	if !strings.Contains(strings.ToLower(cancelSocialPost), "'quota_hold'") {
+		t.Fatalf("cancel query must allow quota_hold, got:\n%s", cancelSocialPost)
+	}
+	if !strings.Contains(strings.ToLower(claimDraftForPublish), "'quota_hold'") {
+		t.Fatalf("publish-now claim must allow quota_hold, got:\n%s", claimDraftForPublish)
+	}
+	dueSQL := strings.ToLower(getDueScheduledPosts)
+	if !strings.Contains(dueSQL, "where status = 'scheduled'") {
+		t.Fatalf("due scheduler query must exclude quota_hold, got:\n%s", getDueScheduledPosts)
+	}
+}
+
 func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(t *testing.T) {
 	body, err := fs.ReadFile(migrations, "migrations/102_workspace_active_scheduled_limits.sql")
 	if err != nil {
@@ -152,6 +192,31 @@ func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("workspace active scheduled limits migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
+func TestPaidSoftOverageMigrationExists(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/107_paid_soft_overage.sql")
+	if err != nil {
+		t.Fatalf("read paid soft overage migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"quota_hold_reason",
+		"quota_hold_at",
+		"quota_hold_original_scheduled_at",
+		"paid_plan_quota_notifications",
+		"plan_id",
+		"severity",
+		"skipped_superseded",
+		"retry_wait",
+		"paid_quota_follow_ups",
+		"unique (workspace_id, period, threshold_percent)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("paid soft overage migration missing %q, got:\n%s", want, string(body))
 		}
 	}
 }

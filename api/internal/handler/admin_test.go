@@ -388,10 +388,12 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 
 	for _, want := range []string{
 		"free_plan_quota_email_reminders",
+		"paid_plan_quota_notifications",
 		"email_send_attempts",
 		"unipost_notification_deliveries",
 		"error_triage_email_sends",
 		"'email.quota.free_plan_reminder.v1' AS event_key",
+		"n.event_key",
 		"'usage_' || r.threshold_percent::TEXT || '_percent' AS trigger_event",
 		"provider",
 		"delivery_class",
@@ -452,5 +454,33 @@ func TestAdminEmailNotificationsRouteIsRegistered(t *testing.T) {
 	}
 	if !strings.Contains(string(source), `r.Get("/v1/admin/email-notifications", adminHandler.ListEmailNotifications)`) {
 		t.Fatalf("admin email notifications route is not registered")
+	}
+	for _, route := range []string{
+		`r.Post("/v1/admin/email-notifications/{id}/retry", adminHandler.RetryPaidQuotaEmailNotification)`,
+		`r.Get("/v1/admin/paid-quota-follow-ups", adminHandler.ListPaidQuotaFollowUps)`,
+		`r.Patch("/v1/admin/paid-quota-follow-ups/{id}", adminHandler.UpdatePaidQuotaFollowUp)`,
+	} {
+		if !strings.Contains(string(source), route) {
+			t.Fatalf("admin paid quota route is not registered: %s", route)
+		}
+	}
+}
+
+func TestPaidQuotaEmailAdminFiltersAcceptDetailedStatusesAndThresholds(t *testing.T) {
+	for _, status := range []string{
+		"processing",
+		"retry_wait",
+		"skipped_superseded",
+		"skipped_preference_disabled",
+		"skipped_missing_recipient",
+	} {
+		if got, ok := normalizeAdminEmailNotificationStatus(status); !ok || got != status {
+			t.Fatalf("normalize status %q = %q/%v", status, got, ok)
+		}
+	}
+	for _, threshold := range []string{"80", "90", "100", "105", "110", "115", "120"} {
+		if _, ok := parseAdminEmailNotificationThreshold(threshold); !ok {
+			t.Fatalf("threshold %s should be accepted", threshold)
+		}
 	}
 }
