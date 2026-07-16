@@ -26,6 +26,64 @@ CREATE TABLE x_inbox_delivery_cleanup_intents (
 CREATE INDEX x_inbox_delivery_cleanup_intents_pending_idx
   ON x_inbox_delivery_cleanup_intents(created_at, id);
 
+-- Capture every eligible resource before PostgreSQL begins cascading the
+-- workspace delete. Child-table cascade order is not defined, so neither
+-- profiles/social_accounts nor platform_credentials can be assumed visible
+-- from a trigger on the other child.
+CREATE OR REPLACE FUNCTION enqueue_deleted_workspace_x_inbox_delivery_cleanup()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO x_inbox_delivery_cleanup_intents (
+    social_account_id,
+    x_app_mode,
+    app_bearer_token,
+    filtered_stream_rule_id,
+    activity_dm_subscription_id
+  )
+  SELECT
+    sa.id,
+    sa.x_app_mode,
+    pc.app_bearer_token,
+    r.filtered_stream_rule_id,
+    r.activity_dm_subscription_id
+  FROM profiles p
+  JOIN social_accounts sa
+    ON sa.profile_id = p.id
+   AND sa.platform = 'twitter'
+  JOIN x_inbox_delivery_resources r
+    ON r.social_account_id = sa.id
+  LEFT JOIN platform_credentials pc
+    ON pc.workspace_id = OLD.id
+   AND pc.platform = 'twitter'
+  WHERE p.workspace_id = OLD.id
+    AND sa.x_app_mode IN ('unipost_managed_app', 'workspace_x_app')
+    AND (
+      sa.x_app_mode = 'unipost_managed_app'
+      OR pc.app_bearer_token IS NOT NULL
+    )
+    AND (
+      r.filtered_stream_rule_id IS NOT NULL
+      OR r.activity_dm_subscription_id IS NOT NULL
+    )
+  ON CONFLICT (social_account_id) DO UPDATE
+  SET x_app_mode = EXCLUDED.x_app_mode,
+      app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
+      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
+      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
+      last_error = NULL,
+      updated_at = NOW();
+
+  RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER workspaces_x_inbox_delivery_cleanup
+BEFORE DELETE ON workspaces
+FOR EACH ROW
+EXECUTE FUNCTION enqueue_deleted_workspace_x_inbox_delivery_cleanup();
+
 CREATE OR REPLACE FUNCTION enqueue_x_inbox_delivery_cleanup()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -135,4 +193,6 @@ DROP TRIGGER IF EXISTS platform_credentials_x_inbox_delivery_cleanup ON platform
 DROP FUNCTION IF EXISTS enqueue_workspace_x_inbox_delivery_cleanup();
 DROP TRIGGER IF EXISTS social_accounts_x_inbox_delivery_cleanup ON social_accounts;
 DROP FUNCTION IF EXISTS enqueue_x_inbox_delivery_cleanup();
+DROP TRIGGER IF EXISTS workspaces_x_inbox_delivery_cleanup ON workspaces;
+DROP FUNCTION IF EXISTS enqueue_deleted_workspace_x_inbox_delivery_cleanup();
 DROP TABLE IF EXISTS x_inbox_delivery_cleanup_intents;

@@ -132,15 +132,15 @@ func TestXClientDeleteFilteredStreamRuleIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestXClientDeleteFilteredStreamRuleRequiresConfirmedRuleID(t *testing.T) {
+func TestXClientDeleteFilteredStreamRuleRequiresConfirmedOfficialSummary(t *testing.T) {
 	tests := []struct {
 		name    string
 		body    string
 		wantErr bool
 	}{
 		{
-			name: "confirmed exact id",
-			body: `{"data":[{"id":"rule-1"}],"meta":{"summary":{"deleted":1}}}`,
+			name: "official success summary",
+			body: `{"meta":{"sent":"2026-07-16T00:00:00.000Z","summary":{"deleted":1,"not_deleted":0}}}`,
 		},
 		{
 			name:    "partial 200 error",
@@ -149,7 +149,12 @@ func TestXClientDeleteFilteredStreamRuleRequiresConfirmedRuleID(t *testing.T) {
 		},
 		{
 			name:    "unconfirmed empty 200",
-			body:    `{"data":[],"meta":{"summary":{"deleted":0}}}`,
+			body:    `{"meta":{"summary":{"deleted":0,"not_deleted":0}}}`,
+			wantErr: true,
+		},
+		{
+			name:    "not deleted summary",
+			body:    `{"meta":{"summary":{"deleted":0,"not_deleted":1}}}`,
 			wantErr: true,
 		},
 		{

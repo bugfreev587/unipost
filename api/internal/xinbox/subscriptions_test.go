@@ -3,6 +3,7 @@ package xinbox
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -286,6 +287,63 @@ func TestXClientEnsureDMSubscriptionFindsStableTagOnSecondPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	if subscription.ID != "subscription-page-2" || calls != 2 {
+		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
+	}
+}
+
+func TestXClientEnsureDMSubscriptionFollowsFullFirstPageToItem1001(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if r.Method != http.MethodGet || r.URL.Path != "/2/activity/subscriptions" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		switch calls {
+		case 1:
+			page := make([]ActivitySubscription, 1000)
+			for i := range page {
+				page[i] = ActivitySubscription{
+					ID:        fmt.Sprintf("other-%d", i),
+					EventType: "dm.received",
+					Filter:    ActivityFilter{UserID: "another-user"},
+					Tag:       fmt.Sprintf("another-tag-%d", i),
+					WebhookID: "webhook-1",
+				}
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": page,
+				"meta": map[string]any{
+					"next_token":   "NEXTTOKEN1234567",
+					"result_count": 1000,
+				},
+			})
+		case 2:
+			if got := r.URL.Query().Get("pagination_token"); got != "NEXTTOKEN1234567" {
+				t.Fatalf("second pagination token = %q", got)
+			}
+			if got := r.URL.Query().Get("max_results"); got != "500" {
+				t.Fatalf("second max_results = %q, want remaining self-serve capacity 500", got)
+			}
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"subscription-1001","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}],"meta":{"result_count":1}}`))
+		default:
+			t.Fatalf("unexpected request %d", calls)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	subscription, err := client.EnsureDMSubscription(
+		context.Background(),
+		"user-oauth-token",
+		"app-token",
+		"account-123",
+		"2244994945",
+		"webhook-1",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subscription.ID != "subscription-1001" || calls != 2 {
 		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
 	}
 }

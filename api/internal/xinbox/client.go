@@ -183,8 +183,13 @@ func (c *Client) DeleteFilteredStreamRule(ctx context.Context, bearerToken, rule
 	}{}
 	request.Delete.IDs = []string{ruleID}
 	var response struct {
-		Data   []StreamRule `json:"data"`
-		Errors []APIError   `json:"errors"`
+		Errors []APIError `json:"errors"`
+		Meta   struct {
+			Summary struct {
+				Deleted    int `json:"deleted"`
+				NotDeleted int `json:"not_deleted"`
+			} `json:"summary"`
+		} `json:"meta"`
 	}
 	status, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, &response)
 	if err != nil {
@@ -202,12 +207,10 @@ func (c *Client) DeleteFilteredStreamRule(ctx context.Context, bearerToken, rule
 		}
 		return errors.New("X delete filtered stream rule returned errors without confirmed deletion")
 	}
-	for _, rule := range response.Data {
-		if rule.ID == ruleID {
-			return nil
-		}
+	if response.Meta.Summary.Deleted == 1 && response.Meta.Summary.NotDeleted == 0 {
+		return nil
 	}
-	return errors.New("X delete filtered stream rule response did not confirm the requested rule id")
+	return errors.New("X delete filtered stream rule response did not confirm deleted=1 and not_deleted=0")
 }
 
 func (c *Client) ConsumeFilteredStream(

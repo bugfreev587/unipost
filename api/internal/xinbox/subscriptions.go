@@ -121,12 +121,19 @@ func (c *Client) ListActivitySubscriptions(
 	ctx context.Context,
 	userAccessToken string,
 ) ([]ActivitySubscription, error) {
-	const selfServeSubscriptionLimit = 1000
+	const (
+		selfServeSubscriptionLimit = 1500
+		maxSubscriptionPageSize    = 1000
+	)
 	subscriptions := make([]ActivitySubscription, 0)
 	nextToken := ""
 	seenTokens := make(map[string]struct{})
 	for page := 0; page < selfServeSubscriptionLimit && len(subscriptions) < selfServeSubscriptionLimit; page++ {
-		query := url.Values{"max_results": {"1000"}}
+		pageSize := selfServeSubscriptionLimit - len(subscriptions)
+		if pageSize > maxSubscriptionPageSize {
+			pageSize = maxSubscriptionPageSize
+		}
+		query := url.Values{"max_results": {fmt.Sprintf("%d", pageSize)}}
 		if nextToken != "" {
 			query.Set("pagination_token", nextToken)
 		}
