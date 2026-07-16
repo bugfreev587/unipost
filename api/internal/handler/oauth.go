@@ -230,7 +230,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config, err := h.oauthConfigForStoredMode(r, oauthState.ProfileID, platformName, oauthAdapter, oauthState.XAppMode)
+	config, resolvedXAppMode, err := h.oauthConfigForCallback(r, oauthState.ProfileID, platformName, oauthAdapter, oauthState.XAppMode)
 	if err != nil {
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "OAuth credentials are no longer available")
 		return
@@ -405,7 +405,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					AccountAvatarUrl: pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 					Metadata:         metadataJSON,
 					Scope:            result.Scopes,
-					XAppMode:         oauthState.XAppMode,
+					XAppMode:         resolvedXAppMode,
 				})
 				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 					Level:     integrationlogs.LevelInfo,
@@ -448,7 +448,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 		Metadata:          metadataJSON,
 		Scope:             result.Scopes,
-		XAppMode:          oauthState.XAppMode,
+		XAppMode:          resolvedXAppMode,
 	})
 	if err != nil {
 		slog.Error("oauth callback: failed to save account", "error", err)
@@ -522,38 +522,49 @@ func (h *OAuthHandler) oauthConfigAtAuthorizationStart(r *http.Request, profileI
 }
 
 func (h *OAuthHandler) oauthConfigForStoredMode(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter, storedMode pgtype.Text) (platform.OAuthConfig, error) {
+	config, _, err := h.oauthConfigForCallback(r, profileID, platformName, adapter, storedMode)
+	return config, err
+}
+
+// oauthConfigForCallback preserves the explicit app choice made by new
+// authorization starts. The only fallback is for rows written by a pre-108
+// instance after migration 108 added the nullable x_app_mode column.
+func (h *OAuthHandler) oauthConfigForCallback(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter, storedMode pgtype.Text) (platform.OAuthConfig, pgtype.Text, error) {
 	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
 	if platformName == "twitter" {
+		if !storedMode.Valid {
+			return h.oauthConfigAtAuthorizationStart(r, profileID, platformName, adapter)
+		}
 		switch xinbox.AppMode(storedMode.String) {
 		case xinbox.AppModeUniPostManaged:
-			return config, nil
+			return config, storedMode, nil
 		case xinbox.AppModeWorkspace:
 			creds, ok, err := h.workspaceOAuthCredential(r.Context(), profileID, platformName, false)
 			if err != nil {
-				return platform.OAuthConfig{}, err
+				return platform.OAuthConfig{}, pgtype.Text{}, err
 			}
 			if !ok {
-				return platform.OAuthConfig{}, pgx.ErrNoRows
+				return platform.OAuthConfig{}, pgtype.Text{}, pgx.ErrNoRows
 			}
 			config.ClientID = creds.ClientID
 			config.ClientSecret, err = h.encryptor.Decrypt(creds.ClientSecret)
-			return config, err
+			return config, storedMode, err
 		default:
-			return platform.OAuthConfig{}, errors.New("missing stored X app mode")
+			return platform.OAuthConfig{}, pgtype.Text{}, fmt.Errorf("invalid stored X app mode %q", storedMode.String)
 		}
 	}
 	creds, ok, err := h.workspaceOAuthCredential(r.Context(), profileID, platformName, true)
 	if err != nil {
-		return platform.OAuthConfig{}, err
+		return platform.OAuthConfig{}, pgtype.Text{}, err
 	}
 	if ok {
 		config.ClientID = creds.ClientID
 		config.ClientSecret, err = h.encryptor.Decrypt(creds.ClientSecret)
 		if err != nil {
-			return platform.OAuthConfig{}, err
+			return platform.OAuthConfig{}, pgtype.Text{}, err
 		}
 	}
-	return config, nil
+	return config, pgtype.Text{}, nil
 }
 
 func (h *OAuthHandler) workspaceOAuthCredential(ctx context.Context, profileID, platformName string, requirePlanSlot bool) (db.PlatformCredential, bool, error) {

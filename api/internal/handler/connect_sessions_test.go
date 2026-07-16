@@ -22,6 +22,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // TestValidateReturnURL — accept https/http with a host, reject everything else.
@@ -297,6 +298,129 @@ func TestResolveConnectorUsesStoredTwitterAppMode(t *testing.T) {
 			t.Fatalf("connector=%v ok=%v, want unavailable", connector, ok)
 		}
 	})
+}
+
+func TestResolveTwitterConnectorForRollingNullModeUsesLegacyPolicy(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("workspace credentials remain eligible without quickstart", func(t *testing.T) {
+		fdb := &connectSessionTestDB{
+			platform:              "twitter",
+			planID:                "growth",
+			credentialSecretValue: encryptedSecret,
+		}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		resolved, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", false, pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resolved.ok || resolved.connector == nil {
+			t.Fatal("workspace connector was not resolved")
+		}
+		if !resolved.xAppMode.Valid || resolved.xAppMode.String != string(xinbox.AppModeWorkspace) {
+			t.Fatalf("resolved mode = %+v, want workspace", resolved.xAppMode)
+		}
+	})
+
+	t.Run("quickstart falls back to UniPost managed", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter"}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		resolved, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", true, pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resolved.ok || resolved.connector == nil {
+			t.Fatal("UniPost managed connector was not resolved")
+		}
+		if !resolved.xAppMode.Valid || resolved.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+			t.Fatalf("resolved mode = %+v, want UniPost managed", resolved.xAppMode)
+		}
+	})
+
+	t.Run("API no-quickstart does not gain managed credentials", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter"}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		resolved, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", false, pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.ok || resolved.connector != nil || resolved.xAppMode.Valid {
+			t.Fatalf("resolved = %+v, want unavailable with no explicit mode", resolved)
+		}
+	})
+
+	t.Run("non-null garbage is rejected", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter"}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		_, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", true,
+			pgtype.Text{String: "garbage", Valid: true},
+		)
+		if err == nil {
+			t.Fatal("garbage stored mode error = nil, want rejection")
+		}
+		if fdb.platformCredentialLookups != 0 {
+			t.Fatalf("credential lookups = %d, want 0 for rejected garbage", fdb.platformCredentialLookups)
+		}
+	})
+}
+
+func TestConnectCallbackPersistsResolvedModeForRollingNullTwitterSession(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "twitter",
+		allowQuickstart:        true,
+		activeAccountLookupErr: pgx.ErrNoRows,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+		"https://api.example.com", nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/twitter?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "twitter")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("saved X app mode = %+v, want resolved UniPost managed mode", fdb.xAppMode)
+	}
 }
 
 func TestCreateConnectSession_FreePlanRejectsNewExternalUserAfterManagedUserCap(t *testing.T) {

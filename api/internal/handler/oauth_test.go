@@ -23,6 +23,7 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 var errOAuthPKCEExchangeObserved = errors.New("exchange observed")
@@ -162,6 +163,122 @@ func TestOAuthConnectUsesProfileWorkspaceCredentialAndStoresWorkspaceMode(t *tes
 	}
 }
 
+func TestOAuthConfigForRollingNullTwitterStateUsesAuthorizationStartPolicy(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-client-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter := &oauthPKCESpyAdapter{TwitterAdapter: platform.NewTwitterAdapter()}
+
+	t.Run("eligible workspace credential", func(t *testing.T) {
+		store := &oauthPKCETestDB{
+			planID:                   "growth",
+			platformCredentialID:     "workspace-client-id",
+			platformCredentialSecret: encryptedSecret,
+		}
+		h := NewOAuthHandler(db.New(store), encryptor, nil)
+		config, mode, err := h.oauthConfigForCallback(
+			httptest.NewRequest(http.MethodGet, "/", nil),
+			"pr_1",
+			"twitter",
+			adapter,
+			pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.ClientID != "workspace-client-id" {
+			t.Fatalf("client id = %q, want workspace credential", config.ClientID)
+		}
+		if !mode.Valid || mode.String != string(xinbox.AppModeWorkspace) {
+			t.Fatalf("resolved mode = %+v, want workspace", mode)
+		}
+	})
+
+	t.Run("no eligible workspace credential", func(t *testing.T) {
+		store := &oauthPKCETestDB{}
+		h := NewOAuthHandler(db.New(store), encryptor, nil)
+		config, mode, err := h.oauthConfigForCallback(
+			httptest.NewRequest(http.MethodGet, "/", nil),
+			"pr_1",
+			"twitter",
+			adapter,
+			pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if config.ClientID != "client-id" {
+			t.Fatalf("client id = %q, want UniPost default", config.ClientID)
+		}
+		if !mode.Valid || mode.String != string(xinbox.AppModeUniPostManaged) {
+			t.Fatalf("resolved mode = %+v, want UniPost managed", mode)
+		}
+	})
+
+	t.Run("non-null garbage is rejected", func(t *testing.T) {
+		store := &oauthPKCETestDB{}
+		h := NewOAuthHandler(db.New(store), encryptor, nil)
+		_, _, err := h.oauthConfigForCallback(
+			httptest.NewRequest(http.MethodGet, "/", nil),
+			"pr_1",
+			"twitter",
+			adapter,
+			pgtype.Text{String: "garbage", Valid: true},
+		)
+		if err == nil {
+			t.Fatal("garbage stored mode error = nil, want rejection")
+		}
+	})
+}
+
+func TestOAuthCallbackPersistsResolvedModeForRollingNullTwitterState(t *testing.T) {
+	store := &oauthPKCETestDB{
+		state:        "csrf-state",
+		pkceVerifier: "stored-random-verifier",
+		planID:       "growth",
+	}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewOAuthHandler(db.New(store), encryptor, nil)
+	h.baseRedirectURL = "https://api.example"
+
+	spy := &oauthPKCESpyAdapter{
+		TwitterAdapter: platform.NewTwitterAdapter(),
+		result: &platform.ConnectResult{
+			AccessToken:       "access-token",
+			RefreshToken:      "refresh-token",
+			ExternalAccountID: "twitter-account-1",
+			AccountName:       "UniPost",
+		},
+	}
+	previous, err := platform.Get("twitter")
+	if err != nil {
+		previous = nil
+	}
+	platform.Register(spy)
+	t.Cleanup(func() {
+		if previous != nil {
+			platform.Register(previous)
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/callback/twitter?code=authorization-code&state=csrf-state", nil)
+	req = withOAuthPKCEChiParams(req, map[string]string{"platform": "twitter"})
+	rec := httptest.NewRecorder()
+	h.Callback(rec, req)
+
+	if !store.savedXAppMode.Valid || store.savedXAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("saved X app mode = %+v, want resolved UniPost managed mode", store.savedXAppMode)
+	}
+}
+
 func TestOAuthStateCallbackConsumesOnceBeforeTwitterExchange(t *testing.T) {
 	store := &oauthPKCETestDB{
 		state:        "csrf-state",
@@ -258,6 +375,7 @@ type oauthPKCESpyAdapter struct {
 	*platform.TwitterAdapter
 	exchangeConfig platform.OAuthConfig
 	exchangeCalls  int
+	result         *platform.ConnectResult
 }
 
 func (a *oauthPKCESpyAdapter) DefaultOAuthConfig(baseRedirectURL string) platform.OAuthConfig {
@@ -270,6 +388,9 @@ func (a *oauthPKCESpyAdapter) DefaultOAuthConfig(baseRedirectURL string) platfor
 func (a *oauthPKCESpyAdapter) ExchangeCode(_ context.Context, config platform.OAuthConfig, _ string) (*platform.ConnectResult, error) {
 	a.exchangeConfig = config
 	a.exchangeCalls++
+	if a.result != nil {
+		return a.result, nil
+	}
 	return nil, errOAuthPKCEExchangeObserved
 }
 
@@ -284,6 +405,7 @@ type oauthPKCETestDB struct {
 	consumeCalls                  int
 	consumed                      bool
 	consumeErr                    error
+	savedXAppMode                 pgtype.Text
 }
 
 func (f *oauthPKCETestDB) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -332,6 +454,11 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 			}}
 		}
 		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: FindSocialAccountByExternalID"):
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: CreateSocialAccount"):
+		f.savedXAppMode, _ = args[10].(pgtype.Text)
+		return f.socialAccountRow()
 	case strings.Contains(query, "-- name: CreateOAuthState"):
 		if len(args) < 6 {
 			return scanRow{err: fmt.Errorf("CreateOAuthState args = %d, want PKCE verifier argument", len(args))}
@@ -358,10 +485,6 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 
 func (f *oauthPKCETestDB) oauthStateRow() scanRow {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	mode := f.xAppMode
-	if !mode.Valid {
-		mode = pgtype.Text{String: "unipost_managed_app", Valid: true}
-	}
 	return scanRow{values: []any{
 		f.state,
 		"pr_1",
@@ -370,7 +493,33 @@ func (f *oauthPKCETestDB) oauthStateRow() scanRow {
 		pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
 		now,
 		pgtype.Text{String: f.pkceVerifier, Valid: f.pkceVerifier != ""},
-		mode,
+		f.xAppMode,
+	}}
+}
+
+func (f *oauthPKCETestDB) socialAccountRow() scanRow {
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return scanRow{values: []any{
+		"sa_1",
+		"pr_1",
+		"twitter",
+		"encrypted-access",
+		pgtype.Text{String: "encrypted-refresh", Valid: true},
+		pgtype.Timestamptz{},
+		"twitter-account-1",
+		pgtype.Text{String: "UniPost", Valid: true},
+		pgtype.Text{},
+		now,
+		pgtype.Timestamptz{},
+		[]byte("{}"),
+		[]string{},
+		"active",
+		"byo",
+		pgtype.Text{},
+		pgtype.Text{},
+		pgtype.Text{},
+		now,
+		f.savedXAppMode,
 	}}
 }
 
