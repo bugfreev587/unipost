@@ -41,24 +41,30 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
+
+type instagramWebhookSubscriber interface {
+	Subscribe(context.Context, string, string) error
+}
 
 // ConnectCallbackHandler owns the OAuth dance for managed accounts.
 // It depends on the connect.Registry (populated at startup with the
 // OAuth Connect connectors) plus the standard db / encryptor / event
 // bus trio.
 type ConnectCallbackHandler struct {
-	queries           *db.Queries
-	encryptor         *crypto.AESEncryptor
-	bus               events.EventBus
-	registry          *connect.Registry
-	callbackBaseURL   string
-	limiter           *ipLimiter // shared in-memory limiter for callback brute-force protection
-	ilog              *integrationlogs.Logger
-	superAdminChecker *auth.SuperAdminChecker
-	quota             *quota.Checker
+	queries                    *db.Queries
+	encryptor                  *crypto.AESEncryptor
+	bus                        events.EventBus
+	registry                   *connect.Registry
+	callbackBaseURL            string
+	limiter                    *ipLimiter // shared in-memory limiter for callback brute-force protection
+	ilog                       *integrationlogs.Logger
+	superAdminChecker          *auth.SuperAdminChecker
+	quota                      *quota.Checker
+	instagramWebhookSubscriber instagramWebhookSubscriber
 }
 
 func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker) *ConnectCallbackHandler {
@@ -69,14 +75,15 @@ func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncrypt
 		callbackBaseURL = "https://api.unipost.dev"
 	}
 	return &ConnectCallbackHandler{
-		queries:           queries,
-		encryptor:         encryptor,
-		bus:               bus,
-		registry:          registry,
-		callbackBaseURL:   callbackBaseURL,
-		limiter:           newIPLimiter(60, time.Minute),
-		superAdminChecker: superAdminChecker,
-		quota:             quota.NewChecker(queries),
+		queries:                    queries,
+		encryptor:                  encryptor,
+		bus:                        bus,
+		registry:                   registry,
+		callbackBaseURL:            callbackBaseURL,
+		limiter:                    newIPLimiter(60, time.Minute),
+		superAdminChecker:          superAdminChecker,
+		quota:                      quota.NewChecker(queries),
+		instagramWebhookSubscriber: instagramwebhooks.NewSubscriber(nil, ""),
 	}
 }
 
@@ -533,6 +540,33 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		})
 		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
 		return
+	}
+
+	if platformName == "instagram" {
+		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), profile.ExternalAccountID, tokens.AccessToken); err != nil {
+			_, _ = h.queries.MarkSocialAccountReconnectRequired(r.Context(), saved.ID)
+			slog.Error("connect.callback: instagram webhook subscription failed",
+				"account_id", saved.ID,
+				"external_account_id", profile.ExternalAccountID,
+				"err", err)
+			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
+				Level:     integrationlogs.LevelError,
+				Status:    integrationlogs.StatusError,
+				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
+				Message:   "Instagram webhook subscription failed.",
+				ProfileID: session.ProfileID,
+				Platform:  platformName,
+				ErrorCode: "webhook_subscription_failed",
+				Metadata: map[string]any{
+					"connect_session_id": session.ID,
+					"external_user_id":   session.ExternalUserID,
+					"social_account_id":  saved.ID,
+				},
+				ResponsePayload: map[string]any{"error": err.Error()},
+			})
+			h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "webhook_subscription_failed", hidePoweredBy)
+			return
+		}
 	}
 
 	_, _ = h.queries.MarkConnectSessionCompleted(r.Context(), db.MarkConnectSessionCompletedParams{
