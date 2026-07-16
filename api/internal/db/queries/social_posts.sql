@@ -149,7 +149,7 @@ ORDER BY scheduled_at ASC;
 -- name: ClaimDraftForPublish :one
 UPDATE social_posts
 SET status = 'publishing'
-WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'quota_hold')
 RETURNING *;
 
 -- name: UpdateDraftContent :one
@@ -159,7 +159,7 @@ SET caption = $3,
     metadata = $5,
     scheduled_at = $6,
     profile_ids = $7
-WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled', 'quota_hold')
 RETURNING *;
 
 -- name: DeleteDraft :exec
@@ -173,14 +173,17 @@ WHERE id = $1
 
 -- name: RescheduleSocialPost :one
 UPDATE social_posts
-SET scheduled_at = $3
-WHERE id = $1 AND workspace_id = $2 AND status = 'scheduled'
+SET scheduled_at = $3,
+    status = 'scheduled',
+    quota_hold_reason = NULL,
+    quota_hold_at = NULL
+WHERE id = $1 AND workspace_id = $2 AND status IN ('scheduled', 'quota_hold')
 RETURNING *;
 
 -- name: CancelSocialPost :one
 UPDATE social_posts
 SET status = 'cancelled'
-WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled', 'quota_hold')
 RETURNING *;
 
 -- name: CountPublishedPostsByWorkspace :one

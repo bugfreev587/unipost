@@ -13,7 +13,7 @@ const PATH_FIELDS: ApiFieldItem[] = [
 
 const BODY_FIELDS: ApiFieldItem[] = [
   { name: "platform_posts?", type: "array", description: "Draft-only content update. Replaces the stored per-account payload." },
-  { name: "scheduled_at?", type: "string", description: "Scheduled-only update. Reschedules a scheduled post when set to a future RFC3339 timestamp." },
+  { name: "scheduled_at?", type: "string", description: "Scheduled or quota-hold update. Reschedules the post when set to a future RFC3339 timestamp and rechecks monthly scheduling capacity." },
   { name: "archived?", type: "boolean", description: "Canonical lifecycle patch. Set `true` to archive or `false` to restore." },
   { name: "status?", type: '"canceled"', description: "Canonical lifecycle patch for draft or scheduled posts. Cancels the post without dispatching more work." },
 ];
@@ -23,13 +23,16 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "status", type: "string", description: "Updated lifecycle state." },
   { name: "archived_at", type: "string | null", description: "Archive timestamp when the post is archived." },
   { name: "scheduled_at", type: "string | null", description: "Updated scheduled publish time for scheduled posts." },
+  { name: "quota_hold_reason", type: "string | null", description: "Present when a downgrade preserved the post on quota hold instead of dispatching it." },
+  { name: "quota_hold_at", type: "string | null", description: "Timestamp when the post entered quota hold." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: 'Usually "VALIDATION_ERROR", "CONFLICT", or "NOT_FOUND".' },
+  { name: "error.code", type: "string", description: 'Usually "VALIDATION_ERROR", "CONFLICT", "NOT_FOUND", or "PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED" (HTTP 402).' },
   { name: "error.normalized_code", type: "string", description: 'Lowercase alias such as "validation_error", "conflict", or "not_found".' },
   { name: "error.message", type: "string", description: "Human-readable error message." },
+  { name: "error.details?", type: "object", description: "Paid scheduling capacity snapshot and projected usage when the update would exceed 100%." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 

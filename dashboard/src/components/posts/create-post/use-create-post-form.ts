@@ -963,7 +963,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     setUploadCache(new Map());
     setSelectedAccountIds(new Set(platformPosts.map((entry) => entry.account_id)));
     setOverrides(deriveOverridesFromPost(post, availableAccounts));
-    setPublishMode(post.status === "scheduled" ? "schedule" : "draft");
+    setPublishMode(post.status === "scheduled" || post.status === "quota_hold" ? "schedule" : "draft");
     setScheduledAt(post.scheduled_at ? toDateTimeLocalValue(post.scheduled_at) : "");
     setQueueId("");
     setSubmitting(false);

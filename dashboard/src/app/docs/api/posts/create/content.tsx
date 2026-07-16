@@ -244,10 +244,11 @@ const RESPONSE_201_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "Machine-readable error code." },
+  { name: "error.code", type: "string", description: 'Machine-readable error code. Paid scheduling capacity uses "PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED" with HTTP 402.' },
   { name: "error.normalized_code", type: "string", description: "Lowercase compatibility alias for the error code." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "error.issues?", type: "array", description: "Structured pre-publish validation issues such as media_not_uploaded." },
+  { name: "error.details?", type: "object", description: "For paid scheduling capacity errors: plan, period, completed/scheduled/held/effective usage, limit, projected usage, requested units, reset time, and scheduling_allowed=false." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
 
@@ -566,6 +567,29 @@ export function CreatePostContent() {
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
               <strong style={{ color: "var(--docs-text)" }}>Media retention:</strong> scheduled posts keep uploaded media until they reach a final status. After success, failed, partial, or cancellation, UniPost retains media according to the workspace plan before cleanup.
+            </p>
+          </div>
+        </section>
+
+        <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+          <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
+            X Credits
+          </h2>
+          <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              Managed X publishes consume the workspace&apos;s included X Credits allowance. A conclusively URL-free
+              X post uses 15 Credits; a URL or domain-like candidate is conservatively counted at 200 Credits.
+              Bring-your-own X API connections do not consume UniPost X Credits. Inspect remaining capacity with{" "}
+              <ApiInlineLink endpoint="GET /v1/billing/x-credits" href="/docs/api/x-credits" />.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              Final platform results include <code>x_credits_counted</code>, <code>x_credit_operation</code>,{" "}
+              <code>x_credit_catalog_version</code>, and <code>x_credit_billing_mode</code>. BYO X results return zero
+              counted Credits with billing mode <code>customer_x_app</code>.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              At the hard limit, managed-X delivery fails with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>x_monthly_usage_limit_exceeded</code>.
+              The independent safety cap of 20 X posts per connected account per UTC day still applies.
             </p>
           </div>
         </section>

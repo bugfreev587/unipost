@@ -72,6 +72,7 @@ const ENDPOINT_DOC_LINKS: Array<{ match: RegExp; href: string }> = [
   { match: /^GET \/v1\/api-metrics\/trend$/i, href: "/docs/api/api-metrics/trend" },
   { match: /^GET \/v1\/api-metrics\/status-codes$/i, href: "/docs/api/api-metrics/status-codes" },
   { match: /^GET \/v1\/api-metrics$/i, href: "/docs/api/api-metrics/overall" },
+  { match: /^GET \/v1\/billing\/x-credits$/i, href: "/docs/api/x-credits" },
   { match: /^GET \/v1\/logs$/i, href: "/docs/api/logs/list" },
   { match: /^GET \/v1\/logs\/stream$/i, href: "/docs/api/logs/stream" },
   { match: /^GET \/v1\/logs\/[^/]+$/i, href: "/docs/api/logs/get" },

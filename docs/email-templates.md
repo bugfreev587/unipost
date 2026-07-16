@@ -160,6 +160,38 @@ The admin view supports filtering by status, provider, event key, quota period/t
 - Retention policy: retain ledger and variable snapshots for 13 months.
 - External Loops workflow audit: no Loops workflow should independently calculate quota thresholds.
 
+### email.quota.paid_plan_warning.v1
+
+- Template env: `LOOPS_PAID_PLAN_QUOTA_TRANSACTIONAL_ID`
+- Provider: Loops
+- Delivery class: `service_alert`
+- Owner area: Billing / Growth lifecycle
+- Trigger: API, Basic, or Growth workspace reaches the 80% or 90% effective-usage threshold.
+- Recipient policy: workspace owner.
+- Preference policy: respect `usage_quota_alerts`; use the manage-preferences footer.
+- Required variables: `subject`, `preview_text`, `headline`, `recipient_name`, `workspace_name`, `plan_name`, `threshold_percent`, `completed_posts`, `scheduled_posts`, `quota_hold_posts`, `effective_usage`, `post_limit`, `effective_percentage`, `resets_at`, `billing_url`, `scheduled_posts_url`
+- Idempotency policy: `paid_plan_quota:{workspace_id}:{period}:{threshold_percent}`
+- Audit policy: use `paid_plan_quota_notifications` and `email_send_attempts`.
+- Fallback policy: none by default.
+- Retention policy: retain ledger and variable snapshots for 13 months.
+- External Loops workflow audit: no Loops workflow should independently calculate paid quota thresholds.
+
+### email.quota.paid_plan_alert.v1
+
+- Template env: `LOOPS_PAID_PLAN_QUOTA_TRANSACTIONAL_ID`
+- Provider: Loops
+- Delivery class: `service_alert`
+- Owner area: Billing / Growth lifecycle
+- Trigger: API, Basic, or Growth workspace reaches a required 100%, 105%, 110%, 115%, or 120% effective-usage threshold.
+- Recipient policy: workspace owner.
+- Preference policy: required service notice; do not suppress with optional email preferences.
+- Required variables: `subject`, `preview_text`, `headline`, `recipient_name`, `workspace_name`, `plan_name`, `threshold_percent`, `completed_posts`, `scheduled_posts`, `quota_hold_posts`, `effective_usage`, `post_limit`, `effective_percentage`, `resets_at`, `billing_url`, `scheduled_posts_url`
+- Idempotency policy: `paid_plan_quota:{workspace_id}:{period}:{threshold_percent}`
+- Audit policy: use `paid_plan_quota_notifications` and `email_send_attempts`.
+- Fallback policy: none by default.
+- Retention policy: retain ledger and variable snapshots for 13 months.
+- External Loops workflow audit: no Loops workflow should independently calculate paid quota thresholds.
+
 ### email.account.disconnected.v1
 
 - Template env: `LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID`

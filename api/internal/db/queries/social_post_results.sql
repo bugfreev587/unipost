@@ -1,6 +1,10 @@
 -- name: CreateSocialPostResult :one
-INSERT INTO social_post_results (post_id, social_account_id, caption, status, external_id, error_message, published_at, url, debug_curl, fb_media_type)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO social_post_results (
+  post_id, social_account_id, caption, status, external_id, error_message,
+  published_at, url, debug_curl, fb_media_type,
+  x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
 -- name: ListSocialPostResultsByPost :many
@@ -34,6 +38,10 @@ SET
   published_at = $5,
   url = $6,
   debug_curl = $7,
+  x_credits_counted = $8,
+  x_credit_operation = $9,
+  x_credit_catalog_version = $10,
+  x_credit_billing_mode = $11,
   error_code = NULL,
   failure_stage = NULL,
   platform_error_code = NULL,

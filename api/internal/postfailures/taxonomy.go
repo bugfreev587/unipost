@@ -59,6 +59,10 @@ func Classify(raw string) Classification {
 	}
 
 	switch {
+	case strings.Contains(s, "x_monthly_usage_limit_exceeded"):
+		c.ErrorCode = "x_monthly_usage_limit_exceeded"
+	case strings.Contains(s, "x_write_outcome_pending_reconciliation"):
+		c.ErrorCode = "x_write_outcome_pending_reconciliation"
 	case isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
 	case isMetaTransientError(s):
@@ -202,7 +206,7 @@ func NextActionForErrorCode(errorCode string) string {
 		return "retry_later"
 	case "rate_limit":
 		return "wait_and_retry"
-	case "quota_exceeded":
+	case "quota_exceeded", "x_monthly_usage_limit_exceeded":
 		return "review_quota"
 	case "account_reconnect_required", "auth_token_invalid":
 		return "reconnect_account"
@@ -211,6 +215,8 @@ func NextActionForErrorCode(errorCode string) string {
 	case "target_not_found":
 		return "select_valid_target"
 	case "unknown_error", "platform_error":
+		return "contact_support"
+	case "x_write_outcome_pending_reconciliation":
 		return "contact_support"
 	default:
 		if strings.TrimSpace(errorCode) == "" {

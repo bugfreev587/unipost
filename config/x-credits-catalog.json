@@ -1,0 +1,129 @@
+{
+  "version": "x-credits-2026-07-16-v1",
+  "plans": [
+    {
+      "id": "free",
+      "label": "Free",
+      "monthly_allowance": 0,
+      "inbound_daily_limit": 0,
+      "inbox_eligible": false
+    },
+    {
+      "id": "api",
+      "label": "API",
+      "monthly_allowance": 1500,
+      "inbound_daily_limit": 0,
+      "inbox_eligible": false
+    },
+    {
+      "id": "basic",
+      "label": "Basic",
+      "monthly_allowance": 4000,
+      "inbound_daily_limit": 400,
+      "inbox_eligible": true
+    },
+    {
+      "id": "growth",
+      "label": "Growth",
+      "monthly_allowance": 12000,
+      "inbound_daily_limit": 1200,
+      "inbox_eligible": true
+    },
+    {
+      "id": "team",
+      "label": "Team",
+      "monthly_allowance": 30000,
+      "inbound_daily_limit": 3000,
+      "inbox_eligible": true
+    },
+    {
+      "id": "enterprise",
+      "label": "Enterprise",
+      "monthly_allowance": null,
+      "inbound_daily_limit": null,
+      "inbox_eligible": true
+    }
+  ],
+  "operations": [
+    {
+      "key": "post.create",
+      "label": "Create normal X post",
+      "credits": 15,
+      "phase": "mvp"
+    },
+    {
+      "key": "post.create_url",
+      "label": "Create X post containing a URL",
+      "credits": 200,
+      "phase": "mvp"
+    },
+    {
+      "key": "post.reply_summoned",
+      "label": "Create summoned X reply",
+      "credits": 10,
+      "phase": "mvp"
+    },
+    {
+      "key": "post.read",
+      "label": "Read public X post",
+      "credits": 5,
+      "phase": "mvp"
+    },
+    {
+      "key": "post.read_owned",
+      "label": "Read app-owner X post",
+      "credits": 1,
+      "phase": "mvp"
+    },
+    {
+      "key": "user.read",
+      "label": "Read X user profile",
+      "credits": 10,
+      "phase": "mvp"
+    },
+    {
+      "key": "dm.read",
+      "label": "Read legacy X DM event",
+      "credits": 10,
+      "phase": "mvp"
+    },
+    {
+      "key": "dm.send",
+      "label": "Send legacy X DM",
+      "credits": 15,
+      "phase": "mvp"
+    },
+    {
+      "key": "post.mention.received",
+      "label": "Receive X reply or mention",
+      "credits": 5,
+      "phase": "mvp"
+    },
+    {
+      "key": "dm.received",
+      "label": "Receive legacy X DM",
+      "credits": 10,
+      "phase": "mvp"
+    },
+    {
+      "key": "chat.received",
+      "label": "Receive XChat message",
+      "credits": 10,
+      "phase": "later"
+    },
+    {
+      "key": "chat.send",
+      "label": "Send XChat message",
+      "credits": 15,
+      "phase": "later"
+    }
+  ],
+  "capacity_examples": {
+    "normal_post_operation": "post.create",
+    "url_post_operation": "post.create_url",
+    "comment_receive_operation": "post.read",
+    "comment_send_operation": "post.create",
+    "dm_receive_operation": "dm.read",
+    "dm_send_operation": "dm.send"
+  }
+}

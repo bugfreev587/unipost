@@ -78,6 +78,7 @@ func TestCanEditSocialPostContent(t *testing.T) {
 	}{
 		{status: "draft", want: true},
 		{status: "scheduled", want: true},
+		{status: "quota_hold", want: true},
 		{status: "publishing", want: false},
 		{status: "published", want: false},
 		{status: "failed", want: false},
