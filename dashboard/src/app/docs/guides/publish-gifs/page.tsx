@@ -100,7 +100,7 @@ RESERVATION=$(curl -sS -X POST "https://api.unipost.dev/v1/media" \\
     "content_type": "image/gif"
   }')
 
-MEDIA_ID=$(echo "$RESERVATION" | jq -r '.data.media_id')
+MEDIA_ID=$(echo "$RESERVATION" | jq -r '.data.id')
 UPLOAD_URL=$(echo "$RESERVATION" | jq -r '.data.upload_url')
 
 # Step 3: Upload the raw GIF bytes to the presigned storage URL.

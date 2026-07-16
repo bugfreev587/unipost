@@ -24,12 +24,13 @@ function endpointMapping(sourceText, method, pathSource) {
 }
 
 test("Publish GIFs guide covers support, workflows, navigation, and API backlinks", async () => {
-  const [guide, guidesIndex, docsShell, endpointGuides, searchIndex] = await Promise.all([
+  const [guide, guidesIndex, docsShell, endpointGuides, searchIndex, reserveMediaReference] = await Promise.all([
     source("src/app/docs/guides/publish-gifs/page.tsx"),
     source("src/app/docs/guides/page.tsx"),
     source("src/app/docs/_components/docs-shell.tsx"),
     source("src/app/docs/api/_components/single-endpoint-page.tsx"),
     source("src/lib/docs-ai-search-index.ts"),
+    source("src/app/docs/api/media/reserve/page.tsx"),
   ]);
 
   assert.match(guide, /title="Publish GIFs to X and Facebook"/);
@@ -71,6 +72,8 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
   }
 
   assert.match(guide, /"content_type": "image\/gif"/);
+  assert.match(guide, /jq -r '\.data\.id'/);
+  assert.doesNotMatch(guide, /jq -r '\.data\.media_id'/);
   assert.match(guide, /"account_id": "sa_twitter_123"/);
   assert.match(guide, /"account_id": "sa_facebook_123"/);
   assert.match(guide, /"platform_posts"/);
@@ -82,6 +85,15 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
   assert.match(guidesIndex, /href="\/docs\/guides\/publish-gifs"/);
   assert.match(docsShell, /label: "Publish GIFs", href: "\/docs\/guides\/publish-gifs"/);
   assert.match(searchIndex, /id: "guide-publish-gifs"/);
+
+  assert.match(reserveMediaReference, /\{ name: "id", type: "string"/);
+  assert.match(reserveMediaReference, /reservation\["data"\]\["id"\]/);
+  assert.match(reserveMediaReference, /reservation\.get\("id"\)/);
+  assert.match(reserveMediaReference, /"id": "media_123"/);
+  assert.doesNotMatch(reserveMediaReference, /\{ name: "media_id", type: "string"/);
+  assert.doesNotMatch(reserveMediaReference, /reservation\["data"\]\["media_id"\]/);
+  assert.doesNotMatch(reserveMediaReference, /reservation\.get\("media_id"\)/);
+  assert.doesNotMatch(reserveMediaReference, /"media_id": "media_123"/);
 
   const endpointMappings = [
     endpointMapping(endpointGuides, "GET", "path: /^\\/v1\\/accounts$/"),
