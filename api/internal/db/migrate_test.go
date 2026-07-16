@@ -134,6 +134,22 @@ func TestCreateSocialPostWithActiveScheduledCapIsAtomic(t *testing.T) {
 	}
 }
 
+func TestCommittedScheduledQuotaQueryCountsPublishingAndQuotaHold(t *testing.T) {
+	sql := strings.ToLower(countScheduledQuotaUnitsByWorkspaceAndPeriod)
+	for _, want := range []string{
+		"status in ('scheduled', 'quota_hold')",
+		"status = 'publishing'",
+		"scheduled_at is not null",
+		"deleted_at is null",
+		"disconnected_at is null",
+		"admin_post_quota_resets",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("committed scheduled quota query missing %q, got:\n%s", want, countScheduledQuotaUnitsByWorkspaceAndPeriod)
+		}
+	}
+}
+
 func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(t *testing.T) {
 	body, err := fs.ReadFile(migrations, "migrations/102_workspace_active_scheduled_limits.sql")
 	if err != nil {
@@ -152,6 +168,29 @@ func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("workspace active scheduled limits migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
+func TestPaidSoftOverageMigrationExists(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/105_paid_soft_overage.sql")
+	if err != nil {
+		t.Fatalf("read paid soft overage migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"quota_hold_reason",
+		"quota_hold_at",
+		"quota_hold_original_scheduled_at",
+		"paid_plan_quota_notifications",
+		"skipped_superseded",
+		"retry_wait",
+		"paid_quota_follow_ups",
+		"unique (workspace_id, period, threshold_percent)",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("paid soft overage migration missing %q, got:\n%s", want, string(body))
 		}
 	}
 }

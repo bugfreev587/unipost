@@ -28,6 +28,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -56,11 +57,12 @@ type SocialPostHandler struct {
 	// April 2026 rate-limit PRD. Always non-nil — main.go injects
 	// either RedisLimiter or NoopLimiter — so call sites do not
 	// need a nil guard.
-	limiter     ratelimit.Limiter
-	ilog        *integrationlogs.Logger
-	loopsSyncer loopsLifecycleSyncer
-	quotaEmail  quotaEmailService
-	appBaseURL  string
+	limiter      ratelimit.Limiter
+	ilog         *integrationlogs.Logger
+	loopsSyncer  loopsLifecycleSyncer
+	quotaEmail   quotaEmailService
+	paidSchedule paidquota.Coordinator
+	appBaseURL   string
 }
 
 type quotaEmailService interface {
@@ -140,6 +142,11 @@ func (h *SocialPostHandler) checkFreePlanPostQuotaForPeriod(ctx context.Context,
 
 func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *SocialPostHandler {
 	h.quotaEmail = service
+	return h
+}
+
+func (h *SocialPostHandler) SetPaidScheduleCoordinator(coordinator paidquota.Coordinator) *SocialPostHandler {
+	h.paidSchedule = coordinator
 	return h
 }
 
@@ -254,6 +261,43 @@ func writeFreePlanPostQuotaExceeded(w http.ResponseWriter, status quota.QuotaSta
 	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", status.Usage, status.Limit))
 	w.Header().Set("X-UniPost-Warning", "over_limit")
 	writeError(w, http.StatusPaymentRequired, "PLAN_POST_QUOTA_EXCEEDED", freePlanQuotaExceededMessage(status, requestedUnits))
+}
+
+func writePaidPlanSchedulingCapacityExceeded(w http.ResponseWriter, admissionErr *paidquota.AdmissionError) {
+	if admissionErr == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Paid scheduling quota admission failed")
+		return
+	}
+	snapshot := admissionErr.Snapshot
+	periodStart, err := time.Parse("2006-01", snapshot.Period)
+	if err != nil {
+		periodStart = time.Now().UTC()
+	}
+	resetsAt := time.Date(periodStart.Year(), periodStart.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+
+	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", snapshot.Completed, snapshot.Limit))
+	w.Header().Set("X-UniPost-Scheduled-Usage", strconv.Itoa(snapshot.Scheduled))
+	w.Header().Set("X-UniPost-Quota-Hold-Usage", strconv.Itoa(snapshot.QuotaHold))
+	w.Header().Set("X-UniPost-Effective-Usage", fmt.Sprintf("%d/%d", snapshot.EffectiveUsage(), snapshot.Limit))
+	w.Header().Set("X-UniPost-Warning", "scheduled_quota_reached")
+	writeErrorWithDetails(
+		w,
+		http.StatusPaymentRequired,
+		"PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED",
+		"Monthly scheduling quota reached. Upgrade your plan, cancel existing scheduled posts, or wait until the quota resets. Immediate publishing remains available.",
+		ErrorDetails{Details: map[string]any{
+			"completed_posts":              snapshot.Completed,
+			"scheduled_posts":              snapshot.Scheduled,
+			"quota_hold_posts":             snapshot.QuotaHold,
+			"effective_usage":              snapshot.EffectiveUsage(),
+			"post_limit":                   snapshot.Limit,
+			"requested_units":              admissionErr.RequestedUnits,
+			"period":                       snapshot.Period,
+			"resets_at":                    resetsAt.Format(time.RFC3339),
+			"upgrade_recommended":          true,
+			"immediate_publishing_allowed": true,
+		}},
+	)
 }
 
 type postResultResponse struct {
@@ -793,7 +837,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}) {
 			return
 		}
-		h.createScheduledPost(w, r, workspaceID, parsed)
+		h.createScheduledPost(w, r, workspaceID, parsed, countPublishQuotaUnits(parsed.Posts, accountMap))
 		return
 	}
 
@@ -822,7 +866,7 @@ func applyIdempotencyKeyHeaderFallback(parsed *parsedRequest, headerValue string
 // the v2 metadata blob so the scheduler can later fan out per-account
 // when the time arrives. Returns 201 Created with a minimal response
 // (no results yet — they'll exist after the scheduler fires).
-func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) {
+func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest, quotaUnitsOverride ...int) {
 	// Persist the parsed request shape into metadata so the scheduler
 	// can reconstruct the per-account captions.
 	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
@@ -860,8 +904,30 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		Source:         resolveSource(r.Context()),
 		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
 	}
-	post, err := h.createScheduledSocialPost(r.Context(), workspaceID, createParams)
+	quotaUnits := len(parsed.Posts)
+	if len(quotaUnitsOverride) > 0 {
+		quotaUnits = quotaUnitsOverride[0]
+	}
+	var post db.SocialPost
+	createMutation := func(queries *db.Queries) error {
+		var createErr error
+		post, createErr = h.createScheduledSocialPostWithQueries(r.Context(), queries, workspaceID, createParams)
+		return createErr
+	}
+	if h.paidSchedule != nil && parsed.ScheduledAt != nil {
+		err = h.paidSchedule.Mutate(r.Context(), workspaceID, []paidquota.PeriodDelta{{
+			Period:         quota.PeriodForTime(*parsed.ScheduledAt),
+			RequestedUnits: quotaUnits,
+		}}, createMutation)
+	} else {
+		err = createMutation(h.queries)
+	}
 	if err != nil {
+		var admissionErr *paidquota.AdmissionError
+		if errors.As(err, &admissionErr) {
+			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)
+			return
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			planID := h.planIDForWorkspace(r.Context(), workspaceID)
 			limit := h.activeScheduledPostLimit(r.Context(), workspaceID, planID)
@@ -916,9 +982,16 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 }
 
 func (h *SocialPostHandler) createScheduledSocialPost(ctx context.Context, workspaceID string, params db.CreateSocialPostParams) (db.SocialPost, error) {
+	return h.createScheduledSocialPostWithQueries(ctx, h.queries, workspaceID, params)
+}
+
+func (h *SocialPostHandler) createScheduledSocialPostWithQueries(ctx context.Context, queries *db.Queries, workspaceID string, params db.CreateSocialPostParams) (db.SocialPost, error) {
+	if queries == nil {
+		return db.SocialPost{}, errors.New("scheduled post queries are not configured")
+	}
 	planID := h.planIDForWorkspace(ctx, workspaceID)
 	if planHasActiveScheduledPostCap(planID) {
-		return h.queries.CreateSocialPostWithActiveScheduledCap(ctx, db.CreateSocialPostWithActiveScheduledCapParams{
+		return queries.CreateSocialPostWithActiveScheduledCap(ctx, db.CreateSocialPostWithActiveScheduledCapParams{
 			WorkspaceID:          params.WorkspaceID,
 			ActiveScheduledLimit: h.activeScheduledPostLimit(ctx, workspaceID, planID),
 			Caption:              params.Caption,
@@ -931,7 +1004,7 @@ func (h *SocialPostHandler) createScheduledSocialPost(ctx context.Context, works
 			ProfileIds:           params.ProfileIds,
 		})
 	}
-	return h.queries.CreateSocialPost(ctx, params)
+	return queries.CreateSocialPost(ctx, params)
 }
 
 func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) bool {

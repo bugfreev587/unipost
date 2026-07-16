@@ -30,6 +30,83 @@ func TestShouldHardBlockFreePlanQuota(t *testing.T) {
 	}
 }
 
+func TestMonthlySnapshotUsesCompletedAndCommittedScheduledUsage(t *testing.T) {
+	snapshot := MonthlySnapshot{
+		Completed: 98,
+		Scheduled: 2,
+		QuotaHold: 1,
+		Limit:     100,
+	}
+
+	if got := snapshot.EffectiveUsage(); got != 100 {
+		t.Fatalf("effective usage = %d, want 100", got)
+	}
+	if got := snapshot.EffectivePercentage(); got != 100 {
+		t.Fatalf("effective percentage = %v, want 100", got)
+	}
+	if !snapshot.Reached(100) {
+		t.Fatal("expected exact 100% to reach the 100 threshold")
+	}
+	if snapshot.Reached(105) {
+		t.Fatal("expected exact 100% not to reach the 105 threshold")
+	}
+}
+
+func TestMonthlySnapshotProjectsAtomicScheduleReplacement(t *testing.T) {
+	snapshot := MonthlySnapshot{
+		Completed: 98,
+		Scheduled: 2,
+		QuotaHold: 1,
+		Limit:     100,
+	}
+
+	if !snapshot.WouldExceed(0, 1) {
+		t.Fatal("expected one net-new scheduled unit above 100% to exceed")
+	}
+	if snapshot.WouldExceed(1, 1) {
+		t.Fatal("expected atomic release and reservation at 100% to remain allowed")
+	}
+	if snapshot.WouldExceed(2, 1) {
+		t.Fatal("expected net release to remain allowed")
+	}
+}
+
+func TestMonthlySnapshotUnlimitedPlanNeverExceeds(t *testing.T) {
+	snapshot := MonthlySnapshot{
+		Completed: 100_000,
+		Scheduled: 100_000,
+		Limit:     -1,
+	}
+
+	if snapshot.WouldExceed(0, 100_000) {
+		t.Fatal("expected unlimited plan not to exceed")
+	}
+	if snapshot.Reached(80) {
+		t.Fatal("expected unlimited plan not to reach finite quota thresholds")
+	}
+}
+
+func TestCheckerMonthlySnapshotForPeriodIncludesScheduledAndHeldUnits(t *testing.T) {
+	checker := NewChecker(db.New(&fakeQuotaDB{
+		planID:         "basic",
+		limit:          2500,
+		usage:          2488,
+		scheduledUnits: 12,
+		quotaHoldUnits: 3,
+	}))
+
+	snapshot, err := checker.MonthlySnapshotForPeriod(context.Background(), "ws_123", "2026-07")
+	if err != nil {
+		t.Fatalf("monthly snapshot: %v", err)
+	}
+	if snapshot.WorkspaceID != "ws_123" || snapshot.PlanID != "basic" || snapshot.Period != "2026-07" {
+		t.Fatalf("snapshot identity = %#v", snapshot)
+	}
+	if snapshot.Completed != 2488 || snapshot.Scheduled != 12 || snapshot.QuotaHold != 3 || snapshot.Limit != 2500 {
+		t.Fatalf("snapshot counts = %#v", snapshot)
+	}
+}
+
 func TestFreePlanHardBlockStatusAlwaysBlocksProjectedFreePlanOverage(t *testing.T) {
 	checker := NewChecker(db.New(&fakeQuotaDB{
 		planID: "free",
@@ -100,6 +177,7 @@ type fakeQuotaDB struct {
 	limit          int32
 	usage          int32
 	scheduledUnits int32
+	quotaHoldUnits int32
 }
 
 func (f *fakeQuotaDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -151,6 +229,8 @@ func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) 
 			pgtype.Timestamptz{},
 			"ws_123",
 		}}
+	case strings.Contains(sql, "sp.status = 'quota_hold'"):
+		return fakeQuotaRow{values: []any{f.quotaHoldUnits}}
 	case strings.Contains(sql, "FROM social_posts"):
 		return fakeQuotaRow{values: []any{f.scheduledUnits}}
 	default:

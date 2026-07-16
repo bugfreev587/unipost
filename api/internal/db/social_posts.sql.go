@@ -17,7 +17,7 @@ SET archived_at = NOW()
 WHERE id = $1
   AND workspace_id = $2
   AND deleted_at IS NULL
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type ArchiveSocialPostParams struct {
@@ -43,6 +43,9 @@ func (q *Queries) ArchiveSocialPost(ctx context.Context, arg ArchiveSocialPostPa
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -51,7 +54,7 @@ const cancelSocialPost = `-- name: CancelSocialPost :one
 UPDATE social_posts
 SET status = 'cancelled'
 WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type CancelSocialPostParams struct {
@@ -77,6 +80,9 @@ func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostPara
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -85,7 +91,7 @@ const claimDraftForPublish = `-- name: ClaimDraftForPublish :one
 UPDATE social_posts
 SET status = 'publishing'
 WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type ClaimDraftForPublishParams struct {
@@ -111,6 +117,9 @@ func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPub
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -118,7 +127,7 @@ func (q *Queries) ClaimDraftForPublish(ctx context.Context, arg ClaimDraftForPub
 const claimScheduledPost = `-- name: ClaimScheduledPost :one
 UPDATE social_posts SET status = 'publishing'
 WHERE id = $1 AND status = 'scheduled'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost, error) {
@@ -139,6 +148,9 @@ func (q *Queries) ClaimScheduledPost(ctx context.Context, id string) (SocialPost
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -160,7 +172,7 @@ func (q *Queries) CountPublishedPostsByWorkspace(ctx context.Context, workspaceI
 const createSocialPost = `-- name: CreateSocialPost :one
 INSERT INTO social_posts (workspace_id, caption, media_urls, status, metadata, scheduled_at, idempotency_key, source, profile_ids)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type CreateSocialPostParams struct {
@@ -203,6 +215,9 @@ func (q *Queries) CreateSocialPost(ctx context.Context, arg CreateSocialPostPara
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -234,7 +249,7 @@ SELECT
   $8,
   $9
 FROM scheduled_cap_slot
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type CreateSocialPostWithActiveScheduledCapParams struct {
@@ -279,6 +294,9 @@ func (q *Queries) CreateSocialPostWithActiveScheduledCap(ctx context.Context, ar
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -317,7 +335,7 @@ func (q *Queries) ExpireOldIdempotencyKeys(ctx context.Context) error {
 }
 
 const getDueScheduledPosts = `-- name: GetDueScheduledPosts :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE status = 'scheduled'
   AND deleted_at IS NULL
   AND scheduled_at <= NOW()
@@ -349,6 +367,9 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 			&i.DeletedAt,
 			&i.Source,
 			&i.ProfileIds,
+			&i.QuotaHoldReason,
+			&i.QuotaHoldAt,
+			&i.QuotaHoldOriginalScheduledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -361,7 +382,7 @@ func (q *Queries) GetDueScheduledPosts(ctx context.Context) ([]SocialPost, error
 }
 
 const getScheduledPostsByWorkspace = `-- name: GetScheduledPostsByWorkspace :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE workspace_id = $1
   AND deleted_at IS NULL
   AND status = 'scheduled'
@@ -392,6 +413,9 @@ func (q *Queries) GetScheduledPostsByWorkspace(ctx context.Context, workspaceID 
 			&i.DeletedAt,
 			&i.Source,
 			&i.ProfileIds,
+			&i.QuotaHoldReason,
+			&i.QuotaHoldAt,
+			&i.QuotaHoldOriginalScheduledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -404,7 +428,7 @@ func (q *Queries) GetScheduledPostsByWorkspace(ctx context.Context, workspaceID 
 }
 
 const getScheduledSocialPostByIdempotencyKey = `-- name: GetScheduledSocialPostByIdempotencyKey :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE workspace_id = $1
   AND idempotency_key = $2
   AND status = 'scheduled'
@@ -436,12 +460,15 @@ func (q *Queries) GetScheduledSocialPostByIdempotencyKey(ctx context.Context, ar
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
 
 const getSocialPostByID = `-- name: GetSocialPostByID :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE id = $1
   AND deleted_at IS NULL
 `
@@ -468,12 +495,15 @@ func (q *Queries) GetSocialPostByID(ctx context.Context, id string) (SocialPost,
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
 
 const getSocialPostByIDAndWorkspace = `-- name: GetSocialPostByIDAndWorkspace :one
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE id = $1
   AND workspace_id = $2
   AND deleted_at IS NULL
@@ -502,12 +532,15 @@ func (q *Queries) GetSocialPostByIDAndWorkspace(ctx context.Context, arg GetSoci
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
 
 const listSocialPostsByWorkspace = `-- name: ListSocialPostsByWorkspace :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE workspace_id = $1
   AND deleted_at IS NULL
 ORDER BY created_at DESC
@@ -544,6 +577,9 @@ func (q *Queries) ListSocialPostsByWorkspace(ctx context.Context, arg ListSocial
 			&i.DeletedAt,
 			&i.Source,
 			&i.ProfileIds,
+			&i.QuotaHoldReason,
+			&i.QuotaHoldAt,
+			&i.QuotaHoldOriginalScheduledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -556,7 +592,7 @@ func (q *Queries) ListSocialPostsByWorkspace(ctx context.Context, arg ListSocial
 }
 
 const listSocialPostsFiltered = `-- name: ListSocialPostsFiltered :many
-SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids FROM social_posts
+SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE workspace_id = $1
   AND deleted_at IS NULL
   AND ($2::text = ''  OR status     = ANY(string_to_array($2, ',')))
@@ -609,6 +645,9 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 			&i.DeletedAt,
 			&i.Source,
 			&i.ProfileIds,
+			&i.QuotaHoldReason,
+			&i.QuotaHoldAt,
+			&i.QuotaHoldOriginalScheduledAt,
 		); err != nil {
 			return nil, err
 		}
@@ -624,7 +663,7 @@ const rescheduleSocialPost = `-- name: RescheduleSocialPost :one
 UPDATE social_posts
 SET scheduled_at = $3
 WHERE id = $1 AND workspace_id = $2 AND status = 'scheduled'
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type RescheduleSocialPostParams struct {
@@ -651,6 +690,9 @@ func (q *Queries) RescheduleSocialPost(ctx context.Context, arg RescheduleSocial
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -661,7 +703,7 @@ SET archived_at = NULL
 WHERE id = $1
   AND workspace_id = $2
   AND deleted_at IS NULL
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type RestoreSocialPostParams struct {
@@ -687,6 +729,9 @@ func (q *Queries) RestoreSocialPost(ctx context.Context, arg RestoreSocialPostPa
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -717,7 +762,7 @@ SET deleted_at = NOW(),
 WHERE id = $1
   AND workspace_id = $2
   AND deleted_at IS NULL
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type SoftDeleteSocialPostParams struct {
@@ -743,6 +788,9 @@ func (q *Queries) SoftDeleteSocialPost(ctx context.Context, arg SoftDeleteSocial
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }
@@ -755,7 +803,7 @@ SET caption = $3,
     scheduled_at = $6,
     profile_ids = $7
 WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
-RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids
+RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
 type UpdateDraftContentParams struct {
@@ -794,6 +842,9 @@ func (q *Queries) UpdateDraftContent(ctx context.Context, arg UpdateDraftContent
 		&i.DeletedAt,
 		&i.Source,
 		&i.ProfileIds,
+		&i.QuotaHoldReason,
+		&i.QuotaHoldAt,
+		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
 }

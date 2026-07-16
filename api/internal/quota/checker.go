@@ -2,8 +2,11 @@ package quota
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
@@ -16,6 +19,44 @@ type QuotaStatus struct {
 	Reserved   int     `json:"reserved,omitempty"`
 	Limit      int     `json:"limit"`
 	Percentage float64 `json:"percentage"`
+}
+
+type MonthlySnapshot struct {
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	PlanID      string `json:"plan_id"`
+	Period      string `json:"period"`
+	Completed   int    `json:"completed"`
+	Scheduled   int    `json:"scheduled"`
+	QuotaHold   int    `json:"quota_hold"`
+	Limit       int    `json:"limit"`
+}
+
+func (s MonthlySnapshot) EffectiveUsage() int {
+	return s.Completed + s.Scheduled
+}
+
+func (s MonthlySnapshot) EffectivePercentage() float64 {
+	if s.Limit <= 0 {
+		return 0
+	}
+	return float64(s.EffectiveUsage()) / float64(s.Limit) * 100
+}
+
+func (s MonthlySnapshot) Reached(threshold int) bool {
+	return s.Limit > 0 && threshold > 0 && s.EffectiveUsage()*100 >= threshold*s.Limit
+}
+
+func (s MonthlySnapshot) WouldExceed(released, requested int) bool {
+	if s.Limit < 0 {
+		return false
+	}
+	if released < 0 {
+		released = 0
+	}
+	if requested < 0 {
+		requested = 0
+	}
+	return s.EffectiveUsage()-released+requested > s.Limit
 }
 
 func (s QuotaStatus) Period() string {
@@ -48,6 +89,64 @@ func NewChecker(queries *db.Queries) *Checker {
 // FreePlanHardBlockStatus at publish-admission call sites.
 func (c *Checker) Check(ctx context.Context, workspaceID string) QuotaStatus {
 	return c.CheckForPeriod(ctx, workspaceID, currentPeriod())
+}
+
+func (c *Checker) MonthlySnapshotForPeriod(ctx context.Context, workspaceID, period string) (MonthlySnapshot, error) {
+	if c == nil || c.queries == nil {
+		return MonthlySnapshot{}, errors.New("quota checker is not configured")
+	}
+	if period == "" {
+		period = currentPeriod()
+	}
+
+	planID := "free"
+	sub, err := c.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
+	if err == nil && sub.PlanID != "" {
+		planID = sub.PlanID
+	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return MonthlySnapshot{}, err
+	}
+
+	plan, err := c.queries.GetPlan(ctx, planID)
+	if err != nil {
+		return MonthlySnapshot{}, err
+	}
+
+	completed := 0
+	usage, err := c.queries.GetUsage(ctx, db.GetUsageParams{
+		WorkspaceID: workspaceID,
+		Period:      period,
+	})
+	if err == nil {
+		completed = int(usage.PostCount)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return MonthlySnapshot{}, err
+	}
+
+	scheduled, err := c.queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{
+		WorkspaceID: workspaceID,
+		Period:      period,
+	})
+	if err != nil {
+		return MonthlySnapshot{}, err
+	}
+	held, err := c.queries.CountQuotaHoldUnitsByWorkspaceAndPeriod(ctx, db.CountQuotaHoldUnitsByWorkspaceAndPeriodParams{
+		WorkspaceID: workspaceID,
+		Period:      period,
+	})
+	if err != nil {
+		return MonthlySnapshot{}, err
+	}
+
+	return MonthlySnapshot{
+		WorkspaceID: workspaceID,
+		PlanID:      planID,
+		Period:      period,
+		Completed:   completed,
+		Scheduled:   int(scheduled),
+		QuotaHold:   int(held),
+		Limit:       int(plan.PostLimit),
+	}, nil
 }
 
 func (c *Checker) CheckForPeriod(ctx context.Context, workspaceID, period string) QuotaStatus {

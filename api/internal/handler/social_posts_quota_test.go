@@ -17,10 +17,132 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
+
+func TestWritePaidPlanSchedulingCapacityExceededContract(t *testing.T) {
+	rr := httptest.NewRecorder()
+	snapshot := quota.MonthlySnapshot{
+		WorkspaceID: "ws_1",
+		PlanID:      "basic",
+		Period:      "2026-07",
+		Completed:   2488,
+		Scheduled:   12,
+		QuotaHold:   2,
+		Limit:       2500,
+	}
+
+	writePaidPlanSchedulingCapacityExceeded(rr, paidquota.NewAdmissionError(snapshot, 1))
+
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402", rr.Code)
+	}
+	for header, want := range map[string]string{
+		"X-UniPost-Usage":            "2488/2500",
+		"X-UniPost-Scheduled-Usage":  "12",
+		"X-UniPost-Quota-Hold-Usage": "2",
+		"X-UniPost-Effective-Usage":  "2500/2500",
+		"X-UniPost-Warning":          "scheduled_quota_reached",
+	} {
+		if got := rr.Header().Get(header); got != want {
+			t.Fatalf("%s = %q, want %q", header, got, want)
+		}
+	}
+
+	var envelope struct {
+		Error struct {
+			Code           string         `json:"code"`
+			NormalizedCode string         `json:"normalized_code"`
+			Message        string         `json:"message"`
+			Details        map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if envelope.Error.Code != "PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED" {
+		t.Fatalf("error.code = %q", envelope.Error.Code)
+	}
+	if envelope.Error.NormalizedCode != "plan_monthly_scheduling_capacity_exceeded" {
+		t.Fatalf("error.normalized_code = %q", envelope.Error.NormalizedCode)
+	}
+	if !strings.Contains(envelope.Error.Message, "Immediate publishing remains available") {
+		t.Fatalf("error.message = %q", envelope.Error.Message)
+	}
+	for key, want := range map[string]any{
+		"completed_posts":              float64(2488),
+		"scheduled_posts":              float64(12),
+		"quota_hold_posts":             float64(2),
+		"effective_usage":              float64(2500),
+		"post_limit":                   float64(2500),
+		"requested_units":              float64(1),
+		"period":                       "2026-07",
+		"upgrade_recommended":          true,
+		"immediate_publishing_allowed": true,
+	} {
+		if got := envelope.Error.Details[key]; got != want {
+			t.Fatalf("details[%q] = %#v, want %#v", key, got, want)
+		}
+	}
+	if got := envelope.Error.Details["resets_at"]; got != "2026-08-01T00:00:00Z" {
+		t.Fatalf("details[resets_at] = %#v", got)
+	}
+}
+
+func TestCreateScheduledPostUsesPaidScheduleCoordinator(t *testing.T) {
+	dbtx := &scheduledQuotaHTTPTestDB{
+		planID:      "basic",
+		limit:       2500,
+		usage:       2500,
+		reserved:    0,
+		reservedSet: true,
+	}
+	coordinator := &recordingPaidScheduleCoordinator{
+		err: paidquota.NewAdmissionError(quota.MonthlySnapshot{
+			WorkspaceID: "ws_1",
+			PlanID:      "basic",
+			Period:      time.Now().UTC().Add(24 * time.Hour).Format("2006-01"),
+			Completed:   2500,
+			Limit:       2500,
+		}, 1),
+	}
+	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil).
+		SetPaidScheduleCoordinator(coordinator)
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	body := strings.NewReader(fmt.Sprintf(`{
+			"scheduled_at": %q,
+			"platform_posts": [
+				{
+					"account_id": "acct_linkedin",
+					"caption": "Paid schedule coordinator coverage."
+				}
+			]
+		}`, scheduledAt.Format(time.RFC3339)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/posts", body)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rr := httptest.NewRecorder()
+
+	handler.Create(rr, req)
+
+	if rr.Code != http.StatusPaymentRequired {
+		t.Fatalf("status = %d, want 402; body: %s", rr.Code, rr.Body.String())
+	}
+	if coordinator.calls != 1 {
+		t.Fatalf("coordinator calls = %d, want 1", coordinator.calls)
+	}
+	wantPeriod := scheduledAt.Format("2006-01")
+	if len(coordinator.deltas) != 1 ||
+		coordinator.deltas[0].Period != wantPeriod ||
+		coordinator.deltas[0].RequestedUnits != 1 {
+		t.Fatalf("coordinator deltas = %#v", coordinator.deltas)
+	}
+	if dbtx.createSocialPostCalls != 0 {
+		t.Fatalf("CreateSocialPost calls = %d, want 0", dbtx.createSocialPostCalls)
+	}
+}
 
 func TestCreateScheduledPostReturnsQuotaExceededWhenFreePlanCapIncludesReservations(t *testing.T) {
 	dbtx := &scheduledQuotaHTTPTestDB{}
@@ -212,6 +334,8 @@ type scheduledQuotaHTTPTestDB struct {
 	activeLimitOverrideSet     bool
 	createPost                 bool
 	createdPost                db.SocialPost
+	planID                     string
+	limit                      int32
 }
 
 func (f *scheduledQuotaHTTPTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -239,9 +363,13 @@ func (f *scheduledQuotaHTTPTestDB) Query(_ context.Context, query string, _ ...i
 func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		planID := f.planID
+		if planID == "" {
+			planID = "free"
+		}
 		return scanRow{values: []any{
 			"sub_1",
-			"free",
+			planID,
 			pgtype.Text{},
 			pgtype.Text{},
 			"active",
@@ -254,11 +382,19 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 			"ws_1",
 		}}
 	case strings.Contains(query, "-- name: GetPlan"):
+		planID := f.planID
+		if planID == "" {
+			planID = "free"
+		}
+		limit := f.limit
+		if limit == 0 {
+			limit = 100
+		}
 		return scanRow{values: []any{
-			"free",
-			"Free",
+			planID,
+			strings.ToUpper(planID[:1]) + planID[1:],
 			int32(0),
-			int32(100),
+			limit,
 			pgtype.Text{},
 			pgtype.Timestamptz{},
 			false,
@@ -293,7 +429,9 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 			return scanRow{values: []any{f.activeScheduled}}
 		}
 		return scanRow{values: []any{int32(0)}}
-	case strings.Contains(query, "FROM social_posts sp") && strings.Contains(query, "sp.status = 'scheduled'"):
+	case strings.Contains(query, "FROM social_posts sp") && strings.Contains(query, "sp.status = 'quota_hold'"):
+		return scanRow{values: []any{int32(0)}}
+	case strings.Contains(query, "FROM social_posts sp"):
 		reserved := f.reserved
 		if !f.reservedSet {
 			reserved = 1
@@ -311,6 +449,24 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 	default:
 		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
 	}
+}
+
+type recordingPaidScheduleCoordinator struct {
+	calls  int
+	deltas []paidquota.PeriodDelta
+	err    error
+}
+
+func (c *recordingPaidScheduleCoordinator) Mutate(_ context.Context, _ string, deltas []paidquota.PeriodDelta, mutation paidquota.Mutation) error {
+	c.calls++
+	c.deltas = append([]paidquota.PeriodDelta(nil), deltas...)
+	if c.err != nil {
+		return c.err
+	}
+	if mutation != nil {
+		return mutation(nil)
+	}
+	return nil
 }
 
 type recordingQuotaEmailService struct {
