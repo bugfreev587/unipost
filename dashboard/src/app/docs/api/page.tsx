@@ -84,6 +84,13 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     ],
   },
   {
+    title: "Billing And X Usage",
+    description: "Inspect plan billing state and the bounded managed-X allowance used by publishing and phased Inbox operations.",
+    endpoints: [
+      { label: "X Credits allowance", method: "GET", path: "/v1/billing/x-credits", href: "/docs/api/x-credits", description: "Read included, used, and remaining managed-X capacity plus reset and inbound limits." },
+    ],
+  },
+  {
     title: "Logs",
     description: "Query, backfill, and stream workspace integration logs for API, publishing, OAuth, webhook, and worker activity.",
     endpoints: [

@@ -59,6 +59,8 @@ func Classify(raw string) Classification {
 	}
 
 	switch {
+	case strings.Contains(s, "x_monthly_usage_limit_exceeded"):
+		c.ErrorCode = "x_monthly_usage_limit_exceeded"
 	case isMetaOAuthReconnectError(s):
 		c.ErrorCode = "account_reconnect_required"
 	case isMetaTransientError(s):
@@ -202,7 +204,7 @@ func NextActionForErrorCode(errorCode string) string {
 		return "retry_later"
 	case "rate_limit":
 		return "wait_and_retry"
-	case "quota_exceeded":
+	case "quota_exceeded", "x_monthly_usage_limit_exceeded":
 		return "review_quota"
 	case "account_reconnect_required", "auth_token_invalid":
 		return "reconnect_account"

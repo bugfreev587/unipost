@@ -4,7 +4,16 @@ import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useAuth } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
-import { getBilling, createCheckout, createPortal, type BillingInfo, type Plan } from "@/lib/api";
+import {
+  getBilling,
+  getXCreditsAllowance,
+  createCheckout,
+  createPortal,
+  type BillingInfo,
+  type Plan,
+  type XCreditsAllowance,
+} from "@/lib/api";
+import { X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
 import { formatPlanPostAllowance, formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { CheckCircle2, ExternalLink } from "lucide-react";
@@ -48,6 +57,9 @@ function BillingSettingsContent() {
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
+  const [xCreditsLoading, setXCreditsLoading] = useState(true);
+  const [xCreditsError, setXCreditsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [billingError, setBillingError] = useState<{ message: string; topic: string } | null>(null);
@@ -57,15 +69,33 @@ function BillingSettingsContent() {
     if (!workspaceId) return;
     try {
       setBillingError(null);
+      setXCreditsError(null);
+      setXCreditsLoading(true);
       const token = await getToken();
       if (!token) return;
-      const res = await getBilling(token);
-      setBilling(res.data);
+      const [billingResult, xCreditsResult] = await Promise.allSettled([
+        getBilling(token),
+        getXCreditsAllowance(token),
+      ]);
+      if (billingResult.status === "rejected") {
+        throw billingResult.reason;
+      }
+      setBilling(billingResult.value.data);
+      if (xCreditsResult.status === "fulfilled") {
+        setXCredits(xCreditsResult.value.data);
+      } else {
+        setXCreditsError(
+          xCreditsResult.reason instanceof Error
+            ? xCreditsResult.reason.message
+            : "Failed to load X Credits allowance",
+        );
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load billing";
       console.error("Failed to load billing:", err);
       setBillingError({ message, topic: "billing-load-failure" });
     } finally {
+      setXCreditsLoading(false);
       setLoading(false);
     }
   }, [getToken, workspaceId]);
@@ -126,6 +156,15 @@ function BillingSettingsContent() {
   const limit = billing?.limit ?? 100;
   const pct = billing ? Math.round(usagePercentage(used, limit)) : 0;
   const barClass = pct >= 100 ? "bar-red" : pct >= 80 ? "bar-amber" : "bar-green";
+  const xPlan = X_CREDIT_PLANS.find((plan) => plan.id === xCredits?.plan_id);
+  const xAllowance = xCredits?.monthly_allowance;
+  const xRemaining = xCredits?.monthly_remaining;
+  const xCreditsPct = xAllowance && xAllowance > 0
+    ? Math.min(100, Math.round(((xCredits?.monthly_used ?? 0) / xAllowance) * 100))
+    : 0;
+  const xResetDate = xCredits?.billing_period_end
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(xCredits.billing_period_end))
+    : "";
 
   return (
     <>
@@ -293,6 +332,96 @@ function BillingSettingsContent() {
             : `${pct}% of monthly post quota used. Consider upgrading.`}
         </div>
       )}
+
+      <section
+        aria-labelledby="x-credits-heading"
+        style={{
+          marginBottom: 24,
+          padding: 18,
+          border: "1px solid var(--dborder)",
+          borderRadius: 10,
+          background: "var(--dcard)",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", marginBottom: 14 }}>
+          <div>
+            <div id="x-credits-heading" className="dt-body" style={{ fontWeight: 700, marginBottom: 4 }}>X Credits</div>
+            <div className="dt-body-sm">
+              Included managed-X allowance. It is separate from posts/month and resets each billing period.
+            </div>
+          </div>
+          <a href="/docs/guides/x/credits" style={{ fontSize: 12, color: "var(--daccent)", textDecoration: "underline", flexShrink: 0 }}>
+            How usage works
+          </a>
+        </div>
+
+        {xCreditsLoading ? (
+          <div className="dt-body-sm">Loading X Credits...</div>
+        ) : xCreditsError ? (
+          <div style={{ color: "var(--danger)", fontSize: 13 }}>
+            X Credits could not be loaded: {xCreditsError}
+          </div>
+        ) : xCredits?.monthly_allowance == null ? (
+          <div>
+            <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 650 }}>Custom</div>
+            <div className="dt-body-sm" style={{ marginTop: 5 }}>
+              Enterprise X Credits and inbound limits are defined by your contract. Contact your UniPost account team for capacity changes.
+            </div>
+          </div>
+        ) : xCredits.monthly_allowance === 0 ? (
+          <div>
+            <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 650 }}>0 included</div>
+            <div className="dt-body-sm" style={{ marginTop: 5 }}>
+              This plan does not include managed X usage. Upgrade to a paid plan to publish through UniPost-managed X credentials.
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+              <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 22, fontWeight: 650 }}>
+                {(xCredits.monthly_used ?? 0).toLocaleString()} / {xCredits.monthly_allowance.toLocaleString()}
+              </div>
+              <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
+                {(xRemaining ?? 0).toLocaleString()} remaining
+              </div>
+            </div>
+            <div style={{ margin: "10px 0 6px" }} className="usage-bar-track">
+              <div
+                className={`usage-bar-fill ${xCreditsPct >= 100 ? "bar-red" : xCreditsPct >= 80 ? "bar-amber" : "bar-green"}`}
+                style={{ width: `${xCreditsPct}%` }}
+              />
+            </div>
+            <div style={{ fontSize: 12, color: "var(--dmuted)" }}>
+              Resets {xResetDate || "at the end of the billing period"}.
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: 8,
+                marginTop: 14,
+              }}
+            >
+              {[
+                ["Normal X posts", Math.floor((xRemaining ?? 0) / 15).toLocaleString()],
+                ["Posts with URL", Math.floor((xRemaining ?? 0) / 200).toLocaleString()],
+                ["Complete comments", xPlan?.inbox_eligible ? Math.floor((xRemaining ?? 0) / 20).toLocaleString() : "Inbox not included"],
+                ["Complete DMs", xPlan?.inbox_eligible ? Math.floor((xRemaining ?? 0) / 25).toLocaleString() : "Inbox not included"],
+              ].map(([label, value]) => (
+                <div key={label} style={{ padding: "10px 11px", border: "1px solid var(--dborder)", borderRadius: 8 }}>
+                  <div style={{ fontSize: 11, color: "var(--dmuted)", marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontFamily: "var(--font-geist-mono), monospace", fontSize: 15, fontWeight: 650 }}>{value}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--dborder)", fontSize: 12, lineHeight: 1.6, color: "var(--dmuted)" }}>
+          Managed-X work stops at the hard limit. The independent safety cap of 20 X posts per connected account per UTC day still applies.
+          Bring-your-own X API connections do not consume this allowance.
+        </div>
+      </section>
 
       <div style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>

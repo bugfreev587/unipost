@@ -413,6 +413,15 @@ export default function ValidatePage() {
         </p>
       </section>
       <section className="api-field-section">
+        <h2 className="api-field-section-title">X Credits Preflight</h2>
+        <p>
+          Validation does not consume X Credits. Use this endpoint to catch request and platform constraints before
+          calling <Link href="/docs/api/posts/create">POST /v1/posts</Link>, then inspect the live allowance with{" "}
+          <Link href="/docs/api/x-credits">GET /v1/billing/x-credits</Link>. Managed X publishes consume the allowance;
+          bring-your-own X API connections do not.
+        </p>
+      </section>
+      <section className="api-field-section">
         <h2 className="api-field-section-title">Platform Options Shape</h2>
         <p>
           Use one request shape at a time. The legacy <code>account_ids</code> shape accepts top-level platform-scoped options such as <code>platform_options.instagram.mediaType</code>. The recommended <code>platform_posts[]</code> shape is already scoped to one destination, so each <code>platform_posts[].platform_options</code> object must be flat, such as <code>{'{"mediaType":"story"}'}</code>.

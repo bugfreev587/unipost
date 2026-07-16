@@ -572,6 +572,24 @@ export function CreatePostContent() {
 
         <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
           <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
+            X Credits
+          </h2>
+          <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              Managed X publishes consume the workspace&apos;s included X Credits allowance. A conclusively URL-free
+              X post uses 15 Credits; a URL or domain-like candidate is conservatively counted at 200 Credits.
+              Bring-your-own X API connections do not consume UniPost X Credits. Inspect remaining capacity with{" "}
+              <ApiInlineLink endpoint="GET /v1/billing/x-credits" href="/docs/api/x-credits" />.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              At the hard limit, managed-X delivery fails with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>x_monthly_usage_limit_exceeded</code>.
+              The independent safety cap of 20 X posts per connected account per UTC day still applies.
+            </p>
+          </div>
+        </section>
+
+        <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+          <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
             Publishing Result
           </h2>
           <div style={{ display: "grid", gap: 12, maxWidth: 880 }}>

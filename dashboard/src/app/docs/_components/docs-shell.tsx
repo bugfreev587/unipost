@@ -412,6 +412,13 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
         { label: "Connect Sessions", href: "/docs/connect-sessions" },
       ],
     },
+    {
+      title: "X Guides",
+      description: "Plan managed-X usage and follow the phased X Inbox rollout.",
+      items: [
+        { label: "X Credits", href: "/docs/guides/x/credits" },
+      ],
+    },
   ],
   resources: [
     {
@@ -478,6 +485,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
           ],
         },
         { label: "Plans and limits", href: "/docs/pricing" },
+        { label: "X Credits", href: "/docs/api/x-credits", method: "GET" },
         {
           label: "Platform Credentials",
           children: [
