@@ -35,4 +35,13 @@ func TestXInboxIngestQueriesPreserveAppAndPlanIsolation(t *testing.T) {
 	if !strings.Contains(string(credentialsSQL), "-- name: ListTwitterConsumerSecretsByWebhookRouteKey :many") {
 		t.Fatal("platform credential queries must resolve workspace consumer secrets by unguessable webhook route key")
 	}
+	for _, required := range []string{
+		"FROM x_inbox_delivery_cleanup_intents",
+		"webhook_route_key = $1",
+		"consumer_secret IS NOT NULL",
+	} {
+		if !strings.Contains(string(credentialsSQL), required) {
+			t.Fatalf("platform credential secret resolver query missing pending cleanup support %q", required)
+		}
+	}
 }

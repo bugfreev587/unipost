@@ -168,26 +168,15 @@ func (s *PostgresIngestionStore) EncryptedConsumerSecrets(
 
 func (s *PostgresIngestionStore) BackfillWebhookRouteKeys(
 	ctx context.Context,
-	decrypt func(string) (string, error),
 ) error {
-	if decrypt == nil {
-		return errors.New("X webhook route-key backfill decryptor is not configured")
-	}
 	rows, err := s.queries.ListTwitterCredentialsMissingWebhookRouteKey(ctx)
 	if err != nil {
 		return err
 	}
 	for _, row := range rows {
-		if !row.ConsumerSecret.Valid {
-			continue
-		}
-		secret, err := decrypt(row.ConsumerSecret.String)
+		routeKey, err := RandomWebhookRouteKey()
 		if err != nil {
 			return err
-		}
-		routeKey := WebhookRouteKey(secret, row.ClientID)
-		if routeKey == "" {
-			continue
 		}
 		if err := s.queries.SetTwitterWebhookRouteKeyIfMissing(
 			ctx,

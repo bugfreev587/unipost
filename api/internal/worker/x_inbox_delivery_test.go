@@ -158,6 +158,7 @@ func (f *fakeXInboxDeliveryStore) SaveState(_ context.Context, state XInboxDeliv
 		if f.accounts[i].SocialAccountID == state.SocialAccountID {
 			f.accounts[i].FilteredStreamRuleID = state.FilteredStreamRuleID
 			f.accounts[i].ActivityDMSubscriptionID = state.ActivityDMSubscriptionID
+			f.accounts[i].ActivityWebhookRouteKey = state.ActivityWebhookRouteKey
 		}
 	}
 	return nil
@@ -328,6 +329,7 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 		AccessTokenEncrypted:     "encrypted-user-token",
 		AppMode:                  xinbox.AppModeUniPostManaged,
 		ConsumerSecretConfigured: true,
+		ActivityWebhookRouteKey:  "managed-route-key",
 		Scopes:                   xinbox.RequiredInboxScopes(),
 		AccountActive:            true,
 		PlanAllowsInbox:          true,
@@ -367,6 +369,54 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	}
 	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
 		t.Fatalf("webhook URLs = %v, want app-specific URL %v", api.webhookURLs, want)
+	}
+}
+
+func TestXInboxDeliverySourceTracksActivityWebhookRouteGeneration(t *testing.T) {
+	source, err := os.ReadFile("x_inbox_delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{
+		"ActivityWebhookRouteKey",
+		"activity_webhook_route_key",
+		"state.ActivityWebhookRouteKey != account.WebhookRouteKey",
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("delivery reconciler missing route-generation contract %q", required)
+		}
+	}
+}
+
+func TestXInboxDeliveryRouteGenerationMismatchRecreatesActivitySubscription(t *testing.T) {
+	account := activeManagedXInboxAccount()
+	account.ActivityDMSubscriptionID = "old-subscription"
+	account.ActivityWebhookRouteKey = "old-route-key"
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{webhookID: "new-webhook", subscriptionID: "new-subscription"}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store:                           store,
+		API:                             api,
+		Cipher:                          fakeXInboxCipher{values: map[string]string{"encrypted-user-token": "user-token"}},
+		ManagedAppBearer:                "managed-app-token",
+		ManagedConsumerSecretConfigured: true,
+		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
+	})
+
+	if err := worker.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"old-subscription"}; !reflect.DeepEqual(api.deletedSubs, want) {
+		t.Fatalf("deleted subscriptions = %v, want route-mismatched generation %v", api.deletedSubs, want)
+	}
+	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
+		t.Fatalf("webhook URLs = %v, want current generation %v", api.webhookURLs, want)
+	}
+	got := store.states[len(store.states)-1]
+	if got.ActivityDMSubscriptionID != "new-subscription" ||
+		got.ActivityWebhookRouteKey != "managed-route-key" {
+		t.Fatalf("final state = %+v, want recreated subscription on current route", got)
 	}
 }
 

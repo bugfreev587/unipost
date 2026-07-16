@@ -318,9 +318,49 @@ func (f fakeSecretStore) EncryptedConsumerSecrets(_ context.Context, routeKey st
 	return f.values[routeKey], nil
 }
 
+func TestXWebhookSecretResolverRotationLifecycle(t *testing.T) {
+	store := &fakeSecretStore{values: map[string][]string{
+		"stable-route": {"encrypted-old"},
+	}}
+	resolver := NewAppSecretResolver(AppSecretResolverConfig{
+		Store: store,
+		Decrypt: func(value string) (string, error) {
+			switch value {
+			case "encrypted-old":
+				return "old-consumer-secret", nil
+			case "encrypted-new":
+				return "new-consumer-secret", nil
+			default:
+				return "", errors.New("unknown ciphertext")
+			}
+		},
+	})
+	if got, err := resolver.ConsumerSecret(context.Background(), "stable-route"); err != nil || got != "old-consumer-secret" {
+		t.Fatalf("old route secret = %q err=%v", got, err)
+	}
+
+	// Same-app secret rotation updates signature validation immediately while
+	// retaining the already registered webhook URL.
+	store.values["stable-route"] = []string{"encrypted-new"}
+	if got, err := resolver.ConsumerSecret(context.Background(), "stable-route"); err != nil || got != "new-consumer-secret" {
+		t.Fatalf("rotated route secret = %q err=%v", got, err)
+	}
+
+	// An old app-generation route is present only while its cleanup intent
+	// contributes encrypted signature material to the resolver query.
+	store.values["old-generation-route"] = []string{"encrypted-old"}
+	if _, err := resolver.ConsumerSecret(context.Background(), "old-generation-route"); err != nil {
+		t.Fatalf("pending cleanup route was not valid: %v", err)
+	}
+	delete(store.values, "old-generation-route")
+	if _, err := resolver.ConsumerSecret(context.Background(), "old-generation-route"); !errors.Is(err, ErrAppSecretNotFound) {
+		t.Fatalf("completed cleanup route error = %v, want not found", err)
+	}
+}
+
 func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T) {
-	managedRoute := WebhookRouteKey("managed-secret", "managed-client")
-	workspaceRoute := WebhookRouteKey("workspace-secret", "workspace-client")
+	managedRoute := WebhookRouteKey("stable-route-secret", "managed-client")
+	workspaceRoute := "random-workspace-route"
 	resolver := NewAppSecretResolver(AppSecretResolverConfig{
 		ManagedRouteKey: managedRoute,
 		ManagedSecret:   "managed-secret",
@@ -346,10 +386,7 @@ func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T)
 		t.Fatalf("missing app err = %v", err)
 	}
 
-	attackerRoute := WebhookRouteKey("attacker-secret", "workspace-client")
-	if attackerRoute == workspaceRoute {
-		t.Fatal("copied client id with a different consumer secret reused victim route")
-	}
+	attackerRoute := "different-random-workspace-route"
 	isolated := NewAppSecretResolver(AppSecretResolverConfig{
 		Store: fakeSecretStore{values: map[string][]string{
 			workspaceRoute: {"victim-ciphertext"},
@@ -382,16 +419,35 @@ func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T)
 	}
 }
 
-func TestWebhookRouteKeyIsDeterministicAndSecretBound(t *testing.T) {
-	first := WebhookRouteKey("consumer-secret", "client-id")
-	if first == "" || first != WebhookRouteKey("consumer-secret", "client-id") {
+func TestManagedWebhookRouteKeyIsStableAcrossConsumerSecretRotation(t *testing.T) {
+	first := WebhookRouteKey("stable-route-secret", "client-id")
+	if first == "" || first != WebhookRouteKey("stable-route-secret", "client-id") {
 		t.Fatalf("route key is not deterministic: %q", first)
 	}
-	if first == WebhookRouteKey("other-secret", "client-id") {
-		t.Fatal("route key was not bound to consumer secret")
+	for _, consumerSecret := range []string{"old-consumer-secret", "rotated-consumer-secret"} {
+		if got := WebhookRouteKey("stable-route-secret", "client-id"); got != first {
+			t.Fatalf("consumer secret %q changed managed route to %q", consumerSecret, got)
+		}
 	}
-	if first == WebhookRouteKey("consumer-secret", "other-client") {
+	if first == WebhookRouteKey("other-route-secret", "client-id") {
+		t.Fatal("route key was not bound to dedicated route secret")
+	}
+	if first == WebhookRouteKey("stable-route-secret", "other-client") {
 		t.Fatal("route key was not bound to client id")
+	}
+}
+
+func TestRandomWebhookRouteKeysAreOpaqueAndUnique(t *testing.T) {
+	first, err := RandomWebhookRouteKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := RandomWebhookRouteKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) < 32 || len(second) < 32 || first == second {
+		t.Fatalf("random routes = %q and %q", first, second)
 	}
 }
 

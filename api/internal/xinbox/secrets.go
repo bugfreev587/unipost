@@ -3,6 +3,7 @@ package xinbox
 import (
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
@@ -37,16 +38,24 @@ func NewAppSecretResolver(config AppSecretResolverConfig) *AppSecretResolver {
 	}
 }
 
-func WebhookRouteKey(consumerSecret, clientID string) string {
-	consumerSecret = strings.TrimSpace(consumerSecret)
+func WebhookRouteKey(routeSecret, clientID string) string {
+	routeSecret = strings.TrimSpace(routeSecret)
 	clientID = strings.TrimSpace(clientID)
-	if consumerSecret == "" || clientID == "" {
+	if routeSecret == "" || clientID == "" {
 		return ""
 	}
-	mac := hmac.New(sha256.New, []byte(consumerSecret))
+	mac := hmac.New(sha256.New, []byte(routeSecret))
 	_, _ = mac.Write([]byte("unipost:x:webhook-route:v1\x00"))
 	_, _ = mac.Write([]byte(clientID))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func RandomWebhookRouteKey() (string, error) {
+	raw := make([]byte, 32)
+	if _, err := rand.Read(raw); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
 }
 
 func (r *AppSecretResolver) ConsumerSecret(ctx context.Context, routeKey string) (string, error) {

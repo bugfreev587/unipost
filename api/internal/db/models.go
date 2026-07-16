@@ -1095,6 +1095,8 @@ type XInboxDeliveryCleanupIntent struct {
 	NextAttemptAt            pgtype.Timestamptz `json:"next_attempt_at"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	WebhookRouteKey          pgtype.Text        `json:"webhook_route_key"`
+	ConsumerSecret           pgtype.Text        `json:"consumer_secret"`
 }
 
 type XInboxDeliveryResource struct {
@@ -1106,6 +1108,7 @@ type XInboxDeliveryResource struct {
 	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	ActivityWebhookRouteKey  pgtype.Text        `json:"activity_webhook_route_key"`
 }
 
 type XUsageEvent struct {

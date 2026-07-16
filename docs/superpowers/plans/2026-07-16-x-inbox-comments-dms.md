@@ -14,7 +14,7 @@
 
 - This plan implements approved PRD phases 2 and 3 only.
 - It does not implement buckets, a customer ledger, Stripe Top-up, Auto top-up, or XChat.
-- Development uses `TWITTER_BEARER_TOKEN` for Filtered Stream/X Activity management and `TWITTER_CONSUMER_SECRET` for webhook CRC/signatures. These are distinct from `TWITTER_CLIENT_ID` and `TWITTER_CLIENT_SECRET`.
+- Development uses `TWITTER_BEARER_TOKEN` for Filtered Stream/X Activity management, `TWITTER_CONSUMER_SECRET` for webhook CRC/signatures, and the independent stable `X_INBOX_WEBHOOK_ROUTE_SECRET` for the managed webhook URL generation. These are distinct from `TWITTER_CLIENT_ID` and `TWITTER_CLIENT_SECRET`.
 - Workspace X Platform Credentials gain optional encrypted app-level Bearer Token and Consumer Secret fields. BYO X publishing can continue with only Client ID/Secret, but BYO Inbox capability stays disabled with explicit missing-credential guidance until all four values are present.
 - A real public test reply or DM must use dedicated test accounts and explicit user approval. Automated acceptance otherwise uses read/sync operations and mocked upstream writes.
 - Disconnecting an X account or deleting a workspace must idempotently remove its Filtered Stream rule and Activity subscription before applying the existing Inbox data-deletion policy.
@@ -600,8 +600,16 @@ TWITTER_CLIENT_ID
 TWITTER_CLIENT_SECRET
 TWITTER_BEARER_TOKEN
 TWITTER_CONSUMER_SECRET
+X_INBOX_WEBHOOK_ROUTE_SECRET
 X_INBOX_WEBHOOK_URL=https://dev-api.unipost.dev/v1/webhooks/twitter
 ```
+
+`X_INBOX_WEBHOOK_ROUTE_SECRET` is a separate stable, environment-specific
+secret used only to derive the managed app's webhook route. Do not reuse
+`TWITTER_CONSUMER_SECRET`: rotating X's consumer secret must update signature
+validation without changing the registered webhook URL. Rotate the route
+secret only as an explicit webhook-generation migration that recreates the
+managed Activity subscription.
 
 Register the dev webhook, complete CRC, create only dev rules/subscriptions, and keep X-side dev spend limits active.
 

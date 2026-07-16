@@ -114,8 +114,11 @@ func TestPlatformCredentialsTwitterEncryptsAppSecretsAndReturnsOnlyCompletenessF
 	if err != nil || gotConsumer != "twitter-consumer-secret" {
 		t.Fatalf("decrypt consumer secret = %q, %v", gotConsumer, err)
 	}
-	if want := xinbox.WebhookRouteKey("twitter-consumer-secret", "twitter-client"); store.webhookRouteKey.String != want {
-		t.Fatalf("webhook route key = %q, want deterministic HMAC route", store.webhookRouteKey.String)
+	if store.webhookRouteKey.String == xinbox.WebhookRouteKey("twitter-consumer-secret", "twitter-client") {
+		t.Fatal("workspace webhook route key must be random, not derived from the rotatable consumer secret")
+	}
+	if len(store.webhookRouteKey.String) < 32 {
+		t.Fatalf("workspace webhook route key = %q, want cryptographically strong opaque token", store.webhookRouteKey.String)
 	}
 	if strings.Contains(rec.Body.String(), "twitter-bearer-secret") || strings.Contains(rec.Body.String(), "twitter-consumer-secret") {
 		t.Fatalf("response leaked an X secret: %s", rec.Body.String())
@@ -132,6 +135,76 @@ func TestPlatformCredentialsTwitterEncryptsAppSecretsAndReturnsOnlyCompletenessF
 	}
 	if !response.Data.AppBearerTokenConfigured || !response.Data.ConsumerSecretConfigured || !response.Data.XInboxCredentialsComplete {
 		t.Fatalf("credential flags = %+v", response.Data)
+	}
+}
+
+func TestPlatformCredentialsTwitterConsumerSecretRotationPreservesSameAppWebhookRoute(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	existingConsumer, _ := encryptor.Encrypt("old-consumer-secret")
+	existingBearer, _ := encryptor.Encrypt("existing-bearer")
+	existingRoute := pgtype.Text{String: "stable-workspace-route-key", Valid: true}
+	store := &platformCredentialTestDB{
+		planID:                  "growth",
+		existingPlatform:        "twitter",
+		existingAppBearerToken:  pgtype.Text{String: existingBearer, Valid: true},
+		existingConsumerSecret:  pgtype.Text{String: existingConsumer, Valid: true},
+		existingWebhookRouteKey: existingRoute,
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "twitter",
+		"client_id": "existing-client",
+		"client_secret": "rotated-client-secret",
+		"consumer_secret": "rotated-consumer-secret"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.webhookRouteKey != existingRoute {
+		t.Fatalf("same-app consumer-secret rotation changed route from %+v to %+v", existingRoute, store.webhookRouteKey)
+	}
+	gotConsumer, err := encryptor.Decrypt(store.consumerSecret.String)
+	if err != nil || gotConsumer != "rotated-consumer-secret" {
+		t.Fatalf("rotated consumer secret = %q, %v", gotConsumer, err)
+	}
+}
+
+func TestPlatformCredentialsTwitterClientIDChangeGeneratesNewWebhookRoute(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &platformCredentialTestDB{
+		planID:                  "growth",
+		existingPlatform:        "twitter",
+		existingWebhookRouteKey: pgtype.Text{String: "old-workspace-route", Valid: true},
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "twitter",
+		"client_id": "replacement-client",
+		"client_secret": "replacement-client-secret",
+		"app_bearer_token": "replacement-bearer",
+		"consumer_secret": "replacement-consumer"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !store.webhookRouteKey.Valid || store.webhookRouteKey.String == "old-workspace-route" {
+		t.Fatalf("replacement app route = %+v, want a new generation", store.webhookRouteKey)
 	}
 }
 
@@ -416,7 +489,8 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 			f.consumerSecret, _ = args[5].(pgtype.Text)
 		}
 		if len(args) > 6 {
-			f.webhookRouteKey, _ = args[6].(pgtype.Text)
+			routeKey, _ := args[6].(string)
+			f.webhookRouteKey = pgtype.Text{String: routeKey, Valid: routeKey != ""}
 		}
 		if len(args) > 7 {
 			f.appBearerTokenSupplied, _ = args[7].(bool)
@@ -434,11 +508,14 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 		if !f.consumerSecretSupplied {
 			if clientID == "existing-client" {
 				f.consumerSecret = f.existingConsumerSecret
-				f.webhookRouteKey = f.existingWebhookRouteKey
 			} else {
 				f.consumerSecret = pgtype.Text{}
-				f.webhookRouteKey = pgtype.Text{}
 			}
+		}
+		if clientID == "existing-client" && f.existingWebhookRouteKey.Valid {
+			f.webhookRouteKey = f.existingWebhookRouteKey
+		} else if !f.appBearerToken.Valid || !f.consumerSecret.Valid {
+			f.webhookRouteKey = pgtype.Text{}
 		}
 		return platformCredentialScanRow{
 			platform:        platform,

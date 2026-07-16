@@ -70,6 +70,45 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	if !hasCredentialUpdateTrigger {
 		applyMigrationUp(t, ctx, tx, "migrations/111_x_inbox_credential_replacement_cleanup.sql")
 	}
+	var hasWebhookRouteKey bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'platform_credentials'
+			  AND column_name = 'webhook_route_key'
+		)
+	`).Scan(&hasWebhookRouteKey); err != nil {
+		t.Fatal(err)
+	}
+	if !hasWebhookRouteKey {
+		var hasInboundReceipts bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT to_regclass('public.x_inbound_event_receipts') IS NOT NULL
+		`).Scan(&hasInboundReceipts); err != nil {
+			t.Fatal(err)
+		}
+		if !hasInboundReceipts {
+			applyMigrationUp(t, ctx, tx, "migrations/109_x_inbound_usage_controls.sql")
+		}
+		applyMigrationUp(t, ctx, tx, "migrations/112_x_inbox_webhook_security_and_atomic_receipts.sql")
+	}
+	var hasActivityWebhookRouteKey bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM information_schema.columns
+			WHERE table_schema = 'public'
+			  AND table_name = 'x_inbox_delivery_resources'
+			  AND column_name = 'activity_webhook_route_key'
+		)
+	`).Scan(&hasActivityWebhookRouteKey); err != nil {
+		t.Fatal(err)
+	}
+	if !hasActivityWebhookRouteKey {
+		applyMigrationUp(t, ctx, tx, "migrations/113_x_inbox_webhook_route_rotation.sql")
+	}
 
 	var hasWorkspaceTrigger bool
 	if err := tx.QueryRowContext(ctx, `
@@ -168,10 +207,12 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`INSERT INTO profiles (id, workspace_id, name) VALUES ($1, $2, 'X Inbox Cascade Test')`, []any{profileID, workspaceID}},
 		{`
 			INSERT INTO platform_credentials (
-				id, workspace_id, platform, client_id, client_secret, app_bearer_token
+				id, workspace_id, platform, client_id, client_secret, app_bearer_token,
+				consumer_secret, webhook_route_key
 			) VALUES (
 				'x-inbox-cascade-test-credential', $1, 'twitter', 'client', 'secret',
-				'encrypted-workspace-bearer'
+				'encrypted-workspace-bearer', 'encrypted-workspace-consumer',
+				'workspace-webhook-route'
 			)
 		`, []any{workspaceID}},
 		{`
@@ -199,26 +240,33 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	}
 
 	var (
-		appMode        string
-		appBearer      string
-		ruleID         string
-		subscriptionID string
+		appMode         string
+		appBearer       string
+		cleanupRoute    string
+		cleanupConsumer string
+		ruleID          string
+		subscriptionID  string
 	)
 	if err := tx.QueryRowContext(ctx, `
-		SELECT x_app_mode, app_bearer_token, filtered_stream_rule_id, activity_dm_subscription_id
+		SELECT x_app_mode, app_bearer_token, webhook_route_key, consumer_secret,
+		       filtered_stream_rule_id, activity_dm_subscription_id
 		FROM x_inbox_delivery_cleanup_intents
 		WHERE social_account_id = $1
-	`, accountID).Scan(&appMode, &appBearer, &ruleID, &subscriptionID); err != nil {
+	`, accountID).Scan(&appMode, &appBearer, &cleanupRoute, &cleanupConsumer, &ruleID, &subscriptionID); err != nil {
 		t.Fatalf("query workspace cleanup intent: %v", err)
 	}
 	if appMode != "workspace_x_app" ||
 		appBearer != "encrypted-workspace-bearer" ||
+		cleanupRoute != "workspace-webhook-route" ||
+		cleanupConsumer != "encrypted-workspace-consumer" ||
 		ruleID != "rule-exact" ||
 		subscriptionID != "subscription-exact" {
 		t.Fatalf(
-			"cleanup intent = mode %q bearer %q rule %q subscription %q",
+			"cleanup intent = mode %q bearer %q route %q consumer %q rule %q subscription %q",
 			appMode,
 			appBearer,
+			cleanupRoute,
+			cleanupConsumer,
 			ruleID,
 			subscriptionID,
 		)
@@ -251,10 +299,12 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`INSERT INTO profiles (id, workspace_id, name) VALUES ($1, $2, 'X Credential Test')`, []any{credentialProfileID, credentialWorkspaceID}},
 		{`
 			INSERT INTO platform_credentials (
-				id, workspace_id, platform, client_id, client_secret, app_bearer_token
+				id, workspace_id, platform, client_id, client_secret, app_bearer_token,
+				consumer_secret, webhook_route_key
 			) VALUES (
 				'x-inbox-credential-test-credential', $1, 'twitter', 'client', 'secret',
-				'encrypted-credential-bearer'
+				'encrypted-credential-bearer', 'encrypted-credential-consumer',
+				'credential-webhook-route'
 			)
 		`, []any{credentialWorkspaceID}},
 		{`
@@ -286,18 +336,23 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	}
 
 	if err := tx.QueryRowContext(ctx, `
-		SELECT app_bearer_token, filtered_stream_rule_id, activity_dm_subscription_id
+		SELECT app_bearer_token, webhook_route_key, consumer_secret,
+		       filtered_stream_rule_id, activity_dm_subscription_id
 		FROM x_inbox_delivery_cleanup_intents
 		WHERE social_account_id = $1
-	`, credentialAccountID).Scan(&appBearer, &ruleID, &subscriptionID); err != nil {
+	`, credentialAccountID).Scan(&appBearer, &cleanupRoute, &cleanupConsumer, &ruleID, &subscriptionID); err != nil {
 		t.Fatalf("query credential cleanup intent: %v", err)
 	}
 	if appBearer != "encrypted-credential-bearer" ||
+		cleanupRoute != "credential-webhook-route" ||
+		cleanupConsumer != "encrypted-credential-consumer" ||
 		ruleID != "credential-rule" ||
 		subscriptionID != "credential-subscription" {
 		t.Fatalf(
-			"credential cleanup intent = bearer %q rule %q subscription %q",
+			"credential cleanup intent = bearer %q route %q consumer %q rule %q subscription %q",
 			appBearer,
+			cleanupRoute,
+			cleanupConsumer,
 			ruleID,
 			subscriptionID,
 		)
@@ -347,11 +402,11 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`
 			INSERT INTO platform_credentials (
 				id, workspace_id, platform, client_id, client_secret,
-				app_bearer_token, consumer_secret
+				app_bearer_token, consumer_secret, webhook_route_key
 			) VALUES (
 				'x-inbox-replacement-test-credential', $1, 'twitter',
 				'old-client', 'old-client-secret',
-				'old-encrypted-bearer', 'old-encrypted-consumer'
+				'old-encrypted-bearer', 'old-encrypted-consumer', 'old-webhook-route'
 			)
 		`, []any{replacementWorkspaceID}},
 		{`
@@ -366,8 +421,8 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`
 			INSERT INTO x_inbox_delivery_resources (
 				social_account_id, filtered_stream_rule_id, activity_dm_subscription_id,
-				delivery_status
-			) VALUES ($1, 'old-exact-rule', 'old-exact-subscription', 'active')
+				activity_webhook_route_key, delivery_status
+			) VALUES ($1, 'old-exact-rule', 'old-exact-subscription', 'old-webhook-route', 'active')
 		`, []any{replacementAccountID}},
 	}
 	for _, statement := range replacementStatements {
@@ -380,27 +435,88 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		SET client_id = 'new-client',
 		    client_secret = 'new-client-secret',
 		    app_bearer_token = 'new-encrypted-bearer',
-		    consumer_secret = 'new-encrypted-consumer'
+		    consumer_secret = 'new-encrypted-consumer',
+		    webhook_route_key = 'new-webhook-route'
 		WHERE workspace_id = $1 AND platform = 'twitter'
 	`, replacementWorkspaceID); err != nil {
 		t.Fatalf("replace workspace X credential: %v", err)
 	}
 	if err := tx.QueryRowContext(ctx, `
-		SELECT app_bearer_token, filtered_stream_rule_id, activity_dm_subscription_id
+		SELECT app_bearer_token, webhook_route_key, consumer_secret,
+		       filtered_stream_rule_id, activity_dm_subscription_id
 		FROM x_inbox_delivery_cleanup_intents
 		WHERE social_account_id = $1
-	`, replacementAccountID).Scan(&appBearer, &ruleID, &subscriptionID); err != nil {
+	`, replacementAccountID).Scan(&appBearer, &cleanupRoute, &cleanupConsumer, &ruleID, &subscriptionID); err != nil {
 		t.Fatalf("query replacement cleanup intent: %v", err)
 	}
 	if appBearer != "old-encrypted-bearer" ||
+		cleanupRoute != "old-webhook-route" ||
+		cleanupConsumer != "old-encrypted-consumer" ||
 		ruleID != "old-exact-rule" ||
 		subscriptionID != "old-exact-subscription" {
 		t.Fatalf(
-			"replacement cleanup intent = bearer %q rule %q subscription %q",
+			"replacement cleanup intent = bearer %q route %q consumer %q rule %q subscription %q",
 			appBearer,
+			cleanupRoute,
+			cleanupConsumer,
 			ruleID,
 			subscriptionID,
 		)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT consumer_secret
+		FROM (
+		  SELECT consumer_secret
+		  FROM platform_credentials
+		  WHERE platform = 'twitter'
+		    AND webhook_route_key = 'old-webhook-route'
+		    AND consumer_secret IS NOT NULL
+		  UNION ALL
+		  SELECT consumer_secret
+		  FROM x_inbox_delivery_cleanup_intents
+		  WHERE webhook_route_key = 'old-webhook-route'
+		    AND consumer_secret IS NOT NULL
+		) route_secrets
+		LIMIT 1
+	`).Scan(&cleanupConsumer); err != nil {
+		t.Fatalf("resolve old route during pending cleanup: %v", err)
+	}
+	if cleanupConsumer != "old-encrypted-consumer" {
+		t.Fatalf("old route resolved consumer = %q", cleanupConsumer)
+	}
+	if _, err := tx.ExecContext(ctx, `SAVEPOINT old_route_cleanup_completion`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+		  AND webhook_route_key = 'old-webhook-route'
+	`, replacementAccountID); err != nil {
+		t.Fatal(err)
+	}
+	var oldRouteSecretCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM (
+		  SELECT consumer_secret
+		  FROM platform_credentials
+		  WHERE platform = 'twitter'
+		    AND webhook_route_key = 'old-webhook-route'
+		    AND consumer_secret IS NOT NULL
+		  UNION ALL
+		  SELECT consumer_secret
+		  FROM x_inbox_delivery_cleanup_intents
+		  WHERE webhook_route_key = 'old-webhook-route'
+		    AND consumer_secret IS NOT NULL
+		) route_secrets
+	`).Scan(&oldRouteSecretCount); err != nil {
+		t.Fatal(err)
+	}
+	if oldRouteSecretCount != 0 {
+		t.Fatalf("completed cleanup left %d old route secrets", oldRouteSecretCount)
+	}
+	if _, err := tx.ExecContext(ctx, `ROLLBACK TO SAVEPOINT old_route_cleanup_completion`); err != nil {
+		t.Fatal(err)
 	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error
@@ -432,20 +548,22 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		storedConsumer string
 	)
 	if err := tx.QueryRowContext(ctx, `
-		SELECT client_id, app_bearer_token, consumer_secret
+		SELECT client_id, app_bearer_token, consumer_secret, webhook_route_key
 		FROM platform_credentials
 		WHERE workspace_id = $1 AND platform = 'twitter'
-	`, replacementWorkspaceID).Scan(&clientID, &storedBearer, &storedConsumer); err != nil {
+	`, replacementWorkspaceID).Scan(&clientID, &storedBearer, &storedConsumer, &ruleID); err != nil {
 		t.Fatalf("query replaced credential: %v", err)
 	}
 	if clientID != "new-client" ||
 		storedBearer != "new-encrypted-bearer" ||
-		storedConsumer != "new-encrypted-consumer" {
+		storedConsumer != "new-encrypted-consumer" ||
+		ruleID != "new-webhook-route" {
 		t.Fatalf(
-			"stored replacement = client %q bearer %q consumer %q",
+			"stored replacement = client %q bearer %q consumer %q route %q",
 			clientID,
 			storedBearer,
 			storedConsumer,
+			ruleID,
 		)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -553,11 +671,11 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`
 			INSERT INTO platform_credentials (
 				id, workspace_id, platform, client_id, client_secret,
-				app_bearer_token, consumer_secret
+				app_bearer_token, consumer_secret, webhook_route_key
 			) VALUES (
 				'x-inbox-old-replica-test-credential', $1, 'twitter',
 				'old-replica-client', 'old-replica-client-secret',
-				'old-replica-bearer', 'old-replica-consumer'
+				'old-replica-bearer', 'old-replica-consumer', 'old-replica-route'
 			)
 		`, []any{oldReplicaWorkspaceID}},
 		{`
@@ -605,36 +723,42 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		oldReplicaClientID string
 		oldReplicaBearer   sql.NullString
 		oldReplicaConsumer sql.NullString
+		oldReplicaRoute    sql.NullString
 	)
 	if err := tx.QueryRowContext(ctx, `
-		SELECT client_id, app_bearer_token, consumer_secret
+		SELECT client_id, app_bearer_token, consumer_secret, webhook_route_key
 		FROM platform_credentials
 		WHERE workspace_id = $1 AND platform = 'twitter'
 	`, oldReplicaWorkspaceID).Scan(
 		&oldReplicaClientID,
 		&oldReplicaBearer,
 		&oldReplicaConsumer,
+		&oldReplicaRoute,
 	); err != nil {
 		t.Fatalf("query old replica replacement: %v", err)
 	}
 	if oldReplicaClientID != "old-replica-new-client" ||
 		oldReplicaBearer.Valid ||
-		oldReplicaConsumer.Valid {
+		oldReplicaConsumer.Valid ||
+		oldReplicaRoute.Valid {
 		t.Fatalf(
-			"old replica replacement = client %q bearer %v consumer %v",
+			"old replica replacement = client %q bearer %v consumer %v route %v",
 			oldReplicaClientID,
 			oldReplicaBearer,
 			oldReplicaConsumer,
+			oldReplicaRoute,
 		)
 	}
 	if err := tx.QueryRowContext(ctx, `
-		SELECT source_app_identity, app_bearer_token,
+		SELECT source_app_identity, app_bearer_token, webhook_route_key, consumer_secret,
 		       filtered_stream_rule_id, activity_dm_subscription_id
 		FROM x_inbox_delivery_cleanup_intents
 		WHERE social_account_id = $1
 	`, oldReplicaAccountID).Scan(
 		&clientID,
 		&appBearer,
+		&cleanupRoute,
+		&cleanupConsumer,
 		&ruleID,
 		&subscriptionID,
 	); err != nil {
@@ -642,12 +766,16 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	}
 	if clientID != "old-replica-client" ||
 		appBearer != "old-replica-bearer" ||
+		cleanupRoute != "old-replica-route" ||
+		cleanupConsumer != "old-replica-consumer" ||
 		ruleID != "old-replica-rule" ||
 		subscriptionID != "old-replica-subscription" {
 		t.Fatalf(
-			"old replica cleanup = client %q bearer %q rule %q subscription %q",
+			"old replica cleanup = client %q bearer %q route %q consumer %q rule %q subscription %q",
 			clientID,
 			appBearer,
+			cleanupRoute,
+			cleanupConsumer,
 			ruleID,
 			subscriptionID,
 		)
@@ -667,11 +795,11 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`
 			INSERT INTO platform_credentials (
 				id, workspace_id, platform, client_id, client_secret,
-				app_bearer_token, consumer_secret
+				app_bearer_token, consumer_secret, webhook_route_key
 			) VALUES (
 				'x-inbox-rotation-test-credential', $1, 'twitter',
 				'same-client', 'old-client-secret',
-				'rotation-old-bearer', 'rotation-old-consumer'
+				'rotation-old-bearer', 'rotation-old-consumer', 'rotation-stable-route'
 			)
 		`, []any{rotationWorkspaceID}},
 		{`
@@ -686,8 +814,11 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		{`
 			INSERT INTO x_inbox_delivery_resources (
 				social_account_id, filtered_stream_rule_id, activity_dm_subscription_id,
-				delivery_status
-			) VALUES ($1, 'rotation-rule', 'rotation-subscription', 'active')
+				activity_webhook_route_key, delivery_status
+			) VALUES (
+				$1, 'rotation-rule', 'rotation-subscription',
+				'rotation-stable-route', 'active'
+			)
 		`, []any{rotationAccountID}},
 	}
 	for _, statement := range rotationStatements {
@@ -714,6 +845,16 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	}
 	if rotationIntentCount != 0 {
 		t.Fatalf("same-app rotation cleanup intents = %d, want none", rotationIntentCount)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT webhook_route_key
+		FROM platform_credentials
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, rotationWorkspaceID).Scan(&cleanupRoute); err != nil {
+		t.Fatalf("query same-app rotation route: %v", err)
+	}
+	if cleanupRoute != "rotation-stable-route" {
+		t.Fatalf("same-app secret rotation changed webhook route to %q", cleanupRoute)
 	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT filtered_stream_rule_id, activity_dm_subscription_id, delivery_status

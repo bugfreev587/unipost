@@ -79,12 +79,14 @@ type XInboxDeliveryAccount struct {
 	PlanAllowsInbox          bool
 	FilteredStreamRuleID     string
 	ActivityDMSubscriptionID string
+	ActivityWebhookRouteKey  string
 }
 
 type XInboxDeliveryState struct {
 	SocialAccountID          string
 	FilteredStreamRuleID     string
 	ActivityDMSubscriptionID string
+	ActivityWebhookRouteKey  string
 	DeliveryStatus           string
 	LastError                string
 	LastSyncedAt             time.Time
@@ -97,6 +99,8 @@ type XInboxCleanupIntent struct {
 	AppMode                  xinbox.AppMode
 	SourceAppIdentity        string
 	AppBearerTokenEncrypted  string
+	WebhookRouteKey          string
+	ConsumerSecretEncrypted  string
 	FilteredStreamRuleID     string
 	ActivityDMSubscriptionID string
 	LastError                string
@@ -371,8 +375,12 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		SocialAccountID:          account.SocialAccountID,
 		FilteredStreamRuleID:     account.FilteredStreamRuleID,
 		ActivityDMSubscriptionID: account.ActivityDMSubscriptionID,
+		ActivityWebhookRouteKey:  account.ActivityWebhookRouteKey,
 		DeliveryStatus:           xinbox.DeliveryStatusPending,
 		LastSyncedAt:             now,
+	}
+	if state.ActivityDMSubscriptionID == "" {
+		state.ActivityWebhookRouteKey = ""
 	}
 
 	targetStatus := xinbox.DeliveryStatusPending
@@ -449,7 +457,20 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			return fail(err)
 		}
 		state.ActivityDMSubscriptionID = ""
+		state.ActivityWebhookRouteKey = ""
 		state.DeliveryStatus = targetStatus
+		if err := w.store.SaveState(ctx, state); err != nil {
+			return app, streamDesired(), true, err
+		}
+	}
+	if dmsDesired &&
+		state.ActivityDMSubscriptionID != "" &&
+		state.ActivityWebhookRouteKey != account.WebhookRouteKey {
+		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
+			return fail(err)
+		}
+		state.ActivityDMSubscriptionID = ""
+		state.ActivityWebhookRouteKey = ""
 		if err := w.store.SaveState(ctx, state); err != nil {
 			return app, streamDesired(), true, err
 		}
@@ -492,6 +513,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			return fail(err)
 		}
 		state.ActivityDMSubscriptionID = subscription.ID
+		state.ActivityWebhookRouteKey = account.WebhookRouteKey
 		if err := w.store.SaveState(ctx, state); err != nil {
 			return app, streamDesired(), true, err
 		}
@@ -832,7 +854,8 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			(sa.disconnected_at IS NULL AND sa.status = 'active') AS account_active,
 			COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox,
 			COALESCE(r.filtered_stream_rule_id, ''),
-			COALESCE(r.activity_dm_subscription_id, '')
+			COALESCE(r.activity_dm_subscription_id, ''),
+			COALESCE(r.activity_webhook_route_key, '')
 		FROM social_accounts sa
 		JOIN profiles p ON p.id = sa.profile_id
 		LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
@@ -871,6 +894,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			&account.PlanAllowsInbox,
 			&account.FilteredStreamRuleID,
 			&account.ActivityDMSubscriptionID,
+			&account.ActivityWebhookRouteKey,
 		); err != nil {
 			return nil, err
 		}
@@ -885,6 +909,7 @@ func (s *postgresXInboxDeliveryStore) SaveState(ctx context.Context, state XInbo
 		SocialAccountID:          state.SocialAccountID,
 		FilteredStreamRuleID:     nullableText(state.FilteredStreamRuleID),
 		ActivityDmSubscriptionID: nullableText(state.ActivityDMSubscriptionID),
+		ActivityWebhookRouteKey:  nullableText(state.ActivityWebhookRouteKey),
 		DeliveryStatus:           state.DeliveryStatus,
 		LastError:                nullableText(state.LastError),
 		LastSyncedAt:             pgtype.Timestamptz{Time: state.LastSyncedAt, Valid: !state.LastSyncedAt.IsZero()},
@@ -926,6 +951,8 @@ func (s *postgresXInboxDeliveryStore) ClaimCleanupIntents(
 			i.x_app_mode,
 			i.source_app_identity,
 			COALESCE(i.app_bearer_token, ''),
+			COALESCE(i.webhook_route_key, ''),
+			COALESCE(i.consumer_secret, ''),
 			COALESCE(i.filtered_stream_rule_id, ''),
 			COALESCE(i.activity_dm_subscription_id, ''),
 			COALESCE(i.last_error, ''),
@@ -949,6 +976,8 @@ func (s *postgresXInboxDeliveryStore) ClaimCleanupIntents(
 			&appMode,
 			&intent.SourceAppIdentity,
 			&intent.AppBearerTokenEncrypted,
+			&intent.WebhookRouteKey,
+			&intent.ConsumerSecretEncrypted,
 			&intent.FilteredStreamRuleID,
 			&intent.ActivityDMSubscriptionID,
 			&intent.LastError,

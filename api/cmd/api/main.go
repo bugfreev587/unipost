@@ -416,11 +416,17 @@ func main() {
 	xCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
 	managedXWebhookRouteKey := xinbox.WebhookRouteKey(
-		os.Getenv("TWITTER_CONSUMER_SECRET"),
+		os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET"),
 		os.Getenv("TWITTER_CLIENT_ID"),
 	)
+	if strings.TrimSpace(os.Getenv("TWITTER_CLIENT_ID")) != "" &&
+		strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "" &&
+		managedXWebhookRouteKey == "" {
+		slog.Error("X_INBOX_WEBHOOK_ROUTE_SECRET is required when managed X Inbox is configured")
+		os.Exit(1)
+	}
 	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, managedXWebhookRouteKey)
-	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx, encryptor.Decrypt); err != nil {
+	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx); err != nil {
 		slog.Error("failed to backfill X webhook route keys")
 	}
 	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{

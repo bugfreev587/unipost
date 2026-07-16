@@ -143,8 +143,14 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 
 	appBearerToken := pgtype.Text{}
 	consumerSecret := pgtype.Text{}
-	webhookRouteKey := pgtype.Text{}
+	webhookRouteKey := ""
 	if body.Platform == "twitter" {
+		routeKey, routeErr := xinbox.RandomWebhookRouteKey()
+		if routeErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate X webhook route")
+			return
+		}
+		webhookRouteKey = routeKey
 		if body.AppBearerToken != nil {
 			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.AppBearerToken))
 			if encryptErr != nil {
@@ -154,15 +160,12 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 			appBearerToken = pgtype.Text{String: encrypted, Valid: true}
 		}
 		if body.ConsumerSecret != nil {
-			plainConsumerSecret := strings.TrimSpace(*body.ConsumerSecret)
-			encrypted, encryptErr := h.encryptor.Encrypt(plainConsumerSecret)
+			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.ConsumerSecret))
 			if encryptErr != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encrypt credentials")
 				return
 			}
 			consumerSecret = pgtype.Text{String: encrypted, Valid: true}
-			routeKey := xinbox.WebhookRouteKey(plainConsumerSecret, body.ClientID)
-			webhookRouteKey = pgtype.Text{String: routeKey, Valid: routeKey != ""}
 		}
 	}
 

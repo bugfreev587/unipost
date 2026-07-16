@@ -32,6 +32,25 @@ func TestXInboxSecurityMigrationAddsRouteKeyAndDateIndependentReceiptIdentity(t 
 	}
 }
 
+func TestXInboxRouteRotationMigrationTracksWebhookGenerationsAndCleanupSecrets(t *testing.T) {
+	source, err := os.ReadFile("migrations/113_x_inbox_webhook_route_rotation.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up := strings.Split(string(source), "-- +goose Down")[0]
+	for _, required := range []string{
+		"activity_webhook_route_key",
+		"webhook_route_key",
+		"consumer_secret",
+		"x_inbox_delivery_cleanup_intents",
+		"augment_replaced_workspace_x_inbox_cleanup_route",
+	} {
+		if !strings.Contains(up, required) {
+			t.Fatalf("route rotation migration missing %q", required)
+		}
+	}
+}
+
 func TestXInboxSecurityMigrationExecutesAndInstallsDateIndependentReceiptKey(t *testing.T) {
 	databaseURL := os.Getenv("X_INBOX_TEST_DATABASE_URL")
 	if databaseURL == "" {
