@@ -175,6 +175,13 @@ done`,
   },
 ];
 
+type PublishGifStatus = "Supported" | "Coming soon";
+
+function PublishGifStatusTag({ status }: { status: PublishGifStatus }) {
+  const tone = status === "Supported" ? "supported" : "coming-soon";
+  return <span className={`publish-gif-status-tag is-${tone}`}>{status}</span>;
+}
+
 export default function PublishGifsGuidePage() {
   return (
     <DocsPage
@@ -192,38 +199,58 @@ export default function PublishGifsGuidePage() {
       <DocsTable
         columns={["Platform", "Official GIF support", "UniPost status", "Recommended action"]}
         rows={[
-          ["X / Twitter", "Yes — direct GIF media upload", "Supported", "Publish the GIF directly."],
-          ["Facebook Page", "Yes — GIF photo post", "Supported", "Publish the GIF directly."],
-          ["LinkedIn", "Yes — through LinkedIn image APIs", "Coming soon", "Wait for native UniPost GIF support."],
-          ["Threads", "Yes — through provider-backed GIF attachments", "Coming soon", "Wait for UniPost GIF attachment support."],
+          [
+            "X / Twitter",
+            "Yes — direct GIF media upload",
+            <PublishGifStatusTag key="x-status" status="Supported" />,
+            "Publish the GIF directly.",
+          ],
+          [
+            "Facebook Page",
+            "Yes — GIF photo post",
+            <PublishGifStatusTag key="facebook-status" status="Supported" />,
+            "Publish the GIF directly.",
+          ],
+          [
+            "LinkedIn",
+            "Yes — through LinkedIn image APIs",
+            <PublishGifStatusTag key="linkedin-status" status="Coming soon" />,
+            "Wait for native UniPost GIF support.",
+          ],
+          [
+            "Threads",
+            "Yes — through provider-backed GIF attachments",
+            <PublishGifStatusTag key="threads-status" status="Coming soon" />,
+            "Wait for UniPost GIF attachment support.",
+          ],
           [
             "Instagram",
             "No direct GIF publishing surface",
-            "Coming soon",
+            <PublishGifStatusTag key="instagram-status" status="Coming soon" />,
             "A UniPost GIF-to-MP4 conversion option is coming soon.",
           ],
           [
             "TikTok",
             "No direct GIF publishing surface",
-            "Coming soon",
+            <PublishGifStatusTag key="tiktok-status" status="Coming soon" />,
             "A UniPost GIF-to-MP4 conversion option is coming soon.",
           ],
           [
             "Pinterest",
             "No direct animated GIF publishing surface in the supported organic Pin API flow",
-            "Coming soon",
+            <PublishGifStatusTag key="pinterest-status" status="Coming soon" />,
             "A UniPost GIF-to-MP4 conversion option is coming soon.",
           ],
           [
             "YouTube",
             "No GIF post type; publishing requires video media",
-            "Coming soon",
+            <PublishGifStatusTag key="youtube-status" status="Coming soon" />,
             "A UniPost GIF-to-MP4 conversion option is coming soon.",
           ],
           [
             "Bluesky",
             "No stable direct GIF file publishing path exposed by UniPost",
-            "Coming soon",
+            <PublishGifStatusTag key="bluesky-status" status="Coming soon" />,
             "A UniPost GIF-to-MP4 conversion option is coming soon.",
           ],
         ]}

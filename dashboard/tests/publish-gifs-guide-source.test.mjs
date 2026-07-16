@@ -48,10 +48,30 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
     assert.match(guide, new RegExp(platform.replace("/", "\\/")));
   }
 
-  assert.match(guide, /"X \/ Twitter", "Yes — direct GIF media upload", "Supported"/);
-  assert.match(guide, /"Facebook Page", "Yes — GIF photo post", "Supported"/);
-  assert.match(guide, /"LinkedIn", "Yes — through LinkedIn image APIs", "Coming soon"/);
-  assert.match(guide, /"Threads", "Yes — through provider-backed GIF attachments", "Coming soon"/);
+  assert.match(guide, /type PublishGifStatus = "Supported" \| "Coming soon"/);
+  assert.match(guide, /function PublishGifStatusTag/);
+  assert.match(guide, /className=\{`publish-gif-status-tag is-\$\{tone\}`\}/);
+  assert.equal((guide.match(/<PublishGifStatusTag key=/g) || []).length, 9);
+
+  assert.match(
+    guide,
+    /"X \/ Twitter",\s*"Yes — direct GIF media upload",\s*<PublishGifStatusTag key="x-status" status="Supported" \/>/,
+  );
+  assert.match(
+    guide,
+    /"Facebook Page",\s*"Yes — GIF photo post",\s*<PublishGifStatusTag key="facebook-status" status="Supported" \/>/,
+  );
+  assert.match(
+    guide,
+    /"LinkedIn",\s*"Yes — through LinkedIn image APIs",\s*<PublishGifStatusTag key="linkedin-status" status="Coming soon" \/>/,
+  );
+  assert.match(
+    guide,
+    /"Threads",\s*"Yes — through provider-backed GIF attachments",\s*<PublishGifStatusTag key="threads-status" status="Coming soon" \/>/,
+  );
+  assert.match(docsShell, /\.publish-gif-status-tag\{/);
+  assert.match(docsShell, /\.publish-gif-status-tag\.is-supported\{/);
+  assert.match(docsShell, /\.publish-gif-status-tag\.is-coming-soon\{/);
 
   for (const platform of ["Instagram", "TikTok", "Pinterest", "YouTube", "Bluesky"]) {
     assert.match(
