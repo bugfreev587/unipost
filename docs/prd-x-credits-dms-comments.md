@@ -129,7 +129,37 @@ These allowances keep the maximum represented upstream X cost near 15% to 21% of
 
 Included X Credits are granted at the start of the Stripe subscription billing period, not on the first day of the calendar month. Free has no X Credits because it cannot newly connect or publish to X.
 
-### 6.2 Top-up conversion
+### 6.2 What each plan can do with its included credits
+
+The public Pricing page must translate abstract credit balances into concrete X operations. Display the following table under the plan cards and before the full feature-comparison matrix, with the heading **What your included X Credits can do**.
+
+| Plan | Included X Credits | Normal posts without a URL | Posts containing a URL | Complete comment interactions | Complete DM interactions |
+|---|---:|---:|---:|---:|---:|
+| Free | 0 | Not available | Not available | Not available | Not available |
+| API | 1,500 | 100 | 7 | Inbox not included | Inbox not included |
+| Basic | 4,000 | 266 | 20 | 200 | 160 |
+| Growth | 12,000 | 800 | 60 | 600 | 480 |
+| Team | 30,000 | 2,000 | 150 | 1,500 | 1,200 |
+| Enterprise | Custom | Custom | Custom | Custom | Custom |
+
+Calculation definitions:
+
+- **Normal post:** 15 credits for one X Post Create without a URL.
+- **Post containing a URL:** 200 credits for one X Post Create with URL.
+- **Complete comment interaction:** 5 credits to receive/read one public reply plus 15 credits to send one normal reply, or 20 credits total.
+- **Complete DM interaction:** 10 credits to receive/read one DM event plus 15 credits to send one DM, or 25 credits total.
+- Every displayed maximum is `floor(included credits / operation cost)`.
+- Each column assumes the workspace spends its entire included balance on that one operation type. Credits are one shared balance, not separate post, comment, and DM allowances.
+- The table uses the conservative normal-reply price. A reply that qualifies for X's lower summoned-reply price can consume fewer credits.
+- Actual capacity can be lower when a workflow also performs paid user enrichment, backfill, or other billable X reads.
+- Comments and DMs remain unavailable on API even though the plan includes X Credits, because UniPost Inbox starts on Basic.
+- BYO X Platform Credentials do not consume UniPost X Credits, so this table applies only to UniPost-managed X connections.
+
+On desktop, use the comparison table above. On mobile, render one compact card per plan with the same values rather than forcing a horizontally compressed table. If the signed-in workspace plan is known, visually mark the current plan without hiding the other plans.
+
+The Pricing page, Plans and limits docs, Billing UI, and API Reference must derive these values from one versioned pricing-catalog configuration or a generated artifact. Do not independently hard-code operation costs and calculated capacities in multiple UI files. Source tests must fail if the displayed table drifts from the approved included allowances or operation catalog.
+
+### 6.3 Top-up conversion
 
 The approved conversion is:
 
@@ -150,7 +180,7 @@ Reference gross margin:          60%
 
 The margin is intentional. It funds payment processing, taxes, infrastructure, observability, support, credit card disputes, refunds, X invoice variance, and the risk that X changes its pricing.
 
-### 6.3 Top-up SKUs
+### 6.4 Top-up SKUs
 
 | SKU | Customer price | Credits | Reference upstream cost | Reference gross profit |
 |---|---:|---:|---:|---:|
@@ -160,7 +190,7 @@ The margin is intentional. It funds payment processing, taxes, infrastructure, o
 
 All SKUs use the same conversion. Larger packs do not initially receive a volume discount. This keeps the model easy to understand and prevents the largest X consumers from getting the lowest margin.
 
-### 6.4 Bucket lifecycle
+### 6.5 Bucket lifecycle
 
 1. Included credits are created as a billing-period grant.
 2. Included credits expire when that subscription billing period ends.
@@ -172,7 +202,7 @@ All SKUs use the same conversion. Larger packs do not initially receive a volume
 8. If a subscription becomes Free, top-up credits remain on the workspace but managed X operations stay unavailable until a paid plan is restored.
 9. Credits are workspace-scoped, non-transferable, and non-refundable except where required by law or when UniPost discontinues the paid capability without a reasonable consumption path.
 
-### 6.5 Managed app versus BYO app
+### 6.6 Managed app versus BYO app
 
 | Connection mode | Who pays X | UniPost X Credits | UniPost plan and post quota |
 |---|---|---|---|
@@ -624,8 +654,14 @@ The Guides sidebar gains an **X Guides** section. Each guide must be procedural,
   - Link to reconnect guidance and the X Inbox guides.
 - `/docs/pricing`
   - Add included credits by plan, reset behavior, top-up conversion, and separate post/X-credit enforcement.
+  - Mirror the operation-capacity table and calculation definitions from Section 6.2.
 - `/pricing`
   - Add one concise X Credits allowance line per plan and a top-up FAQ.
+  - Add **What your included X Credits can do** directly below the plan cards, showing normal posts, URL posts, complete comment interactions, and complete DM interactions for every plan.
+  - Show `Inbox not included` for API comments and DMs rather than displaying a misleading theoretical capacity.
+  - Explain that each maximum assumes the full shared balance is spent on one operation type and that mixed usage reduces every individual maximum.
+  - Render a readable desktop table and equivalent mobile plan cards.
+  - Generate displayed capacities from the versioned allowance/catalog data and cover the values with source tests.
 
 ### 15.4 Bidirectional linking acceptance rule
 
@@ -772,7 +808,7 @@ The MVP is complete only when:
 9. Basic, Growth, Team, and eligible Enterprise workspaces can receive and reply to `x_reply` and `x_dm` items after granting the required permissions.
 10. Existing X publishing remains functional when an account has not yet reconnected for DM scopes.
 11. X developer callbacks, scopes, webhook CRC/signature verification, subscription limits, spending alerts, and ownership runbook are verified per environment.
-12. The pricing page and Plans and limits docs accurately show allowances, top-up conversion, and separate quota behavior.
+12. The pricing page and Plans and limits docs accurately show allowances, top-up conversion, separate quota behavior, and the complete Section 6.2 operation-capacity table. The desktop table and mobile cards are generated from versioned allowance/catalog data, use floor rounding, label API Inbox operations unavailable, and pass source tests for every displayed number.
 13. All new API Reference and Guidance pages in Section 15 exist, are in navigation/search/sitemap, and pass the bidirectional linking tests.
 14. XChat is not presented as generally available.
 15. Local CI-equivalent checks, development deployment, and real development-environment acceptance pass before the implementation is reported complete.
