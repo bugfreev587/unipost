@@ -143,17 +143,6 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	appBearerToken := pgtype.Text{}
 	consumerSecret := pgtype.Text{}
 	if body.Platform == "twitter" {
-		existing, existingErr := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
-			WorkspaceID: workspaceID,
-			Platform:    body.Platform,
-		})
-		if existingErr == nil {
-			appBearerToken = existing.AppBearerToken
-			consumerSecret = existing.ConsumerSecret
-		} else if existingErr != pgx.ErrNoRows {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load existing credentials")
-			return
-		}
 		if body.AppBearerToken != nil {
 			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.AppBearerToken))
 			if encryptErr != nil {
@@ -173,12 +162,14 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	cred, err := h.queries.CreatePlatformCredential(r.Context(), db.CreatePlatformCredentialParams{
-		WorkspaceID:    workspaceID,
-		Platform:       body.Platform,
-		ClientID:       body.ClientID,
-		ClientSecret:   encSecret,
-		AppBearerToken: appBearerToken,
-		ConsumerSecret: consumerSecret,
+		WorkspaceID:            workspaceID,
+		Platform:               body.Platform,
+		ClientID:               body.ClientID,
+		ClientSecret:           encSecret,
+		AppBearerToken:         appBearerToken,
+		ConsumerSecret:         consumerSecret,
+		AppBearerTokenSupplied: body.AppBearerToken != nil,
+		ConsumerSecretSupplied: body.ConsumerSecret != nil,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save credentials")

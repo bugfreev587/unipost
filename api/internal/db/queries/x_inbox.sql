@@ -32,6 +32,20 @@ SET filtered_stream_rule_id = $2,
 WHERE social_account_id = $1
 RETURNING *;
 
+-- name: UpdateXInboxFilteredStreamRule :one
+UPDATE x_inbox_delivery_resources
+SET filtered_stream_rule_id = $2,
+    updated_at = NOW()
+WHERE social_account_id = $1
+RETURNING *;
+
+-- name: UpdateXInboxActivityDMSubscription :one
+UPDATE x_inbox_delivery_resources
+SET activity_dm_subscription_id = $2,
+    updated_at = NOW()
+WHERE social_account_id = $1
+RETURNING *;
+
 -- name: DeleteXInboxDeliveryResource :exec
 DELETE FROM x_inbox_delivery_resources
 WHERE social_account_id = $1;

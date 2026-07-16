@@ -100,6 +100,18 @@ func TestXAccountCapabilityAPIPlanDoesNotPromptReconnect(t *testing.T) {
 	}
 }
 
+func TestXAccountCapabilityRejectsInvalidPersistedAppMode(t *testing.T) {
+	store := &xCapabilityTestDB{
+		planID:  "basic",
+		appMode: "garbage",
+		scopes:  []string{"tweet.read", "tweet.write", "users.read", "dm.read", "dm.write"},
+	}
+	rec := invokeXAccountCapabilities(t, store)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body = %s, want 500", rec.Code, rec.Body.String())
+	}
+}
+
 func invokeXAccountCapabilities(t *testing.T, store *xCapabilityTestDB) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/sa_1/capabilities", nil)

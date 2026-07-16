@@ -67,6 +67,7 @@ type SocialPostHandler struct {
 	loopsSyncer        loopsLifecycleSyncer
 	quotaEmail         quotaEmailService
 	xUsage             xUsageService
+	xTokenRefresher    xinbox.TokenRefresher
 	paidSchedule       paidquota.Coordinator
 	holdReconciler     paidquota.HoldReconciler
 	paidQuotaEvaluator paidQuotaEvaluationService
@@ -165,6 +166,11 @@ func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *Soc
 
 func (h *SocialPostHandler) SetXUsageService(service xUsageService) *SocialPostHandler {
 	h.xUsage = service
+	return h
+}
+
+func (h *SocialPostHandler) SetXTokenRefresher(refresher xinbox.TokenRefresher) *SocialPostHandler {
+	h.xTokenRefresher = refresher
 	return h
 }
 
@@ -1916,7 +1922,7 @@ func (h *SocialPostHandler) publishOneContext(
 	// can retry the refresh later.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
 		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshTok); refErr == nil && newAccess != "" {
+			if newAccess, newRefresh, expiresAt, refErr := h.refreshSocialAccountToken(ctx, acc, adapter, refreshTok); refErr == nil && newAccess != "" {
 				encAccess, encErr := h.encryptor.Encrypt(newAccess)
 				encRefresh, encErr2 := h.encryptor.Encrypt(newRefresh)
 				if encErr == nil && encErr2 == nil {
@@ -2049,6 +2055,20 @@ func (h *SocialPostHandler) publishOneContext(
 	return
 }
 
+func (h *SocialPostHandler) refreshSocialAccountToken(ctx context.Context, account db.SocialAccount, adapter platform.PlatformAdapter, refreshToken string) (string, string, time.Time, error) {
+	if strings.EqualFold(account.Platform, "twitter") {
+		if h.xTokenRefresher == nil {
+			return "", "", time.Time{}, errors.New("X token refresher is not configured")
+		}
+		tokens, err := h.xTokenRefresher.Refresh(ctx, account, refreshToken)
+		if err != nil {
+			return "", "", time.Time{}, err
+		}
+		return tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt, nil
+	}
+	return adapter.RefreshToken(ctx, refreshToken)
+}
+
 func xOperationForText(text string) string {
 	if xURLCandidatePattern.MatchString(text) {
 		return "post.create_url"
@@ -2073,7 +2093,20 @@ func (h *SocialPostHandler) reserveManagedXOperation(
 	account db.SocialAccount,
 	operation string,
 ) (xcredits.UsageEvent, error) {
-	if h == nil || h.xUsage == nil || account.Platform != "twitter" || xinbox.AppMode(account.XAppMode.String) != xinbox.AppModeUniPostManaged {
+	if h == nil || account.Platform != "twitter" {
+		return xcredits.UsageEvent{}, nil
+	}
+	appMode, err := xinbox.ParseAppMode(account.XAppMode.String)
+	if err != nil || !account.XAppMode.Valid {
+		if err == nil {
+			err = errors.New("missing persisted X app mode")
+		}
+		return xcredits.UsageEvent{}, err
+	}
+	if appMode != xinbox.AppModeUniPostManaged {
+		return xcredits.UsageEvent{}, nil
+	}
+	if h.xUsage == nil {
 		return xcredits.UsageEvent{}, nil
 	}
 	event, err := h.xUsage.Reserve(ctx, xcredits.ReserveRequest{

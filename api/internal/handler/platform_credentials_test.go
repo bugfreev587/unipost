@@ -100,6 +100,9 @@ func TestPlatformCredentialsTwitterEncryptsAppSecretsAndReturnsOnlyCompletenessF
 	if store.appBearerToken.String == "twitter-bearer-secret" || store.consumerSecret.String == "twitter-consumer-secret" {
 		t.Fatal("X app-level secrets were passed to persistence in plaintext")
 	}
+	if !store.appBearerTokenSupplied || !store.consumerSecretSupplied {
+		t.Fatalf("supplied flags = bearer:%v consumer:%v, want both true", store.appBearerTokenSupplied, store.consumerSecretSupplied)
+	}
 	gotBearer, err := encryptor.Decrypt(store.appBearerToken.String)
 	if err != nil || gotBearer != "twitter-bearer-secret" {
 		t.Fatalf("decrypt app bearer token = %q, %v", gotBearer, err)
@@ -159,6 +162,12 @@ func TestPlatformCredentialsTwitterPreservesOptionalSecretsWhenOmitted(t *testin
 	if store.consumerSecret != store.existingConsumerSecret {
 		t.Fatal("omitted consumer_secret did not preserve the stored ciphertext")
 	}
+	if store.getCalls != 0 {
+		t.Fatalf("GetPlatformCredential calls = %d, want 0 for atomic update", store.getCalls)
+	}
+	if store.appBearerTokenSupplied || store.consumerSecretSupplied {
+		t.Fatalf("supplied flags = bearer:%v consumer:%v, want both false", store.appBearerTokenSupplied, store.consumerSecretSupplied)
+	}
 }
 
 func TestPlatformCredentialsRejectsBlankXSecretAndXFieldsOnOtherPlatforms(t *testing.T) {
@@ -203,11 +212,14 @@ type platformCredentialTestDB struct {
 	planID                 string
 	customPlatformSlot     string
 	createCalls            int
+	getCalls               int
 	existingPlatform       string
 	existingAppBearerToken pgtype.Text
 	existingConsumerSecret pgtype.Text
 	appBearerToken         pgtype.Text
 	consumerSecret         pgtype.Text
+	appBearerTokenSupplied bool
+	consumerSecretSupplied bool
 }
 
 func (f *platformCredentialTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -280,6 +292,7 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 			pgtype.Text{String: f.customPlatformSlot, Valid: f.customPlatformSlot != ""},
 		}}
 	case strings.Contains(query, "-- name: GetPlatformCredential"):
+		f.getCalls++
 		if f.existingPlatform == "" {
 			return scanRow{err: pgx.ErrNoRows}
 		}
@@ -300,6 +313,18 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 		}
 		if len(args) > 5 {
 			f.consumerSecret, _ = args[5].(pgtype.Text)
+		}
+		if len(args) > 6 {
+			f.appBearerTokenSupplied, _ = args[6].(bool)
+		}
+		if len(args) > 7 {
+			f.consumerSecretSupplied, _ = args[7].(bool)
+		}
+		if !f.appBearerTokenSupplied {
+			f.appBearerToken = f.existingAppBearerToken
+		}
+		if !f.consumerSecretSupplied {
+			f.consumerSecret = f.existingConsumerSecret
 		}
 		return platformCredentialScanRow{
 			platform:       platform,

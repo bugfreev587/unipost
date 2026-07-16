@@ -26,6 +26,12 @@ type SocialAccountHandler struct {
 	bus               events.EventBus
 	superAdminChecker *auth.SuperAdminChecker
 	httpClient        *http.Client
+	xTokenRefresher   xinbox.TokenRefresher
+}
+
+func (h *SocialAccountHandler) SetXTokenRefresher(refresher xinbox.TokenRefresher) *SocialAccountHandler {
+	h.xTokenRefresher = refresher
+	return h
 }
 
 func NewSocialAccountHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, superAdminChecker *auth.SuperAdminChecker) *SocialAccountHandler {

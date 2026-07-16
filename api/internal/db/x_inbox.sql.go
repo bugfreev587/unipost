@@ -42,6 +42,35 @@ func (q *Queries) GetXInboxDeliveryResource(ctx context.Context, socialAccountID
 	return i, err
 }
 
+const updateXInboxActivityDMSubscription = `-- name: UpdateXInboxActivityDMSubscription :one
+UPDATE x_inbox_delivery_resources
+SET activity_dm_subscription_id = $2,
+    updated_at = NOW()
+WHERE social_account_id = $1
+RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at
+`
+
+type UpdateXInboxActivityDMSubscriptionParams struct {
+	SocialAccountID          string      `json:"social_account_id"`
+	ActivityDmSubscriptionID pgtype.Text `json:"activity_dm_subscription_id"`
+}
+
+func (q *Queries) UpdateXInboxActivityDMSubscription(ctx context.Context, arg UpdateXInboxActivityDMSubscriptionParams) (XInboxDeliveryResource, error) {
+	row := q.db.QueryRow(ctx, updateXInboxActivityDMSubscription, arg.SocialAccountID, arg.ActivityDmSubscriptionID)
+	var i XInboxDeliveryResource
+	err := row.Scan(
+		&i.SocialAccountID,
+		&i.FilteredStreamRuleID,
+		&i.ActivityDmSubscriptionID,
+		&i.DeliveryStatus,
+		&i.LastError,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateXInboxDeliveryResource = `-- name: UpdateXInboxDeliveryResource :one
 UPDATE x_inbox_delivery_resources
 SET filtered_stream_rule_id = $2,
@@ -72,6 +101,35 @@ func (q *Queries) UpdateXInboxDeliveryResource(ctx context.Context, arg UpdateXI
 		arg.LastError,
 		arg.LastSyncedAt,
 	)
+	var i XInboxDeliveryResource
+	err := row.Scan(
+		&i.SocialAccountID,
+		&i.FilteredStreamRuleID,
+		&i.ActivityDmSubscriptionID,
+		&i.DeliveryStatus,
+		&i.LastError,
+		&i.LastSyncedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateXInboxFilteredStreamRule = `-- name: UpdateXInboxFilteredStreamRule :one
+UPDATE x_inbox_delivery_resources
+SET filtered_stream_rule_id = $2,
+    updated_at = NOW()
+WHERE social_account_id = $1
+RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at
+`
+
+type UpdateXInboxFilteredStreamRuleParams struct {
+	SocialAccountID      string      `json:"social_account_id"`
+	FilteredStreamRuleID pgtype.Text `json:"filtered_stream_rule_id"`
+}
+
+func (q *Queries) UpdateXInboxFilteredStreamRule(ctx context.Context, arg UpdateXInboxFilteredStreamRuleParams) (XInboxDeliveryResource, error) {
+	row := q.db.QueryRow(ctx, updateXInboxFilteredStreamRule, arg.SocialAccountID, arg.FilteredStreamRuleID)
 	var i XInboxDeliveryResource
 	err := row.Scan(
 		&i.SocialAccountID,

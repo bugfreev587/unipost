@@ -1,12 +1,16 @@
 package xinbox
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type AppMode string
 
 const (
 	AppModeUniPostManaged AppMode = "unipost_managed_app"
 	AppModeWorkspace      AppMode = "workspace_x_app"
+	AppModeLegacyUnknown  AppMode = "legacy_unknown"
 )
 
 const (
@@ -82,6 +86,16 @@ func AppModeForManualConnection(platform string) (AppMode, bool) {
 	return "", false
 }
 
+func ParseAppMode(raw string) (AppMode, error) {
+	mode := AppMode(strings.TrimSpace(raw))
+	switch mode {
+	case AppModeUniPostManaged, AppModeWorkspace, AppModeLegacyUnknown:
+		return mode, nil
+	default:
+		return "", fmt.Errorf("invalid persisted X app mode %q", raw)
+	}
+}
+
 func EvaluateCapabilities(input CapabilityInput) Capabilities {
 	result := Capabilities{
 		MissingScopes:         []string{},
@@ -108,7 +122,7 @@ func EvaluateCapabilities(input CapabilityInput) Capabilities {
 		}
 	}
 	hasPublishingScopes := hasAllScopes(scopeSet, publishingScopes)
-	result.MissingScopes = missingScopes(scopeSet, dmScopes)
+	result.MissingScopes = missingScopes(scopeSet, RequiredInboxScopes())
 	result.ReconnectRequired = len(result.MissingScopes) > 0
 
 	appCredentialsComplete := false
@@ -118,9 +132,11 @@ func EvaluateCapabilities(input CapabilityInput) Capabilities {
 	case AppModeWorkspace:
 		result.MissingAppCredentials = input.AppCredentials.Missing()
 		appCredentialsComplete = len(result.MissingAppCredentials) == 0
+	case AppModeLegacyUnknown:
+		result.ReconnectRequired = true
 	}
 	result.CommentsEnabled = hasPublishingScopes && appCredentialsComplete
-	result.DMsEnabled = result.CommentsEnabled && len(result.MissingScopes) == 0
+	result.DMsEnabled = result.CommentsEnabled && hasAllScopes(scopeSet, RequiredInboxScopes())
 	return result
 }
 

@@ -81,6 +81,58 @@ func TestXInboxCapabilityWorkspaceAppListsExactMissingCredentials(t *testing.T) 
 	}
 }
 
+func TestXInboxCapabilityReportsAllRequiredScopesInStableOrder(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: true,
+		AccountStatus:   "active",
+		AppMode:         AppModeUniPostManaged,
+	})
+
+	if want := []string{"tweet.read", "tweet.write", "users.read", "dm.read", "dm.write"}; !reflect.DeepEqual(got.MissingScopes, want) {
+		t.Fatalf("missing_scopes = %v, want %v", got.MissingScopes, want)
+	}
+	if got.CommentsEnabled || got.DMsEnabled {
+		t.Fatalf("comments_enabled=%v dms_enabled=%v, want both false", got.CommentsEnabled, got.DMsEnabled)
+	}
+	if !got.ReconnectRequired {
+		t.Fatal("reconnect_required = false, want true")
+	}
+}
+
+func TestXInboxCapabilityLegacyUnknownRequiresReconnectWithoutChangingAccountStatus(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: true,
+		AccountStatus:   "active",
+		Scopes:          RequiredInboxScopes(),
+		AppMode:         AppModeLegacyUnknown,
+		DeliveryStatus:  DeliveryStatusActive,
+	})
+
+	if got.CommentsEnabled || got.DMsEnabled {
+		t.Fatalf("comments_enabled=%v dms_enabled=%v, want both false", got.CommentsEnabled, got.DMsEnabled)
+	}
+	if !got.ReconnectRequired {
+		t.Fatal("reconnect_required = false, want true")
+	}
+	if got.DeliveryStatus != DeliveryStatusActive {
+		t.Fatalf("delivery_status = %q, want unchanged %q", got.DeliveryStatus, DeliveryStatusActive)
+	}
+}
+
+func TestParseXAppModeRejectsEmptyAndInvalidValues(t *testing.T) {
+	for _, raw := range []string{"", "managed", "garbage"} {
+		if _, err := ParseAppMode(raw); err == nil {
+			t.Fatalf("ParseAppMode(%q) error = nil, want validation error", raw)
+		}
+	}
+	for _, mode := range []AppMode{AppModeUniPostManaged, AppModeWorkspace, AppModeLegacyUnknown} {
+		got, err := ParseAppMode(string(mode))
+		if err != nil || got != mode {
+			t.Fatalf("ParseAppMode(%q) = %q, %v", mode, got, err)
+		}
+	}
+}
+
 func TestXAppModeForManualTwitterConnectionUsesWorkspaceApp(t *testing.T) {
 	mode, ok := AppModeForManualConnection("twitter")
 	if !ok || mode != AppModeWorkspace {

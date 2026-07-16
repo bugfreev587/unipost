@@ -50,6 +50,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 const (
@@ -252,11 +253,6 @@ func main() {
 
 	go integrationLogger.Start(workerCtx)
 
-	if processMode == processModeAPI {
-		tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
-		go tokenWorker.Start(workerCtx)
-	}
-
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
 	// the managed token refresh worker can take it as a dependency.
 	// Connectors return nil from their constructors when env vars are
@@ -292,6 +288,18 @@ func main() {
 		connectors = append(connectors, yt)
 	}
 	connectRegistry := connect.NewRegistry(connectors...)
+	xTokenRefresher := xinbox.NewTokenRefreshResolver(
+		queries,
+		encryptor,
+		os.Getenv("TWITTER_CLIENT_ID"),
+		os.Getenv("TWITTER_CLIENT_SECRET"),
+		apiBaseURL,
+	)
+	if processMode == processModeAPI {
+		tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor).
+			SetXTokenRefresher(xTokenRefresher)
+		go tokenWorker.Start(workerCtx)
+	}
 
 	// Sprint 3 PR7: managed token refresh worker. Runs every 5 min,
 	// refreshes tokens within a 30 min window of expiry, uses
@@ -409,6 +417,7 @@ func main() {
 		SetLoopsSyncer(loopsSyncer).
 		SetQuotaEmailService(freePlanQuotaEmailService).
 		SetXUsageService(xCreditsService).
+		SetXTokenRefresher(xTokenRefresher).
 		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool)).
 		SetHoldReconciler(paidQuotaHoldReconciler).
 		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
@@ -416,7 +425,8 @@ func main() {
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
 	if processMode == processModeAPI {
-		managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL)
+		managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL).
+			SetXTokenRefresher(xTokenRefresher)
 		go managedTokenWorker.Start(workerCtx)
 	}
 
@@ -438,7 +448,8 @@ func main() {
 	}
 
 	if processMode == processModeAPI {
-		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
+		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient).
+			SetXTokenRefresher(xTokenRefresher)
 		go analyticsRefreshWorker.Start(workerCtx)
 
 		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
@@ -517,7 +528,8 @@ func main() {
 	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
-	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker)
+	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
+		SetXTokenRefresher(xTokenRefresher)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).

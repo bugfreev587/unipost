@@ -224,12 +224,12 @@ func TestServiceFinalizeAndReverseAreIdempotent(t *testing.T) {
 	}
 }
 
-func TestServiceBYOBypassesStore(t *testing.T) {
+func TestServiceWorkspaceAppBypassesStore(t *testing.T) {
 	store := newFakeStore("basic", time.Now(), time.Now().Add(time.Hour))
 	service := NewService(store)
 
 	event, err := service.Reserve(context.Background(), ReserveRequest{
-		WorkspaceID: "ws_1", ConnectionType: "byo",
+		WorkspaceID: "ws_1", AppMode: "workspace_x_app", ConnectionType: "byo",
 		OperationKey: "post.create", IdempotencyKey: "byo", RequestedUnits: 15,
 	})
 	if err != nil {
@@ -266,6 +266,13 @@ func TestXUsageUsesPersistedAppModeRegardlessOfConnectionType(t *testing.T) {
 			wantStatus:     UsageStatusBypassed,
 			wantCalls:      0,
 		},
+		{
+			name:           "ambiguous legacy app bypasses credits",
+			appMode:        "legacy_unknown",
+			connectionType: "byo",
+			wantStatus:     UsageStatusBypassed,
+			wantCalls:      0,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -292,6 +299,26 @@ func TestXUsageUsesPersistedAppModeRegardlessOfConnectionType(t *testing.T) {
 			}
 			if tt.wantCalls == 1 && store.lastReserve.AppMode != tt.appMode {
 				t.Fatalf("persisted app mode = %q, want %q", store.lastReserve.AppMode, tt.appMode)
+			}
+		})
+	}
+}
+
+func TestXUsageRejectsMissingOrInvalidPersistedAppMode(t *testing.T) {
+	for _, appMode := range []string{"", "managed", "garbage"} {
+		t.Run(appMode, func(t *testing.T) {
+			store := newFakeStore("basic", time.Now(), time.Now().Add(time.Hour))
+			service := NewService(store)
+			if _, err := service.Reserve(context.Background(), ReserveRequest{
+				WorkspaceID:    "ws_1",
+				AppMode:        appMode,
+				OperationKey:   "post.create",
+				IdempotencyKey: "invalid-mode",
+			}); err == nil {
+				t.Fatalf("Reserve app_mode=%q error = nil, want validation error", appMode)
+			}
+			if store.reserveCalls != 0 {
+				t.Fatalf("reserve calls = %d, want 0", store.reserveCalls)
 			}
 		})
 	}

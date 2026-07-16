@@ -7,8 +7,14 @@ VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (workspace_id, platform) DO UPDATE
 SET client_id = EXCLUDED.client_id,
     client_secret = EXCLUDED.client_secret,
-    app_bearer_token = EXCLUDED.app_bearer_token,
-    consumer_secret = EXCLUDED.consumer_secret
+    app_bearer_token = CASE
+      WHEN sqlc.arg(app_bearer_token_supplied)::BOOLEAN THEN EXCLUDED.app_bearer_token
+      ELSE platform_credentials.app_bearer_token
+    END,
+    consumer_secret = CASE
+      WHEN sqlc.arg(consumer_secret_supplied)::BOOLEAN THEN EXCLUDED.consumer_secret
+      ELSE platform_credentials.consumer_secret
+    END
 RETURNING *;
 
 -- name: GetPlatformCredential :one

@@ -92,6 +92,40 @@ func TestReserveManagedXUsageBypassesBYO(t *testing.T) {
 	}
 }
 
+func TestReserveManagedXUsageLegacyUnknownPreservesPublishingWithoutCredits(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
+	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_legacy:main", db.SocialAccount{
+		ID:             "sa_legacy",
+		Platform:       "twitter",
+		ConnectionType: "byo",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeLegacyUnknown), Valid: true},
+	}, "legacy publish")
+	if err != nil {
+		t.Fatalf("reserveManagedXUsage: %v", err)
+	}
+	if event.ID != "" || len(fake.requests) != 0 {
+		t.Fatalf("event=%+v reserve requests=%d, want publishing bypass without credits", event, len(fake.requests))
+	}
+}
+
+func TestReserveManagedXUsageRejectsInvalidPersistedAppMode(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
+	for _, appMode := range []pgtype.Text{{}, {String: "garbage", Valid: true}} {
+		_, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:invalid", db.SocialAccount{
+			Platform: "twitter",
+			XAppMode: appMode,
+		}, "hello")
+		if err == nil {
+			t.Fatalf("app mode %+v error = nil, want fail-closed validation", appMode)
+		}
+	}
+	if len(fake.requests) != 0 {
+		t.Fatalf("reserve requests = %d, want 0", len(fake.requests))
+	}
+}
+
 func TestReserveManagedXUsageUsesCatalogWeight(t *testing.T) {
 	fake := &fakeXUsageService{}
 	h := &SocialPostHandler{xUsage: fake}

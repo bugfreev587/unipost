@@ -20,18 +20,26 @@ VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (workspace_id, platform) DO UPDATE
 SET client_id = EXCLUDED.client_id,
     client_secret = EXCLUDED.client_secret,
-    app_bearer_token = EXCLUDED.app_bearer_token,
-    consumer_secret = EXCLUDED.consumer_secret
+    app_bearer_token = CASE
+      WHEN $7::BOOLEAN THEN EXCLUDED.app_bearer_token
+      ELSE platform_credentials.app_bearer_token
+    END,
+    consumer_secret = CASE
+      WHEN $8::BOOLEAN THEN EXCLUDED.consumer_secret
+      ELSE platform_credentials.consumer_secret
+    END
 RETURNING id, platform, client_id, client_secret, created_at, workspace_id, app_bearer_token, consumer_secret
 `
 
 type CreatePlatformCredentialParams struct {
-	WorkspaceID    string      `json:"workspace_id"`
-	Platform       string      `json:"platform"`
-	ClientID       string      `json:"client_id"`
-	ClientSecret   string      `json:"client_secret"`
-	AppBearerToken pgtype.Text `json:"app_bearer_token"`
-	ConsumerSecret pgtype.Text `json:"consumer_secret"`
+	WorkspaceID            string      `json:"workspace_id"`
+	Platform               string      `json:"platform"`
+	ClientID               string      `json:"client_id"`
+	ClientSecret           string      `json:"client_secret"`
+	AppBearerToken         pgtype.Text `json:"app_bearer_token"`
+	ConsumerSecret         pgtype.Text `json:"consumer_secret"`
+	AppBearerTokenSupplied bool        `json:"app_bearer_token_supplied"`
+	ConsumerSecretSupplied bool        `json:"consumer_secret_supplied"`
 }
 
 func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatformCredentialParams) (PlatformCredential, error) {
@@ -42,6 +50,8 @@ func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatfo
 		arg.ClientSecret,
 		arg.AppBearerToken,
 		arg.ConsumerSecret,
+		arg.AppBearerTokenSupplied,
+		arg.ConsumerSecretSupplied,
 	)
 	var i PlatformCredential
 	err := row.Scan(

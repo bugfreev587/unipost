@@ -108,11 +108,16 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 		Capability:    cap,
 	}
 	if strings.EqualFold(acc.Platform, "twitter") {
+		appMode, modeErr := xinbox.ParseAppMode(acc.XAppMode.String)
+		if modeErr != nil || !acc.XAppMode.Valid {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X account app identity is invalid; reconnect required")
+			return
+		}
 		input := xinbox.CapabilityInput{
 			PlanAllowsInbox: h.quota == nil || h.quota.PlanAllowsInbox(r.Context(), workspaceID),
 			AccountStatus:   acc.Status,
 			Scopes:          acc.Scope,
-			AppMode:         xinbox.AppMode(acc.XAppMode.String),
+			AppMode:         appMode,
 		}
 		if delivery, deliveryErr := h.queries.GetXInboxDeliveryResource(r.Context(), acc.ID); deliveryErr == nil {
 			input.DeliveryStatus = delivery.DeliveryStatus
