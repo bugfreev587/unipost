@@ -1,16 +1,97 @@
 package xinbox
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestXClientControlRequestAppliesConfiguredDeadline(t *testing.T) {
+	var remaining time.Duration
+	client := NewClient(ClientConfig{
+		BaseURL:               "https://api.x.test",
+		ControlRequestTimeout: 50 * time.Millisecond,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			deadline, ok := request.Context().Deadline()
+			if !ok {
+				t.Fatal("control request has no context deadline")
+			}
+			remaining = time.Until(deadline)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString(`{"data":[]}`)),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	})
+
+	if _, err := client.ListFilteredStreamRules(context.Background(), "app-token"); err != nil {
+		t.Fatal(err)
+	}
+	if remaining <= 0 || remaining > 50*time.Millisecond {
+		t.Fatalf("remaining deadline = %s, want within configured timeout", remaining)
+	}
+}
+
+func TestXClientControlResponseLimitRejectsOversizedJSON(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":"` + strings.Repeat("x", 128) + `"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{
+		BaseURL:              server.URL,
+		HTTPClient:           server.Client(),
+		MaxJSONResponseBytes: 64,
+	})
+	if _, err := client.ListFilteredStreamRules(context.Background(), "app-token"); err == nil ||
+		!strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("err = %v, want bounded response error", err)
+	}
+}
+
+func TestXClientStreamHTTPClientIsSeparateFromControlClient(t *testing.T) {
+	controlCalls := 0
+	streamCalls := 0
+	client := NewClient(ClientConfig{
+		BaseURL: "https://api.x.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			controlCalls++
+			return nil, errors.New("control transport must not open stream")
+		})},
+		StreamHTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			streamCalls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewBufferString(`{"data":{"id":"tweet-1"}}` + "\n")),
+				Header:     make(http.Header),
+			}, nil
+		})},
+	})
+
+	err := client.ConsumeFilteredStream(context.Background(), "app-token", func(StreamEvent) error { return nil })
+	if !errors.Is(err, ErrStreamDisconnected) {
+		t.Fatalf("err = %v, want stream disconnect after body EOF", err)
+	}
+	if controlCalls != 0 || streamCalls != 1 {
+		t.Fatalf("control calls=%d stream calls=%d", controlCalls, streamCalls)
+	}
+}
 
 func TestXClientEnsureFilteredStreamRuleUsesStableContract(t *testing.T) {
 	var calls int

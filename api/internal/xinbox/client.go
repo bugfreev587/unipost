@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -15,9 +16,11 @@ import (
 )
 
 const (
-	defaultXAPIBaseURL = "https://api.x.com"
-	maxStreamRules     = 1000
-	defaultStreamIdle  = 25 * time.Second
+	defaultXAPIBaseURL                = "https://api.x.com"
+	maxStreamRules                    = 1000
+	defaultStreamIdle                 = 25 * time.Second
+	defaultControlTimeout             = 15 * time.Second
+	defaultMaxJSONResponseBytes int64 = 1 << 20
 )
 
 var ErrStreamDisconnected = errors.New("X filtered stream disconnected")
@@ -25,6 +28,9 @@ var ErrStreamDisconnected = errors.New("X filtered stream disconnected")
 type ClientConfig struct {
 	BaseURL                  string
 	HTTPClient               *http.Client
+	StreamHTTPClient         *http.Client
+	ControlRequestTimeout    time.Duration
+	MaxJSONResponseBytes     int64
 	StreamIdleTimeout        time.Duration
 	WebhookValidationPolls   int
 	WebhookValidationBackoff time.Duration
@@ -33,7 +39,10 @@ type ClientConfig struct {
 
 type Client struct {
 	baseURL                  string
-	httpClient               *http.Client
+	controlHTTP              *http.Client
+	streamHTTP               *http.Client
+	controlTimeout           time.Duration
+	maxJSONResponseBytes     int64
 	streamIdle               time.Duration
 	webhookValidationPolls   int
 	webhookValidationBackoff time.Duration
@@ -79,7 +88,23 @@ func NewClient(config ClientConfig) *Client {
 	}
 	httpClient := config.HTTPClient
 	if httpClient == nil {
-		httpClient = http.DefaultClient
+		httpClient = &http.Client{Transport: newXTransport()}
+	}
+	streamHTTPClient := config.StreamHTTPClient
+	if streamHTTPClient == nil {
+		if config.HTTPClient != nil {
+			streamHTTPClient = config.HTTPClient
+		} else {
+			streamHTTPClient = &http.Client{Transport: newXTransport()}
+		}
+	}
+	controlTimeout := config.ControlRequestTimeout
+	if controlTimeout <= 0 {
+		controlTimeout = defaultControlTimeout
+	}
+	maxJSONResponseBytes := config.MaxJSONResponseBytes
+	if maxJSONResponseBytes <= 0 {
+		maxJSONResponseBytes = defaultMaxJSONResponseBytes
 	}
 	streamIdle := config.StreamIdleTimeout
 	if streamIdle <= 0 {
@@ -99,7 +124,10 @@ func NewClient(config ClientConfig) *Client {
 	}
 	return &Client{
 		baseURL:                  baseURL,
-		httpClient:               httpClient,
+		controlHTTP:              httpClient,
+		streamHTTP:               streamHTTPClient,
+		controlTimeout:           controlTimeout,
+		maxJSONResponseBytes:     maxJSONResponseBytes,
 		streamIdle:               streamIdle,
 		webhookValidationPolls:   webhookValidationPolls,
 		webhookValidationBackoff: webhookValidationBackoff,
@@ -229,7 +257,7 @@ func (c *Client) ConsumeFilteredStream(
 	if err != nil {
 		return err
 	}
-	response, err := c.httpClient.Do(request)
+	response, err := c.streamHTTP.Do(request)
 	if err != nil {
 		return fmt.Errorf("open X filtered stream: %w", err)
 	}
@@ -329,17 +357,32 @@ func (c *Client) do(
 	body any,
 	responseBody any,
 ) (int, error) {
-	request, err := c.newRequest(ctx, method, path, bearerToken, body)
+	requestCtx, cancel := context.WithTimeout(ctx, c.controlTimeout)
+	defer cancel()
+	request, err := c.newRequest(requestCtx, method, path, bearerToken, body)
 	if err != nil {
 		return 0, err
 	}
-	response, err := c.httpClient.Do(request)
+	response, err := c.controlHTTP.Do(request)
 	if err != nil {
 		return 0, fmt.Errorf("X API %s %s: %w", method, path, err)
 	}
 	defer response.Body.Close()
 	if responseBody != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
-		if err := json.NewDecoder(response.Body).Decode(responseBody); err != nil && !errors.Is(err, io.EOF) {
+		limited := &io.LimitedReader{R: response.Body, N: c.maxJSONResponseBytes + 1}
+		payload, readErr := io.ReadAll(limited)
+		if readErr != nil {
+			return response.StatusCode, fmt.Errorf("read X API %s %s response: %w", method, path, readErr)
+		}
+		if int64(len(payload)) > c.maxJSONResponseBytes {
+			return response.StatusCode, fmt.Errorf(
+				"X API %s %s response exceeded %d bytes",
+				method,
+				path,
+				c.maxJSONResponseBytes,
+			)
+		}
+		if err := json.Unmarshal(payload, responseBody); err != nil && len(bytes.TrimSpace(payload)) != 0 {
 			return response.StatusCode, fmt.Errorf("decode X API %s %s response: %w", method, path, err)
 		}
 	} else {
@@ -372,6 +415,23 @@ func (c *Client) newRequest(
 		request.Header.Set("Content-Type", "application/json")
 	}
 	return request, nil
+}
+
+func newXTransport() *http.Transport {
+	return &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
+		ResponseHeaderTimeout: 10 * time.Second,
+		ExpectContinueTimeout: time.Second,
+	}
 }
 
 func isIdempotentDeleteStatus(status int) bool {
