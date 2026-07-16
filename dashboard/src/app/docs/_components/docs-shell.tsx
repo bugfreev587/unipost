@@ -417,6 +417,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       description: "Plan managed-X usage and follow the phased X Inbox rollout.",
       items: [
         { label: "X Credits", href: "/docs/guides/x/credits" },
+        { label: "X comments", href: "/docs/guides/x/comments" },
+        { label: "X direct messages", href: "/docs/guides/x/direct-messages" },
+        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions" },
       ],
     },
   ],
@@ -531,6 +534,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Inbox",
       items: [
         { label: "Overview", href: "/docs/api/inbox" },
+        { label: "List Inbox items", href: "/docs/api/inbox/list", method: "GET" },
+        { label: "Reply to item", href: "/docs/api/inbox/reply", method: "POST" },
+        { label: "Sync and backfill", href: "/docs/api/inbox/sync", method: "POST" },
       ],
     },
     {

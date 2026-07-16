@@ -60,6 +60,15 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     ],
   },
   {
+    title: "Inbox",
+    description: "List normalized conversations, reply idempotently, and run bounded sync or X backfill operations.",
+    endpoints: [
+      { label: "List Inbox items", method: "GET", path: "/v1/inbox", href: "/docs/api/inbox/list", description: "Filter normalized comment, reply, and private-message items." },
+      { label: "Reply to Inbox item", method: "POST", path: "/v1/inbox/{id}/reply", href: "/docs/api/inbox/reply", description: "Send a supported response with X idempotency protection." },
+      { label: "Sync Inbox", method: "POST", path: "/v1/inbox/sync", href: "/docs/api/inbox/sync", description: "Poll supported sources or request a bounded X backfill." },
+    ],
+  },
+  {
     title: "Analytics",
     description: "Build one normalized reporting workflow across Instagram, Threads, Pinterest, TikTok, and Facebook Page without integrating each platform separately.",
     endpoints: [

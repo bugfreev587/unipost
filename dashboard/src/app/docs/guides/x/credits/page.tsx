@@ -20,7 +20,7 @@ export default function XCreditsGuidePage() {
       <h2 id="estimate">1. Estimate the operation mix</h2>
       <p>
         Start from the final X text. A conclusively URL-free X post uses 15 Credits; a post containing a URL or
-        domain-like candidate is conservatively counted at 200 Credits. A complete future Inbox comment interaction
+        domain-like candidate is conservatively counted at 200 Credits. A complete Inbox comment interaction
         combines one received comment and one reply. A complete DM interaction combines one received DM and one sent DM.
       </p>
       <DocsTable
@@ -60,6 +60,7 @@ export default function XCreditsGuidePage() {
         <li>Stop retry loops for the same managed-X operation.</li>
         <li>Show the reset date and the current plan&apos;s upgrade or Enterprise contact path.</li>
         <li>Keep BYO X operations separate because they do not consume UniPost X Credits.</li>
+        <li>For inbound delivery, also branch on <code>x_inbound_daily_cap_exceeded</code> and show the UTC reset boundary.</li>
       </ol>
       <p className="docs-guide-note">
         Managed-X work stops at the hard limit. The allowance does not override the independent safety cap of 20 X
@@ -77,6 +78,16 @@ export default function XCreditsGuidePage() {
           <div className="docs-guide-next-kicker">Publishing</div>
           <div className="docs-guide-next-title">Create post</div>
           <div className="docs-guide-next-body">Submit the final managed-X operation.</div>
+        </Link>
+        <Link href="/docs/guides/x/comments" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Inbox</div>
+          <div className="docs-guide-next-title">X comments</div>
+          <div className="docs-guide-next-body">List, reply, sync, and handle managed-X boundaries.</div>
+        </Link>
+        <Link href="/docs/guides/x/direct-messages" className="docs-guide-next-card">
+          <div className="docs-guide-next-kicker">Inbox</div>
+          <div className="docs-guide-next-title">X direct messages</div>
+          <div className="docs-guide-next-body">Work with private legacy DM threads safely.</div>
         </Link>
         <Link href="/docs/api/posts/validate" className="docs-guide-next-card">
           <div className="docs-guide-next-kicker">Preflight</div>
