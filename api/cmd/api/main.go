@@ -416,6 +416,7 @@ func main() {
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
 	if processMode == processModeAPI {
 		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
+			databaseURL,
 			pool,
 			queries,
 			encryptor,

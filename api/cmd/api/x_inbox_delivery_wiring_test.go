@@ -14,6 +14,7 @@ func TestXInboxDeliveryWorkerWiringUsesDevSafeEnvironmentContracts(t *testing.T)
 	text := string(source)
 	for _, required := range []string{
 		"worker.NewPostgresXInboxDeliveryWorker(",
+		"databaseURL,",
 		`os.Getenv("TWITTER_BEARER_TOKEN")`,
 		`os.Getenv("X_INBOX_WEBHOOK_URL")`,
 		"go xInboxDeliveryWorker.Start(workerCtx)",

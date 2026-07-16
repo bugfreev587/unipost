@@ -208,10 +208,18 @@ func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Reques
 	}
 	platformName := chi.URLParam(r, "platform")
 
-	h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
+	if err := h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
 		WorkspaceID: workspaceID,
 		Platform:    platformName,
-	})
+	}); err != nil {
+		writeError(
+			w,
+			http.StatusInternalServerError,
+			"INTERNAL_ERROR",
+			"Failed to delete platform credential",
+		)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
 }

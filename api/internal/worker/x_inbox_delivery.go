@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -46,7 +48,7 @@ type XInboxLeaderLease interface {
 }
 
 type XInboxLeaderElector interface {
-	TryAcquire(context.Context, string) (XInboxLeaderLease, bool, error)
+	TryAcquire(context.Context, string, context.CancelFunc) (XInboxLeaderLease, bool, error)
 }
 
 type XInboxDeliveryStore interface {
@@ -127,8 +129,16 @@ type XInboxDeliveryWorker struct {
 	eventHandler     func(context.Context, string, xinbox.StreamEvent) error
 	cleanupOwner     string
 
-	streamsMu sync.Mutex
-	streams   map[string]struct{}
+	streamsMu        sync.Mutex
+	streams          map[string]managedXInboxStream
+	streamGeneration uint64
+}
+
+type managedXInboxStream struct {
+	cancel      context.CancelFunc
+	done        <-chan struct{}
+	fingerprint string
+	generation  uint64
 }
 
 func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker {
@@ -152,11 +162,12 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 		now:              now,
 		eventHandler:     config.EventHandler,
 		cleanupOwner:     cleanupOwner,
-		streams:          make(map[string]struct{}),
+		streams:          make(map[string]managedXInboxStream),
 	}
 }
 
 func NewPostgresXInboxDeliveryWorker(
+	databaseURL string,
 	pool *pgxpool.Pool,
 	queries *db.Queries,
 	encryptor *crypto.AESEncryptor,
@@ -171,7 +182,7 @@ func NewPostgresXInboxDeliveryWorker(
 		API:              client,
 		Cipher:           encryptor,
 		Usage:            usage,
-		Leader:           &postgresXInboxLeader{pool: pool},
+		Leader:           NewPostgresStreamLockManager(databaseURL),
 		Stream:           xinbox.NewStreamSupervisor(client, xinbox.StreamSupervisorConfig{}),
 		ManagedAppBearer: managedAppBearer,
 		WebhookURL:       webhookURL,
@@ -188,6 +199,14 @@ func (w *XInboxDeliveryWorker) SetEventHandler(
 func (w *XInboxDeliveryWorker) Start(ctx context.Context) {
 	ticker := time.NewTicker(xInboxReconcileInterval)
 	defer ticker.Stop()
+	defer w.stopAllStreams()
+	defer func() {
+		if closer, ok := w.leader.(interface{ Close() error }); ok {
+			if err := closer.Close(); err != nil {
+				slog.Warn("close X inbox lock manager", "error", err)
+			}
+		}
+	}()
 	slog.Info("X inbox delivery worker started")
 	w.reconcileAndStartStreams(ctx)
 	for {
@@ -202,26 +221,58 @@ func (w *XInboxDeliveryWorker) Start(ctx context.Context) {
 }
 
 func (w *XInboxDeliveryWorker) reconcileAndStartStreams(ctx context.Context) {
-	apps, err := w.reconcile(ctx)
+	apps, complete, err := w.reconcileCycle(ctx)
 	if err != nil {
 		slog.Warn("X inbox delivery reconciliation completed with errors", "error", err)
 	}
-	if w.eventHandler == nil {
+	if !complete {
 		return
 	}
-	for _, app := range apps {
-		w.startAppStream(ctx, app)
+	if w.eventHandler == nil {
+		apps = nil
 	}
+	w.syncDesiredStreams(ctx, apps)
 }
 
 func (w *XInboxDeliveryWorker) ReconcileOnce(ctx context.Context) error {
-	_, err := w.reconcile(ctx)
+	_, _, err := w.reconcileCycle(ctx)
 	return err
 }
 
 func (w *XInboxDeliveryWorker) reconcile(ctx context.Context) ([]XInboxAppStream, error) {
+	apps, _, err := w.reconcileCycle(ctx)
+	return apps, err
+}
+
+func (w *XInboxDeliveryWorker) reconcileCycle(
+	ctx context.Context,
+) (apps []XInboxAppStream, complete bool, resultErr error) {
+	if w.leader != nil {
+		lease, acquired, err := w.leader.TryAcquire(ctx, "x-inbox-reconcile", nil)
+		if err != nil {
+			return nil, false, fmt.Errorf("acquire X inbox reconciliation lock: %w", err)
+		}
+		if !acquired {
+			return nil, false, nil
+		}
+		defer func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := lease.Release(releaseCtx); err != nil {
+				resultErr = errors.Join(resultErr, fmt.Errorf("release X inbox reconciliation lock: %w", err))
+				complete = false
+			}
+		}()
+	}
+	apps, complete, resultErr = w.reconcileUnlocked(ctx)
+	return
+}
+
+func (w *XInboxDeliveryWorker) reconcileUnlocked(
+	ctx context.Context,
+) ([]XInboxAppStream, bool, error) {
 	if w.store == nil || w.api == nil || w.cipher == nil {
-		return nil, errors.New("X inbox delivery worker is not fully configured")
+		return nil, false, errors.New("X inbox delivery worker is not fully configured")
 	}
 	var joined error
 	cleanupNow := w.now().UTC()
@@ -244,30 +295,33 @@ func (w *XInboxDeliveryWorker) reconcile(ctx context.Context) ([]XInboxAppStream
 
 	accounts, err := w.store.ListAccounts(ctx)
 	if err != nil {
-		return nil, errors.Join(joined, fmt.Errorf("list X inbox delivery accounts: %w", err))
+		return nil, false, errors.Join(joined, fmt.Errorf("list X inbox delivery accounts: %w", err))
 	}
 	appsByIdentity := make(map[string]XInboxAppStream)
+	desiredComplete := true
 	for _, account := range accounts {
-		app, streamDesired, err := w.reconcileAccount(ctx, account)
-		if err != nil {
-			joined = errors.Join(joined, fmt.Errorf("reconcile X inbox account %s: %w", account.SocialAccountID, err))
-			continue
+		app, streamDesired, desiredKnown, err := w.reconcileAccount(ctx, account)
+		if !desiredKnown {
+			desiredComplete = false
 		}
 		if streamDesired {
 			appsByIdentity[app.Identity] = app
+		}
+		if err != nil {
+			joined = errors.Join(joined, fmt.Errorf("reconcile X inbox account %s: %w", account.SocialAccountID, err))
 		}
 	}
 	apps := make([]XInboxAppStream, 0, len(appsByIdentity))
 	for _, app := range appsByIdentity {
 		apps = append(apps, app)
 	}
-	return apps, joined
+	return apps, desiredComplete, joined
 }
 
 func (w *XInboxDeliveryWorker) reconcileAccount(
 	ctx context.Context,
 	account XInboxDeliveryAccount,
-) (XInboxAppStream, bool, error) {
+) (XInboxAppStream, bool, bool, error) {
 	now := w.now().UTC()
 	state := XInboxDeliveryState{
 		SocialAccountID:          account.SocialAccountID,
@@ -292,7 +346,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	if account.AppMode == xinbox.AppModeUniPostManaged && commentsDesired && w.usage != nil {
 		snapshot, err := w.usage.Snapshot(ctx, account.WorkspaceID, now)
 		if err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
+			return XInboxAppStream{}, false, false, w.saveAccountError(ctx, state, err)
 		}
 		if snapshot.PausePaidSources {
 			commentsDesired = false
@@ -307,58 +361,65 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 
 	appBearerToken, appIdentity, appTokenErr := w.resolveAccountAppToken(account)
 	if appTokenErr != nil && (state.FilteredStreamRuleID != "" || commentsDesired || dmsDesired) {
-		return XInboxAppStream{}, false, w.saveAccountError(ctx, state, appTokenErr)
+		return XInboxAppStream{}, false, true, w.saveAccountError(ctx, state, appTokenErr)
+	}
+	app := XInboxAppStream{Identity: appIdentity, BearerToken: appBearerToken}
+	streamDesired := func() bool {
+		return commentsDesired && state.FilteredStreamRuleID != ""
+	}
+	fail := func(cause error) (XInboxAppStream, bool, bool, error) {
+		return app, streamDesired(), true, w.saveAccountError(ctx, state, cause)
 	}
 	var userAccessToken string
 	if dmsDesired {
 		var err error
 		userAccessToken, err = w.cipher.Decrypt(account.AccessTokenEncrypted)
 		if err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, fmt.Errorf("decrypt connected X user token: %w", err))
+			return fail(fmt.Errorf("decrypt connected X user token: %w", err))
 		}
 	}
 
 	if !commentsDesired && state.FilteredStreamRuleID != "" {
 		if err := w.api.DeleteFilteredStreamRule(ctx, appBearerToken, state.FilteredStreamRuleID); err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
+			return fail(err)
 		}
 		state.FilteredStreamRuleID = ""
 		state.DeliveryStatus = targetStatus
 		if err := w.store.SaveState(ctx, state); err != nil {
-			return XInboxAppStream{}, false, err
+			return app, streamDesired(), true, err
 		}
 	}
 	if !dmsDesired && state.ActivityDMSubscriptionID != "" {
 		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
+			return fail(err)
 		}
 		state.ActivityDMSubscriptionID = ""
 		state.DeliveryStatus = targetStatus
 		if err := w.store.SaveState(ctx, state); err != nil {
-			return XInboxAppStream{}, false, err
+			return app, streamDesired(), true, err
 		}
 	}
 
 	if commentsDesired && state.FilteredStreamRuleID == "" {
 		if account.Handle == "" {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, errors.New("connected X account has no handle"))
+			return fail(errors.New("connected X account has no handle"))
 		}
 		rule, err := w.api.EnsureFilteredStreamRule(ctx, appBearerToken, account.SocialAccountID, account.Handle)
 		if err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
+			return fail(err)
 		}
 		state.FilteredStreamRuleID = rule.ID
 		if err := w.store.SaveState(ctx, state); err != nil {
-			return XInboxAppStream{}, false, err
+			return app, streamDesired(), true, err
 		}
 	}
 	if dmsDesired && state.ActivityDMSubscriptionID == "" {
 		if w.webhookURL == "" {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, errors.New("X_INBOX_WEBHOOK_URL is not configured"))
+			return fail(errors.New("X_INBOX_WEBHOOK_URL is not configured"))
 		}
 		webhook, err := w.api.EnsureWebhook(ctx, appBearerToken, w.webhookURL)
 		if err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
+			return fail(err)
 		}
 		subscription, err := w.api.EnsureDMSubscription(
 			ctx,
@@ -369,11 +430,11 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			webhook.ID,
 		)
 		if err != nil {
-			return XInboxAppStream{}, false, w.saveAccountError(ctx, state, err)
+			return fail(err)
 		}
 		state.ActivityDMSubscriptionID = subscription.ID
 		if err := w.store.SaveState(ctx, state); err != nil {
-			return XInboxAppStream{}, false, err
+			return app, streamDesired(), true, err
 		}
 	}
 
@@ -384,9 +445,9 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	}
 	state.LastError = ""
 	if err := w.store.SaveState(ctx, state); err != nil {
-		return XInboxAppStream{}, false, err
+		return app, streamDesired(), true, err
 	}
-	return XInboxAppStream{Identity: appIdentity, BearerToken: appBearerToken}, commentsDesired && state.FilteredStreamRuleID != "", nil
+	return app, streamDesired(), true, nil
 }
 
 func (w *XInboxDeliveryWorker) saveAccountError(
@@ -519,31 +580,99 @@ func hasXInboxScopes(scopes []string, required ...string) bool {
 	return true
 }
 
-func (w *XInboxDeliveryWorker) startAppStream(ctx context.Context, app XInboxAppStream) {
-	w.streamsMu.Lock()
-	if _, active := w.streams[app.Identity]; active {
-		w.streamsMu.Unlock()
-		return
+func (w *XInboxDeliveryWorker) syncDesiredStreams(ctx context.Context, apps []XInboxAppStream) {
+	desired := make(map[string]XInboxAppStream, len(apps))
+	for _, app := range apps {
+		desired[app.Identity] = app
 	}
-	w.streams[app.Identity] = struct{}{}
+
+	type stoppedStream struct {
+		cancel context.CancelFunc
+		done   <-chan struct{}
+	}
+	var stopped []stoppedStream
+	w.streamsMu.Lock()
+	for identity, active := range w.streams {
+		app, exists := desired[identity]
+		if exists && active.fingerprint == bearerFingerprint(app.BearerToken) {
+			continue
+		}
+		stopped = append(stopped, stoppedStream{cancel: active.cancel, done: active.done})
+	}
 	w.streamsMu.Unlock()
+
+	for _, active := range stopped {
+		active.cancel()
+		select {
+		case <-active.done:
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+
+	w.streamsMu.Lock()
+	defer w.streamsMu.Unlock()
+	for identity, app := range desired {
+		fingerprint := bearerFingerprint(app.BearerToken)
+		if active, exists := w.streams[identity]; exists {
+			if active.fingerprint == fingerprint {
+				continue
+			}
+			continue
+		}
+		w.startAppStreamLocked(ctx, app, fingerprint)
+	}
+}
+
+func (w *XInboxDeliveryWorker) startAppStreamLocked(
+	ctx context.Context,
+	app XInboxAppStream,
+	fingerprint string,
+) {
+	streamCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	w.streamGeneration++
+	generation := w.streamGeneration
+	w.streams[app.Identity] = managedXInboxStream{
+		cancel:      cancel,
+		done:        done,
+		fingerprint: fingerprint,
+		generation:  generation,
+	}
 	go func() {
 		defer func() {
 			w.streamsMu.Lock()
-			delete(w.streams, app.Identity)
+			if active, exists := w.streams[app.Identity]; exists && active.generation == generation {
+				delete(w.streams, app.Identity)
+			}
 			w.streamsMu.Unlock()
+			close(done)
 		}()
-		if err := w.runAppStream(ctx, app); err != nil && ctx.Err() == nil {
+		if err := w.runAppStreamWithCancel(streamCtx, app, cancel); err != nil &&
+			streamCtx.Err() == nil {
 			slog.Warn("X inbox filtered stream stopped", "app_identity", app.Identity, "error", err)
 		}
 	}()
 }
 
 func (w *XInboxDeliveryWorker) runAppStream(ctx context.Context, app XInboxAppStream) error {
+	return w.runAppStreamWithCancel(ctx, app, func() {})
+}
+
+func (w *XInboxDeliveryWorker) runAppStreamWithCancel(
+	ctx context.Context,
+	app XInboxAppStream,
+	cancel context.CancelFunc,
+) error {
 	if w.leader == nil || w.stream == nil {
 		return nil
 	}
-	lease, acquired, err := w.leader.TryAcquire(ctx, app.Identity)
+	lease, acquired, err := w.leader.TryAcquire(
+		ctx,
+		"x-inbox-stream:"+app.Identity,
+		cancel,
+	)
 	if err != nil {
 		return err
 	}
@@ -564,6 +693,23 @@ func (w *XInboxDeliveryWorker) runAppStream(ctx context.Context, app XInboxAppSt
 		return w.eventHandler(ctx, app.Identity, event)
 	}
 	return w.stream.Run(ctx, app.Identity, app.BearerToken, handler)
+}
+
+func (w *XInboxDeliveryWorker) stopAllStreams() {
+	w.streamsMu.Lock()
+	streams := make([]managedXInboxStream, 0, len(w.streams))
+	for _, stream := range w.streams {
+		streams = append(streams, stream)
+	}
+	w.streamsMu.Unlock()
+	for _, stream := range streams {
+		stream.cancel()
+	}
+}
+
+func bearerFingerprint(bearer string) string {
+	sum := sha256.Sum256([]byte(bearer))
+	return hex.EncodeToString(sum[:])
 }
 
 type postgresXInboxDeliveryStore struct {
@@ -756,58 +902,4 @@ func (s *postgresXInboxDeliveryStore) CompleteCleanupIntent(ctx context.Context,
 
 func nullableText(value string) pgtype.Text {
 	return pgtype.Text{String: value, Valid: value != ""}
-}
-
-type postgresXInboxLeader struct {
-	pool *pgxpool.Pool
-}
-
-type postgresXInboxLeaderLease struct {
-	conn     *pgxpool.Conn
-	lockKey  string
-	released sync.Once
-}
-
-func (l *postgresXInboxLeader) TryAcquire(
-	ctx context.Context,
-	appIdentity string,
-) (XInboxLeaderLease, bool, error) {
-	conn, err := l.pool.Acquire(ctx)
-	if err != nil {
-		return nil, false, err
-	}
-	var acquired bool
-	if err := conn.QueryRow(
-		ctx,
-		`SELECT pg_try_advisory_lock(hashtextextended($1, 0))`,
-		"x-inbox-stream:"+appIdentity,
-	).Scan(&acquired); err != nil {
-		conn.Release()
-		return nil, false, err
-	}
-	if !acquired {
-		conn.Release()
-		return nil, false, nil
-	}
-	return &postgresXInboxLeaderLease{
-		conn:    conn,
-		lockKey: "x-inbox-stream:" + appIdentity,
-	}, true, nil
-}
-
-func (l *postgresXInboxLeaderLease) Release(ctx context.Context) error {
-	var releaseErr error
-	l.released.Do(func() {
-		var released bool
-		releaseErr = l.conn.QueryRow(
-			ctx,
-			`SELECT pg_advisory_unlock(hashtextextended($1, 0))`,
-			l.lockKey,
-		).Scan(&released)
-		l.conn.Release()
-		if releaseErr == nil && !released {
-			releaseErr = errors.New("X inbox stream advisory lock was not held")
-		}
-	})
-	return releaseErr
 }

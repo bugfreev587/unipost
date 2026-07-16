@@ -100,16 +100,34 @@ func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, ap
 }
 
 type fakeXInboxDeliveryStore struct {
-	mu       sync.Mutex
-	accounts []XInboxDeliveryAccount
-	cleanups []XInboxCleanupIntent
-	states   []XInboxDeliveryState
+	mu          sync.Mutex
+	accounts    []XInboxDeliveryAccount
+	cleanups    []XInboxCleanupIntent
+	states      []XInboxDeliveryState
+	listErr     error
+	listCalls   int
+	listStarted chan struct{}
+	listRelease chan struct{}
 }
 
 func (f *fakeXInboxDeliveryStore) ListAccounts(context.Context) ([]XInboxDeliveryAccount, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]XInboxDeliveryAccount(nil), f.accounts...), nil
+	f.listCalls++
+	accounts := append([]XInboxDeliveryAccount(nil), f.accounts...)
+	err := f.listErr
+	started := f.listStarted
+	release := f.listRelease
+	f.mu.Unlock()
+	if started != nil {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+	}
+	if release != nil {
+		<-release
+	}
+	return accounts, err
 }
 
 func (f *fakeXInboxDeliveryStore) SaveState(_ context.Context, state XInboxDeliveryState) error {
@@ -482,14 +500,35 @@ func TestXInboxDeliveryKeepsWorkspaceXAppsIsolated(t *testing.T) {
 }
 
 type sharedTestLeader struct {
-	held atomic.Bool
+	mu       sync.Mutex
+	held     map[string]bool
+	cancels  map[string]context.CancelFunc
+	releases atomic.Int32
 }
 
-func (l *sharedTestLeader) TryAcquire(context.Context, string) (XInboxLeaderLease, bool, error) {
-	if !l.held.CompareAndSwap(false, true) {
+func (l *sharedTestLeader) TryAcquire(
+	_ context.Context,
+	key string,
+	cancel context.CancelFunc,
+) (XInboxLeaderLease, bool, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.held == nil {
+		l.held = make(map[string]bool)
+		l.cancels = make(map[string]context.CancelFunc)
+	}
+	if l.held[key] {
 		return nil, false, nil
 	}
-	return testLeaderLease{release: func() { l.held.Store(false) }}, true, nil
+	l.held[key] = true
+	l.cancels[key] = cancel
+	return testLeaderLease{release: func() {
+		l.mu.Lock()
+		delete(l.held, key)
+		delete(l.cancels, key)
+		l.releases.Add(1)
+		l.mu.Unlock()
+	}}, true, nil
 }
 
 type testLeaderLease struct {
@@ -542,8 +581,178 @@ func TestXInboxDeliveryAdvisoryLeaderAllowsOneStreamAcrossReplicas(t *testing.T)
 	}
 }
 
+type managedStreamRunner struct {
+	starts chan XInboxAppStream
+	stops  chan string
+}
+
+func (r *managedStreamRunner) Run(
+	ctx context.Context,
+	identity string,
+	bearer string,
+	_ func(xinbox.StreamEvent) error,
+) error {
+	r.starts <- XInboxAppStream{Identity: identity, BearerToken: bearer}
+	<-ctx.Done()
+	r.stops <- identity
+	return ctx.Err()
+}
+
+func TestXInboxDeliveryDesiredStreamsStopRemovedAndRestartChangedBearer(t *testing.T) {
+	leader := &sharedTestLeader{}
+	runner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 4),
+		stops:  make(chan string, 4),
+	}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{Leader: leader, Stream: runner})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker.syncDesiredStreams(ctx, []XInboxAppStream{{
+		Identity:    "workspace:one",
+		BearerToken: "token-one",
+	}})
+	if started := <-runner.starts; started.BearerToken != "token-one" {
+		t.Fatalf("started = %+v", started)
+	}
+
+	worker.syncDesiredStreams(ctx, []XInboxAppStream{{
+		Identity:    "workspace:one",
+		BearerToken: "token-one",
+	}})
+	select {
+	case duplicate := <-runner.starts:
+		t.Fatalf("unchanged bearer restarted stream: %+v", duplicate)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	worker.syncDesiredStreams(ctx, []XInboxAppStream{{
+		Identity:    "workspace:one",
+		BearerToken: "token-two",
+	}})
+	if stopped := <-runner.stops; stopped != "workspace:one" {
+		t.Fatalf("stopped = %q", stopped)
+	}
+	if restarted := <-runner.starts; restarted.BearerToken != "token-two" {
+		t.Fatalf("restarted = %+v", restarted)
+	}
+
+	worker.syncDesiredStreams(ctx, nil)
+	if stopped := <-runner.stops; stopped != "workspace:one" {
+		t.Fatalf("removed stream stopped = %q", stopped)
+	}
+	if leader.releases.Load() < 2 {
+		t.Fatalf("lock releases = %d, want changed and removed streams released", leader.releases.Load())
+	}
+}
+
+func TestXInboxDeliveryReconciliationLockSerializesReplicas(t *testing.T) {
+	leader := &sharedTestLeader{}
+	store := &fakeXInboxDeliveryStore{
+		listStarted: make(chan struct{}, 1),
+		listRelease: make(chan struct{}),
+	}
+	config := XInboxDeliveryConfig{
+		Store:  store,
+		API:    &fakeXInboxDeliveryAPI{},
+		Cipher: fakeXInboxCipher{},
+		Leader: leader,
+	}
+	first := NewXInboxDeliveryWorker(config)
+	second := NewXInboxDeliveryWorker(config)
+	firstDone := make(chan error, 1)
+	go func() { firstDone <- first.ReconcileOnce(context.Background()) }()
+	<-store.listStarted
+
+	if err := second.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store.mu.Lock()
+	if store.listCalls != 1 {
+		t.Fatalf("list calls while first replica holds lock = %d, want 1", store.listCalls)
+	}
+	store.mu.Unlock()
+	close(store.listRelease)
+	if err := <-firstDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestXInboxDeliveryIncompleteAccountListRetainsPreviousDesiredStreams(t *testing.T) {
+	leader := &sharedTestLeader{}
+	runner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 2),
+		stops:  make(chan string, 2),
+	}
+	account := activeManagedXInboxAccount()
+	account.FilteredStreamRuleID = "rule-existing"
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store:            store,
+		API:              &fakeXInboxDeliveryAPI{},
+		Cipher:           fakeXInboxCipher{},
+		Leader:           leader,
+		Stream:           runner,
+		ManagedAppBearer: "managed-token",
+		EventHandler:     func(context.Context, string, xinbox.StreamEvent) error { return nil },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker.reconcileAndStartStreams(ctx)
+	<-runner.starts
+	store.mu.Lock()
+	store.listErr = errors.New("database unavailable")
+	store.mu.Unlock()
+	worker.reconcileAndStartStreams(ctx)
+	select {
+	case stopped := <-runner.stops:
+		t.Fatalf("incomplete account list stopped existing stream %q", stopped)
+	case <-time.After(20 * time.Millisecond):
+	}
+	worker.stopAllStreams()
+}
+
+func TestXInboxDeliveryMissingWorkspaceCredentialCancelsDesiredStream(t *testing.T) {
+	leader := &sharedTestLeader{}
+	runner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 2),
+		stops:  make(chan string, 2),
+	}
+	account := activeManagedXInboxAccount()
+	account.AppMode = xinbox.AppModeWorkspace
+	account.AppBearerTokenEncrypted = "encrypted-workspace-token"
+	account.FilteredStreamRuleID = "rule-existing"
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store: store,
+		API:   &fakeXInboxDeliveryAPI{},
+		Cipher: fakeXInboxCipher{values: map[string]string{
+			"encrypted-workspace-token": "workspace-token",
+		}},
+		Leader:       leader,
+		Stream:       runner,
+		EventHandler: func(context.Context, string, xinbox.StreamEvent) error { return nil },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker.reconcileAndStartStreams(ctx)
+	<-runner.starts
+	store.mu.Lock()
+	store.accounts[0].AppBearerTokenEncrypted = ""
+	store.accounts[0].FilteredStreamRuleID = ""
+	store.mu.Unlock()
+	worker.reconcileAndStartStreams(ctx)
+	if stopped := <-runner.stops; stopped != "workspace:workspace-1" {
+		t.Fatalf("stopped = %q", stopped)
+	}
+}
+
 func TestXInboxDeliveryUsesPostgresSessionAdvisoryLock(t *testing.T) {
-	source, err := os.ReadFile("x_inbox_delivery.go")
+	source, err := os.ReadFile("x_inbox_locks.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +762,20 @@ func TestXInboxDeliveryUsesPostgresSessionAdvisoryLock(t *testing.T) {
 		"pg_advisory_unlock(hashtextextended($1, 0))",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("x_inbox_delivery.go missing %q", required)
+			t.Fatalf("x_inbox_locks.go missing %q", required)
 		}
+	}
+	if strings.Contains(text, "pool.Acquire") {
+		t.Fatal("stream locks must not acquire one shared API-pool connection per app")
+	}
+	deliverySource, err := os.ReadFile("x_inbox_delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(
+		string(deliverySource),
+		"Leader:           NewPostgresStreamLockManager(databaseURL)",
+	) {
+		t.Fatal("Postgres worker must construct the isolated lock manager from DATABASE_URL")
 	}
 }

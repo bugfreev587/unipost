@@ -3,12 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -208,6 +210,27 @@ func TestPlatformCredentialsRejectsBlankXSecretAndXFieldsOnOtherPlatforms(t *tes
 	}
 }
 
+func TestPlatformCredentialsDeleteReportsTransactionalCleanupFailure(t *testing.T) {
+	store := &platformCredentialTestDB{deleteErr: errors.New("cleanup trigger failed")}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodDelete, "/v1/platform-credentials/twitter", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("platform", "twitter")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	rec := httptest.NewRecorder()
+
+	h.Delete(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 type platformCredentialTestDB struct {
 	planID                 string
 	customPlatformSlot     string
@@ -220,9 +243,13 @@ type platformCredentialTestDB struct {
 	consumerSecret         pgtype.Text
 	appBearerTokenSupplied bool
 	consumerSecretSupplied bool
+	deleteErr              error
 }
 
-func (f *platformCredentialTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (f *platformCredentialTestDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: DeletePlatformCredential") {
+		return pgconn.CommandTag{}, f.deleteErr
+	}
 	return pgconn.CommandTag{}, nil
 }
 
