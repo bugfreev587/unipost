@@ -414,6 +414,18 @@ func main() {
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
 	xCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
+	if processMode == processModeAPI {
+		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
+			pool,
+			queries,
+			encryptor,
+			xCreditsService,
+			xinbox.NewClient(xinbox.ClientConfig{}),
+			os.Getenv("TWITTER_BEARER_TOKEN"),
+			os.Getenv("X_INBOX_WEBHOOK_URL"),
+		)
+		go xInboxDeliveryWorker.Start(workerCtx)
+	}
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).

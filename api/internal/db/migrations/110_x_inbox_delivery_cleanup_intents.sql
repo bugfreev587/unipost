@@ -1,0 +1,135 @@
+-- +goose Up
+-- Upstream X rules and private Activity subscriptions outlive local rows.
+-- Preserve their exact IDs and encrypted cleanup credentials before a
+-- social-account cascade removes the normal delivery-resource row.
+CREATE TABLE x_inbox_delivery_cleanup_intents (
+  id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
+  social_account_id           TEXT NOT NULL UNIQUE,
+  x_app_mode                  TEXT NOT NULL
+    CHECK (x_app_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown')),
+  app_bearer_token            TEXT,
+  user_access_token           TEXT NOT NULL,
+  filtered_stream_rule_id     TEXT,
+  activity_dm_subscription_id TEXT,
+  attempts                    INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  last_error                  TEXT,
+  created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (
+    filtered_stream_rule_id IS NOT NULL
+    OR activity_dm_subscription_id IS NOT NULL
+  )
+);
+
+CREATE INDEX x_inbox_delivery_cleanup_intents_pending_idx
+  ON x_inbox_delivery_cleanup_intents(created_at, id);
+
+CREATE OR REPLACE FUNCTION enqueue_x_inbox_delivery_cleanup()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO x_inbox_delivery_cleanup_intents (
+    social_account_id,
+    x_app_mode,
+    app_bearer_token,
+    user_access_token,
+    filtered_stream_rule_id,
+    activity_dm_subscription_id
+  )
+  SELECT
+    OLD.id,
+    COALESCE(OLD.x_app_mode, 'legacy_unknown'),
+    pc.app_bearer_token,
+    OLD.access_token,
+    r.filtered_stream_rule_id,
+    r.activity_dm_subscription_id
+  FROM profiles p
+  JOIN x_inbox_delivery_resources r
+    ON r.social_account_id = OLD.id
+  LEFT JOIN platform_credentials pc
+    ON pc.workspace_id = p.workspace_id
+   AND pc.platform = 'twitter'
+  WHERE p.id = OLD.profile_id
+    AND (
+      r.filtered_stream_rule_id IS NOT NULL
+      OR r.activity_dm_subscription_id IS NOT NULL
+    )
+  ON CONFLICT (social_account_id) DO UPDATE
+  SET x_app_mode = EXCLUDED.x_app_mode,
+      app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
+      user_access_token = EXCLUDED.user_access_token,
+      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
+      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
+      last_error = NULL,
+      updated_at = NOW();
+
+  RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER social_accounts_x_inbox_delivery_cleanup
+BEFORE DELETE ON social_accounts
+FOR EACH ROW
+WHEN (OLD.platform = 'twitter')
+EXECUTE FUNCTION enqueue_x_inbox_delivery_cleanup();
+
+-- Workspace deletion can cascade platform_credentials before profiles (or
+-- vice versa). Capture the same cleanup material from the credential side
+-- so either cascade order preserves the encrypted workspace app bearer.
+CREATE OR REPLACE FUNCTION enqueue_workspace_x_inbox_delivery_cleanup()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  INSERT INTO x_inbox_delivery_cleanup_intents (
+    social_account_id,
+    x_app_mode,
+    app_bearer_token,
+    user_access_token,
+    filtered_stream_rule_id,
+    activity_dm_subscription_id
+  )
+  SELECT
+    sa.id,
+    COALESCE(sa.x_app_mode, 'legacy_unknown'),
+    OLD.app_bearer_token,
+    sa.access_token,
+    r.filtered_stream_rule_id,
+    r.activity_dm_subscription_id
+  FROM profiles p
+  JOIN social_accounts sa
+    ON sa.profile_id = p.id
+   AND sa.platform = 'twitter'
+  JOIN x_inbox_delivery_resources r
+    ON r.social_account_id = sa.id
+  WHERE p.workspace_id = OLD.workspace_id
+    AND (
+      r.filtered_stream_rule_id IS NOT NULL
+      OR r.activity_dm_subscription_id IS NOT NULL
+    )
+  ON CONFLICT (social_account_id) DO UPDATE
+  SET x_app_mode = EXCLUDED.x_app_mode,
+      app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
+      user_access_token = EXCLUDED.user_access_token,
+      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
+      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
+      last_error = NULL,
+      updated_at = NOW();
+
+  RETURN OLD;
+END;
+$$;
+
+CREATE TRIGGER platform_credentials_x_inbox_delivery_cleanup
+BEFORE DELETE ON platform_credentials
+FOR EACH ROW
+WHEN (OLD.platform = 'twitter')
+EXECUTE FUNCTION enqueue_workspace_x_inbox_delivery_cleanup();
+
+-- +goose Down
+DROP TRIGGER IF EXISTS platform_credentials_x_inbox_delivery_cleanup ON platform_credentials;
+DROP FUNCTION IF EXISTS enqueue_workspace_x_inbox_delivery_cleanup();
+DROP TRIGGER IF EXISTS social_accounts_x_inbox_delivery_cleanup ON social_accounts;
+DROP FUNCTION IF EXISTS enqueue_x_inbox_delivery_cleanup();
+DROP TABLE IF EXISTS x_inbox_delivery_cleanup_intents;
