@@ -1,12 +1,60 @@
 package db
 
 import (
+	"database/sql"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
+	databaseURL := os.Getenv("GOOSE_MIGRATION_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("GOOSE_MIGRATION_TEST_DATABASE_URL is not configured")
+	}
+
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	var existingTables int
+	if err := database.QueryRow(`
+		SELECT COUNT(*)
+		FROM information_schema.tables
+		WHERE table_schema = 'public'
+		  AND table_type = 'BASE TABLE'
+	`).Scan(&existingTables); err != nil {
+		t.Fatalf("inspect disposable migration database: %v", err)
+	}
+	if existingTables != 0 {
+		t.Fatalf(
+			"GOOSE_MIGRATION_TEST_DATABASE_URL must point to an empty disposable database; found %d public tables",
+			existingTables,
+		)
+	}
+
+	if err := RunMigrations(databaseURL); err != nil {
+		t.Fatalf("run all embedded migrations with Goose: %v", err)
+	}
+
+	var version int64
+	if err := database.QueryRow(`
+		SELECT version_id
+		FROM goose_db_version
+		WHERE is_applied
+		ORDER BY id DESC
+		LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatalf("read final Goose version: %v", err)
+	}
+	if version != 116 {
+		t.Fatalf("final Goose version = %d, want 116", version)
+	}
+}
 
 func TestEmbeddedMigrationVersionsAreUnique(t *testing.T) {
 	seen := map[string]string{}
