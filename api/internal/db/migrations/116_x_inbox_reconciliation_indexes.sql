@@ -3,7 +3,25 @@
 
 -- Current nonterminal write state is reconciled every minute. Keep completed
 -- history out of this index while covering the fields used by BYO and stale
--- operation checks.
+-- operation checks. A failed CREATE INDEX CONCURRENTLY can leave an invalid
+-- same-name index behind. Drop every possible partial result before building
+-- so retrying an interrupted, unrecorded Goose migration always rebuilds it.
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_outbound_reconciliation_current_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_outbound_reconciliation_day_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_confirmation_created_day_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_confirmation_completed_day_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_confirmation_running_lease_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_confirmation_pending_expiry_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_exposure_reconciliation_current_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_exposure_reconciliation_deadline_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_items_x_latency_day_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_usage_events_settled_day_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbound_receipts_evidence_day_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbound_notifications_reconciliation_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_delivery_reconciliation_status_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_cleanup_reconciliation_idx;
+DROP INDEX CONCURRENTLY IF EXISTS x_inbox_cleanup_lease_idx;
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS x_inbox_outbound_reconciliation_current_idx
   ON x_inbox_outbound_requests (status, updated_at)
   INCLUDE (usage_event_id, social_account_id)
