@@ -91,6 +91,7 @@ test("status groups include in-flight, failed partial, cancelled, archived, and 
   assert.equal(getPostStatusGroup({ status: "processing" }), "in_progress");
   assert.equal(getPostStatusGroup({ status: "partial" }), "failed");
   assert.equal(getPostStatusGroup({ status: "failed" }), "failed");
+  assert.equal(getPostStatusGroup({ status: "quota_hold" }), "quota_hold");
   assert.equal(getPostStatusGroup({ status: "cancelled" }), "cancelled");
   assert.equal(getPostStatusGroup({ status: "published", archived_at: "2026-05-30T12:00:00Z" }), "archived");
   assert.equal(getPostStatusGroup({ status: "future_review" }), "unknown");

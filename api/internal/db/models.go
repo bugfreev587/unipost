@@ -530,8 +530,10 @@ type PaidPlanQuotaNotification struct {
 	WorkspaceID      string             `json:"workspace_id"`
 	UserID           pgtype.Text        `json:"user_id"`
 	Email            pgtype.Text        `json:"email"`
+	PlanID           string             `json:"plan_id"`
 	Period           string             `json:"period"`
 	ThresholdPercent int32              `json:"threshold_percent"`
+	Severity         string             `json:"severity"`
 	EventKey         string             `json:"event_key"`
 	Status           string             `json:"status"`
 	TransactionalID  pgtype.Text        `json:"transactional_id"`
@@ -554,6 +556,8 @@ type PaidPlanQuotaNotification struct {
 type PaidQuotaFollowUp struct {
 	ID               string             `json:"id"`
 	WorkspaceID      string             `json:"workspace_id"`
+	OwnerUserID      pgtype.Text        `json:"owner_user_id"`
+	PlanID           string             `json:"plan_id"`
 	Period           string             `json:"period"`
 	ThresholdPercent int32              `json:"threshold_percent"`
 	NotificationID   pgtype.Text        `json:"notification_id"`
@@ -565,6 +569,7 @@ type PaidQuotaFollowUp struct {
 	PostLimit        int32              `json:"post_limit"`
 	AssigneeUserID   pgtype.Text        `json:"assignee_user_id"`
 	Notes            pgtype.Text        `json:"notes"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }

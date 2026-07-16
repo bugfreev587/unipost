@@ -39,6 +39,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
+	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
@@ -325,6 +326,10 @@ func main() {
 	var loopsClient *loops.Client
 	var auditedLoopsClient *loops.AuditedClient
 	var loopsSyncer *loops.Syncer
+	emailPolicyService := emailpolicy.NewService(
+		emailpolicy.NewPostgresPreferenceReader(queries),
+		os.Getenv("APP_BASE_URL"),
+	)
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
@@ -343,10 +348,7 @@ func main() {
 				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
 			},
 			EmailAuditStore: emailAuditStore,
-			EmailPolicy: emailpolicy.NewService(
-				emailpolicy.NewPostgresPreferenceReader(queries),
-				os.Getenv("APP_BASE_URL"),
-			),
+			EmailPolicy:     emailPolicyService,
 		})
 		slog.Info("loops: lifecycle sync configured")
 	} else {
@@ -365,6 +367,28 @@ func main() {
 	} else {
 		slog.Info("quota email: free plan quota reminder disabled; Loops client or transactional ID missing")
 	}
+	var paidPlanQuotaEmailService *paidquotaemail.Service
+	if auditedLoopsClient != nil && os.Getenv("LOOPS_PAID_PLAN_QUOTA_TRANSACTIONAL_ID") != "" {
+		paidPlanQuotaEmailService = paidquotaemail.NewService(
+			paidquotaemail.NewPostgresStore(queries, quotaChecker),
+			emailPolicyService,
+			os.Getenv("LOOPS_PAID_PLAN_QUOTA_TRANSACTIONAL_ID"),
+		)
+		paidQuotaEmailWorker := worker.NewPaidPlanQuotaEmailWorker(
+			worker.NewPostgresPaidQuotaDeliveryStore(queries),
+			auditedLoopsClient,
+			paidPlanQuotaEmailService,
+			nil,
+		).
+			SetAppBaseURL(os.Getenv("APP_BASE_URL")).
+			SetEmailPolicy(emailPolicyService)
+		if processMode == processModeAPI {
+			go paidQuotaEmailWorker.Start(workerCtx)
+		}
+		slog.Info("quota email: paid plan quota notifications configured")
+	} else {
+		slog.Info("quota email: paid plan quota notifications disabled; Loops client or transactional ID missing")
+	}
 
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
 	loopsNotificationBus := worker.NewLoopsNotificationEmailBus(queries, loopsSyncer, os.Getenv("APP_BASE_URL"))
@@ -377,11 +401,14 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
+	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetQuotaEmailService(freePlanQuotaEmailService).
-		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool))
+		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool)).
+		SetHoldReconciler(paidQuotaHoldReconciler).
+		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
@@ -467,7 +494,7 @@ func main() {
 		AllowedOrigins:   corsAllowedOrigins(),
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
-		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Warning", "X-UniPost-RateLimit-Limit", "X-UniPost-RateLimit-Remaining", "X-UniPost-RateLimit-Reset", "X-UniPost-QueueDepth", "Retry-After"},
+		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Scheduled-Usage", "X-UniPost-Quota-Hold-Usage", "X-UniPost-Effective-Usage", "X-UniPost-Warning", "X-UniPost-RateLimit-Limit", "X-UniPost-RateLimit-Remaining", "X-UniPost-RateLimit-Reset", "X-UniPost-QueueDepth", "Retry-After"},
 		AllowCredentials: true,
 		MaxAge:           300,
 	}))
@@ -491,7 +518,10 @@ func main() {
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
-	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
+	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).
+		SetLoopsSyncer(loopsSyncer).
+		SetHoldReconciler(paidQuotaHoldReconciler).
+		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
 	// dynamic GROUP BY clause sqlc can't model.
@@ -549,7 +579,8 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
-	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries)
+	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries).
+		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService)
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
 	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
@@ -717,6 +748,9 @@ func main() {
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
 		r.Get("/v1/admin/email-notifications", adminHandler.ListEmailNotifications)
+		r.Post("/v1/admin/email-notifications/{id}/retry", adminHandler.RetryPaidQuotaEmailNotification)
+		r.Get("/v1/admin/paid-quota-follow-ups", adminHandler.ListPaidQuotaFollowUps)
+		r.Patch("/v1/admin/paid-quota-follow-ups/{id}", adminHandler.UpdatePaidQuotaFollowUp)
 		r.Get("/v1/admin/billing", adminHandler.ListBilling)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin logs are restricted to super admins")).
 			Get("/v1/admin/logs", adminHandler.ListLogs)

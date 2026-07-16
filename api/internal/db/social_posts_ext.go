@@ -17,6 +17,16 @@ WITH reset_baseline AS (
 )
 SELECT COALESCE(SUM(
   CASE
+    WHEN sp.status = 'publishing' AND EXISTS (
+      SELECT 1 FROM social_post_results existing WHERE existing.post_id = sp.id
+    ) THEN (
+      SELECT COUNT(*)::INTEGER
+      FROM social_post_results spr
+      JOIN social_accounts sa ON sa.id = spr.social_account_id
+      WHERE spr.post_id = sp.id
+        AND spr.status NOT IN ('published', 'failed')
+        AND sa.disconnected_at IS NULL
+    )
     WHEN jsonb_typeof(sp.metadata->'platform_posts') = 'array' THEN (
       SELECT COUNT(*)::INTEGER
       FROM jsonb_array_elements(sp.metadata->'platform_posts') AS pp

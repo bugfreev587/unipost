@@ -18,6 +18,8 @@ func TestRegistryContainsRequiredEmailEvents(t *testing.T) {
 		"email.billing.payment_recovered.v1":      "LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID",
 		"email.billing.subscription_canceled.v1":  "LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID",
 		"email.quota.free_plan_reminder.v1":       "LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID",
+		"email.quota.paid_plan_warning.v1":        "LOOPS_PAID_PLAN_QUOTA_TRANSACTIONAL_ID",
+		"email.quota.paid_plan_alert.v1":          "LOOPS_PAID_PLAN_QUOTA_TRANSACTIONAL_ID",
 		"email.account.disconnected.v1":           "LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID",
 		"email.post.failed.v1":                    "LOOPS_POST_FAILED_TRANSACTIONAL_ID",
 		"email.support.error_triage_follow_up.v1": "LOOPS_ERROR_TRIAGE_USER_ACTION_TRANSACTIONAL_ID",
@@ -33,6 +35,22 @@ func TestRegistryContainsRequiredEmailEvents(t *testing.T) {
 		if event.TemplateEnv != env {
 			t.Fatalf("%s TemplateEnv = %q, want %q", key, event.TemplateEnv, env)
 		}
+	}
+}
+
+func TestPaidQuotaRegistrySeparatesOptionalWarningsFromRequiredAlerts(t *testing.T) {
+	events := byKey(t, Registry())
+	warning := events["email.quota.paid_plan_warning.v1"]
+	alert := events["email.quota.paid_plan_alert.v1"]
+
+	if !warning.PreferenceGated || warning.PreferenceCategory != UsageQuotaAlerts || warning.FooterPolicy != FooterManagePreferences {
+		t.Fatalf("paid warning policy = %#v", warning)
+	}
+	if alert.PreferenceGated || alert.FooterPolicy != FooterRequiredNotice || strings.TrimSpace(alert.RequiredReason) == "" {
+		t.Fatalf("paid alert policy = %#v", alert)
+	}
+	if warning.TemplateEnv != alert.TemplateEnv {
+		t.Fatalf("paid quota events should share a template env: warning=%q alert=%q", warning.TemplateEnv, alert.TemplateEnv)
 	}
 }
 

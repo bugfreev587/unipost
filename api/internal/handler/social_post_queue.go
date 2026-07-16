@@ -713,7 +713,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if status == "published" {
 		publishedAt = pgtype.Timestamptz{Time: completedAt, Valid: true}
 	}
-	updated, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+	updateParams := db.UpdateSocialPostResultAfterRetryParams{
 		ID:           res.ID,
 		Status:       status,
 		ExternalID:   externalID,
@@ -721,7 +721,24 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		PublishedAt:  publishedAt,
 		Url:          postURL,
 		DebugCurl:    debugCurl,
-	})
+	}
+	var updated db.SocialPostResult
+	if status == "published" {
+		updated, err = h.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
+			ID:           updateParams.ID,
+			Status:       updateParams.Status,
+			ExternalID:   updateParams.ExternalID,
+			ErrorMessage: updateParams.ErrorMessage,
+			PublishedAt:  updateParams.PublishedAt,
+			Url:          updateParams.Url,
+			DebugCurl:    updateParams.DebugCurl,
+			WorkspaceID:  post.WorkspaceID,
+			Period:       quota.PeriodForTime(completedAt),
+			PostCount:    1,
+		})
+	} else {
+		updated, err = h.queries.UpdateSocialPostResultAfterRetry(ctx, updateParams)
+	}
 	if err != nil {
 		return err
 	}
@@ -731,8 +748,8 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	if updated.Status == "published" {
-		h.quota.Increment(ctx, post.WorkspaceID, 1)
 		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{})
+		h.maybeEvaluatePaidQuota(ctx, post.WorkspaceID, quota.PeriodForTime(completedAt))
 	}
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,

@@ -57,16 +57,22 @@ type SocialPostHandler struct {
 	// April 2026 rate-limit PRD. Always non-nil — main.go injects
 	// either RedisLimiter or NoopLimiter — so call sites do not
 	// need a nil guard.
-	limiter      ratelimit.Limiter
-	ilog         *integrationlogs.Logger
-	loopsSyncer  loopsLifecycleSyncer
-	quotaEmail   quotaEmailService
-	paidSchedule paidquota.Coordinator
-	appBaseURL   string
+	limiter            ratelimit.Limiter
+	ilog               *integrationlogs.Logger
+	loopsSyncer        loopsLifecycleSyncer
+	quotaEmail         quotaEmailService
+	paidSchedule       paidquota.Coordinator
+	holdReconciler     paidquota.HoldReconciler
+	paidQuotaEvaluator paidQuotaEvaluationService
+	appBaseURL         string
 }
 
 type quotaEmailService interface {
 	EvaluateAndSend(context.Context, quotaemail.Evaluation) error
+}
+
+type paidQuotaEvaluationService interface {
+	Evaluate(context.Context, string, string) error
 }
 
 func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
@@ -148,6 +154,34 @@ func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *Soc
 func (h *SocialPostHandler) SetPaidScheduleCoordinator(coordinator paidquota.Coordinator) *SocialPostHandler {
 	h.paidSchedule = coordinator
 	return h
+}
+
+func (h *SocialPostHandler) SetHoldReconciler(reconciler paidquota.HoldReconciler) *SocialPostHandler {
+	h.holdReconciler = reconciler
+	return h
+}
+
+func (h *SocialPostHandler) SetPaidQuotaEvaluator(evaluator paidQuotaEvaluationService) *SocialPostHandler {
+	h.paidQuotaEvaluator = evaluator
+	return h
+}
+
+func (h *SocialPostHandler) maybeEvaluatePaidQuota(ctx context.Context, workspaceID, period string) {
+	if h == nil || h.paidQuotaEvaluator == nil || workspaceID == "" {
+		return
+	}
+	if err := h.paidQuotaEvaluator.Evaluate(ctx, workspaceID, period); err != nil {
+		slog.Warn("paid quota evaluation failed", "workspace_id", workspaceID, "period", period, "error", err)
+	}
+}
+
+func (h *SocialPostHandler) maybeReconcileQuotaHolds(ctx context.Context, workspaceID, reason string) {
+	if h == nil || h.holdReconciler == nil || workspaceID == "" {
+		return
+	}
+	if err := h.holdReconciler.ReconcileWorkspace(ctx, workspaceID, reason, time.Time{}); err != nil {
+		slog.Warn("paid quota hold reconciliation failed", "workspace_id", workspaceID, "reason", reason, "error", err)
+	}
 }
 
 func (h *SocialPostHandler) maybeSendFreePlanQuotaEmail(ctx context.Context, workspaceID string, eval quotaemail.Evaluation) {
@@ -286,14 +320,17 @@ func writePaidPlanSchedulingCapacityExceeded(w http.ResponseWriter, admissionErr
 		"PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED",
 		"Monthly scheduling quota reached. Upgrade your plan, cancel existing scheduled posts, or wait until the quota resets. Immediate publishing remains available.",
 		ErrorDetails{Details: map[string]any{
+			"plan_id":                      snapshot.PlanID,
 			"completed_posts":              snapshot.Completed,
 			"scheduled_posts":              snapshot.Scheduled,
 			"quota_hold_posts":             snapshot.QuotaHold,
 			"effective_usage":              snapshot.EffectiveUsage(),
+			"projected_usage":              admissionErr.ProjectedUsage,
 			"post_limit":                   snapshot.Limit,
 			"requested_units":              admissionErr.RequestedUnits,
 			"period":                       snapshot.Period,
 			"resets_at":                    resetsAt.Format(time.RFC3339),
+			"scheduling_allowed":           false,
 			"upgrade_recommended":          true,
 			"immediate_publishing_allowed": true,
 		}},
@@ -604,21 +641,24 @@ type accountSummary struct {
 }
 
 type socialPostResponse struct {
-	ID                 string     `json:"id"`
-	Message            string     `json:"message,omitempty"`
-	Caption            *string    `json:"caption"`
-	MediaURLs          []string   `json:"media_urls,omitempty"`
-	Status             string     `json:"status"`
-	ExecutionMode      string     `json:"execution_mode,omitempty"`
-	IdempotencyReplay  bool       `json:"idempotency_replay,omitempty"`
-	QueuedResultsCount int        `json:"queued_results_count,omitempty"`
-	ActiveJobCount     int        `json:"active_job_count,omitempty"`
-	RetryingCount      int        `json:"retrying_count,omitempty"`
-	DeadCount          int        `json:"dead_count,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	ScheduledAt        *time.Time `json:"scheduled_at,omitempty"`
-	PublishedAt        *time.Time `json:"published_at,omitempty"`
-	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+	ID                           string     `json:"id"`
+	Message                      string     `json:"message,omitempty"`
+	Caption                      *string    `json:"caption"`
+	MediaURLs                    []string   `json:"media_urls,omitempty"`
+	Status                       string     `json:"status"`
+	ExecutionMode                string     `json:"execution_mode,omitempty"`
+	IdempotencyReplay            bool       `json:"idempotency_replay,omitempty"`
+	QueuedResultsCount           int        `json:"queued_results_count,omitempty"`
+	ActiveJobCount               int        `json:"active_job_count,omitempty"`
+	RetryingCount                int        `json:"retrying_count,omitempty"`
+	DeadCount                    int        `json:"dead_count,omitempty"`
+	CreatedAt                    time.Time  `json:"created_at"`
+	ScheduledAt                  *time.Time `json:"scheduled_at,omitempty"`
+	PublishedAt                  *time.Time `json:"published_at,omitempty"`
+	ArchivedAt                   *time.Time `json:"archived_at,omitempty"`
+	QuotaHoldReason              *string    `json:"quota_hold_reason,omitempty"`
+	QuotaHoldAt                  *time.Time `json:"quota_hold_at,omitempty"`
+	QuotaHoldOriginalScheduledAt *time.Time `json:"quota_hold_original_scheduled_at,omitempty"`
 	// Source identifies who triggered this post: "ui" (dashboard) vs
 	// "api" (external API key). Stamped at row creation from the auth
 	// context and never changes thereafter.
@@ -945,6 +985,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 			Period: quota.PeriodForTime(*parsed.ScheduledAt),
 		})
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(*parsed.ScheduledAt))
 	}
 
 	h.logPublishingEvent(r.Context(), integrationlogs.Event{
@@ -1435,11 +1476,33 @@ func (h *SocialPostHandler) executePublishLoop(
 	if anyPublished {
 		publishedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	}
-	h.queries.UpdateSocialPostStatus(r.Context(), db.UpdateSocialPostStatusParams{
+	statusParams := db.UpdateSocialPostStatusParams{
 		ID:          post.ID,
 		Status:      postStatus,
 		PublishedAt: publishedAt,
-	})
+	}
+	if publishedCount > 0 {
+		if err := h.queries.UpdateSocialPostStatusAndIncrementUsage(r.Context(), db.UpdateSocialPostStatusAndIncrementUsageParams{
+			ID:          statusParams.ID,
+			Status:      statusParams.Status,
+			PublishedAt: statusParams.PublishedAt,
+			WorkspaceID: workspaceID,
+			Period:      quota.PeriodForTime(time.Now().UTC()),
+			PostCount:   int32(publishedCount),
+		}); err != nil {
+			slog.Error("failed to atomically persist published post usage",
+				"post_id", post.ID,
+				"workspace_id", workspaceID,
+				"published_count", publishedCount,
+				"error", err)
+		}
+	} else if err := h.queries.UpdateSocialPostStatus(r.Context(), statusParams); err != nil {
+		slog.Error("failed to persist social post status",
+			"post_id", post.ID,
+			"workspace_id", workspaceID,
+			"status", postStatus,
+			"error", err)
+	}
 
 	// When the post fails, persist a human-readable error summary on
 	// the parent post's metadata so users can understand why.
@@ -1467,8 +1530,8 @@ func (h *SocialPostHandler) executePublishLoop(
 	}
 
 	if publishedCount > 0 {
-		h.quota.Increment(r.Context(), workspaceID, publishedCount)
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{})
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(time.Now().UTC()))
 	}
 
 	var caption *string
@@ -2357,6 +2420,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 							// raw video object — Graph rejects
 							// /{video_id}/comments under Page-scoped tokens.
 							if st.VideoStatus == "ready" {
+								completedAt := time.Now().UTC()
 								pageID := acc.ExternalAccountID
 								newURL := res.Url.String
 								newExternalID := res.ExternalID
@@ -2364,19 +2428,24 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 									newURL = facebookFeedStoryURL(pageID, st.PostID)
 									newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 								}
-								_, _ = h.queries.UpdateSocialPostResultAfterRetry(r.Context(), db.UpdateSocialPostResultAfterRetryParams{
+								_, updateErr := h.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(r.Context(), db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
 									ID:           res.ID,
 									Status:       "published",
 									ExternalID:   newExternalID,
 									ErrorMessage: pgtype.Text{Valid: false},
-									PublishedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+									PublishedAt:  pgtype.Timestamptz{Time: completedAt, Valid: true},
 									Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
 									DebugCurl:    pgtype.Text{Valid: false},
+									WorkspaceID:  workspaceID,
+									Period:       quota.PeriodForTime(completedAt),
+									PostCount:    1,
 								})
-								rr.Status = "published"
-								clearPostResultFailureDetails(&rr)
-								if newURL != "" {
-									rr.URL = &newURL
+								if updateErr == nil {
+									rr.Status = "published"
+									clearPostResultFailureDetails(&rr)
+									if newURL != "" {
+										rr.URL = &newURL
+									}
 								}
 							} else if st.VideoStatus == "error" {
 								errMsg := "Facebook rejected the video"
@@ -2763,7 +2832,7 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		postID = chi.URLParam(r, "postID")
 	}
 
-	_, err := h.queries.SoftDeleteSocialPost(r.Context(), db.SoftDeleteSocialPostParams{
+	deleted, err := h.queries.SoftDeleteSocialPost(r.Context(), db.SoftDeleteSocialPostParams{
 		ID:          postID,
 		WorkspaceID: workspaceID,
 	})
@@ -2780,6 +2849,10 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	}); err != nil {
 		slog.Warn("delete post: cancel active delivery jobs failed", "post_id", postID, "workspace_id", workspaceID, "error", err)
+	}
+	h.maybeReconcileQuotaHolds(r.Context(), workspaceID, "capacity_released")
+	if deleted.ScheduledAt.Valid {
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(deleted.ScheduledAt.Time))
 	}
 
 	writeSuccess(w, map[string]bool{"deleted": true})

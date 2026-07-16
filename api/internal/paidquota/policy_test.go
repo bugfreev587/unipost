@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -81,6 +82,24 @@ func TestAdmissionErrorCarriesRejectedSnapshot(t *testing.T) {
 	}
 }
 
+func TestDecideRejectsNetNewSchedulingWhileQuotaHoldsExist(t *testing.T) {
+	snapshot := quota.MonthlySnapshot{
+		WorkspaceID: "ws_123",
+		PlanID:      "basic",
+		Period:      "2026-07",
+		Completed:   70,
+		Scheduled:   10,
+		QuotaHold:   5,
+		Limit:       100,
+	}
+	if decision := Decide(snapshot, 0, 1); decision.Allowed {
+		t.Fatalf("net-new schedule should be rejected while holds exist: %#v", decision)
+	}
+	if decision := Decide(snapshot, 3, 3); !decision.Allowed {
+		t.Fatalf("capacity-neutral edit should remain allowed: %#v", decision)
+	}
+}
+
 func TestCoordinatorLocksPeriodsInOrderAndCommitsAllowedMutation(t *testing.T) {
 	tx := &fakeTransaction{
 		snapshots: map[string]quota.MonthlySnapshot{
@@ -149,6 +168,66 @@ func TestCoordinatorRollsBackMutationFailure(t *testing.T) {
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if tx.committed || !tx.rolledBack {
+		t.Fatalf("transaction state committed=%v rolledBack=%v", tx.committed, tx.rolledBack)
+	}
+}
+
+func TestCoordinatorPlansDeltaAfterLocksAreHeld(t *testing.T) {
+	tx := &fakeTransaction{
+		snapshots: map[string]quota.MonthlySnapshot{
+			"2026-07": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-07", Completed: 98, Scheduled: 2, Limit: 100},
+			"2026-08": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-08", Completed: 20, Limit: 100},
+		},
+	}
+	coordinator := newCoordinator(&fakeBeginner{tx: tx})
+	plannedAfterLocks := false
+	mutated := false
+
+	err := coordinator.MutatePlanned(
+		context.Background(),
+		"ws_123",
+		[]string{"2026-08", "2026-07"},
+		func(*db.Queries) ([]PeriodDelta, error) {
+			plannedAfterLocks = reflect.DeepEqual(tx.locked, []string{"2026-07", "2026-08"})
+			return []PeriodDelta{
+				{Period: "2026-07", ReleasedUnits: 2},
+				{Period: "2026-08", RequestedUnits: 2},
+			}, nil
+		},
+		func(*db.Queries) error {
+			mutated = true
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("mutate planned: %v", err)
+	}
+	if !plannedAfterLocks || !mutated || !tx.committed {
+		t.Fatalf("plannedAfterLocks=%v mutated=%v committed=%v", plannedAfterLocks, mutated, tx.committed)
+	}
+}
+
+func TestCoordinatorRejectsPlannerDeltaForUnlockedPeriod(t *testing.T) {
+	tx := &fakeTransaction{
+		snapshots: map[string]quota.MonthlySnapshot{
+			"2026-07": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-07", Limit: 100},
+		},
+	}
+	coordinator := newCoordinator(&fakeBeginner{tx: tx})
+
+	err := coordinator.MutatePlanned(
+		context.Background(),
+		"ws_123",
+		[]string{"2026-07"},
+		func(*db.Queries) ([]PeriodDelta, error) {
+			return []PeriodDelta{{Period: "2026-08", RequestedUnits: 1}}, nil
+		},
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "unlocked period") {
+		t.Fatalf("error = %v, want unlocked period rejection", err)
 	}
 	if tx.committed || !tx.rolledBack {
 		t.Fatalf("transaction state committed=%v rolledBack=%v", tx.committed, tx.rolledBack)

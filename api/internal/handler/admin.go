@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,12 +11,14 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/audit"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 )
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
@@ -26,10 +29,57 @@ type AdminHandler struct {
 	pool      *pgxpool.Pool
 	stripeMgr *billing.Manager
 	queries   *db.Queries // for audit-log writes
+	holds     paidquota.HoldReconciler
+	evaluator paidQuotaEvaluationService
 }
 
 func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
 	return &AdminHandler{pool: pool, stripeMgr: stripeMgr, queries: queries}
+}
+
+func (h *AdminHandler) SetPaidQuotaServices(holds paidquota.HoldReconciler, evaluator paidQuotaEvaluationService) *AdminHandler {
+	h.holds = holds
+	h.evaluator = evaluator
+	return h
+}
+
+func (h *AdminHandler) reconcileQuotaAfterAdminReset(ctx context.Context, userID, period string) error {
+	rows, err := h.pool.Query(ctx, `SELECT id FROM workspaces WHERE user_id = $1 ORDER BY id`, userID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	workspaceIDs := make([]string, 0)
+	for rows.Next() {
+		var workspaceID string
+		if err := rows.Scan(&workspaceID); err != nil {
+			return err
+		}
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, workspaceID := range workspaceIDs {
+		if h.holds != nil {
+			if err := h.holds.ReconcileWorkspace(ctx, workspaceID, "admin_quota_reset", time.Time{}); err != nil {
+				return err
+			}
+		}
+		if h.evaluator != nil {
+			if err := h.evaluator.Evaluate(ctx, workspaceID, period); err != nil {
+				return err
+			}
+			if resolver, ok := h.evaluator.(interface {
+				ResolveFollowUpsBelowLimit(context.Context, string, string) error
+			}); ok {
+				if err := resolver.ResolveFollowUpsBelowLimit(ctx, workspaceID, period); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func (h *AdminHandler) excludedUserIDs(ctx context.Context) ([]string, error) {
@@ -998,12 +1048,16 @@ type adminEmailNotificationRow struct {
 	Email              string     `json:"email"`
 	Period             string     `json:"period"`
 	ThresholdPercent   int32      `json:"threshold_percent"`
+	Severity           string     `json:"severity"`
 	Status             string     `json:"status"`
+	AttemptCount       int32      `json:"attempt_count"`
+	Retryable          bool       `json:"retryable"`
 	TransactionalID    string     `json:"transactional_id"`
 	IdempotencyKey     string     `json:"idempotency_key"`
 	EffectiveUsage     int32      `json:"effective_usage"`
 	CompletedUsage     int32      `json:"completed_usage"`
 	ReservedUsage      int32      `json:"reserved_usage"`
+	QuotaHoldUsage     int32      `json:"quota_hold_usage"`
 	PostLimit          int32      `json:"post_limit"`
 	FailureReason      *string    `json:"failure_reason,omitempty"`
 	AttemptedAt        time.Time  `json:"attempted_at"`
@@ -1031,6 +1085,29 @@ type adminEmailNotificationsQuery struct {
 	Offset    int
 }
 
+type adminPaidQuotaFollowUpRow struct {
+	ID               string     `json:"id"`
+	WorkspaceID      string     `json:"workspace_id"`
+	WorkspaceName    string     `json:"workspace_name"`
+	OwnerUserID      string     `json:"owner_user_id"`
+	OwnerEmail       string     `json:"owner_email"`
+	PlanID           string     `json:"plan_id"`
+	Period           string     `json:"period"`
+	ThresholdPercent int32      `json:"threshold_percent"`
+	NotificationID   string     `json:"notification_id"`
+	Status           string     `json:"status"`
+	CompletedUsage   int32      `json:"completed_usage"`
+	ScheduledUsage   int32      `json:"scheduled_usage"`
+	QuotaHoldUsage   int32      `json:"quota_hold_usage"`
+	EffectiveUsage   int32      `json:"effective_usage"`
+	PostLimit        int32      `json:"post_limit"`
+	AssigneeUserID   string     `json:"assignee_user_id"`
+	Notes            string     `json:"notes"`
+	ResolvedAt       *time.Time `json:"resolved_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
 const adminEmailNotificationsCTESQL = `
 WITH email_notifications AS (
   SELECT
@@ -1045,12 +1122,16 @@ WITH email_notifications AS (
     e.recipient_email AS email,
     ''::TEXT AS period,
     0::INTEGER AS threshold_percent,
+    ''::TEXT AS severity,
     e.status,
+    e.attempt_count,
+    FALSE AS retryable,
     COALESCE(e.provider_template_id, '') AS transactional_id,
     e.idempotency_key,
     0::INTEGER AS effective_usage,
     0::INTEGER AS completed_usage,
     0::INTEGER AS reserved_usage,
+    0::INTEGER AS quota_hold_usage,
     0::INTEGER AS post_limit,
     e.last_error AS failure_reason,
     e.attempted_at,
@@ -1102,12 +1183,16 @@ WITH email_notifications AS (
     r.email,
     r.period,
     r.threshold_percent,
+    'warning'::TEXT AS severity,
     r.status,
+    1::INTEGER AS attempt_count,
+    FALSE AS retryable,
     r.transactional_id,
     r.idempotency_key,
     r.effective_usage,
     r.completed_usage,
     r.reserved_usage,
+    0::INTEGER AS quota_hold_usage,
     r.post_limit,
     r.failure_reason,
     r.attempted_at,
@@ -1129,6 +1214,55 @@ WITH email_notifications AS (
   UNION ALL
 
   SELECT
+    n.id,
+    n.event_key,
+    CASE n.severity
+      WHEN 'warning' THEN 'paid_plan_quota_warning'
+      ELSE 'paid_plan_quota_alert'
+    END AS event_type,
+    'usage_' || n.threshold_percent::TEXT || '_percent' AS trigger_event,
+    n.workspace_id,
+    COALESCE(w.name, '') AS workspace_name,
+    COALESCE(n.user_id, '') AS user_id,
+    COALESCE(u.email, '') AS owner_email,
+    COALESCE(n.email, '') AS email,
+    n.period,
+    n.threshold_percent,
+    n.severity,
+    n.status,
+    n.attempt_count,
+    n.status = 'failed' AS retryable,
+    COALESCE(n.transactional_id, '') AS transactional_id,
+    n.idempotency_key,
+    n.effective_usage,
+    n.completed_usage,
+    n.scheduled_usage AS reserved_usage,
+    n.quota_hold_usage,
+    n.post_limit,
+    n.last_error AS failure_reason,
+    COALESCE(n.attempted_at, n.created_at) AS attempted_at,
+    n.sent_at,
+    n.created_at,
+    n.updated_at,
+    'loops' AS provider,
+    'service_alert' AS delivery_class,
+    'usage_quota_alerts' AS preference_category,
+    CASE WHEN n.threshold_percent >= 100 THEN 'required_notice' ELSE 'manage_preferences' END AS footer_policy,
+    CASE
+      WHEN n.status = 'skipped_preference_disabled' THEN 'skipped_preference_disabled'
+      WHEN n.threshold_percent >= 100 THEN 'required'
+      ELSE 'preference_checked'
+    END AS preference_decision,
+    'paid quota threshold evaluator' AS trigger_source,
+    n.workspace_id || ':' || n.period || ':' || n.threshold_percent::TEXT AS trigger_reference_id,
+    '' AS subject_snapshot
+  FROM paid_plan_quota_notifications n
+  LEFT JOIN workspaces w ON w.id = n.workspace_id
+  LEFT JOIN users u ON u.id = n.user_id
+
+  UNION ALL
+
+  SELECT
     s.id,
     'email.support.error_triage_follow_up.v1' AS event_key,
     'error_triage_user_action' AS event_type,
@@ -1140,12 +1274,16 @@ WITH email_notifications AS (
     s.recipient_email AS email,
     ''::TEXT AS period,
     0::INTEGER AS threshold_percent,
+    ''::TEXT AS severity,
     CASE s.provider_status WHEN 'succeeded' THEN 'sent' ELSE s.provider_status END AS status,
+    1::INTEGER AS attempt_count,
+    FALSE AS retryable,
     COALESCE(s.loops_transactional_id, '') AS transactional_id,
     s.idempotency_key,
     0::INTEGER AS effective_usage,
     0::INTEGER AS completed_usage,
     0::INTEGER AS reserved_usage,
+    0::INTEGER AS quota_hold_usage,
     0::INTEGER AS post_limit,
     s.provider_error AS failure_reason,
     s.created_at AS attempted_at,
@@ -1185,12 +1323,16 @@ WITH email_notifications AS (
     COALESCE(c.config->>'address', '') AS email,
     ''::TEXT AS period,
     0::INTEGER AS threshold_percent,
+    ''::TEXT AS severity,
     CASE d.status WHEN 'dead' THEN 'failed' ELSE d.status END AS status,
+    1::INTEGER AS attempt_count,
+    FALSE AS retryable,
     '' AS transactional_id,
     d.event_id || ':' || d.channel_id AS idempotency_key,
     0::INTEGER AS effective_usage,
     0::INTEGER AS completed_usage,
     0::INTEGER AS reserved_usage,
+    0::INTEGER AS quota_hold_usage,
     0::INTEGER AS post_limit,
     d.last_error AS failure_reason,
     COALESCE(d.delivered_at, d.next_retry_at, d.created_at) AS attempted_at,
@@ -1235,12 +1377,16 @@ SELECT
   email,
   period,
   threshold_percent,
+  severity,
   status,
+  attempt_count,
+  retryable,
   transactional_id,
   idempotency_key,
   effective_usage,
   completed_usage,
   reserved_usage,
+  quota_hold_usage,
   post_limit,
   failure_reason,
   attempted_at,
@@ -1259,7 +1405,7 @@ FROM email_notifications
 `
 
 const adminEmailNotificationsWhereSQL = `
-WHERE ($1::TEXT = '' OR status = $1)
+WHERE ($1::TEXT = '' OR status = $1 OR ($1 = 'skipped' AND status LIKE 'skipped_%'))
   AND ($2::INT = 0 OR threshold_percent = $2)
   AND ($3::TEXT = '' OR period = $3)
   AND ($5::TEXT = '' OR provider = $5)
@@ -1290,7 +1436,8 @@ func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
 	switch status {
 	case "", "all":
 		return "", true
-	case "pending", "sent", "failed", "skipped":
+	case "pending", "processing", "retry_wait", "sent", "failed", "skipped",
+		"skipped_superseded", "skipped_preference_disabled", "skipped_missing_recipient":
 		return status, true
 	default:
 		return "", false
@@ -1307,7 +1454,7 @@ func parseAdminEmailNotificationThreshold(raw string) (int, bool) {
 		return 0, false
 	}
 	switch value {
-	case 80, 85, 90, 95, 100:
+	case 80, 85, 90, 95, 100, 105, 110, 115, 120:
 		return value, true
 	default:
 		return 0, false
@@ -2081,6 +2228,10 @@ GROUP BY current_usage.previous_usage
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reset post quota: "+err.Error())
 		return
 	}
+	if err := h.reconcileQuotaAfterAdminReset(r.Context(), userID, out.Period); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Post quota reset succeeded, but paid quota reconciliation failed: "+err.Error())
+		return
+	}
 
 	writeSuccess(w, out)
 }
@@ -2139,6 +2290,17 @@ current_usage AS (
     AND sp.scheduled_at < ((to_char(NOW(), 'YYYY-MM') || '-01')::DATE + INTERVAL '1 month')
     AND sp.created_at > COALESCE(rb.reset_at, '-infinity'::timestamptz)
 ),
+release_future_holds AS (
+  UPDATE social_posts
+  SET status = 'scheduled',
+      quota_hold_reason = NULL,
+      quota_hold_at = NULL
+  WHERE workspace_id IN (SELECT id FROM target_workspaces)
+    AND status = 'quota_hold'
+    AND scheduled_at > NOW()
+    AND deleted_at IS NULL
+  RETURNING id
+),
 reset_markers AS (
   INSERT INTO admin_post_quota_resets (
     user_id,
@@ -2179,6 +2341,10 @@ GROUP BY current_usage.previous_usage
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reset scheduled quota: "+err.Error())
+		return
+	}
+	if err := h.reconcileQuotaAfterAdminReset(r.Context(), userID, out.Period); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Scheduled quota reset succeeded, but paid quota reconciliation failed: "+err.Error())
 		return
 	}
 
@@ -2539,12 +2705,16 @@ LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
 			&item.Email,
 			&item.Period,
 			&item.ThresholdPercent,
+			&item.Severity,
 			&item.Status,
+			&item.AttemptCount,
+			&item.Retryable,
 			&item.TransactionalID,
 			&item.IdempotencyKey,
 			&item.EffectiveUsage,
 			&item.CompletedUsage,
 			&item.ReservedUsage,
+			&item.QuotaHoldUsage,
 			&item.PostLimit,
 			&failureReason,
 			&item.AttemptedAt,
@@ -2587,7 +2757,7 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 	}
 	threshold, ok := parseAdminEmailNotificationThreshold(q.Get("threshold"))
 	if !ok {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "threshold must be one of: 80, 85, 90, 95, 100")
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "threshold must be one of: 80, 85, 90, 95, 100, 105, 110, 115, 120")
 		return
 	}
 
@@ -2615,6 +2785,171 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 	}
 
 	writeSuccessWithListMeta(w, out, int(total), limit)
+}
+
+func (h *AdminHandler) RetryPaidQuotaEmailNotification(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "notification ID required")
+		return
+	}
+	notification, err := h.queries.RetryFailedPaidPlanQuotaNotification(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "INVALID_STATE", "Only failed paid quota notifications can be retried")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to retry paid quota notification")
+		return
+	}
+	writeSuccess(w, map[string]any{
+		"id":      notification.ID,
+		"status":  notification.Status,
+		"message": "Paid quota notification queued for retry",
+	})
+}
+
+func (h *AdminHandler) ListPaidQuotaFollowUps(w http.ResponseWriter, r *http.Request) {
+	status := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("status")))
+	if status == "all" {
+		status = ""
+	}
+	if status != "" && !validPaidQuotaFollowUpStatus(status) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "status must be one of: all, open, contacted, resolved, dismissed")
+		return
+	}
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	statusArg := nullablePGText(status)
+	rows, err := h.queries.ListPaidQuotaFollowUps(r.Context(), db.ListPaidQuotaFollowUpsParams{
+		Status:    statusArg,
+		RowOffset: int32(offset),
+		RowLimit:  int32(limit),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load paid quota follow-ups")
+		return
+	}
+	var total int64
+	if err := h.pool.QueryRow(r.Context(), `
+SELECT COUNT(*)::BIGINT
+FROM paid_quota_follow_ups
+WHERE ($1::TEXT IS NULL OR status = $1)
+`, statusArg).Scan(&total); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to count paid quota follow-ups")
+		return
+	}
+	out := make([]adminPaidQuotaFollowUpRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, h.adminPaidQuotaFollowUpResponse(r.Context(), row))
+	}
+	writeSuccessWithListMeta(w, out, int(total), limit)
+}
+
+func (h *AdminHandler) UpdatePaidQuotaFollowUp(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(chi.URLParam(r, "id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "follow-up ID required")
+		return
+	}
+	var body struct {
+		Status         string `json:"status"`
+		AssigneeUserID string `json:"assignee_user_id"`
+		Notes          string `json:"notes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	body.Status = strings.TrimSpace(strings.ToLower(body.Status))
+	if !validPaidQuotaFollowUpStatus(body.Status) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "status must be one of: open, contacted, resolved, dismissed")
+		return
+	}
+	row, err := h.queries.UpdatePaidQuotaFollowUp(r.Context(), db.UpdatePaidQuotaFollowUpParams{
+		Status:         body.Status,
+		AssigneeUserID: nullablePGText(body.AssigneeUserID),
+		Notes:          nullablePGText(body.Notes),
+		ID:             id,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Paid quota follow-up not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update paid quota follow-up")
+		return
+	}
+	writeSuccess(w, h.adminPaidQuotaFollowUpResponse(r.Context(), row))
+}
+
+func (h *AdminHandler) adminPaidQuotaFollowUpResponse(ctx context.Context, row db.PaidQuotaFollowUp) adminPaidQuotaFollowUpRow {
+	out := adminPaidQuotaFollowUpRow{
+		ID:               row.ID,
+		WorkspaceID:      row.WorkspaceID,
+		OwnerUserID:      pgTextValue(row.OwnerUserID),
+		PlanID:           row.PlanID,
+		Period:           row.Period,
+		ThresholdPercent: row.ThresholdPercent,
+		NotificationID:   pgTextValue(row.NotificationID),
+		Status:           row.Status,
+		CompletedUsage:   row.CompletedUsage,
+		ScheduledUsage:   row.ScheduledUsage,
+		QuotaHoldUsage:   row.QuotaHoldUsage,
+		EffectiveUsage:   row.EffectiveUsage,
+		PostLimit:        row.PostLimit,
+		AssigneeUserID:   pgTextValue(row.AssigneeUserID),
+		Notes:            pgTextValue(row.Notes),
+	}
+	if row.CreatedAt.Valid {
+		out.CreatedAt = row.CreatedAt.Time
+	}
+	if row.UpdatedAt.Valid {
+		out.UpdatedAt = row.UpdatedAt.Time
+	}
+	if row.ResolvedAt.Valid {
+		resolvedAt := row.ResolvedAt.Time
+		out.ResolvedAt = &resolvedAt
+	}
+	if workspace, err := h.queries.GetWorkspace(ctx, row.WorkspaceID); err == nil {
+		out.WorkspaceName = workspace.Name
+	}
+	if out.OwnerUserID != "" {
+		if owner, err := h.queries.GetUser(ctx, out.OwnerUserID); err == nil {
+			out.OwnerEmail = owner.Email
+		}
+	}
+	return out
+}
+
+func validPaidQuotaFollowUpStatus(status string) bool {
+	switch status {
+	case "open", "contacted", "resolved", "dismissed":
+		return true
+	default:
+		return false
+	}
+}
+
+func nullablePGText(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func pgTextValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 // SetPlan flips a workspace's subscription.plan_id directly, bypassing

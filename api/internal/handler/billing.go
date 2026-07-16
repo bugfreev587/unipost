@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
@@ -24,16 +26,75 @@ func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeM
 }
 
 type billingResponse struct {
-	Plan          string  `json:"plan"`
-	PlanName      string  `json:"plan_name"`
-	Status        string  `json:"status"`
-	Usage         int     `json:"usage"`
-	Limit         int     `json:"limit"`
-	Percentage    float64 `json:"percentage"`
-	Period        string  `json:"period"`
-	Warning       string  `json:"warning,omitempty"`
-	CancelAtEnd   bool    `json:"cancel_at_period_end"`
-	TrialEligible bool    `json:"trial_eligible"`
+	Plan                string    `json:"plan"`
+	PlanName            string    `json:"plan_name"`
+	Status              string    `json:"status"`
+	Usage               int       `json:"usage"`
+	CompletedUsage      int       `json:"completed_usage"`
+	ScheduledUsage      int       `json:"scheduled_usage"`
+	QuotaHoldUsage      int       `json:"quota_hold_usage"`
+	EffectiveUsage      int       `json:"effective_usage"`
+	Limit               int       `json:"limit"`
+	Percentage          float64   `json:"percentage"`
+	EffectivePercentage float64   `json:"effective_percentage"`
+	Period              string    `json:"period"`
+	Warning             string    `json:"warning,omitempty"`
+	SchedulingAllowed   bool      `json:"scheduling_allowed"`
+	ResetsAt            time.Time `json:"resets_at"`
+	CancelAtEnd         bool      `json:"cancel_at_period_end"`
+	TrialEligible       bool      `json:"trial_eligible"`
+}
+
+type usageResponse struct {
+	Period              string    `json:"period"`
+	PostCount           int       `json:"post_count"`
+	ScheduledCount      int       `json:"scheduled_count"`
+	QuotaHoldCount      int       `json:"quota_hold_count"`
+	EffectiveUsage      int       `json:"effective_usage"`
+	PostLimit           int       `json:"post_limit"`
+	Plan                string    `json:"plan"`
+	Percentage          float64   `json:"percentage"`
+	EffectivePercentage float64   `json:"effective_percentage"`
+	Warning             string    `json:"warning,omitempty"`
+	SchedulingAllowed   bool      `json:"scheduling_allowed"`
+	ResetsAt            time.Time `json:"resets_at"`
+}
+
+func usageResponseFromSnapshot(snapshot quota.MonthlySnapshot) usageResponse {
+	completedPercentage := 0.0
+	if snapshot.Limit > 0 {
+		completedPercentage = float64(snapshot.Completed) / float64(snapshot.Limit) * 100
+	}
+	schedulingAllowed := true
+	warning := ""
+	if paidquota.AppliesToPlan(snapshot.PlanID) && snapshot.Limit > 0 {
+		switch {
+		case snapshot.QuotaHold > 0 || snapshot.EffectiveUsage() >= snapshot.Limit:
+			schedulingAllowed = false
+			warning = "scheduled_quota_reached"
+		case snapshot.Reached(80):
+			warning = "approaching_limit"
+		}
+	}
+
+	resetsAt := time.Time{}
+	if periodStart, err := time.Parse("2006-01", snapshot.Period); err == nil {
+		resetsAt = periodStart.AddDate(0, 1, 0).UTC()
+	}
+	return usageResponse{
+		Period:              snapshot.Period,
+		PostCount:           snapshot.Completed,
+		ScheduledCount:      snapshot.Scheduled,
+		QuotaHoldCount:      snapshot.QuotaHold,
+		EffectiveUsage:      snapshot.EffectiveUsage(),
+		PostLimit:           snapshot.Limit,
+		Plan:                snapshot.PlanID,
+		Percentage:          completedPercentage,
+		EffectivePercentage: snapshot.EffectivePercentage(),
+		Warning:             warning,
+		SchedulingAllowed:   schedulingAllowed,
+		ResetsAt:            resetsAt,
+	}
 }
 
 // GetBilling handles GET /v1/billing (dual auth, workspace-scoped)
@@ -48,19 +109,31 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 
 	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	plan, _ := h.queries.GetPlan(r.Context(), sub.PlanID)
-	status := h.quota.Check(r.Context(), workspaceID)
+	snapshot, err := h.quota.MonthlySnapshotForPeriod(r.Context(), workspaceID, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load billing usage")
+		return
+	}
+	usage := usageResponseFromSnapshot(snapshot)
 
 	writeSuccess(w, billingResponse{
-		Plan:          sub.PlanID,
-		PlanName:      plan.Name,
-		Status:        sub.Status,
-		Usage:         status.Usage,
-		Limit:         status.Limit,
-		Percentage:    status.Percentage,
-		Period:        status.Period(),
-		Warning:       status.Warning,
-		CancelAtEnd:   sub.CancelAtPeriodEnd.Bool,
-		TrialEligible: false,
+		Plan:                sub.PlanID,
+		PlanName:            plan.Name,
+		Status:              sub.Status,
+		Usage:               usage.PostCount,
+		CompletedUsage:      usage.PostCount,
+		ScheduledUsage:      usage.ScheduledCount,
+		QuotaHoldUsage:      usage.QuotaHoldCount,
+		EffectiveUsage:      usage.EffectiveUsage,
+		Limit:               usage.PostLimit,
+		Percentage:          usage.Percentage,
+		EffectivePercentage: usage.EffectivePercentage,
+		Period:              usage.Period,
+		Warning:             usage.Warning,
+		SchedulingAllowed:   usage.SchedulingAllowed,
+		ResetsAt:            usage.ResetsAt,
+		CancelAtEnd:         sub.CancelAtPeriodEnd.Bool,
+		TrialEligible:       false,
 	})
 }
 
@@ -222,22 +295,12 @@ func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.quota.EnsureSubscription(r.Context(), workspaceID)
-	status := h.quota.Check(r.Context(), workspaceID)
-
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
-	planID := "free"
-	if sub.PlanID != "" {
-		planID = sub.PlanID
+	snapshot, err := h.quota.MonthlySnapshotForPeriod(r.Context(), workspaceID, "")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load usage")
+		return
 	}
-
-	writeSuccess(w, map[string]any{
-		"period":     status.Period(),
-		"post_count": status.Usage,
-		"post_limit": status.Limit,
-		"plan":       planID,
-		"percentage": status.Percentage,
-		"warning":    status.Warning,
-	})
+	writeSuccess(w, usageResponseFromSnapshot(snapshot))
 }
 
 // ListPlans handles GET /v1/plans

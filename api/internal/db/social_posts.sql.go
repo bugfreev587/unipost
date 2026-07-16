@@ -53,7 +53,7 @@ func (q *Queries) ArchiveSocialPost(ctx context.Context, arg ArchiveSocialPostPa
 const cancelSocialPost = `-- name: CancelSocialPost :one
 UPDATE social_posts
 SET status = 'cancelled'
-WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled', 'quota_hold')
 RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
@@ -90,7 +90,7 @@ func (q *Queries) CancelSocialPost(ctx context.Context, arg CancelSocialPostPara
 const claimDraftForPublish = `-- name: ClaimDraftForPublish :one
 UPDATE social_posts
 SET status = 'publishing'
-WHERE id = $1 AND workspace_id = $2 AND status = 'draft'
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'quota_hold')
 RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
@@ -661,8 +661,11 @@ func (q *Queries) ListSocialPostsFiltered(ctx context.Context, arg ListSocialPos
 
 const rescheduleSocialPost = `-- name: RescheduleSocialPost :one
 UPDATE social_posts
-SET scheduled_at = $3
-WHERE id = $1 AND workspace_id = $2 AND status = 'scheduled'
+SET scheduled_at = $3,
+    status = 'scheduled',
+    quota_hold_reason = NULL,
+    quota_hold_at = NULL
+WHERE id = $1 AND workspace_id = $2 AND status IN ('scheduled', 'quota_hold')
 RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 
@@ -802,7 +805,7 @@ SET caption = $3,
     metadata = $5,
     scheduled_at = $6,
     profile_ids = $7
-WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled')
+WHERE id = $1 AND workspace_id = $2 AND status IN ('draft', 'scheduled', 'quota_hold')
 RETURNING id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at
 `
 

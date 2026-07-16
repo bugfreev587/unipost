@@ -9,8 +9,10 @@ CREATE TABLE paid_plan_quota_notifications (
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   email TEXT,
+  plan_id TEXT NOT NULL,
   period TEXT NOT NULL,
   threshold_percent INTEGER NOT NULL CHECK (threshold_percent IN (80, 90, 100, 105, 110, 115, 120)),
+  severity TEXT NOT NULL CHECK (severity IN ('warning', 'alert', 'critical_alert')),
   event_key TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
     'pending',
@@ -50,6 +52,8 @@ CREATE INDEX paid_plan_quota_notifications_admin_idx
 CREATE TABLE paid_quota_follow_ups (
   id TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  owner_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  plan_id TEXT NOT NULL,
   period TEXT NOT NULL,
   threshold_percent INTEGER NOT NULL DEFAULT 120 CHECK (threshold_percent = 120),
   notification_id TEXT REFERENCES paid_plan_quota_notifications(id) ON DELETE SET NULL,
@@ -61,6 +65,7 @@ CREATE TABLE paid_quota_follow_ups (
   post_limit INTEGER NOT NULL,
   assignee_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
   notes TEXT,
+  resolved_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (workspace_id, period, threshold_percent)

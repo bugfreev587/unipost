@@ -150,6 +150,30 @@ func TestCommittedScheduledQuotaQueryCountsPublishingAndQuotaHold(t *testing.T) 
 	}
 }
 
+func TestQuotaHoldLifecycleQueriesAllowRecoveryWithoutDispatch(t *testing.T) {
+	rescheduleSQL := strings.ToLower(rescheduleSocialPost)
+	for _, want := range []string{
+		"status in ('scheduled', 'quota_hold')",
+		"status = 'scheduled'",
+		"quota_hold_reason = null",
+		"quota_hold_at = null",
+	} {
+		if !strings.Contains(rescheduleSQL, want) {
+			t.Fatalf("reschedule query missing %q, got:\n%s", want, rescheduleSocialPost)
+		}
+	}
+	if !strings.Contains(strings.ToLower(cancelSocialPost), "'quota_hold'") {
+		t.Fatalf("cancel query must allow quota_hold, got:\n%s", cancelSocialPost)
+	}
+	if !strings.Contains(strings.ToLower(claimDraftForPublish), "'quota_hold'") {
+		t.Fatalf("publish-now claim must allow quota_hold, got:\n%s", claimDraftForPublish)
+	}
+	dueSQL := strings.ToLower(getDueScheduledPosts)
+	if !strings.Contains(dueSQL, "where status = 'scheduled'") {
+		t.Fatalf("due scheduler query must exclude quota_hold, got:\n%s", getDueScheduledPosts)
+	}
+}
+
 func TestWorkspaceActiveScheduledLimitsMigrationSeedsTemporaryIncidentAllowance(t *testing.T) {
 	body, err := fs.ReadFile(migrations, "migrations/102_workspace_active_scheduled_limits.sql")
 	if err != nil {
@@ -184,6 +208,8 @@ func TestPaidSoftOverageMigrationExists(t *testing.T) {
 		"quota_hold_at",
 		"quota_hold_original_scheduled_at",
 		"paid_plan_quota_notifications",
+		"plan_id",
+		"severity",
 		"skipped_superseded",
 		"retry_wait",
 		"paid_quota_follow_ups",

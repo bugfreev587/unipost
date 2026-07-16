@@ -73,13 +73,16 @@ func TestWritePaidPlanSchedulingCapacityExceededContract(t *testing.T) {
 		t.Fatalf("error.message = %q", envelope.Error.Message)
 	}
 	for key, want := range map[string]any{
+		"plan_id":                      "basic",
 		"completed_posts":              float64(2488),
 		"scheduled_posts":              float64(12),
 		"quota_hold_posts":             float64(2),
 		"effective_usage":              float64(2500),
+		"projected_usage":              float64(2501),
 		"post_limit":                   float64(2500),
 		"requested_units":              float64(1),
 		"period":                       "2026-07",
+		"scheduling_allowed":           false,
 		"upgrade_recommended":          true,
 		"immediate_publishing_allowed": true,
 	} {
@@ -248,6 +251,44 @@ func TestCreateScheduledPostTriggersFreePlanQuotaEmailEvaluation(t *testing.T) {
 	}
 	if got.Blocked {
 		t.Fatal("blocked = true, want false for an accepted scheduled post")
+	}
+}
+
+func TestCreateScheduledPostTriggersPaidQuotaEvaluationAfterCommit(t *testing.T) {
+	dbtx := &scheduledQuotaHTTPTestDB{
+		planID:     "basic",
+		limit:      2500,
+		usage:      1900,
+		createPost: true,
+	}
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	dbtx.createdPost = scheduledQuotaCreatedPost(t, scheduledAt)
+	paidEvaluator := &recordingPaidQuotaEvaluator{}
+	handler := NewSocialPostHandler(db.New(dbtx), nil, quota.NewChecker(db.New(dbtx)), nil, nil, nil, nil).
+		SetPaidQuotaEvaluator(paidEvaluator)
+	body := strings.NewReader(fmt.Sprintf(`{
+			"scheduled_at": %q,
+			"platform_posts": [
+				{
+					"account_id": "acct_linkedin",
+					"caption": "Paid quota evaluation after commit."
+				}
+			]
+		}`, scheduledAt.Format(time.RFC3339)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/posts", body)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rr := httptest.NewRecorder()
+
+	handler.Create(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body: %s", rr.Code, rr.Body.String())
+	}
+	if len(paidEvaluator.calls) != 1 {
+		t.Fatalf("paid evaluations = %#v", paidEvaluator.calls)
+	}
+	if paidEvaluator.calls[0].workspaceID != "ws_1" || paidEvaluator.calls[0].period != scheduledAt.Format("2006-01") {
+		t.Fatalf("paid evaluation = %#v", paidEvaluator.calls[0])
 	}
 }
 
@@ -452,9 +493,11 @@ func (f *scheduledQuotaHTTPTestDB) QueryRow(_ context.Context, query string, arg
 }
 
 type recordingPaidScheduleCoordinator struct {
-	calls  int
-	deltas []paidquota.PeriodDelta
-	err    error
+	calls   int
+	deltas  []paidquota.PeriodDelta
+	periods []string
+	err     error
+	queries *db.Queries
 }
 
 func (c *recordingPaidScheduleCoordinator) Mutate(_ context.Context, _ string, deltas []paidquota.PeriodDelta, mutation paidquota.Mutation) error {
@@ -469,8 +512,47 @@ func (c *recordingPaidScheduleCoordinator) Mutate(_ context.Context, _ string, d
 	return nil
 }
 
+func (c *recordingPaidScheduleCoordinator) MutatePlanned(_ context.Context, _ string, periods []string, planner paidquota.Planner, mutation paidquota.Mutation) error {
+	c.calls++
+	c.periods = append([]string(nil), periods...)
+	if planner != nil {
+		deltas, err := planner(c.queries)
+		if err != nil {
+			return err
+		}
+		c.deltas = append([]paidquota.PeriodDelta(nil), deltas...)
+	} else {
+		c.deltas = make([]paidquota.PeriodDelta, 0, len(periods))
+		for _, period := range periods {
+			c.deltas = append(c.deltas, paidquota.PeriodDelta{Period: period})
+		}
+	}
+	if c.err != nil {
+		return c.err
+	}
+	if mutation != nil {
+		return mutation(c.queries)
+	}
+	return nil
+}
+
 type recordingQuotaEmailService struct {
 	evals []quotaemail.Evaluation
+}
+
+type recordingPaidQuotaEvaluator struct {
+	calls []struct {
+		workspaceID string
+		period      string
+	}
+}
+
+func (r *recordingPaidQuotaEvaluator) Evaluate(_ context.Context, workspaceID, period string) error {
+	r.calls = append(r.calls, struct {
+		workspaceID string
+		period      string
+	}{workspaceID: workspaceID, period: period})
+	return nil
 }
 
 func (s *recordingQuotaEmailService) EvaluateAndSend(_ context.Context, eval quotaemail.Evaluation) error {

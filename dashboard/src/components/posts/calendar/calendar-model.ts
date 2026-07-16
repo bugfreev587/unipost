@@ -2,6 +2,7 @@ export type CalendarStatusFilter =
   | "all"
   | "published"
   | "scheduled"
+  | "quota_hold"
   | "in_progress"
   | "failed"
   | "draft"
@@ -111,6 +112,7 @@ const PROFILE_COLOR_PALETTE = [
 const STATUS_COLOR_PALETTE: Record<CalendarStatusGroup, string> = {
   published: "#15803d",
   scheduled: "#1d4ed8",
+  quota_hold: "#b45309",
   in_progress: "#0f766e",
   failed: "#b91c1c",
   draft: "#a16207",
@@ -207,7 +209,7 @@ export function bucketPostByLocalDay(post: CalendarModelPost): string | null {
 
 export function getCalendarPostDate(post: CalendarModelPost): Date | null {
   const source =
-    post.status === "scheduled" && post.scheduled_at
+    (post.status === "scheduled" || post.status === "quota_hold") && post.scheduled_at
       ? post.scheduled_at
       : post.published_at || post.created_at;
 
@@ -551,6 +553,7 @@ export function getPostStatusGroup(post: CalendarModelPost): CalendarStatusGroup
   if (post.archived_at) return "archived";
   if (post.status === "published") return "published";
   if (post.status === "scheduled") return "scheduled";
+  if (post.status === "quota_hold") return "quota_hold";
   if (IN_PROGRESS_STATUSES.has(post.status)) return "in_progress";
   if (FAILED_STATUSES.has(post.status)) return "failed";
   if (post.status === "draft") return "draft";

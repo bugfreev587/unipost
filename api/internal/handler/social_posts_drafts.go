@@ -15,7 +15,9 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -30,6 +32,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
@@ -177,7 +180,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		// Roll the draft back to its original status so the user can
 		// edit it. Without this they'd be stuck in 'publishing' with
 		// nothing to publish.
-		_ = h.rollbackToDraft(r, claimed.ID)
+		_ = h.rollbackClaimedPost(r, claimed)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Draft has no platform_posts to publish")
 		return
 	}
@@ -191,7 +194,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// the same view.
 	accountMap, err := h.loadValidateAccounts(r, workspaceID)
 	if err != nil {
-		_ = h.rollbackToDraft(r, claimed.ID)
+		_ = h.rollbackClaimedPost(r, claimed)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
 		return
 	}
@@ -201,7 +204,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// whose content was edited into something invalid after creation.
 	vr := h.runPublishValidation(r, workspaceID, posts, nil, accountMap)
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
-		_ = h.rollbackToDraft(r, claimed.ID)
+		_ = h.rollbackClaimedPost(r, claimed)
 		writeValidationErrors(w, fatal)
 		return
 	}
@@ -211,7 +214,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 			Blocked:        true,
 			RequestedUnits: quotaUnits,
 		})
-		h.rollbackDraftAndWriteFreePlanQuotaError(w, r, claimed.ID, status, quotaUnits)
+		h.rollbackClaimedAndWriteFreePlanQuotaError(w, r, claimed, status, quotaUnits)
 		return
 	}
 
@@ -233,8 +236,28 @@ func (h *SocialPostHandler) rollbackToDraft(r *http.Request, postID string) erro
 	})
 }
 
+func rollbackStatusForClaimedPost(post db.SocialPost) string {
+	if post.QuotaHoldReason.Valid {
+		return "quota_hold"
+	}
+	return "draft"
+}
+
+func (h *SocialPostHandler) rollbackClaimedPost(r *http.Request, post db.SocialPost) error {
+	return h.queries.UpdateSocialPostStatus(r.Context(), db.UpdateSocialPostStatusParams{
+		ID:          post.ID,
+		Status:      rollbackStatusForClaimedPost(post),
+		PublishedAt: pgtype.Timestamptz{},
+	})
+}
+
 func (h *SocialPostHandler) rollbackDraftAndWriteFreePlanQuotaError(w http.ResponseWriter, r *http.Request, postID string, status quota.QuotaStatus, requestedUnits int) {
-	if err := h.rollbackToDraft(r, postID); err != nil {
+	h.rollbackClaimedAndWriteFreePlanQuotaError(w, r, db.SocialPost{ID: postID}, status, requestedUnits)
+}
+
+func (h *SocialPostHandler) rollbackClaimedAndWriteFreePlanQuotaError(w http.ResponseWriter, r *http.Request, post db.SocialPost, status quota.QuotaStatus, requestedUnits int) {
+	if err := h.rollbackClaimedPost(r, post); err != nil {
+		postID := post.ID
 		slog.Error("publish draft: failed to roll back after quota rejection", "post_id", postID, "error", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore draft after quota check. Please refresh and contact support if the draft is not editable.")
 		return
@@ -343,6 +366,10 @@ func (h *SocialPostHandler) cancelSocialPost(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	h.syncPostMediaRetention(r.Context(), cancelled, cancelled.Status)
+	h.maybeReconcileQuotaHolds(r.Context(), workspaceID, "capacity_released")
+	if cancelled.ScheduledAt.Valid {
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(cancelled.ScheduledAt.Time))
+	}
 	writeSuccess(w, socialPostResponseFromRow(cancelled))
 }
 
@@ -398,12 +425,66 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	updated, err := h.queries.RescheduleSocialPost(r.Context(), db.RescheduleSocialPostParams{
+	existing, err := h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
 		ID:          postID,
 		WorkspaceID: workspaceID,
-		ScheduledAt: pgtype.Timestamptz{Time: t, Valid: true},
 	})
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusConflict, "CONFLICT",
+				"Post is no longer scheduled (already publishing or published)")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load scheduled post")
+		return
+	}
+
+	var updated db.SocialPost
+	mutate := func(queries *db.Queries) error {
+		var mutationErr error
+		updated, mutationErr = queries.RescheduleSocialPost(r.Context(), db.RescheduleSocialPostParams{
+			ID:          postID,
+			WorkspaceID: workspaceID,
+			ScheduledAt: pgtype.Timestamptz{Time: t, Valid: true},
+		})
+		return mutationErr
+	}
+	if h.paidSchedule != nil && existing.ScheduledAt.Valid {
+		oldPeriod := quota.PeriodForTime(existing.ScheduledAt.Time)
+		newPeriod := quota.PeriodForTime(t)
+		err = h.paidSchedule.MutatePlanned(
+			r.Context(),
+			workspaceID,
+			[]string{oldPeriod, newPeriod},
+			func(queries *db.Queries) ([]paidquota.PeriodDelta, error) {
+				lockedPost, loadErr := queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{
+					ID:          postID,
+					WorkspaceID: workspaceID,
+				})
+				if loadErr != nil {
+					return nil, loadErr
+				}
+				accounts, loadErr := loadValidateAccountsWithQueries(r.Context(), queries, workspaceID)
+				if loadErr != nil {
+					return nil, loadErr
+				}
+				oldPosts, loadErr := platform.DecodePostMetadata(lockedPost.Metadata, derefText(lockedPost.Caption))
+				if loadErr != nil {
+					return nil, loadErr
+				}
+				return paidScheduleEditDeltas(lockedPost, oldPosts, t, accounts)
+			},
+			mutate,
+		)
+	} else {
+		err = mutate(h.queries)
+	}
+	if err != nil {
+		var admissionErr *paidquota.AdmissionError
+		if errors.As(err, &admissionErr) {
+			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)
+			return
+		}
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusConflict, "CONFLICT",
 				"Post is no longer scheduled (already publishing or published)")
@@ -415,6 +496,11 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 	h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 		Period: quota.PeriodForTime(t),
 	})
+	h.maybeReconcileQuotaHolds(r.Context(), workspaceID, "schedule_rescheduled")
+	if existing.ScheduledAt.Valid {
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(existing.ScheduledAt.Time))
+	}
+	h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(t))
 	writeSuccess(w, socialPostResponseFromRow(updated))
 }
 
@@ -431,7 +517,7 @@ func isScheduledAtOnlyPatch(rawBody []byte) bool {
 }
 
 func canEditSocialPostContent(status string) bool {
-	return status == "draft" || status == "scheduled"
+	return status == "draft" || status == "scheduled" || status == "quota_hold"
 }
 
 func buildSocialPostContentUpdateParams(
@@ -465,6 +551,82 @@ func buildSocialPostContentUpdateParams(
 		ScheduledAt: scheduledAtParam,
 		ProfileIds:  profileIDs,
 	}
+}
+
+func paidScheduleEditDeltas(
+	existing db.SocialPost,
+	newPosts []platform.PlatformPostInput,
+	newScheduledAt time.Time,
+	accountMap map[string]platform.ValidateAccount,
+) ([]paidquota.PeriodDelta, error) {
+	if (existing.Status != "scheduled" && existing.Status != "quota_hold") || !existing.ScheduledAt.Valid {
+		return nil, fmt.Errorf("post is not an active scheduled post")
+	}
+	oldPosts, err := platform.DecodePostMetadata(existing.Metadata, derefText(existing.Caption))
+	if err != nil {
+		return nil, err
+	}
+	oldUnits := countPublishQuotaUnits(oldPosts, accountMap)
+	newUnits := countPublishQuotaUnits(newPosts, accountMap)
+	oldPeriod := quota.PeriodForTime(existing.ScheduledAt.Time)
+	newPeriod := quota.PeriodForTime(newScheduledAt)
+	if oldPeriod == newPeriod {
+		return []paidquota.PeriodDelta{{
+			Period:         oldPeriod,
+			ReleasedUnits:  oldUnits,
+			RequestedUnits: newUnits,
+		}}, nil
+	}
+	return []paidquota.PeriodDelta{
+		{Period: oldPeriod, ReleasedUnits: oldUnits},
+		{Period: newPeriod, RequestedUnits: newUnits},
+	}, nil
+}
+
+func (h *SocialPostHandler) updateEditablePostContent(
+	ctx context.Context,
+	workspaceID string,
+	existing db.SocialPost,
+	newPosts []platform.PlatformPostInput,
+	newScheduledAt time.Time,
+	params db.UpdateDraftContentParams,
+) (db.SocialPost, error) {
+	var updated db.SocialPost
+	mutate := func(queries *db.Queries) error {
+		var err error
+		updated, err = queries.UpdateDraftContent(ctx, params)
+		return err
+	}
+	if h.paidSchedule == nil ||
+		(existing.Status != "scheduled" && existing.Status != "quota_hold") ||
+		!existing.ScheduledAt.Valid {
+		err := mutate(h.queries)
+		return updated, err
+	}
+
+	oldPeriod := quota.PeriodForTime(existing.ScheduledAt.Time)
+	newPeriod := quota.PeriodForTime(newScheduledAt)
+	err := h.paidSchedule.MutatePlanned(
+		ctx,
+		workspaceID,
+		[]string{oldPeriod, newPeriod},
+		func(queries *db.Queries) ([]paidquota.PeriodDelta, error) {
+			lockedPost, err := queries.GetSocialPostByIDAndWorkspace(ctx, db.GetSocialPostByIDAndWorkspaceParams{
+				ID:          existing.ID,
+				WorkspaceID: workspaceID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			accounts, err := loadValidateAccountsWithQueries(ctx, queries, workspaceID)
+			if err != nil {
+				return nil, err
+			}
+			return paidScheduleEditDeltas(lockedPost, newPosts, newScheduledAt, accounts)
+		},
+		mutate,
+	)
+	return updated, err
 }
 
 // CancelPost handles POST /v1/posts/{id}/cancel. Allowed for
@@ -537,7 +699,7 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	// Backward-compatible reschedule branch used by the list view and
 	// SDK helpers. Full scheduled-post edits include platform_posts or
 	// account_ids and go through the content update branch below.
-	if existing.Status == "scheduled" && isScheduledAtOnlyPatch(rawBody) {
+	if (existing.Status == "scheduled" || existing.Status == "quota_hold") && isScheduledAtOnlyPatch(rawBody) {
 		h.reschedulePost(w, r, workspaceID, postID, rawBody)
 		return
 	}
@@ -571,22 +733,39 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	}
 
 	scheduledAt := parsed.ScheduledAt
-	if scheduledAt == nil && existing.Status == "scheduled" && existing.ScheduledAt.Valid {
+	if scheduledAt == nil &&
+		(existing.Status == "scheduled" || existing.Status == "quota_hold") &&
+		existing.ScheduledAt.Valid {
 		scheduledAt = &existing.ScheduledAt.Time
 	}
 
-	updated, err := h.queries.UpdateDraftContent(
-		r.Context(),
-		buildSocialPostContentUpdateParams(
-			postID,
-			workspaceID,
-			parsed.Posts,
-			metaJSON,
-			scheduledAt,
-			h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
-		),
+	updateParams := buildSocialPostContentUpdateParams(
+		postID,
+		workspaceID,
+		parsed.Posts,
+		metaJSON,
+		scheduledAt,
+		h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
 	)
+	var updated db.SocialPost
+	if (existing.Status == "scheduled" || existing.Status == "quota_hold") && scheduledAt != nil {
+		updated, err = h.updateEditablePostContent(
+			r.Context(),
+			workspaceID,
+			existing,
+			parsed.Posts,
+			*scheduledAt,
+			updateParams,
+		)
+	} else {
+		updated, err = h.queries.UpdateDraftContent(r.Context(), updateParams)
+	}
 	if err != nil {
+		var admissionErr *paidquota.AdmissionError
+		if errors.As(err, &admissionErr) {
+			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)
+			return
+		}
 		if err == pgx.ErrNoRows {
 			writeError(w, http.StatusConflict, "CONFLICT",
 				"Post is no longer editable or does not exist in this workspace")
@@ -601,6 +780,15 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 	h.syncPostMediaRetention(r.Context(), updated, updated.Status)
+	if existing.Status == "scheduled" || existing.Status == "quota_hold" {
+		h.maybeReconcileQuotaHolds(r.Context(), workspaceID, "scheduled_destinations_changed")
+		if existing.ScheduledAt.Valid {
+			h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(existing.ScheduledAt.Time))
+		}
+		if updated.ScheduledAt.Valid {
+			h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(updated.ScheduledAt.Time))
+		}
+	}
 
 	// Re-run validation against the new content so the editor sees
 	// fresh diagnostics in the response.
@@ -642,6 +830,18 @@ func socialPostResponseFromRow(post db.SocialPost) socialPostResponse {
 	if post.ArchivedAt.Valid {
 		t := post.ArchivedAt.Time
 		resp.ArchivedAt = &t
+	}
+	if post.QuotaHoldReason.Valid {
+		reason := post.QuotaHoldReason.String
+		resp.QuotaHoldReason = &reason
+	}
+	if post.QuotaHoldAt.Valid {
+		t := post.QuotaHoldAt.Time
+		resp.QuotaHoldAt = &t
+	}
+	if post.QuotaHoldOriginalScheduledAt.Valid {
+		t := post.QuotaHoldOriginalScheduledAt.Time
+		resp.QuotaHoldOriginalScheduledAt = &t
 	}
 	return resp
 }
