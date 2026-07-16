@@ -23,6 +23,7 @@ ALTER TABLE x_inbox_outbound_requests
   ADD CONSTRAINT x_inbox_outbound_requests_status_check
   CHECK (status IN (
     'pending',
+    'pending_recovery',
     'sending',
     'outcome_unknown',
     'remote_succeeded',
@@ -47,8 +48,8 @@ WHERE status = 'pending'
 
 CREATE INDEX IF NOT EXISTS x_inbox_outbound_requests_reconcile_idx
   ON x_inbox_outbound_requests (next_attempt_at, created_at)
-  WHERE status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
-     OR (status = 'pending' AND encrypted_payload IS NULL);
+  WHERE status IN ('pending_recovery', 'sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+     OR status = 'pending';
 
 CREATE TABLE x_inbox_backfill_confirmation_operations (
   id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,

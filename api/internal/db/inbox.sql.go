@@ -11,6 +11,26 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimPendingXInboxOutboundRecovery = `-- name: ClaimPendingXInboxOutboundRecovery :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'pending_recovery',
+    next_attempt_at = NOW(),
+    last_error = 'Recovering stale pre-send X Inbox operation',
+    updated_at = NOW()
+WHERE id = $1
+  AND status = 'pending'
+  AND encrypted_payload IS NOT NULL
+  AND reconciliation_deadline <= NOW()
+`
+
+func (q *Queries) ClaimPendingXInboxOutboundRecovery(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, claimPendingXInboxOutboundRecovery, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const claimXInboxOutboundRequest = `-- name: ClaimXInboxOutboundRequest :one
 INSERT INTO x_inbox_outbound_requests (
   workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash,
@@ -146,7 +166,7 @@ SET completion_attempts = completion_attempts + 1,
     last_error = LEFT($2::TEXT, 1000),
     updated_at = NOW()
 WHERE id = $3
-  AND status = 'pending'
+  AND status = 'pending_recovery'
 `
 
 type DeferPendingXInboxOutboundRecoveryParams struct {
@@ -210,6 +230,20 @@ WHERE id = $1
 
 func (q *Queries) DeletePendingXInboxOutboundRequest(ctx context.Context, id string) (int64, error) {
 	result, err := q.db.Exec(ctx, deletePendingXInboxOutboundRequest, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteXInboxOutboundAfterPendingRecovery = `-- name: DeleteXInboxOutboundAfterPendingRecovery :execrows
+DELETE FROM x_inbox_outbound_requests
+WHERE id = $1
+  AND status = 'pending_recovery'
+`
+
+func (q *Queries) DeleteXInboxOutboundAfterPendingRecovery(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteXInboxOutboundAfterPendingRecovery, id)
 	if err != nil {
 		return 0, err
 	}
@@ -1112,7 +1146,7 @@ const listRecoverableXInboxOutboundRequests = `-- name: ListRecoverableXInboxOut
 SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash, status, response_inbox_item_id, created_at, updated_at, encrypted_payload, body_hash, usage_event_id, operation_key, reserved_units, remote_external_id, remote_conversation_id, remote_url, send_started_at, remote_outcome_known_at, reconciliation_deadline, completion_attempts, next_attempt_at, last_error
 FROM x_inbox_outbound_requests
 WHERE (
-	status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+	status IN ('pending_recovery', 'sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
 	OR (status = 'pending' AND encrypted_payload IS NULL)
 	OR (
 	  status = 'pending'

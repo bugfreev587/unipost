@@ -678,7 +678,8 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 				)
 				return
 			}
-			if outboundRequest.Status == "usage_reversal_pending" {
+			if outboundRequest.Status == "usage_reversal_pending" ||
+				outboundRequest.Status == "pending_recovery" {
 				writeXInboxUsageReversalPending(w)
 				return
 			}

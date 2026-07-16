@@ -18,6 +18,7 @@ func TestXInboxDurableOperationsMigrationIsRollingSafeAndExecutable(t *testing.T
 		"ADD COLUMN IF NOT EXISTS body_hash",
 		"ADD COLUMN IF NOT EXISTS send_started_at",
 		"'outcome_unknown'",
+		"'pending_recovery'",
 		"'remote_succeeded'",
 		"'usage_reversal_pending'",
 		"'needs_reconciliation'",
@@ -103,6 +104,9 @@ func TestXInboxRecoveryIncludesStaleModernPendingClaimsWithoutResend(t *testing.
 		"encrypted_payload IS NOT NULL",
 		"reconciliation_deadline <= NOW()",
 		"DeletePendingXInboxOutboundRequest :execrows",
+		"ClaimPendingXInboxOutboundRecovery :execrows",
+		"SET status = 'pending_recovery'",
+		"DeleteXInboxOutboundAfterPendingRecovery :execrows",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("modern pending recovery query missing %q", want)

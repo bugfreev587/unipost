@@ -3,6 +3,8 @@ package handler
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -119,6 +121,7 @@ func TestXInboxOutboundRecoveryReversesStaleModernPendingClaimWithoutCallingX(t 
 			Status:           "pending",
 			EncryptedPayload: pgtype.Text{String: "ciphertext", Valid: true},
 		}},
+		claimPending: true,
 	}
 	stats, err := newXInboxOutboundRecoveryService(store, time.Now).
 		ProcessOnce(context.Background())
@@ -131,6 +134,48 @@ func TestXInboxOutboundRecoveryReversesStaleModernPendingClaimWithoutCallingX(t 
 	}
 }
 
+func TestXInboxOutboundRecoveryClaimFencesConcurrentSendingBeforeUsageReversal(t *testing.T) {
+	store := newConcurrentPendingRecoveryStore()
+	service := newXInboxOutboundRecoveryService(store, time.Now)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-store.claimed
+		if store.markSending() {
+			store.upstreamCalls.Add(1)
+		}
+	}()
+	stats, err := service.ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	<-done
+	if stats.UsageReversed != 1 || !store.reversed.Load() {
+		t.Fatalf("stats/reversed = %+v/%v", stats, store.reversed.Load())
+	}
+	if store.upstreamCalls.Load() != 0 {
+		t.Fatalf("upstream calls = %d, want 0", store.upstreamCalls.Load())
+	}
+}
+
+func TestXInboxOutboundRecoveryDoesNotReverseWhenLiveSendingWinsCAS(t *testing.T) {
+	store := &fakeXInboxOutboundRecoveryStore{
+		rows: []db.XInboxOutboundRequest{{
+			ID: "modern-pending", Status: "pending",
+			EncryptedPayload: pgtype.Text{String: "ciphertext", Valid: true},
+		}},
+		claimPending: false,
+	}
+	stats, err := newXInboxOutboundRecoveryService(store, time.Now).
+		ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if stats.UsageReversed != 0 || store.reversePendingCalls != 0 {
+		t.Fatalf("stats/store = %+v %+v", stats, store)
+	}
+}
+
 func TestXInboxOutboundRecoveryDefersModernPendingWhenUsageLookupFails(t *testing.T) {
 	store := &fakeXInboxOutboundRecoveryStore{
 		rows: []db.XInboxOutboundRequest{{
@@ -138,6 +183,7 @@ func TestXInboxOutboundRecoveryDefersModernPendingWhenUsageLookupFails(t *testin
 			EncryptedPayload: pgtype.Text{String: "ciphertext", Valid: true},
 		}},
 		reversePendingErr: errors.New("database unavailable"),
+		claimPending:      true,
 	}
 	stats, err := newXInboxOutboundRecoveryService(store, time.Now).
 		ProcessOnce(context.Background())
@@ -196,6 +242,8 @@ type fakeXInboxOutboundRecoveryStore struct {
 	deferPendingCalls   int
 	deferReversalCalls  int
 	upstreamCalls       int
+	claimPending        bool
+	claimPendingCalls   int
 }
 
 func (f *fakeXInboxOutboundRecoveryStore) ListRecoverable(
@@ -236,6 +284,14 @@ func (f *fakeXInboxOutboundRecoveryStore) ReversePendingUsage(
 	return f.reversePendingErr
 }
 
+func (f *fakeXInboxOutboundRecoveryStore) ClaimPendingRecovery(
+	context.Context,
+	string,
+) (bool, error) {
+	f.claimPendingCalls++
+	return f.claimPending, nil
+}
+
 func (f *fakeXInboxOutboundRecoveryStore) DeferPending(
 	context.Context,
 	string,
@@ -272,5 +328,85 @@ func (f *fakeXInboxOutboundRecoveryStore) MarkNeedsReconciliation(
 	string,
 ) error {
 	f.manualCalls++
+	return nil
+}
+
+type concurrentPendingRecoveryStore struct {
+	mu            sync.Mutex
+	status        string
+	claimed       chan struct{}
+	claimOnce     sync.Once
+	reversed      atomic.Bool
+	upstreamCalls atomic.Int64
+}
+
+func newConcurrentPendingRecoveryStore() *concurrentPendingRecoveryStore {
+	return &concurrentPendingRecoveryStore{
+		status:  "pending",
+		claimed: make(chan struct{}),
+	}
+}
+
+func (s *concurrentPendingRecoveryStore) ListRecoverable(
+	context.Context,
+	int32,
+) ([]db.XInboxOutboundRequest, error) {
+	return []db.XInboxOutboundRequest{{
+		ID: "request-1", Status: "pending",
+		EncryptedPayload: pgtype.Text{String: "ciphertext", Valid: true},
+	}}, nil
+}
+
+func (s *concurrentPendingRecoveryStore) ClaimPendingRecovery(
+	context.Context,
+	string,
+) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != "pending" {
+		return false, nil
+	}
+	s.status = "pending_recovery"
+	s.claimOnce.Do(func() { close(s.claimed) })
+	return true, nil
+}
+
+func (s *concurrentPendingRecoveryStore) markSending() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != "pending" {
+		return false
+	}
+	s.status = "sending"
+	return true
+}
+
+func (s *concurrentPendingRecoveryStore) ReversePendingUsage(
+	context.Context,
+	db.XInboxOutboundRequest,
+) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status != "pending_recovery" {
+		return errors.New("usage reversal ran without owning pending recovery")
+	}
+	s.reversed.Store(true)
+	return nil
+}
+
+func (*concurrentPendingRecoveryStore) CompleteKnown(context.Context, string) error { return nil }
+func (*concurrentPendingRecoveryStore) ReverseUsage(context.Context, db.XInboxOutboundRequest) error {
+	return nil
+}
+func (*concurrentPendingRecoveryStore) Defer(context.Context, string, time.Time, string) error {
+	return nil
+}
+func (*concurrentPendingRecoveryStore) DeferPending(context.Context, string, time.Time, string) error {
+	return nil
+}
+func (*concurrentPendingRecoveryStore) DeferUsageReversal(context.Context, string, time.Time, string) error {
+	return nil
+}
+func (*concurrentPendingRecoveryStore) MarkNeedsReconciliation(context.Context, string, string) error {
 	return nil
 }

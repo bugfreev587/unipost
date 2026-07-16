@@ -22,6 +22,7 @@ type xInboxOutboundRecoveryStore interface {
 	ListRecoverable(context.Context, int32) ([]db.XInboxOutboundRequest, error)
 	CompleteKnown(context.Context, string) error
 	ReverseUsage(context.Context, db.XInboxOutboundRequest) error
+	ClaimPendingRecovery(context.Context, string) (bool, error)
 	ReversePendingUsage(context.Context, db.XInboxOutboundRequest) error
 	DeferPending(context.Context, string, time.Time, string) error
 	Defer(context.Context, string, time.Time, string) error
@@ -78,6 +79,17 @@ func (s *XInboxOutboundRecoveryService) ProcessOnce(
 			continue
 		}
 		if row.Status == "pending" && row.EncryptedPayload.Valid {
+			claimed, claimErr := s.store.ClaimPendingRecovery(ctx, row.ID)
+			if claimErr != nil {
+				stats.Deferred++
+				continue
+			}
+			if !claimed {
+				continue
+			}
+			row.Status = "pending_recovery"
+		}
+		if row.Status == "pending_recovery" {
 			if err := s.store.ReversePendingUsage(ctx, row); err != nil {
 				stats.Deferred++
 				_ = s.store.DeferPending(ctx, row.ID, now.Add(time.Minute), err.Error())
@@ -173,7 +185,7 @@ func (s postgresXInboxOutboundRecoveryStore) ReversePendingUsage(
 	if err := s.handler.xCredits.ReverseByIdempotencyKey(ctx, row.WorkspaceID, usageKey); err != nil {
 		return err
 	}
-	deleted, err := s.handler.queries.DeletePendingXInboxOutboundRequest(ctx, row.ID)
+	deleted, err := s.handler.queries.DeleteXInboxOutboundAfterPendingRecovery(ctx, row.ID)
 	if err != nil {
 		return err
 	}
@@ -181,6 +193,17 @@ func (s postgresXInboxOutboundRecoveryStore) ReversePendingUsage(
 		return errors.New("stale pending X Inbox claim was not removed")
 	}
 	return nil
+}
+
+func (s postgresXInboxOutboundRecoveryStore) ClaimPendingRecovery(
+	ctx context.Context,
+	id string,
+) (bool, error) {
+	claimed, err := s.handler.queries.ClaimPendingXInboxOutboundRecovery(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	return claimed == 1, nil
 }
 
 func (s postgresXInboxOutboundRecoveryStore) DeferPending(

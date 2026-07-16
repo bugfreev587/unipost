@@ -179,7 +179,7 @@ WHERE id = @id
 SELECT *
 FROM x_inbox_outbound_requests
 WHERE (
-	status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+	status IN ('pending_recovery', 'sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
 	OR (status = 'pending' AND encrypted_payload IS NULL)
 	OR (
 	  status = 'pending'
@@ -201,6 +201,17 @@ WHERE id = @id
     (status IN ('sending', 'outcome_unknown') AND reconciliation_deadline <= NOW())
     OR (status = 'pending' AND encrypted_payload IS NULL)
   );
+
+-- name: ClaimPendingXInboxOutboundRecovery :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'pending_recovery',
+    next_attempt_at = NOW(),
+    last_error = 'Recovering stale pre-send X Inbox operation',
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'pending'
+  AND encrypted_payload IS NOT NULL
+  AND reconciliation_deadline <= NOW();
 
 -- name: DeferXInboxOutboundCompletion :exec
 UPDATE x_inbox_outbound_requests
@@ -227,7 +238,12 @@ SET completion_attempts = completion_attempts + 1,
     last_error = LEFT(@last_error::TEXT, 1000),
     updated_at = NOW()
 WHERE id = @id
-  AND status = 'pending';
+  AND status = 'pending_recovery';
+
+-- name: DeleteXInboxOutboundAfterPendingRecovery :execrows
+DELETE FROM x_inbox_outbound_requests
+WHERE id = @id
+  AND status = 'pending_recovery';
 
 -- name: DeleteXInboxOutboundAfterUsageReversal :execrows
 DELETE FROM x_inbox_outbound_requests
