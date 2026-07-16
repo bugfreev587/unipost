@@ -1048,14 +1048,25 @@ type XInboundDailyUsage struct {
 }
 
 type XInboundEventReceipt struct {
-	WorkspaceID          string             `json:"workspace_id"`
-	SocialAccountID      string             `json:"social_account_id"`
-	UpstreamResourceType string             `json:"upstream_resource_type"`
-	UpstreamResourceID   string             `json:"upstream_resource_id"`
-	UtcDate              pgtype.Date        `json:"utc_date"`
-	Decision             string             `json:"decision"`
-	WeightedUnits        int64              `json:"weighted_units"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID           string             `json:"workspace_id"`
+	SocialAccountID       string             `json:"social_account_id"`
+	UpstreamResourceType  string             `json:"upstream_resource_type"`
+	UpstreamResourceID    string             `json:"upstream_resource_id"`
+	UtcDate               pgtype.Date        `json:"utc_date"`
+	Decision              string             `json:"decision"`
+	WeightedUnits         int64              `json:"weighted_units"`
+	PeriodStart           pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd             pgtype.Timestamptz `json:"period_end"`
+	MonthlyUsedAfter      int64              `json:"monthly_used_after"`
+	MonthlyRemainingAfter int64              `json:"monthly_remaining_after"`
+	InboundDailyUsedAfter int64              `json:"inbound_daily_used_after"`
+	InboundDailyLimit     int64              `json:"inbound_daily_limit"`
+	EventsAcceptedAfter   int64              `json:"events_accepted_after"`
+	EventsSuppressedAfter int64              `json:"events_suppressed_after"`
+	PausePaidSources      bool               `json:"pause_paid_sources"`
+	PauseReason           string             `json:"pause_reason"`
+	ResetAt               pgtype.Timestamptz `json:"reset_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
 type XInboxDeliveryResource struct {

@@ -283,12 +283,16 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 			upstream_resource_id,
 			utc_date,
 			decision,
-			weighted_units
-		) VALUES ($1, $2, $3, $4, $5, 'accepted', $6)
+			weighted_units,
+			period_start,
+			period_end,
+			reset_at
+		) VALUES ($1, $2, $3, $4, $5, 'accepted', $6, $7, $8, $9)
 		ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id, utc_date) DO NOTHING
 		RETURNING TRUE
 	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
-		req.UTCDate, req.WeightedUnits).Scan(&inserted)
+		req.UTCDate, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
+		req.UTCDate.AddDate(0, 0, 1)).Scan(&inserted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		admission, loadErr := loadDuplicateInboundAdmission(ctx, tx, req)
 		if loadErr != nil {
@@ -448,19 +452,6 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		UPDATE x_inbound_event_receipts
-		SET decision = $6, weighted_units = $7
-		WHERE workspace_id = $1
-		  AND social_account_id = $2
-		  AND upstream_resource_type = $3
-		  AND upstream_resource_id = $4
-		  AND utc_date = $5
-	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
-		req.UTCDate, admission.Decision, req.WeightedUnits); err != nil {
-		return InboundAdmission{}, err
-	}
-
 	admission.InboundDailyUsed = dailyUsed
 	admission.EventsAccepted = accepted
 	admission.EventsSuppressed = suppressed
@@ -481,6 +472,34 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 		admission.PauseReason = PauseReasonDailySafetyBuffer
 	}
 
+	if _, err := tx.Exec(ctx, `
+		UPDATE x_inbound_event_receipts
+		SET decision = $6,
+		    weighted_units = $7,
+		    period_start = $8,
+		    period_end = $9,
+		    monthly_used_after = $10,
+		    monthly_remaining_after = $11,
+		    inbound_daily_used_after = $12,
+		    inbound_daily_limit = $13,
+		    events_accepted_after = $14,
+		    events_suppressed_after = $15,
+		    pause_paid_sources = $16,
+		    pause_reason = $17,
+		    reset_at = $18
+		WHERE workspace_id = $1
+		  AND social_account_id = $2
+		  AND upstream_resource_type = $3
+		  AND upstream_resource_id = $4
+		  AND utc_date = $5
+	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
+		req.UTCDate, admission.Decision, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
+		admission.MonthlyUsed, admission.MonthlyRemaining, admission.InboundDailyUsed,
+		admission.InboundDailyLimit, admission.EventsAccepted, admission.EventsSuppressed,
+		admission.PausePaidSources, admission.PauseReason, admission.ResetAt); err != nil {
+		return InboundAdmission{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return InboundAdmission{}, err
 	}
@@ -488,13 +507,22 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 }
 
 func loadDuplicateInboundAdmission(ctx context.Context, tx pgx.Tx, req StoreInboundRequest) (InboundAdmission, error) {
-	admission := InboundAdmission{
-		Duplicate:         true,
-		InboundDailyLimit: req.InboundDailyLimit,
-		ResetAt:           req.UTCDate.AddDate(0, 0, 1),
-	}
+	var receipt inboundReceiptSnapshot
 	if err := tx.QueryRow(ctx, `
-		SELECT decision, weighted_units
+		SELECT
+			decision,
+			weighted_units,
+			period_start,
+			period_end,
+			monthly_used_after,
+			monthly_remaining_after,
+			inbound_daily_used_after,
+			inbound_daily_limit,
+			events_accepted_after,
+			events_suppressed_after,
+			pause_paid_sources,
+			pause_reason,
+			reset_at
 		FROM x_inbound_event_receipts
 		WHERE workspace_id = $1
 		  AND social_account_id = $2
@@ -503,43 +531,24 @@ func loadDuplicateInboundAdmission(ctx context.Context, tx pgx.Tx, req StoreInbo
 		  AND utc_date = $5
 		FOR UPDATE
 	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
-		req.UTCDate).Scan(&admission.Decision, &admission.WeightedUnits); err != nil {
-		return InboundAdmission{}, err
-	}
-	if err := tx.QueryRow(ctx, `
-		SELECT weighted_units_used, weighted_units_limit, events_accepted, events_suppressed
-		FROM x_inbound_daily_usage
-		WHERE workspace_id = $1 AND utc_date = $2
-	`, req.WorkspaceID, req.UTCDate).Scan(
-		&admission.InboundDailyUsed,
-		&admission.InboundDailyLimit,
-		&admission.EventsAccepted,
-		&admission.EventsSuppressed,
+		req.UTCDate).Scan(
+		&receipt.Decision,
+		&receipt.WeightedUnits,
+		&receipt.PeriodStart,
+		&receipt.PeriodEnd,
+		&receipt.MonthlyUsedAfter,
+		&receipt.MonthlyRemainingAfter,
+		&receipt.InboundDailyUsedAfter,
+		&receipt.InboundDailyLimit,
+		&receipt.EventsAcceptedAfter,
+		&receipt.EventsSuppressedAfter,
+		&receipt.PausePaidSources,
+		&receipt.PauseReason,
+		&receipt.ResetAt,
 	); err != nil {
 		return InboundAdmission{}, err
 	}
-	if err := tx.QueryRow(ctx, `
-		SELECT weighted_units_used, GREATEST(weighted_units_limit - weighted_units_used, 0)
-		FROM x_usage_periods
-		WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
-	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(
-		&admission.MonthlyUsed,
-		&admission.MonthlyRemaining,
-	); err != nil {
-		return InboundAdmission{}, err
-	}
-	switch {
-	case admission.Decision == InboundDecisionSuppressedMonthlyAllowance || admission.MonthlyRemaining == 0:
-		admission.PausePaidSources = true
-		admission.PauseReason = PauseReasonMonthlyAllowance
-	case admission.Decision == InboundDecisionSuppressedDailyCap:
-		admission.PausePaidSources = true
-		admission.PauseReason = PauseReasonDailyCap
-	case remainingWithinSafetyBuffer(admission.InboundDailyUsed, admission.InboundDailyLimit):
-		admission.PausePaidSources = true
-		admission.PauseReason = PauseReasonDailySafetyBuffer
-	}
-	return admission, nil
+	return admissionFromReceipt(receipt), nil
 }
 
 func claimInboundThreshold(ctx context.Context, tx pgx.Tx, workspaceID string, utcDate time.Time, threshold int16) (bool, error) {

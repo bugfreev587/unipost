@@ -190,6 +190,40 @@ func TestInboundAdmissionConcurrentDuplicateChargesExactlyOnce(t *testing.T) {
 	}
 }
 
+func TestDuplicateInboundAdmissionReconstructsOriginalSnapshotAcrossBillingPeriodChange(t *testing.T) {
+	originalStart := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	originalEnd := originalStart.AddDate(0, 1, 0)
+	receipt := inboundReceiptSnapshot{
+		Decision:              InboundDecisionAccepted,
+		WeightedUnits:         10,
+		PeriodStart:           originalStart,
+		PeriodEnd:             originalEnd,
+		MonthlyUsedAfter:      3990,
+		MonthlyRemainingAfter: 10,
+		InboundDailyUsedAfter: 320,
+		InboundDailyLimit:     400,
+		EventsAcceptedAfter:   32,
+		EventsSuppressedAfter: 3,
+		PausePaidSources:      true,
+		PauseReason:           PauseReasonDailySafetyBuffer,
+		ResetAt:               time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
+	}
+
+	got := admissionFromReceipt(receipt)
+
+	if !got.Duplicate || got.Decision != InboundDecisionAccepted ||
+		got.MonthlyUsed != 3990 || got.MonthlyRemaining != 10 ||
+		got.InboundDailyUsed != 320 || got.InboundDailyLimit != 400 ||
+		got.EventsAccepted != 32 || got.EventsSuppressed != 3 ||
+		!got.PausePaidSources || got.PauseReason != PauseReasonDailySafetyBuffer ||
+		!got.ResetAt.Equal(receipt.ResetAt) {
+		t.Fatalf("duplicate admission = %+v", got)
+	}
+	if !receipt.PeriodStart.Equal(originalStart) || !receipt.PeriodEnd.Equal(originalEnd) {
+		t.Fatalf("receipt period changed: %+v", receipt)
+	}
+}
+
 func TestInboundAdmissionReturnsDistinctCapAndMonthlyDecisions(t *testing.T) {
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 
@@ -332,6 +366,9 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 	for _, want := range []string{
 		"INSERT INTO x_inbound_event_receipts",
 		"ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id, utc_date) DO NOTHING",
+		"admissionFromReceipt",
+		"monthly_used_after",
+		"monthly_remaining_after",
 		"FOR UPDATE",
 		"UPDATE x_inbound_daily_usage",
 		"UPDATE x_usage_periods",
@@ -341,6 +378,15 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("postgres admission missing %q", want)
 		}
+	}
+	duplicateStart := strings.Index(text, "func loadDuplicateInboundAdmission")
+	duplicateEnd := strings.Index(text, "func claimInboundThreshold")
+	if duplicateStart < 0 || duplicateEnd <= duplicateStart {
+		t.Fatal("duplicate admission function boundaries not found")
+	}
+	duplicateSource := text[duplicateStart:duplicateEnd]
+	if strings.Contains(duplicateSource, "FROM x_usage_periods") {
+		t.Fatal("duplicate replay must reconstruct from its receipt, not the caller's current billing period")
 	}
 	for _, forbidden := range []string{"dm_body", "message_body", "raw_payload"} {
 		if strings.Contains(strings.ToLower(text), forbidden) {

@@ -145,6 +145,39 @@ type InboundAdmission struct {
 	Claimed100Percent bool      `json:"-"`
 }
 
+type inboundReceiptSnapshot struct {
+	Decision              string
+	WeightedUnits         int64
+	PeriodStart           time.Time
+	PeriodEnd             time.Time
+	MonthlyUsedAfter      int64
+	MonthlyRemainingAfter int64
+	InboundDailyUsedAfter int64
+	InboundDailyLimit     int64
+	EventsAcceptedAfter   int64
+	EventsSuppressedAfter int64
+	PausePaidSources      bool
+	PauseReason           string
+	ResetAt               time.Time
+}
+
+func admissionFromReceipt(receipt inboundReceiptSnapshot) InboundAdmission {
+	return InboundAdmission{
+		Decision:          receipt.Decision,
+		Duplicate:         true,
+		WeightedUnits:     receipt.WeightedUnits,
+		MonthlyUsed:       receipt.MonthlyUsedAfter,
+		MonthlyRemaining:  receipt.MonthlyRemainingAfter,
+		InboundDailyUsed:  receipt.InboundDailyUsedAfter,
+		InboundDailyLimit: receipt.InboundDailyLimit,
+		EventsAccepted:    receipt.EventsAcceptedAfter,
+		EventsSuppressed:  receipt.EventsSuppressedAfter,
+		PausePaidSources:  receipt.PausePaidSources,
+		PauseReason:       receipt.PauseReason,
+		ResetAt:           receipt.ResetAt,
+	}
+}
+
 type UpdateInboundCapRequest struct {
 	WorkspaceID          string
 	InboundDailyLimit    int64

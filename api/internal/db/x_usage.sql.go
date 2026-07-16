@@ -72,6 +72,17 @@ SELECT
   utc_date,
   decision,
   weighted_units,
+  period_start,
+  period_end,
+  monthly_used_after,
+  monthly_remaining_after,
+  inbound_daily_used_after,
+  inbound_daily_limit,
+  events_accepted_after,
+  events_suppressed_after,
+  pause_paid_sources,
+  pause_reason,
+  reset_at,
   created_at
 FROM x_inbound_event_receipts
 WHERE workspace_id = $1
@@ -106,6 +117,17 @@ func (q *Queries) GetXInboundEventReceipt(ctx context.Context, arg GetXInboundEv
 		&i.UtcDate,
 		&i.Decision,
 		&i.WeightedUnits,
+		&i.PeriodStart,
+		&i.PeriodEnd,
+		&i.MonthlyUsedAfter,
+		&i.MonthlyRemainingAfter,
+		&i.InboundDailyUsedAfter,
+		&i.InboundDailyLimit,
+		&i.EventsAcceptedAfter,
+		&i.EventsSuppressedAfter,
+		&i.PausePaidSources,
+		&i.PauseReason,
+		&i.ResetAt,
 		&i.CreatedAt,
 	)
 	return i, err
