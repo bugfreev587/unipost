@@ -16,7 +16,9 @@ import {
   getInboxMediaContext,
   getAccountCapabilities,
   getXCreditsAllowance,
+  getXInboxOutboundOperation,
   type InboxItem,
+  type ApiFetchError,
   type SocialAccount,
   type SocialPostSummary,
   type IGMediaContext,
@@ -33,6 +35,17 @@ import {
   evaluateXInboxEligibility,
   type XInboxEligibility,
 } from "@/lib/x-inbox-eligibility";
+import {
+  beginXInboxOutboundOperation,
+  classifyXInboxOutboundStatus,
+  hashXInboxReplyBody,
+  loadXInboxOutboundOperations,
+  resolveXInboxOutboundOperation,
+  saveXInboxOutboundOperations,
+  updateXInboxOutboundOperation,
+  type XInboxClientOutboundOperation,
+  type XInboxClientOutboundStatus,
+} from "@/lib/x-inbox-outbound-state";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 import { buildContactPageHref } from "@/lib/support";
@@ -112,6 +125,26 @@ const COMMENT_THREAD_LINE_COLOR = "var(--dborder2)";
 const COMMENT_THREAD_BEND_RADIUS = 10;
 const INBOX_RECENT_ITEM_LIMIT = 50;
 const INBOX_UNREAD_ITEM_LIMIT = 500;
+
+function xClientOutboundStatus(status: string): XInboxClientOutboundStatus {
+  switch (status) {
+    case "X_REMOTE_ACCEPTED_RECONCILING":
+    case "remote_succeeded":
+      return "remote_succeeded";
+    case "X_USAGE_REVERSAL_PENDING":
+    case "usage_reversal_pending":
+    case "pending_recovery":
+      return "usage_reversal_pending";
+    case "X_WRITE_NEEDS_RECONCILIATION":
+    case "needs_reconciliation":
+      return "needs_reconciliation";
+    case "X_WRITE_OUTCOME_PENDING":
+    case "outcome_unknown":
+      return "outcome_unknown";
+    default:
+      return "sending";
+  }
+}
 
 function mergeInboxItems(...groups: InboxItem[][]): InboxItem[] {
   const byId = new Map<string, InboxItem>();
@@ -650,11 +683,28 @@ function InboxPageInner() {
   const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const [replyFeedback, setReplyFeedback] = useState<string | null>(null);
+  const [xOutboundOperations, setXOutboundOperations] = useState<XInboxClientOutboundOperation[]>([]);
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [leftPaneWidth, setLeftPaneWidth] = useState(360);
   const isDragging = useRef(false);
+  const xOutboundOperationsRef = useRef<XInboxClientOutboundOperation[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [mediaContext, setMediaContext] = useState<Record<string, IGMediaContext>>({});
+
+  const persistXOutboundOperations = useCallback((operations: XInboxClientOutboundOperation[]) => {
+    xOutboundOperationsRef.current = operations;
+    setXOutboundOperations(operations);
+    if (typeof window !== "undefined") {
+      saveXInboxOutboundOperations(window.localStorage, operations);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const operations = loadXInboxOutboundOperations(window.localStorage);
+    xOutboundOperationsRef.current = operations;
+    setXOutboundOperations(operations);
+  }, []);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
@@ -711,10 +761,80 @@ function InboxPageInner() {
     }
   }, [workspaceId, getToken, profileId]);
 
+  const reconcileXOutboundOperation = useCallback(async (
+    operation: XInboxClientOutboundOperation,
+    announce = true,
+  ) => {
+    if (!operation.operationId) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const response = await getXInboxOutboundOperation(token, operation.operationId);
+      const classification = classifyXInboxOutboundStatus(response.data.status);
+      if (classification.terminal) {
+        persistXOutboundOperations(resolveXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          operation.logicalKey,
+        ));
+        if (announce) setReplyFeedback("X reply completed and is now available in Inbox.");
+        await load();
+        return;
+      }
+
+      persistXOutboundOperations(updateXInboxOutboundOperation(
+        xOutboundOperationsRef.current,
+        operation.logicalKey,
+        { status: xClientOutboundStatus(response.data.status) },
+      ));
+      if (announce) {
+        setReplyFeedback(classification.manual
+          ? "UniPost cannot safely determine whether X accepted this reply. Review X before sending anything again."
+          : "X reply is still being reconciled. UniPost will not send it again while this operation is unresolved.");
+      }
+    } catch (err) {
+      const apiError = err as ApiFetchError;
+      if (apiError.status === 404) {
+        persistXOutboundOperations(resolveXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          operation.logicalKey,
+        ));
+        if (announce) setReplyFeedback("The prior X operation is no longer pending. Refresh Inbox before sending again.");
+        await load();
+        return;
+      }
+      if (announce) {
+        setReplyFeedback(err instanceof Error ? err.message : "Could not refresh the X reply status");
+      }
+    }
+  }, [getToken, load, persistXOutboundOperations]);
+
   useEffect(() => {
     setLoading(true);
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    const poll = async () => {
+      const operations = xOutboundOperationsRef.current.filter(
+        (operation) =>
+          operation.workspaceId === workspaceId &&
+          !!operation.operationId &&
+          operation.status !== "needs_reconciliation",
+      );
+      for (const operation of operations) {
+        if (cancelled) return;
+        await reconcileXOutboundOperation(operation, false);
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [workspaceId, reconcileXOutboundOperation, xOutboundOperations.length]);
 
   // Real-time: WebSocket pushes new items instantly.
   const { connected: wsConnected } = useInboxWebSocket(
@@ -831,6 +951,11 @@ function InboxPageInner() {
     (account) => xEligibilityByAccount[account.id]?.appMode === "workspace_x_app",
   );
   const xSyncPaidBlocked = (xCapPaused || xAllowancePaused) && !hasWorkspaceXApp;
+  const workspaceXOutboundOperations = xOutboundOperations.filter(
+    (operation) => operation.workspaceId === workspaceId,
+  );
+  const pendingXOutboundOperation = workspaceXOutboundOperations[0];
+  const pendingXOutboundManual = pendingXOutboundOperation?.status === "needs_reconciliation";
 
   const reconnectAccounts = accounts.filter(
     (account) =>
@@ -949,36 +1074,94 @@ function InboxPageInner() {
     // Check bottom DM input first, then per-message draft
     const draft = (replyDrafts["__dm_bottom__"] || replyDrafts[targetItem.id] || "").trim();
     if (!draft) return;
+    const isX = targetItem.source === "x_reply" || targetItem.source === "x_dm";
+    let xOperation: XInboxClientOutboundOperation | undefined;
 
     setReplyingGroupId(group.id);
     setReplyFeedback(null);
     try {
       const token = await getToken();
       if (!token) return;
-      const isX = targetItem.source === "x_reply" || targetItem.source === "x_dm";
-      const res = await replyToInboxItem(token, targetItem.id, draft, {
-        idempotencyKey: isX
-          ? `${targetItem.id}:${Date.now()}:${crypto.randomUUID()}`
-          : undefined,
+
+      if (isX) {
+        const bodyHash = await hashXInboxReplyBody(draft);
+        const begun = beginXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          {
+            workspaceId,
+            accountId: targetItem.social_account_id,
+            source: targetItem.source as "x_reply" | "x_dm",
+            targetItemId: targetItem.id,
+            threadKey: group.threadKey,
+            bodyHash,
+          },
+          () => `x-inbox-${crypto.randomUUID()}`,
+        );
+        xOperation = begun.operation;
+        persistXOutboundOperations(begun.operations);
+
+        // A previous response already supplied an operation id, so polling
+        // is safer than issuing another POST. A changed body has a different
+        // logical key and therefore starts a separate operation above.
+        if (begun.reused && begun.operation.operationId) {
+          await reconcileXOutboundOperation(begun.operation);
+          return;
+        }
+      }
+
+      const result = await replyToInboxItem(token, targetItem.id, draft, {
+        idempotencyKey: xOperation?.idempotencyKey,
       });
-      if (res.data) {
-        setItems((prev) => [...prev, res.data]);
+      if (result.state === "completed") {
+        if (xOperation) {
+          persistXOutboundOperations(resolveXInboxOutboundOperation(
+            xOutboundOperationsRef.current,
+            xOperation.logicalKey,
+          ));
+        }
+        setItems((prev) => prev.some((item) => item.id === result.data.id)
+          ? prev
+          : [...prev, result.data]);
         if (isX) {
-          const credits = res.data.x_credits_counted ?? 0;
-          const mode = res.data.x_credit_billing_mode === "workspace_x_app"
+          const credits = result.data.x_credits_counted ?? 0;
+          const mode = result.data.x_credit_billing_mode === "workspace_x_app"
             ? "Workspace X app; no UniPost X Credits used."
             : `${credits.toLocaleString()} X Credits used.`;
           setReplyFeedback(`Sent on X. ${mode}`);
         }
-      } else if (isX) {
-        setReplyFeedback("X accepted the reply. UniPost is reconciling the local Inbox result.");
+        setReplyDrafts((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id && key !== "__dm_bottom__"))
+        );
+      } else if (xOperation) {
+        const updated = updateXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          xOperation.logicalKey,
+          {
+            status: xClientOutboundStatus(result.code),
+            operationId: result.operation_id,
+          },
+        );
+        persistXOutboundOperations(updated);
+        setReplyFeedback(`${result.message} Retrying the same message will reuse this operation instead of sending twice.`);
       }
-      setReplyDrafts((prev) =>
-        Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id && key !== "__dm_bottom__"))
-      );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Reply failed";
-      setReplyFeedback(message);
+      const apiError = err as ApiFetchError;
+      if (xOperation && (apiError.status === undefined || apiError.status >= 500)) {
+        persistXOutboundOperations(updateXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          xOperation.logicalKey,
+          { status: "outcome_unknown" },
+        ));
+        setReplyFeedback("The X response was interrupted, so the outcome is unknown. Retry the exact same message to reuse its idempotency key.");
+      } else {
+        if (xOperation) {
+          persistXOutboundOperations(resolveXInboxOutboundOperation(
+            xOutboundOperationsRef.current,
+            xOperation.logicalKey,
+          ));
+        }
+        setReplyFeedback(err instanceof Error ? err.message : "Reply failed");
+      }
     } finally {
       setReplyingGroupId(null);
     }
@@ -1320,6 +1503,7 @@ function InboxPageInner() {
               <input
                 value={draft}
                 onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                aria-label={`Reply to ${item.author_name || "this comment"}`}
                 placeholder={`Reply to ${item.author_name || "this comment"}...`}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && selectedGroup) { e.preventDefault(); handleReply(selectedGroup, item); } }}
                 className="dt-body-sm"
@@ -1571,6 +1755,27 @@ function InboxPageInner() {
             actionLabel="Try again"
           />
         ) : null}
+        {pendingXOutboundOperation ? (
+          <SyncStateCard
+            icon={pendingXOutboundManual
+              ? <AlertTriangle style={{ width: 16, height: 16 }} />
+              : <RefreshCw style={{ width: 16, height: 16 }} />}
+            title={pendingXOutboundManual
+              ? "X reply requires manual review"
+              : "X reply reconciliation in progress"}
+            body={pendingXOutboundManual
+              ? "UniPost cannot safely determine whether X accepted this reply. Check the X conversation and logs before sending anything again."
+              : `${workspaceXOutboundOperations.length} X repl${workspaceXOutboundOperations.length === 1 ? "y is" : "ies are"} unresolved. Retrying an unchanged message reuses its saved idempotency key; editing the message creates a new operation.`}
+            tone={pendingXOutboundManual ? "error" : "warn"}
+            onAction={!pendingXOutboundManual && pendingXOutboundOperation.operationId
+              ? () => reconcileXOutboundOperation(pendingXOutboundOperation)
+              : undefined}
+            actionHref={pendingXOutboundManual && profileId
+              ? `/projects/${profileId}/logs`
+              : undefined}
+            actionLabel={pendingXOutboundManual ? "Review logs" : "Check status"}
+          />
+        ) : null}
         {replyFeedback ? (
           <div role="status" aria-live="polite">
             <SyncStateCard
@@ -1693,6 +1898,7 @@ function InboxPageInner() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search Inbox conversations"
             placeholder={tab === "dms" ? "Search contacts or messages..." : "Search posts, authors, or comments..."}
             className="dt-body-sm"
             style={{
@@ -2105,6 +2311,7 @@ function InboxPageInner() {
                       <input
                         value={replyDrafts["__dm_bottom__"] || ""}
                         onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
+                        aria-label={selectedGroup.source === "x_dm" ? "Write an X direct message" : "Write a direct message"}
                         placeholder={windowClosed ? "24h reply window is closed" : "Message..."}
                         disabled={windowClosed}
                         onKeyDown={(e) => {
@@ -2112,7 +2319,6 @@ function InboxPageInner() {
                             e.preventDefault();
                             if (sendAllowed && lastInbound) {
                               handleReply(selectedGroup, lastInbound);
-                              setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
                             }
                           }
                         }}
@@ -2131,10 +2337,10 @@ function InboxPageInner() {
                         }}
                       />
                       <button
+                        aria-label={windowClosed ? "Cannot send: reply window closed" : "Send direct message"}
                         onClick={() => {
                           if (sendAllowed && lastInbound) {
                             handleReply(selectedGroup, lastInbound);
-                            setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
                           }
                         }}
                         disabled={replyingGroupId === selectedGroup.id || !sendAllowed}

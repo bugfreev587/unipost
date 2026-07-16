@@ -4165,19 +4165,70 @@ export async function markAllInboxRead(
   });
 }
 
+export type InboxReplyAttempt =
+  | {
+      state: "completed";
+      data: InboxItem;
+      operation_id?: string;
+      http_status: number;
+    }
+  | {
+      state: "pending";
+      operation_id?: string;
+      code: string;
+      message: string;
+      http_status: number;
+    };
+
+const X_INBOX_PENDING_REPLY_CODES = new Set([
+  "X_REMOTE_ACCEPTED_RECONCILING",
+  "X_WRITE_OUTCOME_PENDING",
+  "X_USAGE_REVERSAL_PENDING",
+  "X_WRITE_NEEDS_RECONCILIATION",
+]);
+
 export async function replyToInboxItem(
   token: string,
   id: string,
   text: string,
   options?: { idempotencyKey?: string },
-): Promise<ApiResponse<InboxItem>> {
-  return request(`/v1/inbox/${id}/reply`, token, {
+): Promise<InboxReplyAttempt> {
+  const res = await fetch(`${API_URL}/v1/inbox/${id}/reply`, {
     method: "POST",
     body: JSON.stringify({ text }),
-    headers: options?.idempotencyKey
-      ? { "Idempotency-Key": options.idempotencyKey }
-      : undefined,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options?.idempotencyKey
+        ? { "Idempotency-Key": options.idempotencyKey }
+        : {}),
+    },
   });
+  const body = await res.json().catch(() => ({})) as Partial<ApiResponse<InboxItem>> & Partial<ApiError>;
+  const operationId = res.headers.get("X-UniPost-Operation-Id") || undefined;
+  const code = body.error?.code || "";
+
+  if ((!res.ok || res.status === 202) && X_INBOX_PENDING_REPLY_CODES.has(code)) {
+    return {
+      state: "pending",
+      operation_id: operationId,
+      code,
+      message: body.error?.message || "UniPost is reconciling the X reply.",
+      http_status: res.status,
+    };
+  }
+  if (!res.ok) {
+    throw createApiFetchError(res.status, body);
+  }
+  if (!body.data) {
+    throw createApiFetchError(res.status, body);
+  }
+  return {
+    state: "completed",
+    data: body.data,
+    operation_id: operationId,
+    http_status: res.status,
+  };
 }
 
 export interface XInboxBackfillRequest {
