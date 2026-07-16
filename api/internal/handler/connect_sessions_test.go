@@ -601,6 +601,89 @@ func TestConnectCallbackReusesDisconnectedManagedAccountForExternalUser(t *testi
 	}
 }
 
+func TestConnectCallback_InstagramSubscribesBeforeCompleting(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "instagram",
+		allowQuickstart:        true,
+		activeAccountLookupErr: pgx.ErrNoRows,
+	}
+	subscriber := &fakeInstagramWebhookSubscriber{}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
+		"https://api.example.com",
+		nil,
+	)
+	h.instagramWebhookSubscriber = subscriber
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "instagram")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if subscriber.calls != 1 {
+		t.Fatalf("subscriber calls = %d, want 1", subscriber.calls)
+	}
+	if subscriber.accountID != "platform-account-new" {
+		t.Fatalf("subscriber account id = %q", subscriber.accountID)
+	}
+	if subscriber.accessToken != "access-token" {
+		t.Fatalf("subscriber access token = %q", subscriber.accessToken)
+	}
+	if fdb.completedAcctID != "sa_upserted_1" {
+		t.Fatalf("completed social account = %q", fdb.completedAcctID)
+	}
+}
+
+func TestConnectCallback_InstagramSubscriptionFailureRequiresReconnect(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "instagram",
+		allowQuickstart:        true,
+		activeAccountLookupErr: pgx.ErrNoRows,
+	}
+	subscriber := &fakeInstagramWebhookSubscriber{err: fmt.Errorf("meta subscription denied")}
+	h := NewConnectCallbackHandler(
+		db.New(fdb),
+		encryptor,
+		events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
+		"https://api.example.com",
+		nil,
+	)
+	h.instagramWebhookSubscriber = subscriber
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "instagram")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.completedAcctID != "" {
+		t.Fatalf("completed social account = %q, want empty", fdb.completedAcctID)
+	}
+	if fdb.reconnectRequiredCalls != 1 {
+		t.Fatalf("reconnect required calls = %d, want 1", fdb.reconnectRequiredCalls)
+	}
+	if !strings.Contains(rec.Body.String(), "webhook_subscription_failed") {
+		t.Fatalf("body = %q, want webhook subscription failure", rec.Body.String())
+	}
+}
+
 func TestConnectCallback_FreePlanRejectsNewManagedUserAfterCap(t *testing.T) {
 	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
 	if err != nil {
@@ -696,6 +779,7 @@ type connectSessionTestDB struct {
 	createManagedCalls        int
 	upsertManagedCalls        int
 	createConnectSessionCalls int
+	reconnectRequiredCalls    int
 
 	managedUserCount                         int32
 	existingExternalUserAccountCount         int32
@@ -703,7 +787,10 @@ type connectSessionTestDB struct {
 	existingExternalUserPlatformAccountCount int32
 }
 
-func (f *connectSessionTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (f *connectSessionTestDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: MarkSocialAccountReconnectRequired") {
+		f.reconnectRequiredCalls++
+	}
 	return pgconn.CommandTag{}, nil
 }
 
@@ -954,6 +1041,20 @@ func pgTextString(args []interface{}, index int) string {
 
 type fakeOAuthConnector struct {
 	platform string
+}
+
+type fakeInstagramWebhookSubscriber struct {
+	calls       int
+	accountID   string
+	accessToken string
+	err         error
+}
+
+func (f *fakeInstagramWebhookSubscriber) Subscribe(_ context.Context, accountID, accessToken string) error {
+	f.calls++
+	f.accountID = accountID
+	f.accessToken = accessToken
+	return f.err
 }
 
 func (f fakeOAuthConnector) Platform() string {
