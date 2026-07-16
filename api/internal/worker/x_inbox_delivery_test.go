@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -30,18 +31,22 @@ func (f fakeXInboxCipher) Decrypt(value string) (string, error) {
 type fakeXInboxDeliveryAPI struct {
 	mu sync.Mutex
 
-	ruleID           string
-	subscriptionID   string
-	webhookID        string
-	ruleErr          error
-	subscriptionErr  error
-	deleteRuleErrors map[string]error
+	ruleID            string
+	subscriptionID    string
+	webhookID         string
+	ruleErr           error
+	subscriptionErr   error
+	deleteRuleErrors  map[string]error
+	deleteRuleStarted chan string
+	deleteRuleRelease chan struct{}
 
 	ruleTokens         []string
 	subscriptionTokens []string
 	deletedRules       []string
+	deletedRuleTokens  []string
 	deletedSubs        []string
 	deletedSubTokens   []string
+	operations         []string
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
@@ -51,16 +56,28 @@ func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.ruleTokens = append(f.ruleTokens, token)
+	f.operations = append(f.operations, "ensure-rule:"+accountID)
 	if f.ruleErr != nil {
 		return xinbox.StreamRule{}, f.ruleErr
 	}
 	return xinbox.StreamRule{ID: f.ruleID, Tag: xinbox.FilteredStreamRuleTag(accountID), Value: xinbox.FilteredStreamRuleValue(handle)}, nil
 }
 
-func (f *fakeXInboxDeliveryAPI) DeleteFilteredStreamRule(_ context.Context, _ string, ruleID string) error {
+func (f *fakeXInboxDeliveryAPI) DeleteFilteredStreamRule(_ context.Context, token string, ruleID string) error {
+	if f.deleteRuleStarted != nil {
+		select {
+		case f.deleteRuleStarted <- ruleID:
+		default:
+		}
+	}
+	if f.deleteRuleRelease != nil {
+		<-f.deleteRuleRelease
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedRules = append(f.deletedRules, ruleID)
+	f.deletedRuleTokens = append(f.deletedRuleTokens, token)
+	f.operations = append(f.operations, "delete-rule:"+ruleID)
 	if err := f.deleteRuleErrors[ruleID]; err != nil {
 		return err
 	}
@@ -108,6 +125,7 @@ type fakeXInboxDeliveryStore struct {
 	listCalls   int
 	listStarted chan struct{}
 	listRelease chan struct{}
+	claimLimits []int
 }
 
 func (f *fakeXInboxDeliveryStore) ListAccounts(context.Context) ([]XInboxDeliveryAccount, error) {
@@ -152,6 +170,7 @@ func (f *fakeXInboxDeliveryStore) ClaimCleanupIntents(
 ) ([]XInboxCleanupIntent, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.claimLimits = append(f.claimLimits, limit)
 	var claimed []XInboxCleanupIntent
 	for i := range f.cleanups {
 		if len(claimed) >= limit ||
@@ -165,6 +184,95 @@ func (f *fakeXInboxDeliveryStore) ClaimCleanupIntents(
 		claimed = append(claimed, f.cleanups[i])
 	}
 	return claimed, nil
+}
+
+func TestXInboxDeliveryCancelsRemovedStreamBeforeBudgetedCleanup(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	leader := &sharedTestLeader{}
+	runner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 2),
+		stops:  make(chan string, 2),
+	}
+	account := activeManagedXInboxAccount()
+	account.FilteredStreamRuleID = "active-rule"
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{
+		deleteRuleStarted: make(chan string, 1),
+		deleteRuleRelease: make(chan struct{}),
+	}
+	first := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store:            store,
+		API:              api,
+		Cipher:           fakeXInboxCipher{},
+		Leader:           leader,
+		Stream:           runner,
+		ManagedAppBearer: "managed-token",
+		EventHandler:     func(context.Context, string, xinbox.StreamEvent) error { return nil },
+		CleanupOwner:     "worker-one",
+		Now:              func() time.Time { return now },
+	})
+	second := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store:            store,
+		API:              &fakeXInboxDeliveryAPI{},
+		Cipher:           fakeXInboxCipher{},
+		Leader:           leader,
+		ManagedAppBearer: "managed-token",
+		CleanupOwner:     "worker-two",
+		Now:              func() time.Time { return now },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	first.reconcileAndStartStreams(ctx)
+	<-runner.starts
+	store.mu.Lock()
+	store.accounts = nil
+	for i := 0; i < 100; i++ {
+		store.cleanups = append(store.cleanups, XInboxCleanupIntent{
+			ID:                   fmt.Sprintf("cleanup-%03d", i),
+			SocialAccountID:      fmt.Sprintf("deleted-%03d", i),
+			AppMode:              xinbox.AppModeUniPostManaged,
+			FilteredStreamRuleID: fmt.Sprintf("cleanup-rule-%03d", i),
+			NextAttemptAt:        now,
+		})
+	}
+	store.mu.Unlock()
+
+	firstDone := make(chan struct{})
+	go func() {
+		first.reconcileAndStartStreams(ctx)
+		close(firstDone)
+	}()
+
+	select {
+	case stopped := <-runner.stops:
+		if stopped != "unipost_managed_app" {
+			t.Fatalf("stopped = %q", stopped)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("removed stream cancellation was delayed by cleanup backlog")
+	}
+	<-api.deleteRuleStarted
+
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- second.ReconcileOnce(ctx) }()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("other replica reconciliation was blocked by cleanup processing")
+	}
+
+	store.mu.Lock()
+	if len(store.claimLimits) == 0 || store.claimLimits[0] > 10 {
+		t.Fatalf("cleanup claim limits = %v, want first batch <= 10", store.claimLimits)
+	}
+	store.mu.Unlock()
+	close(api.deleteRuleRelease)
+	<-firstDone
 }
 
 func (f *fakeXInboxDeliveryStore) ReleaseCleanupIntent(
@@ -317,6 +425,54 @@ func TestXInboxDeliveryCleanupIntentUsesExactStoredIDsAndIsIdempotent(t *testing
 	}
 	if len(store.cleanups) != 0 {
 		t.Fatalf("cleanup intents = %+v, want empty", store.cleanups)
+	}
+}
+
+func TestXInboxCredentialReplacementReconcilesNewResourcesBeforeCleaningOldApp(t *testing.T) {
+	account := activeManagedXInboxAccount()
+	account.AppMode = xinbox.AppModeWorkspace
+	account.AppBearerTokenEncrypted = "new-encrypted-app-token"
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{
+		accounts: []XInboxDeliveryAccount{account},
+		cleanups: []XInboxCleanupIntent{{
+			ID:                      "replacement-cleanup",
+			SocialAccountID:         account.SocialAccountID,
+			AppMode:                 xinbox.AppModeWorkspace,
+			AppBearerTokenEncrypted: "old-encrypted-app-token",
+			FilteredStreamRuleID:    "old-exact-rule",
+		}},
+	}
+	api := &fakeXInboxDeliveryAPI{ruleID: "new-rule"}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store: store,
+		API:   api,
+		Cipher: fakeXInboxCipher{values: map[string]string{
+			"new-encrypted-app-token": "new-workspace-app-token",
+			"old-encrypted-app-token": "old-workspace-app-token",
+		}},
+	})
+
+	if err := worker.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.states) == 0 || store.states[len(store.states)-1].FilteredStreamRuleID != "new-rule" {
+		t.Fatalf("states = %+v, want a new resource persisted", store.states)
+	}
+	if want := []string{
+		"ensure-rule:" + account.SocialAccountID,
+		"delete-rule:old-exact-rule",
+	}; !reflect.DeepEqual(api.operations, want) {
+		t.Fatalf("operations = %v, want new resource before old cleanup %v", api.operations, want)
+	}
+	if want := []string{"new-workspace-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
+		t.Fatalf("new resource tokens = %v, want %v", api.ruleTokens, want)
+	}
+	if want := []string{"old-workspace-app-token"}; !reflect.DeepEqual(api.deletedRuleTokens, want) {
+		t.Fatalf("old cleanup tokens = %v, want %v", api.deletedRuleTokens, want)
+	}
+	if len(store.cleanups) != 0 {
+		t.Fatalf("cleanup intents = %+v, want completed", store.cleanups)
 	}
 }
 

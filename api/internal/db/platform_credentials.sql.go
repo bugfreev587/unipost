@@ -22,11 +22,13 @@ SET client_id = EXCLUDED.client_id,
     client_secret = EXCLUDED.client_secret,
     app_bearer_token = CASE
       WHEN $7::BOOLEAN THEN EXCLUDED.app_bearer_token
-      ELSE platform_credentials.app_bearer_token
+      WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.app_bearer_token
+      ELSE NULL
     END,
     consumer_secret = CASE
       WHEN $8::BOOLEAN THEN EXCLUDED.consumer_secret
-      ELSE platform_credentials.consumer_secret
+      WHEN platform_credentials.client_id = EXCLUDED.client_id THEN platform_credentials.consumer_secret
+      ELSE NULL
     END
 RETURNING id, platform, client_id, client_secret, created_at, workspace_id,
   app_bearer_token, consumer_secret

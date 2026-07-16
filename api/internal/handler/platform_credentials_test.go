@@ -147,7 +147,7 @@ func TestPlatformCredentialsTwitterPreservesOptionalSecretsWhenOmitted(t *testin
 	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
 	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
 		"platform": "twitter",
-		"client_id": "updated-client",
+		"client_id": "existing-client",
 		"client_secret": "updated-client-secret"
 	}`))
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
@@ -169,6 +169,42 @@ func TestPlatformCredentialsTwitterPreservesOptionalSecretsWhenOmitted(t *testin
 	}
 	if store.appBearerTokenSupplied || store.consumerSecretSupplied {
 		t.Fatalf("supplied flags = bearer:%v consumer:%v, want both false", store.appBearerTokenSupplied, store.consumerSecretSupplied)
+	}
+}
+
+func TestPlatformCredentialsTwitterDoesNotCarryOptionalSecretsAcrossAppIdentity(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	existingBearer, _ := encryptor.Encrypt("existing-bearer")
+	existingConsumer, _ := encryptor.Encrypt("existing-consumer")
+	store := &platformCredentialTestDB{
+		planID:                 "growth",
+		existingPlatform:       "twitter",
+		existingAppBearerToken: pgtype.Text{String: existingBearer, Valid: true},
+		existingConsumerSecret: pgtype.Text{String: existingConsumer, Valid: true},
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "twitter",
+		"client_id": "replacement-client",
+		"client_secret": "replacement-client-secret"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.appBearerToken.Valid || store.consumerSecret.Valid {
+		t.Fatalf(
+			"replacement app inherited old optional secrets: bearer=%v consumer=%v",
+			store.appBearerToken,
+			store.consumerSecret,
+		)
 	}
 }
 
@@ -231,6 +267,33 @@ func TestPlatformCredentialsDeleteReportsTransactionalCleanupFailure(t *testing.
 	}
 }
 
+func TestPlatformCredentialsUpdateReportsTransactionalCleanupFailure(t *testing.T) {
+	store := &platformCredentialTestDB{
+		planID:    "growth",
+		createErr: errors.New("credential replacement cleanup trigger failed"),
+	}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "twitter",
+		"client_id": "replacement-client",
+		"client_secret": "replacement-secret",
+		"app_bearer_token": "replacement-bearer",
+		"consumer_secret": "replacement-consumer"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+}
+
 type platformCredentialTestDB struct {
 	planID                 string
 	customPlatformSlot     string
@@ -243,6 +306,7 @@ type platformCredentialTestDB struct {
 	consumerSecret         pgtype.Text
 	appBearerTokenSupplied bool
 	consumerSecretSupplied bool
+	createErr              error
 	deleteErr              error
 }
 
@@ -332,6 +396,9 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 		}
 	case strings.Contains(query, "-- name: CreatePlatformCredential"):
 		f.createCalls++
+		if f.createErr != nil {
+			return scanRow{err: f.createErr}
+		}
 		platform, _ := args[1].(string)
 		clientID, _ := args[2].(string)
 		clientSecret, _ := args[3].(string)
@@ -348,10 +415,18 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 			f.consumerSecretSupplied, _ = args[7].(bool)
 		}
 		if !f.appBearerTokenSupplied {
-			f.appBearerToken = f.existingAppBearerToken
+			if clientID == "existing-client" {
+				f.appBearerToken = f.existingAppBearerToken
+			} else {
+				f.appBearerToken = pgtype.Text{}
+			}
 		}
 		if !f.consumerSecretSupplied {
-			f.consumerSecret = f.existingConsumerSecret
+			if clientID == "existing-client" {
+				f.consumerSecret = f.existingConsumerSecret
+			} else {
+				f.consumerSecret = pgtype.Text{}
+			}
 		}
 		return platformCredentialScanRow{
 			platform:       platform,

@@ -29,12 +29,13 @@ type fakeXInboxLockSession struct {
 	held       map[string]bool
 	failUnlock bool
 	closed     bool
+	queryBlock <-chan struct{}
 	active     atomic.Int32
 	maxActive  atomic.Int32
 }
 
 func (s *fakeXInboxLockSession) QueryRow(
-	_ context.Context,
+	ctx context.Context,
 	query string,
 	args ...any,
 ) xInboxLockRow {
@@ -46,7 +47,15 @@ func (s *fakeXInboxLockSession) QueryRow(
 		}
 	}
 	defer s.active.Add(-1)
-	time.Sleep(time.Millisecond)
+	if s.queryBlock != nil {
+		select {
+		case <-s.queryBlock:
+		case <-ctx.Done():
+			return fakeXInboxLockRow{err: ctx.Err()}
+		}
+	} else {
+		time.Sleep(time.Millisecond)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -179,6 +188,111 @@ func TestPostgresStreamLockManagerReconnectsAfterInvalidSession(t *testing.T) {
 		t.Fatalf("session factory calls = %d, want reconnect", factoryCalls.Load())
 	}
 	if err := second.Release(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresStreamLockManagerBoundsBlackholedConnect(t *testing.T) {
+	manager := newPostgresStreamLockManagerWithTimeouts(
+		func(ctx context.Context) (xInboxLockSession, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+		xInboxLockTimeouts{
+			gate:    20 * time.Millisecond,
+			connect: 20 * time.Millisecond,
+			query:   20 * time.Millisecond,
+			close:   20 * time.Millisecond,
+		},
+	)
+
+	startedAt := time.Now()
+	_, acquired, err := manager.TryAcquire(context.Background(), "stream:blackholed-connect", func() {})
+	if err == nil || acquired {
+		t.Fatalf("acquire: acquired=%v err=%v, want bounded connect failure", acquired, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("blackholed connect returned after %s, want <= 100ms", elapsed)
+	}
+}
+
+func TestPostgresStreamLockManagerQueryTimeoutInvalidatesSessionAndCancelsStreams(t *testing.T) {
+	session := &fakeXInboxLockSession{held: make(map[string]bool)}
+	manager := newPostgresStreamLockManagerWithTimeouts(
+		func(context.Context) (xInboxLockSession, error) { return session, nil },
+		xInboxLockTimeouts{
+			gate:    20 * time.Millisecond,
+			connect: 20 * time.Millisecond,
+			query:   20 * time.Millisecond,
+			close:   20 * time.Millisecond,
+		},
+	)
+	var cancelled atomic.Int32
+	_, acquired, err := manager.TryAcquire(context.Background(), "stream:owned", func() {
+		cancelled.Add(1)
+	})
+	if err != nil || !acquired {
+		t.Fatalf("owned acquire: acquired=%v err=%v", acquired, err)
+	}
+	block := make(chan struct{})
+	session.mu.Lock()
+	session.queryBlock = block
+	session.mu.Unlock()
+
+	startedAt := time.Now()
+	_, acquired, err = manager.TryAcquire(context.Background(), "stream:blackholed-query", func() {})
+	if err == nil || acquired {
+		t.Fatalf("blackholed query: acquired=%v err=%v, want timeout", acquired, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("blackholed query returned after %s, want <= 100ms", elapsed)
+	}
+	if cancelled.Load() != 1 {
+		t.Fatalf("cancelled streams = %d, want all owned streams cancelled", cancelled.Load())
+	}
+	session.mu.Lock()
+	closed := session.closed
+	session.mu.Unlock()
+	if !closed {
+		t.Fatal("timed-out dedicated session was not closed")
+	}
+}
+
+func TestPostgresStreamLockManagerBoundsSerializedOperationWait(t *testing.T) {
+	block := make(chan struct{})
+	session := &fakeXInboxLockSession{
+		held:       make(map[string]bool),
+		queryBlock: block,
+	}
+	manager := newPostgresStreamLockManagerWithTimeouts(
+		func(context.Context) (xInboxLockSession, error) { return session, nil },
+		xInboxLockTimeouts{
+			gate:    20 * time.Millisecond,
+			connect: 20 * time.Millisecond,
+			query:   250 * time.Millisecond,
+			close:   20 * time.Millisecond,
+		},
+	)
+	firstDone := make(chan error, 1)
+	go func() {
+		_, _, err := manager.TryAcquire(context.Background(), "stream:first", func() {})
+		firstDone <- err
+	}()
+	deadline := time.Now().Add(100 * time.Millisecond)
+	for session.active.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	startedAt := time.Now()
+	_, acquired, err := manager.TryAcquire(context.Background(), "stream:second", func() {})
+	if err == nil || acquired {
+		t.Fatalf("second acquire: acquired=%v err=%v, want bounded serialized wait", acquired, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed > 100*time.Millisecond {
+		t.Fatalf("serialized wait returned after %s, want <= 100ms", elapsed)
+	}
+	close(block)
+	if err := <-firstDone; err != nil {
 		t.Fatal(err)
 	}
 }

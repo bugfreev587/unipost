@@ -53,6 +53,23 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	if !hasCleanupTable {
 		applyMigrationUp(t, ctx, tx, "migrations/110_x_inbox_delivery_cleanup_intents.sql")
 	}
+	var hasCredentialUpdateTrigger bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM pg_trigger
+			WHERE tgrelid = 'platform_credentials'::regclass
+			  AND tgname = 'platform_credentials_x_inbox_delivery_replacement_cleanup'
+			  AND NOT tgisinternal
+			  AND (tgtype & 2) <> 0
+			  AND (tgtype & 16) <> 0
+		)
+	`).Scan(&hasCredentialUpdateTrigger); err != nil {
+		t.Fatal(err)
+	}
+	if !hasCredentialUpdateTrigger {
+		applyMigrationUp(t, ctx, tx, "migrations/111_x_inbox_credential_replacement_cleanup.sql")
+	}
 
 	var hasWorkspaceTrigger bool
 	if err := tx.QueryRowContext(ctx, `
@@ -252,6 +269,202 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 			localSubscription,
 			deliveryStatus,
 			lastError.String,
+		)
+	}
+
+	const (
+		replacementWorkspaceID = "x-inbox-replacement-test-workspace"
+		replacementProfileID   = "x-inbox-replacement-test-profile"
+		replacementAccountID   = "x-inbox-replacement-test-account"
+	)
+	replacementStatements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workspaces (id, user_id, name) VALUES ($1, $2, 'X Replacement Test')`, []any{replacementWorkspaceID, userID}},
+		{`INSERT INTO profiles (id, workspace_id, name) VALUES ($1, $2, 'X Replacement Test')`, []any{replacementProfileID, replacementWorkspaceID}},
+		{`
+			INSERT INTO platform_credentials (
+				id, workspace_id, platform, client_id, client_secret,
+				app_bearer_token, consumer_secret
+			) VALUES (
+				'x-inbox-replacement-test-credential', $1, 'twitter',
+				'old-client', 'old-client-secret',
+				'old-encrypted-bearer', 'old-encrypted-consumer'
+			)
+		`, []any{replacementWorkspaceID}},
+		{`
+			INSERT INTO social_accounts (
+				id, profile_id, platform, access_token, external_account_id, status,
+				connection_type, x_app_mode
+			) VALUES (
+				$1, $2, 'twitter', 'encrypted-user-token', 'x-user-replacement', 'active',
+				'managed', 'workspace_x_app'
+			)
+		`, []any{replacementAccountID, replacementProfileID}},
+		{`
+			INSERT INTO x_inbox_delivery_resources (
+				social_account_id, filtered_stream_rule_id, activity_dm_subscription_id,
+				delivery_status
+			) VALUES ($1, 'old-exact-rule', 'old-exact-subscription', 'active')
+		`, []any{replacementAccountID}},
+	}
+	for _, statement := range replacementStatements {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("seed credential replacement topology: %v", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE platform_credentials
+		SET client_id = 'new-client',
+		    client_secret = 'new-client-secret',
+		    app_bearer_token = 'new-encrypted-bearer',
+		    consumer_secret = 'new-encrypted-consumer'
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, replacementWorkspaceID); err != nil {
+		t.Fatalf("replace workspace X credential: %v", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT app_bearer_token, filtered_stream_rule_id, activity_dm_subscription_id
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+	`, replacementAccountID).Scan(&appBearer, &ruleID, &subscriptionID); err != nil {
+		t.Fatalf("query replacement cleanup intent: %v", err)
+	}
+	if appBearer != "old-encrypted-bearer" ||
+		ruleID != "old-exact-rule" ||
+		subscriptionID != "old-exact-subscription" {
+		t.Fatalf(
+			"replacement cleanup intent = bearer %q rule %q subscription %q",
+			appBearer,
+			ruleID,
+			subscriptionID,
+		)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error
+		FROM x_inbox_delivery_resources
+		WHERE social_account_id = $1
+	`, replacementAccountID).Scan(
+		&localRule,
+		&localSubscription,
+		&deliveryStatus,
+		&lastError,
+	); err != nil {
+		t.Fatalf("query replacement-cleared delivery state: %v", err)
+	}
+	if localRule.Valid || localSubscription.Valid ||
+		deliveryStatus != "error" ||
+		!lastError.Valid ||
+		!strings.Contains(lastError.String, "identity changed") {
+		t.Fatalf(
+			"replacement-cleared state = rule %v subscription %v status %q error %q",
+			localRule,
+			localSubscription,
+			deliveryStatus,
+			lastError.String,
+		)
+	}
+	var (
+		clientID       string
+		storedBearer   string
+		storedConsumer string
+	)
+	if err := tx.QueryRowContext(ctx, `
+		SELECT client_id, app_bearer_token, consumer_secret
+		FROM platform_credentials
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, replacementWorkspaceID).Scan(&clientID, &storedBearer, &storedConsumer); err != nil {
+		t.Fatalf("query replaced credential: %v", err)
+	}
+	if clientID != "new-client" ||
+		storedBearer != "new-encrypted-bearer" ||
+		storedConsumer != "new-encrypted-consumer" {
+		t.Fatalf(
+			"stored replacement = client %q bearer %q consumer %q",
+			clientID,
+			storedBearer,
+			storedConsumer,
+		)
+	}
+
+	const (
+		rotationWorkspaceID = "x-inbox-rotation-test-workspace"
+		rotationProfileID   = "x-inbox-rotation-test-profile"
+		rotationAccountID   = "x-inbox-rotation-test-account"
+	)
+	rotationStatements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workspaces (id, user_id, name) VALUES ($1, $2, 'X Rotation Test')`, []any{rotationWorkspaceID, userID}},
+		{`INSERT INTO profiles (id, workspace_id, name) VALUES ($1, $2, 'X Rotation Test')`, []any{rotationProfileID, rotationWorkspaceID}},
+		{`
+			INSERT INTO platform_credentials (
+				id, workspace_id, platform, client_id, client_secret,
+				app_bearer_token, consumer_secret
+			) VALUES (
+				'x-inbox-rotation-test-credential', $1, 'twitter',
+				'same-client', 'old-client-secret',
+				'rotation-old-bearer', 'rotation-old-consumer'
+			)
+		`, []any{rotationWorkspaceID}},
+		{`
+			INSERT INTO social_accounts (
+				id, profile_id, platform, access_token, external_account_id, status,
+				connection_type, x_app_mode
+			) VALUES (
+				$1, $2, 'twitter', 'encrypted-user-token', 'x-user-rotation', 'active',
+				'managed', 'workspace_x_app'
+			)
+		`, []any{rotationAccountID, rotationProfileID}},
+		{`
+			INSERT INTO x_inbox_delivery_resources (
+				social_account_id, filtered_stream_rule_id, activity_dm_subscription_id,
+				delivery_status
+			) VALUES ($1, 'rotation-rule', 'rotation-subscription', 'active')
+		`, []any{rotationAccountID}},
+	}
+	for _, statement := range rotationStatements {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("seed same-app rotation topology: %v", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE platform_credentials
+		SET client_secret = 'rotated-client-secret',
+		    app_bearer_token = 'rotation-new-bearer',
+		    consumer_secret = 'rotation-new-consumer'
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, rotationWorkspaceID); err != nil {
+		t.Fatalf("rotate same workspace X app secrets: %v", err)
+	}
+	var rotationIntentCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+	`, rotationAccountID).Scan(&rotationIntentCount); err != nil {
+		t.Fatalf("count same-app rotation cleanup intents: %v", err)
+	}
+	if rotationIntentCount != 0 {
+		t.Fatalf("same-app rotation cleanup intents = %d, want none", rotationIntentCount)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT filtered_stream_rule_id, activity_dm_subscription_id, delivery_status
+		FROM x_inbox_delivery_resources
+		WHERE social_account_id = $1
+	`, rotationAccountID).Scan(&ruleID, &subscriptionID, &deliveryStatus); err != nil {
+		t.Fatalf("query same-app rotation delivery state: %v", err)
+	}
+	if ruleID != "rotation-rule" ||
+		subscriptionID != "rotation-subscription" ||
+		deliveryStatus != "active" {
+		t.Fatalf(
+			"same-app rotation state = rule %q subscription %q status %q",
+			ruleID,
+			subscriptionID,
+			deliveryStatus,
 		)
 	}
 }

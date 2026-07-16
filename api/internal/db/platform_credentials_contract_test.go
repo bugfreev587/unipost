@@ -16,6 +16,7 @@ func TestPlatformCredentialOptionalSecretsUseAtomicSuppliedFlags(t *testing.T) {
 		"app_bearer_token_supplied",
 		"consumer_secret_supplied",
 		"CASE",
+		"platform_credentials.client_id = EXCLUDED.client_id",
 		"platform_credentials.app_bearer_token",
 		"platform_credentials.consumer_secret",
 	} {

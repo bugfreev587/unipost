@@ -21,7 +21,12 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
-const xInboxReconcileInterval = time.Minute
+const (
+	xInboxReconcileInterval = time.Minute
+	xInboxCleanupBatchLimit = 10
+	xInboxCleanupBudget     = 30 * time.Second
+	xInboxCleanupLease      = 2 * time.Minute
+)
 
 type XInboxCipher interface {
 	Decrypt(string) (string, error)
@@ -221,30 +226,32 @@ func (w *XInboxDeliveryWorker) Start(ctx context.Context) {
 }
 
 func (w *XInboxDeliveryWorker) reconcileAndStartStreams(ctx context.Context) {
-	apps, complete, err := w.reconcileCycle(ctx)
-	if err != nil {
+	apps, complete, desiredErr := w.reconcileDesiredCycle(ctx)
+	if !complete {
+		apps = nil
+	} else {
+		if w.eventHandler == nil {
+			apps = nil
+		}
+		w.syncDesiredStreams(ctx, apps)
+	}
+	cleanupErr := w.processCleanupBudget(ctx)
+	if err := errors.Join(desiredErr, cleanupErr); err != nil {
 		slog.Warn("X inbox delivery reconciliation completed with errors", "error", err)
 	}
-	if !complete {
-		return
-	}
-	if w.eventHandler == nil {
-		apps = nil
-	}
-	w.syncDesiredStreams(ctx, apps)
 }
 
 func (w *XInboxDeliveryWorker) ReconcileOnce(ctx context.Context) error {
-	_, _, err := w.reconcileCycle(ctx)
-	return err
+	_, _, desiredErr := w.reconcileDesiredCycle(ctx)
+	return errors.Join(desiredErr, w.processCleanupBudget(ctx))
 }
 
 func (w *XInboxDeliveryWorker) reconcile(ctx context.Context) ([]XInboxAppStream, error) {
-	apps, _, err := w.reconcileCycle(ctx)
-	return apps, err
+	apps, _, desiredErr := w.reconcileDesiredCycle(ctx)
+	return apps, errors.Join(desiredErr, w.processCleanupBudget(ctx))
 }
 
-func (w *XInboxDeliveryWorker) reconcileCycle(
+func (w *XInboxDeliveryWorker) reconcileDesiredCycle(
 	ctx context.Context,
 ) (apps []XInboxAppStream, complete bool, resultErr error) {
 	if w.leader != nil {
@@ -264,35 +271,17 @@ func (w *XInboxDeliveryWorker) reconcileCycle(
 			}
 		}()
 	}
-	apps, complete, resultErr = w.reconcileUnlocked(ctx)
+	apps, complete, resultErr = w.reconcileDesiredUnlocked(ctx)
 	return
 }
 
-func (w *XInboxDeliveryWorker) reconcileUnlocked(
+func (w *XInboxDeliveryWorker) reconcileDesiredUnlocked(
 	ctx context.Context,
 ) ([]XInboxAppStream, bool, error) {
 	if w.store == nil || w.api == nil || w.cipher == nil {
 		return nil, false, errors.New("X inbox delivery worker is not fully configured")
 	}
 	var joined error
-	cleanupNow := w.now().UTC()
-	cleanups, err := w.store.ClaimCleanupIntents(
-		ctx,
-		w.cleanupOwner,
-		cleanupNow,
-		cleanupNow.Add(2*time.Minute),
-		100,
-	)
-	if err != nil {
-		joined = errors.Join(joined, fmt.Errorf("claim X inbox cleanup intents: %w", err))
-	} else {
-		for _, intent := range cleanups {
-			if err := w.reconcileCleanupIntent(ctx, intent); err != nil {
-				joined = errors.Join(joined, err)
-			}
-		}
-	}
-
 	accounts, err := w.store.ListAccounts(ctx)
 	if err != nil {
 		return nil, false, errors.Join(joined, fmt.Errorf("list X inbox delivery accounts: %w", err))
@@ -316,6 +305,45 @@ func (w *XInboxDeliveryWorker) reconcileUnlocked(
 		apps = append(apps, app)
 	}
 	return apps, desiredComplete, joined
+}
+
+func (w *XInboxDeliveryWorker) processCleanupBudget(ctx context.Context) error {
+	if w.store == nil || w.api == nil || w.cipher == nil {
+		return errors.New("X inbox cleanup worker is not fully configured")
+	}
+	cleanupCtx, cancel := context.WithTimeout(ctx, xInboxCleanupBudget)
+	defer cancel()
+	cleanupNow := w.now().UTC()
+	cleanups, err := w.store.ClaimCleanupIntents(
+		cleanupCtx,
+		w.cleanupOwner,
+		cleanupNow,
+		cleanupNow.Add(xInboxCleanupLease),
+		xInboxCleanupBatchLimit,
+	)
+	if err != nil {
+		return fmt.Errorf("claim X inbox cleanup intents: %w", err)
+	}
+	var joined error
+	for index, intent := range cleanups {
+		if cleanupCtx.Err() != nil {
+			for _, unprocessed := range cleanups[index:] {
+				joined = errors.Join(
+					joined,
+					w.releaseFailedCleanup(
+						context.Background(),
+						unprocessed,
+						fmt.Errorf("X inbox cleanup budget exhausted: %w", cleanupCtx.Err()),
+					),
+				)
+			}
+			break
+		}
+		if err := w.reconcileCleanupIntent(cleanupCtx, intent); err != nil {
+			joined = errors.Join(joined, err)
+		}
+	}
+	return joined
 }
 
 func (w *XInboxDeliveryWorker) reconcileAccount(
@@ -509,7 +537,13 @@ func (w *XInboxDeliveryWorker) releaseFailedCleanup(
 ) error {
 	intent.LastError = cause.Error()
 	nextAttemptAt := w.now().UTC().Add(cleanupRetryDelay(intent.Attempts))
-	if err := w.store.ReleaseCleanupIntent(ctx, intent, nextAttemptAt); err != nil {
+	releaseCtx := ctx
+	var cancel context.CancelFunc
+	if ctx.Err() != nil {
+		releaseCtx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+	}
+	if err := w.store.ReleaseCleanupIntent(releaseCtx, intent, nextAttemptAt); err != nil {
 		return errors.Join(cause, err)
 	}
 	return cause
