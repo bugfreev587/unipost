@@ -452,16 +452,20 @@ func main() {
 			case xcredits.InboundDecisionSuppressedDailyCap,
 				xcredits.InboundDecisionSuppressedMonthlyAllowance:
 				return xinbox.InboundAdmission{
-					Suppressed: true,
-					Duplicate:  admission.Duplicate,
+					Suppressed:  true,
+					Duplicate:   admission.Duplicate,
+					Decision:    admission.Decision,
+					PauseReason: admission.PauseReason,
 				}, xinbox.InboxItem{}, false, nil
 			}
 			if err != nil {
 				return xinbox.InboundAdmission{}, xinbox.InboxItem{}, false, err
 			}
 			return xinbox.InboundAdmission{
-				Accepted:  admission.Decision == xcredits.InboundDecisionAccepted,
-				Duplicate: admission.Duplicate,
+				Accepted:    admission.Decision == xcredits.InboundDecisionAccepted,
+				Duplicate:   admission.Duplicate,
+				Decision:    admission.Decision,
+				PauseReason: admission.PauseReason,
 			}, insertedItem, inserted, nil
 		},
 		Notify: func(ctx context.Context, workspaceID string, item xinbox.InboxItem) {
@@ -1153,7 +1157,16 @@ func main() {
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
 		// Plan-gated (migration 059): Free + API plans get 402.
-		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
+		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool).
+			SetXInboxServices(
+				xCreditsService,
+				xIngestionService,
+				xTokenRefresher,
+				[]byte(os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET")),
+			)
+		if value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("X_INBOX_BACKFILL_SAFE_CREDITS")), 10, 64); err == nil && value > 0 {
+			inboxHandler.SetXBackfillSafeCredits(value)
+		}
 		r.Route("/v1/inbox", func(r chi.Router) {
 			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)

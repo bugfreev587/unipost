@@ -11,6 +11,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimXInboxOutboundRequest = `-- name: ClaimXInboxOutboundRequest :one
+INSERT INTO x_inbox_outbound_requests (
+  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash
+)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (workspace_id, inbox_item_id, idempotency_key) DO NOTHING
+RETURNING id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
+  payload_hash, status, response_inbox_item_id, created_at, updated_at
+`
+
+type ClaimXInboxOutboundRequestParams struct {
+	WorkspaceID     string `json:"workspace_id"`
+	SocialAccountID string `json:"social_account_id"`
+	InboxItemID     string `json:"inbox_item_id"`
+	IdempotencyKey  string `json:"idempotency_key"`
+	PayloadHash     string `json:"payload_hash"`
+}
+
+func (q *Queries) ClaimXInboxOutboundRequest(ctx context.Context, arg ClaimXInboxOutboundRequestParams) (XInboxOutboundRequest, error) {
+	row := q.db.QueryRow(ctx, claimXInboxOutboundRequest,
+		arg.WorkspaceID,
+		arg.SocialAccountID,
+		arg.InboxItemID,
+		arg.IdempotencyKey,
+		arg.PayloadHash,
+	)
+	var i XInboxOutboundRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.InboxItemID,
+		&i.IdempotencyKey,
+		&i.PayloadHash,
+		&i.Status,
+		&i.ResponseInboxItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const cleanupStaleInboxItems = `-- name: CleanupStaleInboxItems :execrows
 DELETE FROM inbox_items
 WHERE social_account_id IN (
@@ -28,6 +70,25 @@ func (q *Queries) CleanupStaleInboxItems(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const completeXInboxOutboundRequest = `-- name: CompleteXInboxOutboundRequest :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'succeeded',
+    response_inbox_item_id = $1,
+    updated_at = NOW()
+WHERE id = $2
+  AND status = 'pending'
+`
+
+type CompleteXInboxOutboundRequestParams struct {
+	ResponseInboxItemID pgtype.Text `json:"response_inbox_item_id"`
+	ID                  string      `json:"id"`
+}
+
+func (q *Queries) CompleteXInboxOutboundRequest(ctx context.Context, arg CompleteXInboxOutboundRequestParams) error {
+	_, err := q.db.Exec(ctx, completeXInboxOutboundRequest, arg.ResponseInboxItemID, arg.ID)
+	return err
 }
 
 const countUnreadByWorkspace = `-- name: CountUnreadByWorkspace :one
@@ -53,6 +114,17 @@ func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string
 	var count int32
 	err := row.Scan(&count)
 	return count, err
+}
+
+const deletePendingXInboxOutboundRequest = `-- name: DeletePendingXInboxOutboundRequest :exec
+DELETE FROM x_inbox_outbound_requests
+WHERE id = $1
+  AND status = 'pending'
+`
+
+func (q *Queries) DeletePendingXInboxOutboundRequest(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, deletePendingXInboxOutboundRequest, id)
+	return err
 }
 
 const findAllActiveAccountsByPlatform = `-- name: FindAllActiveAccountsByPlatform :many
@@ -569,6 +641,92 @@ func (q *Queries) GetInboxMediaCache(ctx context.Context, arg GetInboxMediaCache
 		&i.MediaType,
 		&i.Permalink,
 		&i.FetchedAt,
+	)
+	return i, err
+}
+
+const getXInboxOutboundRequest = `-- name: GetXInboxOutboundRequest :one
+SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
+  payload_hash, status, response_inbox_item_id, created_at, updated_at
+FROM x_inbox_outbound_requests
+WHERE workspace_id = $1
+  AND inbox_item_id = $2
+  AND idempotency_key = $3
+`
+
+type GetXInboxOutboundRequestParams struct {
+	WorkspaceID    string `json:"workspace_id"`
+	InboxItemID    string `json:"inbox_item_id"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (q *Queries) GetXInboxOutboundRequest(ctx context.Context, arg GetXInboxOutboundRequestParams) (XInboxOutboundRequest, error) {
+	row := q.db.QueryRow(ctx, getXInboxOutboundRequest, arg.WorkspaceID, arg.InboxItemID, arg.IdempotencyKey)
+	var i XInboxOutboundRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.InboxItemID,
+		&i.IdempotencyKey,
+		&i.PayloadHash,
+		&i.Status,
+		&i.ResponseInboxItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getXInboxReplyByIdempotencyKey = `-- name: GetXInboxReplyByIdempotencyKey :one
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
+WHERE workspace_id = $1
+  AND social_account_id = $2
+  AND source = $3
+  AND is_own = TRUE
+  AND metadata->>'reply_to_inbox_item_id' = $4::TEXT
+  AND metadata->>'idempotency_key' = $5::TEXT
+ORDER BY created_at DESC
+LIMIT 1
+`
+
+type GetXInboxReplyByIdempotencyKeyParams struct {
+	WorkspaceID        string `json:"workspace_id"`
+	SocialAccountID    string `json:"social_account_id"`
+	Source             string `json:"source"`
+	ReplyToInboxItemID string `json:"reply_to_inbox_item_id"`
+	IdempotencyKey     string `json:"idempotency_key"`
+}
+
+func (q *Queries) GetXInboxReplyByIdempotencyKey(ctx context.Context, arg GetXInboxReplyByIdempotencyKeyParams) (InboxItem, error) {
+	row := q.db.QueryRow(ctx, getXInboxReplyByIdempotencyKey,
+		arg.WorkspaceID,
+		arg.SocialAccountID,
+		arg.Source,
+		arg.ReplyToInboxItemID,
+		arg.IdempotencyKey,
+	)
+	var i InboxItem
+	err := row.Scan(
+		&i.ID,
+		&i.SocialAccountID,
+		&i.WorkspaceID,
+		&i.Source,
+		&i.ExternalID,
+		&i.ParentExternalID,
+		&i.AuthorName,
+		&i.AuthorID,
+		&i.AuthorAvatarUrl,
+		&i.Body,
+		&i.IsRead,
+		&i.IsOwn,
+		&i.ReceivedAt,
+		&i.CreatedAt,
+		&i.Metadata,
+		&i.ThreadKey,
+		&i.ThreadStatus,
+		&i.AssignedTo,
+		&i.LinkedPostID,
 	)
 	return i, err
 }

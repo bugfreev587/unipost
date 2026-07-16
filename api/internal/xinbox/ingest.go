@@ -96,9 +96,17 @@ type InboundAdmissionRequest struct {
 }
 
 type InboundAdmission struct {
-	Accepted   bool
-	Suppressed bool
-	Duplicate  bool
+	Accepted    bool
+	Suppressed  bool
+	Duplicate   bool
+	Decision    string
+	PauseReason string
+}
+
+type IngestionResult struct {
+	Admission InboundAdmission
+	Item      InboxItem
+	Inserted  bool
 }
 
 type IngestionStore interface {
@@ -183,6 +191,7 @@ func (s *IngestionService) IngestStreamEvent(ctx context.Context, appClientID st
 			Metadata: map[string]any{
 				"conversation_id": event.Data.ConversationID,
 				"permalink":       xPostPermalink(event.Data.ID),
+				"reply_eligible":  true,
 			},
 		}
 		if err := s.admitAndInsert(ctx, account, item, "post.mention.received", "filtered_stream"); err != nil {
@@ -253,8 +262,40 @@ func (s *IngestionService) admitAndInsert(
 	operationKey string,
 	source string,
 ) error {
+	_, err := s.admitAndInsertResult(ctx, account, item, operationKey, source, item.ReceivedAt)
+	return err
+}
+
+func (s *IngestionService) IngestRecovery(
+	ctx context.Context,
+	account InboxAccount,
+	item InboxItem,
+	operationKey string,
+	source string,
+) (IngestionResult, error) {
+	if s == nil || s.store == nil {
+		return IngestionResult{}, errors.New("X inbox ingestion store is not configured")
+	}
+	if account.ID == "" || account.WorkspaceID == "" ||
+		item.SocialAccountID != "" && item.SocialAccountID != account.ID ||
+		item.WorkspaceID != "" && item.WorkspaceID != account.WorkspaceID {
+		return IngestionResult{}, errors.New("X recovery item does not match the account workspace")
+	}
+	item.SocialAccountID = account.ID
+	item.WorkspaceID = account.WorkspaceID
+	return s.admitAndInsertResult(ctx, account, item, operationKey, source, s.now().UTC())
+}
+
+func (s *IngestionService) admitAndInsertResult(
+	ctx context.Context,
+	account InboxAccount,
+	item InboxItem,
+	operationKey string,
+	source string,
+	admissionAt time.Time,
+) (IngestionResult, error) {
 	if item.ExternalID == "" {
-		return nil
+		return IngestionResult{}, nil
 	}
 	request := InboundAdmissionRequest{
 		WorkspaceID:          account.WorkspaceID,
@@ -264,38 +305,40 @@ func (s *IngestionService) admitAndInsert(
 		Source:               source,
 		UpstreamResourceType: item.Source,
 		UpstreamResourceID:   item.ExternalID,
-		Now:                  item.ReceivedAt,
+		Now:                  admissionAt,
 	}
 	if s.atomic != nil {
 		admission, insertedItem, inserted, err := s.atomic(ctx, request, item)
 		if err != nil {
-			return err
+			return IngestionResult{}, err
 		}
 		if (!admission.Accepted || admission.Suppressed) && inserted {
-			return errors.New("X atomic inbound processor inserted a suppressed event")
+			return IngestionResult{}, errors.New("X atomic inbound processor inserted a suppressed event")
 		}
 		if inserted && s.notify != nil {
 			s.notify(ctx, account.WorkspaceID, insertedItem)
 		}
-		return nil
+		return IngestionResult{Admission: admission, Item: insertedItem, Inserted: inserted}, nil
 	}
+	admission := InboundAdmission{Accepted: true}
 	if s.admit != nil {
-		admission, err := s.admit(ctx, request)
+		var err error
+		admission, err = s.admit(ctx, request)
 		if err != nil {
-			return err
+			return IngestionResult{}, err
 		}
 		if !admission.Accepted || admission.Suppressed {
-			return nil
+			return IngestionResult{Admission: admission}, nil
 		}
 	}
 	insertedItem, inserted, err := s.store.InsertInboxItem(ctx, item)
 	if err != nil {
-		return err
+		return IngestionResult{}, err
 	}
 	if inserted && s.notify != nil {
 		s.notify(ctx, account.WorkspaceID, insertedItem)
 	}
-	return nil
+	return IngestionResult{Admission: admission, Item: insertedItem, Inserted: inserted}, nil
 }
 
 func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {

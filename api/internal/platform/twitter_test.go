@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"strings"
@@ -144,6 +145,201 @@ func TestTwitterOAuthPKCEExchangeFallsBackToConfiguredScopesWhenOmitted(t *testi
 	}
 	if !reflect.DeepEqual(result.Scopes, config.Scopes) {
 		t.Fatalf("scopes = %#v, want configured fallback %#v", result.Scopes, config.Scopes)
+	}
+}
+
+func TestTwitterInboxFetchMentionsUsesOfficialUserMentionsEndpoint(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/2/users/user-1/mentions" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer user-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		want := url.Values{
+			"tweet.fields":     {"created_at,author_id,conversation_id,referenced_tweets"},
+			"expansions":       {"author_id"},
+			"user.fields":      {"id,name,username,profile_image_url"},
+			"max_results":      {"25"},
+			"pagination_token": {"next-page"},
+			"start_time":       {"2026-07-15T12:00:00Z"},
+		}
+		if !reflect.DeepEqual(r.URL.Query(), want) {
+			t.Fatalf("query = %#v, want %#v", r.URL.Query(), want)
+		}
+		_, _ = io.WriteString(w, `{
+			"data":[{
+				"id":"tweet-1",
+				"text":"@unipost hello",
+				"author_id":"author-1",
+				"created_at":"2026-07-16T10:00:00Z",
+				"conversation_id":"conversation-1",
+				"referenced_tweets":[{"type":"replied_to","id":"parent-1"}]
+			}],
+			"includes":{"users":[{
+				"id":"author-1",
+				"name":"Robin",
+				"username":"robin",
+				"profile_image_url":"https://example.test/robin.png"
+			}]},
+			"meta":{"next_token":"page-2"}
+		}`)
+	}))
+	defer server.Close()
+
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+	page, err := adapter.FetchInboxMentions(
+		context.Background(),
+		"user-token",
+		"user-1",
+		time.Date(2026, 7, 15, 12, 0, 0, 0, time.UTC),
+		"next-page",
+		25,
+	)
+	if err != nil {
+		t.Fatalf("FetchInboxMentions: %v", err)
+	}
+	if page.NextToken != "page-2" || len(page.Entries) != 1 {
+		t.Fatalf("page = %+v", page)
+	}
+	got := page.Entries[0]
+	if got.ExternalID != "tweet-1" || got.ParentExternalID != "parent-1" ||
+		got.ThreadKey != "conversation-1" || got.AuthorID != "author-1" ||
+		got.AuthorName != "Robin" || got.AuthorAvatarURL == "" || !got.ReplyEligible {
+		t.Fatalf("entry = %+v", got)
+	}
+}
+
+func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/2/dm_events" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer user-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		want := url.Values{
+			"dm_event.fields":  {"id,text,event_type,created_at,sender_id,participant_ids,dm_conversation_id"},
+			"expansions":       {"sender_id"},
+			"user.fields":      {"id,name,username,profile_image_url"},
+			"event_types":      {"MessageCreate"},
+			"max_results":      {"100"},
+			"pagination_token": {"next-page"},
+			"start_time":       {"2026-06-16T12:00:00Z"},
+		}
+		if !reflect.DeepEqual(r.URL.Query(), want) {
+			t.Fatalf("query = %#v, want %#v", r.URL.Query(), want)
+		}
+		_, _ = io.WriteString(w, `{
+			"data":[{
+				"id":"dm-1",
+				"event_type":"MessageCreate",
+				"text":"private",
+				"sender_id":"author-1",
+				"participant_ids":["user-1","author-1"],
+				"dm_conversation_id":"conversation-1",
+				"created_at":"2026-07-16T10:00:00Z"
+			}],
+			"includes":{"users":[{"id":"author-1","name":"Robin","username":"robin"}]},
+			"meta":{"next_token":"page-2"}
+		}`)
+	}))
+	defer server.Close()
+
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+	page, err := adapter.FetchInboxDMEvents(
+		context.Background(),
+		"user-token",
+		time.Date(2026, 6, 16, 12, 0, 0, 0, time.UTC),
+		"next-page",
+		100,
+	)
+	if err != nil {
+		t.Fatalf("FetchInboxDMEvents: %v", err)
+	}
+	if page.NextToken != "page-2" || len(page.Entries) != 1 {
+		t.Fatalf("page = %+v", page)
+	}
+	got := page.Entries[0]
+	if got.ExternalID != "dm-1" || got.ParentExternalID != "conversation-1" ||
+		got.ThreadKey != "conversation-1" || got.AuthorName != "Robin" {
+		t.Fatalf("entry = %+v", got)
+	}
+}
+
+func TestTwitterInboxReplyAndDMSendUseOfficialOAuth2UserEndpoints(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if got := r.Header.Get("Authorization"); got != "Bearer user-token" {
+			t.Fatalf("Authorization = %q", got)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		switch r.URL.Path {
+		case "/2/tweets":
+			reply, _ := body["reply"].(map[string]any)
+			if body["text"] != "public reply" || reply["in_reply_to_tweet_id"] != "tweet-1" {
+				t.Fatalf("tweet payload = %#v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"data":{"id":"tweet-2","text":"public reply"}}`)
+		case "/2/dm_conversations/conversation-1/messages":
+			if body["text"] != "conversation dm" {
+				t.Fatalf("conversation DM payload = %#v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"data":{"dm_event_id":"dm-2","dm_conversation_id":"conversation-1"}}`)
+		case "/2/dm_conversations/with/participant-1/messages":
+			if body["text"] != "participant dm" {
+				t.Fatalf("participant DM payload = %#v", body)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = io.WriteString(w, `{"data":{"dm_event_id":"dm-3","dm_conversation_id":"conversation-2"}}`)
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+	reply, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "public reply")
+	if err != nil || reply.ExternalID != "tweet-2" || reply.URL != "https://x.com/i/status/tweet-2" {
+		t.Fatalf("SendInboxReply = %+v, %v", reply, err)
+	}
+	conversationDM, err := adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "conversation dm")
+	if err != nil || conversationDM.ExternalID != "dm-2" || conversationDM.ConversationID != "conversation-1" {
+		t.Fatalf("SendInboxDMToConversation = %+v, %v", conversationDM, err)
+	}
+	participantDM, err := adapter.SendInboxDMToParticipant(context.Background(), "user-token", "participant-1", "participant dm")
+	if err != nil || participantDM.ExternalID != "dm-3" || participantDM.ConversationID != "conversation-2" {
+		t.Fatalf("SendInboxDMToParticipant = %+v, %v", participantDM, err)
+	}
+	if want := []string{
+		"/2/tweets",
+		"/2/dm_conversations/conversation-1/messages",
+		"/2/dm_conversations/with/participant-1/messages",
+	}; !reflect.DeepEqual(paths, want) {
+		t.Fatalf("paths = %v, want %v", paths, want)
+	}
+}
+
+func TestTwitterInboxWriteTransportErrorsPreserveOutcomeStage(t *testing.T) {
+	adapter := &TwitterAdapter{
+		apiBaseURL: "https://api.x.test",
+		client: &http.Client{Transport: twitterRoundTripFunc(func(*http.Request) (*http.Response, error) {
+			return nil, context.DeadlineExceeded
+		})},
+	}
+	_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+	if err == nil || !strings.HasPrefix(err.Error(), "create_tweet_reply timeout") {
+		t.Fatalf("reply err = %v", err)
+	}
+	_, err = adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "dm")
+	if err == nil || !strings.HasPrefix(err.Error(), "create_dm timeout") {
+		t.Fatalf("dm err = %v", err)
 	}
 }
 

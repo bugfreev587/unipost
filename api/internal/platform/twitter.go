@@ -13,6 +13,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,7 +24,8 @@ import (
 // TwitterAdapter implements PlatformAdapter and OAuthAdapter for X/Twitter.
 // Only works in Native mode — requires user's own API credentials.
 type TwitterAdapter struct {
-	client *http.Client
+	client     *http.Client
+	apiBaseURL string
 }
 
 const (
@@ -33,10 +36,382 @@ const (
 )
 
 func NewTwitterAdapter() *TwitterAdapter {
-	return &TwitterAdapter{client: debugrt.NewClient(30 * time.Second)}
+	return &TwitterAdapter{
+		client:     debugrt.NewClient(30 * time.Second),
+		apiBaseURL: "https://api.x.com",
+	}
 }
 
 func (a *TwitterAdapter) Platform() string { return "twitter" }
+
+type TwitterInboxEntry struct {
+	ExternalID       string
+	ParentExternalID string
+	ThreadKey        string
+	AuthorName       string
+	AuthorID         string
+	AuthorAvatarURL  string
+	Body             string
+	Timestamp        time.Time
+	Source           string
+	ReplyEligible    bool
+}
+
+type TwitterInboxPage struct {
+	Entries   []TwitterInboxEntry
+	NextToken string
+}
+
+type TwitterDMSendResult struct {
+	ExternalID     string
+	ConversationID string
+}
+
+func (a *TwitterAdapter) apiURL(path string) string {
+	base := strings.TrimRight(strings.TrimSpace(a.apiBaseURL), "/")
+	if base == "" {
+		base = "https://api.x.com"
+	}
+	return base + path
+}
+
+func (a *TwitterAdapter) FetchInboxMentions(
+	ctx context.Context,
+	accessToken string,
+	userID string,
+	startTime time.Time,
+	paginationToken string,
+	maxResults int,
+) (TwitterInboxPage, error) {
+	if strings.TrimSpace(userID) == "" {
+		return TwitterInboxPage{}, errors.New("X mentions lookup requires user id")
+	}
+	if maxResults < 5 {
+		maxResults = 5
+	}
+	if maxResults > 100 {
+		maxResults = 100
+	}
+	query := url.Values{
+		"tweet.fields": {"created_at,author_id,conversation_id,referenced_tweets"},
+		"expansions":   {"author_id"},
+		"user.fields":  {"id,name,username,profile_image_url"},
+		"max_results":  {strconv.Itoa(maxResults)},
+	}
+	if !startTime.IsZero() {
+		query.Set("start_time", startTime.UTC().Format(time.RFC3339))
+	}
+	if token := strings.TrimSpace(paginationToken); token != "" {
+		query.Set("pagination_token", token)
+	}
+	var response struct {
+		Data []struct {
+			ID               string `json:"id"`
+			Text             string `json:"text"`
+			AuthorID         string `json:"author_id"`
+			CreatedAt        string `json:"created_at"`
+			ConversationID   string `json:"conversation_id"`
+			ReferencedTweets []struct {
+				Type string `json:"type"`
+				ID   string `json:"id"`
+			} `json:"referenced_tweets"`
+		} `json:"data"`
+		Includes struct {
+			Users []struct {
+				ID              string `json:"id"`
+				Name            string `json:"name"`
+				Username        string `json:"username"`
+				ProfileImageURL string `json:"profile_image_url"`
+			} `json:"users"`
+		} `json:"includes"`
+		Meta struct {
+			NextToken string `json:"next_token"`
+		} `json:"meta"`
+	}
+	err := a.doTwitterInboxJSON(
+		ctx,
+		"x_inbox_read",
+		http.MethodGet,
+		a.apiURL("/2/users/"+url.PathEscape(userID)+"/mentions?"+query.Encode()),
+		accessToken,
+		nil,
+		&response,
+	)
+	if err != nil {
+		return TwitterInboxPage{}, err
+	}
+	users := make(map[string]struct {
+		name   string
+		avatar string
+	}, len(response.Includes.Users))
+	for _, user := range response.Includes.Users {
+		users[user.ID] = struct {
+			name   string
+			avatar string
+		}{name: firstNonEmpty(user.Name, user.Username), avatar: user.ProfileImageURL}
+	}
+	page := TwitterInboxPage{NextToken: response.Meta.NextToken}
+	for _, tweet := range response.Data {
+		parentID := ""
+		for _, reference := range tweet.ReferencedTweets {
+			if reference.Type == "replied_to" {
+				parentID = reference.ID
+				break
+			}
+		}
+		createdAt, err := time.Parse(time.RFC3339, tweet.CreatedAt)
+		if err != nil || tweet.ID == "" || tweet.AuthorID == "" || tweet.ConversationID == "" {
+			continue
+		}
+		author := users[tweet.AuthorID]
+		page.Entries = append(page.Entries, TwitterInboxEntry{
+			ExternalID:       tweet.ID,
+			ParentExternalID: parentID,
+			ThreadKey:        tweet.ConversationID,
+			AuthorName:       author.name,
+			AuthorID:         tweet.AuthorID,
+			AuthorAvatarURL:  author.avatar,
+			Body:             tweet.Text,
+			Timestamp:        createdAt,
+			Source:           "x_reply",
+			ReplyEligible:    true,
+		})
+	}
+	return page, nil
+}
+
+func (a *TwitterAdapter) FetchInboxDMEvents(
+	ctx context.Context,
+	accessToken string,
+	startTime time.Time,
+	paginationToken string,
+	maxResults int,
+) (TwitterInboxPage, error) {
+	if maxResults < 1 {
+		maxResults = 1
+	}
+	if maxResults > 100 {
+		maxResults = 100
+	}
+	query := url.Values{
+		"dm_event.fields": {"id,text,event_type,created_at,sender_id,participant_ids,dm_conversation_id"},
+		"expansions":      {"sender_id"},
+		"user.fields":     {"id,name,username,profile_image_url"},
+		"event_types":     {"MessageCreate"},
+		"max_results":     {strconv.Itoa(maxResults)},
+	}
+	if !startTime.IsZero() {
+		query.Set("start_time", startTime.UTC().Format(time.RFC3339))
+	}
+	if token := strings.TrimSpace(paginationToken); token != "" {
+		query.Set("pagination_token", token)
+	}
+	var response struct {
+		Data []struct {
+			ID             string   `json:"id"`
+			EventType      string   `json:"event_type"`
+			Text           string   `json:"text"`
+			SenderID       string   `json:"sender_id"`
+			ParticipantIDs []string `json:"participant_ids"`
+			ConversationID string   `json:"dm_conversation_id"`
+			CreatedAt      string   `json:"created_at"`
+		} `json:"data"`
+		Includes struct {
+			Users []struct {
+				ID              string `json:"id"`
+				Name            string `json:"name"`
+				Username        string `json:"username"`
+				ProfileImageURL string `json:"profile_image_url"`
+			} `json:"users"`
+		} `json:"includes"`
+		Meta struct {
+			NextToken string `json:"next_token"`
+		} `json:"meta"`
+	}
+	err := a.doTwitterInboxJSON(
+		ctx,
+		"x_inbox_read",
+		http.MethodGet,
+		a.apiURL("/2/dm_events?"+query.Encode()),
+		accessToken,
+		nil,
+		&response,
+	)
+	if err != nil {
+		return TwitterInboxPage{}, err
+	}
+	users := make(map[string]struct {
+		name   string
+		avatar string
+	}, len(response.Includes.Users))
+	for _, user := range response.Includes.Users {
+		users[user.ID] = struct {
+			name   string
+			avatar string
+		}{name: firstNonEmpty(user.Name, user.Username), avatar: user.ProfileImageURL}
+	}
+	page := TwitterInboxPage{NextToken: response.Meta.NextToken}
+	for _, event := range response.Data {
+		if event.EventType != "" && !strings.EqualFold(event.EventType, "MessageCreate") {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339, event.CreatedAt)
+		if err != nil || event.ID == "" || event.SenderID == "" {
+			continue
+		}
+		threadKey := strings.TrimSpace(event.ConversationID)
+		if threadKey == "" {
+			participants := append([]string(nil), event.ParticipantIDs...)
+			if len(participants) == 0 {
+				participants = append(participants, event.SenderID)
+			}
+			sort.Strings(participants)
+			threadKey = "x-dm:" + strings.Join(participants, ":")
+		}
+		author := users[event.SenderID]
+		page.Entries = append(page.Entries, TwitterInboxEntry{
+			ExternalID:       event.ID,
+			ParentExternalID: threadKey,
+			ThreadKey:        threadKey,
+			AuthorName:       author.name,
+			AuthorID:         event.SenderID,
+			AuthorAvatarURL:  author.avatar,
+			Body:             event.Text,
+			Timestamp:        createdAt,
+			Source:           "x_dm",
+		})
+	}
+	return page, nil
+}
+
+func (a *TwitterAdapter) SendInboxReply(
+	ctx context.Context,
+	accessToken string,
+	parentTweetID string,
+	text string,
+) (*PostResult, error) {
+	request := map[string]any{
+		"text":  text,
+		"reply": map[string]any{"in_reply_to_tweet_id": parentTweetID},
+	}
+	var response struct {
+		Data struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := a.doTwitterInboxJSON(ctx, "create_tweet_reply", http.MethodPost, a.apiURL("/2/tweets"), accessToken, request, &response); err != nil {
+		return nil, err
+	}
+	if response.Data.ID == "" {
+		return nil, errors.New("X reply response missing post id")
+	}
+	return &PostResult{
+		ExternalID: response.Data.ID,
+		URL:        "https://x.com/i/status/" + response.Data.ID,
+	}, nil
+}
+
+func (a *TwitterAdapter) SendInboxDMToConversation(
+	ctx context.Context,
+	accessToken string,
+	conversationID string,
+	text string,
+) (*TwitterDMSendResult, error) {
+	return a.sendInboxDM(
+		ctx,
+		accessToken,
+		"/2/dm_conversations/"+url.PathEscape(conversationID)+"/messages",
+		text,
+	)
+}
+
+func (a *TwitterAdapter) SendInboxDMToParticipant(
+	ctx context.Context,
+	accessToken string,
+	participantID string,
+	text string,
+) (*TwitterDMSendResult, error) {
+	return a.sendInboxDM(
+		ctx,
+		accessToken,
+		"/2/dm_conversations/with/"+url.PathEscape(participantID)+"/messages",
+		text,
+	)
+}
+
+func (a *TwitterAdapter) sendInboxDM(
+	ctx context.Context,
+	accessToken string,
+	path string,
+	text string,
+) (*TwitterDMSendResult, error) {
+	var response struct {
+		Data struct {
+			DMEventID      string `json:"dm_event_id"`
+			ConversationID string `json:"dm_conversation_id"`
+		} `json:"data"`
+	}
+	if err := a.doTwitterInboxJSON(
+		ctx,
+		"create_dm",
+		http.MethodPost,
+		a.apiURL(path),
+		accessToken,
+		map[string]string{"text": text},
+		&response,
+	); err != nil {
+		return nil, err
+	}
+	if response.Data.DMEventID == "" {
+		return nil, errors.New("X DM response missing event id")
+	}
+	return &TwitterDMSendResult{
+		ExternalID:     response.Data.DMEventID,
+		ConversationID: response.Data.ConversationID,
+	}, nil
+}
+
+func (a *TwitterAdapter) doTwitterInboxJSON(
+	ctx context.Context,
+	stage string,
+	method string,
+	endpoint string,
+	accessToken string,
+	requestBody any,
+	responseBody any,
+) error {
+	var body io.Reader
+	if requestBody != nil {
+		raw, err := json.Marshal(requestBody)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(raw)
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, twitterCreateTweetTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(requestCtx, method, endpoint, body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	if requestBody != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := a.client.Do(req)
+	if err != nil {
+		return wrapTwitterStageError(stage, twitterCreateTweetTimeout, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("X inbox API returned HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(responseBody); err != nil {
+		return fmt.Errorf("decode X inbox response: %w", err)
+	}
+	return nil
+}
 
 // DefaultOAuthConfig falls back to TWITTER_CLIENT_ID / TWITTER_CLIENT_SECRET
 // env vars (the same pair Sprint 3 Connect uses) so the dashboard quickstart

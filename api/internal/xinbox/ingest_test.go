@@ -89,6 +89,9 @@ func TestXIngestReplyUsesConversationIDAndNotifiesOnlyAfterInsert(t *testing.T) 
 		got.ParentExternalID != "tweet-1" || got.Body != "A public reply" {
 		t.Fatalf("inserted item = %#v", got)
 	}
+	if eligible, _ := got.Metadata["reply_eligible"].(bool); !eligible {
+		t.Fatalf("reply_eligible metadata = %#v", got.Metadata)
+	}
 	if len(notified) != 1 || notified[0].ExternalID != "tweet-2" {
 		t.Fatalf("notifications = %#v", notified)
 	}
@@ -246,6 +249,44 @@ func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
 	}
 	if atomicCalls != 1 || notified != 1 || len(store.inserted) != 0 {
 		t.Fatalf("atomicCalls=%d notified=%d split inserts=%d", atomicCalls, notified, len(store.inserted))
+	}
+}
+
+func TestXRecoveryReusesAtomicIngestionAndReturnsAdmissionResult(t *testing.T) {
+	admissionNow := time.Date(2026, 7, 16, 15, 0, 0, 0, time.UTC)
+	service := NewIngestionService(IngestionConfig{
+		Store: &fakeIngestStore{},
+		AtomicProcess: func(_ context.Context, req InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			if req.OperationKey != "post.read" || req.Source != "backfill" ||
+				req.UpstreamResourceID != item.ExternalID {
+				t.Fatalf("request = %+v item = %+v", req, item)
+			}
+			if !req.Now.Equal(admissionNow) {
+				t.Fatalf("admission time = %s, want paid-read time %s", req.Now, admissionNow)
+			}
+			item.ID = "inbox-1"
+			return InboundAdmission{Accepted: true}, item, true, nil
+		},
+		Now: func() time.Time { return admissionNow },
+	})
+	result, err := service.IngestRecovery(
+		context.Background(),
+		InboxAccount{
+			ID: "account-1", WorkspaceID: "workspace-1",
+			AppMode: AppModeUniPostManaged, PlanAllowsInbox: true,
+		},
+		InboxItem{
+			Source: "x_reply", ExternalID: "tweet-1",
+			ReceivedAt: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+		},
+		"post.read",
+		"backfill",
+	)
+	if err != nil {
+		t.Fatalf("IngestRecovery: %v", err)
+	}
+	if !result.Admission.Accepted || !result.Inserted || result.Item.ID != "inbox-1" {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

@@ -31,6 +31,47 @@ WHERE social_account_id = $1
   AND external_id = $2
 LIMIT 1;
 
+-- name: GetXInboxReplyByIdempotencyKey :one
+SELECT * FROM inbox_items
+WHERE workspace_id = @workspace_id
+  AND social_account_id = @social_account_id
+  AND source = @source
+  AND is_own = TRUE
+  AND metadata->>'reply_to_inbox_item_id' = @reply_to_inbox_item_id::TEXT
+  AND metadata->>'idempotency_key' = @idempotency_key::TEXT
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: ClaimXInboxOutboundRequest :one
+INSERT INTO x_inbox_outbound_requests (
+  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash
+)
+VALUES (@workspace_id, @social_account_id, @inbox_item_id, @idempotency_key, @payload_hash)
+ON CONFLICT (workspace_id, inbox_item_id, idempotency_key) DO NOTHING
+RETURNING id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
+  payload_hash, status, response_inbox_item_id, created_at, updated_at;
+
+-- name: GetXInboxOutboundRequest :one
+SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
+  payload_hash, status, response_inbox_item_id, created_at, updated_at
+FROM x_inbox_outbound_requests
+WHERE workspace_id = @workspace_id
+  AND inbox_item_id = @inbox_item_id
+  AND idempotency_key = @idempotency_key;
+
+-- name: CompleteXInboxOutboundRequest :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'succeeded',
+    response_inbox_item_id = @response_inbox_item_id,
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'pending';
+
+-- name: DeletePendingXInboxOutboundRequest :exec
+DELETE FROM x_inbox_outbound_requests
+WHERE id = @id
+  AND status = 'pending';
+
 -- name: MarkInboxItemRead :exec
 UPDATE inbox_items
 SET is_read = true

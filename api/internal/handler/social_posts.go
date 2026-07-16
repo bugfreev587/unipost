@@ -2153,7 +2153,10 @@ func xWriteOutcomeUnknown(err error) bool {
 		strings.HasPrefix(message, "create_tweet canceled") ||
 		strings.HasPrefix(message, "create_tweet_reply:") ||
 		strings.HasPrefix(message, "create_tweet_reply timeout") ||
-		strings.HasPrefix(message, "create_tweet_reply canceled")
+		strings.HasPrefix(message, "create_tweet_reply canceled") ||
+		strings.HasPrefix(message, "create_dm:") ||
+		strings.HasPrefix(message, "create_dm timeout") ||
+		strings.HasPrefix(message, "create_dm canceled")
 }
 
 func xUsageKeyForResult(resultID string) string {

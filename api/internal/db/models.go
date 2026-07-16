@@ -1111,6 +1111,19 @@ type XInboxDeliveryResource struct {
 	ActivityWebhookRouteKey  pgtype.Text        `json:"activity_webhook_route_key"`
 }
 
+type XInboxOutboundRequest struct {
+	ID                  string             `json:"id"`
+	WorkspaceID         string             `json:"workspace_id"`
+	SocialAccountID     string             `json:"social_account_id"`
+	InboxItemID         string             `json:"inbox_item_id"`
+	IdempotencyKey      string             `json:"idempotency_key"`
+	PayloadHash         string             `json:"payload_hash"`
+	Status              string             `json:"status"`
+	ResponseInboxItemID pgtype.Text        `json:"response_inbox_item_id"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+}
+
 type XUsageEvent struct {
 	ID              string             `json:"id"`
 	WorkspaceID     string             `json:"workspace_id"`

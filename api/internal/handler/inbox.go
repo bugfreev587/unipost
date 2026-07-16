@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	stderrors "errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -17,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -25,6 +28,8 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
+	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // mediaContextCacheTTL is how long a fetched media context is considered fresh.
@@ -38,9 +43,12 @@ const mediaContextCacheTTL = 1 * time.Hour
 const mediaContextFetchTimeout = 15 * time.Second
 
 const (
-	defaultInboxListLimit = int32(50)
-	maxInboxListLimit     = int32(500)
-	metaDMReplyWindow     = 24 * time.Hour
+	defaultInboxListLimit       = int32(50)
+	maxInboxListLimit           = int32(500)
+	metaDMReplyWindow           = 24 * time.Hour
+	defaultXBackfillSafeCredits = int64(250)
+	defaultXBackfillMaxItems    = 20
+	maxXBackfillItems           = 500
 )
 
 func metaDMReplyWindowClosed(item db.InboxItem, now time.Time) bool {
@@ -75,13 +83,57 @@ func inboxReplyPlatformError(source string, err error) (message string, reconnec
 }
 
 type InboxHandler struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	pool      *pgxpool.Pool // for inbox WebSocket notifications
+	queries                     *db.Queries
+	encryptor                   *crypto.AESEncryptor
+	pool                        *pgxpool.Pool // for inbox WebSocket notifications
+	xCredits                    xInboxCreditsService
+	xIngestion                  *xinbox.IngestionService
+	xTokenRefresher             xinbox.TokenRefresher
+	xAdapterFactory             func() xInboxBackfillAdapter
+	xBackfillConfirmationSecret []byte
+	xBackfillSafeCredits        int64
 }
 
 func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxHandler {
-	return &InboxHandler{queries: queries, encryptor: encryptor, pool: pool}
+	return &InboxHandler{
+		queries:              queries,
+		encryptor:            encryptor,
+		pool:                 pool,
+		xAdapterFactory:      func() xInboxBackfillAdapter { return platform.NewTwitterAdapter() },
+		xBackfillSafeCredits: defaultXBackfillSafeCredits,
+	}
+}
+
+type xInboxCreditsService interface {
+	xInboxReplyCredits
+	Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
+	AdmitInbound(context.Context, xcredits.InboundRequest) (xcredits.InboundAdmission, error)
+}
+
+type xInboxBackfillAdapter interface {
+	xInboxReplyAdapter
+	FetchInboxMentions(context.Context, string, string, time.Time, string, int) (platform.TwitterInboxPage, error)
+	FetchInboxDMEvents(context.Context, string, time.Time, string, int) (platform.TwitterInboxPage, error)
+}
+
+func (h *InboxHandler) SetXInboxServices(
+	credits xInboxCreditsService,
+	ingestion *xinbox.IngestionService,
+	refresher xinbox.TokenRefresher,
+	confirmationSecret []byte,
+) *InboxHandler {
+	h.xCredits = credits
+	h.xIngestion = ingestion
+	h.xTokenRefresher = refresher
+	h.xBackfillConfirmationSecret = append([]byte(nil), confirmationSecret...)
+	return h
+}
+
+func (h *InboxHandler) SetXBackfillSafeCredits(limit int64) *InboxHandler {
+	if limit > 0 {
+		h.xBackfillSafeCredits = limit
+	}
+	return h
 }
 
 func inboxListLimit(r *http.Request) int32 {
@@ -120,9 +172,14 @@ type inboxItemResponse struct {
 	ReceivedAt       string  `json:"received_at"`
 	CreatedAt        string  `json:"created_at"`
 	// Joined fields from social_accounts for display.
-	AccountName      string `json:"account_name,omitempty"`
-	AccountPlatform  string `json:"account_platform,omitempty"`
-	AccountAvatarURL string `json:"account_avatar_url,omitempty"`
+	AccountName        string  `json:"account_name,omitempty"`
+	AccountPlatform    string  `json:"account_platform,omitempty"`
+	AccountAvatarURL   string  `json:"account_avatar_url,omitempty"`
+	XCreditsCounted    *int64  `json:"x_credits_counted,omitempty"`
+	XCreditOperation   *string `json:"x_credit_operation,omitempty"`
+	XCreditCatalog     *string `json:"x_credit_catalog_version,omitempty"`
+	XCreditBillingMode *string `json:"x_credit_billing_mode,omitempty"`
+	URL                *string `json:"url,omitempty"`
 }
 
 func toInboxResponse(item db.InboxItem) inboxItemResponse {
@@ -159,6 +216,9 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 	}
 	if item.Body.Valid {
 		r.Body = &item.Body.String
+	}
+	if item.Source == "x_reply" || item.Source == "x_dm" {
+		applyXReplyMetadata(&r, item.Metadata)
 	}
 	return r
 }
@@ -509,7 +569,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load the social account and decrypt the token.
-	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
+	account, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+		ID:          item.SocialAccountID,
+		WorkspaceID: workspaceID,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load social account")
 		return
@@ -517,6 +580,178 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	accessToken, err := h.encryptor.Decrypt(account.AccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to decrypt token")
+		return
+	}
+	if account.Platform == "twitter" {
+		if item.Source != "x_reply" && item.Source != "x_dm" {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Inbox source does not match the X account")
+			return
+		}
+		if err := validateXInboxReplyTarget(item); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+			return
+		}
+		if missingScope := xInboxReplyMissingScope(item.Source, account.Scope); missingScope != "" {
+			writeError(w, http.StatusConflict, "X_RECONNECT_REQUIRED", "Reconnect the X account to grant "+missingScope)
+			return
+		}
+		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if idempotencyKey == "" {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Idempotency-Key is required for X Inbox replies")
+			return
+		}
+		payloadHash := xInboxReplyPayloadHash(item, body.Text)
+		outboundRequest, claimErr := h.queries.ClaimXInboxOutboundRequest(
+			r.Context(),
+			db.ClaimXInboxOutboundRequestParams{
+				WorkspaceID:     workspaceID,
+				SocialAccountID: account.ID,
+				InboxItemID:     item.ID,
+				IdempotencyKey:  idempotencyKey,
+				PayloadHash:     payloadHash,
+			},
+		)
+		if stderrors.Is(claimErr, pgx.ErrNoRows) {
+			outboundRequest, claimErr = h.queries.GetXInboxOutboundRequest(
+				r.Context(),
+				db.GetXInboxOutboundRequestParams{
+					WorkspaceID:    workspaceID,
+					InboxItemID:    item.ID,
+					IdempotencyKey: idempotencyKey,
+				},
+			)
+			if claimErr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load X Inbox idempotency state")
+				return
+			}
+			if outboundRequest.PayloadHash != payloadHash {
+				writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", "Idempotency-Key was already used with a different X Inbox reply payload")
+				return
+			}
+			if outboundRequest.Status == "succeeded" && outboundRequest.ResponseInboxItemID.Valid {
+				replayed, replayErr := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+					ID:          outboundRequest.ResponseInboxItemID.String,
+					WorkspaceID: workspaceID,
+				})
+				if replayErr != nil {
+					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load the prior X Inbox reply")
+					return
+				}
+				response := toInboxResponse(replayed)
+				applyXReplyMetadata(&response, replayed.Metadata)
+				writeSuccess(w, response)
+				return
+			}
+			writeError(w, http.StatusConflict, "CONFLICT", "The X reply is already in progress; retry with the same Idempotency-Key")
+			return
+		}
+		if claimErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to claim X Inbox idempotency key")
+			return
+		}
+		accessToken, err = h.refreshXAccessTokenIfNeeded(r.Context(), account, accessToken)
+		if err != nil {
+			_ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
+			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "X account token refresh failed; reconnect the account")
+			return
+		}
+		adapter := h.xAdapterFactory()
+		sendResult, sendErr := sendXInboxReply(
+			r.Context(),
+			adapter,
+			h.xCredits,
+			workspaceID,
+			account,
+			item,
+			accessToken,
+			body.Text,
+			idempotencyKey,
+		)
+		if stderrors.Is(sendErr, errXInboxIdempotencyReplay) {
+			replayed, replayErr := h.queries.GetXInboxReplyByIdempotencyKey(r.Context(), db.GetXInboxReplyByIdempotencyKeyParams{
+				WorkspaceID:        workspaceID,
+				SocialAccountID:    item.SocialAccountID,
+				Source:             item.Source,
+				ReplyToInboxItemID: item.ID,
+				IdempotencyKey:     idempotencyKey,
+			})
+			if replayErr != nil {
+				writeError(w, http.StatusConflict, "CONFLICT", "The X reply is already in progress; retry with the same Idempotency-Key")
+				return
+			}
+			_ = h.queries.CompleteXInboxOutboundRequest(r.Context(), db.CompleteXInboxOutboundRequestParams{
+				ResponseInboxItemID: pgtype.Text{String: replayed.ID, Valid: true},
+				ID:                  outboundRequest.ID,
+			})
+			response := toInboxResponse(replayed)
+			applyXReplyMetadata(&response, replayed.Metadata)
+			writeSuccess(w, response)
+			return
+		}
+		if sendErr != nil {
+			if !stderrors.Is(sendErr, ErrXWriteOutcomePending) {
+				_ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
+			}
+			h.writeXInboxReplyError(w, sendErr)
+			return
+		}
+		if sendResult.SettlementPending {
+			slog.Error("X Inbox usage finalize pending",
+				"account_id", account.ID,
+				"inbox_item_id", item.ID,
+				"operation", sendResult.Operation)
+		}
+		parentID := item.ParentExternalID
+		threadKey := item.ThreadKey
+		if item.Source == "x_reply" {
+			parentID = pgtype.Text{String: item.ExternalID, Valid: true}
+		} else if sendResult.ConversationID != "" {
+			parentID = pgtype.Text{String: sendResult.ConversationID, Valid: true}
+			threadKey = sendResult.ConversationID
+		} else if !parentID.Valid {
+			parentID = pgtype.Text{String: item.ExternalID, Valid: true}
+		}
+		metadata, _ := json.Marshal(map[string]any{
+			"idempotency_key":          idempotencyKey,
+			"reply_to_inbox_item_id":   item.ID,
+			"conversation_id":          sendResult.ConversationID,
+			"permalink":                sendResult.URL,
+			"x_credits_counted":        sendResult.XCreditsCounted,
+			"x_credit_operation":       sendResult.Operation,
+			"x_credit_catalog_version": sendResult.CatalogVersion,
+			"x_credit_billing_mode":    sendResult.BillingMode,
+		})
+		replyItem, insertErr := h.queries.UpsertInboxItem(r.Context(), db.UpsertInboxItemParams{
+			SocialAccountID:  item.SocialAccountID,
+			WorkspaceID:      workspaceID,
+			Source:           item.Source,
+			ExternalID:       sendResult.ExternalID,
+			ParentExternalID: parentID,
+			AuthorName:       pgtype.Text{String: account.AccountName.String, Valid: account.AccountName.Valid},
+			AuthorID:         pgtype.Text{String: firstNonEmptyString(account.ExternalUserID.String, account.ExternalAccountID), Valid: true},
+			Body:             pgtype.Text{String: body.Text, Valid: true},
+			IsOwn:            true,
+			ReceivedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			Metadata:         metadata,
+			ThreadKey:        threadKey,
+			ThreadStatus:     item.ThreadStatus,
+			AssignedTo:       item.AssignedTo,
+			LinkedPostID:     item.LinkedPostID,
+		})
+		if insertErr != nil {
+			slog.Error("persist X Inbox reply failed", "account_id", account.ID, "source", item.Source, "error", insertErr)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X accepted the reply, but UniPost could not persist the Inbox result")
+			return
+		}
+		if err := h.queries.CompleteXInboxOutboundRequest(r.Context(), db.CompleteXInboxOutboundRequestParams{
+			ResponseInboxItemID: pgtype.Text{String: replyItem.ID, Valid: true},
+			ID:                  outboundRequest.ID,
+		}); err != nil {
+			slog.Error("complete X Inbox idempotency request failed", "request_id", outboundRequest.ID, "error", err)
+		}
+		response := toInboxResponse(replyItem)
+		applyXReplyResult(&response, sendResult)
+		writeSuccess(w, response)
 		return
 	}
 
@@ -636,6 +871,104 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, toInboxResponse(replyItem))
 }
 
+func (h *InboxHandler) refreshXAccessTokenIfNeeded(
+	ctx context.Context,
+	account db.SocialAccount,
+	accessToken string,
+) (string, error) {
+	if !account.TokenExpiresAt.Valid ||
+		account.TokenExpiresAt.Time.After(time.Now().Add(2*time.Minute)) {
+		return accessToken, nil
+	}
+	if h.xTokenRefresher == nil || !account.RefreshToken.Valid {
+		return "", stderrors.New("X token refresh is not configured")
+	}
+	refreshToken, err := h.encryptor.Decrypt(account.RefreshToken.String)
+	if err != nil {
+		return "", err
+	}
+	tokens, err := h.xTokenRefresher.Refresh(ctx, account, refreshToken)
+	if err != nil {
+		return "", err
+	}
+	if tokens == nil || strings.TrimSpace(tokens.AccessToken) == "" {
+		return "", stderrors.New("X token refresh returned an empty access token")
+	}
+	encryptedAccess, err := h.encryptor.Encrypt(tokens.AccessToken)
+	if err != nil {
+		return "", err
+	}
+	rotatedRefresh := tokens.RefreshToken
+	if rotatedRefresh == "" {
+		rotatedRefresh = refreshToken
+	}
+	encryptedRefresh, err := h.encryptor.Encrypt(rotatedRefresh)
+	if err != nil {
+		return "", err
+	}
+	if err := h.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+		ID:             account.ID,
+		AccessToken:    encryptedAccess,
+		RefreshToken:   pgtype.Text{String: encryptedRefresh, Valid: true},
+		TokenExpiresAt: pgtype.Timestamptz{Time: tokens.ExpiresAt, Valid: !tokens.ExpiresAt.IsZero()},
+	}); err != nil {
+		return "", err
+	}
+	return tokens.AccessToken, nil
+}
+
+func (h *InboxHandler) writeXInboxReplyError(w http.ResponseWriter, err error) {
+	switch {
+	case stderrors.Is(err, xcredits.ErrMonthlyLimitExceeded):
+		writeError(w, http.StatusPaymentRequired, "X_MONTHLY_USAGE_LIMIT_EXCEEDED", err.Error())
+	case stderrors.Is(err, ErrXWriteOutcomePending):
+		writeError(w, http.StatusConflict, "CONFLICT", "X may have accepted the reply; retry with the same Idempotency-Key")
+	default:
+		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", "X Inbox reply failed: "+err.Error())
+	}
+}
+
+func applyXReplyResult(response *inboxItemResponse, result xInboxSendResult) {
+	if response == nil {
+		return
+	}
+	counted := result.XCreditsCounted
+	response.XCreditsCounted = &counted
+	response.XCreditOperation = &result.Operation
+	response.XCreditCatalog = &result.CatalogVersion
+	response.XCreditBillingMode = &result.BillingMode
+	if result.URL != "" {
+		response.URL = &result.URL
+	}
+}
+
+func applyXReplyMetadata(response *inboxItemResponse, raw []byte) {
+	if response == nil || len(raw) == 0 {
+		return
+	}
+	var metadata struct {
+		XCreditsCounted int64  `json:"x_credits_counted"`
+		Operation       string `json:"x_credit_operation"`
+		CatalogVersion  string `json:"x_credit_catalog_version"`
+		BillingMode     string `json:"x_credit_billing_mode"`
+		Permalink       string `json:"permalink"`
+	}
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		return
+	}
+	if metadata.Operation != "" || metadata.CatalogVersion != "" || metadata.BillingMode != "" {
+		applyXReplyResult(response, xInboxSendResult{
+			XCreditsCounted: metadata.XCreditsCounted,
+			Operation:       metadata.Operation,
+			CatalogVersion:  metadata.CatalogVersion,
+			BillingMode:     metadata.BillingMode,
+		})
+	}
+	if metadata.Permalink != "" {
+		response.URL = &metadata.Permalink
+	}
+}
+
 // UpdateThreadState persists a thread-level status for a conversation.
 // POST /v1/inbox/{id}/thread-state
 // Body: { "thread_status": "open" | "assigned" | "resolved", "assigned_to": "..." }
@@ -699,6 +1032,20 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 // POST /v1/inbox/sync
 func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	var request struct {
+		XBackfill *xBackfillRequest `json:"x_backfill"`
+	}
+	if r.Body != nil {
+		err := json.NewDecoder(r.Body).Decode(&request)
+		if err != nil && !stderrors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid Inbox sync request")
+			return
+		}
+	}
+	if request.XBackfill != nil {
+		h.syncXBackfill(w, r, workspaceID, *request.XBackfill)
+		return
+	}
 
 	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
 	if err != nil {
@@ -1040,6 +1387,407 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		"errors":           errors,
 		"details":          details,
 	})
+}
+
+type xBackfillAccountResult struct {
+	AccountID         string `json:"account_id"`
+	Accepted          int    `json:"accepted"`
+	Suppressed        int    `json:"suppressed"`
+	Duplicates        int    `json:"duplicates"`
+	Read              int    `json:"read"`
+	StoppedAtBoundary bool   `json:"stopped_at_boundary,omitempty"`
+	StopReason        string `json:"stop_reason,omitempty"`
+}
+
+func normalizeXBackfillRequest(request xBackfillRequest) xBackfillRequest {
+	if request.LookbackDays <= 0 {
+		request.LookbackDays = 7
+	}
+	if request.LookbackDays > 30 {
+		request.LookbackDays = 30
+	}
+	if request.MaxItems <= 0 {
+		request.MaxItems = defaultXBackfillMaxItems
+	}
+	if request.MaxItems > maxXBackfillItems {
+		request.MaxItems = maxXBackfillItems
+	}
+	if !request.IncludeReplies && !request.IncludeDMs {
+		request.IncludeReplies = true
+		request.IncludeDMs = true
+	}
+	request.AccountID = strings.TrimSpace(request.AccountID)
+	request.ConfirmationToken = strings.TrimSpace(request.ConfirmationToken)
+	return request
+}
+
+func (h *InboxHandler) syncXBackfill(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID string,
+	request xBackfillRequest,
+) {
+	request = normalizeXBackfillRequest(request)
+	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find X accounts")
+		return
+	}
+	xAccounts := make([]db.SocialAccount, 0, len(accounts))
+	estimate := int64(0)
+	for _, account := range accounts {
+		if account.Platform != "twitter" ||
+			(request.AccountID != "" && account.ID != request.AccountID) {
+			continue
+		}
+		mode, modeErr := xinbox.NormalizePersistedAppMode(account.XAppMode.String)
+		if modeErr != nil || mode == xinbox.AppModeLegacyUnknown {
+			continue
+		}
+		xAccounts = append(xAccounts, account)
+		estimate += estimateXBackfillCredits(account.XAppMode.String, request)
+	}
+	if len(xAccounts) == 0 {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "No eligible X account found for Inbox backfill")
+		return
+	}
+
+	claim := xBackfillConfirmationClaim{
+		WorkspaceID:  workspaceID,
+		AccountID:    request.AccountID,
+		LookbackDays: request.LookbackDays,
+		MaxItems:     request.MaxItems,
+		Replies:      request.IncludeReplies,
+		DMs:          request.IncludeDMs,
+	}
+	if estimate > h.xBackfillSafeCredits {
+		if request.ConfirmationToken == "" {
+			token, expiresAt, tokenErr := signXBackfillConfirmationToken(
+				h.xBackfillConfirmationSecret,
+				claim,
+				time.Now(),
+			)
+			if tokenErr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", tokenErr.Error())
+				return
+			}
+			writeSuccess(w, map[string]any{
+				"estimated_x_credits":     estimate,
+				"confirmation_required":   true,
+				"confirmation_token":      token,
+				"confirmation_expires_at": expiresAt.Format(time.RFC3339),
+				"accounts_checked":        len(xAccounts),
+				"accepted":                0,
+				"suppressed":              0,
+			})
+			return
+		}
+		if err := verifyXBackfillConfirmationToken(
+			h.xBackfillConfirmationSecret,
+			request.ConfirmationToken,
+			claim,
+			time.Now(),
+		); err != nil {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error())
+			return
+		}
+	}
+	if h.xCredits == nil || h.xIngestion == nil || h.xAdapterFactory == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X Inbox sync is not configured")
+		return
+	}
+
+	now := time.Now().UTC()
+	results := make([]xBackfillAccountResult, 0, len(xAccounts))
+	totalAccepted, totalSuppressed, totalDuplicates, totalRead := 0, 0, 0, 0
+	for _, account := range xAccounts {
+		result := xBackfillAccountResult{AccountID: account.ID}
+		accessToken, decryptErr := h.encryptor.Decrypt(account.AccessToken)
+		if decryptErr != nil {
+			result.StopReason = "token_decrypt_failed"
+			results = append(results, result)
+			continue
+		}
+		accessToken, refreshErr := h.refreshXAccessTokenIfNeeded(r.Context(), account, accessToken)
+		if refreshErr != nil {
+			result.StopReason = "reconnect_required"
+			results = append(results, result)
+			continue
+		}
+		adapter := h.xAdapterFactory()
+		if request.IncludeReplies {
+			h.runXBackfillPages(r.Context(), workspaceID, account, accessToken, adapter, "x_reply", request, now, &result)
+		}
+		if request.IncludeDMs && !result.StoppedAtBoundary {
+			h.runXBackfillPages(r.Context(), workspaceID, account, accessToken, adapter, "x_dm", request, now, &result)
+		}
+		totalAccepted += result.Accepted
+		totalSuppressed += result.Suppressed
+		totalDuplicates += result.Duplicates
+		totalRead += result.Read
+		results = append(results, result)
+	}
+	writeSuccess(w, map[string]any{
+		"estimated_x_credits":   estimate,
+		"confirmation_required": false,
+		"accounts_checked":      len(xAccounts),
+		"accepted":              totalAccepted,
+		"suppressed":            totalSuppressed,
+		"duplicates":            totalDuplicates,
+		"read":                  totalRead,
+		"details":               results,
+	})
+}
+
+func (h *InboxHandler) runXBackfillPages(
+	ctx context.Context,
+	workspaceID string,
+	account db.SocialAccount,
+	accessToken string,
+	adapter xInboxBackfillAdapter,
+	source string,
+	request xBackfillRequest,
+	now time.Time,
+	result *xBackfillAccountResult,
+) {
+	remaining := request.MaxItems
+	nextToken := ""
+	lookbackDays := request.LookbackDays
+	if source == "x_reply" && lookbackDays > 7 {
+		lookbackDays = 7
+	}
+	startTime := now.Add(-time.Duration(lookbackDays) * 24 * time.Hour)
+	operation := "post.read"
+	minPageSize := 5
+	if source == "x_dm" {
+		operation = "dm.read"
+		minPageSize = 1
+		if !hasXScopes(account.Scope, "dm.read", "users.read") {
+			result.StopReason = "reconnect_required"
+			return
+		}
+	} else if !hasXScopes(account.Scope, "tweet.read", "users.read") {
+		result.StopReason = "reconnect_required"
+		return
+	}
+	for remaining > 0 {
+		pageSize := remaining
+		if pageSize > 100 {
+			pageSize = 100
+		}
+		affordable, reason, err := h.xBackfillAffordablePageSize(
+			ctx,
+			workspaceID,
+			account.XAppMode.String,
+			operation,
+			pageSize,
+		)
+		if err != nil {
+			result.StopReason = "usage_check_failed"
+			return
+		}
+		if affordable < minPageSize {
+			result.StoppedAtBoundary = true
+			result.StopReason = reason
+			return
+		}
+		pageSize = affordable
+		var page platform.TwitterInboxPage
+		if source == "x_reply" {
+			page, err = adapter.FetchInboxMentions(
+				ctx,
+				accessToken,
+				firstNonEmptyString(account.ExternalUserID.String, account.ExternalAccountID),
+				startTime,
+				nextToken,
+				pageSize,
+			)
+		} else {
+			page, err = adapter.FetchInboxDMEvents(
+				ctx,
+				accessToken,
+				startTime,
+				nextToken,
+				pageSize,
+			)
+		}
+		if err != nil {
+			result.StopReason = "upstream_read_failed"
+			return
+		}
+		if len(page.Entries) > remaining {
+			page.Entries = page.Entries[:remaining]
+		}
+		result.Read += len(page.Entries)
+		remaining -= len(page.Entries)
+		for _, entry := range page.Entries {
+			ingestion, admissionErr := h.ingestXBackfillEntry(
+				ctx,
+				workspaceID,
+				account,
+				entry,
+				operation,
+			)
+			if admissionErr != nil {
+				result.StopReason = "usage_admission_failed"
+				return
+			}
+			switch ingestion.Admission.Decision {
+			case xcredits.InboundDecisionSuppressedDailyCap,
+				xcredits.InboundDecisionSuppressedMonthlyAllowance:
+				result.Suppressed++
+				result.StoppedAtBoundary = true
+				result.StopReason = ingestion.Admission.PauseReason
+				return
+			}
+			if ingestion.Admission.Duplicate {
+				result.Duplicates++
+				continue
+			}
+			if ingestion.Admission.Accepted && ingestion.Inserted {
+				result.Accepted++
+			}
+		}
+		nextToken = page.NextToken
+		if nextToken == "" || len(page.Entries) == 0 {
+			return
+		}
+	}
+}
+
+func (h *InboxHandler) xBackfillAffordablePageSize(
+	ctx context.Context,
+	workspaceID string,
+	appMode string,
+	operation string,
+	requested int,
+) (int, string, error) {
+	mode, err := xinbox.NormalizePersistedAppMode(appMode)
+	if err != nil {
+		return 0, "invalid_app_mode", err
+	}
+	if mode != xinbox.AppModeUniPostManaged {
+		return requested, "", nil
+	}
+	snapshot, err := h.xCredits.Snapshot(ctx, workspaceID, time.Now().UTC())
+	if err != nil {
+		return 0, "usage_check_failed", err
+	}
+	if snapshot.PausePaidSources {
+		return 0, firstNonEmptyString(snapshot.InboundPauseReason, "inbound_cap_boundary"), nil
+	}
+	available := int64(requested)
+	weight := xcredits.OperationWeight(operation) + xcredits.OperationWeight("user.read")
+	if weight <= 0 {
+		return 0, "unknown_operation", fmt.Errorf("unknown X credit operation %q", operation)
+	}
+	if snapshot.MonthlyRemaining != nil && *snapshot.MonthlyRemaining/weight < available {
+		available = *snapshot.MonthlyRemaining / weight
+	}
+	dailyRemaining := snapshot.InboundDailyLimit
+	if dailyRemaining != nil {
+		safetyBuffer := *dailyRemaining / 10
+		if safetyBuffer < 20 {
+			safetyBuffer = 20
+		}
+		remaining := *dailyRemaining - snapshot.InboundDailyUsed - safetyBuffer
+		if remaining < 0 {
+			remaining = 0
+		}
+		if remaining/weight < available {
+			available = remaining / weight
+		}
+	}
+	if available <= 0 {
+		return 0, "x_inbound_or_monthly_boundary", nil
+	}
+	return int(available), "", nil
+}
+
+func (h *InboxHandler) ingestXBackfillEntry(
+	ctx context.Context,
+	workspaceID string,
+	account db.SocialAccount,
+	entry platform.TwitterInboxEntry,
+	operation string,
+) (xinbox.IngestionResult, error) {
+	isOwn := entry.AuthorID != "" &&
+		(entry.AuthorID == account.ExternalUserID.String || entry.AuthorID == account.ExternalAccountID)
+	metadata := map[string]any{
+		"conversation_id": entry.ThreadKey,
+		"permalink": func() string {
+			if entry.Source == "x_reply" {
+				return "https://x.com/i/status/" + entry.ExternalID
+			}
+			return ""
+		}(),
+		"reply_eligible": entry.ReplyEligible && !isOwn,
+		"backfill":       true,
+	}
+	linkedPostID := resolveInboxLinkedPostID(ctx, h.queries, account.ID, entry.ParentExternalID)
+	mode, err := xinbox.NormalizePersistedAppMode(account.XAppMode.String)
+	if err != nil {
+		return xinbox.IngestionResult{}, err
+	}
+	if entry.AuthorID != "" {
+		userAdmission, admissionErr := h.xCredits.AdmitInbound(ctx, xcredits.InboundRequest{
+			WorkspaceID:          workspaceID,
+			SocialAccountID:      account.ID,
+			AppMode:              account.XAppMode.String,
+			OperationKey:         "user.read",
+			Source:               "backfill",
+			UpstreamResourceType: "x_user",
+			UpstreamResourceID:   entry.AuthorID,
+			Now:                  time.Now().UTC(),
+		})
+		if admissionErr != nil {
+			return xinbox.IngestionResult{}, admissionErr
+		}
+		if userAdmission.Decision == xcredits.InboundDecisionSuppressedDailyCap ||
+			userAdmission.Decision == xcredits.InboundDecisionSuppressedMonthlyAllowance {
+			return xinbox.IngestionResult{
+				Admission: xinbox.InboundAdmission{
+					Suppressed:  true,
+					Duplicate:   userAdmission.Duplicate,
+					Decision:    userAdmission.Decision,
+					PauseReason: userAdmission.PauseReason,
+				},
+			}, nil
+		}
+	}
+	return h.xIngestion.IngestRecovery(
+		ctx,
+		xinbox.InboxAccount{
+			ID:                account.ID,
+			WorkspaceID:       workspaceID,
+			ExternalUserID:    account.ExternalUserID.String,
+			ExternalAccountID: account.ExternalAccountID,
+			AccountName:       account.AccountName.String,
+			AppMode:           mode,
+			Scopes:            account.Scope,
+			ConnectionType:    account.ConnectionType,
+			PlanAllowsInbox:   true,
+		},
+		xinbox.InboxItem{
+			SocialAccountID:  account.ID,
+			WorkspaceID:      workspaceID,
+			Source:           entry.Source,
+			ExternalID:       entry.ExternalID,
+			ParentExternalID: entry.ParentExternalID,
+			AuthorName:       entry.AuthorName,
+			AuthorID:         entry.AuthorID,
+			AuthorAvatarURL:  entry.AuthorAvatarURL,
+			Body:             entry.Body,
+			IsOwn:            isOwn,
+			ReceivedAt:       entry.Timestamp,
+			Metadata:         metadata,
+			ThreadKey:        firstNonEmptyString(entry.ThreadKey, entry.ExternalID),
+			ThreadStatus:     "open",
+			LinkedPostID:     linkedPostID.String,
+		},
+		operation,
+		"backfill",
+	)
 }
 
 func isFacebookPlaceholderAuthorName(name string) bool {
