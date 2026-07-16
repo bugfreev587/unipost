@@ -72,6 +72,7 @@ type XInboxDeliveryAccount struct {
 	AccessTokenEncrypted     string
 	AppMode                  xinbox.AppMode
 	AppBearerTokenEncrypted  string
+	ConsumerSecretConfigured bool
 	Scopes                   []string
 	AccountActive            bool
 	PlanAllowsInbox          bool
@@ -105,36 +106,39 @@ type XInboxCleanupIntent struct {
 }
 
 type XInboxAppStream struct {
-	Identity    string
-	BearerToken string
+	Identity                 string
+	BearerToken              string
+	ConsumerSecretConfigured bool
 }
 
 type XInboxDeliveryConfig struct {
-	Store            XInboxDeliveryStore
-	API              XInboxDeliveryAPI
-	Cipher           XInboxCipher
-	Usage            XInboxUsageReader
-	Leader           XInboxLeaderElector
-	Stream           XInboxStreamRunner
-	ManagedAppBearer string
-	WebhookURL       string
-	Now              func() time.Time
-	EventHandler     func(context.Context, string, xinbox.StreamEvent) error
-	CleanupOwner     string
+	Store                           XInboxDeliveryStore
+	API                             XInboxDeliveryAPI
+	Cipher                          XInboxCipher
+	Usage                           XInboxUsageReader
+	Leader                          XInboxLeaderElector
+	Stream                          XInboxStreamRunner
+	ManagedAppBearer                string
+	ManagedConsumerSecretConfigured bool
+	WebhookURL                      string
+	Now                             func() time.Time
+	EventHandler                    func(context.Context, string, xinbox.StreamEvent) error
+	CleanupOwner                    string
 }
 
 type XInboxDeliveryWorker struct {
-	store            XInboxDeliveryStore
-	api              XInboxDeliveryAPI
-	cipher           XInboxCipher
-	usage            XInboxUsageReader
-	leader           XInboxLeaderElector
-	stream           XInboxStreamRunner
-	managedAppBearer string
-	webhookURL       string
-	now              func() time.Time
-	eventHandler     func(context.Context, string, xinbox.StreamEvent) error
-	cleanupOwner     string
+	store                           XInboxDeliveryStore
+	api                             XInboxDeliveryAPI
+	cipher                          XInboxCipher
+	usage                           XInboxUsageReader
+	leader                          XInboxLeaderElector
+	stream                          XInboxStreamRunner
+	managedAppBearer                string
+	managedConsumerSecretConfigured bool
+	webhookURL                      string
+	now                             func() time.Time
+	eventHandler                    func(context.Context, string, xinbox.StreamEvent) error
+	cleanupOwner                    string
 
 	streamsMu        sync.Mutex
 	streams          map[string]managedXInboxStream
@@ -158,18 +162,19 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 		cleanupOwner = "x-inbox-cleanup-" + uuid.NewString()
 	}
 	return &XInboxDeliveryWorker{
-		store:            config.Store,
-		api:              config.API,
-		cipher:           config.Cipher,
-		usage:            config.Usage,
-		leader:           config.Leader,
-		stream:           config.Stream,
-		managedAppBearer: strings.TrimSpace(config.ManagedAppBearer),
-		webhookURL:       strings.TrimSpace(config.WebhookURL),
-		now:              now,
-		eventHandler:     config.EventHandler,
-		cleanupOwner:     cleanupOwner,
-		streams:          make(map[string]managedXInboxStream),
+		store:                           config.Store,
+		api:                             config.API,
+		cipher:                          config.Cipher,
+		usage:                           config.Usage,
+		leader:                          config.Leader,
+		stream:                          config.Stream,
+		managedAppBearer:                strings.TrimSpace(config.ManagedAppBearer),
+		managedConsumerSecretConfigured: config.ManagedConsumerSecretConfigured,
+		webhookURL:                      strings.TrimSpace(config.WebhookURL),
+		now:                             now,
+		eventHandler:                    config.EventHandler,
+		cleanupOwner:                    cleanupOwner,
+		streams:                         make(map[string]managedXInboxStream),
 	}
 }
 
@@ -181,18 +186,20 @@ func NewPostgresXInboxDeliveryWorker(
 	usage XInboxUsageReader,
 	client *xinbox.Client,
 	managedAppBearer string,
+	managedConsumerSecretConfigured bool,
 	webhookURL string,
 ) *XInboxDeliveryWorker {
 	store := &postgresXInboxDeliveryStore{pool: pool, queries: queries}
 	return NewXInboxDeliveryWorker(XInboxDeliveryConfig{
-		Store:            store,
-		API:              client,
-		Cipher:           encryptor,
-		Usage:            usage,
-		Leader:           NewPostgresStreamLockManager(databaseURL),
-		Stream:           xinbox.NewStreamSupervisor(client, xinbox.StreamSupervisorConfig{}),
-		ManagedAppBearer: managedAppBearer,
-		WebhookURL:       webhookURL,
+		Store:                           store,
+		API:                             client,
+		Cipher:                          encryptor,
+		Usage:                           usage,
+		Leader:                          NewPostgresStreamLockManager(databaseURL),
+		Stream:                          xinbox.NewStreamSupervisor(client, xinbox.StreamSupervisorConfig{}),
+		ManagedAppBearer:                managedAppBearer,
+		ManagedConsumerSecretConfigured: managedConsumerSecretConfigured,
+		WebhookURL:                      webhookURL,
 	})
 }
 
@@ -364,6 +371,18 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	targetStatus := xinbox.DeliveryStatusPending
 	commentsDesired := account.AccountActive && account.PlanAllowsInbox && hasXInboxScopes(account.Scopes, "tweet.read", "tweet.write", "users.read")
 	dmsDesired := commentsDesired && hasXInboxScopes(account.Scopes, "dm.read", "dm.write")
+	appBearerToken, appIdentity, consumerSecretConfigured, appTokenErr := w.resolveAccountAppToken(account)
+	app := XInboxAppStream{
+		Identity:                 appIdentity,
+		BearerToken:              appBearerToken,
+		ConsumerSecretConfigured: consumerSecretConfigured,
+	}
+	credentialErr := deliveryCredentialError(account.AppMode, app.ConsumerSecretConfigured)
+	if credentialErr != nil {
+		targetStatus = xinbox.DeliveryStatusError
+		commentsDesired = false
+		dmsDesired = false
+	}
 	if !account.PlanAllowsInbox {
 		targetStatus = xinbox.DeliveryStatusPausedPlan
 		commentsDesired = false
@@ -389,11 +408,9 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		}
 	}
 
-	appBearerToken, appIdentity, appTokenErr := w.resolveAccountAppToken(account)
-	if appTokenErr != nil && (state.FilteredStreamRuleID != "" || commentsDesired || dmsDesired) {
-		return XInboxAppStream{}, false, true, w.saveAccountError(ctx, state, appTokenErr)
+	if appTokenErr != nil && (state.FilteredStreamRuleID != "" || state.ActivityDMSubscriptionID != "" || commentsDesired || dmsDesired) {
+		return XInboxAppStream{}, false, true, w.saveAccountError(ctx, state, errors.Join(credentialErr, appTokenErr))
 	}
-	app := XInboxAppStream{Identity: appIdentity, BearerToken: appBearerToken}
 	streamDesired := func() bool {
 		return commentsDesired && state.FilteredStreamRuleID != ""
 	}
@@ -473,11 +490,28 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	} else {
 		state.DeliveryStatus = targetStatus
 	}
+	if credentialErr != nil {
+		return app, false, true, w.saveAccountError(ctx, state, errors.Join(credentialErr, appTokenErr))
+	}
 	state.LastError = ""
 	if err := w.store.SaveState(ctx, state); err != nil {
 		return app, streamDesired(), true, err
 	}
 	return app, streamDesired(), true, nil
+}
+
+func deliveryCredentialError(appMode xinbox.AppMode, consumerSecretConfigured bool) error {
+	switch appMode {
+	case xinbox.AppModeUniPostManaged:
+		if !consumerSecretConfigured {
+			return errors.New("TWITTER_CONSUMER_SECRET is not configured")
+		}
+	case xinbox.AppModeWorkspace:
+		if !consumerSecretConfigured {
+			return errors.New("workspace X app consumer_secret is not configured")
+		}
+	}
+	return nil
 }
 
 func (w *XInboxDeliveryWorker) saveAccountError(
@@ -565,24 +599,26 @@ func cleanupRetryDelay(attempts int) time.Duration {
 	return delay
 }
 
-func (w *XInboxDeliveryWorker) resolveAccountAppToken(account XInboxDeliveryAccount) (string, string, error) {
+func (w *XInboxDeliveryWorker) resolveAccountAppToken(
+	account XInboxDeliveryAccount,
+) (string, string, bool, error) {
 	switch account.AppMode {
 	case xinbox.AppModeUniPostManaged:
 		if w.managedAppBearer == "" {
-			return "", "", errors.New("TWITTER_BEARER_TOKEN is not configured")
+			return "", "", w.managedConsumerSecretConfigured, errors.New("TWITTER_BEARER_TOKEN is not configured")
 		}
-		return w.managedAppBearer, string(xinbox.AppModeUniPostManaged), nil
+		return w.managedAppBearer, string(xinbox.AppModeUniPostManaged), w.managedConsumerSecretConfigured, nil
 	case xinbox.AppModeWorkspace:
 		if account.AppBearerTokenEncrypted == "" {
-			return "", "", errors.New("workspace X app bearer token is not configured")
+			return "", "", account.ConsumerSecretConfigured, errors.New("workspace X app bearer token is not configured")
 		}
 		token, err := w.cipher.Decrypt(account.AppBearerTokenEncrypted)
 		if err != nil {
-			return "", "", fmt.Errorf("decrypt workspace X app bearer token: %w", err)
+			return "", "", account.ConsumerSecretConfigured, fmt.Errorf("decrypt workspace X app bearer token: %w", err)
 		}
-		return token, "workspace:" + account.WorkspaceID, nil
+		return token, "workspace:" + account.WorkspaceID, account.ConsumerSecretConfigured, nil
 	default:
-		return "", "", fmt.Errorf("unsupported X app mode %q", account.AppMode)
+		return "", "", false, fmt.Errorf("unsupported X app mode %q", account.AppMode)
 	}
 }
 
@@ -763,6 +799,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			sa.access_token,
 			COALESCE(sa.x_app_mode, 'legacy_unknown'),
 			COALESCE(pc.app_bearer_token, ''),
+			COALESCE(NULLIF(pc.consumer_secret, ''), '') <> '',
 			sa.scope,
 			(sa.disconnected_at IS NULL AND sa.status = 'active') AS account_active,
 			COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox,
@@ -799,6 +836,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			&account.AccessTokenEncrypted,
 			&appMode,
 			&account.AppBearerTokenEncrypted,
+			&account.ConsumerSecretConfigured,
 			&account.Scopes,
 			&account.AccountActive,
 			&account.PlanAllowsInbox,

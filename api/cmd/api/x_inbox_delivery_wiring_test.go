@@ -16,6 +16,7 @@ func TestXInboxDeliveryWorkerWiringUsesDevSafeEnvironmentContracts(t *testing.T)
 		"worker.NewPostgresXInboxDeliveryWorker(",
 		"databaseURL,",
 		`os.Getenv("TWITTER_BEARER_TOKEN")`,
+		`strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != ""`,
 		`os.Getenv("X_INBOX_WEBHOOK_URL")`,
 		"go xInboxDeliveryWorker.Start(workerCtx)",
 	} {

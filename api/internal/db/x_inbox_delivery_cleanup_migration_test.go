@@ -732,6 +732,68 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 			deliveryStatus,
 		)
 	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE platform_credentials
+		SET consumer_secret = NULL
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, rotationWorkspaceID); err != nil {
+		t.Fatalf("remove workspace X consumer secret: %v", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+		  AND source_app_identity = 'same-client'
+		  AND filtered_stream_rule_id = 'rotation-rule'
+		  AND activity_dm_subscription_id = 'rotation-subscription'
+	`, rotationAccountID).Scan(&rotationIntentCount); err != nil {
+		t.Fatalf("count consumer-secret removal cleanup intent: %v", err)
+	}
+	if rotationIntentCount != 1 {
+		t.Fatalf(
+			"consumer-secret removal cleanup intents = %d, want one exact generation",
+			rotationIntentCount,
+		)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT filtered_stream_rule_id, activity_dm_subscription_id,
+		       delivery_status, last_error
+		FROM x_inbox_delivery_resources
+		WHERE social_account_id = $1
+	`, rotationAccountID).Scan(
+		&localRule,
+		&localSubscription,
+		&deliveryStatus,
+		&lastError,
+	); err != nil {
+		t.Fatalf("query consumer-secret removal delivery state: %v", err)
+	}
+	if localRule.Valid || localSubscription.Valid ||
+		deliveryStatus != "error" ||
+		!lastError.Valid ||
+		!strings.Contains(lastError.String, "required credential removed") {
+		t.Fatalf(
+			"consumer-secret removal state = rule %v subscription %v status %q error %q",
+			localRule,
+			localSubscription,
+			deliveryStatus,
+			lastError.String,
+		)
+	}
+	var consumerSecretConfigured bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(NULLIF(pc.consumer_secret, ''), '') <> ''
+		FROM social_accounts sa
+		JOIN profiles p ON p.id = sa.profile_id
+		LEFT JOIN platform_credentials pc
+		  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+		WHERE sa.id = $1
+	`, rotationAccountID).Scan(&consumerSecretConfigured); err != nil {
+		t.Fatalf("query post-removal delivery eligibility: %v", err)
+	}
+	if consumerSecretConfigured {
+		t.Fatal("consumer secret removal still appears delivery-eligible")
+	}
 }
 
 func applyMigrationUp(t *testing.T, ctx context.Context, tx *sql.Tx, path string) {
