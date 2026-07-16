@@ -958,3 +958,40 @@ type WorkspaceMember struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
+
+type XInboundDailyUsage struct {
+	WorkspaceID        string             `json:"workspace_id"`
+	UtcDate            pgtype.Date        `json:"utc_date"`
+	WeightedUnitsUsed  int64              `json:"weighted_units_used"`
+	WeightedUnitsLimit int64              `json:"weighted_units_limit"`
+	EventsAccepted     int64              `json:"events_accepted"`
+	EventsSuppressed   int64              `json:"events_suppressed"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XUsageEvent struct {
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	SocialAccountID pgtype.Text        `json:"social_account_id"`
+	PeriodStart     pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd       pgtype.Timestamptz `json:"period_end"`
+	OperationKey    string             `json:"operation_key"`
+	CatalogVersion  string             `json:"catalog_version"`
+	Source          string             `json:"source"`
+	IdempotencyKey  string             `json:"idempotency_key"`
+	WeightedUnits   int64              `json:"weighted_units"`
+	Status          string             `json:"status"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XUsagePeriod struct {
+	WorkspaceID        string             `json:"workspace_id"`
+	PeriodStart        pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd          pgtype.Timestamptz `json:"period_end"`
+	WeightedUnitsUsed  int64              `json:"weighted_units_used"`
+	WeightedUnitsLimit int64              `json:"weighted_units_limit"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
