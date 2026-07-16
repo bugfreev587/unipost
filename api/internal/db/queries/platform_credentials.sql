@@ -36,3 +36,15 @@ ORDER BY platform;
 -- name: DeletePlatformCredential :exec
 DELETE FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2;
+
+-- name: ListTwitterConsumerSecretsByClientID :many
+-- A workspace X app can be reused by more than one UniPost workspace. The
+-- resolver decrypts all matching rows and fails closed if their plaintext
+-- consumer secrets disagree.
+SELECT consumer_secret
+FROM platform_credentials
+WHERE platform = 'twitter'
+  AND client_id = $1
+  AND consumer_secret IS NOT NULL
+  AND consumer_secret <> ''
+ORDER BY workspace_id;

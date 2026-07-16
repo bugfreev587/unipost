@@ -462,3 +462,22 @@ func TestXClientDeleteActivitySubscriptionRequiresConfirmedDeletedTrue(t *testin
 		})
 	}
 }
+
+func TestAppWebhookURLDerivesAppSpecificHTTPSRoute(t *testing.T) {
+	got, err := AppWebhookURL(
+		"https://dev-api.unipost.dev/v1/webhooks/twitter/",
+		"workspace-client-id",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://dev-api.unipost.dev/v1/webhooks/twitter/workspace-client-id"; got != want {
+		t.Fatalf("URL = %q, want %q", got, want)
+	}
+	if _, err := AppWebhookURL("http://localhost/webhook", "client"); err == nil {
+		t.Fatal("expected non-HTTPS webhook URL rejection")
+	}
+	if _, err := AppWebhookURL("https://dev-api.unipost.dev/v1/webhooks/twitter", ""); err == nil {
+		t.Fatal("expected missing app client id rejection")
+	}
+}

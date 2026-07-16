@@ -414,6 +414,46 @@ func main() {
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
 	xCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
+	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, os.Getenv("TWITTER_CLIENT_ID"))
+	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
+		Store: xIngestionStore,
+		Admit: func(ctx context.Context, req xinbox.InboundAdmissionRequest) (xinbox.InboundAdmission, error) {
+			admission, err := xCreditsService.AdmitInbound(ctx, xcredits.InboundRequest{
+				WorkspaceID:          req.WorkspaceID,
+				SocialAccountID:      req.SocialAccountID,
+				AppMode:              req.AppMode,
+				OperationKey:         req.OperationKey,
+				Source:               req.Source,
+				UpstreamResourceType: req.UpstreamResourceType,
+				UpstreamResourceID:   req.UpstreamResourceID,
+				Now:                  req.Now,
+			})
+			switch admission.Decision {
+			case xcredits.InboundDecisionSuppressedDailyCap,
+				xcredits.InboundDecisionSuppressedMonthlyAllowance:
+				return xinbox.InboundAdmission{
+					Suppressed: true,
+					Duplicate:  admission.Duplicate,
+				}, nil
+			}
+			if err != nil {
+				return xinbox.InboundAdmission{}, err
+			}
+			return xinbox.InboundAdmission{
+				Accepted:  admission.Decision == xcredits.InboundDecisionAccepted,
+				Duplicate: admission.Duplicate,
+			}, nil
+		},
+		Notify: func(ctx context.Context, workspaceID string, item xinbox.InboxItem) {
+			ws.Notify(ctx, pool, workspaceID, item)
+		},
+	})
+	xAppSecretResolver := xinbox.NewAppSecretResolver(xinbox.AppSecretResolverConfig{
+		ManagedAppClientID: os.Getenv("TWITTER_CLIENT_ID"),
+		ManagedSecret:      os.Getenv("TWITTER_CONSUMER_SECRET"),
+		Store:              xIngestionStore,
+		Decrypt:            encryptor.Decrypt,
+	})
 	if processMode == processModeAPI {
 		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
 			databaseURL,
@@ -424,8 +464,9 @@ func main() {
 			xinbox.NewClient(xinbox.ClientConfig{}),
 			os.Getenv("TWITTER_BEARER_TOKEN"),
 			strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
+			os.Getenv("TWITTER_CLIENT_ID"),
 			os.Getenv("X_INBOX_WEBHOOK_URL"),
-		)
+		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
 	}
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
@@ -604,6 +645,11 @@ func main() {
 		os.Getenv("META_APP_SECRET"),
 		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
 	)
+	xWebhookHandler := handler.NewXWebhookHandler(handler.XWebhookConfig{
+		Secrets:            xAppSecretResolver,
+		Ingestor:           xIngestionService,
+		ManagedAppClientID: os.Getenv("TWITTER_CLIENT_ID"),
+	})
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
@@ -651,6 +697,10 @@ func main() {
 	r.Post("/webhooks/stripe", stripeWebhookHandler.HandleStripe)
 	r.Get("/webhooks/meta", metaWebhookHandler.Verify)
 	r.Post("/webhooks/meta", metaWebhookHandler.Handle)
+	r.Get("/v1/webhooks/twitter", xWebhookHandler.CRC)
+	r.Post("/v1/webhooks/twitter", xWebhookHandler.Handle)
+	r.Get("/v1/webhooks/twitter/{app_client_id}", xWebhookHandler.CRC)
+	r.Post("/v1/webhooks/twitter/{app_client_id}", xWebhookHandler.Handle)
 
 	// WebSocket — auth via ?token= query param (browser WS API
 	// doesn't support custom headers). Handler validates Clerk JWT.

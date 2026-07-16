@@ -149,3 +149,36 @@ func (q *Queries) ListPlatformCredentialsByWorkspace(ctx context.Context, worksp
 	}
 	return items, nil
 }
+
+const listTwitterConsumerSecretsByClientID = `-- name: ListTwitterConsumerSecretsByClientID :many
+SELECT consumer_secret
+FROM platform_credentials
+WHERE platform = 'twitter'
+  AND client_id = $1
+  AND consumer_secret IS NOT NULL
+  AND consumer_secret <> ''
+ORDER BY workspace_id
+`
+
+// A workspace X app can be reused by more than one UniPost workspace. The
+// resolver decrypts all matching rows and fails closed if their plaintext
+// consumer secrets disagree.
+func (q *Queries) ListTwitterConsumerSecretsByClientID(ctx context.Context, clientID string) ([]pgtype.Text, error) {
+	rows, err := q.db.Query(ctx, listTwitterConsumerSecretsByClientID, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Text{}
+	for rows.Next() {
+		var consumer_secret pgtype.Text
+		if err := rows.Scan(&consumer_secret); err != nil {
+			return nil, err
+		}
+		items = append(items, consumer_secret)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

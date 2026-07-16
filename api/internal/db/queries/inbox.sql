@@ -225,16 +225,21 @@ WHERE sa.platform = $1
 LIMIT 1;
 
 -- name: ListAllInboxAccounts :many
--- All active IG / Threads / Facebook accounts across all workspaces,
+-- All active Inbox accounts across all workspaces,
 -- for the background inbox sync worker. Returns account fields plus
--- workspace_id.
+-- workspace eligibility context. X real-time delivery is handled by the
+-- dedicated worker; including it here keeps shared Inbox discovery complete.
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
-       sa.account_name, p.workspace_id
+       sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
+       sa.x_app_mode, COALESCE(sub.plan_id, 'free') AS plan_id,
+       COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 WHERE sa.disconnected_at IS NULL
   AND sa.status = 'active'
-  AND sa.platform IN ('instagram', 'threads', 'facebook')
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
 ORDER BY sa.connected_at DESC;
 
 -- name: FindInboxAccountsByWorkspace :many
@@ -249,7 +254,78 @@ FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads', 'facebook');
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter');
+
+-- name: FindXInboxAccountForApp :one
+SELECT
+  sa.id,
+  p.workspace_id,
+  sa.external_user_id,
+  sa.external_account_id,
+  COALESCE(sa.account_name, '') AS account_name,
+  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  sa.scope,
+  sa.connection_type,
+  COALESCE(sub.plan_id, 'free') AS plan_id,
+  COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
+LEFT JOIN platform_credentials pc
+  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+WHERE sa.id = sqlc.arg(account_id)
+  AND sa.platform = 'twitter'
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND (
+    (
+      sa.x_app_mode = 'unipost_managed_app'
+      AND sqlc.arg(app_client_id)::TEXT = sqlc.arg(managed_app_client_id)::TEXT
+    )
+    OR (
+      sa.x_app_mode = 'workspace_x_app'
+      AND pc.client_id = sqlc.arg(app_client_id)::TEXT
+    )
+  )
+LIMIT 1;
+
+-- name: FindXInboxAccountsForExternalUserApp :many
+SELECT
+  sa.id,
+  p.workspace_id,
+  sa.external_user_id,
+  sa.external_account_id,
+  COALESCE(sa.account_name, '') AS account_name,
+  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  sa.scope,
+  sa.connection_type,
+  COALESCE(sub.plan_id, 'free') AS plan_id,
+  COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
+LEFT JOIN platform_credentials pc
+  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+WHERE sa.platform = 'twitter'
+  AND (
+    sa.external_user_id = sqlc.arg(external_user_id)
+    OR sa.external_account_id = sqlc.arg(external_user_id)::TEXT
+  )
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND (
+    (
+      sa.x_app_mode = 'unipost_managed_app'
+      AND sqlc.arg(app_client_id)::TEXT = sqlc.arg(managed_app_client_id)::TEXT
+    )
+    OR (
+      sa.x_app_mode = 'workspace_x_app'
+      AND pc.client_id = sqlc.arg(app_client_id)::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id;
 
 -- name: FindAllSocialAccountsByPlatformAndExternalID :many
 -- Webhook routing: find every active social account for platform +

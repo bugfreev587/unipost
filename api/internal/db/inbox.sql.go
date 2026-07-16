@@ -206,7 +206,7 @@ FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads', 'facebook')
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
 `
 
 // Distinct social accounts that have inbox items, for the sync handler.
@@ -300,6 +300,166 @@ func (q *Queries) FindSocialAccountByPlatformAndExternalID(ctx context.Context, 
 	var i FindSocialAccountByPlatformAndExternalIDRow
 	err := row.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID)
 	return i, err
+}
+
+const findXInboxAccountForApp = `-- name: FindXInboxAccountForApp :one
+SELECT
+  sa.id,
+  p.workspace_id,
+  sa.external_user_id,
+  sa.external_account_id,
+  COALESCE(sa.account_name, '') AS account_name,
+  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  sa.scope,
+  sa.connection_type,
+  COALESCE(sub.plan_id, 'free') AS plan_id,
+  COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
+LEFT JOIN platform_credentials pc
+  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+WHERE sa.id = $1
+  AND sa.platform = 'twitter'
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND (
+    (
+      sa.x_app_mode = 'unipost_managed_app'
+      AND $2::TEXT = $3::TEXT
+    )
+    OR (
+      sa.x_app_mode = 'workspace_x_app'
+      AND pc.client_id = $2::TEXT
+    )
+  )
+LIMIT 1
+`
+
+type FindXInboxAccountForAppParams struct {
+	AccountID          string `json:"account_id"`
+	AppClientID        string `json:"app_client_id"`
+	ManagedAppClientID string `json:"managed_app_client_id"`
+}
+
+type FindXInboxAccountForAppRow struct {
+	ID                string      `json:"id"`
+	WorkspaceID       string      `json:"workspace_id"`
+	ExternalUserID    pgtype.Text `json:"external_user_id"`
+	ExternalAccountID string      `json:"external_account_id"`
+	AccountName       string      `json:"account_name"`
+	XAppMode          string      `json:"x_app_mode"`
+	Scope             []string    `json:"scope"`
+	ConnectionType    string      `json:"connection_type"`
+	PlanID            string      `json:"plan_id"`
+	PlanAllowsInbox   bool        `json:"plan_allows_inbox"`
+}
+
+func (q *Queries) FindXInboxAccountForApp(ctx context.Context, arg FindXInboxAccountForAppParams) (FindXInboxAccountForAppRow, error) {
+	row := q.db.QueryRow(ctx, findXInboxAccountForApp, arg.AccountID, arg.AppClientID, arg.ManagedAppClientID)
+	var i FindXInboxAccountForAppRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ExternalUserID,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.XAppMode,
+		&i.Scope,
+		&i.ConnectionType,
+		&i.PlanID,
+		&i.PlanAllowsInbox,
+	)
+	return i, err
+}
+
+const findXInboxAccountsForExternalUserApp = `-- name: FindXInboxAccountsForExternalUserApp :many
+SELECT
+  sa.id,
+  p.workspace_id,
+  sa.external_user_id,
+  sa.external_account_id,
+  COALESCE(sa.account_name, '') AS account_name,
+  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  sa.scope,
+  sa.connection_type,
+  COALESCE(sub.plan_id, 'free') AS plan_id,
+  COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
+LEFT JOIN platform_credentials pc
+  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+WHERE sa.platform = 'twitter'
+  AND (
+    sa.external_user_id = $1
+    OR sa.external_account_id = $1::TEXT
+  )
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND (
+    (
+      sa.x_app_mode = 'unipost_managed_app'
+      AND $2::TEXT = $3::TEXT
+    )
+    OR (
+      sa.x_app_mode = 'workspace_x_app'
+      AND pc.client_id = $2::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id
+`
+
+type FindXInboxAccountsForExternalUserAppParams struct {
+	ExternalUserID     pgtype.Text `json:"external_user_id"`
+	AppClientID        string      `json:"app_client_id"`
+	ManagedAppClientID string      `json:"managed_app_client_id"`
+}
+
+type FindXInboxAccountsForExternalUserAppRow struct {
+	ID                string      `json:"id"`
+	WorkspaceID       string      `json:"workspace_id"`
+	ExternalUserID    pgtype.Text `json:"external_user_id"`
+	ExternalAccountID string      `json:"external_account_id"`
+	AccountName       string      `json:"account_name"`
+	XAppMode          string      `json:"x_app_mode"`
+	Scope             []string    `json:"scope"`
+	ConnectionType    string      `json:"connection_type"`
+	PlanID            string      `json:"plan_id"`
+	PlanAllowsInbox   bool        `json:"plan_allows_inbox"`
+}
+
+func (q *Queries) FindXInboxAccountsForExternalUserApp(ctx context.Context, arg FindXInboxAccountsForExternalUserAppParams) ([]FindXInboxAccountsForExternalUserAppRow, error) {
+	rows, err := q.db.Query(ctx, findXInboxAccountsForExternalUserApp, arg.ExternalUserID, arg.AppClientID, arg.ManagedAppClientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindXInboxAccountsForExternalUserAppRow{}
+	for rows.Next() {
+		var i FindXInboxAccountsForExternalUserAppRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ExternalUserID,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.XAppMode,
+			&i.Scope,
+			&i.ConnectionType,
+			&i.PlanID,
+			&i.PlanAllowsInbox,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getInboxItem = `-- name: GetInboxItem :one
@@ -415,12 +575,16 @@ func (q *Queries) GetInboxMediaCache(ctx context.Context, arg GetInboxMediaCache
 
 const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
-       sa.account_name, p.workspace_id
+       sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
+       sa.x_app_mode, COALESCE(sub.plan_id, 'free') AS plan_id,
+       COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 WHERE sa.disconnected_at IS NULL
   AND sa.status = 'active'
-  AND sa.platform IN ('instagram', 'threads', 'facebook')
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
 ORDER BY sa.connected_at DESC
 `
 
@@ -431,11 +595,17 @@ type ListAllInboxAccountsRow struct {
 	ExternalAccountID string      `json:"external_account_id"`
 	AccountName       pgtype.Text `json:"account_name"`
 	WorkspaceID       string      `json:"workspace_id"`
+	Scope             []string    `json:"scope"`
+	ConnectionType    string      `json:"connection_type"`
+	XAppMode          pgtype.Text `json:"x_app_mode"`
+	PlanID            string      `json:"plan_id"`
+	PlanAllowsInbox   bool        `json:"plan_allows_inbox"`
 }
 
-// All active IG / Threads / Facebook accounts across all workspaces,
+// All active Inbox accounts across all workspaces,
 // for the background inbox sync worker. Returns account fields plus
-// workspace_id.
+// workspace eligibility context. X real-time delivery is handled by the
+// dedicated worker; including it here keeps shared Inbox discovery complete.
 func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccountsRow, error) {
 	rows, err := q.db.Query(ctx, listAllInboxAccounts)
 	if err != nil {
@@ -452,6 +622,11 @@ func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccou
 			&i.ExternalAccountID,
 			&i.AccountName,
 			&i.WorkspaceID,
+			&i.Scope,
+			&i.ConnectionType,
+			&i.XAppMode,
+			&i.PlanID,
+			&i.PlanAllowsInbox,
 		); err != nil {
 			return nil, err
 		}

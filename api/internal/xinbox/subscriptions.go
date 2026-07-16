@@ -32,6 +32,23 @@ func DMSubscriptionTag(accountID string) string {
 	return "unipost:x:dm:" + strings.TrimSpace(accountID)
 }
 
+func AppWebhookURL(baseURL, appClientID string) (string, error) {
+	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	appClientID = strings.TrimSpace(appClientID)
+	if baseURL == "" {
+		return "", errors.New("X_INBOX_WEBHOOK_URL is not configured")
+	}
+	if appClientID == "" {
+		return "", errors.New("X app client id is not configured")
+	}
+	parsed, err := url.Parse(baseURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+		return "", errors.New("X_INBOX_WEBHOOK_URL must be an absolute HTTPS URL")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + url.PathEscape(appClientID)
+	return parsed.String(), nil
+}
+
 func (c *Client) ListWebhooks(ctx context.Context, appBearerToken string) ([]Webhook, error) {
 	var response struct {
 		Data []Webhook `json:"data"`

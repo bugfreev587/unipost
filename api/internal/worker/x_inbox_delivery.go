@@ -67,6 +67,7 @@ type XInboxDeliveryStore interface {
 type XInboxDeliveryAccount struct {
 	SocialAccountID          string
 	WorkspaceID              string
+	AppClientID              string
 	Handle                   string
 	ExternalUserID           string
 	AccessTokenEncrypted     string
@@ -187,9 +188,14 @@ func NewPostgresXInboxDeliveryWorker(
 	client *xinbox.Client,
 	managedAppBearer string,
 	managedConsumerSecretConfigured bool,
+	managedAppClientID string,
 	webhookURL string,
 ) *XInboxDeliveryWorker {
-	store := &postgresXInboxDeliveryStore{pool: pool, queries: queries}
+	store := &postgresXInboxDeliveryStore{
+		pool:               pool,
+		queries:            queries,
+		managedAppClientID: strings.TrimSpace(managedAppClientID),
+	}
 	return NewXInboxDeliveryWorker(XInboxDeliveryConfig{
 		Store:                           store,
 		API:                             client,
@@ -464,7 +470,11 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		if w.webhookURL == "" {
 			return fail(errors.New("X_INBOX_WEBHOOK_URL is not configured"))
 		}
-		webhook, err := w.api.EnsureWebhook(ctx, appBearerToken, w.webhookURL)
+		appWebhookURL, err := xinbox.AppWebhookURL(w.webhookURL, account.AppClientID)
+		if err != nil {
+			return fail(err)
+		}
+		webhook, err := w.api.EnsureWebhook(ctx, appBearerToken, appWebhookURL)
 		if err != nil {
 			return fail(err)
 		}
@@ -607,7 +617,10 @@ func (w *XInboxDeliveryWorker) resolveAccountAppToken(
 		if w.managedAppBearer == "" {
 			return "", "", w.managedConsumerSecretConfigured, errors.New("TWITTER_BEARER_TOKEN is not configured")
 		}
-		return w.managedAppBearer, string(xinbox.AppModeUniPostManaged), w.managedConsumerSecretConfigured, nil
+		if account.AppClientID == "" {
+			return "", "", w.managedConsumerSecretConfigured, errors.New("TWITTER_CLIENT_ID is not configured")
+		}
+		return w.managedAppBearer, account.AppClientID, w.managedConsumerSecretConfigured, nil
 	case xinbox.AppModeWorkspace:
 		if account.AppBearerTokenEncrypted == "" {
 			return "", "", account.ConsumerSecretConfigured, errors.New("workspace X app bearer token is not configured")
@@ -616,7 +629,10 @@ func (w *XInboxDeliveryWorker) resolveAccountAppToken(
 		if err != nil {
 			return "", "", account.ConsumerSecretConfigured, fmt.Errorf("decrypt workspace X app bearer token: %w", err)
 		}
-		return token, "workspace:" + account.WorkspaceID, account.ConsumerSecretConfigured, nil
+		if account.AppClientID == "" {
+			return "", "", account.ConsumerSecretConfigured, errors.New("workspace X app client_id is not configured")
+		}
+		return token, account.AppClientID, account.ConsumerSecretConfigured, nil
 	default:
 		return "", "", false, fmt.Errorf("unsupported X app mode %q", account.AppMode)
 	}
@@ -785,8 +801,9 @@ func bearerFingerprint(bearer string) string {
 }
 
 type postgresXInboxDeliveryStore struct {
-	pool    *pgxpool.Pool
-	queries *db.Queries
+	pool               *pgxpool.Pool
+	queries            *db.Queries
+	managedAppClientID string
 }
 
 func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInboxDeliveryAccount, error) {
@@ -794,6 +811,10 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 		SELECT
 			sa.id,
 			p.workspace_id,
+			CASE
+			  WHEN COALESCE(sa.x_app_mode, 'legacy_unknown') = 'unipost_managed_app' THEN $1
+			  ELSE COALESCE(pc.client_id, '')
+			END,
 			COALESCE(sa.account_name, ''),
 			COALESCE(sa.external_user_id, ''),
 			sa.access_token,
@@ -819,7 +840,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 		    OR r.activity_dm_subscription_id IS NOT NULL
 		  )
 		ORDER BY sa.id
-	`)
+	`, s.managedAppClientID)
 	if err != nil {
 		return nil, err
 	}
@@ -831,6 +852,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 		if err := rows.Scan(
 			&account.SocialAccountID,
 			&account.WorkspaceID,
+			&account.AppClientID,
 			&account.Handle,
 			&account.ExternalUserID,
 			&account.AccessTokenEncrypted,

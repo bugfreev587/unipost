@@ -47,6 +47,7 @@ type fakeXInboxDeliveryAPI struct {
 	deletedSubs        []string
 	deletedSubTokens   []string
 	operations         []string
+	webhookURLs        []string
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
@@ -85,6 +86,7 @@ func (f *fakeXInboxDeliveryAPI) DeleteFilteredStreamRule(_ context.Context, toke
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, _ string, configuredURL string) (xinbox.Webhook, error) {
+	f.webhookURLs = append(f.webhookURLs, configuredURL)
 	return xinbox.Webhook{ID: f.webhookID, URL: configuredURL, Valid: true}, nil
 }
 
@@ -249,7 +251,7 @@ func TestXInboxDeliveryCancelsRemovedStreamBeforeBudgetedCleanup(t *testing.T) {
 
 	select {
 	case stopped := <-runner.stops:
-		if stopped != "unipost_managed_app" {
+		if stopped != "managed-client-id" {
 			t.Fatalf("stopped = %q", stopped)
 		}
 	case <-time.After(250 * time.Millisecond):
@@ -322,6 +324,7 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 		WorkspaceID:              "workspace-1",
 		Handle:                   "UniPostDev",
 		ExternalUserID:           "2244994945",
+		AppClientID:              "managed-client-id",
 		AccessTokenEncrypted:     "encrypted-user-token",
 		AppMode:                  xinbox.AppModeUniPostManaged,
 		ConsumerSecretConfigured: true,
@@ -362,6 +365,9 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	if want := []string{"user-oauth-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
 		t.Fatalf("subscription tokens = %v, want connected user OAuth token", api.subscriptionTokens)
 	}
+	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-client-id"}; !reflect.DeepEqual(api.webhookURLs, want) {
+		t.Fatalf("webhook URLs = %v, want app-specific URL %v", api.webhookURLs, want)
+	}
 }
 
 func TestXInboxDeliveryPersistsRuleBeforeSubscriptionFailure(t *testing.T) {
@@ -398,6 +404,7 @@ func TestXInboxDeliveryPersistsRuleBeforeSubscriptionFailure(t *testing.T) {
 func TestXInboxDeliveryAfterConsumerSecretRemovalCleansAndDoesNotRecreate(t *testing.T) {
 	account := activeManagedXInboxAccount()
 	account.AppMode = xinbox.AppModeWorkspace
+	account.AppClientID = "workspace-client-id"
 	account.AppBearerTokenEncrypted = "workspace-encrypted-bearer"
 	account.ConsumerSecretConfigured = false
 	store := &fakeXInboxDeliveryStore{
@@ -760,11 +767,13 @@ func TestXInboxDeliveryKeepsWorkspaceXAppsIsolated(t *testing.T) {
 	first.SocialAccountID = "account-1"
 	first.WorkspaceID = "workspace-1"
 	first.AppMode = xinbox.AppModeWorkspace
+	first.AppClientID = "workspace-client-one"
 	first.AppBearerTokenEncrypted = "encrypted-app-one"
 	first.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
 	second := first
 	second.SocialAccountID = "account-2"
 	second.WorkspaceID = "workspace-2"
+	second.AppClientID = "workspace-client-two"
 	second.AppBearerTokenEncrypted = "encrypted-app-two"
 
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{first, second}}
@@ -790,8 +799,8 @@ func TestXInboxDeliveryKeepsWorkspaceXAppsIsolated(t *testing.T) {
 		got[app.Identity] = app.BearerToken
 	}
 	want := map[string]string{
-		"workspace:workspace-1": "workspace-app-token-one",
-		"workspace:workspace-2": "workspace-app-token-two",
+		"workspace-client-one": "workspace-app-token-one",
+		"workspace-client-two": "workspace-app-token-two",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("apps = %v, want isolated workspace apps %v", got, want)
@@ -1022,6 +1031,7 @@ func TestXInboxDeliveryMissingWorkspaceCredentialCancelsDesiredStream(t *testing
 	}
 	account := activeManagedXInboxAccount()
 	account.AppMode = xinbox.AppModeWorkspace
+	account.AppClientID = "workspace-client-id"
 	account.AppBearerTokenEncrypted = "encrypted-workspace-token"
 	account.FilteredStreamRuleID = "rule-existing"
 	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
@@ -1046,7 +1056,7 @@ func TestXInboxDeliveryMissingWorkspaceCredentialCancelsDesiredStream(t *testing
 	store.accounts[0].FilteredStreamRuleID = ""
 	store.mu.Unlock()
 	worker.reconcileAndStartStreams(ctx)
-	if stopped := <-runner.stops; stopped != "workspace:workspace-1" {
+	if stopped := <-runner.stops; stopped != "workspace-client-id" {
 		t.Fatalf("stopped = %q", stopped)
 	}
 }
