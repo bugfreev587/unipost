@@ -164,18 +164,26 @@ func (f *fakeXInboxReplyAdapter) SendInboxDMToParticipant(_ context.Context, _ s
 }
 
 type fakeXInboxCredits struct {
-	event       xcredits.UsageEvent
-	reserve     xcredits.ReserveRequest
-	finalizedID string
-	reversedID  string
-	reserveErr  error
-	finalizeErr error
-	reverseErr  error
-	snapshot    xcredits.Snapshot
+	event        xcredits.UsageEvent
+	events       []xcredits.UsageEvent
+	reserve      xcredits.ReserveRequest
+	reserveCalls int
+	finalizedID  string
+	reversedID   string
+	reserveErr   error
+	finalizeErr  error
+	reverseErr   error
+	snapshot     xcredits.Snapshot
 }
 
 func (f *fakeXInboxCredits) Reserve(_ context.Context, req xcredits.ReserveRequest) (xcredits.UsageEvent, error) {
 	f.reserve = req
+	f.reserveCalls++
+	if len(f.events) > 0 {
+		event := f.events[0]
+		f.events = f.events[1:]
+		return event, f.reserveErr
+	}
 	return f.event, f.reserveErr
 }
 
@@ -603,6 +611,97 @@ func TestInboxXUnknownWriteOutcomeKeepsProvisionalUsage(t *testing.T) {
 	}
 }
 
+func TestInboxXUnknownWriteOutcomeSameKeyRetryDoesNotSendAgain(t *testing.T) {
+	tests := []struct {
+		name  string
+		item  db.InboxItem
+		stage string
+	}{
+		{
+			name:  "reply",
+			stage: "create_tweet_reply",
+			item: db.InboxItem{
+				ID:         "item-reply",
+				Source:     "x_reply",
+				ExternalID: "tweet-1",
+				Metadata:   []byte(`{"reply_eligible":true}`),
+			},
+		},
+		{
+			name:  "DM",
+			stage: "create_dm",
+			item: db.InboxItem{
+				ID:               "item-dm",
+				Source:           "x_dm",
+				ExternalID:       "dm-1",
+				ParentExternalID: pgtype.Text{String: "conversation-1", Valid: true},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			adapter := &fakeFailingXInboxReplyAdapter{
+				err: errors.New(tt.stage + ": X inbox API returned HTTP 502"),
+			}
+			credits := &fakeXInboxCredits{events: []xcredits.UsageEvent{
+				{
+					ID:             "usage-1",
+					Status:         xcredits.UsageStatusProvisional,
+					OperationKey:   "post.reply_summoned",
+					CatalogVersion: xcredits.CatalogVersion,
+					WeightedUnits:  10,
+				},
+				{
+					ID:             "usage-1",
+					Status:         xcredits.UsageStatusProvisional,
+					OperationKey:   "post.reply_summoned",
+					CatalogVersion: xcredits.CatalogVersion,
+					WeightedUnits:  10,
+					Duplicate:      true,
+				},
+			}}
+			account := db.SocialAccount{
+				ID:             "account-1",
+				Platform:       "twitter",
+				XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+				ConnectionType: "managed",
+			}
+			_, firstErr := sendXInboxReply(
+				context.Background(), adapter, credits, "workspace-1", account, tt.item,
+				"user-token", "thanks", "same-key",
+			)
+			if !errors.Is(firstErr, ErrXWriteOutcomePending) {
+				t.Fatalf("first err = %v, want pending", firstErr)
+			}
+			_, retryErr := sendXInboxReply(
+				context.Background(), adapter, credits, "workspace-1", account, tt.item,
+				"user-token", "thanks", "same-key",
+			)
+			if !errors.Is(retryErr, errXInboxIdempotencyReplay) {
+				t.Fatalf("retry err = %v, want idempotency replay", retryErr)
+			}
+			if adapter.calls != 1 {
+				t.Fatalf("upstream calls = %d, want 1", adapter.calls)
+			}
+			if credits.reserveCalls != 2 {
+				t.Fatalf("credit reserve calls = %d, want 2 idempotent attempts", credits.reserveCalls)
+			}
+			if credits.reversedID != "" || credits.finalizedID != "" {
+				t.Fatalf("unknown result was settled: %+v", credits)
+			}
+		})
+	}
+}
+
+func TestInboxXOutboundClaimIsRetainedOnlyForUnknownWriteOutcome(t *testing.T) {
+	if !retainXInboxOutboundClaim(ErrXWriteOutcomePending) {
+		t.Fatal("unknown X write outcome must retain the durable claim")
+	}
+	if retainXInboxOutboundClaim(errors.New("X inbox API returned HTTP 429")) {
+		t.Fatal("definitive 429 rejection must not retain the durable claim")
+	}
+}
+
 func TestInboxXUnknownWriteOutcomeReturnsReconciliationState(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	(&InboxHandler{}).writeXInboxReplyError(recorder, ErrXWriteOutcomePending)
@@ -667,17 +766,21 @@ func TestInboxXFinalizeFailureStillReturnsAcceptedUpstreamResult(t *testing.T) {
 }
 
 type fakeFailingXInboxReplyAdapter struct {
-	err error
+	err   error
+	calls int
 }
 
 func (f *fakeFailingXInboxReplyAdapter) SendInboxReply(context.Context, string, string, string) (*platform.PostResult, error) {
+	f.calls++
 	return nil, f.err
 }
 
 func (f *fakeFailingXInboxReplyAdapter) SendInboxDMToConversation(context.Context, string, string, string) (*platform.TwitterDMSendResult, error) {
+	f.calls++
 	return nil, f.err
 }
 
 func (f *fakeFailingXInboxReplyAdapter) SendInboxDMToParticipant(context.Context, string, string, string) (*platform.TwitterDMSendResult, error) {
+	f.calls++
 	return nil, f.err
 }

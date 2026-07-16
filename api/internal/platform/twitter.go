@@ -68,6 +68,21 @@ type TwitterDMSendResult struct {
 	ConversationID string
 }
 
+type TwitterInboxHTTPError struct {
+	Stage          string
+	StatusCode     int
+	Retryable      bool
+	OutcomeUnknown bool
+}
+
+func (e *TwitterInboxHTTPError) Error() string {
+	message := fmt.Sprintf("X inbox API returned HTTP %d", e.StatusCode)
+	if e.OutcomeUnknown {
+		return e.Stage + ": " + message
+	}
+	return message
+}
+
 func (a *TwitterAdapter) apiURL(path string) string {
 	base := strings.TrimRight(strings.TrimSpace(a.apiBaseURL), "/")
 	if base == "" {
@@ -407,7 +422,18 @@ func (a *TwitterAdapter) doTwitterInboxJSON(
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
-		return fmt.Errorf("X inbox API returned HTTP %d", resp.StatusCode)
+		serverError := resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode < 600
+		retryable := resp.StatusCode == http.StatusRequestTimeout ||
+			resp.StatusCode == http.StatusTooManyRequests ||
+			serverError
+		return &TwitterInboxHTTPError{
+			Stage:      stage,
+			StatusCode: resp.StatusCode,
+			Retryable:  retryable,
+			OutcomeUnknown: twitterInboxWriteStage(stage) &&
+				(resp.StatusCode == http.StatusRequestTimeout ||
+					serverError),
+		}
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
 	if err == nil && len(raw) > 2<<20 {

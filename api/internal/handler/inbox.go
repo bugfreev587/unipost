@@ -694,7 +694,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if sendErr != nil {
-			if !stderrors.Is(sendErr, ErrXWriteOutcomePending) {
+			if !retainXInboxOutboundClaim(sendErr) {
 				_ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
 			}
 			h.writeXInboxReplyError(w, sendErr)
@@ -931,6 +931,10 @@ func (h *InboxHandler) writeXInboxReplyError(w http.ResponseWriter, err error) {
 	default:
 		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", "X Inbox reply failed: "+err.Error())
 	}
+}
+
+func retainXInboxOutboundClaim(err error) bool {
+	return stderrors.Is(err, ErrXWriteOutcomePending)
 }
 
 func writeXInboxOutcomePending(w http.ResponseWriter) {

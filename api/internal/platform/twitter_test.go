@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -444,6 +445,108 @@ func TestTwitterInboxMalformedCreatedResponseIsOutcomeUnknown(t *testing.T) {
 				t.Fatalf("err = %v, want outcome-unknown stage", err)
 			}
 		})
+	}
+}
+
+func TestTwitterInboxWriteHTTPTimeoutAndServerErrorsAreOutcomeUnknown(t *testing.T) {
+	tests := []struct {
+		name   string
+		path   string
+		status int
+		call   func(*TwitterAdapter) error
+	}{
+		{
+			name:   "reply 408",
+			path:   "/2/tweets",
+			status: http.StatusRequestTimeout,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+				return err
+			},
+		},
+		{
+			name:   "reply 500",
+			path:   "/2/tweets",
+			status: http.StatusInternalServerError,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+				return err
+			},
+		},
+		{
+			name:   "reply 502",
+			path:   "/2/tweets",
+			status: http.StatusBadGateway,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+				return err
+			},
+		},
+		{
+			name:   "DM 408",
+			path:   "/2/dm_conversations/conversation-1/messages",
+			status: http.StatusRequestTimeout,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "dm")
+				return err
+			},
+		},
+		{
+			name:   "DM 500",
+			path:   "/2/dm_conversations/conversation-1/messages",
+			status: http.StatusInternalServerError,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "dm")
+				return err
+			},
+		},
+		{
+			name:   "DM 502",
+			path:   "/2/dm_conversations/conversation-1/messages",
+			status: http.StatusBadGateway,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "dm")
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.path {
+					t.Fatalf("path = %q, want %q", r.URL.Path, tt.path)
+				}
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, `{"errors":`)
+			}))
+			defer server.Close()
+			adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+			err := tt.call(adapter)
+			if err == nil || !xWriteOutcomeUnknownForTest(err) {
+				t.Fatalf("err = %v, want outcome-unknown stage", err)
+			}
+			var httpErr *TwitterInboxHTTPError
+			if !errors.As(err, &httpErr) || !httpErr.OutcomeUnknown || !httpErr.Retryable {
+				t.Fatalf("HTTP classification = %#v, err = %v", httpErr, err)
+			}
+		})
+	}
+}
+
+func TestTwitterInboxWrite429IsRetryableWithoutUnknownAcceptance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = io.WriteString(w, `{"errors":[{"detail":"rate limit"}]}`)
+	}))
+	defer server.Close()
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+	_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+	if err == nil || xWriteOutcomeUnknownForTest(err) {
+		t.Fatalf("err = %v, want retryable definitive rejection", err)
+	}
+	var httpErr *TwitterInboxHTTPError
+	if !errors.As(err, &httpErr) || !httpErr.Retryable || httpErr.OutcomeUnknown {
+		t.Fatalf("HTTP classification = %#v, err = %v", httpErr, err)
 	}
 }
 
