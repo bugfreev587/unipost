@@ -377,12 +377,36 @@ Do not display a dollar-equivalent cash balance because credits are a product us
 
 Auto top-up is not required for the first public release, but the data model and API must not prevent it. When enabled, the workspace owner chooses:
 
-- Trigger threshold.
+- A custom trigger threshold in whole Credits. UniPost may recommend a value based on the plan, but the recommendation must remain editable.
 - One of the approved SKUs.
 - Monthly top-up spend cap.
 - Payment method through Stripe.
 
-Only one auto top-up may be in flight for a workspace. A failed auto top-up disables further retries until the owner resolves payment.
+Define `available_to_spend` as included credits plus top-up credits minus active reservations. Auto top-up evaluates against this spendable balance, not against either bucket independently.
+
+Trigger rules:
+
+1. Trigger when `available_to_spend` crosses from above the user-defined threshold to at or below it.
+2. Before a managed X reservation, trigger early if the pending operation would take `available_to_spend` to or below the threshold.
+3. Apply a new billing-period included grant before evaluating Auto top-up at a subscription reset, so the reset cannot cause an unnecessary charge.
+4. If Auto top-up is enabled while the current balance is already at or below the chosen threshold, the UI must warn that a purchase will start immediately; the API response must return `will_trigger_immediately: true`.
+5. Only one Auto top-up may be in flight for a workspace.
+6. A successful purchase cannot immediately trigger another purchase in a chain. The trigger rearms only after the balance is observed above the threshold and later crosses it again.
+7. If the selected SKU would not restore the current balance above the configured threshold, warn the user before saving the configuration.
+8. A failed Auto top-up disables further automatic attempts until the owner resolves payment and explicitly re-enables it. It never grants credits.
+9. Reaching the user-defined monthly spend cap pauses Auto top-up until the next monthly cap period and sends a notification.
+
+The Billing UI uses an editable numeric field rather than a fixed plan threshold:
+
+```text
+Automatically top up when available X Credits fall to: [ 800 ]
+Top-up package:                                      [ $25 ]
+Maximum automatic spend per month:                  [ $100 ]
+```
+
+The confirmation copy must summarize the exact user-defined rule and the non-expiration promise:
+
+> When your available balance falls to 800 X Credits, UniPost will automatically purchase the selected package, up to $100 per month. Purchased credits never expire.
 
 ## 10. Public API contract
 
@@ -433,7 +457,18 @@ The API must derive the price and credits server-side. It must never trust clien
 
 #### `PATCH /v1/billing/x-credits/auto-top-up`
 
-Fast-follow endpoint. Owner/admin only. Enables, updates, or disables threshold, SKU, and monthly spend cap.
+Fast-follow endpoint. Owner/admin or an explicitly `billing:write`-scoped API key only. Enables, updates, or disables the user-defined threshold, SKU, and monthly spend cap. The threshold is not inferred or locked by the workspace plan.
+
+```json
+{
+  "enabled": true,
+  "threshold_credits": 800,
+  "sku": "topup_25",
+  "monthly_spend_cap_cents": 10000
+}
+```
+
+The endpoint requires `Idempotency-Key`. The response returns the saved configuration, current `available_to_spend`, `will_trigger_immediately`, the selected package's total credits, and `expires_at: null` for the credits that a successful Auto top-up will grant. Amount, bonus, and final Credits are derived from the server-side SKU catalog and cannot be supplied by the client.
 
 ### 10.2 Estimates and actual charges
 
