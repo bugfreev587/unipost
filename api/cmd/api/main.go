@@ -377,11 +377,12 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
+	xCreditsService := xcredits.NewPostgresService(pool, queries)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetQuotaEmailService(freePlanQuotaEmailService).
-		SetXUsageService(xcredits.NewPostgresService(pool, queries))
+		SetXUsageService(xCreditsService)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
@@ -490,7 +491,8 @@ func main() {
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
-	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr)
+	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
+		SetXCreditsService(xCreditsService)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).SetLoopsSyncer(loopsSyncer)
 	analyticsHandler := handler.NewAnalyticsHandler(queries, encryptor)
 	// Sprint 5 PR1: GET /v1/analytics/rollup uses raw pgx for the
@@ -962,6 +964,7 @@ func main() {
 		// Billing. Read is workspace-wide (any role); checkout / portal
 		// are owner-only because they touch the payment method.
 		r.Get("/v1/billing", billingHandler.GetBilling)
+		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)

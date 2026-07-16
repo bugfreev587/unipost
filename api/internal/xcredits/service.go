@@ -62,11 +62,11 @@ type Snapshot struct {
 	PlanID            string    `json:"plan_id"`
 	PeriodStart       time.Time `json:"billing_period_start"`
 	PeriodEnd         time.Time `json:"billing_period_end"`
-	MonthlyAllowance  int64     `json:"monthly_allowance"`
+	MonthlyAllowance  *int64    `json:"monthly_allowance"`
 	MonthlyUsed       int64     `json:"monthly_used"`
-	MonthlyRemaining  int64     `json:"monthly_remaining"`
+	MonthlyRemaining  *int64    `json:"monthly_remaining"`
 	InboundDailyUsed  int64     `json:"inbound_daily_usage"`
-	InboundDailyLimit int64     `json:"inbound_daily_limit"`
+	InboundDailyLimit *int64    `json:"inbound_daily_limit"`
 	CatalogVersion    string    `json:"catalog_version"`
 }
 

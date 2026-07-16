@@ -74,13 +74,15 @@ func (s *fakeStore) Reverse(_ context.Context, eventID string) error {
 }
 
 func (s *fakeStore) Snapshot(_ context.Context, _ string, _ time.Time) (Snapshot, error) {
+	allowance := int64(4000)
+	remaining := allowance - s.used
 	return Snapshot{
 		PlanID:           s.period.PlanID,
 		PeriodStart:      s.period.Start,
 		PeriodEnd:        s.period.End,
-		MonthlyAllowance: 4000,
+		MonthlyAllowance: &allowance,
 		MonthlyUsed:      s.used,
-		MonthlyRemaining: 4000 - s.used,
+		MonthlyRemaining: &remaining,
 		CatalogVersion:   CatalogVersion,
 	}, nil
 }

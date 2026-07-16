@@ -26,6 +26,10 @@ func shouldSkipUsageSettlement(queryErr error, status string) (bool, error) {
 	return status != UsageStatusProvisional, nil
 }
 
+func int64Pointer(value int64) *int64 {
+	return &value
+}
+
 func NewPostgresService(pool *pgxpool.Pool, queries *db.Queries) *Service {
 	return NewService(&PostgresStore{pool: pool, queries: queries})
 }
@@ -230,11 +234,8 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 	if err != nil {
 		return Snapshot{}, err
 	}
-	allowance, ok := PlanAllowance(period.PlanID)
-	if !ok {
-		return Snapshot{}, ErrAllowanceNotConfigured
-	}
-	inboundLimit, _ := InboundDailyLimit(period.PlanID)
+	allowance, allowanceConfigured := PlanAllowance(period.PlanID)
+	inboundLimit, inboundLimitConfigured := InboundDailyLimit(period.PlanID)
 
 	var used int64
 	err = s.pool.QueryRow(ctx, `
@@ -260,19 +261,27 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 		return Snapshot{}, err
 	}
 
-	remaining := allowance - used
-	if remaining < 0 {
-		remaining = 0
+	var monthlyAllowance, monthlyRemaining, dailyLimit *int64
+	if allowanceConfigured {
+		remaining := allowance - used
+		if remaining < 0 {
+			remaining = 0
+		}
+		monthlyAllowance = int64Pointer(allowance)
+		monthlyRemaining = int64Pointer(remaining)
+	}
+	if inboundLimitConfigured {
+		dailyLimit = int64Pointer(inboundLimit)
 	}
 	return Snapshot{
 		PlanID:            period.PlanID,
 		PeriodStart:       period.Start,
 		PeriodEnd:         period.End,
-		MonthlyAllowance:  allowance,
+		MonthlyAllowance:  monthlyAllowance,
 		MonthlyUsed:       used,
-		MonthlyRemaining:  remaining,
+		MonthlyRemaining:  monthlyRemaining,
 		InboundDailyUsed:  inboundUsed,
-		InboundDailyLimit: inboundLimit,
+		InboundDailyLimit: dailyLimit,
 		CatalogVersion:    CatalogVersion,
 	}, nil
 }

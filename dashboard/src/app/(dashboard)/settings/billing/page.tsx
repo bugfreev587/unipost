@@ -12,11 +12,11 @@ import { CheckCircle2, ExternalLink } from "lucide-react";
 // Pricing redesign May 2026 (migration 058): tiers are now product-stage
 // based, not per-volume. IDs match plans.id.
 const PLANS: Plan[] = [
-  { id: "free",   name: "Free",   price_cents: 0,     post_limit: 100 },
-  { id: "api",    name: "API",    price_cents: 1000,  post_limit: 1000 },
-  { id: "basic",  name: "Basic",  price_cents: 1900,  post_limit: 2500 },
-  { id: "growth", name: "Growth", price_cents: 5900,  post_limit: 7500 },
-  { id: "team",   name: "Team",   price_cents: 14900, post_limit: -1 },
+  { id: "free",   name: "Free",   price_cents: 0,     post_limit: 100,  pricing_model: "fixed" },
+  { id: "api",    name: "API",    price_cents: 1000,  post_limit: 1000, pricing_model: "fixed" },
+  { id: "basic",  name: "Basic",  price_cents: 1900,  post_limit: 2500, pricing_model: "fixed" },
+  { id: "growth", name: "Growth", price_cents: 5900,  post_limit: 7500, pricing_model: "fixed" },
+  { id: "team",   name: "Team",   price_cents: 14900, post_limit: -1,   pricing_model: "fixed" },
 ];
 
 // Short blurbs surfaced on the upgrade card so customers see the
@@ -305,7 +305,11 @@ function BillingSettingsContent() {
       <div className="plan-cards">
         {PLANS.map((plan) => {
           const isCurrent = billing?.plan === plan.id;
-          const price = plan.price_cents === 0 ? "$0" : `$${plan.price_cents / 100}`;
+          const price = plan.price_cents == null
+            ? "Custom"
+            : plan.price_cents === 0
+              ? "$0"
+              : `$${plan.price_cents / 100}`;
           const blurb = PLAN_BLURBS[plan.id] ?? "";
           return (
             <div key={plan.id} className={`plan-card ${isCurrent ? "current" : ""}`}>

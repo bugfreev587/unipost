@@ -1637,14 +1637,35 @@ export interface BillingInfo {
 export interface Plan {
   id: string;
   name: string;
-  price_cents: number;
+  price_cents: number | null;
   post_limit: number;
+  pricing_model: "fixed" | "custom";
+}
+
+export interface XCreditsAllowance {
+  mode: "monthly_allowance";
+  plan_id: string;
+  monthly_allowance: number | null;
+  monthly_used: number;
+  monthly_remaining: number | null;
+  billing_period_start: string;
+  billing_period_end: string;
+  catalog_version: string;
+  inbound_daily_usage: number;
+  inbound_daily_limit: number | null;
+  connection_mode_note: string;
 }
 
 export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
   return request(`/v1/billing`, token);
+}
+
+export async function getXCreditsAllowance(
+  token: string,
+): Promise<ApiResponse<XCreditsAllowance>> {
+  return request(`/v1/billing/x-credits`, token);
 }
 
 export async function listIntegrationLogs(
