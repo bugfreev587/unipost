@@ -14,7 +14,7 @@ func TestExpandableTablesDoNotUseWildcardProjections(t *testing.T) {
 	}
 	targetTables := `(oauth_states|connect_sessions|social_accounts|platform_credentials)`
 	wildcards := []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\bSELECT\s+(?:[a-z_][a-z0-9_]*\.)?\*\s+FROM\s+` + targetTables + `\b`),
+		regexp.MustCompile(`(?i)\bSELECT\s+(?:DISTINCT\s+)?(?:[a-z_][a-z0-9_]*\.)?\*\s+FROM\s+` + targetTables + `\b`),
 		regexp.MustCompile(`(?is)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+` + targetTables + `\b[^;]*?\bRETURNING\s+\*`),
 	}
 
