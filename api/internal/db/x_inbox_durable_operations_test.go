@@ -16,6 +16,7 @@ func TestXInboxDurableOperationsMigrationIsRollingSafeAndExecutable(t *testing.T
 		"ALTER TABLE x_inbox_outbound_requests",
 		"ADD COLUMN IF NOT EXISTS encrypted_payload",
 		"ADD COLUMN IF NOT EXISTS body_hash",
+		"ADD COLUMN IF NOT EXISTS send_started_at",
 		"'outcome_unknown'",
 		"'remote_succeeded'",
 		"'usage_reversal_pending'",
@@ -30,6 +31,8 @@ func TestXInboxDurableOperationsMigrationIsRollingSafeAndExecutable(t *testing.T
 		"execution_lease_expires_at",
 		"CREATE TABLE x_inbox_backfill_exposure_reservations",
 		"reserved_units",
+		"'read_started'",
+		"'finalize_pending'",
 		"'release_pending'",
 		"reconciliation_attempts",
 		"next_attempt_at",
@@ -74,6 +77,9 @@ func TestXInboxWebhookHealingLocksCandidateAndCanRecoverManualState(t *testing.T
 		"RecordXInboxOutboundRemoteSuccessFromWebhook",
 		"'needs_reconciliation'",
 		"o.body_hash = @body_hash",
+		"o.send_started_at IS NOT NULL",
+		"@event_at::TIMESTAMPTZ >= o.send_started_at - INTERVAL '5 minutes'",
+		"@event_at::TIMESTAMPTZ <= o.reconciliation_deadline",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("webhook healing query missing %q", want)
@@ -82,6 +88,25 @@ func TestXInboxWebhookHealingLocksCandidateAndCanRecoverManualState(t *testing.T
 	if strings.Contains(text, "NOW() - INTERVAL '2 hours'") ||
 		strings.Contains(text, "LIMIT 10") {
 		t.Fatal("webhook healing candidates are truncated before exact payload matching")
+	}
+}
+
+func TestXInboxRecoveryIncludesStaleModernPendingClaimsWithoutResend(t *testing.T) {
+	source, err := os.ReadFile("queries/inbox.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"ListRecoverableXInboxOutboundRequests",
+		"status = 'pending'",
+		"encrypted_payload IS NOT NULL",
+		"reconciliation_deadline <= NOW()",
+		"DeletePendingXInboxOutboundRequest :execrows",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("modern pending recovery query missing %q", want)
+		}
 	}
 }
 
@@ -124,8 +149,17 @@ func TestXInboxExposureReservationUsesWorkspaceDailyLockBeforePaidRead(t *testin
 		"FinalizeExposure",
 		"ReleaseExposure",
 		"MarkExposureReleasePending",
-		"ReconcilePendingExposureReleases",
+		"MarkExposureReadStarted",
+		"MarkExposureFinalizePending",
+		"ReconcilePendingExposures",
 		"needs_reconciliation",
+		`status IN ('reserved', 'read_started', 'finalize_pending', 'release_pending')`,
+		`case "reserved"`,
+		`case "release_pending"`,
+		"claimStaleReservedExposureForRelease",
+		"WHERE id = $1 AND status = 'reserved'",
+		`case "finalize_pending"`,
+		`case "read_started"`,
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("exposure reservation missing %q", want)

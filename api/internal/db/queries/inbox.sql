@@ -76,13 +76,19 @@ FOR UPDATE;
 SELECT
   o.id AS outbound_request_id,
   o.inbox_item_id,
-  o.payload_hash
+  o.payload_hash,
+  o.send_started_at,
+  o.reconciliation_deadline
 FROM x_inbox_outbound_requests o
 JOIN inbox_items target
   ON target.id = o.inbox_item_id
 WHERE o.social_account_id = @social_account_id
   AND o.status IN ('sending', 'outcome_unknown', 'needs_reconciliation')
   AND o.body_hash = @body_hash
+  AND o.send_started_at IS NOT NULL
+  AND o.reconciliation_deadline IS NOT NULL
+  AND @event_at::TIMESTAMPTZ >= o.send_started_at - INTERVAL '5 minutes'
+  AND @event_at::TIMESTAMPTZ <= o.reconciliation_deadline
   AND target.source = @source
   AND (
     (@source = 'x_reply' AND target.external_id = @parent_external_id)
@@ -124,9 +130,10 @@ SET status = 'sending',
     usage_event_id = NULLIF(@usage_event_id::TEXT, ''),
     operation_key = NULLIF(@operation_key::TEXT, ''),
     reserved_units = @reserved_units,
+    send_started_at = COALESCE(send_started_at, NOW()),
     updated_at = NOW()
 WHERE id = @id
-  AND status = 'pending';
+  AND status IN ('pending', 'sending');
 
 -- name: MarkXInboxOutboundUnknown :execrows
 UPDATE x_inbox_outbound_requests
@@ -172,8 +179,13 @@ WHERE id = @id
 SELECT *
 FROM x_inbox_outbound_requests
 WHERE (
-    status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
-    OR (status = 'pending' AND encrypted_payload IS NULL)
+	status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+	OR (status = 'pending' AND encrypted_payload IS NULL)
+	OR (
+	  status = 'pending'
+	  AND encrypted_payload IS NOT NULL
+	  AND reconciliation_deadline <= NOW()
+	)
   )
   AND next_attempt_at <= NOW()
 ORDER BY created_at
@@ -208,15 +220,24 @@ SET completion_attempts = completion_attempts + 1,
 WHERE id = @id
   AND status = 'usage_reversal_pending';
 
+-- name: DeferPendingXInboxOutboundRecovery :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = @next_attempt_at,
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'pending';
+
 -- name: DeleteXInboxOutboundAfterUsageReversal :execrows
 DELETE FROM x_inbox_outbound_requests
 WHERE id = @id
   AND status = 'usage_reversal_pending';
 
--- name: DeletePendingXInboxOutboundRequest :exec
+-- name: DeletePendingXInboxOutboundRequest :execrows
 DELETE FROM x_inbox_outbound_requests
 WHERE id = @id
-  AND status IN ('pending', 'sending');
+  AND status = 'pending';
 
 -- name: MarkInboxItemRead :exec
 UPDATE inbox_items

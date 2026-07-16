@@ -236,9 +236,11 @@ type ExposureReservation struct {
 }
 
 type ExposureReleaseReconcileStats struct {
-	Scanned  int
-	Released int
-	Deferred int
+	Scanned             int
+	Released            int
+	Finalized           int
+	NeedsReconciliation int
+	Deferred            int
 }
 
 type InboundNotification struct {
@@ -276,11 +278,13 @@ type AtomicInboundStore interface {
 
 type ExposureStore interface {
 	ReserveExposure(context.Context, StoreExposureReservationRequest) (ExposureReservation, error)
+	MarkExposureReadStarted(context.Context, string) error
+	MarkExposureFinalizePending(context.Context, string, int64, string) error
 	FinalizeExposure(context.Context, string, int64) error
 	ReleaseExposure(context.Context, string) error
 	MarkExposureReleasePending(context.Context, string, string) error
 	MarkExposureNeedsReconciliation(context.Context, string, string) error
-	ReconcilePendingExposureReleases(context.Context, int, time.Time) (ExposureReleaseReconcileStats, error)
+	ReconcilePendingExposures(context.Context, int, time.Time) (ExposureReleaseReconcileStats, error)
 }
 
 type Service struct {
@@ -382,6 +386,23 @@ func (s *Service) Reverse(ctx context.Context, eventID string) error {
 	return s.store.Reverse(ctx, eventID)
 }
 
+func (s *Service) ReverseByIdempotencyKey(
+	ctx context.Context,
+	workspaceID string,
+	idempotencyKey string,
+) error {
+	store, ok := s.store.(interface {
+		ReverseByIdempotencyKey(context.Context, string, string) error
+	})
+	if !ok {
+		return errors.New("X usage recovery store is not configured")
+	}
+	if workspaceID == "" || idempotencyKey == "" {
+		return errors.New("workspace_id and idempotency_key are required")
+	}
+	return store.ReverseByIdempotencyKey(ctx, workspaceID, idempotencyKey)
+}
+
 func (s *Service) Snapshot(ctx context.Context, workspaceID string, now time.Time) (Snapshot, error) {
 	if s == nil || s.store == nil {
 		return Snapshot{}, errors.New("x credits service is not configured")
@@ -452,6 +473,27 @@ func (s *Service) FinalizeExposure(ctx context.Context, id string, actualUnits i
 	return store.FinalizeExposure(ctx, id, actualUnits)
 }
 
+func (s *Service) MarkExposureReadStarted(ctx context.Context, id string) error {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return errors.New("X exposure reservation store is not configured")
+	}
+	return store.MarkExposureReadStarted(ctx, id)
+}
+
+func (s *Service) MarkExposureFinalizePending(
+	ctx context.Context,
+	id string,
+	actualUnits int64,
+	message string,
+) error {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return errors.New("X exposure reservation store is not configured")
+	}
+	return store.MarkExposureFinalizePending(ctx, id, actualUnits, message)
+}
+
 func (s *Service) ReleaseExposure(ctx context.Context, id string) error {
 	store, ok := s.store.(ExposureStore)
 	if !ok {
@@ -476,7 +518,7 @@ func (s *Service) MarkExposureNeedsReconciliation(ctx context.Context, id, messa
 	return store.MarkExposureNeedsReconciliation(ctx, id, message)
 }
 
-func (s *Service) ReconcilePendingExposureReleases(
+func (s *Service) ReconcilePendingExposures(
 	ctx context.Context,
 	limit int,
 	now time.Time,
@@ -491,7 +533,7 @@ func (s *Service) ReconcilePendingExposureReleases(
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
-	return store.ReconcilePendingExposureReleases(ctx, limit, now)
+	return store.ReconcilePendingExposures(ctx, limit, now)
 }
 
 func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {

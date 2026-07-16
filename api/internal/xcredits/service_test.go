@@ -395,6 +395,15 @@ func (s *fakeExposureStore) ReserveExposure(
 ) (ExposureReservation, error) {
 	return ExposureReservation{}, nil
 }
+func (s *fakeExposureStore) MarkExposureReadStarted(context.Context, string) error { return nil }
+func (s *fakeExposureStore) MarkExposureFinalizePending(
+	context.Context,
+	string,
+	int64,
+	string,
+) error {
+	return nil
+}
 func (s *fakeExposureStore) FinalizeExposure(context.Context, string, int64) error { return nil }
 func (s *fakeExposureStore) ReleaseExposure(context.Context, string) error         { return nil }
 func (s *fakeExposureStore) MarkExposureReleasePending(
@@ -412,7 +421,7 @@ func (s *fakeExposureStore) MarkExposureNeedsReconciliation(
 ) error {
 	return nil
 }
-func (s *fakeExposureStore) ReconcilePendingExposureReleases(
+func (s *fakeExposureStore) ReconcilePendingExposures(
 	context.Context,
 	int,
 	time.Time,
@@ -432,11 +441,11 @@ func TestExposureReleasePendingIsPersistedAndReconciled(t *testing.T) {
 	); err != nil {
 		t.Fatalf("MarkExposureReleasePending: %v", err)
 	}
-	stats, err := service.ReconcilePendingExposureReleases(
+	stats, err := service.ReconcilePendingExposures(
 		context.Background(), 100, time.Now(),
 	)
 	if err != nil {
-		t.Fatalf("ReconcilePendingExposureReleases: %v", err)
+		t.Fatalf("ReconcilePendingExposures: %v", err)
 	}
 	if store.markedID != "reservation-1" || !store.reconcileCall ||
 		stats.Released != 1 {

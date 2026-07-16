@@ -105,9 +105,12 @@ func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *
 
 type xInboxCreditsService interface {
 	xInboxReplyCredits
+	ReverseByIdempotencyKey(context.Context, string, string) error
 	Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
 	AdmitInbound(context.Context, xcredits.InboundRequest) (xcredits.InboundAdmission, error)
 	ReserveExposure(context.Context, xcredits.ExposureReservationRequest) (xcredits.ExposureReservation, error)
+	MarkExposureReadStarted(context.Context, string) error
+	MarkExposureFinalizePending(context.Context, string, int64, string) error
 	FinalizeExposure(context.Context, string, int64) error
 	ReleaseExposure(context.Context, string) error
 	MarkExposureReleasePending(context.Context, string, string) error
@@ -689,7 +692,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-UniPost-Operation-Id", outboundRequest.ID)
 		accessToken, err = h.refreshXAccessTokenIfNeeded(r.Context(), account, accessToken)
 		if err != nil {
-			_ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
+			_, _ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
 			writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "X account token refresh failed; reconnect the account")
 			return
 		}
@@ -798,7 +801,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 					slog.Error("persist X Inbox unknown outcome failed", "request_id", outboundRequest.ID, "error", err)
 				}
 			} else {
-				_ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
+				_, _ = h.queries.DeletePendingXInboxOutboundRequest(r.Context(), outboundRequest.ID)
 			}
 			h.writeXInboxReplyError(w, sendErr)
 			return
@@ -1824,6 +1827,20 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			result.StopReason = "duplicate_exposure_reservation"
 			return
 		}
+		if reservation.ID != "" {
+			if err := h.persistXExposureReadStarted(ctx, reservation.ID); err != nil {
+				if releaseErr := h.xCredits.ReleaseExposure(ctx, reservation.ID); releaseErr != nil {
+					_ = h.persistXExposureReleasePending(
+						ctx,
+						reservation.ID,
+						"paid read was not started and reservation release failed: "+releaseErr.Error(),
+					)
+				}
+				result.StoppedAtBoundary = true
+				result.StopReason = "usage_reservation_read_start_persist_failed"
+				return
+			}
+		}
 		if beforePaidRead != nil {
 			if err := beforePaidRead(ctx); err != nil {
 				if reservation.ID != "" {
@@ -1870,7 +1887,12 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		if err != nil {
 			if reservation.ID != "" {
 				if xInboxReadOutcomeAmbiguous(err) {
-					_ = h.xCredits.MarkExposureNeedsReconciliation(ctx, reservation.ID, err.Error())
+					if markErr := h.persistXExposureNeedsReconciliation(
+						ctx, reservation.ID, err.Error(),
+					); markErr != nil {
+						result.StopReason = "usage_reservation_reconciliation_persist_failed"
+						return
+					}
 				} else {
 					if releaseErr := h.xCredits.ReleaseExposure(ctx, reservation.ID); releaseErr != nil {
 						if markErr := h.persistXExposureReleasePending(
@@ -1905,9 +1927,11 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			)
 			if admissionErr != nil {
 				if reservation.ID != "" {
-					_ = h.xCredits.FinalizeExposure(
-						ctx, reservation.ID, int64(len(page.Entries))*unitsPerResource,
-					)
+					actualUnits := int64(len(page.Entries)) * unitsPerResource
+					if settleErr := h.settleXExposure(ctx, reservation.ID, actualUnits); settleErr != nil {
+						result.StopReason = "usage_reservation_settlement_failed"
+						return
+					}
 				}
 				result.StopReason = "usage_admission_failed"
 				return
@@ -1919,9 +1943,10 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 				result.StoppedAtBoundary = true
 				result.StopReason = ingestion.Admission.PauseReason
 				if reservation.ID != "" {
-					_ = h.xCredits.FinalizeExposure(
-						ctx, reservation.ID, int64(len(page.Entries))*unitsPerResource,
-					)
+					actualUnits := int64(len(page.Entries)) * unitsPerResource
+					if settleErr := h.settleXExposure(ctx, reservation.ID, actualUnits); settleErr != nil {
+						result.StopReason = "usage_reservation_settlement_failed"
+					}
 				}
 				return
 			}
@@ -1935,7 +1960,7 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		}
 		if reservation.ID != "" {
 			actualUnits := int64(len(page.Entries)) * unitsPerResource
-			if err := h.xCredits.FinalizeExposure(ctx, reservation.ID, actualUnits); err != nil {
+			if err := h.settleXExposure(ctx, reservation.ID, actualUnits); err != nil {
 				result.StopReason = "usage_reservation_settlement_failed"
 				return
 			}
@@ -1948,6 +1973,43 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			return
 		}
 	}
+}
+
+func (h *InboxHandler) persistXExposureReadStarted(ctx context.Context, reservationID string) error {
+	persistCtx, cancel := detachedXInboxCompletionContext(ctx)
+	defer cancel()
+	return retryXInboxStatePersistence(persistCtx, func() error {
+		return h.xCredits.MarkExposureReadStarted(persistCtx, reservationID)
+	})
+}
+
+func (h *InboxHandler) persistXExposureNeedsReconciliation(
+	ctx context.Context,
+	reservationID string,
+	message string,
+) error {
+	persistCtx, cancel := detachedXInboxCompletionContext(ctx)
+	defer cancel()
+	return retryXInboxStatePersistence(persistCtx, func() error {
+		return h.xCredits.MarkExposureNeedsReconciliation(persistCtx, reservationID, message)
+	})
+}
+
+func (h *InboxHandler) settleXExposure(
+	ctx context.Context,
+	reservationID string,
+	actualUnits int64,
+) error {
+	persistCtx, cancel := detachedXInboxCompletionContext(ctx)
+	defer cancel()
+	if err := retryXInboxStatePersistence(persistCtx, func() error {
+		return h.xCredits.MarkExposureFinalizePending(
+			persistCtx, reservationID, actualUnits, "X read completed; settlement is pending",
+		)
+	}); err != nil {
+		return err
+	}
+	return h.xCredits.FinalizeExposure(persistCtx, reservationID, actualUnits)
 }
 
 func (h *InboxHandler) persistXExposureReleasePending(

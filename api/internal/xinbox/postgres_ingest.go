@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -188,9 +189,11 @@ func insertInboxItem(
 }
 
 type xInboxOutboundWebhookCandidate struct {
-	ID          string
-	InboxItemID string
-	PayloadHash string
+	ID                     string
+	InboxItemID            string
+	PayloadHash            string
+	SendStartedAt          time.Time
+	ReconciliationDeadline time.Time
 }
 
 func xInboxOutboundWebhookPayloadHash(inboxItemID, source, body string) string {
@@ -207,9 +210,18 @@ func matchingXInboxOutboundWebhookCandidate(
 	candidates []xInboxOutboundWebhookCandidate,
 	source string,
 	body string,
+	eventAt time.Time,
 ) (string, bool) {
+	if eventAt.IsZero() {
+		return "", false
+	}
 	match := ""
 	for _, candidate := range candidates {
+		if candidate.SendStartedAt.IsZero() || candidate.ReconciliationDeadline.IsZero() ||
+			eventAt.Before(candidate.SendStartedAt.Add(-5*time.Minute)) ||
+			eventAt.After(candidate.ReconciliationDeadline) {
+			continue
+		}
 		if candidate.PayloadHash != xInboxOutboundWebhookPayloadHash(candidate.InboxItemID, source, body) {
 			continue
 		}
@@ -228,7 +240,7 @@ func healXInboxOutboundFromWebhook(
 ) error {
 	if queries == nil || !item.IsOwn ||
 		(item.Source != "x_reply" && item.Source != "x_dm") ||
-		item.ExternalID == "" || item.Body == "" {
+		item.ExternalID == "" || item.Body == "" || item.ReceivedAt.IsZero() {
 		return nil
 	}
 	rows, err := queries.ListXInboxOutboundWebhookCandidates(
@@ -239,6 +251,7 @@ func healXInboxOutboundFromWebhook(
 			ParentExternalID: item.ParentExternalID,
 			ThreadKey:        nullableText(item.ThreadKey),
 			BodyHash:         nullableText(xInboxOutboundWebhookBodyHash(item.Body)),
+			EventAt:          pgtype.Timestamptz{Time: item.ReceivedAt, Valid: true},
 		},
 	)
 	if err != nil {
@@ -247,12 +260,16 @@ func healXInboxOutboundFromWebhook(
 	candidates := make([]xInboxOutboundWebhookCandidate, 0, len(rows))
 	for _, row := range rows {
 		candidates = append(candidates, xInboxOutboundWebhookCandidate{
-			ID:          row.OutboundRequestID,
-			InboxItemID: row.InboxItemID,
-			PayloadHash: row.PayloadHash,
+			ID:                     row.OutboundRequestID,
+			InboxItemID:            row.InboxItemID,
+			PayloadHash:            row.PayloadHash,
+			SendStartedAt:          row.SendStartedAt.Time,
+			ReconciliationDeadline: row.ReconciliationDeadline.Time,
 		})
 	}
-	requestID, matched := matchingXInboxOutboundWebhookCandidate(candidates, item.Source, item.Body)
+	requestID, matched := matchingXInboxOutboundWebhookCandidate(
+		candidates, item.Source, item.Body, item.ReceivedAt,
+	)
 	if !matched {
 		return nil
 	}

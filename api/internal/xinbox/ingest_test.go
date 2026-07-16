@@ -514,40 +514,71 @@ func TestXIngestRejectsRecognizedMalformedEvents(t *testing.T) {
 }
 
 func TestMatchingXInboxOutboundWebhookCandidateRequiresExactlyOnePayloadMatch(t *testing.T) {
+	sentAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	deadline := sentAt.Add(30 * time.Minute)
 	candidates := []xInboxOutboundWebhookCandidate{
 		{
-			ID:          "request-1",
-			InboxItemID: "target-1",
-			PayloadHash: xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "thanks"),
+			ID:                     "request-1",
+			InboxItemID:            "target-1",
+			PayloadHash:            xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "thanks"),
+			SendStartedAt:          sentAt,
+			ReconciliationDeadline: deadline,
 		},
 		{
-			ID:          "request-2",
-			InboxItemID: "target-2",
-			PayloadHash: xInboxOutboundWebhookPayloadHash("target-2", "x_reply", "different"),
+			ID:                     "request-2",
+			InboxItemID:            "target-2",
+			PayloadHash:            xInboxOutboundWebhookPayloadHash("target-2", "x_reply", "different"),
+			SendStartedAt:          sentAt,
+			ReconciliationDeadline: deadline,
 		},
 	}
-	if got, ok := matchingXInboxOutboundWebhookCandidate(candidates, "x_reply", "thanks"); !ok || got != "request-1" {
+	if got, ok := matchingXInboxOutboundWebhookCandidate(
+		candidates, "x_reply", "thanks", sentAt.Add(time.Minute),
+	); !ok || got != "request-1" {
 		t.Fatalf("match = %q, %v", got, ok)
 	}
 	candidates[1].PayloadHash = xInboxOutboundWebhookPayloadHash("target-2", "x_reply", "thanks")
-	if got, ok := matchingXInboxOutboundWebhookCandidate(candidates, "x_reply", "thanks"); ok || got != "" {
+	if got, ok := matchingXInboxOutboundWebhookCandidate(
+		candidates, "x_reply", "thanks", sentAt.Add(time.Minute),
+	); ok || got != "" {
 		t.Fatalf("ambiguous match = %q, %v", got, ok)
 	}
 }
 
-func TestXInboxWebhookConflictHealingMustHashPersistedItem(t *testing.T) {
+func TestMatchingXInboxOutboundWebhookCandidateRejectsLateIdenticalManualSend(t *testing.T) {
+	sentAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	candidate := xInboxOutboundWebhookCandidate{
-		ID:          "request-1",
-		InboxItemID: "target-1",
-		PayloadHash: xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "persisted body"),
+		ID:                     "request-1",
+		InboxItemID:            "target-1",
+		PayloadHash:            xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "same text"),
+		SendStartedAt:          sentAt,
+		ReconciliationDeadline: sentAt.Add(30 * time.Minute),
+	}
+	for _, eventAt := range []time.Time{time.Time{}, sentAt.Add(31 * time.Minute)} {
+		if got, ok := matchingXInboxOutboundWebhookCandidate(
+			[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "same text", eventAt,
+		); ok || got != "" {
+			t.Fatalf("late/unprovable event at %s matched = %q, %v", eventAt, got, ok)
+		}
+	}
+}
+
+func TestXInboxWebhookConflictHealingMustHashPersistedItem(t *testing.T) {
+	sentAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	candidate := xInboxOutboundWebhookCandidate{
+		ID:                     "request-1",
+		InboxItemID:            "target-1",
+		PayloadHash:            xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "persisted body"),
+		SendStartedAt:          sentAt,
+		ReconciliationDeadline: sentAt.Add(30 * time.Minute),
 	}
 	if got, ok := matchingXInboxOutboundWebhookCandidate(
-		[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "incoming conflicting body",
+		[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "incoming conflicting body", sentAt,
 	); ok || got != "" {
 		t.Fatalf("incoming conflicting payload matched = %q, %v", got, ok)
 	}
 	if got, ok := matchingXInboxOutboundWebhookCandidate(
-		[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "persisted body",
+		[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "persisted body", sentAt,
 	); !ok || got != "request-1" {
 		t.Fatalf("persisted payload match = %q, %v", got, ok)
 	}

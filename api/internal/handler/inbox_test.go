@@ -250,8 +250,16 @@ type fakeXInboxCredits struct {
 	exposureFinalizedUnits int64
 	exposureReleased       bool
 	exposureReconciliation bool
+	exposureReconcileCalls int
 	exposureReleaseErr     error
 	exposureReconcileErr   error
+	exposureReconcileErrs  []error
+	exposureStarted        bool
+	exposureStartErrs      []error
+	exposureFinalizeCalls  int
+	exposureFinalizeErr    error
+	exposurePendingUnits   int64
+	exposurePendingErrs    []error
 }
 
 func (f *fakeXInboxCredits) Reserve(_ context.Context, req xcredits.ReserveRequest) (xcredits.UsageEvent, error) {
@@ -267,6 +275,10 @@ func (f *fakeXInboxCredits) Reserve(_ context.Context, req xcredits.ReserveReque
 
 func (f *fakeXInboxCredits) Reverse(_ context.Context, id string) error {
 	f.reversedID = id
+	return f.reverseErr
+}
+
+func (f *fakeXInboxCredits) ReverseByIdempotencyKey(context.Context, string, string) error {
 	return f.reverseErr
 }
 
@@ -309,8 +321,9 @@ func (f *fakeXInboxCredits) ReserveExposure(
 }
 
 func (f *fakeXInboxCredits) FinalizeExposure(_ context.Context, _ string, units int64) error {
+	f.exposureFinalizeCalls++
 	f.exposureFinalizedUnits = units
-	return nil
+	return f.exposureFinalizeErr
 }
 func (f *fakeXInboxCredits) ReleaseExposure(context.Context, string) error {
 	f.exposureReleased = true
@@ -318,11 +331,42 @@ func (f *fakeXInboxCredits) ReleaseExposure(context.Context, string) error {
 }
 func (f *fakeXInboxCredits) MarkExposureNeedsReconciliation(context.Context, string, string) error {
 	f.exposureReconciliation = true
+	f.exposureReconcileCalls++
+	if len(f.exposureReconcileErrs) > 0 {
+		err := f.exposureReconcileErrs[0]
+		f.exposureReconcileErrs = f.exposureReconcileErrs[1:]
+		return err
+	}
 	return f.exposureReconcileErr
 }
 func (f *fakeXInboxCredits) MarkExposureReleasePending(context.Context, string, string) error {
 	f.exposureReconciliation = true
 	return f.exposureReconcileErr
+}
+
+func (f *fakeXInboxCredits) MarkExposureReadStarted(context.Context, string) error {
+	f.exposureStarted = true
+	if len(f.exposureStartErrs) == 0 {
+		return nil
+	}
+	err := f.exposureStartErrs[0]
+	f.exposureStartErrs = f.exposureStartErrs[1:]
+	return err
+}
+
+func (f *fakeXInboxCredits) MarkExposureFinalizePending(
+	_ context.Context,
+	_ string,
+	actualUnits int64,
+	_ string,
+) error {
+	f.exposurePendingUnits = actualUnits
+	if len(f.exposurePendingErrs) == 0 {
+		return nil
+	}
+	err := f.exposurePendingErrs[0]
+	f.exposurePendingErrs = f.exposurePendingErrs[1:]
+	return err
 }
 
 type fakeXInboxBackfillAdapter struct {
@@ -333,6 +377,7 @@ type fakeXInboxBackfillAdapter struct {
 	dmTokens         []string
 	dmPages          []platform.TwitterInboxPage
 	mentionErr       error
+	beforeMention    func()
 }
 
 func (f *fakeXInboxBackfillAdapter) FetchInboxMentions(
@@ -343,6 +388,9 @@ func (f *fakeXInboxBackfillAdapter) FetchInboxMentions(
 	paginationToken string,
 	maxResults int,
 ) (platform.TwitterInboxPage, error) {
+	if f.beforeMention != nil {
+		f.beforeMention()
+	}
 	f.mentionPageSizes = append(f.mentionPageSizes, maxResults)
 	f.mentionTokens = append(f.mentionTokens, paginationToken)
 	if f.mentionErr != nil {
@@ -476,6 +524,71 @@ func TestInboxXBackfillDuplicateExposureNeverCallsX(t *testing.T) {
 		t.Fatalf("duplicate reservation triggered paid X read: %v", adapter.mentionPageSizes)
 	}
 	if result.StopReason != "duplicate_exposure_reservation" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestInboxXBackfillPersistsReadStartedBeforePaidRead(t *testing.T) {
+	credits := &fakeXInboxCredits{}
+	adapter := &fakeXInboxBackfillAdapter{beforeMention: func() {
+		if !credits.exposureStarted {
+			t.Fatal("paid X read started before durable read-started state")
+		}
+	}}
+	handler := &InboxHandler{xCredits: credits}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-started", result,
+	)
+	if !credits.exposureStarted || len(adapter.mentionPageSizes) != 1 {
+		t.Fatalf("credits/adapter = %+v %+v", credits, adapter)
+	}
+}
+
+func TestInboxXBackfillPersistsExactSettlementIntentBeforeFinalize(t *testing.T) {
+	credits := &fakeXInboxCredits{
+		exposureFinalizeErr: errors.New("database unavailable"),
+		exposurePendingErrs: []error{errors.New("transient persistence failure"), nil},
+	}
+	adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{{
+		Entries: []platform.TwitterInboxEntry{{ExternalID: "tweet-2", Source: "x_reply"}},
+	}}}
+	ingestion := xinbox.NewIngestionService(xinbox.IngestionConfig{
+		Store: fakeXInboxIngestionStore{},
+		AtomicProcess: func(
+			context.Context,
+			xinbox.InboundAdmissionRequest,
+			xinbox.InboxItem,
+		) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
+			return xinbox.InboundAdmission{Accepted: true}, xinbox.InboxItem{}, true, nil
+		},
+	})
+	handler := &InboxHandler{xCredits: credits, xIngestion: ingestion}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-finalize", result,
+	)
+	wantUnits := xcredits.OperationWeight("post.read") + xcredits.OperationWeight("user.read")
+	if credits.exposurePendingUnits != wantUnits || credits.exposureFinalizeCalls != 1 {
+		t.Fatalf("pending/finalize = %d/%d, want %d/1", credits.exposurePendingUnits, credits.exposureFinalizeCalls, wantUnits)
+	}
+	if result.StopReason != "usage_reservation_settlement_failed" {
 		t.Fatalf("result = %+v", result)
 	}
 }
@@ -655,6 +768,34 @@ func TestInboxXBackfillSettlesShortPageAndClassifiesReadErrors(t *testing.T) {
 				t.Fatalf("credits = %+v", credits)
 			}
 		})
+	}
+}
+
+func TestInboxXBackfillRetriesAmbiguousReadReconciliationPersistence(t *testing.T) {
+	credits := &fakeXInboxCredits{
+		exposureReconcileErrs: []error{errors.New("transient database failure"), nil},
+	}
+	handler := &InboxHandler{xCredits: credits}
+	adapter := &fakeXInboxBackfillAdapter{mentionErr: &platform.TwitterInboxHTTPError{
+		Stage: "x_inbox_read", StatusCode: 502, Retryable: true,
+	}}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-ambiguous", result,
+	)
+	if credits.exposureReconcileCalls != 2 || !credits.exposureReconciliation {
+		t.Fatalf("credits = %+v", credits)
+	}
+	if result.StopReason != "upstream_read_failed" {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

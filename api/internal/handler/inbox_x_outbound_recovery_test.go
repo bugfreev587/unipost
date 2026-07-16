@@ -109,6 +109,53 @@ func TestXInboxOutboundLegacyPendingClaimBecomesManualReconciliation(t *testing.
 	}
 }
 
+func TestXInboxOutboundRecoveryReversesStaleModernPendingClaimWithoutCallingX(t *testing.T) {
+	store := &fakeXInboxOutboundRecoveryStore{
+		rows: []db.XInboxOutboundRequest{{
+			ID:               "modern-pending",
+			WorkspaceID:      "workspace-1",
+			InboxItemID:      "item-1",
+			IdempotencyKey:   "client-key",
+			Status:           "pending",
+			EncryptedPayload: pgtype.Text{String: "ciphertext", Valid: true},
+		}},
+	}
+	stats, err := newXInboxOutboundRecoveryService(store, time.Now).
+		ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if stats.UsageReversed != 1 || store.reversePendingCalls != 1 ||
+		store.manualCalls != 0 || store.upstreamCalls != 0 {
+		t.Fatalf("stats/store = %+v %+v", stats, store)
+	}
+}
+
+func TestXInboxOutboundRecoveryDefersModernPendingWhenUsageLookupFails(t *testing.T) {
+	store := &fakeXInboxOutboundRecoveryStore{
+		rows: []db.XInboxOutboundRequest{{
+			ID: "modern-pending", Status: "pending",
+			EncryptedPayload: pgtype.Text{String: "ciphertext", Valid: true},
+		}},
+		reversePendingErr: errors.New("database unavailable"),
+	}
+	stats, err := newXInboxOutboundRecoveryService(store, time.Now).
+		ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if stats.Deferred != 1 || store.deferPendingCalls != 1 || store.upstreamCalls != 0 {
+		t.Fatalf("stats/store = %+v %+v", stats, store)
+	}
+}
+
+func TestXInboxOutboundUsageKeyMatchesReservationKey(t *testing.T) {
+	row := db.XInboxOutboundRequest{InboxItemID: "item-1", IdempotencyKey: "client-key"}
+	if got := xInboxOutboundUsageIdempotencyKey(row); got != "inbox:item-1:client-key" {
+		t.Fatalf("usage key = %q", got)
+	}
+}
+
 func TestXInboxOutboundRecoveryRetriesUsageReversalWithoutCallingX(t *testing.T) {
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	store := &fakeXInboxOutboundRecoveryStore{
@@ -137,15 +184,18 @@ func TestXInboxOutboundRecoveryRetriesUsageReversalWithoutCallingX(t *testing.T)
 }
 
 type fakeXInboxOutboundRecoveryStore struct {
-	rows               []db.XInboxOutboundRequest
-	completeErrs       []error
-	completeCalls      int
-	deferCalls         int
-	manualCalls        int
-	reverseErrs        []error
-	reverseCalls       int
-	deferReversalCalls int
-	upstreamCalls      int
+	rows                []db.XInboxOutboundRequest
+	completeErrs        []error
+	completeCalls       int
+	deferCalls          int
+	manualCalls         int
+	reverseErrs         []error
+	reverseCalls        int
+	reversePendingCalls int
+	reversePendingErr   error
+	deferPendingCalls   int
+	deferReversalCalls  int
+	upstreamCalls       int
 }
 
 func (f *fakeXInboxOutboundRecoveryStore) ListRecoverable(
@@ -176,6 +226,24 @@ func (f *fakeXInboxOutboundRecoveryStore) ReverseUsage(
 	err := f.reverseErrs[0]
 	f.reverseErrs = f.reverseErrs[1:]
 	return err
+}
+
+func (f *fakeXInboxOutboundRecoveryStore) ReversePendingUsage(
+	context.Context,
+	db.XInboxOutboundRequest,
+) error {
+	f.reversePendingCalls++
+	return f.reversePendingErr
+}
+
+func (f *fakeXInboxOutboundRecoveryStore) DeferPending(
+	context.Context,
+	string,
+	time.Time,
+	string,
+) error {
+	f.deferPendingCalls++
+	return nil
 }
 
 func (f *fakeXInboxOutboundRecoveryStore) Defer(

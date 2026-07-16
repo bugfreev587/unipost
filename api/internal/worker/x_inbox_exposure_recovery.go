@@ -34,15 +34,18 @@ func (w *XInboxExposureRecoveryWorker) Start(ctx context.Context) {
 }
 
 func (w *XInboxExposureRecoveryWorker) runOnce(ctx context.Context) {
-	stats, err := w.service.ReconcilePendingExposureReleases(ctx, 100, time.Now().UTC())
+	stats, err := w.service.ReconcilePendingExposures(ctx, 100, time.Now().UTC())
 	if err != nil {
 		slog.Error("X Inbox exposure release recovery failed", "error", err)
 		return
 	}
-	if stats.Released > 0 || stats.Deferred > 0 {
+	if stats.Released > 0 || stats.Finalized > 0 ||
+		stats.NeedsReconciliation > 0 || stats.Deferred > 0 {
 		slog.Info("X Inbox exposure release recovery complete",
 			"scanned", stats.Scanned,
 			"released", stats.Released,
+			"finalized", stats.Finalized,
+			"needs_reconciliation", stats.NeedsReconciliation,
 			"deferred", stats.Deferred)
 	}
 }

@@ -12,6 +12,7 @@ ALTER TABLE x_inbox_outbound_requests
   ADD COLUMN IF NOT EXISTS remote_external_id TEXT,
   ADD COLUMN IF NOT EXISTS remote_conversation_id TEXT,
   ADD COLUMN IF NOT EXISTS remote_url TEXT,
+  ADD COLUMN IF NOT EXISTS send_started_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS remote_outcome_known_at TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS reconciliation_deadline TIMESTAMPTZ,
   ADD COLUMN IF NOT EXISTS completion_attempts INTEGER NOT NULL DEFAULT 0,
@@ -87,7 +88,10 @@ CREATE TABLE x_inbox_backfill_exposure_reservations (
   period_end          TIMESTAMPTZ NOT NULL,
   utc_date            DATE NOT NULL,
   status              TEXT NOT NULL DEFAULT 'reserved'
-    CHECK (status IN ('reserved', 'finalized', 'released', 'release_pending', 'needs_reconciliation')),
+    CHECK (status IN (
+      'reserved', 'read_started', 'finalize_pending', 'finalized', 'released',
+      'release_pending', 'needs_reconciliation'
+    )),
   reconciliation_deadline TIMESTAMPTZ,
   reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
   next_attempt_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -99,7 +103,7 @@ CREATE TABLE x_inbox_backfill_exposure_reservations (
 
 CREATE INDEX x_inbox_backfill_exposure_pending_idx
   ON x_inbox_backfill_exposure_reservations (next_attempt_at, created_at)
-  WHERE status IN ('reserved', 'release_pending', 'needs_reconciliation');
+  WHERE status IN ('reserved', 'read_started', 'finalize_pending', 'release_pending');
 
 -- +goose Down
 
@@ -133,6 +137,7 @@ ALTER TABLE x_inbox_outbound_requests
   DROP COLUMN IF EXISTS remote_external_id,
   DROP COLUMN IF EXISTS remote_conversation_id,
   DROP COLUMN IF EXISTS remote_url,
+  DROP COLUMN IF EXISTS send_started_at,
   DROP COLUMN IF EXISTS remote_outcome_known_at,
   DROP COLUMN IF EXISTS reconciliation_deadline,
   DROP COLUMN IF EXISTS completion_attempts,

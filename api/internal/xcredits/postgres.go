@@ -263,6 +263,26 @@ func (s *PostgresStore) Reverse(ctx context.Context, eventID string) error {
 	return tx.Commit(ctx)
 }
 
+func (s *PostgresStore) ReverseByIdempotencyKey(
+	ctx context.Context,
+	workspaceID string,
+	idempotencyKey string,
+) error {
+	var eventID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id
+		FROM x_usage_events
+		WHERE workspace_id = $1 AND idempotency_key = $2
+	`, workspaceID, idempotencyKey).Scan(&eventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.Reverse(ctx, eventID)
+}
+
 func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundRequest) (InboundAdmission, error) {
 	return s.admitInbound(ctx, req, nil)
 }

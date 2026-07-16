@@ -1171,6 +1171,7 @@ type XInboxOutboundRequest struct {
 	RemoteExternalID       pgtype.Text        `json:"remote_external_id"`
 	RemoteConversationID   pgtype.Text        `json:"remote_conversation_id"`
 	RemoteUrl              pgtype.Text        `json:"remote_url"`
+	SendStartedAt          pgtype.Timestamptz `json:"send_started_at"`
 	RemoteOutcomeKnownAt   pgtype.Timestamptz `json:"remote_outcome_known_at"`
 	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
 	CompletionAttempts     int32              `json:"completion_attempts"`
