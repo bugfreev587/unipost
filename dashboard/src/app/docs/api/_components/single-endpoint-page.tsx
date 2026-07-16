@@ -51,18 +51,25 @@ const ENDPOINT_GUIDE_LINKS: Array<{
   {
     method: "POST",
     path: /^\/v1\/media$/,
-    guides: [{ label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" }],
+    guides: [
+      { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
+      { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
+    ],
   },
   {
     method: "GET",
     path: /^\/v1\/media\/:[^/]+$/,
-    guides: [{ label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" }],
+    guides: [
+      { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
+      { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
+    ],
   },
   {
     method: "POST",
     path: /^\/v1\/posts$/,
     guides: [
       { label: "Publishing guide", href: "/docs/publishing" },
+      { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
       { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
       { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
     ],
@@ -71,6 +78,7 @@ const ENDPOINT_GUIDE_LINKS: Array<{
     method: "POST",
     path: /^\/v1\/posts\/validate$/,
     guides: [
+      { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
       { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
       { label: "Publishing guide", href: "/docs/publishing" },
     ],
@@ -78,12 +86,16 @@ const ENDPOINT_GUIDE_LINKS: Array<{
   {
     method: "GET",
     path: /^\/v1\/posts\/:[^/]+$/,
-    guides: [{ label: "Publishing guide", href: "/docs/publishing" }],
+    guides: [
+      { label: "Publishing guide", href: "/docs/publishing" },
+      { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
+    ],
   },
   {
     method: "GET",
     path: /^\/v1\/accounts$/,
     guides: [
+      { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
       { label: "Get account metrics", href: "/docs/guides/analytics/account-metrics" },
       { label: "Get TikTok followers", href: "/docs/guides/analytics/tiktok-followers" },
     ],

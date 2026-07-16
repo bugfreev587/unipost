@@ -10,6 +10,10 @@ export default function GuidesIndexPage() {
       className="docs-page-wide"
     >
       <div className="docs-grid">
+        <Link href="/docs/guides/publish-gifs" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Publish GIFs</div>
+          <p>Publish a hosted or local GIF to X and Facebook, compare platform support, and prepare for upcoming conversion workflows.</p>
+        </Link>
         <Link href="/docs/guides/x/credits" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">X Credits</div>
           <p>Estimate managed-X usage, inspect the monthly allowance, and handle hard-limit exhaustion.</p>
@@ -51,6 +55,11 @@ export default function GuidesIndexPage() {
       </p>
 
       <h2 id="start-with-publishing">Start with publishing workflows</h2>
+      <p>
+        If a user wants to publish a GIF, start with{" "}
+        <Link href="/docs/guides/publish-gifs">Publish GIFs</Link>. It shows the current X and Facebook workflow,
+        platform-wide support status, local media upload steps, and the planned GIF-to-MP4 path.
+      </p>
       <p>
         If a user wants an Instagram Story rather than a normal feed post, start with{" "}
         <Link href="/docs/guides/instagram-stories">Instagram Stories</Link>. It shows the strict request shape,
