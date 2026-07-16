@@ -278,10 +278,10 @@ func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
 	}
 }
 
-func TestTwitterInboxMentionsAllowsOneResultWithoutPaidOverRead(t *testing.T) {
+func TestTwitterInboxMentionsClampsOfficialMinimumFiveResults(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.URL.Query().Get("max_results"); got != "1" {
-			t.Fatalf("max_results = %q, want 1", got)
+		if got := r.URL.Query().Get("max_results"); got != "5" {
+			t.Fatalf("max_results = %q, want 5", got)
 		}
 		_, _ = io.WriteString(w, `{"data":[],"meta":{}}`)
 	}))

@@ -1167,10 +1167,17 @@ func main() {
 		if value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("X_INBOX_BACKFILL_SAFE_CREDITS")), 10, 64); err == nil && value > 0 {
 			inboxHandler.SetXBackfillSafeCredits(value)
 		}
+		if processMode == processModeAPI {
+			xOutboundRecoveryWorker := worker.NewXInboxOutboundRecoveryWorker(
+				handler.NewXInboxOutboundRecoveryService(inboxHandler),
+			)
+			go xOutboundRecoveryWorker.Start(workerCtx)
+		}
 		r.Route("/v1/inbox", func(r chi.Router) {
 			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)
+			r.Get("/x-outbound-operations/{requestID}", inboxHandler.XOutboundStatus)
 			r.Post("/mark-all-read", inboxHandler.MarkAllRead)
 			r.Post("/sync", inboxHandler.Sync)
 			r.Get("/{id}", inboxHandler.Get)

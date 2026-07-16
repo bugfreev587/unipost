@@ -203,6 +203,36 @@ type InboundCapSetting struct {
 	UpdatedAt            time.Time `json:"updated_at"`
 }
 
+type ExposureReservationRequest struct {
+	WorkspaceID        string
+	SocialAccountID    string
+	AppMode            string
+	OperationKey       string
+	IdempotencyKey     string
+	RequestedResources int
+	MinimumResources   int
+	UnitsPerResource   int64
+	Now                time.Time
+}
+
+type StoreExposureReservationRequest struct {
+	ExposureReservationRequest
+	MonthlyAllowance  int64
+	InboundDailyLimit int64
+	PeriodStart       time.Time
+	PeriodEnd         time.Time
+	UTCDate           time.Time
+}
+
+type ExposureReservation struct {
+	ID                 string
+	RequestedResources int
+	ReservedResources  int
+	ReservedUnits      int64
+	Duplicate          bool
+	Bypassed           bool
+}
+
 type InboundNotification struct {
 	WorkspaceID       string    `json:"workspace_id"`
 	InboundDailyUsed  int64     `json:"inbound_daily_usage"`
@@ -234,6 +264,13 @@ type InboundMutation func(context.Context, pgx.Tx) error
 type AtomicInboundStore interface {
 	AdmitInboundWithMutation(context.Context, StoreInboundRequest, InboundMutation) (InboundAdmission, error)
 	RunInboundMutation(context.Context, InboundMutation) error
+}
+
+type ExposureStore interface {
+	ReserveExposure(context.Context, StoreExposureReservationRequest) (ExposureReservation, error)
+	FinalizeExposure(context.Context, string, int64) error
+	ReleaseExposure(context.Context, string) error
+	MarkExposureNeedsReconciliation(context.Context, string, string) error
 }
 
 type Service struct {
@@ -343,6 +380,81 @@ func (s *Service) Snapshot(ctx context.Context, workspaceID string, now time.Tim
 		now = time.Now().UTC()
 	}
 	return s.store.Snapshot(ctx, workspaceID, now)
+}
+
+func (s *Service) ReserveExposure(
+	ctx context.Context,
+	req ExposureReservationRequest,
+) (ExposureReservation, error) {
+	mode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	if mode != xinbox.AppModeUniPostManaged {
+		return ExposureReservation{
+			RequestedResources: req.RequestedResources,
+			ReservedResources:  req.RequestedResources,
+			Bypassed:           true,
+		}, nil
+	}
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return ExposureReservation{}, errors.New("X exposure reservation store is not configured")
+	}
+	if req.Now.IsZero() {
+		req.Now = time.Now().UTC()
+	}
+	period, err := s.store.ResolveWorkspacePeriod(ctx, req.WorkspaceID, req.Now)
+	if err != nil {
+		return ExposureReservation{}, err
+	}
+	allowance, configured := PlanAllowance(period.PlanID)
+	if period.MonthlyAllowance != nil {
+		allowance, configured = *period.MonthlyAllowance, true
+	}
+	if !configured {
+		return ExposureReservation{}, ErrAllowanceNotConfigured
+	}
+	dailyLimit, dailyConfigured := InboundDailyLimit(period.PlanID)
+	if period.InboundDailyLimit != nil {
+		dailyLimit, dailyConfigured = *period.InboundDailyLimit, true
+	}
+	if !dailyConfigured {
+		return ExposureReservation{}, ErrInboundDailyCapExceeded
+	}
+	utc := req.Now.UTC()
+	return store.ReserveExposure(ctx, StoreExposureReservationRequest{
+		ExposureReservationRequest: req,
+		MonthlyAllowance:           allowance,
+		InboundDailyLimit:          dailyLimit,
+		PeriodStart:                period.Start,
+		PeriodEnd:                  period.End,
+		UTCDate:                    time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC),
+	})
+}
+
+func (s *Service) FinalizeExposure(ctx context.Context, id string, actualUnits int64) error {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return errors.New("X exposure reservation store is not configured")
+	}
+	return store.FinalizeExposure(ctx, id, actualUnits)
+}
+
+func (s *Service) ReleaseExposure(ctx context.Context, id string) error {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return errors.New("X exposure reservation store is not configured")
+	}
+	return store.ReleaseExposure(ctx, id)
+}
+
+func (s *Service) MarkExposureNeedsReconciliation(ctx context.Context, id, message string) error {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return errors.New("X exposure reservation store is not configured")
+	}
+	return store.MarkExposureNeedsReconciliation(ctx, id, message)
 }
 
 func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {

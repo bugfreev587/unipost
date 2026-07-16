@@ -2,9 +2,8 @@ package handler
 
 import (
 	"context"
-	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -21,6 +20,7 @@ import (
 )
 
 const xBackfillConfirmationTTL = 10 * time.Minute
+const xMentionsMinimumPageSize = 5
 
 var errXInboxIdempotencyReplay = errors.New("X Inbox reply idempotency replay")
 
@@ -38,16 +38,6 @@ type xBackfillRequest struct {
 	ConfirmationToken string `json:"confirmation_token,omitempty"`
 }
 
-type xBackfillConfirmationClaim struct {
-	WorkspaceID  string `json:"workspace_id"`
-	AccountID    string `json:"account_id,omitempty"`
-	LookbackDays int    `json:"lookback_days"`
-	MaxItems     int    `json:"max_items"`
-	Replies      bool   `json:"replies"`
-	DMs          bool   `json:"dms"`
-	ExpiresAt    int64  `json:"expires_at"`
-}
-
 func estimateXBackfillCredits(appMode string, request xBackfillRequest) int64 {
 	mode, err := xinbox.NormalizePersistedAppMode(appMode)
 	if err != nil || mode != xinbox.AppModeUniPostManaged {
@@ -59,7 +49,11 @@ func estimateXBackfillCredits(appMode string, request xBackfillRequest) int64 {
 	}
 	estimate := int64(0)
 	if request.IncludeReplies {
-		estimate += int64(maxItems) * (xcredits.OperationWeight("post.read") +
+		replyItems := maxItems
+		if replyItems > 0 && replyItems < xMentionsMinimumPageSize {
+			replyItems = xMentionsMinimumPageSize
+		}
+		estimate += int64(replyItems) * (xcredits.OperationWeight("post.read") +
 			xcredits.OperationWeight("user.read"))
 	}
 	if request.IncludeDMs {
@@ -69,68 +63,45 @@ func estimateXBackfillCredits(appMode string, request xBackfillRequest) int64 {
 	return estimate
 }
 
-func signXBackfillConfirmationToken(
-	secret []byte,
-	claim xBackfillConfirmationClaim,
-	now time.Time,
-) (string, time.Time, error) {
-	if len(secret) == 0 {
-		return "", time.Time{}, errors.New("X backfill confirmation signing secret is not configured")
-	}
-	expiresAt := now.UTC().Add(xBackfillConfirmationTTL)
-	claim.ExpiresAt = expiresAt.Unix()
-	raw, err := json.Marshal(claim)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write(raw)
-	return base64.RawURLEncoding.EncodeToString(raw) + "." +
-		base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), expiresAt, nil
+func xBackfillExposureKey(
+	runID string,
+	accountID string,
+	source string,
+	startTime time.Time,
+	paginationToken string,
+	pageSize int,
+) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf(
+		"%s\x00%s\x00%s\x00%s\x00%s\x00%d",
+		runID,
+		accountID,
+		source,
+		startTime.UTC().Format(time.RFC3339Nano),
+		paginationToken,
+		pageSize,
+	)))
+	return "x-inbox-backfill:" + hex.EncodeToString(sum[:])
 }
 
-func verifyXBackfillConfirmationToken(
-	secret []byte,
-	token string,
-	expected xBackfillConfirmationClaim,
-	now time.Time,
-) error {
-	if len(secret) == 0 {
-		return errors.New("X backfill confirmation signing secret is not configured")
+func newXBackfillRunID() string {
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err == nil {
+		return hex.EncodeToString(raw)
 	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 2 {
-		return errors.New("invalid X backfill confirmation token")
+	return fmt.Sprintf("fallback-%d", time.Now().UTC().UnixNano())
+}
+
+func xInboxReadOutcomeAmbiguous(err error) bool {
+	if err == nil {
+		return false
 	}
-	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
-	if err != nil {
-		return errors.New("invalid X backfill confirmation token")
+	var httpErr *platform.TwitterInboxHTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.Retryable && httpErr.StatusCode != 429
 	}
-	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return errors.New("invalid X backfill confirmation token")
-	}
-	mac := hmac.New(sha256.New, secret)
-	_, _ = mac.Write(raw)
-	if !hmac.Equal(signature, mac.Sum(nil)) {
-		return errors.New("invalid X backfill confirmation token")
-	}
-	var actual xBackfillConfirmationClaim
-	if err := json.Unmarshal(raw, &actual); err != nil {
-		return errors.New("invalid X backfill confirmation token")
-	}
-	if actual.ExpiresAt <= now.UTC().Unix() {
-		return errors.New("X backfill confirmation token expired")
-	}
-	if actual.WorkspaceID != expected.WorkspaceID ||
-		actual.AccountID != expected.AccountID ||
-		actual.LookbackDays != expected.LookbackDays ||
-		actual.MaxItems != expected.MaxItems ||
-		actual.Replies != expected.Replies ||
-		actual.DMs != expected.DMs {
-		return errors.New("X backfill confirmation token does not match this request")
-	}
-	return nil
+	message := strings.ToLower(err.Error())
+	return strings.HasPrefix(message, "x_inbox_read timeout") ||
+		strings.HasPrefix(message, "x_inbox_read canceled")
 }
 
 func validateXInboxReplyTarget(item db.InboxItem) error {
@@ -210,19 +181,18 @@ type xInboxReplyAdapter interface {
 
 type xInboxReplyCredits interface {
 	Reserve(context.Context, xcredits.ReserveRequest) (xcredits.UsageEvent, error)
-	Finalize(context.Context, string, int64) error
 	Reverse(context.Context, string) error
 }
 
 type xInboxSendResult struct {
-	ExternalID        string
-	ConversationID    string
-	URL               string
-	XCreditsCounted   int64
-	Operation         string
-	CatalogVersion    string
-	BillingMode       string
-	SettlementPending bool
+	ExternalID      string
+	ConversationID  string
+	URL             string
+	XCreditsCounted int64
+	Operation       string
+	CatalogVersion  string
+	BillingMode     string
+	UsageEventID    string
 }
 
 func sendXInboxReply(
@@ -235,6 +205,32 @@ func sendXInboxReply(
 	accessToken string,
 	text string,
 	idempotencyKey string,
+) (xInboxSendResult, error) {
+	return sendXInboxReplyWithReservation(
+		ctx,
+		adapter,
+		credits,
+		workspaceID,
+		account,
+		item,
+		accessToken,
+		text,
+		idempotencyKey,
+		nil,
+	)
+}
+
+func sendXInboxReplyWithReservation(
+	ctx context.Context,
+	adapter xInboxReplyAdapter,
+	credits xInboxReplyCredits,
+	workspaceID string,
+	account db.SocialAccount,
+	item db.InboxItem,
+	accessToken string,
+	text string,
+	idempotencyKey string,
+	onReserved func(xInboxSendResult) error,
 ) (xInboxSendResult, error) {
 	if err := validateXInboxReplyTarget(item); err != nil {
 		return xInboxSendResult{}, err
@@ -275,9 +271,21 @@ func sendXInboxReply(
 	}
 
 	result := xInboxSendResult{
-		Operation:      operation,
-		CatalogVersion: xcredits.CatalogVersion,
-		BillingMode:    string(mode),
+		Operation:       operation,
+		CatalogVersion:  xcredits.CatalogVersion,
+		BillingMode:     string(mode),
+		UsageEventID:    event.ID,
+		XCreditsCounted: event.WeightedUnits,
+	}
+	if onReserved != nil {
+		if err := onReserved(result); err != nil {
+			if event.ID != "" {
+				if reverseErr := credits.Reverse(ctx, event.ID); reverseErr != nil {
+					return xInboxSendResult{}, errors.Join(err, reverseErr)
+				}
+			}
+			return xInboxSendResult{}, err
+		}
 	}
 	var sendErr error
 	switch item.Source {
@@ -312,19 +320,13 @@ func sendXInboxReply(
 	if sendErr != nil {
 		if event.ID != "" {
 			if xWriteOutcomeUnknown(sendErr) {
-				return xInboxSendResult{}, ErrXWriteOutcomePending
+				return result, ErrXWriteOutcomePending
 			}
 			if reverseErr := credits.Reverse(ctx, event.ID); reverseErr != nil {
 				return xInboxSendResult{}, errors.Join(sendErr, reverseErr)
 			}
 		}
 		return xInboxSendResult{}, sendErr
-	}
-	if event.ID != "" {
-		if err := credits.Finalize(ctx, event.ID, event.WeightedUnits); err != nil {
-			result.SettlementPending = true
-		}
-		result.XCreditsCounted = event.WeightedUnits
 	}
 	return result, nil
 }

@@ -102,8 +102,8 @@ func (a *TwitterAdapter) FetchInboxMentions(
 	if strings.TrimSpace(userID) == "" {
 		return TwitterInboxPage{}, errors.New("X mentions lookup requires user id")
 	}
-	if maxResults < 1 {
-		maxResults = 1
+	if maxResults < 5 {
+		maxResults = 5
 	}
 	if maxResults > 100 {
 		maxResults = 100

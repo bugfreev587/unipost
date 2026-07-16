@@ -44,33 +44,110 @@ LIMIT 1;
 
 -- name: ClaimXInboxOutboundRequest :one
 INSERT INTO x_inbox_outbound_requests (
-  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash
+  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash,
+  encrypted_payload, reconciliation_deadline
 )
-VALUES (@workspace_id, @social_account_id, @inbox_item_id, @idempotency_key, @payload_hash)
+VALUES (
+  @workspace_id, @social_account_id, @inbox_item_id, @idempotency_key, @payload_hash,
+  NULLIF(@encrypted_payload::TEXT, ''), @reconciliation_deadline
+)
 ON CONFLICT (workspace_id, inbox_item_id, idempotency_key) DO NOTHING
-RETURNING id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
-  payload_hash, status, response_inbox_item_id, created_at, updated_at;
+RETURNING *;
 
 -- name: GetXInboxOutboundRequest :one
-SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
-  payload_hash, status, response_inbox_item_id, created_at, updated_at
+SELECT *
 FROM x_inbox_outbound_requests
 WHERE workspace_id = @workspace_id
   AND inbox_item_id = @inbox_item_id
   AND idempotency_key = @idempotency_key;
 
+-- name: GetXInboxOutboundRequestByID :one
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE id = @id;
+
+-- name: GetXInboxOutboundRequestByIDForUpdate :one
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE id = @id
+FOR UPDATE;
+
 -- name: CompleteXInboxOutboundRequest :exec
 UPDATE x_inbox_outbound_requests
-SET status = 'succeeded',
+SET status = 'completed',
     response_inbox_item_id = @response_inbox_item_id,
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending', 'remote_succeeded');
+
+-- name: MarkXInboxOutboundSending :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'sending',
+    usage_event_id = NULLIF(@usage_event_id::TEXT, ''),
+    operation_key = NULLIF(@operation_key::TEXT, ''),
+    reserved_units = @reserved_units,
     updated_at = NOW()
 WHERE id = @id
   AND status = 'pending';
 
+-- name: MarkXInboxOutboundUnknown :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'outcome_unknown',
+    usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF(@operation_key::TEXT, ''), operation_key),
+    reserved_units = GREATEST(@reserved_units, reserved_units),
+    last_error = LEFT(@last_error::TEXT, 1000),
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending');
+
+-- name: RecordXInboxOutboundRemoteSuccess :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'remote_succeeded',
+    usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF(@operation_key::TEXT, ''), operation_key),
+    reserved_units = GREATEST(@reserved_units, reserved_units),
+    remote_external_id = @remote_external_id,
+    remote_conversation_id = NULLIF(@remote_conversation_id::TEXT, ''),
+    remote_url = NULLIF(@remote_url::TEXT, ''),
+    remote_outcome_known_at = NOW(),
+    last_error = NULL,
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending', 'remote_succeeded');
+
+-- name: ListRecoverableXInboxOutboundRequests :many
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE status IN ('sending', 'outcome_unknown', 'remote_succeeded')
+  AND next_attempt_at <= NOW()
+ORDER BY created_at
+LIMIT @row_limit;
+
+-- name: MarkXInboxOutboundNeedsReconciliation :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'needs_reconciliation',
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('sending', 'outcome_unknown')
+  AND reconciliation_deadline <= NOW();
+
+-- name: DeferXInboxOutboundCompletion :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = @next_attempt_at,
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'remote_succeeded';
+
 -- name: DeletePendingXInboxOutboundRequest :exec
 DELETE FROM x_inbox_outbound_requests
 WHERE id = @id
-  AND status = 'pending';
+  AND status IN ('pending', 'sending');
 
 -- name: MarkInboxItemRead :exec
 UPDATE inbox_items

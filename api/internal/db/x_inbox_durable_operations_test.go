@@ -1,0 +1,97 @@
+package db
+
+import (
+	"os"
+	"strings"
+	"testing"
+)
+
+func TestXInboxDurableOperationsMigrationIsRollingSafeAndExecutable(t *testing.T) {
+	source, err := os.ReadFile("migrations/115_x_inbox_durable_operations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"ALTER TABLE x_inbox_outbound_requests",
+		"ADD COLUMN IF NOT EXISTS encrypted_payload",
+		"'outcome_unknown'",
+		"'remote_succeeded'",
+		"'needs_reconciliation'",
+		"CREATE TABLE x_inbox_backfill_confirmation_operations",
+		"account_fingerprint",
+		"request_snapshot",
+		"estimated_x_credits",
+		"nonce",
+		"CREATE TABLE x_inbox_backfill_exposure_reservations",
+		"reserved_units",
+		"UNIQUE (workspace_id, idempotency_key)",
+		"-- +goose Down",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("migration missing %q", want)
+		}
+	}
+}
+
+func TestXInboxOutboundCompletionUsesConflictLookupAndAtomicSettlement(t *testing.T) {
+	source, err := os.ReadFile("../handler/inbox_x_outbound.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"BeginTx",
+		"UpsertInboxItem",
+		"errors.Is(err, pgx.ErrNoRows)",
+		"GetInboxItemByExternalID",
+		"finalizeXUsageInTx",
+		"status = 'completed'",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("completion state machine missing %q", want)
+		}
+	}
+}
+
+func TestXInboxConfirmationConsumptionUsesRowLockAndSingleRunningTransition(t *testing.T) {
+	source, err := os.ReadFile("../handler/inbox_x_confirmation.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"FOR UPDATE",
+		"status = 'running'",
+		"WHERE id = $1 AND status = 'pending'",
+		"StartedByThisCall",
+		`status := "completed"`,
+		"account_fingerprint",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("confirmation state machine missing %q", want)
+		}
+	}
+}
+
+func TestXInboxExposureReservationUsesWorkspaceDailyLockBeforePaidRead(t *testing.T) {
+	source, err := os.ReadFile("../xcredits/exposure_postgres.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"pg_advisory_xact_lock",
+		"FOR UPDATE",
+		"requested_resources",
+		"reserved_units",
+		"weighted_units_used = weighted_units_used +",
+		"FinalizeExposure",
+		"ReleaseExposure",
+		"needs_reconciliation",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("exposure reservation missing %q", want)
+		}
+	}
+}

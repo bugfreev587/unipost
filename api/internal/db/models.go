@@ -1079,6 +1079,43 @@ type XInboundEventReceipt struct {
 	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
+type XInboxBackfillConfirmationOperation struct {
+	ID                 string             `json:"id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	AccountIds         []byte             `json:"account_ids"`
+	AccountFingerprint string             `json:"account_fingerprint"`
+	RequestSnapshot    []byte             `json:"request_snapshot"`
+	EstimatedXCredits  int64              `json:"estimated_x_credits"`
+	Nonce              string             `json:"nonce"`
+	Status             string             `json:"status"`
+	Result             []byte             `json:"result"`
+	LastError          pgtype.Text        `json:"last_error"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboxBackfillExposureReservation struct {
+	ID                     string             `json:"id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	SocialAccountID        string             `json:"social_account_id"`
+	OperationKey           string             `json:"operation_key"`
+	IdempotencyKey         string             `json:"idempotency_key"`
+	RequestedResources     int32              `json:"requested_resources"`
+	ReservedUnits          int64              `json:"reserved_units"`
+	ActualUnits            pgtype.Int8        `json:"actual_units"`
+	PeriodStart            pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd              pgtype.Timestamptz `json:"period_end"`
+	UtcDate                pgtype.Date        `json:"utc_date"`
+	Status                 string             `json:"status"`
+	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
+	LastError              pgtype.Text        `json:"last_error"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
 type XInboxDeliveryCleanupIntent struct {
 	ID                       string             `json:"id"`
 	CleanupKey               string             `json:"cleanup_key"`
@@ -1112,16 +1149,28 @@ type XInboxDeliveryResource struct {
 }
 
 type XInboxOutboundRequest struct {
-	ID                  string             `json:"id"`
-	WorkspaceID         string             `json:"workspace_id"`
-	SocialAccountID     string             `json:"social_account_id"`
-	InboxItemID         string             `json:"inbox_item_id"`
-	IdempotencyKey      string             `json:"idempotency_key"`
-	PayloadHash         string             `json:"payload_hash"`
-	Status              string             `json:"status"`
-	ResponseInboxItemID pgtype.Text        `json:"response_inbox_item_id"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                     string             `json:"id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	SocialAccountID        string             `json:"social_account_id"`
+	InboxItemID            string             `json:"inbox_item_id"`
+	IdempotencyKey         string             `json:"idempotency_key"`
+	PayloadHash            string             `json:"payload_hash"`
+	Status                 string             `json:"status"`
+	ResponseInboxItemID    pgtype.Text        `json:"response_inbox_item_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	EncryptedPayload       pgtype.Text        `json:"encrypted_payload"`
+	UsageEventID           pgtype.Text        `json:"usage_event_id"`
+	OperationKey           pgtype.Text        `json:"operation_key"`
+	ReservedUnits          int64              `json:"reserved_units"`
+	RemoteExternalID       pgtype.Text        `json:"remote_external_id"`
+	RemoteConversationID   pgtype.Text        `json:"remote_conversation_id"`
+	RemoteUrl              pgtype.Text        `json:"remote_url"`
+	RemoteOutcomeKnownAt   pgtype.Timestamptz `json:"remote_outcome_known_at"`
+	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
+	CompletionAttempts     int32              `json:"completion_attempts"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError              pgtype.Text        `json:"last_error"`
 }
 
 type XUsageEvent struct {

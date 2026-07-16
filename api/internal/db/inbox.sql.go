@@ -13,20 +13,25 @@ import (
 
 const claimXInboxOutboundRequest = `-- name: ClaimXInboxOutboundRequest :one
 INSERT INTO x_inbox_outbound_requests (
-  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash
+  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash,
+  encrypted_payload, reconciliation_deadline
 )
-VALUES ($1, $2, $3, $4, $5)
+VALUES (
+  $1, $2, $3, $4, $5,
+  NULLIF($6::TEXT, ''), $7
+)
 ON CONFLICT (workspace_id, inbox_item_id, idempotency_key) DO NOTHING
-RETURNING id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
-  payload_hash, status, response_inbox_item_id, created_at, updated_at
+RETURNING id, workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash, status, response_inbox_item_id, created_at, updated_at, encrypted_payload, usage_event_id, operation_key, reserved_units, remote_external_id, remote_conversation_id, remote_url, remote_outcome_known_at, reconciliation_deadline, completion_attempts, next_attempt_at, last_error
 `
 
 type ClaimXInboxOutboundRequestParams struct {
-	WorkspaceID     string `json:"workspace_id"`
-	SocialAccountID string `json:"social_account_id"`
-	InboxItemID     string `json:"inbox_item_id"`
-	IdempotencyKey  string `json:"idempotency_key"`
-	PayloadHash     string `json:"payload_hash"`
+	WorkspaceID            string             `json:"workspace_id"`
+	SocialAccountID        string             `json:"social_account_id"`
+	InboxItemID            string             `json:"inbox_item_id"`
+	IdempotencyKey         string             `json:"idempotency_key"`
+	PayloadHash            string             `json:"payload_hash"`
+	EncryptedPayload       string             `json:"encrypted_payload"`
+	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
 }
 
 func (q *Queries) ClaimXInboxOutboundRequest(ctx context.Context, arg ClaimXInboxOutboundRequestParams) (XInboxOutboundRequest, error) {
@@ -36,6 +41,8 @@ func (q *Queries) ClaimXInboxOutboundRequest(ctx context.Context, arg ClaimXInbo
 		arg.InboxItemID,
 		arg.IdempotencyKey,
 		arg.PayloadHash,
+		arg.EncryptedPayload,
+		arg.ReconciliationDeadline,
 	)
 	var i XInboxOutboundRequest
 	err := row.Scan(
@@ -49,6 +56,18 @@ func (q *Queries) ClaimXInboxOutboundRequest(ctx context.Context, arg ClaimXInbo
 		&i.ResponseInboxItemID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EncryptedPayload,
+		&i.UsageEventID,
+		&i.OperationKey,
+		&i.ReservedUnits,
+		&i.RemoteExternalID,
+		&i.RemoteConversationID,
+		&i.RemoteUrl,
+		&i.RemoteOutcomeKnownAt,
+		&i.ReconciliationDeadline,
+		&i.CompletionAttempts,
+		&i.NextAttemptAt,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -74,11 +93,11 @@ func (q *Queries) CleanupStaleInboxItems(ctx context.Context) (int64, error) {
 
 const completeXInboxOutboundRequest = `-- name: CompleteXInboxOutboundRequest :exec
 UPDATE x_inbox_outbound_requests
-SET status = 'succeeded',
+SET status = 'completed',
     response_inbox_item_id = $1,
     updated_at = NOW()
 WHERE id = $2
-  AND status = 'pending'
+  AND status IN ('pending', 'sending', 'remote_succeeded')
 `
 
 type CompleteXInboxOutboundRequestParams struct {
@@ -116,10 +135,31 @@ func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string
 	return count, err
 }
 
+const deferXInboxOutboundCompletion = `-- name: DeferXInboxOutboundCompletion :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = $1,
+    last_error = LEFT($2::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = $3
+  AND status = 'remote_succeeded'
+`
+
+type DeferXInboxOutboundCompletionParams struct {
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError     string             `json:"last_error"`
+	ID            string             `json:"id"`
+}
+
+func (q *Queries) DeferXInboxOutboundCompletion(ctx context.Context, arg DeferXInboxOutboundCompletionParams) error {
+	_, err := q.db.Exec(ctx, deferXInboxOutboundCompletion, arg.NextAttemptAt, arg.LastError, arg.ID)
+	return err
+}
+
 const deletePendingXInboxOutboundRequest = `-- name: DeletePendingXInboxOutboundRequest :exec
 DELETE FROM x_inbox_outbound_requests
 WHERE id = $1
-  AND status = 'pending'
+  AND status IN ('pending', 'sending')
 `
 
 func (q *Queries) DeletePendingXInboxOutboundRequest(ctx context.Context, id string) error {
@@ -646,8 +686,7 @@ func (q *Queries) GetInboxMediaCache(ctx context.Context, arg GetInboxMediaCache
 }
 
 const getXInboxOutboundRequest = `-- name: GetXInboxOutboundRequest :one
-SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key,
-  payload_hash, status, response_inbox_item_id, created_at, updated_at
+SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash, status, response_inbox_item_id, created_at, updated_at, encrypted_payload, usage_event_id, operation_key, reserved_units, remote_external_id, remote_conversation_id, remote_url, remote_outcome_known_at, reconciliation_deadline, completion_attempts, next_attempt_at, last_error
 FROM x_inbox_outbound_requests
 WHERE workspace_id = $1
   AND inbox_item_id = $2
@@ -674,6 +713,91 @@ func (q *Queries) GetXInboxOutboundRequest(ctx context.Context, arg GetXInboxOut
 		&i.ResponseInboxItemID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EncryptedPayload,
+		&i.UsageEventID,
+		&i.OperationKey,
+		&i.ReservedUnits,
+		&i.RemoteExternalID,
+		&i.RemoteConversationID,
+		&i.RemoteUrl,
+		&i.RemoteOutcomeKnownAt,
+		&i.ReconciliationDeadline,
+		&i.CompletionAttempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const getXInboxOutboundRequestByID = `-- name: GetXInboxOutboundRequestByID :one
+SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash, status, response_inbox_item_id, created_at, updated_at, encrypted_payload, usage_event_id, operation_key, reserved_units, remote_external_id, remote_conversation_id, remote_url, remote_outcome_known_at, reconciliation_deadline, completion_attempts, next_attempt_at, last_error
+FROM x_inbox_outbound_requests
+WHERE id = $1
+`
+
+func (q *Queries) GetXInboxOutboundRequestByID(ctx context.Context, id string) (XInboxOutboundRequest, error) {
+	row := q.db.QueryRow(ctx, getXInboxOutboundRequestByID, id)
+	var i XInboxOutboundRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.InboxItemID,
+		&i.IdempotencyKey,
+		&i.PayloadHash,
+		&i.Status,
+		&i.ResponseInboxItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptedPayload,
+		&i.UsageEventID,
+		&i.OperationKey,
+		&i.ReservedUnits,
+		&i.RemoteExternalID,
+		&i.RemoteConversationID,
+		&i.RemoteUrl,
+		&i.RemoteOutcomeKnownAt,
+		&i.ReconciliationDeadline,
+		&i.CompletionAttempts,
+		&i.NextAttemptAt,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const getXInboxOutboundRequestByIDForUpdate = `-- name: GetXInboxOutboundRequestByIDForUpdate :one
+SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash, status, response_inbox_item_id, created_at, updated_at, encrypted_payload, usage_event_id, operation_key, reserved_units, remote_external_id, remote_conversation_id, remote_url, remote_outcome_known_at, reconciliation_deadline, completion_attempts, next_attempt_at, last_error
+FROM x_inbox_outbound_requests
+WHERE id = $1
+FOR UPDATE
+`
+
+func (q *Queries) GetXInboxOutboundRequestByIDForUpdate(ctx context.Context, id string) (XInboxOutboundRequest, error) {
+	row := q.db.QueryRow(ctx, getXInboxOutboundRequestByIDForUpdate, id)
+	var i XInboxOutboundRequest
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.InboxItemID,
+		&i.IdempotencyKey,
+		&i.PayloadHash,
+		&i.Status,
+		&i.ResponseInboxItemID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EncryptedPayload,
+		&i.UsageEventID,
+		&i.OperationKey,
+		&i.ReservedUnits,
+		&i.RemoteExternalID,
+		&i.RemoteConversationID,
+		&i.RemoteUrl,
+		&i.RemoteOutcomeKnownAt,
+		&i.ReconciliationDeadline,
+		&i.CompletionAttempts,
+		&i.NextAttemptAt,
+		&i.LastError,
 	)
 	return i, err
 }
@@ -915,6 +1039,58 @@ func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxIt
 	return items, nil
 }
 
+const listRecoverableXInboxOutboundRequests = `-- name: ListRecoverableXInboxOutboundRequests :many
+SELECT id, workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash, status, response_inbox_item_id, created_at, updated_at, encrypted_payload, usage_event_id, operation_key, reserved_units, remote_external_id, remote_conversation_id, remote_url, remote_outcome_known_at, reconciliation_deadline, completion_attempts, next_attempt_at, last_error
+FROM x_inbox_outbound_requests
+WHERE status IN ('sending', 'outcome_unknown', 'remote_succeeded')
+  AND next_attempt_at <= NOW()
+ORDER BY created_at
+LIMIT $1
+`
+
+func (q *Queries) ListRecoverableXInboxOutboundRequests(ctx context.Context, rowLimit int32) ([]XInboxOutboundRequest, error) {
+	rows, err := q.db.Query(ctx, listRecoverableXInboxOutboundRequests, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []XInboxOutboundRequest{}
+	for rows.Next() {
+		var i XInboxOutboundRequest
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.SocialAccountID,
+			&i.InboxItemID,
+			&i.IdempotencyKey,
+			&i.PayloadHash,
+			&i.Status,
+			&i.ResponseInboxItemID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EncryptedPayload,
+			&i.UsageEventID,
+			&i.OperationKey,
+			&i.ReservedUnits,
+			&i.RemoteExternalID,
+			&i.RemoteConversationID,
+			&i.RemoteUrl,
+			&i.RemoteOutcomeKnownAt,
+			&i.ReconciliationDeadline,
+			&i.CompletionAttempts,
+			&i.NextAttemptAt,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markAllInboxItemsRead = `-- name: MarkAllInboxItemsRead :execrows
 UPDATE inbox_items
 SET is_read = true
@@ -942,6 +1118,89 @@ type MarkInboxItemReadParams struct {
 
 func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadParams) error {
 	_, err := q.db.Exec(ctx, markInboxItemRead, arg.ID, arg.WorkspaceID)
+	return err
+}
+
+const markXInboxOutboundNeedsReconciliation = `-- name: MarkXInboxOutboundNeedsReconciliation :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'needs_reconciliation',
+    last_error = LEFT($1::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = $2
+  AND status IN ('sending', 'outcome_unknown')
+  AND reconciliation_deadline <= NOW()
+`
+
+type MarkXInboxOutboundNeedsReconciliationParams struct {
+	LastError string `json:"last_error"`
+	ID        string `json:"id"`
+}
+
+func (q *Queries) MarkXInboxOutboundNeedsReconciliation(ctx context.Context, arg MarkXInboxOutboundNeedsReconciliationParams) error {
+	_, err := q.db.Exec(ctx, markXInboxOutboundNeedsReconciliation, arg.LastError, arg.ID)
+	return err
+}
+
+const markXInboxOutboundSending = `-- name: MarkXInboxOutboundSending :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'sending',
+    usage_event_id = NULLIF($1::TEXT, ''),
+    operation_key = NULLIF($2::TEXT, ''),
+    reserved_units = $3,
+    updated_at = NOW()
+WHERE id = $4
+  AND status = 'pending'
+`
+
+type MarkXInboxOutboundSendingParams struct {
+	UsageEventID  string `json:"usage_event_id"`
+	OperationKey  string `json:"operation_key"`
+	ReservedUnits int64  `json:"reserved_units"`
+	ID            string `json:"id"`
+}
+
+func (q *Queries) MarkXInboxOutboundSending(ctx context.Context, arg MarkXInboxOutboundSendingParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markXInboxOutboundSending,
+		arg.UsageEventID,
+		arg.OperationKey,
+		arg.ReservedUnits,
+		arg.ID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const markXInboxOutboundUnknown = `-- name: MarkXInboxOutboundUnknown :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'outcome_unknown',
+    usage_event_id = COALESCE(NULLIF($1::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF($2::TEXT, ''), operation_key),
+    reserved_units = GREATEST($3, reserved_units),
+    last_error = LEFT($4::TEXT, 1000),
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = $5
+  AND status IN ('pending', 'sending')
+`
+
+type MarkXInboxOutboundUnknownParams struct {
+	UsageEventID  string `json:"usage_event_id"`
+	OperationKey  string `json:"operation_key"`
+	ReservedUnits int64  `json:"reserved_units"`
+	LastError     string `json:"last_error"`
+	ID            string `json:"id"`
+}
+
+func (q *Queries) MarkXInboxOutboundUnknown(ctx context.Context, arg MarkXInboxOutboundUnknownParams) error {
+	_, err := q.db.Exec(ctx, markXInboxOutboundUnknown,
+		arg.UsageEventID,
+		arg.OperationKey,
+		arg.ReservedUnits,
+		arg.LastError,
+		arg.ID,
+	)
 	return err
 }
 
@@ -1046,6 +1305,46 @@ func (q *Queries) ReconcileDMThreadKeys(ctx context.Context, arg ReconcileDMThre
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordXInboxOutboundRemoteSuccess = `-- name: RecordXInboxOutboundRemoteSuccess :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'remote_succeeded',
+    usage_event_id = COALESCE(NULLIF($1::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF($2::TEXT, ''), operation_key),
+    reserved_units = GREATEST($3, reserved_units),
+    remote_external_id = $4,
+    remote_conversation_id = NULLIF($5::TEXT, ''),
+    remote_url = NULLIF($6::TEXT, ''),
+    remote_outcome_known_at = NOW(),
+    last_error = NULL,
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = $7
+  AND status IN ('pending', 'sending', 'remote_succeeded')
+`
+
+type RecordXInboxOutboundRemoteSuccessParams struct {
+	UsageEventID         string      `json:"usage_event_id"`
+	OperationKey         string      `json:"operation_key"`
+	ReservedUnits        int64       `json:"reserved_units"`
+	RemoteExternalID     pgtype.Text `json:"remote_external_id"`
+	RemoteConversationID string      `json:"remote_conversation_id"`
+	RemoteUrl            string      `json:"remote_url"`
+	ID                   string      `json:"id"`
+}
+
+func (q *Queries) RecordXInboxOutboundRemoteSuccess(ctx context.Context, arg RecordXInboxOutboundRemoteSuccessParams) error {
+	_, err := q.db.Exec(ctx, recordXInboxOutboundRemoteSuccess,
+		arg.UsageEventID,
+		arg.OperationKey,
+		arg.ReservedUnits,
+		arg.RemoteExternalID,
+		arg.RemoteConversationID,
+		arg.RemoteUrl,
+		arg.ID,
+	)
+	return err
 }
 
 const updateInboxItemAuthorMetadata = `-- name: UpdateInboxItemAuthorMetadata :execrows
