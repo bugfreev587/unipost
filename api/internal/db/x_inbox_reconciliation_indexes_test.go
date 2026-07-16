@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
 )
 
 func TestXInboxReconciliationIndexesMigration(t *testing.T) {
@@ -21,6 +22,7 @@ func TestXInboxReconciliationIndexesMigration(t *testing.T) {
 	}
 	text := string(source)
 	for _, want := range []string{
+		"-- +goose NO TRANSACTION\n-- +goose Up",
 		"x_inbox_outbound_reconciliation_current_idx",
 		"WHERE status NOT IN ('completed', 'succeeded')",
 		"x_inbox_outbound_reconciliation_day_idx",
@@ -39,8 +41,11 @@ func TestXInboxReconciliationIndexesMigration(t *testing.T) {
 			t.Errorf("migration 116 missing %q", want)
 		}
 	}
-	if got := strings.Count(text, "DROP INDEX IF EXISTS"); got < 10 {
-		t.Fatalf("migration Down drops %d indexes, want at least 10", got)
+	if got := strings.Count(text, "CREATE INDEX CONCURRENTLY IF NOT EXISTS"); got != 15 {
+		t.Fatalf("migration Up has %d retry-safe concurrent indexes, want 15", got)
+	}
+	if got := strings.Count(text, "DROP INDEX CONCURRENTLY IF EXISTS"); got != 15 {
+		t.Fatalf("migration Down has %d retry-safe concurrent drops, want 15", got)
 	}
 }
 
@@ -62,6 +67,9 @@ func TestXInboxReconciliationIndexesFreshDownUp(t *testing.T) {
 	sort.Strings(paths)
 	ctx := context.Background()
 	for _, path := range paths {
+		if filepath.Base(path) == "116_x_inbox_reconciliation_indexes.sql" {
+			continue
+		}
 		migration, readErr := os.ReadFile(path)
 		if readErr != nil {
 			t.Fatal(readErr)
@@ -73,22 +81,28 @@ func TestXInboxReconciliationIndexesFreshDownUp(t *testing.T) {
 		}
 	}
 
-	migration, err := os.ReadFile("migrations/116_x_inbox_reconciliation_indexes.sql")
+	if _, err := goose.EnsureDBVersion(database); err != nil {
+		t.Fatalf("initialize Goose version table: %v", err)
+	}
+	migrations, err := goose.CollectMigrations("migrations", 115, 116)
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(string(migration), "-- +goose Down")
-	if len(parts) != 2 {
-		t.Fatal("migration 116 must have one Down section")
+	if len(migrations) != 1 || migrations[0].Version != 116 {
+		t.Fatalf("Goose collected migrations = %+v, want only 116", migrations)
 	}
-	down := strings.TrimSpace(parts[1])
-	if _, err := database.ExecContext(ctx, down); err != nil {
+	migration := migrations[0]
+	if err := migration.UpContext(ctx, database); err != nil {
+		t.Fatalf("migration 116 Goose Up: %v", err)
+	}
+	assertXInboxReconciliationIndexExists(t, ctx, database, true)
+
+	if err := migration.DownContext(ctx, database); err != nil {
 		t.Fatalf("migration 116 Down: %v", err)
 	}
 	assertXInboxReconciliationIndexExists(t, ctx, database, false)
 
-	up := strings.Replace(parts[0], "-- +goose Up", "", 1)
-	if _, err := database.ExecContext(ctx, up); err != nil {
+	if err := migration.UpContext(ctx, database); err != nil {
 		t.Fatalf("migration 116 re-Up: %v", err)
 	}
 	assertXInboxReconciliationIndexExists(t, ctx, database, true)
