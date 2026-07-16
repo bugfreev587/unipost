@@ -201,6 +201,29 @@ func TestTwitterRefresh(t *testing.T) {
 	}
 }
 
+func TestTwitterRefresh_FallsBackToRequestedScopesWhenOmitted(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"access_token":"new-at",
+			"refresh_token":"new-rt",
+			"expires_in":7200,
+			"scope":"   "
+		}`)
+	}))
+	defer mock.Close()
+
+	c := NewTwitterConnector("c", "s", "https://api.example.com")
+	c.TokenEndpoint = mock.URL
+
+	tokens, err := c.Refresh(context.Background(), "old-rt")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if want := strings.Fields(twitterScopes); !reflect.DeepEqual(tokens.Scopes, want) {
+		t.Fatalf("scopes = %#v, want requested fallback %#v", tokens.Scopes, want)
+	}
+}
+
 // TestNewTwitterConnector_NilOnMissingCreds — guards against
 // half-configured environments. The constructor returns nil so the
 // platform simply isn't registered, which is the right failure mode.

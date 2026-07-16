@@ -11,6 +11,27 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const consumeOAuthState = `-- name: ConsumeOAuthState :one
+DELETE FROM oauth_states
+WHERE state = $1 AND expires_at > NOW()
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier
+`
+
+func (q *Queries) ConsumeOAuthState(ctx context.Context, state string) (OauthState, error) {
+	row := q.db.QueryRow(ctx, consumeOAuthState, state)
+	var i OauthState
+	err := row.Scan(
+		&i.State,
+		&i.ProfileID,
+		&i.Platform,
+		&i.RedirectUrl,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.PkceVerifier,
+	)
+	return i, err
+}
+
 const createOAuthState = `-- name: CreateOAuthState :one
 INSERT INTO oauth_states (state, profile_id, platform, redirect_url, pkce_verifier)
 VALUES ($1, $2, $3, $4, $5)
@@ -53,32 +74,4 @@ DELETE FROM oauth_states WHERE expires_at <= NOW()
 func (q *Queries) DeleteExpiredOAuthStates(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, deleteExpiredOAuthStates)
 	return err
-}
-
-const deleteOAuthState = `-- name: DeleteOAuthState :exec
-DELETE FROM oauth_states WHERE state = $1
-`
-
-func (q *Queries) DeleteOAuthState(ctx context.Context, state string) error {
-	_, err := q.db.Exec(ctx, deleteOAuthState, state)
-	return err
-}
-
-const getOAuthState = `-- name: GetOAuthState :one
-SELECT state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier FROM oauth_states WHERE state = $1 AND expires_at > NOW()
-`
-
-func (q *Queries) GetOAuthState(ctx context.Context, state string) (OauthState, error) {
-	row := q.db.QueryRow(ctx, getOAuthState, state)
-	var i OauthState
-	err := row.Scan(
-		&i.State,
-		&i.ProfileID,
-		&i.Platform,
-		&i.RedirectUrl,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.PkceVerifier,
-	)
-	return i, err
 }

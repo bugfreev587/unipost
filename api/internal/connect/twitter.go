@@ -237,10 +237,14 @@ func (t *TwitterConnector) Refresh(ctx context.Context, refreshToken string) (*T
 	if raw.AccessToken == "" {
 		return nil, fmt.Errorf("twitter refresh empty access_token")
 	}
+	scopes := strings.Fields(raw.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(twitterScopes)
+	}
 	return &TokenSet{
 		AccessToken:  raw.AccessToken,
 		RefreshToken: raw.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(raw.ExpiresIn) * time.Second),
-		Scopes:       strings.Fields(raw.Scope),
+		Scopes:       scopes,
 	}, nil
 }

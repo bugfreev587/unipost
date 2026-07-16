@@ -92,9 +92,9 @@ func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("token exchange failed (%d): %s", resp.StatusCode, string(body))
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("twitter token exchange failed with status %d", resp.StatusCode)
 	}
 
 	var tokenResp struct {
@@ -104,7 +104,15 @@ func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		TokenType    string `json:"token_type"`
 		Scope        string `json:"scope"`
 	}
-	json.NewDecoder(resp.Body).Decode(&tokenResp)
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return nil, fmt.Errorf("twitter token response decode: %w", err)
+	}
+	if tokenResp.AccessToken == "" {
+		return nil, fmt.Errorf("twitter token response missing access_token")
+	}
+	if tokenResp.ExpiresIn <= 0 {
+		return nil, fmt.Errorf("twitter token response invalid expires_in")
+	}
 
 	// Get user info
 	userInfo, err := a.getUserInfo(ctx, tokenResp.AccessToken)
@@ -764,6 +772,11 @@ func (a *TwitterAdapter) getUserInfo(ctx context.Context, accessToken string) (*
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
+		return nil, fmt.Errorf("twitter users.me failed with status %d", resp.StatusCode)
+	}
+
 	var result struct {
 		Data struct {
 			ID              string `json:"id"`
@@ -771,7 +784,12 @@ func (a *TwitterAdapter) getUserInfo(ctx context.Context, accessToken string) (*
 			ProfileImageURL string `json:"profile_image_url"`
 		} `json:"data"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("twitter users.me response decode: %w", err)
+	}
+	if result.Data.ID == "" {
+		return nil, fmt.Errorf("twitter users.me response missing user id")
+	}
 
 	return &twitterUserInfo{
 		id:              result.Data.ID,

@@ -195,17 +195,14 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify state (CSRF protection)
-	oauthState, err := h.queries.GetOAuthState(r.Context(), state)
+	// Atomically verify and consume state (CSRF protection + replay prevention).
+	oauthState, err := h.queries.ConsumeOAuthState(r.Context(), state)
 	if err != nil {
 		slog.Warn("oauth callback: invalid or expired state", "state", state)
 		h.redirectWithError(w, r, "", "Invalid or expired OAuth state")
 		return
 	}
 	workspaceID = h.workspaceIDForProfile(r.Context(), oauthState.ProfileID)
-
-	// Clean up state
-	h.queries.DeleteOAuthState(r.Context(), state)
 
 	if oauthState.Platform != platformName {
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Platform mismatch")

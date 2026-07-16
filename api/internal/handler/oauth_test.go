@@ -97,7 +97,7 @@ func TestOAuthPKCEConnectStoresRandomVerifierAndUsesItForTwitterChallenge(t *tes
 	}
 }
 
-func TestOAuthPKCECallbackPassesStoredVerifierToTwitterExchange(t *testing.T) {
+func TestOAuthStateCallbackConsumesOnceBeforeTwitterExchange(t *testing.T) {
 	store := &oauthPKCETestDB{
 		state:        "csrf-state",
 		pkceVerifier: "stored-random-verifier",
@@ -130,14 +130,69 @@ func TestOAuthPKCECallbackPassesStoredVerifierToTwitterExchange(t *testing.T) {
 	if spy.exchangeConfig.PKCEVerifier != store.pkceVerifier {
 		t.Fatalf("exchange PKCE verifier = %q, want stored verifier", spy.exchangeConfig.PKCEVerifier)
 	}
-	if store.deleteCalls != 1 {
-		t.Fatalf("DeleteOAuthState calls = %d, want 1", store.deleteCalls)
+	if store.consumeCalls != 1 {
+		t.Fatalf("ConsumeOAuthState calls = %d, want 1", store.consumeCalls)
+	}
+	if spy.exchangeCalls != 1 {
+		t.Fatalf("ExchangeCode calls = %d, want 1", spy.exchangeCalls)
+	}
+
+	replayReq := httptest.NewRequest(http.MethodGet, "/v1/oauth/callback/twitter?code=replayed-code&state=csrf-state", nil)
+	replayReq = withOAuthPKCEChiParams(replayReq, map[string]string{"platform": "twitter"})
+	replayRec := httptest.NewRecorder()
+
+	h.Callback(replayRec, replayReq)
+
+	if store.consumeCalls != 2 {
+		t.Fatalf("ConsumeOAuthState calls after replay = %d, want 2", store.consumeCalls)
+	}
+	if spy.exchangeCalls != 1 {
+		t.Fatalf("ExchangeCode calls after replay = %d, want still 1", spy.exchangeCalls)
+	}
+}
+
+func TestOAuthStateCallbackRejectsConsumeErrorBeforeExchange(t *testing.T) {
+	store := &oauthPKCETestDB{
+		state:        "csrf-state",
+		pkceVerifier: "stored-random-verifier",
+		consumeErr:   errors.New("database unavailable"),
+	}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewOAuthHandler(db.New(store), encryptor, nil)
+
+	spy := &oauthPKCESpyAdapter{TwitterAdapter: platform.NewTwitterAdapter()}
+	previous, err := platform.Get("twitter")
+	if err != nil {
+		previous = nil
+	}
+	platform.Register(spy)
+	t.Cleanup(func() {
+		if previous != nil {
+			platform.Register(previous)
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/oauth/callback/twitter?code=authorization-code&state=csrf-state", nil)
+	req = withOAuthPKCEChiParams(req, map[string]string{"platform": "twitter"})
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if store.consumeCalls != 1 {
+		t.Fatalf("ConsumeOAuthState calls = %d, want 1", store.consumeCalls)
+	}
+	if spy.exchangeCalls != 0 {
+		t.Fatalf("ExchangeCode calls = %d, want 0", spy.exchangeCalls)
 	}
 }
 
 type oauthPKCESpyAdapter struct {
 	*platform.TwitterAdapter
 	exchangeConfig platform.OAuthConfig
+	exchangeCalls  int
 }
 
 func (a *oauthPKCESpyAdapter) DefaultOAuthConfig(baseRedirectURL string) platform.OAuthConfig {
@@ -149,19 +204,19 @@ func (a *oauthPKCESpyAdapter) DefaultOAuthConfig(baseRedirectURL string) platfor
 
 func (a *oauthPKCESpyAdapter) ExchangeCode(_ context.Context, config platform.OAuthConfig, _ string) (*platform.ConnectResult, error) {
 	a.exchangeConfig = config
+	a.exchangeCalls++
 	return nil, errOAuthPKCEExchangeObserved
 }
 
 type oauthPKCETestDB struct {
 	state        string
 	pkceVerifier string
-	deleteCalls  int
+	consumeCalls int
+	consumed     bool
+	consumeErr   error
 }
 
-func (f *oauthPKCETestDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
-	if strings.Contains(query, "-- name: DeleteOAuthState") {
-		f.deleteCalls++
-	}
+func (f *oauthPKCETestDB) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, nil
 }
 
@@ -173,17 +228,16 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 	switch {
 	case strings.Contains(query, "-- name: GetConnectSessionByOAuthState"):
 		return scanRow{err: pgx.ErrNoRows}
-	case strings.Contains(query, "-- name: GetOAuthState"):
-		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		return scanRow{values: []any{
-			f.state,
-			"pr_1",
-			"twitter",
-			pgtype.Text{},
-			pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
-			now,
-			pgtype.Text{String: f.pkceVerifier, Valid: f.pkceVerifier != ""},
-		}}
+	case strings.Contains(query, "-- name: ConsumeOAuthState"):
+		f.consumeCalls++
+		if f.consumeErr != nil {
+			return scanRow{err: f.consumeErr}
+		}
+		if f.consumed {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		f.consumed = true
+		return f.oauthStateRow()
 	case strings.Contains(query, "-- name: GetProfile"):
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return scanRow{values: []any{
@@ -211,6 +265,19 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
 	}
+}
+
+func (f *oauthPKCETestDB) oauthStateRow() scanRow {
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	return scanRow{values: []any{
+		f.state,
+		"pr_1",
+		"twitter",
+		pgtype.Text{},
+		pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
+		now,
+		pgtype.Text{String: f.pkceVerifier, Valid: f.pkceVerifier != ""},
+	}}
 }
 
 func withOAuthPKCEChiParams(req *http.Request, params map[string]string) *http.Request {

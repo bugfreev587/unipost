@@ -147,6 +147,123 @@ func TestTwitterOAuthPKCEExchangeFallsBackToConfiguredScopesWhenOmitted(t *testi
 	}
 }
 
+func TestTwitterOAuthPKCEExchangeRejectsMalformedTokenJSON(t *testing.T) {
+	adapter := twitterOAuthResponseAdapter(t, `{`, http.StatusOK, validTwitterUserInfoJSON)
+	result, err := adapter.ExchangeCode(context.Background(), validTwitterOAuthConfig(), "authorization-code")
+	if err == nil {
+		t.Fatal("ExchangeCode error = nil, want malformed token JSON error")
+	}
+	if result != nil {
+		t.Fatalf("ConnectResult = %#v, want nil", result)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeRejectsEmptyAccessToken(t *testing.T) {
+	adapter := twitterOAuthResponseAdapter(t, `{
+		"access_token":"",
+		"refresh_token":"refresh-token",
+		"expires_in":7200,
+		"scope":""
+	}`, http.StatusOK, validTwitterUserInfoJSON)
+	result, err := adapter.ExchangeCode(context.Background(), validTwitterOAuthConfig(), "authorization-code")
+	if err == nil {
+		t.Fatal("ExchangeCode error = nil, want empty access token error")
+	}
+	if result != nil {
+		t.Fatalf("ConnectResult = %#v, want nil", result)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeRejectsNonPositiveExpiry(t *testing.T) {
+	adapter := twitterOAuthResponseAdapter(t, `{
+		"access_token":"access-token",
+		"refresh_token":"refresh-token",
+		"expires_in":0,
+		"scope":""
+	}`, http.StatusOK, validTwitterUserInfoJSON)
+	result, err := adapter.ExchangeCode(context.Background(), validTwitterOAuthConfig(), "authorization-code")
+	if err == nil {
+		t.Fatal("ExchangeCode error = nil, want invalid expires_in error")
+	}
+	if result != nil {
+		t.Fatalf("ConnectResult = %#v, want nil", result)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeRejectsUsersMeNon2xxWithoutBodyLeak(t *testing.T) {
+	adapter := twitterOAuthResponseAdapter(t, validTwitterTokenJSON, http.StatusUnauthorized, `{"secret":"upstream-sensitive"}`)
+	result, err := adapter.ExchangeCode(context.Background(), validTwitterOAuthConfig(), "authorization-code")
+	if err == nil {
+		t.Fatal("ExchangeCode error = nil, want users/me status error")
+	}
+	if result != nil {
+		t.Fatalf("ConnectResult = %#v, want nil", result)
+	}
+	if strings.Contains(err.Error(), "upstream-sensitive") || strings.Contains(err.Error(), "access-token") {
+		t.Fatalf("error leaked upstream secret/token: %q", err)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeRejectsMalformedUsersMeJSON(t *testing.T) {
+	adapter := twitterOAuthResponseAdapter(t, validTwitterTokenJSON, http.StatusOK, `{`)
+	result, err := adapter.ExchangeCode(context.Background(), validTwitterOAuthConfig(), "authorization-code")
+	if err == nil {
+		t.Fatal("ExchangeCode error = nil, want malformed users/me JSON error")
+	}
+	if result != nil {
+		t.Fatalf("ConnectResult = %#v, want nil", result)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeRejectsEmptyUsersMeID(t *testing.T) {
+	adapter := twitterOAuthResponseAdapter(t, validTwitterTokenJSON, http.StatusOK, `{"data":{"username":"robyn"}}`)
+	result, err := adapter.ExchangeCode(context.Background(), validTwitterOAuthConfig(), "authorization-code")
+	if err == nil {
+		t.Fatal("ExchangeCode error = nil, want empty users/me ID error")
+	}
+	if result != nil {
+		t.Fatalf("ConnectResult = %#v, want nil", result)
+	}
+}
+
+const (
+	validTwitterTokenJSON = `{
+		"access_token":"access-token",
+		"refresh_token":"refresh-token",
+		"expires_in":7200,
+		"scope":"tweet.read dm.read"
+	}`
+	validTwitterUserInfoJSON = `{
+		"data":{"id":"x-user","username":"robyn","profile_image_url":"https://example/avatar.png"}
+	}`
+)
+
+func validTwitterOAuthConfig() OAuthConfig {
+	return OAuthConfig{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		TokenURL:     "https://token.example/oauth2/token",
+		RedirectURL:  "https://api.example/v1/oauth/callback/twitter",
+		Scopes:       []string{"tweet.read", "tweet.write", "dm.read", "dm.write"},
+		PKCEVerifier: "stored-random-verifier",
+	}
+}
+
+func twitterOAuthResponseAdapter(t *testing.T, tokenBody string, userStatus int, userBody string) *TwitterAdapter {
+	t.Helper()
+	return &TwitterAdapter{client: &http.Client{Transport: twitterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "token.example":
+			return jsonResponse(http.StatusOK, tokenBody), nil
+		case "api.x.com":
+			return jsonResponse(userStatus, userBody), nil
+		default:
+			t.Fatalf("unexpected request URL: %s", req.URL)
+			return nil, nil
+		}
+	})}}
+}
+
 func TestTwitterUploadMediaChunkedNormalizesParameterizedVideoContentType(t *testing.T) {
 	var sawInit bool
 	var sawFinalize bool
