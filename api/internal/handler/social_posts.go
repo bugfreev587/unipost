@@ -1982,10 +1982,12 @@ func xWriteOutcomeUnknown(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "create_tweet timeout") ||
-		strings.Contains(message, "create_tweet canceled") ||
-		strings.Contains(message, "create_tweet_reply timeout") ||
-		strings.Contains(message, "create_tweet_reply canceled")
+	return strings.HasPrefix(message, "create_tweet:") ||
+		strings.HasPrefix(message, "create_tweet timeout") ||
+		strings.HasPrefix(message, "create_tweet canceled") ||
+		strings.HasPrefix(message, "create_tweet_reply:") ||
+		strings.HasPrefix(message, "create_tweet_reply timeout") ||
+		strings.HasPrefix(message, "create_tweet_reply canceled")
 }
 
 func xUsageKeyForResult(resultID string) string {

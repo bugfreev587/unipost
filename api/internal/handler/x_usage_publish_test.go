@@ -185,14 +185,21 @@ func TestSettleManagedXUsageFinalizesSuccessAndReversesConfirmedFailure(t *testi
 }
 
 func TestSettleManagedXUsageKeepsUnknownWriteProvisional(t *testing.T) {
-	fake := &fakeXUsageService{}
-	event := xcredits.UsageEvent{ID: "xue_1", WeightedUnits: 15}
-	err := settleManagedXUsage(context.Background(), fake, event, errors.New("create_tweet timeout after 20s"))
-	if !errors.Is(err, ErrXWriteOutcomePending) {
-		t.Fatalf("error = %v, want ErrXWriteOutcomePending", err)
-	}
-	if len(fake.finals) != 0 || len(fake.reverses) != 0 {
-		t.Fatalf("unknown outcome finals=%v reverses=%v", fake.finals, fake.reverses)
+	for _, transportErr := range []error{
+		errors.New("create_tweet timeout after 20s"),
+		errors.New("create_tweet: unexpected EOF"),
+		errors.New("create_tweet: connection reset by peer"),
+		errors.New("create_tweet_reply: stream error: stream ID 7; INTERNAL_ERROR"),
+	} {
+		fake := &fakeXUsageService{}
+		event := xcredits.UsageEvent{ID: "xue_1", WeightedUnits: 15}
+		err := settleManagedXUsage(context.Background(), fake, event, transportErr)
+		if !errors.Is(err, ErrXWriteOutcomePending) {
+			t.Fatalf("transport error %q settled as %v, want ErrXWriteOutcomePending", transportErr, err)
+		}
+		if len(fake.finals) != 0 || len(fake.reverses) != 0 {
+			t.Fatalf("transport error %q finals=%v reverses=%v", transportErr, fake.finals, fake.reverses)
+		}
 	}
 }
 
