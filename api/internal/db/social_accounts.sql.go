@@ -120,7 +120,10 @@ VALUES (
   'managed', $11, $12, $13,
   'active', NOW(), $14
 )
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type CreateManagedSocialAccountParams struct {
@@ -186,7 +189,10 @@ func (q *Queries) CreateManagedSocialAccount(ctx context.Context, arg CreateMana
 const createSocialAccount = `-- name: CreateSocialAccount :one
 INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata, scope, x_app_mode)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type CreateSocialAccountParams struct {
@@ -257,7 +263,10 @@ SET disconnected_at = NOW(),
     scope = CASE WHEN platform = 'youtube' THEN ARRAY[]::TEXT[] ELSE scope END,
     last_refreshed_at = CASE WHEN platform = 'youtube' THEN NOW() ELSE last_refreshed_at END
 WHERE id = $1 AND profile_id = $2
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type DisconnectSocialAccountParams struct {
@@ -316,7 +325,10 @@ func (q *Queries) DismissSocialAccount(ctx context.Context, arg DismissSocialAcc
 }
 
 const findActiveManagedSocialAccountByExternalAccount = `-- name: FindActiveManagedSocialAccountByExternalAccount :one
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 FROM social_accounts
 WHERE profile_id = $1
   AND platform = $2
@@ -361,7 +373,12 @@ func (q *Queries) FindActiveManagedSocialAccountByExternalAccount(ctx context.Co
 }
 
 const findSocialAccountByExternalID = `-- name: FindSocialAccountByExternalID :one
-SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode FROM social_accounts sa
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
   AND sa.external_account_id = $2
@@ -446,7 +463,11 @@ func (q *Queries) GetDistinctProfileIDsForAccounts(ctx context.Context, arg GetD
 }
 
 const getExpiringTokens = `-- name: GetExpiringTokens :many
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
 WHERE disconnected_at IS NULL
   AND status = 'active'
   AND connection_type <> 'managed'
@@ -496,7 +517,11 @@ func (q *Queries) GetExpiringTokens(ctx context.Context) ([]SocialAccount, error
 }
 
 const getManagedBlueskyAccount = `-- name: GetManagedBlueskyAccount :one
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
 WHERE profile_id = $1
   AND platform = 'bluesky'
   AND external_account_id = $2
@@ -539,7 +564,12 @@ func (q *Queries) GetManagedBlueskyAccount(ctx context.Context, arg GetManagedBl
 }
 
 const getSocialAccount = `-- name: GetSocialAccount :one
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts WHERE id = $1
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
+WHERE id = $1
 `
 
 func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccount, error) {
@@ -571,7 +601,12 @@ func (q *Queries) GetSocialAccount(ctx context.Context, id string) (SocialAccoun
 }
 
 const getSocialAccountByIDAndProfile = `-- name: GetSocialAccountByIDAndProfile :one
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts WHERE id = $1 AND profile_id = $2
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
+WHERE id = $1 AND profile_id = $2
 `
 
 type GetSocialAccountByIDAndProfileParams struct {
@@ -608,7 +643,12 @@ func (q *Queries) GetSocialAccountByIDAndProfile(ctx context.Context, arg GetSoc
 }
 
 const getSocialAccountByIDAndWorkspace = `-- name: GetSocialAccountByIDAndWorkspace :one
-SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode FROM social_accounts sa
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = $1 AND p.workspace_id = $2
 `
@@ -649,7 +689,11 @@ func (q *Queries) GetSocialAccountByIDAndWorkspace(ctx context.Context, arg GetS
 }
 
 const listAllSocialAccountsByProfile = `-- name: ListAllSocialAccountsByProfile :many
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
 WHERE profile_id = $1
   AND COALESCE(metadata->>'dismissed_at', '') = ''
 ORDER BY connected_at DESC
@@ -697,7 +741,12 @@ func (q *Queries) ListAllSocialAccountsByProfile(ctx context.Context, profileID 
 }
 
 const listAllSocialAccountsByWorkspaceIncludingDisconnected = `-- name: ListAllSocialAccountsByWorkspaceIncludingDisconnected :many
-SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode FROM social_accounts sa
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
 ORDER BY sa.connected_at DESC
@@ -751,7 +800,10 @@ func (q *Queries) ListAllSocialAccountsByWorkspaceIncludingDisconnected(ctx cont
 }
 
 const listManagedAccountsDueForRefresh = `-- name: ListManagedAccountsDueForRefresh :many
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 FROM social_accounts
 WHERE connection_type = 'managed'
   AND status = 'active'
@@ -805,7 +857,11 @@ func (q *Queries) ListManagedAccountsDueForRefresh(ctx context.Context) ([]Socia
 }
 
 const listSocialAccountsByProfile = `-- name: ListSocialAccountsByProfile :many
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
 WHERE profile_id = $1
   AND disconnected_at IS NULL
   AND COALESCE(metadata->>'dismissed_at', '') = ''
@@ -854,7 +910,11 @@ func (q *Queries) ListSocialAccountsByProfile(ctx context.Context, profileID str
 }
 
 const listSocialAccountsByProfileFiltered = `-- name: ListSocialAccountsByProfileFiltered :many
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode FROM social_accounts
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+FROM social_accounts
 WHERE profile_id = $1
   AND disconnected_at IS NULL
   AND COALESCE(metadata->>'dismissed_at', '') = ''
@@ -911,7 +971,12 @@ func (q *Queries) ListSocialAccountsByProfileFiltered(ctx context.Context, arg L
 }
 
 const listSocialAccountsByWorkspace = `-- name: ListSocialAccountsByWorkspace :many
-SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode FROM social_accounts sa
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
@@ -963,7 +1028,12 @@ func (q *Queries) ListSocialAccountsByWorkspace(ctx context.Context, workspaceID
 }
 
 const listSocialAccountsByWorkspaceFiltered = `-- name: ListSocialAccountsByWorkspaceFiltered :many
-SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode FROM social_accounts sa
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
@@ -1058,7 +1128,10 @@ SET access_token      = $2,
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
 WHERE id = $1
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type ReactivateSocialAccountParams struct {
@@ -1133,7 +1206,10 @@ SET access_token        = $1,
     disconnected_at     = NULL,
     last_refreshed_at   = NOW()
 WHERE id = $14
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type RefreshConnectedSocialAccountParams struct {
@@ -1210,7 +1286,10 @@ SET access_token       = $2,
     disconnected_at    = NULL,
     last_refreshed_at  = NOW()
 WHERE id = $1 AND connection_type = 'managed'
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type UpdateManagedBlueskyAccountParams struct {
@@ -1344,7 +1423,10 @@ DO UPDATE SET
   status             = 'active',
   disconnected_at    = NULL,
   last_refreshed_at  = NOW()
-RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
+RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode
 `
 
 type UpsertManagedSocialAccountParams struct {

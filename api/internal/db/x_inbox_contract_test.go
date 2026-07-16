@@ -18,8 +18,6 @@ func TestXInboxDeliveryResourceQueryContract(t *testing.T) {
 		"unipost_managed_app",
 		"workspace_x_app",
 		"legacy_unknown",
-		"UPDATE x_usage_events\nSET connection_mode = 'legacy_unknown'",
-		"WHERE x_credit_billing_mode IS NOT NULL",
 		"DELETE FROM oauth_states\nWHERE platform = 'twitter'",
 		"UPDATE connect_sessions\nSET status = 'expired'",
 		"expires_at = LEAST(expires_at, NOW())",
@@ -67,5 +65,45 @@ func TestXInboxDeliveryResourceQueryContract(t *testing.T) {
 		if !strings.Contains(queryText, required) {
 			t.Fatalf("x_inbox.sql missing %q", required)
 		}
+	}
+}
+
+func TestXInboxMigrationAllowsOldAndNewBillingValuesDuringRollingDeploy(t *testing.T) {
+	migration, err := os.ReadFile("migrations/108_x_inbox_oauth_and_delivery.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(migration)
+
+	for _, required := range []string{
+		"CHECK (connection_mode IN ('managed', 'byo', 'unipost_managed_app', 'workspace_x_app', 'legacy_unknown'))",
+		"CHECK (x_credit_billing_mode IS NULL OR x_credit_billing_mode IN ('unipost_managed_app', 'customer_x_app', 'workspace_x_app', 'legacy_unknown'))",
+	} {
+		if !strings.Contains(schema, required) {
+			t.Errorf("migration 108 rolling-deploy constraint missing %q", required)
+		}
+	}
+	if strings.Contains(schema, "UPDATE x_usage_events\nSET connection_mode = 'legacy_unknown'") {
+		t.Error("migration 108 must preserve existing x_usage_events connection modes during rolling deploy")
+	}
+}
+
+func TestXInboxMigrationBackfillsOnlyHistoricalTwitterResults(t *testing.T) {
+	migration, err := os.ReadFile("migrations/108_x_inbox_oauth_and_delivery.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	schema := string(migration)
+	required := `UPDATE social_post_results spr
+SET x_credit_billing_mode = 'legacy_unknown'
+FROM social_accounts sa
+WHERE sa.id = spr.social_account_id
+  AND sa.platform = 'twitter'
+  AND spr.x_credit_billing_mode IS NULL;`
+	if !strings.Contains(schema, required) {
+		t.Fatalf("migration 108 must backfill only historical Twitter results with NULL billing mode")
+	}
+	if strings.Contains(schema, "WHERE x_credit_billing_mode IS NOT NULL") {
+		t.Error("migration 108 must not rewrite already-classified social_post_results")
 	}
 }

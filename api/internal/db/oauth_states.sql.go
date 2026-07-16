@@ -14,7 +14,8 @@ import (
 const consumeOAuthState = `-- name: ConsumeOAuthState :one
 DELETE FROM oauth_states
 WHERE state = $1 AND expires_at > NOW()
-RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier, x_app_mode
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at,
+  pkce_verifier, x_app_mode
 `
 
 func (q *Queries) ConsumeOAuthState(ctx context.Context, state string) (OauthState, error) {
@@ -36,7 +37,8 @@ func (q *Queries) ConsumeOAuthState(ctx context.Context, state string) (OauthSta
 const createOAuthState = `-- name: CreateOAuthState :one
 INSERT INTO oauth_states (state, profile_id, platform, redirect_url, pkce_verifier, x_app_mode)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier, x_app_mode
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at,
+  pkce_verifier, x_app_mode
 `
 
 type CreateOAuthStateParams struct {

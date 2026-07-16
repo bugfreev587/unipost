@@ -15,14 +15,19 @@ SET client_id = EXCLUDED.client_id,
       WHEN sqlc.arg(consumer_secret_supplied)::BOOLEAN THEN EXCLUDED.consumer_secret
       ELSE platform_credentials.consumer_secret
     END
-RETURNING *;
+RETURNING id, platform, client_id, client_secret, created_at, workspace_id,
+  app_bearer_token, consumer_secret;
 
 -- name: GetPlatformCredential :one
-SELECT * FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id,
+  app_bearer_token, consumer_secret
+FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2;
 
 -- name: ListPlatformCredentialsByWorkspace :many
-SELECT * FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id,
+  app_bearer_token, consumer_secret
+FROM platform_credentials
 WHERE workspace_id = $1
 ORDER BY platform;
 

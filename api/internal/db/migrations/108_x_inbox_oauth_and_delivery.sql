@@ -15,21 +15,22 @@ ALTER TABLE platform_credentials
 
 ALTER TABLE x_usage_events
   DROP CONSTRAINT IF EXISTS x_usage_events_connection_mode_check;
-UPDATE x_usage_events
-SET connection_mode = 'legacy_unknown';
 ALTER TABLE x_usage_events
   ALTER COLUMN connection_mode SET DEFAULT 'unipost_managed_app',
   ADD CONSTRAINT x_usage_events_connection_mode_check
-    CHECK (connection_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown'));
+    CHECK (connection_mode IN ('managed', 'byo', 'unipost_managed_app', 'workspace_x_app', 'legacy_unknown'));
 
 ALTER TABLE social_post_results
   DROP CONSTRAINT IF EXISTS social_post_results_x_credit_billing_mode_check;
-UPDATE social_post_results
+UPDATE social_post_results spr
 SET x_credit_billing_mode = 'legacy_unknown'
-WHERE x_credit_billing_mode IS NOT NULL;
+FROM social_accounts sa
+WHERE sa.id = spr.social_account_id
+  AND sa.platform = 'twitter'
+  AND spr.x_credit_billing_mode IS NULL;
 ALTER TABLE social_post_results
   ADD CONSTRAINT social_post_results_x_credit_billing_mode_check
-    CHECK (x_credit_billing_mode IS NULL OR x_credit_billing_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown'));
+    CHECK (x_credit_billing_mode IS NULL OR x_credit_billing_mode IN ('unipost_managed_app', 'customer_x_app', 'workspace_x_app', 'legacy_unknown'));
 
 DELETE FROM oauth_states
 WHERE platform = 'twitter';
@@ -112,7 +113,8 @@ ALTER TABLE x_usage_events
 UPDATE x_usage_events
 SET connection_mode = CASE
   WHEN connection_mode = 'unipost_managed_app' THEN 'managed'
-  ELSE 'byo'
+  WHEN connection_mode IN ('workspace_x_app', 'legacy_unknown') THEN 'byo'
+  ELSE connection_mode
 END;
 ALTER TABLE x_usage_events
   ALTER COLUMN connection_mode SET DEFAULT 'managed',

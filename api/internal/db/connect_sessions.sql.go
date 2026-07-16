@@ -17,7 +17,9 @@ INSERT INTO connect_sessions (
   return_url, oauth_state, pkce_verifier, expires_at, allow_quickstart_creds,
   x_app_mode
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+RETURNING id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
 `
 
 type CreateConnectSessionParams struct {
@@ -79,7 +81,10 @@ func (q *Queries) ExpireConnectSession(ctx context.Context, id string) error {
 }
 
 const getConnectSessionByID = `-- name: GetConnectSessionByID :one
-SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+FROM connect_sessions
 WHERE id = $1 AND profile_id = $2
 `
 
@@ -112,7 +117,10 @@ func (q *Queries) GetConnectSessionByID(ctx context.Context, arg GetConnectSessi
 }
 
 const getConnectSessionByIDOnly = `-- name: GetConnectSessionByIDOnly :one
-SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+FROM connect_sessions
 WHERE id = $1
 `
 
@@ -143,7 +151,10 @@ func (q *Queries) GetConnectSessionByIDOnly(ctx context.Context, id string) (Con
 }
 
 const getConnectSessionByOAuthState = `-- name: GetConnectSessionByOAuthState :one
-SELECT id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode FROM connect_sessions
+SELECT id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+FROM connect_sessions
 WHERE oauth_state = $1
 `
 
@@ -175,7 +186,9 @@ UPDATE connect_sessions
 SET status = 'cancelled',
     completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+RETURNING id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
 `
 
 func (q *Queries) MarkConnectSessionCancelled(ctx context.Context, id string) (ConnectSession, error) {
@@ -207,7 +220,9 @@ SET status = 'completed',
     completed_social_account_id = $2,
     completed_at = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, profile_id, platform, external_user_id, external_user_email, return_url, status, completed_social_account_id, oauth_state, pkce_verifier, expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+RETURNING id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
 `
 
 type MarkConnectSessionCompletedParams struct {
