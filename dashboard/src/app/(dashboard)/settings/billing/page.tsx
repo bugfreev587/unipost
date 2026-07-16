@@ -7,6 +7,7 @@ import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import {
   getBilling,
   getXCreditsAllowance,
+  updateXInboundDailyCap,
   createCheckout,
   createPortal,
   type BillingInfo,
@@ -60,6 +61,9 @@ function BillingSettingsContent() {
   const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
   const [xCreditsLoading, setXCreditsLoading] = useState(true);
   const [xCreditsError, setXCreditsError] = useState<string | null>(null);
+  const [xInboundCapDraft, setXInboundCapDraft] = useState("");
+  const [xInboundCapAcknowledged, setXInboundCapAcknowledged] = useState(false);
+  const [xInboundCapSaving, setXInboundCapSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
   const [billingError, setBillingError] = useState<{ message: string; topic: string } | null>(null);
@@ -83,6 +87,11 @@ function BillingSettingsContent() {
       setBilling(billingResult.value.data);
       if (xCreditsResult.status === "fulfilled") {
         setXCredits(xCreditsResult.value.data);
+        setXInboundCapDraft(
+          xCreditsResult.value.data.inbound_daily_limit == null
+            ? ""
+            : String(xCreditsResult.value.data.inbound_daily_limit),
+        );
       } else {
         setXCreditsError(
           xCreditsResult.reason instanceof Error
@@ -145,6 +154,27 @@ function BillingSettingsContent() {
       const message = err instanceof Error ? err.message : "Failed to open billing portal";
       console.error("Failed:", err);
       setBillingError({ message, topic: "billing-portal-failure" });
+    }
+  }
+
+  async function handleSaveXInboundCap() {
+    const parsed = Number(xInboundCapDraft);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      setXCreditsError("Daily cap must be a whole number of X Credits, zero or greater.");
+      return;
+    }
+    setXInboundCapSaving(true);
+    setXCreditsError(null);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await updateXInboundDailyCap(token, parsed, xInboundCapAcknowledged);
+      setXInboundCapAcknowledged(false);
+      await loadBilling();
+    } catch (err) {
+      setXCreditsError(err instanceof Error ? err.message : "Failed to update X inbound daily cap");
+    } finally {
+      setXInboundCapSaving(false);
     }
   }
 
@@ -438,10 +468,73 @@ function BillingSettingsContent() {
           </div>
         )}
 
+        {!xCreditsLoading && xCredits ? (
+          <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid var(--dborder)" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(220px, 0.7fr)", gap: 20, alignItems: "start" }} className="x-inbound-cap-grid">
+              <div>
+                <div className="dt-body-sm" style={{ fontWeight: 700, color: "var(--dtext)", marginBottom: 5 }}>
+                  X inbound daily cap
+                </div>
+                <div className="dt-body-sm" style={{ color: "var(--dmuted)", lineHeight: 1.55 }}>
+                  Stops new paid X comment and DM reads after the workspace reaches this UTC-day limit.
+                  Today: {xCredits.inbound_daily_usage.toLocaleString()}
+                  {xCredits.inbound_daily_limit == null
+                    ? " used (no daily cap)."
+                    : ` / ${xCredits.inbound_daily_limit.toLocaleString()} used.`}
+                  {xCredits.inbound_events_suppressed > 0
+                    ? ` ${xCredits.inbound_events_suppressed.toLocaleString()} event(s) suppressed today.`
+                    : ""}
+                </div>
+                {xCredits.pause_paid_sources ? (
+                  <div role="status" style={{ marginTop: 8, color: "var(--warning)", fontSize: 12, fontWeight: 600 }}>
+                    Paid inbound X reads are paused: {xCredits.inbound_pause_reason === "daily_cap" ? "daily cap reached" : "monthly allowance reached"}.
+                  </div>
+                ) : null}
+              </div>
+              <div style={{ display: "grid", gap: 8 }}>
+                <label htmlFor="x-inbound-daily-cap" className="dform-label">
+                  Daily X Credits limit
+                </label>
+                <input
+                  id="x-inbound-daily-cap"
+                  inputMode="numeric"
+                  min={0}
+                  step={1}
+                  value={xInboundCapDraft}
+                  onChange={(event) => setXInboundCapDraft(event.target.value.replace(/[^\d]/g, ""))}
+                  className="dform-input"
+                  aria-describedby="x-inbound-cap-help"
+                  placeholder="0"
+                />
+                <div id="x-inbound-cap-help" className="dt-micro" style={{ color: "var(--dmuted2)", textTransform: "none", letterSpacing: 0 }}>
+                  Use 0 to pause paid inbound X reads. Raising the cap above your remaining monthly allowance requires acknowledgement.
+                </div>
+                <label style={{ display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12, color: "var(--dmuted)", lineHeight: 1.45 }}>
+                  <input
+                    type="checkbox"
+                    checked={xInboundCapAcknowledged}
+                    onChange={(event) => setXInboundCapAcknowledged(event.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  I understand that a high daily cap can consume the remaining monthly X Credits quickly.
+                </label>
+                <button
+                  type="button"
+                  className="dbtn dbtn-primary"
+                  onClick={handleSaveXInboundCap}
+                  disabled={xInboundCapSaving || xInboundCapDraft === ""}
+                  style={{ justifySelf: "start" }}
+                >
+                  {xInboundCapSaving ? "Saving…" : "Save inbound cap"}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
         <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--dborder)", fontSize: 12, lineHeight: 1.6, color: "var(--dmuted)" }}>
           Managed-X work stops at the hard limit. The independent safety cap of 20 X posts per connected account per UTC day still applies.
-          Bring-your-own X API connections do not consume this allowance. Comment and DM examples are capacity
-          planning for the phased X Inbox rollout.
+          Bring-your-own X API connections do not consume this allowance. Comment and DM totals include the live X Inbox rollout.
         </div>
       </section>
 
