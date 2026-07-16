@@ -687,6 +687,8 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 
 	oc := h.publishOneContext(
 		ctx,
+		post.WorkspaceID,
+		fmt.Sprintf("%s:%d", job.ID, job.Attempts),
 		pp,
 		dbAccounts,
 		accountMap,

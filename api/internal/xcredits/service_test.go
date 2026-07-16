@@ -226,3 +226,14 @@ func TestCalendarMonthPeriodFallback(t *testing.T) {
 		t.Fatalf("end = %s, want %s", end, want)
 	}
 }
+
+func TestShouldSkipUsageSettlementDoesNotSwallowQueryErrors(t *testing.T) {
+	queryErr := errors.New("database connection reset")
+	skip, err := shouldSkipUsageSettlement(queryErr, "")
+	if skip {
+		t.Fatal("skip = true, want false for a database query error")
+	}
+	if !errors.Is(err, queryErr) {
+		t.Fatalf("error = %v, want %v", err, queryErr)
+	}
+}

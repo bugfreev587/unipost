@@ -47,6 +47,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
+	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
 
 const (
@@ -379,7 +380,8 @@ func main() {
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
-		SetQuotaEmailService(freePlanQuotaEmailService)
+		SetQuotaEmailService(freePlanQuotaEmailService).
+		SetXUsageService(xcredits.NewPostgresService(pool, queries))
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.

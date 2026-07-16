@@ -16,6 +16,16 @@ type PostgresStore struct {
 	queries *db.Queries
 }
 
+func shouldSkipUsageSettlement(queryErr error, status string) (bool, error) {
+	if errors.Is(queryErr, pgx.ErrNoRows) {
+		return true, nil
+	}
+	if queryErr != nil {
+		return false, queryErr
+	}
+	return status != UsageStatusProvisional, nil
+}
+
 func NewPostgresService(pool *pgxpool.Pool, queries *db.Queries) *Service {
 	return NewService(&PostgresStore{pool: pool, queries: queries})
 }
@@ -139,11 +149,12 @@ func (s *PostgresStore) Finalize(ctx context.Context, eventID string, finalUnits
 		WHERE id = $1
 		FOR UPDATE
 	`, eventID).Scan(&workspaceID, &start, &end, &currentUnits, &status)
-	if errors.Is(err, pgx.ErrNoRows) || status != UsageStatusProvisional {
-		return tx.Commit(ctx)
-	}
+	skip, err := shouldSkipUsageSettlement(err, status)
 	if err != nil {
 		return err
+	}
+	if skip {
+		return tx.Commit(ctx)
 	}
 	if finalUnits > currentUnits {
 		return errors.New("final X usage cannot exceed provisional usage")
@@ -187,11 +198,12 @@ func (s *PostgresStore) Reverse(ctx context.Context, eventID string) error {
 		WHERE id = $1
 		FOR UPDATE
 	`, eventID).Scan(&workspaceID, &start, &end, &units, &status)
-	if errors.Is(err, pgx.ErrNoRows) || status != UsageStatusProvisional {
-		return tx.Commit(ctx)
-	}
+	skip, err := shouldSkipUsageSettlement(err, status)
 	if err != nil {
 		return err
+	}
+	if skip {
+		return tx.Commit(ctx)
 	}
 
 	_, err = tx.Exec(ctx, `

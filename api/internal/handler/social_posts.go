@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,7 +35,10 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
+	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
+
+var xURLCandidatePattern = regexp.MustCompile(`(?i)(https?://|www\.|(?:^|[^@[:alnum:]_])(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/:?#][^[:space:]]*)?)`)
 
 type SocialPostHandler struct {
 	queries   *db.Queries
@@ -60,11 +64,18 @@ type SocialPostHandler struct {
 	ilog        *integrationlogs.Logger
 	loopsSyncer loopsLifecycleSyncer
 	quotaEmail  quotaEmailService
+	xUsage      xUsageService
 	appBaseURL  string
 }
 
 type quotaEmailService interface {
 	EvaluateAndSend(context.Context, quotaemail.Evaluation) error
+}
+
+type xUsageService interface {
+	Reserve(context.Context, xcredits.ReserveRequest) (xcredits.UsageEvent, error)
+	Finalize(context.Context, string, int64) error
+	Reverse(context.Context, string) error
 }
 
 func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
@@ -140,6 +151,11 @@ func (h *SocialPostHandler) checkFreePlanPostQuotaForPeriod(ctx context.Context,
 
 func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *SocialPostHandler {
 	h.quotaEmail = service
+	return h
+}
+
+func (h *SocialPostHandler) SetXUsageService(service xUsageService) *SocialPostHandler {
+	h.xUsage = service
 	return h
 }
 
@@ -1201,7 +1217,7 @@ func (h *SocialPostHandler) executePublishLoop(
 		wg.Add(1)
 		go func(g []int) {
 			defer wg.Done()
-			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker, dailyTracker, disallowed)
+			h.runDispatchGroup(r, workspaceID, post.ID, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker, dailyTracker, disallowed)
 		}(group)
 	}
 	wg.Wait()
@@ -1555,6 +1571,8 @@ func sortIndicesByThreadPosition(idxs []int, posts []platform.PlatformPostInput)
 // which weren't even attempted.
 func (h *SocialPostHandler) runDispatchGroup(
 	r *http.Request,
+	workspaceID string,
+	postID string,
 	groupIndices []int,
 	posts []platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
@@ -1593,7 +1611,8 @@ func (h *SocialPostHandler) runDispatchGroup(
 			pp.PlatformOptions = clone
 		}
 
-		oc := h.publishOne(r, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+		usageKey := fmt.Sprintf("%s:%d", postID, postIdx)
+		oc := h.publishOne(r, workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 		outcomes[postIdx] = oc
 
 		if oc.err != nil {
@@ -1631,6 +1650,8 @@ func (h *SocialPostHandler) runDispatchGroup(
 // scoped to the right account.
 func (h *SocialPostHandler) publishOne(
 	r *http.Request,
+	workspaceID string,
+	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
@@ -1638,11 +1659,13 @@ func (h *SocialPostHandler) publishOne(
 	dailyTracker *quota.PerPlatformDailyTracker,
 	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
-	return h.publishOneContext(r.Context(), pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+	return h.publishOneContext(r.Context(), workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 }
 
 func (h *SocialPostHandler) publishOneContext(
 	ctx context.Context,
+	workspaceID string,
+	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
@@ -1787,6 +1810,12 @@ func (h *SocialPostHandler) publishOneContext(
 	debugRec := debugrt.NewRecorder()
 	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
 
+	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)
+	if usageErr != nil {
+		oc.err = usageErr
+		return
+	}
+
 	postResult, err := adapter.Post(
 		dispatchCtx,
 		accessToken,
@@ -1797,6 +1826,15 @@ func (h *SocialPostHandler) publishOneContext(
 	oc.result = postResult
 	oc.err = err
 	oc.debugCurl = debugRec.Serialize()
+	if usageEvent.ID != "" {
+		if err == nil {
+			if settleErr := h.xUsage.Finalize(ctx, usageEvent.ID, usageEvent.WeightedUnits); settleErr != nil {
+				slog.Error("X usage finalize failed", "event_id", usageEvent.ID, "account_id", acc.ID, "error", settleErr)
+			}
+		} else if reverseErr := h.xUsage.Reverse(ctx, usageEvent.ID); reverseErr != nil {
+			slog.Error("X usage reverse failed", "event_id", usageEvent.ID, "account_id", acc.ID, "error", reverseErr)
+		}
+	}
 
 	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
 	// post succeeded AND the adapter implements FirstCommentAdapter
@@ -1805,7 +1843,15 @@ func (h *SocialPostHandler) publishOneContext(
 	// back the main post — it's recorded as a warning instead.
 	if err == nil && postResult != nil && pp.FirstComment != "" {
 		if commenter, ok := adapter.(platform.FirstCommentAdapter); ok {
+			commentEvent, reserveErr := h.reserveManagedXUsage(ctx, workspaceID, usageKey+":first-comment", acc, pp.FirstComment)
+			if reserveErr != nil {
+				oc.firstCommentWarning = reserveErr.Error()
+				return
+			}
 			if _, ferr := commenter.PostComment(ctx, accessToken, postResult.ExternalID, pp.FirstComment); ferr != nil {
+				if commentEvent.ID != "" {
+					_ = h.xUsage.Reverse(ctx, commentEvent.ID)
+				}
 				oc.firstCommentWarning = ferr.Error()
 				slog.Warn("first_comment failed",
 					"account_id", acc.ID,
@@ -1813,10 +1859,43 @@ func (h *SocialPostHandler) publishOneContext(
 					"parent_id", postResult.ExternalID,
 					"err", ferr,
 				)
+			} else if commentEvent.ID != "" {
+				if settleErr := h.xUsage.Finalize(ctx, commentEvent.ID, commentEvent.WeightedUnits); settleErr != nil {
+					slog.Error("X first-comment usage finalize failed", "event_id", commentEvent.ID, "account_id", acc.ID, "error", settleErr)
+				}
 			}
 		}
 	}
 	return
+}
+
+func xOperationForText(text string) string {
+	if xURLCandidatePattern.MatchString(text) {
+		return "post.create_url"
+	}
+	return "post.create"
+}
+
+func (h *SocialPostHandler) reserveManagedXUsage(
+	ctx context.Context,
+	workspaceID string,
+	usageKey string,
+	account db.SocialAccount,
+	text string,
+) (xcredits.UsageEvent, error) {
+	if h == nil || h.xUsage == nil || account.Platform != "twitter" || account.ConnectionType != "managed" {
+		return xcredits.UsageEvent{}, nil
+	}
+	operation := xOperationForText(text)
+	return h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
+		WorkspaceID:     workspaceID,
+		SocialAccountID: account.ID,
+		ConnectionType:  account.ConnectionType,
+		OperationKey:    operation,
+		Source:          "publish",
+		IdempotencyKey:  usageKey,
+		RequestedUnits:  xcredits.OperationWeight(operation),
+	})
 }
 
 // resolveMediaIDsToURLs is the publish-time half of the media library
