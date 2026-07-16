@@ -88,7 +88,13 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	if !hasWorkspaceTrigger {
 		t.Fatal("cleanup migration must install a BEFORE DELETE trigger on workspaces")
 	}
-	for _, column := range []string{"lease_owner", "lease_until", "next_attempt_at"} {
+	for _, column := range []string{
+		"cleanup_key",
+		"source_app_identity",
+		"lease_owner",
+		"lease_until",
+		"next_attempt_at",
+	} {
 		var exists bool
 		if err := tx.QueryRowContext(ctx, `
 			SELECT EXISTS (
@@ -104,6 +110,47 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		if !exists {
 			t.Fatalf("cleanup migration missing %s", column)
 		}
+	}
+	var hasAccountUnique, hasCleanupKeyUnique bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT
+		  EXISTS (
+		    SELECT 1
+		    FROM pg_constraint c
+		    JOIN unnest(c.conkey) WITH ORDINALITY AS key(attnum, ordinality)
+		      ON TRUE
+		    JOIN pg_attribute a
+		      ON a.attrelid = c.conrelid
+		     AND a.attnum = key.attnum
+		    WHERE c.conrelid = 'x_inbox_delivery_cleanup_intents'::regclass
+		      AND c.contype = 'u'
+		    GROUP BY c.oid
+		    HAVING array_agg(a.attname ORDER BY key.ordinality)
+		      = ARRAY['social_account_id']::name[]
+		  ),
+		  EXISTS (
+		    SELECT 1
+		    FROM pg_constraint c
+		    JOIN unnest(c.conkey) WITH ORDINALITY AS key(attnum, ordinality)
+		      ON TRUE
+		    JOIN pg_attribute a
+		      ON a.attrelid = c.conrelid
+		     AND a.attnum = key.attnum
+		    WHERE c.conrelid = 'x_inbox_delivery_cleanup_intents'::regclass
+		      AND c.contype = 'u'
+		    GROUP BY c.oid
+		    HAVING array_agg(a.attname ORDER BY key.ordinality)
+		      = ARRAY['cleanup_key']::name[]
+		  )
+	`).Scan(&hasAccountUnique, &hasCleanupKeyUnique); err != nil {
+		t.Fatal(err)
+	}
+	if hasAccountUnique || !hasCleanupKeyUnique {
+		t.Fatalf(
+			"cleanup uniqueness = account:%v cleanup_key:%v, want generation key only",
+			hasAccountUnique,
+			hasCleanupKeyUnique,
+		)
 	}
 
 	const (
@@ -174,6 +221,20 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 			appBearer,
 			ruleID,
 			subscriptionID,
+		)
+	}
+	var workspaceCleanupCount int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+	`, accountID).Scan(&workspaceCleanupCount); err != nil {
+		t.Fatalf("count workspace cleanup generations: %v", err)
+	}
+	if workspaceCleanupCount != 1 {
+		t.Fatalf(
+			"workspace cleanup generations = %d, want duplicate cascade triggers idempotent",
+			workspaceCleanupCount,
 		)
 	}
 
@@ -385,6 +446,210 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 			clientID,
 			storedBearer,
 			storedConsumer,
+		)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE x_inbox_delivery_cleanup_intents
+		SET lease_owner = 'delayed-generation-a',
+		    lease_until = NOW() + INTERVAL '1 hour',
+		    next_attempt_at = NOW() + INTERVAL '1 hour'
+		WHERE social_account_id = $1
+		  AND source_app_identity = 'old-client'
+	`, replacementAccountID); err != nil {
+		t.Fatalf("delay first cleanup generation: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE x_inbox_delivery_resources
+		SET filtered_stream_rule_id = 'new-exact-rule',
+		    activity_dm_subscription_id = 'new-exact-subscription',
+		    delivery_status = 'active',
+		    last_error = NULL
+		WHERE social_account_id = $1
+	`, replacementAccountID); err != nil {
+		t.Fatalf("provision replacement app resources: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE platform_credentials
+		SET client_id = 'third-client',
+		    client_secret = 'third-client-secret',
+		    app_bearer_token = 'third-encrypted-bearer',
+		    consumer_secret = 'third-encrypted-consumer'
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, replacementWorkspaceID); err != nil {
+		t.Fatalf("replace workspace X credential a second time: %v", err)
+	}
+	rows, err := tx.QueryContext(ctx, `
+		SELECT source_app_identity, app_bearer_token,
+		       filtered_stream_rule_id, activity_dm_subscription_id,
+		       COALESCE(lease_owner, '')
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+		ORDER BY source_app_identity
+	`, replacementAccountID)
+	if err != nil {
+		t.Fatalf("query cleanup generations: %v", err)
+	}
+	defer rows.Close()
+	type cleanupGeneration struct {
+		sourceAppIdentity string
+		appBearer         string
+		ruleID            string
+		subscriptionID    string
+		leaseOwner        string
+	}
+	var generations []cleanupGeneration
+	for rows.Next() {
+		var generation cleanupGeneration
+		if err := rows.Scan(
+			&generation.sourceAppIdentity,
+			&generation.appBearer,
+			&generation.ruleID,
+			&generation.subscriptionID,
+			&generation.leaseOwner,
+		); err != nil {
+			t.Fatalf("scan cleanup generation: %v", err)
+		}
+		generations = append(generations, generation)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate cleanup generations: %v", err)
+	}
+	wantGenerations := []cleanupGeneration{
+		{
+			sourceAppIdentity: "new-client",
+			appBearer:         "new-encrypted-bearer",
+			ruleID:            "new-exact-rule",
+			subscriptionID:    "new-exact-subscription",
+			leaseOwner:        "",
+		},
+		{
+			sourceAppIdentity: "old-client",
+			appBearer:         "old-encrypted-bearer",
+			ruleID:            "old-exact-rule",
+			subscriptionID:    "old-exact-subscription",
+			leaseOwner:        "delayed-generation-a",
+		},
+	}
+	if len(generations) != len(wantGenerations) {
+		t.Fatalf("cleanup generations = %+v, want %+v", generations, wantGenerations)
+	}
+	for i := range wantGenerations {
+		if generations[i] != wantGenerations[i] {
+			t.Fatalf("cleanup generations = %+v, want %+v", generations, wantGenerations)
+		}
+	}
+
+	const (
+		oldReplicaWorkspaceID = "x-inbox-old-replica-test-workspace"
+		oldReplicaProfileID   = "x-inbox-old-replica-test-profile"
+		oldReplicaAccountID   = "x-inbox-old-replica-test-account"
+	)
+	oldReplicaStatements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workspaces (id, user_id, name) VALUES ($1, $2, 'X Old Replica Test')`, []any{oldReplicaWorkspaceID, userID}},
+		{`INSERT INTO profiles (id, workspace_id, name) VALUES ($1, $2, 'X Old Replica Test')`, []any{oldReplicaProfileID, oldReplicaWorkspaceID}},
+		{`
+			INSERT INTO platform_credentials (
+				id, workspace_id, platform, client_id, client_secret,
+				app_bearer_token, consumer_secret
+			) VALUES (
+				'x-inbox-old-replica-test-credential', $1, 'twitter',
+				'old-replica-client', 'old-replica-client-secret',
+				'old-replica-bearer', 'old-replica-consumer'
+			)
+		`, []any{oldReplicaWorkspaceID}},
+		{`
+			INSERT INTO social_accounts (
+				id, profile_id, platform, access_token, external_account_id, status,
+				connection_type, x_app_mode
+			) VALUES (
+				$1, $2, 'twitter', 'encrypted-user-token', 'x-user-old-replica', 'active',
+				'managed', 'workspace_x_app'
+			)
+		`, []any{oldReplicaAccountID, oldReplicaProfileID}},
+		{`
+			INSERT INTO x_inbox_delivery_resources (
+				social_account_id, filtered_stream_rule_id, activity_dm_subscription_id,
+				delivery_status
+			) VALUES ($1, 'old-replica-rule', 'old-replica-subscription', 'active')
+		`, []any{oldReplicaAccountID}},
+	}
+	for _, statement := range oldReplicaStatements {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("seed old replica topology: %v", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO platform_credentials (
+		  workspace_id, platform, client_id, client_secret,
+		  app_bearer_token, consumer_secret
+		)
+		VALUES ($1, 'twitter', 'old-replica-new-client', 'new-client-secret', NULL, NULL)
+		ON CONFLICT (workspace_id, platform) DO UPDATE
+		SET client_id = EXCLUDED.client_id,
+		    client_secret = EXCLUDED.client_secret,
+		    app_bearer_token = CASE
+		      WHEN FALSE THEN EXCLUDED.app_bearer_token
+		      ELSE platform_credentials.app_bearer_token
+		    END,
+		    consumer_secret = CASE
+		      WHEN FALSE THEN EXCLUDED.consumer_secret
+		      ELSE platform_credentials.consumer_secret
+		    END
+	`, oldReplicaWorkspaceID); err != nil {
+		t.Fatalf("execute old replica credential upsert: %v", err)
+	}
+	var (
+		oldReplicaClientID string
+		oldReplicaBearer   sql.NullString
+		oldReplicaConsumer sql.NullString
+	)
+	if err := tx.QueryRowContext(ctx, `
+		SELECT client_id, app_bearer_token, consumer_secret
+		FROM platform_credentials
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, oldReplicaWorkspaceID).Scan(
+		&oldReplicaClientID,
+		&oldReplicaBearer,
+		&oldReplicaConsumer,
+	); err != nil {
+		t.Fatalf("query old replica replacement: %v", err)
+	}
+	if oldReplicaClientID != "old-replica-new-client" ||
+		oldReplicaBearer.Valid ||
+		oldReplicaConsumer.Valid {
+		t.Fatalf(
+			"old replica replacement = client %q bearer %v consumer %v",
+			oldReplicaClientID,
+			oldReplicaBearer,
+			oldReplicaConsumer,
+		)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT source_app_identity, app_bearer_token,
+		       filtered_stream_rule_id, activity_dm_subscription_id
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+	`, oldReplicaAccountID).Scan(
+		&clientID,
+		&appBearer,
+		&ruleID,
+		&subscriptionID,
+	); err != nil {
+		t.Fatalf("query old replica cleanup intent: %v", err)
+	}
+	if clientID != "old-replica-client" ||
+		appBearer != "old-replica-bearer" ||
+		ruleID != "old-replica-rule" ||
+		subscriptionID != "old-replica-subscription" {
+		t.Fatalf(
+			"old replica cleanup = client %q bearer %q rule %q subscription %q",
+			clientID,
+			appBearer,
+			ruleID,
+			subscriptionID,
 		)
 	}
 

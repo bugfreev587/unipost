@@ -90,8 +90,10 @@ type XInboxDeliveryState struct {
 
 type XInboxCleanupIntent struct {
 	ID                       string
+	CleanupKey               string
 	SocialAccountID          string
 	AppMode                  xinbox.AppMode
+	SourceAppIdentity        string
 	AppBearerTokenEncrypted  string
 	FilteredStreamRuleID     string
 	ActivityDMSubscriptionID string
@@ -852,8 +854,10 @@ func (s *postgresXInboxDeliveryStore) ClaimCleanupIntents(
 		WHERE i.id = c.id
 		RETURNING
 			i.id,
+			i.cleanup_key,
 			i.social_account_id,
 			i.x_app_mode,
+			i.source_app_identity,
 			COALESCE(i.app_bearer_token, ''),
 			COALESCE(i.filtered_stream_rule_id, ''),
 			COALESCE(i.activity_dm_subscription_id, ''),
@@ -873,8 +877,10 @@ func (s *postgresXInboxDeliveryStore) ClaimCleanupIntents(
 		var appMode string
 		if err := rows.Scan(
 			&intent.ID,
+			&intent.CleanupKey,
 			&intent.SocialAccountID,
 			&appMode,
+			&intent.SourceAppIdentity,
 			&intent.AppBearerTokenEncrypted,
 			&intent.FilteredStreamRuleID,
 			&intent.ActivityDMSubscriptionID,

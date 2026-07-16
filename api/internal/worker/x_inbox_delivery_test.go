@@ -476,6 +476,55 @@ func TestXInboxCredentialReplacementReconcilesNewResourcesBeforeCleaningOldApp(t
 	}
 }
 
+func TestXInboxCleanupProcessesMultipleAppGenerationsForOneAccount(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{cleanups: []XInboxCleanupIntent{
+		{
+			ID:                      "cleanup-generation-a",
+			CleanupKey:              "key-generation-a",
+			SocialAccountID:         "same-account",
+			AppMode:                 xinbox.AppModeWorkspace,
+			SourceAppIdentity:       "app-a",
+			AppBearerTokenEncrypted: "encrypted-app-a",
+			FilteredStreamRuleID:    "rule-a",
+		},
+		{
+			ID:                       "cleanup-generation-b",
+			CleanupKey:               "key-generation-b",
+			SocialAccountID:          "same-account",
+			AppMode:                  xinbox.AppModeWorkspace,
+			SourceAppIdentity:        "app-b",
+			AppBearerTokenEncrypted:  "encrypted-app-b",
+			FilteredStreamRuleID:     "rule-b",
+			ActivityDMSubscriptionID: "subscription-b",
+		},
+	}}
+	api := &fakeXInboxDeliveryAPI{}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store: store,
+		API:   api,
+		Cipher: fakeXInboxCipher{values: map[string]string{
+			"encrypted-app-a": "app-a-token",
+			"encrypted-app-b": "app-b-token",
+		}},
+	})
+
+	if err := worker.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"rule-a", "rule-b"}; !reflect.DeepEqual(api.deletedRules, want) {
+		t.Fatalf("deleted rules = %v, want both generations %v", api.deletedRules, want)
+	}
+	if want := []string{"app-a-token", "app-b-token"}; !reflect.DeepEqual(api.deletedRuleTokens, want) {
+		t.Fatalf("deleted rule tokens = %v, want generation-specific tokens %v", api.deletedRuleTokens, want)
+	}
+	if want := []string{"subscription-b"}; !reflect.DeepEqual(api.deletedSubs, want) {
+		t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
+	}
+	if len(store.cleanups) != 0 {
+		t.Fatalf("cleanup intents = %+v, want both generations completed", store.cleanups)
+	}
+}
+
 func TestXInboxCleanupClaimsAreMutuallyExclusiveAcrossWorkers(t *testing.T) {
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	store := &fakeXInboxDeliveryStore{cleanups: []XInboxCleanupIntent{

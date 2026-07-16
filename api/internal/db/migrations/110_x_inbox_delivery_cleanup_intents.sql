@@ -2,11 +2,38 @@
 -- Upstream X rules and private Activity subscriptions outlive local rows.
 -- Preserve their exact IDs and encrypted cleanup credentials before a
 -- social-account cascade removes the normal delivery-resource row.
+CREATE OR REPLACE FUNCTION x_inbox_delivery_cleanup_key(
+  social_account_id TEXT,
+  x_app_mode TEXT,
+  source_app_identity TEXT,
+  filtered_stream_rule_id TEXT,
+  activity_dm_subscription_id TEXT
+)
+RETURNS TEXT
+LANGUAGE SQL
+IMMUTABLE
+AS $$
+  SELECT
+    length(social_account_id)::TEXT || ':' || social_account_id || '|' ||
+    length(x_app_mode)::TEXT || ':' || x_app_mode || '|' ||
+    length(source_app_identity)::TEXT || ':' || source_app_identity || '|' ||
+    COALESCE(
+      length(filtered_stream_rule_id)::TEXT || ':' || filtered_stream_rule_id,
+      '-1:'
+    ) || '|' ||
+    COALESCE(
+      length(activity_dm_subscription_id)::TEXT || ':' || activity_dm_subscription_id,
+      '-1:'
+    )
+$$;
+
 CREATE TABLE x_inbox_delivery_cleanup_intents (
   id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
-  social_account_id           TEXT NOT NULL UNIQUE,
+  cleanup_key                 TEXT NOT NULL UNIQUE,
+  social_account_id           TEXT NOT NULL,
   x_app_mode                  TEXT NOT NULL
     CHECK (x_app_mode IN ('unipost_managed_app', 'workspace_x_app')),
+  source_app_identity         TEXT NOT NULL,
   app_bearer_token            TEXT,
   filtered_stream_rule_id     TEXT,
   activity_dm_subscription_id TEXT,
@@ -39,15 +66,31 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   INSERT INTO x_inbox_delivery_cleanup_intents (
+    cleanup_key,
     social_account_id,
     x_app_mode,
+    source_app_identity,
     app_bearer_token,
     filtered_stream_rule_id,
     activity_dm_subscription_id
   )
   SELECT
+    x_inbox_delivery_cleanup_key(
+      sa.id,
+      sa.x_app_mode,
+      CASE
+        WHEN sa.x_app_mode = 'unipost_managed_app' THEN 'unipost_managed_app'
+        ELSE pc.client_id
+      END,
+      r.filtered_stream_rule_id,
+      r.activity_dm_subscription_id
+    ),
     sa.id,
     sa.x_app_mode,
+    CASE
+      WHEN sa.x_app_mode = 'unipost_managed_app' THEN 'unipost_managed_app'
+      ELSE pc.client_id
+    END,
     pc.app_bearer_token,
     r.filtered_stream_rule_id,
     r.activity_dm_subscription_id
@@ -64,21 +107,20 @@ BEGIN
     AND sa.x_app_mode IN ('unipost_managed_app', 'workspace_x_app')
     AND (
       sa.x_app_mode = 'unipost_managed_app'
-      OR pc.app_bearer_token IS NOT NULL
+      OR (
+        pc.client_id IS NOT NULL
+        AND pc.app_bearer_token IS NOT NULL
+      )
     )
     AND (
       r.filtered_stream_rule_id IS NOT NULL
       OR r.activity_dm_subscription_id IS NOT NULL
     )
-  ON CONFLICT (social_account_id) DO UPDATE
-  SET x_app_mode = EXCLUDED.x_app_mode,
-      app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
-      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
-      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
-      last_error = NULL,
-      lease_owner = NULL,
-      lease_until = NULL,
-      next_attempt_at = NOW(),
+  ON CONFLICT (cleanup_key) DO UPDATE
+  SET app_bearer_token = COALESCE(
+        EXCLUDED.app_bearer_token,
+        x_inbox_delivery_cleanup_intents.app_bearer_token
+      ),
       updated_at = NOW();
 
   RETURN OLD;
@@ -96,15 +138,31 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   INSERT INTO x_inbox_delivery_cleanup_intents (
+    cleanup_key,
     social_account_id,
     x_app_mode,
+    source_app_identity,
     app_bearer_token,
     filtered_stream_rule_id,
     activity_dm_subscription_id
   )
   SELECT
+    x_inbox_delivery_cleanup_key(
+      OLD.id,
+      OLD.x_app_mode,
+      CASE
+        WHEN OLD.x_app_mode = 'unipost_managed_app' THEN 'unipost_managed_app'
+        ELSE pc.client_id
+      END,
+      r.filtered_stream_rule_id,
+      r.activity_dm_subscription_id
+    ),
     OLD.id,
     OLD.x_app_mode,
+    CASE
+      WHEN OLD.x_app_mode = 'unipost_managed_app' THEN 'unipost_managed_app'
+      ELSE pc.client_id
+    END,
     pc.app_bearer_token,
     r.filtered_stream_rule_id,
     r.activity_dm_subscription_id
@@ -118,21 +176,20 @@ BEGIN
     AND OLD.x_app_mode IN ('unipost_managed_app', 'workspace_x_app')
     AND (
       OLD.x_app_mode = 'unipost_managed_app'
-      OR pc.app_bearer_token IS NOT NULL
+      OR (
+        pc.client_id IS NOT NULL
+        AND pc.app_bearer_token IS NOT NULL
+      )
     )
     AND (
       r.filtered_stream_rule_id IS NOT NULL
       OR r.activity_dm_subscription_id IS NOT NULL
     )
-  ON CONFLICT (social_account_id) DO UPDATE
-  SET x_app_mode = EXCLUDED.x_app_mode,
-      app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
-      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
-      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
-      last_error = NULL,
-      lease_owner = NULL,
-      lease_until = NULL,
-      next_attempt_at = NOW(),
+  ON CONFLICT (cleanup_key) DO UPDATE
+  SET app_bearer_token = COALESCE(
+        EXCLUDED.app_bearer_token,
+        x_inbox_delivery_cleanup_intents.app_bearer_token
+      ),
       updated_at = NOW();
 
   RETURN OLD;
@@ -154,15 +211,25 @@ LANGUAGE plpgsql
 AS $$
 BEGIN
   INSERT INTO x_inbox_delivery_cleanup_intents (
+    cleanup_key,
     social_account_id,
     x_app_mode,
+    source_app_identity,
     app_bearer_token,
     filtered_stream_rule_id,
     activity_dm_subscription_id
   )
   SELECT
+    x_inbox_delivery_cleanup_key(
+      sa.id,
+      sa.x_app_mode,
+      OLD.client_id,
+      r.filtered_stream_rule_id,
+      r.activity_dm_subscription_id
+    ),
     sa.id,
     sa.x_app_mode,
+    OLD.client_id,
     OLD.app_bearer_token,
     r.filtered_stream_rule_id,
     r.activity_dm_subscription_id
@@ -179,15 +246,11 @@ BEGIN
       r.filtered_stream_rule_id IS NOT NULL
       OR r.activity_dm_subscription_id IS NOT NULL
     )
-  ON CONFLICT (social_account_id) DO UPDATE
-  SET x_app_mode = EXCLUDED.x_app_mode,
-      app_bearer_token = COALESCE(EXCLUDED.app_bearer_token, x_inbox_delivery_cleanup_intents.app_bearer_token),
-      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
-      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
-      last_error = NULL,
-      lease_owner = NULL,
-      lease_until = NULL,
-      next_attempt_at = NOW(),
+  ON CONFLICT (cleanup_key) DO UPDATE
+  SET app_bearer_token = COALESCE(
+        EXCLUDED.app_bearer_token,
+        x_inbox_delivery_cleanup_intents.app_bearer_token
+      ),
       updated_at = NOW();
 
   UPDATE x_inbox_delivery_resources r
@@ -227,3 +290,4 @@ DROP FUNCTION IF EXISTS enqueue_x_inbox_delivery_cleanup();
 DROP TRIGGER IF EXISTS workspaces_x_inbox_delivery_cleanup ON workspaces;
 DROP FUNCTION IF EXISTS enqueue_deleted_workspace_x_inbox_delivery_cleanup();
 DROP TABLE IF EXISTS x_inbox_delivery_cleanup_intents;
+DROP FUNCTION IF EXISTS x_inbox_delivery_cleanup_key(TEXT, TEXT, TEXT, TEXT, TEXT);

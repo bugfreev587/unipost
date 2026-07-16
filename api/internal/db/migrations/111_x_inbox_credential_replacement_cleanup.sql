@@ -9,14 +9,29 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   cleanup_reason TEXT;
+  app_identity_changed BOOLEAN;
 BEGIN
   IF OLD.platform <> 'twitter' THEN
     RETURN NEW;
   END IF;
 
-  IF NOT (
+  app_identity_changed :=
     NEW.platform IS DISTINCT FROM OLD.platform
-    OR NEW.client_id IS DISTINCT FROM OLD.client_id
+    OR NEW.client_id IS DISTINCT FROM OLD.client_id;
+
+  -- Older replicas preserve omitted optional X secrets by writing OLD values
+  -- into NEW. Never carry those credentials across an application identity.
+  IF app_identity_changed THEN
+    IF NEW.app_bearer_token IS NOT DISTINCT FROM OLD.app_bearer_token THEN
+      NEW.app_bearer_token := NULL;
+    END IF;
+    IF NEW.consumer_secret IS NOT DISTINCT FROM OLD.consumer_secret THEN
+      NEW.consumer_secret := NULL;
+    END IF;
+  END IF;
+
+  IF NOT (
+    app_identity_changed
     OR (
       OLD.app_bearer_token IS NOT NULL
       AND NEW.app_bearer_token IS NULL
@@ -53,22 +68,31 @@ BEGIN
   END IF;
 
   cleanup_reason := CASE
-    WHEN NEW.platform IS DISTINCT FROM OLD.platform
-      OR NEW.client_id IS DISTINCT FROM OLD.client_id
+    WHEN app_identity_changed
       THEN 'workspace X app identity changed; upstream cleanup pending'
     ELSE 'workspace X app required credential removed; upstream cleanup pending'
   END;
 
   INSERT INTO x_inbox_delivery_cleanup_intents (
+    cleanup_key,
     social_account_id,
     x_app_mode,
+    source_app_identity,
     app_bearer_token,
     filtered_stream_rule_id,
     activity_dm_subscription_id
   )
   SELECT
+    x_inbox_delivery_cleanup_key(
+      sa.id,
+      sa.x_app_mode,
+      OLD.client_id,
+      r.filtered_stream_rule_id,
+      r.activity_dm_subscription_id
+    ),
     sa.id,
     sa.x_app_mode,
+    OLD.client_id,
     OLD.app_bearer_token,
     r.filtered_stream_rule_id,
     r.activity_dm_subscription_id
@@ -84,16 +108,11 @@ BEGIN
       r.filtered_stream_rule_id IS NOT NULL
       OR r.activity_dm_subscription_id IS NOT NULL
     )
-  ON CONFLICT (social_account_id) DO UPDATE
-  SET x_app_mode = EXCLUDED.x_app_mode,
-      app_bearer_token = EXCLUDED.app_bearer_token,
-      filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
-      activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
-      attempts = 0,
-      last_error = NULL,
-      lease_owner = NULL,
-      lease_until = NULL,
-      next_attempt_at = NOW(),
+  ON CONFLICT (cleanup_key) DO UPDATE
+  SET app_bearer_token = COALESCE(
+        EXCLUDED.app_bearer_token,
+        x_inbox_delivery_cleanup_intents.app_bearer_token
+      ),
       updated_at = NOW();
 
   UPDATE x_inbox_delivery_resources r

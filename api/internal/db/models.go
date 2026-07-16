@@ -1080,8 +1080,10 @@ type XInboundEventReceipt struct {
 
 type XInboxDeliveryCleanupIntent struct {
 	ID                       string             `json:"id"`
+	CleanupKey               string             `json:"cleanup_key"`
 	SocialAccountID          string             `json:"social_account_id"`
 	XAppMode                 string             `json:"x_app_mode"`
+	SourceAppIdentity        string             `json:"source_app_identity"`
 	AppBearerToken           pgtype.Text        `json:"app_bearer_token"`
 	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
 	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
