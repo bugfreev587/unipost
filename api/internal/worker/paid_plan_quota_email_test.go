@@ -35,6 +35,9 @@ func TestPaidPlanQuotaEmailWorkerMarksSuccessfulSend(t *testing.T) {
 	if got := sender.sent[0].DataVariables["billing_url"]; got != "https://dev-app.unipost.dev/settings/billing" {
 		t.Fatalf("billing_url = %#v", got)
 	}
+	if got := sender.sent[0].DataVariables["scheduling_allowed"]; got != "false" {
+		t.Fatalf("scheduling_allowed = %#v, want Loops-compatible string", got)
+	}
 	if len(store.sentIDs) != 1 || store.sentIDs[0] != "notification_1" {
 		t.Fatalf("sent ids = %#v", store.sentIDs)
 	}

@@ -276,7 +276,7 @@ func paidQuotaEmailVariables(delivery PaidQuotaDelivery, appBaseURL string) map[
 		"remaining_capacity":     strconv.Itoa(max(delivery.PostLimit-delivery.EffectiveUsage, 0)),
 		"period":                 delivery.Period,
 		"resets_at":              resetsAt,
-		"scheduling_allowed":     delivery.EffectiveUsage < delivery.PostLimit,
+		"scheduling_allowed":     strconv.FormatBool(delivery.EffectiveUsage < delivery.PostLimit),
 		"immediate_publish_note": "Immediate publishing remains available on your paid plan.",
 		"billing_url":            appBaseURL + "/settings/billing",
 		"scheduled_posts_url":    appBaseURL + "/projects",
