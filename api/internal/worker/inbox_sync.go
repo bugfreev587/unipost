@@ -24,9 +24,14 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 )
+
+type inboxInstagramWebhookSubscriber interface {
+	Subscribe(context.Context, string, string) error
+}
 
 func inboxThreadKey(source, externalID, parentExternalID, authorID string) string {
 	if source == "ig_dm" {
@@ -73,6 +78,9 @@ type InboxSyncWorker struct {
 	encryptor *crypto.AESEncryptor
 	pool      *pgxpool.Pool
 
+	instagramWebhookSubscriber inboxInstagramWebhookSubscriber
+	igWebhookSubscriptions     map[string]bool
+
 	// fbDMFailureCounts tracks consecutive FetchConversations
 	// failures per Facebook account that hit the
 	// ErrFacebookConversationsUnsupported sentinel (Meta's
@@ -99,11 +107,38 @@ const fbDMFailureThreshold = 3
 
 func NewInboxSyncWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxSyncWorker {
 	return &InboxSyncWorker{
-		queries:           queries,
-		encryptor:         encryptor,
-		pool:              pool,
-		fbDMFailureCounts: make(map[string]int),
+		queries:                    queries,
+		encryptor:                  encryptor,
+		pool:                       pool,
+		fbDMFailureCounts:          make(map[string]int),
+		instagramWebhookSubscriber: instagramwebhooks.NewSubscriber(nil, ""),
+		igWebhookSubscriptions:     make(map[string]bool),
 	}
+}
+
+func (w *InboxSyncWorker) ensureInstagramWebhookSubscription(ctx context.Context, acc db.ListAllInboxAccountsRow, accessToken string) {
+	if acc.Platform != "instagram" || w.igWebhookSubscriptions[acc.ID] {
+		return
+	}
+	if w.instagramWebhookSubscriber == nil {
+		w.instagramWebhookSubscriber = instagramwebhooks.NewSubscriber(nil, "")
+	}
+	if w.igWebhookSubscriptions == nil {
+		w.igWebhookSubscriptions = make(map[string]bool)
+	}
+
+	if err := w.instagramWebhookSubscriber.Subscribe(ctx, acc.ExternalAccountID, accessToken); err != nil {
+		slog.Warn("inbox sync worker: instagram webhook subscription repair failed",
+			"account_id", acc.ID,
+			"external_account_id", acc.ExternalAccountID,
+			"err", err)
+		return
+	}
+
+	w.igWebhookSubscriptions[acc.ID] = true
+	slog.Info("inbox sync worker: instagram webhook subscription active",
+		"account_id", acc.ID,
+		"external_account_id", acc.ExternalAccountID)
 }
 
 func (w *InboxSyncWorker) Start(ctx context.Context) {
@@ -156,6 +191,8 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 			slog.Warn("inbox sync worker: decrypt failed", "account_id", acc.ID, "err", err)
 			continue
 		}
+
+		w.ensureInstagramWebhookSubscription(ctx, acc, accessToken)
 
 		switch acc.Platform {
 		case "instagram":

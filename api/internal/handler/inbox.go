@@ -40,7 +40,39 @@ const mediaContextFetchTimeout = 15 * time.Second
 const (
 	defaultInboxListLimit = int32(50)
 	maxInboxListLimit     = int32(500)
+	metaDMReplyWindow     = 24 * time.Hour
 )
+
+func metaDMReplyWindowClosed(item db.InboxItem, now time.Time) bool {
+	if item.Source != "ig_dm" && item.Source != "fb_dm" {
+		return false
+	}
+	if item.IsOwn || !item.ReceivedAt.Valid || item.ReceivedAt.Time.After(now) {
+		return false
+	}
+	return now.Sub(item.ReceivedAt.Time) > metaDMReplyWindow
+}
+
+func metaDMReplyWindowMessage(source string) string {
+	if source == "fb_dm" {
+		return "Messenger reply failed because Meta considers this conversation outside the 24-hour reply window. Ask the Facebook user to send a new message, then retry."
+	}
+	return "Instagram DM reply failed because Meta considers this conversation outside the 24-hour reply window. Ask the Instagram user to send a new message, then retry."
+}
+
+func inboxReplyPlatformError(source string, err error) (message string, reconnect bool) {
+	message = "Reply failed: " + err.Error()
+	if source != "ig_dm" {
+		return message, false
+	}
+	if strings.Contains(err.Error(), "2534022") {
+		return metaDMReplyWindowMessage(source), false
+	}
+	if strings.Contains(err.Error(), "2534014") {
+		return "Instagram DM reply failed because Meta could not resolve the recipient for this conversation. Reconnect the Instagram account with messaging permission and retry with an eligible tester or live account.", true
+	}
+	return message, false
+}
 
 type InboxHandler struct {
 	queries   *db.Queries
@@ -471,6 +503,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
+	if metaDMReplyWindowClosed(item, time.Now()) {
+		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", metaDMReplyWindowMessage(item.Source))
+		return
+	}
 
 	// Load the social account and decrypt the token.
 	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
@@ -560,10 +596,9 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		slog.Error("inbox reply failed", "source", item.Source, "err", err)
-		message := "Reply failed: " + err.Error()
-		if item.Source == "ig_dm" && strings.Contains(err.Error(), "2534014") {
+		message, reconnect := inboxReplyPlatformError(item.Source, err)
+		if reconnect {
 			_, _ = h.queries.MarkSocialAccountReconnectRequired(r.Context(), item.SocialAccountID)
-			message = "Instagram DM reply failed because Meta could not resolve the recipient for this conversation. Reconnect the Instagram account with messaging permission and retry with an eligible tester or live account."
 		}
 		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", message)
 		return
