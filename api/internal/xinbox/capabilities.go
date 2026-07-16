@@ -96,11 +96,22 @@ func ParseAppMode(raw string) (AppMode, error) {
 	}
 }
 
+func NormalizePersistedAppMode(raw string) (AppMode, error) {
+	if strings.TrimSpace(raw) == "" {
+		return AppModeLegacyUnknown, nil
+	}
+	return ParseAppMode(raw)
+}
+
 func EvaluateCapabilities(input CapabilityInput) Capabilities {
+	appMode, err := NormalizePersistedAppMode(string(input.AppMode))
+	if err != nil {
+		appMode = AppModeLegacyUnknown
+	}
 	result := Capabilities{
 		MissingScopes:         []string{},
 		DeliveryStatus:        input.DeliveryStatus,
-		AppMode:               input.AppMode,
+		AppMode:               appMode,
 		MissingAppCredentials: []string{},
 	}
 	if !input.PlanAllowsInbox {
@@ -126,7 +137,7 @@ func EvaluateCapabilities(input CapabilityInput) Capabilities {
 	result.ReconnectRequired = len(result.MissingScopes) > 0
 
 	appCredentialsComplete := false
-	switch input.AppMode {
+	switch result.AppMode {
 	case AppModeUniPostManaged:
 		appCredentialsComplete = true
 	case AppModeWorkspace:

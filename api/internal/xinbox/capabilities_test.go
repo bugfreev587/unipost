@@ -133,6 +133,35 @@ func TestParseXAppModeRejectsEmptyAndInvalidValues(t *testing.T) {
 	}
 }
 
+func TestNormalizePersistedXAppModeTreatsBlankAsLegacyUnknown(t *testing.T) {
+	for _, raw := range []string{"", "   "} {
+		got, err := NormalizePersistedAppMode(raw)
+		if err != nil {
+			t.Fatalf("NormalizePersistedAppMode(%q): %v", raw, err)
+		}
+		if got != AppModeLegacyUnknown {
+			t.Fatalf("NormalizePersistedAppMode(%q) = %q, want %q", raw, got, AppModeLegacyUnknown)
+		}
+	}
+	if _, err := NormalizePersistedAppMode("garbage"); err == nil {
+		t.Fatal("invalid non-empty persisted mode error = nil, want validation error")
+	}
+}
+
+func TestXInboxCapabilityNormalizesEmptyAppModeToLegacyReconnect(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: true,
+		AccountStatus:   "active",
+		Scopes:          RequiredInboxScopes(),
+	})
+	if got.AppMode != AppModeLegacyUnknown {
+		t.Fatalf("app_mode = %q, want %q", got.AppMode, AppModeLegacyUnknown)
+	}
+	if got.CommentsEnabled || got.DMsEnabled || !got.ReconnectRequired {
+		t.Fatalf("capabilities = %+v, want Inbox disabled with reconnect required", got)
+	}
+}
+
 func TestXAppModeForManualTwitterConnectionUsesWorkspaceApp(t *testing.T) {
 	mode, ok := AppModeForManualConnection("twitter")
 	if !ok || mode != AppModeWorkspace {

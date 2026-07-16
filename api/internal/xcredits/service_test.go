@@ -304,8 +304,25 @@ func TestXUsageUsesPersistedAppModeRegardlessOfConnectionType(t *testing.T) {
 	}
 }
 
-func TestXUsageRejectsMissingOrInvalidPersistedAppMode(t *testing.T) {
-	for _, appMode := range []string{"", "managed", "garbage"} {
+func TestXUsageBlankPersistedAppModeUsesLegacyBypass(t *testing.T) {
+	store := newFakeStore("basic", time.Now(), time.Now().Add(time.Hour))
+	service := NewService(store)
+	event, err := service.Reserve(context.Background(), ReserveRequest{
+		WorkspaceID:    "ws_1",
+		AppMode:        "",
+		OperationKey:   "post.create",
+		IdempotencyKey: "legacy-null",
+	})
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if event.Status != UsageStatusBypassed || store.reserveCalls != 0 {
+		t.Fatalf("event=%+v reserve calls=%d, want legacy bypass", event, store.reserveCalls)
+	}
+}
+
+func TestXUsageRejectsInvalidPersistedAppMode(t *testing.T) {
+	for _, appMode := range []string{"managed", "garbage"} {
 		t.Run(appMode, func(t *testing.T) {
 			store := newFakeStore("basic", time.Now(), time.Now().Add(time.Hour))
 			service := NewService(store)

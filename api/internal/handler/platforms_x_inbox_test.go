@@ -112,6 +112,36 @@ func TestXAccountCapabilityRejectsInvalidPersistedAppMode(t *testing.T) {
 	}
 }
 
+func TestXAccountCapabilityNormalizesNullAppModeToLegacyReconnect(t *testing.T) {
+	store := &xCapabilityTestDB{
+		planID: "basic",
+		scopes: []string{"tweet.read", "tweet.write", "users.read", "dm.read", "dm.write"},
+	}
+	rec := invokeXAccountCapabilities(t, store)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s, want 200", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			XInbox struct {
+				CommentsEnabled   bool   `json:"comments_enabled"`
+				DMsEnabled        bool   `json:"dms_enabled"`
+				ReconnectRequired bool   `json:"reconnect_required"`
+				AppMode           string `json:"app_mode"`
+			} `json:"x_inbox"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Data.XInbox.AppMode != "legacy_unknown" ||
+		body.Data.XInbox.CommentsEnabled ||
+		body.Data.XInbox.DMsEnabled ||
+		!body.Data.XInbox.ReconnectRequired {
+		t.Fatalf("x_inbox = %+v, want normalized legacy reconnect state", body.Data.XInbox)
+	}
+}
+
 func invokeXAccountCapabilities(t *testing.T, store *xCapabilityTestDB) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/sa_1/capabilities", nil)

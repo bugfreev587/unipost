@@ -108,8 +108,8 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 		Capability:    cap,
 	}
 	if strings.EqualFold(acc.Platform, "twitter") {
-		appMode, modeErr := xinbox.ParseAppMode(acc.XAppMode.String)
-		if modeErr != nil || !acc.XAppMode.Valid {
+		appMode, modeErr := xinbox.NormalizePersistedAppMode(acc.XAppMode.String)
+		if modeErr != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X account app identity is invalid; reconnect required")
 			return
 		}

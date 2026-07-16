@@ -18,14 +18,15 @@ func TestXInboxDeliveryResourceQueryContract(t *testing.T) {
 		"unipost_managed_app",
 		"workspace_x_app",
 		"legacy_unknown",
-		"JOIN platform_credentials pc",
-		"WHEN sa.connection_type = 'managed' THEN 'unipost_managed_app'",
-		"ELSE 'legacy_unknown'",
-		"UPDATE oauth_states os",
-		"os.expires_at > NOW()",
-		"UPDATE connect_sessions cs",
-		"cs.status = 'pending'",
-		"cs.expires_at > NOW()",
+		"UPDATE x_usage_events\nSET connection_mode = 'legacy_unknown'",
+		"WHERE x_credit_billing_mode IS NOT NULL",
+		"DELETE FROM oauth_states\nWHERE platform = 'twitter'",
+		"UPDATE connect_sessions\nSET status = 'expired'",
+		"expires_at = LEAST(expires_at, NOW())",
+		"completed_at = COALESCE(completed_at, NOW())",
+		"WHERE platform = 'twitter'\n  AND status = 'pending'",
+		"UPDATE social_accounts\nSET x_app_mode = 'legacy_unknown'\nWHERE platform = 'twitter'",
+		"(platform = 'twitter' AND (x_app_mode IS NULL OR x_app_mode IN",
 		"x_inbox_delivery_resources",
 		"filtered_stream_rule_id",
 		"activity_dm_subscription_id",
@@ -35,6 +36,16 @@ func TestXInboxDeliveryResourceQueryContract(t *testing.T) {
 	} {
 		if !strings.Contains(schema, required) {
 			t.Fatalf("migration 108 missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"JOIN platform_credentials pc",
+		"WHEN sa.connection_type = 'managed'",
+		"UPDATE oauth_states os\nSET x_app_mode",
+		"UPDATE connect_sessions cs\nSET x_app_mode",
+	} {
+		if strings.Contains(schema, forbidden) {
+			t.Fatalf("migration 108 must not infer legacy X app identity using %q", forbidden)
 		}
 	}
 

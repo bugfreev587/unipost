@@ -16,10 +16,7 @@ ALTER TABLE platform_credentials
 ALTER TABLE x_usage_events
   DROP CONSTRAINT IF EXISTS x_usage_events_connection_mode_check;
 UPDATE x_usage_events
-SET connection_mode = CASE
-  WHEN connection_mode = 'managed' THEN 'unipost_managed_app'
-  ELSE 'legacy_unknown'
-END;
+SET connection_mode = 'legacy_unknown';
 ALTER TABLE x_usage_events
   ALTER COLUMN connection_mode SET DEFAULT 'unipost_managed_app',
   ADD CONSTRAINT x_usage_events_connection_mode_check
@@ -29,56 +26,24 @@ ALTER TABLE social_post_results
   DROP CONSTRAINT IF EXISTS social_post_results_x_credit_billing_mode_check;
 UPDATE social_post_results
 SET x_credit_billing_mode = 'legacy_unknown'
-WHERE x_credit_billing_mode = 'customer_x_app';
+WHERE x_credit_billing_mode IS NOT NULL;
 ALTER TABLE social_post_results
   ADD CONSTRAINT social_post_results_x_credit_billing_mode_check
     CHECK (x_credit_billing_mode IS NULL OR x_credit_billing_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown'));
 
-UPDATE oauth_states os
-SET x_app_mode = CASE
-  WHEN EXISTS (
-    SELECT 1
-    FROM profiles p
-    JOIN platform_credentials pc
-      ON pc.workspace_id = p.workspace_id
-     AND pc.platform = 'twitter'
-    WHERE p.id = os.profile_id
-  ) THEN 'workspace_x_app'
-  ELSE 'unipost_managed_app'
-END
-WHERE os.platform = 'twitter'
-  AND os.expires_at > NOW();
+DELETE FROM oauth_states
+WHERE platform = 'twitter';
 
-UPDATE connect_sessions cs
-SET x_app_mode = CASE
-  WHEN EXISTS (
-    SELECT 1
-    FROM profiles p
-    JOIN platform_credentials pc
-      ON pc.workspace_id = p.workspace_id
-     AND pc.platform = 'twitter'
-    WHERE p.id = cs.profile_id
-  ) THEN 'workspace_x_app'
-  ELSE 'unipost_managed_app'
-END
-WHERE cs.platform = 'twitter'
-  AND cs.status = 'pending'
-  AND cs.expires_at > NOW();
+UPDATE connect_sessions
+SET status = 'expired',
+    expires_at = LEAST(expires_at, NOW()),
+    completed_at = COALESCE(completed_at, NOW())
+WHERE platform = 'twitter'
+  AND status = 'pending';
 
-UPDATE social_accounts sa
-SET x_app_mode = CASE
-  WHEN EXISTS (
-    SELECT 1
-    FROM profiles p
-    JOIN platform_credentials pc
-      ON pc.workspace_id = p.workspace_id
-     AND pc.platform = 'twitter'
-    WHERE p.id = sa.profile_id
-  ) THEN 'workspace_x_app'
-  WHEN sa.connection_type = 'managed' THEN 'unipost_managed_app'
-  ELSE 'legacy_unknown'
-END
-WHERE sa.platform = 'twitter';
+UPDATE social_accounts
+SET x_app_mode = 'legacy_unknown'
+WHERE platform = 'twitter';
 
 ALTER TABLE oauth_states
   ADD CONSTRAINT oauth_states_x_app_mode_check
@@ -97,7 +62,7 @@ ALTER TABLE connect_sessions
 ALTER TABLE social_accounts
   ADD CONSTRAINT social_accounts_x_app_mode_check
   CHECK (
-    (platform = 'twitter' AND x_app_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown'))
+    (platform = 'twitter' AND (x_app_mode IS NULL OR x_app_mode IN ('unipost_managed_app', 'workspace_x_app', 'legacy_unknown')))
     OR (platform <> 'twitter' AND x_app_mode IS NULL)
   );
 

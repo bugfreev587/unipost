@@ -2096,11 +2096,8 @@ func (h *SocialPostHandler) reserveManagedXOperation(
 	if h == nil || account.Platform != "twitter" {
 		return xcredits.UsageEvent{}, nil
 	}
-	appMode, err := xinbox.ParseAppMode(account.XAppMode.String)
-	if err != nil || !account.XAppMode.Valid {
-		if err == nil {
-			err = errors.New("missing persisted X app mode")
-		}
+	appMode, err := xinbox.NormalizePersistedAppMode(account.XAppMode.String)
+	if err != nil {
 		return xcredits.UsageEvent{}, err
 	}
 	if appMode != xinbox.AppModeUniPostManaged {

@@ -93,7 +93,7 @@ func NewService(store Store) *Service {
 }
 
 func (s *Service) Reserve(ctx context.Context, req ReserveRequest) (UsageEvent, error) {
-	appMode, err := xinbox.ParseAppMode(req.AppMode)
+	appMode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
 	if err != nil {
 		return UsageEvent{}, err
 	}

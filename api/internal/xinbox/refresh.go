@@ -44,11 +44,8 @@ func (r *TokenRefreshResolver) Resolve(ctx context.Context, account db.SocialAcc
 	if !strings.EqualFold(strings.TrimSpace(account.Platform), "twitter") {
 		return nil, fmt.Errorf("X token refresh resolver cannot resolve platform %q", account.Platform)
 	}
-	mode, err := ParseAppMode(account.XAppMode.String)
-	if err != nil || !account.XAppMode.Valid {
-		if err == nil {
-			err = fmt.Errorf("missing persisted X app mode")
-		}
+	mode, err := NormalizePersistedAppMode(account.XAppMode.String)
+	if err != nil {
 		return nil, err
 	}
 	switch mode {

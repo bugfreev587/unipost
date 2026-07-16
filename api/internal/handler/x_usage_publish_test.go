@@ -109,20 +109,29 @@ func TestReserveManagedXUsageLegacyUnknownPreservesPublishingWithoutCredits(t *t
 	}
 }
 
+func TestReserveManagedXUsageNullAppModeUsesLegacyBypass(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
+	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:null", db.SocialAccount{
+		Platform: "twitter",
+	}, "hello")
+	if err != nil {
+		t.Fatalf("reserveManagedXUsage: %v", err)
+	}
+	if event.ID != "" || len(fake.requests) != 0 {
+		t.Fatalf("event=%+v reserve requests=%d, want legacy bypass", event, len(fake.requests))
+	}
+}
+
 func TestReserveManagedXUsageRejectsInvalidPersistedAppMode(t *testing.T) {
 	fake := &fakeXUsageService{}
 	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
-	for _, appMode := range []pgtype.Text{{}, {String: "garbage", Valid: true}} {
-		_, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:invalid", db.SocialAccount{
-			Platform: "twitter",
-			XAppMode: appMode,
-		}, "hello")
-		if err == nil {
-			t.Fatalf("app mode %+v error = nil, want fail-closed validation", appMode)
-		}
-	}
-	if len(fake.requests) != 0 {
-		t.Fatalf("reserve requests = %d, want 0", len(fake.requests))
+	_, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:invalid", db.SocialAccount{
+		Platform: "twitter",
+		XAppMode: pgtype.Text{String: "garbage", Valid: true},
+	}, "hello")
+	if err == nil {
+		t.Fatal("invalid persisted app mode error = nil, want validation error")
 	}
 }
 
