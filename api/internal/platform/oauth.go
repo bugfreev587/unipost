@@ -10,12 +10,6 @@ import (
 )
 
 // OAuthConfig holds the OAuth 2.0 configuration for a platform.
-//
-// State is the original state string that was passed to GetAuthURL on
-// the authorize step. The handler populates it before calling
-// ExchangeCode so adapters that derive PKCE verifiers from state
-// (currently just Twitter) can reconstruct them. Most adapters can
-// ignore this field.
 type OAuthConfig struct {
 	ClientID     string
 	ClientSecret string
@@ -23,7 +17,7 @@ type OAuthConfig struct {
 	TokenURL     string
 	RedirectURL  string
 	Scopes       []string
-	State        string
+	PKCEVerifier string
 }
 
 // OAuthAdapter extends PlatformAdapter with OAuth 2.0 flow methods.

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -23,6 +24,8 @@ func TestNotificationDeliveryPlanSkipsLoopsOwnedEmailEvents(t *testing.T) {
 		{name: "post failed slack stays in notifications", event: events.EventPostFailed, channelKind: "slack_webhook", wantSkipped: false},
 		{name: "account disconnected discord stays in notifications", event: events.EventAccountDisconnected, channelKind: "discord_webhook", wantSkipped: false},
 		{name: "usage email is not claimed by this migration", event: events.EventBillingUsage80pct, channelKind: "email", wantSkipped: false},
+		{name: "X inbound 80 percent email stays in notifications", event: events.EventBillingXInbound80pct, channelKind: "email", wantSkipped: false},
+		{name: "X inbound cap reached slack stays in notifications", event: events.EventBillingXInboundCapReached, channelKind: "slack_webhook", wantSkipped: false},
 	}
 
 	for _, tc := range tests {
@@ -37,6 +40,36 @@ func TestNotificationDeliveryPlanSkipsLoopsOwnedEmailEvents(t *testing.T) {
 				t.Fatal("skipped plan should include audit reason")
 			}
 		})
+	}
+}
+
+func TestXInboundNotificationRenderingIncludesCountsResetAndManagementLinkOnly(t *testing.T) {
+	payload := []byte(`{
+		"inbound_daily_usage": 320,
+		"inbound_daily_limit": 400,
+		"reset_at": "2026-07-17T00:00:00Z",
+		"cap_management_url": "https://dev-app.unipost.dev/settings/billing#x-inbound-cap",
+		"body": "private DM text must not render"
+	}`)
+
+	webhook := renderWebhookMessage(events.EventBillingXInbound80pct, payload, "https://dev-app.unipost.dev")
+	email := renderEmail(events.EventBillingXInboundCapReached, payload, "https://dev-app.unipost.dev")
+	for label, rendered := range map[string]string{
+		"webhook": webhook,
+		"email":   email.Text,
+	} {
+		for _, want := range []string{
+			"320 / 400",
+			"2026-07-17T00:00:00Z",
+			"https://dev-app.unipost.dev/settings/billing#x-inbound-cap",
+		} {
+			if !strings.Contains(rendered, want) {
+				t.Fatalf("%s missing %q: %s", label, want, rendered)
+			}
+		}
+		if strings.Contains(rendered, "private DM text") {
+			t.Fatalf("%s rendered private body: %s", label, rendered)
+		}
 	}
 }
 

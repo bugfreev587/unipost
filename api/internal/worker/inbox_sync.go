@@ -186,6 +186,13 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 		newByWorkspace[workspaceID]++
 	}
 	for _, acc := range accounts {
+		// X replies and DMs are reconciled by XInboxDeliveryWorker and its
+		// shared metered ingestion service. Keep X in shared account discovery,
+		// but do not decrypt user tokens or poll it through the Meta backfill
+		// worker.
+		if acc.Platform == "twitter" {
+			continue
+		}
 		accessToken, err := w.encryptor.Decrypt(acc.AccessToken)
 		if err != nil {
 			slog.Warn("inbox sync worker: decrypt failed", "account_id", acc.ID, "err", err)

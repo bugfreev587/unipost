@@ -1,0 +1,31 @@
+{
+  "data": {
+    "id": "tweet-2",
+    "text": "A public reply",
+    "author_id": "author-2",
+    "created_at": "2026-07-16T12:00:00.000Z",
+    "conversation_id": "conversation-1",
+    "referenced_tweets": [
+      {
+        "type": "replied_to",
+        "id": "tweet-1"
+      }
+    ]
+  },
+  "includes": {
+    "users": [
+      {
+        "id": "author-2",
+        "name": "Reply Author",
+        "username": "reply_author",
+        "profile_image_url": "https://pbs.twimg.com/profile_images/reply-author.jpg"
+      }
+    ]
+  },
+  "matching_rules": [
+    {
+      "id": "rule-1",
+      "tag": "unipost:x:account:account-1"
+    }
+  ]
+}

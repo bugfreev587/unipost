@@ -14,6 +14,18 @@ export default function GuidesIndexPage() {
           <div className="docs-card-title">Publish GIFs</div>
           <p>Publish a hosted or local GIF to X and Facebook, compare platform support, and prepare for upcoming conversion workflows.</p>
         </Link>
+        <Link href="/docs/guides/x/comments" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">X comments</div>
+          <p>List eligible X replies, send idempotent responses, and run a bounded public-reply backfill.</p>
+        </Link>
+        <Link href="/docs/guides/x/direct-messages" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">X direct messages</div>
+          <p>Receive and respond to legacy X DM events while protecting private conversation data.</p>
+        </Link>
+        <Link href="/docs/guides/x/reconnect-permissions" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Reconnect X Inbox permissions</div>
+          <p>Inspect capability state, complete workspace-app credentials, and grant the current X scopes.</p>
+        </Link>
         <Link href="/docs/guides/x/credits" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">X Credits</div>
           <p>Estimate managed-X usage, inspect the monthly allowance, and handle hard-limit exhaustion.</p>

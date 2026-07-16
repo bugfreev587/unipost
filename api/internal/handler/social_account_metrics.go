@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
@@ -101,7 +102,22 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 	// between ticks, refresh inline before hitting the provider metrics endpoint.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid && acc.RefreshToken.String != "" {
 		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(r.Context(), refreshTok)
+			var newAccess, newRefresh string
+			var expiresAt time.Time
+			var refErr error
+			if acc.Platform == "twitter" {
+				if h.xTokenRefresher == nil {
+					refErr = errors.New("X token refresher is not configured")
+				} else {
+					var tokens *connect.TokenSet
+					tokens, refErr = h.xTokenRefresher.Refresh(r.Context(), acc, refreshTok)
+					if refErr == nil {
+						newAccess, newRefresh, expiresAt = tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt
+					}
+				}
+			} else {
+				newAccess, newRefresh, expiresAt, refErr = adapter.RefreshToken(r.Context(), refreshTok)
+			}
 			if refErr != nil {
 				slog.Warn("account metrics: token refresh failed",
 					"account_id", acc.ID, "platform", acc.Platform, "err", refErr)

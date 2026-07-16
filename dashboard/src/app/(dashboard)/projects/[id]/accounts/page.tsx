@@ -10,8 +10,10 @@ import {
 } from "@/components/ui/dialog";
 import {
   listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
-  type SocialAccount, type Profile,
+  getAccountCapabilities,
+  type SocialAccount, type Profile, type XInboxCapabilities,
 } from "@/lib/api";
+import { evaluateXInboxEligibility } from "@/lib/x-inbox-eligibility";
 import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
 import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
@@ -72,6 +74,7 @@ export default function AccountsPage() {
     return list;
   })();
   const [accounts, setAccounts] = useState<SocialAccount[]>([]);
+  const [xCapabilities, setXCapabilities] = useState<Record<string, XInboxCapabilities>>({});
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [profileFilter, setProfileFilter] = useState<string>("all");
   const [loading, setLoading] = useState(true);
@@ -173,7 +176,23 @@ export default function AccountsPage() {
       const allAccounts = await Promise.all(
         profRes.data.map((p) => listSocialAccounts(token, p.id))
       );
-      setAccounts(allAccounts.flatMap((r) => r.data));
+      const loadedAccounts = allAccounts.flatMap((r) => r.data);
+      setAccounts(loadedAccounts);
+      const xResults = await Promise.allSettled(
+        loadedAccounts
+          .filter((account) => account.platform === "twitter")
+          .map(async (account) => ({
+            accountId: account.id,
+            capabilities: (await getAccountCapabilities(token, account.id)).data.x_inbox,
+          })),
+      );
+      const nextXCapabilities: Record<string, XInboxCapabilities> = {};
+      for (const result of xResults) {
+        if (result.status === "fulfilled" && result.value.capabilities) {
+          nextXCapabilities[result.value.accountId] = result.value.capabilities;
+        }
+      }
+      setXCapabilities(nextXCapabilities);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load accounts";
       console.error("Failed to load accounts:", err);
@@ -230,13 +249,13 @@ export default function AccountsPage() {
     } finally { setConnecting(false); }
   }
 
-  async function handleOAuthConnect(platform: string) {
+  async function handleOAuthConnect(platform: string, targetProfileId = connectProfileId) {
     setConnecting(true); setConnectError(""); setAccountsError(null);
     try {
       const token = await getToken();
       if (!token) return;
       const redirectUrl = window.location.href.split("?")[0];
-      const res = await getOAuthConnectURL(token, connectProfileId, platform, redirectUrl);
+      const res = await getOAuthConnectURL(token, targetProfileId, platform, redirectUrl);
       window.location.href = res.data.auth_url;
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to start OAuth";
@@ -516,9 +535,14 @@ export default function AccountsPage() {
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Account</th><th>UniPost Profile</th><th>Source platform</th><th>Connected</th><th>UniPost status</th><th></th></tr></thead>
+            <thead><tr><th>Account</th><th>UniPost Profile</th><th>Source platform</th><th>Connected</th><th>UniPost status</th><th>Inbox capability</th><th></th></tr></thead>
             <tbody>
-              {visibleAccounts.map((a) => (
+              {visibleAccounts.map((a) => {
+                const capabilities = xCapabilities[a.id];
+                const xEligibility = capabilities
+                  ? evaluateXInboxEligibility(a, capabilities)
+                  : null;
+                return (
                 <tr key={a.id}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -552,13 +576,46 @@ export default function AccountsPage() {
                       {a.status === "active" ? "Active" : a.status === "reconnect_required" ? "Reconnect" : "Disconnected"}
                     </span>
                   </td>
+                  <td>
+                    {a.platform !== "twitter" ? (
+                      <span style={{ color: "var(--dmuted2)", fontSize: 12 }}>Platform-managed</span>
+                    ) : !xEligibility ? (
+                      <span style={{ color: "var(--warning)", fontSize: 12 }}>X Inbox capability unavailable</span>
+                    ) : (
+                      <div style={{ display: "grid", gap: 5, minWidth: 180 }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                          <span className={`dbadge ${xEligibility.commentsEnabled ? "dbadge-green" : "dbadge-amber"}`}>
+                            Comments {xEligibility.commentsEnabled ? "on" : "off"}
+                          </span>
+                          <span className={`dbadge ${xEligibility.dmsEnabled ? "dbadge-green" : "dbadge-amber"}`}>
+                            DMs {xEligibility.dmsEnabled ? "on" : "off"}
+                          </span>
+                        </div>
+                        <span style={{ color: "var(--dmuted)", fontSize: 11, lineHeight: 1.4 }}>
+                          {xEligibility.summary}
+                        </span>
+                      </div>
+                    )}
+                  </td>
                   <td style={{ textAlign: "right" }}>
-                    <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
-                      Disconnect
-                    </button>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                      {a.platform === "twitter" && xEligibility?.reconnectRequired ? (
+                        <button
+                          className="dbtn dbtn-primary"
+                          style={{ padding: "4px 10px", fontSize: 12 }}
+                          onClick={() => handleOAuthConnect("twitter", a.profile_id)}
+                          disabled={connecting}
+                        >
+                          Reconnect X
+                        </button>
+                      ) : null}
+                      <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
+                        Disconnect
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         </div>

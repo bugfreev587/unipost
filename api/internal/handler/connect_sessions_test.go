@@ -22,6 +22,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // TestValidateReturnURL — accept https/http with a host, reject everything else.
@@ -215,7 +216,292 @@ func TestCreateConnectSession_OAuthQuickstartPlatformsEnabledInProduction(t *tes
 			if rec.Code != http.StatusCreated {
 				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 			}
+			if platform == "twitter" && (!fdb.xAppMode.Valid || fdb.xAppMode.String != "unipost_managed_app") {
+				t.Fatalf("stored X app mode = %+v, want unipost_managed_app", fdb.xAppMode)
+			}
 		})
+	}
+}
+
+func TestCreateConnectSessionStoresWorkspaceXAppModeWhenCredentialExists(t *testing.T) {
+	fdb := &connectSessionTestDB{
+		platform:        "twitter",
+		planID:          "growth",
+		allowQuickstart: true,
+	}
+	h := NewConnectSessionHandler(db.New(fdb), "https://app.unipost.dev", nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/connect/sessions", strings.NewReader(`{
+		"platform": "twitter",
+		"profile_id": "pr_1",
+		"external_user_id": "user_123",
+		"allow_quickstart_creds": true
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != "workspace_x_app" {
+		t.Fatalf("stored X app mode = %+v, want workspace_x_app", fdb.xAppMode)
+	}
+}
+
+func TestResolveConnectorUsesStoredTwitterAppMode(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Run("managed mode stays registry even when workspace credentials exist", func(t *testing.T) {
+		fdb := &connectSessionTestDB{
+			platform:              "twitter",
+			planID:                "growth",
+			credentialSecretValue: encryptedSecret,
+		}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		connector, ok, err := h.resolveConnector(
+			context.Background(), "ws_1", "twitter", true,
+			pgtype.Text{String: "unipost_managed_app", Valid: true},
+		)
+		if err != nil || !ok || connector == nil {
+			t.Fatalf("connector=%v ok=%v err=%v", connector, ok, err)
+		}
+		if fdb.platformCredentialLookups != 0 {
+			t.Fatalf("workspace credential lookups = %d, want 0", fdb.platformCredentialLookups)
+		}
+	})
+	t.Run("workspace mode fails when credential was removed", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter", credentialErr: pgx.ErrNoRows}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		connector, ok, err := h.resolveConnector(
+			context.Background(), "ws_1", "twitter", true,
+			pgtype.Text{String: "workspace_x_app", Valid: true},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok || connector != nil {
+			t.Fatalf("connector=%v ok=%v, want unavailable", connector, ok)
+		}
+	})
+}
+
+func TestResolveTwitterConnectorForRollingNullModeUsesLegacyPolicy(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("workspace credentials remain eligible without quickstart", func(t *testing.T) {
+		fdb := &connectSessionTestDB{
+			platform:              "twitter",
+			planID:                "growth",
+			credentialSecretValue: encryptedSecret,
+		}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		resolved, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", false, pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resolved.ok || resolved.connector == nil {
+			t.Fatal("workspace connector was not resolved")
+		}
+		if !resolved.xAppMode.Valid || resolved.xAppMode.String != string(xinbox.AppModeWorkspace) {
+			t.Fatalf("resolved mode = %+v, want workspace", resolved.xAppMode)
+		}
+	})
+
+	t.Run("quickstart falls back to UniPost managed", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter"}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		resolved, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", true, pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !resolved.ok || resolved.connector == nil {
+			t.Fatal("UniPost managed connector was not resolved")
+		}
+		if !resolved.xAppMode.Valid || resolved.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+			t.Fatalf("resolved mode = %+v, want UniPost managed", resolved.xAppMode)
+		}
+	})
+
+	t.Run("API no-quickstart does not gain managed credentials", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter"}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		resolved, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", false, pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.ok || resolved.connector != nil || resolved.xAppMode.Valid {
+			t.Fatalf("resolved = %+v, want unavailable with no explicit mode", resolved)
+		}
+	})
+
+	t.Run("non-null garbage is rejected", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "twitter"}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, events.NoopBus{},
+			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+			"https://api.example.com", nil,
+		)
+		_, err := h.resolveConnectorForStoredMode(
+			context.Background(), "ws_1", "twitter", true,
+			pgtype.Text{String: "garbage", Valid: true},
+		)
+		if err == nil {
+			t.Fatal("garbage stored mode error = nil, want rejection")
+		}
+		if fdb.platformCredentialLookups != 0 {
+			t.Fatalf("credential lookups = %d, want 0 for rejected garbage", fdb.platformCredentialLookups)
+		}
+	})
+}
+
+func TestConnectCallbackPersistsResolvedModeForRollingNullTwitterSession(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "twitter",
+		allowQuickstart:        true,
+		activeAccountLookupErr: pgx.ErrNoRows,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+		"https://api.example.com", nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/twitter?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "twitter")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("saved X app mode = %+v, want resolved UniPost managed mode", fdb.xAppMode)
+	}
+}
+
+func TestConnectAuthorizePersistsResolvedModeForRollingNullTwitterSession(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:        "twitter",
+		allowQuickstart: true,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+		"https://api.example.com", nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
+	req = withChiParam(req, "id", "cs_1")
+	rec := httptest.NewRecorder()
+
+	h.Authorize(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.setSessionXAppModeCalls != 1 {
+		t.Fatalf("SetConnectSessionXAppModeIfNull calls = %d, want 1", fdb.setSessionXAppModeCalls)
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("persisted session mode = %+v, want UniPost managed", fdb.xAppMode)
+	}
+}
+
+func TestConnectCallbackUsesModePersistedByAuthorizeAfterWorkspacePolicyChanges(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "twitter",
+		allowQuickstart:        true,
+		activeAccountLookupErr: pgx.ErrNoRows,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+		"https://api.example.com", nil,
+	)
+
+	authorizeReq := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
+	authorizeReq = withChiParam(authorizeReq, "id", "cs_1")
+	authorizeRec := httptest.NewRecorder()
+	h.Authorize(authorizeRec, authorizeReq)
+	if authorizeRec.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d, body = %s", authorizeRec.Code, authorizeRec.Body.String())
+	}
+	if fdb.setSessionXAppModeCalls != 1 {
+		t.Fatalf("SetConnectSessionXAppModeIfNull calls = %d, want 1 before policy changes", fdb.setSessionXAppModeCalls)
+	}
+
+	fdb.planID = "growth"
+	fdb.credentialSecretValue = encryptedSecret
+	fdb.platformCredentialLookups = 0
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/twitter?code=auth-code&state=state_1", nil)
+	callbackReq = withChiParam(callbackReq, "platform", "twitter")
+	callbackRec := httptest.NewRecorder()
+	h.Callback(callbackRec, callbackReq)
+
+	if callbackRec.Code != http.StatusOK {
+		t.Fatalf("callback status = %d, body = %s", callbackRec.Code, callbackRec.Body.String())
+	}
+	if fdb.platformCredentialLookups != 0 {
+		t.Fatalf("callback workspace credential lookups = %d, want 0 for persisted managed mode", fdb.platformCredentialLookups)
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("saved account mode = %+v, want persisted UniPost managed mode", fdb.xAppMode)
 	}
 }
 
@@ -779,7 +1065,9 @@ type connectSessionTestDB struct {
 	createManagedCalls        int
 	upsertManagedCalls        int
 	createConnectSessionCalls int
+	setSessionXAppModeCalls   int
 	reconnectRequiredCalls    int
+	xAppMode                  pgtype.Text
 
 	managedUserCount                         int32
 	existingExternalUserAccountCount         int32
@@ -861,7 +1149,10 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 			secret = "encrypted-secret"
 		}
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		return scanRow{values: []any{"pc_1", f.platform, "client-id", secret, now, "ws_1"}}
+		return scanRow{values: []any{
+			"pc_1", f.platform, "client-id", secret, now, "ws_1",
+			pgtype.Text{}, pgtype.Text{}, pgtype.Text{},
+		}}
 	case strings.Contains(query, "-- name: CreateConnectSession"):
 		f.createConnectSessionCalls++
 		platform, _ := args[1].(string)
@@ -872,10 +1163,20 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 		pkceVerifier, _ := args[6].(pgtype.Text)
 		expiresAt, _ := args[7].(pgtype.Timestamptz)
 		allowQuickstart, _ := args[8].(bool)
+		if len(args) > 9 {
+			f.xAppMode, _ = args[9].(pgtype.Text)
+		}
 		return f.connectSessionRow(platform, "pending", "", externalUserID, externalEmail, returnURL, oauthState, pkceVerifier, expiresAt, allowQuickstart)
 	case strings.Contains(query, "-- name: GetConnectSessionByIDOnly"):
 		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	case strings.Contains(query, "-- name: GetConnectSessionByOAuthState"):
+		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
+	case strings.Contains(query, "-- name: SetConnectSessionXAppModeIfNull"):
+		f.setSessionXAppModeCalls++
+		if f.xAppMode.Valid {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		f.xAppMode, _ = args[1].(pgtype.Text)
 		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	case strings.Contains(query, "-- name: FindActiveManagedSocialAccountByExternalAccount"):
 		if f.activeAccountLookupErr != nil {
@@ -898,6 +1199,9 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 		return f.socialAccountRow("sa_created_1", f.platform, stringArg(args, 5), pgTextString(args, 11), "active")
 	case strings.Contains(query, "-- name: UpsertManagedSocialAccount"):
 		f.upsertManagedCalls++
+		if len(args) > 13 {
+			f.xAppMode, _ = args[13].(pgtype.Text)
+		}
 		id := f.reusedManagedID
 		if id == "" {
 			id = "sa_upserted_1"
@@ -945,6 +1249,7 @@ func (f *connectSessionTestDB) connectSessionRow(platform, status, completedAcct
 		now,
 		completedAt,
 		allowQuickstart,
+		f.xAppMode,
 	}}
 }
 
@@ -973,6 +1278,7 @@ func (f *connectSessionTestDB) socialAccountRow(id, platform, externalAccountID,
 		externalUser,
 		pgtype.Text{},
 		now,
+		f.xAppMode,
 	}}
 }
 
@@ -985,8 +1291,14 @@ func (r scanRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	if len(dest) != len(r.values) {
+	if len(dest) < len(r.values) || len(dest)-len(r.values) > 2 {
 		return fmt.Errorf("scan destination count %d != values count %d", len(dest), len(r.values))
+	}
+	for _, trailing := range dest[len(r.values):] {
+		target := reflect.ValueOf(trailing)
+		if target.Kind() != reflect.Ptr || target.IsNil() || target.Elem().Type() != reflect.TypeOf(pgtype.Text{}) {
+			return fmt.Errorf("unexpected trailing scan destination %T", trailing)
+		}
 	}
 	for i, value := range r.values {
 		if value == nil {

@@ -51,3 +51,10 @@ test("reply-window guard ignores non-DM and invalid timestamps", () => {
   );
   assert.equal(isMetaDMReplyWindowClosed("ig_dm", "not-a-date", now), false);
 });
+
+test("X DMs do not inherit Meta's 24-hour reply window", () => {
+  assert.equal(
+    isMetaDMReplyWindowClosed("x_dm", "2026-06-01T00:00:00Z", now),
+    false,
+  );
+});

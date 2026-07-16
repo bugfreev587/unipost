@@ -44,8 +44,10 @@ const (
 	// Billing events — emitted by the usage tracker and Stripe webhook
 	// handler. Not visible to the developer webhook subscriber list
 	// today; will be added once we document them in the public schema.
-	EventBillingUsage80pct    = "billing.usage_80pct"
-	EventBillingPaymentFailed = "billing.payment_failed"
+	EventBillingUsage80pct         = "billing.usage_80pct"
+	EventBillingPaymentFailed      = "billing.payment_failed"
+	EventBillingXInbound80pct      = "billing.x_inbound_80pct"
+	EventBillingXInboundCapReached = "billing.x_inbound_cap_reached"
 )
 
 // NoopBus is a safe default for tests and for cmd setups that haven't

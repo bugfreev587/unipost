@@ -37,6 +37,7 @@ export type PlatformDoc = {
   inbox?: {
     note?: string;
     rows: readonly (readonly string[])[];
+    links?: ReadonlyArray<{ label: string; href: string; description: string }>;
   };
   setup: readonly (readonly ReactNode[])[];
   setupNote?: ReactNode;
@@ -111,14 +112,14 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     title: "Twitter / X",
     brandColor: "#0f172a",
     icon: icons.twitter,
-    tagline: "Short-form text, media, threads, and first-comment replies.",
-    lead: "Publish, schedule, and thread posts on X from UniPost. Strongest support today for text, media, and reply chains.",
-    badges: ["Publishing", "Scheduling", "Analytics", "Threads", "White-label"],
+    tagline: "Short-form publishing, public replies, and legacy direct messages.",
+    lead: "Publish, schedule, and thread posts on X, then receive eligible public replies and legacy DMs in UniPost Inbox.",
+    badges: ["Publishing", "Scheduling", "Analytics", "Threads", "Inbox", "White-label"],
     summary: {
       publishing: "full",
       scheduling: "full",
       analytics: "full",
-      inbox: "none",
+      inbox: "full",
       connection: "OAuth — Quickstart and Platform Credentials supported; paid plan required",
     },
     capabilities: [
@@ -129,7 +130,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Threads", yes, "Use `thread_position`"],
       ["First comment", yes, "Posted as a reply after publish"],
       ["Scheduling", yes, "Use `scheduled_at`"],
-      ["Inbox / DMs", no, "Not part of the UniPost inbox today"],
+      ["Inbox / public replies", yes, "Eligible replies that summon the connected account"],
+      ["Inbox / legacy DMs", yes, "Requires dm.read and dm.write"],
     ],
     requirements: [
       ["Plan", "Required", "Any paid plan", "Free plans cannot publish to or newly connect X accounts. Existing connections on Free workspaces remain visible (read-only) until the workspace upgrades."],
@@ -178,6 +180,24 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Saves / bookmarks", yes, "Supported"],
       ["Video views", no, "Not exposed for org accounts today"],
     ],
+    inbox: {
+      note: "Start with the unified Inbox overview, then use the endpoint reference for contracts and the X guides for complete workflows.",
+      rows: [
+        ["Public replies", yes, "Normalized as x_reply when the author summons the connected account"],
+        ["Legacy direct messages", yes, "Normalized as x_dm when dm.read and dm.write are granted"],
+      ],
+      links: [
+        { label: "Inbox overview", href: "/docs/api/inbox", description: "Supported sources and normalized Inbox fields." },
+        { label: "List Inbox API", href: "/docs/api/inbox/list", description: "Filter x_reply and x_dm items." },
+        { label: "Reply API", href: "/docs/api/inbox/reply", description: "Send an idempotent public reply or direct message." },
+        { label: "Sync API", href: "/docs/api/inbox/sync", description: "Run bounded reply and DM backfills." },
+        { label: "X comments guide", href: "/docs/guides/x/comments", description: "Receive, list, reply, and backfill public replies." },
+        { label: "X direct messages guide", href: "/docs/guides/x/direct-messages", description: "Operate private legacy DM threads safely." },
+        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions", description: "Restore scopes and workspace-app delivery credentials." },
+        { label: "X Credits reference", href: "/docs/api/x-credits", description: "Inspect allowance and inbound cap fields." },
+        { label: "X Credits guide", href: "/docs/guides/x/credits", description: "Plan the weighted managed-X operation mix." },
+      ],
+    },
     setup: [
       modeTwitterNative,
       ["Quickstart", "Use UniPost's shared X OAuth app", "UniPost-managed app", "Requires any paid plan"],
@@ -223,7 +243,9 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Daily safety cap", "20 publishes/day per connected X account (UTC reset). Protects accounts from being flagged for spam — failed posts do not count."],
       ["Paid plan required", "X publishing and new connections require any paid plan ($10/mo and up); the Free plan covers the other 8 platforms."],
       ["Credential choice", "Quickstart uses UniPost's shared X OAuth app; Platform Credentials use your own X app identity and quota"],
-      ["Inbox is not supported", "UniPost inbox covers Meta and Threads today"],
+      ["Inbox plan", "X comments and DMs require the Basic plan or higher"],
+      ["Inbox permissions", "Reconnect with tweet.read, tweet.write, users.read, offline.access, dm.read, and dm.write"],
+      ["Inbox app identity", "unipost_managed_app consumes the workspace allowance; workspace_x_app uses the workspace X app and requires all four app credentials"],
       ["Rate limits follow your X tier", "Free X-API tier is not enough for production publish volume"],
     ],
   },

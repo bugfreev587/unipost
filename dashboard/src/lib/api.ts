@@ -1678,6 +1678,12 @@ export interface XCreditsAllowance {
   catalog_version: string;
   inbound_daily_usage: number;
   inbound_daily_limit: number | null;
+  inbound_events_accepted: number;
+  inbound_events_suppressed: number;
+  inbound_daily_reset_at: string;
+  inbound_daily_percent: number;
+  pause_paid_sources: boolean;
+  inbound_pause_reason?: string;
   connection_mode_note: string;
 }
 
@@ -1691,6 +1697,25 @@ export async function getXCreditsAllowance(
   token: string,
 ): Promise<ApiResponse<XCreditsAllowance>> {
   return request(`/v1/billing/x-credits`, token);
+}
+
+export async function updateXInboundDailyCap(
+  token: string,
+  inboundDailyLimit: number,
+  acknowledgedExposure = false,
+): Promise<ApiResponse<{
+  inbound_daily_limit: number;
+  updated_by: string;
+  acknowledged_exposure: boolean;
+  updated_at: string;
+}>> {
+  return request(`/v1/billing/x-credits/inbound-cap`, token, {
+    method: "PATCH",
+    body: JSON.stringify({
+      inbound_daily_limit: inboundDailyLimit,
+      acknowledged_exposure: acknowledgedExposure,
+    }),
+  });
 }
 
 export async function listIntegrationLogs(
@@ -4079,7 +4104,7 @@ export interface InboxItem {
   id: string;
   social_account_id: string;
   workspace_id: string;
-  source: "ig_comment" | "ig_dm" | "threads_reply" | "youtube_comment" | "fb_comment" | "fb_dm";
+  source: "ig_comment" | "ig_dm" | "threads_reply" | "youtube_comment" | "fb_comment" | "fb_dm" | "x_reply" | "x_dm";
   external_id: string;
   thread_key: string;
   thread_status: "open" | "assigned" | "resolved";
@@ -4097,6 +4122,11 @@ export interface InboxItem {
   account_name?: string;
   account_platform?: string;
   account_avatar_url?: string;
+  x_credits_counted?: number;
+  x_credit_operation?: string;
+  x_credit_catalog_version?: string;
+  x_credit_billing_mode?: string;
+  url?: string;
 }
 
 export async function listInboxItems(
@@ -4135,15 +4165,106 @@ export async function markAllInboxRead(
   });
 }
 
+export type InboxReplyAttempt =
+  | {
+      state: "completed";
+      data: InboxItem;
+      operation_id?: string;
+      http_status: number;
+    }
+  | {
+      state: "pending";
+      operation_id?: string;
+      code: string;
+      message: string;
+      http_status: number;
+    };
+
+const X_INBOX_PENDING_REPLY_CODES = new Set([
+  "X_REMOTE_ACCEPTED_RECONCILING",
+  "X_WRITE_OUTCOME_PENDING",
+  "X_USAGE_REVERSAL_PENDING",
+  "X_WRITE_NEEDS_RECONCILIATION",
+]);
+
 export async function replyToInboxItem(
   token: string,
   id: string,
-  text: string
-): Promise<ApiResponse<InboxItem>> {
-  return request(`/v1/inbox/${id}/reply`, token, {
+  text: string,
+  options?: { idempotencyKey?: string },
+): Promise<InboxReplyAttempt> {
+  const res = await fetch(`${API_URL}/v1/inbox/${id}/reply`, {
     method: "POST",
     body: JSON.stringify({ text }),
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...(options?.idempotencyKey
+        ? { "Idempotency-Key": options.idempotencyKey }
+        : {}),
+    },
   });
+  const body = await res.json().catch(() => ({})) as Partial<ApiResponse<InboxItem>> & Partial<ApiError>;
+  const operationId = res.headers.get("X-UniPost-Operation-Id") || undefined;
+  const code = body.error?.code || "";
+
+  if ((!res.ok || res.status === 202) && X_INBOX_PENDING_REPLY_CODES.has(code)) {
+    return {
+      state: "pending",
+      operation_id: operationId,
+      code,
+      message: body.error?.message || "UniPost is reconciling the X reply.",
+      http_status: res.status,
+    };
+  }
+  if (!res.ok) {
+    throw createApiFetchError(res.status, body);
+  }
+  if (!body.data) {
+    throw createApiFetchError(res.status, body);
+  }
+  return {
+    state: "completed",
+    data: body.data,
+    operation_id: operationId,
+    http_status: res.status,
+  };
+}
+
+export interface XInboxBackfillRequest {
+  account_id?: string;
+  lookback_days?: number;
+  max_items?: number;
+  include_replies: boolean;
+  include_dms: boolean;
+  confirmation_token?: string;
+}
+
+export interface XInboxBackfillAccountResult {
+  account_id: string;
+  accepted: number;
+  suppressed: number;
+  duplicates: number;
+  read: number;
+  stopped_at_boundary?: boolean;
+  stop_reason?: string;
+  missing_scopes?: string[];
+}
+
+export interface XInboxBackfillResult {
+  estimated_x_credits: number;
+  confirmation_required: boolean;
+  confirmation_operation_id?: string;
+  confirmation_token?: string;
+  confirmation_expires_at?: string;
+  execution_lease_expires_at?: string;
+  status?: "in_progress";
+  accounts_checked: number;
+  accepted?: number;
+  suppressed?: number;
+  duplicates?: number;
+  read?: number;
+  details?: XInboxBackfillAccountResult[];
 }
 
 export interface IGMediaContext {
@@ -4175,10 +4296,58 @@ export async function updateInboxThreadState(
 
 export async function syncInbox(
   token: string,
-): Promise<ApiResponse<{ new_items: number }>> {
+  data?: { x_backfill?: XInboxBackfillRequest },
+): Promise<ApiResponse<{
+  new_items?: number;
+  accounts_checked?: number;
+  errors?: Array<{ account_id: string; platform: string; step: string; error: string }>;
+} | XInboxBackfillResult>> {
   return request(`/v1/inbox/sync`, token, {
     method: "POST",
+    body: data ? JSON.stringify(data) : undefined,
   });
+}
+
+export interface XInboxCapabilities {
+  comments_enabled: boolean;
+  dms_enabled: boolean;
+  missing_scopes: string[];
+  reconnect_required: boolean;
+  delivery_status: string;
+  app_mode: "unipost_managed_app" | "workspace_x_app" | "legacy_unknown";
+  missing_app_credentials: string[];
+}
+
+export interface AccountCapabilities {
+  schema_version: string;
+  account_id: string;
+  platform: string;
+  capability: PlatformPublishCapability;
+  x_inbox?: XInboxCapabilities;
+}
+
+export async function getAccountCapabilities(
+  token: string,
+  accountId: string,
+): Promise<ApiResponse<AccountCapabilities>> {
+  return request(`/v1/accounts/${encodeURIComponent(accountId)}/capabilities`, token);
+}
+
+export interface XInboxOutboundOperation {
+  id: string;
+  status: string;
+  completion_attempts: number;
+  reconciliation_deadline?: string;
+  reconciliation_required: boolean;
+  response_inbox_item_id?: string;
+  updated_at: string;
+}
+
+export async function getXInboxOutboundOperation(
+  token: string,
+  requestId: string,
+): Promise<ApiResponse<XInboxOutboundOperation>> {
+  return request(`/v1/inbox/x-outbound-operations/${encodeURIComponent(requestId)}`, token);
 }
 
 // ── Notifications ────────────────────────────────────────────────────

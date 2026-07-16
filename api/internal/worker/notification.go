@@ -50,6 +50,33 @@ func (d *NotificationDispatcher) Publish(ctx context.Context, workspaceID, event
 }
 
 func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event string, data any) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	return d.fanoutWithEventID(ctx, workspaceID, event, uuid.NewString(), payload)
+}
+
+// EnqueueXInboundNotification durably fans out one stable outbox event.
+// Retries use the same eventID, so notification delivery inserts remain
+// idempotent on (event_id, channel_id).
+func (d *NotificationDispatcher) EnqueueXInboundNotification(
+	ctx context.Context,
+	workspaceID string,
+	event string,
+	eventID string,
+	payload []byte,
+) error {
+	return d.fanoutWithEventID(ctx, workspaceID, event, eventID, payload)
+}
+
+func (d *NotificationDispatcher) fanoutWithEventID(
+	ctx context.Context,
+	workspaceID string,
+	event string,
+	eventID string,
+	payload []byte,
+) error {
 	// Resolve subscriptions that should hear this event. The query
 	// already joins workspaces to validate ownership, so account-level
 	// (workspace_id NULL) subs only match workspaces the user owns.
@@ -64,15 +91,7 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 		return nil
 	}
 
-	// One event_id per Publish call — identical across all fanout rows
-	// so a receiver can correlate, and the UNIQUE (event_id, channel_id)
-	// constraint makes concurrent dispatchers idempotent.
-	eventID := uuid.NewString()
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-
+	var firstErr error
 	for _, t := range targets {
 		plan := notificationDeliveryPlan(event, t.ChannelKind)
 		var err error
@@ -99,10 +118,12 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 				"subscription_id", t.SubscriptionID,
 				"event", event,
 				"error", err)
-			// Keep going — don't let one bad row block the rest.
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 type deliveryPlan struct {
@@ -176,6 +197,9 @@ func (w *NotificationDeliveryWorker) Start(ctx context.Context) {
 var notifRetryDelays = []time.Duration{1 * time.Minute, 5 * time.Minute, 30 * time.Minute}
 
 func (w *NotificationDeliveryWorker) tick(ctx context.Context) {
+	if err := w.queries.SkipStaleXInboundNotificationDeliveries(ctx); err != nil {
+		slog.Error("notifications: skip stale X inbound recipients failed", "error", err)
+	}
 	deliveries, err := w.queries.GetPendingNotificationDeliveries(ctx)
 	if err != nil {
 		slog.Error("notifications: get pending failed", "error", err)
@@ -334,6 +358,12 @@ func renderWebhookMessage(eventType string, payloadJSON []byte, appBaseURL strin
 		return fmt.Sprintf("📊 You've used 80%% of your monthly post quota.\n<%s/settings/billing|Review plan & usage>", appBaseURL)
 	case "billing.payment_failed":
 		return fmt.Sprintf("💳 Your subscription payment failed. Update your card to avoid interruption.\n<%s/settings/billing|Update payment method>", appBaseURL)
+	case events.EventBillingXInbound80pct:
+		usage, resetAt, manageURL := xInboundNotificationDetails(payload, appBaseURL)
+		return fmt.Sprintf("⚠️ **X inbound usage reached 80%% of today's cap.** Usage: %s. Reset: %s. Paid X sources may pause soon.\n<%s|Review X inbound cap>", usage, resetAt, manageURL)
+	case events.EventBillingXInboundCapReached:
+		usage, resetAt, manageURL := xInboundNotificationDetails(payload, appBaseURL)
+		return fmt.Sprintf("⏸️ **X inbound daily cap reached.** Usage: %s. Reset: %s. Paid X sources are paused until the reset or a cap increase.\n<%s|Manage X inbound cap>", usage, resetAt, manageURL)
 	}
 
 	return fmt.Sprintf("UniPost: %s\n<%s|Open dashboard>", eventType, appBaseURL)
@@ -395,6 +425,27 @@ func renderEmail(eventType string, payloadJSON []byte, appBaseURL string) mail.M
 <p><a href="%s/settings/billing">Update payment method →</a></p>`, appBaseURL),
 			Text: fmt.Sprintf("Your UniPost subscription payment failed. Update your card to avoid interruption:\n\n%s/settings/billing\n", appBaseURL),
 		}
+
+	case events.EventBillingXInbound80pct:
+		usage, resetAt, manageURL := xInboundNotificationDetails(payload, appBaseURL)
+		return mail.Message{
+			Subject: "[UniPost] X inbound usage reached 80% of today's cap",
+			HTML: fmt.Sprintf(`<p>Your workspace has used 80%% of today's X inbound-spend cap.</p>
+<p><strong>Usage:</strong> %s<br><strong>UTC reset:</strong> %s</p>
+<p>UniPost may pause paid X reply and DM sources soon to prevent unexpected usage.</p>
+<p><a href="%s">Review X inbound cap →</a></p>`, htmlEscape(usage), htmlEscape(resetAt), htmlEscape(manageURL)),
+			Text: fmt.Sprintf("Your workspace has used 80%% of today's X inbound-spend cap.\n\nUsage: %s\nUTC reset: %s\n\nReview the cap: %s\n", usage, resetAt, manageURL),
+		}
+
+	case events.EventBillingXInboundCapReached:
+		usage, resetAt, manageURL := xInboundNotificationDetails(payload, appBaseURL)
+		return mail.Message{
+			Subject: "[UniPost] X inbound daily cap reached",
+			HTML: fmt.Sprintf(`<p>Paid X reply and DM sources are paused until the next UTC reset or an explicit cap increase.</p>
+<p><strong>Usage:</strong> %s<br><strong>UTC reset:</strong> %s</p>
+<p><a href="%s">Manage X inbound cap →</a></p>`, htmlEscape(usage), htmlEscape(resetAt), htmlEscape(manageURL)),
+			Text: fmt.Sprintf("Paid X reply and DM sources are paused until the next UTC reset or an explicit cap increase.\n\nUsage: %s\nUTC reset: %s\n\nManage the cap: %s\n", usage, resetAt, manageURL),
+		}
 	}
 
 	// Unknown event type — fall back to a generic email so the row
@@ -404,6 +455,21 @@ func renderEmail(eventType string, payloadJSON []byte, appBaseURL string) mail.M
 		Subject: fmt.Sprintf("[UniPost] %s", eventType),
 		Text:    fmt.Sprintf("UniPost event: %s\n\n%s\n", eventType, appBaseURL),
 	}
+}
+
+func xInboundNotificationDetails(payload map[string]any, appBaseURL string) (usage, resetAt, manageURL string) {
+	used, _ := payload["inbound_daily_usage"].(float64)
+	limit, _ := payload["inbound_daily_limit"].(float64)
+	usage = fmt.Sprintf("%d / %d Credits", int64(used), int64(limit))
+	resetAt, _ = payload["reset_at"].(string)
+	if resetAt == "" {
+		resetAt = "next 00:00 UTC"
+	}
+	manageURL, _ = payload["cap_management_url"].(string)
+	if manageURL == "" {
+		manageURL = strings.TrimRight(appBaseURL, "/") + "/settings/billing#x-inbound-cap"
+	}
+	return usage, resetAt, manageURL
 }
 
 func truncate(s string, n int) string {

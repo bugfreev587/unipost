@@ -43,6 +43,7 @@ export type PlatformCredentialGuide = {
   doneChecklist: string[];
   relatedPlatformHref: string;
   relatedPlatformTitle: string;
+  relatedLinks?: Array<{ label: string; href: string; description: string }>;
 };
 
 type ApiWorkflowConfig = {
@@ -1280,7 +1281,7 @@ System.out.println(accounts);`,
     slug: "twitter",
     name: "X / Twitter",
     title: "X / Twitter Platform Credential Setup",
-    lead: "X setup is best approached as a deliberate paid-platform integration: get the app approved for your intended tier, wire the callback cleanly, and validate one branded OAuth flow before scaling out.",
+    lead: "Configure the workspace X app identity, both UniPost OAuth callbacks, and the app-level credentials required for Inbox delivery before reconnecting accounts.",
     portalName: "X Developer Portal",
     portalUrl: "https://developer.x.com",
     dashboardCard: "X / Twitter",
@@ -1297,6 +1298,7 @@ System.out.println(accounts);`,
       "One test X account you control for the first branded connect.",
       "A rollout plan that accounts for X access limits and commercial constraints.",
       "An internal owner for credential rotation and developer-portal billing.",
+      "The app Bearer Token and Consumer Secret when X comments or direct messages are in scope.",
     ],
     steps: [
       {
@@ -1308,8 +1310,8 @@ System.out.println(accounts);`,
         body: "Add the callback URL below exactly as written. X OAuth setups are easy to derail with tiny environment mismatches, so treat the redirect URI as copy-paste material, not something to type from memory.",
       },
       {
-        title: "Paste the Client ID and Client Secret into UniPost",
-        body: "Use the X / Twitter credential row in UniPost's Platform Credentials screen. Save the credentials before testing, then retry from a clean browser session if you had earlier failures.",
+        title: "Save all required X app credentials in UniPost",
+        body: "Use the X / Twitter credential row in UniPost's Platform Credentials screen. Client ID and Client Secret enable OAuth and publishing. X Inbox also requires the app Bearer Token and Consumer Secret. UniPost never returns secret values after write.",
       },
       {
         title: "Run one full connect on a controlled X account",
@@ -1324,6 +1326,8 @@ System.out.println(accounts);`,
       ["X app field", "UniPost field", "Notes"],
       ["Client ID", "Client ID", "Use the OAuth 2.0 client identifier from your X app."],
       ["Client Secret", "Client Secret", "Store once in UniPost, then manage future rotations like any production secret."],
+      ["Bearer Token", "App Bearer Token", "Required for workspace_x_app Filtered Stream and Activity management."],
+      ["Consumer Secret", "Consumer Secret", "Required for X Activity webhook verification."],
       ["Callback / redirect URL", "Callback URL below", "Copy exactly to avoid redirect mismatch errors."],
     ],
     apiWorkflow: buildConnectThroughAppWorkflow({
@@ -1341,15 +1345,29 @@ System.out.println(accounts);`,
       ["Tier mismatch", "X problems often look like OAuth bugs when the real issue is access level or commercial eligibility."],
       ["Old browser session state", "If you tested with the wrong credentials first, retry in a clean session after saving the correct app details."],
       ["Operational ownership", "If one person's personal developer account owns production, future billing and rotation work becomes much harder."],
+      ["Partial Inbox credentials", "Publishing can stay available with Client ID and Client Secret, but X Inbox remains disabled until app Bearer Token and Consumer Secret are also saved."],
     ],
     doneChecklist: [
       "The X consent screen shows your app branding.",
       "The redirect returns to UniPost successfully.",
       "A real X account is connected in the workspace.",
+      "Account capabilities report no missing_app_credentials for workspace_x_app Inbox delivery.",
+      "The account was reconnected with tweet.read, tweet.write, users.read, offline.access, dm.read, and dm.write.",
       "Your team has documented the owning developer account and access tier.",
     ],
     relatedPlatformHref: "/docs/platforms/twitter",
     relatedPlatformTitle: "X / Twitter platform guide",
+    relatedLinks: [
+      { label: "Inbox overview", href: "/docs/api/inbox", description: "See normalized sources and the shared Inbox contract." },
+      { label: "List Inbox API", href: "/docs/api/inbox/list", description: "Filter connected-account replies and direct messages." },
+      { label: "Reply API", href: "/docs/api/inbox/reply", description: "Send an idempotent X response." },
+      { label: "Sync API", href: "/docs/api/inbox/sync", description: "Run a bounded X history backfill." },
+      { label: "X comments guide", href: "/docs/guides/x/comments", description: "Operate eligible public reply workflows." },
+      { label: "X direct messages guide", href: "/docs/guides/x/direct-messages", description: "Operate private legacy DM workflows." },
+      { label: "Reconnect permissions", href: "/docs/guides/x/reconnect-permissions", description: "Grant current scopes after app credentials are complete." },
+      { label: "X Credits reference", href: "/docs/api/x-credits", description: "Inspect managed-X allowance and inbound cap fields." },
+      { label: "X Credits guide", href: "/docs/guides/x/credits", description: "Estimate and monitor managed-X usage." },
+    ],
   },
 };
 

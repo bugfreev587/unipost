@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import type { InboxItem } from "@/lib/api";
+import { isKnownInboxSource } from "@/lib/inbox-model";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -16,7 +17,7 @@ function isInboxItem(value: unknown): value is InboxItem {
   const item = value as Partial<InboxItem>;
   return (
     typeof item.id === "string" &&
-    typeof item.source === "string" &&
+    isKnownInboxSource(item.source) &&
     typeof item.is_read === "boolean" &&
     typeof item.is_own === "boolean"
   );

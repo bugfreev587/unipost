@@ -14,6 +14,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type PlatformCredentialHandler struct {
@@ -27,9 +28,12 @@ func NewPlatformCredentialHandler(queries *db.Queries, encryptor *crypto.AESEncr
 }
 
 type platformCredentialResponse struct {
-	Platform  string    `json:"platform"`
-	ClientID  string    `json:"client_id"`
-	CreatedAt time.Time `json:"created_at"`
+	Platform                  string    `json:"platform"`
+	ClientID                  string    `json:"client_id"`
+	AppBearerTokenConfigured  bool      `json:"app_bearer_token_configured"`
+	ConsumerSecretConfigured  bool      `json:"consumer_secret_configured"`
+	XInboxCredentialsComplete bool      `json:"x_inbox_credentials_complete"`
+	CreatedAt                 time.Time `json:"created_at"`
 }
 
 // requireWorkspace returns the workspace ID stamped into the request
@@ -62,23 +66,37 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	var body struct {
-		Platform     string `json:"platform"`
-		ClientID     string `json:"client_id"`
-		ClientSecret string `json:"client_secret"`
+		Platform       string  `json:"platform"`
+		ClientID       string  `json:"client_id"`
+		ClientSecret   string  `json:"client_secret"`
+		AppBearerToken *string `json:"app_bearer_token"`
+		ConsumerSecret *string `json:"consumer_secret"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
 		return
 	}
 
-	if body.Platform == "" || body.ClientID == "" || body.ClientSecret == "" {
+	body.Platform = strings.ToLower(strings.TrimSpace(body.Platform))
+	if body.Platform == "" || strings.TrimSpace(body.ClientID) == "" || strings.TrimSpace(body.ClientSecret) == "" {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "platform, client_id, and client_secret are required")
 		return
 	}
-	body.Platform = strings.ToLower(strings.TrimSpace(body.Platform))
 	if !connectablePlatforms[body.Platform] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 			"platform must be one of "+connectablePlatformList)
+		return
+	}
+	if body.Platform != "twitter" && (body.AppBearerToken != nil || body.ConsumerSecret != nil) {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "app_bearer_token and consumer_secret are supported only for twitter")
+		return
+	}
+	if body.AppBearerToken != nil && strings.TrimSpace(*body.AppBearerToken) == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "app_bearer_token cannot be blank")
+		return
+	}
+	if body.ConsumerSecret != nil && strings.TrimSpace(*body.ConsumerSecret) == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "consumer_secret cannot be blank")
 		return
 	}
 
@@ -123,22 +141,51 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	appBearerToken := pgtype.Text{}
+	consumerSecret := pgtype.Text{}
+	webhookRouteKey := ""
+	if body.Platform == "twitter" {
+		routeKey, routeErr := xinbox.RandomWebhookRouteKey()
+		if routeErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate X webhook route")
+			return
+		}
+		webhookRouteKey = routeKey
+		if body.AppBearerToken != nil {
+			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.AppBearerToken))
+			if encryptErr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encrypt credentials")
+				return
+			}
+			appBearerToken = pgtype.Text{String: encrypted, Valid: true}
+		}
+		if body.ConsumerSecret != nil {
+			encrypted, encryptErr := h.encryptor.Encrypt(strings.TrimSpace(*body.ConsumerSecret))
+			if encryptErr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encrypt credentials")
+				return
+			}
+			consumerSecret = pgtype.Text{String: encrypted, Valid: true}
+		}
+	}
+
 	cred, err := h.queries.CreatePlatformCredential(r.Context(), db.CreatePlatformCredentialParams{
-		WorkspaceID:  workspaceID,
-		Platform:     body.Platform,
-		ClientID:     body.ClientID,
-		ClientSecret: encSecret,
+		WorkspaceID:            workspaceID,
+		Platform:               body.Platform,
+		ClientID:               body.ClientID,
+		ClientSecret:           encSecret,
+		AppBearerToken:         appBearerToken,
+		ConsumerSecret:         consumerSecret,
+		WebhookRouteKey:        webhookRouteKey,
+		AppBearerTokenSupplied: body.AppBearerToken != nil,
+		ConsumerSecretSupplied: body.ConsumerSecret != nil,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save credentials")
 		return
 	}
 
-	writeCreated(w, platformCredentialResponse{
-		Platform:  cred.Platform,
-		ClientID:  cred.ClientID,
-		CreatedAt: cred.CreatedAt.Time,
-	})
+	writeCreated(w, platformCredentialResponseFromDB(cred))
 }
 
 // List handles GET /v1/platform-credentials
@@ -156,11 +203,7 @@ func (h *PlatformCredentialHandler) List(w http.ResponseWriter, r *http.Request)
 
 	result := make([]platformCredentialResponse, len(creds))
 	for i, c := range creds {
-		result[i] = platformCredentialResponse{
-			Platform:  c.Platform,
-			ClientID:  c.ClientID,
-			CreatedAt: c.CreatedAt.Time,
-		}
+		result[i] = platformCredentialResponseFromDB(c)
 	}
 
 	writeSuccessWithListMeta(w, result, len(result), len(result))
@@ -174,10 +217,32 @@ func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Reques
 	}
 	platformName := chi.URLParam(r, "platform")
 
-	h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
+	if err := h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
 		WorkspaceID: workspaceID,
 		Platform:    platformName,
-	})
+	}); err != nil {
+		writeError(
+			w,
+			http.StatusInternalServerError,
+			"INTERNAL_ERROR",
+			"Failed to delete platform credential",
+		)
+		return
+	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func platformCredentialResponseFromDB(cred db.PlatformCredential) platformCredentialResponse {
+	appBearerConfigured := cred.AppBearerToken.Valid && cred.AppBearerToken.String != ""
+	consumerSecretConfigured := cred.ConsumerSecret.Valid && cred.ConsumerSecret.String != ""
+	isTwitter := strings.EqualFold(cred.Platform, "twitter")
+	return platformCredentialResponse{
+		Platform:                  cred.Platform,
+		ClientID:                  cred.ClientID,
+		AppBearerTokenConfigured:  appBearerConfigured,
+		ConsumerSecretConfigured:  consumerSecretConfigured,
+		XInboxCredentialsComplete: isTwitter && cred.ClientID != "" && cred.ClientSecret != "" && appBearerConfigured && consumerSecretConfigured,
+		CreatedAt:                 cred.CreatedAt.Time,
+	}
 }

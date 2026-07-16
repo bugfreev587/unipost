@@ -29,6 +29,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // ManagedTokenRefreshWorker refreshes managed Connect tokens that
@@ -50,9 +52,15 @@ type ManagedTokenRefreshWorker struct {
 	registry        *connect.Registry
 	bus             events.EventBus
 	callbackBaseURL string
+	xRefresher      xinbox.TokenRefresher
 
 	// tickInterval is variable for tests; production uses 5 min.
 	tickInterval time.Duration
+}
+
+func (w *ManagedTokenRefreshWorker) SetXTokenRefresher(refresher xinbox.TokenRefresher) *ManagedTokenRefreshWorker {
+	w.xRefresher = refresher
+	return w
 }
 
 func NewManagedTokenRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, registry *connect.Registry, bus events.EventBus, callbackBaseURL string) *ManagedTokenRefreshWorker {
@@ -153,18 +161,6 @@ func (w *ManagedTokenRefreshWorker) RunOnce(ctx context.Context) {
 }
 
 func (w *ManagedTokenRefreshWorker) refreshOne(ctx context.Context, acc db.SocialAccount) {
-	connector, ok, err := w.resolveConnector(ctx, acc)
-	if err != nil {
-		slog.Error("managed token refresh: resolve connector failed", "platform", acc.Platform, "account_id", acc.ID, "err", err)
-		return
-	}
-	if !ok {
-		// Should never happen — the query already filters out bluesky,
-		// and the registry should always carry twitter + linkedin in
-		// production. Skip rather than crash.
-		slog.Warn("managed token refresh: no connector", "platform", acc.Platform, "account_id", acc.ID)
-		return
-	}
 	if !acc.RefreshToken.Valid || acc.RefreshToken.String == "" {
 		slog.Warn("managed token refresh: missing refresh token", "account_id", acc.ID)
 		w.markReconnectRequired(ctx, acc, "missing_refresh_token")
@@ -178,7 +174,25 @@ func (w *ManagedTokenRefreshWorker) refreshOne(ctx context.Context, acc db.Socia
 		return
 	}
 
-	tokens, err := connector.Refresh(ctx, refreshTok)
+	var tokens *connect.TokenSet
+	if acc.Platform == "twitter" {
+		if w.xRefresher == nil {
+			err = errors.New("X token refresher is not configured")
+		} else {
+			tokens, err = w.xRefresher.Refresh(ctx, acc, refreshTok)
+		}
+	} else {
+		connector, ok, resolveErr := w.resolveConnector(ctx, acc)
+		if resolveErr != nil {
+			slog.Error("managed token refresh: resolve connector failed", "platform", acc.Platform, "account_id", acc.ID, "err", resolveErr)
+			return
+		}
+		if !ok {
+			slog.Warn("managed token refresh: no connector", "platform", acc.Platform, "account_id", acc.ID)
+			return
+		}
+		tokens, err = connector.Refresh(ctx, refreshTok)
+	}
 	if err != nil {
 		slog.Warn("managed token refresh: platform refused", "account_id", acc.ID, "platform", acc.Platform, "err", err)
 		w.markReconnectRequired(ctx, acc, "refresh_failed")

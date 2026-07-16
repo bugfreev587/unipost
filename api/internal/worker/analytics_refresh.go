@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"strings"
 	"sync"
@@ -10,10 +11,12 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // AnalyticsRefreshWorker periodically refreshes cached metrics for published
@@ -37,9 +40,15 @@ import (
 // so it doesn't compete with the platform API calls for the same
 // burst of CPU.
 type AnalyticsRefreshWorker struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	storage   *storage.Client // optional; nil disables the media sweeper half
+	queries    *db.Queries
+	encryptor  *crypto.AESEncryptor
+	storage    *storage.Client // optional; nil disables the media sweeper half
+	xRefresher xinbox.TokenRefresher
+}
+
+func (w *AnalyticsRefreshWorker) SetXTokenRefresher(refresher xinbox.TokenRefresher) *AnalyticsRefreshWorker {
+	w.xRefresher = refresher
+	return w
 }
 
 func NewAnalyticsRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, store *storage.Client) *AnalyticsRefreshWorker {
@@ -184,7 +193,28 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 	if r.TokenExpiresAt.Valid && r.TokenExpiresAt.Time.Before(time.Now()) && r.RefreshToken.Valid {
 		refreshToken, decErr := w.encryptor.Decrypt(r.RefreshToken.String)
 		if decErr == nil {
-			newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshToken)
+			var newAccess, newRefresh string
+			var expiresAt time.Time
+			var refErr error
+			if r.Platform == "twitter" {
+				if w.xRefresher == nil {
+					refErr = errors.New("X token refresher is not configured")
+				} else {
+					var tokens *connect.TokenSet
+					tokens, refErr = w.xRefresher.Refresh(ctx, db.SocialAccount{
+						ID:             r.SocialAccountID,
+						ProfileID:      r.ProfileID,
+						Platform:       r.Platform,
+						ConnectionType: r.ConnectionType,
+						XAppMode:       r.XAppMode,
+					}, refreshToken)
+					if refErr == nil {
+						newAccess, newRefresh, expiresAt = tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt
+					}
+				}
+			} else {
+				newAccess, newRefresh, expiresAt, refErr = adapter.RefreshToken(ctx, refreshToken)
+			}
 			if refErr != nil {
 				slog.Warn("analytics refresh: token refresh failed",
 					"result_id", r.SocialPostResultID, "platform", r.Platform, "error", refErr)

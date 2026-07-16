@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/go-chi/chi/v5"
@@ -50,6 +51,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 const (
@@ -252,11 +254,6 @@ func main() {
 
 	go integrationLogger.Start(workerCtx)
 
-	if processMode == processModeAPI {
-		tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor)
-		go tokenWorker.Start(workerCtx)
-	}
-
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
 	// the managed token refresh worker can take it as a dependency.
 	// Connectors return nil from their constructors when env vars are
@@ -292,6 +289,18 @@ func main() {
 		connectors = append(connectors, yt)
 	}
 	connectRegistry := connect.NewRegistry(connectors...)
+	xTokenRefresher := xinbox.NewTokenRefreshResolver(
+		queries,
+		encryptor,
+		os.Getenv("TWITTER_CLIENT_ID"),
+		os.Getenv("TWITTER_CLIENT_SECRET"),
+		apiBaseURL,
+	)
+	if processMode == processModeAPI {
+		tokenWorker := worker.NewTokenRefreshWorker(queries, encryptor).
+			SetXTokenRefresher(xTokenRefresher)
+		go tokenWorker.Start(workerCtx)
+	}
 
 	// Sprint 3 PR7: managed token refresh worker. Runs every 5 min,
 	// refreshes tokens within a 30 min window of expiry, uses
@@ -394,21 +403,124 @@ func main() {
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
 	loopsNotificationBus := worker.NewLoopsNotificationEmailBus(queries, loopsSyncer, os.Getenv("APP_BASE_URL"))
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
+	xInboundNotificationWorker := worker.NewXInboundNotificationOutboxWorker(queries, notificationDispatcher)
 	if processMode == processModeAPI {
 		go notificationWorker.Start(workerCtx)
+		go xInboundNotificationWorker.Start(workerCtx)
 	}
 
 	// One Publish() call feeds both the developer webhook system and
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
-	xCreditsService := xcredits.NewPostgresService(pool, queries)
+	xCreditsService := xcredits.NewPostgresService(pool, queries).
+		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
+	managedXWebhookRouteKey := xinbox.WebhookRouteKey(
+		os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET"),
+		os.Getenv("TWITTER_CLIENT_ID"),
+	)
+	if strings.TrimSpace(os.Getenv("TWITTER_CLIENT_ID")) != "" &&
+		strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "" &&
+		managedXWebhookRouteKey == "" {
+		slog.Error("X_INBOX_WEBHOOK_ROUTE_SECRET is required when managed X Inbox is configured")
+		os.Exit(1)
+	}
+	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, pool, managedXWebhookRouteKey)
+	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx); err != nil {
+		slog.Error("failed to backfill X webhook route keys")
+	}
+	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
+		Store: xIngestionStore,
+		AtomicProcess: func(ctx context.Context, req xinbox.InboundAdmissionRequest, item xinbox.InboxItem) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
+			var insertedItem xinbox.InboxItem
+			var inserted bool
+			admission, err := xCreditsService.AdmitInboundWithMutation(ctx, xcredits.InboundRequest{
+				WorkspaceID:          req.WorkspaceID,
+				SocialAccountID:      req.SocialAccountID,
+				AppMode:              req.AppMode,
+				OperationKey:         req.OperationKey,
+				Source:               req.Source,
+				UpstreamResourceType: req.UpstreamResourceType,
+				UpstreamResourceID:   req.UpstreamResourceID,
+				Now:                  req.Now,
+			}, func(ctx context.Context, tx pgx.Tx) error {
+				var insertErr error
+				insertedItem, inserted, insertErr = xIngestionStore.InsertInboxItemTx(ctx, tx, item)
+				return insertErr
+			})
+			switch admission.Decision {
+			case xcredits.InboundDecisionSuppressedDailyCap,
+				xcredits.InboundDecisionSuppressedMonthlyAllowance:
+				return xinbox.InboundAdmission{
+					Suppressed:  true,
+					Duplicate:   admission.Duplicate,
+					Decision:    admission.Decision,
+					PauseReason: admission.PauseReason,
+				}, xinbox.InboxItem{}, false, nil
+			}
+			if err != nil {
+				return xinbox.InboundAdmission{}, xinbox.InboxItem{}, false, err
+			}
+			return xinbox.InboundAdmission{
+				Accepted:    admission.Decision == xcredits.InboundDecisionAccepted,
+				Duplicate:   admission.Duplicate,
+				Decision:    admission.Decision,
+				PauseReason: admission.PauseReason,
+			}, insertedItem, inserted, nil
+		},
+		Notify: func(ctx context.Context, workspaceID string, item xinbox.InboxItem) {
+			ws.Notify(ctx, pool, workspaceID, item)
+		},
+	})
+	xAppSecretResolver := xinbox.NewAppSecretResolver(xinbox.AppSecretResolverConfig{
+		ManagedRouteKey: managedXWebhookRouteKey,
+		ManagedSecret:   os.Getenv("TWITTER_CONSUMER_SECRET"),
+		Store:           xIngestionStore,
+		Decrypt:         encryptor.Decrypt,
+	})
+	if processMode == processModeAPI {
+		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
+			databaseURL,
+			pool,
+			queries,
+			encryptor,
+			xCreditsService,
+			xinbox.NewClient(xinbox.ClientConfig{}),
+			os.Getenv("TWITTER_BEARER_TOKEN"),
+			strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
+			managedXWebhookRouteKey,
+			os.Getenv("X_INBOX_WEBHOOK_URL"),
+		).SetEventHandler(xIngestionService.IngestStreamEvent)
+		go xInboxDeliveryWorker.Start(workerCtx)
+		workspaceXAppCapacities, capacityConfigErr := worker.ParseXInboxWorkspaceAppCapacities(
+			os.Getenv("X_INBOX_WORKSPACE_APP_CAPACITIES_JSON"),
+		)
+		if capacityConfigErr != nil {
+			slog.Warn("invalid X Inbox workspace app capacity configuration",
+				"error_class", "workspace_app_capacity_config_invalid")
+		}
+		xInboxOperationsWorker := worker.NewPostgresXInboxOperationsReconciliationWorker(
+			pool,
+			slog.Default(),
+			worker.XInboxOperationsReconciliationConfig{
+				ManagedFilteredStreamRuleCapacity: positiveInt64Env(
+					"X_INBOX_MANAGED_FILTERED_STREAM_RULE_CAPACITY",
+				),
+				ManagedActivitySubscriptionCapacity: positiveInt64Env(
+					"X_INBOX_MANAGED_ACTIVITY_SUBSCRIPTION_CAPACITY",
+				),
+				WorkspaceAppCapacities: workspaceXAppCapacities,
+			},
+		)
+		go xInboxOperationsWorker.Start(workerCtx)
+	}
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetQuotaEmailService(freePlanQuotaEmailService).
 		SetXUsageService(xCreditsService).
+		SetXTokenRefresher(xTokenRefresher).
 		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool)).
 		SetHoldReconciler(paidQuotaHoldReconciler).
 		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
@@ -416,7 +528,8 @@ func main() {
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.
 	if processMode == processModeAPI {
-		managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL)
+		managedTokenWorker := worker.NewManagedTokenRefreshWorker(queries, encryptor, connectRegistry, eventBus, apiBaseURL).
+			SetXTokenRefresher(xTokenRefresher)
 		go managedTokenWorker.Start(workerCtx)
 	}
 
@@ -438,7 +551,8 @@ func main() {
 	}
 
 	if processMode == processModeAPI {
-		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient)
+		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient).
+			SetXTokenRefresher(xTokenRefresher)
 		go analyticsRefreshWorker.Start(workerCtx)
 
 		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
@@ -493,14 +607,7 @@ func main() {
 	// Global middleware
 	r.Use(mw.Logger)
 	r.Use(chimw.Recoverer)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   corsAllowedOrigins(),
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
-		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Scheduled-Usage", "X-UniPost-Quota-Hold-Usage", "X-UniPost-Effective-Usage", "X-UniPost-Warning", "X-UniPost-RateLimit-Limit", "X-UniPost-RateLimit-Remaining", "X-UniPost-RateLimit-Reset", "X-UniPost-QueueDepth", "Retry-After"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	r.Use(cors.Handler(apiCORSOptions()))
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
@@ -517,7 +624,8 @@ func main() {
 	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
-	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker)
+	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
+		SetXTokenRefresher(xTokenRefresher)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
@@ -531,7 +639,7 @@ func main() {
 	// dynamic GROUP BY clause sqlc can't model.
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
-	platformHandler := handler.NewPlatformHandler(queries)
+	platformHandler := handler.NewPlatformHandler(queries, quotaChecker)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
@@ -575,6 +683,11 @@ func main() {
 		os.Getenv("META_APP_SECRET"),
 		os.Getenv("META_WEBHOOK_VERIFY_TOKEN"),
 	)
+	xWebhookHandler := handler.NewXWebhookHandler(handler.XWebhookConfig{
+		Secrets:         xAppSecretResolver,
+		Ingestor:        xIngestionService,
+		ManagedRouteKey: managedXWebhookRouteKey,
+	})
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
@@ -622,6 +735,10 @@ func main() {
 	r.Post("/webhooks/stripe", stripeWebhookHandler.HandleStripe)
 	r.Get("/webhooks/meta", metaWebhookHandler.Verify)
 	r.Post("/webhooks/meta", metaWebhookHandler.Handle)
+	r.Get("/v1/webhooks/twitter", xWebhookHandler.CRC)
+	r.Post("/v1/webhooks/twitter", xWebhookHandler.Handle)
+	r.Get("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.CRC)
+	r.Post("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.Handle)
 
 	// WebSocket — auth via ?token= query param (browser WS API
 	// doesn't support custom headers). Handler validates Clerk JWT.
@@ -1001,6 +1118,7 @@ func main() {
 		// are owner-only because they touch the payment method.
 		r.Get("/v1/billing", billingHandler.GetBilling)
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
@@ -1053,11 +1171,29 @@ func main() {
 
 		// Inbox — unified Instagram comments/DMs and Threads replies.
 		// Plan-gated (migration 059): Free + API plans get 402.
-		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool)
+		inboxHandler := handler.NewInboxHandler(queries, encryptor, pool).
+			SetXInboxServices(
+				xCreditsService,
+				xIngestionService,
+				xTokenRefresher,
+				[]byte(os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET")),
+			)
+		if value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("X_INBOX_BACKFILL_SAFE_CREDITS")), 10, 64); err == nil && value > 0 {
+			inboxHandler.SetXBackfillSafeCredits(value)
+		}
+		if processMode == processModeAPI {
+			xOutboundRecoveryWorker := worker.NewXInboxOutboundRecoveryWorker(
+				handler.NewXInboxOutboundRecoveryService(inboxHandler),
+			)
+			go xOutboundRecoveryWorker.Start(workerCtx)
+			xExposureRecoveryWorker := worker.NewXInboxExposureRecoveryWorker(xCreditsService)
+			go xExposureRecoveryWorker.Start(workerCtx)
+		}
 		r.Route("/v1/inbox", func(r chi.Router) {
 			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)
+			r.Get("/x-outbound-operations/{requestID}", inboxHandler.XOutboundStatus)
 			r.Post("/mark-all-read", inboxHandler.MarkAllRead)
 			r.Post("/sync", inboxHandler.Sync)
 			r.Get("/{id}", inboxHandler.Get)
@@ -1121,6 +1257,31 @@ func corsAllowedOrigins() []string {
 	return origins
 }
 
+func apiCORSOptions() cors.Options {
+	return cors.Options{
+		AllowedOrigins: corsAllowedOrigins(),
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
+		ExposedHeaders: []string{
+			"Link",
+			"X-Request-Id",
+			"X-UniPost-Usage",
+			"X-UniPost-Scheduled-Usage",
+			"X-UniPost-Quota-Hold-Usage",
+			"X-UniPost-Effective-Usage",
+			"X-UniPost-Warning",
+			"X-UniPost-RateLimit-Limit",
+			"X-UniPost-RateLimit-Remaining",
+			"X-UniPost-RateLimit-Reset",
+			"X-UniPost-QueueDepth",
+			"X-UniPost-Operation-Id",
+			"Retry-After",
+		},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}
+}
+
 func normalizeProcessMode(raw string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(raw))
 	if mode == "" {
@@ -1132,6 +1293,20 @@ func normalizeProcessMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("UNIPOST_PROCESS must be %q or %q, got %q", processModeAPI, processModePostDeliveryWorker, raw)
 	}
+}
+
+func positiveInt64Env(name string) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		slog.Warn("invalid positive integer environment value; capacity alerts disabled",
+			"name", name)
+		return 0
+	}
+	return value
 }
 
 func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorkerConfig) int32 {
