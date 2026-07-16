@@ -620,6 +620,9 @@ func socialPostScanRow(post db.SocialPost) scanRow {
 		post.DeletedAt,
 		post.Source,
 		post.ProfileIds,
+		post.QuotaHoldReason,
+		post.QuotaHoldAt,
+		post.QuotaHoldOriginalScheduledAt,
 	}}
 }
 

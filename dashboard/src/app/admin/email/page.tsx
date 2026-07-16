@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   listAdminEmailNotifications,
+  retryAdminPaidQuotaEmailNotification,
   type AdminEmailNotificationListParams,
   type AdminEmailNotificationRow,
   type AdminEmailNotificationStatus,
@@ -14,9 +15,20 @@ import {
 import { AdminShell, StatCard, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
 
-const STATUS_OPTIONS = ["all", "failed", "skipped", "pending", "sent"] as const;
+const STATUS_OPTIONS = [
+  "all",
+  "failed",
+  "retry_wait",
+  "processing",
+  "pending",
+  "sent",
+  "skipped",
+  "skipped_superseded",
+  "skipped_preference_disabled",
+  "skipped_missing_recipient",
+] as const;
 const PROVIDER_OPTIONS = ["all", "loops", "notification_system", "resend_legacy"] as const;
-const THRESHOLD_OPTIONS = ["all", 80, 85, 90, 95, 100] as const;
+const THRESHOLD_OPTIONS = ["all", 80, 85, 90, 95, 100, 105, 110, 115, 120] as const;
 const LIMIT_OPTIONS = [50, 100, 200, 500] as const;
 
 function currentPeriod() {
@@ -30,7 +42,8 @@ function usagePercent(row: AdminEmailNotificationRow) {
 
 function triggerLabel(row: AdminEmailNotificationRow) {
   if (row.threshold_percent <= 0) return row.event_key.replace(/^email\./, "");
-  if (row.threshold_percent === 100) return "Usage blocked";
+  if (row.threshold_percent >= 120) return "Critical paid quota alert";
+  if (row.threshold_percent >= 100) return "Paid scheduling alert";
   if (row.threshold_percent === 95) return "Block warning";
   return `Usage ${row.threshold_percent}%`;
 }
@@ -50,7 +63,7 @@ function statusStyle(status: AdminEmailNotificationStatus) {
       borderColor: "color-mix(in srgb, var(--danger) 20%, transparent)",
     };
   }
-  if (status === "skipped") {
+  if (status.startsWith("skipped")) {
     return {
       background: "color-mix(in srgb, var(--dmuted) 12%, transparent)",
       color: "var(--dmuted)",
@@ -76,6 +89,7 @@ export default function AdminEmailPage() {
   const [period, setPeriod] = useState("");
   const [limit, setLimit] = useState<(typeof LIMIT_OPTIONS)[number]>(100);
   const [offset, setOffset] = useState(0);
+  const [retryingId, setRetryingId] = useState<string | null>(null);
 
   const loadNotifications = useCallback(async () => {
     setLoading(true);
@@ -103,6 +117,21 @@ export default function AdminEmailPage() {
     }
   }, [eventKey, getToken, limit, offset, period, provider, search, status, threshold]);
 
+  const retryNotification = useCallback(async (notificationId: string) => {
+    setRetryingId(notificationId);
+    setError(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      await retryAdminPaidQuotaEmailNotification(token, notificationId);
+      await loadNotifications();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to retry paid quota notification");
+    } finally {
+      setRetryingId(null);
+    }
+  }, [getToken, loadNotifications]);
+
   useEffect(() => {
     loadNotifications();
   }, [loadNotifications]);
@@ -126,7 +155,7 @@ export default function AdminEmailPage() {
 
   const sentOnPage = useMemo(() => rows.filter((row) => row.status === "sent").length, [rows]);
   const failedOnPage = useMemo(() => rows.filter((row) => row.status === "failed").length, [rows]);
-  const skippedOnPage = useMemo(() => rows.filter((row) => row.status === "skipped").length, [rows]);
+  const skippedOnPage = useMemo(() => rows.filter((row) => row.status.startsWith("skipped")).length, [rows]);
   const latestAttempt = rows[0]?.attempted_at ?? null;
   const canPageBack = offset > 0;
   const canPageForward = offset + rows.length < total;
@@ -272,6 +301,12 @@ export default function AdminEmailPage() {
                       <span className="ad-badge ad-b-gray" style={statusStyle(row.status)}>
                         {row.status}
                       </span>
+                      {row.severity ? (
+                        <div className="ad-mono" style={{ marginTop: 4 }}>{row.severity}</div>
+                      ) : null}
+                      {row.attempt_count > 0 ? (
+                        <div className="ad-mono" style={{ marginTop: 3 }}>attempt {fmtNumber(row.attempt_count)}</div>
+                      ) : null}
                     </td>
                     <td style={{ minWidth: 150 }}>
                       <div>{row.provider || "unknown"}</div>
@@ -287,7 +322,7 @@ export default function AdminEmailPage() {
                             <strong>{pct}%</strong>
                           </div>
                           <div className="ad-mono" style={{ marginTop: 3 }}>
-                            done {fmtNumber(row.completed_usage)} + reserved {fmtNumber(row.reserved_usage)}
+                            done {fmtNumber(row.completed_usage)} + scheduled {fmtNumber(row.reserved_usage)} + held {fmtNumber(row.quota_hold_usage)}
                           </div>
                           <div className="ad-mono" style={{ marginTop: 3 }}>
                             {row.preference_category || "no preference category"}
@@ -321,8 +356,20 @@ export default function AdminEmailPage() {
                     </td>
                     <td style={{ minWidth: 180 }}>
                       {row.status === "failed" ? (
-                        <div className="ae-failure">{row.failure_reason || "No failure reason captured"}</div>
-                      ) : row.status === "skipped" ? (
+                        <div>
+                          <div className="ae-failure">{row.failure_reason || "No failure reason captured"}</div>
+                          {row.retryable ? (
+                            <button
+                              type="button"
+                              className="ad-btn ad-btn-ghost ae-retry-button"
+                              disabled={retryingId === row.id}
+                              onClick={() => void retryNotification(row.id)}
+                            >
+                              {retryingId === row.id ? "Queuing..." : "Retry"}
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : row.status.startsWith("skipped") ? (
                         <div className="ad-mono">
                           {row.preference_decision === "skipped_preference_disabled"
                             ? "Skipped by user email preference"
@@ -402,6 +449,9 @@ const emailCss = `
   color: var(--danger);
   font-size: 11.5px;
   line-height: 1.45;
+}
+.ae-retry-button {
+  margin-top: 8px;
 }
 .ae-idempotency {
   max-width: 260px;

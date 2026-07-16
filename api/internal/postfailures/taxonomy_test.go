@@ -49,6 +49,14 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable:      false,
 		},
 		{
+			name:        "managed X monthly allowance",
+			raw:         "x_monthly_usage_limit_exceeded: managed X usage has reached this billing period's allowance",
+			code:        "x_monthly_usage_limit_exceeded",
+			source:      ErrorSourceUnipost,
+			temporality: ErrorTemporalityPermanent,
+			retriable:   false,
+		},
+		{
 			name:        "threads invalid token",
 			raw:         `threads get user id failed (401): {"error":{"message":"Invalid OAuth access token"}}`,
 			code:        "account_reconnect_required",
@@ -160,6 +168,14 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable:   false,
 		},
 		{
+			name:        "X write outcome pending reconciliation",
+			raw:         "x_write_outcome_pending_reconciliation: the prior X write outcome is unknown",
+			code:        "x_write_outcome_pending_reconciliation",
+			source:      ErrorSourcePlatform,
+			temporality: ErrorTemporalityUnknown,
+			retriable:   false,
+		},
+		{
 			name:        "unknown empty",
 			raw:         "",
 			code:        "unknown_error",
@@ -232,6 +248,7 @@ func TestNextActionForErrorCode(t *testing.T) {
 		{code: "media_error", want: "fix_media"},
 		{code: "temporary_platform_error", want: "retry_later"},
 		{code: "rate_limit", want: "wait_and_retry"},
+		{code: "x_monthly_usage_limit_exceeded", want: "review_quota"},
 		{code: "account_reconnect_required", want: "reconnect_account"},
 		{code: "missing_permission", want: "reconnect_or_update_permissions"},
 		{code: "target_not_found", want: "select_valid_target"},

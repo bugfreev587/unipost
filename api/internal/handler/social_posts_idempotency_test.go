@@ -382,6 +382,9 @@ func scheduledIdempotencySocialPostRow(post db.SocialPost) pgx.Row {
 		post.DeletedAt,
 		post.Source,
 		post.ProfileIds,
+		post.QuotaHoldReason,
+		post.QuotaHoldAt,
+		post.QuotaHoldOriginalScheduledAt,
 	}}
 }
 

@@ -112,6 +112,19 @@ export interface ApiError {
     retry_policy?: RetryPolicy;
     docs_url?: string;
     issues?: SocialPostValidationIssue[];
+    details?: {
+      plan_id?: string;
+      period?: string;
+      completed_posts?: number;
+      scheduled_posts?: number;
+      quota_hold_posts?: number;
+      effective_usage?: number;
+      post_limit?: number;
+      projected_usage?: number;
+      requested_units?: number;
+      scheduling_allowed?: boolean;
+      resets_at?: string;
+    };
   };
   request_id?: string;
 }
@@ -135,6 +148,7 @@ export interface ApiFetchError extends Error {
   retryPolicy?: RetryPolicy;
   docsUrl?: string;
   issues?: SocialPostValidationIssue[];
+  details?: ApiError["error"]["details"];
 }
 
 export interface CreateSocialPostPayload {
@@ -468,6 +482,7 @@ export function createApiFetchError(status: number, body: unknown): ApiFetchErro
   thrown.retryPolicy = apiError?.retry_policy;
   thrown.docsUrl = apiError?.docs_url;
   thrown.issues = issues;
+  thrown.details = apiError?.details;
   return thrown;
 }
 
@@ -1387,6 +1402,9 @@ export interface SocialPost {
   retrying_count?: number;
   dead_count?: number;
   scheduled_at?: string;
+  quota_hold_reason?: string;
+  quota_hold_at?: string;
+  quota_hold_original_scheduled_at?: string;
   created_at: string;
   published_at?: string;
   archived_at?: string;
@@ -1626,10 +1644,17 @@ export interface BillingInfo {
   plan_name: string;
   status: string;
   usage: number;
+  completed_usage: number;
+  scheduled_usage: number;
+  quota_hold_usage: number;
+  effective_usage: number;
   limit: number;
   percentage: number;
+  effective_percentage: number;
   period: string;
   warning?: string;
+  scheduling_allowed: boolean;
+  resets_at: string;
   cancel_at_period_end: boolean;
   trial_eligible: boolean;
 }
@@ -1637,14 +1662,35 @@ export interface BillingInfo {
 export interface Plan {
   id: string;
   name: string;
-  price_cents: number;
+  price_cents: number | null;
   post_limit: number;
+  pricing_model: "fixed" | "custom";
+}
+
+export interface XCreditsAllowance {
+  mode: "monthly_allowance";
+  plan_id: string;
+  monthly_allowance: number | null;
+  monthly_used: number;
+  monthly_remaining: number | null;
+  billing_period_start: string;
+  billing_period_end: string;
+  catalog_version: string;
+  inbound_daily_usage: number;
+  inbound_daily_limit: number | null;
+  connection_mode_note: string;
 }
 
 export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
   return request(`/v1/billing`, token);
+}
+
+export async function getXCreditsAllowance(
+  token: string,
+): Promise<ApiResponse<XCreditsAllowance>> {
+  return request(`/v1/billing/x-credits`, token);
 }
 
 export async function listIntegrationLogs(
@@ -2819,7 +2865,16 @@ export interface AdminPostsAggregates {
   events: AdminPostsEvent[];
 }
 
-export type AdminEmailNotificationStatus = "pending" | "sent" | "failed" | "skipped";
+export type AdminEmailNotificationStatus =
+  | "pending"
+  | "processing"
+  | "retry_wait"
+  | "sent"
+  | "failed"
+  | "skipped"
+  | "skipped_superseded"
+  | "skipped_preference_disabled"
+  | "skipped_missing_recipient";
 
 export interface AdminEmailNotificationRow {
   id: string;
@@ -2833,12 +2888,16 @@ export interface AdminEmailNotificationRow {
   email: string;
   period: string;
   threshold_percent: number;
+  severity: string;
   status: AdminEmailNotificationStatus;
+  attempt_count: number;
+  retryable: boolean;
   transactional_id: string;
   idempotency_key: string;
   effective_usage: number;
   completed_usage: number;
   reserved_usage: number;
+  quota_hold_usage: number;
   post_limit: number;
   failure_reason?: string;
   attempted_at: string;
@@ -2860,8 +2919,37 @@ export interface AdminEmailNotificationListParams {
   status?: "all" | AdminEmailNotificationStatus;
   provider?: "all" | string;
   event_key?: string;
-  threshold?: "all" | 80 | 85 | 90 | 95 | 100;
+  threshold?: "all" | 80 | 85 | 90 | 95 | 100 | 105 | 110 | 115 | 120;
   period?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export interface AdminPaidQuotaFollowUpRow {
+  id: string;
+  workspace_id: string;
+  workspace_name: string;
+  owner_user_id: string;
+  owner_email: string;
+  plan_id: string;
+  period: string;
+  threshold_percent: number;
+  notification_id: string;
+  status: "open" | "contacted" | "resolved" | "dismissed";
+  completed_usage: number;
+  scheduled_usage: number;
+  quota_hold_usage: number;
+  effective_usage: number;
+  post_limit: number;
+  assignee_user_id: string;
+  notes: string;
+  resolved_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminPaidQuotaFollowUpListParams {
+  status?: "all" | AdminPaidQuotaFollowUpRow["status"];
   limit?: number;
   offset?: number;
 }
@@ -3591,6 +3679,42 @@ export async function listAdminEmailNotifications(
   if (params?.offset != null) qs.set("offset", String(params.offset));
   const s = qs.toString();
   return request(`/v1/admin/email-notifications${s ? `?${s}` : ""}`, token);
+}
+
+export async function retryAdminPaidQuotaEmailNotification(
+  token: string,
+  notificationId: string,
+): Promise<ApiResponse<{ id: string; status: string; message: string }>> {
+  return request(`/v1/admin/email-notifications/${notificationId}/retry`, token, {
+    method: "POST",
+  });
+}
+
+export async function listAdminPaidQuotaFollowUps(
+  token: string,
+  params?: AdminPaidQuotaFollowUpListParams,
+): Promise<ApiResponse<AdminPaidQuotaFollowUpRow[]>> {
+  const qs = new URLSearchParams();
+  if (params?.status && params.status !== "all") qs.set("status", params.status);
+  if (params?.limit != null) qs.set("limit", String(params.limit));
+  if (params?.offset != null) qs.set("offset", String(params.offset));
+  const s = qs.toString();
+  return request(`/v1/admin/paid-quota-follow-ups${s ? `?${s}` : ""}`, token);
+}
+
+export async function updateAdminPaidQuotaFollowUp(
+  token: string,
+  followUpId: string,
+  data: {
+    status: AdminPaidQuotaFollowUpRow["status"];
+    assignee_user_id?: string;
+    notes?: string;
+  },
+): Promise<ApiResponse<AdminPaidQuotaFollowUpRow>> {
+  return request(`/v1/admin/paid-quota-follow-ups/${followUpId}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
 }
 
 export async function listAdminBilling(

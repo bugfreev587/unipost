@@ -194,14 +194,18 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 			}
 			newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 		}
-		if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+		completedAt := time.Now().UTC()
+		if _, err := w.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
 			ID:           r.SocialPostResultID,
 			Status:       "published",
 			ExternalID:   newExternalID,
 			ErrorMessage: pgtype.Text{Valid: false},
-			PublishedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			PublishedAt:  pgtype.Timestamptz{Time: completedAt, Valid: true},
 			Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
 			DebugCurl:    pgtype.Text{Valid: false},
+			WorkspaceID:  r.WorkspaceID,
+			Period:       completedAt.Format("2006-01"),
+			PostCount:    1,
 		}); err != nil {
 			slog.Error("facebook video status: update to published failed",
 				"result_id", r.SocialPostResultID, "error", err)

@@ -525,6 +525,55 @@ type OauthState struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type PaidPlanQuotaNotification struct {
+	ID               string             `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	UserID           pgtype.Text        `json:"user_id"`
+	Email            pgtype.Text        `json:"email"`
+	PlanID           string             `json:"plan_id"`
+	Period           string             `json:"period"`
+	ThresholdPercent int32              `json:"threshold_percent"`
+	Severity         string             `json:"severity"`
+	EventKey         string             `json:"event_key"`
+	Status           string             `json:"status"`
+	TransactionalID  pgtype.Text        `json:"transactional_id"`
+	IdempotencyKey   string             `json:"idempotency_key"`
+	CompletedUsage   int32              `json:"completed_usage"`
+	ScheduledUsage   int32              `json:"scheduled_usage"`
+	QuotaHoldUsage   int32              `json:"quota_hold_usage"`
+	EffectiveUsage   int32              `json:"effective_usage"`
+	PostLimit        int32              `json:"post_limit"`
+	AttemptCount     int32              `json:"attempt_count"`
+	NextAttemptAt    pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt   pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError        pgtype.Text        `json:"last_error"`
+	AttemptedAt      pgtype.Timestamptz `json:"attempted_at"`
+	SentAt           pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PaidQuotaFollowUp struct {
+	ID               string             `json:"id"`
+	WorkspaceID      string             `json:"workspace_id"`
+	OwnerUserID      pgtype.Text        `json:"owner_user_id"`
+	PlanID           string             `json:"plan_id"`
+	Period           string             `json:"period"`
+	ThresholdPercent int32              `json:"threshold_percent"`
+	NotificationID   pgtype.Text        `json:"notification_id"`
+	Status           string             `json:"status"`
+	CompletedUsage   int32              `json:"completed_usage"`
+	ScheduledUsage   int32              `json:"scheduled_usage"`
+	QuotaHoldUsage   int32              `json:"quota_hold_usage"`
+	EffectiveUsage   int32              `json:"effective_usage"`
+	PostLimit        int32              `json:"post_limit"`
+	AssigneeUserID   pgtype.Text        `json:"assignee_user_id"`
+	Notes            pgtype.Text        `json:"notes"`
+	ResolvedAt       pgtype.Timestamptz `json:"resolved_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PendingConnection struct {
 	ID                 string             `json:"id"`
 	WorkspaceID        string             `json:"workspace_id"`
@@ -747,44 +796,51 @@ type SocialAccount struct {
 }
 
 type SocialPost struct {
-	ID             string             `json:"id"`
-	Caption        pgtype.Text        `json:"caption"`
-	MediaUrls      []string           `json:"media_urls"`
-	Status         string             `json:"status"`
-	ScheduledAt    pgtype.Timestamptz `json:"scheduled_at"`
-	PublishedAt    pgtype.Timestamptz `json:"published_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	Metadata       []byte             `json:"metadata"`
-	IdempotencyKey pgtype.Text        `json:"idempotency_key"`
-	WorkspaceID    string             `json:"workspace_id"`
-	ArchivedAt     pgtype.Timestamptz `json:"archived_at"`
-	DeletedAt      pgtype.Timestamptz `json:"deleted_at"`
-	Source         string             `json:"source"`
-	ProfileIds     []string           `json:"profile_ids"`
+	ID                           string             `json:"id"`
+	Caption                      pgtype.Text        `json:"caption"`
+	MediaUrls                    []string           `json:"media_urls"`
+	Status                       string             `json:"status"`
+	ScheduledAt                  pgtype.Timestamptz `json:"scheduled_at"`
+	PublishedAt                  pgtype.Timestamptz `json:"published_at"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	Metadata                     []byte             `json:"metadata"`
+	IdempotencyKey               pgtype.Text        `json:"idempotency_key"`
+	WorkspaceID                  string             `json:"workspace_id"`
+	ArchivedAt                   pgtype.Timestamptz `json:"archived_at"`
+	DeletedAt                    pgtype.Timestamptz `json:"deleted_at"`
+	Source                       string             `json:"source"`
+	ProfileIds                   []string           `json:"profile_ids"`
+	QuotaHoldReason              pgtype.Text        `json:"quota_hold_reason"`
+	QuotaHoldAt                  pgtype.Timestamptz `json:"quota_hold_at"`
+	QuotaHoldOriginalScheduledAt pgtype.Timestamptz `json:"quota_hold_original_scheduled_at"`
 }
 
 type SocialPostResult struct {
-	ID                string             `json:"id"`
-	PostID            string             `json:"post_id"`
-	SocialAccountID   string             `json:"social_account_id"`
-	Status            string             `json:"status"`
-	ExternalID        pgtype.Text        `json:"external_id"`
-	ErrorMessage      pgtype.Text        `json:"error_message"`
-	PublishedAt       pgtype.Timestamptz `json:"published_at"`
-	Caption           string             `json:"caption"`
-	Url               pgtype.Text        `json:"url"`
-	DebugCurl         pgtype.Text        `json:"debug_curl"`
-	FbMediaType       pgtype.Text        `json:"fb_media_type"`
-	RemotelyDeletedAt pgtype.Timestamptz `json:"remotely_deleted_at"`
-	ErrorCode         pgtype.Text        `json:"error_code"`
-	FailureStage      pgtype.Text        `json:"failure_stage"`
-	PlatformErrorCode pgtype.Text        `json:"platform_error_code"`
-	IsRetriable       pgtype.Bool        `json:"is_retriable"`
-	NextAction        pgtype.Text        `json:"next_action"`
-	ErrorSource       pgtype.Text        `json:"error_source"`
-	ErrorTemporality  pgtype.Text        `json:"error_temporality"`
-	ProviderError     []byte             `json:"provider_error"`
-	PublishToken      pgtype.Text        `json:"publish_token"`
+	ID                    string             `json:"id"`
+	PostID                string             `json:"post_id"`
+	SocialAccountID       string             `json:"social_account_id"`
+	Status                string             `json:"status"`
+	ExternalID            pgtype.Text        `json:"external_id"`
+	ErrorMessage          pgtype.Text        `json:"error_message"`
+	PublishedAt           pgtype.Timestamptz `json:"published_at"`
+	Caption               string             `json:"caption"`
+	Url                   pgtype.Text        `json:"url"`
+	DebugCurl             pgtype.Text        `json:"debug_curl"`
+	FbMediaType           pgtype.Text        `json:"fb_media_type"`
+	RemotelyDeletedAt     pgtype.Timestamptz `json:"remotely_deleted_at"`
+	ErrorCode             pgtype.Text        `json:"error_code"`
+	FailureStage          pgtype.Text        `json:"failure_stage"`
+	PlatformErrorCode     pgtype.Text        `json:"platform_error_code"`
+	IsRetriable           pgtype.Bool        `json:"is_retriable"`
+	NextAction            pgtype.Text        `json:"next_action"`
+	ErrorSource           pgtype.Text        `json:"error_source"`
+	ErrorTemporality      pgtype.Text        `json:"error_temporality"`
+	ProviderError         []byte             `json:"provider_error"`
+	PublishToken          pgtype.Text        `json:"publish_token"`
+	XCreditsCounted       int64              `json:"x_credits_counted"`
+	XCreditOperation      pgtype.Text        `json:"x_credit_operation"`
+	XCreditCatalogVersion pgtype.Text        `json:"x_credit_catalog_version"`
+	XCreditBillingMode    pgtype.Text        `json:"x_credit_billing_mode"`
 }
 
 type Subscription struct {
@@ -957,4 +1013,50 @@ type WorkspaceMember struct {
 	AcceptedAt  pgtype.Timestamptz `json:"accepted_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboundDailyUsage struct {
+	WorkspaceID        string             `json:"workspace_id"`
+	UtcDate            pgtype.Date        `json:"utc_date"`
+	WeightedUnitsUsed  int64              `json:"weighted_units_used"`
+	WeightedUnitsLimit int64              `json:"weighted_units_limit"`
+	EventsAccepted     int64              `json:"events_accepted"`
+	EventsSuppressed   int64              `json:"events_suppressed"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XUsageEvent struct {
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	SocialAccountID pgtype.Text        `json:"social_account_id"`
+	PeriodStart     pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd       pgtype.Timestamptz `json:"period_end"`
+	OperationKey    string             `json:"operation_key"`
+	CatalogVersion  string             `json:"catalog_version"`
+	Source          string             `json:"source"`
+	IdempotencyKey  string             `json:"idempotency_key"`
+	WeightedUnits   int64              `json:"weighted_units"`
+	Status          string             `json:"status"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ConnectionMode  string             `json:"connection_mode"`
+}
+
+type XUsagePeriod struct {
+	WorkspaceID        string             `json:"workspace_id"`
+	PeriodStart        pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd          pgtype.Timestamptz `json:"period_end"`
+	WeightedUnitsUsed  int64              `json:"weighted_units_used"`
+	WeightedUnitsLimit int64              `json:"weighted_units_limit"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XWorkspaceAllowance struct {
+	WorkspaceID       string             `json:"workspace_id"`
+	MonthlyAllowance  int64              `json:"monthly_allowance"`
+	InboundDailyLimit int64              `json:"inbound_daily_limit"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }

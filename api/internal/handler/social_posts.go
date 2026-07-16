@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,13 +29,17 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
+	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
+	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
+
+var xURLCandidatePattern = regexp.MustCompile(`(?i)(https?://|www\.|(?:^|[^@\p{L}\p{N}_])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:[/:?#][^\s]*)?)`)
 
 type SocialPostHandler struct {
 	queries   *db.Queries
@@ -56,15 +61,29 @@ type SocialPostHandler struct {
 	// April 2026 rate-limit PRD. Always non-nil — main.go injects
 	// either RedisLimiter or NoopLimiter — so call sites do not
 	// need a nil guard.
-	limiter     ratelimit.Limiter
-	ilog        *integrationlogs.Logger
-	loopsSyncer loopsLifecycleSyncer
-	quotaEmail  quotaEmailService
-	appBaseURL  string
+	limiter            ratelimit.Limiter
+	ilog               *integrationlogs.Logger
+	loopsSyncer        loopsLifecycleSyncer
+	quotaEmail         quotaEmailService
+	xUsage             xUsageService
+	paidSchedule       paidquota.Coordinator
+	holdReconciler     paidquota.HoldReconciler
+	paidQuotaEvaluator paidQuotaEvaluationService
+	appBaseURL         string
 }
 
 type quotaEmailService interface {
 	EvaluateAndSend(context.Context, quotaemail.Evaluation) error
+}
+
+type xUsageService interface {
+	Reserve(context.Context, xcredits.ReserveRequest) (xcredits.UsageEvent, error)
+	Finalize(context.Context, string, int64) error
+	Reverse(context.Context, string) error
+}
+
+type paidQuotaEvaluationService interface {
+	Evaluate(context.Context, string, string) error
 }
 
 func NewSocialPostHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, quotaChecker *quota.Checker, bus events.EventBus, store *storage.Client, limiter ratelimit.Limiter, ilog *integrationlogs.Logger) *SocialPostHandler {
@@ -141,6 +160,44 @@ func (h *SocialPostHandler) checkFreePlanPostQuotaForPeriod(ctx context.Context,
 func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *SocialPostHandler {
 	h.quotaEmail = service
 	return h
+}
+
+func (h *SocialPostHandler) SetXUsageService(service xUsageService) *SocialPostHandler {
+	h.xUsage = service
+	return h
+}
+
+func (h *SocialPostHandler) SetPaidScheduleCoordinator(coordinator paidquota.Coordinator) *SocialPostHandler {
+	h.paidSchedule = coordinator
+	return h
+}
+
+func (h *SocialPostHandler) SetHoldReconciler(reconciler paidquota.HoldReconciler) *SocialPostHandler {
+	h.holdReconciler = reconciler
+	return h
+}
+
+func (h *SocialPostHandler) SetPaidQuotaEvaluator(evaluator paidQuotaEvaluationService) *SocialPostHandler {
+	h.paidQuotaEvaluator = evaluator
+	return h
+}
+
+func (h *SocialPostHandler) maybeEvaluatePaidQuota(ctx context.Context, workspaceID, period string) {
+	if h == nil || h.paidQuotaEvaluator == nil || workspaceID == "" {
+		return
+	}
+	if err := h.paidQuotaEvaluator.Evaluate(ctx, workspaceID, period); err != nil {
+		slog.Warn("paid quota evaluation failed", "workspace_id", workspaceID, "period", period, "error", err)
+	}
+}
+
+func (h *SocialPostHandler) maybeReconcileQuotaHolds(ctx context.Context, workspaceID, reason string) {
+	if h == nil || h.holdReconciler == nil || workspaceID == "" {
+		return
+	}
+	if err := h.holdReconciler.ReconcileWorkspace(ctx, workspaceID, reason, time.Time{}); err != nil {
+		slog.Warn("paid quota hold reconciliation failed", "workspace_id", workspaceID, "reason", reason, "error", err)
+	}
 }
 
 func (h *SocialPostHandler) maybeSendFreePlanQuotaEmail(ctx context.Context, workspaceID string, eval quotaemail.Evaluation) {
@@ -256,6 +313,46 @@ func writeFreePlanPostQuotaExceeded(w http.ResponseWriter, status quota.QuotaSta
 	writeError(w, http.StatusPaymentRequired, "PLAN_POST_QUOTA_EXCEEDED", freePlanQuotaExceededMessage(status, requestedUnits))
 }
 
+func writePaidPlanSchedulingCapacityExceeded(w http.ResponseWriter, admissionErr *paidquota.AdmissionError) {
+	if admissionErr == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Paid scheduling quota admission failed")
+		return
+	}
+	snapshot := admissionErr.Snapshot
+	periodStart, err := time.Parse("2006-01", snapshot.Period)
+	if err != nil {
+		periodStart = time.Now().UTC()
+	}
+	resetsAt := time.Date(periodStart.Year(), periodStart.Month()+1, 1, 0, 0, 0, 0, time.UTC)
+
+	w.Header().Set("X-UniPost-Usage", fmt.Sprintf("%d/%d", snapshot.Completed, snapshot.Limit))
+	w.Header().Set("X-UniPost-Scheduled-Usage", strconv.Itoa(snapshot.Scheduled))
+	w.Header().Set("X-UniPost-Quota-Hold-Usage", strconv.Itoa(snapshot.QuotaHold))
+	w.Header().Set("X-UniPost-Effective-Usage", fmt.Sprintf("%d/%d", snapshot.EffectiveUsage(), snapshot.Limit))
+	w.Header().Set("X-UniPost-Warning", "scheduled_quota_reached")
+	writeErrorWithDetails(
+		w,
+		http.StatusPaymentRequired,
+		"PLAN_MONTHLY_SCHEDULING_CAPACITY_EXCEEDED",
+		"Monthly scheduling quota reached. Upgrade your plan, cancel existing scheduled posts, or wait until the quota resets. Immediate publishing remains available.",
+		ErrorDetails{Details: map[string]any{
+			"plan_id":                      snapshot.PlanID,
+			"completed_posts":              snapshot.Completed,
+			"scheduled_posts":              snapshot.Scheduled,
+			"quota_hold_posts":             snapshot.QuotaHold,
+			"effective_usage":              snapshot.EffectiveUsage(),
+			"projected_usage":              admissionErr.ProjectedUsage,
+			"post_limit":                   snapshot.Limit,
+			"requested_units":              admissionErr.RequestedUnits,
+			"period":                       snapshot.Period,
+			"resets_at":                    resetsAt.Format(time.RFC3339),
+			"scheduling_allowed":           false,
+			"upgrade_recommended":          true,
+			"immediate_publishing_allowed": true,
+		}},
+	)
+}
+
 type postResultResponse struct {
 	// ID is the social_post_results row ID. Required by the dashboard
 	// for the per-platform retry path — without it the frontend can't
@@ -278,15 +375,19 @@ type postResultResponse struct {
 	FailureStage *string `json:"failure_stage,omitempty"`
 	// PlatformErrorCode is the provider's stable/near-stable error token
 	// when one is safely available, for example TikTok invalid_params.
-	PlatformErrorCode *string                     `json:"platform_error_code,omitempty"`
-	IsRetriable       *bool                       `json:"is_retriable,omitempty"`
-	NextAction        *string                     `json:"next_action,omitempty"`
-	ErrorSource       *string                     `json:"error_source,omitempty"`
-	ErrorTemporality  *string                     `json:"error_temporality,omitempty"`
-	ProviderError     *postfailures.ProviderError `json:"provider_error,omitempty"`
-	RetryPolicy       *retryPolicyResponse        `json:"retry_policy,omitempty"`
-	PublishedAt       *string                     `json:"published_at,omitempty"`
-	PublishStatus     map[string]any              `json:"publish_status,omitempty"`
+	PlatformErrorCode  *string                     `json:"platform_error_code,omitempty"`
+	IsRetriable        *bool                       `json:"is_retriable,omitempty"`
+	NextAction         *string                     `json:"next_action,omitempty"`
+	ErrorSource        *string                     `json:"error_source,omitempty"`
+	ErrorTemporality   *string                     `json:"error_temporality,omitempty"`
+	ProviderError      *postfailures.ProviderError `json:"provider_error,omitempty"`
+	RetryPolicy        *retryPolicyResponse        `json:"retry_policy,omitempty"`
+	PublishedAt        *string                     `json:"published_at,omitempty"`
+	PublishStatus      map[string]any              `json:"publish_status,omitempty"`
+	XCreditsCounted    int64                       `json:"x_credits_counted"`
+	XCreditOperation   *string                     `json:"x_credit_operation,omitempty"`
+	XCreditCatalog     *string                     `json:"x_credit_catalog_version,omitempty"`
+	XCreditBillingMode *string                     `json:"x_credit_billing_mode,omitempty"`
 	// Warnings (Sprint 4 PR3) carries non-fatal issues that didn't
 	// prevent the main post from being published. The first user is
 	// first_comment failure: the parent post lands and reports
@@ -348,6 +449,16 @@ func postResultResponseFromDBResult(row db.SocialPostResult, account accountSumm
 	}
 	if row.DebugCurl.Valid {
 		resp.DebugCurl = &row.DebugCurl.String
+	}
+	resp.XCreditsCounted = row.XCreditsCounted
+	if row.XCreditOperation.Valid {
+		resp.XCreditOperation = &row.XCreditOperation.String
+	}
+	if row.XCreditCatalogVersion.Valid {
+		resp.XCreditCatalog = &row.XCreditCatalogVersion.String
+	}
+	if row.XCreditBillingMode.Valid {
+		resp.XCreditBillingMode = &row.XCreditBillingMode.String
 	}
 	return resp
 }
@@ -560,21 +671,24 @@ type accountSummary struct {
 }
 
 type socialPostResponse struct {
-	ID                 string     `json:"id"`
-	Message            string     `json:"message,omitempty"`
-	Caption            *string    `json:"caption"`
-	MediaURLs          []string   `json:"media_urls,omitempty"`
-	Status             string     `json:"status"`
-	ExecutionMode      string     `json:"execution_mode,omitempty"`
-	IdempotencyReplay  bool       `json:"idempotency_replay,omitempty"`
-	QueuedResultsCount int        `json:"queued_results_count,omitempty"`
-	ActiveJobCount     int        `json:"active_job_count,omitempty"`
-	RetryingCount      int        `json:"retrying_count,omitempty"`
-	DeadCount          int        `json:"dead_count,omitempty"`
-	CreatedAt          time.Time  `json:"created_at"`
-	ScheduledAt        *time.Time `json:"scheduled_at,omitempty"`
-	PublishedAt        *time.Time `json:"published_at,omitempty"`
-	ArchivedAt         *time.Time `json:"archived_at,omitempty"`
+	ID                           string     `json:"id"`
+	Message                      string     `json:"message,omitempty"`
+	Caption                      *string    `json:"caption"`
+	MediaURLs                    []string   `json:"media_urls,omitempty"`
+	Status                       string     `json:"status"`
+	ExecutionMode                string     `json:"execution_mode,omitempty"`
+	IdempotencyReplay            bool       `json:"idempotency_replay,omitempty"`
+	QueuedResultsCount           int        `json:"queued_results_count,omitempty"`
+	ActiveJobCount               int        `json:"active_job_count,omitempty"`
+	RetryingCount                int        `json:"retrying_count,omitempty"`
+	DeadCount                    int        `json:"dead_count,omitempty"`
+	CreatedAt                    time.Time  `json:"created_at"`
+	ScheduledAt                  *time.Time `json:"scheduled_at,omitempty"`
+	PublishedAt                  *time.Time `json:"published_at,omitempty"`
+	ArchivedAt                   *time.Time `json:"archived_at,omitempty"`
+	QuotaHoldReason              *string    `json:"quota_hold_reason,omitempty"`
+	QuotaHoldAt                  *time.Time `json:"quota_hold_at,omitempty"`
+	QuotaHoldOriginalScheduledAt *time.Time `json:"quota_hold_original_scheduled_at,omitempty"`
 	// Source identifies who triggered this post: "ui" (dashboard) vs
 	// "api" (external API key). Stamped at row creation from the auth
 	// context and never changes thereafter.
@@ -793,7 +907,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}) {
 			return
 		}
-		h.createScheduledPost(w, r, workspaceID, parsed)
+		h.createScheduledPost(w, r, workspaceID, parsed, countPublishQuotaUnits(parsed.Posts, accountMap))
 		return
 	}
 
@@ -822,7 +936,7 @@ func applyIdempotencyKeyHeaderFallback(parsed *parsedRequest, headerValue string
 // the v2 metadata blob so the scheduler can later fan out per-account
 // when the time arrives. Returns 201 Created with a minimal response
 // (no results yet — they'll exist after the scheduler fires).
-func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) {
+func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest, quotaUnitsOverride ...int) {
 	// Persist the parsed request shape into metadata so the scheduler
 	// can reconstruct the per-account captions.
 	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
@@ -860,8 +974,30 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		Source:         resolveSource(r.Context()),
 		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
 	}
-	post, err := h.createScheduledSocialPost(r.Context(), workspaceID, createParams)
+	quotaUnits := len(parsed.Posts)
+	if len(quotaUnitsOverride) > 0 {
+		quotaUnits = quotaUnitsOverride[0]
+	}
+	var post db.SocialPost
+	createMutation := func(queries *db.Queries) error {
+		var createErr error
+		post, createErr = h.createScheduledSocialPostWithQueries(r.Context(), queries, workspaceID, createParams)
+		return createErr
+	}
+	if h.paidSchedule != nil && parsed.ScheduledAt != nil {
+		err = h.paidSchedule.Mutate(r.Context(), workspaceID, []paidquota.PeriodDelta{{
+			Period:         quota.PeriodForTime(*parsed.ScheduledAt),
+			RequestedUnits: quotaUnits,
+		}}, createMutation)
+	} else {
+		err = createMutation(h.queries)
+	}
 	if err != nil {
+		var admissionErr *paidquota.AdmissionError
+		if errors.As(err, &admissionErr) {
+			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)
+			return
+		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			planID := h.planIDForWorkspace(r.Context(), workspaceID)
 			limit := h.activeScheduledPostLimit(r.Context(), workspaceID, planID)
@@ -879,6 +1015,7 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 			Period: quota.PeriodForTime(*parsed.ScheduledAt),
 		})
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(*parsed.ScheduledAt))
 	}
 
 	h.logPublishingEvent(r.Context(), integrationlogs.Event{
@@ -916,9 +1053,16 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 }
 
 func (h *SocialPostHandler) createScheduledSocialPost(ctx context.Context, workspaceID string, params db.CreateSocialPostParams) (db.SocialPost, error) {
+	return h.createScheduledSocialPostWithQueries(ctx, h.queries, workspaceID, params)
+}
+
+func (h *SocialPostHandler) createScheduledSocialPostWithQueries(ctx context.Context, queries *db.Queries, workspaceID string, params db.CreateSocialPostParams) (db.SocialPost, error) {
+	if queries == nil {
+		return db.SocialPost{}, errors.New("scheduled post queries are not configured")
+	}
 	planID := h.planIDForWorkspace(ctx, workspaceID)
 	if planHasActiveScheduledPostCap(planID) {
-		return h.queries.CreateSocialPostWithActiveScheduledCap(ctx, db.CreateSocialPostWithActiveScheduledCapParams{
+		return queries.CreateSocialPostWithActiveScheduledCap(ctx, db.CreateSocialPostWithActiveScheduledCapParams{
 			WorkspaceID:          params.WorkspaceID,
 			ActiveScheduledLimit: h.activeScheduledPostLimit(ctx, workspaceID, planID),
 			Caption:              params.Caption,
@@ -931,7 +1075,7 @@ func (h *SocialPostHandler) createScheduledSocialPost(ctx context.Context, works
 			ProfileIds:           params.ProfileIds,
 		})
 	}
-	return h.queries.CreateSocialPost(ctx, params)
+	return queries.CreateSocialPost(ctx, params)
 }
 
 func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest) bool {
@@ -1201,7 +1345,7 @@ func (h *SocialPostHandler) executePublishLoop(
 		wg.Add(1)
 		go func(g []int) {
 			defer wg.Done()
-			h.runDispatchGroup(r, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker, dailyTracker, disallowed)
+			h.runDispatchGroup(r, workspaceID, post.ID, g, parsed.Posts, dbAccounts, accountMap, outcomes, tracker, dailyTracker, disallowed)
 		}(group)
 	}
 	wg.Wait()
@@ -1283,6 +1427,19 @@ func (h *SocialPostHandler) executePublishLoop(
 			Url:             postURL,
 			DebugCurl:       debugCurl,
 			FbMediaType:     fbMediaType,
+			XCreditsCounted: oc.xCreditsCounted,
+			XCreditOperation: pgtype.Text{
+				String: oc.xCreditOperation,
+				Valid:  oc.xCreditOperation != "",
+			},
+			XCreditCatalogVersion: pgtype.Text{
+				String: oc.xCreditCatalog,
+				Valid:  oc.xCreditCatalog != "",
+			},
+			XCreditBillingMode: pgtype.Text{
+				String: oc.xCreditBillingMode,
+				Valid:  oc.xCreditBillingMode != "",
+			},
 		})
 		if dbErr != nil {
 			// Most common cause: FK violation from a deleted social account.
@@ -1362,11 +1519,33 @@ func (h *SocialPostHandler) executePublishLoop(
 	if anyPublished {
 		publishedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	}
-	h.queries.UpdateSocialPostStatus(r.Context(), db.UpdateSocialPostStatusParams{
+	statusParams := db.UpdateSocialPostStatusParams{
 		ID:          post.ID,
 		Status:      postStatus,
 		PublishedAt: publishedAt,
-	})
+	}
+	if publishedCount > 0 {
+		if err := h.queries.UpdateSocialPostStatusAndIncrementUsage(r.Context(), db.UpdateSocialPostStatusAndIncrementUsageParams{
+			ID:          statusParams.ID,
+			Status:      statusParams.Status,
+			PublishedAt: statusParams.PublishedAt,
+			WorkspaceID: workspaceID,
+			Period:      quota.PeriodForTime(time.Now().UTC()),
+			PostCount:   int32(publishedCount),
+		}); err != nil {
+			slog.Error("failed to atomically persist published post usage",
+				"post_id", post.ID,
+				"workspace_id", workspaceID,
+				"published_count", publishedCount,
+				"error", err)
+		}
+	} else if err := h.queries.UpdateSocialPostStatus(r.Context(), statusParams); err != nil {
+		slog.Error("failed to persist social post status",
+			"post_id", post.ID,
+			"workspace_id", workspaceID,
+			"status", postStatus,
+			"error", err)
+	}
 
 	// When the post fails, persist a human-readable error summary on
 	// the parent post's metadata so users can understand why.
@@ -1394,8 +1573,8 @@ func (h *SocialPostHandler) executePublishLoop(
 	}
 
 	if publishedCount > 0 {
-		h.quota.Increment(r.Context(), workspaceID, publishedCount)
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{})
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(time.Now().UTC()))
 	}
 
 	var caption *string
@@ -1555,6 +1734,8 @@ func sortIndicesByThreadPosition(idxs []int, posts []platform.PlatformPostInput)
 // which weren't even attempted.
 func (h *SocialPostHandler) runDispatchGroup(
 	r *http.Request,
+	workspaceID string,
+	postID string,
 	groupIndices []int,
 	posts []platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
@@ -1593,7 +1774,8 @@ func (h *SocialPostHandler) runDispatchGroup(
 			pp.PlatformOptions = clone
 		}
 
-		oc := h.publishOne(r, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+		usageKey := fmt.Sprintf("%s:%d", postID, postIdx)
+		oc := h.publishOne(r, workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 		outcomes[postIdx] = oc
 
 		if oc.err != nil {
@@ -1631,6 +1813,8 @@ func (h *SocialPostHandler) runDispatchGroup(
 // scoped to the right account.
 func (h *SocialPostHandler) publishOne(
 	r *http.Request,
+	workspaceID string,
+	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
@@ -1638,11 +1822,13 @@ func (h *SocialPostHandler) publishOne(
 	dailyTracker *quota.PerPlatformDailyTracker,
 	disallowedPlatforms map[string]bool,
 ) (oc publishOneOutcome) {
-	return h.publishOneContext(r.Context(), pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
+	return h.publishOneContext(r.Context(), workspaceID, usageKey, pp, dbAccounts, accountMap, tracker, dailyTracker, disallowedPlatforms)
 }
 
 func (h *SocialPostHandler) publishOneContext(
 	ctx context.Context,
+	workspaceID string,
+	usageKey string,
 	pp platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
@@ -1787,6 +1973,22 @@ func (h *SocialPostHandler) publishOneContext(
 	debugRec := debugrt.NewRecorder()
 	dispatchCtx := debugrt.WithRecorder(ctx, debugRec)
 
+	usageEvent, usageErr := h.reserveManagedXUsage(dispatchCtx, workspaceID, usageKey+":main", acc, pp.Caption)
+	if usageErr != nil {
+		oc.err = usageErr
+		return
+	}
+	if acc.Platform == "twitter" {
+		if acc.ConnectionType == "managed" {
+			oc.xCreditBillingMode = "unipost_managed_app"
+			oc.xCreditsCounted = usageEvent.WeightedUnits
+			oc.xCreditOperation = usageEvent.OperationKey
+			oc.xCreditCatalog = usageEvent.CatalogVersion
+		} else {
+			oc.xCreditBillingMode = "customer_x_app"
+		}
+	}
+
 	postResult, err := adapter.Post(
 		dispatchCtx,
 		accessToken,
@@ -1797,6 +1999,15 @@ func (h *SocialPostHandler) publishOneContext(
 	oc.result = postResult
 	oc.err = err
 	oc.debugCurl = debugRec.Serialize()
+	if settleErr := settleManagedXUsage(ctx, h.xUsage, usageEvent, err); settleErr != nil {
+		if errors.Is(settleErr, ErrXWriteOutcomePending) {
+			oc.err = settleErr
+		} else {
+			slog.Error("X usage settlement failed", "event_id", usageEvent.ID, "account_id", acc.ID, "error", settleErr)
+		}
+	} else if err != nil {
+		oc.xCreditsCounted = 0
+	}
 
 	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
 	// post succeeded AND the adapter implements FirstCommentAdapter
@@ -1805,18 +2016,118 @@ func (h *SocialPostHandler) publishOneContext(
 	// back the main post — it's recorded as a warning instead.
 	if err == nil && postResult != nil && pp.FirstComment != "" {
 		if commenter, ok := adapter.(platform.FirstCommentAdapter); ok {
+			commentEvent, reserveErr := h.reserveManagedXOperation(ctx, workspaceID, usageKey+":first-comment", acc, "post.create")
+			if reserveErr != nil {
+				oc.firstCommentWarning = reserveErr.Error()
+				return
+			}
+			if commentEvent.ID != "" {
+				oc.xCreditsCounted += commentEvent.WeightedUnits
+			}
 			if _, ferr := commenter.PostComment(ctx, accessToken, postResult.ExternalID, pp.FirstComment); ferr != nil {
-				oc.firstCommentWarning = ferr.Error()
+				settleErr := settleManagedXUsage(ctx, h.xUsage, commentEvent, ferr)
+				if errors.Is(settleErr, ErrXWriteOutcomePending) {
+					oc.firstCommentWarning = settleErr.Error()
+				} else {
+					oc.firstCommentWarning = ferr.Error()
+					if settleErr == nil {
+						oc.xCreditsCounted -= commentEvent.WeightedUnits
+					}
+				}
 				slog.Warn("first_comment failed",
 					"account_id", acc.ID,
 					"platform", acc.Platform,
 					"parent_id", postResult.ExternalID,
 					"err", ferr,
 				)
+			} else {
+				if settleErr := settleManagedXUsage(ctx, h.xUsage, commentEvent, nil); settleErr != nil {
+					slog.Error("X first-comment usage finalize failed", "event_id", commentEvent.ID, "account_id", acc.ID, "error", settleErr)
+				}
 			}
 		}
 	}
 	return
+}
+
+func xOperationForText(text string) string {
+	if xURLCandidatePattern.MatchString(text) {
+		return "post.create_url"
+	}
+	return "post.create"
+}
+
+func (h *SocialPostHandler) reserveManagedXUsage(
+	ctx context.Context,
+	workspaceID string,
+	usageKey string,
+	account db.SocialAccount,
+	text string,
+) (xcredits.UsageEvent, error) {
+	return h.reserveManagedXOperation(ctx, workspaceID, usageKey, account, xOperationForText(text))
+}
+
+func (h *SocialPostHandler) reserveManagedXOperation(
+	ctx context.Context,
+	workspaceID string,
+	usageKey string,
+	account db.SocialAccount,
+	operation string,
+) (xcredits.UsageEvent, error) {
+	if h == nil || h.xUsage == nil || account.Platform != "twitter" || account.ConnectionType != "managed" {
+		return xcredits.UsageEvent{}, nil
+	}
+	event, err := h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
+		WorkspaceID:     workspaceID,
+		SocialAccountID: account.ID,
+		ConnectionType:  account.ConnectionType,
+		OperationKey:    operation,
+		Source:          "publish",
+		IdempotencyKey:  usageKey,
+		RequestedUnits:  xcredits.OperationWeight(operation),
+	})
+	if err != nil {
+		return xcredits.UsageEvent{}, err
+	}
+	if event.Duplicate && (event.Status == xcredits.UsageStatusProvisional || event.Status == xcredits.UsageStatusFinalized) {
+		return xcredits.UsageEvent{}, ErrXWriteOutcomePending
+	}
+	return event, nil
+}
+
+func settleManagedXUsage(
+	ctx context.Context,
+	service xUsageService,
+	event xcredits.UsageEvent,
+	publishErr error,
+) error {
+	if service == nil || event.ID == "" {
+		return nil
+	}
+	if publishErr == nil {
+		return service.Finalize(ctx, event.ID, event.WeightedUnits)
+	}
+	if xWriteOutcomeUnknown(publishErr) {
+		return ErrXWriteOutcomePending
+	}
+	return service.Reverse(ctx, event.ID)
+}
+
+func xWriteOutcomeUnknown(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.HasPrefix(message, "create_tweet:") ||
+		strings.HasPrefix(message, "create_tweet timeout") ||
+		strings.HasPrefix(message, "create_tweet canceled") ||
+		strings.HasPrefix(message, "create_tweet_reply:") ||
+		strings.HasPrefix(message, "create_tweet_reply timeout") ||
+		strings.HasPrefix(message, "create_tweet_reply canceled")
+}
+
+func xUsageKeyForResult(resultID string) string {
+	return "social-post-result:" + resultID
 }
 
 // resolveMediaIDsToURLs is the publish-time half of the media library
@@ -1902,6 +2213,10 @@ type publishOneOutcome struct {
 	result              *platform.PostResult
 	err                 error
 	firstCommentWarning string
+	xCreditsCounted     int64
+	xCreditOperation    string
+	xCreditCatalog      string
+	xCreditBillingMode  string
 	// debugCurl is the serialized curl+response dump of every non-2xx
 	// HTTP request the adapter made during this dispatch (see
 	// internal/debugrt). Populated whenever entries exist, but only
@@ -1990,6 +2305,8 @@ func idempotencyKeyParam(key string) pgtype.Text {
 // CodePlanPlatformNotAllowed code so dashboard / SDK switches stay
 // consistent across the validate + publish surfaces.
 var ErrPlanPlatformNotAllowed = errors.New("plan_platform_not_allowed: publishing to this platform is not available on your current plan — upgrade at unipost.dev/pricing")
+
+var ErrXWriteOutcomePending = errors.New("x_write_outcome_pending_reconciliation: the prior X write outcome is unknown; UniPost blocked an automatic retry to prevent a duplicate post")
 
 // dailyTargetsFor builds the deduped (account, platform) target list
 // the per-platform daily tracker needs. The caller already loaded the
@@ -2284,6 +2601,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 							// raw video object — Graph rejects
 							// /{video_id}/comments under Page-scoped tokens.
 							if st.VideoStatus == "ready" {
+								completedAt := time.Now().UTC()
 								pageID := acc.ExternalAccountID
 								newURL := res.Url.String
 								newExternalID := res.ExternalID
@@ -2291,19 +2609,24 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 									newURL = facebookFeedStoryURL(pageID, st.PostID)
 									newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 								}
-								_, _ = h.queries.UpdateSocialPostResultAfterRetry(r.Context(), db.UpdateSocialPostResultAfterRetryParams{
+								_, updateErr := h.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(r.Context(), db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
 									ID:           res.ID,
 									Status:       "published",
 									ExternalID:   newExternalID,
 									ErrorMessage: pgtype.Text{Valid: false},
-									PublishedAt:  pgtype.Timestamptz{Time: time.Now(), Valid: true},
+									PublishedAt:  pgtype.Timestamptz{Time: completedAt, Valid: true},
 									Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
 									DebugCurl:    pgtype.Text{Valid: false},
+									WorkspaceID:  workspaceID,
+									Period:       quota.PeriodForTime(completedAt),
+									PostCount:    1,
 								})
-								rr.Status = "published"
-								clearPostResultFailureDetails(&rr)
-								if newURL != "" {
-									rr.URL = &newURL
+								if updateErr == nil {
+									rr.Status = "published"
+									clearPostResultFailureDetails(&rr)
+									if newURL != "" {
+										rr.URL = &newURL
+									}
 								}
 							} else if st.VideoStatus == "error" {
 								errMsg := "Facebook rejected the video"
@@ -2690,7 +3013,7 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		postID = chi.URLParam(r, "postID")
 	}
 
-	_, err := h.queries.SoftDeleteSocialPost(r.Context(), db.SoftDeleteSocialPostParams{
+	deleted, err := h.queries.SoftDeleteSocialPost(r.Context(), db.SoftDeleteSocialPostParams{
 		ID:          postID,
 		WorkspaceID: workspaceID,
 	})
@@ -2707,6 +3030,10 @@ func (h *SocialPostHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceID,
 	}); err != nil {
 		slog.Warn("delete post: cancel active delivery jobs failed", "post_id", postID, "workspace_id", workspaceID, "error", err)
+	}
+	h.maybeReconcileQuotaHolds(r.Context(), workspaceID, "capacity_released")
+	if deleted.ScheduledAt.Valid {
+		h.maybeEvaluatePaidQuota(r.Context(), workspaceID, quota.PeriodForTime(deleted.ScheduledAt.Time))
 	}
 
 	writeSuccess(w, map[string]bool{"deleted": true})

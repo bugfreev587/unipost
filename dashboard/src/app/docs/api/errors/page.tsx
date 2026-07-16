@@ -143,6 +143,7 @@ export default function ApiErrorsPage() {
                 { code: "media_error", http: 400, description: "The provider rejected media format, dimensions, duration, URL, or processing state." },
                 { code: "temporary_platform_error", http: 503, description: "The platform or async worker path failed transiently. Check retry_policy.will_retry to know whether UniPost scheduled retry." },
                 { code: "rate_limit", http: 429, description: "Wait before retrying. Respect Retry-After when present." },
+                { code: "x_monthly_usage_limit_exceeded", http: 402, description: "The workspace has reached its managed-X Credits hard limit for the current billing period. Show the reset date or an upgrade/contact path; do not retry-loop." },
                 { code: "account_reconnect_required", http: 409, description: "Reconnect the affected social account before retrying." },
                 { code: "missing_permission", http: 403, description: "Reconnect or update platform permissions and scopes." },
                 { code: "target_not_found", http: 404, description: "The selected platform target no longer exists or is not visible to the account." },

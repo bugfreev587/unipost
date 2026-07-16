@@ -687,6 +687,8 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 
 	oc := h.publishOneContext(
 		ctx,
+		post.WorkspaceID,
+		xUsageKeyForResult(res.ID),
 		pp,
 		dbAccounts,
 		accountMap,
@@ -713,15 +715,49 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	if status == "published" {
 		publishedAt = pgtype.Timestamptz{Time: completedAt, Valid: true}
 	}
-	updated, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       status,
-		ExternalID:   externalID,
-		ErrorMessage: pgtype.Text{},
-		PublishedAt:  publishedAt,
-		Url:          postURL,
-		DebugCurl:    debugCurl,
-	})
+	updateParams := db.UpdateSocialPostResultAfterRetryParams{
+		ID:              res.ID,
+		Status:          status,
+		ExternalID:      externalID,
+		ErrorMessage:    pgtype.Text{},
+		PublishedAt:     publishedAt,
+		Url:             postURL,
+		DebugCurl:       debugCurl,
+		XCreditsCounted: oc.xCreditsCounted,
+		XCreditOperation: pgtype.Text{
+			String: oc.xCreditOperation,
+			Valid:  oc.xCreditOperation != "",
+		},
+		XCreditCatalogVersion: pgtype.Text{
+			String: oc.xCreditCatalog,
+			Valid:  oc.xCreditCatalog != "",
+		},
+		XCreditBillingMode: pgtype.Text{
+			String: oc.xCreditBillingMode,
+			Valid:  oc.xCreditBillingMode != "",
+		},
+	}
+	var updated db.SocialPostResult
+	if status == "published" {
+		updated, err = h.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
+			ID:                    updateParams.ID,
+			Status:                updateParams.Status,
+			ExternalID:            updateParams.ExternalID,
+			ErrorMessage:          updateParams.ErrorMessage,
+			PublishedAt:           updateParams.PublishedAt,
+			Url:                   updateParams.Url,
+			DebugCurl:             updateParams.DebugCurl,
+			XCreditsCounted:       updateParams.XCreditsCounted,
+			XCreditOperation:      updateParams.XCreditOperation,
+			XCreditCatalogVersion: updateParams.XCreditCatalogVersion,
+			XCreditBillingMode:    updateParams.XCreditBillingMode,
+			WorkspaceID:           post.WorkspaceID,
+			Period:                quota.PeriodForTime(completedAt),
+			PostCount:             1,
+		})
+	} else {
+		updated, err = h.queries.UpdateSocialPostResultAfterRetry(ctx, updateParams)
+	}
 	if err != nil {
 		return err
 	}
@@ -731,8 +767,8 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
 	if updated.Status == "published" {
-		h.quota.Increment(ctx, post.WorkspaceID, 1)
 		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{})
+		h.maybeEvaluatePaidQuota(ctx, post.WorkspaceID, quota.PeriodForTime(completedAt))
 	}
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
@@ -834,13 +870,26 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 	}
 
 	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       resultStatus,
-		ExternalID:   pgtype.Text{},
-		ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-		PublishedAt:  pgtype.Timestamptz{},
-		Url:          pgtype.Text{},
-		DebugCurl:    debugCurl,
+		ID:              res.ID,
+		Status:          resultStatus,
+		ExternalID:      pgtype.Text{},
+		ErrorMessage:    pgtype.Text{String: errMsg, Valid: true},
+		PublishedAt:     pgtype.Timestamptz{},
+		Url:             pgtype.Text{},
+		DebugCurl:       debugCurl,
+		XCreditsCounted: oc.xCreditsCounted,
+		XCreditOperation: pgtype.Text{
+			String: oc.xCreditOperation,
+			Valid:  oc.xCreditOperation != "",
+		},
+		XCreditCatalogVersion: pgtype.Text{
+			String: oc.xCreditCatalog,
+			Valid:  oc.xCreditCatalog != "",
+		},
+		XCreditBillingMode: pgtype.Text{
+			String: oc.xCreditBillingMode,
+			Valid:  oc.xCreditBillingMode != "",
+		},
 	}); err != nil {
 		return err
 	}

@@ -10,6 +10,10 @@ export default function GuidesIndexPage() {
       className="docs-page-wide"
     >
       <div className="docs-grid">
+        <Link href="/docs/guides/x/credits" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">X Credits</div>
+          <p>Estimate managed-X usage, inspect the monthly allowance, and handle hard-limit exhaustion.</p>
+        </Link>
         <Link href="/docs/guides/platform-options" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Platform options examples</div>
           <p>Copy safe platform_posts[] options for YouTube, Instagram, TikTok, Facebook, and Pinterest.</p>

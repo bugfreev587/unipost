@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { PublicSiteHeader, PricingCTA } from "@/components/marketing/nav";
 import { listProfiles, getBilling } from "@/lib/api";
+import { X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
 
 // ── Data ──
 //
@@ -127,7 +128,7 @@ type CompareRow = {
 
 const COMPARE_ROWS: CompareRow[] = [
   { name: "Monthly posts", free: "100", api: "1,000", basic: "2,500", growth: "7,500", team: "Unlimited" },
-  { name: "Monthly quota behavior", sub: "Free stops at its quota; API, Basic, and Growth use soft overage with upgrade guidance; Team is unlimited", free: "Hard cap", api: "Soft overage", basic: "Soft overage", growth: "Soft overage", team: "Unlimited" },
+  { name: "Monthly quota behavior", sub: "Immediate publishing stays soft on paid plans; new schedules pause when effective usage reaches 100%", free: "Hard cap", api: "Soft publish + schedule guard", basic: "Soft publish + schedule guard", growth: "Soft publish + schedule guard", team: "Unlimited" },
   { name: "Platforms", sub: "X (Twitter), Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, Facebook", free: "8 (no X)", api: "9", basic: "9", growth: "9", team: "9" },
   { name: "Profiles", sub: "Brand groupings inside one workspace", free: "1", api: "2", basic: "5", growth: "25", team: "Unlimited" },
   { name: "Users", sub: "Team members on the workspace", free: "1", api: "1", basic: "1", growth: "3", team: "Unlimited" },
@@ -136,7 +137,7 @@ const COMPARE_ROWS: CompareRow[] = [
   { name: "MCP server", sub: "AI agent integration via MCP protocol", free: true, api: true, basic: true, growth: true, team: true },
   { name: "Webhooks", sub: "Real-time event notifications", free: true, api: true, basic: true, growth: true, team: true },
   { name: "Scheduling", sub: "Post at a future time", free: true, api: true, basic: true, growth: true, team: true },
-  { name: "Active scheduled posts", sub: "Undeleted parent posts still in scheduled status. Paid plans do not cap active scheduled backlog.", free: "50", api: "Unlimited", basic: "Unlimited", growth: "Unlimited", team: "Unlimited" },
+  { name: "Active scheduled posts", sub: "Free has a separate backlog cap. Paid schedules consume monthly capacity when committed.", free: "50", api: "Within monthly capacity", basic: "Within monthly capacity", growth: "Within monthly capacity", team: "Unlimited" },
   { name: "Media retention after success", sub: "Uploaded UniPost media is kept after the parent post publishes successfully, then cleaned from storage.", free: "1 day", api: "2 days", basic: "4 days", growth: "15 days", team: "30 days" },
   { name: "Media retention after failed/partial/cancelled", sub: "Failed, partial, and cancelled posts share the same longer troubleshooting window. Scheduled, draft, and in-flight posts are retained.", free: "2 days", api: "4 days", basic: "8 days", growth: "30 days", team: "60 days" },
   { name: "Dashboard UI", sub: "Compose, account management, analytics, and workspace settings in browser", free: true, api: true, basic: true, growth: true, team: true },
@@ -155,7 +156,7 @@ const FAQS = [
   { q: "Why is X (Twitter) not on the Free plan?", a: "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota is too small to absorb that cost without distorting our pricing for everyone else. Free workspaces can read existing X data; new X publishes and connections require any paid plan starting at $10/mo." },
   { q: "Why are there per-account daily limits?", a: "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
   { q: "Can I change plans anytime?", a: "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
-  { q: "What happens if I go over my monthly post quota?", a: "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. API, Basic, and Growth keep soft overage behavior: posting continues for now, with usage warnings and upgrade guidance instead of surprise billing. Team includes unlimited monthly posts. API responses include X-UniPost-Usage and X-UniPost-Warning headers so you can monitor programmatically." },
+  { q: "What happens if I go over my monthly post quota?", a: "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. On API, Basic, and Growth, immediate publishing remains available, while new scheduled posts pause once completed plus committed scheduled usage reaches 100%. Cancel or move scheduled posts, wait for the monthly reset, or upgrade to restore scheduling capacity. Team includes unlimited monthly posts." },
   { q: "Can I schedule posts on the Free plan?", a: "Yes. Free workspaces can schedule posts, but they can hold up to 50 undeleted parent posts in scheduled status at once. Published, failed, partial, draft, and cancelled posts do not count toward that active scheduled backlog. Paid plans do not have an active scheduled-post cap." },
   { q: "How long does UniPost keep uploaded media after a post finishes?", a: "Scheduled, draft, queued, publishing, and processing posts keep their media. Once the parent post reaches a final state, uploaded media is retained by plan: Free 1 day after success or 2 days after failed/partial/cancelled; API 2/4 days; Basic 4/8 days; Growth 15/30 days; Team 30/60 days." },
   { q: "What's the difference between API and Basic?", a: "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
@@ -203,6 +204,31 @@ const MOBILE_CSS = `
 }
 `;
 
+const X_CREDITS_CSS = `
+.pr-xcredits{margin:0 0 64px}
+.pr-xcredits-head{max-width:760px;margin:0 auto 24px;text-align:center}
+.pr-xcredits-title{font-size:36px;font-weight:800;letter-spacing:-.5px;color:var(--pr-text);margin-bottom:10px}
+.pr-xcredits-copy{font-size:14px;line-height:1.7;color:var(--pr-muted)}
+.pr-xcredits-wrap{border:1px solid var(--pr-border);border-radius:14px;overflow:auto;box-shadow:var(--pr-shadow-soft);background:var(--pr-s1)}
+.pr-xcredits-table{width:100%;min-width:880px;border-collapse:collapse}
+.pr-xcredits-table th,.pr-xcredits-table td{padding:16px 18px;border-bottom:1px solid var(--pr-border);text-align:left;vertical-align:top}
+.pr-xcredits-table th{font-family:var(--pr-mono);font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--pr-muted);background:var(--pr-s2)}
+.pr-xcredits-table td{font-family:var(--pr-mono);font-size:13px;color:var(--pr-text)}
+.pr-xcredits-table tr:last-child td{border-bottom:0}
+.pr-xcredits-plan{font-family:var(--pr-ui);font-weight:750}
+.pr-xcredits-muted{display:block;margin-top:3px;font-family:var(--pr-ui);font-size:11.5px;line-height:1.45;color:var(--pr-muted)}
+.pr-xcredits-note{margin-top:14px;font-size:12.5px;line-height:1.65;color:var(--pr-muted)}
+.pr-xcredits-cards{display:none}
+.pr-xcredits-card{border:1px solid var(--pr-border);border-radius:12px;padding:15px;background:var(--pr-s1)}
+.pr-xcredits-card.current{border-color:var(--pr-accent);box-shadow:0 0 0 1px var(--pr-accent)}
+.pr-xcredits-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.pr-xcredits-current{font-family:var(--pr-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--pr-accent)}
+.pr-xcredits-card-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pr-xcredits-card-label{display:block;font-size:10.5px;color:var(--pr-muted);margin-bottom:2px}
+.pr-xcredits-card-value{font-family:var(--pr-mono);font-size:13px;color:var(--pr-text)}
+@media(max-width:680px){.pr-xcredits-title{font-size:26px}.pr-xcredits-head{text-align:left}.pr-xcredits{margin-bottom:48px}.pr-xcredits-wrap{display:none}.pr-xcredits-cards{display:grid;gap:10px}}
+`;
+
 // ── Component ──
 export default function PricingPage() {
   const [currentPlan, setCurrentPlan] = useState<string | null>(null);
@@ -236,6 +262,7 @@ export default function PricingPage() {
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
       <style dangerouslySetInnerHTML={{ __html: MOBILE_CSS }} />
+      <style dangerouslySetInnerHTML={{ __html: X_CREDITS_CSS }} />
       <PublicSiteHeader active="pricing" />
 
       <div className="pr-page">
@@ -326,9 +353,74 @@ export default function PricingPage() {
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><circle cx="8" cy="8" r="6.5" /><path d="M8 5v3M8 10v1" /></svg></div>
           <div>
             <div className="pr-soft-title">Free has a clear cap. Paid plans stay flexible.</div>
-            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 undeleted parent posts in scheduled status at once. API, Basic, and Growth keep soft overage behavior — sustained overage becomes an upgrade conversation, not a surprise charge or sudden interruption. Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply. API responses include <span className="pr-soft-mono">X-UniPost-Usage</span> and <span className="pr-soft-mono">X-UniPost-Warning</span> headers so you can monitor programmatically.</div>
+            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 undeleted parent posts in scheduled status at once. On API, Basic, and Growth, immediate publishing remains available during soft overage. New schedules pause when completed plus committed scheduled usage reaches 100%; cancel or move scheduled posts, wait for reset, or upgrade to restore capacity. Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply.</div>
           </div>
         </div>
+
+        <section className="pr-xcredits" aria-labelledby="x-credits-capacity">
+          <div className="pr-xcredits-head">
+            <h2 id="x-credits-capacity" className="pr-xcredits-title">What your included X Credits can do</h2>
+            <p className="pr-xcredits-copy">
+              X Credits are separate from posts/month. The allowance resets each billing period. Each example below assumes the
+              whole shared allowance is used for one operation type. Managed X requests stop at the hard limit;
+              bring-your-own X API connections do not consume UniPost X Credits.
+            </p>
+          </div>
+          <div className="pr-xcredits-wrap">
+            <table className="pr-xcredits-table">
+              <thead>
+                <tr>
+                  <th>Plan</th>
+                  <th>Included Credits</th>
+                  <th>Normal X posts</th>
+                  <th>Posts with URL</th>
+                  <th>Complete comments</th>
+                  <th>Complete DMs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {X_CREDIT_PLANS.map((plan) => (
+                  <tr key={plan.id} className={currentPlan === plan.id ? "current" : ""}>
+                    <td><span className="pr-xcredits-plan">{plan.label}</span></td>
+                    <td>{plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString()}</td>
+                    <td>{plan.capacity?.normal_posts.toLocaleString() ?? "Custom"}</td>
+                    <td>{plan.capacity?.url_posts.toLocaleString() ?? "Custom"}</td>
+                    <td>
+                      {plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}
+                      <span className="pr-xcredits-muted">One received comment + one reply.</span>
+                    </td>
+                    <td>
+                      {plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}
+                      <span className="pr-xcredits-muted">One received DM + one sent DM.</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="pr-xcredits-cards">
+            {X_CREDIT_PLANS.map((plan) => (
+              <article key={plan.id} className={`pr-xcredits-card ${currentPlan === plan.id ? "current" : ""}`}>
+                <div className="pr-xcredits-card-head">
+                  <span className="pr-xcredits-plan">{plan.label}</span>
+                  {currentPlan === plan.id && <span className="pr-xcredits-current">Current plan</span>}
+                </div>
+                <div className="pr-xcredits-card-grid">
+                  <div><span className="pr-xcredits-card-label">Included Credits</span><span className="pr-xcredits-card-value">{plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString()}</span></div>
+                  <div><span className="pr-xcredits-card-label">Normal X posts</span><span className="pr-xcredits-card-value">{plan.capacity?.normal_posts.toLocaleString() ?? "Custom"}</span></div>
+                  <div><span className="pr-xcredits-card-label">Posts with URL</span><span className="pr-xcredits-card-value">{plan.capacity?.url_posts.toLocaleString() ?? "Custom"}</span></div>
+                  <div><span className="pr-xcredits-card-label">Complete comments</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}</span></div>
+                  <div><span className="pr-xcredits-card-label">Complete DMs</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}</span></div>
+                </div>
+              </article>
+            ))}
+          </div>
+          <p className="pr-xcredits-note">
+            Enterprise X Credits and inbound limits are contract-defined. The independent safety cap of 20 X posts
+            per connected account per UTC day still applies on every plan. Comment and DM figures are capacity
+            planning for phased X Inbox support; they do not indicate API availability before that phase ships.
+          </p>
+        </section>
 
         {/* Compare */}
         <div className="pr-compare">

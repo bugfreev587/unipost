@@ -134,6 +134,7 @@ const STATUS_FILTERS: Array<{ value: CalendarStatusFilter; label: string }> = [
   { value: "all", label: "All Status" },
   { value: "published", label: "Published" },
   { value: "scheduled", label: "Scheduled" },
+  { value: "quota_hold", label: "Quota Hold" },
   { value: "in_progress", label: "In Progress" },
   { value: "failed", label: "Failed" },
   { value: "draft", label: "Drafts" },
@@ -144,6 +145,7 @@ const STATUS_FILTERS: Array<{ value: CalendarStatusFilter; label: string }> = [
 const STATUS_META: Record<CalendarStatusGroup, { label: string; short: string }> = {
   published: { label: "Published", short: "PUB" },
   scheduled: { label: "Scheduled", short: "SCH" },
+  quota_hold: { label: "Quota Hold", short: "HOLD" },
   in_progress: { label: "In Progress", short: "RUN" },
   failed: { label: "Failed", short: "FAIL" },
   draft: { label: "Draft", short: "DRFT" },
@@ -1669,6 +1671,13 @@ function EventPopover({
             </div>
           </dl>
 
+          {post.status === "quota_hold" ? (
+            <div className="posts-calendar-hold-notice">
+              This post is preserved but will not publish while it is on quota hold. Move or cancel scheduled posts,
+              wait for the monthly reset, or upgrade the workspace plan.
+            </div>
+          ) : null}
+
           <CalendarPostDetailGrid post={post} meta={meta} />
           <section className="posts-calendar-results">
             <div className="posts-calendar-results-label">Platform results</div>
@@ -2080,7 +2089,7 @@ function CalendarEditInspector({
 
           <section className="posts-calendar-edit-section">
             <label>Schedule</label>
-            {post.status === "scheduled" ? (
+            {post.status === "scheduled" || post.status === "quota_hold" ? (
               <input
                 type="datetime-local"
                 value={form.scheduledAt}
@@ -2281,7 +2290,7 @@ function getPostPlatforms(post: SocialPost): string[] {
 }
 
 function isEditableCalendarPost(post: SocialPost): boolean {
-  return post.status === "scheduled" || post.status === "draft";
+  return post.status === "scheduled" || post.status === "quota_hold" || post.status === "draft";
 }
 
 function getPostDate(post: SocialPost): Date | null {
@@ -2538,6 +2547,7 @@ const CALENDAR_CSS = `
 .posts-calendar-popover-meta div{display:grid;grid-template-columns:82px minmax(0,1fr);gap:12px;align-items:flex-start}
 .posts-calendar-popover-meta dt{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--dmuted2)}
 .posts-calendar-popover-meta dd{margin:0;color:var(--dtext);font-size:14px;line-height:1.45}
+.posts-calendar-hold-notice{padding:12px 14px;border:1px solid color-mix(in srgb,var(--warning) 28%,transparent);border-radius:10px;background:color-mix(in srgb,var(--warning) 9%,transparent);color:var(--warning);font-size:12px;line-height:1.5}
 .posts-calendar-popover-status{display:inline-flex;align-items:center;height:19px;border-radius:5px;padding:0 5px;margin-right:7px;background:color-mix(in srgb,var(--event-status-color) 18%,transparent);color:var(--event-status-color);font-size:10px;font-weight:800;letter-spacing:.04em}
 .posts-calendar-popover-platforms{display:flex;flex-wrap:wrap;gap:6px}
 .posts-calendar-popover-platform-chip{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--dborder);background:var(--surface2);border-radius:999px;padding:3px 8px;font-size:12px;font-weight:650}
