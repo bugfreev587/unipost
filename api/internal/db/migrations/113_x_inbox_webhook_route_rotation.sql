@@ -25,6 +25,7 @@ WHERE r.social_account_id = sa.id
 -- upstream resource IDs and encrypted app bearer tokens. These ordered
 -- companion triggers run afterward and attach the old webhook signature
 -- generation so its route stays valid only while cleanup is pending.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION augment_replaced_workspace_x_inbox_cleanup_route()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -50,6 +51,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER zz_platform_credentials_x_inbox_cleanup_route_update
 BEFORE UPDATE OF platform, client_id, app_bearer_token, consumer_secret, webhook_route_key
@@ -58,6 +60,7 @@ FOR EACH ROW
 WHEN (OLD.platform = 'twitter')
 EXECUTE FUNCTION augment_replaced_workspace_x_inbox_cleanup_route();
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION augment_deleted_workspace_x_credential_cleanup_route()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -78,6 +81,7 @@ BEGIN
   RETURN OLD;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER zz_platform_credentials_x_inbox_cleanup_route_delete
 BEFORE DELETE ON platform_credentials
@@ -85,6 +89,7 @@ FOR EACH ROW
 WHEN (OLD.platform = 'twitter')
 EXECUTE FUNCTION augment_deleted_workspace_x_credential_cleanup_route();
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION augment_deleted_x_account_cleanup_route()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -103,6 +108,7 @@ BEGIN
   RETURN OLD;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER zz_social_accounts_x_inbox_cleanup_route
 BEFORE DELETE ON social_accounts
@@ -110,6 +116,7 @@ FOR EACH ROW
 WHEN (OLD.platform = 'twitter')
 EXECUTE FUNCTION augment_deleted_x_account_cleanup_route();
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION augment_deleted_workspace_x_cleanup_routes()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -131,6 +138,7 @@ BEGIN
   RETURN OLD;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER zz_workspaces_x_inbox_cleanup_routes
 BEFORE DELETE ON workspaces

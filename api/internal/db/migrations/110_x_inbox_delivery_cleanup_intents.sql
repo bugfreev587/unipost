@@ -2,6 +2,7 @@
 -- Upstream X rules and private Activity subscriptions outlive local rows.
 -- Preserve their exact IDs and encrypted cleanup credentials before a
 -- social-account cascade removes the normal delivery-resource row.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION x_inbox_delivery_cleanup_key(
   social_account_id TEXT,
   x_app_mode TEXT,
@@ -26,6 +27,7 @@ AS $$
       '-1:'
     )
 $$;
+-- +goose StatementEnd
 
 CREATE TABLE x_inbox_delivery_cleanup_intents (
   id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -60,6 +62,7 @@ CREATE INDEX x_inbox_delivery_cleanup_intents_pending_idx
 -- workspace delete. Child-table cascade order is not defined, so neither
 -- profiles/social_accounts nor platform_credentials can be assumed visible
 -- from a trigger on the other child.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enqueue_deleted_workspace_x_inbox_delivery_cleanup()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -126,12 +129,14 @@ BEGIN
   RETURN OLD;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER workspaces_x_inbox_delivery_cleanup
 BEFORE DELETE ON workspaces
 FOR EACH ROW
 EXECUTE FUNCTION enqueue_deleted_workspace_x_inbox_delivery_cleanup();
 
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enqueue_x_inbox_delivery_cleanup()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -195,6 +200,7 @@ BEGIN
   RETURN OLD;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER social_accounts_x_inbox_delivery_cleanup
 BEFORE DELETE ON social_accounts
@@ -205,6 +211,7 @@ EXECUTE FUNCTION enqueue_x_inbox_delivery_cleanup();
 -- Workspace deletion can cascade platform_credentials before profiles (or
 -- vice versa). Capture the same cleanup material from the credential side
 -- so either cascade order preserves the encrypted workspace app bearer.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enqueue_workspace_x_inbox_delivery_cleanup()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -275,6 +282,7 @@ BEGIN
   RETURN OLD;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER platform_credentials_x_inbox_delivery_cleanup
 BEFORE DELETE ON platform_credentials

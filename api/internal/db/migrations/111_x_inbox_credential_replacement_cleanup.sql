@@ -3,6 +3,7 @@
 -- rule and Activity subscription created by the previous application. Capture
 -- the exact old resource IDs and old encrypted bearer in the same transaction
 -- before the new credential row becomes visible.
+-- +goose StatementBegin
 CREATE OR REPLACE FUNCTION enqueue_replaced_workspace_x_inbox_delivery_cleanup()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -137,6 +138,7 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+-- +goose StatementEnd
 
 CREATE TRIGGER platform_credentials_x_inbox_delivery_replacement_cleanup
 BEFORE UPDATE OF platform, client_id, app_bearer_token, consumer_secret
