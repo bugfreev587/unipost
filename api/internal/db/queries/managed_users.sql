@@ -24,7 +24,10 @@ ORDER BY MIN(connected_at) DESC, external_user_id DESC
 LIMIT $2;
 
 -- name: ListManagedAccountsByExternalUser :many
-SELECT *
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, connected_at,
+  disconnected_at, metadata, scope, status, connection_type, connect_session_id,
+  external_user_id, external_user_email, last_refreshed_at
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id = $2
