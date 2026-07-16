@@ -11,6 +11,30 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getXInboundCapSetting = `-- name: GetXInboundCapSetting :one
+SELECT
+  workspace_id,
+  inbound_daily_limit,
+  updated_by,
+  acknowledged_exposure,
+  updated_at
+FROM x_inbound_cap_settings
+WHERE workspace_id = $1
+`
+
+func (q *Queries) GetXInboundCapSetting(ctx context.Context, workspaceID string) (XInboundCapSetting, error) {
+	row := q.db.QueryRow(ctx, getXInboundCapSetting, workspaceID)
+	var i XInboundCapSetting
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.InboundDailyLimit,
+		&i.UpdatedBy,
+		&i.AcknowledgedExposure,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getXInboundDailyUsage = `-- name: GetXInboundDailyUsage :one
 SELECT workspace_id, utc_date, weighted_units_used, weighted_units_limit, events_accepted, events_suppressed, created_at, updated_at
 FROM x_inbound_daily_usage
@@ -35,6 +59,54 @@ func (q *Queries) GetXInboundDailyUsage(ctx context.Context, arg GetXInboundDail
 		&i.EventsSuppressed,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getXInboundEventReceipt = `-- name: GetXInboundEventReceipt :one
+SELECT
+  workspace_id,
+  social_account_id,
+  upstream_resource_type,
+  upstream_resource_id,
+  utc_date,
+  decision,
+  weighted_units,
+  created_at
+FROM x_inbound_event_receipts
+WHERE workspace_id = $1
+  AND social_account_id = $2
+  AND upstream_resource_type = $3
+  AND upstream_resource_id = $4
+  AND utc_date = $5
+`
+
+type GetXInboundEventReceiptParams struct {
+	WorkspaceID          string      `json:"workspace_id"`
+	SocialAccountID      string      `json:"social_account_id"`
+	UpstreamResourceType string      `json:"upstream_resource_type"`
+	UpstreamResourceID   string      `json:"upstream_resource_id"`
+	UtcDate              pgtype.Date `json:"utc_date"`
+}
+
+func (q *Queries) GetXInboundEventReceipt(ctx context.Context, arg GetXInboundEventReceiptParams) (XInboundEventReceipt, error) {
+	row := q.db.QueryRow(ctx, getXInboundEventReceipt,
+		arg.WorkspaceID,
+		arg.SocialAccountID,
+		arg.UpstreamResourceType,
+		arg.UpstreamResourceID,
+		arg.UtcDate,
+	)
+	var i XInboundEventReceipt
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.UpstreamResourceType,
+		&i.UpstreamResourceID,
+		&i.UtcDate,
+		&i.Decision,
+		&i.WeightedUnits,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -115,4 +187,52 @@ func (q *Queries) ListProvisionalXUsageEvents(ctx context.Context, arg ListProvi
 		return nil, err
 	}
 	return items, nil
+}
+
+const upsertXInboundCapSetting = `-- name: UpsertXInboundCapSetting :one
+INSERT INTO x_inbound_cap_settings (
+  workspace_id,
+  inbound_daily_limit,
+  updated_by,
+  acknowledged_exposure,
+  updated_at
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (workspace_id) DO UPDATE SET
+  inbound_daily_limit = EXCLUDED.inbound_daily_limit,
+  updated_by = EXCLUDED.updated_by,
+  acknowledged_exposure = EXCLUDED.acknowledged_exposure,
+  updated_at = EXCLUDED.updated_at
+RETURNING
+  workspace_id,
+  inbound_daily_limit,
+  updated_by,
+  acknowledged_exposure,
+  updated_at
+`
+
+type UpsertXInboundCapSettingParams struct {
+	WorkspaceID          string             `json:"workspace_id"`
+	InboundDailyLimit    int64              `json:"inbound_daily_limit"`
+	UpdatedBy            string             `json:"updated_by"`
+	AcknowledgedExposure bool               `json:"acknowledged_exposure"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) UpsertXInboundCapSetting(ctx context.Context, arg UpsertXInboundCapSettingParams) (XInboundCapSetting, error) {
+	row := q.db.QueryRow(ctx, upsertXInboundCapSetting,
+		arg.WorkspaceID,
+		arg.InboundDailyLimit,
+		arg.UpdatedBy,
+		arg.AcknowledgedExposure,
+		arg.UpdatedAt,
+	)
+	var i XInboundCapSetting
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.InboundDailyLimit,
+		&i.UpdatedBy,
+		&i.AcknowledgedExposure,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

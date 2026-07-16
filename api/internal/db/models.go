@@ -1021,6 +1021,21 @@ type WorkspaceMember struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type XInboundCapNotification struct {
+	WorkspaceID string             `json:"workspace_id"`
+	UtcDate     pgtype.Date        `json:"utc_date"`
+	Threshold   int16              `json:"threshold"`
+	ClaimedAt   pgtype.Timestamptz `json:"claimed_at"`
+}
+
+type XInboundCapSetting struct {
+	WorkspaceID          string             `json:"workspace_id"`
+	InboundDailyLimit    int64              `json:"inbound_daily_limit"`
+	UpdatedBy            string             `json:"updated_by"`
+	AcknowledgedExposure bool               `json:"acknowledged_exposure"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type XInboundDailyUsage struct {
 	WorkspaceID        string             `json:"workspace_id"`
 	UtcDate            pgtype.Date        `json:"utc_date"`
@@ -1030,6 +1045,17 @@ type XInboundDailyUsage struct {
 	EventsSuppressed   int64              `json:"events_suppressed"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboundEventReceipt struct {
+	WorkspaceID          string             `json:"workspace_id"`
+	SocialAccountID      string             `json:"social_account_id"`
+	UpstreamResourceType string             `json:"upstream_resource_type"`
+	UpstreamResourceID   string             `json:"upstream_resource_id"`
+	UtcDate              pgtype.Date        `json:"utc_date"`
+	Decision             string             `json:"decision"`
+	WeightedUnits        int64              `json:"weighted_units"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
 type XInboxDeliveryResource struct {

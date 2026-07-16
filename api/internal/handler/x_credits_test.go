@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,10 +17,17 @@ import (
 type fakeXCreditsSnapshotService struct {
 	snapshot xcredits.Snapshot
 	err      error
+	setting  xcredits.InboundCapSetting
+	update   xcredits.UpdateInboundCapRequest
 }
 
 func (f fakeXCreditsSnapshotService) Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error) {
 	return f.snapshot, f.err
+}
+
+func (f *fakeXCreditsSnapshotService) UpdateInboundCap(_ context.Context, req xcredits.UpdateInboundCapRequest) (xcredits.InboundCapSetting, error) {
+	f.update = req
+	return f.setting, f.err
 }
 
 func xCreditsInt64(value int64) *int64 {
@@ -29,17 +37,23 @@ func xCreditsInt64(value int64) *int64 {
 func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	h := (&BillingHandler{}).SetXCreditsService(fakeXCreditsSnapshotService{
+	h := (&BillingHandler{}).SetXCreditsService(&fakeXCreditsSnapshotService{
 		snapshot: xcredits.Snapshot{
-			PlanID:            "basic",
-			PeriodStart:       start,
-			PeriodEnd:         end,
-			MonthlyAllowance:  xCreditsInt64(4000),
-			MonthlyUsed:       215,
-			MonthlyRemaining:  xCreditsInt64(3785),
-			InboundDailyUsed:  25,
-			InboundDailyLimit: xCreditsInt64(400),
-			CatalogVersion:    xcredits.CatalogVersion,
+			PlanID:             "basic",
+			PeriodStart:        start,
+			PeriodEnd:          end,
+			MonthlyAllowance:   xCreditsInt64(4000),
+			MonthlyUsed:        215,
+			MonthlyRemaining:   xCreditsInt64(3785),
+			InboundDailyUsed:   25,
+			InboundDailyLimit:  xCreditsInt64(400),
+			InboundAccepted:    4,
+			InboundSuppressed:  2,
+			InboundResetAt:     time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
+			InboundPercent:     6.25,
+			PausePaidSources:   true,
+			InboundPauseReason: xcredits.PauseReasonDailySafetyBuffer,
+			CatalogVersion:     xcredits.CatalogVersion,
 		},
 	})
 
@@ -55,14 +69,20 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 	}
 	var body struct {
 		Data struct {
-			Mode               string `json:"mode"`
-			MonthlyAllowance   *int64 `json:"monthly_allowance"`
-			MonthlyUsed        int64  `json:"monthly_used"`
-			MonthlyRemaining   *int64 `json:"monthly_remaining"`
-			InboundDailyUsage  int64  `json:"inbound_daily_usage"`
-			InboundDailyLimit  *int64 `json:"inbound_daily_limit"`
-			ConnectionModeNote string `json:"connection_mode_note"`
-			CatalogVersion     string `json:"catalog_version"`
+			Mode               string    `json:"mode"`
+			MonthlyAllowance   *int64    `json:"monthly_allowance"`
+			MonthlyUsed        int64     `json:"monthly_used"`
+			MonthlyRemaining   *int64    `json:"monthly_remaining"`
+			InboundDailyUsage  int64     `json:"inbound_daily_usage"`
+			InboundDailyLimit  *int64    `json:"inbound_daily_limit"`
+			InboundAccepted    int64     `json:"inbound_events_accepted"`
+			InboundSuppressed  int64     `json:"inbound_events_suppressed"`
+			InboundResetAt     time.Time `json:"inbound_daily_reset_at"`
+			InboundPercent     float64   `json:"inbound_daily_percent"`
+			PausePaidSources   bool      `json:"pause_paid_sources"`
+			InboundPauseReason string    `json:"inbound_pause_reason"`
+			ConnectionModeNote string    `json:"connection_mode_note"`
+			CatalogVersion     string    `json:"catalog_version"`
 		} `json:"data"`
 		RequestID string `json:"request_id"`
 	}
@@ -78,6 +98,12 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 	if body.Data.InboundDailyUsage != 25 || body.Data.InboundDailyLimit == nil || *body.Data.InboundDailyLimit != 400 {
 		t.Fatalf("data = %+v", body.Data)
 	}
+	if body.Data.InboundAccepted != 4 || body.Data.InboundSuppressed != 2 ||
+		!body.Data.InboundResetAt.Equal(time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC)) ||
+		body.Data.InboundPercent != 6.25 || !body.Data.PausePaidSources ||
+		body.Data.InboundPauseReason != xcredits.PauseReasonDailySafetyBuffer {
+		t.Fatalf("inbound metrics = %+v", body.Data)
+	}
 	if body.Data.CatalogVersion != xcredits.CatalogVersion || body.Data.ConnectionModeNote == "" {
 		t.Fatalf("data = %+v", body.Data)
 	}
@@ -87,7 +113,7 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 }
 
 func TestGetXCreditsEnterpriseUsesCustomNullLimits(t *testing.T) {
-	h := (&BillingHandler{}).SetXCreditsService(fakeXCreditsSnapshotService{
+	h := (&BillingHandler{}).SetXCreditsService(&fakeXCreditsSnapshotService{
 		snapshot: xcredits.Snapshot{
 			PlanID:         "enterprise",
 			PeriodStart:    time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
@@ -114,6 +140,64 @@ func TestGetXCreditsEnterpriseUsesCustomNullLimits(t *testing.T) {
 	}
 	if body.Data.MonthlyAllowance != nil || body.Data.MonthlyRemaining != nil || body.Data.InboundDailyLimit != nil {
 		t.Fatalf("enterprise limits must be null: %+v", body.Data)
+	}
+}
+
+func TestPatchXInboundCapPassesAuthenticatedActorAndAcknowledgement(t *testing.T) {
+	service := &fakeXCreditsSnapshotService{
+		setting: xcredits.InboundCapSetting{
+			InboundDailyLimit:    500,
+			UpdatedBy:            "user_admin",
+			AcknowledgedExposure: true,
+			UpdatedAt:            time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	h := (&BillingHandler{}).SetXCreditsService(service)
+	req := httptest.NewRequest(http.MethodPatch, "/v1/billing/x-credits/inbound-cap",
+		strings.NewReader(`{"inbound_daily_limit":500,"acknowledged_exposure":true}`))
+	ctx := auth.SetWorkspaceID(req.Context(), "ws_1")
+	ctx = context.WithValue(ctx, auth.UserIDKey, "user_admin")
+	req = req.WithContext(ctx)
+	rec := httptest.NewRecorder()
+
+	h.UpdateXInboundCap(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if service.update.WorkspaceID != "ws_1" || service.update.UpdatedBy != "user_admin" ||
+		service.update.InboundDailyLimit != 500 || !service.update.AcknowledgedExposure {
+		t.Fatalf("update = %+v", service.update)
+	}
+}
+
+func TestPatchXInboundCapRejectsNegativeLimit(t *testing.T) {
+	service := &fakeXCreditsSnapshotService{}
+	h := (&BillingHandler{}).SetXCreditsService(service)
+	req := httptest.NewRequest(http.MethodPatch, "/v1/billing/x-credits/inbound-cap",
+		strings.NewReader(`{"inbound_daily_limit":-1}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.UpdateXInboundCap(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestPatchXInboundCapRequiresExplicitLimit(t *testing.T) {
+	service := &fakeXCreditsSnapshotService{}
+	h := (&BillingHandler{}).SetXCreditsService(service)
+	req := httptest.NewRequest(http.MethodPatch, "/v1/billing/x-credits/inbound-cap",
+		strings.NewReader(`{"acknowledged_exposure":true}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.UpdateXInboundCap(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

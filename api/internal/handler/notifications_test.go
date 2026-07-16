@@ -47,6 +47,14 @@ func TestMatchingAccountLevelSubscriptions(t *testing.T) {
 	}
 }
 
+func TestSupportedNotificationEventsIncludesXInboundCapWarnings(t *testing.T) {
+	for _, eventType := range []string{"billing.x_inbound_80pct", "billing.x_inbound_cap_reached"} {
+		if !isSupportedEvent(eventType) {
+			t.Fatalf("supported notification events missing %q", eventType)
+		}
+	}
+}
+
 func TestEmailPreferenceRoutesAreRegistered(t *testing.T) {
 	source, err := os.ReadFile("../../cmd/api/main.go")
 	if err != nil {

@@ -410,7 +410,8 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
-	xCreditsService := xcredits.NewPostgresService(pool, queries)
+	xCreditsService := xcredits.NewPostgresService(pool, queries).
+		SetEventBus(eventBus, os.Getenv("APP_BASE_URL"))
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
@@ -1013,6 +1014,7 @@ func main() {
 		// are owner-only because they touch the payment method.
 		r.Get("/v1/billing", billingHandler.GetBilling)
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
+		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
