@@ -11,6 +11,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type fakeXUsageService struct {
@@ -76,6 +77,7 @@ func TestReserveManagedXUsageBypassesBYO(t *testing.T) {
 		ID:             "sa_1",
 		Platform:       "twitter",
 		ConnectionType: "byo",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
 	}
 
 	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:1:main", account, "hello")
@@ -97,6 +99,7 @@ func TestReserveManagedXUsageUsesCatalogWeight(t *testing.T) {
 		ID:             "sa_1",
 		Platform:       "twitter",
 		ConnectionType: "managed",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
 	}
 
 	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:1:main", account, "https://unipost.dev")
@@ -122,6 +125,7 @@ func TestReserveManagedXOperationUsesFirstCommentWeight(t *testing.T) {
 		ID:             "sa_1",
 		Platform:       "twitter",
 		ConnectionType: "managed",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
 	}
 
 	_, err := h.reserveManagedXOperation(
@@ -156,7 +160,12 @@ func TestReserveManagedXOperationStopsDuplicateUnknownOutcome(t *testing.T) {
 		Duplicate:      true,
 	}}
 	h := &SocialPostHandler{xUsage: fake}
-	account := db.SocialAccount{ID: "sa_1", Platform: "twitter", ConnectionType: "managed"}
+	account := db.SocialAccount{
+		ID:             "sa_1",
+		Platform:       "twitter",
+		ConnectionType: "managed",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+	}
 
 	_, err := h.reserveManagedXOperation(context.Background(), "ws_1", "result_1:main", account, "post.create")
 	if !errors.Is(err, ErrXWriteOutcomePending) {

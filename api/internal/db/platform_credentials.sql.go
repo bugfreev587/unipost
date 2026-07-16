@@ -7,21 +7,31 @@ package db
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createPlatformCredential = `-- name: CreatePlatformCredential :one
-INSERT INTO platform_credentials (workspace_id, platform, client_id, client_secret)
-VALUES ($1, $2, $3, $4)
+INSERT INTO platform_credentials (
+  workspace_id, platform, client_id, client_secret,
+  app_bearer_token, consumer_secret
+)
+VALUES ($1, $2, $3, $4, $5, $6)
 ON CONFLICT (workspace_id, platform) DO UPDATE
-SET client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret
-RETURNING id, platform, client_id, client_secret, created_at, workspace_id
+SET client_id = EXCLUDED.client_id,
+    client_secret = EXCLUDED.client_secret,
+    app_bearer_token = EXCLUDED.app_bearer_token,
+    consumer_secret = EXCLUDED.consumer_secret
+RETURNING id, platform, client_id, client_secret, created_at, workspace_id, app_bearer_token, consumer_secret
 `
 
 type CreatePlatformCredentialParams struct {
-	WorkspaceID  string `json:"workspace_id"`
-	Platform     string `json:"platform"`
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
+	WorkspaceID    string      `json:"workspace_id"`
+	Platform       string      `json:"platform"`
+	ClientID       string      `json:"client_id"`
+	ClientSecret   string      `json:"client_secret"`
+	AppBearerToken pgtype.Text `json:"app_bearer_token"`
+	ConsumerSecret pgtype.Text `json:"consumer_secret"`
 }
 
 func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatformCredentialParams) (PlatformCredential, error) {
@@ -30,6 +40,8 @@ func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatfo
 		arg.Platform,
 		arg.ClientID,
 		arg.ClientSecret,
+		arg.AppBearerToken,
+		arg.ConsumerSecret,
 	)
 	var i PlatformCredential
 	err := row.Scan(
@@ -39,6 +51,8 @@ func (q *Queries) CreatePlatformCredential(ctx context.Context, arg CreatePlatfo
 		&i.ClientSecret,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.AppBearerToken,
+		&i.ConsumerSecret,
 	)
 	return i, err
 }
@@ -59,7 +73,7 @@ func (q *Queries) DeletePlatformCredential(ctx context.Context, arg DeletePlatfo
 }
 
 const getPlatformCredential = `-- name: GetPlatformCredential :one
-SELECT id, platform, client_id, client_secret, created_at, workspace_id FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id, app_bearer_token, consumer_secret FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2
 `
 
@@ -78,12 +92,14 @@ func (q *Queries) GetPlatformCredential(ctx context.Context, arg GetPlatformCred
 		&i.ClientSecret,
 		&i.CreatedAt,
 		&i.WorkspaceID,
+		&i.AppBearerToken,
+		&i.ConsumerSecret,
 	)
 	return i, err
 }
 
 const listPlatformCredentialsByWorkspace = `-- name: ListPlatformCredentialsByWorkspace :many
-SELECT id, platform, client_id, client_secret, created_at, workspace_id FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id, app_bearer_token, consumer_secret FROM platform_credentials
 WHERE workspace_id = $1
 ORDER BY platform
 `
@@ -104,6 +120,8 @@ func (q *Queries) ListPlatformCredentialsByWorkspace(ctx context.Context, worksp
 			&i.ClientSecret,
 			&i.CreatedAt,
 			&i.WorkspaceID,
+			&i.AppBearerToken,
+			&i.ConsumerSecret,
 		); err != nil {
 			return nil, err
 		}

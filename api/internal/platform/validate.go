@@ -87,6 +87,7 @@ type ValidateAccount struct {
 	Platform       string
 	Disconnected   bool
 	ConnectionType string
+	AppMode        string
 }
 
 // ValidateMedia (Sprint 2) is what the validator needs to know about

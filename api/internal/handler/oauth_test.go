@@ -73,6 +73,9 @@ func TestOAuthPKCEConnectStoresRandomVerifierAndUsesItForTwitterChallenge(t *tes
 	if store.pkceVerifier == store.state {
 		t.Fatal("PKCE verifier must be random and independent from state")
 	}
+	if !store.xAppMode.Valid || store.xAppMode.String != "unipost_managed_app" {
+		t.Fatalf("stored X app mode = %+v, want unipost_managed_app", store.xAppMode)
+	}
 
 	var response struct {
 		Data struct {
@@ -94,6 +97,68 @@ func TestOAuthPKCEConnectStoresRandomVerifierAndUsesItForTwitterChallenge(t *tes
 	}
 	if got := query.Get("code_challenge_method"); got != "S256" {
 		t.Fatalf("code_challenge_method = %q, want S256", got)
+	}
+}
+
+func TestOAuthConnectUsesProfileWorkspaceCredentialAndStoresWorkspaceMode(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-client-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &oauthPKCETestDB{
+		planID:                   "growth",
+		platformCredentialID:     "workspace-client-id",
+		platformCredentialSecret: encryptedSecret,
+	}
+	h := NewOAuthHandler(db.New(store), encryptor, nil)
+	h.baseRedirectURL = "https://api.example"
+	t.Setenv("TWITTER_CLIENT_ID", "global-client-id")
+	t.Setenv("TWITTER_CLIENT_SECRET", "global-client-secret")
+
+	previous, err := platform.Get("twitter")
+	if err != nil {
+		previous = nil
+	}
+	platform.Register(platform.NewTwitterAdapter())
+	t.Cleanup(func() {
+		if previous != nil {
+			platform.Register(previous)
+		}
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/profiles/pr_1/oauth/connect/twitter", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withOAuthPKCEChiParams(req, map[string]string{"profileID": "pr_1", "platform": "twitter"})
+	rec := httptest.NewRecorder()
+	h.Connect(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.platformCredentialWorkspaceID != "ws_1" {
+		t.Fatalf("credential workspace lookup = %q, want ws_1 (not profile id)", store.platformCredentialWorkspaceID)
+	}
+	if !store.xAppMode.Valid || store.xAppMode.String != "workspace_x_app" {
+		t.Fatalf("stored X app mode = %+v, want workspace_x_app", store.xAppMode)
+	}
+	var response struct {
+		Data struct {
+			AuthURL string `json:"auth_url"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	authURL, err := url.Parse(response.Data.AuthURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := authURL.Query().Get("client_id"); got != "workspace-client-id" {
+		t.Fatalf("client_id = %q, want workspace-client-id", got)
 	}
 }
 
@@ -209,11 +274,16 @@ func (a *oauthPKCESpyAdapter) ExchangeCode(_ context.Context, config platform.OA
 }
 
 type oauthPKCETestDB struct {
-	state        string
-	pkceVerifier string
-	consumeCalls int
-	consumed     bool
-	consumeErr   error
+	state                         string
+	pkceVerifier                  string
+	xAppMode                      pgtype.Text
+	planID                        string
+	platformCredentialID          string
+	platformCredentialSecret      string
+	platformCredentialWorkspaceID string
+	consumeCalls                  int
+	consumed                      bool
+	consumeErr                    error
 }
 
 func (f *oauthPKCETestDB) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -243,15 +313,33 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 		return scanRow{values: []any{
 			"pr_1", "Profile", now, now, pgtype.Text{}, pgtype.Text{}, pgtype.Text{}, "ws_1", false, pgtype.Text{},
 		}}
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		if f.planID == "" {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		return scanRow{values: []any{
+			"sub_1", f.planID, pgtype.Text{}, pgtype.Text{}, "active",
+			now, now, pgtype.Bool{}, now, now, false, "ws_1",
+		}}
 	case strings.Contains(query, "-- name: GetPlatformCredential"):
+		f.platformCredentialWorkspaceID, _ = args[0].(string)
+		if f.platformCredentialID != "" {
+			now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			return scanRow{values: []any{
+				"pc_1", "twitter", f.platformCredentialID, f.platformCredentialSecret,
+				now, "ws_1", pgtype.Text{}, pgtype.Text{},
+			}}
+		}
 		return scanRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "-- name: CreateOAuthState"):
-		if len(args) < 5 {
+		if len(args) < 6 {
 			return scanRow{err: fmt.Errorf("CreateOAuthState args = %d, want PKCE verifier argument", len(args))}
 		}
 		f.state, _ = args[0].(string)
 		verifier, _ := args[4].(pgtype.Text)
 		f.pkceVerifier = verifier.String
+		f.xAppMode, _ = args[5].(pgtype.Text)
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return scanRow{values: []any{
 			f.state,
@@ -261,6 +349,7 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 			pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
 			now,
 			verifier,
+			f.xAppMode,
 		}}
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
@@ -269,6 +358,10 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 
 func (f *oauthPKCETestDB) oauthStateRow() scanRow {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	mode := f.xAppMode
+	if !mode.Valid {
+		mode = pgtype.Text{String: "unipost_managed_app", Valid: true}
+	}
 	return scanRow{values: []any{
 		f.state,
 		"pr_1",
@@ -277,6 +370,7 @@ func (f *oauthPKCETestDB) oauthStateRow() scanRow {
 		pgtype.Timestamptz{Time: time.Now().Add(10 * time.Minute), Valid: true},
 		now,
 		pgtype.Text{String: f.pkceVerifier, Valid: f.pkceVerifier != ""},
+		mode,
 	}}
 }
 

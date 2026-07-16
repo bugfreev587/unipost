@@ -1,0 +1,92 @@
+package xinbox
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestXInboxCapabilityKeepsPublishingAndCommentsWhenDMScopesAreMissing(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: true,
+		AccountStatus:   "active",
+		Scopes:          []string{"tweet.read", "tweet.write", "users.read", "offline.access"},
+		AppMode:         AppModeUniPostManaged,
+	})
+
+	if !got.CommentsEnabled {
+		t.Fatal("comments_enabled = false, want true")
+	}
+	if got.DMsEnabled {
+		t.Fatal("dms_enabled = true, want false")
+	}
+	if want := []string{"dm.read", "dm.write"}; !reflect.DeepEqual(got.MissingScopes, want) {
+		t.Fatalf("missing_scopes = %v, want %v", got.MissingScopes, want)
+	}
+	if !got.ReconnectRequired {
+		t.Fatal("reconnect_required = false, want true")
+	}
+	if got.DeliveryStatus != DeliveryStatusPending {
+		t.Fatalf("delivery_status = %q, want %q", got.DeliveryStatus, DeliveryStatusPending)
+	}
+	if got.AppMode != AppModeUniPostManaged {
+		t.Fatalf("app_mode = %q, want %q", got.AppMode, AppModeUniPostManaged)
+	}
+	if len(got.MissingAppCredentials) != 0 {
+		t.Fatalf("missing_app_credentials = %v, want empty", got.MissingAppCredentials)
+	}
+}
+
+func TestXInboxCapabilityAPIPlanDoesNotPromptReconnect(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: false,
+		AccountStatus:   "active",
+		Scopes:          []string{"tweet.read", "tweet.write", "users.read"},
+		AppMode:         AppModeUniPostManaged,
+	})
+
+	if got.CommentsEnabled || got.DMsEnabled {
+		t.Fatalf("comments_enabled=%v dms_enabled=%v, want both false", got.CommentsEnabled, got.DMsEnabled)
+	}
+	if got.ReconnectRequired {
+		t.Fatal("reconnect_required = true, want false")
+	}
+	if len(got.MissingScopes) != 0 {
+		t.Fatalf("missing_scopes = %v, want empty for plan-ineligible workspace", got.MissingScopes)
+	}
+	if got.DeliveryStatus != DeliveryStatusPausedPlan {
+		t.Fatalf("delivery_status = %q, want %q", got.DeliveryStatus, DeliveryStatusPausedPlan)
+	}
+}
+
+func TestXInboxCapabilityWorkspaceAppListsExactMissingCredentials(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: true,
+		AccountStatus:   "active",
+		Scopes:          RequiredInboxScopes(),
+		AppMode:         AppModeWorkspace,
+		AppCredentials: AppCredentials{
+			ClientIDConfigured:     true,
+			ClientSecretConfigured: true,
+		},
+	})
+
+	if got.CommentsEnabled || got.DMsEnabled {
+		t.Fatalf("comments_enabled=%v dms_enabled=%v, want both false without app-level credentials", got.CommentsEnabled, got.DMsEnabled)
+	}
+	if want := []string{"app_bearer_token", "consumer_secret"}; !reflect.DeepEqual(got.MissingAppCredentials, want) {
+		t.Fatalf("missing_app_credentials = %v, want %v", got.MissingAppCredentials, want)
+	}
+	if got.ReconnectRequired {
+		t.Fatal("reconnect_required = true, want false when OAuth scopes are complete")
+	}
+}
+
+func TestXAppModeForManualTwitterConnectionUsesWorkspaceApp(t *testing.T) {
+	mode, ok := AppModeForManualConnection("twitter")
+	if !ok || mode != AppModeWorkspace {
+		t.Fatalf("mode=%q ok=%v, want workspace X app", mode, ok)
+	}
+	if _, ok := AppModeForManualConnection("linkedin"); ok {
+		t.Fatal("non-X manual connection unexpectedly received an X app mode")
+	}
+}

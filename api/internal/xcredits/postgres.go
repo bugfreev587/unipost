@@ -98,12 +98,12 @@ func (s *PostgresStore) Reserve(ctx context.Context, req StoreReserveRequest) (U
 			workspace_id, social_account_id, period_start, period_end,
 			operation_key, catalog_version, source, idempotency_key,
 			weighted_units, status, connection_mode
-		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, 'provisional', 'managed')
+		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, 'provisional', $10)
 		ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
 		RETURNING id
 	`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
 		req.OperationKey, req.CatalogVersion, req.Source, req.IdempotencyKey,
-		req.WeightedUnits,
+		req.WeightedUnits, req.AppMode,
 	).Scan(&event.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existing UsageEvent

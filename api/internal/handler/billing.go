@@ -358,7 +358,7 @@ func (h *BillingHandler) GetXCredits(w http.ResponseWriter, r *http.Request) {
 		CatalogVersion:     snapshot.CatalogVersion,
 		InboundDailyUsage:  snapshot.InboundDailyUsed,
 		InboundDailyLimit:  snapshot.InboundDailyLimit,
-		ConnectionModeNote: "Managed X connections consume this allowance. Bring-your-own X API connections do not consume UniPost X Credits.",
+		ConnectionModeNote: "Activity through the UniPost-managed X app consumes this allowance. Workspace X app activity does not consume UniPost X Credits.",
 	})
 }
 

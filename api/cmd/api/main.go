@@ -531,7 +531,7 @@ func main() {
 	// dynamic GROUP BY clause sqlc can't model.
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
-	platformHandler := handler.NewPlatformHandler(queries)
+	platformHandler := handler.NewPlatformHandler(queries, quotaChecker)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)

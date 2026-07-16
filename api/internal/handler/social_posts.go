@@ -37,6 +37,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 var xURLCandidatePattern = regexp.MustCompile(`(?i)(https?://|www\.|(?:^|[^@\p{L}\p{N}_])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:[/:?#][^\s]*)?)`)
@@ -1979,13 +1980,11 @@ func (h *SocialPostHandler) publishOneContext(
 		return
 	}
 	if acc.Platform == "twitter" {
-		if acc.ConnectionType == "managed" {
-			oc.xCreditBillingMode = "unipost_managed_app"
+		oc.xCreditBillingMode = acc.XAppMode.String
+		if xinbox.AppMode(acc.XAppMode.String) == xinbox.AppModeUniPostManaged {
 			oc.xCreditsCounted = usageEvent.WeightedUnits
 			oc.xCreditOperation = usageEvent.OperationKey
 			oc.xCreditCatalog = usageEvent.CatalogVersion
-		} else {
-			oc.xCreditBillingMode = "customer_x_app"
 		}
 	}
 
@@ -2074,12 +2073,13 @@ func (h *SocialPostHandler) reserveManagedXOperation(
 	account db.SocialAccount,
 	operation string,
 ) (xcredits.UsageEvent, error) {
-	if h == nil || h.xUsage == nil || account.Platform != "twitter" || account.ConnectionType != "managed" {
+	if h == nil || h.xUsage == nil || account.Platform != "twitter" || xinbox.AppMode(account.XAppMode.String) != xinbox.AppModeUniPostManaged {
 		return xcredits.UsageEvent{}, nil
 	}
 	event, err := h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
 		WorkspaceID:     workspaceID,
 		SocialAccountID: account.ID,
+		AppMode:         account.XAppMode.String,
 		ConnectionType:  account.ConnectionType,
 		OperationKey:    operation,
 		Source:          "publish",

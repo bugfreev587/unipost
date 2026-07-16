@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -74,10 +75,139 @@ func TestPlatformCredentials_BasicClaimsEmptyCustomPlatformSlot(t *testing.T) {
 	}
 }
 
+func TestPlatformCredentialsTwitterEncryptsAppSecretsAndReturnsOnlyCompletenessFlags(t *testing.T) {
+	store := &platformCredentialTestDB{planID: "growth"}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "twitter",
+		"client_id": "twitter-client",
+		"client_secret": "twitter-client-secret",
+		"app_bearer_token": "twitter-bearer-secret",
+		"consumer_secret": "twitter-consumer-secret"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.appBearerToken.String == "twitter-bearer-secret" || store.consumerSecret.String == "twitter-consumer-secret" {
+		t.Fatal("X app-level secrets were passed to persistence in plaintext")
+	}
+	gotBearer, err := encryptor.Decrypt(store.appBearerToken.String)
+	if err != nil || gotBearer != "twitter-bearer-secret" {
+		t.Fatalf("decrypt app bearer token = %q, %v", gotBearer, err)
+	}
+	gotConsumer, err := encryptor.Decrypt(store.consumerSecret.String)
+	if err != nil || gotConsumer != "twitter-consumer-secret" {
+		t.Fatalf("decrypt consumer secret = %q, %v", gotConsumer, err)
+	}
+	if strings.Contains(rec.Body.String(), "twitter-bearer-secret") || strings.Contains(rec.Body.String(), "twitter-consumer-secret") {
+		t.Fatalf("response leaked an X secret: %s", rec.Body.String())
+	}
+	var response struct {
+		Data struct {
+			AppBearerTokenConfigured  bool `json:"app_bearer_token_configured"`
+			ConsumerSecretConfigured  bool `json:"consumer_secret_configured"`
+			XInboxCredentialsComplete bool `json:"x_inbox_credentials_complete"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if !response.Data.AppBearerTokenConfigured || !response.Data.ConsumerSecretConfigured || !response.Data.XInboxCredentialsComplete {
+		t.Fatalf("credential flags = %+v", response.Data)
+	}
+}
+
+func TestPlatformCredentialsTwitterPreservesOptionalSecretsWhenOmitted(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	existingBearer, _ := encryptor.Encrypt("existing-bearer")
+	existingConsumer, _ := encryptor.Encrypt("existing-consumer")
+	store := &platformCredentialTestDB{
+		planID:                 "growth",
+		existingPlatform:       "twitter",
+		existingAppBearerToken: pgtype.Text{String: existingBearer, Valid: true},
+		existingConsumerSecret: pgtype.Text{String: existingConsumer, Valid: true},
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "twitter",
+		"client_id": "updated-client",
+		"client_secret": "updated-client-secret"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.appBearerToken != store.existingAppBearerToken {
+		t.Fatal("omitted app_bearer_token did not preserve the stored ciphertext")
+	}
+	if store.consumerSecret != store.existingConsumerSecret {
+		t.Fatal("omitted consumer_secret did not preserve the stored ciphertext")
+	}
+}
+
+func TestPlatformCredentialsRejectsBlankXSecretAndXFieldsOnOtherPlatforms(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "blank twitter bearer",
+			body: `{"platform":"twitter","client_id":"id","client_secret":"secret","app_bearer_token":"   "}`,
+		},
+		{
+			name: "X secret on LinkedIn",
+			body: `{"platform":"linkedin","client_id":"id","client_secret":"secret","consumer_secret":"not-allowed"}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &platformCredentialTestDB{planID: "growth"}
+			encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+			req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(tt.body))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			rec := httptest.NewRecorder()
+
+			h.Create(rec, req)
+
+			if rec.Code != http.StatusUnprocessableEntity {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if store.createCalls != 0 {
+				t.Fatalf("create calls = %d, want 0", store.createCalls)
+			}
+		})
+	}
+}
+
 type platformCredentialTestDB struct {
-	planID             string
-	customPlatformSlot string
-	createCalls        int
+	planID                 string
+	customPlatformSlot     string
+	createCalls            int
+	existingPlatform       string
+	existingAppBearerToken pgtype.Text
+	existingConsumerSecret pgtype.Text
+	appBearerToken         pgtype.Text
+	consumerSecret         pgtype.Text
 }
 
 func (f *platformCredentialTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -149,21 +279,53 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 			[]string{"publishing"},
 			pgtype.Text{String: f.customPlatformSlot, Valid: f.customPlatformSlot != ""},
 		}}
+	case strings.Contains(query, "-- name: GetPlatformCredential"):
+		if f.existingPlatform == "" {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return platformCredentialScanRow{
+			platform:       f.existingPlatform,
+			clientID:       "existing-client",
+			clientSecret:   "existing-encrypted-client-secret",
+			appBearerToken: f.existingAppBearerToken,
+			consumerSecret: f.existingConsumerSecret,
+		}
 	case strings.Contains(query, "-- name: CreatePlatformCredential"):
 		f.createCalls++
 		platform, _ := args[1].(string)
 		clientID, _ := args[2].(string)
 		clientSecret, _ := args[3].(string)
-		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		return scanRow{values: []any{
-			"pc_1",
-			platform,
-			clientID,
-			clientSecret,
-			now,
-			"ws_1",
-		}}
+		if len(args) > 4 {
+			f.appBearerToken, _ = args[4].(pgtype.Text)
+		}
+		if len(args) > 5 {
+			f.consumerSecret, _ = args[5].(pgtype.Text)
+		}
+		return platformCredentialScanRow{
+			platform:       platform,
+			clientID:       clientID,
+			clientSecret:   clientSecret,
+			appBearerToken: f.appBearerToken,
+			consumerSecret: f.consumerSecret,
+		}
 	default:
 		return scanRow{err: pgx.ErrNoRows}
 	}
+}
+
+type platformCredentialScanRow struct {
+	platform       string
+	clientID       string
+	clientSecret   string
+	appBearerToken pgtype.Text
+	consumerSecret pgtype.Text
+}
+
+func (r platformCredentialScanRow) Scan(dest ...any) error {
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	values := []any{"pc_1", r.platform, r.clientID, r.clientSecret, now, "ws_1"}
+	if len(dest) == 8 {
+		values = []any{"pc_1", r.platform, r.clientID, r.clientSecret, now, "ws_1", r.appBearerToken, r.consumerSecret}
+	}
+	return scanRow{values: values}.Scan(dest...)
 }

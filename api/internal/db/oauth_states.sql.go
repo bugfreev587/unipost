@@ -14,7 +14,7 @@ import (
 const consumeOAuthState = `-- name: ConsumeOAuthState :one
 DELETE FROM oauth_states
 WHERE state = $1 AND expires_at > NOW()
-RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier, x_app_mode
 `
 
 func (q *Queries) ConsumeOAuthState(ctx context.Context, state string) (OauthState, error) {
@@ -28,14 +28,15 @@ func (q *Queries) ConsumeOAuthState(ctx context.Context, state string) (OauthSta
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.PkceVerifier,
+		&i.XAppMode,
 	)
 	return i, err
 }
 
 const createOAuthState = `-- name: CreateOAuthState :one
-INSERT INTO oauth_states (state, profile_id, platform, redirect_url, pkce_verifier)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier
+INSERT INTO oauth_states (state, profile_id, platform, redirect_url, pkce_verifier, x_app_mode)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier, x_app_mode
 `
 
 type CreateOAuthStateParams struct {
@@ -44,6 +45,7 @@ type CreateOAuthStateParams struct {
 	Platform     string      `json:"platform"`
 	RedirectUrl  pgtype.Text `json:"redirect_url"`
 	PkceVerifier pgtype.Text `json:"pkce_verifier"`
+	XAppMode     pgtype.Text `json:"x_app_mode"`
 }
 
 func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStateParams) (OauthState, error) {
@@ -53,6 +55,7 @@ func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStatePara
 		arg.Platform,
 		arg.RedirectUrl,
 		arg.PkceVerifier,
+		arg.XAppMode,
 	)
 	var i OauthState
 	err := row.Scan(
@@ -63,6 +66,7 @@ func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStatePara
 		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.PkceVerifier,
+		&i.XAppMode,
 	)
 	return i, err
 }

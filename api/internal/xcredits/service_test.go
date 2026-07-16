@@ -14,6 +14,7 @@ type fakeStore struct {
 	events       map[string]UsageEvent
 	used         int64
 	reserveCalls int
+	lastReserve  StoreReserveRequest
 }
 
 func newFakeStore(planID string, start, end time.Time) *fakeStore {
@@ -29,6 +30,7 @@ func (s *fakeStore) ResolveWorkspacePeriod(context.Context, string, time.Time) (
 
 func (s *fakeStore) Reserve(_ context.Context, req StoreReserveRequest) (UsageEvent, error) {
 	s.reserveCalls++
+	s.lastReserve = req
 	if existing, ok := s.events[req.IdempotencyKey]; ok {
 		existing.Duplicate = true
 		return existing, nil
@@ -97,6 +99,7 @@ func TestServiceReserveCreatesOneProvisionalEvent(t *testing.T) {
 	event, err := service.Reserve(context.Background(), ReserveRequest{
 		WorkspaceID:     "ws_1",
 		SocialAccountID: "sa_1",
+		AppMode:         "unipost_managed_app",
 		ConnectionType:  "managed",
 		OperationKey:    "post.create",
 		Source:          "publish",
@@ -120,7 +123,7 @@ func TestServiceReserveIsIdempotent(t *testing.T) {
 	store := newFakeStore("basic", now, now.Add(30*24*time.Hour))
 	service := NewService(store)
 	req := ReserveRequest{
-		WorkspaceID: "ws_1", ConnectionType: "managed",
+		WorkspaceID: "ws_1", AppMode: "unipost_managed_app", ConnectionType: "managed",
 		OperationKey: "post.create", Source: "publish",
 		IdempotencyKey: "same", RequestedUnits: 15, Now: now,
 	}
@@ -147,7 +150,7 @@ func TestServiceReserveBlocksBeforeMonthlyOverspend(t *testing.T) {
 	service := NewService(store)
 
 	_, err := service.Reserve(context.Background(), ReserveRequest{
-		WorkspaceID: "ws_1", ConnectionType: "managed",
+		WorkspaceID: "ws_1", AppMode: "unipost_managed_app", ConnectionType: "managed",
 		OperationKey: "post.create", Source: "publish",
 		IdempotencyKey: "over", RequestedUnits: 15, Now: now,
 	})
@@ -167,7 +170,7 @@ func TestServiceReserveUsesWorkspaceContractAllowance(t *testing.T) {
 	service := NewService(store)
 
 	event, err := service.Reserve(context.Background(), ReserveRequest{
-		WorkspaceID: "ws_enterprise", ConnectionType: "managed",
+		WorkspaceID: "ws_enterprise", AppMode: "unipost_managed_app", ConnectionType: "managed",
 		OperationKey: "post.create", Source: "publish",
 		IdempotencyKey: "enterprise-post", RequestedUnits: 15, Now: now,
 	})
@@ -185,7 +188,7 @@ func TestServiceFinalizeAndReverseAreIdempotent(t *testing.T) {
 	service := NewService(store)
 
 	finalized, err := service.Reserve(context.Background(), ReserveRequest{
-		WorkspaceID: "ws_1", ConnectionType: "managed",
+		WorkspaceID: "ws_1", AppMode: "unipost_managed_app", ConnectionType: "managed",
 		OperationKey: "post.create_url", Source: "publish",
 		IdempotencyKey: "finalize", RequestedUnits: 200, Now: now,
 	})
@@ -203,7 +206,7 @@ func TestServiceFinalizeAndReverseAreIdempotent(t *testing.T) {
 	}
 
 	reversed, err := service.Reserve(context.Background(), ReserveRequest{
-		WorkspaceID: "ws_1", ConnectionType: "managed",
+		WorkspaceID: "ws_1", AppMode: "unipost_managed_app", ConnectionType: "managed",
 		OperationKey: "post.create", Source: "publish",
 		IdempotencyKey: "reverse", RequestedUnits: 15, Now: now,
 	})
@@ -237,6 +240,60 @@ func TestServiceBYOBypassesStore(t *testing.T) {
 	}
 	if store.reserveCalls != 0 {
 		t.Fatalf("reserve calls = %d, want 0", store.reserveCalls)
+	}
+}
+
+func TestXUsageUsesPersistedAppModeRegardlessOfConnectionType(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name           string
+		appMode        string
+		connectionType string
+		wantStatus     string
+		wantCalls      int
+	}{
+		{
+			name:           "UniPost app meters a native BYO-owned account",
+			appMode:        "unipost_managed_app",
+			connectionType: "byo",
+			wantStatus:     UsageStatusProvisional,
+			wantCalls:      1,
+		},
+		{
+			name:           "workspace app bypasses a Hosted Connect managed account",
+			appMode:        "workspace_x_app",
+			connectionType: "managed",
+			wantStatus:     UsageStatusBypassed,
+			wantCalls:      0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newFakeStore("basic", now, now.Add(30*24*time.Hour))
+			service := NewService(store)
+			event, err := service.Reserve(context.Background(), ReserveRequest{
+				WorkspaceID:     "ws_1",
+				SocialAccountID: "sa_1",
+				AppMode:         tt.appMode,
+				ConnectionType:  tt.connectionType,
+				OperationKey:    "post.create",
+				IdempotencyKey:  "mode-test",
+				RequestedUnits:  15,
+				Now:             now,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if event.Status != tt.wantStatus {
+				t.Fatalf("status = %q, want %q", event.Status, tt.wantStatus)
+			}
+			if store.reserveCalls != tt.wantCalls {
+				t.Fatalf("reserve calls = %d, want %d", store.reserveCalls, tt.wantCalls)
+			}
+			if tt.wantCalls == 1 && store.lastReserve.AppMode != tt.appMode {
+				t.Fatalf("persisted app mode = %q, want %q", store.lastReserve.AppMode, tt.appMode)
+			}
+		})
 	}
 }
 

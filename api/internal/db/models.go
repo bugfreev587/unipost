@@ -159,6 +159,7 @@ type ConnectSession struct {
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
+	XAppMode                 pgtype.Text        `json:"x_app_mode"`
 }
 
 type EmailPreference struct {
@@ -524,6 +525,7 @@ type OauthState struct {
 	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	PkceVerifier pgtype.Text        `json:"pkce_verifier"`
+	XAppMode     pgtype.Text        `json:"x_app_mode"`
 }
 
 type PaidPlanQuotaNotification struct {
@@ -604,12 +606,14 @@ type Plan struct {
 }
 
 type PlatformCredential struct {
-	ID           string             `json:"id"`
-	Platform     string             `json:"platform"`
-	ClientID     string             `json:"client_id"`
-	ClientSecret string             `json:"client_secret"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	WorkspaceID  string             `json:"workspace_id"`
+	ID             string             `json:"id"`
+	Platform       string             `json:"platform"`
+	ClientID       string             `json:"client_id"`
+	ClientSecret   string             `json:"client_secret"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID    string             `json:"workspace_id"`
+	AppBearerToken pgtype.Text        `json:"app_bearer_token"`
+	ConsumerSecret pgtype.Text        `json:"consumer_secret"`
 }
 
 type PostAnalytic struct {
@@ -794,6 +798,7 @@ type SocialAccount struct {
 	ExternalUserID    pgtype.Text        `json:"external_user_id"`
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
+	XAppMode          pgtype.Text        `json:"x_app_mode"`
 }
 
 type SocialPost struct {
@@ -1025,6 +1030,17 @@ type XInboundDailyUsage struct {
 	EventsSuppressed   int64              `json:"events_suppressed"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboxDeliveryResource struct {
+	SocialAccountID          string             `json:"social_account_id"`
+	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
+	DeliveryStatus           string             `json:"delivery_status"`
+	LastError                pgtype.Text        `json:"last_error"`
+	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }
 
 type XUsageEvent struct {

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 const (
@@ -30,6 +32,7 @@ type WorkspacePeriod struct {
 type ReserveRequest struct {
 	WorkspaceID     string
 	SocialAccountID string
+	AppMode         string
 	ConnectionType  string
 	OperationKey    string
 	Source          string
@@ -41,6 +44,7 @@ type ReserveRequest struct {
 type StoreReserveRequest struct {
 	WorkspaceID        string
 	SocialAccountID    string
+	AppMode            string
 	OperationKey       string
 	CatalogVersion     string
 	Source             string
@@ -89,7 +93,7 @@ func NewService(store Store) *Service {
 }
 
 func (s *Service) Reserve(ctx context.Context, req ReserveRequest) (UsageEvent, error) {
-	if req.ConnectionType != "managed" {
+	if xinbox.AppMode(req.AppMode) != xinbox.AppModeUniPostManaged {
 		return UsageEvent{Status: UsageStatusBypassed}, nil
 	}
 	if s == nil || s.store == nil {
@@ -129,6 +133,7 @@ func (s *Service) Reserve(ctx context.Context, req ReserveRequest) (UsageEvent, 
 	return s.store.Reserve(ctx, StoreReserveRequest{
 		WorkspaceID:        req.WorkspaceID,
 		SocialAccountID:    req.SocialAccountID,
+		AppMode:            req.AppMode,
 		OperationKey:       req.OperationKey,
 		CatalogVersion:     CatalogVersion,
 		Source:             req.Source,

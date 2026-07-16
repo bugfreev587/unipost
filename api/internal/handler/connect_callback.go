@@ -44,6 +44,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type instagramWebhookSubscriber interface {
@@ -152,7 +153,37 @@ func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, prof
 	return profile.WorkspaceID
 }
 
-func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool) (connect.Connector, bool, error) {
+func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool, appModes ...pgtype.Text) (connect.Connector, bool, error) {
+	if platform == "twitter" {
+		appMode := pgtype.Text{}
+		if len(appModes) > 0 {
+			appMode = appModes[0]
+		}
+		switch xinbox.AppMode(appMode.String) {
+		case xinbox.AppModeWorkspace:
+			cred, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
+				WorkspaceID: workspaceID,
+				Platform:    platform,
+			})
+			if err == pgx.ErrNoRows {
+				return nil, false, nil
+			}
+			if err != nil {
+				return nil, false, err
+			}
+			clientSecret, err := h.encryptor.Decrypt(cred.ClientSecret)
+			if err != nil {
+				return nil, false, err
+			}
+			connector := connect.NewManagedConnector(platform, cred.ClientID, clientSecret, h.callbackBaseURL)
+			return connector, connector != nil, nil
+		case xinbox.AppModeUniPostManaged:
+			connector, ok := h.registry.Get(platform)
+			return connector, ok, nil
+		default:
+			return nil, false, nil
+		}
+	}
 	if workspaceAllowsPlatformCredentialsForPlatform(ctx, h.queries, workspaceID, platform) {
 		cred, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
 			WorkspaceID: workspaceID,
@@ -238,7 +269,7 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 	}
 
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds)
+	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds, session.XAppMode)
 	if err != nil {
 		slog.Error("connect.authorize: resolve connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to load platform credentials.")
@@ -366,7 +397,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds)
+	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds, session.XAppMode)
 	if err != nil {
 		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "connector_resolution_failed", false)
@@ -504,6 +535,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			ConnectSessionID:  connectSessionID,
 			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
+			XAppMode:          session.XAppMode,
 		})
 	case lookupErr == pgx.ErrNoRows:
 		saved, err = h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
@@ -520,6 +552,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			ConnectSessionID:  connectSessionID,
 			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
+			XAppMode:          session.XAppMode,
 		})
 	}
 	if err != nil {

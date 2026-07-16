@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type SocialAccountHandler struct {
@@ -184,6 +185,10 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	metadataJSON, _ := json.Marshal(result.Metadata)
+	xAppMode := pgtype.Text{}
+	if mode, ok := xinbox.AppModeForManualConnection(body.Platform); ok {
+		xAppMode = pgtype.Text{String: string(mode), Valid: true}
+	}
 
 	account, err := h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
 		ProfileID:         profileID,
@@ -196,6 +201,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 		Metadata:          metadataJSON,
 		Scope:             result.Scopes,
+		XAppMode:          xAppMode,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save account")

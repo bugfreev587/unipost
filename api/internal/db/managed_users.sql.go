@@ -51,7 +51,7 @@ func (q *Queries) DismissDisconnectedManagedAccountsByExternalUser(ctx context.C
 }
 
 const listManagedAccountsByExternalUser = `-- name: ListManagedAccountsByExternalUser :many
-SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at
+SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, connected_at, disconnected_at, metadata, scope, status, connection_type, connect_session_id, external_user_id, external_user_email, last_refreshed_at, x_app_mode
 FROM social_accounts
 WHERE profile_id = $1
   AND external_user_id = $2
@@ -94,6 +94,7 @@ func (q *Queries) ListManagedAccountsByExternalUser(ctx context.Context, arg Lis
 			&i.ExternalUserID,
 			&i.ExternalUserEmail,
 			&i.LastRefreshedAt,
+			&i.XAppMode,
 		); err != nil {
 			return nil, err
 		}

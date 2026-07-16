@@ -196,7 +196,7 @@ func (q *Queries) FindDMThreadKeyBySender(ctx context.Context, arg FindDMThreadK
 }
 
 const findInboxAccountsByWorkspace = `-- name: FindInboxAccountsByWorkspace :many
-SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at
+SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token, sa.token_expires_at, sa.external_account_id, sa.account_name, sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata, sa.scope, sa.status, sa.connection_type, sa.connect_session_id, sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
@@ -234,6 +234,7 @@ func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, workspaceID 
 			&i.ExternalUserID,
 			&i.ExternalUserEmail,
 			&i.LastRefreshedAt,
+			&i.XAppMode,
 		); err != nil {
 			return nil, err
 		}

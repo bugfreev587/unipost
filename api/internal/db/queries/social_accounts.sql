@@ -1,6 +1,6 @@
 -- name: CreateSocialAccount :one
-INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata, scope)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO social_accounts (profile_id, platform, access_token, refresh_token, token_expires_at, external_account_id, account_name, account_avatar_url, metadata, scope, x_app_mode)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: ListSocialAccountsByProfile :many
@@ -127,13 +127,13 @@ INSERT INTO social_accounts (
   profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, metadata, scope,
   connection_type, connect_session_id, external_user_id, external_user_email,
-  status, last_refreshed_at
+  status, last_refreshed_at, x_app_mode
 )
 VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9, $10,
   'managed', $11, $12, $13,
-  'active', NOW()
+  'active', NOW(), $14
 )
 RETURNING *;
 
@@ -151,6 +151,7 @@ SET access_token        = @access_token,
     connect_session_id  = @connect_session_id,
     external_user_id    = @external_user_id,
     external_user_email = @external_user_email,
+    x_app_mode          = @x_app_mode,
     status              = 'active',
     disconnected_at     = NULL,
     last_refreshed_at   = NOW()
@@ -162,13 +163,13 @@ INSERT INTO social_accounts (
   profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, metadata, scope,
   connection_type, connect_session_id, external_user_id, external_user_email,
-  status, last_refreshed_at
+  status, last_refreshed_at, x_app_mode
 )
 VALUES (
   $1, $2, $3, $4, $5,
   $6, $7, $8, $9, $10,
   'managed', $11, $12, $13,
-  'active', NOW()
+  'active', NOW(), $14
 )
 ON CONFLICT (profile_id, platform, external_user_id)
   WHERE external_user_id IS NOT NULL AND platform <> 'bluesky'
@@ -183,6 +184,7 @@ DO UPDATE SET
   scope              = EXCLUDED.scope,
   connect_session_id = EXCLUDED.connect_session_id,
   external_user_email= EXCLUDED.external_user_email,
+  x_app_mode         = EXCLUDED.x_app_mode,
   status             = 'active',
   disconnected_at    = NULL,
   last_refreshed_at  = NOW()
@@ -225,6 +227,7 @@ SET access_token      = $2,
     account_avatar_url= COALESCE($6, account_avatar_url),
     metadata          = COALESCE($7, metadata, '{}'::jsonb) - 'dismissed_at' - 'disconnect_notified_at' - 'reconnect_required_at',
     scope             = COALESCE($8, scope),
+    x_app_mode        = COALESCE($9, x_app_mode),
     status            = 'active',
     disconnected_at   = NULL,
     last_refreshed_at = NOW()
