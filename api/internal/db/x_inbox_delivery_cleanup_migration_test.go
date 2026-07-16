@@ -71,6 +71,23 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	if !hasWorkspaceTrigger {
 		t.Fatal("cleanup migration must install a BEFORE DELETE trigger on workspaces")
 	}
+	for _, column := range []string{"lease_owner", "lease_until", "next_attempt_at"} {
+		var exists bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'x_inbox_delivery_cleanup_intents'
+				  AND column_name = $1
+			)
+		`, column).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if !exists {
+			t.Fatalf("cleanup migration missing %s", column)
+		}
+	}
 
 	const (
 		userID      = "x-inbox-cascade-test-user"
@@ -140,6 +157,101 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 			appBearer,
 			ruleID,
 			subscriptionID,
+		)
+	}
+
+	const (
+		credentialWorkspaceID = "x-inbox-credential-test-workspace"
+		credentialProfileID   = "x-inbox-credential-test-profile"
+		credentialAccountID   = "x-inbox-credential-test-account"
+	)
+	credentialStatements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO workspaces (id, user_id, name) VALUES ($1, $2, 'X Credential Test')`, []any{credentialWorkspaceID, userID}},
+		{`INSERT INTO profiles (id, workspace_id, name) VALUES ($1, $2, 'X Credential Test')`, []any{credentialProfileID, credentialWorkspaceID}},
+		{`
+			INSERT INTO platform_credentials (
+				id, workspace_id, platform, client_id, client_secret, app_bearer_token
+			) VALUES (
+				'x-inbox-credential-test-credential', $1, 'twitter', 'client', 'secret',
+				'encrypted-credential-bearer'
+			)
+		`, []any{credentialWorkspaceID}},
+		{`
+			INSERT INTO social_accounts (
+				id, profile_id, platform, access_token, external_account_id, status,
+				connection_type, x_app_mode
+			) VALUES (
+				$1, $2, 'twitter', 'encrypted-user-token', 'x-user-credential', 'active',
+				'managed', 'workspace_x_app'
+			)
+		`, []any{credentialAccountID, credentialProfileID}},
+		{`
+			INSERT INTO x_inbox_delivery_resources (
+				social_account_id, filtered_stream_rule_id, activity_dm_subscription_id,
+				delivery_status
+			) VALUES ($1, 'credential-rule', 'credential-subscription', 'active')
+		`, []any{credentialAccountID}},
+	}
+	for _, statement := range credentialStatements {
+		if _, err := tx.ExecContext(ctx, statement.query, statement.args...); err != nil {
+			t.Fatalf("seed credential deletion topology: %v", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM platform_credentials
+		WHERE workspace_id = $1 AND platform = 'twitter'
+	`, credentialWorkspaceID); err != nil {
+		t.Fatalf("delete workspace X credential: %v", err)
+	}
+
+	if err := tx.QueryRowContext(ctx, `
+		SELECT app_bearer_token, filtered_stream_rule_id, activity_dm_subscription_id
+		FROM x_inbox_delivery_cleanup_intents
+		WHERE social_account_id = $1
+	`, credentialAccountID).Scan(&appBearer, &ruleID, &subscriptionID); err != nil {
+		t.Fatalf("query credential cleanup intent: %v", err)
+	}
+	if appBearer != "encrypted-credential-bearer" ||
+		ruleID != "credential-rule" ||
+		subscriptionID != "credential-subscription" {
+		t.Fatalf(
+			"credential cleanup intent = bearer %q rule %q subscription %q",
+			appBearer,
+			ruleID,
+			subscriptionID,
+		)
+	}
+	var (
+		localRule         sql.NullString
+		localSubscription sql.NullString
+		deliveryStatus    string
+		lastError         sql.NullString
+	)
+	if err := tx.QueryRowContext(ctx, `
+		SELECT filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error
+		FROM x_inbox_delivery_resources
+		WHERE social_account_id = $1
+	`, credentialAccountID).Scan(
+		&localRule,
+		&localSubscription,
+		&deliveryStatus,
+		&lastError,
+	); err != nil {
+		t.Fatalf("query credential-cleared delivery state: %v", err)
+	}
+	if localRule.Valid || localSubscription.Valid ||
+		deliveryStatus != "error" ||
+		!lastError.Valid ||
+		!strings.Contains(lastError.String, "credential") {
+		t.Fatalf(
+			"credential-cleared state = rule %v subscription %v status %q error %q",
+			localRule,
+			localSubscription,
+			deliveryStatus,
+			lastError.String,
 		)
 	}
 }

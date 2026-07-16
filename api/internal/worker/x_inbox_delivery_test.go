@@ -30,11 +30,12 @@ func (f fakeXInboxCipher) Decrypt(value string) (string, error) {
 type fakeXInboxDeliveryAPI struct {
 	mu sync.Mutex
 
-	ruleID          string
-	subscriptionID  string
-	webhookID       string
-	ruleErr         error
-	subscriptionErr error
+	ruleID           string
+	subscriptionID   string
+	webhookID        string
+	ruleErr          error
+	subscriptionErr  error
+	deleteRuleErrors map[string]error
 
 	ruleTokens         []string
 	subscriptionTokens []string
@@ -60,6 +61,9 @@ func (f *fakeXInboxDeliveryAPI) DeleteFilteredStreamRule(_ context.Context, _ st
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedRules = append(f.deletedRules, ruleID)
+	if err := f.deleteRuleErrors[ruleID]; err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -96,16 +100,21 @@ func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, ap
 }
 
 type fakeXInboxDeliveryStore struct {
+	mu       sync.Mutex
 	accounts []XInboxDeliveryAccount
 	cleanups []XInboxCleanupIntent
 	states   []XInboxDeliveryState
 }
 
 func (f *fakeXInboxDeliveryStore) ListAccounts(context.Context) ([]XInboxDeliveryAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return append([]XInboxDeliveryAccount(nil), f.accounts...), nil
 }
 
 func (f *fakeXInboxDeliveryStore) SaveState(_ context.Context, state XInboxDeliveryState) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.states = append(f.states, state)
 	for i := range f.accounts {
 		if f.accounts[i].SocialAccountID == state.SocialAccountID {
@@ -116,30 +125,59 @@ func (f *fakeXInboxDeliveryStore) SaveState(_ context.Context, state XInboxDeliv
 	return nil
 }
 
-func (f *fakeXInboxDeliveryStore) ListCleanupIntents(context.Context) ([]XInboxCleanupIntent, error) {
-	return append([]XInboxCleanupIntent(nil), f.cleanups...), nil
+func (f *fakeXInboxDeliveryStore) ClaimCleanupIntents(
+	_ context.Context,
+	owner string,
+	now time.Time,
+	leaseUntil time.Time,
+	limit int,
+) ([]XInboxCleanupIntent, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var claimed []XInboxCleanupIntent
+	for i := range f.cleanups {
+		if len(claimed) >= limit ||
+			f.cleanups[i].NextAttemptAt.After(now) ||
+			(!f.cleanups[i].LeaseUntil.IsZero() && f.cleanups[i].LeaseUntil.After(now)) {
+			continue
+		}
+		f.cleanups[i].LeaseOwner = owner
+		f.cleanups[i].LeaseUntil = leaseUntil
+		f.cleanups[i].Attempts++
+		claimed = append(claimed, f.cleanups[i])
+	}
+	return claimed, nil
 }
 
-func (f *fakeXInboxDeliveryStore) SaveCleanupIntent(_ context.Context, intent XInboxCleanupIntent) error {
-	if intent.FilteredStreamRuleID == "" && intent.ActivityDMSubscriptionID == "" {
-		return errors.New("cleanup intent cannot persist without an upstream resource id")
-	}
+func (f *fakeXInboxDeliveryStore) ReleaseCleanupIntent(
+	_ context.Context,
+	intent XInboxCleanupIntent,
+	nextAttemptAt time.Time,
+) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for i := range f.cleanups {
-		if f.cleanups[i].ID == intent.ID {
+		if f.cleanups[i].ID == intent.ID && f.cleanups[i].LeaseOwner == intent.LeaseOwner {
+			intent.LeaseOwner = ""
+			intent.LeaseUntil = time.Time{}
+			intent.NextAttemptAt = nextAttemptAt
 			f.cleanups[i] = intent
+			return nil
 		}
 	}
-	return nil
+	return errors.New("cleanup lease lost")
 }
 
-func (f *fakeXInboxDeliveryStore) DeleteCleanupIntent(_ context.Context, id string) error {
+func (f *fakeXInboxDeliveryStore) CompleteCleanupIntent(_ context.Context, id, owner string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for i := range f.cleanups {
-		if f.cleanups[i].ID == id {
+		if f.cleanups[i].ID == id && f.cleanups[i].LeaseOwner == owner {
 			f.cleanups = append(f.cleanups[:i], f.cleanups[i+1:]...)
 			return nil
 		}
 	}
-	return nil
+	return errors.New("cleanup lease lost")
 }
 
 type fakeXInboxUsageReader struct {
@@ -261,6 +299,115 @@ func TestXInboxDeliveryCleanupIntentUsesExactStoredIDsAndIsIdempotent(t *testing
 	}
 	if len(store.cleanups) != 0 {
 		t.Fatalf("cleanup intents = %+v, want empty", store.cleanups)
+	}
+}
+
+func TestXInboxCleanupClaimsAreMutuallyExclusiveAcrossWorkers(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := &fakeXInboxDeliveryStore{cleanups: []XInboxCleanupIntent{
+		{ID: "cleanup-1", NextAttemptAt: now},
+		{ID: "cleanup-2", NextAttemptAt: now},
+	}}
+	type result struct {
+		owner   string
+		intents []XInboxCleanupIntent
+	}
+	results := make(chan result, 2)
+	for _, owner := range []string{"worker-one", "worker-two"} {
+		owner := owner
+		go func() {
+			intents, err := store.ClaimCleanupIntents(
+				context.Background(),
+				owner,
+				now,
+				now.Add(time.Minute),
+				2,
+			)
+			if err != nil {
+				t.Error(err)
+			}
+			results <- result{owner: owner, intents: intents}
+		}()
+	}
+	first := <-results
+	second := <-results
+	claimed := make(map[string]string)
+	for _, batch := range []result{first, second} {
+		for _, intent := range batch.intents {
+			if previous := claimed[intent.ID]; previous != "" {
+				t.Fatalf("intent %s claimed by both %s and %s", intent.ID, previous, batch.owner)
+			}
+			claimed[intent.ID] = batch.owner
+		}
+	}
+	if len(claimed) != 2 {
+		t.Fatalf("claimed = %v, want every due intent exactly once", claimed)
+	}
+}
+
+func TestXInboxCleanupRetryBackoffIsDeterministicAndCapped(t *testing.T) {
+	tests := []struct {
+		attempts int
+		want     time.Duration
+	}{
+		{attempts: 1, want: time.Minute},
+		{attempts: 2, want: 2 * time.Minute},
+		{attempts: 6, want: 32 * time.Minute},
+		{attempts: 7, want: time.Hour},
+		{attempts: 20, want: time.Hour},
+	}
+	for _, tt := range tests {
+		if got := cleanupRetryDelay(tt.attempts); got != tt.want {
+			t.Fatalf("cleanupRetryDelay(%d) = %s, want %s", tt.attempts, got, tt.want)
+		}
+	}
+}
+
+func TestXInboxCleanupFailureSchedulesOldIntentAndProcessesNewerDueWork(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := &fakeXInboxDeliveryStore{cleanups: []XInboxCleanupIntent{
+		{
+			ID:                   "cleanup-old",
+			SocialAccountID:      "account-old",
+			AppMode:              xinbox.AppModeUniPostManaged,
+			FilteredStreamRuleID: "rule-permanent-failure",
+			NextAttemptAt:        now.Add(-time.Hour),
+		},
+		{
+			ID:                   "cleanup-new",
+			SocialAccountID:      "account-new",
+			AppMode:              xinbox.AppModeUniPostManaged,
+			FilteredStreamRuleID: "rule-newer",
+			NextAttemptAt:        now,
+		},
+	}}
+	api := &fakeXInboxDeliveryAPI{deleteRuleErrors: map[string]error{
+		"rule-permanent-failure": errors.New("permanent upstream failure"),
+	}}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store:            store,
+		API:              api,
+		Cipher:           fakeXInboxCipher{},
+		ManagedAppBearer: "managed-app-token",
+		CleanupOwner:     "worker-one",
+		Now:              func() time.Time { return now },
+	})
+
+	if err := worker.ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("expected cleanup failure to be reported")
+	}
+	if len(store.cleanups) != 1 || store.cleanups[0].ID != "cleanup-old" {
+		t.Fatalf("cleanup intents = %+v, want only failed old intent", store.cleanups)
+	}
+	failed := store.cleanups[0]
+	if failed.LeaseOwner != "" {
+		t.Fatalf("failed lease owner = %q, want released", failed.LeaseOwner)
+	}
+	if want := now.Add(time.Minute); !failed.NextAttemptAt.Equal(want) {
+		t.Fatalf("failed next attempt = %s, want %s", failed.NextAttemptAt, want)
+	}
+	if want := []string{"rule-permanent-failure", "rule-newer"}; !reflect.DeepEqual(api.deletedRules, want) {
+		t.Fatalf("deleted rules = %v, want old failure not to starve newer work %v", api.deletedRules, want)
 	}
 }
 

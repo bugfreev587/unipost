@@ -1087,6 +1087,9 @@ type XInboxDeliveryCleanupIntent struct {
 	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
 	Attempts                 int32              `json:"attempts"`
 	LastError                pgtype.Text        `json:"last_error"`
+	LeaseOwner               pgtype.Text        `json:"lease_owner"`
+	LeaseUntil               pgtype.Timestamptz `json:"lease_until"`
+	NextAttemptAt            pgtype.Timestamptz `json:"next_attempt_at"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
 }

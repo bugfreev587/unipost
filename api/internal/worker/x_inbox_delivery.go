@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -51,9 +52,9 @@ type XInboxLeaderElector interface {
 type XInboxDeliveryStore interface {
 	ListAccounts(context.Context) ([]XInboxDeliveryAccount, error)
 	SaveState(context.Context, XInboxDeliveryState) error
-	ListCleanupIntents(context.Context) ([]XInboxCleanupIntent, error)
-	SaveCleanupIntent(context.Context, XInboxCleanupIntent) error
-	DeleteCleanupIntent(context.Context, string) error
+	ClaimCleanupIntents(context.Context, string, time.Time, time.Time, int) ([]XInboxCleanupIntent, error)
+	ReleaseCleanupIntent(context.Context, XInboxCleanupIntent, time.Time) error
+	CompleteCleanupIntent(context.Context, string, string) error
 }
 
 type XInboxDeliveryAccount struct {
@@ -88,6 +89,10 @@ type XInboxCleanupIntent struct {
 	FilteredStreamRuleID     string
 	ActivityDMSubscriptionID string
 	LastError                string
+	Attempts                 int
+	LeaseOwner               string
+	LeaseUntil               time.Time
+	NextAttemptAt            time.Time
 }
 
 type XInboxAppStream struct {
@@ -106,6 +111,7 @@ type XInboxDeliveryConfig struct {
 	WebhookURL       string
 	Now              func() time.Time
 	EventHandler     func(context.Context, string, xinbox.StreamEvent) error
+	CleanupOwner     string
 }
 
 type XInboxDeliveryWorker struct {
@@ -119,6 +125,7 @@ type XInboxDeliveryWorker struct {
 	webhookURL       string
 	now              func() time.Time
 	eventHandler     func(context.Context, string, xinbox.StreamEvent) error
+	cleanupOwner     string
 
 	streamsMu sync.Mutex
 	streams   map[string]struct{}
@@ -128,6 +135,10 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 	now := config.Now
 	if now == nil {
 		now = time.Now
+	}
+	cleanupOwner := strings.TrimSpace(config.CleanupOwner)
+	if cleanupOwner == "" {
+		cleanupOwner = "x-inbox-cleanup-" + uuid.NewString()
 	}
 	return &XInboxDeliveryWorker{
 		store:            config.Store,
@@ -140,6 +151,7 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 		webhookURL:       strings.TrimSpace(config.WebhookURL),
 		now:              now,
 		eventHandler:     config.EventHandler,
+		cleanupOwner:     cleanupOwner,
 		streams:          make(map[string]struct{}),
 	}
 }
@@ -212,9 +224,16 @@ func (w *XInboxDeliveryWorker) reconcile(ctx context.Context) ([]XInboxAppStream
 		return nil, errors.New("X inbox delivery worker is not fully configured")
 	}
 	var joined error
-	cleanups, err := w.store.ListCleanupIntents(ctx)
+	cleanupNow := w.now().UTC()
+	cleanups, err := w.store.ClaimCleanupIntents(
+		ctx,
+		w.cleanupOwner,
+		cleanupNow,
+		cleanupNow.Add(2*time.Minute),
+		100,
+	)
 	if err != nil {
-		joined = errors.Join(joined, fmt.Errorf("list X inbox cleanup intents: %w", err))
+		joined = errors.Join(joined, fmt.Errorf("claim X inbox cleanup intents: %w", err))
 	} else {
 		for _, intent := range cleanups {
 			if err := w.reconcileCleanupIntent(ctx, intent); err != nil {
@@ -387,36 +406,66 @@ func (w *XInboxDeliveryWorker) saveAccountError(
 func (w *XInboxDeliveryWorker) reconcileCleanupIntent(ctx context.Context, intent XInboxCleanupIntent) error {
 	appToken, err := w.resolveCleanupAppToken(intent)
 	if err != nil && (intent.FilteredStreamRuleID != "" || intent.ActivityDMSubscriptionID != "") {
-		intent.LastError = err.Error()
-		_ = w.store.SaveCleanupIntent(ctx, intent)
-		return fmt.Errorf("cleanup X inbox account %s: %w", intent.SocialAccountID, err)
+		return w.releaseFailedCleanup(
+			ctx,
+			intent,
+			fmt.Errorf("cleanup X inbox account %s: %w", intent.SocialAccountID, err),
+		)
 	}
 	if intent.FilteredStreamRuleID != "" {
 		if err := w.api.DeleteFilteredStreamRule(ctx, appToken, intent.FilteredStreamRuleID); err != nil {
-			intent.LastError = err.Error()
-			_ = w.store.SaveCleanupIntent(ctx, intent)
-			return fmt.Errorf("cleanup X inbox rule for account %s: %w", intent.SocialAccountID, err)
+			return w.releaseFailedCleanup(
+				ctx,
+				intent,
+				fmt.Errorf("cleanup X inbox rule for account %s: %w", intent.SocialAccountID, err),
+			)
 		}
 		intent.FilteredStreamRuleID = ""
 		intent.LastError = ""
 		if intent.ActivityDMSubscriptionID == "" {
-			return w.store.DeleteCleanupIntent(ctx, intent.ID)
-		}
-		if err := w.store.SaveCleanupIntent(ctx, intent); err != nil {
-			return err
+			return w.store.CompleteCleanupIntent(ctx, intent.ID, intent.LeaseOwner)
 		}
 	}
 	if intent.ActivityDMSubscriptionID != "" {
 		if err := w.api.DeleteActivitySubscription(ctx, appToken, intent.ActivityDMSubscriptionID); err != nil {
-			intent.LastError = err.Error()
-			_ = w.store.SaveCleanupIntent(ctx, intent)
-			return fmt.Errorf("cleanup X inbox subscription for account %s: %w", intent.SocialAccountID, err)
+			return w.releaseFailedCleanup(
+				ctx,
+				intent,
+				fmt.Errorf("cleanup X inbox subscription for account %s: %w", intent.SocialAccountID, err),
+			)
 		}
 		intent.ActivityDMSubscriptionID = ""
 		intent.LastError = ""
-		return w.store.DeleteCleanupIntent(ctx, intent.ID)
+		return w.store.CompleteCleanupIntent(ctx, intent.ID, intent.LeaseOwner)
 	}
-	return w.store.DeleteCleanupIntent(ctx, intent.ID)
+	return w.store.CompleteCleanupIntent(ctx, intent.ID, intent.LeaseOwner)
+}
+
+func (w *XInboxDeliveryWorker) releaseFailedCleanup(
+	ctx context.Context,
+	intent XInboxCleanupIntent,
+	cause error,
+) error {
+	intent.LastError = cause.Error()
+	nextAttemptAt := w.now().UTC().Add(cleanupRetryDelay(intent.Attempts))
+	if err := w.store.ReleaseCleanupIntent(ctx, intent, nextAttemptAt); err != nil {
+		return errors.Join(cause, err)
+	}
+	return cause
+}
+
+func cleanupRetryDelay(attempts int) time.Duration {
+	if attempts < 1 {
+		attempts = 1
+	}
+	delay := time.Minute
+	for attempt := 1; attempt < attempts && delay < time.Hour; attempt++ {
+		delay *= 2
+		if delay > time.Hour {
+			return time.Hour
+		}
+	}
+	return delay
 }
 
 func (w *XInboxDeliveryWorker) resolveAccountAppToken(account XInboxDeliveryAccount) (string, string, error) {
@@ -594,20 +643,46 @@ func (s *postgresXInboxDeliveryStore) SaveState(ctx context.Context, state XInbo
 	return err
 }
 
-func (s *postgresXInboxDeliveryStore) ListCleanupIntents(ctx context.Context) ([]XInboxCleanupIntent, error) {
+func (s *postgresXInboxDeliveryStore) ClaimCleanupIntents(
+	ctx context.Context,
+	owner string,
+	now time.Time,
+	leaseUntil time.Time,
+	limit int,
+) ([]XInboxCleanupIntent, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
 	rows, err := s.pool.Query(ctx, `
-		SELECT
-			id,
-			social_account_id,
-			x_app_mode,
-			COALESCE(app_bearer_token, ''),
-			COALESCE(filtered_stream_rule_id, ''),
-			COALESCE(activity_dm_subscription_id, ''),
-			COALESCE(last_error, '')
-		FROM x_inbox_delivery_cleanup_intents
-		ORDER BY created_at, id
-		LIMIT 100
-	`)
+		WITH candidates AS (
+			SELECT id
+			FROM x_inbox_delivery_cleanup_intents
+			WHERE next_attempt_at <= $2
+			  AND (lease_until IS NULL OR lease_until <= $2)
+			ORDER BY next_attempt_at, created_at, id
+			FOR UPDATE SKIP LOCKED
+			LIMIT $4
+		)
+		UPDATE x_inbox_delivery_cleanup_intents i
+		SET lease_owner = $1,
+		    lease_until = $3,
+		    attempts = attempts + 1,
+		    updated_at = NOW()
+		FROM candidates c
+		WHERE i.id = c.id
+		RETURNING
+			i.id,
+			i.social_account_id,
+			i.x_app_mode,
+			COALESCE(i.app_bearer_token, ''),
+			COALESCE(i.filtered_stream_rule_id, ''),
+			COALESCE(i.activity_dm_subscription_id, ''),
+			COALESCE(i.last_error, ''),
+			i.attempts,
+			COALESCE(i.lease_owner, ''),
+			i.lease_until,
+			i.next_attempt_at
+	`, owner, now, leaseUntil, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -624,6 +699,10 @@ func (s *postgresXInboxDeliveryStore) ListCleanupIntents(ctx context.Context) ([
 			&intent.FilteredStreamRuleID,
 			&intent.ActivityDMSubscriptionID,
 			&intent.LastError,
+			&intent.Attempts,
+			&intent.LeaseOwner,
+			&intent.LeaseUntil,
+			&intent.NextAttemptAt,
 		); err != nil {
 			return nil, err
 		}
@@ -633,22 +712,46 @@ func (s *postgresXInboxDeliveryStore) ListCleanupIntents(ctx context.Context) ([
 	return intents, rows.Err()
 }
 
-func (s *postgresXInboxDeliveryStore) SaveCleanupIntent(ctx context.Context, intent XInboxCleanupIntent) error {
-	_, err := s.pool.Exec(ctx, `
+func (s *postgresXInboxDeliveryStore) ReleaseCleanupIntent(
+	ctx context.Context,
+	intent XInboxCleanupIntent,
+	nextAttemptAt time.Time,
+) error {
+	tag, err := s.pool.Exec(ctx, `
 		UPDATE x_inbox_delivery_cleanup_intents
 		SET filtered_stream_rule_id = NULLIF($2, ''),
 		    activity_dm_subscription_id = NULLIF($3, ''),
 		    last_error = NULLIF($4, ''),
-		    attempts = attempts + 1,
+		    next_attempt_at = $5,
+		    lease_owner = NULL,
+		    lease_until = NULL,
 		    updated_at = NOW()
 		WHERE id = $1
-	`, intent.ID, intent.FilteredStreamRuleID, intent.ActivityDMSubscriptionID, intent.LastError)
-	return err
+		  AND lease_owner = $6
+	`, intent.ID, intent.FilteredStreamRuleID, intent.ActivityDMSubscriptionID, intent.LastError, nextAttemptAt, intent.LeaseOwner)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("X inbox cleanup lease was lost before retry scheduling")
+	}
+	return nil
 }
 
-func (s *postgresXInboxDeliveryStore) DeleteCleanupIntent(ctx context.Context, id string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM x_inbox_delivery_cleanup_intents WHERE id = $1`, id)
-	return err
+func (s *postgresXInboxDeliveryStore) CompleteCleanupIntent(ctx context.Context, id, owner string) error {
+	tag, err := s.pool.Exec(
+		ctx,
+		`DELETE FROM x_inbox_delivery_cleanup_intents WHERE id = $1 AND lease_owner = $2`,
+		id,
+		owner,
+	)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("X inbox cleanup lease was lost before completion")
+	}
+	return nil
 }
 
 func nullableText(value string) pgtype.Text {

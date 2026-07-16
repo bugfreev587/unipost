@@ -12,6 +12,9 @@ CREATE TABLE x_inbox_delivery_cleanup_intents (
   activity_dm_subscription_id TEXT,
   attempts                    INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   last_error                  TEXT,
+  lease_owner                 TEXT,
+  lease_until                 TIMESTAMPTZ,
+  next_attempt_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (
@@ -24,7 +27,7 @@ CREATE TABLE x_inbox_delivery_cleanup_intents (
 );
 
 CREATE INDEX x_inbox_delivery_cleanup_intents_pending_idx
-  ON x_inbox_delivery_cleanup_intents(created_at, id);
+  ON x_inbox_delivery_cleanup_intents(next_attempt_at, created_at, id);
 
 -- Capture every eligible resource before PostgreSQL begins cascading the
 -- workspace delete. Child-table cascade order is not defined, so neither
@@ -73,6 +76,9 @@ BEGIN
       filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
       activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
       last_error = NULL,
+      lease_owner = NULL,
+      lease_until = NULL,
+      next_attempt_at = NOW(),
       updated_at = NOW();
 
   RETURN OLD;
@@ -124,6 +130,9 @@ BEGIN
       filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
       activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
       last_error = NULL,
+      lease_owner = NULL,
+      lease_until = NULL,
+      next_attempt_at = NOW(),
       updated_at = NOW();
 
   RETURN OLD;
@@ -176,7 +185,29 @@ BEGIN
       filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
       activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
       last_error = NULL,
+      lease_owner = NULL,
+      lease_until = NULL,
+      next_attempt_at = NOW(),
       updated_at = NOW();
+
+  UPDATE x_inbox_delivery_resources r
+  SET filtered_stream_rule_id = NULL,
+      activity_dm_subscription_id = NULL,
+      delivery_status = 'error',
+      last_error = 'workspace X app credential deleted; upstream cleanup pending',
+      last_synced_at = NOW(),
+      updated_at = NOW()
+  FROM social_accounts sa
+  JOIN profiles p
+    ON p.id = sa.profile_id
+  WHERE r.social_account_id = sa.id
+    AND p.workspace_id = OLD.workspace_id
+    AND sa.platform = 'twitter'
+    AND sa.x_app_mode = 'workspace_x_app'
+    AND (
+      r.filtered_stream_rule_id IS NOT NULL
+      OR r.activity_dm_subscription_id IS NOT NULL
+    );
 
   RETURN OLD;
 END;
