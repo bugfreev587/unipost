@@ -110,6 +110,8 @@ The implementation and final public copy must be checked against the then-curren
 
 X pricing and access rules are external dependencies. The values in this PRD are the launch catalog, not a permanent promise that X's upstream rates will never change.
 
+**Re-verified 2026-07-16:** the pricing catalog values remain current. X Activity self-serve capacity is now documented as 1,000 subscriptions, and X Activity explicitly does not deliver Posts. Therefore legacy DMs use X Activity `dm.received`, while public replies/mentions use a pay-per-use persistent Filtered Stream connection with per-account rules plus controlled recent-search recovery. Filtered Stream webhook delivery is currently Enterprise-only and is not an MVP dependency.
+
 ## 3. Goals
 
 ### 3.1 MVP goals
@@ -311,7 +313,7 @@ The launch catalog uses the official X resource prices available when this PRD w
 | Receive legacy DM webhook | `dm.received` | 10 | $0.0208-$0.0250 | Do not also charge a duplicate lookup read for the same event. |
 | Receive XChat webhook | `chat.received` | 10 | $0.0208-$0.0250 | Later-phase only. |
 | Send XChat message | Chat send operation | 15 | $0.0313-$0.0375 | Provisional until the XChat proof of concept confirms upstream accounting. |
-| Receive public-post webhook | `post.create` | 5 | $0.0104-$0.0125 | Charge once per unique upstream event/resource/day. |
+| Receive public reply/mention from Filtered Stream | `post.mention.received` | 5 | $0.0104-$0.0125 | Charge once per unique upstream Post/day. |
 | Delete or other optional interaction | Current X priced resource | Catalog-defined | Catalog-defined | Not exposed in MVP. |
 
 ### 7.1 Catalog rules
@@ -454,13 +456,13 @@ Reservation TTL and reconciliation SLA:
 - Automated background sync stops before it would exceed the MVP monthly allowance or daily inbound cap, and later before it would make the ledger balance negative.
 - MVP usage records, and later customer-facing ledger entries, identify whether consumption came from a webhook, polling, backfill, publish, or reply.
 
-Inbound cost protection is mandatory before enabling X Activity subscriptions:
+Inbound cost protection is mandatory before enabling X Activity subscriptions or the Filtered Stream consumer:
 
-- Each workspace has a hard UTC-day inbound-spend cap measured in Credits across `post.mention.create`, `dm.received`, later `chat.received`, and paid recovery reads caused by those events.
+- Each workspace has a hard UTC-day inbound-spend cap measured in Credits across `post.mention.received`, `dm.received`, later `chat.received`, and paid recovery reads caused by those events.
 - Default cap for an Inbox-eligible self-serve plan is `max(100, floor(plan_monthly_included_credits * 10%))`: Basic 400, Growth 1,200, Team 3,000. Enterprise is contract-defined. Free and API have an effective cap of 0 because Inbox is unavailable.
 - The cap is independent of the monthly allowance and, later, the total balance. A large Top-up cannot be silently drained by a viral post unless the owner explicitly raises the inbound cap.
 - Billing lets an Owner/Admin lower the cap or raise it up to the remaining monthly allowance in the MVP, and later up to the current available ledger balance, after acknowledging the estimated exposure.
-- At 80% of the inbound cap, notify the workspace. Define a subscription-removal safety buffer of `max(20 Credits, 10% of the daily cap)`; when remaining cap reaches that buffer, stop billable polling/backfill and begin removing or pausing paid Activity subscriptions before the nominal cap is exhausted. At 100%, suppress all optional downstream paid work and send the cap-reached notification.
+- At 80% of the inbound cap, notify the workspace. Define a source-pausing safety buffer of `max(20 Credits, 10% of the daily cap)`; when remaining cap reaches that buffer, stop billable polling/backfill, disable the workspace's Filtered Stream rules, and begin removing or pausing paid Activity subscriptions before the nominal cap is exhausted. At 100%, suppress all optional downstream paid work and send the cap-reached notification.
 - Events suppressed after the cap are counted without storing private bodies where feasible. Restoring delivery requires the next UTC day or an explicit cap increase; any paid backfill requires a displayed estimate and confirmation.
 - Keep an operational buffer and alert because subscription removal is not instantaneous and X may continue billing events during propagation.
 
@@ -749,11 +751,12 @@ For inbound activity in the MVP, apply account/plan eligibility, event deduplica
 
 ### 11.2 Ingestion strategy
 
-1. Prefer X Activity `post.mention.create` events for low-latency inbound delivery.
-2. Use filtered stream or recent-search/conversation lookup only where needed for recovery and controlled backfill.
-3. Deduplicate by upstream post id before creating an Inbox row or consuming weighted allowance/later ledger Credits.
-4. Avoid repeated author enrichment reads when the author already exists in UniPost's cache.
-5. Store the upstream `conversation_id`, replied-to post id, and root post id.
+1. Use one shared pay-per-use persistent Filtered Stream connection and maintain tagged rules for eligible connected accounts. X Activity does not deliver Posts.
+2. Match public replies/mentions with narrowly scoped per-account rules, exclude reposts where appropriate, and map each rule tag to the owning social account/workspace.
+3. Use recent-search, mentions lookup, or conversation lookup only for controlled recovery and bounded backfill.
+4. Deduplicate by upstream post id before creating an Inbox row or consuming weighted allowance/later ledger Credits.
+5. Avoid repeated author enrichment reads when the author already exists in UniPost's cache.
+6. Store the upstream `conversation_id`, replied-to post id, and root post id.
 
 ### 11.3 Outbound replies
 
@@ -856,14 +859,20 @@ Adding scopes does not retroactively update previously granted OAuth tokens.
 - After reconnect, verify granted scopes before enabling DM sync.
 - BYO customers must update their own X app permissions before reconnecting.
 
-### 14.4 Activity and webhook subscriptions
+### 14.4 Filtered Stream, Activity, and webhook subscriptions
 
-For MVP, request the minimum applicable private activity subscriptions:
+For public comments/replies, use the pay-per-use persistent Filtered Stream endpoint:
 
-- `post.mention.create`
+- One shared app-level connection, with self-serve limits currently documented as one connection, 1,000 rules, and 1,024 characters per rule.
+- Create one narrowly scoped tagged rule per eligible connected account where practical.
+- Filtered Stream webhook delivery is currently Enterprise-only, so the self-serve MVP must operate the persistent stream consumer with reconnect/backoff and keep-alive monitoring.
+- Disable/remove a workspace's rules on disconnect, allowance/cap exhaustion, or plan loss.
+
+For private legacy DMs, request the minimum applicable X Activity subscription:
+
 - `dm.received`
 
-Use the app-only bearer token for webhook registration and the connected user's OAuth authorization for private, account-scoped event delivery. Record the returned subscription ids so disconnect, allowance/cap exhaustion, later zero-balance pause, and workspace deletion can remove the exact subscriptions idempotently.
+Use the app-only bearer token for webhook and Filtered Stream management and the connected user's OAuth authorization for private, account-scoped Activity delivery. Record the returned rule and subscription ids so disconnect, allowance/cap exhaustion, later zero-balance pause, and workspace deletion can remove the exact resources idempotently.
 
 Do not subscribe to `dm.sent` if UniPost already stores all of its own outbound messages and the event would add cost without filling a product gap. Add it only if reconciliation testing proves it is necessary.
 
@@ -872,7 +881,7 @@ For XChat beta, evaluate:
 - `chat.received`
 - `chat.sent` only if required for cross-client consistency
 
-X currently documents self-serve Activity subscription capacity limits. The MVP requests two event subscriptions per eligible connected account (`post.mention.create` and `dm.received`), so a 1,500-subscription limit represents about 750 fully subscribed accounts. Alert before 70%, 85%, and 95% and pursue higher capacity before onboarding would exceed it. This is a capacity-monitoring requirement, not an initial launch blocker at current scale. If later XChat adds a third subscription, capacity falls to about 500 accounts and must be recalculated in the runbook.
+X currently documents a self-serve limit of 1,000 Filtered Stream rules and 1,000 X Activity subscriptions. With one comment rule and one `dm.received` Activity subscription per eligible account, each mechanism independently supports about 1,000 fully enabled accounts. Alert before 70%, 85%, and 95% on both counters and pursue higher capacity before onboarding would exceed either limit. If later XChat adds a second private Activity subscription per account, Activity capacity falls to about 500 accounts and must be recalculated in the runbook.
 
 ### 14.5 Developer access request narrative
 
@@ -994,7 +1003,7 @@ Track and alert on in the MVP:
 - Daily upstream-cost-to-usage variance.
 - Monthly allowance utilization, hard-limit blocks, and reversal failures.
 - Duplicate webhook event attempts and deduplication rate.
-- Activity subscription capacity at 70%, 85%, and 95%.
+- Filtered Stream rule and X Activity subscription capacity at 70%, 85%, and 95%.
 - Inbound daily-cap usage, 80%/100% notifications, suppressed events, subscription-removal latency, and paid backfill confirmations.
 - DM/reply webhook latency, backfill lag, and reply success rate.
 - Gross margin for included allowance by plan.
@@ -1054,7 +1063,7 @@ No feature flag is required by default. Use normal environment promotion, plan g
 
 ### Phase 2 — X public comments/replies
 
-1. Add Activity subscription and controlled recovery/backfill.
+1. Add the shared Filtered Stream consumer, tagged per-account rules, reconnect/backoff, and controlled recovery/backfill.
 2. Normalize `x_reply`, render it in Inbox, and support outbound public replies.
 3. Verify cost counting, deduplication, caps, scopes, and bidirectional Reference/Guidance links in the real development environment.
 
