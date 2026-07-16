@@ -1,0 +1,167 @@
+---
+source: citeloop
+citeloop_article_id: "4c664d39-b204-41d7-8ff6-f26154af6084"
+citeloop_topic_id: "2a427911-9a4f-4aee-a5f8-148a79890f70"
+slug: "unipost"
+title: "UniPost — Unified Social Media Publishing API for Developers"
+seo_title: "UniPost — Unified Social Media Publishing API for Developers"
+description: "UniPost is a unified social media publishing API. One endpoint to connect accounts, upload media, and publish to all platforms. Hosted OAuth, MCP server, SDKs, and post-volume pricing with a permanent free tier."
+excerpt: "UniPost is a unified social media publishing API. One endpoint to connect accounts, upload media, and publish to all platforms. Hosted OAuth, MCP server, SDKs, and post-volume pricing with a permanent free tier."
+published_at: "2026-07-16"
+updated_at: "2026-07-16"
+author: "UniPost"
+category: "Engineering"
+keywords: []
+canonical: "https://unipost.dev/blog/unipost"
+---
+
+# UniPost: The Unified Social Media Publishing API for Developers
+
+UniPost is a unified social media publishing API that lets developers connect customer accounts, upload media, and publish to all major social platforms through a single integration. Instead of building and maintaining separate integrations for each social network, teams use one API surface — one POST endpoint — to handle multi-platform publishing.
+
+This guide covers what UniPost is, how it works, who it's built for, and why developers choose it over building custom integrations or using alternative APIs.
+
+---
+
+## What Is UniPost?
+
+UniPost is social publishing infrastructure designed for developers. It provides a REST API and official SDK access that abstract away the complexity of connecting to multiple social media platforms.
+
+At its core, UniPost replaces nine separate integration projects with one API surface. Developers send a single API request to publish content across platforms, with support for per-platform content variants within that same request.
+
+### Core Capabilities
+
+- **Unified Publishing API** — A single POST endpoint to publish to all connected social platforms simultaneously.
+- **Hosted OAuth Account Connection Flows** — Pre-built, hosted flows that handle the complexity of connecting end-user social accounts without custom OAuth work.
+- **Media Upload and Validation** — Built-in media handling ensures assets meet each platform's requirements before publishing. Duration, aspect ratio, file size, and content type constraints vary by platform, and UniPost centralizes upload, validation, publish, and failure feedback.
+- **Post Scheduling** — Schedule content for future delivery through the API.
+- **Per-Platform Content Variants** — Customize messaging for each platform in a single request.
+- **Webhook Delivery Notifications** — Real-time callbacks confirming post delivery status.
+- **Analytics and Delivery Status Tracking** — Monitor performance and confirm successful publishing across all channels.
+- **MCP Server (AI Agent Ready)** — A native Model Context Protocol server enabling AI agents to publish and manage social content programmatically.
+- **Dashboard Publishing Interface** — A visual interface for teams that prefer GUI-based publishing alongside API access.
+- **Inbox Workflows** — Manage incoming messages and engagement across connected accounts.
+
+---
+
+## Who Uses UniPost?
+
+UniPost serves a range of developer-centric use cases:
+
+| Audience | Use Case |
+|---|---|
+| **Embedded SaaS products** | Add customer-facing social publishing features without building integrations from scratch |
+| **Scheduling tool builders** | Power scheduling functionality with a reliable publishing backend |
+| **AI agent developers** | Use the native MCP server to let agents publish and manage social content |
+| **Agencies and multi-operator teams** | Manage publishing across multiple client accounts with RBAC (owner/admin/editor roles) and per-member API keys |
+| **E-commerce teams** | Automate product announcements and social campaigns |
+| **Solo builders and creators** | Ship social features quickly with minimal infrastructure overhead |
+| **Creator tool developers** | Build social publishing features into creator-focused products |
+| **Internal workflow builders** | Integrate social publishing into internal tools and automation pipelines |
+
+---
+
+## How UniPost Works: A Technical Overview
+
+### 1. Connect Social Accounts
+
+UniPost provides **Hosted Connect** — a managed OAuth flow that handles account connection without requiring developers to build custom OAuth implementations. Each connected account receives a unique `account_id` used in subsequent API calls.
+
+For teams building embedded products, **white-label / custom hosted connect** options allow the connection flow to match the host application's branding. White-label account connection is included in the Growth plan and above.
+
+For advanced use cases, **Platform Credentials** let developers bring their own OAuth app, giving full control over the authentication relationship.
+
+### 2. Publish Content
+
+Publishing is a single API call. Developers specify target `account_ids`, content body, and optional per-platform variants. The API handles formatting, validation, and delivery to each platform.
+
+### 3. Track Delivery
+
+UniPost provides delivery visibility through three channels:
+- **Webhooks** — Real-time POST callbacks when content is delivered or fails.
+- **Analytics dashboard** — Visual tracking of delivery status and post performance.
+- **API status endpoints** — Programmatic access to delivery status.
+
+### 4. Manage Teams and Access
+
+RBAC with owner, admin, and editor roles controls who can publish and manage accounts. Per-member API keys enable granular access control, and audit history tracks all actions.
+
+---
+
+## UniPost Security
+
+Security is a non-negotiable concern for any API handling third-party credentials:
+
+- **OAuth tokens are encrypted at rest with AES-256-GCM.**
+- **UniPost uses hosted OAuth token-based authentication and keeps native tokens out of browsers.**
+
+These measures ensure that connected account credentials are protected with industry-standard encryption, and that sensitive tokens never transit through client-side code.
+
+---
+
+## UniPost Pricing Model
+
+UniPost uses a **post-volume pricing model** rather than charging per connected social account. This distinction matters significantly at scale.
+
+> **Key pricing fact:** UniPost does not impose a "connected-account tax." Whether a developer connects 10 or 10,000 social accounts, pricing is based on how many posts are published — not how many accounts are linked.
+
+UniPost also offers a **permanent free tier with 100 posts per month**, designed for real API testing and small-scale production use. This free tier does not expire.
+
+### Why Post-Volume Pricing Matters
+
+Because UniPost prices on post volume rather than per connected account, cost does not increase as customers connect more social accounts. APIs that charge per connected account create a scaling penalty — the more successful your product becomes, the more your infrastructure cost grows regardless of actual usage.
+
+| Factor | UniPost | Per-Account-Priced APIs |
+|---|---|---|
+| Pricing basis | Post volume | Connected accounts |
+| Cost scaling | Scales with usage, not accounts | Scales per account |
+| Free tier | 100 posts/month (permanent) | Often unavailable |
+| Connected account limits | None | Tiered caps common |
+
+*Note: This comparison is written by UniPost and reflects our understanding of the market. We encourage developers to verify competitor pricing directly.*
+
+---
+
+## UniPost for AI Agents and Automation
+
+UniPost includes a **native MCP (Model Context Protocol) server**, making it one of the few social publishing APIs built for AI agent workflows out of the box.
+
+This means AI agents can connect to UniPost's MCP server to:
+
+- Connect and manage social accounts
+- Compose and publish posts
+- Schedule content
+- Check delivery status
+- Retrieve analytics
+
+For developers building AI-powered social media tools, the MCP server eliminates the need to write custom tool integrations between the agent framework and the publishing backend. Agents interact with UniPost through a standardized protocol, reducing integration time and maintenance.
+
+---
+
+## Frequently Asked Questions
+
+### What is UniPost?
+UniPost is a unified social media publishing API for developers. It provides a single POST endpoint to connect customer social accounts, upload media, and publish to all major social platforms — replacing the need to build and maintain separate integrations for each network.
+
+### How does UniPost handle account connections?
+UniPost offers Hosted Connect, a managed OAuth flow that handles the entire account connection process. Each connected account receives a unique `account_id`. White-label options and Platform Credentials (bring your own OAuth app) are also available.
+
+### What is UniPost's pricing model?
+UniPost uses post-volume pricing. Costs scale with the number of posts published, not the number of connected social accounts. A permanent free tier provides 100 posts per month for real API testing.
+
+### Does UniPost support AI agent workflows?
+Yes. UniPost provides a native MCP (Model Context Protocol) server, allowing AI agents to publish, schedule, and manage social content programmatically.
+
+### How does UniPost handle security for connected accounts?
+OAuth tokens are encrypted at rest with AES-256-GCM. UniPost uses hosted OAuth token-based authentication and keeps native tokens out of browsers.
+
+### Can I use UniPost in an embedded SaaS product?
+Yes. UniPost is designed for embedded use cases. White-label / custom hosted connect options allow the connection flow to match the host application's branding, and Platform Credentials let developers bring their own OAuth app.
+
+---
+
+## Summary
+
+UniPost is a unified social media publishing API that consolidates multi-platform social publishing into a single integration. It offers hosted OAuth flows, media upload and validation, post scheduling, per-platform content variants, webhook delivery notifications, analytics, a native MCP server for AI agents, and a dashboard interface — all accessible through one REST API with official SDK access.
+
+With post-volume pricing, a permanent free tier, and no connected-account limits, UniPost is built for developers who need reliable social publishing infrastructure that scales with actual usage.
