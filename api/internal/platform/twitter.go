@@ -3,6 +3,8 @@ package platform
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -49,35 +51,32 @@ func (a *TwitterAdapter) DefaultOAuthConfig(baseRedirectURL string) OAuthConfig 
 		AuthURL:      "https://twitter.com/i/oauth2/authorize",
 		TokenURL:     "https://api.x.com/2/oauth2/token",
 		RedirectURL:  baseRedirectURL + "/v1/oauth/callback/twitter",
-		Scopes:       []string{"tweet.read", "tweet.write", "users.read", "offline.access", "media.write"},
+		Scopes:       []string{"tweet.read", "tweet.write", "users.read", "offline.access", "media.write", "dm.read", "dm.write"},
 	}
 }
 
 func (a *TwitterAdapter) GetAuthURL(config OAuthConfig, state string) string {
 	// X/Twitter uses OAuth 2.0 with PKCE
+	sum := sha256.Sum256([]byte(config.PKCEVerifier))
 	params := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {config.ClientID},
 		"redirect_uri":          {config.RedirectURL},
-		"scope":                 {"tweet.read tweet.write users.read offline.access media.write"},
+		"scope":                 {strings.Join(config.Scopes, " ")},
 		"state":                 {state},
-		"code_challenge":        {state[:43]}, // Use part of state as challenge (simplified PKCE)
-		"code_challenge_method": {"plain"},
+		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
+		"code_challenge_method": {"S256"},
 	}
 	return config.AuthURL + "?" + params.Encode()
 }
 
 func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, code string) (*ConnectResult, error) {
-	// PKCE: GetAuthURL sets code_challenge=state[:43] with method=plain, so
-	// the verifier we send here MUST equal that same string. The handler
-	// passes the original state through in OAuthConfig.State so we can
-	// reconstruct it here without storing it on the row.
 	data := url.Values{
 		"code":          {code},
 		"grant_type":    {"authorization_code"},
 		"client_id":     {config.ClientID},
 		"redirect_uri":  {config.RedirectURL},
-		"code_verifier": {config.State[:43]},
+		"code_verifier": {config.PKCEVerifier},
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "POST", config.TokenURL, bytes.NewBufferString(data.Encode()))
@@ -103,6 +102,7 @@ func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
 	}
 	json.NewDecoder(resp.Body).Decode(&tokenResp)
 
@@ -112,6 +112,11 @@ func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		return nil, fmt.Errorf("failed to get user info: %w", err)
 	}
 
+	scopes := strings.Fields(tokenResp.Scope)
+	if len(scopes) == 0 {
+		scopes = config.Scopes
+	}
+
 	return &ConnectResult{
 		AccessToken:       tokenResp.AccessToken,
 		RefreshToken:      tokenResp.RefreshToken,
@@ -119,6 +124,7 @@ func (a *TwitterAdapter) ExchangeCode(ctx context.Context, config OAuthConfig, c
 		ExternalAccountID: userInfo.id,
 		AccountName:       userInfo.username,
 		AvatarURL:         userInfo.profileImageURL,
+		Scopes:            scopes,
 		Metadata: map[string]any{
 			"id":       userInfo.id,
 			"username": userInfo.username,

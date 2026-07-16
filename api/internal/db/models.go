@@ -517,12 +517,13 @@ type NotificationSubscription struct {
 }
 
 type OauthState struct {
-	State       string             `json:"state"`
-	ProfileID   string             `json:"profile_id"`
-	Platform    string             `json:"platform"`
-	RedirectUrl pgtype.Text        `json:"redirect_url"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	State        string             `json:"state"`
+	ProfileID    string             `json:"profile_id"`
+	Platform     string             `json:"platform"`
+	RedirectUrl  pgtype.Text        `json:"redirect_url"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	PkceVerifier pgtype.Text        `json:"pkce_verifier"`
 }
 
 type PaidPlanQuotaNotification struct {

@@ -1,6 +1,6 @@
 -- name: CreateOAuthState :one
-INSERT INTO oauth_states (state, profile_id, platform, redirect_url)
-VALUES ($1, $2, $3, $4)
+INSERT INTO oauth_states (state, profile_id, platform, redirect_url, pkce_verifier)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: GetOAuthState :one

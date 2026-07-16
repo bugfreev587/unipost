@@ -3,10 +3,14 @@ package platform
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +20,131 @@ type twitterRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f twitterRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestTwitterOAuthPKCEAuthorizationUsesConfiguredScopesAndS256(t *testing.T) {
+	adapter := NewTwitterAdapter()
+	config := OAuthConfig{
+		ClientID:     "client-id",
+		AuthURL:      "https://twitter.example/authorize",
+		RedirectURL:  "https://api.example/v1/oauth/callback/twitter",
+		Scopes:       []string{"custom.read", "custom.write"},
+		PKCEVerifier: "stored-random-verifier",
+	}
+
+	authURL := adapter.GetAuthURL(config, "csrf-state")
+	parsed, err := url.Parse(authURL)
+	if err != nil {
+		t.Fatalf("parse auth URL: %v", err)
+	}
+	sum := sha256.Sum256([]byte(config.PKCEVerifier))
+	wantChallenge := base64.RawURLEncoding.EncodeToString(sum[:])
+	query := parsed.Query()
+	if got := query.Get("scope"); got != "custom.read custom.write" {
+		t.Fatalf("scope = %q, want configured scopes", got)
+	}
+	if got := query.Get("code_challenge_method"); got != "S256" {
+		t.Fatalf("code_challenge_method = %q, want S256", got)
+	}
+	if got := query.Get("code_challenge"); got != wantChallenge {
+		t.Fatalf("code_challenge = %q, want %q", got, wantChallenge)
+	}
+	if query.Get("code_challenge") == "csrf-state" {
+		t.Fatal("code_challenge must not be derived from OAuth state")
+	}
+}
+
+func TestTwitterOAuthPKCEDefaultScopesIncludeInboxDMs(t *testing.T) {
+	t.Setenv("TWITTER_CLIENT_ID", "client-id")
+	t.Setenv("TWITTER_CLIENT_SECRET", "client-secret")
+
+	got := NewTwitterAdapter().DefaultOAuthConfig("https://api.example").Scopes
+	want := []string{"tweet.read", "tweet.write", "users.read", "offline.access", "media.write", "dm.read", "dm.write"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("scopes = %#v, want %#v", got, want)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeUsesStoredVerifierAndGrantedScopes(t *testing.T) {
+	var tokenForm url.Values
+	adapter := &TwitterAdapter{client: &http.Client{Transport: twitterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "token.example":
+			if err := req.ParseForm(); err != nil {
+				t.Fatalf("parse token form: %v", err)
+			}
+			tokenForm = req.Form
+			return jsonResponse(http.StatusOK, `{
+				"access_token":"access-token",
+				"refresh_token":"refresh-token",
+				"expires_in":7200,
+				"scope":"tweet.read dm.read"
+			}`), nil
+		case "api.x.com":
+			return jsonResponse(http.StatusOK, `{
+				"data":{"id":"x-user","username":"robyn","profile_image_url":"https://example/avatar.png"}
+			}`), nil
+		default:
+			t.Fatalf("unexpected request URL: %s", req.URL)
+			return nil, nil
+		}
+	})}}
+	config := OAuthConfig{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		TokenURL:     "https://token.example/oauth2/token",
+		RedirectURL:  "https://api.example/v1/oauth/callback/twitter",
+		Scopes:       []string{"tweet.read", "tweet.write", "dm.read", "dm.write"},
+		PKCEVerifier: "stored-random-verifier",
+	}
+
+	result, err := adapter.ExchangeCode(context.Background(), config, "authorization-code")
+	if err != nil {
+		t.Fatalf("ExchangeCode: %v", err)
+	}
+	if got := tokenForm.Get("code_verifier"); got != config.PKCEVerifier {
+		t.Fatalf("code_verifier = %q, want stored verifier", got)
+	}
+	if !reflect.DeepEqual(result.Scopes, []string{"tweet.read", "dm.read"}) {
+		t.Fatalf("scopes = %#v, want granted token scopes", result.Scopes)
+	}
+}
+
+func TestTwitterOAuthPKCEExchangeFallsBackToConfiguredScopesWhenOmitted(t *testing.T) {
+	adapter := &TwitterAdapter{client: &http.Client{Transport: twitterRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.Host {
+		case "token.example":
+			return jsonResponse(http.StatusOK, `{
+				"access_token":"access-token",
+				"refresh_token":"refresh-token",
+				"expires_in":7200,
+				"scope":"   "
+			}`), nil
+		case "api.x.com":
+			return jsonResponse(http.StatusOK, `{
+				"data":{"id":"x-user","username":"robyn","profile_image_url":"https://example/avatar.png"}
+			}`), nil
+		default:
+			t.Fatalf("unexpected request URL: %s", req.URL)
+			return nil, nil
+		}
+	})}}
+	config := OAuthConfig{
+		ClientID:     "client-id",
+		ClientSecret: "client-secret",
+		TokenURL:     "https://token.example/oauth2/token",
+		RedirectURL:  "https://api.example/v1/oauth/callback/twitter",
+		Scopes:       []string{"tweet.read", "tweet.write", "dm.read", "dm.write"},
+		PKCEVerifier: "stored-random-verifier",
+	}
+
+	result, err := adapter.ExchangeCode(context.Background(), config, "authorization-code")
+	if err != nil {
+		t.Fatalf("ExchangeCode: %v", err)
+	}
+	if !reflect.DeepEqual(result.Scopes, config.Scopes) {
+		t.Fatalf("scopes = %#v, want configured fallback %#v", result.Scopes, config.Scopes)
+	}
 }
 
 func TestTwitterUploadMediaChunkedNormalizesParameterizedVideoContentType(t *testing.T) {

@@ -143,13 +143,23 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate state")
 		return
 	}
+	pkceVerifier := ""
+	if platformName == "twitter" {
+		pkceVerifier, err = randomBase64URL(64)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate PKCE verifier")
+			return
+		}
+		config.PKCEVerifier = pkceVerifier
+	}
 
 	// Store state for verification on callback
 	_, err = h.queries.CreateOAuthState(r.Context(), db.CreateOAuthStateParams{
-		State:       state,
-		ProfileID:   profileID,
-		Platform:    platformName,
-		RedirectUrl: pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
+		State:        state,
+		ProfileID:    profileID,
+		Platform:     platformName,
+		RedirectUrl:  pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
+		PkceVerifier: pgtype.Text{String: pkceVerifier, Valid: pkceVerifier != ""},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to store OAuth state")
@@ -215,9 +225,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config := h.getOAuthConfigForProfile(r, oauthState.ProfileID, platformName, oauthAdapter)
-	// Pass the original state through so PKCE-using adapters (Twitter)
-	// can reconstruct their verifier on the token exchange step.
-	config.State = state
+	config.PKCEVerifier = oauthState.PkceVerifier.String
 
 	// Exchange code for tokens
 	result, err := oauthAdapter.ExchangeCode(r.Context(), config, code)

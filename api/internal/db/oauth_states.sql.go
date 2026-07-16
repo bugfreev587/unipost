@@ -12,16 +12,17 @@ import (
 )
 
 const createOAuthState = `-- name: CreateOAuthState :one
-INSERT INTO oauth_states (state, profile_id, platform, redirect_url)
-VALUES ($1, $2, $3, $4)
-RETURNING state, profile_id, platform, redirect_url, expires_at, created_at
+INSERT INTO oauth_states (state, profile_id, platform, redirect_url, pkce_verifier)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier
 `
 
 type CreateOAuthStateParams struct {
-	State       string      `json:"state"`
-	ProfileID   string      `json:"profile_id"`
-	Platform    string      `json:"platform"`
-	RedirectUrl pgtype.Text `json:"redirect_url"`
+	State        string      `json:"state"`
+	ProfileID    string      `json:"profile_id"`
+	Platform     string      `json:"platform"`
+	RedirectUrl  pgtype.Text `json:"redirect_url"`
+	PkceVerifier pgtype.Text `json:"pkce_verifier"`
 }
 
 func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStateParams) (OauthState, error) {
@@ -30,6 +31,7 @@ func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStatePara
 		arg.ProfileID,
 		arg.Platform,
 		arg.RedirectUrl,
+		arg.PkceVerifier,
 	)
 	var i OauthState
 	err := row.Scan(
@@ -39,6 +41,7 @@ func (q *Queries) CreateOAuthState(ctx context.Context, arg CreateOAuthStatePara
 		&i.RedirectUrl,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.PkceVerifier,
 	)
 	return i, err
 }
@@ -62,7 +65,7 @@ func (q *Queries) DeleteOAuthState(ctx context.Context, state string) error {
 }
 
 const getOAuthState = `-- name: GetOAuthState :one
-SELECT state, profile_id, platform, redirect_url, expires_at, created_at FROM oauth_states WHERE state = $1 AND expires_at > NOW()
+SELECT state, profile_id, platform, redirect_url, expires_at, created_at, pkce_verifier FROM oauth_states WHERE state = $1 AND expires_at > NOW()
 `
 
 func (q *Queries) GetOAuthState(ctx context.Context, state string) (OauthState, error) {
@@ -75,6 +78,7 @@ func (q *Queries) GetOAuthState(ctx context.Context, state string) (OauthState, 
 		&i.RedirectUrl,
 		&i.ExpiresAt,
 		&i.CreatedAt,
+		&i.PkceVerifier,
 	)
 	return i, err
 }

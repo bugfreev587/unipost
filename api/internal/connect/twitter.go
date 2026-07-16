@@ -14,11 +14,8 @@
 //	   grant_type=refresh_token. Twitter rotates the refresh token
 //	   on every refresh — we always return both.
 //
-// Sprint 3 PR3 ships text-only managed Twitter — the media.write
-// scope is intentionally NOT requested per founder decision #2.
-// The post validator (handler/validate.go branch) refuses any
-// media on a managed Twitter account so the user fails fast
-// instead of getting a 403 from Twitter.
+// Managed X requests the publishing scopes used by existing post and
+// media flows plus the legacy DM scopes used by the inbox integration.
 
 package connect
 
@@ -40,12 +37,9 @@ const (
 	twitterTokenEndpoint     = "https://api.twitter.com/2/oauth2/token"
 	twitterUsersMeEndpoint   = "https://api.twitter.com/2/users/me"
 
-	// Sprint 4 PR1: managed Twitter now supports media. media.write
-	// was added to the UniPost OAuth app's scope allowlist; this
-	// constant requests it on every Connect handshake so newly-minted
-	// tokens can call POST /1.1/media/upload. Existing tokens minted
-	// before this change DON'T have the scope and need a re-Connect.
-	twitterScopes = "tweet.read tweet.write users.read offline.access media.write"
+	// Preserve the established publishing scope order and append the
+	// legacy DM scopes required by the inbox integration.
+	twitterScopes = "tweet.read tweet.write users.read offline.access media.write dm.read dm.write"
 )
 
 // TwitterConnector is the OAuth 2.0 PKCE Connector for Twitter / X.
@@ -151,12 +145,16 @@ func (t *TwitterConnector) ExchangeCode(ctx context.Context, session SessionView
 	if raw.AccessToken == "" {
 		return nil, fmt.Errorf("twitter token exchange returned empty access_token: %s", string(body))
 	}
+	scopes := strings.Fields(raw.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(twitterScopes)
+	}
 
 	return &TokenSet{
 		AccessToken:  raw.AccessToken,
 		RefreshToken: raw.RefreshToken,
 		ExpiresAt:    time.Now().Add(time.Duration(raw.ExpiresIn) * time.Second),
-		Scopes:       strings.Fields(raw.Scope),
+		Scopes:       scopes,
 	}, nil
 }
 
@@ -246,4 +244,3 @@ func (t *TwitterConnector) Refresh(ctx context.Context, refreshToken string) (*T
 		Scopes:       strings.Fields(raw.Scope),
 	}, nil
 }
-
