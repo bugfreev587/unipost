@@ -9,20 +9,18 @@ async function source(path) {
   return readFile(join(root, path), "utf8");
 }
 
-function endpointMapping(sourceText, method, pathPattern) {
-  const methodIndex = sourceText.indexOf(`method: "${method}"`);
-  let cursor = methodIndex;
-
-  while (cursor >= 0) {
-    const nextMethod = sourceText.indexOf('method: "', cursor + 1);
-    const block = sourceText.slice(cursor, nextMethod >= 0 ? nextMethod : sourceText.length);
-    if (pathPattern.test(block)) {
-      return block;
-    }
-    cursor = nextMethod;
+function endpointMapping(sourceText, method, pathSource) {
+  const pathIndex = sourceText.indexOf(pathSource);
+  if (pathIndex < 0) {
+    return "";
   }
 
-  return "";
+  const blockStart = sourceText.lastIndexOf("  {", pathIndex);
+  const blockEnd = sourceText.indexOf("\n  },", pathIndex);
+  const block = sourceText.slice(blockStart, blockEnd >= 0 ? blockEnd + 5 : sourceText.length);
+
+  assert.match(block, new RegExp(`method: "${method}"`));
+  return block;
 }
 
 test("Publish GIFs guide covers support, workflows, navigation, and API backlinks", async () => {
@@ -86,12 +84,12 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
   assert.match(searchIndex, /id: "guide-publish-gifs"/);
 
   const endpointMappings = [
-    endpointMapping(endpointGuides, "GET", /path: \/\^\\\/v1\\\/accounts\$\//),
-    endpointMapping(endpointGuides, "POST", /path: \/\^\\\/v1\\\/media\$\//),
-    endpointMapping(endpointGuides, "GET", /path: \/\^\\\/v1\\\/media\\\/:\[\^\\\/\]\+\$\//),
-    endpointMapping(endpointGuides, "POST", /path: \/\^\\\/v1\\\/posts\\\/validate\$\//),
-    endpointMapping(endpointGuides, "POST", /path: \/\^\\\/v1\\\/posts\$\//),
-    endpointMapping(endpointGuides, "GET", /path: \/\^\\\/v1\\\/posts\\\/:\[\^\\\/\]\+\$\//),
+    endpointMapping(endpointGuides, "GET", "path: /^\\/v1\\/accounts$/"),
+    endpointMapping(endpointGuides, "POST", "path: /^\\/v1\\/media$/"),
+    endpointMapping(endpointGuides, "GET", "path: /^\\/v1\\/media\\/:[^/]+$/"),
+    endpointMapping(endpointGuides, "POST", "path: /^\\/v1\\/posts\\/validate$/"),
+    endpointMapping(endpointGuides, "POST", "path: /^\\/v1\\/posts$/"),
+    endpointMapping(endpointGuides, "GET", "path: /^\\/v1\\/posts\\/:[^/]+$/"),
   ];
 
   for (const mapping of endpointMappings) {
