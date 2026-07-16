@@ -492,12 +492,24 @@ func main() {
 			os.Getenv("X_INBOX_WEBHOOK_URL"),
 		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
+		workspaceXAppCapacities, capacityConfigErr := worker.ParseXInboxWorkspaceAppCapacities(
+			os.Getenv("X_INBOX_WORKSPACE_APP_CAPACITIES_JSON"),
+		)
+		if capacityConfigErr != nil {
+			slog.Warn("invalid X Inbox workspace app capacity configuration",
+				"error_class", "workspace_app_capacity_config_invalid")
+		}
 		xInboxOperationsWorker := worker.NewPostgresXInboxOperationsReconciliationWorker(
 			pool,
 			slog.Default(),
 			worker.XInboxOperationsReconciliationConfig{
-				FilteredStreamRuleCapacity:   positiveInt64Env("X_INBOX_FILTERED_STREAM_RULE_CAPACITY"),
-				ActivitySubscriptionCapacity: positiveInt64Env("X_INBOX_ACTIVITY_SUBSCRIPTION_CAPACITY"),
+				ManagedFilteredStreamRuleCapacity: positiveInt64Env(
+					"X_INBOX_MANAGED_FILTERED_STREAM_RULE_CAPACITY",
+				),
+				ManagedActivitySubscriptionCapacity: positiveInt64Env(
+					"X_INBOX_MANAGED_ACTIVITY_SUBSCRIPTION_CAPACITY",
+				),
+				WorkspaceAppCapacities: workspaceXAppCapacities,
 			},
 		)
 		go xInboxOperationsWorker.Start(workerCtx)
@@ -595,14 +607,7 @@ func main() {
 	// Global middleware
 	r.Use(mw.Logger)
 	r.Use(chimw.Recoverer)
-	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   corsAllowedOrigins(),
-		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
-		ExposedHeaders:   []string{"Link", "X-Request-Id", "X-UniPost-Usage", "X-UniPost-Scheduled-Usage", "X-UniPost-Quota-Hold-Usage", "X-UniPost-Effective-Usage", "X-UniPost-Warning", "X-UniPost-RateLimit-Limit", "X-UniPost-RateLimit-Remaining", "X-UniPost-RateLimit-Reset", "X-UniPost-QueueDepth", "Retry-After"},
-		AllowCredentials: true,
-		MaxAge:           300,
-	}))
+	r.Use(cors.Handler(apiCORSOptions()))
 
 	// Handlers
 	healthHandler := handler.NewHealthHandler()
@@ -1250,6 +1255,31 @@ func corsAllowedOrigins() []string {
 	}
 
 	return origins
+}
+
+func apiCORSOptions() cors.Options {
+	return cors.Options{
+		AllowedOrigins: corsAllowedOrigins(),
+		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "Idempotency-Key"},
+		ExposedHeaders: []string{
+			"Link",
+			"X-Request-Id",
+			"X-UniPost-Usage",
+			"X-UniPost-Scheduled-Usage",
+			"X-UniPost-Quota-Hold-Usage",
+			"X-UniPost-Effective-Usage",
+			"X-UniPost-Warning",
+			"X-UniPost-RateLimit-Limit",
+			"X-UniPost-RateLimit-Remaining",
+			"X-UniPost-RateLimit-Reset",
+			"X-UniPost-QueueDepth",
+			"X-UniPost-Operation-Id",
+			"Retry-After",
+		},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}
 }
 
 func normalizeProcessMode(raw string) (string, error) {

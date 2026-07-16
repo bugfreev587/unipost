@@ -44,10 +44,11 @@ The development API/worker deployment requires the following variables. Values b
 | `X_INBOX_WEBHOOK_ROUTE_SECRET` | Stable, independent webhook route-key secret |
 | `X_INBOX_WEBHOOK_URL` | Absolute HTTPS base URL for the development X webhook |
 | `X_INBOX_BACKFILL_SAFE_CREDITS` | Safety reserve retained during estimated backfill admission |
-| `X_INBOX_FILTERED_STREAM_RULE_CAPACITY` | Current developer-plan rule capacity used for 70/85/95 alerts |
-| `X_INBOX_ACTIVITY_SUBSCRIPTION_CAPACITY` | Current developer-plan Activity subscription capacity used for 70/85/95 alerts |
+| `X_INBOX_MANAGED_FILTERED_STREAM_RULE_CAPACITY` | Managed developer-app rule capacity used for 70/85/95 alerts |
+| `X_INBOX_MANAGED_ACTIVITY_SUBSCRIPTION_CAPACITY` | Managed developer-app Activity capacity used for 70/85/95 alerts |
+| `X_INBOX_WORKSPACE_APP_CAPACITIES_JSON` | Per-workspace-app capacities keyed by the opaque `workspace_<16 hex>` scope emitted by reconciliation |
 
-Workspace X applications additionally require their own OAuth client, consumer secret, and app bearer through the encrypted workspace-credential flow. They must not inherit managed-app credentials. A missing or non-positive capacity variable disables percentage alerts for that resource and is an operational configuration defect.
+Workspace X applications additionally require their own OAuth client, consumer secret, and app bearer through the encrypted workspace-credential flow. They must not inherit managed-app credentials. Capacity is never aggregated across X applications: managed resources use the managed limits, while each workspace application and resource type has a separate opaque scope and configured limit. The JSON capacity value has the shape `{"workspace_<opaque>":{"filtered_stream_rules":25,"activity_subscriptions":10}}`; never use a raw X client ID as its key. Missing capacity emits `app_capacity_input_missing` and blocks the promotion gate.
 
 Before deployment:
 
@@ -61,8 +62,10 @@ Before deployment:
 
 The reconciliation worker emits aggregate JSON events once per minute:
 
-- `x_inbox_operations_snapshot`: provisional/stale/reversed usage, cap and allowance suppression, 80/100 notification claims and enqueue totals, paused and restore-pending source latency, stale delivery resources, delivery-resource counts, and cleanup state;
-- `x_inbox_capacity_alert`: resource name, aggregate used/capacity, and the highest crossed 70/85/95 threshold;
+- `x_inbox_operations_snapshot`: provisional/stale/reversed usage; durable outbound, confirmation, and exposure states; cap suppression; notifications; pause/restore; webhook and paid-backfill latency; deduplication; outbound success; aggregate customer demand; and cleanup state;
+- `x_inbox_capacity_metric` / `x_inbox_capacity_alert`: opaque application scope, resource type, used/capacity, and the highest crossed 70/85/95 threshold—never a cross-application total;
+- `x_inbox_usage_metric`: controlled operation key, catalog version, settlement state, event count, and weighted units;
+- `x_inbox_cost_variance`: externally supplied provider cost compared with expected cost derived from finalized catalog usage;
 - `x_inbox_reconciliation_alert`: aggregate alert kind and count;
 - `x_inbox_reconciliation_failed`: a fixed `error_class` without the underlying query/provider error.
 
@@ -78,6 +81,9 @@ Recommended alerts:
 | pause or restore-pending age | above 10 minutes | Run source pause/restore procedure |
 | `stale_delivery_resources` | greater than zero | Reconcile stream rule and Activity subscription state |
 | cleanup overdue/stale lease | greater than zero | Run disconnect/deletion cleanup procedure |
+| outbound outcome-unknown / needs-reconciliation | greater than zero | Do not resend; reconcile the durable write, including BYO writes with no usage event |
+| confirmation or exposure stale/reconciliation state | greater than zero | Inspect lease/recovery state before starting another paid read |
+| `daily_cost_input_missing` | present | Import and validate the daily X billing export; promotion remains blocked |
 
 ## Capacity and delivery-resource reconciliation
 
@@ -87,6 +93,22 @@ Recommended alerts:
 4. Treat an `active` resource with no recent `last_synced_at`, or an old `pending`/`error` resource, as stale. Let the delivery worker reconcile once before manual intervention.
 5. At 85%, identify unused/disconnected resources and verify their durable cleanup intents. At 95%, stop provisioning managed resources and escalate.
 6. Never delete an upstream rule or subscription based only on a label. Match the stable UniPost tag/application identity and the exact stored upstream resource ID.
+
+Live resources and durable cleanup intents are de-duplicated by exact upstream resource ID inside each app scope. A missing workspace credential falls back to an isolated opaque account scope; it must never be merged into another workspace application's count.
+
+## Promotion-gate monitoring and daily cost input
+
+Review a complete UTC-day window before promotion. The gate requires operation/catalog usage, finalized and reversed usage, paid-backfill confirmation count and duration, paid-backfill dedup rate (`duplicates / read` from persisted completed results), webhook delivery latency, outbound completion rate, distinct-workspace demand, and every durable uncertain/stale state. Zero traffic is reported as zero, not silently treated as a successful demand or latency sample.
+
+X console/export cost is external; UniPost does not claim a live cost comparison when it is absent. The injected daily-cost boundary must supply both provider cost in micros and expected cost in micros computed from finalized usage with the approved catalog cost mapping. Until an authorized adapter supplies that UTC-day record, `daily_cost_input_missing` is expected and promotion is blocked.
+
+Daily cost procedure:
+
+1. `<X_BILLING_OWNER>` exports the completed UTC day's X provider charges and records the export time in the restricted change record.
+2. `<UNIPOST_BACKEND_OWNER>` computes expected cost from finalized operation/catalog usage using the approved internal cost mapping; provisional or reversed units are excluded.
+3. Feed both micro-unit amounts through the daily-cost input implementation. Never place export rows, account IDs, or credentials in application logs or environment variables.
+4. Verify `x_inbox_cost_variance` reports provider, expected, signed variance, and basis points. Investigate any non-zero unexplained variance before promotion.
+5. If the export is late, malformed, or incomplete, retain the missing-data alert and stop the promotion rather than substituting an estimate.
 
 ## Inbound cap, allowance, and notifications
 
@@ -145,4 +167,7 @@ An incident is resolved only when:
 - paused sources are intentionally paused, or restored sources are active with advancing sync timestamps;
 - 80/100 notifications are enqueued as expected;
 - durable confirmation/outbound operations have a terminal, reconciled state;
+- exposure reservations are finalized/released and no BYO uncertain write lacks explicit reconciliation;
+- the daily provider-cost input is present and any cost-versus-finalized-usage variance is explained;
+- app-scoped capacity, dedup, latency, outbound success, and customer-demand promotion signals have been reviewed;
 - no credential or customer content was copied into logs or incident artifacts.
