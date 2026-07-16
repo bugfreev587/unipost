@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -125,6 +124,7 @@ type StoreInboundRequest struct {
 	PeriodStart          time.Time
 	PeriodEnd            time.Time
 	UTCDate              time.Time
+	CapManagementURL     string
 }
 
 type InboundAdmission struct {
@@ -188,9 +188,10 @@ type UpdateInboundCapRequest struct {
 
 type StoreUpdateInboundCapRequest struct {
 	UpdateInboundCapRequest
-	MonthlyAllowance int64
-	PeriodStart      time.Time
-	PeriodEnd        time.Time
+	MonthlyAllowance         int64
+	DefaultInboundDailyLimit int64
+	PeriodStart              time.Time
+	PeriodEnd                time.Time
 }
 
 type InboundCapSetting struct {
@@ -201,6 +202,7 @@ type InboundCapSetting struct {
 }
 
 type InboundNotification struct {
+	WorkspaceID       string    `json:"workspace_id"`
 	InboundDailyUsed  int64     `json:"inbound_daily_usage"`
 	InboundDailyLimit int64     `json:"inbound_daily_limit"`
 	ResetAt           time.Time `json:"reset_at"`
@@ -228,20 +230,21 @@ type InboundStore interface {
 type Service struct {
 	store      Store
 	inbound    InboundStore
-	eventBus   events.EventBus
 	appBaseURL string
 }
 
 func NewService(store Store) *Service {
-	service := &Service{store: store}
+	service := &Service{
+		store:      store,
+		appBaseURL: "https://app.unipost.dev",
+	}
 	if inbound, ok := store.(InboundStore); ok {
 		service.inbound = inbound
 	}
 	return service
 }
 
-func (s *Service) SetEventBus(bus events.EventBus, appBaseURL string) *Service {
-	s.eventBus = bus
+func (s *Service) SetAppBaseURL(appBaseURL string) *Service {
 	s.appBaseURL = strings.TrimRight(appBaseURL, "/")
 	if s.appBaseURL == "" {
 		s.appBaseURL = "https://app.unipost.dev"
@@ -394,12 +397,10 @@ func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (Inbound
 		PeriodStart:          period.Start,
 		PeriodEnd:            period.End,
 		UTCDate:              utcDate,
+		CapManagementURL:     s.appBaseURL + "/settings/billing#x-inbound-cap",
 	})
 	if err != nil {
 		return InboundAdmission{}, err
-	}
-	if !admission.Duplicate {
-		s.publishInboundNotifications(ctx, req.WorkspaceID, admission)
 	}
 	switch admission.Decision {
 	case InboundDecisionSuppressedDailyCap:
@@ -434,14 +435,16 @@ func (s *Service) UpdateInboundCap(ctx context.Context, req UpdateInboundCapRequ
 	if req.InboundDailyLimit > *snapshot.MonthlyRemaining {
 		return InboundCapSetting{}, ErrInboundCapExceedsMonthlyRemaining
 	}
-	if snapshot.InboundDailyLimit != nil && req.InboundDailyLimit > *snapshot.InboundDailyLimit && !req.AcknowledgedExposure {
-		return InboundCapSetting{}, ErrInboundExposureAcknowledgementRequired
+	defaultInboundLimit := int64(0)
+	if snapshot.InboundDailyLimit != nil {
+		defaultInboundLimit = *snapshot.InboundDailyLimit
 	}
 	return s.inbound.UpdateInboundCap(ctx, StoreUpdateInboundCapRequest{
-		UpdateInboundCapRequest: req,
-		MonthlyAllowance:        *snapshot.MonthlyAllowance,
-		PeriodStart:             snapshot.PeriodStart,
-		PeriodEnd:               snapshot.PeriodEnd,
+		UpdateInboundCapRequest:  req,
+		MonthlyAllowance:         *snapshot.MonthlyAllowance,
+		DefaultInboundDailyLimit: defaultInboundLimit,
+		PeriodStart:              snapshot.PeriodStart,
+		PeriodEnd:                snapshot.PeriodEnd,
 	})
 }
 
@@ -477,22 +480,11 @@ func remainingWithinSafetyBuffer(used, limit int64) bool {
 	return remaining <= buffer
 }
 
-func (s *Service) publishInboundNotifications(ctx context.Context, workspaceID string, admission InboundAdmission) {
-	if s.eventBus == nil {
-		return
+func validateInboundCapIncrease(currentLimit, requestedLimit int64, acknowledged bool) error {
+	if requestedLimit > currentLimit && !acknowledged {
+		return ErrInboundExposureAcknowledgementRequired
 	}
-	payload := InboundNotification{
-		InboundDailyUsed:  admission.InboundDailyUsed,
-		InboundDailyLimit: admission.InboundDailyLimit,
-		ResetAt:           admission.ResetAt,
-		CapManagementURL:  s.appBaseURL + "/settings/billing#x-inbound-cap",
-	}
-	if admission.Claimed80Percent {
-		s.eventBus.Publish(ctx, workspaceID, events.EventBillingXInbound80pct, payload)
-	}
-	if admission.Claimed100Percent {
-		s.eventBus.Publish(ctx, workspaceID, events.EventBillingXInboundCapReached, payload)
-	}
+	return nil
 }
 
 func CalendarMonthPeriod(now time.Time) (time.Time, time.Time) {

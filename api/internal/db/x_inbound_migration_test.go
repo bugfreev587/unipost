@@ -52,9 +52,29 @@ func TestXInboundMigrationReceiptPersistsOriginalAdmissionSnapshot(t *testing.T)
 		"pause_paid_sources",
 		"pause_reason",
 		"reset_at",
+		"payload",
+		"status",
+		"attempts",
+		"next_attempt_at",
+		"lease_expires_at",
+		"enqueued_at",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("receipt schema missing %q", want)
 		}
+	}
+}
+
+func TestXInboundMigrationRollbackPreservesUserNotificationPreferences(t *testing.T) {
+	source, err := os.ReadFile("migrations/109_x_inbound_usage_controls.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(source), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatal("migration must contain exactly one goose Down section")
+	}
+	if strings.Contains(parts[1], "DELETE FROM unipost_notification_subscriptions") {
+		t.Fatal("rollback must not delete user notification subscriptions by event type")
 	}
 }

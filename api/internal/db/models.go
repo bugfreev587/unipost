@@ -1022,10 +1022,19 @@ type WorkspaceMember struct {
 }
 
 type XInboundCapNotification struct {
-	WorkspaceID string             `json:"workspace_id"`
-	UtcDate     pgtype.Date        `json:"utc_date"`
-	Threshold   int16              `json:"threshold"`
-	ClaimedAt   pgtype.Timestamptz `json:"claimed_at"`
+	ID             string             `json:"id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	UtcDate        pgtype.Date        `json:"utc_date"`
+	Threshold      int16              `json:"threshold"`
+	EventType      string             `json:"event_type"`
+	Payload        []byte             `json:"payload"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	EnqueuedAt     pgtype.Timestamptz `json:"enqueued_at"`
+	ClaimedAt      pgtype.Timestamptz `json:"claimed_at"`
 }
 
 type XInboundCapSetting struct {

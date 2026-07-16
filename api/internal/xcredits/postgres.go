@@ -2,6 +2,7 @@ package xcredits
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -365,6 +366,7 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 		InboundDailyLimit: dailyLimit,
 		ResetAt:           req.UTCDate.AddDate(0, 0, 1),
 	}
+	var claim80Percent, claim100Percent bool
 
 	if dailyUsed+req.WeightedUnits > dailyLimit {
 		admission.Decision = InboundDecisionSuppressedDailyCap
@@ -376,11 +378,7 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 		`, req.WorkspaceID, req.UTCDate); err != nil {
 			return InboundAdmission{}, err
 		}
-		claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 100)
-		if err != nil {
-			return InboundAdmission{}, err
-		}
-		admission.Claimed100Percent = claimed
+		claim100Percent = true
 	} else {
 		tag, err := tx.Exec(ctx, `
 			UPDATE x_usage_periods
@@ -436,18 +434,10 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 				return InboundAdmission{}, err
 			}
 			if dailyLimit > 0 && dailyUsed*100 >= dailyLimit*80 {
-				claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 80)
-				if err != nil {
-					return InboundAdmission{}, err
-				}
-				admission.Claimed80Percent = claimed
+				claim80Percent = true
 			}
 			if dailyLimit > 0 && dailyUsed >= dailyLimit {
-				claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 100)
-				if err != nil {
-					return InboundAdmission{}, err
-				}
-				admission.Claimed100Percent = claimed
+				claim100Percent = true
 			}
 		}
 	}
@@ -470,6 +460,20 @@ func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundReques
 	case remainingWithinSafetyBuffer(dailyUsed, dailyLimit):
 		admission.PausePaidSources = true
 		admission.PauseReason = PauseReasonDailySafetyBuffer
+	}
+	if claim80Percent {
+		claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 80, admission, req.CapManagementURL)
+		if err != nil {
+			return InboundAdmission{}, err
+		}
+		admission.Claimed80Percent = claimed
+	}
+	if claim100Percent {
+		claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 100, admission, req.CapManagementURL)
+		if err != nil {
+			return InboundAdmission{}, err
+		}
+		admission.Claimed100Percent = claimed
 	}
 
 	if _, err := tx.Exec(ctx, `
@@ -551,14 +555,38 @@ func loadDuplicateInboundAdmission(ctx context.Context, tx pgx.Tx, req StoreInbo
 	return admissionFromReceipt(receipt), nil
 }
 
-func claimInboundThreshold(ctx context.Context, tx pgx.Tx, workspaceID string, utcDate time.Time, threshold int16) (bool, error) {
+func claimInboundThreshold(
+	ctx context.Context,
+	tx pgx.Tx,
+	workspaceID string,
+	utcDate time.Time,
+	threshold int16,
+	admission InboundAdmission,
+	capManagementURL string,
+) (bool, error) {
+	eventType := "billing.x_inbound_80pct"
+	if threshold == 100 {
+		eventType = "billing.x_inbound_cap_reached"
+	}
+	payload, err := json.Marshal(InboundNotification{
+		WorkspaceID:       workspaceID,
+		InboundDailyUsed:  admission.InboundDailyUsed,
+		InboundDailyLimit: admission.InboundDailyLimit,
+		ResetAt:           admission.ResetAt,
+		CapManagementURL:  capManagementURL,
+	})
+	if err != nil {
+		return false, err
+	}
 	var claimed int16
-	err := tx.QueryRow(ctx, `
-		INSERT INTO x_inbound_cap_notifications (workspace_id, utc_date, threshold)
-		VALUES ($1, $2, $3)
+	err = tx.QueryRow(ctx, `
+		INSERT INTO x_inbound_cap_notifications (
+			workspace_id, utc_date, threshold, event_type, payload, status
+		)
+		VALUES ($1, $2, $3, $4, $5, 'pending')
 		ON CONFLICT (workspace_id, utc_date, threshold) DO NOTHING
 		RETURNING threshold
-	`, workspaceID, utcDate, threshold).Scan(&claimed)
+	`, workspaceID, utcDate, threshold, eventType, payload).Scan(&claimed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -577,8 +605,26 @@ func (s *PostgresStore) UpdateInboundCap(ctx context.Context, req StoreUpdateInb
 
 	utc := req.Now.UTC()
 	utcDate := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+	settingLockKey := fmt.Sprintf("x-inbound-cap-setting:%s", req.WorkspaceID)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, settingLockKey); err != nil {
+		return InboundCapSetting{}, err
+	}
 	lockKey := fmt.Sprintf("x-inbound-cap:%s:%s", req.WorkspaceID, utcDate.Format("2006-01-02"))
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return InboundCapSetting{}, err
+	}
+
+	currentLimit := req.DefaultInboundDailyLimit
+	err = tx.QueryRow(ctx, `
+		SELECT inbound_daily_limit
+		FROM x_inbound_cap_settings
+		WHERE workspace_id = $1
+		FOR UPDATE
+	`, req.WorkspaceID).Scan(&currentLimit)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return InboundCapSetting{}, err
+	}
+	if err := validateInboundCapIncrease(currentLimit, req.InboundDailyLimit, req.AcknowledgedExposure); err != nil {
 		return InboundCapSetting{}, err
 	}
 

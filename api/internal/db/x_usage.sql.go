@@ -11,6 +11,76 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimPendingXInboundNotifications = `-- name: ClaimPendingXInboundNotifications :many
+WITH candidates AS (
+  SELECT id
+  FROM x_inbound_cap_notifications
+  WHERE (
+      status = 'pending'
+      OR (status = 'processing' AND lease_expires_at <= NOW())
+    )
+    AND next_attempt_at <= NOW()
+  ORDER BY next_attempt_at ASC, claimed_at ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT $1
+)
+UPDATE x_inbound_cap_notifications n
+SET status = 'processing',
+    attempts = n.attempts + 1,
+    lease_expires_at = NOW() + INTERVAL '5 minutes',
+    last_error = NULL
+FROM candidates c
+WHERE n.id = c.id
+RETURNING
+  n.id,
+  n.workspace_id,
+  n.utc_date,
+  n.threshold,
+  n.event_type,
+  n.payload,
+  n.status,
+  n.attempts,
+  n.next_attempt_at,
+  n.lease_expires_at,
+  n.last_error,
+  n.enqueued_at,
+  n.claimed_at
+`
+
+func (q *Queries) ClaimPendingXInboundNotifications(ctx context.Context, limit int32) ([]XInboundCapNotification, error) {
+	rows, err := q.db.Query(ctx, claimPendingXInboundNotifications, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []XInboundCapNotification{}
+	for rows.Next() {
+		var i XInboundCapNotification
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.UtcDate,
+			&i.Threshold,
+			&i.EventType,
+			&i.Payload,
+			&i.Status,
+			&i.Attempts,
+			&i.NextAttemptAt,
+			&i.LeaseExpiresAt,
+			&i.LastError,
+			&i.EnqueuedAt,
+			&i.ClaimedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getXInboundCapSetting = `-- name: GetXInboundCapSetting :one
 SELECT
   workspace_id,
@@ -209,6 +279,40 @@ func (q *Queries) ListProvisionalXUsageEvents(ctx context.Context, arg ListProvi
 		return nil, err
 	}
 	return items, nil
+}
+
+const markXInboundNotificationEnqueued = `-- name: MarkXInboundNotificationEnqueued :exec
+UPDATE x_inbound_cap_notifications
+SET status = 'enqueued',
+    enqueued_at = NOW(),
+    lease_expires_at = NULL,
+    last_error = NULL
+WHERE id = $1
+`
+
+func (q *Queries) MarkXInboundNotificationEnqueued(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markXInboundNotificationEnqueued, id)
+	return err
+}
+
+const retryXInboundNotification = `-- name: RetryXInboundNotification :exec
+UPDATE x_inbound_cap_notifications
+SET status = 'pending',
+    next_attempt_at = $2,
+    lease_expires_at = NULL,
+    last_error = $3
+WHERE id = $1
+`
+
+type RetryXInboundNotificationParams struct {
+	ID            string             `json:"id"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError     pgtype.Text        `json:"last_error"`
+}
+
+func (q *Queries) RetryXInboundNotification(ctx context.Context, arg RetryXInboundNotificationParams) error {
+	_, err := q.db.Exec(ctx, retryXInboundNotification, arg.ID, arg.NextAttemptAt, arg.LastError)
+	return err
 }
 
 const upsertXInboundCapSetting = `-- name: UpsertXInboundCapSetting :one

@@ -9,8 +9,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/xiaoboyu/unipost-api/internal/events"
 )
 
 type fakeInboundStore struct {
@@ -94,6 +92,13 @@ func (s *fakeInboundStore) AdmitInbound(_ context.Context, req StoreInboundReque
 func (s *fakeInboundStore) UpdateInboundCap(_ context.Context, req StoreUpdateInboundCapRequest) (InboundCapSetting, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	current := req.DefaultInboundDailyLimit
+	if s.customLimit != nil {
+		current = *s.customLimit
+	}
+	if err := validateInboundCapIncrease(current, req.InboundDailyLimit, req.AcknowledgedExposure); err != nil {
+		return InboundCapSetting{}, err
+	}
 	s.customLimit = &req.InboundDailyLimit
 	return InboundCapSetting{
 		InboundDailyLimit:    req.InboundDailyLimit,
@@ -121,19 +126,6 @@ func (s *fakeInboundStore) Snapshot(_ context.Context, _ string, _ time.Time) (S
 		InboundDailyLimit: &limit,
 		CatalogVersion:    CatalogVersion,
 	}, nil
-}
-
-type recordingEventBus struct {
-	mu     sync.Mutex
-	events []string
-	data   []any
-}
-
-func (b *recordingEventBus) Publish(_ context.Context, _ string, event string, data any) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.events = append(b.events, event)
-	b.data = append(b.data, data)
 }
 
 func TestInboundAdmissionConcurrentDuplicateChargesExactlyOnce(t *testing.T) {
@@ -276,30 +268,13 @@ func TestInboundAdmissionRequestAndStoreContractContainNoPrivateBody(t *testing.
 	}
 }
 
-func TestInboundAdmissionClaimsThresholdNotificationsOnceWithoutContent(t *testing.T) {
-	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
-	store := newFakeInboundStore("basic", now)
-	store.dailyUsed = 310
-	bus := &recordingEventBus{}
-	service := NewService(store).SetEventBus(bus, "https://dev-app.unipost.dev")
-	req := InboundRequest{
-		WorkspaceID: "ws_1", SocialAccountID: "sa_1", AppMode: "unipost_managed_app",
-		OperationKey: "dm.received", Source: "activity",
-		UpstreamResourceType: "dm_event", UpstreamResourceID: "dm_80", Now: now,
-	}
-	if _, err := service.AdmitInbound(context.Background(), req); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := service.AdmitInbound(context.Background(), req); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(bus.events) != 1 || bus.events[0] != events.EventBillingXInbound80pct {
-		t.Fatalf("events = %#v", bus.events)
-	}
-	payload, ok := bus.data[0].(InboundNotification)
-	if !ok {
-		t.Fatalf("payload type = %T", bus.data[0])
+func TestInboundNotificationContainsOnlySafeMetricsAndManagementURL(t *testing.T) {
+	payload := InboundNotification{
+		WorkspaceID:       "ws_1",
+		InboundDailyUsed:  320,
+		InboundDailyLimit: 400,
+		ResetAt:           time.Date(2026, 7, 17, 0, 0, 0, 0, time.UTC),
+		CapManagementURL:  "https://dev-app.unipost.dev/settings/billing#x-inbound-cap",
 	}
 	if payload.InboundDailyUsed != 320 || payload.InboundDailyLimit != 400 || payload.ResetAt.IsZero() || payload.CapManagementURL == "" {
 		t.Fatalf("payload = %+v", payload)
@@ -308,6 +283,93 @@ func TestInboundAdmissionClaimsThresholdNotificationsOnceWithoutContent(t *testi
 		if strings.Contains(payload.String(), private) {
 			t.Fatalf("notification leaked private/upstream identifier %q: %s", private, payload.String())
 		}
+	}
+}
+
+type racingInboundCapStore struct {
+	*fakeInboundStore
+	snapshotBarrier sync.WaitGroup
+	lowered         chan struct{}
+}
+
+func newRacingInboundCapStore(now time.Time) *racingInboundCapStore {
+	store := &racingInboundCapStore{
+		fakeInboundStore: newFakeInboundStore("basic", now),
+		lowered:          make(chan struct{}),
+	}
+	store.snapshotBarrier.Add(2)
+	return store
+}
+
+func (s *racingInboundCapStore) Snapshot(ctx context.Context, workspaceID string, now time.Time) (Snapshot, error) {
+	s.snapshotBarrier.Done()
+	s.snapshotBarrier.Wait()
+	allowance := int64(4000)
+	remaining := int64(4000)
+	stale := int64(400)
+	return Snapshot{
+		PlanID:            "basic",
+		PeriodStart:       now,
+		PeriodEnd:         now.AddDate(0, 1, 0),
+		MonthlyAllowance:  &allowance,
+		MonthlyRemaining:  &remaining,
+		InboundDailyLimit: &stale,
+	}, nil
+}
+
+func (s *racingInboundCapStore) UpdateInboundCap(_ context.Context, req StoreUpdateInboundCapRequest) (InboundCapSetting, error) {
+	if req.InboundDailyLimit == 300 {
+		<-s.lowered
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	current := int64(400)
+	if s.customLimit != nil {
+		current = *s.customLimit
+	}
+	if err := validateInboundCapIncrease(current, req.InboundDailyLimit, req.AcknowledgedExposure); err != nil {
+		return InboundCapSetting{}, err
+	}
+	s.customLimit = &req.InboundDailyLimit
+	if req.InboundDailyLimit == 100 {
+		close(s.lowered)
+	}
+	return InboundCapSetting{InboundDailyLimit: req.InboundDailyLimit}, nil
+}
+
+func TestConcurrentCapUpdateRechecksAcknowledgementAgainstLockedCurrentLimit(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := newRacingInboundCapStore(now)
+	service := NewService(store)
+	errs := make(chan error, 2)
+
+	go func() {
+		_, err := service.UpdateInboundCap(context.Background(), UpdateInboundCapRequest{
+			WorkspaceID: "ws_1", InboundDailyLimit: 100, UpdatedBy: "owner", Now: now,
+		})
+		errs <- err
+	}()
+	go func() {
+		_, err := service.UpdateInboundCap(context.Background(), UpdateInboundCapRequest{
+			WorkspaceID: "ws_1", InboundDailyLimit: 300, UpdatedBy: "admin", Now: now,
+		})
+		errs <- err
+	}()
+
+	var sawSuccess, sawAckRequired bool
+	for i := 0; i < 2; i++ {
+		err := <-errs
+		switch {
+		case err == nil:
+			sawSuccess = true
+		case errors.Is(err, ErrInboundExposureAcknowledgementRequired):
+			sawAckRequired = true
+		default:
+			t.Fatalf("unexpected update error: %v", err)
+		}
+	}
+	if !sawSuccess || !sawAckRequired {
+		t.Fatalf("success=%v acknowledgement_required=%v", sawSuccess, sawAckRequired)
 	}
 }
 
@@ -373,6 +435,8 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 		"UPDATE x_inbound_daily_usage",
 		"UPDATE x_usage_periods",
 		"INSERT INTO x_inbound_cap_notifications",
+		"payload",
+		"status",
 		"tx.Commit",
 	} {
 		if !strings.Contains(text, want) {
@@ -387,6 +451,17 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 	duplicateSource := text[duplicateStart:duplicateEnd]
 	if strings.Contains(duplicateSource, "FROM x_usage_periods") {
 		t.Fatal("duplicate replay must reconstruct from its receipt, not the caller's current billing period")
+	}
+	updateStart := strings.Index(text, "func (s *PostgresStore) UpdateInboundCap")
+	snapshotStart := strings.Index(text, "func (s *PostgresStore) Snapshot")
+	if updateStart < 0 || snapshotStart <= updateStart {
+		t.Fatal("cap update function boundaries not found")
+	}
+	updateSource := text[updateStart:snapshotStart]
+	for _, want := range []string{"FROM x_inbound_cap_settings", "FOR UPDATE", "validateInboundCapIncrease"} {
+		if !strings.Contains(updateSource, want) {
+			t.Fatalf("atomic cap update missing %q", want)
+		}
 	}
 	for _, forbidden := range []string{"dm_body", "message_body", "raw_payload"} {
 		if strings.Contains(strings.ToLower(text), forbidden) {

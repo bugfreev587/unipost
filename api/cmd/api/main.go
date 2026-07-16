@@ -402,8 +402,10 @@ func main() {
 	notificationDispatcher := worker.NewNotificationDispatcher(queries)
 	loopsNotificationBus := worker.NewLoopsNotificationEmailBus(queries, loopsSyncer, os.Getenv("APP_BASE_URL"))
 	notificationWorker := worker.NewNotificationDeliveryWorker(queries, mailer, os.Getenv("APP_BASE_URL"))
+	xInboundNotificationWorker := worker.NewXInboundNotificationOutboxWorker(queries, notificationDispatcher)
 	if processMode == processModeAPI {
 		go notificationWorker.Start(workerCtx)
+		go xInboundNotificationWorker.Start(workerCtx)
 	}
 
 	// One Publish() call feeds both the developer webhook system and
@@ -411,7 +413,7 @@ func main() {
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
 	xCreditsService := xcredits.NewPostgresService(pool, queries).
-		SetEventBus(eventBus, os.Getenv("APP_BASE_URL"))
+		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).

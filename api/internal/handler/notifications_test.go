@@ -55,6 +55,31 @@ func TestSupportedNotificationEventsIncludesXInboundCapWarnings(t *testing.T) {
 	}
 }
 
+func TestXInboundNotificationTargetsRequireCurrentPrivilegedMembership(t *testing.T) {
+	source, err := os.ReadFile("../db/queries/notifications.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"billing.x_inbound_80pct",
+		"billing.x_inbound_cap_reached",
+		"workspace_members",
+		"d.payload ->> 'workspace_id'",
+		"wm.status = 'active'",
+		"wm.role IN ('owner', 'admin')",
+		"recipient no longer has an active owner/admin workspace membership",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("notification target query missing stale-member guard %q", want)
+		}
+	}
+	if strings.Count(sql, "wm.status = 'active'") < 2 ||
+		strings.Count(sql, "wm.role IN ('owner', 'admin')") < 2 {
+		t.Fatal("current membership must be checked both during fanout and immediately before delivery")
+	}
+}
+
 func TestEmailPreferenceRoutesAreRegistered(t *testing.T) {
 	source, err := os.ReadFile("../../cmd/api/main.go")
 	if err != nil {

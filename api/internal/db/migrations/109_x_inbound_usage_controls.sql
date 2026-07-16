@@ -41,12 +41,27 @@ CREATE TABLE x_inbound_cap_settings (
 );
 
 CREATE TABLE x_inbound_cap_notifications (
+  id           TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
   workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   utc_date     DATE NOT NULL,
   threshold    SMALLINT NOT NULL CHECK (threshold IN (80, 100)),
+  event_type   TEXT NOT NULL
+    CHECK (event_type IN ('billing.x_inbound_80pct', 'billing.x_inbound_cap_reached')),
+  payload      JSONB NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'processing', 'enqueued')),
+  attempts     INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  lease_expires_at TIMESTAMPTZ,
+  last_error   TEXT,
+  enqueued_at  TIMESTAMPTZ,
   claimed_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  PRIMARY KEY (workspace_id, utc_date, threshold)
+  UNIQUE (workspace_id, utc_date, threshold)
 );
+
+CREATE INDEX x_inbound_cap_notifications_pending_idx
+  ON x_inbound_cap_notifications(next_attempt_at, claimed_at)
+  WHERE status IN ('pending', 'processing');
 
 -- Existing users have already passed the one-time bootstrap path. Give
 -- active owner/admin members a verified email channel when they do not
@@ -133,9 +148,6 @@ WHERE NOT EXISTS (
 ON CONFLICT DO NOTHING;
 
 -- +goose Down
-DELETE FROM unipost_notification_subscriptions
-WHERE event_type IN ('billing.x_inbound_80pct', 'billing.x_inbound_cap_reached');
-
 DELETE FROM unipost_notification_channels c
 WHERE c.label = 'X inbound alerts (migration 109)'
   AND NOT EXISTS (

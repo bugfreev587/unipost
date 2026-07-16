@@ -50,6 +50,33 @@ func (d *NotificationDispatcher) Publish(ctx context.Context, workspaceID, event
 }
 
 func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event string, data any) error {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("marshal payload: %w", err)
+	}
+	return d.fanoutWithEventID(ctx, workspaceID, event, uuid.NewString(), payload)
+}
+
+// EnqueueXInboundNotification durably fans out one stable outbox event.
+// Retries use the same eventID, so notification delivery inserts remain
+// idempotent on (event_id, channel_id).
+func (d *NotificationDispatcher) EnqueueXInboundNotification(
+	ctx context.Context,
+	workspaceID string,
+	event string,
+	eventID string,
+	payload []byte,
+) error {
+	return d.fanoutWithEventID(ctx, workspaceID, event, eventID, payload)
+}
+
+func (d *NotificationDispatcher) fanoutWithEventID(
+	ctx context.Context,
+	workspaceID string,
+	event string,
+	eventID string,
+	payload []byte,
+) error {
 	// Resolve subscriptions that should hear this event. The query
 	// already joins workspaces to validate ownership, so account-level
 	// (workspace_id NULL) subs only match workspaces the user owns.
@@ -64,15 +91,7 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 		return nil
 	}
 
-	// One event_id per Publish call — identical across all fanout rows
-	// so a receiver can correlate, and the UNIQUE (event_id, channel_id)
-	// constraint makes concurrent dispatchers idempotent.
-	eventID := uuid.NewString()
-	payload, err := json.Marshal(data)
-	if err != nil {
-		return fmt.Errorf("marshal payload: %w", err)
-	}
-
+	var firstErr error
 	for _, t := range targets {
 		plan := notificationDeliveryPlan(event, t.ChannelKind)
 		var err error
@@ -99,10 +118,12 @@ func (d *NotificationDispatcher) fanout(ctx context.Context, workspaceID, event 
 				"subscription_id", t.SubscriptionID,
 				"event", event,
 				"error", err)
-			// Keep going — don't let one bad row block the rest.
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
-	return nil
+	return firstErr
 }
 
 type deliveryPlan struct {
@@ -176,6 +197,9 @@ func (w *NotificationDeliveryWorker) Start(ctx context.Context) {
 var notifRetryDelays = []time.Duration{1 * time.Minute, 5 * time.Minute, 30 * time.Minute}
 
 func (w *NotificationDeliveryWorker) tick(ctx context.Context) {
+	if err := w.queries.SkipStaleXInboundNotificationDeliveries(ctx); err != nil {
+		slog.Error("notifications: skip stale X inbound recipients failed", "error", err)
+	}
 	deliveries, err := w.queries.GetPendingNotificationDeliveries(ctx)
 	if err != nil {
 		slog.Error("notifications: get pending failed", "error", err)

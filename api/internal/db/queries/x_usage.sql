@@ -76,3 +76,54 @@ WHERE workspace_id = $1
   AND upstream_resource_type = $3
   AND upstream_resource_id = $4
   AND utc_date = $5;
+
+-- name: ClaimPendingXInboundNotifications :many
+WITH candidates AS (
+  SELECT id
+  FROM x_inbound_cap_notifications
+  WHERE (
+      status = 'pending'
+      OR (status = 'processing' AND lease_expires_at <= NOW())
+    )
+    AND next_attempt_at <= NOW()
+  ORDER BY next_attempt_at ASC, claimed_at ASC
+  FOR UPDATE SKIP LOCKED
+  LIMIT $1
+)
+UPDATE x_inbound_cap_notifications n
+SET status = 'processing',
+    attempts = n.attempts + 1,
+    lease_expires_at = NOW() + INTERVAL '5 minutes',
+    last_error = NULL
+FROM candidates c
+WHERE n.id = c.id
+RETURNING
+  n.id,
+  n.workspace_id,
+  n.utc_date,
+  n.threshold,
+  n.event_type,
+  n.payload,
+  n.status,
+  n.attempts,
+  n.next_attempt_at,
+  n.lease_expires_at,
+  n.last_error,
+  n.enqueued_at,
+  n.claimed_at;
+
+-- name: MarkXInboundNotificationEnqueued :exec
+UPDATE x_inbound_cap_notifications
+SET status = 'enqueued',
+    enqueued_at = NOW(),
+    lease_expires_at = NULL,
+    last_error = NULL
+WHERE id = $1;
+
+-- name: RetryXInboundNotification :exec
+UPDATE x_inbound_cap_notifications
+SET status = 'pending',
+    next_attempt_at = $2,
+    lease_expires_at = NULL,
+    last_error = $3
+WHERE id = $1;
