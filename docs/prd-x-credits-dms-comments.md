@@ -16,11 +16,11 @@ The approved commercial model is:
 
 - **1 X Credit represents $0.001 of upstream X API cost for internal cost accounting.**
 - Included credits reset each billing cycle and do not roll over.
-- Purchased top-up credits persist until used.
+- Purchased top-up credits never expire; they remain until consumed or reversed because of a refund or chargeback.
 - Included credits are consumed before top-up credits.
-- Top-ups are sold at **$1 = 400 X Credits**, or **1,000 X Credits = $2.50**.
-- This creates a theoretical 60% gross margin before Stripe fees, taxes, infrastructure, support, refunds, and future X pricing changes.
-- The initial top-up SKUs are **$5 / 2,000 credits**, **$25 / 10,000 credits**, and **$100 / 40,000 credits**.
+- The base Top-up rate is **$1 = 400 X Credits**, with progressively larger bonus-credit percentages for larger purchases.
+- The launch ladder is **$5 / 2,000**, **$10 / 4,200**, **$25 / 11,000**, **$50 / 23,000**, and **$100 / 48,000 Credits**.
+- The ladder creates a theoretical gross-margin range of **60% down to 52%** before Stripe fees, taxes, infrastructure, support, refunds, and future X pricing changes.
 
 X Credits are separate from the existing UniPost posts-per-month allowance. An X publish can consume both one UniPost post unit and X Credits. X Credits apply only when UniPost's managed X developer app pays the upstream API bill. Calls made through a customer's own X Platform Credentials are billed by X to that customer and do not consume UniPost X Credits.
 
@@ -104,7 +104,7 @@ X pricing and access rules are external dependencies. The values in this PRD are
 |---|---|
 | X Credit | UniPost usage unit for managed X API operations. It is not currency and has no cash value. |
 | Included credits | Credits granted by a paid plan for the current billing period. They expire at the end of that period and do not roll over. |
-| Top-up credits | Credits purchased separately. They persist until consumed, subject to the account terms and applicable law. |
+| Top-up credits | Credits purchased separately through manual or automatic Top-up. They have no time-based expiration and remain until consumed or reversed because of a refund or chargeback. |
 | Managed X app | UniPost's shared X developer app. UniPost pays X for its usage. |
 | BYO X app | A customer's X app configured through UniPost Platform Credentials. The customer pays X directly. |
 | X reply | A public X post that replies to another post. This is normalized as an Inbox comment workflow. |
@@ -161,15 +161,17 @@ The Pricing page, Plans and limits docs, Billing UI, and API Reference must deri
 
 ### 6.3 Top-up conversion
 
-The approved conversion is:
+The base conversion before volume bonus is:
 
 ```text
-$1.00 customer price = 400 X Credits
-1 X Credit = $0.0025 customer price
-1,000 X Credits = $2.50 customer price
+$1.00 customer price = 400 base X Credits
+1 base X Credit = $0.0025 customer price
+1,000 base X Credits = $2.50 customer price
 ```
 
-Because 1 X Credit represents $0.001 of upstream X cost, the theoretical top-up economics are:
+Larger purchases receive bonus Credits. The effective Credits per dollar increase by SKU while the reference upstream cost represented by one Credit remains $0.001. Therefore there is no single effective customer price per Credit across all Top-up packs.
+
+For the $5 base pack, the theoretical economics are:
 
 ```text
 Revenue per 1,000 credits:       $2.50
@@ -178,29 +180,43 @@ Gross profit before other costs: $1.50
 Reference gross margin:          60%
 ```
 
-The margin is intentional. It funds payment processing, taxes, infrastructure, observability, support, credit card disputes, refunds, X invoice variance, and the risk that X changes its pricing.
+The volume discount intentionally reduces theoretical gross margin as purchase size increases, but the self-serve launch ladder must not fall below 52% before payment and operating costs. This margin funds payment processing, taxes, infrastructure, observability, support, credit card disputes, refunds, X invoice variance, and the risk that X changes its pricing.
 
 ### 6.4 Top-up SKUs
 
-| SKU | Customer price | Credits | Reference upstream cost | Reference gross profit |
-|---|---:|---:|---:|---:|
-| Starter | $5 | 2,000 | $2.00 | $3.00 |
-| Builder | $25 | 10,000 | $10.00 | $15.00 |
-| Scale | $100 | 40,000 | $40.00 | $60.00 |
+| SKU | Price | Base Credits | Bonus | Total Credits | Reference upstream cost | Reference gross profit | Theoretical gross margin |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `topup_5` | $5 | 2,000 | 0% / 0 | 2,000 | $2.00 | $3.00 | 60% |
+| `topup_10` | $10 | 4,000 | 5% / 200 | 4,200 | $4.20 | $5.80 | 58% |
+| `topup_25` | $25 | 10,000 | 10% / 1,000 | 11,000 | $11.00 | $14.00 | 56% |
+| `topup_50` | $50 | 20,000 | 15% / 3,000 | 23,000 | $23.00 | $27.00 | 54% |
+| `topup_100` | $100 | 40,000 | 20% / 8,000 | 48,000 | $48.00 | $52.00 | 52% |
 
-All SKUs use the same conversion. Larger packs do not initially receive a volume discount. This keeps the model easy to understand and prevents the largest X consumers from getting the lowest margin.
+The self-serve minimum is $5 and maximum single purchase is $100. A customer can make another purchase after the first completes. Larger Enterprise commitments require a custom quote and explicit margin review. No self-serve pack may exceed a 20% bonus or reduce theoretical gross margin below 52% without a new product decision.
+
+The Billing and Pricing surfaces should also translate each pack into conservative, single-operation examples:
+
+| Top-up | Normal posts | URL posts | Complete comment interactions | Complete DM interactions |
+|---:|---:|---:|---:|---:|
+| $5 / 2,000 | 133 | 10 | 100 | 80 |
+| $10 / 4,200 | 280 | 21 | 210 | 168 |
+| $25 / 11,000 | 733 | 55 | 550 | 440 |
+| $50 / 23,000 | 1,533 | 115 | 1,150 | 920 |
+| $100 / 48,000 | 3,200 | 240 | 2,400 | 1,920 |
+
+These values use the same definitions and floor rounding as Section 6.2. Each column assumes all purchased Credits are spent on one operation type. Comment and DM examples apply only to Basic and higher because purchasing a Top-up does not unlock Inbox on API.
 
 ### 6.5 Bucket lifecycle
 
 1. Included credits are created as a billing-period grant.
 2. Included credits expire when that subscription billing period ends.
 3. Unused included credits do not roll over.
-4. Top-up credits do not reset each month.
+4. Top-up credits never expire and do not reset each month. A Top-up bucket always stores `expires_at = null`; the database must reject a time-based expiration on this bucket type.
 5. Consumption uses the earliest-expiring included bucket first, then top-up buckets oldest-first.
 6. An upgrade immediately grants the positive difference between the old and new plan allowance for the remainder of the current billing period. It does not regrant the entire new allowance if the workspace has already consumed included credits.
 7. A downgrade changes the allowance on the next billing period. It does not remove purchased top-up credits.
 8. If a subscription becomes Free, top-up credits remain on the workspace but managed X operations stay unavailable until a paid plan is restored.
-9. Credits are workspace-scoped, non-transferable, and non-refundable except where required by law or when UniPost discontinues the paid capability without a reasonable consumption path.
+9. Credits are workspace-scoped and non-transferable. Refunds, chargebacks, and account deletion can create reversing/removal entries, but they are not expiration events and must not be described as expiration in the UI or API.
 
 ### 6.6 Managed app versus BYO app
 
@@ -211,24 +227,26 @@ All SKUs use the same conversion. Larger packs do not initially receive a volume
 
 The connection mode must be stored on every X account and copied into every X usage ledger entry. A customer must never be charged UniPost X Credits for BYO activity.
 
+Included and Top-up Credits form one workspace balance usable by both Dashboard and API operations on managed X connections. Buying Credits does not unlock a plan feature: API can spend them on permitted X publishing but still cannot use Inbox, Basic and above can spend them on shipped X Inbox operations, and Free cannot use managed X operations even if retained Top-up Credits are present.
+
 ## 7. Launch pricing catalog
 
 The launch catalog uses the official X resource prices available when this PRD was written. Engineering must verify the catalog immediately before production release.
 
-| UniPost operation | Upstream X resource | Managed-app credits | Effective top-up price | Notes |
+| UniPost operation | Upstream X resource | Managed-app credits | Effective customer price across $5-$100 packs | Notes |
 |---|---|---:|---:|---|
-| Create normal X post | Post Create | 15 | $0.0375 | Includes a public reply when X classifies it as normal create. |
-| Create post containing URL | Post Create with URL | 200 | $0.50 | Determine URL classification before reservation. |
-| Create summoned reply | Post Create summoned | 10 | $0.025 | Use only when the request qualifies under X's definition. |
-| Read public post | Post Read | 5 / newly billable resource | $0.0125 | Local daily deduplication applies. |
-| Read app-owner post | Owned Post Read | 1 / newly billable resource | $0.0025 | Use only when X's ownership conditions are conclusively met. Otherwise charge Post Read. |
-| Read user profile | User Read | 10 / newly billable resource | $0.025 | Avoid enrichment reads unless the product needs them. |
-| Read legacy DM event | DM Event Read | 10 / newly billable event | $0.025 | Applies to lookup/backfill reads. |
-| Send legacy DM | DM Interaction Create | 15 | $0.0375 | Reserve before calling X. |
-| Receive legacy DM webhook | `dm.received` | 10 | $0.025 | Do not also charge a duplicate lookup read for the same event. |
-| Receive XChat webhook | `chat.received` | 10 | $0.025 | Later-phase only. |
-| Send XChat message | Chat send operation | 15 | $0.0375 | Provisional until the XChat proof of concept confirms upstream accounting. |
-| Receive public-post webhook | `post.create` | 5 | $0.0125 | Charge once per unique upstream event/resource/day. |
+| Create normal X post | Post Create | 15 | $0.0313-$0.0375 | Includes a public reply when X classifies it as normal create. |
+| Create post containing URL | Post Create with URL | 200 | $0.4167-$0.5000 | Determine URL classification before reservation. |
+| Create summoned reply | Post Create summoned | 10 | $0.0208-$0.0250 | Use only when the request qualifies under X's definition. |
+| Read public post | Post Read | 5 / newly billable resource | $0.0104-$0.0125 | Local daily deduplication applies. |
+| Read app-owner post | Owned Post Read | 1 / newly billable resource | $0.0021-$0.0025 | Use only when X's ownership conditions are conclusively met. Otherwise charge Post Read. |
+| Read user profile | User Read | 10 / newly billable resource | $0.0208-$0.0250 | Avoid enrichment reads unless the product needs them. |
+| Read legacy DM event | DM Event Read | 10 / newly billable event | $0.0208-$0.0250 | Applies to lookup/backfill reads. |
+| Send legacy DM | DM Interaction Create | 15 | $0.0313-$0.0375 | Reserve before calling X. |
+| Receive legacy DM webhook | `dm.received` | 10 | $0.0208-$0.0250 | Do not also charge a duplicate lookup read for the same event. |
+| Receive XChat webhook | `chat.received` | 10 | $0.0208-$0.0250 | Later-phase only. |
+| Send XChat message | Chat send operation | 15 | $0.0313-$0.0375 | Provisional until the XChat proof of concept confirms upstream accounting. |
+| Receive public-post webhook | `post.create` | 5 | $0.0104-$0.0125 | Charge once per unique upstream event/resource/day. |
 | Delete or other optional interaction | Current X priced resource | Catalog-defined | Catalog-defined | Not exposed in MVP. |
 
 ### 7.1 Catalog rules
@@ -265,7 +283,7 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 - `granted_credits`
 - `available_credits`
 - `starts_at`
-- `expires_at`: nullable for top-ups
+- `expires_at`: required for `monthly_grant`; always `NULL` for `topup`, enforced by a database constraint
 - `source_id`: subscription period, Stripe Checkout Session, manual adjustment, or refund
 - `created_at`
 
@@ -297,10 +315,15 @@ Use an immutable ledger plus materialized balances. Suggested logical entities:
 - `id`
 - `workspace_id`
 - `sku`
-- `credits`
+- `base_credits`
+- `bonus_percent`
+- `bonus_credits`
+- `total_credits`
 - `amount_cents`
+- `purchase_mode`: `manual` or `auto`
 - `stripe_checkout_session_id`
 - `stripe_payment_intent_id`
+- `idempotency_key`
 - `status`
 - `credited_at`
 - `created_at`
@@ -349,12 +372,20 @@ Add an **X Credits** section to workspace Billing showing:
 - Billing-period reset date.
 - Estimated examples such as normal posts, URL posts, DM sends, and post reads.
 - Last 30 days of consumption by operation.
-- Top-up buttons for the three SKUs.
+- Top-up cards for all five SKUs, showing base Credits, bonus percentage, bonus Credits, final Credits, and `Never expires`.
 - Link to full transaction history.
 - Auto top-up settings when that fast-follow is enabled.
 - Link to the X Credits Guidance page.
 
 Do not display a dollar-equivalent cash balance because credits are a product usage unit, not stored money.
+
+Non-expiration must be visible without opening terms or a tooltip:
+
+- Above the pack selector: **Buy more, get up to 20% bonus credits. Purchased credits never expire.**
+- On every pack card: final Credits, bonus percentage, and **Never expires**.
+- In the order summary: for example, **11,000 X Credits · Includes 10% bonus · Never expires**.
+- On the payment-success page and email receipt: final base/bonus breakdown and **Purchased credits never expire**.
+- On the balance card: **Included credits — resets on {date}** and **Top-up credits — never expire** as separate labels.
 
 ### 9.2 Low-balance states
 
@@ -367,11 +398,14 @@ Do not display a dollar-equivalent cash balance because credits are a product us
 ### 9.3 Top-up Checkout
 
 - Use one-time Stripe Checkout in the same live/test mode selection already used by UniPost subscription billing.
-- Attach `workspace_id`, `sku`, `credits`, and an internal top-up id to Stripe metadata.
+- Use the five fixed server-side SKUs in Section 6.4; do not accept arbitrary amounts in the first release.
+- Attach `workspace_id`, `sku`, `base_credits`, `bonus_credits`, `total_credits`, and an internal top-up id to Stripe metadata generated by the server.
 - Grant credits only after a verified successful Stripe webhook.
 - The success page polls the UniPost balance until the idempotent webhook grant is visible.
 - Payment failure or Checkout cancellation grants no credits.
 - Refunds create reversing ledger entries. They must never silently delete ledger history.
+- Manual and Auto top-ups use the same SKU, bonus, margin, and non-expiration rules.
+- A paid workspace can use the resulting balance from Dashboard or API operations allowed by its plan. Top-up purchase never bypasses the Free X gate or the Basic Inbox gate.
 
 ### 9.4 Auto top-up fast-follow
 
@@ -381,6 +415,8 @@ Auto top-up is not required for the first public release, but the data model and
 - One of the approved SKUs.
 - Monthly top-up spend cap.
 - Payment method through Stripe.
+
+Auto top-up is off by default and requires explicit owner/admin consent. Stripe must collect and authorize a reusable payment method through a SetupIntent or equivalent compliant flow before UniPost can make off-session charges. A payment requiring 3DS or other customer action pauses Auto top-up, sends an actionable notification, and does not grant Credits until Stripe confirms success. A downgrade to Free or subscription cancellation disables future automatic charges without deleting existing Top-up Credits.
 
 Define `available_to_spend` as included credits plus top-up credits minus active reservations. Auto top-up evaluates against this spendable balance, not against either bucket independently.
 
@@ -395,6 +431,7 @@ Trigger rules:
 7. If the selected SKU would not restore the current balance above the configured threshold, warn the user before saving the configuration.
 8. A failed Auto top-up disables further automatic attempts until the owner resolves payment and explicitly re-enables it. It never grants credits.
 9. Reaching the user-defined monthly spend cap pauses Auto top-up until the next monthly cap period and sends a notification.
+10. Auto top-up uses the same volume bonus as a manual purchase of the selected SKU; it never receives a hidden lower or higher conversion.
 
 The Billing UI uses an editable numeric field rather than a fixed plan threshold:
 
@@ -421,6 +458,7 @@ Minimum response fields:
 - `data.total_available`
 - `data.included_available`
 - `data.topup_available`
+- `data.topup_expires_at`: always `null`
 - `data.reserved`
 - `data.plan_monthly_grant`
 - `data.billing_period_start`
@@ -445,15 +483,38 @@ No sensitive X DM body or post body is returned in billing transactions.
 
 #### `POST /v1/billing/x-credits/top-up/checkout`
 
-Owner/admin only. Accepts one enum SKU and returns a Stripe Checkout URL.
+Owner/admin or an explicitly `billing:write`-scoped API key only. Accepts one enum SKU and returns a Stripe Checkout URL. It supports API-initiated purchase but still requires the customer to complete Stripe Checkout; the first release does not allow an ordinary publishing API key to charge a saved card directly.
 
 ```json
 {
-  "sku": "builder_10000"
+  "sku": "topup_25"
 }
 ```
 
-The API must derive the price and credits server-side. It must never trust client-supplied amount or credit quantity.
+The endpoint requires `Idempotency-Key`. The API derives price, base Credits, bonus, total Credits, and margin from the server-side SKU catalog. It must never trust client-supplied amount or credit quantity.
+
+```json
+{
+  "data": {
+    "topup_id": "xtu_123",
+    "sku": "topup_25",
+    "amount_cents": 2500,
+    "base_credits": 10000,
+    "bonus_percent": 10,
+    "bonus_credits": 1000,
+    "total_credits": 11000,
+    "expires_at": null,
+    "checkout_url": "https://checkout.stripe.com/..."
+  },
+  "request_id": "req_123"
+}
+```
+
+Credits become spendable only after a verified Stripe success webhook grants the idempotent Top-up ledger entry. A Free workspace cannot create a Checkout Session for managed X Credits; return the existing plan-gate error with an upgrade link.
+
+#### `POST /v1/billing/x-credits/auto-top-up/payment-method/setup`
+
+Fast-follow endpoint. Owner/admin only. Creates the Stripe SetupIntent or equivalent session required to collect explicit consent and a reusable payment method for off-session Auto top-up. No Credits are granted by this endpoint.
 
 #### `PATCH /v1/billing/x-credits/auto-top-up`
 
@@ -485,6 +546,9 @@ The endpoint requires `Idempotency-Key`. The response returns the saved configur
 | Total X balance is insufficient before an immediate write | 402 | `x_credits_exhausted` | No upstream request is made. |
 | Top-up SKU is invalid | 422 | `validation_error` | No Checkout Session is created. |
 | Stripe top-up is unavailable | 503 | `billing_unavailable` | Existing balance remains unchanged. |
+| Auto top-up requires customer action | 409 | `auto_topup_action_required` | Pause automatic charges and return the Stripe recovery URL. |
+| Auto top-up monthly cap reached | 402 | `auto_topup_monthly_cap_reached` | Do not charge; notify the owner and use the remaining balance until exhausted. |
+| Auto top-up payment failed | 402 | `auto_topup_payment_failed` | Grant no Credits, disable automatic retries, and return manual recovery guidance. |
 | X account lacks new scopes | 409 | `x_reconnect_required` | Return reconnect URL and missing scopes. |
 | X Inbox unavailable on plan | 402 | `plan_feature_not_available` | Existing Basic gate semantics. |
 | XChat is not enabled for the account | 422 | `x_chat_not_supported` | Legacy DM support remains unaffected. |
@@ -651,7 +715,8 @@ Create these pages using the existing API Reference components and navigation:
 | `/docs/api/x-credits` | X Credits overview, catalog, managed vs BYO behavior | X Credits guide; Plans and limits |
 | `/docs/api/x-credits/balance` | `GET /v1/billing/x-credits` request/response | X Credits guide |
 | `/docs/api/x-credits/transactions` | `GET /v1/billing/x-credits/transactions` filters and ledger fields | X Credits guide |
-| `/docs/api/x-credits/top-up` | `POST /v1/billing/x-credits/top-up/checkout` and SKUs | X Credits guide |
+| `/docs/api/x-credits/top-up` | Manual Top-up Checkout, five SKUs, bonus fields, idempotency, and non-expiration | X Credits guide |
+| `/docs/api/x-credits/auto-top-up` | Payment-method setup and user-configured Auto top-up API | X Credits guide |
 | `/docs/api/inbox/list` | Dedicated `GET /v1/inbox` contract including `x_reply` and `x_dm` | X comments guide; X DMs guide |
 | `/docs/api/inbox/reply` | Dedicated `POST /v1/inbox/{id}/reply` contract and X credit result fields | X comments guide; X DMs guide |
 | `/docs/api/inbox/sync` | Dedicated `POST /v1/inbox/sync`, estimates, backfill, and credit behavior | X comments guide; X DMs guide |
@@ -670,7 +735,7 @@ Create task-oriented Guidance pages:
 
 | Route | User task | Must link back to |
 |---|---|---|
-| `/docs/guides/x/credits-and-top-ups` | Estimate X cost, inspect balance, buy top-ups, and handle exhaustion | Balance, transactions, top-up, create-post, and validate references |
+| `/docs/guides/x/credits-and-top-ups` | Estimate X cost, inspect balance, buy discounted non-expiring Top-ups, configure Auto top-up, and handle exhaustion | Balance, transactions, manual/Auto top-up, create-post, and validate references |
 | `/docs/guides/x/comments` | Connect X, receive comments/replies, list threads, and reply | Inbox list, reply, and sync references |
 | `/docs/guides/x/direct-messages` | Request scopes, reconnect, sync DMs, and send a reply | Inbox list, reply, sync, and X Credits references |
 | `/docs/guides/x/reconnect-permissions` | Add DM scopes to managed or BYO X apps and reconnect existing accounts | Account connect/capabilities, Inbox, and X Credits references |
@@ -688,15 +753,17 @@ The Guides sidebar gains an **X Guides** section. Each guide must be procedural,
   - Explain that BYO X app usage is billed directly by X and does not consume UniPost X Credits.
   - Link to reconnect guidance and the X Inbox guides.
 - `/docs/pricing`
-  - Add included credits by plan, reset behavior, top-up conversion, and separate post/X-credit enforcement.
+  - Add included credits by plan, reset behavior, the five-pack Top-up ladder, 0%-20% bonus, 60%-52% theoretical margin model, non-expiration, and separate post/X-credit enforcement.
   - Mirror the operation-capacity table and calculation definitions from Section 6.2.
+  - Mirror the Top-up operation examples from Section 6.4 and explain that each example spends the whole pack on one operation type.
 - `/pricing`
-  - Add one concise X Credits allowance line per plan and a top-up FAQ.
+  - Add one concise X Credits allowance line per plan and a Top-up FAQ covering the five packs, volume bonus, manual/API purchase, Auto top-up, and non-expiration.
   - Add **What your included X Credits can do** directly below the plan cards, showing normal posts, URL posts, complete comment interactions, and complete DM interactions for every plan.
   - Show `Inbox not included` for API comments and DMs rather than displaying a misleading theoretical capacity.
   - Explain that each maximum assumes the full shared balance is spent on one operation type and that mixed usage reduces every individual maximum.
   - Render a readable desktop table and equivalent mobile plan cards.
   - Generate displayed capacities from the versioned allowance/catalog data and cover the values with source tests.
+  - Display **Buy more, get up to 20% bonus credits. Purchased credits never expire.** near the Top-up ladder.
 
 ### 15.4 Bidirectional linking acceptance rule
 
@@ -715,7 +782,7 @@ The documentation build is incomplete unless all of the following are true:
 
 | Reference page | Guidance page | Direction |
 |---|---|---|
-| X Credits overview/balance/transactions/top-up | X Credits and top-ups | Both directions |
+| X Credits overview/balance/transactions/manual Top-up/Auto top-up | X Credits and top-ups | Both directions |
 | Inbox list/reply/sync | X comments | Both directions |
 | Inbox list/reply/sync | X direct messages | Both directions |
 | Account connect/capabilities | X reconnect permissions | Both directions |
@@ -735,8 +802,9 @@ Track and alert on:
 - Duplicate webhook event attempts and deduplication rate.
 - Activity subscription capacity at 70%, 85%, and 95%.
 - Low-balance blocks and successful top-ups after a block.
+- Manual and automatic Top-up attempts, failures, customer-action requirements, monthly-cap pauses, and duplicate-prevention outcomes.
 - DM/reply webhook latency, backfill lag, and reply success rate.
-- Gross margin for included allowance and top-ups separately.
+- Gross margin for included allowance and Top-ups separately, broken down by SKU and manual versus automatic purchase mode.
 
 ### 16.2 Reconciliation
 
@@ -778,6 +846,14 @@ No feature flag is required by default. Use normal environment promotion, plan g
 - Low-balance notifications and hard block.
 - API Reference and X Credits Guidance pages.
 
+### Phase 1B — Auto top-up fast-follow
+
+- Explicit opt-in and Stripe reusable-payment-method setup.
+- User-defined threshold, selected SKU, and required monthly spend cap.
+- Off-session payment, 3DS/customer-action recovery, notifications, and anti-loop behavior.
+- Auto top-up API Reference and updated X Credits Guidance.
+- This phase is not included in the MVP total unless product explicitly promotes Auto top-up to launch scope.
+
 ### Phase 2 — X public comments/replies
 
 - Activity/webhook ingestion and backfill.
@@ -806,6 +882,7 @@ The estimate assumes one backend engineer and one frontend/full-stack engineer w
 |---|---:|
 | Credits ledger, grants, reservation/settlement, reconciliation | 3-4 engineer-weeks |
 | Stripe top-ups, billing APIs, Billing UI, notifications | 2-3 engineer-weeks |
+| Auto top-up, saved payment method, off-session recovery, and configurable threshold | 1-2 engineer-weeks as fast-follow |
 | X developer setup, webhooks, Activity subscriptions, reconnect scopes | 1-2 engineer-weeks plus external X approval time |
 | X comments/replies ingestion, normalization, UI, outbound replies | 2-3 engineer-weeks |
 | Legacy X DM sync, UI integration, outbound replies, privacy hardening | 2-3 engineer-weeks |
@@ -814,12 +891,14 @@ The estimate assumes one backend engineer and one frontend/full-stack engineer w
 
 **MVP total:** approximately **12.5-18.5 engineer-weeks**, or roughly **7-10 calendar weeks** with two engineers and no external X approval delay.
 
+**Auto top-up fast-follow:** add approximately **1-2 engineer-weeks**. If promoted into MVP, add this range to the MVP total and release schedule.
+
 **XChat later phase:** add approximately **4-8+ engineer-weeks** after official tooling and permission feasibility are proven. This range is intentionally separate because encrypted key management and evolving XChat APIs are the largest uncertainty.
 
 ## 19. Success metrics
 
 - Managed X gross margin stays within the approved floor by plan and in aggregate.
-- Top-up reference gross margin is at least 60% before payment and operating costs under the launch catalog.
+- Top-up theoretical gross margin matches the approved SKU ladder and never falls below 52% before payment and operating costs under the launch catalog.
 - Duplicate customer charges: zero confirmed incidents.
 - Successful top-up grant after verified Stripe payment: at least 99.9%.
 - X reply and legacy DM outbound success rate: at least 98%, excluding platform policy/rate-limit failures.
@@ -833,8 +912,8 @@ The estimate assumes one backend engineer and one frontend/full-stack engineer w
 The MVP is complete only when:
 
 1. Paid plans receive exactly the approved included credit amounts at the correct Stripe billing-period boundary.
-2. Top-ups grant exactly 2,000, 10,000, or 40,000 credits after a verified successful payment and never before it.
-3. Included credits are consumed before top-ups and expire without affecting persistent top-ups.
+2. Manual Top-ups grant exactly 2,000, 4,200, 11,000, 23,000, or 48,000 Credits for the five approved SKUs after a verified successful payment and never before it. The ledger and API preserve base, bonus, and total Credits separately.
+3. Included credits are consumed before Top-ups. Included credits expire at the billing-period boundary, while purchased Top-up buckets always have `expires_at = null` and never expire because of time, plan changes, or subscription cancellation.
 4. Managed X operations charge the versioned catalog; BYO X operations charge zero UniPost X Credits.
 5. Immediate writes cannot start without enough available credits.
 6. Retries, duplicate webhooks, and worker redelivery do not create duplicate charges.
@@ -843,10 +922,12 @@ The MVP is complete only when:
 9. Basic, Growth, Team, and eligible Enterprise workspaces can receive and reply to `x_reply` and `x_dm` items after granting the required permissions.
 10. Existing X publishing remains functional when an account has not yet reconnected for DM scopes.
 11. X developer callbacks, scopes, webhook CRC/signature verification, subscription limits, spending alerts, and ownership runbook are verified per environment.
-12. The pricing page and Plans and limits docs accurately show allowances, top-up conversion, separate quota behavior, and the complete Section 6.2 operation-capacity table. The desktop table and mobile cards are generated from versioned allowance/catalog data, use floor rounding, label API Inbox operations unavailable, and pass source tests for every displayed number.
+12. The Pricing page and Plans and limits docs accurately show allowances, the five-pack graduated Top-up ladder, 0%-20% bonus, 60%-52% theoretical margin range, non-expiration, separate quota behavior, and the complete Section 6.2 and 6.4 operation-capacity tables. Desktop tables and mobile cards are generated from versioned allowance/catalog data, use floor rounding, label API Inbox operations unavailable, and pass source tests for every displayed number.
 13. All new API Reference and Guidance pages in Section 15 exist, are in navigation/search/sitemap, and pass the bidirectional linking tests.
 14. XChat is not presented as generally available.
 15. Local CI-equivalent checks, development deployment, and real development-environment acceptance pass before the implementation is reported complete.
+16. `POST /v1/billing/x-credits/top-up/checkout` requires Owner/Admin or explicit `billing:write`, requires `Idempotency-Key`, returns server-derived base/bonus/total fields with `expires_at: null`, and never grants Credits before the verified Stripe webhook.
+17. Billing, Checkout summary, payment success, email receipt, Pricing, and Plans and limits surfaces visibly state that purchased Credits never expire; this promise is not hidden only in a tooltip or legal terms.
 
 ## 21. Risks and mitigations
 
@@ -861,6 +942,7 @@ The MVP is complete only when:
 | DM content appears in logs | Privacy/security incident | Payload redaction, log tests, token encryption, restricted support tooling. |
 | XChat encryption/API instability | Delayed or unreliable feature | Separate POC and GA gate; ship legacy DM independently. |
 | Top-up refunds create inconsistent balance | Financial mismatch | Reversing ledger entries and admin review when balance is already consumed. |
+| Auto top-up repeatedly charges a customer | Financial and trust incident | Explicit opt-in, user-defined threshold, required monthly cap, one in-flight payment, threshold-crossing rearm, and no chained purchases. |
 | Docs claim more than production supports | Customer confusion | Environment acceptance and source tests; phase-aware XChat copy. |
 
 ## 22. Product decisions recorded
@@ -868,13 +950,21 @@ The MVP is complete only when:
 - Package model: **included monthly allowance plus purchasable top-ups**.
 - Credit accounting unit: **1 credit represents $0.001 upstream X reference cost**.
 - Included credits: **0 / 1,500 / 4,000 / 12,000 / 30,000 / custom** for Free / API / Basic / Growth / Team / Enterprise.
-- Top-up conversion: **$1 = 400 credits**.
-- Top-up SKUs: **$5 / 2,000**, **$25 / 10,000**, **$100 / 40,000**.
-- Top-up target margin: **60% before payment and operating costs**.
-- Included credits do not roll over; top-ups persist.
+- Top-up base conversion: **$1 = 400 base Credits**, before volume bonus.
+- Top-up SKUs: **$5 / 2,000**, **$10 / 4,200**, **$25 / 11,000**, **$50 / 23,000**, and **$100 / 48,000**.
+- Top-up bonus ladder: **0% / 5% / 10% / 15% / 20%** as purchase size increases.
+- Top-up theoretical margin range: **60% down to a 52% floor before payment and operating costs**.
+- Included credits do not roll over; purchased Top-up Credits never expire.
 - Included credits are consumed before top-ups.
+- Manual and Auto top-ups use the same SKU bonus and non-expiration rules.
+- Top-up purchase is available through Billing UI and API with `billing:write`, but does not unlock Free X access or API-plan Inbox.
+- Auto top-up uses a user-defined editable threshold and required monthly spend cap; no plan-locked threshold is permitted.
 - X Credits are separate from posts/month.
 - Managed app consumes X Credits; BYO X app does not.
 - X comments/replies and legacy DMs are the MVP.
 - XChat is a separate gated beta.
 - API Reference and Guidance pages are both required, with bidirectional links.
+
+## 23. Open product decision
+
+- **Auto top-up launch phase:** the design is complete and currently scheduled as Phase 1B fast-follow. Product must explicitly decide whether to promote it into MVP; until then, it is not included in the 12.5-18.5 engineer-week MVP estimate.
