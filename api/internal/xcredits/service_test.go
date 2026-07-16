@@ -381,3 +381,65 @@ func TestPostgresReserveUsesRowSerializationWithoutSerializableFailures(t *testi
 		t.Fatal("concurrent duplicate reservations must converge on one usage event")
 	}
 }
+
+type fakeExposureStore struct {
+	*fakeStore
+	markedID      string
+	reconcileCall bool
+	reconcileStat ExposureReleaseReconcileStats
+}
+
+func (s *fakeExposureStore) ReserveExposure(
+	context.Context,
+	StoreExposureReservationRequest,
+) (ExposureReservation, error) {
+	return ExposureReservation{}, nil
+}
+func (s *fakeExposureStore) FinalizeExposure(context.Context, string, int64) error { return nil }
+func (s *fakeExposureStore) ReleaseExposure(context.Context, string) error         { return nil }
+func (s *fakeExposureStore) MarkExposureReleasePending(
+	_ context.Context,
+	id string,
+	_ string,
+) error {
+	s.markedID = id
+	return nil
+}
+func (s *fakeExposureStore) MarkExposureNeedsReconciliation(
+	context.Context,
+	string,
+	string,
+) error {
+	return nil
+}
+func (s *fakeExposureStore) ReconcilePendingExposureReleases(
+	context.Context,
+	int,
+	time.Time,
+) (ExposureReleaseReconcileStats, error) {
+	s.reconcileCall = true
+	return s.reconcileStat, nil
+}
+
+func TestExposureReleasePendingIsPersistedAndReconciled(t *testing.T) {
+	store := &fakeExposureStore{
+		fakeStore:     newFakeStore("basic", time.Now(), time.Now().Add(time.Hour)),
+		reconcileStat: ExposureReleaseReconcileStats{Scanned: 1, Released: 1},
+	}
+	service := NewService(store)
+	if err := service.MarkExposureReleasePending(
+		context.Background(), "reservation-1", "release failed",
+	); err != nil {
+		t.Fatalf("MarkExposureReleasePending: %v", err)
+	}
+	stats, err := service.ReconcilePendingExposureReleases(
+		context.Background(), 100, time.Now(),
+	)
+	if err != nil {
+		t.Fatalf("ReconcilePendingExposureReleases: %v", err)
+	}
+	if store.markedID != "reservation-1" || !store.reconcileCall ||
+		stats.Released != 1 {
+		t.Fatalf("store/stats = %+v %+v", store, stats)
+	}
+}

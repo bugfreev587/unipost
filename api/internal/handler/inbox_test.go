@@ -42,16 +42,35 @@ func TestInboxXBackfillEstimateIsDeterministicAndBYOIsFree(t *testing.T) {
 }
 
 func TestInboxXBackfillOperationTokenReferencesOnlyPersistedOperation(t *testing.T) {
-	token, err := signXBackfillOperationToken([]byte("secret"), "operation-1")
+	token, err := signXBackfillOperationToken([]byte("secret"), "operation-1", "nonce-1")
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	operationID, err := verifyXBackfillOperationToken([]byte("secret"), token)
-	if err != nil || operationID != "operation-1" {
-		t.Fatalf("verify = %q, %v", operationID, err)
+	operationID, nonce, err := verifyXBackfillOperationToken([]byte("secret"), token)
+	if err != nil || operationID != "operation-1" || nonce != "nonce-1" {
+		t.Fatalf("verify = %q, %q, %v", operationID, nonce, err)
 	}
-	if _, err := verifyXBackfillOperationToken([]byte("different"), token); err == nil {
+	if _, _, err := verifyXBackfillOperationToken([]byte("different"), token); err == nil {
 		t.Fatal("token verified with another secret")
+	}
+	parts := strings.Split(token, ".")
+	parts[1] = "nonce-2"
+	if _, _, err := verifyXBackfillOperationToken([]byte("secret"), strings.Join(parts, ".")); err == nil {
+		t.Fatal("token verified after nonce tampering")
+	}
+}
+
+func TestInboxXBackfillExecutionOwnersAreOpaqueAndUnique(t *testing.T) {
+	first, err := newXBackfillExecutionOwner()
+	if err != nil {
+		t.Fatalf("first owner: %v", err)
+	}
+	second, err := newXBackfillExecutionOwner()
+	if err != nil {
+		t.Fatalf("second owner: %v", err)
+	}
+	if first == "" || second == "" || first == second || strings.Contains(first, ".") {
+		t.Fatalf("owners = %q, %q", first, second)
 	}
 }
 
@@ -231,6 +250,8 @@ type fakeXInboxCredits struct {
 	exposureFinalizedUnits int64
 	exposureReleased       bool
 	exposureReconciliation bool
+	exposureReleaseErr     error
+	exposureReconcileErr   error
 }
 
 func (f *fakeXInboxCredits) Reserve(_ context.Context, req xcredits.ReserveRequest) (xcredits.UsageEvent, error) {
@@ -293,11 +314,15 @@ func (f *fakeXInboxCredits) FinalizeExposure(_ context.Context, _ string, units 
 }
 func (f *fakeXInboxCredits) ReleaseExposure(context.Context, string) error {
 	f.exposureReleased = true
-	return nil
+	return f.exposureReleaseErr
 }
 func (f *fakeXInboxCredits) MarkExposureNeedsReconciliation(context.Context, string, string) error {
 	f.exposureReconciliation = true
-	return nil
+	return f.exposureReconcileErr
+}
+func (f *fakeXInboxCredits) MarkExposureReleasePending(context.Context, string, string) error {
+	f.exposureReconciliation = true
+	return f.exposureReconcileErr
 }
 
 type fakeXInboxBackfillAdapter struct {
@@ -425,6 +450,152 @@ func TestInboxXBackfillDoesNotCallMentionsForOneThroughFourRemainingItems(t *tes
 	}
 }
 
+func TestInboxXBackfillDuplicateExposureNeverCallsX(t *testing.T) {
+	credits := &fakeXInboxCredits{exposure: xcredits.ExposureReservation{
+		ID:                 "existing-reservation",
+		RequestedResources: 5,
+		ReservedResources:  5,
+		ReservedUnits:      75,
+		Duplicate:          true,
+	}}
+	handler := &InboxHandler{xCredits: credits}
+	adapter := &fakeXInboxBackfillAdapter{}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-duplicate", result,
+	)
+	if len(adapter.mentionPageSizes) != 0 {
+		t.Fatalf("duplicate reservation triggered paid X read: %v", adapter.mentionPageSizes)
+	}
+	if result.StopReason != "duplicate_exposure_reservation" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestInboxXBackfillLostExecutionLeaseStopsBeforeReservationAndPaidRead(t *testing.T) {
+	credits := &fakeXInboxCredits{}
+	handler := &InboxHandler{xCredits: credits}
+	adapter := &fakeXInboxBackfillAdapter{}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPagesWithLease(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-fenced", result,
+		func(context.Context) error { return errors.New("lease lost") },
+	)
+	if len(adapter.mentionPageSizes) != 0 {
+		t.Fatalf("lost lease triggered paid X read: %v", adapter.mentionPageSizes)
+	}
+	if result.StopReason != "confirmation_execution_lease_lost" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestInboxXBackfillLostLeaseAfterReservationReleasesBeforePaidRead(t *testing.T) {
+	credits := &fakeXInboxCredits{}
+	handler := &InboxHandler{xCredits: credits}
+	adapter := &fakeXInboxBackfillAdapter{}
+	result := &xBackfillAccountResult{}
+	checks := 0
+	handler.runXBackfillPagesWithLease(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-refenced", result,
+		func(context.Context) error {
+			checks++
+			if checks == 2 {
+				return errors.New("lease lost after reservation")
+			}
+			return nil
+		},
+	)
+	if checks != 2 || len(adapter.mentionPageSizes) != 0 || !credits.exposureReleased {
+		t.Fatalf("checks=%d adapter=%v credits=%+v", checks, adapter.mentionPageSizes, credits)
+	}
+	if result.StopReason != "confirmation_execution_lease_lost" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestInboxXBackfillFailedLeaseReleaseRetainsExposureForReconciliation(t *testing.T) {
+	credits := &fakeXInboxCredits{exposureReleaseErr: errors.New("database unavailable")}
+	handler := &InboxHandler{xCredits: credits}
+	adapter := &fakeXInboxBackfillAdapter{}
+	result := &xBackfillAccountResult{}
+	checks := 0
+	handler.runXBackfillPagesWithLease(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "user-1",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-release-reconcile", result,
+		func(context.Context) error {
+			checks++
+			if checks == 2 {
+				return errors.New("lease lost after reservation")
+			}
+			return nil
+		},
+	)
+	if len(adapter.mentionPageSizes) != 0 ||
+		!credits.exposureReleased ||
+		!credits.exposureReconciliation {
+		t.Fatalf("adapter=%v credits=%+v", adapter.mentionPageSizes, credits)
+	}
+	if result.StopReason != "usage_reservation_release_needs_reconciliation" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestInboxXBackfillDMStillRunsWhenMentionsCannotMeetFiveItemMinimum(t *testing.T) {
+	handler := &InboxHandler{xCredits: &fakeXInboxCredits{}}
+	adapter := &fakeXInboxBackfillAdapter{}
+	result := &xBackfillAccountResult{}
+	account := db.SocialAccount{
+		ID: "account-1", ExternalAccountID: "user-1",
+		XAppMode: pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+		Scope:    []string{"tweet.read", "users.read", "dm.read"},
+	}
+	request := xBackfillRequest{
+		LookbackDays: 7, MaxItems: 1, IncludeReplies: true, IncludeDMs: true,
+	}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1", account, "token", adapter, "x_reply",
+		request, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-mixed", result,
+	)
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1", account, "token", adapter, "x_dm",
+		request, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-mixed", result,
+	)
+	if len(adapter.mentionPageSizes) != 0 || !reflect.DeepEqual(adapter.dmPageSizes, []int{1}) {
+		t.Fatalf("mentions=%v dms=%v", adapter.mentionPageSizes, adapter.dmPageSizes)
+	}
+}
+
 func TestInboxXBackfillSettlesShortPageAndClassifiesReadErrors(t *testing.T) {
 	account := db.SocialAccount{
 		ID:                "account-1",
@@ -435,6 +606,7 @@ func TestInboxXBackfillSettlesShortPageAndClassifiesReadErrors(t *testing.T) {
 	tests := []struct {
 		name        string
 		adapterErr  error
+		releaseErr  error
 		wantRelease bool
 		wantManual  bool
 	}{
@@ -445,16 +617,28 @@ func TestInboxXBackfillSettlesShortPageAndClassifiesReadErrors(t *testing.T) {
 			wantRelease: true,
 		},
 		{
+			name:        "definitive read rejection release failure is retried by worker",
+			adapterErr:  &platform.TwitterInboxHTTPError{Stage: "x_inbox_read", StatusCode: 403},
+			releaseErr:  errors.New("database unavailable"),
+			wantRelease: true,
+			wantManual:  true,
+		},
+		{
 			name: "ambiguous server response retains exposure",
 			adapterErr: &platform.TwitterInboxHTTPError{
 				Stage: "x_inbox_read", StatusCode: 502, Retryable: true,
 			},
 			wantManual: true,
 		},
+		{
+			name:       "paid 2xx decode failure retains exposure",
+			adapterErr: errors.New("x_inbox_read: decode X inbox response: invalid character"),
+			wantManual: true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			credits := &fakeXInboxCredits{}
+			credits := &fakeXInboxCredits{exposureReleaseErr: tt.releaseErr}
 			handler := &InboxHandler{xCredits: credits}
 			adapter := &fakeXInboxBackfillAdapter{mentionErr: tt.adapterErr}
 			result := &xBackfillAccountResult{}
@@ -813,6 +997,38 @@ func TestInboxXConfirmedFailureReversesUsage(t *testing.T) {
 	}
 	if credits.reversedID != "usage-1" {
 		t.Fatalf("settlement = %+v", credits)
+	}
+}
+
+func TestInboxXConfirmedFailureRetainsOperationWhenUsageReversalFails(t *testing.T) {
+	adapter := &fakeFailingXInboxReplyAdapter{
+		err: errors.New("X inbox API returned HTTP 403"),
+	}
+	credits := &fakeXInboxCredits{
+		event: xcredits.UsageEvent{
+			ID: "usage-1", Status: xcredits.UsageStatusProvisional,
+			OperationKey: "post.reply_summoned", CatalogVersion: xcredits.CatalogVersion,
+			WeightedUnits: 10,
+		},
+		reverseErr: errors.New("database unavailable"),
+	}
+	account := db.SocialAccount{
+		ID: "account-1", Platform: "twitter",
+		XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+	}
+	item := db.InboxItem{
+		ID: "item-1", Source: "x_reply", ExternalID: "tweet-1",
+		Metadata: []byte(`{"reply_eligible":true}`),
+	}
+	result, err := sendXInboxReply(
+		context.Background(), adapter, credits, "workspace-1", account, item,
+		"user-token", "thanks", "client-key",
+	)
+	if !errors.Is(err, ErrXUsageReversalPending) {
+		t.Fatalf("err = %v, want ErrXUsageReversalPending", err)
+	}
+	if result.UsageEventID != "usage-1" || result.XCreditsCounted != 10 {
+		t.Fatalf("result = %+v", result)
 	}
 }
 

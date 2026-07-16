@@ -229,8 +229,16 @@ type ExposureReservation struct {
 	RequestedResources int
 	ReservedResources  int
 	ReservedUnits      int64
+	ActualUnits        int64
+	Status             string
 	Duplicate          bool
 	Bypassed           bool
+}
+
+type ExposureReleaseReconcileStats struct {
+	Scanned  int
+	Released int
+	Deferred int
 }
 
 type InboundNotification struct {
@@ -270,7 +278,9 @@ type ExposureStore interface {
 	ReserveExposure(context.Context, StoreExposureReservationRequest) (ExposureReservation, error)
 	FinalizeExposure(context.Context, string, int64) error
 	ReleaseExposure(context.Context, string) error
+	MarkExposureReleasePending(context.Context, string, string) error
 	MarkExposureNeedsReconciliation(context.Context, string, string) error
+	ReconcilePendingExposureReleases(context.Context, int, time.Time) (ExposureReleaseReconcileStats, error)
 }
 
 type Service struct {
@@ -394,6 +404,7 @@ func (s *Service) ReserveExposure(
 		return ExposureReservation{
 			RequestedResources: req.RequestedResources,
 			ReservedResources:  req.RequestedResources,
+			Status:             "bypassed",
 			Bypassed:           true,
 		}, nil
 	}
@@ -449,12 +460,38 @@ func (s *Service) ReleaseExposure(ctx context.Context, id string) error {
 	return store.ReleaseExposure(ctx, id)
 }
 
+func (s *Service) MarkExposureReleasePending(ctx context.Context, id, message string) error {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return errors.New("X exposure reservation store is not configured")
+	}
+	return store.MarkExposureReleasePending(ctx, id, message)
+}
+
 func (s *Service) MarkExposureNeedsReconciliation(ctx context.Context, id, message string) error {
 	store, ok := s.store.(ExposureStore)
 	if !ok {
 		return errors.New("X exposure reservation store is not configured")
 	}
 	return store.MarkExposureNeedsReconciliation(ctx, id, message)
+}
+
+func (s *Service) ReconcilePendingExposureReleases(
+	ctx context.Context,
+	limit int,
+	now time.Time,
+) (ExposureReleaseReconcileStats, error) {
+	store, ok := s.store.(ExposureStore)
+	if !ok {
+		return ExposureReleaseReconcileStats{}, errors.New("X exposure reservation store is not configured")
+	}
+	if limit <= 0 {
+		limit = 100
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	return store.ReconcilePendingExposureReleases(ctx, limit, now)
 }
 
 func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {

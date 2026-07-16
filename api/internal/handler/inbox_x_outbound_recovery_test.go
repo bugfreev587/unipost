@@ -21,6 +21,31 @@ func TestDetachedXInboxCompletionSurvivesClientDisconnect(t *testing.T) {
 	}
 }
 
+func TestRetryXInboxStatePersistenceHealsTransientDatabaseFailure(t *testing.T) {
+	attempts := 0
+	err := retryXInboxStatePersistence(context.Background(), func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("database unavailable")
+		}
+		return nil
+	})
+	if err != nil || attempts != 3 {
+		t.Fatalf("err/attempts = %v/%d", err, attempts)
+	}
+}
+
+func TestRetryXInboxStatePersistenceDoesNotRetryTransitionConflict(t *testing.T) {
+	attempts := 0
+	err := retryXInboxStatePersistence(context.Background(), func() error {
+		attempts++
+		return errXInboxStateTransitionConflict
+	})
+	if !errors.Is(err, errXInboxStateTransitionConflict) || attempts != 1 {
+		t.Fatalf("err/attempts = %v/%d", err, attempts)
+	}
+}
+
 func TestXInboxOutboundRecoveryHealsTransientCompletionFailureWithoutResend(t *testing.T) {
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	store := &fakeXInboxOutboundRecoveryStore{
@@ -70,13 +95,57 @@ func TestXInboxOutboundUnknownOutcomeBecomesManualReconciliationAfterDeadline(t 
 	}
 }
 
+func TestXInboxOutboundLegacyPendingClaimBecomesManualReconciliation(t *testing.T) {
+	store := &fakeXInboxOutboundRecoveryStore{
+		rows: []db.XInboxOutboundRequest{{ID: "legacy-claim", Status: "pending"}},
+	}
+	stats, err := newXInboxOutboundRecoveryService(store, time.Now).
+		ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if stats.NeedsReconciliation != 1 || store.manualCalls != 1 || store.upstreamCalls != 0 {
+		t.Fatalf("stats/store = %+v %+v", stats, store)
+	}
+}
+
+func TestXInboxOutboundRecoveryRetriesUsageReversalWithoutCallingX(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	store := &fakeXInboxOutboundRecoveryStore{
+		rows: []db.XInboxOutboundRequest{{
+			ID:           "request-1",
+			Status:       "usage_reversal_pending",
+			UsageEventID: pgtype.Text{String: "usage-1", Valid: true},
+		}},
+		reverseErrs: []error{errors.New("database unavailable"), nil},
+	}
+	service := newXInboxOutboundRecoveryService(store, func() time.Time { return now })
+	first, err := service.ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("first ProcessOnce: %v", err)
+	}
+	if first.Deferred != 1 || store.reverseCalls != 1 || store.deferReversalCalls != 1 {
+		t.Fatalf("first stats/store = %+v %+v", first, store)
+	}
+	second, err := service.ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("second ProcessOnce: %v", err)
+	}
+	if second.UsageReversed != 1 || store.reverseCalls != 2 || store.upstreamCalls != 0 {
+		t.Fatalf("second stats/store = %+v %+v", second, store)
+	}
+}
+
 type fakeXInboxOutboundRecoveryStore struct {
-	rows          []db.XInboxOutboundRequest
-	completeErrs  []error
-	completeCalls int
-	deferCalls    int
-	manualCalls   int
-	upstreamCalls int
+	rows               []db.XInboxOutboundRequest
+	completeErrs       []error
+	completeCalls      int
+	deferCalls         int
+	manualCalls        int
+	reverseErrs        []error
+	reverseCalls       int
+	deferReversalCalls int
+	upstreamCalls      int
 }
 
 func (f *fakeXInboxOutboundRecoveryStore) ListRecoverable(
@@ -96,6 +165,19 @@ func (f *fakeXInboxOutboundRecoveryStore) CompleteKnown(context.Context, string)
 	return err
 }
 
+func (f *fakeXInboxOutboundRecoveryStore) ReverseUsage(
+	context.Context,
+	db.XInboxOutboundRequest,
+) error {
+	f.reverseCalls++
+	if len(f.reverseErrs) == 0 {
+		return nil
+	}
+	err := f.reverseErrs[0]
+	f.reverseErrs = f.reverseErrs[1:]
+	return err
+}
+
 func (f *fakeXInboxOutboundRecoveryStore) Defer(
 	context.Context,
 	string,
@@ -103,6 +185,16 @@ func (f *fakeXInboxOutboundRecoveryStore) Defer(
 	string,
 ) error {
 	f.deferCalls++
+	return nil
+}
+
+func (f *fakeXInboxOutboundRecoveryStore) DeferUsageReversal(
+	context.Context,
+	string,
+	time.Time,
+	string,
+) error {
+	f.deferReversalCalls++
 	return nil
 }
 

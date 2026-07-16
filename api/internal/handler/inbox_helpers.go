@@ -23,9 +23,15 @@ const xBackfillConfirmationTTL = 10 * time.Minute
 const xMentionsMinimumPageSize = 5
 
 var errXInboxIdempotencyReplay = errors.New("X Inbox reply idempotency replay")
+var ErrXUsageReversalPending = errors.New("X Inbox usage reversal is pending")
 
 func xInboxReplyPayloadHash(item db.InboxItem, text string) string {
 	sum := sha256.Sum256([]byte(item.ID + "\x00" + item.Source + "\x00" + text))
+	return hex.EncodeToString(sum[:])
+}
+
+func xInboxReplyBodyHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -101,7 +107,8 @@ func xInboxReadOutcomeAmbiguous(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.HasPrefix(message, "x_inbox_read timeout") ||
-		strings.HasPrefix(message, "x_inbox_read canceled")
+		strings.HasPrefix(message, "x_inbox_read canceled") ||
+		strings.HasPrefix(message, "x_inbox_read: decode x inbox response")
 }
 
 func validateXInboxReplyTarget(item db.InboxItem) error {
@@ -281,7 +288,10 @@ func sendXInboxReplyWithReservation(
 		if err := onReserved(result); err != nil {
 			if event.ID != "" {
 				if reverseErr := credits.Reverse(ctx, event.ID); reverseErr != nil {
-					return xInboxSendResult{}, errors.Join(err, reverseErr)
+					return result, fmt.Errorf(
+						"%w: reservation persistence failed: %v; credit reversal failed: %v",
+						ErrXUsageReversalPending, err, reverseErr,
+					)
 				}
 			}
 			return xInboxSendResult{}, err
@@ -323,7 +333,10 @@ func sendXInboxReplyWithReservation(
 				return result, ErrXWriteOutcomePending
 			}
 			if reverseErr := credits.Reverse(ctx, event.ID); reverseErr != nil {
-				return xInboxSendResult{}, errors.Join(sendErr, reverseErr)
+				return result, fmt.Errorf(
+					"%w: X rejected the write: %v; credit reversal failed: %v",
+					ErrXUsageReversalPending, sendErr, reverseErr,
+				)
 			}
 		}
 		return xInboxSendResult{}, sendErr

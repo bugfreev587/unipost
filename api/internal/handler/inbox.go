@@ -110,6 +110,7 @@ type xInboxCreditsService interface {
 	ReserveExposure(context.Context, xcredits.ExposureReservationRequest) (xcredits.ExposureReservation, error)
 	FinalizeExposure(context.Context, string, int64) error
 	ReleaseExposure(context.Context, string) error
+	MarkExposureReleasePending(context.Context, string, string) error
 	MarkExposureNeedsReconciliation(context.Context, string, string) error
 }
 
@@ -623,6 +624,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 				IdempotencyKey:   idempotencyKey,
 				PayloadHash:      payloadHash,
 				EncryptedPayload: encryptedPayload,
+				BodyHash:         pgtype.Text{String: xInboxReplyBodyHash(body.Text), Valid: true},
 				ReconciliationDeadline: pgtype.Timestamptz{
 					Time: time.Now().UTC().Add(xInboxOutcomeUnknownTimeout), Valid: true,
 				},
@@ -671,6 +673,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 					"X_WRITE_NEEDS_RECONCILIATION",
 					"UniPost cannot safely determine whether X accepted this reply. No automatic resend will occur; manual reconciliation is required.",
 				)
+				return
+			}
+			if outboundRequest.Status == "usage_reversal_pending" {
+				writeXInboxUsageReversalPending(w)
 				return
 			}
 			writeXInboxOutcomePending(w)
@@ -739,15 +745,55 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if sendErr != nil {
+			if stderrors.Is(sendErr, ErrXUsageReversalPending) {
+				completionCtx, cancel := detachedXInboxCompletionContext(r.Context())
+				defer cancel()
+				err := retryXInboxStatePersistence(completionCtx, func() error {
+					updated, err := h.queries.MarkXInboxOutboundUsageReversalPending(
+						completionCtx,
+						db.MarkXInboxOutboundUsageReversalPendingParams{
+							UsageEventID:  sendResult.UsageEventID,
+							OperationKey:  sendResult.Operation,
+							ReservedUnits: sendResult.XCreditsCounted,
+							LastError:     sendErr.Error(),
+							ID:            outboundRequest.ID,
+						},
+					)
+					if err != nil {
+						return err
+					}
+					if updated != 1 {
+						return errXInboxStateTransitionConflict
+					}
+					return nil
+				})
+				if err != nil {
+					slog.Error("persist X Inbox usage reversal state failed", "request_id", outboundRequest.ID, "error", err)
+				}
+				writeXInboxUsageReversalPending(w)
+				return
+			}
 			if retainXInboxOutboundClaim(sendErr) {
 				completionCtx, cancel := detachedXInboxCompletionContext(r.Context())
 				defer cancel()
-				if err := h.queries.MarkXInboxOutboundUnknown(completionCtx, db.MarkXInboxOutboundUnknownParams{
-					UsageEventID:  sendResult.UsageEventID,
-					OperationKey:  sendResult.Operation,
-					ReservedUnits: sendResult.XCreditsCounted,
-					LastError:     sendErr.Error(),
-					ID:            outboundRequest.ID,
+				if err := retryXInboxStatePersistence(completionCtx, func() error {
+					updated, err := h.queries.MarkXInboxOutboundUnknown(
+						completionCtx,
+						db.MarkXInboxOutboundUnknownParams{
+							UsageEventID:  sendResult.UsageEventID,
+							OperationKey:  sendResult.Operation,
+							ReservedUnits: sendResult.XCreditsCounted,
+							LastError:     sendErr.Error(),
+							ID:            outboundRequest.ID,
+						},
+					)
+					if err != nil {
+						return err
+					}
+					if updated != 1 {
+						return errXInboxStateTransitionConflict
+					}
+					return nil
 				}); err != nil {
 					slog.Error("persist X Inbox unknown outcome failed", "request_id", outboundRequest.ID, "error", err)
 				}
@@ -759,7 +805,9 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		}
 		completionCtx, cancel := detachedXInboxCompletionContext(r.Context())
 		defer cancel()
-		if err := h.recordXInboxRemoteSuccess(completionCtx, outboundRequest.ID, sendResult); err != nil {
+		if err := retryXInboxStatePersistence(completionCtx, func() error {
+			return h.recordXInboxRemoteSuccess(completionCtx, outboundRequest.ID, sendResult)
+		}); err != nil {
 			slog.Error("persist X Inbox remote outcome failed", "request_id", outboundRequest.ID, "error", err)
 			writeError(w, http.StatusAccepted, "X_REMOTE_ACCEPTED_RECONCILING", "X accepted the reply; UniPost is reconciling the local Inbox result")
 			return
@@ -985,6 +1033,15 @@ func writeXInboxOutcomePending(w http.ResponseWriter) {
 		http.StatusConflict,
 		"X_WRITE_OUTCOME_PENDING",
 		"X may have accepted this reply. UniPost retained the idempotency claim and provisional usage for reconciliation; retrying with the same Idempotency-Key will not send again.",
+	)
+}
+
+func writeXInboxUsageReversalPending(w http.ResponseWriter) {
+	writeError(
+		w,
+		http.StatusConflict,
+		"X_USAGE_REVERSAL_PENDING",
+		"X rejected this reply, but UniPost is still reversing the provisional X credits. Retry later with the same Idempotency-Key.",
 	)
 }
 
@@ -1514,6 +1571,7 @@ func (h *InboxHandler) syncXBackfill(
 	}
 
 	confirmationOperationID := ""
+	confirmationExecutionOwner := ""
 	if request.ConfirmationToken != "" || estimate > h.xBackfillSafeCredits {
 		if request.ConfirmationToken == "" {
 			operation, token, operationErr := h.createXBackfillConfirmationOperation(
@@ -1561,9 +1619,10 @@ func (h *InboxHandler) syncXBackfill(
 		}
 		if operation.Status == "running" && !operation.StartedByThisCall {
 			writeSuccess(w, map[string]any{
-				"confirmation_operation_id": operation.ID,
-				"status":                    "in_progress",
-				"estimated_x_credits":       operation.EstimatedXCredits,
+				"confirmation_operation_id":  operation.ID,
+				"status":                     "in_progress",
+				"estimated_x_credits":        operation.EstimatedXCredits,
+				"execution_lease_expires_at": operation.ExecutionLease.Format(time.RFC3339),
 			})
 			return
 		}
@@ -1579,6 +1638,7 @@ func (h *InboxHandler) syncXBackfill(
 			_ = h.completeXBackfillConfirmationOperation(
 				r.Context(),
 				operation.ID,
+				operation.ExecutionOwner,
 				map[string]any{"status": "failed", "reason": "account_or_request_changed"},
 				stderrors.New("X backfill account selection or request changed after confirmation"),
 			)
@@ -1586,6 +1646,7 @@ func (h *InboxHandler) syncXBackfill(
 			return
 		}
 		confirmationOperationID = operation.ID
+		confirmationExecutionOwner = operation.ExecutionOwner
 	}
 	if h.xCredits == nil || h.xIngestion == nil || h.xAdapterFactory == nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X Inbox sync is not configured")
@@ -1599,6 +1660,14 @@ func (h *InboxHandler) syncXBackfill(
 	}
 	results := make([]xBackfillAccountResult, 0, len(xAccounts))
 	totalAccepted, totalSuppressed, totalDuplicates, totalRead := 0, 0, 0, 0
+	var beforePaidRead func(context.Context) error
+	if confirmationOperationID != "" {
+		beforePaidRead = func(ctx context.Context) error {
+			return h.renewXBackfillExecutionLease(
+				ctx, confirmationOperationID, confirmationExecutionOwner, time.Now().UTC(),
+			)
+		}
+	}
 	for _, account := range xAccounts {
 		result := xBackfillAccountResult{AccountID: account.ID}
 		accessToken, decryptErr := h.encryptor.Decrypt(account.AccessToken)
@@ -1615,10 +1684,16 @@ func (h *InboxHandler) syncXBackfill(
 		}
 		adapter := h.xAdapterFactory()
 		if request.IncludeReplies {
-			h.runXBackfillPages(r.Context(), workspaceID, account, accessToken, adapter, "x_reply", request, now, backfillRunID, &result)
+			h.runXBackfillPagesWithLease(
+				r.Context(), workspaceID, account, accessToken, adapter, "x_reply",
+				request, now, backfillRunID, &result, beforePaidRead,
+			)
 		}
-		if request.IncludeDMs && !result.StoppedAtBoundary {
-			h.runXBackfillPages(r.Context(), workspaceID, account, accessToken, adapter, "x_dm", request, now, backfillRunID, &result)
+		if request.IncludeDMs {
+			h.runXBackfillPagesWithLease(
+				r.Context(), workspaceID, account, accessToken, adapter, "x_dm",
+				request, now, backfillRunID, &result, beforePaidRead,
+			)
 		}
 		totalAccepted += result.Accepted
 		totalSuppressed += result.Suppressed
@@ -1641,7 +1716,7 @@ func (h *InboxHandler) syncXBackfill(
 		completionCtx, cancel := detachedXInboxCompletionContext(r.Context())
 		defer cancel()
 		if err := h.completeXBackfillConfirmationOperation(
-			completionCtx, confirmationOperationID, response, nil,
+			completionCtx, confirmationOperationID, confirmationExecutionOwner, response, nil,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to persist X backfill result")
 			return
@@ -1661,6 +1736,25 @@ func (h *InboxHandler) runXBackfillPages(
 	now time.Time,
 	runID string,
 	result *xBackfillAccountResult,
+) {
+	h.runXBackfillPagesWithLease(
+		ctx, workspaceID, account, accessToken, adapter, source,
+		request, now, runID, result, nil,
+	)
+}
+
+func (h *InboxHandler) runXBackfillPagesWithLease(
+	ctx context.Context,
+	workspaceID string,
+	account db.SocialAccount,
+	accessToken string,
+	adapter xInboxBackfillAdapter,
+	source string,
+	request xBackfillRequest,
+	now time.Time,
+	runID string,
+	result *xBackfillAccountResult,
+	beforePaidRead func(context.Context) error,
 ) {
 	remaining := request.MaxItems
 	nextToken := ""
@@ -1682,6 +1776,13 @@ func (h *InboxHandler) runXBackfillPages(
 		return
 	}
 	for remaining > 0 {
+		if beforePaidRead != nil {
+			if err := beforePaidRead(ctx); err != nil {
+				result.StoppedAtBoundary = true
+				result.StopReason = "confirmation_execution_lease_lost"
+				return
+			}
+		}
 		pageSize := remaining
 		if pageSize > 100 {
 			pageSize = 100
@@ -1718,6 +1819,34 @@ func (h *InboxHandler) runXBackfillPages(
 			}
 			return
 		}
+		if reservation.Duplicate {
+			result.StoppedAtBoundary = true
+			result.StopReason = "duplicate_exposure_reservation"
+			return
+		}
+		if beforePaidRead != nil {
+			if err := beforePaidRead(ctx); err != nil {
+				if reservation.ID != "" {
+					if releaseErr := h.xCredits.ReleaseExposure(ctx, reservation.ID); releaseErr != nil {
+						if markErr := h.persistXExposureReleasePending(
+							ctx,
+							reservation.ID,
+							"confirmation execution lease was lost and reservation release failed: "+releaseErr.Error(),
+						); markErr != nil {
+							result.StoppedAtBoundary = true
+							result.StopReason = "usage_reservation_reconciliation_persist_failed"
+							return
+						}
+						result.StoppedAtBoundary = true
+						result.StopReason = "usage_reservation_release_needs_reconciliation"
+						return
+					}
+				}
+				result.StoppedAtBoundary = true
+				result.StopReason = "confirmation_execution_lease_lost"
+				return
+			}
+		}
 		pageSize = reservation.ReservedResources
 		var page platform.TwitterInboxPage
 		if source == "x_reply" {
@@ -1743,7 +1872,18 @@ func (h *InboxHandler) runXBackfillPages(
 				if xInboxReadOutcomeAmbiguous(err) {
 					_ = h.xCredits.MarkExposureNeedsReconciliation(ctx, reservation.ID, err.Error())
 				} else {
-					_ = h.xCredits.ReleaseExposure(ctx, reservation.ID)
+					if releaseErr := h.xCredits.ReleaseExposure(ctx, reservation.ID); releaseErr != nil {
+						if markErr := h.persistXExposureReleasePending(
+							ctx,
+							reservation.ID,
+							"upstream read failed definitively and reservation release failed: "+releaseErr.Error(),
+						); markErr != nil {
+							result.StopReason = "usage_reservation_reconciliation_persist_failed"
+							return
+						}
+						result.StopReason = "usage_reservation_release_needs_reconciliation"
+						return
+					}
 				}
 			}
 			result.StopReason = "upstream_read_failed"
@@ -1808,6 +1948,18 @@ func (h *InboxHandler) runXBackfillPages(
 			return
 		}
 	}
+}
+
+func (h *InboxHandler) persistXExposureReleasePending(
+	ctx context.Context,
+	reservationID string,
+	message string,
+) error {
+	persistCtx, cancel := detachedXInboxCompletionContext(ctx)
+	defer cancel()
+	return retryXInboxStatePersistence(persistCtx, func() error {
+		return h.xCredits.MarkExposureReleasePending(persistCtx, reservationID, message)
+	})
 }
 
 func (h *InboxHandler) ingestXBackfillEntry(

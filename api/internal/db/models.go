@@ -1080,21 +1080,23 @@ type XInboundEventReceipt struct {
 }
 
 type XInboxBackfillConfirmationOperation struct {
-	ID                 string             `json:"id"`
-	WorkspaceID        string             `json:"workspace_id"`
-	AccountIds         []byte             `json:"account_ids"`
-	AccountFingerprint string             `json:"account_fingerprint"`
-	RequestSnapshot    []byte             `json:"request_snapshot"`
-	EstimatedXCredits  int64              `json:"estimated_x_credits"`
-	Nonce              string             `json:"nonce"`
-	Status             string             `json:"status"`
-	Result             []byte             `json:"result"`
-	LastError          pgtype.Text        `json:"last_error"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-	StartedAt          pgtype.Timestamptz `json:"started_at"`
-	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ID                      string             `json:"id"`
+	WorkspaceID             string             `json:"workspace_id"`
+	AccountIds              []byte             `json:"account_ids"`
+	AccountFingerprint      string             `json:"account_fingerprint"`
+	RequestSnapshot         []byte             `json:"request_snapshot"`
+	EstimatedXCredits       int64              `json:"estimated_x_credits"`
+	Nonce                   string             `json:"nonce"`
+	Status                  string             `json:"status"`
+	Result                  []byte             `json:"result"`
+	LastError               pgtype.Text        `json:"last_error"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	ExecutionOwner          pgtype.Text        `json:"execution_owner"`
+	ExecutionLeaseExpiresAt pgtype.Timestamptz `json:"execution_lease_expires_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type XInboxBackfillExposureReservation struct {
@@ -1111,6 +1113,8 @@ type XInboxBackfillExposureReservation struct {
 	UtcDate                pgtype.Date        `json:"utc_date"`
 	Status                 string             `json:"status"`
 	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
+	ReconciliationAttempts int32              `json:"reconciliation_attempts"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
 	LastError              pgtype.Text        `json:"last_error"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
@@ -1160,6 +1164,7 @@ type XInboxOutboundRequest struct {
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 	EncryptedPayload       pgtype.Text        `json:"encrypted_payload"`
+	BodyHash               pgtype.Text        `json:"body_hash"`
 	UsageEventID           pgtype.Text        `json:"usage_event_id"`
 	OperationKey           pgtype.Text        `json:"operation_key"`
 	ReservedUnits          int64              `json:"reserved_units"`

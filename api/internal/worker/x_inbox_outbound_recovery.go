@@ -41,10 +41,12 @@ func (w *XInboxOutboundRecoveryWorker) runOnce(ctx context.Context) {
 		slog.Error("X Inbox outbound recovery failed", "error", err)
 		return
 	}
-	if stats.Completed > 0 || stats.Deferred > 0 || stats.NeedsReconciliation > 0 {
+	if stats.Completed > 0 || stats.UsageReversed > 0 ||
+		stats.Deferred > 0 || stats.NeedsReconciliation > 0 {
 		slog.Info("X Inbox outbound recovery complete",
 			"scanned", stats.Scanned,
 			"completed", stats.Completed,
+			"usage_reversed", stats.UsageReversed,
 			"deferred", stats.Deferred,
 			"needs_reconciliation", stats.NeedsReconciliation)
 	}

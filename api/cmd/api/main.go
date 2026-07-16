@@ -425,7 +425,7 @@ func main() {
 		slog.Error("X_INBOX_WEBHOOK_ROUTE_SECRET is required when managed X Inbox is configured")
 		os.Exit(1)
 	}
-	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, managedXWebhookRouteKey)
+	xIngestionStore := xinbox.NewPostgresIngestionStore(queries, pool, managedXWebhookRouteKey)
 	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx); err != nil {
 		slog.Error("failed to backfill X webhook route keys")
 	}
@@ -1172,6 +1172,8 @@ func main() {
 				handler.NewXInboxOutboundRecoveryService(inboxHandler),
 			)
 			go xOutboundRecoveryWorker.Start(workerCtx)
+			xExposureRecoveryWorker := worker.NewXInboxExposureRecoveryWorker(xCreditsService)
+			go xExposureRecoveryWorker.Start(workerCtx)
 		}
 		r.Route("/v1/inbox", func(r chi.Router) {
 			r.Use(handler.RequirePlanInbox(quotaChecker))

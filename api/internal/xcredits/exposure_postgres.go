@@ -28,12 +28,13 @@ func (s *PostgresStore) ReserveExposure(
 	}
 	var existing ExposureReservation
 	err = tx.QueryRow(ctx, `
-		SELECT id, requested_resources, reserved_units, TRUE
+		SELECT id, requested_resources, reserved_units, COALESCE(actual_units, 0), status, TRUE
 		FROM x_inbox_backfill_exposure_reservations
 		WHERE workspace_id = $1 AND idempotency_key = $2
 		FOR UPDATE
 	`, req.WorkspaceID, req.IdempotencyKey).Scan(
-		&existing.ID, &existing.RequestedResources, &existing.ReservedUnits, &existing.Duplicate,
+		&existing.ID, &existing.RequestedResources, &existing.ReservedUnits,
+		&existing.ActualUnits, &existing.Status, &existing.Duplicate,
 	)
 	if err == nil {
 		existing.ReservedResources = int(existing.ReservedUnits / req.UnitsPerResource)
@@ -130,6 +131,7 @@ func (s *PostgresStore) ReserveExposure(
 		RequestedResources: req.RequestedResources,
 		ReservedResources:  int(resources),
 		ReservedUnits:      units,
+		Status:             "reserved",
 	}
 	err = tx.QueryRow(ctx, `
 		INSERT INTO x_inbox_backfill_exposure_reservations (
@@ -156,6 +158,29 @@ func (s *PostgresStore) FinalizeExposure(ctx context.Context, id string, actualU
 
 func (s *PostgresStore) ReleaseExposure(ctx context.Context, id string) error {
 	return s.settleExposure(ctx, id, 0, "released")
+}
+
+func (s *PostgresStore) MarkExposureReleasePending(
+	ctx context.Context,
+	id string,
+	message string,
+) error {
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE x_inbox_backfill_exposure_reservations
+		SET status = 'release_pending',
+		    last_error = LEFT($2, 1000),
+		    next_attempt_at = NOW(),
+		    updated_at = NOW()
+		WHERE id = $1
+		  AND status IN ('reserved', 'release_pending')
+	`, id, message)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		return errors.New("X exposure release-pending state was not persisted")
+	}
+	return nil
 }
 
 func (s *PostgresStore) settleExposure(
@@ -228,4 +253,55 @@ func (s *PostgresStore) MarkExposureNeedsReconciliation(
 		WHERE id = $1 AND status = 'reserved'
 	`, id, message)
 	return err
+}
+
+func (s *PostgresStore) ReconcilePendingExposureReleases(
+	ctx context.Context,
+	limit int,
+	now time.Time,
+) (ExposureReleaseReconcileStats, error) {
+	stats := ExposureReleaseReconcileStats{}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id
+		FROM x_inbox_backfill_exposure_reservations
+		WHERE status = 'release_pending'
+		  AND next_attempt_at <= $1
+		ORDER BY created_at
+		LIMIT $2
+	`, now.UTC(), limit)
+	if err != nil {
+		return stats, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return stats, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return stats, err
+	}
+	rows.Close()
+	stats.Scanned = len(ids)
+	for _, id := range ids {
+		if err := s.ReleaseExposure(ctx, id); err != nil {
+			stats.Deferred++
+			_, _ = s.pool.Exec(ctx, `
+				UPDATE x_inbox_backfill_exposure_reservations
+				SET reconciliation_attempts = reconciliation_attempts + 1,
+				    next_attempt_at = $2,
+				    last_error = LEFT($3, 1000),
+				    updated_at = NOW()
+				WHERE id = $1
+				  AND status = 'release_pending'
+			`, id, now.UTC().Add(time.Minute), err.Error())
+			continue
+		}
+		stats.Released++
+	}
+	return stats, nil
 }

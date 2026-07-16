@@ -45,11 +45,11 @@ LIMIT 1;
 -- name: ClaimXInboxOutboundRequest :one
 INSERT INTO x_inbox_outbound_requests (
   workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash,
-  encrypted_payload, reconciliation_deadline
+  encrypted_payload, body_hash, reconciliation_deadline
 )
 VALUES (
   @workspace_id, @social_account_id, @inbox_item_id, @idempotency_key, @payload_hash,
-  NULLIF(@encrypted_payload::TEXT, ''), @reconciliation_deadline
+  NULLIF(@encrypted_payload::TEXT, ''), @body_hash, @reconciliation_deadline
 )
 ON CONFLICT (workspace_id, inbox_item_id, idempotency_key) DO NOTHING
 RETURNING *;
@@ -72,6 +72,44 @@ FROM x_inbox_outbound_requests
 WHERE id = @id
 FOR UPDATE;
 
+-- name: ListXInboxOutboundWebhookCandidates :many
+SELECT
+  o.id AS outbound_request_id,
+  o.inbox_item_id,
+  o.payload_hash
+FROM x_inbox_outbound_requests o
+JOIN inbox_items target
+  ON target.id = o.inbox_item_id
+WHERE o.social_account_id = @social_account_id
+  AND o.status IN ('sending', 'outcome_unknown', 'needs_reconciliation')
+  AND o.body_hash = @body_hash
+  AND target.source = @source
+  AND (
+    (@source = 'x_reply' AND target.external_id = @parent_external_id)
+    OR (
+      @source = 'x_dm'
+      AND (
+        target.parent_external_id = @thread_key
+        OR target.thread_key = @thread_key
+      )
+    )
+  )
+ORDER BY o.created_at DESC
+FOR UPDATE OF o;
+
+-- name: RecordXInboxOutboundRemoteSuccessFromWebhook :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'remote_succeeded',
+    remote_external_id = @remote_external_id,
+    remote_conversation_id = NULLIF(@remote_conversation_id::TEXT, ''),
+    remote_url = NULLIF(@remote_url::TEXT, ''),
+    remote_outcome_known_at = NOW(),
+    last_error = NULL,
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('sending', 'outcome_unknown', 'needs_reconciliation');
+
 -- name: CompleteXInboxOutboundRequest :exec
 UPDATE x_inbox_outbound_requests
 SET status = 'completed',
@@ -90,7 +128,7 @@ SET status = 'sending',
 WHERE id = @id
   AND status = 'pending';
 
--- name: MarkXInboxOutboundUnknown :exec
+-- name: MarkXInboxOutboundUnknown :execrows
 UPDATE x_inbox_outbound_requests
 SET status = 'outcome_unknown',
     usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
@@ -102,7 +140,19 @@ SET status = 'outcome_unknown',
 WHERE id = @id
   AND status IN ('pending', 'sending');
 
--- name: RecordXInboxOutboundRemoteSuccess :exec
+-- name: MarkXInboxOutboundUsageReversalPending :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'usage_reversal_pending',
+    usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF(@operation_key::TEXT, ''), operation_key),
+    reserved_units = GREATEST(@reserved_units, reserved_units),
+    last_error = LEFT(@last_error::TEXT, 1000),
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending');
+
+-- name: RecordXInboxOutboundRemoteSuccess :execrows
 UPDATE x_inbox_outbound_requests
 SET status = 'remote_succeeded',
     usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
@@ -121,7 +171,10 @@ WHERE id = @id
 -- name: ListRecoverableXInboxOutboundRequests :many
 SELECT *
 FROM x_inbox_outbound_requests
-WHERE status IN ('sending', 'outcome_unknown', 'remote_succeeded')
+WHERE (
+    status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+    OR (status = 'pending' AND encrypted_payload IS NULL)
+  )
   AND next_attempt_at <= NOW()
 ORDER BY created_at
 LIMIT @row_limit;
@@ -132,8 +185,10 @@ SET status = 'needs_reconciliation',
     last_error = LEFT(@last_error::TEXT, 1000),
     updated_at = NOW()
 WHERE id = @id
-  AND status IN ('sending', 'outcome_unknown')
-  AND reconciliation_deadline <= NOW();
+  AND (
+    (status IN ('sending', 'outcome_unknown') AND reconciliation_deadline <= NOW())
+    OR (status = 'pending' AND encrypted_payload IS NULL)
+  );
 
 -- name: DeferXInboxOutboundCompletion :exec
 UPDATE x_inbox_outbound_requests
@@ -143,6 +198,20 @@ SET completion_attempts = completion_attempts + 1,
     updated_at = NOW()
 WHERE id = @id
   AND status = 'remote_succeeded';
+
+-- name: DeferXInboxUsageReversal :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = @next_attempt_at,
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'usage_reversal_pending';
+
+-- name: DeleteXInboxOutboundAfterUsageReversal :execrows
+DELETE FROM x_inbox_outbound_requests
+WHERE id = @id
+  AND status = 'usage_reversal_pending';
 
 -- name: DeletePendingXInboxOutboundRequest :exec
 DELETE FROM x_inbox_outbound_requests

@@ -5,6 +5,7 @@ ALTER TABLE x_inbox_outbound_requests
 
 ALTER TABLE x_inbox_outbound_requests
   ADD COLUMN IF NOT EXISTS encrypted_payload TEXT,
+  ADD COLUMN IF NOT EXISTS body_hash TEXT,
   ADD COLUMN IF NOT EXISTS usage_event_id TEXT REFERENCES x_usage_events(id) ON DELETE SET NULL,
   ADD COLUMN IF NOT EXISTS operation_key TEXT,
   ADD COLUMN IF NOT EXISTS reserved_units BIGINT NOT NULL DEFAULT 0,
@@ -24,6 +25,7 @@ ALTER TABLE x_inbox_outbound_requests
     'sending',
     'outcome_unknown',
     'remote_succeeded',
+    'usage_reversal_pending',
     'completed',
     'needs_reconciliation',
     'succeeded'
@@ -32,9 +34,20 @@ ALTER TABLE x_inbox_outbound_requests
 ALTER TABLE x_inbox_outbound_requests
   VALIDATE CONSTRAINT x_inbox_outbound_requests_status_check;
 
+-- Migration 114 claims did not persist enough state to determine whether X
+-- accepted the write. Preserve the no-resend guarantee by routing them to
+-- manual reconciliation instead of leaving them permanently pending.
+UPDATE x_inbox_outbound_requests
+SET status = 'needs_reconciliation',
+    last_error = 'Legacy X Inbox write claim requires manual reconciliation',
+    updated_at = NOW()
+WHERE status = 'pending'
+  AND encrypted_payload IS NULL;
+
 CREATE INDEX IF NOT EXISTS x_inbox_outbound_requests_reconcile_idx
   ON x_inbox_outbound_requests (next_attempt_at, created_at)
-  WHERE status IN ('sending', 'outcome_unknown', 'remote_succeeded');
+  WHERE status IN ('sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+     OR (status = 'pending' AND encrypted_payload IS NULL);
 
 CREATE TABLE x_inbox_backfill_confirmation_operations (
   id                    TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
@@ -50,6 +63,8 @@ CREATE TABLE x_inbox_backfill_confirmation_operations (
   last_error             TEXT,
   expires_at             TIMESTAMPTZ NOT NULL,
   started_at             TIMESTAMPTZ,
+  execution_owner        TEXT,
+  execution_lease_expires_at TIMESTAMPTZ,
   completed_at           TIMESTAMPTZ,
   created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -72,8 +87,10 @@ CREATE TABLE x_inbox_backfill_exposure_reservations (
   period_end          TIMESTAMPTZ NOT NULL,
   utc_date            DATE NOT NULL,
   status              TEXT NOT NULL DEFAULT 'reserved'
-    CHECK (status IN ('reserved', 'finalized', 'released', 'needs_reconciliation')),
+    CHECK (status IN ('reserved', 'finalized', 'released', 'release_pending', 'needs_reconciliation')),
   reconciliation_deadline TIMESTAMPTZ,
+  reconciliation_attempts INTEGER NOT NULL DEFAULT 0,
+  next_attempt_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_error          TEXT,
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -81,8 +98,8 @@ CREATE TABLE x_inbox_backfill_exposure_reservations (
 );
 
 CREATE INDEX x_inbox_backfill_exposure_pending_idx
-  ON x_inbox_backfill_exposure_reservations (created_at)
-  WHERE status IN ('reserved', 'needs_reconciliation');
+  ON x_inbox_backfill_exposure_reservations (next_attempt_at, created_at)
+  WHERE status IN ('reserved', 'release_pending', 'needs_reconciliation');
 
 -- +goose Down
 
@@ -94,12 +111,22 @@ DROP INDEX IF EXISTS x_inbox_outbound_requests_reconcile_idx;
 ALTER TABLE x_inbox_outbound_requests
   DROP CONSTRAINT IF EXISTS x_inbox_outbound_requests_status_check;
 
+UPDATE x_inbox_outbound_requests
+SET status = CASE
+  WHEN status IN ('completed', 'succeeded') THEN 'succeeded'
+  ELSE 'pending'
+END;
+
 ALTER TABLE x_inbox_outbound_requests
   ADD CONSTRAINT x_inbox_outbound_requests_status_check
   CHECK (status IN ('pending', 'succeeded')) NOT VALID;
 
 ALTER TABLE x_inbox_outbound_requests
+  VALIDATE CONSTRAINT x_inbox_outbound_requests_status_check;
+
+ALTER TABLE x_inbox_outbound_requests
   DROP COLUMN IF EXISTS encrypted_payload,
+  DROP COLUMN IF EXISTS body_hash,
   DROP COLUMN IF EXISTS usage_event_id,
   DROP COLUMN IF EXISTS operation_key,
   DROP COLUMN IF EXISTS reserved_units,

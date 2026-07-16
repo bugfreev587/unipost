@@ -443,10 +443,7 @@ func (a *TwitterAdapter) doTwitterInboxJSON(
 		err = json.Unmarshal(raw, responseBody)
 	}
 	if err != nil {
-		if twitterInboxWriteStage(stage) {
-			return fmt.Errorf("%s: decode X inbox response: %w", stage, err)
-		}
-		return fmt.Errorf("decode X inbox response: %w", err)
+		return fmt.Errorf("%s: decode X inbox response: %w", stage, err)
 	}
 	return nil
 }

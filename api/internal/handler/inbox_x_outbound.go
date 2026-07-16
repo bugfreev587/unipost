@@ -19,6 +19,8 @@ const (
 	xInboxOutcomeUnknownTimeout     = 30 * time.Minute
 )
 
+var errXInboxStateTransitionConflict = errors.New("X Inbox state transition conflict")
+
 func detachedXInboxCompletionContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), xInboxOutboundCompletionTimeout)
 }
@@ -28,7 +30,7 @@ func (h *InboxHandler) recordXInboxRemoteSuccess(
 	requestID string,
 	result xInboxSendResult,
 ) error {
-	return h.queries.RecordXInboxOutboundRemoteSuccess(ctx, db.RecordXInboxOutboundRemoteSuccessParams{
+	updated, err := h.queries.RecordXInboxOutboundRemoteSuccess(ctx, db.RecordXInboxOutboundRemoteSuccessParams{
 		UsageEventID:         result.UsageEventID,
 		OperationKey:         result.Operation,
 		ReservedUnits:        result.XCreditsCounted,
@@ -37,6 +39,33 @@ func (h *InboxHandler) recordXInboxRemoteSuccess(
 		RemoteUrl:            result.URL,
 		ID:                   requestID,
 	})
+	if err != nil {
+		return err
+	}
+	if updated != 1 {
+		return errXInboxStateTransitionConflict
+	}
+	return nil
+}
+
+func retryXInboxStatePersistence(ctx context.Context, persist func() error) error {
+	delay := 50 * time.Millisecond
+	for {
+		err := persist()
+		if err == nil || errors.Is(err, errXInboxStateTransitionConflict) {
+			return err
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+		if delay < 500*time.Millisecond {
+			delay *= 2
+		}
+	}
 }
 
 func (h *InboxHandler) completeKnownXInboxOutbound(

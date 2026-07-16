@@ -16,6 +16,8 @@ func TestXInboxOutboundRecoveryWorkerIsWired(t *testing.T) {
 		"handler.NewXInboxOutboundRecoveryService(inboxHandler)",
 		"worker.NewXInboxOutboundRecoveryWorker(",
 		"go xOutboundRecoveryWorker.Start(workerCtx)",
+		"worker.NewXInboxExposureRecoveryWorker(xCreditsService)",
+		"go xExposureRecoveryWorker.Start(workerCtx)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("main.go missing X Inbox outbound recovery wiring %q", want)

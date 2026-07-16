@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -12,6 +13,7 @@ import (
 type XInboxOutboundReconcileStats struct {
 	Scanned             int `json:"scanned"`
 	Completed           int `json:"completed"`
+	UsageReversed       int `json:"usage_reversed"`
 	Deferred            int `json:"deferred"`
 	NeedsReconciliation int `json:"needs_reconciliation"`
 }
@@ -19,7 +21,9 @@ type XInboxOutboundReconcileStats struct {
 type xInboxOutboundRecoveryStore interface {
 	ListRecoverable(context.Context, int32) ([]db.XInboxOutboundRequest, error)
 	CompleteKnown(context.Context, string) error
+	ReverseUsage(context.Context, db.XInboxOutboundRequest) error
 	Defer(context.Context, string, time.Time, string) error
+	DeferUsageReversal(context.Context, string, time.Time, string) error
 	MarkNeedsReconciliation(context.Context, string, string) error
 }
 
@@ -59,6 +63,27 @@ func (s *XInboxOutboundRecoveryService) ProcessOnce(
 	now := s.now().UTC()
 	stats.Scanned = len(rows)
 	for _, row := range rows {
+		if row.Status == "pending" && !row.EncryptedPayload.Valid {
+			if err := s.store.MarkNeedsReconciliation(
+				ctx,
+				row.ID,
+				"Legacy X Inbox write claim requires manual reconciliation",
+			); err != nil {
+				stats.Deferred++
+				continue
+			}
+			stats.NeedsReconciliation++
+			continue
+		}
+		if row.Status == "usage_reversal_pending" {
+			if err := s.store.ReverseUsage(ctx, row); err != nil {
+				stats.Deferred++
+				_ = s.store.DeferUsageReversal(ctx, row.ID, now.Add(time.Minute), err.Error())
+				continue
+			}
+			stats.UsageReversed++
+			continue
+		}
 		if row.Status == "remote_succeeded" && row.RemoteExternalID.Valid {
 			if err := s.store.CompleteKnown(ctx, row.ID); err != nil {
 				stats.Deferred++
@@ -99,6 +124,29 @@ func (s postgresXInboxOutboundRecoveryStore) CompleteKnown(ctx context.Context, 
 	return err
 }
 
+func (s postgresXInboxOutboundRecoveryStore) ReverseUsage(
+	ctx context.Context,
+	row db.XInboxOutboundRequest,
+) error {
+	if !row.UsageEventID.Valid {
+		return errors.New("X Inbox usage reversal is missing its usage event")
+	}
+	if s.handler == nil || s.handler.xCredits == nil {
+		return errors.New("X Inbox credits service is not configured")
+	}
+	if err := s.handler.xCredits.Reverse(ctx, row.UsageEventID.String); err != nil {
+		return err
+	}
+	deleted, err := s.handler.queries.DeleteXInboxOutboundAfterUsageReversal(ctx, row.ID)
+	if err != nil {
+		return err
+	}
+	if deleted != 1 {
+		return errors.New("X Inbox usage reversal state was not removed")
+	}
+	return nil
+}
+
 func (s postgresXInboxOutboundRecoveryStore) Defer(
 	ctx context.Context,
 	id string,
@@ -106,6 +154,19 @@ func (s postgresXInboxOutboundRecoveryStore) Defer(
 	message string,
 ) error {
 	return s.handler.queries.DeferXInboxOutboundCompletion(ctx, db.DeferXInboxOutboundCompletionParams{
+		NextAttemptAt: pgtype.Timestamptz{Time: next, Valid: true},
+		LastError:     message,
+		ID:            id,
+	})
+}
+
+func (s postgresXInboxOutboundRecoveryStore) DeferUsageReversal(
+	ctx context.Context,
+	id string,
+	next time.Time,
+	message string,
+) error {
+	return s.handler.queries.DeferXInboxUsageReversal(ctx, db.DeferXInboxUsageReversalParams{
 		NextAttemptAt: pgtype.Timestamptz{Time: next, Valid: true},
 		LastError:     message,
 		ID:            id,

@@ -2,23 +2,32 @@ package xinbox
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 type PostgresIngestionStore struct {
 	queries                *db.Queries
+	pool                   *pgxpool.Pool
 	managedWebhookRouteKey string
 }
 
-func NewPostgresIngestionStore(queries *db.Queries, managedWebhookRouteKey string) *PostgresIngestionStore {
+func NewPostgresIngestionStore(
+	queries *db.Queries,
+	pool *pgxpool.Pool,
+	managedWebhookRouteKey string,
+) *PostgresIngestionStore {
 	return &PostgresIngestionStore{
 		queries:                queries,
+		pool:                   pool,
 		managedWebhookRouteKey: managedWebhookRouteKey,
 	}
 }
@@ -95,7 +104,22 @@ func (s *PostgresIngestionStore) InsertInboxItem(
 	ctx context.Context,
 	item InboxItem,
 ) (InboxItem, bool, error) {
-	return insertInboxItem(ctx, s.queries, item)
+	if s == nil || s.pool == nil {
+		return InboxItem{}, false, errors.New("X inbox database pool is not configured")
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return InboxItem{}, false, err
+	}
+	defer tx.Rollback(ctx)
+	insertedItem, inserted, err := insertInboxItem(ctx, db.New(tx), item)
+	if err != nil {
+		return InboxItem{}, false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return InboxItem{}, false, err
+	}
+	return insertedItem, inserted, nil
 }
 
 func (s *PostgresIngestionStore) InsertInboxItemTx(
@@ -141,12 +165,128 @@ func insertInboxItem(
 		LinkedPostID:     nullableText(item.LinkedPostID),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return InboxItem{}, false, nil
+		existing, loadErr := queries.GetInboxItemByExternalID(ctx, db.GetInboxItemByExternalIDParams{
+			SocialAccountID: item.SocialAccountID,
+			ExternalID:      item.ExternalID,
+		})
+		if loadErr != nil {
+			return InboxItem{}, false, loadErr
+		}
+		existingItem := inboxItemFromDB(existing)
+		if healErr := healXInboxOutboundFromWebhook(ctx, queries, existingItem); healErr != nil {
+			return InboxItem{}, false, healErr
+		}
+		return existingItem, false, nil
 	}
 	if err != nil {
 		return InboxItem{}, false, err
 	}
+	if err := healXInboxOutboundFromWebhook(ctx, queries, item); err != nil {
+		return InboxItem{}, false, err
+	}
 	return inboxItemFromDB(row), true, nil
+}
+
+type xInboxOutboundWebhookCandidate struct {
+	ID          string
+	InboxItemID string
+	PayloadHash string
+}
+
+func xInboxOutboundWebhookPayloadHash(inboxItemID, source, body string) string {
+	sum := sha256.Sum256([]byte(inboxItemID + "\x00" + source + "\x00" + body))
+	return hex.EncodeToString(sum[:])
+}
+
+func xInboxOutboundWebhookBodyHash(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}
+
+func matchingXInboxOutboundWebhookCandidate(
+	candidates []xInboxOutboundWebhookCandidate,
+	source string,
+	body string,
+) (string, bool) {
+	match := ""
+	for _, candidate := range candidates {
+		if candidate.PayloadHash != xInboxOutboundWebhookPayloadHash(candidate.InboxItemID, source, body) {
+			continue
+		}
+		if match != "" {
+			return "", false
+		}
+		match = candidate.ID
+	}
+	return match, match != ""
+}
+
+func healXInboxOutboundFromWebhook(
+	ctx context.Context,
+	queries *db.Queries,
+	item InboxItem,
+) error {
+	if queries == nil || !item.IsOwn ||
+		(item.Source != "x_reply" && item.Source != "x_dm") ||
+		item.ExternalID == "" || item.Body == "" {
+		return nil
+	}
+	rows, err := queries.ListXInboxOutboundWebhookCandidates(
+		ctx,
+		db.ListXInboxOutboundWebhookCandidatesParams{
+			SocialAccountID:  item.SocialAccountID,
+			Source:           item.Source,
+			ParentExternalID: item.ParentExternalID,
+			ThreadKey:        nullableText(item.ThreadKey),
+			BodyHash:         nullableText(xInboxOutboundWebhookBodyHash(item.Body)),
+		},
+	)
+	if err != nil {
+		return err
+	}
+	candidates := make([]xInboxOutboundWebhookCandidate, 0, len(rows))
+	for _, row := range rows {
+		candidates = append(candidates, xInboxOutboundWebhookCandidate{
+			ID:          row.OutboundRequestID,
+			InboxItemID: row.InboxItemID,
+			PayloadHash: row.PayloadHash,
+		})
+	}
+	requestID, matched := matchingXInboxOutboundWebhookCandidate(candidates, item.Source, item.Body)
+	if !matched {
+		return nil
+	}
+	remoteURL := ""
+	if item.Source == "x_reply" {
+		remoteURL = xPostPermalink(item.ExternalID)
+	}
+	updated, err := queries.RecordXInboxOutboundRemoteSuccessFromWebhook(
+		ctx,
+		db.RecordXInboxOutboundRemoteSuccessFromWebhookParams{
+			RemoteExternalID:     nullableText(item.ExternalID),
+			RemoteConversationID: item.ThreadKey,
+			RemoteUrl:            remoteURL,
+			ID:                   requestID,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if updated == 1 {
+		return nil
+	}
+	outbound, err := queries.GetXInboxOutboundRequestByID(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	if (outbound.Status == "remote_succeeded" ||
+		outbound.Status == "completed" ||
+		outbound.Status == "succeeded") &&
+		outbound.RemoteExternalID.Valid &&
+		outbound.RemoteExternalID.String == item.ExternalID {
+		return nil
+	}
+	return errors.New("X webhook could not persist the matched outbound remote outcome")
 }
 
 func (s *PostgresIngestionStore) EncryptedConsumerSecrets(
