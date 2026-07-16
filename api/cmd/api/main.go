@@ -492,6 +492,15 @@ func main() {
 			os.Getenv("X_INBOX_WEBHOOK_URL"),
 		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
+		xInboxOperationsWorker := worker.NewPostgresXInboxOperationsReconciliationWorker(
+			pool,
+			slog.Default(),
+			worker.XInboxOperationsReconciliationConfig{
+				FilteredStreamRuleCapacity:   positiveInt64Env("X_INBOX_FILTERED_STREAM_RULE_CAPACITY"),
+				ActivitySubscriptionCapacity: positiveInt64Env("X_INBOX_ACTIVITY_SUBSCRIPTION_CAPACITY"),
+			},
+		)
+		go xInboxOperationsWorker.Start(workerCtx)
 	}
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
@@ -1254,6 +1263,20 @@ func normalizeProcessMode(raw string) (string, error) {
 	default:
 		return "", fmt.Errorf("UNIPOST_PROCESS must be %q or %q, got %q", processModeAPI, processModePostDeliveryWorker, raw)
 	}
+}
+
+func positiveInt64Env(name string) int64 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return 0
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		slog.Warn("invalid positive integer environment value; capacity alerts disabled",
+			"name", name)
+		return 0
+	}
+	return value
 }
 
 func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorkerConfig) int32 {
