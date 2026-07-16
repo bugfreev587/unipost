@@ -533,7 +533,7 @@ func (h *OAuthHandler) oauthConfigForCallback(r *http.Request, profileID, platfo
 	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
 	if platformName == "twitter" {
 		if !storedMode.Valid {
-			return h.oauthConfigAtAuthorizationStart(r, profileID, platformName, adapter)
+			return h.oauthConfigForLegacyNullState(r, profileID, platformName, adapter)
 		}
 		switch xinbox.AppMode(storedMode.String) {
 		case xinbox.AppModeUniPostManaged:
@@ -565,6 +565,26 @@ func (h *OAuthHandler) oauthConfigForCallback(r *http.Request, profileID, platfo
 		}
 	}
 	return config, pgtype.Text{}, nil
+}
+
+// oauthConfigForLegacyNullState reproduces the deployed pre-108 callback
+// lookup, including its use of profile_id as platform_credentials.workspace_id.
+// Real workspace credentials therefore remain invisible to this rolling-only
+// fallback, while all new authorization states carry an explicit mode.
+func (h *OAuthHandler) oauthConfigForLegacyNullState(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) (platform.OAuthConfig, pgtype.Text, error) {
+	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
+	creds, err := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
+		WorkspaceID: profileID,
+		Platform:    platformName,
+	})
+	if err != nil {
+		return config, pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true}, nil
+	}
+	config.ClientID = creds.ClientID
+	if secret, decryptErr := h.encryptor.Decrypt(creds.ClientSecret); decryptErr == nil {
+		config.ClientSecret = secret
+	}
+	return config, pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true}, nil
 }
 
 func (h *OAuthHandler) workspaceOAuthCredential(ctx context.Context, profileID, platformName string, requirePlanSlot bool) (db.PlatformCredential, bool, error) {

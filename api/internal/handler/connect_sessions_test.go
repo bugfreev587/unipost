@@ -423,6 +423,88 @@ func TestConnectCallbackPersistsResolvedModeForRollingNullTwitterSession(t *test
 	}
 }
 
+func TestConnectAuthorizePersistsResolvedModeForRollingNullTwitterSession(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:        "twitter",
+		allowQuickstart: true,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+		"https://api.example.com", nil,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
+	req = withChiParam(req, "id", "cs_1")
+	rec := httptest.NewRecorder()
+
+	h.Authorize(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fdb.setSessionXAppModeCalls != 1 {
+		t.Fatalf("SetConnectSessionXAppModeIfNull calls = %d, want 1", fdb.setSessionXAppModeCalls)
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("persisted session mode = %+v, want UniPost managed", fdb.xAppMode)
+	}
+}
+
+func TestConnectCallbackUsesModePersistedByAuthorizeAfterWorkspacePolicyChanges(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedSecret, err := encryptor.Encrypt("workspace-secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{
+		platform:               "twitter",
+		allowQuickstart:        true,
+		activeAccountLookupErr: pgx.ErrNoRows,
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
+		"https://api.example.com", nil,
+	)
+
+	authorizeReq := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
+	authorizeReq = withChiParam(authorizeReq, "id", "cs_1")
+	authorizeRec := httptest.NewRecorder()
+	h.Authorize(authorizeRec, authorizeReq)
+	if authorizeRec.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d, body = %s", authorizeRec.Code, authorizeRec.Body.String())
+	}
+	if fdb.setSessionXAppModeCalls != 1 {
+		t.Fatalf("SetConnectSessionXAppModeIfNull calls = %d, want 1 before policy changes", fdb.setSessionXAppModeCalls)
+	}
+
+	fdb.planID = "growth"
+	fdb.credentialSecretValue = encryptedSecret
+	fdb.platformCredentialLookups = 0
+
+	callbackReq := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/twitter?code=auth-code&state=state_1", nil)
+	callbackReq = withChiParam(callbackReq, "platform", "twitter")
+	callbackRec := httptest.NewRecorder()
+	h.Callback(callbackRec, callbackReq)
+
+	if callbackRec.Code != http.StatusOK {
+		t.Fatalf("callback status = %d, body = %s", callbackRec.Code, callbackRec.Body.String())
+	}
+	if fdb.platformCredentialLookups != 0 {
+		t.Fatalf("callback workspace credential lookups = %d, want 0 for persisted managed mode", fdb.platformCredentialLookups)
+	}
+	if !fdb.xAppMode.Valid || fdb.xAppMode.String != string(xinbox.AppModeUniPostManaged) {
+		t.Fatalf("saved account mode = %+v, want persisted UniPost managed mode", fdb.xAppMode)
+	}
+}
+
 func TestCreateConnectSession_FreePlanRejectsNewExternalUserAfterManagedUserCap(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "development")
 
@@ -983,6 +1065,7 @@ type connectSessionTestDB struct {
 	createManagedCalls        int
 	upsertManagedCalls        int
 	createConnectSessionCalls int
+	setSessionXAppModeCalls   int
 	reconnectRequiredCalls    int
 	xAppMode                  pgtype.Text
 
@@ -1084,6 +1167,13 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 	case strings.Contains(query, "-- name: GetConnectSessionByIDOnly"):
 		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	case strings.Contains(query, "-- name: GetConnectSessionByOAuthState"):
+		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
+	case strings.Contains(query, "-- name: SetConnectSessionXAppModeIfNull"):
+		f.setSessionXAppModeCalls++
+		if f.xAppMode.Valid {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		f.xAppMode, _ = args[1].(pgtype.Text)
 		return f.connectSessionRow(f.platform, f.statusOrDefault(), f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	case strings.Contains(query, "-- name: FindActiveManagedSocialAccountByExternalAccount"):
 		if f.activeAccountLookupErr != nil {

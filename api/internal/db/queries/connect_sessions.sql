@@ -32,6 +32,14 @@ SELECT id, profile_id, platform, external_user_id, external_user_email,
 FROM connect_sessions
 WHERE oauth_state = $1;
 
+-- name: SetConnectSessionXAppModeIfNull :one
+UPDATE connect_sessions
+SET x_app_mode = $2
+WHERE id = $1 AND x_app_mode IS NULL
+RETURNING id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode;
+
 -- name: MarkConnectSessionCompleted :one
 UPDATE connect_sessions
 SET status = 'completed',

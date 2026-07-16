@@ -163,7 +163,7 @@ func TestOAuthConnectUsesProfileWorkspaceCredentialAndStoresWorkspaceMode(t *tes
 	}
 }
 
-func TestOAuthConfigForRollingNullTwitterStateUsesAuthorizationStartPolicy(t *testing.T) {
+func TestOAuthConfigForRollingNullTwitterStateUsesDeployedCompatibilityLookup(t *testing.T) {
 	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
 	if err != nil {
 		t.Fatal(err)
@@ -174,11 +174,12 @@ func TestOAuthConfigForRollingNullTwitterStateUsesAuthorizationStartPolicy(t *te
 	}
 	adapter := &oauthPKCESpyAdapter{TwitterAdapter: platform.NewTwitterAdapter()}
 
-	t.Run("eligible workspace credential", func(t *testing.T) {
+	t.Run("real workspace credential remains invisible to old profile-id lookup", func(t *testing.T) {
 		store := &oauthPKCETestDB{
-			planID:                   "growth",
-			platformCredentialID:     "workspace-client-id",
-			platformCredentialSecret: encryptedSecret,
+			planID:                              "growth",
+			platformCredentialID:                "workspace-client-id",
+			platformCredentialSecret:            encryptedSecret,
+			platformCredentialRecordWorkspaceID: "ws_1",
 		}
 		h := NewOAuthHandler(db.New(store), encryptor, nil)
 		config, mode, err := h.oauthConfigForCallback(
@@ -191,11 +192,14 @@ func TestOAuthConfigForRollingNullTwitterStateUsesAuthorizationStartPolicy(t *te
 		if err != nil {
 			t.Fatal(err)
 		}
-		if config.ClientID != "workspace-client-id" {
-			t.Fatalf("client id = %q, want workspace credential", config.ClientID)
+		if config.ClientID != "client-id" {
+			t.Fatalf("client id = %q, want UniPost default", config.ClientID)
 		}
-		if !mode.Valid || mode.String != string(xinbox.AppModeWorkspace) {
-			t.Fatalf("resolved mode = %+v, want workspace", mode)
+		if !mode.Valid || mode.String != string(xinbox.AppModeUniPostManaged) {
+			t.Fatalf("resolved mode = %+v, want UniPost managed", mode)
+		}
+		if store.platformCredentialWorkspaceID != "pr_1" {
+			t.Fatalf("credential lookup workspace = %q, want legacy profile id pr_1", store.platformCredentialWorkspaceID)
 		}
 	})
 
@@ -211,6 +215,27 @@ func TestOAuthConfigForRollingNullTwitterStateUsesAuthorizationStartPolicy(t *te
 		)
 		if err != nil {
 			t.Fatal(err)
+		}
+		if config.ClientID != "client-id" {
+			t.Fatalf("client id = %q, want UniPost default", config.ClientID)
+		}
+		if !mode.Valid || mode.String != string(xinbox.AppModeUniPostManaged) {
+			t.Fatalf("resolved mode = %+v, want UniPost managed", mode)
+		}
+	})
+
+	t.Run("legacy lookup error still uses global app", func(t *testing.T) {
+		store := &oauthPKCETestDB{platformCredentialErr: errors.New("compatibility database read failed")}
+		h := NewOAuthHandler(db.New(store), encryptor, nil)
+		config, mode, err := h.oauthConfigForCallback(
+			httptest.NewRequest(http.MethodGet, "/", nil),
+			"pr_1",
+			"twitter",
+			adapter,
+			pgtype.Text{},
+		)
+		if err != nil {
+			t.Fatalf("legacy NULL fallback returned error: %v", err)
 		}
 		if config.ClientID != "client-id" {
 			t.Fatalf("client id = %q, want UniPost default", config.ClientID)
@@ -395,17 +420,19 @@ func (a *oauthPKCESpyAdapter) ExchangeCode(_ context.Context, config platform.OA
 }
 
 type oauthPKCETestDB struct {
-	state                         string
-	pkceVerifier                  string
-	xAppMode                      pgtype.Text
-	planID                        string
-	platformCredentialID          string
-	platformCredentialSecret      string
-	platformCredentialWorkspaceID string
-	consumeCalls                  int
-	consumed                      bool
-	consumeErr                    error
-	savedXAppMode                 pgtype.Text
+	state                               string
+	pkceVerifier                        string
+	xAppMode                            pgtype.Text
+	planID                              string
+	platformCredentialID                string
+	platformCredentialSecret            string
+	platformCredentialRecordWorkspaceID string
+	platformCredentialWorkspaceID       string
+	platformCredentialErr               error
+	consumeCalls                        int
+	consumed                            bool
+	consumeErr                          error
+	savedXAppMode                       pgtype.Text
 }
 
 func (f *oauthPKCETestDB) Exec(_ context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -446,7 +473,14 @@ func (f *oauthPKCETestDB) QueryRow(_ context.Context, query string, args ...inte
 		}}
 	case strings.Contains(query, "-- name: GetPlatformCredential"):
 		f.platformCredentialWorkspaceID, _ = args[0].(string)
-		if f.platformCredentialID != "" {
+		if f.platformCredentialErr != nil {
+			return scanRow{err: f.platformCredentialErr}
+		}
+		recordWorkspaceID := f.platformCredentialRecordWorkspaceID
+		if recordWorkspaceID == "" {
+			recordWorkspaceID = "ws_1"
+		}
+		if f.platformCredentialID != "" && f.platformCredentialWorkspaceID == recordWorkspaceID {
 			now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 			return scanRow{values: []any{
 				"pc_1", "twitter", f.platformCredentialID, f.platformCredentialSecret,

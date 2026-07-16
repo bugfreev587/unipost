@@ -252,3 +252,40 @@ func (q *Queries) MarkConnectSessionCompleted(ctx context.Context, arg MarkConne
 	)
 	return i, err
 }
+
+const setConnectSessionXAppModeIfNull = `-- name: SetConnectSessionXAppModeIfNull :one
+UPDATE connect_sessions
+SET x_app_mode = $2
+WHERE id = $1 AND x_app_mode IS NULL
+RETURNING id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
+`
+
+type SetConnectSessionXAppModeIfNullParams struct {
+	ID       string      `json:"id"`
+	XAppMode pgtype.Text `json:"x_app_mode"`
+}
+
+func (q *Queries) SetConnectSessionXAppModeIfNull(ctx context.Context, arg SetConnectSessionXAppModeIfNullParams) (ConnectSession, error) {
+	row := q.db.QueryRow(ctx, setConnectSessionXAppModeIfNull, arg.ID, arg.XAppMode)
+	var i ConnectSession
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.ReturnUrl,
+		&i.Status,
+		&i.CompletedSocialAccountID,
+		&i.OauthState,
+		&i.PkceVerifier,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.CompletedAt,
+		&i.AllowQuickstartCreds,
+		&i.XAppMode,
+	)
+	return i, err
+}

@@ -309,6 +309,31 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 		renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not supported.")
 		return
 	}
+	if session.Platform == "twitter" && !session.XAppMode.Valid {
+		persisted, persistErr := h.queries.SetConnectSessionXAppModeIfNull(r.Context(), db.SetConnectSessionXAppModeIfNullParams{
+			ID:       session.ID,
+			XAppMode: resolved.xAppMode,
+		})
+		if persistErr == pgx.ErrNoRows {
+			persisted, persistErr = h.queries.GetConnectSessionByOAuthState(r.Context(), state)
+		}
+		if persistErr != nil || persisted.ID != session.ID || !persisted.XAppMode.Valid {
+			slog.Error("connect.authorize: persist resolved X app mode", "session_id", session.ID, "workspace_id", workspaceID, "err", persistErr)
+			renderConnectError(w, http.StatusInternalServerError, "Failed to preserve platform credentials.")
+			return
+		}
+		session = persisted
+		resolved, err = h.resolveConnectorForStoredMode(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds, session.XAppMode)
+		if err != nil {
+			slog.Error("connect.authorize: resolve persisted connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
+			renderConnectError(w, http.StatusInternalServerError, "Failed to load platform credentials.")
+			return
+		}
+		if !resolved.ok {
+			renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not supported.")
+			return
+		}
+	}
 
 	authURL, err := resolved.connector.AuthorizeURL(connect.SessionView{
 		ID:             session.ID,
