@@ -3,14 +3,16 @@ INSERT INTO platform_credentials (workspace_id, platform, client_id, client_secr
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (workspace_id, platform) DO UPDATE
 SET client_id = EXCLUDED.client_id, client_secret = EXCLUDED.client_secret
-RETURNING *;
+RETURNING id, platform, client_id, client_secret, created_at, workspace_id;
 
 -- name: GetPlatformCredential :one
-SELECT * FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id
+FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2;
 
 -- name: ListPlatformCredentialsByWorkspace :many
-SELECT * FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id
+FROM platform_credentials
 WHERE workspace_id = $1
 ORDER BY platform;
 

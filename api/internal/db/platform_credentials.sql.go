@@ -59,7 +59,8 @@ func (q *Queries) DeletePlatformCredential(ctx context.Context, arg DeletePlatfo
 }
 
 const getPlatformCredential = `-- name: GetPlatformCredential :one
-SELECT id, platform, client_id, client_secret, created_at, workspace_id FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id
+FROM platform_credentials
 WHERE workspace_id = $1 AND platform = $2
 `
 
@@ -83,7 +84,8 @@ func (q *Queries) GetPlatformCredential(ctx context.Context, arg GetPlatformCred
 }
 
 const listPlatformCredentialsByWorkspace = `-- name: ListPlatformCredentialsByWorkspace :many
-SELECT id, platform, client_id, client_secret, created_at, workspace_id FROM platform_credentials
+SELECT id, platform, client_id, client_secret, created_at, workspace_id
+FROM platform_credentials
 WHERE workspace_id = $1
 ORDER BY platform
 `
