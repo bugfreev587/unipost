@@ -58,8 +58,9 @@ type TwitterInboxEntry struct {
 }
 
 type TwitterInboxPage struct {
-	Entries   []TwitterInboxEntry
-	NextToken string
+	Entries        []TwitterInboxEntry
+	NextToken      string
+	HorizonReached bool
 }
 
 type TwitterDMSendResult struct {
@@ -86,8 +87,8 @@ func (a *TwitterAdapter) FetchInboxMentions(
 	if strings.TrimSpace(userID) == "" {
 		return TwitterInboxPage{}, errors.New("X mentions lookup requires user id")
 	}
-	if maxResults < 5 {
-		maxResults = 5
+	if maxResults < 1 {
+		maxResults = 1
 	}
 	if maxResults > 100 {
 		maxResults = 100
@@ -200,9 +201,6 @@ func (a *TwitterAdapter) FetchInboxDMEvents(
 		"event_types":     {"MessageCreate"},
 		"max_results":     {strconv.Itoa(maxResults)},
 	}
-	if !startTime.IsZero() {
-		query.Set("start_time", startTime.UTC().Format(time.RFC3339))
-	}
 	if token := strings.TrimSpace(paginationToken); token != "" {
 		query.Set("pagination_token", token)
 	}
@@ -259,6 +257,10 @@ func (a *TwitterAdapter) FetchInboxDMEvents(
 		if err != nil || event.ID == "" || event.SenderID == "" {
 			continue
 		}
+		if !startTime.IsZero() && createdAt.Before(startTime) {
+			page.HorizonReached = true
+			continue
+		}
 		threadKey := strings.TrimSpace(event.ConversationID)
 		if threadKey == "" {
 			participants := append([]string(nil), event.ParticipantIDs...)
@@ -303,7 +305,7 @@ func (a *TwitterAdapter) SendInboxReply(
 		return nil, err
 	}
 	if response.Data.ID == "" {
-		return nil, errors.New("X reply response missing post id")
+		return nil, errors.New("create_tweet_reply: X 2xx response missing post id")
 	}
 	return &PostResult{
 		ExternalID: response.Data.ID,
@@ -363,7 +365,7 @@ func (a *TwitterAdapter) sendInboxDM(
 		return nil, err
 	}
 	if response.Data.DMEventID == "" {
-		return nil, errors.New("X DM response missing event id")
+		return nil, errors.New("create_dm: X 2xx response missing event id")
 	}
 	return &TwitterDMSendResult{
 		ExternalID:     response.Data.DMEventID,
@@ -407,10 +409,29 @@ func (a *TwitterAdapter) doTwitterInboxJSON(
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		return fmt.Errorf("X inbox API returned HTTP %d", resp.StatusCode)
 	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(responseBody); err != nil {
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
+	if err == nil && len(raw) > 2<<20 {
+		err = errors.New("X inbox response exceeds 2 MiB")
+	}
+	if err == nil {
+		err = json.Unmarshal(raw, responseBody)
+	}
+	if err != nil {
+		if twitterInboxWriteStage(stage) {
+			return fmt.Errorf("%s: decode X inbox response: %w", stage, err)
+		}
 		return fmt.Errorf("decode X inbox response: %w", err)
 	}
 	return nil
+}
+
+func twitterInboxWriteStage(stage string) bool {
+	switch stage {
+	case "create_tweet_reply", "create_dm":
+		return true
+	default:
+		return false
+	}
 }
 
 // DefaultOAuthConfig falls back to TWITTER_CLIENT_ID / TWITTER_CLIENT_SECRET

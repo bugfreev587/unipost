@@ -591,8 +591,13 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
 			return
 		}
-		if missingScope := xInboxReplyMissingScope(item.Source, account.Scope); missingScope != "" {
-			writeError(w, http.StatusConflict, "X_RECONNECT_REQUIRED", "Reconnect the X account to grant "+missingScope)
+		if missingScopes := xInboxReplyMissingScopes(item.Source, account.Scope); len(missingScopes) > 0 {
+			writeError(
+				w,
+				http.StatusConflict,
+				"X_RECONNECT_REQUIRED",
+				"Reconnect the X account to grant missing scopes: "+strings.Join(missingScopes, ", "),
+			)
 			return
 		}
 		idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
@@ -642,7 +647,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 				writeSuccess(w, response)
 				return
 			}
-			writeError(w, http.StatusConflict, "CONFLICT", "The X reply is already in progress; retry with the same Idempotency-Key")
+			writeXInboxOutcomePending(w)
 			return
 		}
 		if claimErr != nil {
@@ -676,7 +681,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 				IdempotencyKey:     idempotencyKey,
 			})
 			if replayErr != nil {
-				writeError(w, http.StatusConflict, "CONFLICT", "The X reply is already in progress; retry with the same Idempotency-Key")
+				writeXInboxOutcomePending(w)
 				return
 			}
 			_ = h.queries.CompleteXInboxOutboundRequest(r.Context(), db.CompleteXInboxOutboundRequestParams{
@@ -922,10 +927,19 @@ func (h *InboxHandler) writeXInboxReplyError(w http.ResponseWriter, err error) {
 	case stderrors.Is(err, xcredits.ErrMonthlyLimitExceeded):
 		writeError(w, http.StatusPaymentRequired, "X_MONTHLY_USAGE_LIMIT_EXCEEDED", err.Error())
 	case stderrors.Is(err, ErrXWriteOutcomePending):
-		writeError(w, http.StatusConflict, "CONFLICT", "X may have accepted the reply; retry with the same Idempotency-Key")
+		writeXInboxOutcomePending(w)
 	default:
 		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", "X Inbox reply failed: "+err.Error())
 	}
+}
+
+func writeXInboxOutcomePending(w http.ResponseWriter) {
+	writeError(
+		w,
+		http.StatusConflict,
+		"X_WRITE_OUTCOME_PENDING",
+		"X may have accepted this reply. UniPost retained the idempotency claim and provisional usage for reconciliation; retrying with the same Idempotency-Key will not send again.",
+	)
 }
 
 func applyXReplyResult(response *inboxItemResponse, result xInboxSendResult) {
@@ -1390,13 +1404,14 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 }
 
 type xBackfillAccountResult struct {
-	AccountID         string `json:"account_id"`
-	Accepted          int    `json:"accepted"`
-	Suppressed        int    `json:"suppressed"`
-	Duplicates        int    `json:"duplicates"`
-	Read              int    `json:"read"`
-	StoppedAtBoundary bool   `json:"stopped_at_boundary,omitempty"`
-	StopReason        string `json:"stop_reason,omitempty"`
+	AccountID         string   `json:"account_id"`
+	Accepted          int      `json:"accepted"`
+	Suppressed        int      `json:"suppressed"`
+	Duplicates        int      `json:"duplicates"`
+	Read              int      `json:"read"`
+	StoppedAtBoundary bool     `json:"stopped_at_boundary,omitempty"`
+	StopReason        string   `json:"stop_reason,omitempty"`
+	MissingScopes     []string `json:"missing_scopes,omitempty"`
 }
 
 func normalizeXBackfillRequest(request xBackfillRequest) xBackfillRequest {
@@ -1558,16 +1573,12 @@ func (h *InboxHandler) runXBackfillPages(
 	}
 	startTime := now.Add(-time.Duration(lookbackDays) * 24 * time.Hour)
 	operation := "post.read"
-	minPageSize := 5
 	if source == "x_dm" {
 		operation = "dm.read"
-		minPageSize = 1
-		if !hasXScopes(account.Scope, "dm.read", "users.read") {
-			result.StopReason = "reconnect_required"
-			return
-		}
-	} else if !hasXScopes(account.Scope, "tweet.read", "users.read") {
+	}
+	if missingScopes := xInboxBackfillMissingScopes(source, account.Scope); len(missingScopes) > 0 {
 		result.StopReason = "reconnect_required"
+		result.MissingScopes = missingScopes
 		return
 	}
 	for remaining > 0 {
@@ -1586,7 +1597,7 @@ func (h *InboxHandler) runXBackfillPages(
 			result.StopReason = "usage_check_failed"
 			return
 		}
-		if affordable < minPageSize {
+		if affordable < 1 {
 			result.StoppedAtBoundary = true
 			result.StopReason = reason
 			return
@@ -1647,6 +1658,9 @@ func (h *InboxHandler) runXBackfillPages(
 			if ingestion.Admission.Accepted && ingestion.Inserted {
 				result.Accepted++
 			}
+		}
+		if page.HorizonReached {
+			return
 		}
 		nextToken = page.NextToken
 		if nextToken == "" || len(page.Entries) == 0 {

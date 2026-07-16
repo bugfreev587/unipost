@@ -225,21 +225,31 @@ func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
 			"event_types":      {"MessageCreate"},
 			"max_results":      {"100"},
 			"pagination_token": {"next-page"},
-			"start_time":       {"2026-06-16T12:00:00Z"},
 		}
 		if !reflect.DeepEqual(r.URL.Query(), want) {
 			t.Fatalf("query = %#v, want %#v", r.URL.Query(), want)
 		}
 		_, _ = io.WriteString(w, `{
-			"data":[{
-				"id":"dm-1",
-				"event_type":"MessageCreate",
-				"text":"private",
-				"sender_id":"author-1",
-				"participant_ids":["user-1","author-1"],
-				"dm_conversation_id":"conversation-1",
-				"created_at":"2026-07-16T10:00:00Z"
-			}],
+			"data":[
+				{
+					"id":"dm-1",
+					"event_type":"MessageCreate",
+					"text":"private",
+					"sender_id":"author-1",
+					"participant_ids":["user-1","author-1"],
+					"dm_conversation_id":"conversation-1",
+					"created_at":"2026-07-16T10:00:00Z"
+				},
+				{
+					"id":"dm-old",
+					"event_type":"MessageCreate",
+					"text":"old private",
+					"sender_id":"author-1",
+					"participant_ids":["user-1","author-1"],
+					"dm_conversation_id":"conversation-1",
+					"created_at":"2026-06-15T10:00:00Z"
+				}
+			],
 			"includes":{"users":[{"id":"author-1","name":"Robin","username":"robin"}]},
 			"meta":{"next_token":"page-2"}
 		}`)
@@ -257,13 +267,35 @@ func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchInboxDMEvents: %v", err)
 	}
-	if page.NextToken != "page-2" || len(page.Entries) != 1 {
+	if page.NextToken != "page-2" || len(page.Entries) != 1 || !page.HorizonReached {
 		t.Fatalf("page = %+v", page)
 	}
 	got := page.Entries[0]
 	if got.ExternalID != "dm-1" || got.ParentExternalID != "conversation-1" ||
 		got.ThreadKey != "conversation-1" || got.AuthorName != "Robin" {
 		t.Fatalf("entry = %+v", got)
+	}
+}
+
+func TestTwitterInboxMentionsAllowsOneResultWithoutPaidOverRead(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("max_results"); got != "1" {
+			t.Fatalf("max_results = %q, want 1", got)
+		}
+		_, _ = io.WriteString(w, `{"data":[],"meta":{}}`)
+	}))
+	defer server.Close()
+
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+	if _, err := adapter.FetchInboxMentions(
+		context.Background(),
+		"user-token",
+		"user-1",
+		time.Time{},
+		"",
+		1,
+	); err != nil {
+		t.Fatalf("FetchInboxMentions: %v", err)
 	}
 }
 
@@ -341,6 +373,87 @@ func TestTwitterInboxWriteTransportErrorsPreserveOutcomeStage(t *testing.T) {
 	if err == nil || !strings.HasPrefix(err.Error(), "create_dm timeout") {
 		t.Fatalf("dm err = %v", err)
 	}
+}
+
+func TestTwitterInboxMalformedCreatedResponseIsOutcomeUnknown(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		response string
+		call     func(*TwitterAdapter) error
+	}{
+		{
+			name:     "reply malformed JSON",
+			path:     "/2/tweets",
+			response: `{"data":`,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+				return err
+			},
+		},
+		{
+			name:     "reply missing post id",
+			path:     "/2/tweets",
+			response: `{"data":{"text":"reply"}}`,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+				return err
+			},
+		},
+		{
+			name:     "reply trailing malformed JSON",
+			path:     "/2/tweets",
+			response: `{"data":{"id":"tweet-2"}} trailing`,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxReply(context.Background(), "user-token", "tweet-1", "reply")
+				return err
+			},
+		},
+		{
+			name:     "DM malformed JSON",
+			path:     "/2/dm_conversations/conversation-1/messages",
+			response: `{"data":`,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "dm")
+				return err
+			},
+		},
+		{
+			name:     "DM missing event id",
+			path:     "/2/dm_conversations/conversation-1/messages",
+			response: `{"data":{"dm_conversation_id":"conversation-1"}}`,
+			call: func(adapter *TwitterAdapter) error {
+				_, err := adapter.SendInboxDMToConversation(context.Background(), "user-token", "conversation-1", "dm")
+				return err
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tt.path {
+					t.Fatalf("path = %q, want %q", r.URL.Path, tt.path)
+				}
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, tt.response)
+			}))
+			defer server.Close()
+			adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+			err := tt.call(adapter)
+			if err == nil || !xWriteOutcomeUnknownForTest(err) {
+				t.Fatalf("err = %v, want outcome-unknown stage", err)
+			}
+		})
+	}
+}
+
+func xWriteOutcomeUnknownForTest(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.HasPrefix(message, "create_tweet_reply:") ||
+		strings.HasPrefix(message, "create_dm:")
 }
 
 func TestTwitterOAuthPKCEExchangeRejectsMalformedTokenJSON(t *testing.T) {

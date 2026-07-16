@@ -153,17 +153,30 @@ func validateXInboxReplyTarget(item db.InboxItem) error {
 	}
 }
 
-func xInboxReplyMissingScope(source string, scopes []string) string {
-	required := "tweet.write"
+func xInboxReplyMissingScopes(source string, scopes []string) []string {
+	required := []string{"tweet.read", "tweet.write", "users.read"}
 	if source == "x_dm" {
-		required = "dm.write"
+		required = []string{"dm.read", "dm.write", "tweet.read", "users.read"}
 	}
-	for _, scope := range scopes {
-		if strings.EqualFold(strings.TrimSpace(scope), required) {
-			return ""
+	return missingXScopes(scopes, required...)
+}
+
+func xInboxBackfillMissingScopes(source string, scopes []string) []string {
+	required := []string{"tweet.read", "users.read"}
+	if source == "x_dm" {
+		required = []string{"dm.read", "tweet.read", "users.read"}
+	}
+	return missingXScopes(scopes, required...)
+}
+
+func missingXScopes(scopes []string, required ...string) []string {
+	missing := make([]string, 0, len(required))
+	for _, want := range required {
+		if !hasXScopes(scopes, want) {
+			missing = append(missing, want)
 		}
 	}
-	return required
+	return missing
 }
 
 func hasXScopes(scopes []string, required ...string) bool {

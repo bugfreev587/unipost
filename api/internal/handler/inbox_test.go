@@ -2,7 +2,11 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -81,12 +85,36 @@ func TestInboxXReplyEligibilityRequiresPersistedSummonedItem(t *testing.T) {
 	}
 }
 
-func TestInboxXReplyRequiresCapabilitySpecificWriteScope(t *testing.T) {
-	if missing := xInboxReplyMissingScope("x_reply", []string{"tweet.read", "tweet.write"}); missing != "" {
-		t.Fatalf("x_reply missing scope = %q", missing)
+func TestInboxXReplyRequiresFullCapabilityScopes(t *testing.T) {
+	tests := []struct {
+		source string
+		scopes []string
+		want   []string
+	}{
+		{
+			source: "x_reply",
+			scopes: []string{"tweet.write"},
+			want:   []string{"tweet.read", "users.read"},
+		},
+		{
+			source: "x_dm",
+			scopes: []string{"dm.write"},
+			want:   []string{"dm.read", "tweet.read", "users.read"},
+		},
 	}
-	if missing := xInboxReplyMissingScope("x_dm", []string{"dm.read"}); missing != "dm.write" {
-		t.Fatalf("x_dm missing scope = %q, want dm.write", missing)
+	for _, tt := range tests {
+		if got := xInboxReplyMissingScopes(tt.source, tt.scopes); !reflect.DeepEqual(got, tt.want) {
+			t.Fatalf("%s missing scopes = %v, want %v", tt.source, got, tt.want)
+		}
+	}
+}
+
+func TestInboxXBackfillRequiresPreciseLookupScopes(t *testing.T) {
+	if got := xInboxBackfillMissingScopes("x_reply", []string{"users.read"}); !reflect.DeepEqual(got, []string{"tweet.read"}) {
+		t.Fatalf("x_reply missing scopes = %v", got)
+	}
+	if got := xInboxBackfillMissingScopes("x_dm", []string{"dm.read"}); !reflect.DeepEqual(got, []string{"tweet.read", "users.read"}) {
+		t.Fatalf("x_dm missing scopes = %v", got)
 	}
 }
 
@@ -213,6 +241,162 @@ func TestInboxXBackfillRechecksAffordablePageAtDailyAndMonthlyBoundaries(t *test
 	)
 	if err != nil || got != 0 || reason != xcredits.PauseReasonDailySafetyBuffer {
 		t.Fatalf("paused affordable = %d, reason = %q, err = %v", got, reason, err)
+	}
+}
+
+type fakeXInboxBackfillAdapter struct {
+	mentionPageSizes []int
+	dmPageSizes      []int
+	mentionTokens    []string
+	mentionPages     []platform.TwitterInboxPage
+	dmTokens         []string
+	dmPages          []platform.TwitterInboxPage
+}
+
+func (f *fakeXInboxBackfillAdapter) FetchInboxMentions(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ time.Time,
+	paginationToken string,
+	maxResults int,
+) (platform.TwitterInboxPage, error) {
+	f.mentionPageSizes = append(f.mentionPageSizes, maxResults)
+	f.mentionTokens = append(f.mentionTokens, paginationToken)
+	if len(f.mentionPages) > 0 {
+		page := f.mentionPages[0]
+		f.mentionPages = f.mentionPages[1:]
+		return page, nil
+	}
+	return platform.TwitterInboxPage{}, nil
+}
+
+func (f *fakeXInboxBackfillAdapter) FetchInboxDMEvents(
+	_ context.Context,
+	_ string,
+	_ time.Time,
+	paginationToken string,
+	maxResults int,
+) (platform.TwitterInboxPage, error) {
+	f.dmPageSizes = append(f.dmPageSizes, maxResults)
+	f.dmTokens = append(f.dmTokens, paginationToken)
+	if len(f.dmPages) > 0 {
+		page := f.dmPages[0]
+		f.dmPages = f.dmPages[1:]
+		return page, nil
+	}
+	return platform.TwitterInboxPage{}, nil
+}
+
+func (f *fakeXInboxBackfillAdapter) SendInboxReply(context.Context, string, string, string) (*platform.PostResult, error) {
+	return nil, errors.New("not used")
+}
+
+func (f *fakeXInboxBackfillAdapter) SendInboxDMToConversation(context.Context, string, string, string) (*platform.TwitterDMSendResult, error) {
+	return nil, errors.New("not used")
+}
+
+func (f *fakeXInboxBackfillAdapter) SendInboxDMToParticipant(context.Context, string, string, string) (*platform.TwitterDMSendResult, error) {
+	return nil, errors.New("not used")
+}
+
+func TestInboxXBackfillSendsOneResultPageWhenOnlyOneItemIsAffordable(t *testing.T) {
+	monthly := int64(15)
+	daily := int64(100)
+	credits := &fakeXInboxCredits{snapshot: xcredits.Snapshot{
+		MonthlyRemaining:  &monthly,
+		InboundDailyLimit: &daily,
+	}}
+	handler := &InboxHandler{xCredits: credits}
+	adapter := &fakeXInboxBackfillAdapter{}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(),
+		"workspace-1",
+		db.SocialAccount{
+			ID:                "account-1",
+			ExternalAccountID: "user-1",
+			XAppMode:          pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:             []string{"tweet.read", "users.read"},
+		},
+		"user-token",
+		adapter,
+		"x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 100},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+		result,
+	)
+	if !reflect.DeepEqual(adapter.mentionPageSizes, []int{1}) {
+		t.Fatalf("mention page sizes = %v, want [1]", adapter.mentionPageSizes)
+	}
+	if result.StoppedAtBoundary {
+		t.Fatalf("one affordable result was incorrectly treated as a boundary: %+v", result)
+	}
+}
+
+type fakeXInboxIngestionStore struct{}
+
+func (fakeXInboxIngestionStore) AccountForApp(context.Context, string, string) (xinbox.InboxAccount, error) {
+	return xinbox.InboxAccount{}, errors.New("not used")
+}
+
+func (fakeXInboxIngestionStore) AccountsForExternalUser(context.Context, string, string) ([]xinbox.InboxAccount, error) {
+	return nil, errors.New("not used")
+}
+
+func (fakeXInboxIngestionStore) InsertInboxItem(context.Context, xinbox.InboxItem) (xinbox.InboxItem, bool, error) {
+	return xinbox.InboxItem{}, false, errors.New("not used")
+}
+
+func TestInboxXBackfillStopsPaginationAtLocalHorizon(t *testing.T) {
+	adapter := &fakeXInboxBackfillAdapter{
+		dmPages: []platform.TwitterInboxPage{
+			{
+				Entries: []platform.TwitterInboxEntry{{
+					ExternalID: "dm-1",
+					ThreadKey:  "conversation-1",
+					Timestamp:  time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+					Source:     "x_dm",
+				}},
+				NextToken:      "page-2",
+				HorizonReached: true,
+			},
+			{},
+		},
+	}
+	ingestion := xinbox.NewIngestionService(xinbox.IngestionConfig{
+		Store: fakeXInboxIngestionStore{},
+		AtomicProcess: func(
+			context.Context,
+			xinbox.InboundAdmissionRequest,
+			xinbox.InboxItem,
+		) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
+			return xinbox.InboundAdmission{Accepted: true}, xinbox.InboxItem{}, false, nil
+		},
+	})
+	handler := &InboxHandler{
+		xCredits:   &fakeXInboxCredits{},
+		xIngestion: ingestion,
+	}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(),
+		"workspace-1",
+		db.SocialAccount{
+			ID:                "account-1",
+			ExternalAccountID: "user-1",
+			XAppMode:          pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+			Scope:             []string{"dm.read", "tweet.read", "users.read"},
+		},
+		"user-token",
+		adapter,
+		"x_dm",
+		xBackfillRequest{LookbackDays: 30, MaxItems: 2},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+		result,
+	)
+	if !reflect.DeepEqual(adapter.dmTokens, []string{""}) {
+		t.Fatalf("pagination tokens = %v, want one initial request", adapter.dmTokens)
 	}
 }
 
@@ -416,6 +600,30 @@ func TestInboxXUnknownWriteOutcomeKeepsProvisionalUsage(t *testing.T) {
 	}
 	if credits.reversedID != "" || credits.finalizedID != "" {
 		t.Fatalf("unknown result was settled: %+v", credits)
+	}
+}
+
+func TestInboxXUnknownWriteOutcomeReturnsReconciliationState(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	(&InboxHandler{}).writeXInboxReplyError(recorder, ErrXWriteOutcomePending)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", recorder.Code)
+	}
+	var response struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Error.Code != "X_WRITE_OUTCOME_PENDING" {
+		t.Fatalf("code = %q, want X_WRITE_OUTCOME_PENDING", response.Error.Code)
+	}
+	if !strings.Contains(response.Error.Message, "will not send again") ||
+		!strings.Contains(response.Error.Message, "reconciliation") {
+		t.Fatalf("message = %q", response.Error.Message)
 	}
 }
 
