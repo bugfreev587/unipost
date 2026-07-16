@@ -508,6 +508,10 @@ func socialPostResultScanRow(result db.SocialPostResult) scanRow {
 		result.ErrorTemporality,
 		result.ProviderError,
 		result.PublishToken,
+		result.XCreditsCounted,
+		result.XCreditOperation,
+		result.XCreditCatalogVersion,
+		result.XCreditBillingMode,
 	}}
 }
 

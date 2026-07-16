@@ -2,9 +2,12 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -14,10 +17,18 @@ type fakeXUsageService struct {
 	requests []xcredits.ReserveRequest
 	finals   []string
 	reverses []string
+	event    xcredits.UsageEvent
+	err      error
 }
 
 func (f *fakeXUsageService) Reserve(_ context.Context, req xcredits.ReserveRequest) (xcredits.UsageEvent, error) {
 	f.requests = append(f.requests, req)
+	if f.err != nil {
+		return xcredits.UsageEvent{}, f.err
+	}
+	if f.event.ID != "" || f.event.Status != "" {
+		return f.event, nil
+	}
 	return xcredits.UsageEvent{
 		ID:             "xue_1",
 		Status:         xcredits.UsageStatusProvisional,
@@ -48,6 +59,8 @@ func TestXOperationForTextUsesConservativeURLWeight(t *testing.T) {
 		{text: "quoted https://x.com/unipost/status/1", want: "post.create_url"},
 		{text: "docs are at unipost.dev/docs", want: "post.create_url"},
 		{text: "short link bit.ly/launch", want: "post.create_url"},
+		{text: "international domain 例子.公司/发布", want: "post.create_url"},
+		{text: "punctuation (unipost.dev), works", want: "post.create_url"},
 	}
 	for _, tt := range tests {
 		if got := xOperationForText(tt.text); got != tt.want {
@@ -133,6 +146,56 @@ func TestReserveManagedXOperationUsesFirstCommentWeight(t *testing.T) {
 	}
 }
 
+func TestReserveManagedXOperationStopsDuplicateUnknownOutcome(t *testing.T) {
+	fake := &fakeXUsageService{event: xcredits.UsageEvent{
+		ID:             "xue_existing",
+		Status:         xcredits.UsageStatusProvisional,
+		OperationKey:   "post.create",
+		CatalogVersion: xcredits.CatalogVersion,
+		WeightedUnits:  15,
+		Duplicate:      true,
+	}}
+	h := &SocialPostHandler{xUsage: fake}
+	account := db.SocialAccount{ID: "sa_1", Platform: "twitter", ConnectionType: "managed"}
+
+	_, err := h.reserveManagedXOperation(context.Background(), "ws_1", "result_1:main", account, "post.create")
+	if !errors.Is(err, ErrXWriteOutcomePending) {
+		t.Fatalf("error = %v, want ErrXWriteOutcomePending", err)
+	}
+}
+
+func TestSettleManagedXUsageFinalizesSuccessAndReversesConfirmedFailure(t *testing.T) {
+	fake := &fakeXUsageService{}
+	event := xcredits.UsageEvent{ID: "xue_1", WeightedUnits: 15}
+
+	if err := settleManagedXUsage(context.Background(), fake, event, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.finals) != 1 || len(fake.reverses) != 0 {
+		t.Fatalf("success finals=%v reverses=%v", fake.finals, fake.reverses)
+	}
+
+	fake.finals = nil
+	if err := settleManagedXUsage(context.Background(), fake, event, errors.New("tweet failed (400): invalid")); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.finals) != 0 || len(fake.reverses) != 1 {
+		t.Fatalf("failure finals=%v reverses=%v", fake.finals, fake.reverses)
+	}
+}
+
+func TestSettleManagedXUsageKeepsUnknownWriteProvisional(t *testing.T) {
+	fake := &fakeXUsageService{}
+	event := xcredits.UsageEvent{ID: "xue_1", WeightedUnits: 15}
+	err := settleManagedXUsage(context.Background(), fake, event, errors.New("create_tweet timeout after 20s"))
+	if !errors.Is(err, ErrXWriteOutcomePending) {
+		t.Fatalf("error = %v, want ErrXWriteOutcomePending", err)
+	}
+	if len(fake.finals) != 0 || len(fake.reverses) != 0 {
+		t.Fatalf("unknown outcome finals=%v reverses=%v", fake.finals, fake.reverses)
+	}
+}
+
 func TestPublishGateOrdersDailyCapBeforeXUsage(t *testing.T) {
 	source, err := os.ReadFile("social_posts.go")
 	if err != nil {
@@ -146,5 +209,38 @@ func TestPublishGateOrdersDailyCapBeforeXUsage(t *testing.T) {
 	}
 	if daily >= usage {
 		t.Fatalf("daily safety gate must execute before X usage reservation")
+	}
+}
+
+func TestQueuedXUsageKeyUsesStableResultID(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "xUsageKeyForResult(res.ID)") {
+		t.Fatal("queued publishing must derive the X usage key from the stable social post result ID")
+	}
+	if strings.Contains(text, `fmt.Sprintf("%s:%d", job.ID, job.Attempts)`) {
+		t.Fatal("queued publishing must not derive the X usage key from mutable job attempts")
+	}
+}
+
+func TestPostResultResponseIncludesXUsageContract(t *testing.T) {
+	row := db.SocialPostResult{
+		ID:                    "result_1",
+		SocialAccountID:       "sa_1",
+		Status:                "published",
+		XCreditsCounted:       15,
+		XCreditOperation:      pgtype.Text{String: "post.create", Valid: true},
+		XCreditCatalogVersion: pgtype.Text{String: xcredits.CatalogVersion, Valid: true},
+		XCreditBillingMode:    pgtype.Text{String: "unipost_managed_app", Valid: true},
+	}
+	got := postResultResponseFromDBResult(row, accountSummary{Platform: "twitter"})
+	if got.XCreditsCounted != 15 ||
+		got.XCreditOperation == nil || *got.XCreditOperation != "post.create" ||
+		got.XCreditCatalog == nil || *got.XCreditCatalog != xcredits.CatalogVersion ||
+		got.XCreditBillingMode == nil || *got.XCreditBillingMode != "unipost_managed_app" {
+		t.Fatalf("response = %+v", got)
 	}
 }

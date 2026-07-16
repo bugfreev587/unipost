@@ -51,11 +51,26 @@ func (s *PostgresStore) ResolveWorkspacePeriod(ctx context.Context, workspaceID 
 		period.Start = sub.CurrentPeriodStart.Time.UTC()
 		period.End = sub.CurrentPeriodEnd.Time.UTC()
 	}
+	if period.PlanID == "enterprise" {
+		var monthlyAllowance, inboundDailyLimit int64
+		err := s.pool.QueryRow(ctx, `
+			SELECT monthly_allowance, inbound_daily_limit
+			FROM x_workspace_allowances
+			WHERE workspace_id = $1
+		`, workspaceID).Scan(&monthlyAllowance, &inboundDailyLimit)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return WorkspacePeriod{}, err
+		}
+		if err == nil {
+			period.MonthlyAllowance = int64Pointer(monthlyAllowance)
+			period.InboundDailyLimit = int64Pointer(inboundDailyLimit)
+		}
+	}
 	return period, nil
 }
 
 func (s *PostgresStore) Reserve(ctx context.Context, req StoreReserveRequest) (UsageEvent, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return UsageEvent{}, err
 	}
@@ -72,26 +87,50 @@ func (s *PostgresStore) Reserve(ctx context.Context, req StoreReserveRequest) (U
 		return UsageEvent{}, err
 	}
 
-	var existing UsageEvent
+	event := UsageEvent{
+		Status:         UsageStatusProvisional,
+		OperationKey:   req.OperationKey,
+		CatalogVersion: req.CatalogVersion,
+		WeightedUnits:  req.WeightedUnits,
+	}
 	err = tx.QueryRow(ctx, `
-		SELECT id, status, operation_key, catalog_version, weighted_units
-		FROM x_usage_events
-		WHERE workspace_id = $1 AND idempotency_key = $2
-	`, req.WorkspaceID, req.IdempotencyKey).Scan(
-		&existing.ID,
-		&existing.Status,
-		&existing.OperationKey,
-		&existing.CatalogVersion,
-		&existing.WeightedUnits,
-	)
-	if err == nil {
-		existing.Duplicate = true
-		if err := tx.Commit(ctx); err != nil {
+		INSERT INTO x_usage_events (
+			workspace_id, social_account_id, period_start, period_end,
+			operation_key, catalog_version, source, idempotency_key,
+			weighted_units, status, connection_mode
+		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, 'provisional', 'managed')
+		ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
+		RETURNING id
+	`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
+		req.OperationKey, req.CatalogVersion, req.Source, req.IdempotencyKey,
+		req.WeightedUnits,
+	).Scan(&event.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		var existing UsageEvent
+		err = tx.QueryRow(ctx, `
+			SELECT id, status, operation_key, catalog_version, weighted_units
+			FROM x_usage_events
+			WHERE workspace_id = $1 AND idempotency_key = $2
+			FOR UPDATE
+		`, req.WorkspaceID, req.IdempotencyKey).Scan(
+			&existing.ID,
+			&existing.Status,
+			&existing.OperationKey,
+			&existing.CatalogVersion,
+			&existing.WeightedUnits,
+		)
+		if err != nil {
 			return UsageEvent{}, err
 		}
-		return existing, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+		if existing.Status != UsageStatusReversed {
+			existing.Duplicate = true
+			if err := tx.Commit(ctx); err != nil {
+				return UsageEvent{}, err
+			}
+			return existing, nil
+		}
+		event.ID = existing.ID
+	} else if err != nil {
 		return UsageEvent{}, err
 	}
 
@@ -110,23 +149,16 @@ func (s *PostgresStore) Reserve(ctx context.Context, req StoreReserveRequest) (U
 		return UsageEvent{}, ErrMonthlyLimitExceeded
 	}
 
-	event := UsageEvent{
-		Status:         UsageStatusProvisional,
-		OperationKey:   req.OperationKey,
-		CatalogVersion: req.CatalogVersion,
-		WeightedUnits:  req.WeightedUnits,
-	}
-	err = tx.QueryRow(ctx, `
-		INSERT INTO x_usage_events (
-			workspace_id, social_account_id, period_start, period_end,
-			operation_key, catalog_version, source, idempotency_key,
-			weighted_units, status
-		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, 'provisional')
-		RETURNING id
-	`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
-		req.OperationKey, req.CatalogVersion, req.Source, req.IdempotencyKey,
-		req.WeightedUnits,
-	).Scan(&event.ID)
+	_, err = tx.Exec(ctx, `
+		UPDATE x_usage_events
+		SET status = 'provisional',
+		    operation_key = $2,
+		    catalog_version = $3,
+		    source = $4,
+		    weighted_units = $5,
+		    updated_at = NOW()
+		WHERE id = $1
+	`, event.ID, req.OperationKey, req.CatalogVersion, req.Source, req.WeightedUnits)
 	if err != nil {
 		return UsageEvent{}, err
 	}
@@ -235,7 +267,15 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 		return Snapshot{}, err
 	}
 	allowance, allowanceConfigured := PlanAllowance(period.PlanID)
+	if period.MonthlyAllowance != nil {
+		allowance = *period.MonthlyAllowance
+		allowanceConfigured = true
+	}
 	inboundLimit, inboundLimitConfigured := InboundDailyLimit(period.PlanID)
+	if period.InboundDailyLimit != nil {
+		inboundLimit = *period.InboundDailyLimit
+		inboundLimitConfigured = true
+	}
 
 	var used int64
 	err = s.pool.QueryRow(ctx, `

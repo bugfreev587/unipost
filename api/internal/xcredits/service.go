@@ -20,9 +20,11 @@ var (
 )
 
 type WorkspacePeriod struct {
-	PlanID string
-	Start  time.Time
-	End    time.Time
+	PlanID            string
+	Start             time.Time
+	End               time.Time
+	MonthlyAllowance  *int64
+	InboundDailyLimit *int64
 }
 
 type ReserveRequest struct {
@@ -110,9 +112,15 @@ func (s *Service) Reserve(ctx context.Context, req ReserveRequest) (UsageEvent, 
 	if err != nil {
 		return UsageEvent{}, err
 	}
-	allowance, ok := PlanAllowance(period.PlanID)
-	if !ok {
-		return UsageEvent{}, ErrAllowanceNotConfigured
+	allowance := int64(0)
+	if period.MonthlyAllowance != nil {
+		allowance = *period.MonthlyAllowance
+	} else {
+		var ok bool
+		allowance, ok = PlanAllowance(period.PlanID)
+		if !ok {
+			return UsageEvent{}, ErrAllowanceNotConfigured
+		}
 	}
 	if period.Start.IsZero() || period.End.IsZero() || !period.End.After(period.Start) {
 		period.Start, period.End = CalendarMonthPeriod(req.Now)

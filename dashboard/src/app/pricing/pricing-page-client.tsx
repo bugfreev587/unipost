@@ -218,7 +218,15 @@ const X_CREDITS_CSS = `
 .pr-xcredits-plan{font-family:var(--pr-ui);font-weight:750}
 .pr-xcredits-muted{display:block;margin-top:3px;font-family:var(--pr-ui);font-size:11.5px;line-height:1.45;color:var(--pr-muted)}
 .pr-xcredits-note{margin-top:14px;font-size:12.5px;line-height:1.65;color:var(--pr-muted)}
-@media(max-width:680px){.pr-xcredits-title{font-size:26px}.pr-xcredits-head{text-align:left}.pr-xcredits{margin-bottom:48px}}
+.pr-xcredits-cards{display:none}
+.pr-xcredits-card{border:1px solid var(--pr-border);border-radius:12px;padding:15px;background:var(--pr-s1)}
+.pr-xcredits-card.current{border-color:var(--pr-accent);box-shadow:0 0 0 1px var(--pr-accent)}
+.pr-xcredits-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+.pr-xcredits-current{font-family:var(--pr-mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--pr-accent)}
+.pr-xcredits-card-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pr-xcredits-card-label{display:block;font-size:10.5px;color:var(--pr-muted);margin-bottom:2px}
+.pr-xcredits-card-value{font-family:var(--pr-mono);font-size:13px;color:var(--pr-text)}
+@media(max-width:680px){.pr-xcredits-title{font-size:26px}.pr-xcredits-head{text-align:left}.pr-xcredits{margin-bottom:48px}.pr-xcredits-wrap{display:none}.pr-xcredits-cards{display:grid;gap:10px}}
 `;
 
 // ── Component ──
@@ -371,24 +379,41 @@ export default function PricingPage() {
                 </tr>
               </thead>
               <tbody>
-                {X_CREDIT_PLANS.filter((plan) => plan.id !== "free" && plan.id !== "enterprise").map((plan) => (
-                  <tr key={plan.id}>
+                {X_CREDIT_PLANS.map((plan) => (
+                  <tr key={plan.id} className={currentPlan === plan.id ? "current" : ""}>
                     <td><span className="pr-xcredits-plan">{plan.label}</span></td>
-                    <td>{plan.monthly_allowance?.toLocaleString()}</td>
-                    <td>{plan.capacity?.normal_posts.toLocaleString()}</td>
-                    <td>{plan.capacity?.url_posts.toLocaleString()}</td>
+                    <td>{plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString()}</td>
+                    <td>{plan.capacity?.normal_posts.toLocaleString() ?? "Custom"}</td>
+                    <td>{plan.capacity?.url_posts.toLocaleString() ?? "Custom"}</td>
                     <td>
-                      {plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() : "Inbox not included"}
+                      {plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}
                       <span className="pr-xcredits-muted">One received comment + one reply.</span>
                     </td>
                     <td>
-                      {plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() : "Inbox not included"}
+                      {plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}
                       <span className="pr-xcredits-muted">One received DM + one sent DM.</span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="pr-xcredits-cards">
+            {X_CREDIT_PLANS.map((plan) => (
+              <article key={plan.id} className={`pr-xcredits-card ${currentPlan === plan.id ? "current" : ""}`}>
+                <div className="pr-xcredits-card-head">
+                  <span className="pr-xcredits-plan">{plan.label}</span>
+                  {currentPlan === plan.id && <span className="pr-xcredits-current">Current plan</span>}
+                </div>
+                <div className="pr-xcredits-card-grid">
+                  <div><span className="pr-xcredits-card-label">Included Credits</span><span className="pr-xcredits-card-value">{plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString()}</span></div>
+                  <div><span className="pr-xcredits-card-label">Normal X posts</span><span className="pr-xcredits-card-value">{plan.capacity?.normal_posts.toLocaleString() ?? "Custom"}</span></div>
+                  <div><span className="pr-xcredits-card-label">Posts with URL</span><span className="pr-xcredits-card-value">{plan.capacity?.url_posts.toLocaleString() ?? "Custom"}</span></div>
+                  <div><span className="pr-xcredits-card-label">Complete comments</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}</span></div>
+                  <div><span className="pr-xcredits-card-label">Complete DMs</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}</span></div>
+                </div>
+              </article>
+            ))}
           </div>
           <p className="pr-xcredits-note">
             Enterprise X Credits and inbound limits are contract-defined. The independent safety cap of 20 X posts

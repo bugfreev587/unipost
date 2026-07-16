@@ -38,7 +38,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
 
-var xURLCandidatePattern = regexp.MustCompile(`(?i)(https?://|www\.|(?:^|[^@[:alnum:]_])(?:[a-z0-9-]+\.)+[a-z]{2,}(?:[/:?#][^[:space:]]*)?)`)
+var xURLCandidatePattern = regexp.MustCompile(`(?i)(https?://|www\.|(?:^|[^@\p{L}\p{N}_])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:[/:?#][^\s]*)?)`)
 
 type SocialPostHandler struct {
 	queries   *db.Queries
@@ -294,15 +294,19 @@ type postResultResponse struct {
 	FailureStage *string `json:"failure_stage,omitempty"`
 	// PlatformErrorCode is the provider's stable/near-stable error token
 	// when one is safely available, for example TikTok invalid_params.
-	PlatformErrorCode *string                     `json:"platform_error_code,omitempty"`
-	IsRetriable       *bool                       `json:"is_retriable,omitempty"`
-	NextAction        *string                     `json:"next_action,omitempty"`
-	ErrorSource       *string                     `json:"error_source,omitempty"`
-	ErrorTemporality  *string                     `json:"error_temporality,omitempty"`
-	ProviderError     *postfailures.ProviderError `json:"provider_error,omitempty"`
-	RetryPolicy       *retryPolicyResponse        `json:"retry_policy,omitempty"`
-	PublishedAt       *string                     `json:"published_at,omitempty"`
-	PublishStatus     map[string]any              `json:"publish_status,omitempty"`
+	PlatformErrorCode  *string                     `json:"platform_error_code,omitempty"`
+	IsRetriable        *bool                       `json:"is_retriable,omitempty"`
+	NextAction         *string                     `json:"next_action,omitempty"`
+	ErrorSource        *string                     `json:"error_source,omitempty"`
+	ErrorTemporality   *string                     `json:"error_temporality,omitempty"`
+	ProviderError      *postfailures.ProviderError `json:"provider_error,omitempty"`
+	RetryPolicy        *retryPolicyResponse        `json:"retry_policy,omitempty"`
+	PublishedAt        *string                     `json:"published_at,omitempty"`
+	PublishStatus      map[string]any              `json:"publish_status,omitempty"`
+	XCreditsCounted    int64                       `json:"x_credits_counted"`
+	XCreditOperation   *string                     `json:"x_credit_operation,omitempty"`
+	XCreditCatalog     *string                     `json:"x_credit_catalog_version,omitempty"`
+	XCreditBillingMode *string                     `json:"x_credit_billing_mode,omitempty"`
 	// Warnings (Sprint 4 PR3) carries non-fatal issues that didn't
 	// prevent the main post from being published. The first user is
 	// first_comment failure: the parent post lands and reports
@@ -364,6 +368,16 @@ func postResultResponseFromDBResult(row db.SocialPostResult, account accountSumm
 	}
 	if row.DebugCurl.Valid {
 		resp.DebugCurl = &row.DebugCurl.String
+	}
+	resp.XCreditsCounted = row.XCreditsCounted
+	if row.XCreditOperation.Valid {
+		resp.XCreditOperation = &row.XCreditOperation.String
+	}
+	if row.XCreditCatalogVersion.Valid {
+		resp.XCreditCatalog = &row.XCreditCatalogVersion.String
+	}
+	if row.XCreditBillingMode.Valid {
+		resp.XCreditBillingMode = &row.XCreditBillingMode.String
 	}
 	return resp
 }
@@ -1299,6 +1313,19 @@ func (h *SocialPostHandler) executePublishLoop(
 			Url:             postURL,
 			DebugCurl:       debugCurl,
 			FbMediaType:     fbMediaType,
+			XCreditsCounted: oc.xCreditsCounted,
+			XCreditOperation: pgtype.Text{
+				String: oc.xCreditOperation,
+				Valid:  oc.xCreditOperation != "",
+			},
+			XCreditCatalogVersion: pgtype.Text{
+				String: oc.xCreditCatalog,
+				Valid:  oc.xCreditCatalog != "",
+			},
+			XCreditBillingMode: pgtype.Text{
+				String: oc.xCreditBillingMode,
+				Valid:  oc.xCreditBillingMode != "",
+			},
 		})
 		if dbErr != nil {
 			// Most common cause: FK violation from a deleted social account.
@@ -1815,6 +1842,16 @@ func (h *SocialPostHandler) publishOneContext(
 		oc.err = usageErr
 		return
 	}
+	if acc.Platform == "twitter" {
+		if acc.ConnectionType == "managed" {
+			oc.xCreditBillingMode = "unipost_managed_app"
+			oc.xCreditsCounted = usageEvent.WeightedUnits
+			oc.xCreditOperation = usageEvent.OperationKey
+			oc.xCreditCatalog = usageEvent.CatalogVersion
+		} else {
+			oc.xCreditBillingMode = "customer_x_app"
+		}
+	}
 
 	postResult, err := adapter.Post(
 		dispatchCtx,
@@ -1826,14 +1863,14 @@ func (h *SocialPostHandler) publishOneContext(
 	oc.result = postResult
 	oc.err = err
 	oc.debugCurl = debugRec.Serialize()
-	if usageEvent.ID != "" {
-		if err == nil {
-			if settleErr := h.xUsage.Finalize(ctx, usageEvent.ID, usageEvent.WeightedUnits); settleErr != nil {
-				slog.Error("X usage finalize failed", "event_id", usageEvent.ID, "account_id", acc.ID, "error", settleErr)
-			}
-		} else if reverseErr := h.xUsage.Reverse(ctx, usageEvent.ID); reverseErr != nil {
-			slog.Error("X usage reverse failed", "event_id", usageEvent.ID, "account_id", acc.ID, "error", reverseErr)
+	if settleErr := settleManagedXUsage(ctx, h.xUsage, usageEvent, err); settleErr != nil {
+		if errors.Is(settleErr, ErrXWriteOutcomePending) {
+			oc.err = settleErr
+		} else {
+			slog.Error("X usage settlement failed", "event_id", usageEvent.ID, "account_id", acc.ID, "error", settleErr)
 		}
+	} else if err != nil {
+		oc.xCreditsCounted = 0
 	}
 
 	// Sprint 4 PR3: first_comment dispatch. Only fires when the main
@@ -1848,19 +1885,27 @@ func (h *SocialPostHandler) publishOneContext(
 				oc.firstCommentWarning = reserveErr.Error()
 				return
 			}
+			if commentEvent.ID != "" {
+				oc.xCreditsCounted += commentEvent.WeightedUnits
+			}
 			if _, ferr := commenter.PostComment(ctx, accessToken, postResult.ExternalID, pp.FirstComment); ferr != nil {
-				if commentEvent.ID != "" {
-					_ = h.xUsage.Reverse(ctx, commentEvent.ID)
+				settleErr := settleManagedXUsage(ctx, h.xUsage, commentEvent, ferr)
+				if errors.Is(settleErr, ErrXWriteOutcomePending) {
+					oc.firstCommentWarning = settleErr.Error()
+				} else {
+					oc.firstCommentWarning = ferr.Error()
+					if settleErr == nil {
+						oc.xCreditsCounted -= commentEvent.WeightedUnits
+					}
 				}
-				oc.firstCommentWarning = ferr.Error()
 				slog.Warn("first_comment failed",
 					"account_id", acc.ID,
 					"platform", acc.Platform,
 					"parent_id", postResult.ExternalID,
 					"err", ferr,
 				)
-			} else if commentEvent.ID != "" {
-				if settleErr := h.xUsage.Finalize(ctx, commentEvent.ID, commentEvent.WeightedUnits); settleErr != nil {
+			} else {
+				if settleErr := settleManagedXUsage(ctx, h.xUsage, commentEvent, nil); settleErr != nil {
 					slog.Error("X first-comment usage finalize failed", "event_id", commentEvent.ID, "account_id", acc.ID, "error", settleErr)
 				}
 			}
@@ -1896,7 +1941,7 @@ func (h *SocialPostHandler) reserveManagedXOperation(
 	if h == nil || h.xUsage == nil || account.Platform != "twitter" || account.ConnectionType != "managed" {
 		return xcredits.UsageEvent{}, nil
 	}
-	return h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
+	event, err := h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
 		WorkspaceID:     workspaceID,
 		SocialAccountID: account.ID,
 		ConnectionType:  account.ConnectionType,
@@ -1905,6 +1950,46 @@ func (h *SocialPostHandler) reserveManagedXOperation(
 		IdempotencyKey:  usageKey,
 		RequestedUnits:  xcredits.OperationWeight(operation),
 	})
+	if err != nil {
+		return xcredits.UsageEvent{}, err
+	}
+	if event.Duplicate && (event.Status == xcredits.UsageStatusProvisional || event.Status == xcredits.UsageStatusFinalized) {
+		return xcredits.UsageEvent{}, ErrXWriteOutcomePending
+	}
+	return event, nil
+}
+
+func settleManagedXUsage(
+	ctx context.Context,
+	service xUsageService,
+	event xcredits.UsageEvent,
+	publishErr error,
+) error {
+	if service == nil || event.ID == "" {
+		return nil
+	}
+	if publishErr == nil {
+		return service.Finalize(ctx, event.ID, event.WeightedUnits)
+	}
+	if xWriteOutcomeUnknown(publishErr) {
+		return ErrXWriteOutcomePending
+	}
+	return service.Reverse(ctx, event.ID)
+}
+
+func xWriteOutcomeUnknown(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "create_tweet timeout") ||
+		strings.Contains(message, "create_tweet canceled") ||
+		strings.Contains(message, "create_tweet_reply timeout") ||
+		strings.Contains(message, "create_tweet_reply canceled")
+}
+
+func xUsageKeyForResult(resultID string) string {
+	return "social-post-result:" + resultID
 }
 
 // resolveMediaIDsToURLs is the publish-time half of the media library
@@ -1990,6 +2075,10 @@ type publishOneOutcome struct {
 	result              *platform.PostResult
 	err                 error
 	firstCommentWarning string
+	xCreditsCounted     int64
+	xCreditOperation    string
+	xCreditCatalog      string
+	xCreditBillingMode  string
 	// debugCurl is the serialized curl+response dump of every non-2xx
 	// HTTP request the adapter made during this dispatch (see
 	// internal/debugrt). Populated whenever entries exist, but only
@@ -2078,6 +2167,8 @@ func idempotencyKeyParam(key string) pgtype.Text {
 // CodePlanPlatformNotAllowed code so dashboard / SDK switches stay
 // consistent across the validate + publish surfaces.
 var ErrPlanPlatformNotAllowed = errors.New("plan_platform_not_allowed: publishing to this platform is not available on your current plan — upgrade at unipost.dev/pricing")
+
+var ErrXWriteOutcomePending = errors.New("x_write_outcome_pending_reconciliation: the prior X write outcome is unknown; UniPost blocked an automatic retry to prevent a duplicate post")
 
 // dailyTargetsFor builds the deduped (account, platform) target list
 // the per-platform daily tracker needs. The caller already loaded the

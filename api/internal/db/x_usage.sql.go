@@ -69,7 +69,7 @@ func (q *Queries) GetXUsagePeriod(ctx context.Context, arg GetXUsagePeriodParams
 }
 
 const listProvisionalXUsageEvents = `-- name: ListProvisionalXUsageEvents :many
-SELECT id, workspace_id, social_account_id, period_start, period_end, operation_key, catalog_version, source, idempotency_key, weighted_units, status, created_at, updated_at
+SELECT id, workspace_id, social_account_id, period_start, period_end, operation_key, catalog_version, source, idempotency_key, weighted_units, status, created_at, updated_at, connection_mode
 FROM x_usage_events
 WHERE status = 'provisional'
   AND created_at <= $1
@@ -105,6 +105,7 @@ func (q *Queries) ListProvisionalXUsageEvents(ctx context.Context, arg ListProvi
 			&i.Status,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ConnectionMode,
 		); err != nil {
 			return nil, err
 		}

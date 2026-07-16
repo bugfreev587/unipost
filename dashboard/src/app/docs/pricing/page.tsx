@@ -73,7 +73,8 @@ export default function DocsPricingPage() {
       <p className="docs-guide-note">
         Each operation column assumes the full shared allowance is spent on that one operation type. A complete
         comment means one received comment plus one reply; a complete DM means one received DM plus one sent DM.
-        The independent safety cap of 20 X posts per connected account per UTC day still applies.
+        Comment and DM figures are capacity planning for phased X Inbox support and do not indicate API availability
+        before that production phase ships. The independent safety cap of 20 X posts per connected account per UTC day still applies.
       </p>
 
       <h2 id="usage-limits">Usage limits</h2>

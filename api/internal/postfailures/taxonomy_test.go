@@ -168,6 +168,14 @@ func TestClassifyKnownPublishFailures(t *testing.T) {
 			retriable:   false,
 		},
 		{
+			name:        "X write outcome pending reconciliation",
+			raw:         "x_write_outcome_pending_reconciliation: the prior X write outcome is unknown",
+			code:        "x_write_outcome_pending_reconciliation",
+			source:      ErrorSourcePlatform,
+			temporality: ErrorTemporalityUnknown,
+			retriable:   false,
+		},
+		{
 			name:        "unknown empty",
 			raw:         "",
 			code:        "unknown_error",

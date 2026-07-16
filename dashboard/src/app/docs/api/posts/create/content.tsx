@@ -582,6 +582,11 @@ export function CreatePostContent() {
               <ApiInlineLink endpoint="GET /v1/billing/x-credits" href="/docs/api/x-credits" />.
             </p>
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              Final platform results include <code>x_credits_counted</code>, <code>x_credit_operation</code>,{" "}
+              <code>x_credit_catalog_version</code>, and <code>x_credit_billing_mode</code>. BYO X results return zero
+              counted Credits with billing mode <code>customer_x_app</code>.
+            </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
               At the hard limit, managed-X delivery fails with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>x_monthly_usage_limit_exceeded</code>.
               The independent safety cap of 20 X posts per connected account per UTC day still applies.
             </p>

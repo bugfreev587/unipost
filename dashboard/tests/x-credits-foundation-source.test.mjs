@@ -24,6 +24,8 @@ test("pricing explains included X Credits with the generated catalog", async () 
   assert.match(pricing, /hard limit/);
   assert.match(pricing, /Inbox not included/);
   assert.match(pricing, /phased X Inbox support/);
+  assert.match(pricing, /pr-xcredits-cards/);
+  assert.doesNotMatch(pricing, /X_CREDIT_PLANS\.filter/);
 
   for (const expected of [
     /"id": "basic"[\s\S]*"normal_posts": 266[\s\S]*"url_posts": 20[\s\S]*"comment_interactions": 200[\s\S]*"dm_interactions": 160/,
@@ -49,6 +51,8 @@ test("billing shows every X allowance state and uses the live endpoint", async (
   assert.match(billing, /monthly_allowance === 0/);
   assert.match(billing, /20 X posts per connected account per UTC day/);
   assert.match(billing, /hard limit/);
+  assert.match(billing, /X_CREDIT_OPERATIONS/);
+  assert.doesNotMatch(billing, /xRemaining \?\? 0\) \/ (15|200|20|25)/);
 });
 
 test("X Credits reference and guide link to each other and all discovery surfaces", async () => {

@@ -3,6 +3,8 @@ package xcredits
 import (
 	"context"
 	"errors"
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -157,6 +159,26 @@ func TestServiceReserveBlocksBeforeMonthlyOverspend(t *testing.T) {
 	}
 }
 
+func TestServiceReserveUsesWorkspaceContractAllowance(t *testing.T) {
+	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	allowance := int64(90000)
+	store := newFakeStore("enterprise", now, now.Add(30*24*time.Hour))
+	store.period.MonthlyAllowance = &allowance
+	service := NewService(store)
+
+	event, err := service.Reserve(context.Background(), ReserveRequest{
+		WorkspaceID: "ws_enterprise", ConnectionType: "managed",
+		OperationKey: "post.create", Source: "publish",
+		IdempotencyKey: "enterprise-post", RequestedUnits: 15, Now: now,
+	})
+	if err != nil {
+		t.Fatalf("Reserve: %v", err)
+	}
+	if event.WeightedUnits != 15 || store.used != 15 {
+		t.Fatalf("event=%+v used=%d", event, store.used)
+	}
+}
+
 func TestServiceFinalizeAndReverseAreIdempotent(t *testing.T) {
 	now := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	store := newFakeStore("basic", now, now.Add(30*24*time.Hour))
@@ -237,5 +259,24 @@ func TestShouldSkipUsageSettlementDoesNotSwallowQueryErrors(t *testing.T) {
 	}
 	if !errors.Is(err, queryErr) {
 		t.Fatalf("error = %v, want %v", err, queryErr)
+	}
+}
+
+func TestPostgresReserveUsesRowSerializationWithoutSerializableFailures(t *testing.T) {
+	source, err := os.ReadFile("postgres.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, "pgx.Serializable") {
+		t.Fatal("Reserve must not use SERIALIZABLE without a retry loop")
+	}
+	insert := strings.Index(text, "INSERT INTO x_usage_events")
+	increment := strings.Index(text, "SET weighted_units_used = weighted_units_used + $4")
+	if insert < 0 || increment < 0 || insert >= increment {
+		t.Fatalf("event insert index=%d period increment index=%d", insert, increment)
+	}
+	if !strings.Contains(text, "ON CONFLICT (workspace_id, idempotency_key) DO NOTHING") {
+		t.Fatal("concurrent duplicate reservations must converge on one usage event")
 	}
 }

@@ -13,7 +13,7 @@ import {
   type Plan,
   type XCreditsAllowance,
 } from "@/lib/api";
-import { X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
+import { X_CREDIT_OPERATIONS, X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
 import { formatPlanPostAllowance, formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { CheckCircle2, ExternalLink } from "lucide-react";
@@ -165,6 +165,11 @@ function BillingSettingsContent() {
   const xResetDate = xCredits?.billing_period_end
     ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(xCredits.billing_period_end))
     : "";
+  const xOperationCredits = Object.fromEntries(X_CREDIT_OPERATIONS.map((operation) => [operation.key, operation.credits]));
+  const normalPostCredits = xOperationCredits["post.create"];
+  const urlPostCredits = xOperationCredits["post.create_url"];
+  const completeCommentCredits = xOperationCredits["post.mention.received"] + xOperationCredits["post.create"];
+  const completeDMCredits = xOperationCredits["dm.received"] + xOperationCredits["dm.send"];
 
   return (
     <>
@@ -403,10 +408,10 @@ function BillingSettingsContent() {
               }}
             >
               {[
-                ["Normal X posts", Math.floor((xRemaining ?? 0) / 15).toLocaleString()],
-                ["Posts with URL", Math.floor((xRemaining ?? 0) / 200).toLocaleString()],
-                ["Complete comments", xPlan?.inbox_eligible ? Math.floor((xRemaining ?? 0) / 20).toLocaleString() : "Inbox not included"],
-                ["Complete DMs", xPlan?.inbox_eligible ? Math.floor((xRemaining ?? 0) / 25).toLocaleString() : "Inbox not included"],
+                ["Normal X posts", Math.floor((xRemaining ?? 0) / normalPostCredits).toLocaleString()],
+                ["Posts with URL", Math.floor((xRemaining ?? 0) / urlPostCredits).toLocaleString()],
+                ["Complete comments", xPlan?.inbox_eligible ? Math.floor((xRemaining ?? 0) / completeCommentCredits).toLocaleString() : "Inbox not included"],
+                ["Complete DMs", xPlan?.inbox_eligible ? Math.floor((xRemaining ?? 0) / completeDMCredits).toLocaleString() : "Inbox not included"],
               ].map(([label, value]) => (
                 <div key={label} style={{ padding: "10px 11px", border: "1px solid var(--dborder)", borderRadius: 8 }}>
                   <div style={{ fontSize: 11, color: "var(--dmuted)", marginBottom: 3 }}>{label}</div>
