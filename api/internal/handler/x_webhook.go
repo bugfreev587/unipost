@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"regexp"
@@ -112,7 +113,29 @@ func (h *XWebhookHandler) CRC(w http.ResponseWriter, r *http.Request) {
 	}
 	values := r.URL.Query()
 	crcTokens, ok := values["crc_token"]
-	if !ok || len(values) != 1 || len(crcTokens) != 1 || !xCRCTokenPattern.MatchString(crcTokens[0]) {
+	validationReason := ""
+	switch {
+	case !ok:
+		validationReason = "missing_crc_token"
+	case len(values) != 1:
+		validationReason = "unexpected_query_keys"
+	case len(crcTokens) != 1:
+		validationReason = "duplicate_crc_token"
+	case !xCRCTokenPattern.MatchString(crcTokens[0]):
+		validationReason = "unsupported_crc_token_format"
+	}
+	if validationReason != "" {
+		tokenLength := 0
+		if len(crcTokens) == 1 {
+			tokenLength = len(crcTokens[0])
+		}
+		slog.Warn("X webhook CRC rejected",
+			"reason", validationReason,
+			"query_key_count", len(values),
+			"crc_token_count", len(crcTokens),
+			"crc_token_length", tokenLength,
+			"raw_query_length", len(r.URL.RawQuery),
+		)
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "crc_token is required")
 		return
 	}
