@@ -27,7 +27,7 @@ SET status = 'processing',
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
-RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at
+RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at, j.input_media_id
 `
 
 func (q *Queries) ClaimMediaProcessingJobs(ctx context.Context, batchLimit int32) ([]MediaProcessingJob, error) {
@@ -63,6 +63,7 @@ func (q *Queries) ClaimMediaProcessingJobs(ctx context.Context, batchLimit int32
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.InputMediaID,
 		); err != nil {
 			return nil, err
 		}
@@ -106,15 +107,15 @@ INSERT INTO media_processing_jobs (
   $12,
   $13
 )
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
 `
 
 type CreateMediaProcessingJobParams struct {
 	WorkspaceID       string      `json:"workspace_id"`
 	Kind              string      `json:"kind"`
 	Status            string      `json:"status"`
-	InputVideoMediaID string      `json:"input_video_media_id"`
-	InputAudioMediaID string      `json:"input_audio_media_id"`
+	InputVideoMediaID pgtype.Text `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text `json:"input_audio_media_id"`
 	OutputMediaID     pgtype.Text `json:"output_media_id"`
 	Mode              string      `json:"mode"`
 	Fit               string      `json:"fit"`
@@ -168,12 +169,13 @@ func (q *Queries) CreateMediaProcessingJob(ctx context.Context, arg CreateMediaP
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
 	)
 	return i, err
 }
 
 const getMediaProcessingJobByIDAndWorkspace = `-- name: GetMediaProcessingJobByIDAndWorkspace :one
-SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at FROM media_processing_jobs
+SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id FROM media_processing_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -209,12 +211,13 @@ func (q *Queries) GetMediaProcessingJobByIDAndWorkspace(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
 	)
 	return i, err
 }
 
 const getMediaProcessingJobByIdempotencyKey = `-- name: GetMediaProcessingJobByIdempotencyKey :one
-SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at FROM media_processing_jobs
+SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id FROM media_processing_jobs
 WHERE workspace_id = $1 AND idempotency_key = $2
 `
 
@@ -250,6 +253,7 @@ func (q *Queries) GetMediaProcessingJobByIdempotencyKey(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
 	)
 	return i, err
 }
@@ -263,7 +267,7 @@ SET status = 'failed',
     updated_at = NOW(),
     completed_at = NOW()
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
 `
 
 type MarkMediaProcessingJobFailedParams struct {
@@ -305,6 +309,7 @@ func (q *Queries) MarkMediaProcessingJobFailed(ctx context.Context, arg MarkMedi
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
 	)
 	return i, err
 }
@@ -319,7 +324,7 @@ SET status = 'succeeded',
     updated_at = NOW(),
     completed_at = NOW()
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
 `
 
 type MarkMediaProcessingJobSucceededParams struct {
@@ -354,6 +359,7 @@ func (q *Queries) MarkMediaProcessingJobSucceeded(ctx context.Context, arg MarkM
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
 	)
 	return i, err
 }
@@ -367,7 +373,7 @@ SET status = 'queued',
     updated_at = NOW(),
     completed_at = NULL
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
 `
 
 func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, id string) (MediaProcessingJob, error) {
@@ -397,6 +403,7 @@ func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, id string) (Med
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
 	)
 	return i, err
 }

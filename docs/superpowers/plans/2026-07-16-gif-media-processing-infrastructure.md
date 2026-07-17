@@ -25,20 +25,20 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 
 **Files:**
 
-- Create: `api/internal/db/migrations/108_media_processing_lifecycle.sql`
+- Create: `api/internal/db/migrations/117_media_processing_lifecycle.sql`
 - Modify: `api/internal/db/migrate_test.go`
 - Modify: `api/internal/db/queries/media_processing_jobs.sql`
 - Create: `api/internal/db/queries/media_processing_usages.sql`
 - Regenerate: `api/internal/db/generated/*`
 
-- [ ] Add a failing migration-source test asserting migration 108 contains:
+- [x] Add a failing migration-source test asserting migration 117 contains:
   - nullable legacy audio input columns;
   - `input_media_id` for GIF jobs;
   - a named kind/input-shape constraint;
   - `media_processing_usages` with role, lifecycle status, and cleanup deadline;
   - backfill SQL for existing Audio Overlay jobs and unattached uploaded media.
-- [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/db -run 'Migration108' -count=1` from `api/` and confirm RED.
-- [ ] Create migration 108. Replace the old kind constraint with a named constraint equivalent to:
+- [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/db -run 'Migration117' -count=1` from `api/` and confirm RED.
+- [x] Create migration 117. Replace the old kind constraint with a named constraint equivalent to:
 
   ```sql
   CHECK (
@@ -54,11 +54,11 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
   )
   ```
 
-- [ ] Create `media_processing_usages` with one row per `(job_id, media_id, role)`, roles `input`/`output`, statuses `active`/`succeeded`/`failed`/`cancelled`, timestamps, and `cleanup_after_at`; add indexes for active-use checks and cleanup scans.
-- [ ] Backfill existing Audio Overlay input/output usage rows. Active jobs keep input usages active; terminal jobs receive plan-aware cleanup deadlines. Backfill a base plan-aware deadline for uploaded, unattached media that currently has none.
-- [ ] Add SQL queries needed to insert, transition, look up, and delete processing usage rows.
-- [ ] Run `/Users/xiaoboyu/go/bin/sqlc generate` from `api/`.
-- [ ] Re-run the focused database tests and confirm GREEN.
+- [x] Create `media_processing_usages` with one row per `(job_id, media_id, role)`, roles `input`/`output`, statuses `active`/`succeeded`/`failed`/`cancelled`, timestamps, and `cleanup_after_at`; add indexes for active-use checks and cleanup scans.
+- [x] Backfill existing Audio Overlay input/output usage rows. Active jobs keep input usages active; terminal jobs receive plan-aware cleanup deadlines. Backfill a base plan-aware deadline for uploaded, unattached media that currently has none.
+- [x] Add SQL queries needed to insert, transition, look up, and delete processing usage rows.
+- [x] Run `/Users/xiaoboyu/go/bin/sqlc generate` from `api/`.
+- [x] Re-run the focused database tests and confirm GREEN.
 - [ ] Commit: `feat(media): add processing lifecycle schema`.
 
 ## Task 2: Make job claiming kind-specific
@@ -237,5 +237,5 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 
 - Re-enable the API-process media-worker fallback first if the dedicated worker becomes unhealthy.
 - Do not insert GIF jobs during rollback; Deployment A contains no such application path.
-- Migration 108 is additive except for replacing the job CHECK and relaxing legacy input nullability. Roll back application processes without dropping lifecycle data; repair worker/query behavior forward.
+- Migration 117 is additive except for replacing the job CHECK and relaxing legacy input nullability. Roll back application processes without dropping lifecycle data; repair worker/query behavior forward.
 - Never remove processing-usage rows to force cleanup. If retention is blocked, investigate the owning job and ledger state.
