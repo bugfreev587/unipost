@@ -29,7 +29,7 @@ const (
 	defaultXCRCMaxRateLimitKeys       = 10000
 )
 
-var xCRCTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+var xCRCTokenPattern = regexp.MustCompile(`^[A-Za-z0-9._~+/=:-]{1,512}$`)
 
 type XWebhookSecretResolver interface {
 	ConsumerSecret(context.Context, string) (string, error)

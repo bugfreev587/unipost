@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -66,6 +68,24 @@ func TestXWebhookCRCUsesAppSpecificConsumerSecret(t *testing.T) {
 	const want = `{"response_token":"sha256=2RUZDVKjSpEV/C/r9ivMsVZJ4DFPAawjJFQQzY+6ba4="}`
 	if got := rec.Body.String(); got != want+"\n" {
 		t.Fatalf("body = %q, want %q", got, want+"\\n")
+	}
+}
+
+func TestXWebhookCRCAcceptsOpaqueProviderToken(t *testing.T) {
+	handler := NewXWebhookHandler(XWebhookConfig{
+		Secrets: fakeXWebhookSecrets{secrets: map[string]string{"route-1": "consumer-secret"}},
+	})
+	crcToken := strings.Repeat("a", 256) + ".+/=:"
+	target := "/v1/webhooks/twitter/route-1?" + url.Values{"crc_token": {crcToken}}.Encode()
+	req := xWebhookRequest(http.MethodGet, target, "route-1", nil)
+	rec := httptest.NewRecorder()
+	handler.CRC(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Body.String(), `{"response_token":"`+xSignature([]byte(crcToken), "consumer-secret")+`"}`+"\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
 	}
 }
 
