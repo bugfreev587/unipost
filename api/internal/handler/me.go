@@ -167,10 +167,12 @@ func (h *MeHandler) planGatesForUser(r *http.Request, userID string) map[string]
 		workspaceID = workspaces[0].ID
 	}
 	planGates := map[string]bool{
-		"inbox": false,
+		"inbox":     false,
+		"audit_log": false,
 	}
 	if workspaceID != "" {
 		planGates["inbox"] = h.quotaChecker == nil || h.quotaChecker.PlanAllowsInbox(r.Context(), workspaceID)
+		planGates["audit_log"] = h.quotaChecker != nil && h.quotaChecker.PlanAllowsAuditLog(r.Context(), workspaceID)
 	}
 
 	return planGates
