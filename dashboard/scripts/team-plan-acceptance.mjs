@@ -143,7 +143,7 @@ async function main() {
   const prefix = `${WORKSPACE_PREFIX}${runID}`;
   const password = `Codex-${randomBytes(18).toString("base64url")}!9a`;
   const ledger = new CleanupLedger();
-  const state = { users: {}, sessions: {}, tokens: {}, profiles: [], apiKeys: [] };
+  const state = { users: {}, tokens: {}, profiles: [], apiKeys: [] };
 
   ledger.track("database_run", prefix, async () => cleanupDatabaseRun(config, prefix, state.users));
 
@@ -161,14 +161,8 @@ async function main() {
       state.users[role] = user.id;
       ledger.track("clerk_user", user.id, () => clerkRequest(config, `/users/${user.id}`, { method: "DELETE", allow404: true }));
 
-      const session = await clerkRequest(config, "/sessions", {
-        method: "POST",
-        body: { user_id: user.id },
-      });
-      state.sessions[role] = session.id;
-      ledger.track("clerk_session", session.id, () => clerkRequest(config, `/sessions/${session.id}/revoke`, { method: "POST", allow404: true }));
-      const sessionToken = await clerkRequest(config, `/sessions/${session.id}/tokens`, { method: "POST" });
-      state.tokens[role] = sessionToken.jwt;
+      const session = await createSyntheticBrowserSession(config, config.emails[role]);
+      state.tokens[role] = session.token;
       assert.ok(state.tokens[role], `Clerk did not return a ${role} session JWT`);
     }
 
@@ -292,6 +286,26 @@ async function main() {
   });
 }
 
+async function createSyntheticBrowserSession(config, email) {
+  const { chromium } = await import("@playwright/test");
+  const previousClerkSecretKey = process.env.CLERK_SECRET_KEY;
+  process.env.CLERK_SECRET_KEY = config.clerkSecretKey;
+  const { clerk, clerkSetup } = await import("@clerk/testing/playwright");
+  const publishableKey = await loadClerkPublishableKey(config.appUrl);
+  await clerkSetup({ publishableKey, secretKey: config.clerkSecretKey });
+  const browser = await chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(`${config.appUrl}/pricing`, { waitUntil: "domcontentloaded" });
+    await signInSyntheticUser(page, email, clerk.signIn);
+    return await readActiveClerkSession(page);
+  } finally {
+    await browser.close();
+    if (previousClerkSecretKey === undefined) delete process.env.CLERK_SECRET_KEY;
+    else process.env.CLERK_SECRET_KEY = previousClerkSecretKey;
+  }
+}
+
 async function createTrackedAPIKey(config, ledger, state, token, name) {
   const key = await apiRequest(config, token, "/v1/api-keys", {
     method: "POST",
@@ -362,7 +376,7 @@ async function verifyDashboard(config, email, profileID) {
       "/settings/audit-log",
     ];
     for (const route of routes) {
-      await page.goto(`${config.appUrl}${route}`, { waitUntil: "networkidle" });
+      await navigateDashboardRoute(page, `${config.appUrl}${route}`);
       const body = await page.locator("body").innerText();
       assert.ok(body.trim().length > 0, `${route} rendered an empty body`);
       assert.equal(/application error|internal server error/i.test(body), false, `${route} rendered an error state`);
@@ -378,6 +392,23 @@ async function verifyDashboard(config, email, profileID) {
 
 export async function signInSyntheticUser(page, emailAddress, signIn) {
   await signIn({ page, emailAddress });
+}
+
+export async function readActiveClerkSession(page) {
+  const session = await page.evaluate(async () => {
+    const activeSession = window.Clerk?.session;
+    return {
+      id: activeSession?.id ?? null,
+      token: activeSession ? await activeSession.getToken() : null,
+    };
+  });
+  assert.ok(session.id && session.token, "Clerk browser sign-in did not create an active Clerk session");
+  return session;
+}
+
+export async function navigateDashboardRoute(page, url) {
+  await page.goto(url, { waitUntil: "domcontentloaded" });
+  await page.locator("body").waitFor({ state: "visible" });
 }
 
 async function loadClerkPublishableKey(appUrl) {
