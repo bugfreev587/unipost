@@ -194,6 +194,12 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 	return nil
 }
 
+// ProcessClaimedJob lets the shared Media Processing coordinator own all
+// claiming and global concurrency while preserving Audio Overlay processing.
+func (w *MediaAudioOverlayWorker) ProcessClaimedJob(ctx context.Context, job db.MediaProcessingJob) error {
+	return w.processJob(ctx, job)
+}
+
 func (w *MediaAudioOverlayWorker) createOutputMedia(ctx context.Context, job db.MediaProcessingJob, outputPath string, result audioOverlayProcessResult) (db.Media, error) {
 	row, err := w.queries.CreateMedia(ctx, db.CreateMediaParams{
 		WorkspaceID: job.WorkspaceID,

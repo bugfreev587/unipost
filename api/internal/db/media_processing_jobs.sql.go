@@ -720,6 +720,108 @@ func (q *Queries) PromoteDueMediaProcessingRetriesByKind(ctx context.Context, jo
 	return result.RowsAffected(), nil
 }
 
+const recoverStaleMediaProcessingJobs = `-- name: RecoverStaleMediaProcessingJobs :many
+WITH stale AS MATERIALIZED (
+  SELECT job.id, job.workspace_id, job.attempts
+  FROM media_processing_jobs job
+  WHERE job.status = 'processing'
+    AND job.updated_at < NOW() - INTERVAL '5 minutes'
+  ORDER BY job.updated_at ASC, job.id ASC
+  LIMIT $1::int
+  FOR UPDATE SKIP LOCKED
+), terminal_deadlines AS (
+  SELECT
+    stale.id AS job_id,
+    NOW() + CASE COALESCE(subscription.plan_id, 'free')
+      WHEN 'api' THEN INTERVAL '4 days'
+      WHEN 'basic' THEN INTERVAL '8 days'
+      WHEN 'growth' THEN INTERVAL '30 days'
+      WHEN 'team' THEN INTERVAL '60 days'
+      WHEN 'enterprise' THEN INTERVAL '60 days'
+      ELSE INTERVAL '2 days'
+    END AS cleanup_after_at
+  FROM stale
+  LEFT JOIN subscriptions subscription
+    ON subscription.workspace_id = stale.workspace_id
+  WHERE stale.attempts >= 3
+), transitioned_usages AS (
+  UPDATE media_processing_usages usage
+  SET status = 'failed',
+      cleanup_after_at = terminal_deadlines.cleanup_after_at,
+      updated_at = NOW()
+  FROM terminal_deadlines
+  WHERE usage.job_id = terminal_deadlines.job_id
+    AND usage.status = 'active'
+  RETURNING usage.job_id
+)
+UPDATE media_processing_jobs job
+SET status = CASE WHEN stale.attempts < 3 THEN 'retry_wait' ELSE 'failed' END,
+    error_code = CASE WHEN stale.attempts < 3 THEN 'processing_timeout' ELSE 'media_processing_worker_lost' END,
+    error_message = CASE
+      WHEN stale.attempts < 3 THEN 'Media processing worker heartbeat expired; the job will be retried.'
+      ELSE 'Media processing worker was lost and the attempt limit was exhausted.'
+    END,
+    retryable = stale.attempts < 3,
+    next_attempt_at = CASE
+      WHEN stale.attempts < 3 THEN NOW() + LEAST(
+        INTERVAL '5 minutes',
+        INTERVAL '30 seconds' * POWER(2, GREATEST(stale.attempts - 1, 0))
+      )
+      ELSE job.next_attempt_at
+    END,
+    updated_at = NOW(),
+    completed_at = CASE WHEN stale.attempts < 3 THEN NULL ELSE NOW() END
+FROM stale
+WHERE job.id = stale.id
+RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id, job.next_attempt_at
+`
+
+func (q *Queries) RecoverStaleMediaProcessingJobs(ctx context.Context, batchLimit int32) ([]MediaProcessingJob, error) {
+	rows, err := q.db.Query(ctx, recoverStaleMediaProcessingJobs, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MediaProcessingJob{}
+	for rows.Next() {
+		var i MediaProcessingJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Kind,
+			&i.Status,
+			&i.InputVideoMediaID,
+			&i.InputAudioMediaID,
+			&i.OutputMediaID,
+			&i.Mode,
+			&i.Fit,
+			&i.VideoVolume,
+			&i.AudioVolume,
+			&i.AudioStartMs,
+			&i.Request,
+			&i.IdempotencyKey,
+			&i.RequestHash,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.Retryable,
+			&i.Attempts,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.InputMediaID,
+			&i.NextAttemptAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requeueMediaProcessingJob = `-- name: RequeueMediaProcessingJob :one
 UPDATE media_processing_jobs
 SET status = 'retry_wait',
@@ -774,4 +876,19 @@ func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, arg RequeueMedi
 		&i.NextAttemptAt,
 	)
 	return i, err
+}
+
+const touchMediaProcessingJobHeartbeat = `-- name: TouchMediaProcessingJobHeartbeat :execrows
+UPDATE media_processing_jobs
+SET updated_at = NOW()
+WHERE id = $1
+  AND status = 'processing'
+`
+
+func (q *Queries) TouchMediaProcessingJobHeartbeat(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, touchMediaProcessingJobHeartbeat, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

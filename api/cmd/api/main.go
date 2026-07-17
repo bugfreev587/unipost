@@ -568,7 +568,9 @@ func main() {
 		go mediaCleanupWorker.Start(workerCtx)
 
 		mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
-		go mediaAudioOverlayWorker.Start(workerCtx)
+		mediaGIFConversionWorker := worker.NewMediaGIFConversionWorker(queries, storageClient)
+		mediaProcessingCoordinator := worker.NewMediaProcessingCoordinator(queries, mediaAudioOverlayWorker, mediaGIFConversionWorker)
+		go mediaProcessingCoordinator.Start(workerCtx)
 	}
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
