@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   CleanupLedger,
   clerkRequest,
+  fillPassword,
   loadAcceptanceConfig,
   runWithCleanup,
 } from "../scripts/team-plan-acceptance.mjs";
@@ -90,6 +91,20 @@ test("Clerk POST without a payload still sends JSON content type", async () => {
   );
 
   assert.equal(requestInit.headers["Content-Type"], "application/json");
+});
+
+test("Clerk password entry targets only the password input", async () => {
+  let selector;
+  let filled;
+  await fillPassword({
+    locator(value) {
+      selector = value;
+      return { async fill(valueToFill) { filled = valueToFill; } };
+    },
+  }, "synthetic-password");
+
+  assert.equal(selector, 'input[type="password"]');
+  assert.equal(filled, "synthetic-password");
 });
 
 test("cleanup runs after a failed acceptance assertion", async () => {
