@@ -1824,6 +1824,7 @@ export interface ApiLimits {
   plan_allows_twitter: boolean;
   plan_allows_inbox: boolean;
   plan_allows_analytics: boolean;
+  plan_allows_audit_log: boolean;
   plan_allows_white_label: boolean;
   plan_allows_hosted_connect_branding: boolean;
   plan_allows_hide_powered_by: boolean;

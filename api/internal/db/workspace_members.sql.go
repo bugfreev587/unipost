@@ -216,6 +216,55 @@ func (q *Queries) PromoteToOwner(ctx context.Context, arg PromoteToOwnerParams) 
 	return err
 }
 
+const transferWorkspaceOwnership = `-- name: TransferWorkspaceOwnership :one
+WITH target AS MATERIALIZED (
+  SELECT user_id
+  FROM workspace_members
+  WHERE workspace_id = $1
+    AND user_id = $2
+    AND status = 'active'
+    AND role <> 'owner'
+), demoted AS (
+  UPDATE workspace_members AS current_owner
+  SET role = 'admin', updated_at = NOW()
+  WHERE current_owner.workspace_id = $1
+    AND current_owner.role = 'owner'
+    AND EXISTS (SELECT 1 FROM target)
+  RETURNING current_owner.workspace_id
+)
+UPDATE workspace_members AS target_member
+SET role = 'owner', updated_at = NOW()
+WHERE target_member.workspace_id = $1
+  AND target_member.user_id = $2
+  AND EXISTS (SELECT 1 FROM demoted)
+RETURNING workspace_id, user_id, role, status, invited_by, invited_at, accepted_at, created_at, updated_at
+`
+
+type TransferWorkspaceOwnershipParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	UserID      string `json:"user_id"`
+}
+
+// Atomically demote the current owner and promote an existing active target.
+// The data dependency on demoted makes PostgreSQL finish the first update
+// before the target update; any failure rolls the entire statement back.
+func (q *Queries) TransferWorkspaceOwnership(ctx context.Context, arg TransferWorkspaceOwnershipParams) (WorkspaceMember, error) {
+	row := q.db.QueryRow(ctx, transferWorkspaceOwnership, arg.WorkspaceID, arg.UserID)
+	var i WorkspaceMember
+	err := row.Scan(
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.InvitedAt,
+		&i.AcceptedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateMemberRole = `-- name: UpdateMemberRole :one
 UPDATE workspace_members
 SET role = $3, updated_at = NOW()

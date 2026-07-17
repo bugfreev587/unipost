@@ -2,16 +2,20 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/audit"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -74,13 +78,135 @@ func TestPlatformCredentials_BasicClaimsEmptyCustomPlatformSlot(t *testing.T) {
 	}
 }
 
-type platformCredentialTestDB struct {
-	planID             string
-	customPlatformSlot string
-	createCalls        int
+func TestPlatformCredentials_CreateWritesSecretSafeAuditEvent(t *testing.T) {
+	store := &platformCredentialTestDB{planID: "team"}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "linkedin",
+		"client_id": "linkedin-client",
+		"client_secret": "top-secret-value"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "user_owner"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s, want 201", rec.Code, rec.Body.String())
+	}
+	write := requireSinglePlatformCredentialAuditWrite(t, store)
+	assertAuditIdentity(t, write, audit.ActionPlatformCredentialCreated, "platform_credential", "linkedin")
+	payload := auditJSONPayload(write)
+	if strings.Contains(payload, "top-secret-value") || strings.Contains(payload, store.lastEncryptedSecret) {
+		t.Fatalf("credential audit leaked secret material: %s", payload)
+	}
+	if !strings.Contains(payload, "linkedin-client") {
+		t.Fatalf("credential audit missing non-secret client ID: %s", payload)
+	}
 }
 
-func (f *platformCredentialTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func TestPlatformCredentials_DeleteWritesAuditEvent(t *testing.T) {
+	store := &platformCredentialTestDB{planID: "team"}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	router := chi.NewRouter()
+	router.Delete("/{platform}", h.Delete)
+	req := httptest.NewRequest(http.MethodDelete, "/linkedin", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "user_owner"))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s, want 204", rec.Code, rec.Body.String())
+	}
+	write := requireSinglePlatformCredentialAuditWrite(t, store)
+	assertAuditIdentity(t, write, audit.ActionPlatformCredentialDeleted, "platform_credential", "linkedin")
+}
+
+func TestPlatformCredentials_DeleteDoesNotReportSuccessOnDatabaseFailure(t *testing.T) {
+	store := &platformCredentialTestDB{planID: "team", deleteErr: errors.New("database unavailable")}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	router := chi.NewRouter()
+	router.Delete("/{platform}", h.Delete)
+	req := httptest.NewRequest(http.MethodDelete, "/linkedin", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s, want 500", rec.Code, rec.Body.String())
+	}
+	if len(store.auditWrites) != 0 {
+		t.Fatalf("audit writes=%d, want 0 for failed delete", len(store.auditWrites))
+	}
+}
+
+func TestPlatformCredentials_AuditFailureDoesNotFailCreate(t *testing.T) {
+	store := &platformCredentialTestDB{planID: "team", auditErr: fmt.Errorf("audit unavailable")}
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewPlatformCredentialHandler(db.New(store), encryptor, quota.NewChecker(db.New(store)))
+	req := httptest.NewRequest(http.MethodPost, "/v1/platform-credentials", strings.NewReader(`{
+		"platform": "linkedin",
+		"client_id": "linkedin-client",
+		"client_secret": "top-secret-value"
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "user_owner"))
+	rec := httptest.NewRecorder()
+
+	h.Create(rec, req)
+
+	if rec.Code != http.StatusCreated || store.auditWriteAttempts != 1 {
+		t.Fatalf("status=%d audit attempts=%d body=%s, want 201/1", rec.Code, store.auditWriteAttempts, rec.Body.String())
+	}
+}
+
+func requireSinglePlatformCredentialAuditWrite(t *testing.T, store *platformCredentialTestDB) []any {
+	t.Helper()
+	if len(store.auditWrites) != 1 {
+		t.Fatalf("audit writes=%d, want 1", len(store.auditWrites))
+	}
+	return store.auditWrites[0]
+}
+
+type platformCredentialTestDB struct {
+	planID              string
+	customPlatformSlot  string
+	createCalls         int
+	deleteErr           error
+	auditErr            error
+	auditWriteAttempts  int
+	auditWrites         [][]any
+	lastEncryptedSecret string
+}
+
+func (f *platformCredentialTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: DeletePlatformCredential") {
+		return pgconn.CommandTag{}, f.deleteErr
+	}
+	if strings.Contains(query, "-- name: WriteAuditLog") {
+		f.auditWriteAttempts++
+		f.auditWrites = append(f.auditWrites, append([]any(nil), args...))
+		return pgconn.CommandTag{}, f.auditErr
+	}
 	return pgconn.CommandTag{}, nil
 }
 
@@ -154,6 +280,7 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 		platform, _ := args[1].(string)
 		clientID, _ := args[2].(string)
 		clientSecret, _ := args[3].(string)
+		f.lastEncryptedSecret = clientSecret
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		return scanRow{values: []any{
 			"pc_1",
