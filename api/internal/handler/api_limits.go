@@ -76,6 +76,7 @@ type apiLimitsResponse struct {
 	PlanAllowsTwitter               bool    `json:"plan_allows_twitter"`
 	PlanAllowsInbox                 bool    `json:"plan_allows_inbox"`
 	PlanAllowsAnalytics             bool    `json:"plan_allows_analytics"`
+	PlanAllowsAuditLog              bool    `json:"plan_allows_audit_log"`
 	PlanAllowsWhiteLabel            bool    `json:"plan_allows_white_label"`
 	PlanAllowsHostedConnectBranding bool    `json:"plan_allows_hosted_connect_branding"`
 	PlanAllowsHidePoweredBy         bool    `json:"plan_allows_hide_powered_by"`
@@ -188,6 +189,7 @@ func (h *ApiLimitsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		PlanAllowsTwitter:               h.quota.PlanAllowsPlatform(r.Context(), workspaceID, "twitter"),
 		PlanAllowsInbox:                 h.quota.PlanAllowsInbox(r.Context(), workspaceID),
 		PlanAllowsAnalytics:             h.quota.PlanAllowsAnalytics(r.Context(), workspaceID),
+		PlanAllowsAuditLog:              h.quota.PlanAllowsAuditLog(r.Context(), workspaceID),
 		PlanAllowsWhiteLabel:            h.quota.PlanAllowsWhiteLabel(r.Context(), workspaceID),
 		PlanAllowsHostedConnectBranding: h.quota.PlanAllowsHostedConnectBranding(r.Context(), workspaceID),
 		PlanAllowsHidePoweredBy:         h.quota.PlanAllowsHidePoweredBy(r.Context(), workspaceID),

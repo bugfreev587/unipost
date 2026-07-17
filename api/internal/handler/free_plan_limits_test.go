@@ -175,6 +175,7 @@ func TestApiLimits_TeamPlanReturnsPublishedEntitlementBundle(t *testing.T) {
 	assertJSONBool(t, data, "plan_allows_twitter", true)
 	assertJSONBool(t, data, "plan_allows_inbox", true)
 	assertJSONBool(t, data, "plan_allows_analytics", true)
+	assertJSONBool(t, data, "plan_allows_audit_log", true)
 	assertJSONBool(t, data, "plan_allows_white_label", true)
 	assertJSONBool(t, data, "plan_allows_hosted_connect_branding", true)
 	assertJSONBool(t, data, "plan_allows_hide_powered_by", true)
