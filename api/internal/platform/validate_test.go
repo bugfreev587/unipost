@@ -51,7 +51,7 @@ func stubCapabilities() map[string]Capability {
 				RequiresMedia: true,
 				AllowMixed:    false,
 				Images:        ImageCapability{MaxCount: 35, MaxFileSizeBytes: 20 * 1024 * 1024, AllowedFormats: []string{"jpg", "jpeg", "webp"}},
-				Videos:        VideoCapability{MaxCount: 1, AllowedFormats: []string{"mp4", "mov", "webm"}},
+				Videos:        VideoCapability{MaxCount: 1, MinWidth: 360, MinHeight: 360, AllowedFormats: []string{"mp4", "mov", "webm"}},
 			},
 		},
 		"bluesky": {
@@ -816,6 +816,42 @@ func TestValidate_MediaIDUnsupportedFormat(t *testing.T) {
 		Now: time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC),
 	})
 	hasError(t, res, 0, CodeUnsupportedFormat)
+}
+
+func TestValidate_UniversalMP4UsesDocumentedTikTokMinimumDimensions(t *testing.T) {
+	for _, accountID := range []string{"acc_instagram", "acc_tiktok", "acc_pinterest", "acc_youtube", "acc_bluesky"} {
+		t.Run(accountID, func(t *testing.T) {
+			res := ValidatePlatformPosts(ValidateOptions{
+				Capabilities: stubCapabilities(),
+				Accounts:     stubAccounts(),
+				Media: map[string]ValidateMedia{"converted": {
+					Status: "uploaded", ContentType: "video/mp4", SizeBytes: 10_000,
+					Width: 320, Height: 320, DurationMS: 5000,
+				}},
+				Posts: []PlatformPostInput{{
+					AccountID: accountID, Caption: "converted GIF", MediaIDs: []string{"converted"},
+					PlatformOptions: map[string]any{"title": "Converted GIF", "made_for_kids": false, "board_id": "123"},
+				}},
+				Now: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+			})
+			if accountID == "acc_tiktok" {
+				hasError(t, res, 0, CodeDimensionsOutOfRange)
+			} else {
+				hasNoError(t, res, CodeDimensionsOutOfRange)
+			}
+		})
+	}
+
+	valid := ValidatePlatformPosts(ValidateOptions{
+		Capabilities: stubCapabilities(), Accounts: stubAccounts(),
+		Media: map[string]ValidateMedia{"converted": {
+			Status: "uploaded", ContentType: "video/mp4", SizeBytes: 10_000,
+			Width: 360, Height: 360, DurationMS: 5000,
+		}},
+		Posts: []PlatformPostInput{{AccountID: "acc_tiktok", Caption: "converted GIF", MediaIDs: []string{"converted"}}},
+		Now:   time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+	})
+	hasNoError(t, valid, CodeDimensionsOutOfRange)
 }
 
 func TestValidate_AudioMediaIDCannotPublishDirectly(t *testing.T) {

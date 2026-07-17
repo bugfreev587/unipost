@@ -1501,6 +1501,26 @@ func validateOnePost(i int, post PlatformPostInput, opts ValidateOptions, res *V
 				})
 			}
 
+			if kind == MediaKindVideo && m.Width > 0 && m.Height > 0 &&
+				((cap.Media.Videos.MinWidth > 0 && m.Width < cap.Media.Videos.MinWidth) ||
+					(cap.Media.Videos.MinHeight > 0 && m.Height < cap.Media.Videos.MinHeight)) {
+				displayName := cap.DisplayName
+				if strings.TrimSpace(displayName) == "" {
+					displayName = plat
+				}
+				res.Errors = append(res.Errors, Issue{
+					PlatformPostIndex: i,
+					AccountID:         post.AccountID,
+					Platform:          plat,
+					Field:             "media_ids",
+					Code:              CodeDimensionsOutOfRange,
+					Message:           fmt.Sprintf("%s requires video dimensions of at least %d×%d pixels; this video is %d×%d", displayName, cap.Media.Videos.MinWidth, cap.Media.Videos.MinHeight, m.Width, m.Height),
+					Actual:            fmt.Sprintf("%dx%d", m.Width, m.Height),
+					Limit:             fmt.Sprintf(">=%dx%d", cap.Media.Videos.MinWidth, cap.Media.Videos.MinHeight),
+					Severity:          SeverityError,
+				})
+			}
+
 			limit := mediaSizeLimit(kind, cap)
 			if limit > 0 && m.SizeBytes > limit {
 				label := mediaLabel(kind)
