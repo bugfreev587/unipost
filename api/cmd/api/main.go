@@ -551,7 +551,7 @@ func main() {
 	}
 
 	if processMode == processModeAPI {
-		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient).
+		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor).
 			SetXTokenRefresher(xTokenRefresher)
 		go analyticsRefreshWorker.Start(workerCtx)
 

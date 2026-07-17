@@ -15,16 +15,9 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
-// MediaCleanupWorker hard-deletes media rows that the media_post_usages
-// ledger says are past their plan/status retention window, plus the
-// matching R2 objects.
-//
-// Distinct from the abandoned-pending sweep folded into
-// AnalyticsRefreshWorker: that one runs hourly and only touches
-// status='pending' rows older than 7 days. This one runs every
-// day and only touches rows that have a terminal post usage whose
-// cleanup_after_at is set. They never overlap because pending rows are
-// not attached to terminal post usage rows.
+// MediaCleanupWorker owns both business-state retention cleanup and the
+// abandoned pending-upload sweep. Terminal retention runs daily; pending
+// uploads older than seven days are checked hourly.
 //
 // A nil storage Client makes Start a no-op so a server without R2
 // (or a test env) doesn't trip on the missing client.
@@ -46,6 +39,7 @@ type mediaCleanupQueries interface {
 	CreateMediaCleanupRun(context.Context, db.CreateMediaCleanupRunParams) (db.MediaCleanupRun, error)
 	CompleteMediaCleanupRun(context.Context, db.CompleteMediaCleanupRunParams) (db.MediaCleanupRun, error)
 	ListMediaDueForRetentionCleanup(context.Context, int32) ([]db.Media, error)
+	ListAbandonedMedia(context.Context) ([]db.Media, error)
 	HardDeleteMedia(context.Context, string) error
 }
 
@@ -57,6 +51,7 @@ type mediaCleanupStorage interface {
 // Retention is measured in days by plan, so daily cleanup is enough
 // and avoids unnecessary DB/R2 churn.
 const mediaCleanupInterval = 24 * time.Hour
+const mediaAbandonedCleanupInterval = time.Hour
 
 const mediaCleanupBatchSize = 500
 const mediaCleanupWorkerName = "media_cleanup"
@@ -72,13 +67,16 @@ func (w *MediaCleanupWorker) Start(ctx context.Context) {
 		return
 	}
 
-	ticker := time.NewTicker(mediaCleanupInterval)
-	defer ticker.Stop()
+	retentionTicker := time.NewTicker(mediaCleanupInterval)
+	defer retentionTicker.Stop()
+	abandonedTicker := time.NewTicker(mediaAbandonedCleanupInterval)
+	defer abandonedTicker.Stop()
 
 	slog.Info("media cleanup worker started", "interval", mediaCleanupInterval)
 
 	// Run once on startup so a freshly-deployed instance doesn't sit
 	// idle for the first interval before processing the backlog.
+	w.sweepAbandoned(ctx)
 	w.sweepDue(ctx)
 
 	for {
@@ -86,8 +84,35 @@ func (w *MediaCleanupWorker) Start(ctx context.Context) {
 		case <-ctx.Done():
 			slog.Info("media cleanup worker stopped")
 			return
-		case <-ticker.C:
+		case <-retentionTicker.C:
 			w.sweepDue(ctx)
+		case <-abandonedTicker.C:
+			w.sweepAbandoned(ctx)
+		}
+	}
+}
+
+// sweepAbandoned removes pending Media whose upload reservation has been
+// unused for seven days. Storage deletion happens first so a transient R2
+// failure keeps the database row available for the next hourly retry.
+func (w *MediaCleanupWorker) sweepAbandoned(ctx context.Context) {
+	rows, err := w.queries.ListAbandonedMedia(ctx)
+	if err != nil {
+		slog.Error("media cleanup: failed to list abandoned uploads", "error", err)
+		return
+	}
+	if len(rows) == 0 {
+		return
+	}
+
+	slog.Info("media cleanup: cleaning abandoned uploads", "count", len(rows))
+	for _, row := range rows {
+		if err := w.storage.Delete(ctx, row.StorageKey); err != nil {
+			slog.Warn("media cleanup: abandoned object delete failed", "media_id", row.ID, "error", err)
+			continue
+		}
+		if err := w.queries.HardDeleteMedia(ctx, row.ID); err != nil {
+			slog.Warn("media cleanup: abandoned row delete failed", "media_id", row.ID, "error", err)
 		}
 	}
 }

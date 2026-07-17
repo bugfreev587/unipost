@@ -19,6 +19,42 @@ func TestMediaCleanupWorkerRunsDaily(t *testing.T) {
 	}
 }
 
+func TestMediaCleanupWorkerOwnsHourlyAbandonedUploadSweep(t *testing.T) {
+	if mediaAbandonedCleanupInterval != time.Hour {
+		t.Fatalf("mediaAbandonedCleanupInterval = %s, want 1h", mediaAbandonedCleanupInterval)
+	}
+	queries := &mediaCleanupFakeQueries{abandonedRows: []db.Media{{
+		ID:         "media_abandoned",
+		StorageKey: "media/abandoned.gif",
+	}}}
+	store := &mediaCleanupFakeStorage{}
+	worker := &MediaCleanupWorker{queries: queries, storage: store}
+
+	worker.sweepAbandoned(context.Background())
+
+	if queries.listAbandonedCalls != 1 {
+		t.Fatalf("ListAbandonedMedia calls = %d, want 1", queries.listAbandonedCalls)
+	}
+	if store.deleteCalls != 1 || queries.hardDeleteCalls != 1 {
+		t.Fatalf("storage/hard delete calls = %d/%d, want 1/1", store.deleteCalls, queries.hardDeleteCalls)
+	}
+}
+
+func TestMediaCleanupWorkerKeepsAbandonedRowWhenObjectDeleteFails(t *testing.T) {
+	queries := &mediaCleanupFakeQueries{abandonedRows: []db.Media{{
+		ID:         "media_abandoned",
+		StorageKey: "media/abandoned.gif",
+	}}}
+	store := &mediaCleanupFakeStorage{err: errors.New("r2 unavailable")}
+	worker := &MediaCleanupWorker{queries: queries, storage: store}
+
+	worker.sweepAbandoned(context.Background())
+
+	if queries.hardDeleteCalls != 0 {
+		t.Fatalf("hard delete calls = %d, want 0", queries.hardDeleteCalls)
+	}
+}
+
 func TestMediaCleanupWorkerStopsWhenFullBatchMakesNoProgress(t *testing.T) {
 	rows := make([]db.Media, mediaCleanupBatchSize)
 	for i := range rows {
@@ -157,14 +193,21 @@ func TestMediaCleanupWorkerRecoversStaleRunningRowsBeforeSweep(t *testing.T) {
 }
 
 type mediaCleanupFakeQueries struct {
-	rows            []db.Media
-	listCalls       int
-	hardDeleteCalls int
-	staleCalls      int
-	staleCutoffs    []pgtype.Timestamptz
-	createErr       error
-	createRuns      []db.CreateMediaCleanupRunParams
-	completeRuns    []db.CompleteMediaCleanupRunParams
+	rows               []db.Media
+	abandonedRows      []db.Media
+	listCalls          int
+	listAbandonedCalls int
+	hardDeleteCalls    int
+	staleCalls         int
+	staleCutoffs       []pgtype.Timestamptz
+	createErr          error
+	createRuns         []db.CreateMediaCleanupRunParams
+	completeRuns       []db.CompleteMediaCleanupRunParams
+}
+
+func (q *mediaCleanupFakeQueries) ListAbandonedMedia(context.Context) ([]db.Media, error) {
+	q.listAbandonedCalls++
+	return q.abandonedRows, nil
 }
 
 func (q *mediaCleanupFakeQueries) MarkStaleMediaCleanupRunsFailed(_ context.Context, arg db.MarkStaleMediaCleanupRunsFailedParams) (int64, error) {

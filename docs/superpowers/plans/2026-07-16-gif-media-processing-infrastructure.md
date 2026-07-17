@@ -154,7 +154,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Add failing cleanup-query contract tests proving a soft-deleted object is eligible only after all ledger blockers clear.
 - [x] Include a migration audit/backfill for historical soft-deleted rows that still have active references, preserving those objects until their ledgers clear.
 - [x] Regenerate sqlc; run handler, worker, and database tests.
-- [ ] Commit: `feat(media): unify retention and deletion gates`.
+- [x] Commit: `feat(media): unify retention and deletion gates`.
 
 ## Task 7: Move abandoned-upload cleanup into MediaCleanupWorker
 
@@ -166,12 +166,12 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/cmd/api/main.go`
 - Modify tests that construct either worker
 
-- [ ] Add failing `MediaCleanupWorker` tests proving pending uploads older than seven days are swept on startup/hourly while normal retention cleanup remains daily.
-- [ ] Move the `ListAbandonedMedia` sweep and storage deletion logic from `AnalyticsRefreshWorker` into `MediaCleanupWorker`.
-- [ ] Give the cleanup worker separate hourly abandoned-upload and daily retention schedules; both run once at startup and respect context cancellation.
-- [ ] Remove media-storage cleanup responsibilities and constructor dependencies from `AnalyticsRefreshWorker`.
-- [ ] Update application wiring and all constructor tests.
-- [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/worker ./cmd/api -count=1` and confirm GREEN.
+- [x] Add failing `MediaCleanupWorker` tests proving pending uploads older than seven days are swept on startup/hourly while normal retention cleanup remains daily.
+- [x] Move the `ListAbandonedMedia` sweep and storage deletion logic from `AnalyticsRefreshWorker` into `MediaCleanupWorker`.
+- [x] Give the cleanup worker separate hourly abandoned-upload and daily retention schedules; both run once at startup and respect context cancellation.
+- [x] Remove media-storage cleanup responsibilities and constructor dependencies from `AnalyticsRefreshWorker`.
+- [x] Update application wiring and all constructor tests.
+- [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/worker ./cmd/api -count=1` and confirm GREEN.
 - [ ] Commit: `refactor(media): centralize object cleanup ownership`.
 
 ## Task 8: Add the dedicated Railway media-worker process mode
