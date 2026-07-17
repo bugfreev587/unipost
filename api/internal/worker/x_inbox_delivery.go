@@ -69,7 +69,7 @@ type XInboxDeliveryAccount struct {
 	WorkspaceID              string
 	WebhookRouteKey          string
 	Handle                   string
-	ExternalUserID           string
+	ExternalAccountID        string
 	AccessTokenEncrypted     string
 	AppMode                  xinbox.AppMode
 	AppBearerTokenEncrypted  string
@@ -506,7 +506,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			userAccessToken,
 			appBearerToken,
 			account.SocialAccountID,
-			account.ExternalUserID,
+			account.ExternalAccountID,
 			webhook.ID,
 		)
 		if err != nil {
@@ -845,7 +845,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			  ELSE COALESCE(pc.webhook_route_key, '')
 			END,
 			COALESCE(sa.account_name, ''),
-			COALESCE(sa.external_user_id, ''),
+			COALESCE(sa.external_account_id, ''),
 			sa.access_token,
 			COALESCE(sa.x_app_mode, 'legacy_unknown'),
 			COALESCE(pc.app_bearer_token, ''),
@@ -884,7 +884,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			&account.WorkspaceID,
 			&account.WebhookRouteKey,
 			&account.Handle,
-			&account.ExternalUserID,
+			&account.ExternalAccountID,
 			&account.AccessTokenEncrypted,
 			&appMode,
 			&account.AppBearerTokenEncrypted,
