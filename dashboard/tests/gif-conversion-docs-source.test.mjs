@@ -34,6 +34,16 @@ test("GIF guidance keeps direct support scoped and links conversion", () => {
   assert.match(source, /POST \/v1\/media\/gif-conversions/);
   assert.match(source, /Conversion does not publish, edit a draft, or replace the original GIF/);
   assert.match(source, /TikTok requires both output dimensions to be at least 360 pixels/);
+  assert.equal(
+    source.match(/GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon/g)?.length,
+    5,
+  );
+  assert.doesNotMatch(source, /MP4 conversion supported; GIF guidance coming soon/);
+  assert.doesNotMatch(source, /prepare for upcoming conversion workflows/);
+  assert.match(
+    source,
+    /Destination-specific publishing guides and the Dashboard conversion control are still coming soon/,
+  );
 });
 
 test("GIF conversion appears in docs navigation, endpoint links, and AI search", () => {
