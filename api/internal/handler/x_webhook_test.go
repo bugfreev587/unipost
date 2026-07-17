@@ -89,6 +89,27 @@ func TestXWebhookCRCAcceptsOpaqueProviderToken(t *testing.T) {
 	}
 }
 
+func TestXWebhookCRCIgnoresProviderMetadataQueryParameter(t *testing.T) {
+	handler := NewXWebhookHandler(XWebhookConfig{
+		Secrets: fakeXWebhookSecrets{secrets: map[string]string{"route-1": "consumer-secret"}},
+	})
+	const crcToken = "provider-challenge"
+	target := "/v1/webhooks/twitter/route-1?" + url.Values{
+		"crc_token":  {crcToken},
+		"webhook_id": {"provider-webhook-1"},
+	}.Encode()
+	req := xWebhookRequest(http.MethodGet, target, "route-1", nil)
+	rec := httptest.NewRecorder()
+	handler.CRC(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if got, want := rec.Body.String(), `{"response_token":"`+xSignature([]byte(crcToken), "consumer-secret")+`"}`+"\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
 func TestXWebhookPOSTVerifiesRawBodyBeforeParsing(t *testing.T) {
 	body := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner-1"},"tag":"unipost:x:dm:account-1","payload":{"id":"dm-1","dm_conversation_id":"c-1","sender_id":"sender-1","created_at":"2026-07-16T12:00:00Z","text":"private"}}}`)
 	ingestor := &fakeXWebhookIngestor{}
@@ -181,7 +202,6 @@ func TestXWebhookCRCRejectsSigningOracleInputsAndRateLimitsRouteIP(t *testing.T)
 	for _, target := range []string{
 		"/v1/webhooks/twitter/route-1?crc_token=%7B%22data%22%3A%7B%7D%7D",
 		"/v1/webhooks/twitter/route-1?crc_token=one&crc_token=two",
-		"/v1/webhooks/twitter/route-1?crc_token=ok&extra=value",
 		"/v1/webhooks/twitter/route-1?crc_token=",
 	} {
 		req := xWebhookRequest(http.MethodGet, target, "route-1", nil)
