@@ -194,6 +194,23 @@ func TestMigration117BackfillsActiveSoftDeletedReferences(t *testing.T) {
 	}
 }
 
+func TestMigration117SkipsOrphanedLegacyProcessingMedia(t *testing.T) {
+	source, err := os.ReadFile("migrations/117_media_processing_lifecycle.sql")
+	if err != nil {
+		t.Fatalf("read lifecycle migration: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"join media existing_media",
+		"existing_media.id = source.media_id",
+		"existing_media.workspace_id = j.workspace_id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("legacy processing backfill must skip orphaned media; missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
 func TestCleanupClaimsRowsBeforeObjectDeletion(t *testing.T) {
 	source, err := os.ReadFile("queries/media_post_usages.sql")
 	if err != nil {

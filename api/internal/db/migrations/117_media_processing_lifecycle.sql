@@ -127,6 +127,9 @@ WITH migration_clock AS (
       (j.input_audio_media_id, 'input'::text),
       (j.output_media_id, 'output'::text)
   ) AS source(media_id, role)
+  JOIN media existing_media
+    ON existing_media.id = source.media_id
+   AND existing_media.workspace_id = j.workspace_id
   WHERE j.kind = 'audio_overlay'
     AND source.media_id IS NOT NULL
 )
