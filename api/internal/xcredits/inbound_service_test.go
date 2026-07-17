@@ -21,6 +21,7 @@ type fakeInboundStore struct {
 	accepted    int64
 	suppressed  int64
 	customLimit *int64
+	lastInbound StoreInboundRequest
 }
 
 func newFakeInboundStore(planID string, now time.Time) *fakeInboundStore {
@@ -33,6 +34,7 @@ func newFakeInboundStore(planID string, now time.Time) *fakeInboundStore {
 func (s *fakeInboundStore) AdmitInbound(_ context.Context, req StoreInboundRequest) (InboundAdmission, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.lastInbound = req
 
 	key := strings.Join([]string{
 		req.WorkspaceID,
@@ -60,12 +62,14 @@ func (s *fakeInboundStore) AdmitInbound(_ context.Context, req StoreInboundReque
 		admission.Decision = InboundDecisionSuppressedDailyCap
 		s.suppressed++
 		admission.Claimed100Percent = true
-	case s.used+req.WeightedUnits > req.MonthlyAllowance:
+	case req.AccountingEnabled && s.used+req.WeightedUnits > req.MonthlyAllowance:
 		admission.Decision = InboundDecisionSuppressedMonthlyAllowance
 		s.suppressed++
 	default:
 		s.dailyUsed += req.WeightedUnits
-		s.used += req.WeightedUnits
+		if req.AccountingEnabled {
+			s.used += req.WeightedUnits
+		}
 		s.accepted++
 		if limit > 0 && s.dailyUsed*100 >= limit*80 {
 			admission.Claimed80Percent = true
@@ -566,10 +570,14 @@ func TestPostgresInboundAdmissionContractIsAtomicAndBodyFree(t *testing.T) {
 		"payload",
 		"status",
 		"tx.Commit",
+		"if req.AccountingEnabled",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("postgres admission missing %q", want)
 		}
+	}
+	if !strings.Contains(text, "if req.AccountingEnabled {") {
+		t.Fatal("safety-only inbound path must guard customer monthly accounting")
 	}
 	duplicateStart := strings.Index(text, "func loadDuplicateInboundAdmission")
 	duplicateEnd := strings.Index(text, "func claimInboundThreshold")

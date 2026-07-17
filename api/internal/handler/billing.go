@@ -13,17 +13,21 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
 
 type BillingHandler struct {
-	queries     *db.Queries
-	quota       *quota.Checker
-	stripe      *billing.Manager
-	xCredits    xCreditsSnapshotService
-	xInboundCap xCreditsInboundCapService
+	queries      *db.Queries
+	quota        *quota.Checker
+	stripe       *billing.Manager
+	xCredits     xCreditsSnapshotService
+	xInboundCap  xCreditsInboundCapService
+	featureFlags interface {
+		ForWorkspace(context.Context, string, string) (bool, error)
+	}
 }
 
 type xCreditsSnapshotService interface {
@@ -44,6 +48,29 @@ func (h *BillingHandler) SetXCreditsService(service xCreditsSnapshotService) *Bi
 		h.xInboundCap = inboundCap
 	}
 	return h
+}
+
+func (h *BillingHandler) SetFeatureFlags(flags interface {
+	ForWorkspace(context.Context, string, string) (bool, error)
+}) *BillingHandler {
+	h.featureFlags = flags
+	return h
+}
+
+func (h *BillingHandler) requireXCreditsAvailable(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
+	if h.featureFlags == nil {
+		return true
+	}
+	enabled, err := h.featureFlags.ForWorkspace(r.Context(), workspaceID, featureflags.XCreditsBillingV1)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to evaluate X Credits availability")
+		return false
+	}
+	if !enabled {
+		writeError(w, http.StatusForbidden, "FEATURE_NOT_AVAILABLE", "X Credits billing is not available yet")
+		return false
+	}
+	return true
 }
 
 type billingResponse struct {
@@ -351,6 +378,9 @@ func (h *BillingHandler) GetXCredits(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
 		return
 	}
+	if !h.requireXCreditsAvailable(w, r, workspaceID) {
+		return
+	}
 	if h.xCredits == nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X Credits service is not configured")
 		return
@@ -388,6 +418,9 @@ func (h *BillingHandler) UpdateXInboundCap(w http.ResponseWriter, r *http.Reques
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if !h.requireXCreditsAvailable(w, r, workspaceID) {
 		return
 	}
 	if h.xInboundCap == nil {

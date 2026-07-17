@@ -422,8 +422,9 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
-	xCreditsService := xcredits.NewPostgresService(pool, queries).
+	baseXCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
+	xCreditsService := xcredits.NewRolloutService(baseXCreditsService, featureFlagEvaluator)
 	managedXWebhookRouteKey := xinbox.WebhookRouteKey(
 		os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET"),
 		os.Getenv("TWITTER_CLIENT_ID"),
@@ -652,7 +653,8 @@ func main() {
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
-		SetXCreditsService(xCreditsService)
+		SetXCreditsService(xCreditsService).
+		SetFeatureFlags(featureFlagEvaluator)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetHoldReconciler(paidQuotaHoldReconciler).

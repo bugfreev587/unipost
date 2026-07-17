@@ -22,6 +22,7 @@ func TestFeatureFlagsMigrationContract(t *testing.T) {
 		"changed_by",
 		"changed_at",
 		"ON CONFLICT (key) DO NOTHING",
+		"accounting_enabled BOOLEAN NOT NULL DEFAULT TRUE",
 	} {
 		if !strings.Contains(schema, required) {
 			t.Fatalf("migration 118 missing %q", required)

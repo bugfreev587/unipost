@@ -1150,6 +1150,7 @@ type XInboxBackfillExposureReservation struct {
 	LastError              pgtype.Text        `json:"last_error"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	AccountingEnabled      bool               `json:"accounting_enabled"`
 }
 
 type XInboxDeliveryCleanupIntent struct {

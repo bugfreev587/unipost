@@ -1,5 +1,8 @@
 -- +goose Up
 
+ALTER TABLE x_inbox_backfill_exposure_reservations
+  ADD COLUMN accounting_enabled BOOLEAN NOT NULL DEFAULT TRUE;
+
 CREATE TABLE feature_flags (
   key         TEXT PRIMARY KEY CHECK (key IN ('x_dms_v1', 'x_credits_billing_v1')),
   enabled     BOOLEAN NOT NULL DEFAULT FALSE,
@@ -30,3 +33,5 @@ ON CONFLICT (key) DO NOTHING;
 
 DROP TABLE IF EXISTS feature_flag_changes;
 DROP TABLE IF EXISTS feature_flags;
+ALTER TABLE x_inbox_backfill_exposure_reservations
+  DROP COLUMN IF EXISTS accounting_enabled;
