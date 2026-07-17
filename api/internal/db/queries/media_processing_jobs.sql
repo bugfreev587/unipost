@@ -94,6 +94,72 @@ WITH created_job AS (
 SELECT created_job.*
 FROM created_job;
 
+-- name: CreateGIFMediaProcessingJob :one
+WITH created_job AS (
+  INSERT INTO media_processing_jobs (
+    workspace_id,
+    kind,
+    status,
+    input_media_id,
+    request,
+    idempotency_key,
+    request_hash
+  ) VALUES (
+    sqlc.arg(workspace_id),
+    'gif_to_mp4',
+    'queued',
+    sqlc.arg(input_media_id),
+    sqlc.arg(request_json)::jsonb,
+    sqlc.narg(idempotency_key),
+    sqlc.narg(request_hash)
+  )
+  RETURNING *
+), input_usage AS (
+  INSERT INTO media_processing_usages (
+    workspace_id,
+    job_id,
+    media_id,
+    role,
+    status,
+    cleanup_after_at
+  )
+  SELECT
+    created_job.workspace_id,
+    created_job.id,
+    created_job.input_media_id,
+    'input',
+    'active',
+    NULL
+  FROM created_job
+  ON CONFLICT (job_id, media_id, role) DO NOTHING
+  RETURNING job_id
+)
+SELECT created_job.*
+FROM created_job
+WHERE EXISTS (
+  SELECT 1 FROM input_usage WHERE input_usage.job_id = created_job.id
+);
+
+-- name: CountActiveMediaProcessingJobsByWorkspace :one
+SELECT COUNT(*)::bigint
+FROM media_processing_jobs
+WHERE workspace_id = $1
+  AND status IN ('queued', 'retry_wait', 'processing');
+
+-- name: CountGIFConversionsSince :one
+SELECT COUNT(*)::bigint
+FROM media_processing_jobs
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND kind = 'gif_to_mp4'
+  AND created_at >= sqlc.arg(created_since);
+
+-- name: OldestGIFConversionCreatedSince :one
+SELECT MIN(created_at)::timestamptz
+FROM media_processing_jobs
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND kind = 'gif_to_mp4'
+  AND created_at >= sqlc.arg(created_since);
+
 -- name: GetMediaProcessingJobByIDAndWorkspace :one
 SELECT * FROM media_processing_jobs
 WHERE id = $1 AND workspace_id = $2;

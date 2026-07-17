@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
@@ -54,6 +57,12 @@ type mediaAudioOverlayObjectStore interface {
 type MediaAudioOverlayHandler struct {
 	queries     mediaAudioOverlayQueries
 	objectStore mediaAudioOverlayObjectStore
+	admitter    mediaprocessing.AudioOverlayAdmitter
+}
+
+func (h *MediaAudioOverlayHandler) WithAdmitter(admitter mediaprocessing.AudioOverlayAdmitter) *MediaAudioOverlayHandler {
+	h.admitter = admitter
+	return h
 }
 
 func NewMediaAudioOverlayHandler(queries mediaAudioOverlayQueries, objectStore mediaAudioOverlayObjectStore) *MediaAudioOverlayHandler {
@@ -174,6 +183,36 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 	if idempotencyKey != "" {
 		params.IdempotencyKey = pgtype.Text{String: idempotencyKey, Valid: true}
 		params.RequestHash = pgtype.Text{String: requestHash, Valid: true}
+	}
+	if h.admitter != nil {
+		result, admitErr := h.admitter.AdmitAudioOverlay(r.Context(), mediaprocessing.AudioOverlayAdmissionRequest{
+			WorkspaceID: workspaceID, InputVideoMediaID: normalized.VideoMediaID, InputAudioMediaID: normalized.AudioMediaID,
+			Mode: normalized.Mode, Fit: normalized.Fit, VideoVolume: normalized.VideoVolume,
+			AudioVolume: normalized.AudioVolume, AudioStartMS: normalized.AudioStartMs,
+			RequestJSON: requestJSON, RequestHash: requestHash, IdempotencyKey: idempotencyKey,
+			Now: time.Now().UTC(),
+		})
+		if admitErr != nil {
+			slog.Error("media audio overlay: admission failed", "err", admitErr, "workspace_id", workspaceID)
+			writeError(w, http.StatusServiceUnavailable, "media_processing_unavailable", "Audio overlay could not be queued")
+			return
+		}
+		switch result.Decision.Code {
+		case mediaprocessing.AdmissionAccepted, mediaprocessing.AdmissionIdempotentReplay:
+			writeAccepted(w, audioOverlayJobResponse(result.Job))
+		case mediaprocessing.AdmissionIdempotentConflict:
+			writeError(w, http.StatusConflict, audioOverlayIdempotencyErrorCode, "Idempotency-Key was already used with a different audio overlay request")
+		case mediaprocessing.AdmissionCapacityExceeded:
+			seconds := int(math.Ceil(result.Decision.RetryAfter.Seconds()))
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			writeErrorWithDetails(w, http.StatusTooManyRequests, "media_processing_capacity_exceeded", "Workspace active media processing capacity is reached", ErrorDetails{DocsURL: audioOverlayDocsURL})
+		default:
+			writeError(w, http.StatusServiceUnavailable, "media_processing_unavailable", "Audio overlay could not be queued")
+		}
+		return
 	}
 
 	created, err := h.queries.CreateAudioOverlayMediaProcessingJob(r.Context(), params)

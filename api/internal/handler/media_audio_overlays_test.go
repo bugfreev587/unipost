@@ -15,6 +15,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -65,6 +66,25 @@ func TestCreateAudioOverlayJobDefaultsAndQueues(t *testing.T) {
 	}
 	if got.Data.ID == "" || got.Data.Status != "queued" || got.Data.OutputMediaID != nil {
 		t.Fatalf("unexpected response data: %#v", got.Data)
+	}
+}
+
+func TestCreateAudioOverlayJobAppliesSharedMediaProcessingCapacity(t *testing.T) {
+	store := newFakeAudioOverlayQueries()
+	objectStore := &fakeAudioOverlayObjectStore{heads: map[string]storage.HeadResult{
+		"media/vid.mp4": {Exists: true}, "media/audio.mp3": {Exists: true},
+	}}
+	admitter := &fakeAudioOverlayAdmitter{result: mediaprocessing.AdmissionResult{Decision: mediaprocessing.AdmissionDecision{
+		Code: mediaprocessing.AdmissionCapacityExceeded, RetryAfter: 30 * time.Second,
+	}}}
+	h := NewMediaAudioOverlayHandler(store, objectStore).WithAdmitter(admitter)
+	rr := httptest.NewRecorder()
+	h.Create(rr, audioOverlayRequest(t, `{"video_media_id":"med_video","audio_media_id":"med_audio"}`))
+	if rr.Code != http.StatusTooManyRequests || rr.Header().Get("Retry-After") != "30" || !strings.Contains(rr.Body.String(), "media_processing_capacity_exceeded") {
+		t.Fatalf("status=%d headers=%v body=%s", rr.Code, rr.Header(), rr.Body.String())
+	}
+	if len(store.createParams) != 0 || len(admitter.requests) != 1 {
+		t.Fatalf("direct creates=%d admission calls=%d", len(store.createParams), len(admitter.requests))
 	}
 }
 
@@ -383,6 +403,17 @@ type fakeAudioOverlayObjectStore struct {
 	heads     map[string]storage.HeadResult
 	videoMeta map[string]storage.VideoMetadata
 	err       error
+}
+
+type fakeAudioOverlayAdmitter struct {
+	requests []mediaprocessing.AudioOverlayAdmissionRequest
+	result   mediaprocessing.AdmissionResult
+	err      error
+}
+
+func (f *fakeAudioOverlayAdmitter) AdmitAudioOverlay(_ context.Context, req mediaprocessing.AudioOverlayAdmissionRequest) (mediaprocessing.AdmissionResult, error) {
+	f.requests = append(f.requests, req)
+	return f.result, f.err
 }
 
 func (f *fakeAudioOverlayObjectStore) Head(_ context.Context, key string) (storage.HeadResult, error) {
