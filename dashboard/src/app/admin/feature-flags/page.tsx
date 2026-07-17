@@ -71,7 +71,7 @@ export default function AdminFeatureFlagsPage() {
         <div>
           <div className="ad-section-title">Customer feature availability</div>
           <div className="ad-section-meta">
-            Changes apply globally across development, staging, and production.
+            One global value in this deployment; no test, percentage, or audience variants.
           </div>
         </div>
         <span className="ad-badge ad-b-gray">Super Admin only</span>
@@ -89,13 +89,13 @@ export default function AdminFeatureFlagsPage() {
 
       {error ? <div className="aff-error" role="alert">{error}</div> : null}
 
-      <div className="aff-grid" aria-busy={loading}>
+      <div className="aff-list" aria-busy={loading}>
         {loading && flags.length === 0 ? (
           <div className="aff-loading"><LoaderCircle aria-hidden="true" /> Loading feature flags…</div>
         ) : flags.map((flag) => {
           const saving = savingKey === flag.key;
           return (
-            <article className="aff-card" key={flag.key}>
+            <article className="aff-row" key={flag.key}>
               <div className="aff-card-top">
                 <div>
                   <div className="aff-title-row">
@@ -170,19 +170,23 @@ const featureFlagsCss = `
   background: var(--danger-soft);
   color: var(--danger);
 }
-.aff-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.aff-card {
-  min-width: 0;
-  padding: 18px;
+.aff-list {
+  overflow: hidden;
   border: 1px solid var(--dborder);
   border-radius: 10px;
   background: var(--surface);
 }
+.aff-row {
+  min-width: 0;
+  padding: 18px;
+  border-bottom: 1px solid var(--dborder);
+}
+.aff-row:last-child { border-bottom: 0; }
 .aff-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .aff-title-row { display: flex; align-items: center; gap: 9px; }
 .aff-title-row h2 { margin: 0; font-size: 17px; letter-spacing: -0.02em; }
-.aff-card code { display: block; margin-top: 5px; color: var(--dmuted); font-size: 11px; }
-.aff-card p { min-height: 42px; margin: 18px 0 14px; color: var(--dmuted); line-height: 1.6; }
+.aff-row code { display: block; margin-top: 5px; color: var(--dmuted); font-size: 11px; }
+.aff-row p { margin: 18px 0 14px; color: var(--dmuted); line-height: 1.6; }
 .aff-toggle {
   display: inline-flex;
   align-items: center;
@@ -214,29 +218,22 @@ const featureFlagsCss = `
   font-size: 12px;
 }
 .aff-state svg { width: 14px; height: 14px; color: var(--daccent); }
-.aff-card dl { display: grid; gap: 8px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--dborder); }
-.aff-card dl div { display: flex; justify-content: space-between; gap: 12px; }
-.aff-card dt { color: var(--dmuted); }
-.aff-card dd { margin: 0; text-align: right; }
+.aff-row dl { display: grid; gap: 8px; margin: 16px 0 0; padding-top: 14px; border-top: 1px solid var(--dborder); }
+.aff-row dl div { display: flex; justify-content: space-between; gap: 12px; }
+.aff-row dt { color: var(--dmuted); }
+.aff-row dd { margin: 0; text-align: right; }
 .aff-loading {
-  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 9px;
   min-height: 180px;
-  border: 1px solid var(--dborder);
-  border-radius: 10px;
   color: var(--dmuted);
 }
 .aff-loading svg, .aff-spin { animation: aff-spin .8s linear infinite; }
 @keyframes aff-spin { to { transform: rotate(360deg); } }
-@media (max-width: 820px) {
-  .aff-grid { grid-template-columns: 1fr; }
-}
 @media (max-width: 560px) {
   .aff-card-top { display: grid; }
   .aff-toggle { width: 100%; justify-content: center; }
-  .aff-card p { min-height: 0; }
 }
 `;

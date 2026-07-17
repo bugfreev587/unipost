@@ -7,7 +7,7 @@ UniPost no longer uses Unleash. Rollout flags are stored in the UniPost database
 - Page: `/admin/feature-flags`
 - API: `GET /v1/admin/feature-flags` and `PATCH /v1/admin/feature-flags/{key}`
 - Access: Super Admin only
-- Scope: global; flags do not vary between development, staging, and production
+- Scope: one global value per deployed environment; the data model has no test/production variant dimension
 - Audit: actual state changes append an immutable row to `feature_flag_changes`
 
 The Admin UI uses these semantics:

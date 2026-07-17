@@ -58,7 +58,7 @@ The current production-safe release intentionally separates implemented code fro
 - The OAuth 2.0 request continues to include the DM scopes. Accounts that already granted them will not reconnect when `x_dms_v1` later turns ON; accounts missing them reconnect once after the feature becomes available.
 - Manual Top-up, purchased balances, transaction ledger, and Auto top-up remain later phases and are not implied by the X Credits rollout flag.
 
-The Super Admin page `/admin/feature-flags` is the global control surface. ON makes a feature available to regular users; OFF keeps it unavailable to regular users while preserving Super Admin workspace access. The flags do not vary by development, staging, or production.
+The Super Admin page `/admin/feature-flags` is the global control surface inside each deployed environment. ON makes a feature available to regular users; OFF keeps it unavailable to regular users while preserving Super Admin workspace access. The data model has no test/staging/production variant field; each isolated deployment reads the same keys and semantics from its own database.
 
 ## 2. Background
 
