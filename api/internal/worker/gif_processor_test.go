@@ -83,6 +83,36 @@ func TestValidateGIFOutputProbeRejectsWrongProfile(t *testing.T) {
 	}
 }
 
+func TestValidateGIFOutputProbeUsesStableOutputSizeError(t *testing.T) {
+	probe := gifOutputProbe{
+		FormatName: "mov,mp4,m4a,3gp,3g2,mj2", VideoCodec: "h264", PixelFormat: "yuv420p",
+		Width: 2, Height: 2, FPS: 30, DurationMS: 5000,
+	}
+	var processingErr *gifProcessingError
+	err := validateGIFOutputProbe(
+		probe,
+		gifRenderPlan{Width: 2, Height: 2, Duration: 5 * time.Second},
+		gifOutputHardCapBytes+1,
+	)
+	if !errors.As(err, &processingErr) || processingErr.Code != gifErrorOutputSizeExceeded {
+		t.Fatalf("error = %#v, want %q", err, gifErrorOutputSizeExceeded)
+	}
+}
+
+func TestClassifyGIFFFmpegRunFailureDistinguishesDecodeFailure(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.mp4")
+	if err := classifyGIFFFmpegRunFailure(missing, errors.New("ffmpeg exited")); err.Code != gifErrorDecodeFailed {
+		t.Fatalf("missing output code = %q, want %q", err.Code, gifErrorDecodeFailed)
+	}
+	partial := filepath.Join(t.TempDir(), "partial.mp4")
+	if writeErr := os.WriteFile(partial, []byte("partial"), 0o600); writeErr != nil {
+		t.Fatal(writeErr)
+	}
+	if err := classifyGIFFFmpegRunFailure(partial, errors.New("ffmpeg exited")); err.Code != gifErrorProcessingFailed {
+		t.Fatalf("partial output code = %q, want %q", err.Code, gifErrorProcessingFailed)
+	}
+}
+
 func requireGIFBinaries(t *testing.T) (string, string) {
 	t.Helper()
 	ffmpegPath, err := exec.LookPath("ffmpeg")

@@ -564,13 +564,17 @@ func main() {
 	}
 
 	if shouldStartMediaProcessingWorkers(processMode) {
-		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
-		go mediaCleanupWorker.Start(workerCtx)
+		if storageClient == nil {
+			slog.Error("media processing workers disabled: object storage is not configured", "process_mode", processMode)
+		} else {
+			mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
+			go mediaCleanupWorker.Start(workerCtx)
 
-		mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
-		mediaGIFConversionWorker := worker.NewMediaGIFConversionWorker(queries, storageClient)
-		mediaProcessingCoordinator := worker.NewMediaProcessingCoordinator(queries, mediaAudioOverlayWorker, mediaGIFConversionWorker)
-		go mediaProcessingCoordinator.Start(workerCtx)
+			mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
+			mediaGIFConversionWorker := worker.NewMediaGIFConversionWorker(queries, storageClient)
+			mediaProcessingCoordinator := worker.NewMediaProcessingCoordinator(queries, mediaAudioOverlayWorker, mediaGIFConversionWorker)
+			go mediaProcessingCoordinator.Start(workerCtx)
+		}
 	}
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)

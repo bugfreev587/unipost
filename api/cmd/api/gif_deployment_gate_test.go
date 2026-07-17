@@ -35,3 +35,21 @@ func TestDeploymentBUsesAtomicGIFAdmission(t *testing.T) {
 		}
 	}
 }
+
+func TestDeploymentBMediaWorkersCanOnlyBeClaimedBySharedCoordinator(t *testing.T) {
+	source, err := os.ReadFile("../../internal/worker/media_audio_overlay.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	for _, forbidden := range []string{
+		"func (w *MediaAudioOverlayWorker) Start(",
+		"func (w *MediaAudioOverlayWorker) runOnce(",
+		"ClaimMediaProcessingJobsByKind(context.Context",
+		"PromoteDueMediaProcessingRetriesByKind(context.Context",
+	} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("audio worker retains independent queue ownership: %q", forbidden)
+		}
+	}
+}

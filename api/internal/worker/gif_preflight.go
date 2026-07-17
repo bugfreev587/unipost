@@ -21,7 +21,9 @@ const (
 	gifErrorDecodeBudgetExceeded = "gif_decode_budget_exceeded"
 	gifErrorDurationExceeded     = "gif_duration_exceeded"
 	gifErrorProbeFailed          = "gif_probe_failed"
+	gifErrorDecodeFailed         = "gif_decode_failed"
 	gifErrorOutputInvalid        = "gif_output_invalid"
+	gifErrorOutputSizeExceeded   = "output_size_exceeded"
 	gifErrorProcessingFailed     = "gif_processing_failed"
 	gifErrorProcessingTimeout    = "gif_processing_timeout"
 )

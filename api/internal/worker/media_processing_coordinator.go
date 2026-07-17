@@ -64,9 +64,13 @@ func (c *MediaProcessingCoordinator) RunOnce(ctx context.Context) {
 	}
 	defer c.runMu.Unlock()
 	for _, kind := range []string{mediaAudioOverlayKind, mediaGIFConversionKind} {
-		if _, err := c.queries.PromoteDueMediaProcessingRetriesByKind(ctx, kind); err != nil {
+		promoted, err := c.queries.PromoteDueMediaProcessingRetriesByKind(ctx, kind)
+		if err != nil {
 			slog.Error("media processing coordinator: retry promotion failed", "kind", kind, "error", err)
 			return
+		}
+		if promoted > 0 {
+			slog.Info("media processing retries promoted", "kind", kind, "count", promoted)
 		}
 	}
 	if recovered, err := c.queries.RecoverStaleMediaProcessingJobs(ctx, mediaProcessingRecoveryBatch); err != nil {
@@ -92,6 +96,11 @@ func (c *MediaProcessingCoordinator) RunOnce(ctx context.Context) {
 		job := jobs[0]
 		c.preferred = otherMediaProcessingKind(kind)
 		started := time.Now()
+		queueWaitMS := int64(0)
+		if job.CreatedAt.Valid {
+			queueWaitMS = time.Since(job.CreatedAt.Time).Milliseconds()
+		}
+		slog.Info("media processing job claimed", "job_id", job.ID, "kind", job.Kind, "attempts", job.Attempts, "queue_wait_ms", queueWaitMS)
 		processor := c.audio
 		if kind == mediaGIFConversionKind {
 			processor = c.gif
@@ -126,6 +135,7 @@ func (c *MediaProcessingCoordinator) heartbeat(ctx context.Context, job db.Media
 				slog.Warn("media processing heartbeat lost job ownership", "job_id", job.ID, "kind", job.Kind)
 				return
 			}
+			slog.Debug("media processing heartbeat refreshed", "job_id", job.ID, "kind", job.Kind)
 		}
 	}
 }

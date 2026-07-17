@@ -108,7 +108,7 @@ func (p *ffmpegGIFProcessor) Process(parent context.Context, req gifProcessReque
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return gifProcessResult{}, &gifProcessingError{Code: gifErrorProcessingTimeout, Message: "GIF conversion exceeded the five minute processing limit", Retryable: true, Cause: ctx.Err()}
 		}
-		return gifProcessResult{}, &gifProcessingError{Code: gifErrorProcessingFailed, Message: "GIF conversion failed", Cause: runErr}
+		return gifProcessResult{}, classifyGIFFFmpegRunFailure(req.OutputPath, runErr)
 	}
 	probe, err := p.probeOutput(ctx, req.OutputPath)
 	if err != nil {
@@ -122,6 +122,16 @@ func (p *ffmpegGIFProcessor) Process(parent context.Context, req gifProcessReque
 		return gifProcessResult{}, err
 	}
 	return gifProcessResult{SizeBytes: outputStat.Size(), Width: probe.Width, Height: probe.Height, DurationMS: probe.DurationMS}, nil
+}
+
+func classifyGIFFFmpegRunFailure(outputPath string, runErr error) *gifProcessingError {
+	stat, statErr := os.Stat(outputPath)
+	if statErr != nil || stat.Size() == 0 {
+		return &gifProcessingError{
+			Code: gifErrorDecodeFailed, Message: "GIF source could not be decoded", Cause: runErr,
+		}
+	}
+	return &gifProcessingError{Code: gifErrorProcessingFailed, Message: "GIF conversion failed", Cause: runErr}
 }
 
 func (p *ffmpegGIFProcessor) probeOutput(ctx context.Context, path string) (gifOutputProbe, error) {
@@ -189,6 +199,11 @@ func parseGIFFrameRate(value string) float64 {
 }
 
 func validateGIFOutputProbe(probe gifOutputProbe, plan gifRenderPlan, sizeBytes int64) error {
+	if sizeBytes > gifOutputHardCapBytes {
+		return &gifProcessingError{
+			Code: gifErrorOutputSizeExceeded, Message: "converted MP4 exceeds the global Media size limit",
+		}
+	}
 	validContainer := false
 	for _, name := range strings.Split(probe.FormatName, ",") {
 		if name == "mp4" {
@@ -200,7 +215,7 @@ func validateGIFOutputProbe(probe gifOutputProbe, plan gifRenderPlan, sizeBytes 
 		probe.Width == plan.Width && probe.Height == plan.Height && probe.Width%2 == 0 && probe.Height%2 == 0 &&
 		math.Abs(probe.FPS-30) < 0.01 && !probe.HasAudio && probe.DurationMS > 0 &&
 		math.Abs(float64(probe.DurationMS)-float64(plan.Duration.Milliseconds())) <= 100 &&
-		sizeBytes > 0 && sizeBytes <= gifOutputHardCapBytes
+		sizeBytes > 0
 	if !valid {
 		return &gifProcessingError{Code: gifErrorOutputInvalid, Message: "converted MP4 does not match the universal_mp4_v1 profile"}
 	}
