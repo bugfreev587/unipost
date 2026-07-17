@@ -295,6 +295,23 @@ type ErrorTriageRun struct {
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 }
 
+type FeatureFlag struct {
+	Key         string             `json:"key"`
+	Enabled     bool               `json:"enabled"`
+	Description string             `json:"description"`
+	UpdatedBy   string             `json:"updated_by"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type FeatureFlagChange struct {
+	ID              string             `json:"id"`
+	FlagKey         string             `json:"flag_key"`
+	PreviousEnabled bool               `json:"previous_enabled"`
+	Enabled         bool               `json:"enabled"`
+	ChangedBy       string             `json:"changed_by"`
+	ChangedAt       pgtype.Timestamptz `json:"changed_at"`
+}
+
 type FreePlanQuotaEmailReminder struct {
 	ID               string             `json:"id"`
 	WorkspaceID      string             `json:"workspace_id"`

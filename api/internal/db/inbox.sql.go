@@ -141,9 +141,15 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 WHERE i.workspace_id = $1
   AND i.is_read = false
   AND i.is_own = false
+  AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
 `
+
+type CountUnreadByWorkspaceParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	ExcludeXDms bool   `json:"exclude_x_dms"`
+}
 
 // Mirrors the inbox UI's "unread" filter exactly: items the user
 // HASN'T read AND wasn't authored by them. Without the is_own = false
@@ -152,8 +158,8 @@ WHERE i.workspace_id = $1
 // page itself, and the sidebar count would drift higher than the
 // per-tab counts on the page. is_own is set in the webhook / sync
 // upsert based on author_id == account.external_account_id.
-func (q *Queries) CountUnreadByWorkspace(ctx context.Context, workspaceID string) (int32, error) {
-	row := q.db.QueryRow(ctx, countUnreadByWorkspace, workspaceID)
+func (q *Queries) CountUnreadByWorkspace(ctx context.Context, arg CountUnreadByWorkspaceParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countUnreadByWorkspace, arg.WorkspaceID, arg.ExcludeXDms)
 	var count int32
 	err := row.Scan(&count)
 	return count, err
@@ -1081,9 +1087,10 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 WHERE i.workspace_id = $1
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
-  AND ($3::TEXT IS NULL OR i.source = $3::TEXT)
-  AND ($4::BOOLEAN IS NULL OR i.is_read = $4::BOOLEAN)
-  AND ($5::BOOLEAN IS NULL OR i.is_own = $5::BOOLEAN)
+  AND (NOT $3::BOOLEAN OR i.source <> 'x_dm')
+  AND ($4::TEXT IS NULL OR i.source = $4::TEXT)
+  AND ($5::BOOLEAN IS NULL OR i.is_read = $5::BOOLEAN)
+  AND ($6::BOOLEAN IS NULL OR i.is_own = $6::BOOLEAN)
 ORDER BY i.received_at DESC
 LIMIT $2
 `
@@ -1091,6 +1098,7 @@ LIMIT $2
 type ListInboxItemsByWorkspaceParams struct {
 	WorkspaceID string      `json:"workspace_id"`
 	Limit       int32       `json:"limit"`
+	ExcludeXDms bool        `json:"exclude_x_dms"`
 	Source      pgtype.Text `json:"source"`
 	IsRead      pgtype.Bool `json:"is_read"`
 	IsOwn       pgtype.Bool `json:"is_own"`
@@ -1100,6 +1108,7 @@ func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxIt
 	rows, err := q.db.Query(ctx, listInboxItemsByWorkspace,
 		arg.WorkspaceID,
 		arg.Limit,
+		arg.ExcludeXDms,
 		arg.Source,
 		arg.IsRead,
 		arg.IsOwn,
@@ -1289,11 +1298,18 @@ func (q *Queries) ListXInboxOutboundWebhookCandidates(ctx context.Context, arg L
 const markAllInboxItemsRead = `-- name: MarkAllInboxItemsRead :execrows
 UPDATE inbox_items
 SET is_read = true
-WHERE workspace_id = $1 AND is_read = false
+WHERE workspace_id = $1
+  AND is_read = false
+  AND (NOT $2::BOOLEAN OR source <> 'x_dm')
 `
 
-func (q *Queries) MarkAllInboxItemsRead(ctx context.Context, workspaceID string) (int64, error) {
-	result, err := q.db.Exec(ctx, markAllInboxItemsRead, workspaceID)
+type MarkAllInboxItemsReadParams struct {
+	WorkspaceID string `json:"workspace_id"`
+	ExcludeXDms bool   `json:"exclude_x_dms"`
+}
+
+func (q *Queries) MarkAllInboxItemsRead(ctx context.Context, arg MarkAllInboxItemsReadParams) (int64, error) {
+	result, err := q.db.Exec(ctx, markAllInboxItemsRead, arg.WorkspaceID, arg.ExcludeXDms)
 	if err != nil {
 		return 0, err
 	}

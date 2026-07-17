@@ -202,6 +202,10 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	superAdminChecker := auth.NewSuperAdminChecker(queries)
+	featureFlagStore := featureflags.NewPostgresStore(pool)
+	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
+	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
@@ -436,6 +440,9 @@ func main() {
 	}
 	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
 		Store: xIngestionStore,
+		DMsAvailable: func(ctx context.Context, workspaceID string) (bool, error) {
+			return featureFlagEvaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
+		},
 		AtomicProcess: func(ctx context.Context, req xinbox.InboundAdmissionRequest, item xinbox.InboxItem) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
 			var insertedItem xinbox.InboxItem
 			var inserted bool
@@ -640,10 +647,6 @@ func main() {
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
-	superAdminChecker := auth.NewSuperAdminChecker(queries)
-	featureFlagStore := featureflags.NewPostgresStore(pool)
-	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
-	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
 		SetXTokenRefresher(xTokenRefresher)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
@@ -659,7 +662,7 @@ func main() {
 	// dynamic GROUP BY clause sqlc can't model.
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
-	platformHandler := handler.NewPlatformHandler(queries, quotaChecker)
+	platformHandler := handler.NewPlatformHandler(queries, quotaChecker).SetFeatureFlags(featureFlagEvaluator)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	mediaProcessingAdmitter := mediaprocessing.NewPostgresAdmitter(pool)
 	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient).WithAdmitter(mediaProcessingAdmitter)
@@ -1209,7 +1212,8 @@ func main() {
 				xIngestionService,
 				xTokenRefresher,
 				[]byte(os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET")),
-			)
+			).
+			SetFeatureFlags(featureFlagEvaluator)
 		if value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("X_INBOX_BACKFILL_SAFE_CREDITS")), 10, 64); err == nil && value > 0 {
 			inboxHandler.SetXBackfillSafeCredits(value)
 		}
