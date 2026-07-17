@@ -387,11 +387,20 @@ type platformCredentialTestDB struct {
 	consumerSecretSupplied  bool
 	createErr               error
 	deleteErr               error
+	auditErr                error
+	auditWriteAttempts      int
+	auditWrites             [][]any
+	lastEncryptedSecret     string
 }
 
-func (f *platformCredentialTestDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+func (f *platformCredentialTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	if strings.Contains(query, "-- name: DeletePlatformCredential") {
 		return pgconn.CommandTag{}, f.deleteErr
+	}
+	if strings.Contains(query, "-- name: WriteAuditLog") {
+		f.auditWriteAttempts++
+		f.auditWrites = append(f.auditWrites, append([]any(nil), args...))
+		return pgconn.CommandTag{}, f.auditErr
 	}
 	return pgconn.CommandTag{}, nil
 }
@@ -482,6 +491,7 @@ func (f *platformCredentialTestDB) QueryRow(_ context.Context, query string, arg
 		platform, _ := args[1].(string)
 		clientID, _ := args[2].(string)
 		clientSecret, _ := args[3].(string)
+		f.lastEncryptedSecret = clientSecret
 		if len(args) > 4 {
 			f.appBearerToken, _ = args[4].(pgtype.Text)
 		}
