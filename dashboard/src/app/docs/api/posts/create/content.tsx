@@ -554,6 +554,9 @@ export function CreatePostContent() {
             <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
               <strong style={{ color: "var(--docs-text)" }}>Local file bytes:</strong> reserve an upload with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, PUT the bytes to the returned upload URL, then publish with <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>platform_posts[].media_ids</code>. <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>size_bytes</code> is optional; UniPost hydrates the actual byte length after upload.
             </p>
+            <p style={{ color: "var(--docs-text-soft)", fontSize: 14.5, lineHeight: 1.68, margin: 0 }}>
+              <strong style={{ color: "var(--docs-text)" }}>GIF conversion:</strong> X and Facebook can publish the original GIF. For a video-only destination, call <ApiInlineLink endpoint="POST /v1/media/gif-conversions" href="/docs/api/media/gif-conversions" />, wait for success, and send the returned <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>output_media_id</code> here as normal video media. Conversion does not create the post automatically.
+            </p>
           </div>
         </section>
 

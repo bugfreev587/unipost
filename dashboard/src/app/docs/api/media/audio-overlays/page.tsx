@@ -198,6 +198,7 @@ export default function AudioOverlayPage() {
         { code: "401", fields: ERROR_FIELDS },
         { code: "409", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
+        { code: "429", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
@@ -205,6 +206,12 @@ export default function AudioOverlayPage() {
     >
       <InfoBox>
         Use this endpoint for functionality, not platform music libraries. TikTok and Instagram API publishing do not let API clients attach arbitrary audio to image or carousel posts. UniPost creates a normal processed video instead, so the publish API receives a regular video <code>media_id</code>.
+      </InfoBox>
+      <InfoBox>
+        Audio Overlay and GIF conversion share the workspace&apos;s Plan-based active Media Processing capacity. A 429 <code>media_processing_capacity_exceeded</code> response includes <code>Retry-After</code>. Audio Overlay does not consume the rolling GIF conversion allowance.
+      </InfoBox>
+      <InfoBox>
+        Active inputs are protected from cleanup. After success or failure, both inputs and a successful output use the Plan retention deadline assigned when the job reaches its terminal state.
       </InfoBox>
     </SingleEndpointReferencePage>
   );
