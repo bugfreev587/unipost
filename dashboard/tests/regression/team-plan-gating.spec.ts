@@ -20,6 +20,8 @@ test.describe("Team plan security gates", () => {
     expect(planGateSource).toContain('type Feature = "inbox" | "analytics" | "audit_log";');
     expect(planGateSource).toContain('feature === "audit_log"');
     expect(planGateSource).toContain("res.data.plan_allows_audit_log");
+    expect(planGateSource).toContain('if (!token) {\n          setAllowed(feature !== "audit_log");');
+    expect(planGateSource).not.toContain("if (!token || cancelled) return;");
     expect(auditPageSource).toContain('import { PlanGate } from "@/components/dashboard/plan-gate";');
     expect(auditPageSource).toContain('<PlanGate feature="audit_log">');
     expect(apiRoutesSource).toContain(

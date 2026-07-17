@@ -50,7 +50,11 @@ export function PlanGate({
     (async () => {
       try {
         const token = await getToken();
-        if (!token || cancelled) return;
+        if (cancelled) return;
+        if (!token) {
+          setAllowed(feature !== "audit_log");
+          return;
+        }
         const res = await getApiLimits(token);
         if (cancelled) return;
         const ok = feature === "inbox"
