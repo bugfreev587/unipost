@@ -15,7 +15,7 @@ Cleanup runs in `finally` semantics after success and failure. It first attempts
 - `TEAM_ACCEPTANCE_ENV`: `development`, `staging`, or `production`.
 - `TEAM_ACCEPTANCE_API_URL`: the exact API domain for that environment.
 - `TEAM_ACCEPTANCE_APP_URL`: the exact app domain for that environment.
-- `TEAM_ACCEPTANCE_DATABASE_URL`: the Postgres URL for that environment. Never reuse one environment's URL for another.
+- `TEAM_ACCEPTANCE_DATABASE_URL`: the public Postgres URL for that environment (Railway `DATABASE_PUBLIC_URL`, not the `.railway.internal` runtime URL). Never reuse one environment's URL for another.
 - `TEAM_ACCEPTANCE_CLERK_SECRET_KEY`: the environment's Clerk secret (`sk_test_` for development/staging; `sk_live_` for production).
 - `TEAM_ACCEPTANCE_OWNER_EMAIL`, `TEAM_ACCEPTANCE_ADMIN_EMAIL`, `TEAM_ACCEPTANCE_EDITOR_EMAIL`: three unique disposable addresses beginning with `codex-team-acceptance-`. The runner creates and deletes these Clerk users.
 
