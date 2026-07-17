@@ -151,6 +151,19 @@ func TestMediaProcessingLifecycleMigration117Exists(t *testing.T) {
 	}
 }
 
+func TestMediaProcessingClaimQueryIsKindAware(t *testing.T) {
+	sql := strings.ToLower(claimMediaProcessingJobsByKind)
+	for _, want := range []string{
+		"candidate.kind = $1",
+		"candidate.status = 'queued'",
+		"for update skip locked",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("kind-aware media processing claim query missing %q, got:\n%s", want, claimMediaProcessingJobsByKind)
+		}
+	}
+}
+
 func TestMediaPostUsageRetentionMigrationExists(t *testing.T) {
 	body, err := fs.ReadFile(migrations, "migrations/097_media_post_usage_retention.sql")
 	if err != nil {

@@ -26,7 +26,7 @@ const (
 )
 
 type mediaAudioOverlayWorkerQueries interface {
-	ClaimMediaProcessingJobs(context.Context, int32) ([]db.MediaProcessingJob, error)
+	ClaimMediaProcessingJobsByKind(context.Context, db.ClaimMediaProcessingJobsByKindParams) ([]db.MediaProcessingJob, error)
 	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
 	CreateMedia(context.Context, db.CreateMediaParams) (db.Media, error)
 	UpdateMediaStorageKey(context.Context, db.UpdateMediaStorageKeyParams) (db.Media, error)
@@ -95,7 +95,10 @@ func (w *MediaAudioOverlayWorker) runOnce(ctx context.Context) {
 	if w.queries == nil || w.storage == nil || w.processor == nil {
 		return
 	}
-	jobs, err := w.queries.ClaimMediaProcessingJobs(ctx, mediaAudioOverlayClaimBatch)
+	jobs, err := w.queries.ClaimMediaProcessingJobsByKind(ctx, db.ClaimMediaProcessingJobsByKindParams{
+		JobKind:    mediaAudioOverlayKind,
+		BatchLimit: mediaAudioOverlayClaimBatch,
+	})
 	if err != nil {
 		slog.Error("media audio overlay worker: claim failed", "error", err)
 		return
@@ -109,18 +112,18 @@ func (w *MediaAudioOverlayWorker) runOnce(ctx context.Context) {
 
 func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaProcessingJob) error {
 	if job.Kind != mediaAudioOverlayKind {
-		return nil
+		return fmt.Errorf("unsupported media processing job kind %q", job.Kind)
 	}
 
 	video, err := w.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
-		ID:          job.InputVideoMediaID,
+		ID:          job.InputVideoMediaID.String,
 		WorkspaceID: job.WorkspaceID,
 	})
 	if err != nil {
 		return w.failJob(ctx, job.ID, "input_media_unavailable", "input video media is unavailable", true)
 	}
 	audio, err := w.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
-		ID:          job.InputAudioMediaID,
+		ID:          job.InputAudioMediaID.String,
 		WorkspaceID: job.WorkspaceID,
 	})
 	if err != nil {

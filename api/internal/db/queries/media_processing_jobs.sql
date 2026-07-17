@@ -40,12 +40,13 @@ WHERE id = $1 AND workspace_id = $2;
 SELECT * FROM media_processing_jobs
 WHERE workspace_id = $1 AND idempotency_key = $2;
 
--- name: ClaimMediaProcessingJobs :many
+-- name: ClaimMediaProcessingJobsByKind :many
 WITH eligible AS (
-  SELECT id
-  FROM media_processing_jobs
-  WHERE status = 'queued'
-  ORDER BY created_at ASC, id ASC
+  SELECT candidate.id
+  FROM media_processing_jobs candidate
+  WHERE candidate.kind = sqlc.arg(job_kind)
+    AND candidate.status = 'queued'
+  ORDER BY candidate.created_at ASC, candidate.id ASC
   LIMIT sqlc.arg(batch_limit)::int
   FOR UPDATE SKIP LOCKED
 )

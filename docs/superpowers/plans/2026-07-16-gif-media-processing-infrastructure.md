@@ -59,7 +59,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Add SQL queries needed to insert, transition, look up, and delete processing usage rows.
 - [x] Run `/Users/xiaoboyu/go/bin/sqlc generate` from `api/`.
 - [x] Re-run the focused database tests and confirm GREEN.
-- [ ] Commit: `feat(media): add processing lifecycle schema`.
+- [x] Commit: `feat(media): add processing lifecycle schema`.
 
 ## Task 2: Make job claiming kind-specific
 
@@ -70,11 +70,11 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/internal/worker/media_audio_overlay_test.go`
 - Regenerate: `api/internal/db/generated/*`
 
-- [ ] Extend the Audio Overlay worker query mock with a failing expectation that the claim call receives `audio_overlay`; confirm the current generic claim path fails the test.
-- [ ] Replace `ClaimMediaProcessingJobs` with `ClaimMediaProcessingJobsByKind(kind, batch_limit)`. Keep `FOR UPDATE SKIP LOCKED`, retry scheduling, and ordering unchanged, but add `kind = $1` to the claim predicate.
-- [ ] Regenerate sqlc and update the worker interface/call site to pass `audio_overlay` explicitly.
-- [ ] Add a database query test or source assertion proving one worker kind cannot claim another kind.
-- [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/worker ./internal/db -count=1` and confirm GREEN.
+- [x] Extend the Audio Overlay worker query mock with a failing expectation that the claim call receives `audio_overlay`; confirm the current generic claim path fails the test.
+- [x] Replace `ClaimMediaProcessingJobs` with `ClaimMediaProcessingJobsByKind(kind, batch_limit)`. Keep `FOR UPDATE SKIP LOCKED`, retry scheduling, and ordering unchanged, but add `kind = $1` to the claim predicate.
+- [x] Regenerate sqlc and update the worker interface/call site to pass `audio_overlay` explicitly.
+- [x] Add a database query test or source assertion proving one worker kind cannot claim another kind.
+- [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/worker ./internal/db -count=1` and confirm GREEN.
 - [ ] Commit: `fix(media): isolate processing job claims by kind`.
 
 ## Task 3: Preserve Audio Overlay across nullable input fields

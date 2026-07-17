@@ -90,6 +90,9 @@ func TestMediaAudioOverlayWorkerProcessesClaimedJob(t *testing.T) {
 	if queries.claimCalls != 1 {
 		t.Fatalf("claim calls = %d, want 1", queries.claimCalls)
 	}
+	if queries.claimKind != mediaAudioOverlayKind {
+		t.Fatalf("claim kind = %q, want %q", queries.claimKind, mediaAudioOverlayKind)
+	}
 	if len(store.downloads) != 2 {
 		t.Fatalf("downloads = %#v, want video and audio", store.downloads)
 	}
@@ -106,6 +109,7 @@ func TestMediaAudioOverlayWorkerProcessesClaimedJob(t *testing.T) {
 
 type fakeMediaAudioOverlayWorkerQueries struct {
 	claimCalls             int
+	claimKind              string
 	succeededJobID         string
 	succeededOutputMediaID string
 	failedJobID            string
@@ -115,16 +119,17 @@ func newFakeMediaAudioOverlayWorkerQueries() *fakeMediaAudioOverlayWorkerQueries
 	return &fakeMediaAudioOverlayWorkerQueries{}
 }
 
-func (f *fakeMediaAudioOverlayWorkerQueries) ClaimMediaProcessingJobs(context.Context, int32) ([]db.MediaProcessingJob, error) {
+func (f *fakeMediaAudioOverlayWorkerQueries) ClaimMediaProcessingJobsByKind(_ context.Context, arg db.ClaimMediaProcessingJobsByKindParams) ([]db.MediaProcessingJob, error) {
 	f.claimCalls++
+	f.claimKind = arg.JobKind
 	now := pgtype.Timestamptz{Time: time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC), Valid: true}
 	return []db.MediaProcessingJob{{
 		ID:                "mpj_1",
 		WorkspaceID:       "ws_1",
 		Kind:              "audio_overlay",
 		Status:            "processing",
-		InputVideoMediaID: "med_video",
-		InputAudioMediaID: "med_audio",
+		InputVideoMediaID: pgtype.Text{String: "med_video", Valid: true},
+		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
 		Mode:              "mix",
 		Fit:               "trim_to_video",
 		VideoVolume:       70,

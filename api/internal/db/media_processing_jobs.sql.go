@@ -11,13 +11,14 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimMediaProcessingJobs = `-- name: ClaimMediaProcessingJobs :many
+const claimMediaProcessingJobsByKind = `-- name: ClaimMediaProcessingJobsByKind :many
 WITH eligible AS (
-  SELECT id
-  FROM media_processing_jobs
-  WHERE status = 'queued'
-  ORDER BY created_at ASC, id ASC
-  LIMIT $1::int
+  SELECT candidate.id
+  FROM media_processing_jobs candidate
+  WHERE candidate.kind = $1
+    AND candidate.status = 'queued'
+  ORDER BY candidate.created_at ASC, candidate.id ASC
+  LIMIT $2::int
   FOR UPDATE SKIP LOCKED
 )
 UPDATE media_processing_jobs j
@@ -30,8 +31,13 @@ WHERE j.id = eligible.id
 RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at, j.input_media_id
 `
 
-func (q *Queries) ClaimMediaProcessingJobs(ctx context.Context, batchLimit int32) ([]MediaProcessingJob, error) {
-	rows, err := q.db.Query(ctx, claimMediaProcessingJobs, batchLimit)
+type ClaimMediaProcessingJobsByKindParams struct {
+	JobKind    string `json:"job_kind"`
+	BatchLimit int32  `json:"batch_limit"`
+}
+
+func (q *Queries) ClaimMediaProcessingJobsByKind(ctx context.Context, arg ClaimMediaProcessingJobsByKindParams) ([]MediaProcessingJob, error) {
+	rows, err := q.db.Query(ctx, claimMediaProcessingJobsByKind, arg.JobKind, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}
