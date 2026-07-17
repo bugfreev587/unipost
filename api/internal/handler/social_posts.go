@@ -37,6 +37,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 var xURLCandidatePattern = regexp.MustCompile(`(?i)(https?://|www\.|(?:^|[^@\p{L}\p{N}_])(?:[\p{L}\p{N}-]+\.)+\p{L}{2,}(?:[/:?#][^\s]*)?)`)
@@ -66,6 +67,7 @@ type SocialPostHandler struct {
 	loopsSyncer        loopsLifecycleSyncer
 	quotaEmail         quotaEmailService
 	xUsage             xUsageService
+	xTokenRefresher    xinbox.TokenRefresher
 	paidSchedule       paidquota.Coordinator
 	holdReconciler     paidquota.HoldReconciler
 	paidQuotaEvaluator paidQuotaEvaluationService
@@ -164,6 +166,11 @@ func (h *SocialPostHandler) SetQuotaEmailService(service quotaEmailService) *Soc
 
 func (h *SocialPostHandler) SetXUsageService(service xUsageService) *SocialPostHandler {
 	h.xUsage = service
+	return h
+}
+
+func (h *SocialPostHandler) SetXTokenRefresher(refresher xinbox.TokenRefresher) *SocialPostHandler {
+	h.xTokenRefresher = refresher
 	return h
 }
 
@@ -1915,7 +1922,7 @@ func (h *SocialPostHandler) publishOneContext(
 	// can retry the refresh later.
 	if acc.TokenExpiresAt.Valid && acc.TokenExpiresAt.Time.Before(time.Now()) && acc.RefreshToken.Valid {
 		if refreshTok, decErr := h.encryptor.Decrypt(acc.RefreshToken.String); decErr == nil {
-			if newAccess, newRefresh, expiresAt, refErr := adapter.RefreshToken(ctx, refreshTok); refErr == nil && newAccess != "" {
+			if newAccess, newRefresh, expiresAt, refErr := h.refreshSocialAccountToken(ctx, acc, adapter, refreshTok); refErr == nil && newAccess != "" {
 				encAccess, encErr := h.encryptor.Encrypt(newAccess)
 				encRefresh, encErr2 := h.encryptor.Encrypt(newRefresh)
 				if encErr == nil && encErr2 == nil {
@@ -1979,13 +1986,11 @@ func (h *SocialPostHandler) publishOneContext(
 		return
 	}
 	if acc.Platform == "twitter" {
-		if acc.ConnectionType == "managed" {
-			oc.xCreditBillingMode = "unipost_managed_app"
+		oc.xCreditBillingMode = acc.XAppMode.String
+		if xinbox.AppMode(acc.XAppMode.String) == xinbox.AppModeUniPostManaged {
 			oc.xCreditsCounted = usageEvent.WeightedUnits
 			oc.xCreditOperation = usageEvent.OperationKey
 			oc.xCreditCatalog = usageEvent.CatalogVersion
-		} else {
-			oc.xCreditBillingMode = "customer_x_app"
 		}
 	}
 
@@ -2050,6 +2055,20 @@ func (h *SocialPostHandler) publishOneContext(
 	return
 }
 
+func (h *SocialPostHandler) refreshSocialAccountToken(ctx context.Context, account db.SocialAccount, adapter platform.PlatformAdapter, refreshToken string) (string, string, time.Time, error) {
+	if strings.EqualFold(account.Platform, "twitter") {
+		if h.xTokenRefresher == nil {
+			return "", "", time.Time{}, errors.New("X token refresher is not configured")
+		}
+		tokens, err := h.xTokenRefresher.Refresh(ctx, account, refreshToken)
+		if err != nil {
+			return "", "", time.Time{}, err
+		}
+		return tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt, nil
+	}
+	return adapter.RefreshToken(ctx, refreshToken)
+}
+
 func xOperationForText(text string) string {
 	if xURLCandidatePattern.MatchString(text) {
 		return "post.create_url"
@@ -2074,12 +2093,23 @@ func (h *SocialPostHandler) reserveManagedXOperation(
 	account db.SocialAccount,
 	operation string,
 ) (xcredits.UsageEvent, error) {
-	if h == nil || h.xUsage == nil || account.Platform != "twitter" || account.ConnectionType != "managed" {
+	if h == nil || account.Platform != "twitter" {
+		return xcredits.UsageEvent{}, nil
+	}
+	appMode, err := xinbox.NormalizePersistedAppMode(account.XAppMode.String)
+	if err != nil {
+		return xcredits.UsageEvent{}, err
+	}
+	if appMode != xinbox.AppModeUniPostManaged {
+		return xcredits.UsageEvent{}, nil
+	}
+	if h.xUsage == nil {
 		return xcredits.UsageEvent{}, nil
 	}
 	event, err := h.xUsage.Reserve(ctx, xcredits.ReserveRequest{
 		WorkspaceID:     workspaceID,
 		SocialAccountID: account.ID,
+		AppMode:         account.XAppMode.String,
 		ConnectionType:  account.ConnectionType,
 		OperationKey:    operation,
 		Source:          "publish",
@@ -2123,7 +2153,10 @@ func xWriteOutcomeUnknown(err error) bool {
 		strings.HasPrefix(message, "create_tweet canceled") ||
 		strings.HasPrefix(message, "create_tweet_reply:") ||
 		strings.HasPrefix(message, "create_tweet_reply timeout") ||
-		strings.HasPrefix(message, "create_tweet_reply canceled")
+		strings.HasPrefix(message, "create_tweet_reply canceled") ||
+		strings.HasPrefix(message, "create_dm:") ||
+		strings.HasPrefix(message, "create_dm timeout") ||
+		strings.HasPrefix(message, "create_dm canceled")
 }
 
 func xUsageKeyForResult(resultID string) string {

@@ -39,6 +39,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // ConnectSessionHandler owns the Connect session lifecycle.
@@ -276,6 +277,24 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	xAppMode := pgtype.Text{}
+	if body.Platform == "twitter" {
+		mode := xinbox.AppModeUniPostManaged
+		if workspaceAllowsPlatformCredentialsForPlatform(r.Context(), h.queries, workspaceID, body.Platform) {
+			_, credErr := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
+				WorkspaceID: workspaceID,
+				Platform:    body.Platform,
+			})
+			if credErr == nil {
+				mode = xinbox.AppModeWorkspace
+			} else if credErr != pgx.ErrNoRows {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load platform credentials")
+				return
+			}
+		}
+		xAppMode = pgtype.Text{String: string(mode), Valid: true}
+	}
+
 	oauthState, err := randomBase64URL(32)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate state")
@@ -309,6 +328,7 @@ func (h *ConnectSessionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		PkceVerifier:         pkceVerifier,
 		ExpiresAt:            pgtype.Timestamptz{Time: expiresAt, Valid: true},
 		AllowQuickstartCreds: body.AllowQuickstartCreds,
+		XAppMode:             xAppMode,
 	})
 	if err != nil {
 		slog.Error("connect session create failed",

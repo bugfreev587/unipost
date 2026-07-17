@@ -304,6 +304,17 @@ export default async function PlatformDetailPage({
             columns={["Surface", "Support", "Notes"]}
             rows={data.inbox.rows}
           />
+          {data.inbox.links?.length ? (
+            <div className="docs-next-grid">
+              {data.inbox.links.map((link) => (
+                <Link key={link.href} href={link.href} className="docs-next-card">
+                  <div className="docs-next-kicker">X Inbox</div>
+                  <div className="docs-next-title">{link.label}</div>
+                  <div className="docs-next-body">{link.description}</div>
+                </Link>
+              ))}
+            </div>
+          ) : null}
         </>
       ) : null}
 

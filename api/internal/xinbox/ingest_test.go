@@ -1,0 +1,585 @@
+package xinbox
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"testing"
+	"time"
+)
+
+type fakeIngestStore struct {
+	accounts     map[string]InboxAccount
+	external     map[string][]InboxAccount
+	inserted     []InboxItem
+	insertResult InboxItem
+	insertedNew  bool
+	insertErr    error
+}
+
+func (s *fakeIngestStore) AccountForApp(_ context.Context, appClientID, accountID string) (InboxAccount, error) {
+	account, ok := s.accounts[appClientID+":"+accountID]
+	if !ok {
+		return InboxAccount{}, ErrInboxAccountNotFound
+	}
+	return account, nil
+}
+
+func (s *fakeIngestStore) AccountsForExternalUser(_ context.Context, appClientID, externalUserID string) ([]InboxAccount, error) {
+	return s.external[appClientID+":"+externalUserID], nil
+}
+
+func (s *fakeIngestStore) InsertInboxItem(_ context.Context, item InboxItem) (InboxItem, bool, error) {
+	s.inserted = append(s.inserted, item)
+	if s.insertErr != nil {
+		return InboxItem{}, false, s.insertErr
+	}
+	if s.insertResult.ExternalID == "" {
+		s.insertResult = item
+	}
+	return s.insertResult, s.insertedNew, nil
+}
+
+func TestXIngestReplyUsesConversationIDAndNotifiesOnlyAfterInsert(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"client-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1",
+				ExternalUserID: "owner-1", AppMode: AppModeUniPostManaged,
+				Scopes: []string{"tweet.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+		insertedNew: true,
+	}
+	var admitted []InboundAdmissionRequest
+	var notified []InboxItem
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		Admit: func(_ context.Context, req InboundAdmissionRequest) (InboundAdmission, error) {
+			admitted = append(admitted, req)
+			return InboundAdmission{Accepted: true}, nil
+		},
+		Notify: func(_ context.Context, _ string, item InboxItem) {
+			notified = append(notified, item)
+		},
+	})
+
+	event := StreamEvent{}
+	event.Data.ID = "tweet-2"
+	event.Data.Text = "A public reply"
+	event.Data.AuthorID = "author-2"
+	event.Data.CreatedAt = "2026-07-16T12:00:00Z"
+	event.Data.ConversationID = "conversation-1"
+	event.Data.ReferencedTweets = []ReferencedTweet{{Type: "replied_to", ID: "tweet-1"}}
+	event.MatchingRules = []StreamRule{{Tag: FilteredStreamRuleTag("account-1")}}
+
+	if err := service.IngestStreamEvent(context.Background(), "client-1", event); err != nil {
+		t.Fatalf("IngestStreamEvent: %v", err)
+	}
+	if len(admitted) != 1 || admitted[0].OperationKey != "post.mention.received" ||
+		admitted[0].UpstreamResourceID != "tweet-2" {
+		t.Fatalf("admission = %#v", admitted)
+	}
+	if len(store.inserted) != 1 {
+		t.Fatalf("insert count = %d, want 1", len(store.inserted))
+	}
+	got := store.inserted[0]
+	if got.Source != "x_reply" || got.ThreadKey != "conversation-1" ||
+		got.ParentExternalID != "tweet-1" || got.Body != "A public reply" {
+		t.Fatalf("inserted item = %#v", got)
+	}
+	if eligible, _ := got.Metadata["reply_eligible"].(bool); !eligible {
+		t.Fatalf("reply_eligible metadata = %#v", got.Metadata)
+	}
+	if len(notified) != 1 || notified[0].ExternalID != "tweet-2" {
+		t.Fatalf("notifications = %#v", notified)
+	}
+
+	store.insertedNew = false
+	if err := service.IngestStreamEvent(context.Background(), "client-1", event); err != nil {
+		t.Fatalf("duplicate IngestStreamEvent: %v", err)
+	}
+	if len(notified) != 1 {
+		t.Fatalf("duplicate sent notification; count = %d", len(notified))
+	}
+}
+
+func TestXIngestDMSuppressionNeverPersistsPrivateBody(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"client-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1",
+				ExternalUserID: "owner-1", AppMode: AppModeUniPostManaged,
+				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+	}
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+			return InboundAdmission{Accepted: false, Suppressed: true}, nil
+		},
+	})
+	event := ActivityEvent{
+		AccountID:      "account-1",
+		ExternalID:     "dm-1",
+		ConversationID: "dm-conversation-1",
+		SenderID:       "sender-1",
+		RecipientID:    "owner-1",
+		Text:           "private secret body",
+		CreatedAt:      time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+	}
+	if err := service.IngestActivityEvent(context.Background(), "client-1", event); err != nil {
+		t.Fatalf("IngestActivityEvent: %v", err)
+	}
+	if len(store.inserted) != 0 {
+		t.Fatalf("suppressed DM was persisted: %#v", store.inserted)
+	}
+}
+
+func TestXIngestDMUsesCanonicalConversationIDAndDeduplicates(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"client-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1",
+				ExternalUserID: "owner-1", AppMode: AppModeWorkspace,
+				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+		insertedNew: true,
+	}
+	admissions := 0
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		Admit: func(_ context.Context, req InboundAdmissionRequest) (InboundAdmission, error) {
+			admissions++
+			if req.OperationKey != "dm.received" || req.UpstreamResourceType != "x_dm" {
+				t.Fatalf("admission request = %#v", req)
+			}
+			return InboundAdmission{Accepted: true, Duplicate: admissions > 1}, nil
+		},
+	})
+	event := ActivityEvent{
+		AccountID:      "account-1",
+		ExternalID:     "dm-1",
+		ConversationID: "dm-conversation-1",
+		SenderID:       "sender-1",
+		RecipientID:    "owner-1",
+		Text:           "hello",
+		CreatedAt:      time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+	}
+	if err := service.IngestActivityEvent(context.Background(), "client-1", event); err != nil {
+		t.Fatalf("first ingest: %v", err)
+	}
+	store.insertedNew = false
+	if err := service.IngestActivityEvent(context.Background(), "client-1", event); err != nil {
+		t.Fatalf("duplicate ingest: %v", err)
+	}
+	if len(store.inserted) != 2 {
+		t.Fatalf("insert attempts = %d, want 2 so a charged-but-failed insert can recover", len(store.inserted))
+	}
+	if got := store.inserted[0]; got.Source != "x_dm" || got.ThreadKey != "dm-conversation-1" ||
+		got.ParentExternalID != "dm-conversation-1" || got.Body != "hello" {
+		t.Fatalf("DM item = %#v", got)
+	}
+}
+
+func TestXIngestDoesNotNotifyWhenInsertFails(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"client-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1", AppMode: AppModeWorkspace,
+				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+		insertErr: errors.New("database unavailable"),
+	}
+	notified := false
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			return InboundAdmission{}, InboxItem{}, false, errors.New("database unavailable")
+		},
+		Notify: func(context.Context, string, InboxItem) { notified = true },
+	})
+	event := ActivityEvent{AccountID: "account-1", ExternalID: "dm-1", ConversationID: "c-1"}
+	if err := service.IngestActivityEvent(context.Background(), "client-1", event); err == nil {
+		t.Fatal("expected insert error")
+	}
+	if notified {
+		t.Fatal("notified after failed insert")
+	}
+}
+
+func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"route-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1", ExternalUserID: "owner-1",
+				AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+	}
+	atomicCalls := 0
+	notified := 0
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		AtomicProcess: func(_ context.Context, req InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			atomicCalls++
+			if req.UpstreamResourceID != item.ExternalID {
+				t.Fatalf("request/item mismatch: req=%+v item=%+v", req, item)
+			}
+			item.ID = "inbox-1"
+			return InboundAdmission{Accepted: true}, item, true, nil
+		},
+		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+			t.Fatal("split admission path must not run when atomic processor is configured")
+			return InboundAdmission{}, nil
+		},
+		Notify: func(context.Context, string, InboxItem) { notified++ },
+	})
+	err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
+		AccountID: "account-1", ExternalID: "dm-1", ConversationID: "conversation-1",
+		SenderID: "sender-1", RecipientID: "owner-1", Text: "private",
+		CreatedAt: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if atomicCalls != 1 || notified != 1 || len(store.inserted) != 0 {
+		t.Fatalf("atomicCalls=%d notified=%d split inserts=%d", atomicCalls, notified, len(store.inserted))
+	}
+}
+
+func TestXRecoveryReusesAtomicIngestionAndReturnsAdmissionResult(t *testing.T) {
+	admissionNow := time.Date(2026, 7, 16, 15, 0, 0, 0, time.UTC)
+	service := NewIngestionService(IngestionConfig{
+		Store: &fakeIngestStore{},
+		AtomicProcess: func(_ context.Context, req InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			if req.OperationKey != "post.read" || req.Source != "backfill" ||
+				req.UpstreamResourceID != item.ExternalID {
+				t.Fatalf("request = %+v item = %+v", req, item)
+			}
+			if !req.Now.Equal(admissionNow) {
+				t.Fatalf("admission time = %s, want paid-read time %s", req.Now, admissionNow)
+			}
+			item.ID = "inbox-1"
+			return InboundAdmission{Accepted: true}, item, true, nil
+		},
+		Now: func() time.Time { return admissionNow },
+	})
+	result, err := service.IngestRecovery(
+		context.Background(),
+		InboxAccount{
+			ID: "account-1", WorkspaceID: "workspace-1",
+			AppMode: AppModeUniPostManaged, PlanAllowsInbox: true,
+		},
+		InboxItem{
+			Source: "x_reply", ExternalID: "tweet-1",
+			ReceivedAt: time.Date(2026, 7, 10, 12, 0, 0, 0, time.UTC),
+		},
+		"post.read",
+		"backfill",
+	)
+	if err != nil {
+		t.Fatalf("IngestRecovery: %v", err)
+	}
+	if !result.Admission.Accepted || !result.Inserted || result.Item.ID != "inbox-1" {
+		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestParseXActivityFixtures(t *testing.T) {
+	t.Run("current X Activity dm.received envelope", func(t *testing.T) {
+		body, err := os.ReadFile("testdata/x_activity_dm_received.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		events, err := ParseActivityEvents(body)
+		if err != nil {
+			t.Fatalf("ParseActivityEvents: %v", err)
+		}
+		if len(events) != 1 {
+			t.Fatalf("events = %#v", events)
+		}
+		got := events[0]
+		if got.AccountID != "account-1" || got.ExternalID != "dm-1" ||
+			got.ConversationID != "conversation-1" || got.RecipientID != "owner-1" ||
+			got.Text != "hello" {
+			t.Fatalf("event = %#v", got)
+		}
+	})
+
+	t.Run("filtered stream reply envelope", func(t *testing.T) {
+		body, err := os.ReadFile("testdata/filtered_stream_reply.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var event StreamEvent
+		if err := json.Unmarshal(body, &event); err != nil {
+			t.Fatal(err)
+		}
+		if event.Data.ConversationID != "conversation-1" ||
+			repliedToID(event.Data.ReferencedTweets) != "tweet-1" ||
+			len(streamAccountIDs(event.MatchingRules)) != 1 {
+			t.Fatalf("event = %#v", event)
+		}
+	})
+
+	t.Run("legacy Account Activity direct_message_events envelope", func(t *testing.T) {
+		body := []byte(`{
+		  "for_user_id": "owner-1",
+		  "direct_message_events": [{
+		    "type": "message_create",
+		    "id": "dm-2",
+		    "created_timestamp": "1784203200000",
+		    "message_create": {
+		      "target": {"recipient_id": "owner-1"},
+		      "sender_id": "sender-1",
+		      "message_data": {"text": "legacy hello"}
+		    }
+		  }]
+		}`)
+		events, err := ParseActivityEvents(body)
+		if err != nil {
+			t.Fatalf("ParseActivityEvents: %v", err)
+		}
+		if len(events) != 1 || events[0].ThreadKey() != "x-dm:owner-1:sender-1" {
+			t.Fatalf("events = %#v", events)
+		}
+	})
+}
+
+type fakeSecretStore struct {
+	values map[string][]string
+}
+
+func (f fakeSecretStore) EncryptedConsumerSecrets(_ context.Context, routeKey string) ([]string, error) {
+	return f.values[routeKey], nil
+}
+
+func TestXWebhookSecretResolverRotationLifecycle(t *testing.T) {
+	store := &fakeSecretStore{values: map[string][]string{
+		"stable-route": {"encrypted-old"},
+	}}
+	resolver := NewAppSecretResolver(AppSecretResolverConfig{
+		Store: store,
+		Decrypt: func(value string) (string, error) {
+			switch value {
+			case "encrypted-old":
+				return "old-consumer-secret", nil
+			case "encrypted-new":
+				return "new-consumer-secret", nil
+			default:
+				return "", errors.New("unknown ciphertext")
+			}
+		},
+	})
+	if got, err := resolver.ConsumerSecret(context.Background(), "stable-route"); err != nil || got != "old-consumer-secret" {
+		t.Fatalf("old route secret = %q err=%v", got, err)
+	}
+
+	// Same-app secret rotation updates signature validation immediately while
+	// retaining the already registered webhook URL.
+	store.values["stable-route"] = []string{"encrypted-new"}
+	if got, err := resolver.ConsumerSecret(context.Background(), "stable-route"); err != nil || got != "new-consumer-secret" {
+		t.Fatalf("rotated route secret = %q err=%v", got, err)
+	}
+
+	// An old app-generation route is present only while its cleanup intent
+	// contributes encrypted signature material to the resolver query.
+	store.values["old-generation-route"] = []string{"encrypted-old"}
+	if _, err := resolver.ConsumerSecret(context.Background(), "old-generation-route"); err != nil {
+		t.Fatalf("pending cleanup route was not valid: %v", err)
+	}
+	delete(store.values, "old-generation-route")
+	if _, err := resolver.ConsumerSecret(context.Background(), "old-generation-route"); !errors.Is(err, ErrAppSecretNotFound) {
+		t.Fatalf("completed cleanup route error = %v, want not found", err)
+	}
+}
+
+func TestXWebhookSecretResolverKeepsAppsIsolatedAndFailsOnConflict(t *testing.T) {
+	managedRoute := WebhookRouteKey("stable-route-secret", "managed-client")
+	workspaceRoute := "random-workspace-route"
+	resolver := NewAppSecretResolver(AppSecretResolverConfig{
+		ManagedRouteKey: managedRoute,
+		ManagedSecret:   "managed-secret",
+		Store: fakeSecretStore{values: map[string][]string{
+			workspaceRoute: {"encrypted-one", "encrypted-two"},
+		}},
+		Decrypt: func(value string) (string, error) {
+			switch value {
+			case "encrypted-one", "encrypted-two":
+				return "workspace-secret", nil
+			default:
+				return "", errors.New("unknown ciphertext")
+			}
+		},
+	})
+	if got, err := resolver.ConsumerSecret(context.Background(), managedRoute); err != nil || got != "managed-secret" {
+		t.Fatalf("managed secret = %q err=%v", got, err)
+	}
+	if got, err := resolver.ConsumerSecret(context.Background(), workspaceRoute); err != nil || got != "workspace-secret" {
+		t.Fatalf("workspace secret = %q err=%v", got, err)
+	}
+	if _, err := resolver.ConsumerSecret(context.Background(), "other-route"); !errors.Is(err, ErrAppSecretNotFound) {
+		t.Fatalf("missing app err = %v", err)
+	}
+
+	attackerRoute := "different-random-workspace-route"
+	isolated := NewAppSecretResolver(AppSecretResolverConfig{
+		Store: fakeSecretStore{values: map[string][]string{
+			workspaceRoute: {"victim-ciphertext"},
+			attackerRoute:  {"attacker-ciphertext"},
+		}},
+		Decrypt: func(value string) (string, error) {
+			if value == "victim-ciphertext" {
+				return "workspace-secret", nil
+			}
+			return "attacker-secret", nil
+		},
+	})
+	if got, err := isolated.ConsumerSecret(context.Background(), workspaceRoute); err != nil || got != "workspace-secret" {
+		t.Fatalf("victim route affected by attacker: secret=%q err=%v", got, err)
+	}
+
+	conflicting := NewAppSecretResolver(AppSecretResolverConfig{
+		Store: fakeSecretStore{values: map[string][]string{
+			workspaceRoute: {"encrypted-one", "encrypted-conflict"},
+		}},
+		Decrypt: func(value string) (string, error) {
+			if value == "encrypted-one" {
+				return "first-secret", nil
+			}
+			return "different-secret", nil
+		},
+	})
+	if _, err := conflicting.ConsumerSecret(context.Background(), workspaceRoute); err == nil {
+		t.Fatal("expected conflicting workspace secrets to fail closed")
+	}
+}
+
+func TestManagedWebhookRouteKeyIsStableAcrossConsumerSecretRotation(t *testing.T) {
+	first := WebhookRouteKey("stable-route-secret", "client-id")
+	if first == "" || first != WebhookRouteKey("stable-route-secret", "client-id") {
+		t.Fatalf("route key is not deterministic: %q", first)
+	}
+	for _, consumerSecret := range []string{"old-consumer-secret", "rotated-consumer-secret"} {
+		if got := WebhookRouteKey("stable-route-secret", "client-id"); got != first {
+			t.Fatalf("consumer secret %q changed managed route to %q", consumerSecret, got)
+		}
+	}
+	if first == WebhookRouteKey("other-route-secret", "client-id") {
+		t.Fatal("route key was not bound to dedicated route secret")
+	}
+	if first == WebhookRouteKey("stable-route-secret", "other-client") {
+		t.Fatal("route key was not bound to client id")
+	}
+}
+
+func TestRandomWebhookRouteKeysAreOpaqueAndUnique(t *testing.T) {
+	first, err := RandomWebhookRouteKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := RandomWebhookRouteKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) < 32 || len(second) < 32 || first == second {
+		t.Fatalf("random routes = %q and %q", first, second)
+	}
+}
+
+func TestXIngestRejectsRecognizedMalformedEvents(t *testing.T) {
+	service := NewIngestionService(IngestionConfig{Store: &fakeIngestStore{}})
+	stream := StreamEvent{}
+	stream.Data.ID = "tweet-1"
+	stream.MatchingRules = []StreamRule{{Tag: FilteredStreamRuleTag("account-1")}}
+	if err := service.IngestStreamEvent(context.Background(), "route", stream); !errors.Is(err, ErrMalformedEvent) {
+		t.Fatalf("malformed stream error = %v", err)
+	}
+
+	for _, body := range [][]byte{
+		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"tag":"unipost:x:dm:account","payload":{"sender_id":"sender","created_at":"2026-07-16T12:00:00Z"}}}`),
+		[]byte(`{"data":{"event_type":"dm.received","tag":"unipost:x:dm:account","payload":{"id":"dm","sender_id":"sender","created_at":"2026-07-16T12:00:00Z"}}}`),
+		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"tag":"unipost:x:dm:account","payload":{"id":"dm","sender_id":"sender"}}}`),
+		[]byte(`{"for_user_id":"owner","direct_message_events":[{"type":"message_create","created_timestamp":"1784212800000","message_create":{"target":{"recipient_id":"owner"},"sender_id":"sender"}}]}`),
+	} {
+		if _, err := ParseActivityEvents(body); !errors.Is(err, ErrMalformedEvent) {
+			t.Fatalf("malformed activity error = %v body=%s", err, body)
+		}
+	}
+}
+
+func TestMatchingXInboxOutboundWebhookCandidateRequiresExactlyOnePayloadMatch(t *testing.T) {
+	sentAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	deadline := sentAt.Add(30 * time.Minute)
+	candidates := []xInboxOutboundWebhookCandidate{
+		{
+			ID:                     "request-1",
+			InboxItemID:            "target-1",
+			PayloadHash:            xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "thanks"),
+			SendStartedAt:          sentAt,
+			ReconciliationDeadline: deadline,
+		},
+		{
+			ID:                     "request-2",
+			InboxItemID:            "target-2",
+			PayloadHash:            xInboxOutboundWebhookPayloadHash("target-2", "x_reply", "different"),
+			SendStartedAt:          sentAt,
+			ReconciliationDeadline: deadline,
+		},
+	}
+	if got, ok := matchingXInboxOutboundWebhookCandidate(
+		candidates, "x_reply", "thanks", sentAt.Add(time.Minute),
+	); !ok || got != "request-1" {
+		t.Fatalf("match = %q, %v", got, ok)
+	}
+	candidates[1].PayloadHash = xInboxOutboundWebhookPayloadHash("target-2", "x_reply", "thanks")
+	if got, ok := matchingXInboxOutboundWebhookCandidate(
+		candidates, "x_reply", "thanks", sentAt.Add(time.Minute),
+	); ok || got != "" {
+		t.Fatalf("ambiguous match = %q, %v", got, ok)
+	}
+}
+
+func TestMatchingXInboxOutboundWebhookCandidateRejectsLateIdenticalManualSend(t *testing.T) {
+	sentAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	candidate := xInboxOutboundWebhookCandidate{
+		ID:                     "request-1",
+		InboxItemID:            "target-1",
+		PayloadHash:            xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "same text"),
+		SendStartedAt:          sentAt,
+		ReconciliationDeadline: sentAt.Add(30 * time.Minute),
+	}
+	for _, eventAt := range []time.Time{time.Time{}, sentAt.Add(31 * time.Minute)} {
+		if got, ok := matchingXInboxOutboundWebhookCandidate(
+			[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "same text", eventAt,
+		); ok || got != "" {
+			t.Fatalf("late/unprovable event at %s matched = %q, %v", eventAt, got, ok)
+		}
+	}
+}
+
+func TestXInboxWebhookConflictHealingMustHashPersistedItem(t *testing.T) {
+	sentAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
+	candidate := xInboxOutboundWebhookCandidate{
+		ID:                     "request-1",
+		InboxItemID:            "target-1",
+		PayloadHash:            xInboxOutboundWebhookPayloadHash("target-1", "x_reply", "persisted body"),
+		SendStartedAt:          sentAt,
+		ReconciliationDeadline: sentAt.Add(30 * time.Minute),
+	}
+	if got, ok := matchingXInboxOutboundWebhookCandidate(
+		[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "incoming conflicting body", sentAt,
+	); ok || got != "" {
+		t.Fatalf("incoming conflicting payload matched = %q, %v", got, ok)
+	}
+	if got, ok := matchingXInboxOutboundWebhookCandidate(
+		[]xInboxOutboundWebhookCandidate{candidate}, "x_reply", "persisted body", sentAt,
+	); !ok || got != "request-1" {
+		t.Fatalf("persisted payload match = %q, %v", got, ok)
+	}
+}

@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"time"
@@ -18,14 +19,19 @@ import (
 )
 
 type BillingHandler struct {
-	queries  *db.Queries
-	quota    *quota.Checker
-	stripe   *billing.Manager
-	xCredits xCreditsSnapshotService
+	queries     *db.Queries
+	quota       *quota.Checker
+	stripe      *billing.Manager
+	xCredits    xCreditsSnapshotService
+	xInboundCap xCreditsInboundCapService
 }
 
 type xCreditsSnapshotService interface {
 	Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
+}
+
+type xCreditsInboundCapService interface {
+	UpdateInboundCap(context.Context, xcredits.UpdateInboundCapRequest) (xcredits.InboundCapSetting, error)
 }
 
 func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeMgr *billing.Manager) *BillingHandler {
@@ -34,6 +40,9 @@ func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeM
 
 func (h *BillingHandler) SetXCreditsService(service xCreditsSnapshotService) *BillingHandler {
 	h.xCredits = service
+	if inboundCap, ok := service.(xCreditsInboundCapService); ok {
+		h.xInboundCap = inboundCap
+	}
 	return h
 }
 
@@ -316,17 +325,23 @@ func (h *BillingHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 type xCreditsAllowanceResponse struct {
-	Mode               string    `json:"mode"`
-	PlanID             string    `json:"plan_id"`
-	MonthlyAllowance   *int64    `json:"monthly_allowance"`
-	MonthlyUsed        int64     `json:"monthly_used"`
-	MonthlyRemaining   *int64    `json:"monthly_remaining"`
-	BillingPeriodStart time.Time `json:"billing_period_start"`
-	BillingPeriodEnd   time.Time `json:"billing_period_end"`
-	CatalogVersion     string    `json:"catalog_version"`
-	InboundDailyUsage  int64     `json:"inbound_daily_usage"`
-	InboundDailyLimit  *int64    `json:"inbound_daily_limit"`
-	ConnectionModeNote string    `json:"connection_mode_note"`
+	Mode                string    `json:"mode"`
+	PlanID              string    `json:"plan_id"`
+	MonthlyAllowance    *int64    `json:"monthly_allowance"`
+	MonthlyUsed         int64     `json:"monthly_used"`
+	MonthlyRemaining    *int64    `json:"monthly_remaining"`
+	BillingPeriodStart  time.Time `json:"billing_period_start"`
+	BillingPeriodEnd    time.Time `json:"billing_period_end"`
+	CatalogVersion      string    `json:"catalog_version"`
+	InboundDailyUsage   int64     `json:"inbound_daily_usage"`
+	InboundDailyLimit   *int64    `json:"inbound_daily_limit"`
+	InboundAccepted     int64     `json:"inbound_events_accepted"`
+	InboundSuppressed   int64     `json:"inbound_events_suppressed"`
+	InboundDailyResetAt time.Time `json:"inbound_daily_reset_at"`
+	InboundDailyPercent float64   `json:"inbound_daily_percent"`
+	PausePaidSources    bool      `json:"pause_paid_sources"`
+	InboundPauseReason  string    `json:"inbound_pause_reason,omitempty"`
+	ConnectionModeNote  string    `json:"connection_mode_note"`
 }
 
 // GetXCredits handles GET /v1/billing/x-credits.
@@ -348,18 +363,79 @@ func (h *BillingHandler) GetXCredits(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeSuccess(w, xCreditsAllowanceResponse{
-		Mode:               "monthly_allowance",
-		PlanID:             snapshot.PlanID,
-		MonthlyAllowance:   snapshot.MonthlyAllowance,
-		MonthlyUsed:        snapshot.MonthlyUsed,
-		MonthlyRemaining:   snapshot.MonthlyRemaining,
-		BillingPeriodStart: snapshot.PeriodStart,
-		BillingPeriodEnd:   snapshot.PeriodEnd,
-		CatalogVersion:     snapshot.CatalogVersion,
-		InboundDailyUsage:  snapshot.InboundDailyUsed,
-		InboundDailyLimit:  snapshot.InboundDailyLimit,
-		ConnectionModeNote: "Managed X connections consume this allowance. Bring-your-own X API connections do not consume UniPost X Credits.",
+		Mode:                "monthly_allowance",
+		PlanID:              snapshot.PlanID,
+		MonthlyAllowance:    snapshot.MonthlyAllowance,
+		MonthlyUsed:         snapshot.MonthlyUsed,
+		MonthlyRemaining:    snapshot.MonthlyRemaining,
+		BillingPeriodStart:  snapshot.PeriodStart,
+		BillingPeriodEnd:    snapshot.PeriodEnd,
+		CatalogVersion:      snapshot.CatalogVersion,
+		InboundDailyUsage:   snapshot.InboundDailyUsed,
+		InboundDailyLimit:   snapshot.InboundDailyLimit,
+		InboundAccepted:     snapshot.InboundAccepted,
+		InboundSuppressed:   snapshot.InboundSuppressed,
+		InboundDailyResetAt: snapshot.InboundResetAt,
+		InboundDailyPercent: snapshot.InboundPercent,
+		PausePaidSources:    snapshot.PausePaidSources,
+		InboundPauseReason:  snapshot.InboundPauseReason,
+		ConnectionModeNote:  "Activity through the UniPost-managed X app consumes this allowance. Workspace X app activity does not consume UniPost X Credits.",
 	})
+}
+
+// UpdateXInboundCap handles PATCH /v1/billing/x-credits/inbound-cap.
+func (h *BillingHandler) UpdateXInboundCap(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if h.xInboundCap == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X inbound cap service is not configured")
+		return
+	}
+
+	var body struct {
+		InboundDailyLimit    *int64 `json:"inbound_daily_limit"`
+		AcknowledgedExposure bool   `json:"acknowledged_exposure"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+		return
+	}
+	if body.InboundDailyLimit == nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "inbound_daily_limit is required")
+		return
+	}
+	if *body.InboundDailyLimit < 0 {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "inbound_daily_limit cannot be negative")
+		return
+	}
+
+	updatedBy := auth.GetUserID(r.Context())
+	if updatedBy == "" {
+		updatedBy = "api_key"
+	}
+	setting, err := h.xInboundCap.UpdateInboundCap(r.Context(), xcredits.UpdateInboundCapRequest{
+		WorkspaceID:          workspaceID,
+		InboundDailyLimit:    *body.InboundDailyLimit,
+		UpdatedBy:            updatedBy,
+		AcknowledgedExposure: body.AcknowledgedExposure,
+		Now:                  time.Now().UTC(),
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, xcredits.ErrInboundCapExceedsMonthlyRemaining),
+			errors.Is(err, xcredits.ErrInboundExposureAcknowledgementRequired):
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update X inbound daily cap")
+		}
+		return
+	}
+	writeSuccess(w, setting)
 }
 
 type planResponse struct {

@@ -248,6 +248,13 @@ export default function PlatformCredentialGuidePage() {
             Publishing rules, media limits, and platform-specific post behavior after setup is complete.
           </div>
         </Link>
+        {guide.relatedLinks ? guide.relatedLinks.map((link) => (
+          <Link key={link.href} href={link.href} className="wlp-next-card">
+            <div className="wlp-next-kicker">X Inbox</div>
+            <div className="wlp-next-title">{link.label}</div>
+            <div className="wlp-next-body">{link.description}</div>
+          </Link>
+        )) : null}
       </div>
 
       {zoomedImage ? (

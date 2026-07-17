@@ -8,7 +8,7 @@ const AUTH_FIELDS: ApiFieldItem[] = [
 ];
 
 const PATH_FIELDS: ApiFieldItem[] = [
-  { name: "account_id", type: "string", description: "Connected account ID such as sa_instagram_123." },
+  { name: "account_id", type: "string", description: "Connected account ID such as sa_x_123." },
 ];
 
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
@@ -21,6 +21,13 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "capability.thread", type: "object", description: "Whether reply-chain style threading is supported." },
   { name: "capability.scheduling", type: "object", description: "Whether UniPost can schedule posts for this platform." },
   { name: "capability.first_comment", type: "object", description: "Whether first comments are supported and any extra limits." },
+  { name: "x_inbox.comments_enabled", type: "boolean", description: "Whether this X account can receive and answer eligible public replies." },
+  { name: "x_inbox.dms_enabled", type: "boolean", description: "Whether this X account can receive and send legacy direct messages." },
+  { name: "x_inbox.missing_scopes", type: "string[]", description: "Permissions that require OAuth reconnect, including dm.read or dm.write." },
+  { name: "x_inbox.reconnect_required", type: "boolean", description: "Whether the account must repeat X OAuth." },
+  { name: "x_inbox.delivery_status", type: "string", description: "pending, active, paused_cap, paused_allowance, paused_plan, or error." },
+  { name: "x_inbox.app_mode", type: "string", description: "unipost_managed_app, workspace_x_app, or legacy_unknown." },
+  { name: "x_inbox.missing_app_credentials", type: "string[]", description: "For workspace_x_app, any missing client_id, client_secret, app_bearer_token, or consumer_secret." },
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
@@ -34,7 +41,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/accounts/sa_instagram_123/capabilities" \\
+    code: `curl "https://api.unipost.dev/v1/accounts/sa_x_123/capabilities" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -100,23 +107,32 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": {
     "schema_version": "1.7",
-    "account_id": "sa_instagram_123",
-    "platform": "instagram",
+    "account_id": "sa_x_123",
+    "platform": "twitter",
     "capability": {
-      "display_name": "Instagram",
+      "display_name": "X / Twitter",
       "text": {
-        "max_length": 2200,
+        "max_length": 280,
         "min_length": 0,
         "required": false,
         "supports_threads": false
       },
       "media": {
-        "requires_media": true,
-        "allow_mixed": true
+        "requires_media": false,
+        "allow_mixed": false
       },
       "thread": { "supported": false },
       "scheduling": { "supported": true },
-      "first_comment": { "supported": true, "max_length": 2200 }
+      "first_comment": { "supported": true, "max_length": 280 }
+    },
+    "x_inbox": {
+      "comments_enabled": true,
+      "dms_enabled": false,
+      "missing_scopes": ["dm.read", "dm.write"],
+      "reconnect_required": true,
+      "delivery_status": "pending",
+      "app_mode": "unipost_managed_app",
+      "missing_app_credentials": []
     }
   }
 }`,
@@ -155,6 +171,11 @@ export default function AccountCapabilitiesPage() {
       ]}
       snippets={SNIPPETS}
       responseSnippets={RESPONSE_SNIPPETS}
+      guideLinks={[
+        { label: "Reconnect X Inbox permissions", href: "/docs/guides/x/reconnect-permissions" },
+        { label: "Receive X comments", href: "/docs/guides/x/comments" },
+        { label: "Receive X direct messages", href: "/docs/guides/x/direct-messages" },
+      ]}
     />
   );
 }

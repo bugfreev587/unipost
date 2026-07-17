@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -69,6 +70,13 @@ func TestTwitterAuthorizeURL_HasMediaWriteScope(t *testing.T) {
 	}
 }
 
+func TestTwitterAuthorizeURL_HasPublishingAndInboxScopes(t *testing.T) {
+	want := "tweet.read tweet.write users.read offline.access media.write dm.read dm.write"
+	if twitterScopes != want {
+		t.Fatalf("twitterScopes = %q, want %q", twitterScopes, want)
+	}
+}
+
 // TestTwitterExchangeCode_HappyPath — exercises the token endpoint
 // against a fake server.
 func TestTwitterExchangeCode_HappyPath(t *testing.T) {
@@ -112,11 +120,36 @@ func TestTwitterExchangeCode_HappyPath(t *testing.T) {
 	if tokens.AccessToken != "AT-1" || tokens.RefreshToken != "RT-1" {
 		t.Errorf("tokens: %+v", tokens)
 	}
-	if len(tokens.Scopes) != 4 {
-		t.Errorf("scopes: %v", tokens.Scopes)
+	if want := []string{"tweet.read", "tweet.write", "users.read", "offline.access"}; !reflect.DeepEqual(tokens.Scopes, want) {
+		t.Errorf("scopes = %#v, want granted scopes %#v", tokens.Scopes, want)
 	}
 	if tokens.ExpiresAt.IsZero() {
 		t.Error("ExpiresAt not set")
+	}
+}
+
+func TestTwitterExchangeCode_FallsBackToRequestedScopesWhenOmitted(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"token_type":"bearer",
+			"access_token":"AT-1",
+			"refresh_token":"RT-1",
+			"expires_in":7200,
+			"scope":"   "
+		}`)
+	}))
+	defer mock.Close()
+
+	c := NewTwitterConnector("client123", "secretXYZ", "https://api.example.com")
+	c.TokenEndpoint = mock.URL
+
+	tokens, err := c.ExchangeCode(context.Background(), SessionView{PKCEVerifier: "verifier-xyz"}, "authcode-1")
+	if err != nil {
+		t.Fatalf("ExchangeCode: %v", err)
+	}
+	if want := strings.Fields(twitterScopes); !reflect.DeepEqual(tokens.Scopes, want) {
+		t.Fatalf("scopes = %#v, want requested fallback %#v", tokens.Scopes, want)
 	}
 }
 
@@ -165,6 +198,29 @@ func TestTwitterRefresh(t *testing.T) {
 	}
 	if tokens.AccessToken != "new-at" || tokens.RefreshToken != "new-rt" {
 		t.Errorf("tokens: %+v", tokens)
+	}
+}
+
+func TestTwitterRefresh_FallsBackToRequestedScopesWhenOmitted(t *testing.T) {
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"access_token":"new-at",
+			"refresh_token":"new-rt",
+			"expires_in":7200,
+			"scope":"   "
+		}`)
+	}))
+	defer mock.Close()
+
+	c := NewTwitterConnector("c", "s", "https://api.example.com")
+	c.TokenEndpoint = mock.URL
+
+	tokens, err := c.Refresh(context.Background(), "old-rt")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if want := strings.Fields(twitterScopes); !reflect.DeepEqual(tokens.Scopes, want) {
+		t.Fatalf("scopes = %#v, want requested fallback %#v", tokens.Scopes, want)
 	}
 }
 

@@ -195,13 +195,24 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, arg GetNotificatio
 }
 
 const getPendingNotificationDeliveries = `-- name: GetPendingNotificationDeliveries :many
-
 SELECT d.id, d.subscription_id, d.channel_id, d.event_type, d.event_id, d.payload, d.status, d.attempts, d.next_retry_at, d.last_error, d.delivered_at, d.created_at, c.kind AS channel_kind, c.config AS channel_config, c.label AS channel_label
 FROM unipost_notification_deliveries d
 JOIN unipost_notification_channels c ON c.id = d.channel_id
+JOIN unipost_notification_subscriptions s ON s.id = d.subscription_id
 WHERE d.status = 'pending'
   AND d.next_retry_at <= NOW()
   AND c.deleted_at IS NULL
+  AND (
+    d.event_type NOT IN ('billing.x_inbound_80pct', 'billing.x_inbound_cap_reached')
+    OR EXISTS (
+      SELECT 1
+      FROM workspace_members wm
+      WHERE wm.workspace_id = NULLIF(d.payload ->> 'workspace_id', '')
+        AND wm.user_id = s.user_id
+        AND wm.status = 'active'
+        AND wm.role IN ('owner', 'admin')
+    )
+  )
 ORDER BY d.created_at ASC
 LIMIT 100
 `
@@ -224,7 +235,6 @@ type GetPendingNotificationDeliveriesRow struct {
 	ChannelLabel   pgtype.Text        `json:"channel_label"`
 }
 
-// ─── Delivery worker ─────────────────────────────────────────────────
 func (q *Queries) GetPendingNotificationDeliveries(ctx context.Context) ([]GetPendingNotificationDeliveriesRow, error) {
 	rows, err := q.db.Query(ctx, getPendingNotificationDeliveries)
 	if err != nil {
@@ -405,6 +415,17 @@ WHERE s.event_type = $1
   AND c.deleted_at IS NULL
   AND c.verified_at IS NOT NULL
   AND (s.workspace_id = w.id OR (s.workspace_id IS NULL AND s.user_id = w.user_id))
+  AND (
+    s.event_type NOT IN ('billing.x_inbound_80pct', 'billing.x_inbound_cap_reached')
+    OR EXISTS (
+      SELECT 1
+      FROM workspace_members wm
+      WHERE wm.workspace_id = w.id
+        AND wm.user_id = s.user_id
+        AND wm.status = 'active'
+        AND wm.role IN ('owner', 'admin')
+    )
+  )
 `
 
 type ResolveNotificationTargetsParams struct {
@@ -483,6 +504,32 @@ type SetNotificationSubscriptionEnabledParams struct {
 
 func (q *Queries) SetNotificationSubscriptionEnabled(ctx context.Context, arg SetNotificationSubscriptionEnabledParams) error {
 	_, err := q.db.Exec(ctx, setNotificationSubscriptionEnabled, arg.ID, arg.UserID, arg.Enabled)
+	return err
+}
+
+const skipStaleXInboundNotificationDeliveries = `-- name: SkipStaleXInboundNotificationDeliveries :exec
+
+UPDATE unipost_notification_deliveries d
+SET status = 'skipped',
+    last_error = 'recipient no longer has an active owner/admin workspace membership',
+    delivered_at = NOW()
+FROM unipost_notification_subscriptions s
+WHERE s.id = d.subscription_id
+  AND d.status = 'pending'
+  AND d.event_type IN ('billing.x_inbound_80pct', 'billing.x_inbound_cap_reached')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM workspace_members wm
+    WHERE wm.workspace_id = NULLIF(d.payload ->> 'workspace_id', '')
+      AND wm.user_id = s.user_id
+      AND wm.status = 'active'
+      AND wm.role IN ('owner', 'admin')
+  )
+`
+
+// ─── Delivery worker ─────────────────────────────────────────────────
+func (q *Queries) SkipStaleXInboundNotificationDeliveries(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, skipStaleXInboundNotificationDeliveries)
 	return err
 }
 

@@ -2,20 +2,29 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/connect"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type TokenRefreshWorker struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
+	queries    *db.Queries
+	encryptor  *crypto.AESEncryptor
+	xRefresher xinbox.TokenRefresher
+}
+
+func (w *TokenRefreshWorker) SetXTokenRefresher(refresher xinbox.TokenRefresher) *TokenRefreshWorker {
+	w.xRefresher = refresher
+	return w
 }
 
 func NewTokenRefreshWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) *TokenRefreshWorker {
@@ -53,12 +62,6 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 	slog.Info("token refresh: found expiring tokens", "count", len(accounts))
 
 	for _, acc := range accounts {
-		adapter, err := platform.Get(acc.Platform)
-		if err != nil {
-			slog.Warn("token refresh: unsupported platform", "platform", acc.Platform, "account_id", acc.ID)
-			continue
-		}
-
 		if !acc.RefreshToken.Valid {
 			slog.Warn("token refresh: no refresh token", "account_id", acc.ID)
 			continue
@@ -70,7 +73,26 @@ func (w *TokenRefreshWorker) refreshExpiring(ctx context.Context) {
 			continue
 		}
 
-		newAccess, newRefresh, expiresAt, err := adapter.RefreshToken(ctx, refreshToken)
+		var newAccess, newRefresh string
+		var expiresAt time.Time
+		if acc.Platform == "twitter" {
+			if w.xRefresher == nil {
+				err = errors.New("X token refresher is not configured")
+			} else {
+				var tokens *connect.TokenSet
+				tokens, err = w.xRefresher.Refresh(ctx, acc, refreshToken)
+				if err == nil {
+					newAccess, newRefresh, expiresAt = tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt
+				}
+			}
+		} else {
+			adapter, adapterErr := platform.Get(acc.Platform)
+			if adapterErr != nil {
+				slog.Warn("token refresh: unsupported platform", "platform", acc.Platform, "account_id", acc.ID)
+				continue
+			}
+			newAccess, newRefresh, expiresAt, err = adapter.RefreshToken(ctx, refreshToken)
+		}
 		if err != nil {
 			slog.Error("token refresh: failed to refresh", "account_id", acc.ID, "error", err)
 			if refreshFailureShouldMarkReconnectRequired(err) {

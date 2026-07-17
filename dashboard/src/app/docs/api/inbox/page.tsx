@@ -18,8 +18,8 @@ const AVAILABILITY_FIELDS: ApiFieldItem[] = [
   },
   {
     name: "Current support",
-    type: "ig_comment, ig_dm, threads_reply, youtube_comment",
-    description: "Instagram comments and DMs, Threads comments, and YouTube comments are currently supported. More sources are coming soon.",
+    type: "7 normalized sources",
+    description: "Instagram, Facebook, Threads, and X reply or messaging sources are currently shipped.",
   },
   {
     name: "Auth model",
@@ -33,7 +33,7 @@ const ENDPOINT_FIELDS: ApiFieldItem[] = [
   {
     name: "GET /v1/inbox",
     type: "list",
-    description: "List inbox items for the current workspace. Supports filters such as source and unread status.",
+    description: <>List inbox items for the current workspace. See the <a href="/docs/api/inbox/list">endpoint reference</a>.</>,
   },
   {
     name: "GET /v1/inbox/unread-count",
@@ -43,7 +43,7 @@ const ENDPOINT_FIELDS: ApiFieldItem[] = [
   {
     name: "POST /v1/inbox/sync",
     type: "sync",
-    description: "Trigger a manual sync for connected accounts that support inbox polling.",
+    description: <>Trigger polling or a bounded X backfill. See the <a href="/docs/api/inbox/sync">endpoint reference</a>.</>,
   },
   {
     name: "GET /v1/inbox/{id}",
@@ -53,7 +53,7 @@ const ENDPOINT_FIELDS: ApiFieldItem[] = [
   {
     name: "POST /v1/inbox/{id}/reply",
     type: "write",
-    description: "Reply to a supported comment, DM, or thread from your product.",
+    description: <>Reply to a supported comment, DM, or thread. See the <a href="/docs/api/inbox/reply">endpoint reference</a>.</>,
   },
   {
     name: "POST /v1/inbox/{id}/thread-state",
@@ -79,9 +79,24 @@ const SOURCE_FIELDS: ApiFieldItem[] = [
     description: "Comments and replies on connected Threads content.",
   },
   {
-    name: "youtube_comment",
+    name: "fb_comment",
     type: "supported",
-    description: "Comments on connected YouTube video content.",
+    description: "Comments on connected Facebook Page posts.",
+  },
+  {
+    name: "fb_dm",
+    type: "supported",
+    description: "Private messages for connected Facebook Pages.",
+  },
+  {
+    name: "x_reply",
+    type: "supported",
+    description: "Eligible public replies that summon a connected X account.",
+  },
+  {
+    name: "x_dm",
+    type: "supported",
+    description: "Legacy X direct-message events; newer X messaging products are outside this API contract.",
   },
   {
     name: "more_sources",
@@ -94,7 +109,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
   {
     name: "source?",
     type: "string",
-    description: <>Filter by normalized source.<EnumValues values={["ig_comment", "ig_dm", "threads_reply", "youtube_comment"]} /></>,
+    description: <>Filter by normalized source.<EnumValues values={["ig_comment", "ig_dm", "threads_reply", "fb_comment", "fb_dm", "x_reply", "x_dm"]} /></>,
   },
   {
     name: "is_read?",
@@ -116,7 +131,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
 const RESPONSE_FIELDS: ApiFieldItem[] = [
   { name: "data[]", type: "array", description: "Normalized inbox items sorted by received_at descending." },
   { name: "data[].id", type: "string", description: "Stable UniPost inbox item identifier." },
-  { name: "data[].source", type: "string", description: "Normalized source such as ig_comment, ig_dm, threads_reply, or youtube_comment." },
+  { name: "data[].source", type: "string", description: "One of ig_comment, ig_dm, threads_reply, fb_comment, fb_dm, x_reply, or x_dm." },
   { name: "data[].social_account_id", type: "string", description: "Connected account that owns the item." },
   { name: "data[].thread_key", type: "string", description: "Stable key used to group related messages and replies." },
   { name: "data[].thread_status", type: "string", description: <>Workflow state.<EnumValues values={["open", "assigned", "resolved"]} /></> },
@@ -200,7 +215,7 @@ export default function InboxPage() {
     <ApiReferencePage
       section="inbox"
       title="Inbox"
-      description="Use UniPost Inbox APIs to bring supported comments, DMs, and response workflows into your own product. Today this covers Instagram comments and DMs, Threads comments, and YouTube comments, with more sources coming soon."
+      description="Use UniPost Inbox APIs to list, sync, and reply to normalized Instagram, Facebook, Threads, and X conversations. X Inbox requires the Basic plan or higher."
     >
       <ApiReferenceGrid
         left={

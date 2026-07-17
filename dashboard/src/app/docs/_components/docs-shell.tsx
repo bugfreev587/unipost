@@ -12,6 +12,7 @@ import { splitDocsAiAnswerParagraphs } from "@/lib/docs-ai-answer-formatting";
 import { ApiInlineLink } from "../api/_components/doc-components";
 import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
 import { DocsContentBreadcrumb } from "./docs-content-breadcrumb";
+import { resolveDocsTableEnumTone, type DocsEnumTone } from "./docs-table-enum";
 
 type NavLeaf = {
   label: string;
@@ -99,27 +100,18 @@ function clampApiSidebarWidth(value: number) {
   return Math.min(API_SIDEBAR_MAX_WIDTH, Math.max(API_SIDEBAR_MIN_WIDTH, Math.round(value)));
 }
 
-function renderDocsTableCell(cell: React.ReactNode) {
+export function DocsEnumTag({ value, tone }: { value: string; tone: DocsEnumTone }) {
+  return <span className={`docs-enum-tag is-${tone}`}>{value}</span>;
+}
+
+function renderDocsTableCell(cell: React.ReactNode, column: string) {
   if (typeof cell !== "string") {
     return cell;
   }
 
-  const normalized = cell.trim().toLowerCase();
-
-  if (normalized === "yes") {
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", color: "#22c55e", fontWeight: 700 }}>
-        ✓
-      </span>
-    );
-  }
-
-  if (normalized === "no") {
-    return (
-      <span style={{ display: "inline-flex", alignItems: "center", color: "#ef4444", fontWeight: 700 }}>
-        X
-      </span>
-    );
+  const tone = resolveDocsTableEnumTone(column, cell);
+  if (tone) {
+    return <DocsEnumTag value={cell.trim()} tone={tone} />;
   }
 
   return renderDocsRichContent(cell);
@@ -405,6 +397,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Publishing Guides",
       items: [
+        { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
         { label: "Platform options examples", href: "/docs/guides/platform-options" },
         { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
         { label: "Video + audio overlay", href: "/docs/guides/video-audio-overlay" },
@@ -417,6 +410,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       description: "Plan managed-X usage and follow the phased X Inbox rollout.",
       items: [
         { label: "X Credits", href: "/docs/guides/x/credits" },
+        { label: "X comments", href: "/docs/guides/x/comments" },
+        { label: "X direct messages", href: "/docs/guides/x/direct-messages" },
+        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions" },
       ],
     },
   ],
@@ -531,6 +527,9 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       title: "Inbox",
       items: [
         { label: "Overview", href: "/docs/api/inbox" },
+        { label: "List Inbox items", href: "/docs/api/inbox/list", method: "GET" },
+        { label: "Reply to item", href: "/docs/api/inbox/reply", method: "POST" },
+        { label: "Sync and backfill", href: "/docs/api/inbox/sync", method: "POST" },
       ],
     },
     {
@@ -1400,14 +1399,25 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-table tr:last-child td{border-bottom:none}
 .docs-table td:has(.docs-matrix-check),
 .docs-table td:has(.docs-matrix-dash),
-.docs-table td:has(.docs-matrix-partial),
 .docs-table th.docs-matrix-center,
 .docs-table .docs-table-cell-center{text-align:center}
 .docs-table th.docs-table-cell-nowrap,
 .docs-table td.docs-table-cell-nowrap{white-space:nowrap;overflow-wrap:normal;word-break:normal}
+.docs-enum-tag{display:inline-flex;align-items:center;justify-content:center;min-height:24px;padding:0 9px;border-radius:6px;font-size:11.5px;font-weight:700;line-height:1;white-space:nowrap}
+.docs-enum-tag.is-success{background:color-mix(in srgb,#10b981 13%,var(--docs-bg-elevated));color:color-mix(in srgb,#047857 92%,var(--docs-text))}
+.docs-enum-tag.is-warning{background:color-mix(in srgb,#f59e0b 15%,var(--docs-bg-elevated));color:color-mix(in srgb,#9a6500 92%,var(--docs-text))}
+.docs-enum-tag.is-danger{background:color-mix(in srgb,#ef4444 13%,var(--docs-bg-elevated));color:color-mix(in srgb,#b91c1c 92%,var(--docs-text))}
+.docs-enum-tag.is-info{background:color-mix(in srgb,#3b82f6 13%,var(--docs-bg-elevated));color:color-mix(in srgb,#1d4ed8 92%,var(--docs-text))}
+.docs-enum-tag.is-neutral{background:color-mix(in srgb,var(--docs-text-muted) 12%,var(--docs-bg-elevated));color:var(--docs-text-soft)}
+.docs-enum-tag.is-caution{background:color-mix(in srgb,#f97316 14%,var(--docs-bg-elevated));color:color-mix(in srgb,#c2410c 92%,var(--docs-text))}
+html.dark .docs-enum-tag.is-success{background:rgba(16,185,129,.15);color:#6ee7b7}
+html.dark .docs-enum-tag.is-warning{background:rgba(245,158,11,.16);color:#fcd34d}
+html.dark .docs-enum-tag.is-danger{background:rgba(239,68,68,.16);color:#fca5a5}
+html.dark .docs-enum-tag.is-info{background:rgba(59,130,246,.16);color:#93c5fd}
+html.dark .docs-enum-tag.is-neutral{background:rgba(148,163,184,.14);color:#cbd5e1}
+html.dark .docs-enum-tag.is-caution{background:rgba(249,115,22,.16);color:#fdba74}
 .docs-matrix-check{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:#22c55e;font-weight:700;font-size:18px;line-height:1}
 .docs-matrix-dash{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-soft)}
-.docs-matrix-partial{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-muted);font-size:12px;font-weight:700;line-height:1;text-transform:uppercase;letter-spacing:.04em}
 .docs-callout,.wlp-top-callout{
   --docs-callout-accent:var(--docs-callout-info-accent);
   --docs-callout-bg:var(--docs-callout-info-bg);
@@ -3640,7 +3650,7 @@ export function DocsTable({
                   className={getDocsTableCellClassName(columns, cellIndex)}
                   key={cellIndex}
                 >
-                  {renderDocsTableCell(cell)}
+                  {renderDocsTableCell(cell, columns[cellIndex])}
                 </td>
               ))}
             </tr>

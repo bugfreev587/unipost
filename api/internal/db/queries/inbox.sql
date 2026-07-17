@@ -31,6 +31,230 @@ WHERE social_account_id = $1
   AND external_id = $2
 LIMIT 1;
 
+-- name: GetXInboxReplyByIdempotencyKey :one
+SELECT * FROM inbox_items
+WHERE workspace_id = @workspace_id
+  AND social_account_id = @social_account_id
+  AND source = @source
+  AND is_own = TRUE
+  AND metadata->>'reply_to_inbox_item_id' = @reply_to_inbox_item_id::TEXT
+  AND metadata->>'idempotency_key' = @idempotency_key::TEXT
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: ClaimXInboxOutboundRequest :one
+INSERT INTO x_inbox_outbound_requests (
+  workspace_id, social_account_id, inbox_item_id, idempotency_key, payload_hash,
+  encrypted_payload, body_hash, reconciliation_deadline
+)
+VALUES (
+  @workspace_id, @social_account_id, @inbox_item_id, @idempotency_key, @payload_hash,
+  NULLIF(@encrypted_payload::TEXT, ''), @body_hash, @reconciliation_deadline
+)
+ON CONFLICT (workspace_id, inbox_item_id, idempotency_key) DO NOTHING
+RETURNING *;
+
+-- name: GetXInboxOutboundRequest :one
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE workspace_id = @workspace_id
+  AND inbox_item_id = @inbox_item_id
+  AND idempotency_key = @idempotency_key;
+
+-- name: GetXInboxOutboundRequestByID :one
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE id = @id;
+
+-- name: GetXInboxOutboundRequestByIDForUpdate :one
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE id = @id
+FOR UPDATE;
+
+-- name: ListXInboxOutboundWebhookCandidates :many
+SELECT
+  o.id AS outbound_request_id,
+  o.inbox_item_id,
+  o.payload_hash,
+  o.send_started_at,
+  o.reconciliation_deadline
+FROM x_inbox_outbound_requests o
+JOIN inbox_items target
+  ON target.id = o.inbox_item_id
+WHERE o.social_account_id = @social_account_id
+  AND o.status IN ('sending', 'outcome_unknown', 'needs_reconciliation')
+  AND o.body_hash = @body_hash
+  AND o.send_started_at IS NOT NULL
+  AND o.reconciliation_deadline IS NOT NULL
+  AND @event_at::TIMESTAMPTZ >= o.send_started_at - INTERVAL '5 minutes'
+  AND @event_at::TIMESTAMPTZ <= o.reconciliation_deadline
+  AND target.source = @source
+  AND (
+    (@source = 'x_reply' AND target.external_id = @parent_external_id)
+    OR (
+      @source = 'x_dm'
+      AND (
+        target.parent_external_id = @thread_key
+        OR target.thread_key = @thread_key
+      )
+    )
+  )
+ORDER BY o.created_at DESC
+FOR UPDATE OF o;
+
+-- name: RecordXInboxOutboundRemoteSuccessFromWebhook :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'remote_succeeded',
+    remote_external_id = @remote_external_id,
+    remote_conversation_id = NULLIF(@remote_conversation_id::TEXT, ''),
+    remote_url = NULLIF(@remote_url::TEXT, ''),
+    remote_outcome_known_at = NOW(),
+    last_error = NULL,
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('sending', 'outcome_unknown', 'needs_reconciliation');
+
+-- name: CompleteXInboxOutboundRequest :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'completed',
+    response_inbox_item_id = @response_inbox_item_id,
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending', 'remote_succeeded');
+
+-- name: MarkXInboxOutboundSending :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'sending',
+    usage_event_id = NULLIF(@usage_event_id::TEXT, ''),
+    operation_key = NULLIF(@operation_key::TEXT, ''),
+    reserved_units = @reserved_units,
+    send_started_at = COALESCE(send_started_at, NOW()),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending');
+
+-- name: MarkXInboxOutboundUnknown :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'outcome_unknown',
+    usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF(@operation_key::TEXT, ''), operation_key),
+    reserved_units = GREATEST(@reserved_units, reserved_units),
+    last_error = LEFT(@last_error::TEXT, 1000),
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending');
+
+-- name: MarkXInboxOutboundUsageReversalPending :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'usage_reversal_pending',
+    usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF(@operation_key::TEXT, ''), operation_key),
+    reserved_units = GREATEST(@reserved_units, reserved_units),
+    last_error = LEFT(@last_error::TEXT, 1000),
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending');
+
+-- name: RecordXInboxOutboundRemoteSuccess :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'remote_succeeded',
+    usage_event_id = COALESCE(NULLIF(@usage_event_id::TEXT, ''), usage_event_id),
+    operation_key = COALESCE(NULLIF(@operation_key::TEXT, ''), operation_key),
+    reserved_units = GREATEST(@reserved_units, reserved_units),
+    remote_external_id = @remote_external_id,
+    remote_conversation_id = NULLIF(@remote_conversation_id::TEXT, ''),
+    remote_url = NULLIF(@remote_url::TEXT, ''),
+    remote_outcome_known_at = NOW(),
+    last_error = NULL,
+    next_attempt_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND status IN ('pending', 'sending', 'remote_succeeded');
+
+-- name: ListRecoverableXInboxOutboundRequests :many
+SELECT *
+FROM x_inbox_outbound_requests
+WHERE (
+	status IN ('pending_recovery', 'sending', 'outcome_unknown', 'remote_succeeded', 'usage_reversal_pending')
+	OR (status = 'pending' AND encrypted_payload IS NULL)
+	OR (
+	  status = 'pending'
+	  AND encrypted_payload IS NOT NULL
+	  AND reconciliation_deadline <= NOW()
+	)
+  )
+  AND next_attempt_at <= NOW()
+ORDER BY created_at
+LIMIT @row_limit;
+
+-- name: MarkXInboxOutboundNeedsReconciliation :exec
+UPDATE x_inbox_outbound_requests
+SET status = 'needs_reconciliation',
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND (
+    (status IN ('sending', 'outcome_unknown') AND reconciliation_deadline <= NOW())
+    OR (status = 'pending' AND encrypted_payload IS NULL)
+  );
+
+-- name: ClaimPendingXInboxOutboundRecovery :execrows
+UPDATE x_inbox_outbound_requests
+SET status = 'pending_recovery',
+    next_attempt_at = NOW(),
+    last_error = 'Recovering stale pre-send X Inbox operation',
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'pending'
+  AND encrypted_payload IS NOT NULL
+  AND reconciliation_deadline <= NOW();
+
+-- name: DeferXInboxOutboundCompletion :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = @next_attempt_at,
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'remote_succeeded';
+
+-- name: DeferXInboxUsageReversal :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = @next_attempt_at,
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'usage_reversal_pending';
+
+-- name: DeferPendingXInboxOutboundRecovery :exec
+UPDATE x_inbox_outbound_requests
+SET completion_attempts = completion_attempts + 1,
+    next_attempt_at = @next_attempt_at,
+    last_error = LEFT(@last_error::TEXT, 1000),
+    updated_at = NOW()
+WHERE id = @id
+  AND status = 'pending_recovery';
+
+-- name: DeleteXInboxOutboundAfterPendingRecovery :execrows
+DELETE FROM x_inbox_outbound_requests
+WHERE id = @id
+  AND status = 'pending_recovery';
+
+-- name: DeleteXInboxOutboundAfterUsageReversal :execrows
+DELETE FROM x_inbox_outbound_requests
+WHERE id = @id
+  AND status = 'usage_reversal_pending';
+
+-- name: DeletePendingXInboxOutboundRequest :execrows
+DELETE FROM x_inbox_outbound_requests
+WHERE id = @id
+  AND status = 'pending';
+
 -- name: MarkInboxItemRead :exec
 UPDATE inbox_items
 SET is_read = true
@@ -225,16 +449,21 @@ WHERE sa.platform = $1
 LIMIT 1;
 
 -- name: ListAllInboxAccounts :many
--- All active IG / Threads / Facebook accounts across all workspaces,
+-- All active Inbox accounts across all workspaces,
 -- for the background inbox sync worker. Returns account fields plus
--- workspace_id.
+-- workspace eligibility context. X real-time delivery is handled by the
+-- dedicated worker; including it here keeps shared Inbox discovery complete.
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
-       sa.account_name, p.workspace_id
+       sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
+       sa.x_app_mode, COALESCE(sub.plan_id, 'free') AS plan_id,
+       COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 WHERE sa.disconnected_at IS NULL
   AND sa.status = 'active'
-  AND sa.platform IN ('instagram', 'threads', 'facebook')
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
 ORDER BY sa.connected_at DESC;
 
 -- name: FindInboxAccountsByWorkspace :many
@@ -244,12 +473,83 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
        sa.account_name, sa.account_avatar_url, sa.connected_at,
        sa.disconnected_at, sa.metadata, sa.scope, sa.status,
        sa.connection_type, sa.connect_session_id, sa.external_user_id,
-       sa.external_user_email, sa.last_refreshed_at
+       sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads', 'facebook');
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter');
+
+-- name: FindXInboxAccountForApp :one
+SELECT
+  sa.id,
+  p.workspace_id,
+  sa.external_user_id,
+  sa.external_account_id,
+  COALESCE(sa.account_name, '') AS account_name,
+  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  sa.scope,
+  sa.connection_type,
+  COALESCE(sub.plan_id, 'free') AS plan_id,
+  COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
+LEFT JOIN platform_credentials pc
+  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+WHERE sa.id = sqlc.arg(account_id)
+  AND sa.platform = 'twitter'
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND (
+    (
+      sa.x_app_mode = 'unipost_managed_app'
+      AND sqlc.arg(webhook_route_key)::TEXT = sqlc.arg(managed_webhook_route_key)::TEXT
+    )
+    OR (
+      sa.x_app_mode = 'workspace_x_app'
+      AND pc.webhook_route_key = sqlc.arg(webhook_route_key)::TEXT
+    )
+  )
+LIMIT 1;
+
+-- name: FindXInboxAccountsForExternalUserApp :many
+SELECT
+  sa.id,
+  p.workspace_id,
+  sa.external_user_id,
+  sa.external_account_id,
+  COALESCE(sa.account_name, '') AS account_name,
+  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  sa.scope,
+  sa.connection_type,
+  COALESCE(sub.plan_id, 'free') AS plan_id,
+  COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
+LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
+LEFT JOIN platform_credentials pc
+  ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
+WHERE sa.platform = 'twitter'
+  AND (
+    sa.external_user_id = sqlc.arg(external_user_id)
+    OR sa.external_account_id = sqlc.arg(external_user_id)::TEXT
+  )
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+  AND (
+    (
+      sa.x_app_mode = 'unipost_managed_app'
+      AND sqlc.arg(webhook_route_key)::TEXT = sqlc.arg(managed_webhook_route_key)::TEXT
+    )
+    OR (
+      sa.x_app_mode = 'workspace_x_app'
+      AND pc.webhook_route_key = sqlc.arg(webhook_route_key)::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id;
 
 -- name: FindAllSocialAccountsByPlatformAndExternalID :many
 -- Webhook routing: find every active social account for platform +
