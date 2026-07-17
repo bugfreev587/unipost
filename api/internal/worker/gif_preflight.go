@@ -21,6 +21,9 @@ const (
 	gifErrorDecodeBudgetExceeded = "gif_decode_budget_exceeded"
 	gifErrorDurationExceeded     = "gif_duration_exceeded"
 	gifErrorProbeFailed          = "gif_probe_failed"
+	gifErrorOutputInvalid        = "gif_output_invalid"
+	gifErrorProcessingFailed     = "gif_processing_failed"
+	gifErrorProcessingTimeout    = "gif_processing_timeout"
 )
 
 type gifMetadata struct {
