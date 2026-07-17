@@ -115,7 +115,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Implement terminal transition queries as single atomic SQL statements. The worker computes the plan-aware retention deadline using the existing media-retention policy and passes it into the transition.
 - [x] Ensure a worker crash before the terminal transaction leaves the job retryable and its inputs protected by active usages.
 - [x] Run focused handler/worker tests and confirm GREEN.
-- [ ] Commit: `feat(media): track processing retention atomically`.
+- [x] Commit: `feat(media): track processing retention atomically`.
 
 ## Task 5: Assign a base cleanup deadline when uploads become usable
 
@@ -125,9 +125,9 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/internal/db/migrate_test.go` or add a focused query source test
 - Regenerate: `api/internal/db/generated/*`
 
-- [ ] Add a failing query-source or integration test proving `MarkMediaUploaded` assigns a plan-aware base `cleanup_after_at` when none exists and never shortens a later deadline.
-- [ ] Update `MarkMediaUploaded` to derive the workspace's current plan and set the base success-retention deadline with `GREATEST(existing_deadline, plan_deadline)` semantics.
-- [ ] Regenerate sqlc and run the focused database tests.
+- [x] Add a failing query-source or integration test proving `MarkMediaUploaded` assigns a plan-aware base `cleanup_after_at` when none exists and never shortens a later deadline.
+- [x] Update `MarkMediaUploaded` to derive the workspace's current plan and set the base success-retention deadline with `GREATEST(existing_deadline, plan_deadline)` semantics.
+- [x] Regenerate sqlc and run the focused database tests.
 - [ ] Commit: `feat(media): set base upload retention deadline`.
 
 ## Task 6: Enforce unified cleanup and soft-delete rules

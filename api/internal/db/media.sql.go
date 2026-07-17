@@ -280,16 +280,31 @@ func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorks
 }
 
 const markMediaUploaded = `-- name: MarkMediaUploaded :one
-UPDATE media
+UPDATE media m
 SET status = 'uploaded',
     size_bytes = $2,
     content_type = $3,
     width = $4,
     height = $5,
     duration_ms = $6,
-    uploaded_at = NOW()
-WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms
+    uploaded_at = NOW(),
+    cleanup_after_at = GREATEST(
+      COALESCE(m.cleanup_after_at, '-infinity'::timestamptz),
+      NOW() + CASE COALESCE((
+        SELECT subscriptions.plan_id
+        FROM subscriptions
+        WHERE subscriptions.workspace_id = m.workspace_id
+      ), 'free')
+        WHEN 'api' THEN INTERVAL '2 days'
+        WHEN 'basic' THEN INTERVAL '4 days'
+        WHEN 'growth' THEN INTERVAL '15 days'
+        WHEN 'team' THEN INTERVAL '30 days'
+        WHEN 'enterprise' THEN INTERVAL '30 days'
+        ELSE INTERVAL '1 day'
+      END
+    )
+WHERE m.id = $1
+RETURNING m.id, m.storage_key, m.content_type, m.size_bytes, m.status, m.created_at, m.uploaded_at, m.workspace_id, m.content_hash, m.cleanup_after_at, m.width, m.height, m.duration_ms
 `
 
 type MarkMediaUploadedParams struct {

@@ -44,16 +44,31 @@ LIMIT $2 OFFSET $3;
 -- migration 056); pass NULL for images or for any case where probing
 -- couldn't extract them. NULLs leave the columns at NULL — the validator
 -- treats unknown dimensions as "warn, don't block" rather than 0×0.
-UPDATE media
+UPDATE media m
 SET status = 'uploaded',
     size_bytes = $2,
     content_type = $3,
     width = $4,
     height = $5,
     duration_ms = $6,
-    uploaded_at = NOW()
-WHERE id = $1
-RETURNING *;
+    uploaded_at = NOW(),
+    cleanup_after_at = GREATEST(
+      COALESCE(m.cleanup_after_at, '-infinity'::timestamptz),
+      NOW() + CASE COALESCE((
+        SELECT subscriptions.plan_id
+        FROM subscriptions
+        WHERE subscriptions.workspace_id = m.workspace_id
+      ), 'free')
+        WHEN 'api' THEN INTERVAL '2 days'
+        WHEN 'basic' THEN INTERVAL '4 days'
+        WHEN 'growth' THEN INTERVAL '15 days'
+        WHEN 'team' THEN INTERVAL '30 days'
+        WHEN 'enterprise' THEN INTERVAL '30 days'
+        ELSE INTERVAL '1 day'
+      END
+    )
+WHERE m.id = $1
+RETURNING m.*;
 
 -- name: SoftDeleteMedia :exec
 UPDATE media SET status = 'deleted'
