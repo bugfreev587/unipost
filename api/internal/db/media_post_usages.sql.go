@@ -11,6 +11,116 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimMediaDueForRetentionCleanup = `-- name: ClaimMediaDueForRetentionCleanup :many
+WITH snapshot_candidates AS MATERIALIZED (
+  SELECT
+    m.id,
+    m.usage_version,
+    GREATEST(
+      COALESCE(m.cleanup_after_at, '-infinity'::timestamptz),
+      COALESCE((
+        SELECT MAX(post_due.cleanup_after_at)
+        FROM media_post_usages post_due
+        WHERE post_due.media_id = m.id
+          AND post_due.cleanup_after_at <= NOW()
+      ), '-infinity'::timestamptz),
+      COALESCE((
+        SELECT MAX(processing_due.cleanup_after_at)
+        FROM media_processing_usages processing_due
+        WHERE processing_due.media_id = m.id
+          AND processing_due.cleanup_after_at <= NOW()
+      ), '-infinity'::timestamptz)
+    ) AS due_at
+  FROM media m
+  WHERE (
+    m.status = 'deleted'
+    OR m.cleanup_after_at <= NOW()
+    OR EXISTS (
+      SELECT 1
+      FROM media_post_usages post_due
+      WHERE post_due.media_id = m.id
+        AND post_due.cleanup_after_at <= NOW()
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM media_processing_usages processing_due
+      WHERE processing_due.media_id = m.id
+        AND processing_due.cleanup_after_at <= NOW()
+    )
+  )
+  AND (m.cleanup_after_at IS NULL OR m.cleanup_after_at <= NOW())
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_post_usages post_blocker
+    WHERE post_blocker.media_id = m.id
+      AND (
+        post_blocker.cleanup_after_at IS NULL
+        OR post_blocker.cleanup_after_at > NOW()
+      )
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_blocker
+    WHERE processing_blocker.media_id = m.id
+      AND (
+        processing_blocker.cleanup_after_at IS NULL
+        OR processing_blocker.cleanup_after_at > NOW()
+      )
+  )
+  ORDER BY due_at ASC
+  LIMIT $1
+), eligible AS (
+  SELECT m.id
+  FROM media m
+  JOIN snapshot_candidates snapshot
+    ON snapshot.id = m.id
+   AND snapshot.usage_version = m.usage_version
+  ORDER BY snapshot.due_at ASC
+  FOR UPDATE OF m SKIP LOCKED
+)
+UPDATE media AS m
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+FROM eligible
+WHERE m.id = eligible.id
+RETURNING m.id, m.storage_key, m.content_type, m.size_bytes, m.status, m.created_at, m.uploaded_at, m.workspace_id, m.content_hash, m.cleanup_after_at, m.width, m.height, m.duration_ms, m.usage_version
+`
+
+func (q *Queries) ClaimMediaDueForRetentionCleanup(ctx context.Context, limit int32) ([]Media, error) {
+	rows, err := q.db.Query(ctx, claimMediaDueForRetentionCleanup, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Media{}
+	for rows.Next() {
+		var i Media
+		if err := rows.Scan(
+			&i.ID,
+			&i.StorageKey,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UploadedAt,
+			&i.WorkspaceID,
+			&i.ContentHash,
+			&i.CleanupAfterAt,
+			&i.Width,
+			&i.Height,
+			&i.DurationMs,
+			&i.UsageVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countActiveScheduledPostsByWorkspace = `-- name: CountActiveScheduledPostsByWorkspace :one
 SELECT COUNT(*)::integer
 FROM social_posts
@@ -52,127 +162,64 @@ func (q *Queries) DeleteMediaPostUsagesForPostExcept(ctx context.Context, arg De
 	return err
 }
 
-const listMediaDueForRetentionCleanup = `-- name: ListMediaDueForRetentionCleanup :many
-SELECT m.id, m.storage_key, m.content_type, m.size_bytes, m.status, m.created_at, m.uploaded_at, m.workspace_id, m.content_hash, m.cleanup_after_at, m.width, m.height, m.duration_ms
-FROM media m
-WHERE (
-    m.status = 'deleted'
-    OR m.cleanup_after_at <= NOW()
-    OR EXISTS (
-      SELECT 1
-      FROM media_post_usages post_due
-      WHERE post_due.media_id = m.id
-        AND post_due.cleanup_after_at <= NOW()
-    )
-    OR EXISTS (
-      SELECT 1
-      FROM media_processing_usages processing_due
-      WHERE processing_due.media_id = m.id
-        AND processing_due.cleanup_after_at <= NOW()
-    )
+const upsertMediaPostUsage = `-- name: UpsertMediaPostUsage :one
+WITH locked_media AS MATERIALIZED (
+  UPDATE media parent
+  SET usage_version = usage_version + 1
+  WHERE parent.id = $1
+    AND parent.workspace_id = $2
+    AND parent.status = 'uploaded'
+  RETURNING parent.id
+), updated_usage AS (
+  UPDATE media_post_usages usage
+  SET post_status = $3,
+      cleanup_after_at = $4,
+      updated_at = NOW()
+  FROM locked_media
+  WHERE usage.media_id = locked_media.id
+    AND usage.post_id = $5
+  RETURNING usage.id
+), inserted_usage AS (
+  INSERT INTO media_post_usages (
+    workspace_id, media_id, post_id, post_status, cleanup_after_at
   )
-  AND (m.cleanup_after_at IS NULL OR m.cleanup_after_at <= NOW())
-  AND NOT EXISTS (
-    SELECT 1
-    FROM media_post_usages post_blocker
-    WHERE post_blocker.media_id = m.id
-      AND (
-        post_blocker.cleanup_after_at IS NULL
-        OR post_blocker.cleanup_after_at > NOW()
-      )
-  )
-  AND NOT EXISTS (
-    SELECT 1
-    FROM media_processing_usages processing_blocker
-    WHERE processing_blocker.media_id = m.id
-      AND (
-        processing_blocker.cleanup_after_at IS NULL
-        OR processing_blocker.cleanup_after_at > NOW()
-      )
-  )
-ORDER BY GREATEST(
-  COALESCE(m.cleanup_after_at, '-infinity'::timestamptz),
-  COALESCE((
-    SELECT MAX(post_due.cleanup_after_at)
-    FROM media_post_usages post_due
-    WHERE post_due.media_id = m.id
-      AND post_due.cleanup_after_at <= NOW()
-  ), '-infinity'::timestamptz),
-  COALESCE((
-    SELECT MAX(processing_due.cleanup_after_at)
-    FROM media_processing_usages processing_due
-    WHERE processing_due.media_id = m.id
-      AND processing_due.cleanup_after_at <= NOW()
-  ), '-infinity'::timestamptz)
-) ASC
-LIMIT $1
-`
-
-func (q *Queries) ListMediaDueForRetentionCleanup(ctx context.Context, limit int32) ([]Media, error) {
-	rows, err := q.db.Query(ctx, listMediaDueForRetentionCleanup, limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Media{}
-	for rows.Next() {
-		var i Media
-		if err := rows.Scan(
-			&i.ID,
-			&i.StorageKey,
-			&i.ContentType,
-			&i.SizeBytes,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UploadedAt,
-			&i.WorkspaceID,
-			&i.ContentHash,
-			&i.CleanupAfterAt,
-			&i.Width,
-			&i.Height,
-			&i.DurationMs,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const upsertMediaPostUsage = `-- name: UpsertMediaPostUsage :exec
-INSERT INTO media_post_usages (
-  workspace_id,
-  media_id,
-  post_id,
-  post_status,
-  cleanup_after_at
-) VALUES (
-  $1, $2, $3, $4, $5
+  SELECT
+    $2,
+    $1,
+    $5,
+    $3,
+    $4
+  FROM locked_media
+  WHERE NOT EXISTS (SELECT 1 FROM updated_usage)
+  ON CONFLICT (media_id, post_id) DO UPDATE
+  SET post_status = EXCLUDED.post_status,
+      cleanup_after_at = EXCLUDED.cleanup_after_at,
+      updated_at = NOW()
+  RETURNING id
 )
-ON CONFLICT (media_id, post_id) DO UPDATE
-SET post_status = EXCLUDED.post_status,
-    cleanup_after_at = EXCLUDED.cleanup_after_at,
-    updated_at = NOW()
+SELECT true::boolean AS applied FROM updated_usage
+UNION ALL
+SELECT true::boolean AS applied FROM inserted_usage
+LIMIT 1
 `
 
 type UpsertMediaPostUsageParams struct {
-	WorkspaceID    string             `json:"workspace_id"`
 	MediaID        string             `json:"media_id"`
-	PostID         string             `json:"post_id"`
+	WorkspaceID    string             `json:"workspace_id"`
 	PostStatus     string             `json:"post_status"`
 	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+	PostID         string             `json:"post_id"`
 }
 
-func (q *Queries) UpsertMediaPostUsage(ctx context.Context, arg UpsertMediaPostUsageParams) error {
-	_, err := q.db.Exec(ctx, upsertMediaPostUsage,
-		arg.WorkspaceID,
+func (q *Queries) UpsertMediaPostUsage(ctx context.Context, arg UpsertMediaPostUsageParams) (bool, error) {
+	row := q.db.QueryRow(ctx, upsertMediaPostUsage,
 		arg.MediaID,
-		arg.PostID,
+		arg.WorkspaceID,
 		arg.PostStatus,
 		arg.CleanupAfterAt,
+		arg.PostID,
 	)
-	return err
+	var applied bool
+	err := row.Scan(&applied)
+	return applied, err
 }

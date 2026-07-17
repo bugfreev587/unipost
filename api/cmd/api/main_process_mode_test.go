@@ -114,6 +114,19 @@ func TestProcessModeCanDisableAPIMediaWorkersAfterDedicatedWorkerIsEnabled(t *te
 	}
 }
 
+func TestSchedulerOverrideCannotStartSchedulerInMediaWorker(t *testing.T) {
+	t.Setenv("POST_DELIVERY_WORKER_RUN_SCHEDULER", "true")
+	if shouldStartScheduler(processModeMediaWorker) {
+		t.Fatal("media worker mode must never start the post scheduler")
+	}
+	if !shouldStartScheduler(processModePostDeliveryWorker) {
+		t.Fatal("post delivery worker scheduler override should start the scheduler")
+	}
+	if !shouldStartScheduler(processModeAPI) {
+		t.Fatal("api mode should start the scheduler")
+	}
+}
+
 func TestProcessModeCanDisableAPIDeliveryWorkersAfterDedicatedWorkerIsEnabled(t *testing.T) {
 	t.Setenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY", "true")
 	if shouldStartPostDeliveryWorkers(processModeAPI) {

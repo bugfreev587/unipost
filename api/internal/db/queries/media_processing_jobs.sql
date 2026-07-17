@@ -92,12 +92,7 @@ WITH created_job AS (
   RETURNING job_id
 )
 SELECT created_job.*
-FROM created_job
-WHERE EXISTS (
-  SELECT 1
-  FROM input_usages
-  WHERE input_usages.job_id = created_job.id
-);
+FROM created_job;
 
 -- name: GetMediaProcessingJobByIDAndWorkspace :one
 SELECT * FROM media_processing_jobs
@@ -113,7 +108,8 @@ WITH eligible AS (
   FROM media_processing_jobs candidate
   WHERE candidate.kind = sqlc.arg(job_kind)
     AND candidate.status = 'queued'
-  ORDER BY candidate.created_at ASC, candidate.id ASC
+    AND candidate.next_attempt_at <= NOW()
+  ORDER BY candidate.next_attempt_at ASC, candidate.created_at ASC, candidate.id ASC
   LIMIT sqlc.arg(batch_limit)::int
   FOR UPDATE SKIP LOCKED
 )
@@ -125,6 +121,14 @@ SET status = 'processing',
 FROM eligible
 WHERE j.id = eligible.id
 RETURNING j.*;
+
+-- name: PromoteDueMediaProcessingRetriesByKind :execrows
+UPDATE media_processing_jobs
+SET status = 'queued',
+    updated_at = NOW()
+WHERE kind = sqlc.arg(job_kind)
+  AND status = 'retry_wait'
+  AND next_attempt_at <= NOW();
 
 -- name: MarkMediaProcessingJobSucceeded :one
 UPDATE media_processing_jobs
@@ -151,11 +155,16 @@ RETURNING *;
 
 -- name: RequeueMediaProcessingJob :one
 UPDATE media_processing_jobs
-SET status = 'queued',
-    error_code = NULL,
-    error_message = NULL,
-    retryable = false,
+SET status = 'retry_wait',
+    error_code = sqlc.arg(error_code),
+    error_message = sqlc.arg(error_message),
+    retryable = true,
+    next_attempt_at = NOW() + LEAST(
+      INTERVAL '5 minutes',
+      INTERVAL '30 seconds' * POWER(2, GREATEST(attempts - 1, 0))
+    ),
     updated_at = NOW(),
     completed_at = NULL
-WHERE id = $1
+WHERE id = sqlc.arg(job_id)
+  AND attempts < 3
 RETURNING *;

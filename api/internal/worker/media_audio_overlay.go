@@ -29,13 +29,14 @@ const (
 )
 
 type mediaAudioOverlayWorkerQueries interface {
+	PromoteDueMediaProcessingRetriesByKind(context.Context, string) (int64, error)
 	ClaimMediaProcessingJobsByKind(context.Context, db.ClaimMediaProcessingJobsByKindParams) ([]db.MediaProcessingJob, error)
 	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
 	CreateMedia(context.Context, db.CreateMediaParams) (db.Media, error)
 	UpdateMediaStorageKey(context.Context, db.UpdateMediaStorageKeyParams) (db.Media, error)
 	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
 	HardDeleteMedia(context.Context, string) error
-	MarkMediaProcessingJobFailed(context.Context, db.MarkMediaProcessingJobFailedParams) (db.MediaProcessingJob, error)
+	RequeueMediaProcessingJob(context.Context, db.RequeueMediaProcessingJobParams) (db.MediaProcessingJob, error)
 	CompleteMediaProcessingJobSucceeded(context.Context, db.CompleteMediaProcessingJobSucceededParams) (db.MediaProcessingJob, error)
 	CompleteMediaProcessingJobFailed(context.Context, db.CompleteMediaProcessingJobFailedParams) (db.MediaProcessingJob, error)
 	GetSubscriptionByWorkspace(context.Context, string) (db.Subscription, error)
@@ -98,6 +99,10 @@ func (w *MediaAudioOverlayWorker) Start(ctx context.Context) {
 
 func (w *MediaAudioOverlayWorker) runOnce(ctx context.Context) {
 	if w.queries == nil || w.storage == nil || w.processor == nil {
+		return
+	}
+	if _, err := w.queries.PromoteDueMediaProcessingRetriesByKind(ctx, mediaAudioOverlayKind); err != nil {
+		slog.Error("media audio overlay worker: retry promotion failed", "error", err)
 		return
 	}
 	jobs, err := w.queries.ClaimMediaProcessingJobsByKind(ctx, db.ClaimMediaProcessingJobsByKindParams{
@@ -251,31 +256,35 @@ func (w *MediaAudioOverlayWorker) createOutputMedia(ctx context.Context, job db.
 }
 
 func (w *MediaAudioOverlayWorker) failJob(ctx context.Context, job db.MediaProcessingJob, code, message string, retryable bool) error {
-	if !retryable {
-		cleanupAfter, deadlineErr := w.processingCleanupDeadline(ctx, job.WorkspaceID, "failed")
-		if deadlineErr != nil {
-			return fmt.Errorf("%s: calculate media processing failure retention: %w", message, deadlineErr)
-		}
-		_, err := w.queries.CompleteMediaProcessingJobFailed(ctx, db.CompleteMediaProcessingJobFailedParams{
-			JobID:          job.ID,
-			ErrorCode:      pgtype.Text{String: code, Valid: true},
-			ErrorMessage:   pgtype.Text{String: message, Valid: true},
-			CleanupAfterAt: cleanupAfter,
+	if retryable && job.Attempts < 3 {
+		_, err := w.queries.RequeueMediaProcessingJob(ctx, db.RequeueMediaProcessingJobParams{
+			ErrorCode:    pgtype.Text{String: code, Valid: true},
+			ErrorMessage: pgtype.Text{String: message, Valid: true},
+			JobID:        job.ID,
 		})
 		if err != nil {
-			return fmt.Errorf("%s: complete terminal failure: %w", message, err)
+			return fmt.Errorf("%s: requeue retryable failure: %w", message, err)
 		}
 		return fmt.Errorf("%s", message)
 	}
 
-	_, err := w.queries.MarkMediaProcessingJobFailed(ctx, db.MarkMediaProcessingJobFailedParams{
-		ID:           job.ID,
-		ErrorCode:    pgtype.Text{String: code, Valid: true},
-		ErrorMessage: pgtype.Text{String: message, Valid: true},
-		Retryable:    retryable,
+	if retryable {
+		code = "media_processing_attempts_exhausted"
+		message = fmt.Sprintf("processing attempts exhausted: %s", message)
+	}
+
+	cleanupAfter, deadlineErr := w.processingCleanupDeadline(ctx, job.WorkspaceID, "failed")
+	if deadlineErr != nil {
+		return fmt.Errorf("%s: calculate media processing failure retention: %w", message, deadlineErr)
+	}
+	_, err := w.queries.CompleteMediaProcessingJobFailed(ctx, db.CompleteMediaProcessingJobFailedParams{
+		JobID:          job.ID,
+		ErrorCode:      pgtype.Text{String: code, Valid: true},
+		ErrorMessage:   pgtype.Text{String: message, Valid: true},
+		CleanupAfterAt: cleanupAfter,
 	})
 	if err != nil {
-		return fmt.Errorf("%s: mark failed: %w", message, err)
+		return fmt.Errorf("%s: complete terminal failure: %w", message, err)
 	}
 	return fmt.Errorf("%s", message)
 }

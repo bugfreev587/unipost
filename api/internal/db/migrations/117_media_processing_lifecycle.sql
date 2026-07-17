@@ -4,7 +4,11 @@
 -- ledger that prevents active inputs/outputs from being physically deleted.
 
 ALTER TABLE media_processing_jobs
-  ADD COLUMN input_media_id TEXT;
+  ADD COLUMN input_media_id TEXT,
+  ADD COLUMN next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
+
+ALTER TABLE media
+  ADD COLUMN usage_version BIGINT NOT NULL DEFAULT 0;
 
 ALTER TABLE media_processing_jobs
   ALTER COLUMN input_video_media_id DROP NOT NULL,
@@ -12,6 +16,9 @@ ALTER TABLE media_processing_jobs
 
 ALTER TABLE media_processing_jobs
   DROP CONSTRAINT IF EXISTS media_processing_jobs_kind_check;
+
+ALTER TABLE media_processing_jobs
+  DROP CONSTRAINT IF EXISTS media_processing_jobs_status_check;
 
 ALTER TABLE media_processing_jobs
   ADD CONSTRAINT media_processing_jobs_kind_inputs_check CHECK (
@@ -30,9 +37,18 @@ ALTER TABLE media_processing_jobs
     )
   );
 
+ALTER TABLE media_processing_jobs
+  ADD CONSTRAINT media_processing_jobs_status_check CHECK (
+    status IN ('queued', 'retry_wait', 'processing', 'succeeded', 'failed', 'cancelled')
+  );
+
 CREATE INDEX media_processing_jobs_kind_claim_idx
-  ON media_processing_jobs (kind, status, created_at, id)
+  ON media_processing_jobs (kind, status, next_attempt_at, created_at, id)
   WHERE status = 'queued';
+
+CREATE INDEX media_processing_jobs_retry_due_idx
+  ON media_processing_jobs (kind, next_attempt_at, created_at, id)
+  WHERE status = 'retry_wait';
 
 CREATE TABLE media_processing_usages (
   id               TEXT PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -197,13 +213,208 @@ WHERE m.status = 'uploaded'
     WHERE processing_usage.media_id = m.id
   );
 
+-- Usage creation and cleanup both lock the parent Media row. Cleanup claims
+-- use SKIP LOCKED, so whichever operation arrives first wins without leaving
+-- a window in which an object can be deleted after gaining a new reference.
+-- +goose StatementBegin
+CREATE FUNCTION protect_media_usage_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  media_status TEXT;
+BEGIN
+  UPDATE media
+  SET usage_version = usage_version + 1
+  WHERE id = NEW.media_id
+    AND status = 'uploaded'
+  RETURNING status INTO media_status;
+  IF media_status IS NULL THEN
+    RAISE EXCEPTION 'media % is not available for a new usage', NEW.media_id USING ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER media_post_usages_protect_media
+BEFORE INSERT OR UPDATE OF media_id ON media_post_usages
+FOR EACH ROW EXECUTE FUNCTION protect_media_usage_insert();
+
+CREATE TRIGGER media_processing_usages_protect_media
+BEFORE INSERT OR UPDATE OF media_id ON media_processing_usages
+FOR EACH ROW EXECUTE FUNCTION protect_media_usage_insert();
+
+-- During a rolling deployment, an old API process can still use the legacy
+-- job insert query. Mirror those Audio Overlay inputs into the new ledger.
+-- +goose StatementBegin
+CREATE FUNCTION track_legacy_media_processing_job_inputs()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.kind = 'audio_overlay' THEN
+    INSERT INTO media_processing_usages (
+      workspace_id, job_id, media_id, role, status, cleanup_after_at
+    )
+    SELECT NEW.workspace_id, NEW.id, source.media_id, 'input', 'active', NULL
+    FROM (
+      VALUES (NEW.input_video_media_id), (NEW.input_audio_media_id)
+    ) AS source(media_id)
+    WHERE source.media_id IS NOT NULL
+    ON CONFLICT (job_id, media_id, role) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER media_processing_jobs_track_legacy_inputs
+AFTER INSERT ON media_processing_jobs
+FOR EACH ROW EXECUTE FUNCTION track_legacy_media_processing_job_inputs();
+
+-- Old workers represent retryable failures as failed rows. Normalize those
+-- writes into retry-wait with the same bounded policy used by new code; old
+-- generic claimers only select queued rows and therefore cannot bypass it.
+-- +goose StatementBegin
+CREATE FUNCTION normalize_legacy_media_processing_retry()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.status = 'failed' AND NEW.retryable THEN
+    IF NEW.attempts < 3 THEN
+      NEW.status := 'retry_wait';
+      NEW.next_attempt_at := NOW() + LEAST(
+        INTERVAL '5 minutes',
+        INTERVAL '30 seconds' * POWER(2, GREATEST(NEW.attempts - 1, 0))
+      );
+      NEW.completed_at := NULL;
+    ELSE
+      NEW.retryable := false;
+      NEW.error_code := 'media_processing_attempts_exhausted';
+      NEW.error_message := 'processing attempts exhausted: ' || COALESCE(NEW.error_message, 'retryable failure');
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER media_processing_jobs_normalize_legacy_retry
+BEFORE UPDATE OF status, retryable ON media_processing_jobs
+FOR EACH ROW EXECUTE FUNCTION normalize_legacy_media_processing_retry();
+
+-- Also mirror terminal writes made by an old worker into the lifecycle
+-- ledger. GREATEST prevents overlap with new workers from shortening a
+-- deadline already calculated by the application.
+-- +goose StatementBegin
+CREATE FUNCTION transition_legacy_media_processing_usages()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  plan_id TEXT;
+  retention_window INTERVAL;
+  cleanup_deadline TIMESTAMPTZ;
+BEGIN
+  IF NEW.status NOT IN ('succeeded', 'failed', 'cancelled') THEN
+    RETURN NEW;
+  END IF;
+
+  SELECT COALESCE((
+    SELECT subscription.plan_id
+    FROM subscriptions subscription
+    WHERE subscription.workspace_id = NEW.workspace_id
+    LIMIT 1
+  ), 'free') INTO plan_id;
+
+  IF NEW.status = 'succeeded' THEN
+    retention_window := CASE plan_id
+      WHEN 'api' THEN INTERVAL '2 days'
+      WHEN 'basic' THEN INTERVAL '4 days'
+      WHEN 'growth' THEN INTERVAL '15 days'
+      WHEN 'team' THEN INTERVAL '30 days'
+      WHEN 'enterprise' THEN INTERVAL '30 days'
+      ELSE INTERVAL '1 day'
+    END;
+  ELSE
+    retention_window := CASE plan_id
+      WHEN 'api' THEN INTERVAL '4 days'
+      WHEN 'basic' THEN INTERVAL '8 days'
+      WHEN 'growth' THEN INTERVAL '30 days'
+      WHEN 'team' THEN INTERVAL '60 days'
+      WHEN 'enterprise' THEN INTERVAL '60 days'
+      ELSE INTERVAL '2 days'
+    END;
+  END IF;
+
+  cleanup_deadline := COALESCE(NEW.completed_at, NOW()) + retention_window;
+
+  UPDATE media_processing_usages usage
+  SET status = NEW.status,
+      cleanup_after_at = GREATEST(
+        COALESCE(usage.cleanup_after_at, '-infinity'::timestamptz),
+        cleanup_deadline
+      ),
+      updated_at = NOW()
+  WHERE usage.job_id = NEW.id
+    AND usage.role = 'input';
+
+  IF NEW.status = 'succeeded' AND NEW.output_media_id IS NOT NULL THEN
+    INSERT INTO media_processing_usages (
+      workspace_id, job_id, media_id, role, status, cleanup_after_at
+    ) VALUES (
+      NEW.workspace_id, NEW.id, NEW.output_media_id, 'output', 'succeeded', cleanup_deadline
+    )
+    ON CONFLICT (job_id, media_id, role) DO UPDATE
+    SET status = 'succeeded',
+        cleanup_after_at = GREATEST(
+          COALESCE(media_processing_usages.cleanup_after_at, '-infinity'::timestamptz),
+          EXCLUDED.cleanup_after_at
+        ),
+        updated_at = NOW();
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER media_processing_jobs_transition_legacy_usages
+AFTER UPDATE OF status, output_media_id, retryable ON media_processing_jobs
+FOR EACH ROW EXECUTE FUNCTION transition_legacy_media_processing_usages();
+
 -- +goose Down
+DROP TRIGGER IF EXISTS media_processing_jobs_transition_legacy_usages ON media_processing_jobs;
+DROP FUNCTION IF EXISTS transition_legacy_media_processing_usages();
+DROP TRIGGER IF EXISTS media_processing_jobs_normalize_legacy_retry ON media_processing_jobs;
+DROP FUNCTION IF EXISTS normalize_legacy_media_processing_retry();
+DROP TRIGGER IF EXISTS media_processing_jobs_track_legacy_inputs ON media_processing_jobs;
+DROP FUNCTION IF EXISTS track_legacy_media_processing_job_inputs();
+DROP TRIGGER IF EXISTS media_processing_usages_protect_media ON media_processing_usages;
+DROP TRIGGER IF EXISTS media_post_usages_protect_media ON media_post_usages;
+DROP FUNCTION IF EXISTS protect_media_usage_insert();
+
+DROP INDEX IF EXISTS media_processing_jobs_retry_due_idx;
 DROP INDEX IF EXISTS media_processing_usages_cleanup_due_idx;
 DROP INDEX IF EXISTS media_processing_usages_active_media_idx;
 DROP INDEX IF EXISTS media_processing_usages_job_idx;
 DROP TABLE IF EXISTS media_processing_usages;
 
 DROP INDEX IF EXISTS media_processing_jobs_kind_claim_idx;
+
+UPDATE media_processing_jobs
+SET status = 'queued',
+    next_attempt_at = NOW()
+WHERE status = 'retry_wait';
+
+ALTER TABLE media_processing_jobs
+  DROP CONSTRAINT IF EXISTS media_processing_jobs_status_check;
+
+ALTER TABLE media_processing_jobs
+  ADD CONSTRAINT media_processing_jobs_status_check
+  CHECK (status IN ('queued', 'processing', 'succeeded', 'failed', 'cancelled'));
 
 ALTER TABLE media_processing_jobs
   DROP CONSTRAINT IF EXISTS media_processing_jobs_kind_inputs_check;
@@ -219,4 +430,8 @@ ALTER TABLE media_processing_jobs
   CHECK (kind IN ('audio_overlay'));
 
 ALTER TABLE media_processing_jobs
+  DROP COLUMN IF EXISTS next_attempt_at,
   DROP COLUMN IF EXISTS input_media_id;
+
+ALTER TABLE media
+  DROP COLUMN IF EXISTS usage_version;

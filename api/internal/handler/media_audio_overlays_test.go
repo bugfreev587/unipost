@@ -275,6 +275,13 @@ func TestGetAudioOverlayJob(t *testing.T) {
 	}
 }
 
+func TestAudioOverlayResponseKeepsRetryWaitInternal(t *testing.T) {
+	response := audioOverlayJobResponse(db.MediaProcessingJob{Status: "retry_wait"})
+	if response.Status != "queued" {
+		t.Fatalf("response status = %q, want queued for internal retry_wait", response.Status)
+	}
+}
+
 type audioOverlaySuccessEnvelope struct {
 	Data struct {
 		ID            string  `json:"id"`

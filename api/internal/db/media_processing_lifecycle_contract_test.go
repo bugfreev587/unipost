@@ -27,6 +27,26 @@ func TestAudioOverlayJobCreationTracksInputsAtomically(t *testing.T) {
 	}
 }
 
+func TestMediaProcessingRetryQueryUsesBackoffAndClaimDeadline(t *testing.T) {
+	source, err := os.ReadFile("queries/media_processing_jobs.sql")
+	if err != nil {
+		t.Fatalf("read media processing jobs queries: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"candidate.next_attempt_at <= now()",
+		"next_attempt_at = now() +",
+		"interval '30 seconds'",
+		"attempts < 3",
+		"status = 'retry_wait'",
+		"-- name: promoteduemediaprocessingretriesbykind :execrows",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("media processing retry contract missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
 func TestTerminalMediaProcessingQueriesTransitionLifecycleAtomically(t *testing.T) {
 	source, err := os.ReadFile("queries/media_processing_usages.sql")
 	if err != nil {
@@ -61,9 +81,49 @@ func TestMarkMediaUploadedAssignsPlanAwareBaseDeadlineWithoutShortening(t *testi
 		"coalesce(m.cleanup_after_at, '-infinity'::timestamptz)",
 		"from subscriptions",
 		"when 'enterprise' then interval '30 days'",
+		"and m.status = 'pending'",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("mark media uploaded base retention missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
+func TestAbandonedUploadCleanupClaimsBeforeDeleting(t *testing.T) {
+	source, err := os.ReadFile("queries/media.sql")
+	if err != nil {
+		t.Fatalf("read media queries: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"-- name: claimabandonedmedia :many",
+		"status = 'pending'",
+		"for update of candidate skip locked",
+		"set status = 'deleted'",
+		"returning m.*",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("abandoned media claim missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
+func TestPostUsageUpsertLocksAvailableParentForInsertAndReactivation(t *testing.T) {
+	source, err := os.ReadFile("queries/media_post_usages.sql")
+	if err != nil {
+		t.Fatalf("read media post usage queries: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"with locked_media as",
+		"update media",
+		"usage_version = usage_version + 1",
+		"status = 'uploaded'",
+		"from locked_media",
+		"select true::boolean as applied",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("post usage parent lock missing %q, got:\n%s", want, string(source))
 		}
 	}
 }
@@ -130,6 +190,51 @@ func TestMigration117BackfillsActiveSoftDeletedReferences(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("soft-deleted reference backfill missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
+func TestCleanupClaimsRowsBeforeObjectDeletion(t *testing.T) {
+	source, err := os.ReadFile("queries/media_post_usages.sql")
+	if err != nil {
+		t.Fatalf("read media cleanup query: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"-- name: claimmediadueforretentioncleanup :many",
+		"snapshot_candidates as materialized",
+		"usage_version",
+		"for update of m skip locked",
+		"update media",
+		"set status = 'deleted'",
+		"returning m.*",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("atomic cleanup claim missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
+func TestMigration117SerializesUsageCreationAndRollingWorkers(t *testing.T) {
+	source, err := os.ReadFile("migrations/117_media_processing_lifecycle.sql")
+	if err != nil {
+		t.Fatalf("read lifecycle migration: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"create function protect_media_usage_insert",
+		"set usage_version = usage_version + 1",
+		"create trigger media_post_usages_protect_media",
+		"create trigger media_processing_usages_protect_media",
+		"create function track_legacy_media_processing_job_inputs",
+		"create trigger media_processing_jobs_track_legacy_inputs",
+		"create function normalize_legacy_media_processing_retry",
+		"create trigger media_processing_jobs_normalize_legacy_retry",
+		"create function transition_legacy_media_processing_usages",
+		"create trigger media_processing_jobs_transition_legacy_usages",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("rolling lifecycle compatibility missing %q, got:\n%s", want, string(source))
 		}
 	}
 }

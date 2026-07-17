@@ -17,7 +17,8 @@ WITH eligible AS (
   FROM media_processing_jobs candidate
   WHERE candidate.kind = $1
     AND candidate.status = 'queued'
-  ORDER BY candidate.created_at ASC, candidate.id ASC
+    AND candidate.next_attempt_at <= NOW()
+  ORDER BY candidate.next_attempt_at ASC, candidate.created_at ASC, candidate.id ASC
   LIMIT $2::int
   FOR UPDATE SKIP LOCKED
 )
@@ -28,7 +29,7 @@ SET status = 'processing',
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
-RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at, j.input_media_id
+RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at, j.input_media_id, j.next_attempt_at
 `
 
 type ClaimMediaProcessingJobsByKindParams struct {
@@ -70,6 +71,7 @@ func (q *Queries) ClaimMediaProcessingJobsByKind(ctx context.Context, arg ClaimM
 			&i.StartedAt,
 			&i.CompletedAt,
 			&i.InputMediaID,
+			&i.NextAttemptAt,
 		); err != nil {
 			return nil, err
 		}
@@ -114,7 +116,7 @@ WITH created_job AS (
     $10,
     $11
   )
-  RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
+  RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 ), input_usages AS (
   INSERT INTO media_processing_usages (
     workspace_id,
@@ -140,13 +142,8 @@ WITH created_job AS (
   ON CONFLICT (job_id, media_id, role) DO NOTHING
   RETURNING job_id
 )
-SELECT created_job.id, created_job.workspace_id, created_job.kind, created_job.status, created_job.input_video_media_id, created_job.input_audio_media_id, created_job.output_media_id, created_job.mode, created_job.fit, created_job.video_volume, created_job.audio_volume, created_job.audio_start_ms, created_job.request, created_job.idempotency_key, created_job.request_hash, created_job.error_code, created_job.error_message, created_job.retryable, created_job.attempts, created_job.created_at, created_job.updated_at, created_job.started_at, created_job.completed_at, created_job.input_media_id
+SELECT created_job.id, created_job.workspace_id, created_job.kind, created_job.status, created_job.input_video_media_id, created_job.input_audio_media_id, created_job.output_media_id, created_job.mode, created_job.fit, created_job.video_volume, created_job.audio_volume, created_job.audio_start_ms, created_job.request, created_job.idempotency_key, created_job.request_hash, created_job.error_code, created_job.error_message, created_job.retryable, created_job.attempts, created_job.created_at, created_job.updated_at, created_job.started_at, created_job.completed_at, created_job.input_media_id, created_job.next_attempt_at
 FROM created_job
-WHERE EXISTS (
-  SELECT 1
-  FROM input_usages
-  WHERE input_usages.job_id = created_job.id
-)
 `
 
 type CreateAudioOverlayMediaProcessingJobParams struct {
@@ -188,6 +185,7 @@ type CreateAudioOverlayMediaProcessingJobRow struct {
 	StartedAt         pgtype.Timestamptz `json:"started_at"`
 	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
 	InputMediaID      pgtype.Text        `json:"input_media_id"`
+	NextAttemptAt     pgtype.Timestamptz `json:"next_attempt_at"`
 }
 
 func (q *Queries) CreateAudioOverlayMediaProcessingJob(ctx context.Context, arg CreateAudioOverlayMediaProcessingJobParams) (CreateAudioOverlayMediaProcessingJobRow, error) {
@@ -230,6 +228,7 @@ func (q *Queries) CreateAudioOverlayMediaProcessingJob(ctx context.Context, arg 
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -266,7 +265,7 @@ INSERT INTO media_processing_jobs (
   $12,
   $13
 )
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 `
 
 type CreateMediaProcessingJobParams struct {
@@ -329,12 +328,13 @@ func (q *Queries) CreateMediaProcessingJob(ctx context.Context, arg CreateMediaP
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
 
 const getMediaProcessingJobByIDAndWorkspace = `-- name: GetMediaProcessingJobByIDAndWorkspace :one
-SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id FROM media_processing_jobs
+SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at FROM media_processing_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -371,12 +371,13 @@ func (q *Queries) GetMediaProcessingJobByIDAndWorkspace(ctx context.Context, arg
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
 
 const getMediaProcessingJobByIdempotencyKey = `-- name: GetMediaProcessingJobByIdempotencyKey :one
-SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id FROM media_processing_jobs
+SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at FROM media_processing_jobs
 WHERE workspace_id = $1 AND idempotency_key = $2
 `
 
@@ -413,6 +414,7 @@ func (q *Queries) GetMediaProcessingJobByIdempotencyKey(ctx context.Context, arg
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -426,7 +428,7 @@ SET status = 'failed',
     updated_at = NOW(),
     completed_at = NOW()
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 `
 
 type MarkMediaProcessingJobFailedParams struct {
@@ -469,6 +471,7 @@ func (q *Queries) MarkMediaProcessingJobFailed(ctx context.Context, arg MarkMedi
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -483,7 +486,7 @@ SET status = 'succeeded',
     updated_at = NOW(),
     completed_at = NOW()
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 `
 
 type MarkMediaProcessingJobSucceededParams struct {
@@ -519,24 +522,53 @@ func (q *Queries) MarkMediaProcessingJobSucceeded(ctx context.Context, arg MarkM
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
 
-const requeueMediaProcessingJob = `-- name: RequeueMediaProcessingJob :one
+const promoteDueMediaProcessingRetriesByKind = `-- name: PromoteDueMediaProcessingRetriesByKind :execrows
 UPDATE media_processing_jobs
 SET status = 'queued',
-    error_code = NULL,
-    error_message = NULL,
-    retryable = false,
-    updated_at = NOW(),
-    completed_at = NULL
-WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
+    updated_at = NOW()
+WHERE kind = $1
+  AND status = 'retry_wait'
+  AND next_attempt_at <= NOW()
 `
 
-func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, id string) (MediaProcessingJob, error) {
-	row := q.db.QueryRow(ctx, requeueMediaProcessingJob, id)
+func (q *Queries) PromoteDueMediaProcessingRetriesByKind(ctx context.Context, jobKind string) (int64, error) {
+	result, err := q.db.Exec(ctx, promoteDueMediaProcessingRetriesByKind, jobKind)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const requeueMediaProcessingJob = `-- name: RequeueMediaProcessingJob :one
+UPDATE media_processing_jobs
+SET status = 'retry_wait',
+    error_code = $1,
+    error_message = $2,
+    retryable = true,
+    next_attempt_at = NOW() + LEAST(
+      INTERVAL '5 minutes',
+      INTERVAL '30 seconds' * POWER(2, GREATEST(attempts - 1, 0))
+    ),
+    updated_at = NOW(),
+    completed_at = NULL
+WHERE id = $3
+  AND attempts < 3
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
+`
+
+type RequeueMediaProcessingJobParams struct {
+	ErrorCode    pgtype.Text `json:"error_code"`
+	ErrorMessage pgtype.Text `json:"error_message"`
+	JobID        string      `json:"job_id"`
+}
+
+func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, arg RequeueMediaProcessingJobParams) (MediaProcessingJob, error) {
+	row := q.db.QueryRow(ctx, requeueMediaProcessingJob, arg.ErrorCode, arg.ErrorMessage, arg.JobID)
 	var i MediaProcessingJob
 	err := row.Scan(
 		&i.ID,
@@ -563,6 +595,7 @@ func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, id string) (Med
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }

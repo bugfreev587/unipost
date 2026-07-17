@@ -31,7 +31,7 @@ SET status = 'failed',
     completed_at = NOW()
 WHERE job.id = $3
   AND (SELECT COUNT(*) FROM transitioned_inputs) >= 0
-RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id
+RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id, job.next_attempt_at
 `
 
 type CompleteMediaProcessingJobFailedParams struct {
@@ -74,6 +74,7 @@ func (q *Queries) CompleteMediaProcessingJobFailed(ctx context.Context, arg Comp
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -133,7 +134,7 @@ WHERE job.id = target_job.id
     WHERE output_usage.job_id = job.id
   )
   AND (SELECT COUNT(*) FROM transitioned_inputs) >= 0
-RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id
+RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id, job.next_attempt_at
 `
 
 type CompleteMediaProcessingJobSucceededParams struct {
@@ -170,6 +171,7 @@ func (q *Queries) CompleteMediaProcessingJobSucceeded(ctx context.Context, arg C
 		&i.StartedAt,
 		&i.CompletedAt,
 		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }

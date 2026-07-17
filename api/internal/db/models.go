@@ -414,6 +414,7 @@ type Media struct {
 	Width          pgtype.Int4        `json:"width"`
 	Height         pgtype.Int4        `json:"height"`
 	DurationMs     pgtype.Int4        `json:"duration_ms"`
+	UsageVersion   int64              `json:"usage_version"`
 }
 
 type MediaCleanupRun struct {
@@ -469,6 +470,7 @@ type MediaProcessingJob struct {
 	StartedAt         pgtype.Timestamptz `json:"started_at"`
 	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
 	InputMediaID      pgtype.Text        `json:"input_media_id"`
+	NextAttemptAt     pgtype.Timestamptz `json:"next_attempt_at"`
 }
 
 type MediaProcessingUsage struct {

@@ -205,15 +205,27 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Add a route-registration source contract proving `POST /v1/media/gif-conversions` is absent in Deployment A; the real dev endpoint is verified as `404` after deployment.
 - [x] Add a source/query assertion that production Go code has no callable insert path using `kind = 'gif_to_mp4'` yet; the migration may recognize the future kind, but no handler may create it.
 - [x] Run the focused tests and confirm GREEN.
-- [ ] Commit: `test(media): lock deployment a gif gate`.
+- [x] Commit: `test(media): lock deployment a gif gate`.
+
+## Task 9A: Close pre-integration review findings
+
+- [x] Make retryable failures return to `queued` with bounded exponential backoff; terminally fail and release usages after three attempts.
+- [x] Atomically claim cleanup candidates by soft-deleting them under the unified predicate, and serialize new usage creation against the parent Media row.
+- [x] Add database compatibility triggers for old API job inserts and old worker retry/terminal updates during a rolling deployment.
+- [x] Prevent `media-worker` from starting the post scheduler even when the post-delivery scheduler override is enabled.
+- [x] Increment a parent Media usage generation for new/reactivated usages and require cleanup to claim the same snapshotted generation, closing the post-snapshot lock race.
+- [x] Atomically claim seven-day abandoned uploads and allow hydration only while the row remains `pending`.
+- [x] Isolate retry backoff in `retry_wait`, which old generic claimers cannot consume, and promote due retries only from the kind-aware worker.
+- [x] Run migration 1 through 117 on disposable PostgreSQL 16 and exercise legacy insert, retry, terminal retention, cleanup locking, and post-claim rejection behavior.
+- [x] Pass the final independent Critical/Important code review after remediation.
 
 ## Task 10: Validate the task branch
 
-- [ ] Run `/Users/xiaoboyu/go/bin/sqlc generate` from `api/` and confirm `git diff --exit-code` after generated changes are committed.
-- [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./...` from `api/`.
-- [ ] Run any repository CI-equivalent lint/build command that covers the API if configured.
-- [ ] Review the complete diff against the Deployment A scope. Confirm there is no GIF conversion handler, route, UI, SDK method, or insertion path.
-- [ ] Use `superpowers:verification-before-completion` before claiming local readiness.
+- [x] Run `/Users/xiaoboyu/go/bin/sqlc generate` from `api/` and confirm generated code matches the SQL sources.
+- [x] Run `GOCACHE=/tmp/unipost-go-build go test ./...` from `api/`.
+- [x] Run the API CI-equivalent build and vet commands.
+- [x] Review the complete diff against the Deployment A scope. Confirm there is no GIF conversion handler, route, UI, SDK method, or insertion path.
+- [x] Use `superpowers:verification-before-completion` before claiming local readiness.
 
 ## Task 11: Integrate into dev and pass the real Deployment A gate
 

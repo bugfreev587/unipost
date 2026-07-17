@@ -126,6 +126,10 @@ func TestMediaProcessingLifecycleMigration117Exists(t *testing.T) {
 	sql := strings.ToLower(string(body))
 	for _, want := range []string{
 		"add column input_media_id text",
+		"add column next_attempt_at timestamptz not null default now()",
+		"add column usage_version bigint not null default 0",
+		"status in ('queued', 'retry_wait', 'processing', 'succeeded', 'failed', 'cancelled')",
+		"media_processing_jobs_retry_due_idx",
 		"alter column input_video_media_id drop not null",
 		"alter column input_audio_media_id drop not null",
 		"media_processing_jobs_kind_inputs_check",

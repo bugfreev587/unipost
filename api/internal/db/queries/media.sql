@@ -68,6 +68,7 @@ SET status = 'uploaded',
       END
     )
 WHERE m.id = $1
+  AND m.status = 'pending'
 RETURNING m.*;
 
 -- name: HasBlockingMediaUsage :one
@@ -101,12 +102,25 @@ WHERE id = $1
   AND status != 'deleted';
 
 -- name: SoftDeleteUnusedMedia :execrows
+WITH snapshot_candidate AS MATERIALIZED (
+  SELECT candidate.id, candidate.usage_version
+  FROM media candidate
+  WHERE candidate.id = sqlc.arg(id)
+    AND candidate.workspace_id = sqlc.arg(workspace_id)
+    AND candidate.status != 'deleted'
+), locked_candidate AS (
+  SELECT candidate.id
+  FROM media candidate
+  JOIN snapshot_candidate snapshot
+    ON snapshot.id = candidate.id
+   AND snapshot.usage_version = candidate.usage_version
+  FOR UPDATE OF candidate SKIP LOCKED
+)
 UPDATE media candidate
 SET status = 'deleted',
     cleanup_after_at = NOW()
-WHERE candidate.id = sqlc.arg(id)
-  AND candidate.workspace_id = sqlc.arg(workspace_id)
-  AND candidate.status != 'deleted'
+FROM locked_candidate
+WHERE candidate.id = locked_candidate.id
   AND NOT EXISTS (
     SELECT 1
     FROM media_post_usages post_blocker
@@ -130,8 +144,27 @@ WHERE candidate.id = sqlc.arg(id)
 DELETE FROM media
 WHERE id = $1;
 
--- name: ListAbandonedMedia :many
-SELECT * FROM media
-WHERE status = 'pending'
-  AND created_at < NOW() - INTERVAL '7 days'
-LIMIT 100;
+-- name: ClaimAbandonedMedia :many
+WITH eligible AS (
+  SELECT candidate.id
+  FROM media candidate
+  WHERE candidate.status = 'pending'
+    AND candidate.created_at < NOW() - INTERVAL '7 days'
+  ORDER BY candidate.created_at ASC, candidate.id ASC
+  LIMIT 100
+  FOR UPDATE OF candidate SKIP LOCKED
+)
+UPDATE media AS m
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+FROM eligible
+WHERE m.id = eligible.id
+RETURNING m.*;
+
+-- name: ReleaseAbandonedMediaClaim :exec
+UPDATE media
+SET status = 'pending',
+    cleanup_after_at = NULL
+WHERE id = $1
+  AND status = 'deleted'
+  AND created_at < NOW() - INTERVAL '7 days';

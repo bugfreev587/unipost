@@ -38,8 +38,9 @@ type mediaCleanupQueries interface {
 	MarkStaleMediaCleanupRunsFailed(context.Context, db.MarkStaleMediaCleanupRunsFailedParams) (int64, error)
 	CreateMediaCleanupRun(context.Context, db.CreateMediaCleanupRunParams) (db.MediaCleanupRun, error)
 	CompleteMediaCleanupRun(context.Context, db.CompleteMediaCleanupRunParams) (db.MediaCleanupRun, error)
-	ListMediaDueForRetentionCleanup(context.Context, int32) ([]db.Media, error)
-	ListAbandonedMedia(context.Context) ([]db.Media, error)
+	ClaimMediaDueForRetentionCleanup(context.Context, int32) ([]db.Media, error)
+	ClaimAbandonedMedia(context.Context) ([]db.Media, error)
+	ReleaseAbandonedMediaClaim(context.Context, string) error
 	HardDeleteMedia(context.Context, string) error
 }
 
@@ -96,7 +97,7 @@ func (w *MediaCleanupWorker) Start(ctx context.Context) {
 // unused for seven days. Storage deletion happens first so a transient R2
 // failure keeps the database row available for the next hourly retry.
 func (w *MediaCleanupWorker) sweepAbandoned(ctx context.Context) {
-	rows, err := w.queries.ListAbandonedMedia(ctx)
+	rows, err := w.queries.ClaimAbandonedMedia(ctx)
 	if err != nil {
 		slog.Error("media cleanup: failed to list abandoned uploads", "error", err)
 		return
@@ -109,6 +110,9 @@ func (w *MediaCleanupWorker) sweepAbandoned(ctx context.Context) {
 	for _, row := range rows {
 		if err := w.storage.Delete(ctx, row.StorageKey); err != nil {
 			slog.Warn("media cleanup: abandoned object delete failed", "media_id", row.ID, "error", err)
+			if releaseErr := w.queries.ReleaseAbandonedMediaClaim(ctx, row.ID); releaseErr != nil {
+				slog.Warn("media cleanup: abandoned claim release failed", "media_id", row.ID, "error", releaseErr)
+			}
 			continue
 		}
 		if err := w.queries.HardDeleteMedia(ctx, row.ID); err != nil {
@@ -117,9 +121,9 @@ func (w *MediaCleanupWorker) sweepAbandoned(ctx context.Context) {
 	}
 }
 
-// sweepDue lists media rows past their cleanup_after_at and deletes
-// each one's R2 object before hard-deleting the row. R2 delete
-// errors leave the row in place so the next tick can retry.
+// sweepDue atomically claims media rows past their retention gates, then
+// deletes each R2 object before hard-deleting the row. A claimed row remains
+// soft-deleted after an R2 error so the next tick can safely retry it.
 func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 	startedAt := time.Now().UTC()
 	if _, err := w.queries.MarkStaleMediaCleanupRunsFailed(ctx, db.MarkStaleMediaCleanupRunsFailedParams{
@@ -146,11 +150,11 @@ func (w *MediaCleanupWorker) sweepDue(ctx context.Context) {
 	stats := mediaCleanupRunStats{}
 	status := mediaCleanupRunCompleted
 	for {
-		rows, err := w.queries.ListMediaDueForRetentionCleanup(ctx, mediaCleanupBatchSize)
+		rows, err := w.queries.ClaimMediaDueForRetentionCleanup(ctx, mediaCleanupBatchSize)
 		if err != nil {
-			slog.Error("media cleanup: failed to list due rows", "error", err)
+			slog.Error("media cleanup: failed to claim due rows", "error", err)
 			status = mediaCleanupRunFailed
-			stats.addError("list due rows failed", err)
+			stats.addError("claim due rows failed", err)
 			break
 		}
 		if len(rows) == 0 {

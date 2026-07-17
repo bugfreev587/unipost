@@ -90,6 +90,9 @@ func TestMediaAudioOverlayWorkerProcessesClaimedJob(t *testing.T) {
 	if queries.claimCalls != 1 {
 		t.Fatalf("claim calls = %d, want 1", queries.claimCalls)
 	}
+	if queries.promoteCalls != 1 || queries.promoteKind != mediaAudioOverlayKind {
+		t.Fatalf("retry promotion calls/kind = %d/%q, want 1/%q", queries.promoteCalls, queries.promoteKind, mediaAudioOverlayKind)
+	}
 	if queries.claimKind != mediaAudioOverlayKind {
 		t.Fatalf("claim kind = %q, want %q", queries.claimKind, mediaAudioOverlayKind)
 	}
@@ -159,6 +162,7 @@ func TestMediaAudioOverlayWorkerKeepsLifecycleActiveForRetryableFailure(t *testi
 		WorkspaceID:       "ws_1",
 		Kind:              mediaAudioOverlayKind,
 		Status:            "processing",
+		Attempts:          1,
 		InputVideoMediaID: pgtype.Text{String: "missing_video", Valid: true},
 		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
 	})
@@ -166,11 +170,37 @@ func TestMediaAudioOverlayWorkerKeepsLifecycleActiveForRetryableFailure(t *testi
 	if err == nil {
 		t.Fatal("retryable input failure error = nil")
 	}
-	if queries.legacyFailureCalls != 1 || !queries.failedRetryable {
-		t.Fatalf("legacy retryable failure calls/retryable = %d/%t, want 1/true", queries.legacyFailureCalls, queries.failedRetryable)
+	if queries.requeueCalls != 1 || queries.requeuedJobID != "mpj_retryable" {
+		t.Fatalf("requeue calls/job = %d/%q, want 1/mpj_retryable", queries.requeueCalls, queries.requeuedJobID)
 	}
-	if queries.completedFailureCalls != 0 {
-		t.Fatalf("terminal failure calls = %d, want 0 so input usages stay active", queries.completedFailureCalls)
+	if queries.completedFailureCalls != 0 || queries.legacyFailureCalls != 0 {
+		t.Fatalf("terminal/legacy failure calls = %d/%d, want 0/0 so input usages stay active", queries.completedFailureCalls, queries.legacyFailureCalls)
+	}
+}
+
+func TestMediaAudioOverlayWorkerTerminallyFailsAfterRetryAttemptsExhausted(t *testing.T) {
+	queries := newFakeMediaAudioOverlayWorkerQueries()
+	worker := NewMediaAudioOverlayWorker(queries, &fakeMediaAudioOverlayWorkerStorage{}).
+		WithProcessor(&fakeAudioOverlayProcessor{})
+
+	err := worker.processJob(context.Background(), db.MediaProcessingJob{
+		ID:                "mpj_exhausted",
+		WorkspaceID:       "ws_1",
+		Kind:              mediaAudioOverlayKind,
+		Status:            "processing",
+		Attempts:          3,
+		InputVideoMediaID: pgtype.Text{String: "missing_video", Valid: true},
+		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
+	})
+
+	if err == nil {
+		t.Fatal("exhausted retry failure error = nil")
+	}
+	if queries.requeueCalls != 0 || queries.completedFailureCalls != 1 {
+		t.Fatalf("requeue/terminal calls = %d/%d, want 0/1", queries.requeueCalls, queries.completedFailureCalls)
+	}
+	if queries.failedErrorCode != "media_processing_attempts_exhausted" {
+		t.Fatalf("terminal code = %q, want media_processing_attempts_exhausted", queries.failedErrorCode)
 	}
 }
 
@@ -187,6 +217,10 @@ type fakeMediaAudioOverlayWorkerQueries struct {
 	legacyFailureCalls            int
 	completedFailureCalls         int
 	completedFailureDeadline      pgtype.Timestamptz
+	requeueCalls                  int
+	requeuedJobID                 string
+	promoteCalls                  int
+	promoteKind                   string
 }
 
 func newFakeMediaAudioOverlayWorkerQueries() *fakeMediaAudioOverlayWorkerQueries {
@@ -212,6 +246,12 @@ func (f *fakeMediaAudioOverlayWorkerQueries) ClaimMediaProcessingJobsByKind(_ co
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}}, nil
+}
+
+func (f *fakeMediaAudioOverlayWorkerQueries) PromoteDueMediaProcessingRetriesByKind(_ context.Context, kind string) (int64, error) {
+	f.promoteCalls++
+	f.promoteKind = kind
+	return 0, nil
 }
 
 func (f *fakeMediaAudioOverlayWorkerQueries) GetMediaByIDAndWorkspace(_ context.Context, arg db.GetMediaByIDAndWorkspaceParams) (db.Media, error) {
@@ -306,6 +346,12 @@ func (f *fakeMediaAudioOverlayWorkerQueries) CompleteMediaProcessingJobFailed(_ 
 
 func (f *fakeMediaAudioOverlayWorkerQueries) GetSubscriptionByWorkspace(context.Context, string) (db.Subscription, error) {
 	return db.Subscription{WorkspaceID: "ws_1", PlanID: "basic"}, nil
+}
+
+func (f *fakeMediaAudioOverlayWorkerQueries) RequeueMediaProcessingJob(_ context.Context, arg db.RequeueMediaProcessingJobParams) (db.MediaProcessingJob, error) {
+	f.requeueCalls++
+	f.requeuedJobID = arg.JobID
+	return db.MediaProcessingJob{ID: arg.JobID, Status: "retry_wait", Retryable: true}, nil
 }
 
 type fakeMediaAudioOverlayWorkerStorage struct {

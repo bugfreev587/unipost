@@ -415,6 +415,10 @@ func isUsableOverlayMediaStatus(status string) bool {
 }
 
 func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayResponse {
+	status := job.Status
+	if status == "retry_wait" {
+		status = "queued"
+	}
 	var output *string
 	if job.OutputMediaID.Valid {
 		v := job.OutputMediaID.String
@@ -440,7 +444,7 @@ func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayRespons
 	}
 	return mediaAudioOverlayResponse{
 		ID:            job.ID,
-		Status:        job.Status,
+		Status:        status,
 		VideoMediaID:  nullableTextValue(job.InputVideoMediaID),
 		AudioMediaID:  nullableTextValue(job.InputAudioMediaID),
 		OutputMediaID: output,

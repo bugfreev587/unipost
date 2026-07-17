@@ -536,7 +536,7 @@ func main() {
 		go managedTokenWorker.Start(workerCtx)
 	}
 
-	if processMode == processModeAPI || strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_RUN_SCHEDULER"), "true") {
+	if shouldStartScheduler(processMode) {
 		schedulerWorker := worker.NewSchedulerWorker(queries, socialPostHandler)
 		go schedulerWorker.Start(workerCtx)
 	}
@@ -1361,6 +1361,14 @@ func shouldStartPostDeliveryWorkers(mode string) bool {
 		return false
 	}
 	return !strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY"), "true")
+}
+
+func shouldStartScheduler(mode string) bool {
+	if mode == processModeAPI {
+		return true
+	}
+	return mode == processModePostDeliveryWorker &&
+		strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_RUN_SCHEDULER"), "true")
 }
 
 func shouldStartMediaProcessingWorkers(mode string) bool {

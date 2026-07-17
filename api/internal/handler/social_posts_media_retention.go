@@ -81,7 +81,7 @@ func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.
 	}
 
 	for _, mediaID := range ids {
-		if err := h.queries.UpsertMediaPostUsage(ctx, db.UpsertMediaPostUsageParams{
+		if _, err := h.queries.UpsertMediaPostUsage(ctx, db.UpsertMediaPostUsageParams{
 			WorkspaceID:    post.WorkspaceID,
 			MediaID:        mediaID,
 			PostID:         post.ID,
