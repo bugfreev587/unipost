@@ -24,7 +24,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data[].x_credit_billing_mode", type: "string", optional: true, description: "unipost_managed_app or workspace_x_app." },
 ];
 const ERRORS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "UNAUTHORIZED or PLAN_FEATURE_NOT_AVAILABLE." },
+  { name: "error.code", type: "string", description: "UNAUTHORIZED, FEATURE_NOT_AVAILABLE for a disabled X DM rollout, or PLAN_FEATURE_NOT_AVAILABLE." },
   { name: "request_id", type: "string", description: "Request identifier for support." },
 ];
 
@@ -33,7 +33,7 @@ export default function InboxListPage() {
     <SingleEndpointReferencePage
       section="inbox"
       title="List Inbox items"
-      description="Returns the normalized Inbox contract for Instagram, Facebook, Threads, and X. X replies use source x_reply; legacy X direct messages use x_dm."
+      description="Returns the normalized Inbox contract for Instagram, Facebook, Threads, and X. X replies use source x_reply; legacy X direct messages use x_dm only when the workspace is included in the controlled rollout."
       method="GET"
       path="/v1/inbox"
       requestSections={[{ title: "Authorization", items: AUTH }, { title: "Query Params", items: QUERY }]}

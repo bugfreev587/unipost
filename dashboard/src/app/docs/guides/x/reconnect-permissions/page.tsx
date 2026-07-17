@@ -26,6 +26,11 @@ export default function XReconnectPermissionsGuidePage() {
       lead="Diagnose the account-specific X Inbox capability, correct workspace-app credentials when needed, then repeat OAuth so UniPost receives the current scopes."
       className="docs-page-guide-redesign"
     >
+      <p className="docs-guide-note">
+        While the controlled X DM rollout is unavailable, DM-only missing scopes do not require reconnect and do not
+        interrupt X publishing or comments. Accounts that already granted <code>dm.read</code> and <code>dm.write</code>
+        will not reconnect again when the rollout opens; accounts still missing them reconnect once at that time.
+      </p>
       <h2 id="inspect">1. Inspect the exact capability state</h2>
       <p>
         Call <Link href="/docs/api/accounts/capabilities">GET account capabilities</Link>. Read
@@ -49,7 +54,7 @@ export default function XReconnectPermissionsGuidePage() {
         <li>Find the affected X / Twitter account and choose Reconnect.</li>
         <li>On X, approve the complete requested permission set: tweet.read, tweet.write, users.read, offline.access, dm.read, and dm.write.</li>
         <li>Return to UniPost and wait for the account to show Active.</li>
-        <li>Call capabilities again. Require an empty <code>missing_scopes</code> array and the needed comments or DM capability to be true.</li>
+        <li>Call capabilities again. Require an empty <code>missing_scopes</code> array for the feature currently available to the workspace and the needed comments or DM capability to be true.</li>
       </ol>
 
       <h2 id="verify">4. Verify list, reply, and sync</h2>
@@ -62,7 +67,9 @@ export default function XReconnectPermissionsGuidePage() {
 
       <h2 id="errors">5. Interpret remaining boundaries</h2>
       <p>
-        <code>x_reconnect_required</code> means scopes are still missing. <code>x_monthly_usage_limit_exceeded</code> and
+        <code>feature_not_available</code> means the controlled rollout is closed for this workspace and is not fixed
+        by reconnecting. <code>x_reconnect_required</code> means scopes required by an available feature are still
+        missing. <code>x_monthly_usage_limit_exceeded</code> and
         <code> x_inbound_daily_cap_exceeded</code> are allowance boundaries and are not fixed by reconnecting. Managed
         mode consumes UniPost X Credits; <code>workspace_x_app</code> uses your X app access and bypasses the UniPost
         allowance.

@@ -29,16 +29,29 @@ export default function XDirectMessagesGuidePage() {
     <DocsPage
       eyebrow="X Guides"
       title="Receive and reply to X direct messages"
-      lead="Use UniPost Inbox for legacy X direct-message events, private threads, bounded history sync, and idempotent replies."
+      lead="Prepare for the controlled X DM rollout, then use UniPost Inbox for legacy direct-message lookup, private threads, bounded history sync, and idempotent replies when the workspace is enabled."
       className="docs-page-guide-redesign"
     >
       <div className="docs-guide-badges">
         <span className="docs-guide-badge">Basic plan or higher</span>
+        <span className="docs-guide-badge">Controlled availability</span>
         <span className="docs-guide-badge">Legacy DM API</span>
         <span className="docs-guide-badge">Private content</span>
       </div>
 
-      <h2 id="prerequisites">1. Confirm DM access</h2>
+      <h2 id="availability">Availability</h2>
+      <p>
+        X DMs are currently controlled by the UniPost <code>x_dms_v1</code> rollout. When it is unavailable for the
+        workspace, <code>source=x_dm</code>, DM-only sync, and DM replies return
+        <code> FEATURE_NOT_AVAILABLE</code>. X comments and ordinary X publishing continue to work.
+      </p>
+      <p>
+        UniPost uses OAuth 2.0 for bounded DM lookup and send. Private real-time X Activity subscription provisioning
+        is disabled because the verified OAuth 2.0 user-token subscription path returns 403. No OAuth 1.0a or second
+        authorization is required by the current release.
+      </p>
+
+      <h2 id="prerequisites">1. Confirm DM access after enablement</h2>
       <p>
         Read <Link href="/docs/api/accounts/capabilities">account capabilities</Link> and require
         <code> x_inbox.dms_enabled</code>. The connected X account needs <code>dm.read</code>, <code>dm.write</code>,
@@ -80,6 +93,7 @@ export default function XDirectMessagesGuidePage() {
 
       <h2 id="limits">5. Branch on stable conditions</h2>
       <ul className="docs-checklist">
+        <li><code>feature_not_available</code>: the workspace is not included in the controlled X DM rollout.</li>
         <li><code>plan_feature_not_available</code>: Inbox requires the Basic plan or higher.</li>
         <li><code>x_monthly_usage_limit_exceeded</code>: stop managed-X work until allowance becomes available.</li>
         <li><code>x_inbound_daily_cap_exceeded</code>: new inbound DMs are suppressed at the UTC-day safety boundary.</li>

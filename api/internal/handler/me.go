@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
@@ -26,6 +28,9 @@ type MeHandler struct {
 	superAdminChecker *auth.SuperAdminChecker
 	quotaChecker      *quota.Checker
 	loopsSyncer       loopsLifecycleSyncer
+	featureFlags      interface {
+		WorkspaceFlags(context.Context, string) (map[string]bool, error)
+	}
 }
 
 func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker, superAdminChecker *auth.SuperAdminChecker) *MeHandler {
@@ -34,6 +39,13 @@ func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker, superAdm
 
 func (h *MeHandler) SetQuotaChecker(quotaChecker *quota.Checker) *MeHandler {
 	h.quotaChecker = quotaChecker
+	return h
+}
+
+func (h *MeHandler) SetFeatureFlags(evaluator interface {
+	WorkspaceFlags(context.Context, string) (map[string]bool, error)
+}) *MeHandler {
+	h.featureFlags = evaluator
 	return h
 }
 
@@ -142,8 +154,8 @@ func (h *MeHandler) PlanGates(w http.ResponseWriter, r *http.Request) {
 	writeSuccess(w, planGatesResponse{PlanGates: h.planGatesForUser(r, userID)})
 }
 
-// FeatureFlagsCompat keeps the old /v1/me/features response shape stable during
-// rolling deployments. It does not evaluate remote flags.
+// FeatureFlagsCompat keeps the existing /v1/me/features response shape stable
+// while evaluating UniPost-managed rollout flags for the active workspace.
 func (h *MeHandler) FeatureFlagsCompat(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
@@ -151,21 +163,29 @@ func (h *MeHandler) FeatureFlagsCompat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	flags := map[string]bool{
+		featureflags.XDMSV1:            false,
+		featureflags.XCreditsBillingV1: false,
+	}
+	workspaceID := h.workspaceIDForUser(r, userID)
+	if workspaceID != "" && h.featureFlags != nil {
+		evaluated, err := h.featureFlags.WorkspaceFlags(r.Context(), workspaceID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to evaluate feature flags")
+			return
+		}
+		flags = evaluated
+	}
 	writeSuccess(w, featureFlagsCompatResponse{
 		Environment: runtimeenv.Current(),
-		Provider:    "removed",
-		Flags:       map[string]bool{},
+		Provider:    "unipost",
+		Flags:       flags,
 		PlanGates:   h.planGatesForUser(r, userID),
 	})
 }
 
 func (h *MeHandler) planGatesForUser(r *http.Request, userID string) map[string]bool {
-	workspaceID := ""
-	if mem, err := h.queries.GetActiveMembership(r.Context(), userID); err == nil {
-		workspaceID = mem.WorkspaceID
-	} else if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
-		workspaceID = workspaces[0].ID
-	}
+	workspaceID := h.workspaceIDForUser(r, userID)
 	planGates := map[string]bool{
 		"inbox":     false,
 		"audit_log": false,
@@ -176,6 +196,15 @@ func (h *MeHandler) planGatesForUser(r *http.Request, userID string) map[string]
 	}
 
 	return planGates
+}
+
+func (h *MeHandler) workspaceIDForUser(r *http.Request, userID string) string {
+	if mem, err := h.queries.GetActiveMembership(r.Context(), userID); err == nil {
+		return mem.WorkspaceID
+	} else if workspaces, wsErr := h.queries.ListWorkspacesByUser(r.Context(), userID); wsErr == nil && len(workspaces) > 0 {
+		return workspaces[0].ID
+	}
+	return ""
 }
 
 // SetIntent handles PATCH /v1/me/intent.

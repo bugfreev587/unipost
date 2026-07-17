@@ -112,6 +112,22 @@ func TestGetXCreditsReturnsMonthlyAllowance(t *testing.T) {
 	}
 }
 
+func TestGetXCreditsFeatureOffReturnsUnavailableWithoutLoadingBalance(t *testing.T) {
+	service := &fakeXCreditsSnapshotService{}
+	h := (&BillingHandler{}).
+		SetXCreditsService(service).
+		SetFeatureFlags(platformFeatureFlags(false))
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/x-credits", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rec := httptest.NewRecorder()
+
+	h.GetXCredits(rec, req)
+
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "FEATURE_NOT_AVAILABLE") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestGetXCreditsEnterpriseUsesCustomNullLimits(t *testing.T) {
 	h := (&BillingHandler{}).SetXCreditsService(&fakeXCreditsSnapshotService{
 		snapshot: xcredits.Snapshot{

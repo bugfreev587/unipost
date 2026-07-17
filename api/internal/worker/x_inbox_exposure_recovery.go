@@ -9,10 +9,14 @@ import (
 )
 
 type XInboxExposureRecoveryWorker struct {
-	service *xcredits.Service
+	service interface {
+		ReconcilePendingExposures(context.Context, int, time.Time) (xcredits.ExposureReleaseReconcileStats, error)
+	}
 }
 
-func NewXInboxExposureRecoveryWorker(service *xcredits.Service) *XInboxExposureRecoveryWorker {
+func NewXInboxExposureRecoveryWorker(service interface {
+	ReconcilePendingExposures(context.Context, int, time.Time) (xcredits.ExposureReleaseReconcileStats, error)
+}) *XInboxExposureRecoveryWorker {
 	return &XInboxExposureRecoveryWorker{service: service}
 }
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { PublicSiteHeader, PricingCTA } from "@/components/marketing/nav";
-import { listProfiles, getBilling } from "@/lib/api";
+import { getBilling, getPublicFeatureFlags, listProfiles } from "@/lib/api";
 import { X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
 
 // ── Data ──
@@ -233,6 +233,7 @@ const X_CREDITS_CSS = `
 export default function PricingPage() {
   const [currentPlan, setCurrentPlan] = useState<string | null>(null);
   const [profileId, setProjectId] = useState<string | null>(null);
+  const [xCreditsEnabled, setXCreditsEnabled] = useState(false);
   const { isSignedIn, getToken } = useAuth();
 
   const APP_URL = "https://app.unipost.dev";
@@ -257,6 +258,22 @@ export default function PricingPage() {
     const timer = window.setTimeout(() => { void loadPlan(); }, 0);
     return () => window.clearTimeout(timer);
   }, [loadPlan]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPublicFeatureFlags()
+      .then((response) => {
+        if (!cancelled) {
+          setXCreditsEnabled(response.data.flags.x_credits_billing_v1);
+        }
+      })
+      .catch(() => {
+        // Conservative default: do not advertise a disabled or unknown rollout.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <>
@@ -357,7 +374,7 @@ export default function PricingPage() {
           </div>
         </div>
 
-        <section className="pr-xcredits" aria-labelledby="x-credits-capacity">
+        {xCreditsEnabled ? <section className="pr-xcredits" aria-labelledby="x-credits-capacity">
           <div className="pr-xcredits-head">
             <h2 id="x-credits-capacity" className="pr-xcredits-title">What your included X Credits can do</h2>
             <p className="pr-xcredits-copy">
@@ -420,7 +437,7 @@ export default function PricingPage() {
             per connected account per UTC day still applies on every plan. Comment and DM figures are capacity
             planning for phased X Inbox support; they do not indicate API availability before that phase ships.
           </p>
-        </section>
+        </section> : null}
 
         {/* Compare */}
         <div className="pr-compare">

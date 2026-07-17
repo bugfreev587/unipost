@@ -20,6 +20,41 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
+type platformFeatureFlags bool
+
+func (f platformFeatureFlags) ForWorkspace(context.Context, string, string) (bool, error) {
+	return bool(f), nil
+}
+
+func TestXAccountCapabilityFlagOffDoesNotRequestDMReconnect(t *testing.T) {
+	store := &xCapabilityTestDB{
+		planID:  "basic",
+		appMode: "unipost_managed_app",
+		scopes:  []string{"tweet.read", "tweet.write", "users.read", "offline.access"},
+	}
+	rec := invokeXAccountCapabilitiesWithFlags(t, store, platformFeatureFlags(false))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Data struct {
+			XInbox struct {
+				CommentsEnabled   bool     `json:"comments_enabled"`
+				DMsEnabled        bool     `json:"dms_enabled"`
+				MissingScopes     []string `json:"missing_scopes"`
+				ReconnectRequired bool     `json:"reconnect_required"`
+			} `json:"x_inbox"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if !body.Data.XInbox.CommentsEnabled || body.Data.XInbox.DMsEnabled ||
+		body.Data.XInbox.ReconnectRequired || len(body.Data.XInbox.MissingScopes) != 0 {
+		t.Fatalf("x_inbox = %+v, want comments with hidden DMs and no reconnect", body.Data.XInbox)
+	}
+}
+
 func TestXAccountCapabilityKeepsPublishingActiveWhenDMScopesNeedReconnect(t *testing.T) {
 	store := &xCapabilityTestDB{
 		planID:  "basic",
@@ -143,6 +178,16 @@ func TestXAccountCapabilityNormalizesNullAppModeToLegacyReconnect(t *testing.T) 
 }
 
 func invokeXAccountCapabilities(t *testing.T, store *xCapabilityTestDB) *httptest.ResponseRecorder {
+	return invokeXAccountCapabilitiesWithFlags(t, store, nil)
+}
+
+func invokeXAccountCapabilitiesWithFlags(
+	t *testing.T,
+	store *xCapabilityTestDB,
+	flags interface {
+		ForWorkspace(context.Context, string, string) (bool, error)
+	},
+) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodGet, "/v1/accounts/sa_1/capabilities", nil)
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
@@ -150,7 +195,7 @@ func invokeXAccountCapabilities(t *testing.T, store *xCapabilityTestDB) *httptes
 	rctx.URLParams.Add("id", "sa_1")
 	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 	rec := httptest.NewRecorder()
-	NewPlatformHandler(db.New(store)).GetAccountCapabilities(rec, req)
+	NewPlatformHandler(db.New(store)).SetFeatureFlags(flags).GetAccountCapabilities(rec, req)
 	return rec
 }
 

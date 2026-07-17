@@ -167,7 +167,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     intent_tags: ["reference", "posting"],
     endpoint_aliases: ["GET /v1/inbox", "POST /v1/inbox/:id/reply", "POST /v1/inbox/sync"],
     platforms: ["twitter"],
-    content: "Use source x_dm for legacy X direct-message events. Verify x_inbox.dms_enabled and the dm.read and dm.write scopes, protect private message content, send with an idempotency key, and backfill at most 30 days.",
+    content: "X DMs are a controlled rollout. When enabled for the workspace, use source x_dm for bounded OAuth 2.0 lookup/send, verify x_inbox.dms_enabled plus dm.read and dm.write, protect private content, and use idempotency. Private real-time Activity subscription provisioning is currently disabled because the verified OAuth 2.0 subscription request returns 403.",
   }),
   chunk({
     id: "guide-x-reconnect-permissions",
@@ -181,7 +181,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     intent_tags: ["auth", "connect"],
     endpoint_aliases: ["GET /v1/accounts/{id}/capabilities", "GET /v1/accounts/:id/capabilities"],
     platforms: ["twitter"],
-    content: "Read x_inbox capability state first. Workspace X apps require Client ID, Client Secret, app Bearer Token, and Consumer Secret. Reconnect OAuth and approve tweet.read, tweet.write, users.read, offline.access, dm.read, and dm.write, then confirm the missing scopes list is empty.",
+    content: "Read x_inbox capability state first. X comments use OAuth 2.0 tweet.read, tweet.write, users.read, and offline.access. While X DMs are unavailable, DM-only missing scopes do not require reconnect. When the DM rollout opens, accounts missing dm.read or dm.write reconnect once; accounts that already granted them do not reconnect again.",
   }),
   chunk({
     id: "guide-x-credits",
@@ -196,7 +196,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     endpoint_aliases: ["GET /v1/billing/x-credits", "/v1/billing/x-credits"],
     platforms: ["twitter"],
     content:
-      "X Credits are a weighted managed-X allowance separate from posts/month. The allowance resets each billing period. Use GET /v1/billing/x-credits to read monthly_allowance, monthly_used, monthly_remaining, billing_period_end, inbound_daily_usage, and inbound_daily_limit. Managed X operations stop at the hard limit. BYO X API connections do not consume UniPost X Credits. Validation does not consume X Credits, and the independent 20 X posts per account per UTC day safety cap still applies.",
+      "X Credits billing is a controlled rollout. After enablement, the weighted managed-X allowance is separate from posts/month and GET /v1/billing/x-credits returns monthly usage, remaining capacity, reset, and inbound fields. Before enablement, regular workspaces do not consume or block on customer monthly Credits and the endpoint returns feature_not_available. Internal inbound safety and the independent 20 X posts/account/day cap remain active.",
   }),
   chunk({
     id: "api-reference-x-credits",
@@ -211,7 +211,7 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     endpoint_aliases: ["GET /v1/billing/x-credits", "/v1/billing/x-credits"],
     platforms: ["twitter"],
     content:
-      "GET /v1/billing/x-credits returns mode monthly_allowance, plan_id, monthly_allowance, monthly_used, monthly_remaining, billing_period_start, billing_period_end, catalog_version, inbound_daily_usage, inbound_daily_limit, and a managed-versus-BYO note. Enterprise limits are null because they are contract-defined. x_monthly_usage_limit_exceeded means managed-X work reached the billing-period hard limit.",
+      "GET /v1/billing/x-credits is available only after the workspace X Credits billing rollout is enabled; otherwise it returns feature_not_available. When enabled it returns the monthly allowance, usage, remaining capacity, billing-period boundaries, catalog version, inbound daily usage/limit, and managed-versus-BYO note.",
   }),
   chunk({
     id: "guide-connect-sessions-overview",

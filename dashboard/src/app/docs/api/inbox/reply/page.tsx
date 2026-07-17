@@ -18,6 +18,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.x_credit_billing_mode", type: "string", description: "unipost_managed_app or workspace_x_app." },
 ];
 const ERRORS: ApiFieldItem[] = [
+  { name: "feature_not_available", type: "403", description: "X DMs are not available to this workspace. X public replies remain available." },
   { name: "x_monthly_usage_limit_exceeded", type: "402", description: "Managed-X allowance exhausted. Do not retry until capacity resets or changes." },
   { name: "x_reconnect_required", type: "409", description: "Reconnect the account with the required X scopes." },
   { name: "idempotency_key_conflict", type: "409", description: "The key was previously used with different text or a different item." },
@@ -31,7 +32,7 @@ export default function InboxReplyPage() {
     <SingleEndpointReferencePage
       section="inbox"
       title="Reply to an Inbox item"
-      description="Sends an eligible public reply or legacy direct message. UniPost-managed X operations consume X Credits; workspace-owned X app operations use that app's X access and do not consume UniPost X Credits."
+      description="Sends an eligible public reply or, for an enabled workspace, a legacy direct message. Managed X operations consume X Credits only after that billing rollout is enabled; workspace-owned X app operations use that app's X access."
       method="POST"
       path="/v1/inbox/:id/reply"
       requestSections={[{ title: "Authorization", items: AUTH }, { title: "Path Params", items: PATH }, { title: "Request Body", items: BODY }]}

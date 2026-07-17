@@ -12,7 +12,7 @@ const publicRoutes = [
   { path: "/docs/guides/analytics", marker: /Analytics Guides|Unified-first Analytics/i },
   { path: "/docs/guides/analytics/tiktok-followers", marker: /Get TikTok followers|user\.info\.stats/i },
   { path: "/docs/guides/x/credits", marker: /Plan and monitor X Credits|Estimate the operation mix/i },
-  { path: "/pricing", marker: /What your included X Credits can do/i },
+  { path: "/pricing", marker: /Start free|Compare plans/i },
   { path: "/tools", marker: /TikTok Analytics|YouTube Analytics|Instagram Analytics|Threads Analytics|Pinterest Analytics/i },
   { path: "/tools/tiktok-analytics", marker: /TikTok Analytics/i },
   { path: "/tools/youtube-analytics", marker: /YouTube Analytics/i },

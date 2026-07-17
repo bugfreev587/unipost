@@ -57,11 +57,14 @@ func (c AppCredentials) Complete() bool {
 
 type CapabilityInput struct {
 	PlanAllowsInbox bool
-	AccountStatus   string
-	Scopes          []string
-	AppMode         AppMode
-	AppCredentials  AppCredentials
-	DeliveryStatus  string
+	// DMsAvailable is nil for legacy callers and means enabled. A non-nil
+	// false value hides the unfinished DM rollout without affecting comments.
+	DMsAvailable   *bool
+	AccountStatus  string
+	Scopes         []string
+	AppMode        AppMode
+	AppCredentials AppCredentials
+	DeliveryStatus string
 }
 
 type Capabilities struct {
@@ -133,7 +136,12 @@ func EvaluateCapabilities(input CapabilityInput) Capabilities {
 		}
 	}
 	hasPublishingScopes := hasAllScopes(scopeSet, publishingScopes)
-	result.MissingScopes = missingScopes(scopeSet, RequiredInboxScopes())
+	dmsAvailable := input.DMsAvailable == nil || *input.DMsAvailable
+	requiredScopes := publishingScopes
+	if dmsAvailable {
+		requiredScopes = RequiredInboxScopes()
+	}
+	result.MissingScopes = missingScopes(scopeSet, requiredScopes)
 	result.ReconnectRequired = len(result.MissingScopes) > 0
 
 	appCredentialsComplete := false
@@ -147,7 +155,7 @@ func EvaluateCapabilities(input CapabilityInput) Capabilities {
 		result.ReconnectRequired = true
 	}
 	result.CommentsEnabled = hasPublishingScopes && appCredentialsComplete
-	result.DMsEnabled = result.CommentsEnabled && hasAllScopes(scopeSet, RequiredInboxScopes())
+	result.DMsEnabled = dmsAvailable && result.CommentsEnabled && hasAllScopes(scopeSet, RequiredInboxScopes())
 	return result
 }
 

@@ -25,6 +25,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -91,6 +92,9 @@ type InboxHandler struct {
 	xAdapterFactory             func() xInboxBackfillAdapter
 	xBackfillConfirmationSecret []byte
 	xBackfillSafeCredits        int64
+	featureFlags                interface {
+		ForWorkspace(context.Context, string, string) (bool, error)
+	}
 }
 
 func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxHandler {
@@ -141,6 +145,33 @@ func (h *InboxHandler) SetXBackfillSafeCredits(limit int64) *InboxHandler {
 		h.xBackfillSafeCredits = limit
 	}
 	return h
+}
+
+func (h *InboxHandler) SetFeatureFlags(flags interface {
+	ForWorkspace(context.Context, string, string) (bool, error)
+}) *InboxHandler {
+	h.featureFlags = flags
+	return h
+}
+
+func (h *InboxHandler) xDMsAvailable(ctx context.Context, workspaceID string) (bool, error) {
+	if h == nil || h.featureFlags == nil {
+		return true, nil
+	}
+	return h.featureFlags.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
+}
+
+func (h *InboxHandler) writeXDMSUnavailable(w http.ResponseWriter) {
+	writeError(w, http.StatusForbidden, "FEATURE_NOT_AVAILABLE", "X direct messages are not available yet")
+}
+
+func (h *InboxHandler) xDMAvailabilityForRequest(w http.ResponseWriter, r *http.Request, workspaceID string) (bool, bool) {
+	available, err := h.xDMsAvailable(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to evaluate X DM availability")
+		return false, false
+	}
+	return available, true
 }
 
 func inboxListLimit(r *http.Request) int32 {
@@ -234,10 +265,19 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 // GET /v1/inbox?source=ig_comment&is_read=false
 func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	if r.URL.Query().Get("source") == "x_dm" && !dmsAvailable {
+		h.writeXDMSUnavailable(w)
+		return
+	}
 
 	params := db.ListInboxItemsByWorkspaceParams{
 		WorkspaceID: workspaceID,
 		Limit:       inboxListLimit(r),
+		ExcludeXDms: !dmsAvailable,
 	}
 	if s := r.URL.Query().Get("source"); s != "" {
 		params.Source = pgtype.Text{String: s, Valid: true}
@@ -348,6 +388,9 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]inboxItemResponse, 0, len(items))
 	for _, item := range items {
+		if item.Source == "x_dm" && !dmsAvailable {
+			continue
+		}
 		r := toInboxResponse(item)
 		if acc, ok := accountMap[item.SocialAccountID]; ok {
 			r.AccountName = acc.AccountName.String
@@ -366,7 +409,14 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/unread-count
 func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
-	count, err := h.queries.CountUnreadByWorkspace(r.Context(), workspaceID)
+	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	count, err := h.queries.CountUnreadByWorkspace(r.Context(), db.CountUnreadByWorkspaceParams{
+		WorkspaceID: workspaceID,
+		ExcludeXDms: !dmsAvailable,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to count unread")
 		return
@@ -387,6 +437,16 @@ func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
+	if item.Source == "x_dm" {
+		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !available {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+			return
+		}
+	}
 	writeSuccess(w, toInboxResponse(item))
 }
 
@@ -396,6 +456,21 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	id := chi.URLParam(r, "id")
 
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{ID: id, WorkspaceID: workspaceID})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
+	if item.Source == "x_dm" {
+		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !available {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+			return
+		}
+	}
 	if err := h.queries.MarkInboxItemRead(r.Context(), db.MarkInboxItemReadParams{
 		ID: id, WorkspaceID: workspaceID,
 	}); err != nil {
@@ -409,7 +484,14 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 // POST /v1/inbox/mark-all-read
 func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
-	count, err := h.queries.MarkAllInboxItemsRead(r.Context(), workspaceID)
+	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	count, err := h.queries.MarkAllInboxItemsRead(r.Context(), db.MarkAllInboxItemsReadParams{
+		WorkspaceID: workspaceID,
+		ExcludeXDms: !dmsAvailable,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark all read")
 		return
@@ -429,6 +511,16 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
+	}
+	if item.Source == "x_dm" {
+		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !available {
+			h.writeXDMSUnavailable(w)
+			return
+		}
 	}
 
 	// Resolve the media (post) ID. For comments/replies we already have it
@@ -569,6 +661,16 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
+	}
+	if item.Source == "x_dm" {
+		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !available {
+			h.writeXDMSUnavailable(w)
+			return
+		}
 	}
 	if metaDMReplyWindowClosed(item, time.Now()) {
 		writeError(w, http.StatusUnprocessableEntity, "PLATFORM_ERROR", metaDMReplyWindowMessage(item.Source))
@@ -1016,6 +1118,20 @@ func (h *InboxHandler) XOutboundStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
 		return
 	}
+	target, targetErr := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID:          outbound.InboxItemID,
+		WorkspaceID: workspaceID,
+	})
+	if targetErr == nil && target.Source == "x_dm" {
+		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !available {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
+			return
+		}
+	}
 	writeSuccess(w, map[string]any{
 		"id":                      outbound.ID,
 		"status":                  outbound.Status,
@@ -1118,6 +1234,16 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
+	}
+	if item.Source == "x_dm" {
+		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+		if !ok {
+			return
+		}
+		if !available {
+			h.writeXDMSUnavailable(w)
+			return
+		}
 	}
 
 	threadKey := item.ThreadKey
@@ -1549,7 +1675,20 @@ func (h *InboxHandler) syncXBackfill(
 	workspaceID string,
 	request xBackfillRequest,
 ) {
+	requestedOnlyDMs := request.IncludeDMs && !request.IncludeReplies
 	request = normalizeXBackfillRequest(request)
+	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	if !dmsAvailable {
+		if requestedOnlyDMs {
+			h.writeXDMSUnavailable(w)
+			return
+		}
+		request.IncludeDMs = false
+		request.IncludeReplies = true
+	}
 	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find X accounts")
@@ -2033,6 +2172,15 @@ func (h *InboxHandler) ingestXBackfillEntry(
 	operation string,
 	exposureReserved bool,
 ) (xinbox.IngestionResult, error) {
+	if entry.Source == "x_dm" {
+		available, err := h.xDMsAvailable(ctx, workspaceID)
+		if err != nil {
+			return xinbox.IngestionResult{}, err
+		}
+		if !available {
+			return xinbox.IngestionResult{}, stderrors.New("X direct messages are not available")
+		}
+	}
 	isOwn := entry.AuthorID != "" &&
 		(entry.AuthorID == account.ExternalUserID.String || entry.AuthorID == account.ExternalAccountID)
 	metadata := map[string]any{

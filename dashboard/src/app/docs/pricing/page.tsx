@@ -46,7 +46,9 @@ export default function DocsPricingPage() {
       <h2 id="x-credits">Included X Credits</h2>
       <p className="docs-guide-note">
         <strong>X Credits are separate from posts/month.</strong>{" "}
-        They apply to managed X API usage, reset each billing period, and stop new managed-X work at the hard limit.
+        They apply to managed X API usage after the X Credits billing rollout is enabled, reset each billing period,
+        and stop new managed-X work at the hard limit. Until then, regular workspaces do not consume or block on the
+        customer monthly balance, although internal cost-safety limits remain active.
         Bring-your-own X API connections do not consume UniPost X Credits. See the{" "}
         <Link href="/docs/api/x-credits">X Credits API Reference</Link> and the{" "}
         <Link href="/docs/guides/x/credits">X Credits planning guide</Link>.
