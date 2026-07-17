@@ -17,6 +17,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -40,11 +41,23 @@ import (
 // error so a half-deployed environment fails loudly instead of
 // quietly losing uploads.
 type MediaHandler struct {
-	queries *db.Queries
+	queries mediaHandlerQueries
 	storage *storage.Client
 }
 
-func NewMediaHandler(queries *db.Queries, store *storage.Client) *MediaHandler {
+type mediaHandlerQueries interface {
+	CreateMedia(context.Context, db.CreateMediaParams) (db.Media, error)
+	GetActiveMediaByHash(context.Context, db.GetActiveMediaByHashParams) (db.Media, error)
+	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
+	HasBlockingMediaUsage(context.Context, string) (bool, error)
+	HardDeleteMedia(context.Context, string) error
+	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
+	SoftDeleteMedia(context.Context, db.SoftDeleteMediaParams) error
+	SoftDeleteUnusedMedia(context.Context, db.SoftDeleteUnusedMediaParams) (int64, error)
+	UpdateMediaStorageKey(context.Context, db.UpdateMediaStorageKeyParams) (db.Media, error)
+}
+
+func NewMediaHandler(queries mediaHandlerQueries, store *storage.Client) *MediaHandler {
 	return &MediaHandler{queries: queries, storage: store}
 }
 
@@ -376,11 +389,43 @@ func (h *MediaHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := chi.URLParam(r, "id")
-	if err := h.queries.SoftDeleteMedia(r.Context(), db.SoftDeleteMediaParams{
+	row, err := h.queries.GetMediaByIDAndWorkspace(r.Context(), db.GetMediaByIDAndWorkspaceParams{
 		ID:          id,
 		WorkspaceID: workspaceID,
-	}); err != nil {
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Media not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load media")
+		return
+	}
+	if row.Status == "deleted" {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Media not found")
+		return
+	}
+
+	blocked, err := h.queries.HasBlockingMediaUsage(r.Context(), row.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check media usage")
+		return
+	}
+	if blocked {
+		writeError(w, http.StatusConflict, "MEDIA_IN_USE", "Media is still referenced by an active post or media processing job")
+		return
+	}
+
+	updated, err := h.queries.SoftDeleteUnusedMedia(r.Context(), db.SoftDeleteUnusedMediaParams{
+		ID:          id,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete media")
+		return
+	}
+	if updated == 0 {
+		writeError(w, http.StatusConflict, "MEDIA_IN_USE", "Media became referenced before it could be deleted")
 		return
 	}
 	writeSuccess(w, map[string]bool{"deleted": true})

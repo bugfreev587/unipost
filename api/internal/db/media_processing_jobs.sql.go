@@ -11,13 +11,15 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const claimMediaProcessingJobs = `-- name: ClaimMediaProcessingJobs :many
+const claimMediaProcessingJobsByKind = `-- name: ClaimMediaProcessingJobsByKind :many
 WITH eligible AS (
-  SELECT id
-  FROM media_processing_jobs
-  WHERE status = 'queued'
-  ORDER BY created_at ASC, id ASC
-  LIMIT $1::int
+  SELECT candidate.id
+  FROM media_processing_jobs candidate
+  WHERE candidate.kind = $1
+    AND candidate.status = 'queued'
+    AND candidate.next_attempt_at <= NOW()
+  ORDER BY candidate.next_attempt_at ASC, candidate.created_at ASC, candidate.id ASC
+  LIMIT $2::int
   FOR UPDATE SKIP LOCKED
 )
 UPDATE media_processing_jobs j
@@ -27,11 +29,16 @@ SET status = 'processing',
     updated_at = NOW()
 FROM eligible
 WHERE j.id = eligible.id
-RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at
+RETURNING j.id, j.workspace_id, j.kind, j.status, j.input_video_media_id, j.input_audio_media_id, j.output_media_id, j.mode, j.fit, j.video_volume, j.audio_volume, j.audio_start_ms, j.request, j.idempotency_key, j.request_hash, j.error_code, j.error_message, j.retryable, j.attempts, j.created_at, j.updated_at, j.started_at, j.completed_at, j.input_media_id, j.next_attempt_at
 `
 
-func (q *Queries) ClaimMediaProcessingJobs(ctx context.Context, batchLimit int32) ([]MediaProcessingJob, error) {
-	rows, err := q.db.Query(ctx, claimMediaProcessingJobs, batchLimit)
+type ClaimMediaProcessingJobsByKindParams struct {
+	JobKind    string `json:"job_kind"`
+	BatchLimit int32  `json:"batch_limit"`
+}
+
+func (q *Queries) ClaimMediaProcessingJobsByKind(ctx context.Context, arg ClaimMediaProcessingJobsByKindParams) ([]MediaProcessingJob, error) {
+	rows, err := q.db.Query(ctx, claimMediaProcessingJobsByKind, arg.JobKind, arg.BatchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -63,6 +70,8 @@ func (q *Queries) ClaimMediaProcessingJobs(ctx context.Context, batchLimit int32
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.CompletedAt,
+			&i.InputMediaID,
+			&i.NextAttemptAt,
 		); err != nil {
 			return nil, err
 		}
@@ -72,6 +81,312 @@ func (q *Queries) ClaimMediaProcessingJobs(ctx context.Context, batchLimit int32
 		return nil, err
 	}
 	return items, nil
+}
+
+const countActiveMediaProcessingJobsByWorkspace = `-- name: CountActiveMediaProcessingJobsByWorkspace :one
+SELECT COUNT(*)::bigint
+FROM media_processing_jobs
+WHERE workspace_id = $1
+  AND status IN ('queued', 'retry_wait', 'processing')
+`
+
+func (q *Queries) CountActiveMediaProcessingJobsByWorkspace(ctx context.Context, workspaceID string) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveMediaProcessingJobsByWorkspace, workspaceID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countGIFConversionsSince = `-- name: CountGIFConversionsSince :one
+SELECT COUNT(*)::bigint
+FROM media_processing_jobs
+WHERE workspace_id = $1
+  AND kind = 'gif_to_mp4'
+  AND created_at >= $2
+`
+
+type CountGIFConversionsSinceParams struct {
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedSince pgtype.Timestamptz `json:"created_since"`
+}
+
+func (q *Queries) CountGIFConversionsSince(ctx context.Context, arg CountGIFConversionsSinceParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countGIFConversionsSince, arg.WorkspaceID, arg.CreatedSince)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const createAudioOverlayMediaProcessingJob = `-- name: CreateAudioOverlayMediaProcessingJob :one
+WITH created_job AS (
+  INSERT INTO media_processing_jobs (
+    workspace_id,
+    kind,
+    status,
+    input_video_media_id,
+    input_audio_media_id,
+    output_media_id,
+    mode,
+    fit,
+    video_volume,
+    audio_volume,
+    audio_start_ms,
+    request,
+    idempotency_key,
+    request_hash
+  ) VALUES (
+    $1,
+    'audio_overlay',
+    'queued',
+    $2,
+    $3,
+    NULL,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9::jsonb,
+    $10,
+    $11
+  )
+  RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
+), input_usages AS (
+  INSERT INTO media_processing_usages (
+    workspace_id,
+    job_id,
+    media_id,
+    role,
+    status,
+    cleanup_after_at
+  )
+  SELECT
+    created_job.workspace_id,
+    created_job.id,
+    input.media_id,
+    'input',
+    'active',
+    NULL
+  FROM created_job
+  CROSS JOIN LATERAL (
+    VALUES
+      (created_job.input_video_media_id),
+      (created_job.input_audio_media_id)
+  ) AS input(media_id)
+  ON CONFLICT (job_id, media_id, role) DO NOTHING
+  RETURNING job_id
+)
+SELECT created_job.id, created_job.workspace_id, created_job.kind, created_job.status, created_job.input_video_media_id, created_job.input_audio_media_id, created_job.output_media_id, created_job.mode, created_job.fit, created_job.video_volume, created_job.audio_volume, created_job.audio_start_ms, created_job.request, created_job.idempotency_key, created_job.request_hash, created_job.error_code, created_job.error_message, created_job.retryable, created_job.attempts, created_job.created_at, created_job.updated_at, created_job.started_at, created_job.completed_at, created_job.input_media_id, created_job.next_attempt_at
+FROM created_job
+`
+
+type CreateAudioOverlayMediaProcessingJobParams struct {
+	WorkspaceID       string      `json:"workspace_id"`
+	InputVideoMediaID pgtype.Text `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text `json:"input_audio_media_id"`
+	Mode              string      `json:"mode"`
+	Fit               string      `json:"fit"`
+	VideoVolume       int32       `json:"video_volume"`
+	AudioVolume       int32       `json:"audio_volume"`
+	AudioStartMs      int32       `json:"audio_start_ms"`
+	RequestJson       []byte      `json:"request_json"`
+	IdempotencyKey    pgtype.Text `json:"idempotency_key"`
+	RequestHash       pgtype.Text `json:"request_hash"`
+}
+
+type CreateAudioOverlayMediaProcessingJobRow struct {
+	ID                string             `json:"id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Kind              string             `json:"kind"`
+	Status            string             `json:"status"`
+	InputVideoMediaID pgtype.Text        `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text        `json:"input_audio_media_id"`
+	OutputMediaID     pgtype.Text        `json:"output_media_id"`
+	Mode              string             `json:"mode"`
+	Fit               string             `json:"fit"`
+	VideoVolume       int32              `json:"video_volume"`
+	AudioVolume       int32              `json:"audio_volume"`
+	AudioStartMs      int32              `json:"audio_start_ms"`
+	Request           []byte             `json:"request"`
+	IdempotencyKey    pgtype.Text        `json:"idempotency_key"`
+	RequestHash       pgtype.Text        `json:"request_hash"`
+	ErrorCode         pgtype.Text        `json:"error_code"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	Retryable         bool               `json:"retryable"`
+	Attempts          int32              `json:"attempts"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	InputMediaID      pgtype.Text        `json:"input_media_id"`
+	NextAttemptAt     pgtype.Timestamptz `json:"next_attempt_at"`
+}
+
+func (q *Queries) CreateAudioOverlayMediaProcessingJob(ctx context.Context, arg CreateAudioOverlayMediaProcessingJobParams) (CreateAudioOverlayMediaProcessingJobRow, error) {
+	row := q.db.QueryRow(ctx, createAudioOverlayMediaProcessingJob,
+		arg.WorkspaceID,
+		arg.InputVideoMediaID,
+		arg.InputAudioMediaID,
+		arg.Mode,
+		arg.Fit,
+		arg.VideoVolume,
+		arg.AudioVolume,
+		arg.AudioStartMs,
+		arg.RequestJson,
+		arg.IdempotencyKey,
+		arg.RequestHash,
+	)
+	var i CreateAudioOverlayMediaProcessingJobRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.Status,
+		&i.InputVideoMediaID,
+		&i.InputAudioMediaID,
+		&i.OutputMediaID,
+		&i.Mode,
+		&i.Fit,
+		&i.VideoVolume,
+		&i.AudioVolume,
+		&i.AudioStartMs,
+		&i.Request,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.Retryable,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
+	)
+	return i, err
+}
+
+const createGIFMediaProcessingJob = `-- name: CreateGIFMediaProcessingJob :one
+WITH created_job AS (
+  INSERT INTO media_processing_jobs (
+    workspace_id,
+    kind,
+    status,
+    input_media_id,
+    request,
+    idempotency_key,
+    request_hash
+  ) VALUES (
+    $1,
+    'gif_to_mp4',
+    'queued',
+    $2,
+    $3::jsonb,
+    $4,
+    $5
+  )
+  RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
+), input_usage AS (
+  INSERT INTO media_processing_usages (
+    workspace_id,
+    job_id,
+    media_id,
+    role,
+    status,
+    cleanup_after_at
+  )
+  SELECT
+    created_job.workspace_id,
+    created_job.id,
+    created_job.input_media_id,
+    'input',
+    'active',
+    NULL
+  FROM created_job
+  ON CONFLICT (job_id, media_id, role) DO NOTHING
+  RETURNING job_id
+)
+SELECT created_job.id, created_job.workspace_id, created_job.kind, created_job.status, created_job.input_video_media_id, created_job.input_audio_media_id, created_job.output_media_id, created_job.mode, created_job.fit, created_job.video_volume, created_job.audio_volume, created_job.audio_start_ms, created_job.request, created_job.idempotency_key, created_job.request_hash, created_job.error_code, created_job.error_message, created_job.retryable, created_job.attempts, created_job.created_at, created_job.updated_at, created_job.started_at, created_job.completed_at, created_job.input_media_id, created_job.next_attempt_at
+FROM created_job
+WHERE EXISTS (
+  SELECT 1 FROM input_usage WHERE input_usage.job_id = created_job.id
+)
+`
+
+type CreateGIFMediaProcessingJobParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	InputMediaID   pgtype.Text `json:"input_media_id"`
+	RequestJson    []byte      `json:"request_json"`
+	IdempotencyKey pgtype.Text `json:"idempotency_key"`
+	RequestHash    pgtype.Text `json:"request_hash"`
+}
+
+type CreateGIFMediaProcessingJobRow struct {
+	ID                string             `json:"id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Kind              string             `json:"kind"`
+	Status            string             `json:"status"`
+	InputVideoMediaID pgtype.Text        `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text        `json:"input_audio_media_id"`
+	OutputMediaID     pgtype.Text        `json:"output_media_id"`
+	Mode              string             `json:"mode"`
+	Fit               string             `json:"fit"`
+	VideoVolume       int32              `json:"video_volume"`
+	AudioVolume       int32              `json:"audio_volume"`
+	AudioStartMs      int32              `json:"audio_start_ms"`
+	Request           []byte             `json:"request"`
+	IdempotencyKey    pgtype.Text        `json:"idempotency_key"`
+	RequestHash       pgtype.Text        `json:"request_hash"`
+	ErrorCode         pgtype.Text        `json:"error_code"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	Retryable         bool               `json:"retryable"`
+	Attempts          int32              `json:"attempts"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	InputMediaID      pgtype.Text        `json:"input_media_id"`
+	NextAttemptAt     pgtype.Timestamptz `json:"next_attempt_at"`
+}
+
+func (q *Queries) CreateGIFMediaProcessingJob(ctx context.Context, arg CreateGIFMediaProcessingJobParams) (CreateGIFMediaProcessingJobRow, error) {
+	row := q.db.QueryRow(ctx, createGIFMediaProcessingJob,
+		arg.WorkspaceID,
+		arg.InputMediaID,
+		arg.RequestJson,
+		arg.IdempotencyKey,
+		arg.RequestHash,
+	)
+	var i CreateGIFMediaProcessingJobRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.Status,
+		&i.InputVideoMediaID,
+		&i.InputAudioMediaID,
+		&i.OutputMediaID,
+		&i.Mode,
+		&i.Fit,
+		&i.VideoVolume,
+		&i.AudioVolume,
+		&i.AudioStartMs,
+		&i.Request,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.Retryable,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
+	)
+	return i, err
 }
 
 const createMediaProcessingJob = `-- name: CreateMediaProcessingJob :one
@@ -106,15 +421,15 @@ INSERT INTO media_processing_jobs (
   $12,
   $13
 )
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 `
 
 type CreateMediaProcessingJobParams struct {
 	WorkspaceID       string      `json:"workspace_id"`
 	Kind              string      `json:"kind"`
 	Status            string      `json:"status"`
-	InputVideoMediaID string      `json:"input_video_media_id"`
-	InputAudioMediaID string      `json:"input_audio_media_id"`
+	InputVideoMediaID pgtype.Text `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text `json:"input_audio_media_id"`
 	OutputMediaID     pgtype.Text `json:"output_media_id"`
 	Mode              string      `json:"mode"`
 	Fit               string      `json:"fit"`
@@ -168,12 +483,14 @@ func (q *Queries) CreateMediaProcessingJob(ctx context.Context, arg CreateMediaP
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
 
 const getMediaProcessingJobByIDAndWorkspace = `-- name: GetMediaProcessingJobByIDAndWorkspace :one
-SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at FROM media_processing_jobs
+SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at FROM media_processing_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -209,12 +526,14 @@ func (q *Queries) GetMediaProcessingJobByIDAndWorkspace(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
 
 const getMediaProcessingJobByIdempotencyKey = `-- name: GetMediaProcessingJobByIdempotencyKey :one
-SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at FROM media_processing_jobs
+SELECT id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at FROM media_processing_jobs
 WHERE workspace_id = $1 AND idempotency_key = $2
 `
 
@@ -250,6 +569,8 @@ func (q *Queries) GetMediaProcessingJobByIdempotencyKey(ctx context.Context, arg
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -263,7 +584,7 @@ SET status = 'failed',
     updated_at = NOW(),
     completed_at = NOW()
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 `
 
 type MarkMediaProcessingJobFailedParams struct {
@@ -305,6 +626,8 @@ func (q *Queries) MarkMediaProcessingJobFailed(ctx context.Context, arg MarkMedi
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
@@ -319,7 +642,7 @@ SET status = 'succeeded',
     updated_at = NOW(),
     completed_at = NOW()
 WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
 `
 
 type MarkMediaProcessingJobSucceededParams struct {
@@ -354,24 +677,176 @@ func (q *Queries) MarkMediaProcessingJobSucceeded(ctx context.Context, arg MarkM
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
 }
 
-const requeueMediaProcessingJob = `-- name: RequeueMediaProcessingJob :one
-UPDATE media_processing_jobs
-SET status = 'queued',
-    error_code = NULL,
-    error_message = NULL,
-    retryable = false,
-    updated_at = NOW(),
-    completed_at = NULL
-WHERE id = $1
-RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at
+const oldestGIFConversionCreatedSince = `-- name: OldestGIFConversionCreatedSince :one
+SELECT MIN(created_at)::timestamptz
+FROM media_processing_jobs
+WHERE workspace_id = $1
+  AND kind = 'gif_to_mp4'
+  AND created_at >= $2
 `
 
-func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, id string) (MediaProcessingJob, error) {
-	row := q.db.QueryRow(ctx, requeueMediaProcessingJob, id)
+type OldestGIFConversionCreatedSinceParams struct {
+	WorkspaceID  string             `json:"workspace_id"`
+	CreatedSince pgtype.Timestamptz `json:"created_since"`
+}
+
+func (q *Queries) OldestGIFConversionCreatedSince(ctx context.Context, arg OldestGIFConversionCreatedSinceParams) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, oldestGIFConversionCreatedSince, arg.WorkspaceID, arg.CreatedSince)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const promoteDueMediaProcessingRetriesByKind = `-- name: PromoteDueMediaProcessingRetriesByKind :execrows
+UPDATE media_processing_jobs
+SET status = 'queued',
+    updated_at = NOW()
+WHERE kind = $1
+  AND status = 'retry_wait'
+  AND next_attempt_at <= NOW()
+`
+
+func (q *Queries) PromoteDueMediaProcessingRetriesByKind(ctx context.Context, jobKind string) (int64, error) {
+	result, err := q.db.Exec(ctx, promoteDueMediaProcessingRetriesByKind, jobKind)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const recoverStaleMediaProcessingJobs = `-- name: RecoverStaleMediaProcessingJobs :many
+WITH stale AS MATERIALIZED (
+  SELECT job.id, job.workspace_id, job.attempts
+  FROM media_processing_jobs job
+  WHERE job.status = 'processing'
+    AND job.updated_at < NOW() - INTERVAL '5 minutes'
+  ORDER BY job.updated_at ASC, job.id ASC
+  LIMIT $1::int
+  FOR UPDATE SKIP LOCKED
+), terminal_deadlines AS (
+  SELECT
+    stale.id AS job_id,
+    NOW() + CASE COALESCE(subscription.plan_id, 'free')
+      WHEN 'api' THEN INTERVAL '4 days'
+      WHEN 'basic' THEN INTERVAL '8 days'
+      WHEN 'growth' THEN INTERVAL '30 days'
+      WHEN 'team' THEN INTERVAL '60 days'
+      WHEN 'enterprise' THEN INTERVAL '60 days'
+      ELSE INTERVAL '2 days'
+    END AS cleanup_after_at
+  FROM stale
+  LEFT JOIN subscriptions subscription
+    ON subscription.workspace_id = stale.workspace_id
+  WHERE stale.attempts >= 3
+), transitioned_usages AS (
+  UPDATE media_processing_usages usage
+  SET status = 'failed',
+      cleanup_after_at = terminal_deadlines.cleanup_after_at,
+      updated_at = NOW()
+  FROM terminal_deadlines
+  WHERE usage.job_id = terminal_deadlines.job_id
+    AND usage.status = 'active'
+  RETURNING usage.job_id
+)
+UPDATE media_processing_jobs job
+SET status = CASE WHEN stale.attempts < 3 THEN 'retry_wait' ELSE 'failed' END,
+    error_code = CASE WHEN stale.attempts < 3 THEN 'processing_timeout' ELSE 'media_processing_worker_lost' END,
+    error_message = CASE
+      WHEN stale.attempts < 3 THEN 'Media processing worker heartbeat expired; the job will be retried.'
+      ELSE 'Media processing worker was lost and the attempt limit was exhausted.'
+    END,
+    retryable = stale.attempts < 3,
+    next_attempt_at = CASE
+      WHEN stale.attempts < 3 THEN NOW() + LEAST(
+        INTERVAL '5 minutes',
+        INTERVAL '30 seconds' * POWER(2, GREATEST(stale.attempts - 1, 0))
+      )
+      ELSE job.next_attempt_at
+    END,
+    updated_at = NOW(),
+    completed_at = CASE WHEN stale.attempts < 3 THEN NULL ELSE NOW() END
+FROM stale
+WHERE job.id = stale.id
+RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id, job.next_attempt_at
+`
+
+func (q *Queries) RecoverStaleMediaProcessingJobs(ctx context.Context, batchLimit int32) ([]MediaProcessingJob, error) {
+	rows, err := q.db.Query(ctx, recoverStaleMediaProcessingJobs, batchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []MediaProcessingJob{}
+	for rows.Next() {
+		var i MediaProcessingJob
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.Kind,
+			&i.Status,
+			&i.InputVideoMediaID,
+			&i.InputAudioMediaID,
+			&i.OutputMediaID,
+			&i.Mode,
+			&i.Fit,
+			&i.VideoVolume,
+			&i.AudioVolume,
+			&i.AudioStartMs,
+			&i.Request,
+			&i.IdempotencyKey,
+			&i.RequestHash,
+			&i.ErrorCode,
+			&i.ErrorMessage,
+			&i.Retryable,
+			&i.Attempts,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.InputMediaID,
+			&i.NextAttemptAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requeueMediaProcessingJob = `-- name: RequeueMediaProcessingJob :one
+UPDATE media_processing_jobs
+SET status = 'retry_wait',
+    error_code = $1,
+    error_message = $2,
+    retryable = true,
+    next_attempt_at = NOW() + LEAST(
+      INTERVAL '5 minutes',
+      INTERVAL '30 seconds' * POWER(2, GREATEST(attempts - 1, 0))
+    ),
+    updated_at = NOW(),
+    completed_at = NULL
+WHERE id = $3
+  AND attempts < 3
+RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id, next_attempt_at
+`
+
+type RequeueMediaProcessingJobParams struct {
+	ErrorCode    pgtype.Text `json:"error_code"`
+	ErrorMessage pgtype.Text `json:"error_message"`
+	JobID        string      `json:"job_id"`
+}
+
+func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, arg RequeueMediaProcessingJobParams) (MediaProcessingJob, error) {
+	row := q.db.QueryRow(ctx, requeueMediaProcessingJob, arg.ErrorCode, arg.ErrorMessage, arg.JobID)
 	var i MediaProcessingJob
 	err := row.Scan(
 		&i.ID,
@@ -397,6 +872,23 @@ func (q *Queries) RequeueMediaProcessingJob(ctx context.Context, id string) (Med
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.CompletedAt,
+		&i.InputMediaID,
+		&i.NextAttemptAt,
 	)
 	return i, err
+}
+
+const touchMediaProcessingJobHeartbeat = `-- name: TouchMediaProcessingJobHeartbeat :execrows
+UPDATE media_processing_jobs
+SET updated_at = NOW()
+WHERE id = $1
+  AND status = 'processing'
+`
+
+func (q *Queries) TouchMediaProcessingJobHeartbeat(ctx context.Context, id string) (int64, error) {
+	result, err := q.db.Exec(ctx, touchMediaProcessingJobHeartbeat, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

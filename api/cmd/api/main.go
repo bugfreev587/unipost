@@ -37,6 +37,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
+	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
@@ -57,6 +58,7 @@ import (
 const (
 	processModeAPI                = "api"
 	processModePostDeliveryWorker = "post-delivery-worker"
+	processModeMediaWorker        = "media-worker"
 )
 
 func main() {
@@ -252,7 +254,9 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 
-	go integrationLogger.Start(workerCtx)
+	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
+		go integrationLogger.Start(workerCtx)
+	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
 	// the managed token refresh worker can take it as a dependency.
@@ -533,7 +537,7 @@ func main() {
 		go managedTokenWorker.Start(workerCtx)
 	}
 
-	if processMode == processModeAPI || strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_RUN_SCHEDULER"), "true") {
+	if shouldStartScheduler(processMode) {
 		schedulerWorker := worker.NewSchedulerWorker(queries, socialPostHandler)
 		go schedulerWorker.Start(workerCtx)
 	}
@@ -551,18 +555,26 @@ func main() {
 	}
 
 	if processMode == processModeAPI {
-		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor, storageClient).
+		analyticsRefreshWorker := worker.NewAnalyticsRefreshWorker(queries, encryptor).
 			SetXTokenRefresher(xTokenRefresher)
 		go analyticsRefreshWorker.Start(workerCtx)
 
-		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
-		go mediaCleanupWorker.Start(workerCtx)
-
-		mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
-		go mediaAudioOverlayWorker.Start(workerCtx)
-
 		logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
 		go logRetentionWorker.Start(workerCtx)
+	}
+
+	if shouldStartMediaProcessingWorkers(processMode) {
+		if storageClient == nil {
+			slog.Error("media processing workers disabled: object storage is not configured", "process_mode", processMode)
+		} else {
+			mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
+			go mediaCleanupWorker.Start(workerCtx)
+
+			mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
+			mediaGIFConversionWorker := worker.NewMediaGIFConversionWorker(queries, storageClient)
+			mediaProcessingCoordinator := worker.NewMediaProcessingCoordinator(queries, mediaAudioOverlayWorker, mediaGIFConversionWorker)
+			go mediaProcessingCoordinator.Start(workerCtx)
+		}
 	}
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
@@ -591,8 +603,12 @@ func main() {
 		go inboxSyncWorker.Start(workerCtx)
 	}
 
-	if processMode == processModePostDeliveryWorker {
-		waitForProcessShutdown("post delivery worker", workerCancel, port)
+	if processMode != processModeAPI {
+		processName := "post delivery worker"
+		if processMode == processModeMediaWorker {
+			processName = "media worker"
+		}
+		waitForProcessShutdown(processName, workerCancel, port)
 		return
 	}
 
@@ -641,7 +657,9 @@ func main() {
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
 	platformHandler := handler.NewPlatformHandler(queries, quotaChecker)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
-	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient)
+	mediaProcessingAdmitter := mediaprocessing.NewPostgresAdmitter(pool)
+	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient).WithAdmitter(mediaProcessingAdmitter)
+	mediaGIFConversionHandler := handler.NewMediaGIFConversionHandler(queries, storageClient, mediaProcessingAdmitter)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
 	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
 	adminObjectStorageHandler := handler.NewAdminObjectStorageHandler(queries, os.Getenv("R2_BUCKET_NAME"))
@@ -1031,6 +1049,8 @@ func main() {
 		// platform_posts[].media_ids on subsequent /v1/posts.
 		r.Post("/v1/media/audio-overlays", mediaAudioOverlayHandler.Create)
 		r.Get("/v1/media/audio-overlays/{id}", mediaAudioOverlayHandler.Get)
+		r.Post("/v1/media/gif-conversions", mediaGIFConversionHandler.Create)
+		r.Get("/v1/media/gif-conversions/{id}", mediaGIFConversionHandler.Get)
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)
@@ -1288,10 +1308,10 @@ func normalizeProcessMode(raw string) (string, error) {
 		mode = processModeAPI
 	}
 	switch mode {
-	case processModeAPI, processModePostDeliveryWorker:
+	case processModeAPI, processModePostDeliveryWorker, processModeMediaWorker:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("UNIPOST_PROCESS must be %q or %q, got %q", processModeAPI, processModePostDeliveryWorker, raw)
+		return "", fmt.Errorf("UNIPOST_PROCESS must be %q, %q, or %q, got %q", processModeAPI, processModePostDeliveryWorker, processModeMediaWorker, raw)
 	}
 }
 
@@ -1319,6 +1339,9 @@ func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorker
 		}
 		defaultMax = concurrency + 5
 		envNames = append([]string{"POST_DELIVERY_WORKER_DATABASE_MAX_CONNS"}, envNames...)
+	} else if mode == processModeMediaWorker {
+		defaultMax = 8
+		envNames = append([]string{"MEDIA_PROCESSING_WORKER_DATABASE_MAX_CONNS"}, envNames...)
 	} else {
 		envNames = append([]string{"API_DATABASE_MAX_CONNS"}, envNames...)
 	}
@@ -1349,6 +1372,24 @@ func shouldStartPostDeliveryWorkers(mode string) bool {
 		return false
 	}
 	return !strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY"), "true")
+}
+
+func shouldStartScheduler(mode string) bool {
+	if mode == processModeAPI {
+		return true
+	}
+	return mode == processModePostDeliveryWorker &&
+		strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_RUN_SCHEDULER"), "true")
+}
+
+func shouldStartMediaProcessingWorkers(mode string) bool {
+	if mode == processModeMediaWorker {
+		return true
+	}
+	if mode != processModeAPI {
+		return false
+	}
+	return !strings.EqualFold(os.Getenv("MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING"), "true")
 }
 
 func newWorkerHealthHandler() http.Handler {

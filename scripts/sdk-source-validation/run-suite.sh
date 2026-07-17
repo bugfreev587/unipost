@@ -17,18 +17,28 @@ BASE_URL="${BASE_URL:-https://api.unipost.dev}"
 TEST_ACCOUNT_ID="${TEST_ACCOUNT_ID:-}"
 TEST_PUBLISH_NOW="${TEST_PUBLISH_NOW:-false}"
 TEST_PLATFORM_CREDENTIALS_PLATFORM="${TEST_PLATFORM_CREDENTIALS_PLATFORM:-}"
+SOURCE_ONLY="${SOURCE_ONLY:-false}"
 export TEST_PLATFORM_CREDENTIALS_PLATFORM
 
-if [[ -z "$UNIPOST_API_KEY" ]]; then
+if [[ "$SOURCE_ONLY" != "true" && -z "$UNIPOST_API_KEY" ]]; then
   echo "UNIPOST_API_KEY is required" >&2
   exit 64
 fi
 
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/${SUITE}.log"
+: > "$LOG_FILE"
+
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] checking ${SUITE} source contract" | tee -a "$LOG_FILE"
+UNIPOST_DEV_ROOT="$UNIPOST_DEV_ROOT" \
+  bash "${ROOT_DIR}/scripts/sdk-source-validation/check-contract.sh" "$SUITE" 2>&1 | tee -a "$LOG_FILE"
+
+if [[ "$SOURCE_ONLY" == "true" ]]; then
+  exit 0
+fi
 
 run_and_log() {
-  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting ${SUITE}" | tee "$LOG_FILE"
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting ${SUITE} live validation" | tee -a "$LOG_FILE"
   (
     set -euo pipefail
     cd "$ROOT_DIR"

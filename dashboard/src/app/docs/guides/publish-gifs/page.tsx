@@ -6,7 +6,9 @@ const HOSTED_GIF_SNIPPETS = [
   {
     label: "cURL",
     lang: "bash",
-    code: `GIF_PAYLOAD='{
+    code: `set -euo pipefail
+
+GIF_PAYLOAD='{
   "platform_posts": [
     {
       "account_id": "sa_twitter_123",
@@ -21,14 +23,20 @@ const HOSTED_GIF_SNIPPETS = [
   ]
 }'
 
-# Optional: validate the exact destination payload before publishing.
-curl -X POST "https://api.unipost.dev/v1/posts/validate" \\
+# Validate the exact destination payload before publishing.
+VALIDATION=$(curl -fSs -X POST "https://api.unipost.dev/v1/posts/validate" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d "$GIF_PAYLOAD"
+  -d "$GIF_PAYLOAD")
+
+if ! echo "$VALIDATION" | jq -e '.data.valid == true' >/dev/null; then
+  echo "Hosted GIF validation failed" >&2
+  echo "$VALIDATION" | jq >&2
+  exit 1
+fi
 
 # Publish one hosted GIF to X and Facebook.
-curl -X POST "https://api.unipost.dev/v1/posts" \\
+curl -fSs -X POST "https://api.unipost.dev/v1/posts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d "$GIF_PAYLOAD"`,
@@ -87,12 +95,14 @@ const LOCAL_GIF_SNIPPETS = [
   {
     label: "cURL",
     lang: "bash",
-    code: `# Step 1: Find the connected X and Facebook account IDs.
-curl "https://api.unipost.dev/v1/accounts" \\
+    code: `set -euo pipefail
+
+# Step 1: Find the connected X and Facebook account IDs.
+curl -fSs "https://api.unipost.dev/v1/accounts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"
 
 # Step 2: Reserve a UniPost media upload for the local GIF.
-RESERVATION=$(curl -sS -X POST "https://api.unipost.dev/v1/media" \\
+RESERVATION=$(curl -fSs -X POST "https://api.unipost.dev/v1/media" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{
@@ -100,29 +110,31 @@ RESERVATION=$(curl -sS -X POST "https://api.unipost.dev/v1/media" \\
     "content_type": "image/gif"
   }')
 
-MEDIA_ID=$(echo "$RESERVATION" | jq -r '.data.id')
-UPLOAD_URL=$(echo "$RESERVATION" | jq -r '.data.upload_url')
+MEDIA_ID=$(echo "$RESERVATION" | jq -er '.data.id')
+UPLOAD_URL=$(echo "$RESERVATION" | jq -er '.data.upload_url')
 
 # Step 3: Upload the raw GIF bytes to the presigned storage URL.
 curl -fsS -X PUT "$UPLOAD_URL" \\
   -H "Content-Type: image/gif" \\
   --data-binary "@launch.gif"
 
-# Step 4: Poll until the media is uploaded or attached.
-while true; do
-  MEDIA=$(curl -sS "https://api.unipost.dev/v1/media/$MEDIA_ID" \\
+# Step 4: Poll for up to five minutes.
+MEDIA_DEADLINE=$((SECONDS + 300))
+while (( SECONDS < MEDIA_DEADLINE )); do
+  MEDIA=$(curl -fSs "https://api.unipost.dev/v1/media/$MEDIA_ID" \\
     -H "Authorization: Bearer $UNIPOST_API_KEY")
-  MEDIA_STATUS=$(echo "$MEDIA" | jq -r '.data.status')
+  MEDIA_STATUS=$(echo "$MEDIA" | jq -er '.data.status')
 
-  if [ "$MEDIA_STATUS" = "uploaded" ] || [ "$MEDIA_STATUS" = "attached" ]; then
-    break
-  fi
-  if [ "$MEDIA_STATUS" != "pending" ]; then
-    echo "$MEDIA" >&2
-    exit 1
-  fi
-  sleep 1
+  case "$MEDIA_STATUS" in
+    uploaded|attached) break ;;
+    pending) sleep 1 ;;
+    *) echo "Unexpected media status: $MEDIA_STATUS" >&2; echo "$MEDIA" | jq >&2; exit 1 ;;
+  esac
 done
+if [ "$MEDIA_STATUS" != "uploaded" ] && [ "$MEDIA_STATUS" != "attached" ]; then
+  echo "Timed out waiting for the GIF upload" >&2
+  exit 1
+fi
 
 GIF_PAYLOAD=$(jq -n --arg media_id "$MEDIA_ID" '{
   platform_posts: [
@@ -140,38 +152,43 @@ GIF_PAYLOAD=$(jq -n --arg media_id "$MEDIA_ID" '{
 }')
 
 # Step 5: Validate the final destination payload.
-VALIDATION=$(curl -sS -X POST "https://api.unipost.dev/v1/posts/validate" \\
+VALIDATION=$(curl -fSs -X POST "https://api.unipost.dev/v1/posts/validate" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d "$GIF_PAYLOAD")
 
-if [ "$(echo "$VALIDATION" | jq -r '.data.valid')" != "true" ]; then
+if [ "$(echo "$VALIDATION" | jq -er '.data.valid')" != "true" ]; then
   echo "$VALIDATION" >&2
   exit 1
 fi
 
 # Step 6: Publish the uploaded GIF to X and Facebook.
-POST=$(curl -sS -X POST "https://api.unipost.dev/v1/posts" \\
+POST=$(curl -fSs -X POST "https://api.unipost.dev/v1/posts" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d "$GIF_PAYLOAD")
 
-POST_ID=$(echo "$POST" | jq -r '.data.id')
+POST_ID=$(echo "$POST" | jq -er '.data.id')
 
-# Step 7: Poll the asynchronous per-destination publishing results.
-while true; do
-  RESULT=$(curl -sS "https://api.unipost.dev/v1/posts/$POST_ID" \\
+# Step 7: Poll the asynchronous results for up to 15 minutes.
+POST_DEADLINE=$((SECONDS + 900))
+while (( SECONDS < POST_DEADLINE )); do
+  RESULT=$(curl -fSs "https://api.unipost.dev/v1/posts/$POST_ID" \\
     -H "Authorization: Bearer $UNIPOST_API_KEY")
-  STATUS=$(echo "$RESULT" | jq -r '.data.status')
+  STATUS=$(echo "$RESULT" | jq -er '.data.status')
 
   case "$STATUS" in
-    published|partial|failed|cancelled)
+    published)
       echo "$RESULT" | jq
-      break
+      exit 0
       ;;
+    partial|failed|cancelled) echo "$RESULT" | jq >&2; exit 1 ;;
+    queued|dispatching|retrying|publishing|scheduled) sleep 2 ;;
+    *) echo "Unexpected post status: $STATUS" >&2; echo "$RESULT" | jq >&2; exit 1 ;;
   esac
-  sleep 2
-done`,
+done
+echo "Timed out waiting for publishing results" >&2
+exit 1`,
   },
 ];
 
@@ -180,7 +197,7 @@ export default function PublishGifsGuidePage() {
     <DocsPage
       eyebrow="Publishing Guides"
       title="Publish GIFs to X and Facebook"
-      lead="Publish a hosted or local GIF to X and Facebook, compare official platform support with UniPost support, and prepare for upcoming conversion workflows."
+      lead="Publish a hosted or local GIF to X and Facebook, compare official platform support with UniPost support, and convert GIFs for destinations that require video to preserve GIF animation."
       className="docs-page-wide"
     >
       <h2 id="platform-support">Platform support</h2>
@@ -219,40 +236,40 @@ export default function PublishGifsGuidePage() {
           [
             "Instagram",
             "No direct GIF publishing surface",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "TikTok",
             "No direct GIF publishing surface",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "Pinterest",
             "No direct animated GIF publishing surface in the supported organic Pin API flow",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "YouTube",
             "No GIF post type; publishing requires video media",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "Bluesky",
-            "No stable direct GIF file publishing path exposed by UniPost",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "No direct GIF media type in the documented image and video embed APIs",
+            "GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
         ]}
       />
 
       <div className="docs-callout docs-callout-tip">
         <strong>Current direct destinations:</strong> send GIF files only to connected X and Facebook Page accounts.
-        For every other platform, treat the status above as coming soon rather than sending the same GIF and waiting for
-        the upstream platform to reject it.
+        LinkedIn and Threads direct GIF paths remain coming soon. For destinations that require video to preserve GIF
+        animation, convert the GIF first; do not send the unchanged GIF and wait for the upstream platform to reject it.
       </div>
 
       <h2 id="supported-workflow">Choose the media source</h2>
@@ -266,7 +283,7 @@ export default function PublishGifsGuidePage() {
           [
             "Public hosted GIF",
             <code key="hosted">platform_posts[].media_urls</code>,
-            "Send a direct, publicly reachable GIF URL. Do not reserve the URL in the media library.",
+            "Send a direct, publicly reachable URL whose path ends in .gif. Query strings are allowed.",
           ],
           [
             "Local .gif file",
@@ -286,9 +303,19 @@ export default function PublishGifsGuidePage() {
         reused for the X and Facebook destinations, while each platform post can keep a different caption.
       </p>
       <p>
+        The URL path must end in <code>.gif</code>; Query strings are allowed. If your CDN provides an extensionless URL,
+        upload it and use <code>media_ids</code> instead so UniPost can identify the stored content as{" "}
+        <code>image/gif</code>.
+      </p>
+      <p>
         Validate with <ApiInlineLink endpoint="POST /v1/posts/validate" href="/docs/api/posts/validate" />, then publish
         the identical payload with <ApiInlineLink endpoint="POST /v1/posts" href="/docs/api/posts/create" />.
       </p>
+      <div className="docs-callout docs-callout-warning">
+        <strong>Hosted URL validation:</strong> the validate endpoint does not download hosted media bytes. It can
+        validate the URL shape and destination rules, but cannot confirm the hosted file&apos;s actual MIME type,
+        dimensions, or size. Keep the URL public and confirm that it returns the expected GIF before publishing.
+      </div>
       <DocsCodeTabs snippets={HOSTED_GIF_SNIPPETS} />
 
       <h2 id="local-gif">Publish a local GIF</h2>
@@ -322,18 +349,36 @@ export default function PublishGifsGuidePage() {
         request must satisfy the stricter X limit. Do not include <code>scheduled_at</code> when the request contains a
         Facebook GIF.
       </div>
+      <div className="docs-callout docs-callout-warning">
+        <strong>X validation boundary:</strong> <code>POST /v1/posts/validate</code> does not currently enforce X&apos;s
+        one-GIF-only rule or reject a GIF combined with another image. Send exactly one GIF as the only X media item;
+        otherwise X can reject the post after UniPost queues it.
+      </div>
 
-      <h2 id="coming-soon">What is coming soon</h2>
+      <h2 id="convert-to-mp4">Convert a GIF for video destinations</h2>
       <p>
         LinkedIn and Threads require native integrations with their upstream GIF capabilities. UniPost will add those
         destination-specific paths without pretending that the platforms themselves reject GIFs.
       </p>
       <p>
-        Instagram, TikTok, Pinterest, YouTube, and Bluesky need a video-compatible path. A UniPost GIF-to-MP4
-        conversion option is coming soon so an integration can provide a GIF and publish the converted video to an
-        eligible destination. Conversion is not available yet, and this guide does not define a future API field,
-        quality setting, file limit, retention policy, or release date.
+        To preserve animation on Instagram, TikTok, Pinterest, YouTube, and Bluesky, convert the GIF to video media.
+        Upload the GIF with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, create a job
+        with <ApiInlineLink endpoint="POST /v1/media/gif-conversions" href="/docs/api/media/gif-conversions" />, and
+        poll <code>GET /v1/media/gif-conversions/&#123;id&#125;</code>. A successful job returns an MP4{" "}
+        <code>output_media_id</code>.
       </p>
+      <p>
+        Conversion does not publish, edit a draft, or replace the original GIF. Use the returned Media ID in a normal
+        video publishing request after validating the selected destination. Destination-specific publishing guides and
+        the Dashboard conversion control are still coming soon.
+      </p>
+      <div className="docs-callout docs-callout-tip">
+        <strong>Output profile:</strong> UniPost creates a silent H.264 MP4 at 30 FPS, composites transparency over
+        white by default, preserves complete animation cycles, avoids upscaling, and limits the longest edge to 1920
+        pixels. Static GIFs and animations shorter than five seconds produce at least five seconds of video; short
+        animations repeat complete cycles. TikTok requires both output dimensions to be at least 360 pixels; validation
+        rejects smaller outputs before dispatch.
+      </div>
 
       <h2 id="common-errors">Common errors</h2>
       <DocsTable
@@ -342,7 +387,7 @@ export default function PublishGifsGuidePage() {
           [
             "unsupported_format",
             "The GIF targets a destination that UniPost does not currently support for direct GIF publishing.",
-            "Target X or Facebook, or wait for the documented coming-soon path.",
+            "Target X or Facebook directly, or convert the GIF to MP4 before using a video destination.",
           ],
           [
             "file_too_large",
@@ -360,8 +405,8 @@ export default function PublishGifsGuidePage() {
           ],
           [
             "mixed_media_unsupported",
-            "The GIF was combined with another media kind.",
-            "Send the GIF as the only media item for that destination.",
+            "The request combines image-family media with video.",
+            "Do not combine the GIF with video. X and Facebook each require the GIF to be the only media item.",
           ],
           [
             "facebook_scheduled_media_unsupported",
@@ -395,6 +440,11 @@ export default function PublishGifsGuidePage() {
           <div className="docs-next-kicker">Reference</div>
           <div className="docs-next-title">Get media</div>
           <div className="docs-next-body">Wait until a local GIF is uploaded or attached before publishing it.</div>
+        </Link>
+        <Link href="/docs/api/media/gif-conversions" className="docs-next-card">
+          <div className="docs-next-kicker">Reference</div>
+          <div className="docs-next-title">Convert GIF to MP4</div>
+          <div className="docs-next-body">Create and poll an asynchronous universal MP4 conversion job.</div>
         </Link>
         <Link href="/docs/api/posts/validate" className="docs-next-card">
           <div className="docs-next-kicker">Reference</div>

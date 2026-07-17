@@ -202,15 +202,6 @@ func (f *mediaRetentionTestDB) Exec(_ context.Context, query string, args ...int
 		return pgconn.CommandTag{}, nil
 	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"):
 		return pgconn.CommandTag{}, nil
-	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
-		f.upserts = append(f.upserts, db.UpsertMediaPostUsageParams{
-			WorkspaceID:    args[0].(string),
-			MediaID:        args[1].(string),
-			PostID:         args[2].(string),
-			PostStatus:     args[3].(string),
-			CleanupAfterAt: args[4].(pgtype.Timestamptz),
-		})
-		return pgconn.CommandTag{}, nil
 	default:
 		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
 	}
@@ -220,12 +211,21 @@ func (f *mediaRetentionTestDB) Query(context.Context, string, ...interface{}) (p
 	return nil, errors.New("unexpected Query")
 }
 
-func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
 		return subscriptionScanRow(f.planID)
 	case strings.Contains(query, "-- name: CancelSocialPost"):
 		return scheduledIdempotencySocialPostRow(f.cancelPost)
+	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
+		f.upserts = append(f.upserts, db.UpsertMediaPostUsageParams{
+			MediaID:        args[0].(string),
+			WorkspaceID:    args[1].(string),
+			PostStatus:     args[2].(string),
+			CleanupAfterAt: args[3].(pgtype.Timestamptz),
+			PostID:         args[4].(string),
+		})
+		return scheduledIdempotencyRow{values: []any{true}}
 	default:
 		return scheduledIdempotencyRow{err: errors.New("unexpected QueryRow: " + query)}
 	}

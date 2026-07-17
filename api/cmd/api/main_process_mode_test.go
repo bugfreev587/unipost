@@ -29,6 +29,16 @@ func TestProcessModeAcceptsPostDeliveryWorker(t *testing.T) {
 	}
 }
 
+func TestProcessModeAcceptsMediaWorker(t *testing.T) {
+	mode, err := normalizeProcessMode(" media-worker ")
+	if err != nil {
+		t.Fatalf("normalizeProcessMode returned error: %v", err)
+	}
+	if mode != processModeMediaWorker {
+		t.Fatalf("mode = %q, want %q", mode, processModeMediaWorker)
+	}
+}
+
 func TestProcessModeRejectsUnknownMode(t *testing.T) {
 	if _, err := normalizeProcessMode("scheduler"); err == nil {
 		t.Fatal("expected unknown process mode to fail")
@@ -58,8 +68,19 @@ func TestDBPoolMaxConnsPrefersSpecificEnvOverGeneric(t *testing.T) {
 	}
 }
 
+func TestDBPoolMaxConnsUsesMediaWorkerSpecificEnv(t *testing.T) {
+	t.Setenv("DATABASE_MAX_CONNS", "31")
+	t.Setenv("MEDIA_PROCESSING_WORKER_DATABASE_MAX_CONNS", "13")
+
+	got := dbPoolMaxConnsForMode(processModeMediaWorker, worker.PostDeliveryWorkerConfig{})
+	if got != 13 {
+		t.Fatalf("media worker db max conns = %d, want specific override 13", got)
+	}
+}
+
 func TestProcessModeWorkerStartupRules(t *testing.T) {
 	t.Setenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY", "")
+	t.Setenv("MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING", "")
 	if !shouldStartHTTPServer(processModeAPI) {
 		t.Fatal("api mode should start the HTTP server")
 	}
@@ -71,6 +92,38 @@ func TestProcessModeWorkerStartupRules(t *testing.T) {
 	}
 	if !shouldStartPostDeliveryWorkers(processModePostDeliveryWorker) {
 		t.Fatal("post delivery worker mode should start post delivery workers")
+	}
+	if shouldStartHTTPServer(processModeMediaWorker) {
+		t.Fatal("media worker mode must not start the public HTTP server")
+	}
+	if !shouldStartMediaProcessingWorkers(processModeMediaWorker) {
+		t.Fatal("media worker mode should start media processing workers")
+	}
+	if !shouldStartMediaProcessingWorkers(processModeAPI) {
+		t.Fatal("api mode should keep media workers as a rollout fallback by default")
+	}
+	if shouldStartMediaProcessingWorkers(processModePostDeliveryWorker) {
+		t.Fatal("post delivery worker mode must not start media workers")
+	}
+}
+
+func TestProcessModeCanDisableAPIMediaWorkersAfterDedicatedWorkerIsEnabled(t *testing.T) {
+	t.Setenv("MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING", "true")
+	if shouldStartMediaProcessingWorkers(processModeAPI) {
+		t.Fatal("api mode should stop media workers when the dedicated worker disable switch is set")
+	}
+}
+
+func TestSchedulerOverrideCannotStartSchedulerInMediaWorker(t *testing.T) {
+	t.Setenv("POST_DELIVERY_WORKER_RUN_SCHEDULER", "true")
+	if shouldStartScheduler(processModeMediaWorker) {
+		t.Fatal("media worker mode must never start the post scheduler")
+	}
+	if !shouldStartScheduler(processModePostDeliveryWorker) {
+		t.Fatal("post delivery worker scheduler override should start the scheduler")
+	}
+	if !shouldStartScheduler(processModeAPI) {
+		t.Fatal("api mode should start the scheduler")
 	}
 }
 

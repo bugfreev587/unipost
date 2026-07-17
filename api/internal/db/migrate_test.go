@@ -84,8 +84,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 116 {
-		t.Fatalf("final Goose version = %d, want 116", version)
+	if version != 117 {
+		t.Fatalf("final Goose version = %d, want 117", version)
 	}
 }
 
@@ -147,6 +147,57 @@ func TestMediaProcessingJobsMigrationPreservesMediaCleanup(t *testing.T) {
 	}
 	if !strings.Contains(sql, "idempotency_key") || !strings.Contains(sql, "request_hash") {
 		t.Fatalf("media processing jobs migration should include idempotency fields, got:\n%s", string(body))
+	}
+}
+
+func TestMediaProcessingLifecycleMigration117Exists(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/117_media_processing_lifecycle.sql")
+	if err != nil {
+		t.Fatalf("read media processing lifecycle migration: %v", err)
+	}
+
+	sql := strings.ToLower(string(body))
+	for _, want := range []string{
+		"add column input_media_id text",
+		"add column next_attempt_at timestamptz not null default now()",
+		"add column usage_version bigint not null default 0",
+		"status in ('queued', 'retry_wait', 'processing', 'succeeded', 'failed', 'cancelled')",
+		"media_processing_jobs_retry_due_idx",
+		"alter column input_video_media_id drop not null",
+		"alter column input_audio_media_id drop not null",
+		"media_processing_jobs_kind_inputs_check",
+		"kind = 'audio_overlay'",
+		"kind = 'gif_to_mp4'",
+		"create table media_processing_usages",
+		"role in ('input', 'output')",
+		"status in ('active', 'succeeded', 'failed', 'cancelled')",
+		"cleanup_after_at timestamptz",
+		"unique (job_id, media_id, role)",
+		"media_processing_usages_active_media_idx",
+		"media_processing_usages_cleanup_due_idx",
+		"input_video_media_id",
+		"input_audio_media_id",
+		"output_media_id",
+		"update media",
+		"cleanup_after_at",
+		"status = 'uploaded'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("media processing lifecycle migration missing %q, got:\n%s", want, string(body))
+		}
+	}
+}
+
+func TestMediaProcessingClaimQueryIsKindAware(t *testing.T) {
+	sql := strings.ToLower(claimMediaProcessingJobsByKind)
+	for _, want := range []string{
+		"candidate.kind = $1",
+		"candidate.status = 'queued'",
+		"for update skip locked",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("kind-aware media processing claim query missing %q, got:\n%s", want, claimMediaProcessingJobsByKind)
+		}
 	}
 }
 

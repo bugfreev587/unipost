@@ -11,8 +11,8 @@ func TestMediaProcessingJobSQLCModelsExposeRequiredFields(t *testing.T) {
 		WorkspaceID:       "ws_1",
 		Kind:              "audio_overlay",
 		Status:            "queued",
-		InputVideoMediaID: "med_video",
-		InputAudioMediaID: "med_audio",
+		InputVideoMediaID: pgtype.Text{String: "med_video", Valid: true},
+		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
 		OutputMediaID:     pgtype.Text{},
 		IdempotencyKey:    pgtype.Text{String: "overlay-1", Valid: true},
 		RequestHash:       pgtype.Text{String: "hash", Valid: true},
@@ -38,7 +38,12 @@ func TestMediaProcessingJobSQLCModelsExposeRequiredFields(t *testing.T) {
 		Request:           createParams.RequestJson,
 	}
 
-	if job.Kind != "audio_overlay" || job.Status != "queued" || job.InputVideoMediaID != "med_video" || job.InputAudioMediaID != "med_audio" {
+	if job.Kind != "audio_overlay" || job.Status != "queued" ||
+		!job.InputVideoMediaID.Valid || job.InputVideoMediaID.String != "med_video" ||
+		!job.InputAudioMediaID.Valid || job.InputAudioMediaID.String != "med_audio" {
 		t.Fatalf("media processing job model lost required media references: %#v", job)
+	}
+	if job.InputMediaID.Valid {
+		t.Fatalf("audio overlay job must not populate generalized input media: %#v", job)
 	}
 }

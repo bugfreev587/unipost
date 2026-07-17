@@ -463,6 +463,11 @@ export default function VideoAudioOverlayGuidePage() {
         <code>size_bytes</code> when reserving media uploads. Older SDK versions may still make your app calculate file size
         before calling <ApiInlineLink endpoint="POST /v1/media" />.
       </div>
+      <div className="docs-callout docs-callout-tip">
+        <strong>Shared processing capacity:</strong> Audio Overlay and GIF conversion use the same Plan-based active-job
+        limit. If capacity is full, job creation returns <code>media_processing_capacity_exceeded</code> with a{" "}
+        <code>Retry-After</code> header. Audio Overlay does not count toward the rolling GIF conversion allowance.
+      </div>
 
       <h2 id="when-to-use">When to use this guide</h2>
       <p>
