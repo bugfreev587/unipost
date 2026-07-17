@@ -1,16 +1,17 @@
 -- name: CreateConnectSession :one
 INSERT INTO connect_sessions (
   profile_id, platform, external_user_id, external_user_email,
-  return_url, oauth_state, pkce_verifier, expires_at, allow_quickstart_creds
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+  return_url, oauth_state, pkce_verifier, expires_at, allow_quickstart_creds,
+  x_app_mode
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, profile_id, platform, external_user_id, external_user_email,
   return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
-  expires_at, created_at, completed_at, allow_quickstart_creds;
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode;
 
 -- name: GetConnectSessionByID :one
 SELECT id, profile_id, platform, external_user_id, external_user_email,
   return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
-  expires_at, created_at, completed_at, allow_quickstart_creds
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
 FROM connect_sessions
 WHERE id = $1 AND profile_id = $2;
 
@@ -20,16 +21,24 @@ WHERE id = $1 AND profile_id = $2;
 -- session's profile belongs to the caller's workspace.
 SELECT id, profile_id, platform, external_user_id, external_user_email,
   return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
-  expires_at, created_at, completed_at, allow_quickstart_creds
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
 FROM connect_sessions
 WHERE id = $1;
 
 -- name: GetConnectSessionByOAuthState :one
 SELECT id, profile_id, platform, external_user_id, external_user_email,
   return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
-  expires_at, created_at, completed_at, allow_quickstart_creds
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode
 FROM connect_sessions
 WHERE oauth_state = $1;
+
+-- name: SetConnectSessionXAppModeIfNull :one
+UPDATE connect_sessions
+SET x_app_mode = $2
+WHERE id = $1 AND x_app_mode IS NULL
+RETURNING id, profile_id, platform, external_user_id, external_user_email,
+  return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode;
 
 -- name: MarkConnectSessionCompleted :one
 UPDATE connect_sessions
@@ -39,7 +48,7 @@ SET status = 'completed',
 WHERE id = $1 AND status = 'pending'
 RETURNING id, profile_id, platform, external_user_id, external_user_email,
   return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
-  expires_at, created_at, completed_at, allow_quickstart_creds;
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode;
 
 -- name: MarkConnectSessionCancelled :one
 UPDATE connect_sessions
@@ -48,7 +57,7 @@ SET status = 'cancelled',
 WHERE id = $1 AND status = 'pending'
 RETURNING id, profile_id, platform, external_user_id, external_user_email,
   return_url, status, completed_social_account_id, oauth_state, pkce_verifier,
-  expires_at, created_at, completed_at, allow_quickstart_creds;
+  expires_at, created_at, completed_at, allow_quickstart_creds, x_app_mode;
 
 -- name: ExpireConnectSession :exec
 UPDATE connect_sessions

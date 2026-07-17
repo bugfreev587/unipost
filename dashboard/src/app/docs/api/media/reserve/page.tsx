@@ -12,7 +12,7 @@ const BODY_FIELDS: ApiFieldItem[] = [
   { name: "size_bytes?", type: "number", description: <>Optional upload size in bytes. If provided, it must be greater than <code>0</code>. If your client does not know the byte length yet, omit <code>size_bytes</code>; UniPost hydrates the actual size from storage after upload. If the asset already has a public URL, skip <ApiInlineLink endpoint="POST /v1/media" /> and send that URL in <code>platform_posts[].media_urls</code> on <ApiInlineLink endpoint="POST /v1/posts" />.</> },
 ];
 const RESPONSE_200_FIELDS: ApiFieldItem[] = [
-  { name: "media_id", type: "string", description: "Media library ID to use in later publish calls." },
+  { name: "id", type: "string", description: "Media library ID to use in later publish calls." },
   { name: "upload_url", type: "string", description: "Presigned storage URL for the raw file bytes." },
   { name: "status", type: "string", description: <>Media lifecycle state. Reserve responses start as pending; publish calls should wait for uploaded.<EnumValues values={["pending", "uploaded", "attached", "deleted"]} /></> },
 ];
@@ -86,7 +86,7 @@ with open("photo.jpg", "rb") as f:
     headers={"Content-Type": "image/jpeg"},
   )
 
-print(reservation["data"]["media_id"])`,
+print(reservation["data"]["id"])`,
   },
   {
     lang: "go",
@@ -137,7 +137,7 @@ var reservation = client.media().upload(Map.of(
     "content_type", "image/jpeg"
 ));
 
-var mediaId = reservation.get("media_id").asText();
+var mediaId = reservation.get("id").asText();
 var uploadUrl = reservation.get("upload_url").asText();
 
 HttpClient.newHttpClient().send(
@@ -157,7 +157,7 @@ const RESPONSE_SNIPPETS = [
     label: "200",
     code: `{
   "data": {
-    "media_id": "media_123",
+    "id": "media_123",
     "upload_url": "https://storage.example.com/...",
     "status": "pending"
   }

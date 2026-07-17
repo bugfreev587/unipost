@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,23 @@ func TestExpandableTablesDoNotUseWildcardProjections(t *testing.T) {
 			if match := wildcard.Find(data); match != nil {
 				t.Errorf("%s contains schema-expansion-unsafe projection %q", file, match)
 			}
+		}
+	}
+}
+
+func TestConnectSessionXAppModePinIsConditional(t *testing.T) {
+	data, err := os.ReadFile("queries/connect_sessions.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := string(data)
+	for _, required := range []string{
+		"-- name: SetConnectSessionXAppModeIfNull :one",
+		"SET x_app_mode = $2",
+		"WHERE id = $1 AND x_app_mode IS NULL",
+	} {
+		if !strings.Contains(query, required) {
+			t.Errorf("connect session X app mode pin query missing %q", required)
 		}
 	}
 }

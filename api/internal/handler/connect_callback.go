@@ -44,6 +44,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type instagramWebhookSubscriber interface {
@@ -152,7 +153,59 @@ func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, prof
 	return profile.WorkspaceID
 }
 
-func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool) (connect.Connector, bool, error) {
+type connectorResolution struct {
+	connector connect.Connector
+	xAppMode  pgtype.Text
+	ok        bool
+}
+
+func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool, appModes ...pgtype.Text) (connect.Connector, bool, error) {
+	appMode := pgtype.Text{}
+	if len(appModes) > 0 {
+		appMode = appModes[0]
+	}
+	resolved, err := h.resolveConnectorForStoredMode(ctx, workspaceID, platform, allowQuickstartCreds, appMode)
+	return resolved.connector, resolved.ok, err
+}
+
+// resolveConnectorForStoredMode preserves explicit app identity for new
+// sessions. NULL is a transient rolling-deploy compatibility case for sessions
+// written by pre-108 instances, so it replays the old plan/credential/
+// allow_quickstart selection policy and returns the resulting explicit mode.
+func (h *ConnectCallbackHandler) resolveConnectorForStoredMode(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool, appMode pgtype.Text) (connectorResolution, error) {
+	if platform == "twitter" {
+		if !appMode.Valid {
+			return h.resolveConnectorUsingLegacyPolicy(ctx, workspaceID, platform, allowQuickstartCreds)
+		}
+		switch xinbox.AppMode(appMode.String) {
+		case xinbox.AppModeWorkspace:
+			cred, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
+				WorkspaceID: workspaceID,
+				Platform:    platform,
+			})
+			if err == pgx.ErrNoRows {
+				return connectorResolution{}, nil
+			}
+			if err != nil {
+				return connectorResolution{}, err
+			}
+			clientSecret, err := h.encryptor.Decrypt(cred.ClientSecret)
+			if err != nil {
+				return connectorResolution{}, err
+			}
+			connector := connect.NewManagedConnector(platform, cred.ClientID, clientSecret, h.callbackBaseURL)
+			return connectorResolution{connector: connector, xAppMode: appMode, ok: connector != nil}, nil
+		case xinbox.AppModeUniPostManaged:
+			connector, ok := h.registry.Get(platform)
+			return connectorResolution{connector: connector, xAppMode: appMode, ok: ok}, nil
+		default:
+			return connectorResolution{}, fmt.Errorf("invalid stored X app mode %q", appMode.String)
+		}
+	}
+	return h.resolveConnectorUsingLegacyPolicy(ctx, workspaceID, platform, allowQuickstartCreds)
+}
+
+func (h *ConnectCallbackHandler) resolveConnectorUsingLegacyPolicy(ctx context.Context, workspaceID, platform string, allowQuickstartCreds bool) (connectorResolution, error) {
 	if workspaceAllowsPlatformCredentialsForPlatform(ctx, h.queries, workspaceID, platform) {
 		cred, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
 			WorkspaceID: workspaceID,
@@ -162,22 +215,30 @@ func (h *ConnectCallbackHandler) resolveConnector(ctx context.Context, workspace
 		case nil:
 			clientSecret, decErr := h.encryptor.Decrypt(cred.ClientSecret)
 			if decErr != nil {
-				return nil, false, decErr
+				return connectorResolution{}, decErr
 			}
 			if connector := connect.NewManagedConnector(platform, cred.ClientID, clientSecret, h.callbackBaseURL); connector != nil {
-				return connector, true, nil
+				mode := pgtype.Text{}
+				if platform == "twitter" {
+					mode = pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true}
+				}
+				return connectorResolution{connector: connector, xAppMode: mode, ok: true}, nil
 			}
 		case pgx.ErrNoRows:
 			// Fall through to the default registry-backed connector.
 		default:
-			return nil, false, err
+			return connectorResolution{}, err
 		}
 	}
 	if !allowQuickstartCreds {
-		return nil, false, nil
+		return connectorResolution{}, nil
 	}
 	connector, ok := h.registry.Get(platform)
-	return connector, ok, nil
+	mode := pgtype.Text{}
+	if platform == "twitter" && ok {
+		mode = pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true}
+	}
+	return connectorResolution{connector: connector, xAppMode: mode, ok: ok}, nil
 }
 
 func (h *ConnectCallbackHandler) logOAuthEvent(ctx context.Context, workspaceID string, event integrationlogs.Event) {
@@ -238,18 +299,43 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 	}
 
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds)
+	resolved, err := h.resolveConnectorForStoredMode(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds, session.XAppMode)
 	if err != nil {
 		slog.Error("connect.authorize: resolve connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to load platform credentials.")
 		return
 	}
-	if !ok {
+	if !resolved.ok {
 		renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not supported.")
 		return
 	}
+	if session.Platform == "twitter" && !session.XAppMode.Valid {
+		persisted, persistErr := h.queries.SetConnectSessionXAppModeIfNull(r.Context(), db.SetConnectSessionXAppModeIfNullParams{
+			ID:       session.ID,
+			XAppMode: resolved.xAppMode,
+		})
+		if persistErr == pgx.ErrNoRows {
+			persisted, persistErr = h.queries.GetConnectSessionByOAuthState(r.Context(), state)
+		}
+		if persistErr != nil || persisted.ID != session.ID || !persisted.XAppMode.Valid {
+			slog.Error("connect.authorize: persist resolved X app mode", "session_id", session.ID, "workspace_id", workspaceID, "err", persistErr)
+			renderConnectError(w, http.StatusInternalServerError, "Failed to preserve platform credentials.")
+			return
+		}
+		session = persisted
+		resolved, err = h.resolveConnectorForStoredMode(r.Context(), workspaceID, session.Platform, session.AllowQuickstartCreds, session.XAppMode)
+		if err != nil {
+			slog.Error("connect.authorize: resolve persisted connector", "platform", session.Platform, "workspace_id", workspaceID, "err", err)
+			renderConnectError(w, http.StatusInternalServerError, "Failed to load platform credentials.")
+			return
+		}
+		if !resolved.ok {
+			renderConnectError(w, http.StatusBadRequest, "Platform "+session.Platform+" is not supported.")
+			return
+		}
+	}
 
-	authURL, err := connector.AuthorizeURL(connect.SessionView{
+	authURL, err := resolved.connector.AuthorizeURL(connect.SessionView{
 		ID:             session.ID,
 		OAuthState:     session.OauthState,
 		PKCEVerifier:   session.PkceVerifier.String,
@@ -366,13 +452,13 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
-	connector, ok, err := h.resolveConnector(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds)
+	resolved, err := h.resolveConnectorForStoredMode(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds, session.XAppMode)
 	if err != nil {
 		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "connector_resolution_failed", false)
 		return
 	}
-	if !ok {
+	if !resolved.ok {
 		renderConnectError(w, http.StatusBadRequest, "Platform not supported.")
 		return
 	}
@@ -384,7 +470,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		ExternalUserID: session.ExternalUserID,
 	}
 
-	tokens, err := connector.ExchangeCode(r.Context(), view, code)
+	tokens, err := resolved.connector.ExchangeCode(r.Context(), view, code)
 	if err != nil {
 		slog.Error("connect.callback: token exchange failed", "platform", platformName, "err", err)
 		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
@@ -404,7 +490,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "token_exchange_failed", false)
 		return
 	}
-	profile, err := connector.FetchProfile(r.Context(), tokens.AccessToken)
+	profile, err := resolved.connector.FetchProfile(r.Context(), tokens.AccessToken)
 	if err != nil {
 		slog.Error("connect.callback: profile fetch failed", "platform", platformName, "err", err)
 		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
@@ -504,6 +590,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			ConnectSessionID:  connectSessionID,
 			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
+			XAppMode:          resolved.xAppMode,
 		})
 	case lookupErr == pgx.ErrNoRows:
 		saved, err = h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
@@ -520,6 +607,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			ConnectSessionID:  connectSessionID,
 			ExternalUserID:    externalUserID,
 			ExternalUserEmail: session.ExternalUserEmail,
+			XAppMode:          resolved.xAppMode,
 		})
 	}
 	if err != nil {

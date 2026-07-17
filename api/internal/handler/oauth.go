@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -19,6 +20,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type OAuthHandler struct {
@@ -134,8 +136,14 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get OAuth config — check for White Label credentials first
-	config := h.getOAuthConfig(r, profileID, platformName, oauthAdapter)
+	// Resolve both the OAuth connector and X app identity now. The
+	// callback must use this stored choice even if workspace credentials
+	// are added or removed while the user is authorizing.
+	config, appMode, err := h.oauthConfigAtAuthorizationStart(r, profileID, platformName, oauthAdapter)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load OAuth credentials")
+		return
+	}
 
 	// Generate CSRF state
 	state, err := platform.GenerateState()
@@ -143,13 +151,24 @@ func (h *OAuthHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate state")
 		return
 	}
+	pkceVerifier := ""
+	if platformName == "twitter" {
+		pkceVerifier, err = randomBase64URL(64)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to generate PKCE verifier")
+			return
+		}
+		config.PKCEVerifier = pkceVerifier
+	}
 
 	// Store state for verification on callback
 	_, err = h.queries.CreateOAuthState(r.Context(), db.CreateOAuthStateParams{
-		State:       state,
-		ProfileID:   profileID,
-		Platform:    platformName,
-		RedirectUrl: pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
+		State:        state,
+		ProfileID:    profileID,
+		Platform:     platformName,
+		RedirectUrl:  pgtype.Text{String: redirectURL, Valid: redirectURL != ""},
+		PkceVerifier: pgtype.Text{String: pkceVerifier, Valid: pkceVerifier != ""},
+		XAppMode:     appMode,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to store OAuth state")
@@ -185,17 +204,14 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify state (CSRF protection)
-	oauthState, err := h.queries.GetOAuthState(r.Context(), state)
+	// Atomically verify and consume state (CSRF protection + replay prevention).
+	oauthState, err := h.queries.ConsumeOAuthState(r.Context(), state)
 	if err != nil {
 		slog.Warn("oauth callback: invalid or expired state", "state", state)
 		h.redirectWithError(w, r, "", "Invalid or expired OAuth state")
 		return
 	}
 	workspaceID = h.workspaceIDForProfile(r.Context(), oauthState.ProfileID)
-
-	// Clean up state
-	h.queries.DeleteOAuthState(r.Context(), state)
 
 	if oauthState.Platform != platformName {
 		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "Platform mismatch")
@@ -214,10 +230,12 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config := h.getOAuthConfigForProfile(r, oauthState.ProfileID, platformName, oauthAdapter)
-	// Pass the original state through so PKCE-using adapters (Twitter)
-	// can reconstruct their verifier on the token exchange step.
-	config.State = state
+	config, resolvedXAppMode, err := h.oauthConfigForCallback(r, oauthState.ProfileID, platformName, oauthAdapter, oauthState.XAppMode)
+	if err != nil {
+		h.redirectWithError(w, r, oauthState.RedirectUrl.String, "OAuth credentials are no longer available")
+		return
+	}
+	config.PKCEVerifier = oauthState.PkceVerifier.String
 
 	// Exchange code for tokens
 	result, err := oauthAdapter.ExchangeCode(r.Context(), config, code)
@@ -387,6 +405,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 					AccountAvatarUrl: pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 					Metadata:         metadataJSON,
 					Scope:            result.Scopes,
+					XAppMode:         resolvedXAppMode,
 				})
 				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 					Level:     integrationlogs.LevelInfo,
@@ -429,6 +448,7 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
 		Metadata:          metadataJSON,
 		Scope:             result.Scopes,
+		XAppMode:          resolvedXAppMode,
 	})
 	if err != nil {
 		slog.Error("oauth callback: failed to save account", "error", err)
@@ -478,27 +498,114 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectURL+sep+"status=success&account_name="+result.AccountName, http.StatusFound)
 }
 
-func (h *OAuthHandler) getOAuthConfig(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
-	return h.getOAuthConfigForProfile(r, profileID, platformName, adapter)
+func (h *OAuthHandler) oauthConfigAtAuthorizationStart(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) (platform.OAuthConfig, pgtype.Text, error) {
+	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
+	creds, ok, err := h.workspaceOAuthCredential(r.Context(), profileID, platformName, true)
+	if err != nil {
+		return platform.OAuthConfig{}, pgtype.Text{}, err
+	}
+	if ok {
+		config.ClientID = creds.ClientID
+		config.ClientSecret, err = h.encryptor.Decrypt(creds.ClientSecret)
+		if err != nil {
+			return platform.OAuthConfig{}, pgtype.Text{}, err
+		}
+	}
+	if platformName != "twitter" {
+		return config, pgtype.Text{}, nil
+	}
+	mode := xinbox.AppModeUniPostManaged
+	if ok {
+		mode = xinbox.AppModeWorkspace
+	}
+	return config, pgtype.Text{String: string(mode), Valid: true}, nil
 }
 
-func (h *OAuthHandler) getOAuthConfigForProfile(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) platform.OAuthConfig {
-	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
+func (h *OAuthHandler) oauthConfigForStoredMode(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter, storedMode pgtype.Text) (platform.OAuthConfig, error) {
+	config, _, err := h.oauthConfigForCallback(r, profileID, platformName, adapter, storedMode)
+	return config, err
+}
 
-	// Check for White Label credentials
+// oauthConfigForCallback preserves the explicit app choice made by new
+// authorization starts. The only fallback is for rows written by a pre-108
+// instance after migration 108 added the nullable x_app_mode column.
+func (h *OAuthHandler) oauthConfigForCallback(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter, storedMode pgtype.Text) (platform.OAuthConfig, pgtype.Text, error) {
+	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
+	if platformName == "twitter" {
+		if !storedMode.Valid {
+			return h.oauthConfigForLegacyNullState(r, profileID, platformName, adapter)
+		}
+		switch xinbox.AppMode(storedMode.String) {
+		case xinbox.AppModeUniPostManaged:
+			return config, storedMode, nil
+		case xinbox.AppModeWorkspace:
+			creds, ok, err := h.workspaceOAuthCredential(r.Context(), profileID, platformName, false)
+			if err != nil {
+				return platform.OAuthConfig{}, pgtype.Text{}, err
+			}
+			if !ok {
+				return platform.OAuthConfig{}, pgtype.Text{}, pgx.ErrNoRows
+			}
+			config.ClientID = creds.ClientID
+			config.ClientSecret, err = h.encryptor.Decrypt(creds.ClientSecret)
+			return config, storedMode, err
+		default:
+			return platform.OAuthConfig{}, pgtype.Text{}, fmt.Errorf("invalid stored X app mode %q", storedMode.String)
+		}
+	}
+	creds, ok, err := h.workspaceOAuthCredential(r.Context(), profileID, platformName, true)
+	if err != nil {
+		return platform.OAuthConfig{}, pgtype.Text{}, err
+	}
+	if ok {
+		config.ClientID = creds.ClientID
+		config.ClientSecret, err = h.encryptor.Decrypt(creds.ClientSecret)
+		if err != nil {
+			return platform.OAuthConfig{}, pgtype.Text{}, err
+		}
+	}
+	return config, pgtype.Text{}, nil
+}
+
+// oauthConfigForLegacyNullState reproduces the deployed pre-108 callback
+// lookup, including its use of profile_id as platform_credentials.workspace_id.
+// Real workspace credentials therefore remain invisible to this rolling-only
+// fallback, while all new authorization states carry an explicit mode.
+func (h *OAuthHandler) oauthConfigForLegacyNullState(r *http.Request, profileID, platformName string, adapter platform.OAuthAdapter) (platform.OAuthConfig, pgtype.Text, error) {
+	config := adapter.DefaultOAuthConfig(h.baseRedirectURL)
 	creds, err := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
 		WorkspaceID: profileID,
 		Platform:    platformName,
 	})
-	if err == nil {
-		config.ClientID = creds.ClientID
-		secret, err := h.encryptor.Decrypt(creds.ClientSecret)
-		if err == nil {
-			config.ClientSecret = secret
-		}
+	if err != nil {
+		return config, pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true}, nil
 	}
+	config.ClientID = creds.ClientID
+	if secret, decryptErr := h.encryptor.Decrypt(creds.ClientSecret); decryptErr == nil {
+		config.ClientSecret = secret
+	}
+	return config, pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true}, nil
+}
 
-	return config
+func (h *OAuthHandler) workspaceOAuthCredential(ctx context.Context, profileID, platformName string, requirePlanSlot bool) (db.PlatformCredential, bool, error) {
+	profile, err := h.queries.GetProfile(ctx, profileID)
+	if err != nil {
+		return db.PlatformCredential{}, false, err
+	}
+	if requirePlanSlot && !workspaceAllowsPlatformCredentialsForPlatform(ctx, h.queries, profile.WorkspaceID, platformName) {
+		return db.PlatformCredential{}, false, nil
+	}
+	creds, err := h.queries.GetPlatformCredential(ctx, db.GetPlatformCredentialParams{
+		WorkspaceID: profile.WorkspaceID,
+		Platform:    platformName,
+	})
+	if err == pgx.ErrNoRows {
+		return db.PlatformCredential{}, false, nil
+	}
+	if err != nil {
+		return db.PlatformCredential{}, false, err
+	}
+	return creds, true, nil
 }
 
 // resolveProfileID resolves the profile_id this OAuth Connect call

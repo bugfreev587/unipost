@@ -14,11 +14,38 @@ import {
   listSocialAccounts,
   listSocialPostSummaries,
   getInboxMediaContext,
+  getAccountCapabilities,
+  getXCreditsAllowance,
+  getXInboxOutboundOperation,
   type InboxItem,
+  type ApiFetchError,
   type SocialAccount,
   type SocialPostSummary,
   type IGMediaContext,
+  type XInboxBackfillResult,
+  type XInboxCapabilities,
+  type XCreditsAllowance,
 } from "@/lib/api";
+import {
+  canonicalInboxConversationKey,
+  getInboxSourceDefinition,
+  isInboxDMSource,
+} from "@/lib/inbox-model";
+import {
+  evaluateXInboxEligibility,
+  type XInboxEligibility,
+} from "@/lib/x-inbox-eligibility";
+import {
+  beginXInboxOutboundOperation,
+  classifyXInboxOutboundStatus,
+  hashXInboxReplyBody,
+  loadXInboxOutboundOperations,
+  resolveXInboxOutboundOperation,
+  saveXInboxOutboundOperations,
+  updateXInboxOutboundOperation,
+  type XInboxClientOutboundOperation,
+  type XInboxClientOutboundStatus,
+} from "@/lib/x-inbox-outbound-state";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { useInboxWebSocket } from "@/lib/use-inbox-ws";
 import { buildContactPageHref } from "@/lib/support";
@@ -28,15 +55,14 @@ import { isMetaDMReplyWindowClosed } from "./reply-window";
 import {
   AlertTriangle,
   Archive,
+  ArrowLeft,
   AtSign,
   CheckCheck,
-  CornerUpLeft,
   ChevronRight,
   Inbox as InboxIcon,
   Mail,
   MessageCircle,
   MessageSquare,
-  MoreHorizontal,
   RefreshCw,
   Search,
   Send,
@@ -58,6 +84,13 @@ type SyncResponse = {
   accounts_checked?: number;
   errors?: SyncError[];
 };
+
+type XSyncState =
+  | { kind: "idle" }
+  | { kind: "estimate"; result: XInboxBackfillResult }
+  | { kind: "pending"; result: XInboxBackfillResult; confirmationToken?: string }
+  | { kind: "complete"; result: XInboxBackfillResult }
+  | { kind: "error"; message: string };
 
 type ConversationGroup = {
   id: string;
@@ -92,6 +125,26 @@ const COMMENT_THREAD_LINE_COLOR = "var(--dborder2)";
 const COMMENT_THREAD_BEND_RADIUS = 10;
 const INBOX_RECENT_ITEM_LIMIT = 50;
 const INBOX_UNREAD_ITEM_LIMIT = 500;
+
+function xClientOutboundStatus(status: string): XInboxClientOutboundStatus {
+  switch (status) {
+    case "X_REMOTE_ACCEPTED_RECONCILING":
+    case "remote_succeeded":
+      return "remote_succeeded";
+    case "X_USAGE_REVERSAL_PENDING":
+    case "usage_reversal_pending":
+    case "pending_recovery":
+      return "usage_reversal_pending";
+    case "X_WRITE_NEEDS_RECONCILIATION":
+    case "needs_reconciliation":
+      return "needs_reconciliation";
+    case "X_WRITE_OUTCOME_PENDING":
+    case "outcome_unknown":
+      return "outcome_unknown";
+    default:
+      return "sending";
+  }
+}
 
 function mergeInboxItems(...groups: InboxItem[][]): InboxItem[] {
   const byId = new Map<string, InboxItem>();
@@ -181,19 +234,7 @@ function timeAgo(dateStr: string): string {
 }
 
 function sourceLabel(source: InboxItem["source"]) {
-  switch (source) {
-    case "ig_comment":
-    case "youtube_comment":
-    case "fb_comment":
-      return "Comment";
-    case "ig_dm":
-    case "fb_dm":
-      return "DM";
-    case "threads_reply":
-      return "Reply";
-    default:
-      return source;
-  }
+  return getInboxSourceDefinition(source).shortLabel;
 }
 
 // platformFromSource maps an InboxItem.source back to the platform
@@ -202,17 +243,7 @@ function sourceLabel(source: InboxItem["source"]) {
 // worst case the IG icon is wrong for a row, but it's still
 // something recognizable.
 function platformFromSource(source: InboxItem["source"] | ConversationGroup["source"]): string {
-  switch (source) {
-    case "threads_reply":
-      return "threads";
-    case "youtube_comment":
-      return "youtube";
-    case "fb_comment":
-    case "fb_dm":
-      return "facebook";
-    default:
-      return "instagram";
-  }
+  return getInboxSourceDefinition(source).platform;
 }
 
 function sourceIcon(source: InboxItem["source"]) {
@@ -220,9 +251,11 @@ function sourceIcon(source: InboxItem["source"]) {
     case "ig_comment":
     case "youtube_comment":
     case "fb_comment":
+    case "x_reply":
       return <MessageCircle style={{ width: 14, height: 14 }} />;
     case "ig_dm":
     case "fb_dm":
+    case "x_dm":
       return <Mail style={{ width: 14, height: 14 }} />;
     case "threads_reply":
       return <AtSign style={{ width: 14, height: 14 }} />;
@@ -247,7 +280,7 @@ function byNewestActivity(a: ConversationGroup, b: ConversationGroup) {
 // Messenger needs the exact same conversation-style handling, so
 // the checks now route through this helper.
 function isDMSource(source?: string | null): boolean {
-  return source === "ig_dm" || source === "fb_dm";
+  return isInboxDMSource(source);
 }
 
 function isMetaInboxPlatform(platform?: string | null): boolean {
@@ -257,6 +290,10 @@ function isMetaInboxPlatform(platform?: string | null): boolean {
 function conversationRootKey(item: InboxItem, source: ConversationGroup["source"]) {
   if (isDMSource(source)) {
     return item.thread_key || item.parent_external_id || item.author_id || item.external_id;
+  }
+
+  if (source === "x_reply") {
+    return item.thread_key || item.parent_external_id || item.external_id;
   }
 
   // For comment-style inbox items, prefer the internal linked post ID
@@ -273,63 +310,12 @@ function conversationRootKey(item: InboxItem, source: ConversationGroup["source"
   return item.parent_external_id || item.external_id;
 }
 
-// commentPostRootKey walks the parent chain of a comment item using the
-// full batch of siblings as context. Each reply's parent_external_id
-// points at the comment directly above it, and eventually a parent
-// falls outside the set — that outermost parent is the POST itself and
-// makes a stable grouping key for every comment on the same post.
-//
-// Why this exists: when our webhook fan-out inserts comment rows for IG
-// accounts that don't own the underlying post, resolveInboxLinkedPostID
-// returns empty (the account has no matching social_post_result), so
-// linked_post_id is null. Falling back to thread_key (which is each
-// row's immediate parent_external_id) splits a single post's comments
-// into N conversation groups — one per branch the replies take. Walking
-// to the post root here sidesteps that regardless of what the backend
-// set.
-function commentPostRootKey(item: InboxItem, byExternalID: Map<string, InboxItem>): string {
-  let current: InboxItem = item;
-  const seen = new Set<string>();
-  // The first parent that ISN'T in the inbox item set is the post. A
-  // top-level comment's `parent_external_id` is already the post id.
-  while (true) {
-    if (seen.has(current.external_id)) return current.external_id; // cycle guard
-    seen.add(current.external_id);
-    const parentID = current.parent_external_id;
-    if (!parentID) return current.external_id;
-    const parent = byExternalID.get(parentID);
-    if (!parent) return parentID;
-    current = parent;
-  }
-}
-
 function groupItems(items: InboxItem[], source: ConversationGroup["source"]): ConversationGroup[] {
   const filtered = items.filter((item) => item.source === source);
   const map = new Map<string, InboxItem[]>();
 
-  // For comment-style sources, precompute an external_id → item index so
-  // commentPostRootKey can walk the chain without O(n²) lookups. DMs
-  // skip this since their root key logic doesn't need it.
-  const byExternalID = isDMSource(source) ? null : (() => {
-    const m = new Map<string, InboxItem>();
-    for (const item of filtered) m.set(item.external_id, item);
-    return m;
-  })();
-
   for (const item of filtered) {
-    let rootKey: string;
-    if (isDMSource(source)) {
-      rootKey = conversationRootKey(item, source);
-    } else if (item.linked_post_id) {
-      // Backend already resolved the post — most trustworthy signal.
-      rootKey = `post:${item.linked_post_id}`;
-    } else if (byExternalID) {
-      // Walk to the post root via parent chain.
-      rootKey = `post-ext:${commentPostRootKey(item, byExternalID)}`;
-    } else {
-      rootKey = conversationRootKey(item, source);
-    }
-    const key = `${item.social_account_id}:${source}:${rootKey}`;
+    const key = canonicalInboxConversationKey(item, filtered);
     const existing = map.get(key) || [];
     existing.push(item);
     map.set(key, existing);
@@ -375,7 +361,7 @@ function groupItems(items: InboxItem[], source: ConversationGroup["source"]): Co
   });
 }
 
-function buildCommentTree(items: InboxItem[], threadKey: string): CommentNode[] {
+function buildCommentTree(items: InboxItem[]): CommentNode[] {
   const nodeMap = new Map<string, CommentNode>();
   for (const item of items) {
     nodeMap.set(item.external_id, { item, children: [] });
@@ -594,14 +580,18 @@ function SyncStateCard({
   body,
   tone = "neutral",
   actionHref,
+  onAction,
   actionLabel = "Contact support",
+  actionDisabled = false,
 }: {
   icon: React.ReactNode;
   title: string;
   body: string;
   tone?: "neutral" | "warn" | "error";
   actionHref?: string;
+  onAction?: () => void;
   actionLabel?: string;
+  actionDisabled?: boolean;
 }) {
   const styles =
     tone === "error"
@@ -628,7 +618,17 @@ function SyncStateCard({
           {title}
         </div>
         <div className="dt-body-sm" style={{ color: "var(--dmuted)" }}>{body}</div>
-        {actionHref ? (
+        {onAction ? (
+          <button
+            type="button"
+            className="dbtn dbtn-ghost"
+            onClick={onAction}
+            disabled={actionDisabled}
+            style={{ marginTop: 10, fontSize: 12 }}
+          >
+            {actionLabel}
+          </button>
+        ) : actionHref ? (
           <a
             href={actionHref}
             style={{
@@ -671,20 +671,45 @@ function InboxPageInner() {
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
+  const [xSyncing, setXSyncing] = useState(false);
   const [tab, setTab] = useState<FilterTab>("comments");
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
   const [replyingGroupId, setReplyingGroupId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [syncData, setSyncData] = useState<SyncResponse | null>(null);
+  const [xSyncState, setXSyncState] = useState<XSyncState>({ kind: "idle" });
+  const [xCapabilities, setXCapabilities] = useState<Record<string, XInboxCapabilities>>({});
+  const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [replyFeedback, setReplyFeedback] = useState<string | null>(null);
+  const [xOutboundOperations, setXOutboundOperations] = useState<XInboxClientOutboundOperation[]>([]);
+  const [mobileDetailOpen, setMobileDetailOpen] = useState(false);
   const [leftPaneWidth, setLeftPaneWidth] = useState(360);
   const isDragging = useRef(false);
+  const xOutboundOperationsRef = useRef<XInboxClientOutboundOperation[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const [mediaContext, setMediaContext] = useState<Record<string, IGMediaContext>>({});
+
+  const persistXOutboundOperations = useCallback((operations: XInboxClientOutboundOperation[]) => {
+    xOutboundOperationsRef.current = operations;
+    setXOutboundOperations(operations);
+    if (typeof window !== "undefined") {
+      saveXInboxOutboundOperations(window.localStorage, operations);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const operations = loadXInboxOutboundOperations(window.localStorage);
+    xOutboundOperationsRef.current = operations;
+    setXOutboundOperations(operations);
+  }, []);
 
   const load = useCallback(async () => {
     if (!workspaceId) return;
     try {
+      setPageError(null);
       const token = await getToken();
       if (!token) return;
       const [recentItemsRes, unreadRes, socialPostsRes] = await Promise.all([
@@ -708,16 +733,108 @@ function InboxPageInner() {
       setItems(mergeInboxItems(recentItemsRes.data || [], unreadItemsRes?.data || []));
       setUnreadCount(unreadTotal);
       setSocialPosts(socialPostsRes.data || []);
-      if (accountsRes?.data) setAccounts(accountsRes.data);
+      if (accountsRes?.data) {
+        setAccounts(accountsRes.data);
+        const twitterAccounts = accountsRes.data.filter((account) => account.platform === "twitter");
+        const [capabilityResults, creditsResult] = await Promise.all([
+          Promise.allSettled(
+            twitterAccounts.map(async (account) => ({
+              accountId: account.id,
+              capabilities: (await getAccountCapabilities(token, account.id)).data.x_inbox,
+            })),
+          ),
+          getXCreditsAllowance(token).catch(() => null),
+        ]);
+        const nextCapabilities: Record<string, XInboxCapabilities> = {};
+        for (const result of capabilityResults) {
+          if (result.status === "fulfilled" && result.value.capabilities) {
+            nextCapabilities[result.value.accountId] = result.value.capabilities;
+          }
+        }
+        setXCapabilities(nextCapabilities);
+        setXCredits(creditsResult?.data || null);
+      }
+    } catch (err) {
+      setPageError(err instanceof Error ? err.message : "Failed to load Inbox");
     } finally {
       setLoading(false);
     }
   }, [workspaceId, getToken, profileId]);
 
+  const reconcileXOutboundOperation = useCallback(async (
+    operation: XInboxClientOutboundOperation,
+    announce = true,
+  ) => {
+    if (!operation.operationId) return;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const response = await getXInboxOutboundOperation(token, operation.operationId);
+      const classification = classifyXInboxOutboundStatus(response.data.status);
+      if (classification.terminal) {
+        persistXOutboundOperations(resolveXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          operation.logicalKey,
+        ));
+        if (announce) setReplyFeedback("X reply completed and is now available in Inbox.");
+        await load();
+        return;
+      }
+
+      persistXOutboundOperations(updateXInboxOutboundOperation(
+        xOutboundOperationsRef.current,
+        operation.logicalKey,
+        { status: xClientOutboundStatus(response.data.status) },
+      ));
+      if (announce) {
+        setReplyFeedback(classification.manual
+          ? "UniPost cannot safely determine whether X accepted this reply. Review X before sending anything again."
+          : "X reply is still being reconciled. UniPost will not send it again while this operation is unresolved.");
+      }
+    } catch (err) {
+      const apiError = err as ApiFetchError;
+      if (apiError.status === 404) {
+        persistXOutboundOperations(resolveXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          operation.logicalKey,
+        ));
+        if (announce) setReplyFeedback("The prior X operation is no longer pending. Refresh Inbox before sending again.");
+        await load();
+        return;
+      }
+      if (announce) {
+        setReplyFeedback(err instanceof Error ? err.message : "Could not refresh the X reply status");
+      }
+    }
+  }, [getToken, load, persistXOutboundOperations]);
+
   useEffect(() => {
     setLoading(true);
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (!workspaceId) return;
+    let cancelled = false;
+    const poll = async () => {
+      const operations = xOutboundOperationsRef.current.filter(
+        (operation) =>
+          operation.workspaceId === workspaceId &&
+          !!operation.operationId &&
+          operation.status !== "needs_reconciliation",
+      );
+      for (const operation of operations) {
+        if (cancelled) return;
+        await reconcileXOutboundOperation(operation, false);
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => void poll(), 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [workspaceId, reconcileXOutboundOperation, xOutboundOperations.length]);
 
   // Real-time: WebSocket pushes new items instantly.
   const { connected: wsConnected } = useInboxWebSocket(
@@ -743,8 +860,14 @@ function InboxPageInner() {
   }, [workspaceId, wsConnected, load]);
 
   // Enrich comment/thread group titles with post captions from mediaContext or socialPosts.
-  function enrichGroupTitle(group: ConversationGroup): ConversationGroup {
+  const enrichGroupTitle = useCallback((group: ConversationGroup): ConversationGroup => {
     if (isDMSource(group.source) || group.title) return group;
+    if (group.source === "x_reply") {
+      return {
+        ...group,
+        title: group.accountName ? `@${group.accountName} on X` : "Conversation on X",
+      };
+    }
     const rootExternalID = group.parentExternalID || group.threadKey;
     // Try mediaContext first (fetched from IG API directly)
     if (rootExternalID && mediaContext[rootExternalID]?.caption) {
@@ -760,18 +883,20 @@ function InboxPageInner() {
       }
     }
     return { ...group, title: group.accountName ? `@${group.accountName}` : "Post" };
-  }
+  }, [mediaContext, socialPosts]);
 
   const commentsGroups = useMemo(() => [
     ...groupItems(items, "ig_comment"),
     ...groupItems(items, "youtube_comment"),
     ...groupItems(items, "fb_comment"),
-  ].map(enrichGroupTitle), [items, socialPosts, mediaContext]);
+    ...groupItems(items, "x_reply"),
+  ].map(enrichGroupTitle), [items, enrichGroupTitle]);
   const dmGroups = useMemo(() => [
     ...groupItems(items, "ig_dm"),
     ...groupItems(items, "fb_dm"),
+    ...groupItems(items, "x_dm"),
   ], [items]);
-  const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, socialPosts, mediaContext]);
+  const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, enrichGroupTitle]);
 
   const activeGroups = useMemo(() => {
     const base =
@@ -799,6 +924,38 @@ function InboxPageInner() {
   }, [activeGroups, selectedGroupId]);
 
   const selectedGroup = activeGroups.find((group) => group.id === selectedGroupId) || null;
+  const twitterAccounts = accounts.filter((account) => account.platform === "twitter");
+  const xEligibilityByAccount = useMemo(() => {
+    const result: Record<string, XInboxEligibility> = {};
+    for (const account of twitterAccounts) {
+      const capabilities = xCapabilities[account.id];
+      if (capabilities) {
+        result[account.id] = evaluateXInboxEligibility(account, capabilities);
+      }
+    }
+    return result;
+  }, [twitterAccounts, xCapabilities]);
+  const xReconnectAccounts = twitterAccounts.filter(
+    (account) => xEligibilityByAccount[account.id]?.reconnectRequired,
+  );
+  const xCredentialAccounts = twitterAccounts.filter(
+    (account) => (xEligibilityByAccount[account.id]?.missingAppCredentials.length ?? 0) > 0,
+  );
+  const xDeliveryErrorAccounts = twitterAccounts.filter(
+    (account) => xEligibilityByAccount[account.id]?.deliveryStatus === "error",
+  );
+  const xCapPaused = xCredits?.pause_paid_sources && xCredits.inbound_pause_reason === "daily_cap";
+  const xAllowancePaused =
+    xCredits?.pause_paid_sources && xCredits.inbound_pause_reason === "monthly_allowance";
+  const hasWorkspaceXApp = twitterAccounts.some(
+    (account) => xEligibilityByAccount[account.id]?.appMode === "workspace_x_app",
+  );
+  const xSyncPaidBlocked = (xCapPaused || xAllowancePaused) && !hasWorkspaceXApp;
+  const workspaceXOutboundOperations = xOutboundOperations.filter(
+    (operation) => operation.workspaceId === workspaceId,
+  );
+  const pendingXOutboundOperation = workspaceXOutboundOperations[0];
+  const pendingXOutboundManual = pendingXOutboundOperation?.status === "needs_reconciliation";
 
   const reconnectAccounts = accounts.filter(
     (account) =>
@@ -834,6 +991,41 @@ function InboxPageInner() {
     }
   }
 
+  async function handleXSync(confirmationToken?: string) {
+    if (!workspaceId || twitterAccounts.length === 0) return;
+    setXSyncing(true);
+    setXSyncState({ kind: "idle" });
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const response = await syncInbox(token, {
+        x_backfill: {
+          lookback_days: 7,
+          max_items: 20,
+          include_replies: true,
+          include_dms: true,
+          confirmation_token: confirmationToken,
+        },
+      });
+      const result = response.data as XInboxBackfillResult;
+      if (result.status === "in_progress") {
+        setXSyncState({ kind: "pending", result, confirmationToken });
+      } else if (result.confirmation_required && result.confirmation_token) {
+        setXSyncState({ kind: "estimate", result });
+      } else {
+        setXSyncState({ kind: "complete", result });
+        await load();
+      }
+    } catch (err) {
+      setXSyncState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "X Inbox sync failed",
+      });
+    } finally {
+      setXSyncing(false);
+    }
+  }
+
   async function handleMarkAllRead() {
     if (!workspaceId) return;
     const token = await getToken();
@@ -851,6 +1043,7 @@ function InboxPageInner() {
 
   async function openGroup(group: ConversationGroup) {
     setSelectedGroupId(group.id);
+    setMobileDetailOpen(true);
     const unreadInbound = group.items.filter((item) => !item.is_read && !item.is_own);
     if (!workspaceId || unreadInbound.length === 0) return;
     const token = await getToken();
@@ -881,18 +1074,94 @@ function InboxPageInner() {
     // Check bottom DM input first, then per-message draft
     const draft = (replyDrafts["__dm_bottom__"] || replyDrafts[targetItem.id] || "").trim();
     if (!draft) return;
+    const isX = targetItem.source === "x_reply" || targetItem.source === "x_dm";
+    let xOperation: XInboxClientOutboundOperation | undefined;
 
     setReplyingGroupId(group.id);
+    setReplyFeedback(null);
     try {
       const token = await getToken();
       if (!token) return;
-      const res = await replyToInboxItem(token, targetItem.id, draft);
-      if (res.data) {
-        setItems((prev) => [...prev, res.data]);
+
+      if (isX) {
+        const bodyHash = await hashXInboxReplyBody(draft);
+        const begun = beginXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          {
+            workspaceId,
+            accountId: targetItem.social_account_id,
+            source: targetItem.source as "x_reply" | "x_dm",
+            targetItemId: targetItem.id,
+            threadKey: group.threadKey,
+            bodyHash,
+          },
+          () => `x-inbox-${crypto.randomUUID()}`,
+        );
+        xOperation = begun.operation;
+        persistXOutboundOperations(begun.operations);
+
+        // A previous response already supplied an operation id, so polling
+        // is safer than issuing another POST. A changed body has a different
+        // logical key and therefore starts a separate operation above.
+        if (begun.reused && begun.operation.operationId) {
+          await reconcileXOutboundOperation(begun.operation);
+          return;
+        }
       }
-      setReplyDrafts((prev) =>
-        Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id && key !== "__dm_bottom__"))
-      );
+
+      const result = await replyToInboxItem(token, targetItem.id, draft, {
+        idempotencyKey: xOperation?.idempotencyKey,
+      });
+      if (result.state === "completed") {
+        if (xOperation) {
+          persistXOutboundOperations(resolveXInboxOutboundOperation(
+            xOutboundOperationsRef.current,
+            xOperation.logicalKey,
+          ));
+        }
+        setItems((prev) => prev.some((item) => item.id === result.data.id)
+          ? prev
+          : [...prev, result.data]);
+        if (isX) {
+          const credits = result.data.x_credits_counted ?? 0;
+          const mode = result.data.x_credit_billing_mode === "workspace_x_app"
+            ? "Workspace X app; no UniPost X Credits used."
+            : `${credits.toLocaleString()} X Credits used.`;
+          setReplyFeedback(`Sent on X. ${mode}`);
+        }
+        setReplyDrafts((prev) =>
+          Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id && key !== "__dm_bottom__"))
+        );
+      } else if (xOperation) {
+        const updated = updateXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          xOperation.logicalKey,
+          {
+            status: xClientOutboundStatus(result.code),
+            operationId: result.operation_id,
+          },
+        );
+        persistXOutboundOperations(updated);
+        setReplyFeedback(`${result.message} Retrying the same message will reuse this operation instead of sending twice.`);
+      }
+    } catch (err) {
+      const apiError = err as ApiFetchError;
+      if (xOperation && (apiError.status === undefined || apiError.status >= 500)) {
+        persistXOutboundOperations(updateXInboxOutboundOperation(
+          xOutboundOperationsRef.current,
+          xOperation.logicalKey,
+          { status: "outcome_unknown" },
+        ));
+        setReplyFeedback("The X response was interrupted, so the outcome is unknown. Retry the exact same message to reuse its idempotency key.");
+      } else {
+        if (xOperation) {
+          persistXOutboundOperations(resolveXInboxOutboundOperation(
+            xOutboundOperationsRef.current,
+            xOperation.logicalKey,
+          ));
+        }
+        setReplyFeedback(err instanceof Error ? err.message : "Reply failed");
+      }
     } finally {
       setReplyingGroupId(null);
     }
@@ -940,6 +1209,7 @@ function InboxPageInner() {
 
   const selectedPost = useMemo(() => {
     if (!selectedGroup) return null;
+    if (selectedGroup.source === "x_reply") return null;
     const linkedPostID = selectedGroup.linkedPostID || selectedGroup.items.find((item) => item.linked_post_id)?.linked_post_id;
     if (linkedPostID) {
       const post = socialPosts.find((candidate) => candidate.id === linkedPostID);
@@ -988,6 +1258,7 @@ function InboxPageInner() {
     if (!workspaceId) return;
     const allGroups = [...commentsGroups, ...threadsGroups];
     const toFetch = allGroups.filter((g) => {
+      if (g.source === "x_reply") return false;
       const key = g.parentExternalID || g.threadKey;
       return key && !mediaContext[key] && !attemptedMediaKeys.current.has(key) && g.items[0];
     });
@@ -1018,6 +1289,7 @@ function InboxPageInner() {
   useEffect(() => {
     if (!selectedGroup || !workspaceId) return;
     if (isDMSource(selectedGroup.source)) return;
+    if (selectedGroup.source === "x_reply") return;
     // Skip if selectedPost already has media_urls (image available locally).
     if (selectedPost && selectedPost.media_urls && selectedPost.media_urls.length > 0) return;
     const parentID = selectedGroup.parentExternalID || selectedGroup.threadKey;
@@ -1055,9 +1327,9 @@ function InboxPageInner() {
   const commentTree = useMemo(
     () =>
       selectedGroup && !isDMSource(selectedGroup.source)
-        ? buildCommentTree(selectedGroup.items, selectedGroup.threadKey)
+        ? buildCommentTree(selectedGroup.items)
         : [],
-    [selectedGroup, items]
+    [selectedGroup]
   );
 
   function handleDragStart(e: React.MouseEvent) {
@@ -1068,7 +1340,6 @@ function InboxPageInner() {
 
     function onMouseMove(ev: MouseEvent) {
       if (!isDragging.current) return;
-      const containerLeft = containerRef.current?.getBoundingClientRect().left || 0;
       const newWidth = Math.min(Math.max(startWidth + (ev.clientX - startX), 240), 600);
       setLeftPaneWidth(newWidth);
     }
@@ -1091,7 +1362,6 @@ function InboxPageInner() {
     if (!selectedGroup) return null;
     const draft = replyDrafts[item.id] || "";
     const replyOpen = Object.prototype.hasOwnProperty.call(replyDrafts, item.id);
-    const isCommentLike = !isDMSource(selectedGroup.source);
     const isDM = isDMSource(selectedGroup.source);
     const avatarSrc = item.is_own ? item.account_avatar_url : item.author_avatar_url;
     // Meta's Graph API strips the `from` block for commenters who
@@ -1154,11 +1424,11 @@ function InboxPageInner() {
                       ? { borderRadius: "18px 18px 18px 4px" }
                       : {}),
               background: item.is_own
-                ? "linear-gradient(135deg, #4f46e5, #7c3aed)"
+                ? "var(--dtext)"
                 : "var(--surface2)",
-              color: item.is_own ? "#fff" : "var(--dtext)",
+              color: item.is_own ? "var(--surface)" : "var(--dtext)",
               border: item.is_own ? "none" : "1px solid var(--dborder)",
-              boxShadow: item.is_own ? "0 10px 24px rgb(79 70 229 / 0.16)" : "none",
+              boxShadow: item.is_own ? "0 10px 24px rgb(15 23 42 / 0.12)" : "none",
               maxWidth: "70%",
               lineHeight: 1.45,
               fontSize: 13,
@@ -1211,6 +1481,16 @@ function InboxPageInner() {
                 Reply
               </button>
             ) : null}
+            {item.source === "x_reply" && item.url ? (
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 11, color: "var(--dmuted)", fontWeight: 600 }}
+              >
+                View on X
+              </a>
+            ) : null}
             {/* Per-message Mark read / unread button removed — opening
                 a conversation auto-marks every inbound message in it
                 read (see openGroup), so the manual toggle was both
@@ -1223,6 +1503,7 @@ function InboxPageInner() {
               <input
                 value={draft}
                 onChange={(e) => setReplyDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                aria-label={`Reply to ${item.author_name || "this comment"}`}
                 placeholder={`Reply to ${item.author_name || "this comment"}...`}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && selectedGroup) { e.preventDefault(); handleReply(selectedGroup, item); } }}
                 className="dt-body-sm"
@@ -1271,7 +1552,7 @@ function InboxPageInner() {
 
   return (
     <div className="inbox-page-fullheight">
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
+      <div className="inbox-header" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
           <div
             style={{
@@ -1309,11 +1590,11 @@ function InboxPageInner() {
               </span>
             </div>
             <p className="dt-body-sm" style={{ margin: "4px 0 0", color: "var(--dmuted)" }}>
-              {metaAccountCount} Meta accounts · {counts.comments + counts.dms + counts.threads} unread
+              {metaAccountCount + twitterAccounts.length} inbox account{metaAccountCount + twitterAccounts.length === 1 ? "" : "s"} · {counts.comments + counts.dms + counts.threads} unread
             </p>
           </div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="inbox-header-actions" style={{ display: "flex", gap: 8 }}>
           <button
             onClick={handleMarkAllRead}
             disabled={unreadCount === 0}
@@ -1333,29 +1614,177 @@ function InboxPageInner() {
             <CheckCheck style={{ width: 14, height: 14 }} />
             Mark all read
           </button>
-          <button
-            onClick={handleSync}
-            disabled={syncing}
-            className="dt-body-sm"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 12px",
-              borderRadius: 8,
-              border: "none",
-              background: "var(--daccent)",
-              color: "var(--primary-foreground)",
-              cursor: syncing ? "wait" : "pointer",
-            }}
-          >
-            <RefreshCw style={{ width: 14, height: 14, animation: syncing ? "spin 1s linear infinite" : "none" }} />
-            {syncing ? "Syncing..." : "Sync"}
-          </button>
+          {metaAccountCount > 0 ? (
+            <button
+              onClick={handleSync}
+              disabled={syncing}
+              className="dt-body-sm"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "none",
+                background: "var(--daccent)",
+                color: "var(--primary-foreground)",
+                cursor: syncing ? "wait" : "pointer",
+              }}
+            >
+              <RefreshCw style={{ width: 14, height: 14, animation: syncing ? "spin 1s linear infinite" : "none" }} />
+              {syncing ? "Syncing..." : "Sync Meta"}
+            </button>
+          ) : null}
+          {twitterAccounts.length > 0 ? (
+            <button
+              onClick={() => handleXSync()}
+              disabled={xSyncing || xSyncPaidBlocked}
+              className="dt-body-sm"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--dborder2)",
+                background: "var(--dtext)",
+                color: "var(--surface)",
+                cursor: xSyncing ? "wait" : "pointer",
+                opacity: xSyncPaidBlocked ? 0.55 : 1,
+              }}
+            >
+              <RefreshCw style={{ width: 14, height: 14, animation: xSyncing ? "spin 1s linear infinite" : "none" }} />
+              {xSyncing ? "Estimating..." : "Sync X"}
+            </button>
+          ) : null}
         </div>
       </div>
 
       <div style={{ display: "grid", gap: 10, marginBottom: 16 }}>
+        {pageError ? (
+          <SyncStateCard
+            icon={<AlertTriangle style={{ width: 16, height: 16 }} />}
+            title="Inbox could not be fully loaded"
+            body={pageError}
+            tone="error"
+            onAction={() => load()}
+            actionLabel="Try again"
+          />
+        ) : null}
+        {xReconnectAccounts.length > 0 ? (
+          <SyncStateCard
+            icon={<ShieldAlert style={{ width: 16, height: 16 }} />}
+            title="Reconnect X for Inbox permissions"
+            body={`${xReconnectAccounts.length} X account${xReconnectAccounts.length === 1 ? "" : "s"} can keep publishing, but comments or DMs need the latest X scopes. Reconnect to grant the missing permissions.`}
+            tone="warn"
+            actionHref={profileId ? `/projects/${profileId}/accounts` : undefined}
+            actionLabel="Review X connection"
+          />
+        ) : null}
+        {xCredentialAccounts.length > 0 ? (
+          <SyncStateCard
+            icon={<ShieldAlert style={{ width: 16, height: 16 }} />}
+            title="Complete workspace X app credentials"
+            body={`${xCredentialAccounts.length} workspace X app connection${xCredentialAccounts.length === 1 ? " is" : "s are"} missing the app Bearer Token, Consumer Secret, Client ID, or Client Secret required for Inbox delivery. Publishing credentials are unchanged.`}
+            tone="warn"
+            actionHref={profileId ? `/projects/${profileId}/credentials` : undefined}
+            actionLabel="Open platform credentials"
+          />
+        ) : null}
+        {xDeliveryErrorAccounts.length > 0 ? (
+          <SyncStateCard
+            icon={<AlertTriangle style={{ width: 16, height: 16 }} />}
+            title="X Inbox delivery needs attention"
+            body="UniPost could not activate the X stream or DM subscription for at least one account. Review the connection and integration logs before retrying sync."
+            tone="error"
+            actionHref={profileId ? `/projects/${profileId}/logs` : undefined}
+            actionLabel="Review logs"
+          />
+        ) : null}
+        {xCapPaused ? (
+          <SyncStateCard
+            icon={<Archive style={{ width: 16, height: 16 }} />}
+            title="X inbound daily cap reached"
+            body={`Paid X reads are paused until ${xCredits?.inbound_daily_reset_at ? new Date(xCredits.inbound_daily_reset_at).toLocaleString() : "the next UTC reset"}. Adjust the cap in Billing if you want to resume sooner.`}
+            tone="warn"
+            actionHref="/settings/billing"
+            actionLabel="Manage X inbound cap"
+          />
+        ) : null}
+        {xAllowancePaused ? (
+          <SyncStateCard
+            icon={<Archive style={{ width: 16, height: 16 }} />}
+            title="Monthly X Credits exhausted"
+            body="Managed X Inbox reads are paused until the billing period resets. Workspace X app connections remain BYO-billed."
+            tone="error"
+            actionHref="/settings/billing"
+            actionLabel="Review X Credits"
+          />
+        ) : null}
+        {xSyncState.kind === "estimate" ? (
+          <SyncStateCard
+            icon={<PlatformIcon platform="twitter" size={16} />}
+            title="Confirm X Inbox sync"
+            body={`This 7-day backfill can use up to ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits across ${xSyncState.result.accounts_checked} account(s). The final charge is based on the server-returned result.`}
+            tone="warn"
+            onAction={() => handleXSync(xSyncState.result.confirmation_token)}
+            actionLabel={xSyncing ? "Syncing..." : "Confirm and sync"}
+            actionDisabled={xSyncing}
+          />
+        ) : xSyncState.kind === "pending" ? (
+          <SyncStateCard
+            icon={<RefreshCw style={{ width: 16, height: 16 }} />}
+            title="X Inbox sync is already running"
+            body={`Operation ${xSyncState.result.confirmation_operation_id || ""} is in progress. Its execution lease runs until ${xSyncState.result.execution_lease_expires_at ? new Date(xSyncState.result.execution_lease_expires_at).toLocaleString() : "the server completes it"}.`}
+            onAction={() => handleXSync(xSyncState.confirmationToken)}
+            actionLabel="Refresh status"
+          />
+        ) : xSyncState.kind === "complete" ? (
+          <SyncStateCard
+            icon={<CheckCheck style={{ width: 16, height: 16 }} />}
+            title="X Inbox sync complete"
+            body={`${(xSyncState.result.accepted ?? 0).toLocaleString()} added, ${(xSyncState.result.duplicates ?? 0).toLocaleString()} duplicates, ${(xSyncState.result.suppressed ?? 0).toLocaleString()} suppressed. Estimated ceiling: ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits.`}
+          />
+        ) : xSyncState.kind === "error" ? (
+          <SyncStateCard
+            icon={<AlertTriangle style={{ width: 16, height: 16 }} />}
+            title="X Inbox sync failed"
+            body={xSyncState.message}
+            tone="error"
+            onAction={() => handleXSync()}
+            actionLabel="Try again"
+          />
+        ) : null}
+        {pendingXOutboundOperation ? (
+          <SyncStateCard
+            icon={pendingXOutboundManual
+              ? <AlertTriangle style={{ width: 16, height: 16 }} />
+              : <RefreshCw style={{ width: 16, height: 16 }} />}
+            title={pendingXOutboundManual
+              ? "X reply requires manual review"
+              : "X reply reconciliation in progress"}
+            body={pendingXOutboundManual
+              ? "UniPost cannot safely determine whether X accepted this reply. Check the X conversation and logs before sending anything again."
+              : `${workspaceXOutboundOperations.length} X repl${workspaceXOutboundOperations.length === 1 ? "y is" : "ies are"} unresolved. Retrying an unchanged message reuses its saved idempotency key; editing the message creates a new operation.`}
+            tone={pendingXOutboundManual ? "error" : "warn"}
+            onAction={!pendingXOutboundManual && pendingXOutboundOperation.operationId
+              ? () => reconcileXOutboundOperation(pendingXOutboundOperation)
+              : undefined}
+            actionHref={pendingXOutboundManual && profileId
+              ? `/projects/${profileId}/logs`
+              : undefined}
+            actionLabel={pendingXOutboundManual ? "Review logs" : "Check status"}
+          />
+        ) : null}
+        {replyFeedback ? (
+          <div role="status" aria-live="polite">
+            <SyncStateCard
+              icon={<Send style={{ width: 16, height: 16 }} />}
+              title="Reply status"
+              body={replyFeedback}
+            />
+          </div>
+        ) : null}
         {reconnectAccounts.length > 0 ? (
           <SyncStateCard
             icon={<ShieldAlert style={{ width: 16, height: 16 }} />}
@@ -1397,8 +1826,8 @@ function InboxPageInner() {
         ) : null}
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
-        <div style={{ display: "flex", gap: 4, padding: 4, borderRadius: 10, border: "1px solid var(--dborder)", background: "var(--sidebar)" }}>
+      <div className="inbox-toolbar" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12 }}>
+        <div role="tablist" aria-label="Inbox sources" style={{ display: "flex", gap: 4, padding: 4, borderRadius: 10, border: "1px solid var(--dborder)", background: "var(--sidebar)" }}>
           {([
             { key: "comments", label: "Comments", count: counts.comments },
             { key: "dms", label: "DMs", count: counts.dms },
@@ -1408,7 +1837,12 @@ function InboxPageInner() {
             return (
               <button
                 key={item.key}
-                onClick={() => setTab(item.key)}
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  setTab(item.key);
+                  setMobileDetailOpen(false);
+                }}
                 className="dt-body-sm"
                 style={{
                   display: "flex",
@@ -1464,6 +1898,7 @@ function InboxPageInner() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label="Search Inbox conversations"
             placeholder={tab === "dms" ? "Search contacts or messages..." : "Search posts, authors, or comments..."}
             className="dt-body-sm"
             style={{
@@ -1479,10 +1914,22 @@ function InboxPageInner() {
         </div>
       </div>
 
-      <div ref={containerRef} style={{ display: "flex", flex: 1, minHeight: 0, border: "1px solid var(--dborder)", borderRadius: 14, overflow: "hidden" }}>
-        <div style={{ width: leftPaneWidth, minWidth: 240, maxWidth: 600, minHeight: 0, flexShrink: 0, background: "var(--sidebar)", overflowY: "auto" }}>
+      <div
+        ref={containerRef}
+        className="inbox-master-detail"
+        data-detail-open={mobileDetailOpen ? "true" : "false"}
+        style={{ display: "flex", flex: 1, minHeight: 0, border: "1px solid var(--dborder)", borderRadius: 14, overflow: "hidden" }}
+      >
+        <div className="inbox-list-pane" style={{ width: leftPaneWidth, minWidth: 240, maxWidth: 600, minHeight: 0, flexShrink: 0, background: "var(--sidebar)", overflowY: "auto" }}>
           {loading ? (
-            <div style={{ padding: 24, color: "var(--dmuted)" }}>Loading inbox...</div>
+            <div aria-label="Loading Inbox" style={{ padding: 16, display: "grid", gap: 12 }}>
+              {[0, 1, 2, 3].map((index) => (
+                <div key={index} className="inbox-skeleton-row" aria-hidden="true">
+                  <span />
+                  <div><span /><span /></div>
+                </div>
+              ))}
+            </div>
           ) : activeGroups.length === 0 ? (
             <div style={{ padding: 24 }}>
               <SyncStateCard
@@ -1564,7 +2011,22 @@ function InboxPageInner() {
 
         {/* Drag handle */}
         <div
+          className="inbox-resize-handle"
+          role="separator"
+          aria-label="Resize conversation list"
+          aria-orientation="vertical"
+          aria-valuemin={240}
+          aria-valuemax={600}
+          aria-valuenow={leftPaneWidth}
+          tabIndex={0}
           onMouseDown={handleDragStart}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            setLeftPaneWidth((width) =>
+              Math.min(600, Math.max(240, width + (event.key === "ArrowRight" ? 24 : -24))),
+            );
+          }}
           style={{
             width: 4,
             cursor: "col-resize",
@@ -1576,7 +2038,7 @@ function InboxPageInner() {
           onMouseLeave={(e) => { e.currentTarget.style.background = "var(--dborder)"; }}
         />
 
-        <section style={{
+        <section className="inbox-detail-pane" aria-label="Conversation detail" style={{
           display: "flex",
           flexDirection: "column",
           minWidth: 0,
@@ -1609,6 +2071,14 @@ function InboxPageInner() {
               }}>
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+                    <button
+                      type="button"
+                      className="inbox-mobile-back"
+                      aria-label="Back to conversation list"
+                      onClick={() => setMobileDetailOpen(false)}
+                    >
+                      <ArrowLeft style={{ width: 15, height: 15 }} />
+                    </button>
                     {sourceIcon(selectedGroup.source)}
                     <h2 className="dt-body" style={{ margin: 0, fontWeight: 700, color: "var(--dtext)" }}>
                       {isDMSource(selectedGroup.source) ? selectedGroup.title : `${selectedGroup.items.length} ${sourceLabel(selectedGroup.source).toLowerCase()}${selectedGroup.items.length === 1 ? "" : "s"}`}
@@ -1658,7 +2128,31 @@ function InboxPageInner() {
                 </div>
               </div>
 
-              {!isDMSource(selectedGroup.source) ? (
+              {selectedGroup.source === "x_reply" ? (
+                <div className="x-inbox-context">
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <PlatformIcon platform="twitter" size={18} />
+                    <span className="dt-body-sm" style={{ fontWeight: 650, color: "var(--dtext)" }}>
+                      X conversation
+                    </span>
+                  </div>
+                  <p className="dt-body-sm" style={{ margin: 0, color: "var(--dmuted)", lineHeight: 1.6 }}>
+                    Replies are grouped by X conversation ID {selectedGroup.threadKey}. Open any available permalink to review the public context on X.
+                  </p>
+                  {selectedGroup.items.find((item) => item.url)?.url ? (
+                    <a
+                      href={selectedGroup.items.find((item) => item.url)?.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="dt-body-sm"
+                      style={{ color: "var(--daccent)", display: "inline-flex", alignItems: "center", gap: 6 }}
+                    >
+                      View conversation on X
+                      <ChevronRight style={{ width: 13, height: 13 }} />
+                    </a>
+                  ) : null}
+                </div>
+              ) : !isDMSource(selectedGroup.source) ? (
                 <div style={{ margin: "20px 20px 0", padding: 16, borderRadius: 12, border: "1px solid var(--dborder)", background: "var(--surface2)", position: "relative", overflow: "hidden", boxShadow: "0 10px 24px rgb(15 23 42 / 0.04)" }}>
                   <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "linear-gradient(90deg, transparent, rgba(16,185,129,.45), transparent)" }} />
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 8 }}>
@@ -1817,6 +2311,7 @@ function InboxPageInner() {
                       <input
                         value={replyDrafts["__dm_bottom__"] || ""}
                         onChange={(e) => setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: e.target.value }))}
+                        aria-label={selectedGroup.source === "x_dm" ? "Write an X direct message" : "Write a direct message"}
                         placeholder={windowClosed ? "24h reply window is closed" : "Message..."}
                         disabled={windowClosed}
                         onKeyDown={(e) => {
@@ -1824,7 +2319,6 @@ function InboxPageInner() {
                             e.preventDefault();
                             if (sendAllowed && lastInbound) {
                               handleReply(selectedGroup, lastInbound);
-                              setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
                             }
                           }
                         }}
@@ -1843,10 +2337,10 @@ function InboxPageInner() {
                         }}
                       />
                       <button
+                        aria-label={windowClosed ? "Cannot send: reply window closed" : "Send direct message"}
                         onClick={() => {
                           if (sendAllowed && lastInbound) {
                             handleReply(selectedGroup, lastInbound);
-                            setReplyDrafts((prev) => ({ ...prev, ["__dm_bottom__"]: "" }));
                           }
                         }}
                         disabled={replyingGroupId === selectedGroup.id || !sendAllowed}
@@ -1856,9 +2350,9 @@ function InboxPageInner() {
                           height: 36,
                           borderRadius: 999,
                           border: "none",
-                          background: sendAllowed ? "linear-gradient(135deg, #4f46e5, #7c3aed)" : "var(--surface3)",
-                          color: sendAllowed ? "#fff" : "var(--dmuted2)",
-                          boxShadow: sendAllowed ? "0 10px 24px rgb(79 70 229 / 0.18)" : "none",
+                          background: sendAllowed ? "var(--dtext)" : "var(--surface3)",
+                          color: sendAllowed ? "var(--surface)" : "var(--dmuted2)",
+                          boxShadow: sendAllowed ? "0 10px 24px rgb(15 23 42 / 0.12)" : "none",
                           cursor: sendAllowed ? "pointer" : "not-allowed",
                           display: "flex",
                           alignItems: "center",

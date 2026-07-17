@@ -5,10 +5,13 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 // PlatformHandler exposes the static publish-side capability map and the
@@ -17,18 +20,23 @@ import (
 // fast and cache them aggressively at the edge.
 type PlatformHandler struct {
 	queries *db.Queries
+	quota   *quota.Checker
 }
 
-func NewPlatformHandler(queries *db.Queries) *PlatformHandler {
-	return &PlatformHandler{queries: queries}
+func NewPlatformHandler(queries *db.Queries, quotaCheckers ...*quota.Checker) *PlatformHandler {
+	checker := quota.NewChecker(queries)
+	if len(quotaCheckers) > 0 && quotaCheckers[0] != nil {
+		checker = quotaCheckers[0]
+	}
+	return &PlatformHandler{queries: queries, quota: checker}
 }
 
 // capabilitiesEnvelope is what the global endpoint returns. We wrap the
 // map under a "platforms" key + a schema_version sibling so clients can
 // detect drift without parsing every entry.
 type capabilitiesEnvelope struct {
-	SchemaVersion string                          `json:"schema_version"`
-	Platforms     map[string]platform.Capability  `json:"platforms"`
+	SchemaVersion string                         `json:"schema_version"`
+	Platforms     map[string]platform.Capability `json:"platforms"`
 }
 
 // GetGlobalCapabilities handles GET /v1/platforms/capabilities.
@@ -49,10 +57,11 @@ func (h *PlatformHandler) GetGlobalCapabilities(w http.ResponseWriter, r *http.R
 // is included alongside so the client can correlate without re-fetching
 // the global map.
 type accountCapabilityResponse struct {
-	SchemaVersion string              `json:"schema_version"`
-	AccountID     string              `json:"account_id"`
-	Platform      string              `json:"platform"`
-	Capability    platform.Capability `json:"capability"`
+	SchemaVersion string               `json:"schema_version"`
+	AccountID     string               `json:"account_id"`
+	Platform      string               `json:"platform"`
+	Capability    platform.Capability  `json:"capability"`
+	XInbox        *xinbox.Capabilities `json:"x_inbox,omitempty"`
 }
 
 // GetAccountCapabilities handles GET /v1/social-accounts/{id}/capabilities.
@@ -92,10 +101,49 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 		return
 	}
 
-	writeSuccess(w, accountCapabilityResponse{
+	response := accountCapabilityResponse{
 		SchemaVersion: platform.CapabilitiesSchemaVersion,
 		AccountID:     acc.ID,
 		Platform:      acc.Platform,
 		Capability:    cap,
-	})
+	}
+	if strings.EqualFold(acc.Platform, "twitter") {
+		appMode, modeErr := xinbox.NormalizePersistedAppMode(acc.XAppMode.String)
+		if modeErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X account app identity is invalid; reconnect required")
+			return
+		}
+		input := xinbox.CapabilityInput{
+			PlanAllowsInbox: h.quota == nil || h.quota.PlanAllowsInbox(r.Context(), workspaceID),
+			AccountStatus:   acc.Status,
+			Scopes:          acc.Scope,
+			AppMode:         appMode,
+		}
+		if delivery, deliveryErr := h.queries.GetXInboxDeliveryResource(r.Context(), acc.ID); deliveryErr == nil {
+			input.DeliveryStatus = delivery.DeliveryStatus
+		} else if deliveryErr != pgx.ErrNoRows {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load X Inbox delivery state")
+			return
+		}
+		if input.AppMode == xinbox.AppModeWorkspace {
+			cred, credErr := h.queries.GetPlatformCredential(r.Context(), db.GetPlatformCredentialParams{
+				WorkspaceID: workspaceID,
+				Platform:    "twitter",
+			})
+			if credErr == nil {
+				input.AppCredentials = xinbox.AppCredentials{
+					ClientIDConfigured:       strings.TrimSpace(cred.ClientID) != "",
+					ClientSecretConfigured:   strings.TrimSpace(cred.ClientSecret) != "",
+					AppBearerTokenConfigured: cred.AppBearerToken.Valid && strings.TrimSpace(cred.AppBearerToken.String) != "",
+					ConsumerSecretConfigured: cred.ConsumerSecret.Valid && strings.TrimSpace(cred.ConsumerSecret.String) != "",
+				}
+			} else if credErr != pgx.ErrNoRows {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load X app credentials")
+				return
+			}
+		}
+		xInbox := xinbox.EvaluateCapabilities(input)
+		response.XInbox = &xInbox
+	}
+	writeSuccess(w, response)
 }

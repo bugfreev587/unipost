@@ -11,6 +11,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 type fakeXUsageService struct {
@@ -76,6 +77,7 @@ func TestReserveManagedXUsageBypassesBYO(t *testing.T) {
 		ID:             "sa_1",
 		Platform:       "twitter",
 		ConnectionType: "byo",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
 	}
 
 	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:1:main", account, "hello")
@@ -90,6 +92,49 @@ func TestReserveManagedXUsageBypassesBYO(t *testing.T) {
 	}
 }
 
+func TestReserveManagedXUsageLegacyUnknownPreservesPublishingWithoutCredits(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
+	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_legacy:main", db.SocialAccount{
+		ID:             "sa_legacy",
+		Platform:       "twitter",
+		ConnectionType: "byo",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeLegacyUnknown), Valid: true},
+	}, "legacy publish")
+	if err != nil {
+		t.Fatalf("reserveManagedXUsage: %v", err)
+	}
+	if event.ID != "" || len(fake.requests) != 0 {
+		t.Fatalf("event=%+v reserve requests=%d, want publishing bypass without credits", event, len(fake.requests))
+	}
+}
+
+func TestReserveManagedXUsageNullAppModeUsesLegacyBypass(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
+	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:null", db.SocialAccount{
+		Platform: "twitter",
+	}, "hello")
+	if err != nil {
+		t.Fatalf("reserveManagedXUsage: %v", err)
+	}
+	if event.ID != "" || len(fake.requests) != 0 {
+		t.Fatalf("event=%+v reserve requests=%d, want legacy bypass", event, len(fake.requests))
+	}
+}
+
+func TestReserveManagedXUsageRejectsInvalidPersistedAppMode(t *testing.T) {
+	fake := &fakeXUsageService{}
+	h := NewSocialPostHandler(nil, nil, nil, nil, nil, nil, nil).SetXUsageService(fake)
+	_, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:invalid", db.SocialAccount{
+		Platform: "twitter",
+		XAppMode: pgtype.Text{String: "garbage", Valid: true},
+	}, "hello")
+	if err == nil {
+		t.Fatal("invalid persisted app mode error = nil, want validation error")
+	}
+}
+
 func TestReserveManagedXUsageUsesCatalogWeight(t *testing.T) {
 	fake := &fakeXUsageService{}
 	h := &SocialPostHandler{xUsage: fake}
@@ -97,6 +142,7 @@ func TestReserveManagedXUsageUsesCatalogWeight(t *testing.T) {
 		ID:             "sa_1",
 		Platform:       "twitter",
 		ConnectionType: "managed",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
 	}
 
 	event, err := h.reserveManagedXUsage(context.Background(), "ws_1", "job_1:1:main", account, "https://unipost.dev")
@@ -122,6 +168,7 @@ func TestReserveManagedXOperationUsesFirstCommentWeight(t *testing.T) {
 		ID:             "sa_1",
 		Platform:       "twitter",
 		ConnectionType: "managed",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
 	}
 
 	_, err := h.reserveManagedXOperation(
@@ -156,7 +203,12 @@ func TestReserveManagedXOperationStopsDuplicateUnknownOutcome(t *testing.T) {
 		Duplicate:      true,
 	}}
 	h := &SocialPostHandler{xUsage: fake}
-	account := db.SocialAccount{ID: "sa_1", Platform: "twitter", ConnectionType: "managed"}
+	account := db.SocialAccount{
+		ID:             "sa_1",
+		Platform:       "twitter",
+		ConnectionType: "managed",
+		XAppMode:       pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+	}
 
 	_, err := h.reserveManagedXOperation(context.Background(), "ws_1", "result_1:main", account, "post.create")
 	if !errors.Is(err, ErrXWriteOutcomePending) {

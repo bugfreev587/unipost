@@ -259,7 +259,10 @@ SELECT
   spr.id                  AS social_post_result_id,
   spr.social_account_id,
   spr.external_id,
+  sa.profile_id,
   sa.platform,
+  sa.connection_type,
+  sa.x_app_mode,
   sa.access_token,
   sa.refresh_token,
   sa.token_expires_at
@@ -289,7 +292,10 @@ type GetDuePostAnalyticsRefreshRow struct {
 	SocialPostResultID string             `json:"social_post_result_id"`
 	SocialAccountID    string             `json:"social_account_id"`
 	ExternalID         pgtype.Text        `json:"external_id"`
+	ProfileID          string             `json:"profile_id"`
 	Platform           string             `json:"platform"`
+	ConnectionType     string             `json:"connection_type"`
+	XAppMode           pgtype.Text        `json:"x_app_mode"`
 	AccessToken        string             `json:"access_token"`
 	RefreshToken       pgtype.Text        `json:"refresh_token"`
 	TokenExpiresAt     pgtype.Timestamptz `json:"token_expires_at"`
@@ -308,7 +314,10 @@ func (q *Queries) GetDuePostAnalyticsRefresh(ctx context.Context) ([]GetDuePostA
 			&i.SocialPostResultID,
 			&i.SocialAccountID,
 			&i.ExternalID,
+			&i.ProfileID,
 			&i.Platform,
+			&i.ConnectionType,
+			&i.XAppMode,
 			&i.AccessToken,
 			&i.RefreshToken,
 			&i.TokenExpiresAt,

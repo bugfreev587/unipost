@@ -2,7 +2,9 @@ package xcredits
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -98,12 +100,12 @@ func (s *PostgresStore) Reserve(ctx context.Context, req StoreReserveRequest) (U
 			workspace_id, social_account_id, period_start, period_end,
 			operation_key, catalog_version, source, idempotency_key,
 			weighted_units, status, connection_mode
-		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, 'provisional', 'managed')
+		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8, $9, 'provisional', $10)
 		ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
 		RETURNING id
 	`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
 		req.OperationKey, req.CatalogVersion, req.Source, req.IdempotencyKey,
-		req.WeightedUnits,
+		req.WeightedUnits, req.AppMode,
 	).Scan(&event.ID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		var existing UsageEvent
@@ -261,6 +263,478 @@ func (s *PostgresStore) Reverse(ctx context.Context, eventID string) error {
 	return tx.Commit(ctx)
 }
 
+func (s *PostgresStore) ReverseByIdempotencyKey(
+	ctx context.Context,
+	workspaceID string,
+	idempotencyKey string,
+) error {
+	var eventID string
+	err := s.pool.QueryRow(ctx, `
+		SELECT id
+		FROM x_usage_events
+		WHERE workspace_id = $1 AND idempotency_key = $2
+	`, workspaceID, idempotencyKey).Scan(&eventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return s.Reverse(ctx, eventID)
+}
+
+func (s *PostgresStore) AdmitInbound(ctx context.Context, req StoreInboundRequest) (InboundAdmission, error) {
+	return s.admitInbound(ctx, req, nil)
+}
+
+func (s *PostgresStore) AdmitInboundWithMutation(
+	ctx context.Context,
+	req StoreInboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
+	return s.admitInbound(ctx, req, mutation)
+}
+
+func (s *PostgresStore) RunInboundMutation(ctx context.Context, mutation InboundMutation) error {
+	if mutation == nil {
+		return nil
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	if err := mutation(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresStore) admitInbound(
+	ctx context.Context,
+	req StoreInboundRequest,
+	mutation InboundMutation,
+) (InboundAdmission, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return InboundAdmission{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	lockKey := fmt.Sprintf("x-inbound-cap:%s:%s", req.WorkspaceID, req.UTCDate.Format("2006-01-02"))
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return InboundAdmission{}, err
+	}
+
+	var inserted bool
+	err = tx.QueryRow(ctx, `
+		INSERT INTO x_inbound_event_receipts (
+			workspace_id,
+			social_account_id,
+			upstream_resource_type,
+			upstream_resource_id,
+			utc_date,
+			decision,
+			weighted_units,
+			period_start,
+			period_end,
+			reset_at
+		) VALUES ($1, $2, $3, $4, $5, 'accepted', $6, $7, $8, $9)
+		ON CONFLICT (workspace_id, social_account_id, upstream_resource_type, upstream_resource_id) DO NOTHING
+		RETURNING TRUE
+	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
+		req.UTCDate, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
+		req.UTCDate.AddDate(0, 0, 1)).Scan(&inserted)
+	if errors.Is(err, pgx.ErrNoRows) {
+		admission, loadErr := loadDuplicateInboundAdmission(ctx, tx, req)
+		if loadErr != nil {
+			return InboundAdmission{}, loadErr
+		}
+		if admission.Decision == InboundDecisionAccepted && mutation != nil {
+			if err := mutation(ctx, tx); err != nil {
+				return InboundAdmission{}, err
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return InboundAdmission{}, err
+		}
+		return admission, nil
+	}
+	if err != nil {
+		return InboundAdmission{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO x_usage_periods (
+			workspace_id, period_start, period_end, weighted_units_used, weighted_units_limit
+		) VALUES ($1, $2, $3, 0, $4)
+		ON CONFLICT (workspace_id, period_start, period_end)
+		DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
+	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.MonthlyAllowance); err != nil {
+		return InboundAdmission{}, err
+	}
+
+	dailyLimit := req.InboundDailyLimit
+	err = tx.QueryRow(ctx, `
+		SELECT inbound_daily_limit
+		FROM x_inbound_cap_settings
+		WHERE workspace_id = $1
+		FOR UPDATE
+	`, req.WorkspaceID).Scan(&dailyLimit)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return InboundAdmission{}, err
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO x_inbound_daily_usage (
+			workspace_id, utc_date, weighted_units_used, weighted_units_limit,
+			events_accepted, events_suppressed
+		) VALUES ($1, $2, 0, $3, 0, 0)
+		ON CONFLICT (workspace_id, utc_date)
+		DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
+	`, req.WorkspaceID, req.UTCDate, dailyLimit); err != nil {
+		return InboundAdmission{}, err
+	}
+
+	var dailyUsed, accepted, suppressed int64
+	if err := tx.QueryRow(ctx, `
+		SELECT weighted_units_used, events_accepted, events_suppressed
+		FROM x_inbound_daily_usage
+		WHERE workspace_id = $1 AND utc_date = $2
+		FOR UPDATE
+	`, req.WorkspaceID, req.UTCDate).Scan(&dailyUsed, &accepted, &suppressed); err != nil {
+		return InboundAdmission{}, err
+	}
+
+	var monthlyUsed int64
+	if err := tx.QueryRow(ctx, `
+		SELECT weighted_units_used
+		FROM x_usage_periods
+		WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+		FOR UPDATE
+	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(&monthlyUsed); err != nil {
+		return InboundAdmission{}, err
+	}
+
+	admission := InboundAdmission{
+		Decision:          InboundDecisionAccepted,
+		WeightedUnits:     req.WeightedUnits,
+		InboundDailyLimit: dailyLimit,
+		ResetAt:           req.UTCDate.AddDate(0, 0, 1),
+	}
+	var claim80Percent, claim100Percent bool
+
+	if dailyUsed+req.WeightedUnits > dailyLimit {
+		admission.Decision = InboundDecisionSuppressedDailyCap
+		suppressed++
+		if _, err := tx.Exec(ctx, `
+			UPDATE x_inbound_daily_usage
+			SET events_suppressed = events_suppressed + 1, updated_at = NOW()
+			WHERE workspace_id = $1 AND utc_date = $2
+		`, req.WorkspaceID, req.UTCDate); err != nil {
+			return InboundAdmission{}, err
+		}
+		claim100Percent = true
+	} else {
+		tag, err := tx.Exec(ctx, `
+			UPDATE x_usage_periods
+			SET weighted_units_used = weighted_units_used + $4, updated_at = NOW()
+			WHERE workspace_id = $1
+			  AND period_start = $2
+			  AND period_end = $3
+			  AND weighted_units_used + $4 <= weighted_units_limit
+		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.WeightedUnits)
+		if err != nil {
+			return InboundAdmission{}, err
+		}
+		if tag.RowsAffected() != 1 {
+			admission.Decision = InboundDecisionSuppressedMonthlyAllowance
+			suppressed++
+			if _, err := tx.Exec(ctx, `
+				UPDATE x_inbound_daily_usage
+				SET events_suppressed = events_suppressed + 1, updated_at = NOW()
+				WHERE workspace_id = $1 AND utc_date = $2
+			`, req.WorkspaceID, req.UTCDate); err != nil {
+				return InboundAdmission{}, err
+			}
+		} else {
+			dailyUsed += req.WeightedUnits
+			monthlyUsed += req.WeightedUnits
+			accepted++
+			if _, err := tx.Exec(ctx, `
+				UPDATE x_inbound_daily_usage
+				SET weighted_units_used = weighted_units_used + $3,
+				    events_accepted = events_accepted + 1,
+				    updated_at = NOW()
+				WHERE workspace_id = $1 AND utc_date = $2
+			`, req.WorkspaceID, req.UTCDate, req.WeightedUnits); err != nil {
+				return InboundAdmission{}, err
+			}
+			inboundID := fmt.Sprintf(
+				"inbound:%s:%s:%s",
+				req.SocialAccountID,
+				req.UpstreamResourceType,
+				req.UpstreamResourceID,
+			)
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO x_usage_events (
+					workspace_id, social_account_id, period_start, period_end,
+					operation_key, catalog_version, source, idempotency_key,
+					weighted_units, status, connection_mode
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'finalized', $10)
+				ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
+			`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
+				req.OperationKey, req.CatalogVersion, req.Source, inboundID,
+				req.WeightedUnits, req.AppMode); err != nil {
+				return InboundAdmission{}, err
+			}
+			if dailyLimit > 0 && dailyUsed*100 >= dailyLimit*80 {
+				claim80Percent = true
+			}
+			if dailyLimit > 0 && dailyUsed >= dailyLimit {
+				claim100Percent = true
+			}
+		}
+	}
+
+	admission.InboundDailyUsed = dailyUsed
+	admission.EventsAccepted = accepted
+	admission.EventsSuppressed = suppressed
+	admission.MonthlyUsed = monthlyUsed
+	admission.MonthlyRemaining = req.MonthlyAllowance - monthlyUsed
+	if admission.MonthlyRemaining < 0 {
+		admission.MonthlyRemaining = 0
+	}
+	switch {
+	case admission.Decision == InboundDecisionSuppressedMonthlyAllowance || admission.MonthlyRemaining == 0:
+		admission.PausePaidSources = true
+		admission.PauseReason = PauseReasonMonthlyAllowance
+	case admission.Decision == InboundDecisionSuppressedDailyCap:
+		admission.PausePaidSources = true
+		admission.PauseReason = PauseReasonDailyCap
+	case remainingWithinSafetyBuffer(dailyUsed, dailyLimit):
+		admission.PausePaidSources = true
+		admission.PauseReason = PauseReasonDailySafetyBuffer
+	}
+	if claim80Percent {
+		claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 80, admission, req.CapManagementURL)
+		if err != nil {
+			return InboundAdmission{}, err
+		}
+		admission.Claimed80Percent = claimed
+	}
+	if claim100Percent {
+		claimed, err := claimInboundThreshold(ctx, tx, req.WorkspaceID, req.UTCDate, 100, admission, req.CapManagementURL)
+		if err != nil {
+			return InboundAdmission{}, err
+		}
+		admission.Claimed100Percent = claimed
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE x_inbound_event_receipts
+		SET decision = $5,
+		    weighted_units = $6,
+		    period_start = $7,
+		    period_end = $8,
+		    monthly_used_after = $9,
+		    monthly_remaining_after = $10,
+		    inbound_daily_used_after = $11,
+		    inbound_daily_limit = $12,
+		    events_accepted_after = $13,
+		    events_suppressed_after = $14,
+		    pause_paid_sources = $15,
+		    pause_reason = $16,
+		    reset_at = $17
+		WHERE workspace_id = $1
+		  AND social_account_id = $2
+		  AND upstream_resource_type = $3
+		  AND upstream_resource_id = $4
+	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
+		admission.Decision, req.WeightedUnits, req.PeriodStart, req.PeriodEnd,
+		admission.MonthlyUsed, admission.MonthlyRemaining, admission.InboundDailyUsed,
+		admission.InboundDailyLimit, admission.EventsAccepted, admission.EventsSuppressed,
+		admission.PausePaidSources, admission.PauseReason, admission.ResetAt); err != nil {
+		return InboundAdmission{}, err
+	}
+	if admission.Decision == InboundDecisionAccepted && mutation != nil {
+		if err := mutation(ctx, tx); err != nil {
+			return InboundAdmission{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return InboundAdmission{}, err
+	}
+	return admission, nil
+}
+
+func loadDuplicateInboundAdmission(ctx context.Context, tx pgx.Tx, req StoreInboundRequest) (InboundAdmission, error) {
+	var receipt inboundReceiptSnapshot
+	if err := tx.QueryRow(ctx, `
+		SELECT
+			decision,
+			weighted_units,
+			period_start,
+			period_end,
+			monthly_used_after,
+			monthly_remaining_after,
+			inbound_daily_used_after,
+			inbound_daily_limit,
+			events_accepted_after,
+			events_suppressed_after,
+			pause_paid_sources,
+			pause_reason,
+			reset_at
+		FROM x_inbound_event_receipts
+		WHERE workspace_id = $1
+		  AND social_account_id = $2
+		  AND upstream_resource_type = $3
+		  AND upstream_resource_id = $4
+		FOR UPDATE
+	`, req.WorkspaceID, req.SocialAccountID, req.UpstreamResourceType, req.UpstreamResourceID,
+	).Scan(
+		&receipt.Decision,
+		&receipt.WeightedUnits,
+		&receipt.PeriodStart,
+		&receipt.PeriodEnd,
+		&receipt.MonthlyUsedAfter,
+		&receipt.MonthlyRemainingAfter,
+		&receipt.InboundDailyUsedAfter,
+		&receipt.InboundDailyLimit,
+		&receipt.EventsAcceptedAfter,
+		&receipt.EventsSuppressedAfter,
+		&receipt.PausePaidSources,
+		&receipt.PauseReason,
+		&receipt.ResetAt,
+	); err != nil {
+		return InboundAdmission{}, err
+	}
+	return admissionFromReceipt(receipt), nil
+}
+
+func claimInboundThreshold(
+	ctx context.Context,
+	tx pgx.Tx,
+	workspaceID string,
+	utcDate time.Time,
+	threshold int16,
+	admission InboundAdmission,
+	capManagementURL string,
+) (bool, error) {
+	eventType := "billing.x_inbound_80pct"
+	if threshold == 100 {
+		eventType = "billing.x_inbound_cap_reached"
+	}
+	payload, err := json.Marshal(InboundNotification{
+		WorkspaceID:       workspaceID,
+		InboundDailyUsed:  admission.InboundDailyUsed,
+		InboundDailyLimit: admission.InboundDailyLimit,
+		ResetAt:           admission.ResetAt,
+		CapManagementURL:  capManagementURL,
+	})
+	if err != nil {
+		return false, err
+	}
+	var claimed int16
+	err = tx.QueryRow(ctx, `
+		INSERT INTO x_inbound_cap_notifications (
+			workspace_id, utc_date, threshold, event_type, payload, status
+		)
+		VALUES ($1, $2, $3, $4, $5, 'pending')
+		ON CONFLICT (workspace_id, utc_date, threshold) DO NOTHING
+		RETURNING threshold
+	`, workspaceID, utcDate, threshold, eventType, payload).Scan(&claimed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return claimed == threshold, nil
+}
+
+func (s *PostgresStore) UpdateInboundCap(ctx context.Context, req StoreUpdateInboundCapRequest) (InboundCapSetting, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return InboundCapSetting{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	utc := req.Now.UTC()
+	utcDate := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC)
+	settingLockKey := fmt.Sprintf("x-inbound-cap-setting:%s", req.WorkspaceID)
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, settingLockKey); err != nil {
+		return InboundCapSetting{}, err
+	}
+	lockKey := fmt.Sprintf("x-inbound-cap:%s:%s", req.WorkspaceID, utcDate.Format("2006-01-02"))
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey); err != nil {
+		return InboundCapSetting{}, err
+	}
+
+	currentLimit := req.DefaultInboundDailyLimit
+	err = tx.QueryRow(ctx, `
+		SELECT inbound_daily_limit
+		FROM x_inbound_cap_settings
+		WHERE workspace_id = $1
+		FOR UPDATE
+	`, req.WorkspaceID).Scan(&currentLimit)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return InboundCapSetting{}, err
+	}
+	if err := validateInboundCapIncrease(currentLimit, req.InboundDailyLimit, req.AcknowledgedExposure); err != nil {
+		return InboundCapSetting{}, err
+	}
+
+	var monthlyUsed int64
+	err = tx.QueryRow(ctx, `
+		SELECT weighted_units_used
+		FROM x_usage_periods
+		WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+		FOR UPDATE
+	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(&monthlyUsed)
+	if errors.Is(err, pgx.ErrNoRows) {
+		monthlyUsed = 0
+	} else if err != nil {
+		return InboundCapSetting{}, err
+	}
+	if req.InboundDailyLimit > req.MonthlyAllowance-monthlyUsed {
+		return InboundCapSetting{}, ErrInboundCapExceedsMonthlyRemaining
+	}
+
+	setting := InboundCapSetting{}
+	err = tx.QueryRow(ctx, `
+		INSERT INTO x_inbound_cap_settings (
+			workspace_id, inbound_daily_limit, updated_by, acknowledged_exposure, updated_at
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (workspace_id) DO UPDATE SET
+			inbound_daily_limit = EXCLUDED.inbound_daily_limit,
+			updated_by = EXCLUDED.updated_by,
+			acknowledged_exposure = EXCLUDED.acknowledged_exposure,
+			updated_at = EXCLUDED.updated_at
+		RETURNING inbound_daily_limit, updated_by, acknowledged_exposure, updated_at
+	`, req.WorkspaceID, req.InboundDailyLimit, req.UpdatedBy, req.AcknowledgedExposure, req.Now).Scan(
+		&setting.InboundDailyLimit,
+		&setting.UpdatedBy,
+		&setting.AcknowledgedExposure,
+		&setting.UpdatedAt,
+	)
+	if err != nil {
+		return InboundCapSetting{}, err
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE x_inbound_daily_usage
+		SET weighted_units_limit = $3, updated_at = NOW()
+		WHERE workspace_id = $1 AND utc_date = $2
+	`, req.WorkspaceID, utcDate, req.InboundDailyLimit); err != nil {
+		return InboundCapSetting{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return InboundCapSetting{}, err
+	}
+	return setting, nil
+}
+
 func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now time.Time) (Snapshot, error) {
 	period, err := s.ResolveWorkspacePeriod(ctx, workspaceID, now)
 	if err != nil {
@@ -289,12 +763,22 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 		return Snapshot{}, err
 	}
 
-	var inboundUsed int64
+	var inboundUsed, inboundAccepted, inboundSuppressed int64
+	var storedInboundLimit int64
 	err = s.pool.QueryRow(ctx, `
-		SELECT COALESCE(weighted_units_used, 0)
+		SELECT
+			COALESCE(weighted_units_used, 0),
+			weighted_units_limit,
+			events_accepted,
+			events_suppressed
 		FROM x_inbound_daily_usage
 		WHERE workspace_id = $1 AND utc_date = $2
-	`, workspaceID, now.UTC().Format("2006-01-02")).Scan(&inboundUsed)
+	`, workspaceID, now.UTC().Format("2006-01-02")).Scan(
+		&inboundUsed,
+		&storedInboundLimit,
+		&inboundAccepted,
+		&inboundSuppressed,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		inboundUsed = 0
 	} else if err != nil {
@@ -313,15 +797,60 @@ func (s *PostgresStore) Snapshot(ctx context.Context, workspaceID string, now ti
 	if inboundLimitConfigured {
 		dailyLimit = int64Pointer(inboundLimit)
 	}
+	var customInboundLimit int64
+	err = s.pool.QueryRow(ctx, `
+		SELECT inbound_daily_limit
+		FROM x_inbound_cap_settings
+		WHERE workspace_id = $1
+	`, workspaceID).Scan(&customInboundLimit)
+	if err == nil {
+		dailyLimit = int64Pointer(customInboundLimit)
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return Snapshot{}, err
+	} else if storedInboundLimit > 0 {
+		dailyLimit = int64Pointer(storedInboundLimit)
+	}
+
+	utc := now.UTC()
+	resetAt := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	inboundPercent := 0.0
+	pausePaidSources := false
+	pauseReason := ""
+	if dailyLimit != nil {
+		if *dailyLimit > 0 {
+			inboundPercent = float64(inboundUsed) / float64(*dailyLimit) * 100
+			if inboundPercent > 100 {
+				inboundPercent = 100
+			}
+		}
+		if remainingWithinSafetyBuffer(inboundUsed, *dailyLimit) {
+			pausePaidSources = true
+			if inboundUsed >= *dailyLimit {
+				pauseReason = PauseReasonDailyCap
+			} else {
+				pauseReason = PauseReasonDailySafetyBuffer
+			}
+		}
+	}
+	if monthlyRemaining != nil && *monthlyRemaining == 0 {
+		pausePaidSources = true
+		pauseReason = PauseReasonMonthlyAllowance
+	}
 	return Snapshot{
-		PlanID:            period.PlanID,
-		PeriodStart:       period.Start,
-		PeriodEnd:         period.End,
-		MonthlyAllowance:  monthlyAllowance,
-		MonthlyUsed:       used,
-		MonthlyRemaining:  monthlyRemaining,
-		InboundDailyUsed:  inboundUsed,
-		InboundDailyLimit: dailyLimit,
-		CatalogVersion:    CatalogVersion,
+		PlanID:             period.PlanID,
+		PeriodStart:        period.Start,
+		PeriodEnd:          period.End,
+		MonthlyAllowance:   monthlyAllowance,
+		MonthlyUsed:        used,
+		MonthlyRemaining:   monthlyRemaining,
+		InboundDailyUsed:   inboundUsed,
+		InboundDailyLimit:  dailyLimit,
+		InboundAccepted:    inboundAccepted,
+		InboundSuppressed:  inboundSuppressed,
+		InboundResetAt:     resetAt,
+		InboundPercent:     inboundPercent,
+		PausePaidSources:   pausePaidSources,
+		InboundPauseReason: pauseReason,
+		CatalogVersion:     CatalogVersion,
 	}, nil
 }

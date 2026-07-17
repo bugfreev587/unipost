@@ -159,6 +159,7 @@ type ConnectSession struct {
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	CompletedAt              pgtype.Timestamptz `json:"completed_at"`
 	AllowQuickstartCreds     bool               `json:"allow_quickstart_creds"`
+	XAppMode                 pgtype.Text        `json:"x_app_mode"`
 }
 
 type EmailPreference struct {
@@ -517,12 +518,14 @@ type NotificationSubscription struct {
 }
 
 type OauthState struct {
-	State       string             `json:"state"`
-	ProfileID   string             `json:"profile_id"`
-	Platform    string             `json:"platform"`
-	RedirectUrl pgtype.Text        `json:"redirect_url"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	State        string             `json:"state"`
+	ProfileID    string             `json:"profile_id"`
+	Platform     string             `json:"platform"`
+	RedirectUrl  pgtype.Text        `json:"redirect_url"`
+	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+	PkceVerifier pgtype.Text        `json:"pkce_verifier"`
+	XAppMode     pgtype.Text        `json:"x_app_mode"`
 }
 
 type PaidPlanQuotaNotification struct {
@@ -603,12 +606,15 @@ type Plan struct {
 }
 
 type PlatformCredential struct {
-	ID           string             `json:"id"`
-	Platform     string             `json:"platform"`
-	ClientID     string             `json:"client_id"`
-	ClientSecret string             `json:"client_secret"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	WorkspaceID  string             `json:"workspace_id"`
+	ID              string             `json:"id"`
+	Platform        string             `json:"platform"`
+	ClientID        string             `json:"client_id"`
+	ClientSecret    string             `json:"client_secret"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	WorkspaceID     string             `json:"workspace_id"`
+	AppBearerToken  pgtype.Text        `json:"app_bearer_token"`
+	ConsumerSecret  pgtype.Text        `json:"consumer_secret"`
+	WebhookRouteKey pgtype.Text        `json:"webhook_route_key"`
 }
 
 type PostAnalytic struct {
@@ -793,6 +799,7 @@ type SocialAccount struct {
 	ExternalUserID    pgtype.Text        `json:"external_user_id"`
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
+	XAppMode          pgtype.Text        `json:"x_app_mode"`
 }
 
 type SocialPost struct {
@@ -1015,6 +1022,30 @@ type WorkspaceMember struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type XInboundCapNotification struct {
+	ID             string             `json:"id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	UtcDate        pgtype.Date        `json:"utc_date"`
+	Threshold      int16              `json:"threshold"`
+	EventType      string             `json:"event_type"`
+	Payload        []byte             `json:"payload"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	EnqueuedAt     pgtype.Timestamptz `json:"enqueued_at"`
+	ClaimedAt      pgtype.Timestamptz `json:"claimed_at"`
+}
+
+type XInboundCapSetting struct {
+	WorkspaceID          string             `json:"workspace_id"`
+	InboundDailyLimit    int64              `json:"inbound_daily_limit"`
+	UpdatedBy            string             `json:"updated_by"`
+	AcknowledgedExposure bool               `json:"acknowledged_exposure"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type XInboundDailyUsage struct {
 	WorkspaceID        string             `json:"workspace_id"`
 	UtcDate            pgtype.Date        `json:"utc_date"`
@@ -1024,6 +1055,128 @@ type XInboundDailyUsage struct {
 	EventsSuppressed   int64              `json:"events_suppressed"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboundEventReceipt struct {
+	WorkspaceID           string             `json:"workspace_id"`
+	SocialAccountID       string             `json:"social_account_id"`
+	UpstreamResourceType  string             `json:"upstream_resource_type"`
+	UpstreamResourceID    string             `json:"upstream_resource_id"`
+	UtcDate               pgtype.Date        `json:"utc_date"`
+	Decision              string             `json:"decision"`
+	WeightedUnits         int64              `json:"weighted_units"`
+	PeriodStart           pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd             pgtype.Timestamptz `json:"period_end"`
+	MonthlyUsedAfter      int64              `json:"monthly_used_after"`
+	MonthlyRemainingAfter int64              `json:"monthly_remaining_after"`
+	InboundDailyUsedAfter int64              `json:"inbound_daily_used_after"`
+	InboundDailyLimit     int64              `json:"inbound_daily_limit"`
+	EventsAcceptedAfter   int64              `json:"events_accepted_after"`
+	EventsSuppressedAfter int64              `json:"events_suppressed_after"`
+	PausePaidSources      bool               `json:"pause_paid_sources"`
+	PauseReason           string             `json:"pause_reason"`
+	ResetAt               pgtype.Timestamptz `json:"reset_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+}
+
+type XInboxBackfillConfirmationOperation struct {
+	ID                      string             `json:"id"`
+	WorkspaceID             string             `json:"workspace_id"`
+	AccountIds              []byte             `json:"account_ids"`
+	AccountFingerprint      string             `json:"account_fingerprint"`
+	RequestSnapshot         []byte             `json:"request_snapshot"`
+	EstimatedXCredits       int64              `json:"estimated_x_credits"`
+	Nonce                   string             `json:"nonce"`
+	Status                  string             `json:"status"`
+	Result                  []byte             `json:"result"`
+	LastError               pgtype.Text        `json:"last_error"`
+	ExpiresAt               pgtype.Timestamptz `json:"expires_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	ExecutionOwner          pgtype.Text        `json:"execution_owner"`
+	ExecutionLeaseExpiresAt pgtype.Timestamptz `json:"execution_lease_expires_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboxBackfillExposureReservation struct {
+	ID                     string             `json:"id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	SocialAccountID        string             `json:"social_account_id"`
+	OperationKey           string             `json:"operation_key"`
+	IdempotencyKey         string             `json:"idempotency_key"`
+	RequestedResources     int32              `json:"requested_resources"`
+	ReservedUnits          int64              `json:"reserved_units"`
+	ActualUnits            pgtype.Int8        `json:"actual_units"`
+	PeriodStart            pgtype.Timestamptz `json:"period_start"`
+	PeriodEnd              pgtype.Timestamptz `json:"period_end"`
+	UtcDate                pgtype.Date        `json:"utc_date"`
+	Status                 string             `json:"status"`
+	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
+	ReconciliationAttempts int32              `json:"reconciliation_attempts"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError              pgtype.Text        `json:"last_error"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+}
+
+type XInboxDeliveryCleanupIntent struct {
+	ID                       string             `json:"id"`
+	CleanupKey               string             `json:"cleanup_key"`
+	SocialAccountID          string             `json:"social_account_id"`
+	XAppMode                 string             `json:"x_app_mode"`
+	SourceAppIdentity        string             `json:"source_app_identity"`
+	AppBearerToken           pgtype.Text        `json:"app_bearer_token"`
+	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
+	Attempts                 int32              `json:"attempts"`
+	LastError                pgtype.Text        `json:"last_error"`
+	LeaseOwner               pgtype.Text        `json:"lease_owner"`
+	LeaseUntil               pgtype.Timestamptz `json:"lease_until"`
+	NextAttemptAt            pgtype.Timestamptz `json:"next_attempt_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	WebhookRouteKey          pgtype.Text        `json:"webhook_route_key"`
+	ConsumerSecret           pgtype.Text        `json:"consumer_secret"`
+}
+
+type XInboxDeliveryResource struct {
+	SocialAccountID          string             `json:"social_account_id"`
+	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
+	DeliveryStatus           string             `json:"delivery_status"`
+	LastError                pgtype.Text        `json:"last_error"`
+	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	ActivityWebhookRouteKey  pgtype.Text        `json:"activity_webhook_route_key"`
+}
+
+type XInboxOutboundRequest struct {
+	ID                     string             `json:"id"`
+	WorkspaceID            string             `json:"workspace_id"`
+	SocialAccountID        string             `json:"social_account_id"`
+	InboxItemID            string             `json:"inbox_item_id"`
+	IdempotencyKey         string             `json:"idempotency_key"`
+	PayloadHash            string             `json:"payload_hash"`
+	Status                 string             `json:"status"`
+	ResponseInboxItemID    pgtype.Text        `json:"response_inbox_item_id"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
+	EncryptedPayload       pgtype.Text        `json:"encrypted_payload"`
+	BodyHash               pgtype.Text        `json:"body_hash"`
+	UsageEventID           pgtype.Text        `json:"usage_event_id"`
+	OperationKey           pgtype.Text        `json:"operation_key"`
+	ReservedUnits          int64              `json:"reserved_units"`
+	RemoteExternalID       pgtype.Text        `json:"remote_external_id"`
+	RemoteConversationID   pgtype.Text        `json:"remote_conversation_id"`
+	RemoteUrl              pgtype.Text        `json:"remote_url"`
+	SendStartedAt          pgtype.Timestamptz `json:"send_started_at"`
+	RemoteOutcomeKnownAt   pgtype.Timestamptz `json:"remote_outcome_known_at"`
+	ReconciliationDeadline pgtype.Timestamptz `json:"reconciliation_deadline"`
+	CompletionAttempts     int32              `json:"completion_attempts"`
+	NextAttemptAt          pgtype.Timestamptz `json:"next_attempt_at"`
+	LastError              pgtype.Text        `json:"last_error"`
 }
 
 type XUsageEvent struct {

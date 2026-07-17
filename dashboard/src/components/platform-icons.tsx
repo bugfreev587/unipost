@@ -90,7 +90,13 @@ const ICONS: Record<string, PlatformIconDef> = {
 export function PlatformIcon({ platform, size = 14 }: { platform: string; size?: number }) {
   const icon = ICONS[platform];
   if (!icon) {
-    return <span style={{ width: size, height: size, display: "inline-flex" }}>🔗</span>;
+    return (
+      <span style={{ width: size, height: size, display: "inline-flex", color: "var(--platform-icon-mono)" }}>
+        <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M10 13a5 5 0 0 0 7.5.5l2-2a5 5 0 0 0-7-7l-1.1 1.1M14 11a5 5 0 0 0-7.5-.5l-2 2a5 5 0 0 0 7 7l1.1-1.1" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        </svg>
+      </span>
+    );
   }
 
   const style: CSSProperties = {

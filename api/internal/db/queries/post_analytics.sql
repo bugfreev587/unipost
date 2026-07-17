@@ -91,7 +91,10 @@ SELECT
   spr.id                  AS social_post_result_id,
   spr.social_account_id,
   spr.external_id,
+  sa.profile_id,
   sa.platform,
+  sa.connection_type,
+  sa.x_app_mode,
   sa.access_token,
   sa.refresh_token,
   sa.token_expires_at

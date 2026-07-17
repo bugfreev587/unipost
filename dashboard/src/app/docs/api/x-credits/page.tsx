@@ -82,7 +82,8 @@ export default function XCreditsReferencePage() {
         <DocSection id="operation-catalog" title="Operation catalog">
           <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
             The public catalog is versioned. X Credits are weighted units, not dollars, and are separate from the
-            workspace&apos;s posts/month allowance. Inbox operations become usable as their phased X Inbox support ships.
+            workspace&apos;s posts/month allowance. The table includes the shipped X Inbox read, inbound, reply, and legacy
+            DM operations used by the list, reply, and sync workflows.
           </p>
           <div style={{ overflowX: "auto" }}>
             <table className="docs-table">
@@ -108,6 +109,11 @@ export default function XCreditsReferencePage() {
             connections use the customer&apos;s developer credentials and do not consume UniPost X Credits. Platform-owned
             limits, abuse controls, and the independent 20-post daily X safety cap still apply to both modes.
           </p>
+          <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+            Account capabilities expose these identities as <code>unipost_managed_app</code> and
+            <code> workspace_x_app</code>. X Inbox requires the Basic plan or higher. Managed inbound delivery also stops
+            at <code>x_inbound_daily_cap_exceeded</code> independently of the monthly allowance.
+          </p>
         </DocSection>
 
         <DocSection id="errors" title="Errors">
@@ -123,7 +129,9 @@ export default function XCreditsReferencePage() {
         <DocSection id="next" title="Next steps">
           <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
             Use the <Link href="/docs/guides/x/credits">X Credits guide</Link> to estimate operations and handle
-            exhaustion. Compare included plan capacity in <Link href="/docs/pricing">Plans and limits</Link>.
+            exhaustion. Continue with <Link href="/docs/guides/x/comments">X comments</Link> or{" "}
+            <Link href="/docs/guides/x/direct-messages">X direct messages</Link>. Compare included plan capacity in{" "}
+            <Link href="/docs/pricing">Plans and limits</Link>.
           </p>
         </DocSection>
       </div>
