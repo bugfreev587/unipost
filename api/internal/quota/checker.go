@@ -331,6 +331,19 @@ func (c *Checker) PlanAllowsAnalytics(ctx context.Context, workspaceID string) b
 	return plan.AllowAnalytics
 }
 
+// PlanAllowsAuditLog reports whether the workspace may read the security
+// audit log. Unlike publishing/inbox availability, this security-sensitive
+// Team feature fails closed: an unknown plan or subscription lookup error
+// must never grant access.
+func (c *Checker) PlanAllowsAuditLog(ctx context.Context, workspaceID string) bool {
+	switch c.PlanIDFor(ctx, workspaceID) {
+	case "team", "enterprise":
+		return true
+	default:
+		return false
+	}
+}
+
 // PlanAllowsWhiteLabel reports whether the workspace's plan unlocks
 // any custom platform capability. Basic has one shared platform slot;
 // Growth, Team, and Enterprise cover all supported platforms.

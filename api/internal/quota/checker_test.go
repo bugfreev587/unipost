@@ -86,6 +86,37 @@ func TestMonthlySnapshotUnlimitedPlanNeverExceeds(t *testing.T) {
 	}
 }
 
+func TestPlanAllowsAuditLogIsTeamOnlyAndFailsClosed(t *testing.T) {
+	tests := []struct {
+		name            string
+		planID          string
+		subscriptionErr error
+		want            bool
+	}{
+		{name: "team", planID: "team", want: true},
+		{name: "enterprise", planID: "enterprise", want: true},
+		{name: "growth", planID: "growth", want: false},
+		{name: "basic", planID: "basic", want: false},
+		{name: "api", planID: "api", want: false},
+		{name: "free", planID: "free", want: false},
+		{name: "unknown", planID: "unexpected", want: false},
+		{name: "subscription lookup error", subscriptionErr: errors.New("database unavailable"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			checker := NewChecker(db.New(&fakeQuotaDB{
+				planID:          tt.planID,
+				subscriptionErr: tt.subscriptionErr,
+			}))
+
+			if got := checker.PlanAllowsAuditLog(context.Background(), "ws_123"); got != tt.want {
+				t.Fatalf("PlanAllowsAuditLog() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheckerMonthlySnapshotForPeriodIncludesScheduledAndHeldUnits(t *testing.T) {
 	checker := NewChecker(db.New(&fakeQuotaDB{
 		planID:         "basic",
@@ -173,11 +204,12 @@ func TestFreePlanHardBlockGateProjectsBulkAccumulation(t *testing.T) {
 }
 
 type fakeQuotaDB struct {
-	planID         string
-	limit          int32
-	usage          int32
-	scheduledUnits int32
-	quotaHoldUnits int32
+	planID          string
+	subscriptionErr error
+	limit           int32
+	usage           int32
+	scheduledUnits  int32
+	quotaHoldUnits  int32
 }
 
 func (f *fakeQuotaDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -191,6 +223,9 @@ func (f *fakeQuotaDB) Query(context.Context, string, ...interface{}) (pgx.Rows, 
 func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(sql, "FROM subscriptions"):
+		if f.subscriptionErr != nil {
+			return fakeQuotaRow{err: f.subscriptionErr}
+		}
 		return fakeQuotaRow{values: []any{
 			"sub_123",
 			f.planID,

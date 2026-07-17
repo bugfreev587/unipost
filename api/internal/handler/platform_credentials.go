@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/audit"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -133,6 +134,21 @@ func (h *PlatformCredentialHandler) Create(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save credentials")
 		return
 	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:   workspaceID,
+		ActorUserID:   auth.GetUserID(r.Context()),
+		ActorAPIKeyID: auth.GetAPIKeyID(r.Context()),
+		Action:        audit.ActionPlatformCredentialCreated,
+		ResourceType:  "platform_credential",
+		ResourceID:    cred.Platform,
+		Category:      audit.CategoryConfig,
+		IPAddress:     r.RemoteAddr,
+		UserAgent:     r.UserAgent(),
+		After: map[string]any{
+			"platform":  cred.Platform,
+			"client_id": cred.ClientID,
+		},
+	})
 
 	writeCreated(w, platformCredentialResponse{
 		Platform:  cred.Platform,
@@ -174,9 +190,27 @@ func (h *PlatformCredentialHandler) Delete(w http.ResponseWriter, r *http.Reques
 	}
 	platformName := chi.URLParam(r, "platform")
 
-	h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
+	if err := h.queries.DeletePlatformCredential(r.Context(), db.DeletePlatformCredentialParams{
 		WorkspaceID: workspaceID,
 		Platform:    platformName,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete credentials")
+		return
+	}
+
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:   workspaceID,
+		ActorUserID:   auth.GetUserID(r.Context()),
+		ActorAPIKeyID: auth.GetAPIKeyID(r.Context()),
+		Action:        audit.ActionPlatformCredentialDeleted,
+		ResourceType:  "platform_credential",
+		ResourceID:    platformName,
+		Category:      audit.CategoryConfig,
+		IPAddress:     r.RemoteAddr,
+		UserAgent:     r.UserAgent(),
+		Before: map[string]any{
+			"platform": platformName,
+		},
 	})
 
 	w.WriteHeader(http.StatusNoContent)

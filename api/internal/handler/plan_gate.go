@@ -71,6 +71,26 @@ func RequirePlanAnalytics(q *quota.Checker) func(http.Handler) http.Handler {
 	}
 }
 
+// RequirePlanAuditLog blocks the security audit log on plans below Team.
+// The Checker deliberately fails closed for this security-sensitive gate.
+func RequirePlanAuditLog(q *quota.Checker) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			workspaceID := auth.GetWorkspaceID(r.Context())
+			if workspaceID == "" {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Missing workspace context")
+				return
+			}
+			if q == nil || !q.PlanAllowsAuditLog(r.Context(), workspaceID) {
+				writeError(w, http.StatusPaymentRequired, "PLAN_FEATURE_NOT_AVAILABLE",
+					"Audit Log requires the Team plan — upgrade at unipost.dev/pricing")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // RequirePlanWhiteLabel blocks custom platform capability mutations on
 // plans where plans.white_label is FALSE (Free / API). Basic is allowed
 // through and is then constrained to one shared custom platform slot by

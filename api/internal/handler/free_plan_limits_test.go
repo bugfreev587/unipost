@@ -142,16 +142,16 @@ func TestApiLimits_FreePlanReturnsPackagingCaps(t *testing.T) {
 	assertJSONNumber(t, data, "current_managed_users", 3)
 }
 
-func TestApiLimits_PaidPlanReturnsUnlimitedPackagingCaps(t *testing.T) {
+func TestApiLimits_TeamPlanReturnsPublishedEntitlementBundle(t *testing.T) {
 	store := &freePlanLimitsTestDB{
-		planID:                "growth",
+		planID:                "team",
 		activeAPIKeys:         4,
 		activeWebhooks:        2,
 		activeManagedAccounts: 18,
 		managedUsers:          11,
 		activeDeliveryJobs:    8,
-		currentProfiles:       3,
-		currentMembers:        2,
+		currentProfiles:       26,
+		currentMembers:        4,
 		whiteLabelAllowed:     true,
 		allowInbox:            true,
 		allowAnalytics:        true,
@@ -169,6 +169,21 @@ func TestApiLimits_PaidPlanReturnsUnlimitedPackagingCaps(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	data := decodeLimitsData(t, rec.Body.Bytes())
+	if got := data["plan_id"]; got != "team" {
+		t.Fatalf("plan_id = %#v, want team", got)
+	}
+	assertJSONBool(t, data, "plan_allows_twitter", true)
+	assertJSONBool(t, data, "plan_allows_inbox", true)
+	assertJSONBool(t, data, "plan_allows_analytics", true)
+	assertJSONBool(t, data, "plan_allows_audit_log", true)
+	assertJSONBool(t, data, "plan_allows_white_label", true)
+	assertJSONBool(t, data, "plan_allows_hosted_connect_branding", true)
+	assertJSONBool(t, data, "plan_allows_hide_powered_by", true)
+	assertJSONNumber(t, data, "white_label_platform_limit", -1)
+	assertJSONNumber(t, data, "max_profiles", -1)
+	assertJSONNumber(t, data, "current_profiles", 26)
+	assertJSONNumber(t, data, "max_members", -1)
+	assertJSONNumber(t, data, "current_members", 4)
 	assertJSONNumber(t, data, "max_api_keys", -1)
 	assertJSONNumber(t, data, "current_api_keys", 4)
 	assertJSONNumber(t, data, "max_webhooks", -1)
@@ -177,6 +192,17 @@ func TestApiLimits_PaidPlanReturnsUnlimitedPackagingCaps(t *testing.T) {
 	assertJSONNumber(t, data, "current_managed_accounts", 18)
 	assertJSONNumber(t, data, "max_managed_users", -1)
 	assertJSONNumber(t, data, "current_managed_users", 11)
+}
+
+func assertJSONBool(t *testing.T, data map[string]any, key string, want bool) {
+	t.Helper()
+	got, ok := data[key].(bool)
+	if !ok {
+		t.Fatalf("%s = %#v, want JSON boolean %v", key, data[key], want)
+	}
+	if got != want {
+		t.Fatalf("%s = %v, want %v", key, got, want)
+	}
 }
 
 type freePlanLimitsTestDB struct {
@@ -196,9 +222,17 @@ type freePlanLimitsTestDB struct {
 	allowAnalytics        bool
 	createAPIKeyCalls     int
 	createWebhookCalls    int
+	auditWrites           [][]any
+	auditWriteAttempts    int
+	auditErr              error
 }
 
-func (f *freePlanLimitsTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (f *freePlanLimitsTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: WriteAuditLog") {
+		f.auditWriteAttempts++
+		f.auditWrites = append(f.auditWrites, append([]any(nil), args...))
+		return pgconn.CommandTag{}, f.auditErr
+	}
 	return pgconn.CommandTag{}, nil
 }
 
@@ -243,6 +277,22 @@ func (f *freePlanLimitsTestDB) QueryRow(_ context.Context, query string, args ..
 			env,
 			"ws_1",
 			createdBy,
+		}}
+	case strings.Contains(query, "-- name: RevokeAPIKey"):
+		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		keyID, _ := args[0].(string)
+		return scanRow{values: []any{
+			keyID,
+			"Editor automation",
+			"up_test_11111111",
+			now,
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			now,
+			"stored-key-hash",
+			"test",
+			"ws_1",
+			"user_1",
 		}}
 	case strings.Contains(query, "-- name: CountActiveWebhooksByWorkspace"):
 		return scanRow{values: []any{f.activeWebhooks}}
