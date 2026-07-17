@@ -195,12 +195,12 @@ async function signIn(page: Page, email: string, password: string) {
   }
 
   await page.getByLabel(/email/i).fill(email);
-  const continueButton = page.getByRole("button", { name: /continue|next/i });
+  const continueButton = page.locator('button[data-localization-key="formButtonPrimary"]');
   if (await continueButton.isVisible().catch(() => false)) {
     await continueButton.click();
   }
   await page.locator('input[type="password"]').fill(password);
-  await page.getByRole("button", { name: /continue|sign in|log in/i }).click();
+  await page.locator('button[data-localization-key="formButtonPrimary"]').click();
   await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
 }
 
