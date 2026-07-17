@@ -192,7 +192,7 @@ func (c *Client) EnsureDMSubscription(
 	userID string,
 	webhookID string,
 ) (ActivitySubscription, error) {
-	subscriptions, err := c.ListActivitySubscriptions(ctx, userAccessToken)
+	subscriptions, err := c.ListActivitySubscriptions(ctx, appBearerToken)
 	if err != nil {
 		return ActivitySubscription{}, err
 	}
