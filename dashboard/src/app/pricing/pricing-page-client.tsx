@@ -163,7 +163,7 @@ const FAQS = [
   { q: "When do I need Growth?", a: "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove \"Powered by UniPost\" from hosted onboarding." },
   { q: "When do I need Team?", a: "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
   { q: "What does unlimited Team usage mean?", a: "Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply. Customers needing capacity planning, SLA, or custom platform-volume terms should use Enterprise." },
-  { q: "When do I need Enterprise instead of Team?", a: "Use Enterprise when you need priority support, capacity planning, custom platform-volume terms, SLA, security review, procurement, or dedicated support. It is a sales-led contract plan, not a sixth self-serve card." },
+  { q: "When do I need Enterprise instead of Team?", a: "Use Enterprise when you need dedicated support, capacity planning, custom platform-volume terms, SLA, security review, or procurement. It is a sales-led contract plan, not a sixth self-serve card." },
   { q: "Can Enterprise increase third-party platform quotas?", a: "Enterprise can help plan, isolate, and contract around usage, but it cannot override platform-owned rate limits, app review, spam controls, or content policy enforcement. Custom means contract-defined terms and is not a smaller quota than Team." },
   { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. For an embedded app with 100 end users connecting 2 social accounts each, UniPost Growth is $59/mo if total usage fits under 7,500 posts/month; Zernio's current account-meter pricing is $418/mo for those 200 connected accounts. PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
@@ -333,7 +333,7 @@ export default function PricingPage() {
         <div className="pr-ent">
           <div className="pr-ent-copy">
             <div className="pr-ent-title">Enterprise</div>
-            <div className="pr-ent-desc">Priority support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.</div>
+            <div className="pr-ent-desc">Dedicated support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.</div>
             <div className="pr-ent-chips">{["Capacity planning", "Platform-volume terms", "SLA and security", "Dedicated support"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
           </div>
           <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact sales</a>
