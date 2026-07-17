@@ -48,30 +48,28 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
     assert.match(guide, new RegExp(platform.replace("/", "\\/")));
   }
 
-  assert.match(guide, /type PublishGifStatus = "Supported" \| "Coming soon"/);
-  assert.match(guide, /function PublishGifStatusTag/);
-  assert.match(guide, /className=\{`publish-gif-status-tag is-\$\{tone\}`\}/);
-  assert.equal((guide.match(/<PublishGifStatusTag key=/g) || []).length, 9);
+  assert.doesNotMatch(guide, /PublishGifStatusTag|publish-gif-status-tag/);
+  assert.equal((guide.match(/"Supported"/g) || []).length, 2);
+  assert.equal((guide.match(/"Coming soon"/g) || []).length, 7);
 
   assert.match(
     guide,
-    /"X \/ Twitter",\s*"Yes — direct GIF media upload",\s*<PublishGifStatusTag key="x-status" status="Supported" \/>/,
+    /"X \/ Twitter",\s*"Yes — direct GIF media upload",\s*"Supported"/,
   );
   assert.match(
     guide,
-    /"Facebook Page",\s*"Yes — GIF photo post",\s*<PublishGifStatusTag key="facebook-status" status="Supported" \/>/,
+    /"Facebook Page",\s*"Yes — GIF photo post",\s*"Supported"/,
   );
   assert.match(
     guide,
-    /"LinkedIn",\s*"Yes — through LinkedIn image APIs",\s*<PublishGifStatusTag key="linkedin-status" status="Coming soon" \/>/,
+    /"LinkedIn",\s*"Yes — through LinkedIn image APIs",\s*"Coming soon"/,
   );
   assert.match(
     guide,
-    /"Threads",\s*"Yes — through provider-backed GIF attachments",\s*<PublishGifStatusTag key="threads-status" status="Coming soon" \/>/,
+    /"Threads",\s*"Yes — through provider-backed GIF attachments",\s*"Coming soon"/,
   );
-  assert.match(docsShell, /\.publish-gif-status-tag\{/);
-  assert.match(docsShell, /\.publish-gif-status-tag\.is-supported\{/);
-  assert.match(docsShell, /\.publish-gif-status-tag\.is-coming-soon\{/);
+  assert.match(docsShell, /\.docs-enum-tag\.is-success\{/);
+  assert.match(docsShell, /\.docs-enum-tag\.is-warning\{/);
 
   for (const platform of ["Instagram", "TikTok", "Pinterest", "YouTube", "Bluesky"]) {
     assert.match(

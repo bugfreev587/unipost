@@ -62,3 +62,9 @@ test("DocsTable renders enums with the shared B-style tag", async () => {
     assert.match(docsShell, new RegExp(`\\.docs-enum-tag\\.is-${tone}\\{`));
   }
 });
+
+test("the dense platform matrix shares the partial-support tag", async () => {
+  const platforms = await readFile(join(root, "src/app/docs/platforms/page.tsx"), "utf8");
+  assert.match(platforms, /<DocsEnumTag value="Limited" tone="warning" \/>/);
+  assert.doesNotMatch(platforms, /docs-matrix-partial/);
+});

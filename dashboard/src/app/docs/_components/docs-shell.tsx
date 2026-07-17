@@ -1399,7 +1399,6 @@ body{background:var(--docs-bg);color:var(--docs-text);font-family:var(--docs-ui)
 .docs-table tr:last-child td{border-bottom:none}
 .docs-table td:has(.docs-matrix-check),
 .docs-table td:has(.docs-matrix-dash),
-.docs-table td:has(.docs-matrix-partial),
 .docs-table th.docs-matrix-center,
 .docs-table .docs-table-cell-center{text-align:center}
 .docs-table th.docs-table-cell-nowrap,
@@ -1419,7 +1418,6 @@ html.dark .docs-enum-tag.is-neutral{background:rgba(148,163,184,.14);color:#cbd5
 html.dark .docs-enum-tag.is-caution{background:rgba(249,115,22,.16);color:#fdba74}
 .docs-matrix-check{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:#22c55e;font-weight:700;font-size:18px;line-height:1}
 .docs-matrix-dash{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-soft)}
-.docs-matrix-partial{display:inline-flex;align-items:center;justify-content:center;min-width:20px;color:var(--docs-text-muted);font-size:12px;font-weight:700;line-height:1;text-transform:uppercase;letter-spacing:.04em}
 .docs-callout,.wlp-top-callout{
   --docs-callout-accent:var(--docs-callout-info-accent);
   --docs-callout-bg:var(--docs-callout-info-bg);

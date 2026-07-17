@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { DocsCode, DocsPage, DocsTable } from "../_components/docs-shell";
+import { DocsCode, DocsEnumTag, DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 
 function checkCell() {
@@ -11,7 +11,7 @@ function dashCell() {
 }
 
 function partialCell() {
-  return <span className="docs-matrix-partial">Limited</span>;
+  return <DocsEnumTag value="Limited" tone="warning" />;
 }
 
 const PLATFORM_API_NAMES = [
