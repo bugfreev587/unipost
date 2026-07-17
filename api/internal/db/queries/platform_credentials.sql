@@ -4,9 +4,13 @@ INSERT INTO platform_credentials (
   app_bearer_token, consumer_secret, webhook_route_key
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6,
+  $1, $2, $3, $4,
+  sqlc.narg(app_bearer_token)::TEXT,
+  sqlc.narg(consumer_secret)::TEXT,
   CASE
-    WHEN $2 = 'twitter' AND $5 IS NOT NULL AND $6 IS NOT NULL
+    WHEN $2 = 'twitter'
+      AND sqlc.narg(app_bearer_token)::TEXT IS NOT NULL
+      AND sqlc.narg(consumer_secret)::TEXT IS NOT NULL
       THEN sqlc.arg(webhook_route_key)::TEXT
     ELSE NULL
   END
