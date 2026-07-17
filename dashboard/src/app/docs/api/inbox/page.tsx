@@ -18,8 +18,8 @@ const AVAILABILITY_FIELDS: ApiFieldItem[] = [
   },
   {
     name: "Current support",
-    type: "7 normalized sources",
-    description: "Instagram, Facebook, Threads, and X reply or messaging sources are currently shipped.",
+    type: "6 available + 1 controlled source",
+    description: "Instagram, Facebook, Threads, and X replies are available; legacy X DMs are controlled by workspace rollout eligibility.",
   },
   {
     name: "Auth model",
@@ -95,8 +95,8 @@ const SOURCE_FIELDS: ApiFieldItem[] = [
   },
   {
     name: "x_dm",
-    type: "supported",
-    description: "Legacy X direct-message events; newer X messaging products are outside this API contract.",
+    type: "controlled availability",
+    description: "Legacy X direct-message lookup/send when x_dms_v1 is enabled for the workspace. Private real-time subscription provisioning is not currently available.",
   },
   {
     name: "more_sources",
@@ -144,7 +144,7 @@ const RESPONSE_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
+  { name: "error.code", type: "string", description: "UNAUTHORIZED, FEATURE_NOT_AVAILABLE, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];

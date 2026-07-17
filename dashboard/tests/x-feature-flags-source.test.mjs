@@ -40,3 +40,21 @@ test("X Credits and X DMs customer UI are gated by evaluated flags", () => {
   assert.match(pricing, /x_credits_billing_v1/);
   assert.match(pricing, /xCreditsEnabled/);
 });
+
+test("X API references and guidance disclose controlled availability and keep bidirectional links", () => {
+  const dmGuide = read("src/app/docs/guides/x/direct-messages/page.tsx");
+  const inboxReference = read("src/app/docs/api/inbox/page.tsx");
+  const inboxListReference = read("src/app/docs/api/inbox/list/page.tsx");
+  const creditsGuide = read("src/app/docs/guides/x/credits/page.tsx");
+  const creditsReference = read("src/app/docs/api/x-credits/page.tsx");
+
+  assert.match(dmGuide, /Controlled availability/);
+  assert.match(dmGuide, /OAuth 2\.0 user-token subscription path returns 403/);
+  assert.match(inboxReference, /FEATURE_NOT_AVAILABLE/);
+  assert.match(creditsGuide, /controlled rollout/i);
+  assert.match(creditsReference, /FEATURE_NOT_AVAILABLE/);
+  assert.match(dmGuide, /\/docs\/api\/inbox/);
+  assert.match(inboxListReference, /\/docs\/guides\/x\/direct-messages/);
+  assert.match(creditsGuide, /\/docs\/api\/x-credits/);
+  assert.match(creditsReference, /\/docs\/guides\/x\/credits/);
+});

@@ -10,7 +10,7 @@ const BODY: ApiFieldItem[] = [
   { name: "x_backfill.lookback_days", type: "integer", optional: true, defaultValue: 7, description: "1-30 days. X reply lookup is bounded to 7 days; DM lookup can use up to 30 days." },
   { name: "x_backfill.max_items", type: "integer", optional: true, defaultValue: 20, description: "1-500 resources per source and account." },
   { name: "x_backfill.include_replies", type: "boolean", optional: true, description: "Fetch eligible mentions and replies." },
-  { name: "x_backfill.include_dms", type: "boolean", optional: true, description: "Fetch legacy direct-message events." },
+  { name: "x_backfill.include_dms", type: "boolean", optional: true, description: "Fetch legacy direct-message events only when x_dms_v1 is enabled for the workspace." },
   { name: "x_backfill.confirmation_token", type: "string", optional: true, description: "When the estimate exceeds the safe threshold, repeat the exact request with the returned one-time token before it expires." },
 ];
 const RESPONSE: ApiFieldItem[] = [
@@ -23,6 +23,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.details[].missing_scopes", type: "string[]", optional: true, description: "X permissions that require reconnect." },
 ];
 const ERRORS: ApiFieldItem[] = [
+  { name: "feature_not_available", type: "403", description: "A DM-only backfill was requested while X DMs are unavailable to the workspace." },
   { name: "plan_feature_not_available", type: "402", description: "Inbox is unavailable below Basic." },
   { name: "validation_error", type: "400/409", description: "The confirmation token is invalid, expired, already consumed, or no longer matches the frozen request." },
   { name: "not_found", type: "404", description: "No eligible X account matched the request." },
@@ -33,7 +34,7 @@ export default function InboxSyncPage() {
     <SingleEndpointReferencePage
       section="inbox"
       title="Sync and backfill Inbox"
-      description="Runs existing Inbox polling or a bounded X backfill. Managed-X reads reserve both monthly allowance and the inbound daily cap before the paid X read; workspace_x_app bypasses UniPost X Credits."
+      description="Runs existing Inbox polling or a bounded X backfill. X comments remain available independently; DM reads require the controlled rollout. Managed-X reads reserve monthly allowance only when X Credits billing is enabled, while the inbound safety cap remains active."
       method="POST"
       path="/v1/inbox/sync"
       requestSections={[{ title: "Authorization", items: AUTH }, { title: "Request Body", items: BODY }]}

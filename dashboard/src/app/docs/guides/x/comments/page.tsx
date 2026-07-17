@@ -37,12 +37,18 @@ export default function XCommentsGuidePage() {
         <span className="docs-guide-badge">Eligible summons only</span>
         <span className="docs-guide-badge">Managed or workspace X app</span>
       </div>
+      <p className="docs-guide-note">
+        X comments use OAuth 2.0 and remain available independently of the controlled X DM rollout. When X Credits
+        billing is not yet enabled for a workspace, customer monthly allowance fields and hard-limit errors are not
+        applied; UniPost still enforces its internal inbound safety boundary.
+      </p>
 
       <h2 id="prerequisites">1. Verify account capability</h2>
       <p>
         Call <Link href="/docs/api/accounts/capabilities">Get account capabilities</Link> and require
         <code> x_inbox.comments_enabled</code>. For <code>unipost_managed_app</code>, UniPost operates the X app and
-        managed reads, inbound events, and replies consume the workspace allowance. For <code>workspace_x_app</code>,
+        managed reads, inbound events, and replies consume the workspace allowance when X Credits billing is enabled.
+        For <code>workspace_x_app</code>,
         your X app must have Client ID, Client Secret, app Bearer Token, and Consumer Secret configured; those operations
         use your X access and do not consume UniPost X Credits.
       </p>

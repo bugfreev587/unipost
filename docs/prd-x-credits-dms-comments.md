@@ -1,8 +1,8 @@
 # UniPost X Credits, Comments, and DMs PRD
 
-**Status:** Approved product direction — bounded X Inbox MVP (Option B); ready for implementation planning
+**Status:** Approved product direction — phased production rollout in progress
 
-**Date:** 2026-07-16
+**Date:** 2026-07-17
 
 **Decision date:** 2026-07-16
 
@@ -47,20 +47,34 @@ This PRD also requires new API Reference pages and task-oriented Guidance pages.
 
 This document specifies both the approved bounded-Inbox MVP and the implementation-ready later commercial target. Section 2.3 records the sequencing decision and the evidence required before promotion to the full Credits ledger.
 
+### 1.1 Production rollout update — 2026-07-17
+
+The current production-safe release intentionally separates implemented code from customer availability:
+
+- `x_dms_v1` defaults OFF. X DM list, sync, and send remain available only to Super Admin-owned workspaces for controlled OAuth 2.0 acceptance. Regular workspaces cannot access `x_dm`.
+- `x_credits_billing_v1` defaults OFF. Managed X API calls do not count against or block on the customer monthly X Credits balance until Product enables the flag. The independent 20 X publishes/account/day cap and internal inbound cost-safety cap remain active.
+- X public comments/replies and ordinary X publishing stay on OAuth 2.0 and are not gated by `x_dms_v1`.
+- Private real-time DM delivery is not provisioned. X Activity subscription creation with the connected user's OAuth 2.0 token currently returns 403 in the verified development path. UniPost will not add OAuth 1.0a in this release.
+- The OAuth 2.0 request continues to include the DM scopes. Accounts that already granted them will not reconnect when `x_dms_v1` later turns ON; accounts missing them reconnect once after the feature becomes available.
+- Manual Top-up, purchased balances, transaction ledger, and Auto top-up remain later phases and are not implied by the X Credits rollout flag.
+
+The Super Admin page `/admin/feature-flags` is the global control surface. ON makes a feature available to regular users; OFF keeps it unavailable to regular users while preserving Super Admin workspace access. The flags do not vary by development, staging, or production.
+
 ## 2. Background
 
 ### 2.1 Current UniPost behavior
 
-As of this PRD:
+As of the 2026-07-17 implementation update:
 
 - UniPost supports X publishing, scheduling, media posts, threads, and `first_comment` as a self-reply.
 - UniPost can expose X reply counts through Analytics.
-- UniPost Inbox does not ingest X comments/replies or X DMs.
-- The current X OAuth 2.0 flow requests publishing and read scopes, but not DM scopes.
+- UniPost Inbox supports eligible X public replies/comments through `x_reply`.
+- X DM lookup/send and normalized `x_dm` handling exist behind `x_dms_v1`; the flag is OFF for regular workspaces and private subscription delivery is disabled.
+- The X OAuth 2.0 flow requests publishing, read, offline, media, `dm.read`, and `dm.write` scopes.
 - X publishing and new X connections require a paid UniPost plan.
 - X publishing already has a per-connected-account safety cap of 20 successful publishes per UTC day.
 - Inbox requires Basic or higher.
-- UniPost has monthly post quotas and Stripe subscription billing, but no customer-facing variable-cost credit ledger or one-time top-up product.
+- UniPost has monthly post quotas and a bounded X usage counter behind `x_credits_billing_v1`, but no purchased balance, customer transaction ledger, one-time Top-up, or Auto top-up product.
 
 ### 2.2 Why credits are required
 
@@ -851,11 +865,13 @@ XChat-specific scopes and key permissions must be verified against the current o
 
 Adding scopes does not retroactively update previously granted OAuth tokens.
 
-- Mark managed X connections missing `dm.read` or `dm.write` as `reconnect_required` for DM capability only.
+- While `x_dms_v1` is OFF, exclude DM-only missing scopes from reconnect requirements.
+- When `x_dms_v1` is ON, mark managed X connections missing `dm.read` or `dm.write` as `reconnect_required` for DM capability only.
 - Keep existing publishing working if its current scopes remain valid.
 - Show the exact missing scopes and a reconnect CTA in Accounts, Inbox, and Billing/X Credits context.
 - Do not repeatedly prompt API-plan customers for DM scopes because their plan cannot use Inbox.
 - Basic, Growth, Team, and eligible Enterprise accounts receive the reconnect prompt.
+- Accounts that granted `dm.read` and `dm.write` before the flag turns ON do not reconnect again.
 - After reconnect, verify granted scopes before enabling DM sync.
 - BYO customers must update their own X app permissions before reconnecting.
 
@@ -868,11 +884,23 @@ For public comments/replies, use the pay-per-use persistent Filtered Stream endp
 - Filtered Stream webhook delivery is currently Enterprise-only, so the self-serve MVP must operate the persistent stream consumer with reconnect/backoff and keep-alive monitoring.
 - Disable/remove a workspace's rules on disconnect, allowance/cap exhaustion, or plan loss.
 
-For private legacy DMs, request the minimum applicable X Activity subscription:
+For private legacy DMs, the intended minimum X Activity subscription is:
 
 - `dm.received`
 
-Use the app-only bearer token for webhook and Filtered Stream management and the connected user's OAuth authorization for private, account-scoped Activity delivery. Record the returned rule and subscription ids so disconnect, allowance/cap exhaustion, later zero-balance pause, and workspace deletion can remove the exact resources idempotently.
+The verified OAuth 2.0 implementation cannot currently provision that private subscription: app-only bearer authentication requires a user context for `dm.received`, while the connected OAuth 2.0 user token returns 403 from the subscription endpoint. Direct OAuth 2.0 DM lookup and send are separate APIs and remain suitable for controlled manual testing.
+
+Therefore the current release:
+
+- continues to use OAuth 2.0 + PKCE for X publishing, comments, DM lookup, and DM send;
+- keeps `x_dms_v1` OFF for regular users;
+- does not call the private Activity subscription endpoint;
+- removes or ignores stale DM subscription intent while continuing to provision the public comments Filtered Stream;
+- does not add OAuth 1.0a tokens, secrets, signing, or a second authorization step.
+
+If X fixes the OAuth 2.0 subscription path, re-verify it with a non-app-owner test account before enabling private real-time delivery. If Product later chooses OAuth 1.0a as the long-term fallback, treat it as a separate architecture project covering three-legged authorization, encrypted per-user token secrets, managed-user UX, cleanup, and migration. It is not a URL or header substitution.
+
+Once a supported private subscription path exists, use the exact returned rule and subscription IDs so disconnect, allowance/cap exhaustion, later zero-balance pause, and workspace deletion can remove resources idempotently.
 
 Do not subscribe to `dm.sent` if UniPost already stores all of its own outbound messages and the event would add cost without filling a product gap. Add it only if reconciliation testing proves it is necessary.
 
@@ -881,7 +909,7 @@ For XChat beta, evaluate:
 - `chat.received`
 - `chat.sent` only if required for cross-client consistency
 
-X currently documents a self-serve limit of 1,000 Filtered Stream rules and 1,000 X Activity subscriptions. With one comment rule and one `dm.received` Activity subscription per eligible account, each mechanism independently supports about 1,000 fully enabled accounts. Alert before 70%, 85%, and 95% on both counters and pursue higher capacity before onboarding would exceed either limit. If later XChat adds a second private Activity subscription per account, Activity capacity falls to about 500 accounts and must be recalculated in the runbook.
+X currently documents a self-serve limit of 1,000 Filtered Stream rules and 1,000 X Activity subscriptions. The Activity numbers are future-state planning only while DM subscription provisioning is disabled. If a supported path later uses one comment rule and one `dm.received` Activity subscription per eligible account, each mechanism independently supports about 1,000 fully enabled accounts. Alert before 70%, 85%, and 95% on active resource types and pursue higher capacity before onboarding would exceed a limit. If later XChat adds a second private Activity subscription per account, Activity capacity falls to about 500 accounts and must be recalculated in the runbook.
 
 ### 14.5 Developer access request narrative
 
@@ -1043,7 +1071,12 @@ Add automatic-payment metrics only when Auto top-up ships.
 
 ## 17. Rollout plan
 
-No feature flag is required by default. Use normal environment promotion, plan gates, capability checks, and explicit beta eligibility. The following phase order is approved.
+Normal environment promotion, plan gates, and capability checks remain required. Two explicit global backend feature flags contain the incomplete production surfaces:
+
+- `x_dms_v1`, default OFF
+- `x_credits_billing_v1`, default OFF
+
+Turning a flag ON makes the feature available to regular users. Turning it OFF keeps the feature available only to Super Admin-owned workspaces. Every API-key, Dashboard, managed-user, worker, and public-marketing decision must resolve through the backend authority. The following phase order is approved.
 
 ### Common Phase 0 — prerequisites
 
@@ -1069,9 +1102,9 @@ No feature flag is required by default. Use normal environment promotion, plan g
 
 ### Phase 3 — legacy X DMs
 
-1. Add DM scopes, reconnect flow, Activity subscription, and controlled recent-history sync.
-2. Normalize `x_dm`, render private threads in Inbox, and support outbound DM replies.
-3. Verify privacy controls, cost counting, deduplication, caps, and documentation in the real development environment.
+1. Add DM scopes and flag-aware reconnect behavior; normalize `x_dm`, private threads, bounded manual history sync, and outbound DM replies behind `x_dms_v1`.
+2. Keep private Activity subscription provisioning disabled until X OAuth 2.0 succeeds for a non-app-owner connected user or a separately approved OAuth 1.0a architecture ships.
+3. Verify privacy controls, cost counting, deduplication, caps, both flag states, and documentation in the real development environment before Product turns the flag ON.
 
 ### Phase 4 — measurement and promotion review
 
