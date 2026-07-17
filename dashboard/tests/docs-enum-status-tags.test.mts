@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import {
   resolveDocsTableEnumTone,
   type DocsEnumTone,
 } from "../src/app/docs/_components/docs-table-enum.ts";
+
+const root = process.cwd();
 
 const recognized: Array<[string, string, DocsEnumTone]> = [
   ["Support", "Yes", "success"],
@@ -45,4 +49,16 @@ test("does not tag prose, machine enums, or descriptive values", () => {
 
 test("normalizes harmless whitespace and case", () => {
   assert.equal(resolveDocsTableEnumTone("  unipost STATUS ", " coming SOON "), "warning");
+});
+
+test("DocsTable renders enums with the shared B-style tag", async () => {
+  const docsShell = await readFile(join(root, "src/app/docs/_components/docs-shell.tsx"), "utf8");
+
+  assert.match(docsShell, /export function DocsEnumTag/);
+  assert.match(docsShell, /resolveDocsTableEnumTone\(column, cell\)/);
+  assert.match(docsShell, /renderDocsTableCell\(cell, columns\[cellIndex\]\)/);
+  assert.match(docsShell, /\.docs-enum-tag\{/);
+  for (const tone of ["success", "warning", "danger", "info", "neutral", "caution"]) {
+    assert.match(docsShell, new RegExp(`\\.docs-enum-tag\\.is-${tone}\\{`));
+  }
 });
