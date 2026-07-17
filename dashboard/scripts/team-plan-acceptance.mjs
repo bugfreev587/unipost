@@ -343,7 +343,7 @@ async function verifyDashboard(config, email, password, profileID) {
       await page.getByLabel(/email/i).fill(email);
       const next = page.getByRole("button", { name: /continue|next/i });
       if (await next.isVisible().catch(() => false)) await next.click();
-      await page.getByLabel(/password/i).fill(password);
+      await fillPassword(page, password);
       await page.getByRole("button", { name: /continue|sign in|log in/i }).click();
       await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
     }
@@ -368,6 +368,10 @@ async function verifyDashboard(config, email, password, profileID) {
   } finally {
     await browser.close();
   }
+}
+
+export async function fillPassword(page, password) {
+  await page.locator('input[type="password"]').fill(password);
 }
 
 async function apiRequest(config, token, path, options = {}) {
