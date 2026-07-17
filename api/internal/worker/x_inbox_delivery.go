@@ -36,7 +36,7 @@ type XInboxDeliveryAPI interface {
 	EnsureFilteredStreamRule(context.Context, string, string, string) (xinbox.StreamRule, error)
 	DeleteFilteredStreamRule(context.Context, string, string) error
 	EnsureWebhook(context.Context, string, string) (xinbox.Webhook, error)
-	EnsureDMSubscription(context.Context, string, string, string, string, string) (xinbox.ActivitySubscription, error)
+	EnsureDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
 	DeleteActivitySubscription(context.Context, string, string) error
 }
 
@@ -70,7 +70,6 @@ type XInboxDeliveryAccount struct {
 	WebhookRouteKey          string
 	Handle                   string
 	ExternalAccountID        string
-	AccessTokenEncrypted     string
 	AppMode                  xinbox.AppMode
 	AppBearerTokenEncrypted  string
 	ConsumerSecretConfigured bool
@@ -433,15 +432,6 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	fail := func(cause error) (XInboxAppStream, bool, bool, error) {
 		return app, streamDesired(), true, w.saveAccountError(ctx, state, cause)
 	}
-	var userAccessToken string
-	if dmsDesired {
-		var err error
-		userAccessToken, err = w.cipher.Decrypt(account.AccessTokenEncrypted)
-		if err != nil {
-			return fail(fmt.Errorf("decrypt connected X user token: %w", err))
-		}
-	}
-
 	if !commentsDesired && state.FilteredStreamRuleID != "" {
 		if err := w.api.DeleteFilteredStreamRule(ctx, appBearerToken, state.FilteredStreamRuleID); err != nil {
 			return fail(err)
@@ -503,7 +493,6 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		}
 		subscription, err := w.api.EnsureDMSubscription(
 			ctx,
-			userAccessToken,
 			appBearerToken,
 			account.SocialAccountID,
 			account.ExternalAccountID,
@@ -846,7 +835,6 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			END,
 			COALESCE(sa.account_name, ''),
 			COALESCE(sa.external_account_id, ''),
-			sa.access_token,
 			COALESCE(sa.x_app_mode, 'legacy_unknown'),
 			COALESCE(pc.app_bearer_token, ''),
 			COALESCE(NULLIF(pc.consumer_secret, ''), '') <> '',
@@ -885,7 +873,6 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			&account.WebhookRouteKey,
 			&account.Handle,
 			&account.ExternalAccountID,
-			&account.AccessTokenEncrypted,
 			&appMode,
 			&account.AppBearerTokenEncrypted,
 			&account.ConsumerSecretConfigured,

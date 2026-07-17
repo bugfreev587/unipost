@@ -93,12 +93,12 @@ func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, _ string, confi
 
 func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
 	_ context.Context,
-	userToken, _ string,
+	appToken string,
 	accountID, userID, webhookID string,
 ) (xinbox.ActivitySubscription, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.subscriptionTokens = append(f.subscriptionTokens, userToken)
+	f.subscriptionTokens = append(f.subscriptionTokens, appToken)
 	f.subscriptionUserIDs = append(f.subscriptionUserIDs, userID)
 	if f.subscriptionErr != nil {
 		return xinbox.ActivitySubscription{}, f.subscriptionErr
@@ -328,7 +328,6 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 		Handle:                   "UniPostDev",
 		ExternalAccountID:        "2244994945",
 		WebhookRouteKey:          "managed-route-key",
-		AccessTokenEncrypted:     "encrypted-user-token",
 		AppMode:                  xinbox.AppModeUniPostManaged,
 		ConsumerSecretConfigured: true,
 		ActivityWebhookRouteKey:  "managed-route-key",
@@ -344,7 +343,7 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
 		Store:                           store,
 		API:                             api,
-		Cipher:                          fakeXInboxCipher{values: map[string]string{"encrypted-user-token": "user-oauth-token"}},
+		Cipher:                          fakeXInboxCipher{},
 		Usage:                           fakeXInboxUsageReader{},
 		ManagedAppBearer:                "managed-app-token",
 		ManagedConsumerSecretConfigured: true,
@@ -366,8 +365,8 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
 		t.Fatalf("rule tokens = %v, want app bearer", api.ruleTokens)
 	}
-	if want := []string{"user-oauth-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
-		t.Fatalf("subscription tokens = %v, want connected user OAuth token", api.subscriptionTokens)
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
+		t.Fatalf("subscription tokens = %v, want app bearer", api.subscriptionTokens)
 	}
 	if want := []string{"2244994945"}; !reflect.DeepEqual(api.subscriptionUserIDs, want) {
 		t.Fatalf("subscription user IDs = %v, want X platform account ID", api.subscriptionUserIDs)

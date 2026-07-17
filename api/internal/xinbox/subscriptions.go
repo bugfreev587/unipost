@@ -136,7 +136,7 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 
 func (c *Client) ListActivitySubscriptions(
 	ctx context.Context,
-	userAccessToken string,
+	appBearerToken string,
 ) ([]ActivitySubscription, error) {
 	const (
 		selfServeSubscriptionLimit = 1500
@@ -161,7 +161,7 @@ func (c *Client) ListActivitySubscriptions(
 			} `json:"meta"`
 		}
 		path := "/2/activity/subscriptions?" + query.Encode()
-		if err := c.doJSON(ctx, http.MethodGet, path, userAccessToken, nil, &response); err != nil {
+		if err := c.doJSON(ctx, http.MethodGet, path, appBearerToken, nil, &response); err != nil {
 			return nil, err
 		}
 		remaining := selfServeSubscriptionLimit - len(subscriptions)
@@ -186,7 +186,6 @@ func (c *Client) ListActivitySubscriptions(
 
 func (c *Client) EnsureDMSubscription(
 	ctx context.Context,
-	userAccessToken string,
 	appBearerToken string,
 	accountID string,
 	userID string,
@@ -218,7 +217,7 @@ func (c *Client) EnsureDMSubscription(
 		WebhookID: webhookID,
 	}
 	var raw json.RawMessage
-	if err := c.doJSON(ctx, http.MethodPost, "/2/activity/subscriptions", userAccessToken, request, &raw); err != nil {
+	if err := c.doJSON(ctx, http.MethodPost, "/2/activity/subscriptions", appBearerToken, request, &raw); err != nil {
 		return ActivitySubscription{}, err
 	}
 	var response struct {
