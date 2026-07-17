@@ -155,7 +155,7 @@ func TestXClientEnsureWebhookAcceptsWrappedCreateResponseWithoutRetry(t *testing
 	}
 }
 
-func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndUserOAuthForCreate(t *testing.T) {
+func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndCreate(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -169,8 +169,8 @@ func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndUserOAuthForCreate(t 
 			}
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			if got := r.Header.Get("Authorization"); got != "Bearer user-oauth-token" {
-				t.Fatalf("create Authorization = %q, want connected user token", got)
+			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
+				t.Fatalf("create Authorization = %q, want app bearer", got)
 			}
 			if r.Method != http.MethodPost || r.URL.Path != "/2/activity/subscriptions" {
 				t.Fatalf("create request = %s %s", r.Method, r.URL.Path)
@@ -196,7 +196,6 @@ func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndUserOAuthForCreate(t 
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	subscription, err := client.EnsureDMSubscription(
 		context.Background(),
-		"user-oauth-token",
 		"app-token",
 		"account-123",
 		"2244994945",
@@ -236,7 +235,6 @@ func TestXClientEnsureDMSubscriptionReplacesStaleStableTag(t *testing.T) {
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	subscription, err := client.EnsureDMSubscription(
 		context.Background(),
-		"user-oauth-token",
 		"app-token",
 		"account-123",
 		"2244994945",
@@ -280,7 +278,6 @@ func TestXClientEnsureDMSubscriptionFindsStableTagOnSecondPage(t *testing.T) {
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	subscription, err := client.EnsureDMSubscription(
 		context.Background(),
-		"user-oauth-token",
 		"app-token",
 		"account-123",
 		"2244994945",
@@ -337,7 +334,6 @@ func TestXClientEnsureDMSubscriptionFollowsFullFirstPageToItem1001(t *testing.T)
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	subscription, err := client.EnsureDMSubscription(
 		context.Background(),
-		"user-oauth-token",
 		"app-token",
 		"account-123",
 		"2244994945",
@@ -367,7 +363,6 @@ func TestXClientEnsureDMSubscriptionAcceptsDirectDataResponse(t *testing.T) {
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	subscription, err := client.EnsureDMSubscription(
 		context.Background(),
-		"user-oauth-token",
 		"app-token",
 		"account-123",
 		"2244994945",
@@ -397,7 +392,6 @@ func TestXClientEnsureDMSubscriptionAcceptsArrayDataResponse(t *testing.T) {
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
 	subscription, err := client.EnsureDMSubscription(
 		context.Background(),
-		"user-oauth-token",
 		"app-token",
 		"account-123",
 		"2244994945",
