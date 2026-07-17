@@ -9,6 +9,28 @@ import (
 	"testing"
 )
 
+func TestRunMigrationsUsesPostgresSessionLocker(t *testing.T) {
+	source, err := os.ReadFile("migrate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"lock.NewPostgresSessionLocker()",
+		"goose.NewProvider(",
+		"goose.DialectPostgres",
+		"goose.WithSessionLocker(sessionLocker)",
+		"provider.Up(context.Background())",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("migration runner missing %q", want)
+		}
+	}
+	if strings.Contains(text, "goose.Up(") {
+		t.Fatal("migration runner must not use unlocked legacy goose.Up")
+	}
+}
+
 func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	databaseURL := os.Getenv("GOOSE_MIGRATION_TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -37,8 +59,19 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 		)
 	}
 
-	if err := RunMigrations(databaseURL); err != nil {
-		t.Fatalf("run all embedded migrations with Goose: %v", err)
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			errs <- RunMigrations(databaseURL)
+		}()
+	}
+	close(start)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent RunMigrations: %v", err)
+		}
 	}
 
 	var version int64
