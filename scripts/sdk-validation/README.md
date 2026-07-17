@@ -108,6 +108,17 @@ scripts/sdk-source-validation/run-suite.sh sdk-go
 scripts/sdk-source-validation/run-suite.sh sdk-java
 ```
 
+Each suite first runs the source repository's unit tests and compile/type checks, including the GIF conversion create/get/wait/upload-and-convert contract. To run only those checks without a live API key:
+
+```bash
+SOURCE_ONLY=true scripts/sdk-source-validation/run-suite.sh sdk-js
+SOURCE_ONLY=true scripts/sdk-source-validation/run-suite.sh sdk-python
+SOURCE_ONLY=true scripts/sdk-source-validation/run-suite.sh sdk-go
+SOURCE_ONLY=true scripts/sdk-source-validation/run-suite.sh sdk-java
+```
+
+GIF polling coverage includes the two-second default, custom interval and timeout, runtime cancellation/interruption, typed terminal failures, caller-supplied idempotency keys, and confirmation that the high-level helper never publishes a post.
+
 If your SDK checkout root is not `/Users/xiaoboyu/unipost-dev`, override it with:
 
 ```bash

@@ -219,40 +219,40 @@ export default function PublishGifsGuidePage() {
           [
             "Instagram",
             "No direct GIF publishing surface",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "MP4 conversion supported; GIF guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "TikTok",
             "No direct GIF publishing surface",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "MP4 conversion supported; GIF guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "Pinterest",
             "No direct animated GIF publishing surface in the supported organic Pin API flow",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "MP4 conversion supported; GIF guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "YouTube",
             "No GIF post type; publishing requires video media",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "MP4 conversion supported; GIF guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
           [
             "Bluesky",
             "No stable direct GIF file publishing path exposed by UniPost",
-            "Coming soon",
-            "A UniPost GIF-to-MP4 conversion option is coming soon.",
+            "MP4 conversion supported; GIF guidance coming soon",
+            "Convert the GIF to MP4, then use the destination's video workflow.",
           ],
         ]}
       />
 
       <div className="docs-callout docs-callout-tip">
         <strong>Current direct destinations:</strong> send GIF files only to connected X and Facebook Page accounts.
-        For every other platform, treat the status above as coming soon rather than sending the same GIF and waiting for
-        the upstream platform to reject it.
+        LinkedIn and Threads direct GIF paths remain coming soon. For video-only destinations, convert the GIF first;
+        do not send the unchanged GIF and wait for the upstream platform to reject it.
       </div>
 
       <h2 id="supported-workflow">Choose the media source</h2>
@@ -323,17 +323,28 @@ export default function PublishGifsGuidePage() {
         Facebook GIF.
       </div>
 
-      <h2 id="coming-soon">What is coming soon</h2>
+      <h2 id="convert-to-mp4">Convert a GIF for video destinations</h2>
       <p>
         LinkedIn and Threads require native integrations with their upstream GIF capabilities. UniPost will add those
         destination-specific paths without pretending that the platforms themselves reject GIFs.
       </p>
       <p>
-        Instagram, TikTok, Pinterest, YouTube, and Bluesky need a video-compatible path. A UniPost GIF-to-MP4
-        conversion option is coming soon so an integration can provide a GIF and publish the converted video to an
-        eligible destination. Conversion is not available yet, and this guide does not define a future API field,
-        quality setting, file limit, retention policy, or release date.
+        Instagram, TikTok, Pinterest, YouTube, and Bluesky need video media instead of an unchanged GIF. Upload the GIF
+        with <ApiInlineLink endpoint="POST /v1/media" href="/docs/api/media/reserve" />, create a job with{" "}
+        <ApiInlineLink endpoint="POST /v1/media/gif-conversions" href="/docs/api/media/gif-conversions" />, and poll{" "}
+        <code>GET /v1/media/gif-conversions/&#123;id&#125;</code>. A successful job returns an MP4 <code>output_media_id</code>.
       </p>
+      <p>
+        Conversion does not publish, edit a draft, or replace the original GIF. Use the returned Media ID in a normal
+        video publishing request after validating the selected destination. Destination-specific GIF guidance and the
+        Dashboard conversion control are still coming soon.
+      </p>
+      <div className="docs-callout docs-callout-tip">
+        <strong>Output profile:</strong> UniPost creates a silent H.264 MP4 at 30 FPS, composites transparency over
+        white by default, preserves complete animation cycles, avoids upscaling, and limits the longest edge to 1920
+        pixels. TikTok requires both output dimensions to be at least 360 pixels; validation rejects smaller outputs
+        before dispatch.
+      </div>
 
       <h2 id="common-errors">Common errors</h2>
       <DocsTable
@@ -342,7 +353,7 @@ export default function PublishGifsGuidePage() {
           [
             "unsupported_format",
             "The GIF targets a destination that UniPost does not currently support for direct GIF publishing.",
-            "Target X or Facebook, or wait for the documented coming-soon path.",
+            "Target X or Facebook directly, or convert the GIF to MP4 before using a video destination.",
           ],
           [
             "file_too_large",
@@ -395,6 +406,11 @@ export default function PublishGifsGuidePage() {
           <div className="docs-next-kicker">Reference</div>
           <div className="docs-next-title">Get media</div>
           <div className="docs-next-body">Wait until a local GIF is uploaded or attached before publishing it.</div>
+        </Link>
+        <Link href="/docs/api/media/gif-conversions" className="docs-next-card">
+          <div className="docs-next-kicker">Reference</div>
+          <div className="docs-next-title">Convert GIF to MP4</div>
+          <div className="docs-next-body">Create and poll an asynchronous universal MP4 conversion job.</div>
         </Link>
         <Link href="/docs/api/posts/validate" className="docs-next-card">
           <div className="docs-next-kicker">Reference</div>

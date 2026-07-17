@@ -22,15 +22,11 @@ import (
 )
 
 const (
-	mediaAudioOverlayWorkerInterval = 5 * time.Second
-	mediaAudioOverlayClaimBatch     = 3
-	mediaAudioOverlayKind           = "audio_overlay"
-	mediaAudioOverlayOutputType     = "video/mp4"
+	mediaAudioOverlayKind       = "audio_overlay"
+	mediaAudioOverlayOutputType = "video/mp4"
 )
 
 type mediaAudioOverlayWorkerQueries interface {
-	PromoteDueMediaProcessingRetriesByKind(context.Context, string) (int64, error)
-	ClaimMediaProcessingJobsByKind(context.Context, db.ClaimMediaProcessingJobsByKindParams) ([]db.MediaProcessingJob, error)
 	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
 	CreateMedia(context.Context, db.CreateMediaParams) (db.Media, error)
 	UpdateMediaStorageKey(context.Context, db.UpdateMediaStorageKeyParams) (db.Media, error)
@@ -47,6 +43,7 @@ type mediaAudioOverlayWorkerStorage interface {
 	PutFile(context.Context, string, string, string, string) error
 	Head(context.Context, string) (storage.HeadResult, error)
 	ProbeVideo(context.Context, string) (storage.VideoMetadata, error)
+	Delete(context.Context, string) error
 }
 
 type audioOverlayProcessor interface {
@@ -70,54 +67,6 @@ func NewMediaAudioOverlayWorker(queries mediaAudioOverlayWorkerQueries, store me
 func (w *MediaAudioOverlayWorker) WithProcessor(processor audioOverlayProcessor) *MediaAudioOverlayWorker {
 	w.processor = processor
 	return w
-}
-
-func (w *MediaAudioOverlayWorker) Start(ctx context.Context) {
-	if w.storage == nil {
-		slog.Info("media audio overlay worker: storage not configured, worker disabled")
-		return
-	}
-	if w.processor == nil {
-		slog.Info("media audio overlay worker: processor not configured, worker disabled")
-		return
-	}
-
-	ticker := time.NewTicker(mediaAudioOverlayWorkerInterval)
-	defer ticker.Stop()
-
-	slog.Info("media audio overlay worker started", "interval", mediaAudioOverlayWorkerInterval)
-	for {
-		select {
-		case <-ctx.Done():
-			slog.Info("media audio overlay worker stopped")
-			return
-		case <-ticker.C:
-			w.runOnce(ctx)
-		}
-	}
-}
-
-func (w *MediaAudioOverlayWorker) runOnce(ctx context.Context) {
-	if w.queries == nil || w.storage == nil || w.processor == nil {
-		return
-	}
-	if _, err := w.queries.PromoteDueMediaProcessingRetriesByKind(ctx, mediaAudioOverlayKind); err != nil {
-		slog.Error("media audio overlay worker: retry promotion failed", "error", err)
-		return
-	}
-	jobs, err := w.queries.ClaimMediaProcessingJobsByKind(ctx, db.ClaimMediaProcessingJobsByKindParams{
-		JobKind:    mediaAudioOverlayKind,
-		BatchLimit: mediaAudioOverlayClaimBatch,
-	})
-	if err != nil {
-		slog.Error("media audio overlay worker: claim failed", "error", err)
-		return
-	}
-	for _, job := range jobs {
-		if err := w.processJob(ctx, job); err != nil {
-			slog.Error("media audio overlay worker: process failed", "job_id", job.ID, "error", err)
-		}
-	}
 }
 
 func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaProcessingJob) error {
@@ -172,16 +121,19 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 		OutputVideoPath: outputPath,
 	})
 	if err != nil {
-		return w.failJob(ctx, job, "audio_overlay_processing_failed", err.Error(), true)
+		slog.Error("media audio overlay processor failed", "job_id", job.ID, "error", err)
+		return w.failJob(ctx, job, "audio_overlay_processing_failed", "Audio overlay processing failed", true)
 	}
 
 	outputMedia, err := w.createOutputMedia(ctx, job, outputPath, result)
 	if err != nil {
-		return w.failJob(ctx, job, "audio_overlay_output_upload_failed", err.Error(), true)
+		slog.Error("media audio overlay output storage failed", "job_id", job.ID, "error", err)
+		return w.failJob(ctx, job, "audio_overlay_output_upload_failed", "Audio overlay output could not be stored", true)
 	}
 
 	cleanupAfter, err := w.processingCleanupDeadline(ctx, job.WorkspaceID, "published")
 	if err != nil {
+		w.compensateOutput(ctx, outputMedia)
 		return fmt.Errorf("calculate media processing success retention: %w", err)
 	}
 	if _, err := w.queries.CompleteMediaProcessingJobSucceeded(ctx, db.CompleteMediaProcessingJobSucceededParams{
@@ -189,9 +141,19 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 		OutputMediaID:  pgtype.Text{String: outputMedia.ID, Valid: true},
 		CleanupAfterAt: cleanupAfter,
 	}); err != nil {
+		w.compensateOutput(ctx, outputMedia)
 		return fmt.Errorf("complete media processing job succeeded: %w", err)
 	}
 	return nil
+}
+
+// ProcessClaimedJob lets the shared Media Processing coordinator own all
+// claiming and global concurrency while preserving Audio Overlay processing.
+func (w *MediaAudioOverlayWorker) ProcessClaimedJob(ctx context.Context, job db.MediaProcessingJob) error {
+	if w == nil || w.queries == nil || w.storage == nil || w.processor == nil {
+		return fmt.Errorf("media audio overlay worker is not configured")
+	}
+	return w.processJob(ctx, job)
 }
 
 func (w *MediaAudioOverlayWorker) createOutputMedia(ctx context.Context, job db.MediaProcessingJob, outputPath string, result audioOverlayProcessResult) (db.Media, error) {
@@ -217,12 +179,14 @@ func (w *MediaAudioOverlayWorker) createOutputMedia(ctx context.Context, job db.
 		return db.Media{}, fmt.Errorf("update output media key: %w", err)
 	}
 	if err := w.storage.PutFile(ctx, finalKey, outputPath, mediaAudioOverlayOutputType, "public, max-age=31536000, immutable"); err != nil {
+		_ = w.storage.Delete(ctx, finalKey)
 		_ = w.queries.HardDeleteMedia(ctx, row.ID)
 		return db.Media{}, fmt.Errorf("upload output media: %w", err)
 	}
 
 	head, err := w.storage.Head(ctx, finalKey)
 	if err != nil || !head.Exists {
+		_ = w.storage.Delete(ctx, finalKey)
 		_ = w.queries.HardDeleteMedia(ctx, row.ID)
 		return db.Media{}, fmt.Errorf("head output media: %w", err)
 	}
@@ -249,10 +213,22 @@ func (w *MediaAudioOverlayWorker) createOutputMedia(ctx context.Context, job db.
 		DurationMs:  int4FromPositive(meta.DurationMS),
 	})
 	if err != nil {
+		_ = w.storage.Delete(ctx, finalKey)
 		_ = w.queries.HardDeleteMedia(ctx, row.ID)
 		return db.Media{}, fmt.Errorf("mark output media uploaded: %w", err)
 	}
 	return marked, nil
+}
+
+func (w *MediaAudioOverlayWorker) compensateOutput(ctx context.Context, output db.Media) {
+	if strings.HasPrefix(output.StorageKey, storage.MediaPrefix) {
+		if err := w.storage.Delete(ctx, output.StorageKey); err != nil {
+			slog.Error("media audio overlay output compensation object delete failed", "media_id", output.ID, "error", err)
+		}
+	}
+	if err := w.queries.HardDeleteMedia(ctx, output.ID); err != nil {
+		slog.Error("media audio overlay output compensation row delete failed", "media_id", output.ID, "error", err)
+	}
 }
 
 func (w *MediaAudioOverlayWorker) failJob(ctx context.Context, job db.MediaProcessingJob, code, message string, retryable bool) error {

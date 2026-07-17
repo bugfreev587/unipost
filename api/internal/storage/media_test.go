@@ -1,7 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -70,6 +74,9 @@ func TestNilClient(t *testing.T) {
 	if err := c.DownloadObject(ctx, "media/in.mp4", "/tmp/in.mp4"); err != ErrNotConfigured {
 		t.Errorf("DownloadObject on nil: want ErrNotConfigured, got %v", err)
 	}
+	if err := c.DownloadObjectLimited(ctx, "media/in.gif", "/tmp/in.gif", 1); err != ErrNotConfigured {
+		t.Errorf("DownloadObjectLimited on nil: want ErrNotConfigured, got %v", err)
+	}
 	if err := c.PutFile(ctx, "media/out.mp4", "/tmp/out.mp4", "video/mp4", "public, max-age=1"); err != ErrNotConfigured {
 		t.Errorf("PutFile on nil: want ErrNotConfigured, got %v", err)
 	}
@@ -101,5 +108,30 @@ func TestNilClientBrandingHelpers(t *testing.T) {
 	}
 	if got := c.PublicURL("branding/ws/pr/logo.png"); got != "" {
 		t.Errorf("PublicURL on nil = %q, want empty string", got)
+	}
+}
+
+func TestWriteFileLimitedRejectsBytesBeyondLimitAndRemovesPartialFile(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "input.gif")
+	err := writeFileLimited(destination, bytes.NewBufferString("123456"), 5)
+	if !errors.Is(err, ErrObjectTooLarge) {
+		t.Fatalf("writeFileLimited error = %v, want ErrObjectTooLarge", err)
+	}
+	if _, statErr := os.Stat(destination); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("partial destination remains: %v", statErr)
+	}
+}
+
+func TestWriteFileLimitedAllowsExactLimit(t *testing.T) {
+	destination := filepath.Join(t.TempDir(), "input.gif")
+	if err := writeFileLimited(destination, bytes.NewBufferString("12345"), 5); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "12345" {
+		t.Fatalf("body = %q", body)
 	}
 }

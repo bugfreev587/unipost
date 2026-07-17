@@ -37,6 +37,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/mail"
+	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
@@ -563,11 +564,17 @@ func main() {
 	}
 
 	if shouldStartMediaProcessingWorkers(processMode) {
-		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
-		go mediaCleanupWorker.Start(workerCtx)
+		if storageClient == nil {
+			slog.Error("media processing workers disabled: object storage is not configured", "process_mode", processMode)
+		} else {
+			mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
+			go mediaCleanupWorker.Start(workerCtx)
 
-		mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
-		go mediaAudioOverlayWorker.Start(workerCtx)
+			mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
+			mediaGIFConversionWorker := worker.NewMediaGIFConversionWorker(queries, storageClient)
+			mediaProcessingCoordinator := worker.NewMediaProcessingCoordinator(queries, mediaAudioOverlayWorker, mediaGIFConversionWorker)
+			go mediaProcessingCoordinator.Start(workerCtx)
+		}
 	}
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
@@ -650,7 +657,9 @@ func main() {
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
 	platformHandler := handler.NewPlatformHandler(queries, quotaChecker)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
-	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient)
+	mediaProcessingAdmitter := mediaprocessing.NewPostgresAdmitter(pool)
+	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient).WithAdmitter(mediaProcessingAdmitter)
+	mediaGIFConversionHandler := handler.NewMediaGIFConversionHandler(queries, storageClient, mediaProcessingAdmitter)
 	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
 	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
 	adminObjectStorageHandler := handler.NewAdminObjectStorageHandler(queries, os.Getenv("R2_BUCKET_NAME"))
@@ -1040,6 +1049,8 @@ func main() {
 		// platform_posts[].media_ids on subsequent /v1/posts.
 		r.Post("/v1/media/audio-overlays", mediaAudioOverlayHandler.Create)
 		r.Get("/v1/media/audio-overlays/{id}", mediaAudioOverlayHandler.Get)
+		r.Post("/v1/media/gif-conversions", mediaGIFConversionHandler.Create)
+		r.Get("/v1/media/gif-conversions/{id}", mediaGIFConversionHandler.Get)
 		r.Post("/v1/media", mediaHandler.Create)
 		r.Get("/v1/media/{id}", mediaHandler.Get)
 		r.Delete("/v1/media/{id}", mediaHandler.Delete)

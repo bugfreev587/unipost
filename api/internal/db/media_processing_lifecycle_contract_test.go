@@ -27,6 +27,26 @@ func TestAudioOverlayJobCreationTracksInputsAtomically(t *testing.T) {
 	}
 }
 
+func TestGIFJobCreationTracksInputAndFairUseCounts(t *testing.T) {
+	source, err := os.ReadFile("queries/media_processing_jobs.sql")
+	if err != nil {
+		t.Fatalf("read media processing jobs queries: %v", err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"-- name: creategifmediaprocessingjob :one",
+		"'gif_to_mp4'",
+		"insert into media_processing_usages",
+		"created_job.input_media_id",
+		"status in ('queued', 'retry_wait', 'processing')",
+		"-- name: countgifconversionssince :one",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("GIF admission query contract missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
 func TestMediaProcessingRetryQueryUsesBackoffAndClaimDeadline(t *testing.T) {
 	source, err := os.ReadFile("queries/media_processing_jobs.sql")
 	if err != nil {
@@ -43,6 +63,27 @@ func TestMediaProcessingRetryQueryUsesBackoffAndClaimDeadline(t *testing.T) {
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("media processing retry contract missing %q, got:\n%s", want, string(source))
+		}
+	}
+}
+
+func TestStaleMediaProcessingRecoveryIsAtomicAndPlanAware(t *testing.T) {
+	source, err := os.ReadFile("queries/media_processing_jobs.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := strings.ToLower(string(source))
+	for _, want := range []string{
+		"-- name: recoverstalemediaprocessingjobs :many",
+		"now() - interval '5 minutes'",
+		"for update skip locked",
+		"when stale.attempts < 3 then 'retry_wait' else 'failed'",
+		"'media_processing_worker_lost'",
+		"update media_processing_usages",
+		"when 'enterprise' then interval '60 days'",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("stale recovery contract missing %q", want)
 		}
 	}
 }

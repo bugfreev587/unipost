@@ -1,6 +1,6 @@
 "use client";
 
-import { EnumValues, InfoBox, type ApiFieldItem } from "../../_components/doc-components";
+import { ApiInlineLink, EnumValues, InfoBox, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
 const AUTH_FIELDS: ApiFieldItem[] = [
@@ -136,8 +136,11 @@ export default function GetMediaPage() {
       <InfoBox>
         <strong>Deleted media:</strong> after a post reaches a final status, UniPost keeps uploaded media
         for the plan retention window, then removes the R2 object and the media row after every usage
-        for that media is due. Scheduled, draft, queued, publishing, and processing posts keep their
-        media until they finish.
+        for that media is due. Scheduled, draft, queued, publishing, and active Media Processing jobs keep their
+        media until they finish. GIF conversion inputs and successful MP4 outputs follow the same lifecycle.
+      </InfoBox>
+      <InfoBox>
+        An uploaded <code>image/gif</code> can be passed to <ApiInlineLink endpoint="POST /v1/media/gif-conversions" href="/docs/api/media/gif-conversions" />. Poll the conversion job itself for <code>output_media_id</code>; this endpoint only reports the Media row.
       </InfoBox>
     </SingleEndpointReferencePage>
   );
