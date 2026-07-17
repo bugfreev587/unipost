@@ -107,12 +107,40 @@ func TestMediaAudioOverlayWorkerProcessesClaimedJob(t *testing.T) {
 	}
 }
 
+func TestMediaAudioOverlayWorkerTerminallyFailsMalformedInputs(t *testing.T) {
+	queries := newFakeMediaAudioOverlayWorkerQueries()
+	worker := NewMediaAudioOverlayWorker(queries, &fakeMediaAudioOverlayWorkerStorage{}).
+		WithProcessor(&fakeAudioOverlayProcessor{})
+
+	err := worker.processJob(context.Background(), db.MediaProcessingJob{
+		ID:          "mpj_malformed",
+		WorkspaceID: "ws_1",
+		Kind:        mediaAudioOverlayKind,
+		Status:      "processing",
+	})
+
+	if err == nil {
+		t.Fatal("process malformed job error = nil, want terminal validation error")
+	}
+	if queries.failedJobID != "mpj_malformed" {
+		t.Fatalf("failed job id = %q, want mpj_malformed", queries.failedJobID)
+	}
+	if queries.failedErrorCode != "invalid_media_processing_job" {
+		t.Fatalf("failed error code = %q, want invalid_media_processing_job", queries.failedErrorCode)
+	}
+	if queries.failedRetryable {
+		t.Fatal("malformed job must not be retryable")
+	}
+}
+
 type fakeMediaAudioOverlayWorkerQueries struct {
 	claimCalls             int
 	claimKind              string
 	succeededJobID         string
 	succeededOutputMediaID string
 	failedJobID            string
+	failedErrorCode         string
+	failedRetryable         bool
 }
 
 func newFakeMediaAudioOverlayWorkerQueries() *fakeMediaAudioOverlayWorkerQueries {
@@ -209,6 +237,8 @@ func (f *fakeMediaAudioOverlayWorkerQueries) MarkMediaProcessingJobSucceeded(_ c
 
 func (f *fakeMediaAudioOverlayWorkerQueries) MarkMediaProcessingJobFailed(_ context.Context, arg db.MarkMediaProcessingJobFailedParams) (db.MediaProcessingJob, error) {
 	f.failedJobID = arg.ID
+	f.failedErrorCode = arg.ErrorCode.String
+	f.failedRetryable = arg.Retryable
 	return db.MediaProcessingJob{ID: arg.ID, Status: "failed"}, nil
 }
 

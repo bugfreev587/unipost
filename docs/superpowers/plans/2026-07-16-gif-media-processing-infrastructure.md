@@ -75,7 +75,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Regenerate sqlc and update the worker interface/call site to pass `audio_overlay` explicitly.
 - [x] Add a database query test or source assertion proving one worker kind cannot claim another kind.
 - [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/worker ./internal/db -count=1` and confirm GREEN.
-- [ ] Commit: `fix(media): isolate processing job claims by kind`.
+- [x] Commit: `fix(media): isolate processing job claims by kind`.
 
 ## Task 3: Preserve Audio Overlay across nullable input fields
 
@@ -87,11 +87,11 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/internal/worker/media_audio_overlay_test.go`
 - Modify: `api/internal/db/queries/media_processing_jobs.sql`
 
-- [ ] Add failing handler tests proving Audio Overlay jobs still write both required audio/video IDs after sqlc changes them to nullable values.
-- [ ] Add failing worker tests proving malformed Audio Overlay rows fail terminally instead of panicking or remaining stuck in `processing`.
-- [ ] Update handler inserts to use valid nullable pgx values and update worker reads to validate and unwrap both inputs before processing.
-- [ ] Keep the public Audio Overlay API response and idempotency behavior unchanged.
-- [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/handler ./internal/worker -run 'AudioOverlay' -count=1` and confirm GREEN.
+- [x] Add failing handler tests proving Audio Overlay jobs still write both required audio/video IDs after sqlc changes them to nullable values.
+- [x] Add failing worker tests proving malformed Audio Overlay rows fail terminally instead of panicking or remaining stuck in `processing`.
+- [x] Update handler inserts to use valid nullable pgx values and update worker reads to validate and unwrap both inputs before processing.
+- [x] Keep the public Audio Overlay API response and idempotency behavior unchanged.
+- [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/handler ./internal/worker -run 'AudioOverlay' -count=1` and confirm GREEN.
 - [ ] Commit: `fix(media): preserve audio overlay input compatibility`.
 
 ## Task 4: Make processing retention transitions atomic

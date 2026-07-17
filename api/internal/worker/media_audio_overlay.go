@@ -114,6 +114,12 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 	if job.Kind != mediaAudioOverlayKind {
 		return fmt.Errorf("unsupported media processing job kind %q", job.Kind)
 	}
+	if !job.InputVideoMediaID.Valid || strings.TrimSpace(job.InputVideoMediaID.String) == "" {
+		return w.failJob(ctx, job.ID, "invalid_media_processing_job", "input video media id is missing", false)
+	}
+	if !job.InputAudioMediaID.Valid || strings.TrimSpace(job.InputAudioMediaID.String) == "" {
+		return w.failJob(ctx, job.ID, "invalid_media_processing_job", "input audio media id is missing", false)
+	}
 
 	video, err := w.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
 		ID:          job.InputVideoMediaID.String,

@@ -164,8 +164,8 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 		WorkspaceID:       workspaceID,
 		Kind:              audioOverlayKind,
 		Status:            audioOverlayStatusQueued,
-		InputVideoMediaID: normalized.VideoMediaID,
-		InputAudioMediaID: normalized.AudioMediaID,
+		InputVideoMediaID: pgtype.Text{String: normalized.VideoMediaID, Valid: true},
+		InputAudioMediaID: pgtype.Text{String: normalized.AudioMediaID, Valid: true},
 		OutputMediaID:     pgtype.Text{},
 		Mode:              normalized.Mode,
 		Fit:               normalized.Fit,
@@ -414,8 +414,8 @@ func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayRespons
 	return mediaAudioOverlayResponse{
 		ID:            job.ID,
 		Status:        job.Status,
-		VideoMediaID:  job.InputVideoMediaID,
-		AudioMediaID:  job.InputAudioMediaID,
+		VideoMediaID:  nullableTextValue(job.InputVideoMediaID),
+		AudioMediaID:  nullableTextValue(job.InputAudioMediaID),
 		OutputMediaID: output,
 		Mode:          job.Mode,
 		Fit:           job.Fit,
@@ -424,6 +424,13 @@ func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayRespons
 		CompletedAt:   completedAt,
 		Error:         errPayload,
 	}
+}
+
+func nullableTextValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 func writeAudioOverlayValidationError(w http.ResponseWriter, issues []platform.Issue) {

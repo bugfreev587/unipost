@@ -48,6 +48,10 @@ func TestCreateAudioOverlayJobDefaultsAndQueues(t *testing.T) {
 	if params.Kind != "audio_overlay" || params.Status != "queued" {
 		t.Fatalf("kind/status = %q/%q, want audio_overlay/queued", params.Kind, params.Status)
 	}
+	if !params.InputVideoMediaID.Valid || params.InputVideoMediaID.String != "med_video" ||
+		!params.InputAudioMediaID.Valid || params.InputAudioMediaID.String != "med_audio" {
+		t.Fatalf("nullable media inputs = %#v/%#v, want valid video/audio ids", params.InputVideoMediaID, params.InputAudioMediaID)
+	}
 	if params.Mode != "replace" || params.Fit != "loop_to_video" {
 		t.Fatalf("mode/fit = %q/%q", params.Mode, params.Fit)
 	}
@@ -244,8 +248,8 @@ func TestGetAudioOverlayJob(t *testing.T) {
 		WorkspaceID:       "ws_test",
 		Kind:              "audio_overlay",
 		Status:            "succeeded",
-		InputVideoMediaID: "med_video",
-		InputAudioMediaID: "med_audio",
+		InputVideoMediaID: pgtype.Text{String: "med_video", Valid: true},
+		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
 		OutputMediaID:     pgtype.Text{String: "med_output", Valid: true},
 		Mode:              "mix",
 		Fit:               "trim_to_video",
