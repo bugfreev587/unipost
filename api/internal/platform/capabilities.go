@@ -113,6 +113,9 @@ type VideoCapability struct {
 	MaxDurationSeconds int `json:"max_duration_seconds,omitempty"`
 	// MaxFileSizeBytes is the upper bound on video file size. 0 = unspecified.
 	MaxFileSizeBytes int64 `json:"max_file_size_bytes,omitempty"`
+	// MinWidth / MinHeight are hard upload floors. 0 = unspecified.
+	MinWidth  int `json:"min_width,omitempty"`
+	MinHeight int `json:"min_height,omitempty"`
 	// AllowedFormats lists accepted container/codec hints (e.g. "mp4", "mov").
 	AllowedFormats []string `json:"allowed_formats,omitempty"`
 
@@ -295,7 +298,12 @@ var Capabilities = map[string]Capability{
 				MaxCount:           1,
 				MaxDurationSeconds: 600, // 10 min for some accounts
 				MaxFileSizeBytes:   4 * 1024 * 1024 * 1024,
-				AllowedFormats:     []string{"mp4", "mov", "webm"},
+				// Content Posting API Media Transfer Guide: both dimensions
+				// must be at least 360px (30 FPS universal outputs already
+				// satisfy its 23-60 FPS range).
+				MinWidth:       360,
+				MinHeight:      360,
+				AllowedFormats: []string{"mp4", "mov", "webm"},
 			},
 		},
 		Thread:       ThreadCapability{Supported: false},
@@ -460,7 +468,7 @@ var Capabilities = map[string]Capability{
 				// 1 GB matches the decision to skip resumable upload
 				// in v1 — anything larger has to wait for Phase 2.5.
 				MaxFileSizeBytes: 1024 * 1024 * 1024,
-				AllowedFormats: []string{"mp4", "mov"},
+				AllowedFormats:   []string{"mp4", "mov"},
 				// Placement specs encode Meta's silent-routing rule:
 				// post a vertical 9:16 video to /{page_id}/videos
 				// (mediaType=feed) and Meta re-routes the upload into

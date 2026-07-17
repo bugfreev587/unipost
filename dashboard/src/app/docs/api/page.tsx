@@ -56,6 +56,7 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
       { label: "Publish draft", method: "POST", path: "/v1/posts/{id}/publish", href: "/docs/api/posts/drafts/publish", description: "Publish a draft." },
       { label: "Reserve media upload", method: "POST", path: "/v1/media", href: "/docs/api/media/reserve", description: "Reserve upload storage for media." },
       { label: "Get media", method: "GET", path: "/v1/media/{id}", href: "/docs/api/media/get", description: "Fetch uploaded media metadata." },
+      { label: "Convert GIF to MP4", method: "POST", path: "/v1/media/gif-conversions", href: "/docs/api/media/gif-conversions", description: "Create and poll a universal MP4 conversion." },
       { label: "Create audio overlay", method: "POST", path: "/v1/media/audio-overlays", href: "/docs/api/media/audio-overlays", description: "Combine uploaded audio with an uploaded video." },
     ],
   },

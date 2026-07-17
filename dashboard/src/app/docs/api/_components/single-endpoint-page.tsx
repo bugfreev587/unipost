@@ -50,6 +50,11 @@ const ENDPOINT_GUIDE_LINKS: Array<{
   },
   {
     method: "POST",
+    path: /^\/v1\/media\/gif-conversions$/,
+    guides: [{ label: "Publish GIFs", href: "/docs/guides/publish-gifs" }],
+  },
+  {
+    method: "POST",
     path: /^\/v1\/media$/,
     guides: [
       { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },

@@ -44,6 +44,10 @@ const MediaPrefix = "media/"
 // workspace configuration and must be retained indefinitely.
 const BrandingPrefix = "branding/"
 
+// ErrObjectTooLarge means a bounded download exceeded the caller's hard byte
+// limit. The partial destination is removed before this error is returned.
+var ErrObjectTooLarge = fmt.Errorf("storage: object exceeds download limit")
+
 // MediaKey returns a stable R2 key for a media row. We use the row's
 // UUID directly so the key never collides and so a HEAD lookup at
 // dispatch time only needs the row ID, not extra storage_key state.
@@ -118,6 +122,59 @@ func (c *Client) DownloadObject(ctx context.Context, key, dstPath string) error 
 	if _, err := io.Copy(dst, out.Body); err != nil {
 		return fmt.Errorf("storage: write destination %s: %w", dstPath, err)
 	}
+	return nil
+}
+
+// DownloadObjectLimited streams an object to a private local path while
+// enforcing a hard byte ceiling. It protects media workers from stale or
+// incorrect object metadata and never leaves a partial file behind.
+func (c *Client) DownloadObjectLimited(ctx context.Context, key, dstPath string, maxBytes int64) error {
+	if c == nil {
+		return ErrNotConfigured
+	}
+	if maxBytes < 0 {
+		return fmt.Errorf("storage: invalid download limit")
+	}
+	out, err := c.s3.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return fmt.Errorf("storage: get object: %w", err)
+	}
+	defer out.Body.Close()
+	if err := writeFileLimited(dstPath, out.Body, maxBytes); err != nil {
+		return fmt.Errorf("storage: download object: %w", err)
+	}
+	return nil
+}
+
+func writeFileLimited(dstPath string, source io.Reader, maxBytes int64) (err error) {
+	if maxBytes < 0 {
+		return fmt.Errorf("storage: invalid download limit")
+	}
+	dst, err := os.OpenFile(dstPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("storage: create bounded destination: %w", err)
+	}
+	complete := false
+	defer func() {
+		if closeErr := dst.Close(); err == nil && closeErr != nil {
+			err = fmt.Errorf("storage: close bounded destination: %w", closeErr)
+		}
+		if !complete || err != nil {
+			_ = os.Remove(dstPath)
+		}
+	}()
+
+	written, err := io.Copy(dst, io.LimitReader(source, maxBytes+1))
+	if err != nil {
+		return fmt.Errorf("storage: write bounded destination: %w", err)
+	}
+	if written > maxBytes {
+		return ErrObjectTooLarge
+	}
+	complete = true
 	return nil
 }
 

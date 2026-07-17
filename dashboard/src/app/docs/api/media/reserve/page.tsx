@@ -229,9 +229,12 @@ export default function ReserveMediaPage() {
       </InfoBox>
       <InfoBox>
         <strong>Retention follows post status:</strong> UniPost keeps uploaded media for scheduled, draft,
-        queued, publishing, and processing posts. After the parent post finishes, media is retained by plan:
+        queued, publishing, and active Media Processing jobs. After the parent post or processing job finishes, media is retained by plan:
         Free 1 day after success or 2 days after failed/partial/cancelled, API 2/4 days, Basic 4/8 days,
-        Growth 15/30 days, and Team 30/60 days. Reused media is deleted only after all post usages are due.
+        Growth 15/30 days, and Team or Enterprise 30/60 days. Reused media is deleted only after all Post and Processing usages are due.
+      </InfoBox>
+      <InfoBox>
+        To turn an uploaded <code>image/gif</code> into video media, use <ApiInlineLink endpoint="POST /v1/media/gif-conversions" href="/docs/api/media/gif-conversions" /> after the upload is ready.
       </InfoBox>
       <InfoBox>
         <strong>TikTok file_upload note:</strong> upload the complete video file to UniPost with this

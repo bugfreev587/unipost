@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
@@ -42,7 +45,7 @@ type mediaAudioOverlayQueries interface {
 	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
 	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
 	GetMediaProcessingJobByIdempotencyKey(context.Context, db.GetMediaProcessingJobByIdempotencyKeyParams) (db.MediaProcessingJob, error)
-	CreateMediaProcessingJob(context.Context, db.CreateMediaProcessingJobParams) (db.MediaProcessingJob, error)
+	CreateAudioOverlayMediaProcessingJob(context.Context, db.CreateAudioOverlayMediaProcessingJobParams) (db.CreateAudioOverlayMediaProcessingJobRow, error)
 	GetMediaProcessingJobByIDAndWorkspace(context.Context, db.GetMediaProcessingJobByIDAndWorkspaceParams) (db.MediaProcessingJob, error)
 }
 
@@ -54,6 +57,12 @@ type mediaAudioOverlayObjectStore interface {
 type MediaAudioOverlayHandler struct {
 	queries     mediaAudioOverlayQueries
 	objectStore mediaAudioOverlayObjectStore
+	admitter    mediaprocessing.AudioOverlayAdmitter
+}
+
+func (h *MediaAudioOverlayHandler) WithAdmitter(admitter mediaprocessing.AudioOverlayAdmitter) *MediaAudioOverlayHandler {
+	h.admitter = admitter
+	return h
 }
 
 func NewMediaAudioOverlayHandler(queries mediaAudioOverlayQueries, objectStore mediaAudioOverlayObjectStore) *MediaAudioOverlayHandler {
@@ -138,7 +147,7 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 			IdempotencyKey: pgtype.Text{String: idempotencyKey, Valid: true},
 		})
 		if err == nil {
-			if existing.RequestHash.Valid && existing.RequestHash.String == requestHash {
+			if existing.Kind == audioOverlayKind && existing.RequestHash.Valid && existing.RequestHash.String == requestHash {
 				writeAccepted(w, audioOverlayJobResponse(existing))
 				return
 			}
@@ -160,13 +169,10 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	params := db.CreateMediaProcessingJobParams{
+	params := db.CreateAudioOverlayMediaProcessingJobParams{
 		WorkspaceID:       workspaceID,
-		Kind:              audioOverlayKind,
-		Status:            audioOverlayStatusQueued,
-		InputVideoMediaID: normalized.VideoMediaID,
-		InputAudioMediaID: normalized.AudioMediaID,
-		OutputMediaID:     pgtype.Text{},
+		InputVideoMediaID: pgtype.Text{String: normalized.VideoMediaID, Valid: true},
+		InputAudioMediaID: pgtype.Text{String: normalized.AudioMediaID, Valid: true},
 		Mode:              normalized.Mode,
 		Fit:               normalized.Fit,
 		VideoVolume:       normalized.VideoVolume,
@@ -178,15 +184,75 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 		params.IdempotencyKey = pgtype.Text{String: idempotencyKey, Valid: true}
 		params.RequestHash = pgtype.Text{String: requestHash, Valid: true}
 	}
+	if h.admitter != nil {
+		result, admitErr := h.admitter.AdmitAudioOverlay(r.Context(), mediaprocessing.AudioOverlayAdmissionRequest{
+			WorkspaceID: workspaceID, InputVideoMediaID: normalized.VideoMediaID, InputAudioMediaID: normalized.AudioMediaID,
+			Mode: normalized.Mode, Fit: normalized.Fit, VideoVolume: normalized.VideoVolume,
+			AudioVolume: normalized.AudioVolume, AudioStartMS: normalized.AudioStartMs,
+			RequestJSON: requestJSON, RequestHash: requestHash, IdempotencyKey: idempotencyKey,
+			Now: time.Now().UTC(),
+		})
+		if admitErr != nil {
+			slog.Error("media audio overlay: admission failed", "err", admitErr, "workspace_id", workspaceID)
+			writeError(w, http.StatusServiceUnavailable, "media_processing_unavailable", "Audio overlay could not be queued")
+			return
+		}
+		switch result.Decision.Code {
+		case mediaprocessing.AdmissionAccepted, mediaprocessing.AdmissionIdempotentReplay:
+			writeAccepted(w, audioOverlayJobResponse(result.Job))
+		case mediaprocessing.AdmissionIdempotentConflict:
+			writeError(w, http.StatusConflict, audioOverlayIdempotencyErrorCode, "Idempotency-Key was already used with a different audio overlay request")
+		case mediaprocessing.AdmissionCapacityExceeded:
+			seconds := int(math.Ceil(result.Decision.RetryAfter.Seconds()))
+			if seconds < 1 {
+				seconds = 1
+			}
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			writeErrorWithDetails(w, http.StatusTooManyRequests, "media_processing_capacity_exceeded", "Workspace active media processing capacity is reached", ErrorDetails{DocsURL: audioOverlayDocsURL})
+		default:
+			writeError(w, http.StatusServiceUnavailable, "media_processing_unavailable", "Audio overlay could not be queued")
+		}
+		return
+	}
 
-	job, err := h.queries.CreateMediaProcessingJob(r.Context(), params)
+	created, err := h.queries.CreateAudioOverlayMediaProcessingJob(r.Context(), params)
 	if err != nil {
 		slog.Error("media audio overlay: create job failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create audio overlay job")
 		return
 	}
+	job := mediaProcessingJobFromAudioOverlayCreateRow(created)
 
 	writeAccepted(w, audioOverlayJobResponse(job))
+}
+
+func mediaProcessingJobFromAudioOverlayCreateRow(row db.CreateAudioOverlayMediaProcessingJobRow) db.MediaProcessingJob {
+	return db.MediaProcessingJob{
+		ID:                row.ID,
+		WorkspaceID:       row.WorkspaceID,
+		Kind:              row.Kind,
+		Status:            row.Status,
+		InputVideoMediaID: row.InputVideoMediaID,
+		InputAudioMediaID: row.InputAudioMediaID,
+		OutputMediaID:     row.OutputMediaID,
+		Mode:              row.Mode,
+		Fit:               row.Fit,
+		VideoVolume:       row.VideoVolume,
+		AudioVolume:       row.AudioVolume,
+		AudioStartMs:      row.AudioStartMs,
+		Request:           row.Request,
+		IdempotencyKey:    row.IdempotencyKey,
+		RequestHash:       row.RequestHash,
+		ErrorCode:         row.ErrorCode,
+		ErrorMessage:      row.ErrorMessage,
+		Retryable:         row.Retryable,
+		Attempts:          row.Attempts,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+		StartedAt:         row.StartedAt,
+		CompletedAt:       row.CompletedAt,
+		InputMediaID:      row.InputMediaID,
+	}
 }
 
 func (h *MediaAudioOverlayHandler) Get(w http.ResponseWriter, r *http.Request) {
@@ -388,6 +454,10 @@ func isUsableOverlayMediaStatus(status string) bool {
 }
 
 func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayResponse {
+	status := job.Status
+	if status == "retry_wait" {
+		status = "queued"
+	}
 	var output *string
 	if job.OutputMediaID.Valid {
 		v := job.OutputMediaID.String
@@ -413,9 +483,9 @@ func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayRespons
 	}
 	return mediaAudioOverlayResponse{
 		ID:            job.ID,
-		Status:        job.Status,
-		VideoMediaID:  job.InputVideoMediaID,
-		AudioMediaID:  job.InputAudioMediaID,
+		Status:        status,
+		VideoMediaID:  nullableTextValue(job.InputVideoMediaID),
+		AudioMediaID:  nullableTextValue(job.InputAudioMediaID),
 		OutputMediaID: output,
 		Mode:          job.Mode,
 		Fit:           job.Fit,
@@ -424,6 +494,13 @@ func audioOverlayJobResponse(job db.MediaProcessingJob) mediaAudioOverlayRespons
 		CompletedAt:   completedAt,
 		Error:         errPayload,
 	}
+}
+
+func nullableTextValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 func writeAudioOverlayValidationError(w http.ResponseWriter, issues []platform.Issue) {

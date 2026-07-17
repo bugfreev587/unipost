@@ -15,6 +15,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -45,8 +46,9 @@ func TestCreateAudioOverlayJobDefaultsAndQueues(t *testing.T) {
 		t.Fatalf("CreateMediaProcessingJob calls = %d, want 1", len(store.createParams))
 	}
 	params := store.createParams[0]
-	if params.Kind != "audio_overlay" || params.Status != "queued" {
-		t.Fatalf("kind/status = %q/%q, want audio_overlay/queued", params.Kind, params.Status)
+	if !params.InputVideoMediaID.Valid || params.InputVideoMediaID.String != "med_video" ||
+		!params.InputAudioMediaID.Valid || params.InputAudioMediaID.String != "med_audio" {
+		t.Fatalf("nullable media inputs = %#v/%#v, want valid video/audio ids", params.InputVideoMediaID, params.InputAudioMediaID)
 	}
 	if params.Mode != "replace" || params.Fit != "loop_to_video" {
 		t.Fatalf("mode/fit = %q/%q", params.Mode, params.Fit)
@@ -64,6 +66,25 @@ func TestCreateAudioOverlayJobDefaultsAndQueues(t *testing.T) {
 	}
 	if got.Data.ID == "" || got.Data.Status != "queued" || got.Data.OutputMediaID != nil {
 		t.Fatalf("unexpected response data: %#v", got.Data)
+	}
+}
+
+func TestCreateAudioOverlayJobAppliesSharedMediaProcessingCapacity(t *testing.T) {
+	store := newFakeAudioOverlayQueries()
+	objectStore := &fakeAudioOverlayObjectStore{heads: map[string]storage.HeadResult{
+		"media/vid.mp4": {Exists: true}, "media/audio.mp3": {Exists: true},
+	}}
+	admitter := &fakeAudioOverlayAdmitter{result: mediaprocessing.AdmissionResult{Decision: mediaprocessing.AdmissionDecision{
+		Code: mediaprocessing.AdmissionCapacityExceeded, RetryAfter: 30 * time.Second,
+	}}}
+	h := NewMediaAudioOverlayHandler(store, objectStore).WithAdmitter(admitter)
+	rr := httptest.NewRecorder()
+	h.Create(rr, audioOverlayRequest(t, `{"video_media_id":"med_video","audio_media_id":"med_audio"}`))
+	if rr.Code != http.StatusTooManyRequests || rr.Header().Get("Retry-After") != "30" || !strings.Contains(rr.Body.String(), "media_processing_capacity_exceeded") {
+		t.Fatalf("status=%d headers=%v body=%s", rr.Code, rr.Header(), rr.Body.String())
+	}
+	if len(store.createParams) != 0 || len(admitter.requests) != 1 {
+		t.Fatalf("direct creates=%d admission calls=%d", len(store.createParams), len(admitter.requests))
 	}
 }
 
@@ -244,8 +265,8 @@ func TestGetAudioOverlayJob(t *testing.T) {
 		WorkspaceID:       "ws_test",
 		Kind:              "audio_overlay",
 		Status:            "succeeded",
-		InputVideoMediaID: "med_video",
-		InputAudioMediaID: "med_audio",
+		InputVideoMediaID: pgtype.Text{String: "med_video", Valid: true},
+		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
 		OutputMediaID:     pgtype.Text{String: "med_output", Valid: true},
 		Mode:              "mix",
 		Fit:               "trim_to_video",
@@ -274,6 +295,13 @@ func TestGetAudioOverlayJob(t *testing.T) {
 	}
 }
 
+func TestAudioOverlayResponseKeepsRetryWaitInternal(t *testing.T) {
+	response := audioOverlayJobResponse(db.MediaProcessingJob{Status: "retry_wait"})
+	if response.Status != "queued" {
+		t.Fatalf("response status = %q, want queued for internal retry_wait", response.Status)
+	}
+}
+
 type audioOverlaySuccessEnvelope struct {
 	Data struct {
 		ID            string  `json:"id"`
@@ -294,7 +322,7 @@ func audioOverlayRequest(t *testing.T, body string) *http.Request {
 
 type fakeAudioOverlayQueries struct {
 	media                 map[string]db.Media
-	createParams          []db.CreateMediaProcessingJobParams
+	createParams          []db.CreateAudioOverlayMediaProcessingJobParams
 	markUploadedParams    []db.MarkMediaUploadedParams
 	existingByIdempotency *db.MediaProcessingJob
 	jobByID               db.MediaProcessingJob
@@ -338,12 +366,13 @@ func (f *fakeAudioOverlayQueries) GetMediaProcessingJobByIdempotencyKey(_ contex
 	return *f.existingByIdempotency, nil
 }
 
-func (f *fakeAudioOverlayQueries) CreateMediaProcessingJob(_ context.Context, arg db.CreateMediaProcessingJobParams) (db.MediaProcessingJob, error) {
+func (f *fakeAudioOverlayQueries) CreateAudioOverlayMediaProcessingJob(_ context.Context, arg db.CreateAudioOverlayMediaProcessingJobParams) (db.CreateAudioOverlayMediaProcessingJobRow, error) {
 	f.createParams = append(f.createParams, arg)
-	job := overlayJobFromParams(arg)
+	row := audioOverlayCreateRowFromParams(arg)
+	job := mediaProcessingJobFromAudioOverlayCreateRow(row)
 	f.existingByIdempotency = &job
 	f.jobByID = job
-	return job, nil
+	return row, nil
 }
 
 func (f *fakeAudioOverlayQueries) GetMediaProcessingJobByIDAndWorkspace(_ context.Context, arg db.GetMediaProcessingJobByIDAndWorkspaceParams) (db.MediaProcessingJob, error) {
@@ -374,6 +403,17 @@ type fakeAudioOverlayObjectStore struct {
 	heads     map[string]storage.HeadResult
 	videoMeta map[string]storage.VideoMetadata
 	err       error
+}
+
+type fakeAudioOverlayAdmitter struct {
+	requests []mediaprocessing.AudioOverlayAdmissionRequest
+	result   mediaprocessing.AdmissionResult
+	err      error
+}
+
+func (f *fakeAudioOverlayAdmitter) AdmitAudioOverlay(_ context.Context, req mediaprocessing.AudioOverlayAdmissionRequest) (mediaprocessing.AdmissionResult, error) {
+	f.requests = append(f.requests, req)
+	return f.result, f.err
 }
 
 func (f *fakeAudioOverlayObjectStore) Head(_ context.Context, key string) (storage.HeadResult, error) {
@@ -416,6 +456,28 @@ func overlayJobFromParams(arg db.CreateMediaProcessingJobParams) db.MediaProcess
 		InputVideoMediaID: arg.InputVideoMediaID,
 		InputAudioMediaID: arg.InputAudioMediaID,
 		OutputMediaID:     arg.OutputMediaID,
+		Mode:              arg.Mode,
+		Fit:               arg.Fit,
+		VideoVolume:       arg.VideoVolume,
+		AudioVolume:       arg.AudioVolume,
+		AudioStartMs:      arg.AudioStartMs,
+		Request:           arg.RequestJson,
+		IdempotencyKey:    arg.IdempotencyKey,
+		RequestHash:       arg.RequestHash,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+}
+
+func audioOverlayCreateRowFromParams(arg db.CreateAudioOverlayMediaProcessingJobParams) db.CreateAudioOverlayMediaProcessingJobRow {
+	now := pgtype.Timestamptz{Time: time.Date(2026, 7, 3, 12, 0, 0, 0, time.UTC), Valid: true}
+	return db.CreateAudioOverlayMediaProcessingJobRow{
+		ID:                "mpj_1",
+		WorkspaceID:       arg.WorkspaceID,
+		Kind:              audioOverlayKind,
+		Status:            audioOverlayStatusQueued,
+		InputVideoMediaID: arg.InputVideoMediaID,
+		InputAudioMediaID: arg.InputAudioMediaID,
 		Mode:              arg.Mode,
 		Fit:               arg.Fit,
 		VideoVolume:       arg.VideoVolume,

@@ -414,6 +414,7 @@ type Media struct {
 	Width          pgtype.Int4        `json:"width"`
 	Height         pgtype.Int4        `json:"height"`
 	DurationMs     pgtype.Int4        `json:"duration_ms"`
+	UsageVersion   int64              `json:"usage_version"`
 }
 
 type MediaCleanupRun struct {
@@ -449,8 +450,8 @@ type MediaProcessingJob struct {
 	WorkspaceID       string             `json:"workspace_id"`
 	Kind              string             `json:"kind"`
 	Status            string             `json:"status"`
-	InputVideoMediaID string             `json:"input_video_media_id"`
-	InputAudioMediaID string             `json:"input_audio_media_id"`
+	InputVideoMediaID pgtype.Text        `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text        `json:"input_audio_media_id"`
 	OutputMediaID     pgtype.Text        `json:"output_media_id"`
 	Mode              string             `json:"mode"`
 	Fit               string             `json:"fit"`
@@ -468,6 +469,20 @@ type MediaProcessingJob struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 	StartedAt         pgtype.Timestamptz `json:"started_at"`
 	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	InputMediaID      pgtype.Text        `json:"input_media_id"`
+	NextAttemptAt     pgtype.Timestamptz `json:"next_attempt_at"`
+}
+
+type MediaProcessingUsage struct {
+	ID             string             `json:"id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	JobID          string             `json:"job_id"`
+	MediaID        string             `json:"media_id"`
+	Role           string             `json:"role"`
+	Status         string             `json:"status"`
+	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type MetaUserToken struct {

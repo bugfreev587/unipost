@@ -13,3 +13,11 @@ restartPolicyMaxRetries = 10
 # enabled as the rollout fallback until the dedicated worker service is
 # verified, then set
 # POST_DELIVERY_WORKER_DISABLE_API_DELIVERY=true on API services.
+
+# Dedicated media processing worker services reuse this build artifact and
+# startCommand with UNIPOST_PROCESS=media-worker. The process serves only
+# /health and starts Audio Overlay plus Media cleanup workers. Size its pool
+# with MEDIA_PROCESSING_WORKER_DATABASE_MAX_CONNS (default 8). During the
+# rolling Deployment A rollout, leave API-mode media processing enabled. Only
+# after the dedicated service is healthy and old API instances have drained,
+# set MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING=true on API services.

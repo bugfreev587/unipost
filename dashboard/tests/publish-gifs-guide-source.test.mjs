@@ -50,7 +50,7 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
 
   assert.doesNotMatch(guide, /PublishGifStatusTag|publish-gif-status-tag/);
   assert.equal((guide.match(/"Supported"/g) || []).length, 2);
-  assert.equal((guide.match(/"Coming soon"/g) || []).length, 7);
+  assert.equal((guide.match(/"Coming soon"/g) || []).length, 2);
 
   assert.match(
     guide,
@@ -74,7 +74,10 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
   for (const platform of ["Instagram", "TikTok", "Pinterest", "YouTube", "Bluesky"]) {
     assert.match(
       guide,
-      new RegExp(`${platform}[\\s\\S]{0,420}GIF-to-MP4 conversion option is coming soon`, "i"),
+      new RegExp(
+        `${platform}[\\s\\S]{0,420}GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon`,
+        "i",
+      ),
     );
   }
 
@@ -90,15 +93,18 @@ test("Publish GIFs guide covers support, workflows, navigation, and API backlink
   }
 
   assert.match(guide, /"content_type": "image\/gif"/);
-  assert.match(guide, /jq -r '\.data\.id'/);
+  assert.match(guide, /jq -er '\.data\.id'/);
   assert.doesNotMatch(guide, /jq -r '\.data\.media_id'/);
   assert.match(guide, /"account_id": "sa_twitter_123"/);
   assert.match(guide, /"account_id": "sa_facebook_123"/);
   assert.match(guide, /"platform_posts"/);
   assert.match(guide, /5 MB or smaller/i);
   assert.match(guide, /publish the Facebook GIF immediately/i);
-  assert.match(guide, /GIF-to-MP4 conversion option is coming soon/i);
-  assert.doesNotMatch(guide, /GIF-to-MP4 conversion is available/i);
+  assert.match(
+    guide,
+    /GIF-to-MP4 conversion available; destination-specific publishing guidance coming soon/i,
+  );
+  assert.doesNotMatch(guide, /GIF-to-MP4 conversion option is coming soon/i);
 
   assert.match(guidesIndex, /href="\/docs\/guides\/publish-gifs"/);
   assert.match(docsShell, /label: "Publish GIFs", href: "\/docs\/guides\/publish-gifs"/);

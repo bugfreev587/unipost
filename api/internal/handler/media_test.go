@@ -1,13 +1,19 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
@@ -111,3 +117,139 @@ func TestCreateRejectsExplicitNonPositiveSizeWithActionableIssue(t *testing.T) {
 		t.Fatalf("issue message = %q, want optional size guidance", issue.Message)
 	}
 }
+
+func TestDeleteMediaReturnsNotFoundForMissingOrDeletedMedia(t *testing.T) {
+	queries := &fakeMediaHandlerQueries{getErr: pgx.ErrNoRows}
+	h := NewMediaHandler(queries, nil)
+	rr := httptest.NewRecorder()
+
+	h.Delete(rr, mediaDeleteRequest("med_missing"))
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body: %s", rr.Code, rr.Body.String())
+	}
+	if queries.softDeleteCalls != 0 {
+		t.Fatalf("soft delete calls = %d, want 0", queries.softDeleteCalls)
+	}
+}
+
+func TestDeleteMediaReturnsConflictWhenUsageBlocksDeletion(t *testing.T) {
+	queries := &fakeMediaHandlerQueries{
+		row:      db.Media{ID: "med_in_use", WorkspaceID: "ws_test", Status: "uploaded"},
+		blocking: true,
+	}
+	h := NewMediaHandler(queries, nil)
+	rr := httptest.NewRecorder()
+
+	h.Delete(rr, mediaDeleteRequest("med_in_use"))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", rr.Code, rr.Body.String())
+	}
+	var got ErrorResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Error.NormalizedCode != "media_in_use" {
+		t.Fatalf("normalized code = %q, want media_in_use", got.Error.NormalizedCode)
+	}
+	if queries.softDeleteCalls != 0 {
+		t.Fatalf("soft delete calls = %d, want 0", queries.softDeleteCalls)
+	}
+}
+
+func TestDeleteMediaSchedulesUnusedMediaForCleanup(t *testing.T) {
+	queries := &fakeMediaHandlerQueries{
+		row: db.Media{ID: "med_unused", WorkspaceID: "ws_test", Status: "uploaded"},
+	}
+	h := NewMediaHandler(queries, nil)
+	rr := httptest.NewRecorder()
+
+	h.Delete(rr, mediaDeleteRequest("med_unused"))
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body: %s", rr.Code, rr.Body.String())
+	}
+	if queries.softDeleteCalls != 1 || queries.softDeleteArg.ID != "med_unused" || queries.softDeleteArg.WorkspaceID != "ws_test" {
+		t.Fatalf("soft delete calls/arg = %d/%#v", queries.softDeleteCalls, queries.softDeleteArg)
+	}
+}
+
+func TestDeleteMediaReturnsConflictWhenUsageAppearsDuringTransition(t *testing.T) {
+	queries := &fakeMediaHandlerQueries{
+		row:                    db.Media{ID: "med_raced", WorkspaceID: "ws_test", Status: "uploaded"},
+		blockSoftDeleteAtWrite: true,
+	}
+	h := NewMediaHandler(queries, nil)
+	rr := httptest.NewRecorder()
+
+	h.Delete(rr, mediaDeleteRequest("med_raced"))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func mediaDeleteRequest(mediaID string) *http.Request {
+	req := httptest.NewRequest(http.MethodDelete, "/v1/media/"+mediaID, nil)
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("id", mediaID)
+	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
+	ctx = auth.SetWorkspaceID(ctx, "ws_test")
+	return req.WithContext(ctx)
+}
+
+type fakeMediaHandlerQueries struct {
+	row                    db.Media
+	getErr                 error
+	blocking               bool
+	softDeleteCalls        int
+	softDeleteArg          db.SoftDeleteMediaParams
+	blockSoftDeleteAtWrite bool
+}
+
+func (f *fakeMediaHandlerQueries) GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error) {
+	if f.getErr != nil {
+		return db.Media{}, f.getErr
+	}
+	return f.row, nil
+}
+
+func (f *fakeMediaHandlerQueries) HasBlockingMediaUsage(context.Context, string) (bool, error) {
+	return f.blocking, nil
+}
+
+func (f *fakeMediaHandlerQueries) SoftDeleteMedia(_ context.Context, arg db.SoftDeleteMediaParams) error {
+	return nil
+}
+
+func (f *fakeMediaHandlerQueries) SoftDeleteUnusedMedia(_ context.Context, arg db.SoftDeleteUnusedMediaParams) (int64, error) {
+	f.softDeleteCalls++
+	f.softDeleteArg = db.SoftDeleteMediaParams{ID: arg.ID, WorkspaceID: arg.WorkspaceID}
+	if f.blockSoftDeleteAtWrite {
+		return 0, nil
+	}
+	return 1, nil
+}
+
+func (f *fakeMediaHandlerQueries) CreateMedia(context.Context, db.CreateMediaParams) (db.Media, error) {
+	return db.Media{}, errUnexpectedMediaHandlerQuery
+}
+
+func (f *fakeMediaHandlerQueries) GetActiveMediaByHash(context.Context, db.GetActiveMediaByHashParams) (db.Media, error) {
+	return db.Media{}, errUnexpectedMediaHandlerQuery
+}
+
+func (f *fakeMediaHandlerQueries) HardDeleteMedia(context.Context, string) error {
+	return errUnexpectedMediaHandlerQuery
+}
+
+func (f *fakeMediaHandlerQueries) UpdateMediaStorageKey(context.Context, db.UpdateMediaStorageKeyParams) (db.Media, error) {
+	return db.Media{}, errUnexpectedMediaHandlerQuery
+}
+
+func (f *fakeMediaHandlerQueries) MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error) {
+	return db.Media{}, errUnexpectedMediaHandlerQuery
+}
+
+var errUnexpectedMediaHandlerQuery = errors.New("unexpected media handler query")

@@ -11,10 +11,63 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimAbandonedMedia = `-- name: ClaimAbandonedMedia :many
+WITH eligible AS (
+  SELECT candidate.id
+  FROM media candidate
+  WHERE candidate.status = 'pending'
+    AND candidate.created_at < NOW() - INTERVAL '7 days'
+  ORDER BY candidate.created_at ASC, candidate.id ASC
+  LIMIT 100
+  FOR UPDATE OF candidate SKIP LOCKED
+)
+UPDATE media AS m
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+FROM eligible
+WHERE m.id = eligible.id
+RETURNING m.id, m.storage_key, m.content_type, m.size_bytes, m.status, m.created_at, m.uploaded_at, m.workspace_id, m.content_hash, m.cleanup_after_at, m.width, m.height, m.duration_ms, m.usage_version
+`
+
+func (q *Queries) ClaimAbandonedMedia(ctx context.Context) ([]Media, error) {
+	rows, err := q.db.Query(ctx, claimAbandonedMedia)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Media{}
+	for rows.Next() {
+		var i Media
+		if err := rows.Scan(
+			&i.ID,
+			&i.StorageKey,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UploadedAt,
+			&i.WorkspaceID,
+			&i.ContentHash,
+			&i.CleanupAfterAt,
+			&i.Width,
+			&i.Height,
+			&i.DurationMs,
+			&i.UsageVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createMedia = `-- name: CreateMedia :one
 INSERT INTO media (workspace_id, storage_key, content_type, size_bytes, status, content_hash)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version
 `
 
 type CreateMediaParams struct {
@@ -50,12 +103,13 @@ func (q *Queries) CreateMedia(ctx context.Context, arg CreateMediaParams) (Media
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
 
 const getActiveMediaByHash = `-- name: GetActiveMediaByHash :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version FROM media
 WHERE workspace_id = $1 AND content_hash = $2 AND status != 'deleted'
 ORDER BY
   CASE status
@@ -90,12 +144,13 @@ func (q *Queries) GetActiveMediaByHash(ctx context.Context, arg GetActiveMediaBy
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
 
 const getMedia = `-- name: GetMedia :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media WHERE id = $1
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version FROM media WHERE id = $1
 `
 
 func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
@@ -115,12 +170,13 @@ func (q *Queries) GetMedia(ctx context.Context, id string) (Media, error) {
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
 
 const getMediaByHash = `-- name: GetMediaByHash :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version FROM media
 WHERE workspace_id = $1 AND content_hash = $2 AND status = 'uploaded'
 LIMIT 1
 `
@@ -147,12 +203,13 @@ func (q *Queries) GetMediaByHash(ctx context.Context, arg GetMediaByHashParams) 
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
 
 const getMediaByIDAndWorkspace = `-- name: GetMediaByIDAndWorkspace :one
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media WHERE id = $1 AND workspace_id = $2
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version FROM media WHERE id = $1 AND workspace_id = $2
 `
 
 type GetMediaByIDAndWorkspaceParams struct {
@@ -177,6 +234,7 @@ func (q *Queries) GetMediaByIDAndWorkspace(ctx context.Context, arg GetMediaByID
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
@@ -191,49 +249,38 @@ func (q *Queries) HardDeleteMedia(ctx context.Context, id string) error {
 	return err
 }
 
-const listAbandonedMedia = `-- name: ListAbandonedMedia :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media
-WHERE status = 'pending'
-  AND created_at < NOW() - INTERVAL '7 days'
-LIMIT 100
+const hasBlockingMediaUsage = `-- name: HasBlockingMediaUsage :one
+SELECT (
+  EXISTS (
+    SELECT 1
+    FROM media_post_usages post_usage
+    WHERE post_usage.media_id = $1
+      AND (
+        post_usage.cleanup_after_at IS NULL
+        OR post_usage.cleanup_after_at > NOW()
+      )
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_usage
+    WHERE processing_usage.media_id = $1
+      AND (
+        processing_usage.cleanup_after_at IS NULL
+        OR processing_usage.cleanup_after_at > NOW()
+      )
+  )
+)::boolean
 `
 
-func (q *Queries) ListAbandonedMedia(ctx context.Context) ([]Media, error) {
-	rows, err := q.db.Query(ctx, listAbandonedMedia)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Media{}
-	for rows.Next() {
-		var i Media
-		if err := rows.Scan(
-			&i.ID,
-			&i.StorageKey,
-			&i.ContentType,
-			&i.SizeBytes,
-			&i.Status,
-			&i.CreatedAt,
-			&i.UploadedAt,
-			&i.WorkspaceID,
-			&i.ContentHash,
-			&i.CleanupAfterAt,
-			&i.Width,
-			&i.Height,
-			&i.DurationMs,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+func (q *Queries) HasBlockingMediaUsage(ctx context.Context, mediaID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasBlockingMediaUsage, mediaID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const listMediaByWorkspace = `-- name: ListMediaByWorkspace :many
-SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media
+SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version FROM media
 WHERE workspace_id = $1 AND status != 'deleted'
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -268,6 +315,7 @@ func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorks
 			&i.Width,
 			&i.Height,
 			&i.DurationMs,
+			&i.UsageVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -280,16 +328,32 @@ func (q *Queries) ListMediaByWorkspace(ctx context.Context, arg ListMediaByWorks
 }
 
 const markMediaUploaded = `-- name: MarkMediaUploaded :one
-UPDATE media
+UPDATE media m
 SET status = 'uploaded',
     size_bytes = $2,
     content_type = $3,
     width = $4,
     height = $5,
     duration_ms = $6,
-    uploaded_at = NOW()
-WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms
+    uploaded_at = NOW(),
+    cleanup_after_at = GREATEST(
+      COALESCE(m.cleanup_after_at, '-infinity'::timestamptz),
+      NOW() + CASE COALESCE((
+        SELECT subscriptions.plan_id
+        FROM subscriptions
+        WHERE subscriptions.workspace_id = m.workspace_id
+      ), 'free')
+        WHEN 'api' THEN INTERVAL '2 days'
+        WHEN 'basic' THEN INTERVAL '4 days'
+        WHEN 'growth' THEN INTERVAL '15 days'
+        WHEN 'team' THEN INTERVAL '30 days'
+        WHEN 'enterprise' THEN INTERVAL '30 days'
+        ELSE INTERVAL '1 day'
+      END
+    )
+WHERE m.id = $1
+  AND m.status = 'pending'
+RETURNING m.id, m.storage_key, m.content_type, m.size_bytes, m.status, m.created_at, m.uploaded_at, m.workspace_id, m.content_hash, m.cleanup_after_at, m.width, m.height, m.duration_ms, m.usage_version
 `
 
 type MarkMediaUploadedParams struct {
@@ -330,13 +394,32 @@ func (q *Queries) MarkMediaUploaded(ctx context.Context, arg MarkMediaUploadedPa
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
 
+const releaseAbandonedMediaClaim = `-- name: ReleaseAbandonedMediaClaim :exec
+UPDATE media
+SET status = 'pending',
+    cleanup_after_at = NULL
+WHERE id = $1
+  AND status = 'deleted'
+  AND created_at < NOW() - INTERVAL '7 days'
+`
+
+func (q *Queries) ReleaseAbandonedMediaClaim(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, releaseAbandonedMediaClaim, id)
+	return err
+}
+
 const softDeleteMedia = `-- name: SoftDeleteMedia :exec
-UPDATE media SET status = 'deleted'
-WHERE id = $1 AND workspace_id = $2
+UPDATE media
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status != 'deleted'
 `
 
 type SoftDeleteMediaParams struct {
@@ -349,10 +432,63 @@ func (q *Queries) SoftDeleteMedia(ctx context.Context, arg SoftDeleteMediaParams
 	return err
 }
 
+const softDeleteUnusedMedia = `-- name: SoftDeleteUnusedMedia :execrows
+WITH snapshot_candidate AS MATERIALIZED (
+  SELECT candidate.id, candidate.usage_version
+  FROM media candidate
+  WHERE candidate.id = $1
+    AND candidate.workspace_id = $2
+    AND candidate.status != 'deleted'
+), locked_candidate AS (
+  SELECT candidate.id
+  FROM media candidate
+  JOIN snapshot_candidate snapshot
+    ON snapshot.id = candidate.id
+   AND snapshot.usage_version = candidate.usage_version
+  FOR UPDATE OF candidate SKIP LOCKED
+)
+UPDATE media candidate
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+FROM locked_candidate
+WHERE candidate.id = locked_candidate.id
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_post_usages post_blocker
+    WHERE post_blocker.media_id = candidate.id
+      AND (
+        post_blocker.cleanup_after_at IS NULL
+        OR post_blocker.cleanup_after_at > NOW()
+      )
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_blocker
+    WHERE processing_blocker.media_id = candidate.id
+      AND (
+        processing_blocker.cleanup_after_at IS NULL
+        OR processing_blocker.cleanup_after_at > NOW()
+      )
+  )
+`
+
+type SoftDeleteUnusedMediaParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) SoftDeleteUnusedMedia(ctx context.Context, arg SoftDeleteUnusedMediaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteUnusedMedia, arg.ID, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateMediaStorageKey = `-- name: UpdateMediaStorageKey :one
 UPDATE media SET storage_key = $2
 WHERE id = $1
-RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms
+RETURNING id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms, usage_version
 `
 
 type UpdateMediaStorageKeyParams struct {
@@ -377,6 +513,7 @@ func (q *Queries) UpdateMediaStorageKey(ctx context.Context, arg UpdateMediaStor
 		&i.Width,
 		&i.Height,
 		&i.DurationMs,
+		&i.UsageVersion,
 	)
 	return i, err
 }
