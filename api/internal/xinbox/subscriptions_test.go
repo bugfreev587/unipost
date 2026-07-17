@@ -155,20 +155,23 @@ func TestXClientEnsureWebhookAcceptsWrappedCreateResponseWithoutRetry(t *testing
 	}
 }
 
-func TestXClientEnsureDMSubscriptionUsesPrivateUserOAuthContract(t *testing.T) {
+func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndUserOAuthForCreate(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if got := r.Header.Get("Authorization"); got != "Bearer user-oauth-token" {
-			t.Fatalf("Authorization = %q, want connected user token", got)
-		}
 		switch calls {
 		case 1:
+			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
+				t.Fatalf("list Authorization = %q, want app bearer", got)
+			}
 			if r.Method != http.MethodGet || r.URL.Path != "/2/activity/subscriptions" {
 				t.Fatalf("list request = %s %s", r.Method, r.URL.Path)
 			}
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
+			if got := r.Header.Get("Authorization"); got != "Bearer user-oauth-token" {
+				t.Fatalf("create Authorization = %q, want connected user token", got)
+			}
 			if r.Method != http.MethodPost || r.URL.Path != "/2/activity/subscriptions" {
 				t.Fatalf("create request = %s %s", r.Method, r.URL.Path)
 			}
