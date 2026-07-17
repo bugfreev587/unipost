@@ -16,7 +16,7 @@ test("pricing page keeps Enterprise out of the self-serve card grid", async () =
   const tiersSource = pricing.slice(tiersStart, tiersEnd);
 
   assert.doesNotMatch(tiersSource, /id:\s*"enterprise"/);
-  assert.match(pricing, /Priority support, capacity planning, and custom platform-volume terms for high-scale teams\./);
+  assert.match(pricing, /Dedicated support, capacity planning, and custom platform-volume terms for high-scale teams\./);
   assert.match(pricing, /Team has no monthly UniPost post quota/);
   assert.match(pricing, /Contact sales/);
   assert.doesNotMatch(pricing, /Reserved capacity, SLA, and custom platform-volume terms for high-scale teams\./);
