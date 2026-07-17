@@ -6,6 +6,8 @@ import {
   clerkRequest,
   extractClerkPublishableKey,
   loadAcceptanceConfig,
+  navigateDashboardRoute,
+  readActiveClerkSession,
   runWithCleanup,
   signInSyntheticUser,
 } from "../scripts/team-plan-acceptance.mjs";
@@ -110,6 +112,40 @@ test("dashboard acceptance discovers the deployed Clerk publishable key", () => 
     "pk_test_YmlnLWN1Yi01My5jbGVyay5hY2NvdW50cy5kZXYk",
   );
   assert.throws(() => extractClerkPublishableKey("<html></html>"), /publishable key/i);
+});
+
+test("production acceptance reads the JWT from a real Clerk browser session", async () => {
+  const session = await readActiveClerkSession({
+    async evaluate() {
+      return { id: "sess_production", token: "production-session-jwt" };
+    },
+  });
+
+  assert.deepEqual(session, { id: "sess_production", token: "production-session-jwt" });
+  await assert.rejects(
+    readActiveClerkSession({ async evaluate() { return { id: null, token: null }; } }),
+    /active Clerk session/i,
+  );
+});
+
+test("deployed dashboard navigation does not wait for production network idle", async () => {
+  let navigation;
+  let bodyWait;
+  await navigateDashboardRoute({
+    async goto(url, options) {
+      navigation = { url, options };
+    },
+    locator(selector) {
+      assert.equal(selector, "body");
+      return { async waitFor(options) { bodyWait = options; } };
+    },
+  }, "https://app.unipost.dev/settings/audit-log");
+
+  assert.deepEqual(navigation, {
+    url: "https://app.unipost.dev/settings/audit-log",
+    options: { waitUntil: "domcontentloaded" },
+  });
+  assert.deepEqual(bodyWait, { state: "visible" });
 });
 
 test("cleanup runs after a failed acceptance assertion", async () => {
