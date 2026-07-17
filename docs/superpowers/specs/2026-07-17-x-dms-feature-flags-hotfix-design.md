@@ -223,7 +223,21 @@ The page uses the existing Admin shell and visual language. It is a compact oper
 - last update time and actor when present;
 - one accessible toggle labeled `Available to ordinary users`.
 
-The page includes matching loading, empty, error, saving, and success states. A public-enablement change requires a confirmation dialog describing the impact. The toggle is disabled during the request and updates only after the backend confirms persistence.
+The page includes matching loading, empty, error, saving, and success states. A public-enablement change requires an in-app confirmation dialog describing the impact. It must use UniPost's existing `Dialog` primitive rather than `window.confirm` or another browser-native prompt.
+
+The confirmation dialog:
+
+- appears centered over a dimmed page overlay;
+- identifies the feature and the requested `ON` or `OFF` target state;
+- explains whether the feature will become available or unavailable to regular users;
+- reminds the operator that Super Admin-owned workspaces retain acceptance access while the flag is `OFF`;
+- offers explicit `Cancel` and `Turn ON` or `Turn OFF` actions;
+- supports Escape, focus containment, and focus restoration through the shared dialog primitive;
+- keeps the confirm action disabled and visibly loading while persistence is pending;
+- remains open with a scoped error when the update fails;
+- closes only after the backend confirms persistence and the row state has updated.
+
+Only one pending flag change can exist at a time. Opening the dialog does not mutate server state. Canceling or dismissing it leaves the flag unchanged.
 
 The page and APIs require Super Admin access.
 
@@ -268,6 +282,8 @@ Dashboard tests prove:
 - Feature Flags appears below Object Storage;
 - the page is Super Admin-only;
 - loading, error, empty, saving, confirmation, and success states exist;
+- the confirmation is an accessible centered in-app dialog and no `window.confirm` call remains;
+- canceling the dialog performs no update, while confirming shows a pending state and closes only after success;
 - ordinary users do not see X DM controls while closed;
 - a Super Admin can still test X DMs;
 - ordinary users do not see X Credits Billing/allowance/capacity UI while closed;
