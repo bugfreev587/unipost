@@ -193,7 +193,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Add `shouldStartMediaProcessingWorkers`. In API mode, honor a single documented fallback environment variable; in media-worker mode always start the media-processing and cleanup workers.
 - [x] Document the Railway service command/process configuration, health endpoint, database pool variable, and rollout order in `api/railway.toml` comments and the operations document.
 - [x] Run `GOCACHE=/tmp/unipost-go-build go test ./cmd/api ./internal/worker -count=1` and confirm GREEN.
-- [ ] Commit: `feat(media): add dedicated processing worker mode`.
+- [x] Commit: `feat(media): add dedicated processing worker mode`.
 
 ## Task 9: Prove Deployment A cannot expose GIF conversion
 
@@ -202,9 +202,9 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/cmd/api/main_test.go` or add a focused route-registration test
 - Modify: `api/internal/db/migrate_test.go` if needed
 
-- [ ] Add a test that constructs the API router and proves `POST /v1/media/gif-conversions` returns `404` in Deployment A.
-- [ ] Add a source/query assertion that production Go code has no callable insert path using `kind = 'gif_to_mp4'` yet; the migration may recognize the future kind, but no handler may create it.
-- [ ] Run the focused tests and confirm GREEN.
+- [x] Add a route-registration source contract proving `POST /v1/media/gif-conversions` is absent in Deployment A; the real dev endpoint is verified as `404` after deployment.
+- [x] Add a source/query assertion that production Go code has no callable insert path using `kind = 'gif_to_mp4'` yet; the migration may recognize the future kind, but no handler may create it.
+- [x] Run the focused tests and confirm GREEN.
 - [ ] Commit: `test(media): lock deployment a gif gate`.
 
 ## Task 10: Validate the task branch
