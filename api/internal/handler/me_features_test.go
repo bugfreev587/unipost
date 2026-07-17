@@ -15,13 +15,20 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
-func TestFeatureFlagsCompatReturnsEmptyFlagsAndPlanGates(t *testing.T) {
+func TestFeatureFlagsCompatReturnsWorkspaceFlagsAndPlanGates(t *testing.T) {
 	t.Setenv("UNIPOST_ENV", "production")
 
-	h := NewMeHandler(db.New(meFeaturesCompatDB{}), nil, nil)
+	store := meFeaturesCompatDB{planID: "basic"}
+	flagStore := &handlerFeatureFlagStore{flags: map[string]bool{
+		featureflags.XDMSV1:            false,
+		featureflags.XCreditsBillingV1: true,
+	}}
+	h := NewMeHandler(db.New(store), nil, nil).
+		SetFeatureFlags(featureflags.NewEvaluator(flagStore, nil))
 	req := httptest.NewRequest(http.MethodGet, "/v1/me/features", nil)
 	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "user_1"))
 	rec := httptest.NewRecorder()
@@ -46,17 +53,17 @@ func TestFeatureFlagsCompatReturnsEmptyFlagsAndPlanGates(t *testing.T) {
 	if body.Data.Environment != "production" {
 		t.Fatalf("environment = %q, want production", body.Data.Environment)
 	}
-	if body.Data.Provider != "removed" {
-		t.Fatalf("provider = %q, want removed", body.Data.Provider)
+	if body.Data.Provider != "unipost" {
+		t.Fatalf("provider = %q, want unipost", body.Data.Provider)
 	}
-	if body.Data.Flags == nil {
-		t.Fatalf("flags map should be present")
+	if body.Data.Flags[featureflags.XDMSV1] {
+		t.Fatalf("x_dms_v1 = true, want false")
 	}
-	if len(body.Data.Flags) != 0 {
-		t.Fatalf("flags = %#v, want empty map", body.Data.Flags)
+	if !body.Data.Flags[featureflags.XCreditsBillingV1] {
+		t.Fatalf("x_credits_billing_v1 = false, want true")
 	}
-	if got := body.Data.PlanGates["inbox"]; got {
-		t.Fatalf("plan_gates.inbox = true, want false without workspace")
+	if got := body.Data.PlanGates["inbox"]; !got {
+		t.Fatalf("plan_gates.inbox = false, want true for basic workspace")
 	}
 }
 
