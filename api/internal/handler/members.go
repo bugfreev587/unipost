@@ -443,6 +443,11 @@ func (h *MembersHandler) ChangeRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Missing parameters")
 		return
 	}
+	if callerID := auth.GetUserID(r.Context()); callerID != "" && callerID == targetUserID {
+		writeError(w, http.StatusForbidden, "CANNOT_CHANGE_OWN_ROLE",
+			"ask another administrator or the workspace owner to change your role")
+		return
+	}
 
 	var body struct {
 		Role string `json:"role"`
@@ -553,8 +558,8 @@ func (h *MembersHandler) Remove(w http.ResponseWriter, r *http.Request) {
 // and promotes the target user to owner. Owner-only — admins cannot
 // trigger transfer (would otherwise be a privilege-escalation path).
 //
-// The two writes run inside a single tx so the unique-owner partial
-// index never sees a transient two-owner state.
+// The role swap runs as one data-dependent SQL statement so the
+// unique-owner partial index never sees a committed ownerless state.
 func (h *MembersHandler) TransferOwnership(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	targetUserID := chi.URLParam(r, "userID")
@@ -579,27 +584,12 @@ func (h *MembersHandler) TransferOwnership(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Two-step transaction. We don't have a tx-scoped Queries handle
-	// in this handler, so we use the raw pool via a small inline tx —
-	// or we can run the queries sequentially and accept a microsecond
-	// race (the unique index would reject a concurrent second owner,
-	// but ours is the only write path). Using sequential queries; if
-	// the second fails, we re-promote the original owner via a manual
-	// fix-up at the end. Worst-case observable state is "no owner for
-	// a few microseconds", which the rest of the app tolerates because
-	// no read uses the owner row.
-	if err := h.queries.DemoteCurrentOwner(r.Context(), workspaceID); err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to demote current owner: "+err.Error())
-		return
-	}
-	if err := h.queries.PromoteToOwner(r.Context(), db.PromoteToOwnerParams{
+	if _, err := h.queries.TransferWorkspaceOwnership(r.Context(), db.TransferWorkspaceOwnershipParams{
 		WorkspaceID: workspaceID,
 		UserID:      targetUserID,
 	}); err != nil {
-		// Best-effort rollback: re-promote the original owner. If this
-		// also fails, log loudly — operator intervention required.
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"Failed to promote target owner — workspace temporarily has no owner; please retry: "+err.Error())
+			"Failed to transfer ownership: "+err.Error())
 		return
 	}
 	audit.Log(r.Context(), h.queries, audit.Event{
