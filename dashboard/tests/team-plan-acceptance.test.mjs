@@ -4,10 +4,10 @@ import { test } from "node:test";
 import {
   CleanupLedger,
   clerkRequest,
-  clickPrimaryAuthButton,
-  fillPassword,
+  extractClerkPublishableKey,
   loadAcceptanceConfig,
   runWithCleanup,
+  signInSyntheticUser,
 } from "../scripts/team-plan-acceptance.mjs";
 
 const identities = {
@@ -94,32 +94,22 @@ test("Clerk POST without a payload still sends JSON content type", async () => {
   assert.equal(requestInit.headers["Content-Type"], "application/json");
 });
 
-test("Clerk password entry targets only the password input", async () => {
-  let selector;
-  let filled;
-  await fillPassword({
-    locator(value) {
-      selector = value;
-      return { async fill(valueToFill) { filled = valueToFill; } };
-    },
-  }, "synthetic-password");
-
-  assert.equal(selector, 'input[type="password"]');
-  assert.equal(filled, "synthetic-password");
-});
-
-test("Clerk auth submission targets only its primary form button", async () => {
-  let selector;
-  let clicked = false;
-  await clickPrimaryAuthButton({
-    locator(value) {
-      selector = value;
-      return { async click() { clicked = true; } };
-    },
+test("dashboard acceptance uses Clerk's server-side synthetic-user sign-in", async () => {
+  let received;
+  const page = { name: "synthetic-page" };
+  await signInSyntheticUser(page, "owner@example.com", async (options) => {
+    received = options;
   });
 
-  assert.equal(selector, 'button[data-localization-key="formButtonPrimary"]');
-  assert.equal(clicked, true);
+  assert.deepEqual(received, { page, emailAddress: "owner@example.com" });
+});
+
+test("dashboard acceptance discovers the deployed Clerk publishable key", () => {
+  assert.equal(
+    extractClerkPublishableKey('<script>window.__env="pk_test_YmlnLWN1Yi01My5jbGVyay5hY2NvdW50cy5kZXYk"</script>'),
+    "pk_test_YmlnLWN1Yi01My5jbGVyay5hY2NvdW50cy5kZXYk",
+  );
+  assert.throws(() => extractClerkPublishableKey("<html></html>"), /publishable key/i);
 });
 
 test("cleanup runs after a failed acceptance assertion", async () => {

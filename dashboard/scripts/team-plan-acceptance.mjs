@@ -286,7 +286,7 @@ async function main() {
     assert.equal(serializedAudit.includes(ownerKey.key), false, "audit log leaked a raw API key");
     assert.equal(serializedAudit.includes(adminKey.key), false, "audit log leaked a raw API key");
 
-    await verifyDashboard(config, config.emails.owner, password, defaultProfile.id);
+    await verifyDashboard(config, config.emails.owner, defaultProfile.id);
 
     console.log(`Team acceptance passed for ${config.environment}: ${prefix}`);
   });
@@ -329,8 +329,13 @@ function assertTeamLimits(limits) {
   assert.equal(limits.white_label_platform_limit, -1);
 }
 
-async function verifyDashboard(config, email, password, profileID) {
+async function verifyDashboard(config, email, profileID) {
   const { chromium } = await import("@playwright/test");
+  const previousClerkSecretKey = process.env.CLERK_SECRET_KEY;
+  process.env.CLERK_SECRET_KEY = config.clerkSecretKey;
+  const { clerk, clerkSetup } = await import("@clerk/testing/playwright");
+  const publishableKey = await loadClerkPublishableKey(config.appUrl);
+  await clerkSetup({ publishableKey, secretKey: config.clerkSecretKey });
   const browser = await chromium.launch();
   try {
     const page = await browser.newPage();
@@ -338,15 +343,14 @@ async function verifyDashboard(config, email, password, profileID) {
     page.on("response", (response) => {
       if (response.status() >= 500) serverFailures.push(`${response.status()} ${response.url()}`);
     });
+    await page.goto(`${config.appUrl}/pricing`, { waitUntil: "domcontentloaded" });
+    await signInSyntheticUser(page, email, clerk.signIn);
     await page.goto(config.appUrl, { waitUntil: "domcontentloaded" });
-    if (page.url().includes("clerk") || page.url().includes("sign-in")) {
-      await page.getByLabel(/email/i).fill(email);
-      const next = page.locator('button[data-localization-key="formButtonPrimary"]');
-      if (await next.isVisible().catch(() => false)) await clickPrimaryAuthButton(page);
-      await fillPassword(page, password);
-      await clickPrimaryAuthButton(page);
-      await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
-    }
+    assert.equal(
+      page.url().includes("clerk") || page.url().includes("sign-in"),
+      false,
+      "synthetic Clerk session JWT did not authenticate the dashboard",
+    );
 
     const routes = [
       `/projects/${profileID}`,
@@ -367,15 +371,25 @@ async function verifyDashboard(config, email, password, profileID) {
     assert.deepEqual(serverFailures, [], `dashboard produced 5xx responses: ${serverFailures.join(", ")}`);
   } finally {
     await browser.close();
+    if (previousClerkSecretKey === undefined) delete process.env.CLERK_SECRET_KEY;
+    else process.env.CLERK_SECRET_KEY = previousClerkSecretKey;
   }
 }
 
-export async function fillPassword(page, password) {
-  await page.locator('input[type="password"]').fill(password);
+export async function signInSyntheticUser(page, emailAddress, signIn) {
+  await signIn({ page, emailAddress });
 }
 
-export async function clickPrimaryAuthButton(page) {
-  await page.locator('button[data-localization-key="formButtonPrimary"]').click();
+async function loadClerkPublishableKey(appUrl) {
+  const response = await fetch(`${appUrl}/pricing`);
+  assert.equal(response.ok, true, `could not load ${appUrl}/pricing to discover Clerk configuration`);
+  return extractClerkPublishableKey(await response.text());
+}
+
+export function extractClerkPublishableKey(html) {
+  const publishableKey = html.match(/pk_(?:test|live)_[A-Za-z0-9_-]+/)?.[0];
+  assert.ok(publishableKey, "deployed dashboard did not expose a Clerk publishable key");
+  return publishableKey;
 }
 
 async function apiRequest(config, token, path, options = {}) {
