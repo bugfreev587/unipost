@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,9 +13,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/mediaretention"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
 )
 
@@ -32,8 +35,10 @@ type mediaAudioOverlayWorkerQueries interface {
 	UpdateMediaStorageKey(context.Context, db.UpdateMediaStorageKeyParams) (db.Media, error)
 	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
 	HardDeleteMedia(context.Context, string) error
-	MarkMediaProcessingJobSucceeded(context.Context, db.MarkMediaProcessingJobSucceededParams) (db.MediaProcessingJob, error)
 	MarkMediaProcessingJobFailed(context.Context, db.MarkMediaProcessingJobFailedParams) (db.MediaProcessingJob, error)
+	CompleteMediaProcessingJobSucceeded(context.Context, db.CompleteMediaProcessingJobSucceededParams) (db.MediaProcessingJob, error)
+	CompleteMediaProcessingJobFailed(context.Context, db.CompleteMediaProcessingJobFailedParams) (db.MediaProcessingJob, error)
+	GetSubscriptionByWorkspace(context.Context, string) (db.Subscription, error)
 }
 
 type mediaAudioOverlayWorkerStorage interface {
@@ -115,10 +120,10 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 		return fmt.Errorf("unsupported media processing job kind %q", job.Kind)
 	}
 	if !job.InputVideoMediaID.Valid || strings.TrimSpace(job.InputVideoMediaID.String) == "" {
-		return w.failJob(ctx, job.ID, "invalid_media_processing_job", "input video media id is missing", false)
+		return w.failJob(ctx, job, "invalid_media_processing_job", "input video media id is missing", false)
 	}
 	if !job.InputAudioMediaID.Valid || strings.TrimSpace(job.InputAudioMediaID.String) == "" {
-		return w.failJob(ctx, job.ID, "invalid_media_processing_job", "input audio media id is missing", false)
+		return w.failJob(ctx, job, "invalid_media_processing_job", "input audio media id is missing", false)
 	}
 
 	video, err := w.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
@@ -126,19 +131,19 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 		WorkspaceID: job.WorkspaceID,
 	})
 	if err != nil {
-		return w.failJob(ctx, job.ID, "input_media_unavailable", "input video media is unavailable", true)
+		return w.failJob(ctx, job, "input_media_unavailable", "input video media is unavailable", true)
 	}
 	audio, err := w.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
 		ID:          job.InputAudioMediaID.String,
 		WorkspaceID: job.WorkspaceID,
 	})
 	if err != nil {
-		return w.failJob(ctx, job.ID, "input_media_unavailable", "input audio media is unavailable", true)
+		return w.failJob(ctx, job, "input_media_unavailable", "input audio media is unavailable", true)
 	}
 
 	tmpDir, err := os.MkdirTemp("", "unipost-audio-overlay-*")
 	if err != nil {
-		return w.failJob(ctx, job.ID, "audio_overlay_processing_failed", "failed to create processing workspace", true)
+		return w.failJob(ctx, job, "audio_overlay_processing_failed", "failed to create processing workspace", true)
 	}
 	defer os.RemoveAll(tmpDir)
 
@@ -147,10 +152,10 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 	outputPath := filepath.Join(tmpDir, "output.mp4")
 
 	if err := w.storage.DownloadObject(ctx, video.StorageKey, videoPath); err != nil {
-		return w.failJob(ctx, job.ID, "input_media_unavailable", "input video object is unavailable", true)
+		return w.failJob(ctx, job, "input_media_unavailable", "input video object is unavailable", true)
 	}
 	if err := w.storage.DownloadObject(ctx, audio.StorageKey, audioPath); err != nil {
-		return w.failJob(ctx, job.ID, "input_media_unavailable", "input audio object is unavailable", true)
+		return w.failJob(ctx, job, "input_media_unavailable", "input audio object is unavailable", true)
 	}
 
 	result, err := w.processor.Process(ctx, audioOverlayProcessRequest{
@@ -162,19 +167,24 @@ func (w *MediaAudioOverlayWorker) processJob(ctx context.Context, job db.MediaPr
 		OutputVideoPath: outputPath,
 	})
 	if err != nil {
-		return w.failJob(ctx, job.ID, "audio_overlay_processing_failed", err.Error(), true)
+		return w.failJob(ctx, job, "audio_overlay_processing_failed", err.Error(), true)
 	}
 
 	outputMedia, err := w.createOutputMedia(ctx, job, outputPath, result)
 	if err != nil {
-		return w.failJob(ctx, job.ID, "audio_overlay_output_upload_failed", err.Error(), true)
+		return w.failJob(ctx, job, "audio_overlay_output_upload_failed", err.Error(), true)
 	}
 
-	if _, err := w.queries.MarkMediaProcessingJobSucceeded(ctx, db.MarkMediaProcessingJobSucceededParams{
-		ID:            job.ID,
-		OutputMediaID: pgtype.Text{String: outputMedia.ID, Valid: true},
+	cleanupAfter, err := w.processingCleanupDeadline(ctx, job.WorkspaceID, "published")
+	if err != nil {
+		return fmt.Errorf("calculate media processing success retention: %w", err)
+	}
+	if _, err := w.queries.CompleteMediaProcessingJobSucceeded(ctx, db.CompleteMediaProcessingJobSucceededParams{
+		JobID:          job.ID,
+		OutputMediaID:  pgtype.Text{String: outputMedia.ID, Valid: true},
+		CleanupAfterAt: cleanupAfter,
 	}); err != nil {
-		return fmt.Errorf("mark media processing job succeeded: %w", err)
+		return fmt.Errorf("complete media processing job succeeded: %w", err)
 	}
 	return nil
 }
@@ -240,9 +250,26 @@ func (w *MediaAudioOverlayWorker) createOutputMedia(ctx context.Context, job db.
 	return marked, nil
 }
 
-func (w *MediaAudioOverlayWorker) failJob(ctx context.Context, jobID, code, message string, retryable bool) error {
+func (w *MediaAudioOverlayWorker) failJob(ctx context.Context, job db.MediaProcessingJob, code, message string, retryable bool) error {
+	if !retryable {
+		cleanupAfter, deadlineErr := w.processingCleanupDeadline(ctx, job.WorkspaceID, "failed")
+		if deadlineErr != nil {
+			return fmt.Errorf("%s: calculate media processing failure retention: %w", message, deadlineErr)
+		}
+		_, err := w.queries.CompleteMediaProcessingJobFailed(ctx, db.CompleteMediaProcessingJobFailedParams{
+			JobID:          job.ID,
+			ErrorCode:      pgtype.Text{String: code, Valid: true},
+			ErrorMessage:   pgtype.Text{String: message, Valid: true},
+			CleanupAfterAt: cleanupAfter,
+		})
+		if err != nil {
+			return fmt.Errorf("%s: complete terminal failure: %w", message, err)
+		}
+		return fmt.Errorf("%s", message)
+	}
+
 	_, err := w.queries.MarkMediaProcessingJobFailed(ctx, db.MarkMediaProcessingJobFailedParams{
-		ID:           jobID,
+		ID:           job.ID,
 		ErrorCode:    pgtype.Text{String: code, Valid: true},
 		ErrorMessage: pgtype.Text{String: message, Valid: true},
 		Retryable:    retryable,
@@ -251,6 +278,22 @@ func (w *MediaAudioOverlayWorker) failJob(ctx context.Context, jobID, code, mess
 		return fmt.Errorf("%s: mark failed: %w", message, err)
 	}
 	return fmt.Errorf("%s", message)
+}
+
+func (w *MediaAudioOverlayWorker) processingCleanupDeadline(ctx context.Context, workspaceID, terminalStatus string) (pgtype.Timestamptz, error) {
+	planID := "free"
+	subscription, err := w.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
+	if err == nil {
+		planID = subscription.PlanID
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return pgtype.Timestamptz{}, err
+	}
+
+	retention, ok := mediaretention.RetentionForPlanStatus(planID, terminalStatus)
+	if !ok {
+		return pgtype.Timestamptz{}, fmt.Errorf("unsupported terminal status %q", terminalStatus)
+	}
+	return pgtype.Timestamptz{Time: time.Now().Add(retention), Valid: true}, nil
 }
 
 type audioOverlayProcessRequest struct {

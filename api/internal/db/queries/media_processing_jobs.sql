@@ -32,6 +32,73 @@ INSERT INTO media_processing_jobs (
 )
 RETURNING *;
 
+-- name: CreateAudioOverlayMediaProcessingJob :one
+WITH created_job AS (
+  INSERT INTO media_processing_jobs (
+    workspace_id,
+    kind,
+    status,
+    input_video_media_id,
+    input_audio_media_id,
+    output_media_id,
+    mode,
+    fit,
+    video_volume,
+    audio_volume,
+    audio_start_ms,
+    request,
+    idempotency_key,
+    request_hash
+  ) VALUES (
+    sqlc.arg(workspace_id),
+    'audio_overlay',
+    'queued',
+    sqlc.arg(input_video_media_id),
+    sqlc.arg(input_audio_media_id),
+    NULL,
+    sqlc.arg(mode),
+    sqlc.arg(fit),
+    sqlc.arg(video_volume),
+    sqlc.arg(audio_volume),
+    sqlc.arg(audio_start_ms),
+    sqlc.arg(request_json)::jsonb,
+    sqlc.narg(idempotency_key),
+    sqlc.narg(request_hash)
+  )
+  RETURNING *
+), input_usages AS (
+  INSERT INTO media_processing_usages (
+    workspace_id,
+    job_id,
+    media_id,
+    role,
+    status,
+    cleanup_after_at
+  )
+  SELECT
+    created_job.workspace_id,
+    created_job.id,
+    input.media_id,
+    'input',
+    'active',
+    NULL
+  FROM created_job
+  CROSS JOIN LATERAL (
+    VALUES
+      (created_job.input_video_media_id),
+      (created_job.input_audio_media_id)
+  ) AS input(media_id)
+  ON CONFLICT (job_id, media_id, role) DO NOTHING
+  RETURNING job_id
+)
+SELECT created_job.*
+FROM created_job
+WHERE EXISTS (
+  SELECT 1
+  FROM input_usages
+  WHERE input_usages.job_id = created_job.id
+);
+
 -- name: GetMediaProcessingJobByIDAndWorkspace :one
 SELECT * FROM media_processing_jobs
 WHERE id = $1 AND workspace_id = $2;

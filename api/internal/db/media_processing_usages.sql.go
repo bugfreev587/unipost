@@ -11,6 +11,169 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const completeMediaProcessingJobFailed = `-- name: CompleteMediaProcessingJobFailed :one
+WITH transitioned_inputs AS (
+  UPDATE media_processing_usages usage
+  SET status = 'failed',
+      cleanup_after_at = $4,
+      updated_at = NOW()
+  WHERE usage.job_id = $3
+    AND usage.role = 'input'
+    AND usage.status = 'active'
+  RETURNING usage.id
+)
+UPDATE media_processing_jobs job
+SET status = 'failed',
+    error_code = $1,
+    error_message = $2,
+    retryable = false,
+    updated_at = NOW(),
+    completed_at = NOW()
+WHERE job.id = $3
+  AND (SELECT COUNT(*) FROM transitioned_inputs) >= 0
+RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id
+`
+
+type CompleteMediaProcessingJobFailedParams struct {
+	ErrorCode      pgtype.Text        `json:"error_code"`
+	ErrorMessage   pgtype.Text        `json:"error_message"`
+	JobID          string             `json:"job_id"`
+	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+}
+
+func (q *Queries) CompleteMediaProcessingJobFailed(ctx context.Context, arg CompleteMediaProcessingJobFailedParams) (MediaProcessingJob, error) {
+	row := q.db.QueryRow(ctx, completeMediaProcessingJobFailed,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+		arg.JobID,
+		arg.CleanupAfterAt,
+	)
+	var i MediaProcessingJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.Status,
+		&i.InputVideoMediaID,
+		&i.InputAudioMediaID,
+		&i.OutputMediaID,
+		&i.Mode,
+		&i.Fit,
+		&i.VideoVolume,
+		&i.AudioVolume,
+		&i.AudioStartMs,
+		&i.Request,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.Retryable,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.InputMediaID,
+	)
+	return i, err
+}
+
+const completeMediaProcessingJobSucceeded = `-- name: CompleteMediaProcessingJobSucceeded :one
+WITH target_job AS (
+  SELECT job_source.id, job_source.workspace_id
+  FROM media_processing_jobs job_source
+  WHERE job_source.id = $2
+  FOR UPDATE
+), transitioned_inputs AS (
+  UPDATE media_processing_usages usage
+  SET status = 'succeeded',
+      cleanup_after_at = $3,
+      updated_at = NOW()
+  FROM target_job
+  WHERE usage.job_id = target_job.id
+    AND usage.role = 'input'
+    AND usage.status = 'active'
+  RETURNING usage.id
+), output_usage AS (
+  INSERT INTO media_processing_usages (
+    workspace_id,
+    job_id,
+    media_id,
+    role,
+    status,
+    cleanup_after_at
+  )
+  SELECT
+    target_job.workspace_id,
+    target_job.id,
+    $1,
+    'output',
+    'succeeded',
+    $3
+  FROM target_job
+  ON CONFLICT (job_id, media_id, role) DO UPDATE
+  SET status = EXCLUDED.status,
+      cleanup_after_at = EXCLUDED.cleanup_after_at,
+      updated_at = NOW()
+  RETURNING job_id
+)
+UPDATE media_processing_jobs job
+SET status = 'succeeded',
+    output_media_id = $1,
+    error_code = NULL,
+    error_message = NULL,
+    retryable = false,
+    updated_at = NOW(),
+    completed_at = NOW()
+FROM target_job
+WHERE job.id = target_job.id
+  AND EXISTS (
+    SELECT 1
+    FROM output_usage
+    WHERE output_usage.job_id = job.id
+  )
+  AND (SELECT COUNT(*) FROM transitioned_inputs) >= 0
+RETURNING job.id, job.workspace_id, job.kind, job.status, job.input_video_media_id, job.input_audio_media_id, job.output_media_id, job.mode, job.fit, job.video_volume, job.audio_volume, job.audio_start_ms, job.request, job.idempotency_key, job.request_hash, job.error_code, job.error_message, job.retryable, job.attempts, job.created_at, job.updated_at, job.started_at, job.completed_at, job.input_media_id
+`
+
+type CompleteMediaProcessingJobSucceededParams struct {
+	OutputMediaID  pgtype.Text        `json:"output_media_id"`
+	JobID          string             `json:"job_id"`
+	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
+}
+
+func (q *Queries) CompleteMediaProcessingJobSucceeded(ctx context.Context, arg CompleteMediaProcessingJobSucceededParams) (MediaProcessingJob, error) {
+	row := q.db.QueryRow(ctx, completeMediaProcessingJobSucceeded, arg.OutputMediaID, arg.JobID, arg.CleanupAfterAt)
+	var i MediaProcessingJob
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.Status,
+		&i.InputVideoMediaID,
+		&i.InputAudioMediaID,
+		&i.OutputMediaID,
+		&i.Mode,
+		&i.Fit,
+		&i.VideoVolume,
+		&i.AudioVolume,
+		&i.AudioStartMs,
+		&i.Request,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.Retryable,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.InputMediaID,
+	)
+	return i, err
+}
+
 const createMediaProcessingUsage = `-- name: CreateMediaProcessingUsage :one
 INSERT INTO media_processing_usages (
   workspace_id,

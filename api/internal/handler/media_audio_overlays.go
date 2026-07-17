@@ -42,7 +42,7 @@ type mediaAudioOverlayQueries interface {
 	GetMediaByIDAndWorkspace(context.Context, db.GetMediaByIDAndWorkspaceParams) (db.Media, error)
 	MarkMediaUploaded(context.Context, db.MarkMediaUploadedParams) (db.Media, error)
 	GetMediaProcessingJobByIdempotencyKey(context.Context, db.GetMediaProcessingJobByIdempotencyKeyParams) (db.MediaProcessingJob, error)
-	CreateMediaProcessingJob(context.Context, db.CreateMediaProcessingJobParams) (db.MediaProcessingJob, error)
+	CreateAudioOverlayMediaProcessingJob(context.Context, db.CreateAudioOverlayMediaProcessingJobParams) (db.CreateAudioOverlayMediaProcessingJobRow, error)
 	GetMediaProcessingJobByIDAndWorkspace(context.Context, db.GetMediaProcessingJobByIDAndWorkspaceParams) (db.MediaProcessingJob, error)
 }
 
@@ -160,13 +160,10 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	params := db.CreateMediaProcessingJobParams{
+	params := db.CreateAudioOverlayMediaProcessingJobParams{
 		WorkspaceID:       workspaceID,
-		Kind:              audioOverlayKind,
-		Status:            audioOverlayStatusQueued,
 		InputVideoMediaID: pgtype.Text{String: normalized.VideoMediaID, Valid: true},
 		InputAudioMediaID: pgtype.Text{String: normalized.AudioMediaID, Valid: true},
-		OutputMediaID:     pgtype.Text{},
 		Mode:              normalized.Mode,
 		Fit:               normalized.Fit,
 		VideoVolume:       normalized.VideoVolume,
@@ -179,14 +176,44 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 		params.RequestHash = pgtype.Text{String: requestHash, Valid: true}
 	}
 
-	job, err := h.queries.CreateMediaProcessingJob(r.Context(), params)
+	created, err := h.queries.CreateAudioOverlayMediaProcessingJob(r.Context(), params)
 	if err != nil {
 		slog.Error("media audio overlay: create job failed", "err", err, "workspace_id", workspaceID)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create audio overlay job")
 		return
 	}
+	job := mediaProcessingJobFromAudioOverlayCreateRow(created)
 
 	writeAccepted(w, audioOverlayJobResponse(job))
+}
+
+func mediaProcessingJobFromAudioOverlayCreateRow(row db.CreateAudioOverlayMediaProcessingJobRow) db.MediaProcessingJob {
+	return db.MediaProcessingJob{
+		ID:                row.ID,
+		WorkspaceID:       row.WorkspaceID,
+		Kind:              row.Kind,
+		Status:            row.Status,
+		InputVideoMediaID: row.InputVideoMediaID,
+		InputAudioMediaID: row.InputAudioMediaID,
+		OutputMediaID:     row.OutputMediaID,
+		Mode:              row.Mode,
+		Fit:               row.Fit,
+		VideoVolume:       row.VideoVolume,
+		AudioVolume:       row.AudioVolume,
+		AudioStartMs:      row.AudioStartMs,
+		Request:           row.Request,
+		IdempotencyKey:    row.IdempotencyKey,
+		RequestHash:       row.RequestHash,
+		ErrorCode:         row.ErrorCode,
+		ErrorMessage:      row.ErrorMessage,
+		Retryable:         row.Retryable,
+		Attempts:          row.Attempts,
+		CreatedAt:         row.CreatedAt,
+		UpdatedAt:         row.UpdatedAt,
+		StartedAt:         row.StartedAt,
+		CompletedAt:       row.CompletedAt,
+		InputMediaID:      row.InputMediaID,
+	}
 }
 
 func (h *MediaAudioOverlayHandler) Get(w http.ResponseWriter, r *http.Request) {

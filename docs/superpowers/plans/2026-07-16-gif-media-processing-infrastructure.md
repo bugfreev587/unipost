@@ -92,7 +92,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Update handler inserts to use valid nullable pgx values and update worker reads to validate and unwrap both inputs before processing.
 - [x] Keep the public Audio Overlay API response and idempotency behavior unchanged.
 - [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/handler ./internal/worker -run 'AudioOverlay' -count=1` and confirm GREEN.
-- [ ] Commit: `fix(media): preserve audio overlay input compatibility`.
+- [x] Commit: `fix(media): preserve audio overlay input compatibility`.
 
 ## Task 4: Make processing retention transitions atomic
 
@@ -106,15 +106,15 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/internal/worker/media_audio_overlay_test.go`
 - Modify: `api/internal/mediaretention/policy.go` only if a shared helper is required
 
-- [ ] Add failing handler tests asserting job creation also creates two active input-usage rows and cannot leave a job without its usage records.
-- [ ] Implement one SQL statement/transaction boundary that creates the Audio Overlay job and both active input usages atomically. Preserve idempotency lookup before creation and the existing idempotency uniqueness constraint.
-- [ ] Add failing worker tests for terminal success and failure transitions:
+- [x] Add failing handler tests asserting job creation also creates two active input-usage rows and cannot leave a job without its usage records.
+- [x] Implement one SQL statement/transaction boundary that creates the Audio Overlay job and both active input usages atomically. Preserve idempotency lookup before creation and the existing idempotency uniqueness constraint.
+- [x] Add failing worker tests for terminal success and failure transitions:
   - success transitions both inputs to `succeeded`, inserts/updates the output usage as `succeeded`, assigns plan-aware deadlines, and marks the job succeeded atomically;
   - terminal failure transitions inputs to `failed`, assigns plan-aware deadlines, and marks the job failed atomically;
   - retryable failure keeps input usage active.
-- [ ] Implement terminal transition queries as single atomic SQL statements. The worker computes the plan-aware retention deadline using the existing media-retention policy and passes it into the transition.
-- [ ] Ensure a worker crash before the terminal transaction leaves the job retryable and its inputs protected by active usages.
-- [ ] Run focused handler/worker tests and confirm GREEN.
+- [x] Implement terminal transition queries as single atomic SQL statements. The worker computes the plan-aware retention deadline using the existing media-retention policy and passes it into the transition.
+- [x] Ensure a worker crash before the terminal transaction leaves the job retryable and its inputs protected by active usages.
+- [x] Run focused handler/worker tests and confirm GREEN.
 - [ ] Commit: `feat(media): track processing retention atomically`.
 
 ## Task 5: Assign a base cleanup deadline when uploads become usable

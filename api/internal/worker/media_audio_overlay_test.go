@@ -99,8 +99,18 @@ func TestMediaAudioOverlayWorkerProcessesClaimedJob(t *testing.T) {
 	if len(store.uploads) != 1 || !strings.HasSuffix(store.uploads[0].key, ".mp4") {
 		t.Fatalf("uploads = %#v, want one mp4 upload", store.uploads)
 	}
-	if queries.succeededJobID != "mpj_1" || queries.succeededOutputMediaID == "" {
-		t.Fatalf("success = %q/%q, want job id and output media id", queries.succeededJobID, queries.succeededOutputMediaID)
+	if queries.completedSuccessJobID != "mpj_1" || queries.completedSuccessOutputMediaID == "" {
+		t.Fatalf("success = %q/%q, want lifecycle-completed job id and output media id", queries.completedSuccessJobID, queries.completedSuccessOutputMediaID)
+	}
+	if !queries.completedSuccessDeadline.Valid {
+		t.Fatal("success cleanup deadline must be plan-aware and non-null")
+	}
+	wantSuccessDeadline := time.Now().Add(4 * 24 * time.Hour)
+	if delta := queries.completedSuccessDeadline.Time.Sub(wantSuccessDeadline); delta < -time.Minute || delta > time.Minute {
+		t.Fatalf("basic success cleanup deadline delta = %s, want within one minute of four days", delta)
+	}
+	if queries.legacySuccessCalls != 0 {
+		t.Fatalf("legacy success calls = %d, want 0", queries.legacySuccessCalls)
 	}
 	if queries.failedJobID != "" {
 		t.Fatalf("job should not fail, got failed id %q", queries.failedJobID)
@@ -131,16 +141,52 @@ func TestMediaAudioOverlayWorkerTerminallyFailsMalformedInputs(t *testing.T) {
 	if queries.failedRetryable {
 		t.Fatal("malformed job must not be retryable")
 	}
+	if queries.completedFailureCalls != 1 || queries.legacyFailureCalls != 0 {
+		t.Fatalf("terminal/legacy failure calls = %d/%d, want 1/0", queries.completedFailureCalls, queries.legacyFailureCalls)
+	}
+	if !queries.completedFailureDeadline.Valid {
+		t.Fatal("terminal failure cleanup deadline must be plan-aware and non-null")
+	}
+}
+
+func TestMediaAudioOverlayWorkerKeepsLifecycleActiveForRetryableFailure(t *testing.T) {
+	queries := newFakeMediaAudioOverlayWorkerQueries()
+	worker := NewMediaAudioOverlayWorker(queries, &fakeMediaAudioOverlayWorkerStorage{}).
+		WithProcessor(&fakeAudioOverlayProcessor{})
+
+	err := worker.processJob(context.Background(), db.MediaProcessingJob{
+		ID:                "mpj_retryable",
+		WorkspaceID:       "ws_1",
+		Kind:              mediaAudioOverlayKind,
+		Status:            "processing",
+		InputVideoMediaID: pgtype.Text{String: "missing_video", Valid: true},
+		InputAudioMediaID: pgtype.Text{String: "med_audio", Valid: true},
+	})
+
+	if err == nil {
+		t.Fatal("retryable input failure error = nil")
+	}
+	if queries.legacyFailureCalls != 1 || !queries.failedRetryable {
+		t.Fatalf("legacy retryable failure calls/retryable = %d/%t, want 1/true", queries.legacyFailureCalls, queries.failedRetryable)
+	}
+	if queries.completedFailureCalls != 0 {
+		t.Fatalf("terminal failure calls = %d, want 0 so input usages stay active", queries.completedFailureCalls)
+	}
 }
 
 type fakeMediaAudioOverlayWorkerQueries struct {
-	claimCalls             int
-	claimKind              string
-	succeededJobID         string
-	succeededOutputMediaID string
-	failedJobID            string
-	failedErrorCode         string
-	failedRetryable         bool
+	claimCalls                    int
+	claimKind                     string
+	legacySuccessCalls            int
+	completedSuccessJobID         string
+	completedSuccessOutputMediaID string
+	completedSuccessDeadline      pgtype.Timestamptz
+	failedJobID                   string
+	failedErrorCode               string
+	failedRetryable               bool
+	legacyFailureCalls            int
+	completedFailureCalls         int
+	completedFailureDeadline      pgtype.Timestamptz
 }
 
 func newFakeMediaAudioOverlayWorkerQueries() *fakeMediaAudioOverlayWorkerQueries {
@@ -230,16 +276,36 @@ func (f *fakeMediaAudioOverlayWorkerQueries) HardDeleteMedia(context.Context, st
 }
 
 func (f *fakeMediaAudioOverlayWorkerQueries) MarkMediaProcessingJobSucceeded(_ context.Context, arg db.MarkMediaProcessingJobSucceededParams) (db.MediaProcessingJob, error) {
-	f.succeededJobID = arg.ID
-	f.succeededOutputMediaID = arg.OutputMediaID.String
+	f.legacySuccessCalls++
 	return db.MediaProcessingJob{ID: arg.ID, OutputMediaID: arg.OutputMediaID, Status: "succeeded"}, nil
 }
 
 func (f *fakeMediaAudioOverlayWorkerQueries) MarkMediaProcessingJobFailed(_ context.Context, arg db.MarkMediaProcessingJobFailedParams) (db.MediaProcessingJob, error) {
+	f.legacyFailureCalls++
 	f.failedJobID = arg.ID
 	f.failedErrorCode = arg.ErrorCode.String
 	f.failedRetryable = arg.Retryable
 	return db.MediaProcessingJob{ID: arg.ID, Status: "failed"}, nil
+}
+
+func (f *fakeMediaAudioOverlayWorkerQueries) CompleteMediaProcessingJobSucceeded(_ context.Context, arg db.CompleteMediaProcessingJobSucceededParams) (db.MediaProcessingJob, error) {
+	f.completedSuccessJobID = arg.JobID
+	f.completedSuccessOutputMediaID = arg.OutputMediaID.String
+	f.completedSuccessDeadline = arg.CleanupAfterAt
+	return db.MediaProcessingJob{ID: arg.JobID, OutputMediaID: arg.OutputMediaID, Status: "succeeded"}, nil
+}
+
+func (f *fakeMediaAudioOverlayWorkerQueries) CompleteMediaProcessingJobFailed(_ context.Context, arg db.CompleteMediaProcessingJobFailedParams) (db.MediaProcessingJob, error) {
+	f.completedFailureCalls++
+	f.failedJobID = arg.JobID
+	f.failedErrorCode = arg.ErrorCode.String
+	f.failedRetryable = false
+	f.completedFailureDeadline = arg.CleanupAfterAt
+	return db.MediaProcessingJob{ID: arg.JobID, Status: "failed"}, nil
+}
+
+func (f *fakeMediaAudioOverlayWorkerQueries) GetSubscriptionByWorkspace(context.Context, string) (db.Subscription, error) {
+	return db.Subscription{WorkspaceID: "ws_1", PlanID: "basic"}, nil
 }
 
 type fakeMediaAudioOverlayWorkerStorage struct {

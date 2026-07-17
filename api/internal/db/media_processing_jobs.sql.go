@@ -81,6 +81,159 @@ func (q *Queries) ClaimMediaProcessingJobsByKind(ctx context.Context, arg ClaimM
 	return items, nil
 }
 
+const createAudioOverlayMediaProcessingJob = `-- name: CreateAudioOverlayMediaProcessingJob :one
+WITH created_job AS (
+  INSERT INTO media_processing_jobs (
+    workspace_id,
+    kind,
+    status,
+    input_video_media_id,
+    input_audio_media_id,
+    output_media_id,
+    mode,
+    fit,
+    video_volume,
+    audio_volume,
+    audio_start_ms,
+    request,
+    idempotency_key,
+    request_hash
+  ) VALUES (
+    $1,
+    'audio_overlay',
+    'queued',
+    $2,
+    $3,
+    NULL,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9::jsonb,
+    $10,
+    $11
+  )
+  RETURNING id, workspace_id, kind, status, input_video_media_id, input_audio_media_id, output_media_id, mode, fit, video_volume, audio_volume, audio_start_ms, request, idempotency_key, request_hash, error_code, error_message, retryable, attempts, created_at, updated_at, started_at, completed_at, input_media_id
+), input_usages AS (
+  INSERT INTO media_processing_usages (
+    workspace_id,
+    job_id,
+    media_id,
+    role,
+    status,
+    cleanup_after_at
+  )
+  SELECT
+    created_job.workspace_id,
+    created_job.id,
+    input.media_id,
+    'input',
+    'active',
+    NULL
+  FROM created_job
+  CROSS JOIN LATERAL (
+    VALUES
+      (created_job.input_video_media_id),
+      (created_job.input_audio_media_id)
+  ) AS input(media_id)
+  ON CONFLICT (job_id, media_id, role) DO NOTHING
+  RETURNING job_id
+)
+SELECT created_job.id, created_job.workspace_id, created_job.kind, created_job.status, created_job.input_video_media_id, created_job.input_audio_media_id, created_job.output_media_id, created_job.mode, created_job.fit, created_job.video_volume, created_job.audio_volume, created_job.audio_start_ms, created_job.request, created_job.idempotency_key, created_job.request_hash, created_job.error_code, created_job.error_message, created_job.retryable, created_job.attempts, created_job.created_at, created_job.updated_at, created_job.started_at, created_job.completed_at, created_job.input_media_id
+FROM created_job
+WHERE EXISTS (
+  SELECT 1
+  FROM input_usages
+  WHERE input_usages.job_id = created_job.id
+)
+`
+
+type CreateAudioOverlayMediaProcessingJobParams struct {
+	WorkspaceID       string      `json:"workspace_id"`
+	InputVideoMediaID pgtype.Text `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text `json:"input_audio_media_id"`
+	Mode              string      `json:"mode"`
+	Fit               string      `json:"fit"`
+	VideoVolume       int32       `json:"video_volume"`
+	AudioVolume       int32       `json:"audio_volume"`
+	AudioStartMs      int32       `json:"audio_start_ms"`
+	RequestJson       []byte      `json:"request_json"`
+	IdempotencyKey    pgtype.Text `json:"idempotency_key"`
+	RequestHash       pgtype.Text `json:"request_hash"`
+}
+
+type CreateAudioOverlayMediaProcessingJobRow struct {
+	ID                string             `json:"id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Kind              string             `json:"kind"`
+	Status            string             `json:"status"`
+	InputVideoMediaID pgtype.Text        `json:"input_video_media_id"`
+	InputAudioMediaID pgtype.Text        `json:"input_audio_media_id"`
+	OutputMediaID     pgtype.Text        `json:"output_media_id"`
+	Mode              string             `json:"mode"`
+	Fit               string             `json:"fit"`
+	VideoVolume       int32              `json:"video_volume"`
+	AudioVolume       int32              `json:"audio_volume"`
+	AudioStartMs      int32              `json:"audio_start_ms"`
+	Request           []byte             `json:"request"`
+	IdempotencyKey    pgtype.Text        `json:"idempotency_key"`
+	RequestHash       pgtype.Text        `json:"request_hash"`
+	ErrorCode         pgtype.Text        `json:"error_code"`
+	ErrorMessage      pgtype.Text        `json:"error_message"`
+	Retryable         bool               `json:"retryable"`
+	Attempts          int32              `json:"attempts"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	InputMediaID      pgtype.Text        `json:"input_media_id"`
+}
+
+func (q *Queries) CreateAudioOverlayMediaProcessingJob(ctx context.Context, arg CreateAudioOverlayMediaProcessingJobParams) (CreateAudioOverlayMediaProcessingJobRow, error) {
+	row := q.db.QueryRow(ctx, createAudioOverlayMediaProcessingJob,
+		arg.WorkspaceID,
+		arg.InputVideoMediaID,
+		arg.InputAudioMediaID,
+		arg.Mode,
+		arg.Fit,
+		arg.VideoVolume,
+		arg.AudioVolume,
+		arg.AudioStartMs,
+		arg.RequestJson,
+		arg.IdempotencyKey,
+		arg.RequestHash,
+	)
+	var i CreateAudioOverlayMediaProcessingJobRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.Status,
+		&i.InputVideoMediaID,
+		&i.InputAudioMediaID,
+		&i.OutputMediaID,
+		&i.Mode,
+		&i.Fit,
+		&i.VideoVolume,
+		&i.AudioVolume,
+		&i.AudioStartMs,
+		&i.Request,
+		&i.IdempotencyKey,
+		&i.RequestHash,
+		&i.ErrorCode,
+		&i.ErrorMessage,
+		&i.Retryable,
+		&i.Attempts,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.InputMediaID,
+	)
+	return i, err
+}
+
 const createMediaProcessingJob = `-- name: CreateMediaProcessingJob :one
 INSERT INTO media_processing_jobs (
   workspace_id,
