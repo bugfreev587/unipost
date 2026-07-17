@@ -109,7 +109,10 @@ if err != nil {
   log.Fatal(err)
 }
 
-completed, err := client.Media.GIFConversions.Wait(ctx, job.ID, unipost.WithPollInterval(2*time.Second))
+completed, err := client.Media.GIFConversions.Wait(ctx, job.ID, &unipost.GIFConversionWaitOptions{
+  PollInterval: 2 * time.Second,
+  Timeout: 5 * time.Minute,
+})
 if err != nil {
   log.Fatal(err)
 }
@@ -119,14 +122,14 @@ fmt.Println(completed.OutputMediaID)`,
     lang: "java",
     label: "Java",
     code: `var job = client.media().gifConversions().create(
-    new GifConversionRequest("media_gif_123", "#FFFFFF"),
+    new GifConversionCreateRequest("media_gif_123", "#FFFFFF"),
     "gif-demo-001"
 );
 
 var completed = client.media().gifConversions().waitFor(
-    job.id(), Duration.ofSeconds(2), Duration.ofMinutes(5)
+    job.getId(), new GifConversionWaitOptions(Duration.ofSeconds(2), Duration.ofMinutes(5))
 );
-System.out.println(completed.outputMediaId());`,
+System.out.println(completed.getOutputMediaId());`,
   },
 ];
 
