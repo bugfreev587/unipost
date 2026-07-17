@@ -15,6 +15,11 @@ import (
 
 const admissionLockNamespace = "media-processing-admission:"
 
+const (
+	mediaProcessingKindAudioOverlay = "audio_overlay"
+	mediaProcessingKindGIFToMP4     = "gif_to_mp4"
+)
+
 type AdmissionCode string
 
 const (
@@ -132,7 +137,7 @@ func (a *PostgresAdmitter) AdmitGIF(ctx context.Context, req GIFAdmissionRequest
 		})
 		if lookupErr == nil {
 			decision := AdmissionDecision{Code: AdmissionIdempotentConflict}
-			if existing.RequestHash.Valid && existing.RequestHash.String == req.RequestHash {
+			if existing.Kind == mediaProcessingKindGIFToMP4 && existing.RequestHash.Valid && existing.RequestHash.String == req.RequestHash {
 				decision.Code = AdmissionIdempotentReplay
 			}
 			if err = tx.Commit(ctx); err != nil {
@@ -229,7 +234,7 @@ func (a *PostgresAdmitter) AdmitAudioOverlay(ctx context.Context, req AudioOverl
 		})
 		if lookupErr == nil {
 			decision := AdmissionDecision{Code: AdmissionIdempotentConflict}
-			if existing.RequestHash.Valid && existing.RequestHash.String == req.RequestHash {
+			if existing.Kind == mediaProcessingKindAudioOverlay && existing.RequestHash.Valid && existing.RequestHash.String == req.RequestHash {
 				decision.Code = AdmissionIdempotentReplay
 			}
 			if err = tx.Commit(ctx); err != nil {

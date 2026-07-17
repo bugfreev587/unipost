@@ -56,6 +56,8 @@ func TestCreateGIFConversionRejectsInvalidInputBeforeAdmission(t *testing.T) {
 		code   string
 	}{
 		{name: "missing id", body: `{}`, status: 422, code: "gif_media_required"},
+		{name: "trailing body", body: `{"gif_media_id":"med_gif"}{}`, status: 422, code: "validation_error"},
+		{name: "unknown field", body: `{"gif_media_id":"med_gif","publish":true}`, status: 422, code: "validation_error"},
 		{name: "background", body: `{"gif_media_id":"med_gif","background_color":"white"}`, status: 422, code: "invalid_background_color"},
 		{name: "wrong type", body: `{"gif_media_id":"med_gif"}`, media: gifTestMedia("med_gif", "uploaded", "image/png", 12), head: storage.HeadResult{Exists: true, ContentType: "image/png", SizeBytes: 12}, status: 422, code: "gif_media_required"},
 		{name: "too large", body: `{"gif_media_id":"med_gif"}`, media: gifTestMedia("med_gif", "uploaded", "image/gif", gifConversionMaxBytes+1), head: storage.HeadResult{Exists: true, ContentType: "image/gif", SizeBytes: gifConversionMaxBytes + 1}, status: 422, code: "gif_size_exceeded"},

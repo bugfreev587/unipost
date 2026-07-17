@@ -147,7 +147,7 @@ func (h *MediaAudioOverlayHandler) Create(w http.ResponseWriter, r *http.Request
 			IdempotencyKey: pgtype.Text{String: idempotencyKey, Valid: true},
 		})
 		if err == nil {
-			if existing.RequestHash.Valid && existing.RequestHash.String == requestHash {
+			if existing.Kind == audioOverlayKind && existing.RequestHash.Valid && existing.RequestHash.String == requestHash {
 				writeAccepted(w, audioOverlayJobResponse(existing))
 				return
 			}

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -29,6 +30,7 @@ const (
 	gifConversionOutputProfile = "universal_mp4_v1"
 	gifConversionDefaultColor  = "#FFFFFF"
 	gifConversionMaxBytes      = int64(50 * 1024 * 1024)
+	gifConversionMaxBodyBytes  = int64(16 * 1024)
 	gifConversionDocsURL       = "https://unipost.dev/docs/api/media/gif-conversions"
 )
 
@@ -98,9 +100,13 @@ func (h *MediaGIFConversionHandler) Create(w http.ResponseWriter, r *http.Reques
 	}
 
 	var body mediaGIFConversionCreateRequest
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, gifConversionMaxBodyBytes))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
+		writeErrorWithDetails(w, http.StatusUnprocessableEntity, "validation_error", "Invalid request body", ErrorDetails{DocsURL: gifConversionDocsURL})
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		writeErrorWithDetails(w, http.StatusUnprocessableEntity, "validation_error", "Invalid request body", ErrorDetails{DocsURL: gifConversionDocsURL})
 		return
 	}
