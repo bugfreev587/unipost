@@ -12,7 +12,7 @@ export default function GuidesIndexPage() {
       <div className="docs-grid">
         <Link href="/docs/guides/publish-gifs" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Publish GIFs</div>
-          <p>Publish a hosted or local GIF to X and Facebook, compare platform support, and prepare for upcoming conversion workflows.</p>
+          <p>Publish a hosted or local GIF to X and Facebook, compare platform support, and convert GIFs to MP4 for video destinations.</p>
         </Link>
         <Link href="/docs/guides/x/comments" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">X comments</div>
@@ -70,7 +70,7 @@ export default function GuidesIndexPage() {
       <p>
         If a user wants to publish a GIF, start with{" "}
         <Link href="/docs/guides/publish-gifs">Publish GIFs</Link>. It shows the current X and Facebook workflow,
-        platform-wide support status, local media upload steps, and the planned GIF-to-MP4 path.
+        platform-wide support status, local media upload steps, and the available GIF-to-MP4 API workflow.
       </p>
       <p>
         If a user wants an Instagram Story rather than a normal feed post, start with{" "}

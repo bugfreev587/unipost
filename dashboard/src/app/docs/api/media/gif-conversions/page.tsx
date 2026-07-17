@@ -5,7 +5,7 @@ import { SingleEndpointReferencePage } from "../../_components/single-endpoint-p
 
 const AUTH_FIELDS: ApiFieldItem[] = [
   { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key." },
-  { name: "Idempotency-Key", type: "string", meta: "Optional header", description: "Replays the same normalized conversion without consuming another rolling fair-use unit. Reusing the key with different input returns idempotency_conflict." },
+  { name: "Idempotency-Key", type: "string", meta: "Optional POST header", description: "Replays the same normalized conversion without consuming another rolling fair-use unit. Reusing the key with different input returns idempotency_conflict." },
 ];
 
 const BODY_FIELDS: ApiFieldItem[] = [
@@ -38,7 +38,9 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `JOB=$(curl -sS -X POST "https://api.unipost.dev/v1/media/gif-conversions" \\
+    code: `set -euo pipefail
+
+JOB=$(curl -fSs -X POST "https://api.unipost.dev/v1/media/gif-conversions" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Idempotency-Key: gif-demo-001" \\
   -H "Content-Type: application/json" \\
@@ -47,89 +49,23 @@ const SNIPPETS = [
     "background_color": "#FFFFFF"
   }')
 
-JOB_ID=$(echo "$JOB" | jq -r '.data.id')
+JOB_ID=$(echo "$JOB" | jq -er '.data.id')
 
-while true; do
-  CURRENT=$(curl -sS "https://api.unipost.dev/v1/media/gif-conversions/$JOB_ID" \\
+DEADLINE=$((SECONDS + 900))
+while (( SECONDS < DEADLINE )); do
+  CURRENT=$(curl -fSs "https://api.unipost.dev/v1/media/gif-conversions/$JOB_ID" \\
     -H "Authorization: Bearer $UNIPOST_API_KEY")
-  STATUS=$(echo "$CURRENT" | jq -r '.data.status')
+  STATUS=$(echo "$CURRENT" | jq -er '.data.status')
   case "$STATUS" in
-    succeeded|failed) echo "$CURRENT" | jq; break ;;
+    succeeded) echo "$CURRENT" | jq; exit 0 ;;
+    failed) echo "$CURRENT" | jq >&2; exit 1 ;;
+    queued|processing) sleep 2 ;;
+    *) echo "Unexpected conversion status: $STATUS" >&2; echo "$CURRENT" | jq >&2; exit 1 ;;
   esac
-  sleep 2
-done`,
-  },
-  {
-    lang: "js",
-    label: "Node.js",
-    code: `import { UniPost } from "@unipost/sdk";
+done
 
-const client = new UniPost();
-const job = await client.media.gifConversions.create({
-  gifMediaId: "media_gif_123",
-  backgroundColor: "#FFFFFF",
-}, { idempotencyKey: "gif-demo-001" });
-
-const completed = await client.media.gifConversions.wait(job.id, {
-  pollIntervalMs: 2000,
-  timeoutMs: 300000,
-});
-
-if (completed.status !== "succeeded") {
-  throw new Error(completed.error?.message || "GIF conversion failed");
-}
-console.log(completed.outputMediaId);`,
-  },
-  {
-    lang: "python",
-    label: "Python",
-    code: `from unipost import UniPost
-
-client = UniPost()
-job = client.media.gif_conversions.create(
-    gif_media_id="media_gif_123",
-    background_color="#FFFFFF",
-    idempotency_key="gif-demo-001",
-)
-completed = client.media.gif_conversions.wait(
-    job.id,
-    poll_interval=2.0,
-    timeout=300.0,
-)
-print(completed.output_media_id)`,
-  },
-  {
-    lang: "go",
-    label: "Go",
-    code: `job, err := client.Media.GIFConversions.Create(ctx, &unipost.GIFConversionCreateRequest{
-  GIFMediaID: "media_gif_123",
-  BackgroundColor: "#FFFFFF",
-}, unipost.WithIdempotencyKey("gif-demo-001"))
-if err != nil {
-  log.Fatal(err)
-}
-
-completed, err := client.Media.GIFConversions.Wait(ctx, job.ID, &unipost.GIFConversionWaitOptions{
-  PollInterval: 2 * time.Second,
-  Timeout: 5 * time.Minute,
-})
-if err != nil {
-  log.Fatal(err)
-}
-fmt.Println(completed.OutputMediaID)`,
-  },
-  {
-    lang: "java",
-    label: "Java",
-    code: `var job = client.media().gifConversions().create(
-    new GifConversionCreateRequest("media_gif_123", "#FFFFFF"),
-    "gif-demo-001"
-);
-
-var completed = client.media().gifConversions().waitFor(
-    job.getId(), new GifConversionWaitOptions(Duration.ofSeconds(2), Duration.ofMinutes(5))
-);
-System.out.println(completed.getOutputMediaId());`,
+echo "Timed out waiting for the GIF conversion; the server-side job was not cancelled. Continue polling JOB_ID=$JOB_ID." >&2
+exit 1`,
   },
 ];
 
@@ -155,7 +91,7 @@ const RESPONSE_SNIPPETS = [
   },
   {
     lang: "json",
-    label: "200",
+    label: "GET 200",
     code: `{
   "data": {
     "id": "mpj_123",
@@ -189,7 +125,6 @@ export default function GIFConversionsPage() {
       ]}
       responses={[
         { code: "202", fields: RESPONSE_FIELDS },
-        { code: "200", fields: RESPONSE_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
         { code: "409", fields: ERROR_FIELDS },
         { code: "422", fields: ERROR_FIELDS },
@@ -203,10 +138,28 @@ export default function GIFConversionsPage() {
         Conversion and publishing are separate operations. This endpoint never edits a draft or publishes automatically. X and Facebook can receive the original GIF directly; use the MP4 output for destinations that require video.
       </InfoBox>
       <InfoBox>
-        <code>universal_mp4_v1</code> is H.264, yuv420p, constant 30 FPS, silent, fast-start MP4 with even dimensions and no upscaling above a 1920-pixel longest edge. Transparent pixels use the selected background color.
+        POST always returns 202 when a job is accepted, including an idempotent replay. GET returns 200 when the job can be read. Idempotency-Key applies only to POST.
       </InfoBox>
       <InfoBox>
-        Active Media Processing capacity is shared with Audio Overlay. New GIF jobs also have a Plan-based rolling 24-hour limit. Input and output Media follow Plan retention after the job reaches a terminal state; active inputs are protected from cleanup.
+        Published UniPost SDK packages do not yet include GIF conversion helpers. Use the REST example on this page until updated SDK versions are released.
+      </InfoBox>
+      <InfoBox>
+        <code>universal_mp4_v1</code> is H.264, yuv420p, constant 30 FPS, silent, fast-start MP4 with even dimensions and no upscaling above a 1920-pixel longest edge. Transparent pixels use the selected background color. Static GIFs and short animations produce at least five seconds of video; short animations repeat complete cycles.
+      </InfoBox>
+      <InfoBox>
+        Input limits: 50 MB compressed, 4096 pixels per dimension, 2,000 frames, 1.5 billion decoded pixels, and a 60-second animation cycle. Processing has a five-minute processing limit, and the converted MP4 cannot exceed the global 4 GB Media limit.
+      </InfoBox>
+      <InfoBox>
+        The cURL example waits up to 15 minutes because queue time is separate from the five-minute server processing limit. A client timeout does not cancel the server-side job; keep the job ID and continue polling <code>GET /v1/media/gif-conversions/&#123;id&#125;</code>.
+      </InfoBox>
+      <InfoBox>
+        Terminal job codes include <code>gif_dimensions_exceeded</code>, <code>gif_frame_count_exceeded</code>, <code>gif_decode_budget_exceeded</code>, <code>gif_duration_exceeded</code>, <code>gif_probe_failed</code>, <code>gif_decode_failed</code>, <code>processing_timeout</code>, <code>output_size_exceeded</code>, and <code>gif_conversion_failed</code>. Read <code>error.retryable</code> before deciding whether to submit a new job.
+      </InfoBox>
+      <InfoBox>
+        Active Media Processing capacity is shared with Audio Overlay. New GIF jobs also have a Plan-based rolling 24-hour limit. Active inputs are protected from cleanup. After a successful conversion, UniPost retains both the input GIF and output MP4 for Free 1 day, API 2 days, Basic 4 days, Growth 15 days, and Team and Enterprise 30 days. After a failed conversion, no output Media exists; the input GIF is retained for Free 2 days, API 4 days, Basic 8 days, Growth 30 days, and Team and Enterprise 60 days. See <ApiInlineLink endpoint="GET /v1/media/:media_id" href="/docs/api/media/get" /> for the shared Plan retention lifecycle.
+      </InfoBox>
+      <InfoBox>
+        Plan limits are active Media Processing jobs / new GIF conversions in a rolling 24-hour window: Free: 1 active / 10 GIF conversions; API: 2 / 50; Basic: 2 / 100; Growth: 4 / 300; Team: 6 / 1,000; Enterprise: 6 / 1,000 by default, with contract overrides available.
       </InfoBox>
     </SingleEndpointReferencePage>
   );
