@@ -132,6 +132,35 @@ SELECT DISTINCT
 FROM lifecycle_rows
 ON CONFLICT (job_id, media_id, role) DO NOTHING;
 
+-- Audit historical soft-deleted Media and restore missing active post usages
+-- before the new cleanup predicate is allowed to consider deleted rows.
+INSERT INTO media_post_usages (
+  workspace_id,
+  media_id,
+  post_id,
+  post_status,
+  cleanup_after_at
+)
+SELECT DISTINCT
+  sp.workspace_id,
+  m.id,
+  sp.id,
+  sp.status,
+  NULL::timestamptz
+FROM social_posts sp
+CROSS JOIN LATERAL jsonb_array_elements(COALESCE(sp.metadata->'platform_posts', '[]'::jsonb)) platform_post
+CROSS JOIN LATERAL jsonb_array_elements_text(COALESCE(platform_post->'media_ids', '[]'::jsonb)) media_ref(media_id)
+JOIN media m
+  ON m.id = media_ref.media_id
+ AND m.workspace_id = sp.workspace_id
+WHERE m.status = 'deleted'
+  AND sp.deleted_at IS NULL
+  AND sp.status IN ('draft', 'scheduled', 'publishing', 'quota_hold')
+ON CONFLICT (media_id, post_id) DO UPDATE
+SET post_status = EXCLUDED.post_status,
+    cleanup_after_at = NULL,
+    updated_at = NOW();
+
 -- Start a conservative base success-retention window for existing uploaded
 -- Media that has never been attached to a post or processing job. Preserve any
 -- later deadline already written by an older policy.

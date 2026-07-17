@@ -128,7 +128,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Add a failing query-source or integration test proving `MarkMediaUploaded` assigns a plan-aware base `cleanup_after_at` when none exists and never shortens a later deadline.
 - [x] Update `MarkMediaUploaded` to derive the workspace's current plan and set the base success-retention deadline with `GREATEST(existing_deadline, plan_deadline)` semantics.
 - [x] Regenerate sqlc and run the focused database tests.
-- [ ] Commit: `feat(media): set base upload retention deadline`.
+- [x] Commit: `feat(media): set base upload retention deadline`.
 
 ## Task 6: Enforce unified cleanup and soft-delete rules
 
@@ -143,17 +143,17 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/internal/worker/media_cleanup_test.go`
 - Regenerate: `api/internal/db/generated/*`
 
-- [ ] Add failing cleanup query/source tests for all blockers:
+- [x] Add failing cleanup query/source tests for all blockers:
   - base media deadline is due;
   - every post-usage deadline is due or absent;
   - no active processing usage exists;
   - every terminal processing-usage deadline is due or absent.
-- [ ] Update cleanup-selection and admin backlog/deadline queries to use the same unified predicate, so operational reporting matches deletion behavior.
-- [ ] Add failing DELETE handler tests: media referenced by an active post usage or active processing usage returns `409`; unreferenced media is soft-deleted.
-- [ ] Add a database query that checks both active ledgers. Use it before soft delete, and change `SoftDeleteMedia` to set `cleanup_after_at = NOW()` without removing usage records.
-- [ ] Add failing cleanup-worker tests proving a soft-deleted object is deleted only after all ledger blockers clear.
-- [ ] Include a migration audit/backfill for historical soft-deleted rows that still have active references, preserving those objects until their ledgers clear.
-- [ ] Regenerate sqlc; run handler, worker, and database tests.
+- [x] Update cleanup-selection and admin backlog/deadline queries to use the same unified predicate, so operational reporting matches deletion behavior.
+- [x] Add failing DELETE handler tests: media referenced by an active post usage or active processing usage returns `409`; unreferenced media is soft-deleted.
+- [x] Add database queries that check both ledgers before deletion and atomically repeat those checks during soft delete; set `cleanup_after_at = NOW()` without removing usage records.
+- [x] Add failing cleanup-query contract tests proving a soft-deleted object is eligible only after all ledger blockers clear.
+- [x] Include a migration audit/backfill for historical soft-deleted rows that still have active references, preserving those objects until their ledgers clear.
+- [x] Regenerate sqlc; run handler, worker, and database tests.
 - [ ] Commit: `feat(media): unify retention and deletion gates`.
 
 ## Task 7: Move abandoned-upload cleanup into MediaCleanupWorker

@@ -70,9 +70,61 @@ SET status = 'uploaded',
 WHERE m.id = $1
 RETURNING m.*;
 
+-- name: HasBlockingMediaUsage :one
+SELECT (
+  EXISTS (
+    SELECT 1
+    FROM media_post_usages post_usage
+    WHERE post_usage.media_id = $1
+      AND (
+        post_usage.cleanup_after_at IS NULL
+        OR post_usage.cleanup_after_at > NOW()
+      )
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_usage
+    WHERE processing_usage.media_id = $1
+      AND (
+        processing_usage.cleanup_after_at IS NULL
+        OR processing_usage.cleanup_after_at > NOW()
+      )
+  )
+)::boolean;
+
 -- name: SoftDeleteMedia :exec
-UPDATE media SET status = 'deleted'
-WHERE id = $1 AND workspace_id = $2;
+UPDATE media
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status != 'deleted';
+
+-- name: SoftDeleteUnusedMedia :execrows
+UPDATE media candidate
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+WHERE candidate.id = sqlc.arg(id)
+  AND candidate.workspace_id = sqlc.arg(workspace_id)
+  AND candidate.status != 'deleted'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_post_usages post_blocker
+    WHERE post_blocker.media_id = candidate.id
+      AND (
+        post_blocker.cleanup_after_at IS NULL
+        OR post_blocker.cleanup_after_at > NOW()
+      )
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_blocker
+    WHERE processing_blocker.media_id = candidate.id
+      AND (
+        processing_blocker.cleanup_after_at IS NULL
+        OR processing_blocker.cleanup_after_at > NOW()
+      )
+  );
 
 -- name: HardDeleteMedia :exec
 DELETE FROM media

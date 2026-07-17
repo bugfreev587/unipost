@@ -191,6 +191,36 @@ func (q *Queries) HardDeleteMedia(ctx context.Context, id string) error {
 	return err
 }
 
+const hasBlockingMediaUsage = `-- name: HasBlockingMediaUsage :one
+SELECT (
+  EXISTS (
+    SELECT 1
+    FROM media_post_usages post_usage
+    WHERE post_usage.media_id = $1
+      AND (
+        post_usage.cleanup_after_at IS NULL
+        OR post_usage.cleanup_after_at > NOW()
+      )
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_usage
+    WHERE processing_usage.media_id = $1
+      AND (
+        processing_usage.cleanup_after_at IS NULL
+        OR processing_usage.cleanup_after_at > NOW()
+      )
+  )
+)::boolean
+`
+
+func (q *Queries) HasBlockingMediaUsage(ctx context.Context, mediaID string) (bool, error) {
+	row := q.db.QueryRow(ctx, hasBlockingMediaUsage, mediaID)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const listAbandonedMedia = `-- name: ListAbandonedMedia :many
 SELECT id, storage_key, content_type, size_bytes, status, created_at, uploaded_at, workspace_id, content_hash, cleanup_after_at, width, height, duration_ms FROM media
 WHERE status = 'pending'
@@ -350,8 +380,12 @@ func (q *Queries) MarkMediaUploaded(ctx context.Context, arg MarkMediaUploadedPa
 }
 
 const softDeleteMedia = `-- name: SoftDeleteMedia :exec
-UPDATE media SET status = 'deleted'
-WHERE id = $1 AND workspace_id = $2
+UPDATE media
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status != 'deleted'
 `
 
 type SoftDeleteMediaParams struct {
@@ -362,6 +396,46 @@ type SoftDeleteMediaParams struct {
 func (q *Queries) SoftDeleteMedia(ctx context.Context, arg SoftDeleteMediaParams) error {
 	_, err := q.db.Exec(ctx, softDeleteMedia, arg.ID, arg.WorkspaceID)
 	return err
+}
+
+const softDeleteUnusedMedia = `-- name: SoftDeleteUnusedMedia :execrows
+UPDATE media candidate
+SET status = 'deleted',
+    cleanup_after_at = NOW()
+WHERE candidate.id = $1
+  AND candidate.workspace_id = $2
+  AND candidate.status != 'deleted'
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_post_usages post_blocker
+    WHERE post_blocker.media_id = candidate.id
+      AND (
+        post_blocker.cleanup_after_at IS NULL
+        OR post_blocker.cleanup_after_at > NOW()
+      )
+  )
+  AND NOT EXISTS (
+    SELECT 1
+    FROM media_processing_usages processing_blocker
+    WHERE processing_blocker.media_id = candidate.id
+      AND (
+        processing_blocker.cleanup_after_at IS NULL
+        OR processing_blocker.cleanup_after_at > NOW()
+      )
+  )
+`
+
+type SoftDeleteUnusedMediaParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) SoftDeleteUnusedMedia(ctx context.Context, arg SoftDeleteUnusedMediaParams) (int64, error) {
+	result, err := q.db.Exec(ctx, softDeleteUnusedMedia, arg.ID, arg.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateMediaStorageKey = `-- name: UpdateMediaStorageKey :one

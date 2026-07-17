@@ -54,40 +54,87 @@ SELECT
   COUNT(*)::bigint AS due_objects,
   COALESCE(SUM(m.size_bytes), 0)::bigint AS due_bytes
 FROM media m
-WHERE m.status != 'deleted'
-  AND EXISTS (
+WHERE (
+    m.status = 'deleted'
+    OR m.cleanup_after_at <= NOW()
+    OR EXISTS (
+      SELECT 1
+      FROM media_post_usages post_due
+      WHERE post_due.media_id = m.id
+        AND post_due.cleanup_after_at <= NOW()
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM media_processing_usages processing_due
+      WHERE processing_due.media_id = m.id
+        AND processing_due.cleanup_after_at <= NOW()
+    )
+  )
+  AND (m.cleanup_after_at IS NULL OR m.cleanup_after_at <= NOW())
+  AND NOT EXISTS (
     SELECT 1
-    FROM media_post_usages due
-    WHERE due.media_id = m.id
-      AND due.cleanup_after_at IS NOT NULL
-      AND due.cleanup_after_at <= NOW()
+    FROM media_post_usages post_blocker
+    WHERE post_blocker.media_id = m.id
+      AND (
+        post_blocker.cleanup_after_at IS NULL
+        OR post_blocker.cleanup_after_at > NOW()
+      )
   )
   AND NOT EXISTS (
     SELECT 1
-    FROM media_post_usages blocker
-    WHERE blocker.media_id = m.id
+    FROM media_processing_usages processing_blocker
+    WHERE processing_blocker.media_id = m.id
       AND (
-        blocker.cleanup_after_at IS NULL
-        OR blocker.cleanup_after_at > NOW()
+        processing_blocker.cleanup_after_at IS NULL
+        OR processing_blocker.cleanup_after_at > NOW()
       )
   );
 
 -- name: GetAdminObjectStorageReferencedObjects :one
 SELECT COUNT(DISTINCT m.id)::bigint AS referenced_objects
 FROM media m
-JOIN media_post_usages mpu ON mpu.media_id = m.id
 WHERE m.status != 'deleted'
   AND (
-    mpu.cleanup_after_at IS NULL
-    OR mpu.cleanup_after_at > NOW()
+    EXISTS (
+      SELECT 1
+      FROM media_post_usages post_blocker
+      WHERE post_blocker.media_id = m.id
+        AND (
+          post_blocker.cleanup_after_at IS NULL
+          OR post_blocker.cleanup_after_at > NOW()
+        )
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM media_processing_usages processing_blocker
+      WHERE processing_blocker.media_id = m.id
+        AND (
+          processing_blocker.cleanup_after_at IS NULL
+          OR processing_blocker.cleanup_after_at > NOW()
+        )
+    )
   );
 
 -- name: GetAdminObjectStorageNextCleanupDeadline :one
-SELECT MIN(mpu.cleanup_after_at)::timestamptz AS next_cleanup_deadline_at
-FROM media_post_usages mpu
-JOIN media m ON m.id = mpu.media_id
-WHERE m.status != 'deleted'
-  AND mpu.cleanup_after_at > NOW();
+SELECT MIN(deadline)::timestamptz AS next_cleanup_deadline_at
+FROM (
+  SELECT m.cleanup_after_at AS deadline
+  FROM media m
+  WHERE m.status != 'deleted'
+    AND m.cleanup_after_at > NOW()
+  UNION ALL
+  SELECT post_usage.cleanup_after_at AS deadline
+  FROM media_post_usages post_usage
+  JOIN media m ON m.id = post_usage.media_id
+  WHERE m.status != 'deleted'
+    AND post_usage.cleanup_after_at > NOW()
+  UNION ALL
+  SELECT processing_usage.cleanup_after_at AS deadline
+  FROM media_processing_usages processing_usage
+  JOIN media m ON m.id = processing_usage.media_id
+  WHERE m.status != 'deleted'
+    AND processing_usage.cleanup_after_at > NOW()
+) deadlines;
 
 -- name: GetAdminObjectStoragePeriodCleanupRuns :one
 SELECT

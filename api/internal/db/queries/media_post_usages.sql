@@ -32,26 +32,54 @@ WHERE workspace_id = $1
 -- name: ListMediaDueForRetentionCleanup :many
 SELECT m.*
 FROM media m
-WHERE m.status != 'deleted'
-  AND EXISTS (
+WHERE (
+    m.status = 'deleted'
+    OR m.cleanup_after_at <= NOW()
+    OR EXISTS (
+      SELECT 1
+      FROM media_post_usages post_due
+      WHERE post_due.media_id = m.id
+        AND post_due.cleanup_after_at <= NOW()
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM media_processing_usages processing_due
+      WHERE processing_due.media_id = m.id
+        AND processing_due.cleanup_after_at <= NOW()
+    )
+  )
+  AND (m.cleanup_after_at IS NULL OR m.cleanup_after_at <= NOW())
+  AND NOT EXISTS (
     SELECT 1
-    FROM media_post_usages due
-    WHERE due.media_id = m.id
-      AND due.cleanup_after_at IS NOT NULL
-      AND due.cleanup_after_at <= NOW()
+    FROM media_post_usages post_blocker
+    WHERE post_blocker.media_id = m.id
+      AND (
+        post_blocker.cleanup_after_at IS NULL
+        OR post_blocker.cleanup_after_at > NOW()
+      )
   )
   AND NOT EXISTS (
     SELECT 1
-    FROM media_post_usages blocker
-    WHERE blocker.media_id = m.id
+    FROM media_processing_usages processing_blocker
+    WHERE processing_blocker.media_id = m.id
       AND (
-        blocker.cleanup_after_at IS NULL
-        OR blocker.cleanup_after_at > NOW()
+        processing_blocker.cleanup_after_at IS NULL
+        OR processing_blocker.cleanup_after_at > NOW()
       )
   )
-ORDER BY (
-  SELECT MAX(due.cleanup_after_at)
-  FROM media_post_usages due
-  WHERE due.media_id = m.id
+ORDER BY GREATEST(
+  COALESCE(m.cleanup_after_at, '-infinity'::timestamptz),
+  COALESCE((
+    SELECT MAX(post_due.cleanup_after_at)
+    FROM media_post_usages post_due
+    WHERE post_due.media_id = m.id
+      AND post_due.cleanup_after_at <= NOW()
+  ), '-infinity'::timestamptz),
+  COALESCE((
+    SELECT MAX(processing_due.cleanup_after_at)
+    FROM media_processing_usages processing_due
+    WHERE processing_due.media_id = m.id
+      AND processing_due.cleanup_after_at <= NOW()
+  ), '-infinity'::timestamptz)
 ) ASC
 LIMIT $1;
