@@ -19,6 +19,8 @@ func TestPlatformCredentialOptionalSecretsUseAtomicSuppliedFlags(t *testing.T) {
 		"platform_credentials.client_id = EXCLUDED.client_id",
 		"platform_credentials.app_bearer_token",
 		"platform_credentials.consumer_secret",
+		"sqlc.narg(app_bearer_token)::TEXT",
+		"sqlc.narg(consumer_secret)::TEXT",
 	} {
 		if !strings.Contains(query, required) {
 			t.Fatalf("platform_credentials.sql missing %q", required)

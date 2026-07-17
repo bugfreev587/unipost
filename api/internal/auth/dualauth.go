@@ -94,25 +94,25 @@ func authenticateAPIKey(w http.ResponseWriter, r *http.Request, queries *db.Quer
 	ctx := context.WithValue(r.Context(), WorkspaceIDKey, ak.WorkspaceID)
 	ctx = context.WithValue(ctx, APIKeyIDKey, ak.ID)
 	// RBAC migration 063: derive role from the key creator's current
-	// membership. Falls back to RoleOwner only when the membership
-	// can't be loaded (creator removed from team, transient DB error).
+	// active membership. Creator-bound keys fail closed when that
+	// membership is missing, inactive, or temporarily unreadable so a
+	// removed member's surviving key can never escalate to owner.
 	// A nice property: changing the creator's role at the membership
 	// level automatically changes the key's effective permissions
 	// without rotating the key.
 	role := RoleOwner
 	if ak.CreatedByUserID != "" {
-		if mem, err := queries.GetMembership(r.Context(), db.GetMembershipParams{
+		mem, err := queries.GetMembership(r.Context(), db.GetMembershipParams{
 			WorkspaceID: ak.WorkspaceID,
 			UserID:      ak.CreatedByUserID,
-		}); err == nil && mem.Status == "active" {
-			role = mem.Role
+		})
+		if err != nil || mem.Status != "active" {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{
+				"error": map[string]any{"code": "UNAUTHORIZED", "message": "API key is no longer authorized"},
+			})
+			return nil, false
 		}
-		// If GetMembership fails or status != active, the key was
-		// created by a member who has since been removed. We could
-		// reject the request here, but for now we keep RoleOwner as
-		// a safe default — admins should explicitly revoke keys when
-		// removing members. Audit trail (Phase 6) will surface the
-		// "key creator no longer a member" condition.
+		role = mem.Role
 	}
 	ctx = context.WithValue(ctx, RoleKey, role)
 	return ctx, true

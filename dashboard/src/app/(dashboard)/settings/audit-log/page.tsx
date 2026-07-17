@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@clerk/nextjs";
 import { listAuditLog, type AuditLogEntry } from "@/lib/api";
+import { PlanGate } from "@/components/dashboard/plan-gate";
 
 // /settings/audit-log — RBAC Phase 6 dashboard view.
 //
@@ -15,6 +16,14 @@ const CATEGORY_OPTIONS = ["all", "membership", "billing", "config", "auth"] as c
 const DAY_OPTIONS = [7, 30, 90, 180] as const;
 
 export default function AuditLogPage() {
+  return (
+    <PlanGate feature="audit_log">
+      <AuditLogContent />
+    </PlanGate>
+  );
+}
+
+function AuditLogContent() {
   const { getToken } = useAuth();
   const [rows, setRows] = useState<AuditLogEntry[]>([]);
   const [loading, setLoading] = useState(true);

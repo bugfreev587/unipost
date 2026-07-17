@@ -1168,7 +1168,7 @@ func main() {
 		// Audit log (RBAC Phase 6). Read access only — writes happen
 		// inline at every mutation site via internal/audit.Log().
 		auditHandler := handler.NewAuditHandler(queries)
-		r.Get("/v1/audit-log", auditHandler.List)
+		r.With(handler.RequirePlanAuditLog(quotaChecker)).Get("/v1/audit-log", auditHandler.List)
 		logsHandler := handler.NewLogsHandler(queries)
 		r.Get("/v1/logs", logsHandler.List)
 		// Mount the static /stream route before the /{id} param route so

@@ -7,7 +7,7 @@ import { getApiLimits } from "@/lib/api";
 import { Lock } from "lucide-react";
 
 // PlanGate renders an upgrade card when the active workspace's plan
-// doesn't unlock a given feature. Used on Inbox + Analytics pages so
+// doesn't unlock a given feature. Used on Inbox, Analytics, and Audit Log pages so
 // Free / API users see a clear upgrade CTA instead of a 402 toast.
 //
 // Server-side enforcement is the source of truth (the matching API
@@ -15,7 +15,7 @@ import { Lock } from "lucide-react";
 // the dashboard does). This component is a UX shortcut, not a
 // security boundary.
 
-type Feature = "inbox" | "analytics";
+type Feature = "inbox" | "analytics" | "audit_log";
 
 const FEATURE_COPY: Record<Feature, { title: string; minTier: string; blurb: string }> = {
   inbox: {
@@ -27,6 +27,11 @@ const FEATURE_COPY: Record<Feature, { title: string; minTier: string; blurb: str
     title: "Analytics is a paid plan feature",
     minTier: "API ($10/mo)",
     blurb: "Analytics surfaces reach, impressions, and engagement across every connected account. It is included on every paid plan.",
+  },
+  audit_log: {
+    title: "Audit Log is a Team feature",
+    minTier: "Team ($149/mo)",
+    blurb: "Audit Log records membership, API key, billing, and configuration changes for Team workspaces.",
   },
 };
 
@@ -45,18 +50,24 @@ export function PlanGate({
     (async () => {
       try {
         const token = await getToken();
-        if (!token || cancelled) return;
+        if (cancelled) return;
+        if (!token) {
+          setAllowed(feature !== "audit_log");
+          return;
+        }
         const res = await getApiLimits(token);
         if (cancelled) return;
-        const ok =
-          feature === "inbox"
-            ? res.data.plan_allows_inbox
+        const ok = feature === "inbox"
+          ? res.data.plan_allows_inbox
+          : feature === "audit_log"
+            ? res.data.plan_allows_audit_log
             : res.data.plan_allows_analytics;
         setAllowed(Boolean(ok));
       } catch {
-        // Fail-open on the dashboard: show the feature, let the
-        // server-side 402 surface if the plan really doesn't allow.
-        if (!cancelled) setAllowed(true);
+        // Audit Log contains security history and fails closed. Inbox and
+        // Analytics preserve their existing fail-open UX; their API routes
+        // remain the authority and return 402 when unavailable.
+        if (!cancelled) setAllowed(feature !== "audit_log");
       }
     })();
     return () => {

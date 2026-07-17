@@ -4,8 +4,8 @@
 //
 // GET /v1/audit-log?action=...&category=...&days=N&limit=N
 //
-// Available to any authenticated workspace user (read access to the
-// audit log is part of "transparency", not a privileged action).
+// Available to any authenticated member of a Team or Enterprise workspace.
+// The router owns the plan gate; this handler owns workspace scoping.
 // Filters are optional — empty values mean "no filter on that axis".
 
 package handler

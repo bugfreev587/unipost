@@ -16,6 +16,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 func TestMediaIDsForRetentionFromPostMetadataDedupesAcrossPlatformPosts(t *testing.T) {
@@ -87,6 +88,86 @@ func TestCancelSocialPostSyncsCancelledMediaRetention(t *testing.T) {
 	}
 }
 
+func TestSyncPostMediaRetentionUsesTeamTerminalWindows(t *testing.T) {
+	tests := []struct {
+		status string
+		want   time.Duration
+	}{
+		{status: "published", want: 30 * 24 * time.Hour},
+		{status: "failed", want: 60 * 24 * time.Hour},
+		{status: "partial", want: 60 * 24 * time.Hour},
+		{status: "cancelled", want: 60 * 24 * time.Hour},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			post := mediaRetentionPost(t, tt.status)
+			dbtx := &mediaRetentionTestDB{planID: "team"}
+			queries := db.New(dbtx)
+			handler := &SocialPostHandler{queries: queries, quota: quota.NewChecker(queries)}
+			before := time.Now().Add(tt.want - time.Minute)
+
+			handler.syncPostMediaRetention(context.Background(), post, tt.status)
+
+			after := time.Now().Add(tt.want + time.Minute)
+			if len(dbtx.upserts) != 2 {
+				t.Fatalf("upserts=%d, want 2", len(dbtx.upserts))
+			}
+			for _, upsert := range dbtx.upserts {
+				if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(before) || upsert.CleanupAfterAt.Time.After(after) {
+					t.Fatalf("cleanup_after_at=%#v, want about %s", upsert.CleanupAfterAt, tt.want)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncPostMediaRetentionKeepsActiveTeamMedia(t *testing.T) {
+	for _, status := range []string{"draft", "scheduled", "queued", "publishing", "processing"} {
+		t.Run(status, func(t *testing.T) {
+			post := mediaRetentionPost(t, status)
+			dbtx := &mediaRetentionTestDB{planID: "team"}
+			queries := db.New(dbtx)
+			handler := &SocialPostHandler{queries: queries, quota: quota.NewChecker(queries)}
+
+			handler.syncPostMediaRetention(context.Background(), post, status)
+
+			if len(dbtx.upserts) != 2 {
+				t.Fatalf("upserts=%d, want 2", len(dbtx.upserts))
+			}
+			for _, upsert := range dbtx.upserts {
+				if upsert.CleanupAfterAt.Valid {
+					t.Fatalf("active status %q scheduled cleanup at %s", status, upsert.CleanupAfterAt.Time)
+				}
+			}
+		})
+	}
+}
+
+func TestSyncPostMediaRetentionTransitionReplacesActiveDeadline(t *testing.T) {
+	post := mediaRetentionPost(t, "scheduled")
+	dbtx := &mediaRetentionTestDB{planID: "team"}
+	queries := db.New(dbtx)
+	handler := &SocialPostHandler{queries: queries, quota: quota.NewChecker(queries)}
+
+	handler.syncPostMediaRetention(context.Background(), post, "scheduled")
+	handler.syncPostMediaRetention(context.Background(), post, "published")
+
+	if len(dbtx.upserts) != 4 {
+		t.Fatalf("upserts=%d, want 4", len(dbtx.upserts))
+	}
+	for i := 0; i < 2; i++ {
+		if dbtx.upserts[i].CleanupAfterAt.Valid {
+			t.Fatalf("active upsert %d unexpectedly has cleanup deadline", i)
+		}
+	}
+	for i := 2; i < 4; i++ {
+		if !dbtx.upserts[i].CleanupAfterAt.Valid {
+			t.Fatalf("terminal upsert %d missing cleanup deadline", i)
+		}
+	}
+}
+
 func mediaRetentionPost(t *testing.T, status string) db.SocialPost {
 	t.Helper()
 
@@ -111,6 +192,7 @@ func mediaRetentionPost(t *testing.T, status string) db.SocialPost {
 
 type mediaRetentionTestDB struct {
 	cancelPost db.SocialPost
+	planID     string
 	upserts    []db.UpsertMediaPostUsageParams
 }
 
@@ -131,6 +213,8 @@ func (f *mediaRetentionTestDB) Query(context.Context, string, ...interface{}) (p
 
 func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		return subscriptionScanRow(f.planID)
 	case strings.Contains(query, "-- name: CancelSocialPost"):
 		return scheduledIdempotencySocialPostRow(f.cancelPost)
 	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):

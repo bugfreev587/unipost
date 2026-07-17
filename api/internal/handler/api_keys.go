@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/apikey"
+	"github.com/xiaoboyu/unipost-api/internal/audit"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -176,6 +177,23 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:   workspaceID,
+		ActorUserID:   auth.GetUserID(r.Context()),
+		ActorAPIKeyID: auth.GetAPIKeyID(r.Context()),
+		Action:        audit.ActionAPIKeyCreated,
+		ResourceType:  "api_key",
+		ResourceID:    key.ID,
+		Category:      audit.CategoryConfig,
+		IPAddress:     r.RemoteAddr,
+		UserAgent:     r.UserAgent(),
+		After: map[string]any{
+			"name":        key.Name,
+			"prefix":      key.Prefix,
+			"environment": key.Environment,
+		},
+	})
+
 	writeCreated(w, apiKeyCreateResponse{
 		ID:          key.ID,
 		Name:        key.Name,
@@ -194,7 +212,7 @@ func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	keyID := chi.URLParam(r, "keyID")
 
-	_, err := h.queries.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
+	key, err := h.queries.RevokeAPIKey(r.Context(), db.RevokeAPIKeyParams{
 		ID:          keyID,
 		WorkspaceID: workspaceID,
 	})
@@ -206,5 +224,21 @@ func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to revoke API key")
 		return
 	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID:   workspaceID,
+		ActorUserID:   auth.GetUserID(r.Context()),
+		ActorAPIKeyID: auth.GetAPIKeyID(r.Context()),
+		Action:        audit.ActionAPIKeyRevoked,
+		ResourceType:  "api_key",
+		ResourceID:    key.ID,
+		Category:      audit.CategoryConfig,
+		IPAddress:     r.RemoteAddr,
+		UserAgent:     r.UserAgent(),
+		Before: map[string]any{
+			"name":        key.Name,
+			"prefix":      key.Prefix,
+			"environment": key.Environment,
+		},
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

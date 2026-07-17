@@ -17,9 +17,13 @@ INSERT INTO platform_credentials (
   app_bearer_token, consumer_secret, webhook_route_key
 )
 VALUES (
-  $1, $2, $3, $4, $5, $6,
+  $1, $2, $3, $4,
+  $5::TEXT,
+  $6::TEXT,
   CASE
-    WHEN $2 = 'twitter' AND $5 IS NOT NULL AND $6 IS NOT NULL
+    WHEN $2 = 'twitter'
+      AND $5::TEXT IS NOT NULL
+      AND $6::TEXT IS NOT NULL
       THEN $7::TEXT
     ELSE NULL
   END

@@ -74,3 +74,29 @@ WHERE workspace_id = $1 AND role = 'owner';
 UPDATE workspace_members
 SET role = 'owner', updated_at = NOW()
 WHERE workspace_id = $1 AND user_id = $2;
+
+-- name: TransferWorkspaceOwnership :one
+-- Atomically demote the current owner and promote an existing active target.
+-- The data dependency on demoted makes PostgreSQL finish the first update
+-- before the target update; any failure rolls the entire statement back.
+WITH target AS MATERIALIZED (
+  SELECT user_id
+  FROM workspace_members
+  WHERE workspace_id = $1
+    AND user_id = $2
+    AND status = 'active'
+    AND role <> 'owner'
+), demoted AS (
+  UPDATE workspace_members AS current_owner
+  SET role = 'admin', updated_at = NOW()
+  WHERE current_owner.workspace_id = $1
+    AND current_owner.role = 'owner'
+    AND EXISTS (SELECT 1 FROM target)
+  RETURNING current_owner.workspace_id
+)
+UPDATE workspace_members AS target_member
+SET role = 'owner', updated_at = NOW()
+WHERE target_member.workspace_id = $1
+  AND target_member.user_id = $2
+  AND EXISTS (SELECT 1 FROM demoted)
+RETURNING *;

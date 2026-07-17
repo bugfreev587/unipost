@@ -40,14 +40,15 @@ type fakeXInboxDeliveryAPI struct {
 	deleteRuleStarted chan string
 	deleteRuleRelease chan struct{}
 
-	ruleTokens         []string
-	subscriptionTokens []string
-	deletedRules       []string
-	deletedRuleTokens  []string
-	deletedSubs        []string
-	deletedSubTokens   []string
-	operations         []string
-	webhookURLs        []string
+	ruleTokens          []string
+	subscriptionTokens  []string
+	subscriptionUserIDs []string
+	deletedRules        []string
+	deletedRuleTokens   []string
+	deletedSubs         []string
+	deletedSubTokens    []string
+	operations          []string
+	webhookURLs         []string
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
@@ -92,12 +93,13 @@ func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, _ string, confi
 
 func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
 	_ context.Context,
-	userToken, _ string,
+	appToken string,
 	accountID, userID, webhookID string,
 ) (xinbox.ActivitySubscription, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.subscriptionTokens = append(f.subscriptionTokens, userToken)
+	f.subscriptionTokens = append(f.subscriptionTokens, appToken)
+	f.subscriptionUserIDs = append(f.subscriptionUserIDs, userID)
 	if f.subscriptionErr != nil {
 		return xinbox.ActivitySubscription{}, f.subscriptionErr
 	}
@@ -324,9 +326,8 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 		SocialAccountID:          "account-1",
 		WorkspaceID:              "workspace-1",
 		Handle:                   "UniPostDev",
-		ExternalUserID:           "2244994945",
+		ExternalAccountID:        "2244994945",
 		WebhookRouteKey:          "managed-route-key",
-		AccessTokenEncrypted:     "encrypted-user-token",
 		AppMode:                  xinbox.AppModeUniPostManaged,
 		ConsumerSecretConfigured: true,
 		ActivityWebhookRouteKey:  "managed-route-key",
@@ -342,7 +343,7 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
 		Store:                           store,
 		API:                             api,
-		Cipher:                          fakeXInboxCipher{values: map[string]string{"encrypted-user-token": "user-oauth-token"}},
+		Cipher:                          fakeXInboxCipher{},
 		Usage:                           fakeXInboxUsageReader{},
 		ManagedAppBearer:                "managed-app-token",
 		ManagedConsumerSecretConfigured: true,
@@ -364,8 +365,11 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
 		t.Fatalf("rule tokens = %v, want app bearer", api.ruleTokens)
 	}
-	if want := []string{"user-oauth-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
-		t.Fatalf("subscription tokens = %v, want connected user OAuth token", api.subscriptionTokens)
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
+		t.Fatalf("subscription tokens = %v, want app bearer", api.subscriptionTokens)
+	}
+	if want := []string{"2244994945"}; !reflect.DeepEqual(api.subscriptionUserIDs, want) {
+		t.Fatalf("subscription user IDs = %v, want X platform account ID", api.subscriptionUserIDs)
 	}
 	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
 		t.Fatalf("webhook URLs = %v, want app-specific URL %v", api.webhookURLs, want)
@@ -386,6 +390,20 @@ func TestXInboxDeliverySourceTracksActivityWebhookRouteGeneration(t *testing.T) 
 		if !strings.Contains(text, required) {
 			t.Fatalf("delivery reconciler missing route-generation contract %q", required)
 		}
+	}
+}
+
+func TestXInboxDeliverySourceUsesXPlatformAccountIDForActivityFilter(t *testing.T) {
+	source, err := os.ReadFile("x_inbox_delivery.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, "COALESCE(sa.external_account_id, '')") {
+		t.Fatal("delivery account query must load the X platform account ID")
+	}
+	if strings.Contains(text, "COALESCE(sa.external_user_id, '')") {
+		t.Fatal("delivery account query must not use the Hosted Connect external user ID as the X user ID")
 	}
 }
 
