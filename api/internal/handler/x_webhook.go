@@ -117,8 +117,6 @@ func (h *XWebhookHandler) CRC(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case !ok:
 		validationReason = "missing_crc_token"
-	case len(values) != 1:
-		validationReason = "unexpected_query_keys"
 	case len(crcTokens) != 1:
 		validationReason = "duplicate_crc_token"
 	case !xCRCTokenPattern.MatchString(crcTokens[0]):
