@@ -57,6 +57,7 @@ import (
 const (
 	processModeAPI                = "api"
 	processModePostDeliveryWorker = "post-delivery-worker"
+	processModeMediaWorker        = "media-worker"
 )
 
 func main() {
@@ -252,7 +253,9 @@ func main() {
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
 
-	go integrationLogger.Start(workerCtx)
+	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
+		go integrationLogger.Start(workerCtx)
+	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
 	// the managed token refresh worker can take it as a dependency.
@@ -555,14 +558,16 @@ func main() {
 			SetXTokenRefresher(xTokenRefresher)
 		go analyticsRefreshWorker.Start(workerCtx)
 
+		logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
+		go logRetentionWorker.Start(workerCtx)
+	}
+
+	if shouldStartMediaProcessingWorkers(processMode) {
 		mediaCleanupWorker := worker.NewMediaCleanupWorker(queries, storageClient)
 		go mediaCleanupWorker.Start(workerCtx)
 
 		mediaAudioOverlayWorker := worker.NewMediaAudioOverlayWorker(queries, storageClient)
 		go mediaAudioOverlayWorker.Start(workerCtx)
-
-		logRetentionWorker := worker.NewIntegrationLogRetentionWorker(pool, queries)
-		go logRetentionWorker.Start(workerCtx)
 	}
 
 	errorTriageStore := errortriage.NewPostgresStore(pool)
@@ -591,8 +596,12 @@ func main() {
 		go inboxSyncWorker.Start(workerCtx)
 	}
 
-	if processMode == processModePostDeliveryWorker {
-		waitForProcessShutdown("post delivery worker", workerCancel, port)
+	if processMode != processModeAPI {
+		processName := "post delivery worker"
+		if processMode == processModeMediaWorker {
+			processName = "media worker"
+		}
+		waitForProcessShutdown(processName, workerCancel, port)
 		return
 	}
 
@@ -1288,10 +1297,10 @@ func normalizeProcessMode(raw string) (string, error) {
 		mode = processModeAPI
 	}
 	switch mode {
-	case processModeAPI, processModePostDeliveryWorker:
+	case processModeAPI, processModePostDeliveryWorker, processModeMediaWorker:
 		return mode, nil
 	default:
-		return "", fmt.Errorf("UNIPOST_PROCESS must be %q or %q, got %q", processModeAPI, processModePostDeliveryWorker, raw)
+		return "", fmt.Errorf("UNIPOST_PROCESS must be %q, %q, or %q, got %q", processModeAPI, processModePostDeliveryWorker, processModeMediaWorker, raw)
 	}
 }
 
@@ -1319,6 +1328,9 @@ func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorker
 		}
 		defaultMax = concurrency + 5
 		envNames = append([]string{"POST_DELIVERY_WORKER_DATABASE_MAX_CONNS"}, envNames...)
+	} else if mode == processModeMediaWorker {
+		defaultMax = 8
+		envNames = append([]string{"MEDIA_PROCESSING_WORKER_DATABASE_MAX_CONNS"}, envNames...)
 	} else {
 		envNames = append([]string{"API_DATABASE_MAX_CONNS"}, envNames...)
 	}
@@ -1349,6 +1361,16 @@ func shouldStartPostDeliveryWorkers(mode string) bool {
 		return false
 	}
 	return !strings.EqualFold(os.Getenv("POST_DELIVERY_WORKER_DISABLE_API_DELIVERY"), "true")
+}
+
+func shouldStartMediaProcessingWorkers(mode string) bool {
+	if mode == processModeMediaWorker {
+		return true
+	}
+	if mode != processModeAPI {
+		return false
+	}
+	return !strings.EqualFold(os.Getenv("MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING"), "true")
 }
 
 func newWorkerHealthHandler() http.Handler {

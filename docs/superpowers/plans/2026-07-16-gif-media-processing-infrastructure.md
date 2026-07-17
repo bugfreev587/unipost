@@ -172,7 +172,7 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - [x] Remove media-storage cleanup responsibilities and constructor dependencies from `AnalyticsRefreshWorker`.
 - [x] Update application wiring and all constructor tests.
 - [x] Run `GOCACHE=/tmp/unipost-go-build go test ./internal/worker ./cmd/api -count=1` and confirm GREEN.
-- [ ] Commit: `refactor(media): centralize object cleanup ownership`.
+- [x] Commit: `refactor(media): centralize object cleanup ownership`.
 
 ## Task 8: Add the dedicated Railway media-worker process mode
 
@@ -183,16 +183,16 @@ Deployment A is infrastructure-only. It must satisfy all of the following before
 - Modify: `api/railway.toml`
 - Modify: `api/README.md` or the existing process-mode operations document
 
-- [ ] Add failing process-mode tests for:
+- [x] Add failing process-mode tests for:
   - normalization of `UNIPOST_PROCESS=media-worker`;
   - a dedicated database pool limit (`MEDIA_PROCESSING_WORKER_DATABASE_MAX_CONNS`);
   - media worker mode starting Audio Overlay and media cleanup workers but not the public API server or unrelated background workers;
   - API mode fallback being controllable by an environment variable and defaulting on for the rolling Deployment A transition;
   - `/health` remaining available in worker mode.
-- [ ] Add `media-worker` to the existing process-mode switch and share the existing signal/shutdown/health-server pattern used by `post-delivery-worker`.
-- [ ] Add `shouldStartMediaProcessingWorkers`. In API mode, honor a single documented fallback environment variable; in media-worker mode always start the media-processing and cleanup workers.
-- [ ] Document the Railway service command/process configuration, health endpoint, database pool variable, and rollout order in `api/railway.toml` comments and the operations document.
-- [ ] Run `GOCACHE=/tmp/unipost-go-build go test ./cmd/api ./internal/worker -count=1` and confirm GREEN.
+- [x] Add `media-worker` to the existing process-mode switch and share the existing signal/shutdown/health-server pattern used by `post-delivery-worker`.
+- [x] Add `shouldStartMediaProcessingWorkers`. In API mode, honor a single documented fallback environment variable; in media-worker mode always start the media-processing and cleanup workers.
+- [x] Document the Railway service command/process configuration, health endpoint, database pool variable, and rollout order in `api/railway.toml` comments and the operations document.
+- [x] Run `GOCACHE=/tmp/unipost-go-build go test ./cmd/api ./internal/worker -count=1` and confirm GREEN.
 - [ ] Commit: `feat(media): add dedicated processing worker mode`.
 
 ## Task 9: Prove Deployment A cannot expose GIF conversion
