@@ -41,6 +41,17 @@ export function loadAcceptanceConfig(env = process.env) {
   }
 
   const databaseUrl = required(env, "TEAM_ACCEPTANCE_DATABASE_URL");
+  let databaseHost;
+  try {
+    const parsedDatabaseURL = new URL(databaseUrl);
+    if (!parsedDatabaseURL.protocol.startsWith("postgres")) throw new Error("unsupported protocol");
+    databaseHost = parsedDatabaseURL.hostname;
+  } catch {
+    throw new Error("TEAM_ACCEPTANCE_DATABASE_URL must be a valid Postgres URL");
+  }
+  if (databaseHost.endsWith(".railway.internal")) {
+    throw new Error("TEAM_ACCEPTANCE_DATABASE_URL must use the environment's public database URL");
+  }
   const clerkSecretKey = required(env, "TEAM_ACCEPTANCE_CLERK_SECRET_KEY");
   if (!clerkSecretKey.startsWith(expected.clerkKeyPrefix)) {
     throw new Error(`${environment} Clerk secret does not match the expected instance type`);
@@ -379,12 +390,13 @@ async function apiRequest(config, token, path, options = {}) {
   return Object.hasOwn(payload, "data") ? payload.data : payload;
 }
 
-async function clerkRequest(config, path, options = {}) {
-  const response = await fetch(`https://api.clerk.com/v1${path}`, {
-    method: options.method ?? "GET",
+export async function clerkRequest(config, path, options = {}, fetchImpl = fetch) {
+  const method = options.method ?? "GET";
+  const response = await fetchImpl(`https://api.clerk.com/v1${path}`, {
+    method,
     headers: {
       Authorization: `Bearer ${config.clerkSecretKey}`,
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
+      ...(!["GET", "HEAD"].includes(method.toUpperCase()) ? { "Content-Type": "application/json" } : {}),
     },
     body: options.body ? JSON.stringify(options.body) : undefined,
   });

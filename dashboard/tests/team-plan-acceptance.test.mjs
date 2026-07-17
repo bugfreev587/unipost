@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   CleanupLedger,
+  clerkRequest,
   loadAcceptanceConfig,
   runWithCleanup,
 } from "../scripts/team-plan-acceptance.mjs";
@@ -55,6 +56,40 @@ test("release mode requires owner, admin, and editor identities", () => {
     delete env[missing];
     assert.throws(() => loadAcceptanceConfig(env), new RegExp(missing));
   }
+});
+
+test("release mode rejects a Railway-private database host", () => {
+  assert.throws(
+    () => loadAcceptanceConfig({
+      TEAM_ACCEPTANCE_ENV: "staging",
+      TEAM_ACCEPTANCE_API_URL: "https://staging-api.unipost.dev",
+      TEAM_ACCEPTANCE_APP_URL: "https://staging-app.unipost.dev",
+      TEAM_ACCEPTANCE_DATABASE_URL: "postgresql://postgres:secret@postgres.railway.internal:5432/railway",
+      TEAM_ACCEPTANCE_CLERK_SECRET_KEY: "sk_test_test",
+      TEAM_ACCEPTANCE_OWNER_EMAIL: "codex-team-acceptance-owner@example.com",
+      TEAM_ACCEPTANCE_ADMIN_EMAIL: "codex-team-acceptance-admin@example.com",
+      TEAM_ACCEPTANCE_EDITOR_EMAIL: "codex-team-acceptance-editor@example.com",
+    }),
+    /public.*database/i,
+  );
+});
+
+test("Clerk POST without a payload still sends JSON content type", async () => {
+  let requestInit;
+  await clerkRequest(
+    { clerkSecretKey: "sk_test_test" },
+    "/sessions/sess_test/tokens",
+    { method: "POST" },
+    async (_url, init) => {
+      requestInit = init;
+      return new Response('{"jwt":"token"}', {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    },
+  );
+
+  assert.equal(requestInit.headers["Content-Type"], "application/json");
 });
 
 test("cleanup runs after a failed acceptance assertion", async () => {
