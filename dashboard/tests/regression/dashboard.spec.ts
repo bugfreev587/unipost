@@ -199,7 +199,7 @@ async function signIn(page: Page, email: string, password: string) {
   if (await continueButton.isVisible().catch(() => false)) {
     await continueButton.click();
   }
-  await page.getByLabel(/password/i).fill(password);
+  await page.locator('input[type="password"]').fill(password);
   await page.getByRole("button", { name: /continue|sign in|log in/i }).click();
   await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
 }
