@@ -222,9 +222,17 @@ type freePlanLimitsTestDB struct {
 	allowAnalytics        bool
 	createAPIKeyCalls     int
 	createWebhookCalls    int
+	auditWrites           [][]any
+	auditWriteAttempts    int
+	auditErr              error
 }
 
-func (f *freePlanLimitsTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+func (f *freePlanLimitsTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: WriteAuditLog") {
+		f.auditWriteAttempts++
+		f.auditWrites = append(f.auditWrites, append([]any(nil), args...))
+		return pgconn.CommandTag{}, f.auditErr
+	}
 	return pgconn.CommandTag{}, nil
 }
 
@@ -269,6 +277,22 @@ func (f *freePlanLimitsTestDB) QueryRow(_ context.Context, query string, args ..
 			env,
 			"ws_1",
 			createdBy,
+		}}
+	case strings.Contains(query, "-- name: RevokeAPIKey"):
+		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		keyID, _ := args[0].(string)
+		return scanRow{values: []any{
+			keyID,
+			"Editor automation",
+			"up_test_11111111",
+			now,
+			pgtype.Timestamptz{},
+			pgtype.Timestamptz{},
+			now,
+			"stored-key-hash",
+			"test",
+			"ws_1",
+			"user_1",
 		}}
 	case strings.Contains(query, "-- name: CountActiveWebhooksByWorkspace"):
 		return scanRow{values: []any{f.activeWebhooks}}
