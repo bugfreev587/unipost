@@ -53,7 +53,7 @@ func TestRunMigrationsUsesPostgresSessionLocker(t *testing.T) {
 			t.Fatalf("migration runner missing %q", want)
 		}
 	}
-	if strings.Contains(text, `goose.Up(db, "migrations")`) {
+	if strings.Contains(text, "goose.Up(") {
 		t.Fatal("migration runner must not use unlocked legacy goose.Up")
 	}
 }
@@ -164,11 +164,12 @@ run the integration test, and remove it:
 docker run --rm -d \
   --name unipost-migration-lock-test \
   -e POSTGRES_PASSWORD=postgres \
-  -p 55432:5432 \
+  -p 127.0.0.1::5432 \
   postgres:16
-until pg_isready -h 127.0.0.1 -p 55432 -U postgres; do sleep 1; done
+port=$(docker port unipost-migration-lock-test 5432/tcp | sed 's/.*://')
+until pg_isready -h 127.0.0.1 -p "$port" -U postgres; do sleep 1; done
 cd api
-GOOSE_MIGRATION_TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable" \
+GOOSE_MIGRATION_TEST_DATABASE_URL="postgresql://postgres:postgres@127.0.0.1:${port}/postgres?sslmode=disable" \
   GOCACHE=/tmp/unipost-go-build \
   go test ./internal/db -run TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose -count=1 -v
 docker rm -f unipost-migration-lock-test
