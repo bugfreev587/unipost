@@ -56,9 +56,19 @@ There are also object-storage lifecycle gaps:
   or processing;
 - `DELETE /v1/media/{id}` soft-deletes the database row, but the current due
   cleanup query excludes `status = 'deleted'`, leaving a cleanup gap;
+- the seven-day `pending` upload sweep runs hourly inside
+  `AnalyticsRefreshWorker`, while terminal Post retention runs daily inside
+  `MediaCleanupWorker`, so Media cleanup is currently split across unrelated
+  worker loops;
 - a Cloudflare R2 age-based lifecycle rule cannot safely solve these problems,
   because it cannot distinguish abandoned media from media needed by a draft,
   scheduled post, retry, or active processing job.
+
+Migration `052_media_cleanup_after.sql` introduced the legacy 200 MB / two-hour
+`media.cleanup_after_at` policy. Migration
+`097_media_post_usage_retention.sql` disabled that policy by clearing the
+column after backfilling `media_post_usages`. The column still exists, but the
+current retention worker no longer reads it.
 
 The product needs one user-facing conversion workflow and one business-owned
 media lifecycle that understands both Post and Media Processing references.
@@ -157,6 +167,10 @@ Conversion never creates a Post and never publishes automatically.
 
 If conversion fails, the original GIF remains in the composer and the user can
 retry.
+
+For a static single-frame GIF, the conversion control must explain that UniPost
+will create a five-second still video. This is intentional output behavior, not
+an animation-detection error.
 
 ### 6.3 Mixed-platform Dashboard posts
 
@@ -293,6 +307,12 @@ Failed response body:
 }
 ```
 
+If the conversion ID does not exist or belongs to another workspace, return
+HTTP `404` with public code `not_found` and message
+`GIF conversion not found`. Use the same response for both cases so the
+endpoint does not reveal cross-workspace job existence. Authentication and
+infrastructure errors continue to use the standard UniPost error contract.
+
 ### 7.3 Job states
 
 ```text
@@ -370,7 +390,24 @@ V1 accepts:
 
 The conversion endpoint must use the current Media hydration path before
 admission so it does not trust only the client's original declared size or
-content type.
+content type. Hydration uses an R2 `HEAD`; it must not decode the GIF or load
+the object into API-process memory.
+
+Before FFprobe or FFmpeg rendering, the Media Worker must perform a bounded
+metadata preflight over the downloaded compressed file:
+
+1. enforce the 50 MB compressed-byte limit while downloading to disk;
+2. parse the GIF logical screen descriptor, image descriptors, frame delays,
+   and frame count without materializing decoded full-frame canvases;
+3. reject oversized logical dimensions, more than 2,000 frames, a source cycle
+   over 60 seconds, or more than 1.5 billion effective decoded pixels;
+4. impose parser byte, time, and allocation bounds and fail closed on malformed
+   block structure;
+5. only after preflight passes, run bounded FFprobe and FFmpeg processes.
+
+`ffprobe -count_frames` or an equivalent decode-dependent probe is not the
+primary decompression-bomb defense. The safety decision must happen before the
+full render path can allocate decoded animation canvases.
 
 ### 8.2 Universal output profile
 
@@ -407,6 +444,12 @@ Let `D` be the duration of one complete GIF animation cycle.
 - A static single-frame GIF is treated as a valid animation source and rendered
   as a five-second MP4.
 - Preserve source frame timing as closely as the fixed 30 FPS output permits.
+
+The complete-cycle rule intentionally creates a duration discontinuity near
+five seconds: a 4.9-second cycle renders twice, for approximately 9.8 seconds,
+while a 5.0-second cycle renders once. Do not special-case or truncate the
+4.9-second input; document and test this consequence of the approved
+full-cycle rule.
 
 ### 8.4 Dimensions
 
@@ -481,6 +524,13 @@ Rules:
 - Operational configuration may lower global Worker capacity without changing
   the public per-workspace Plan contract.
 
+The shared active-job cap is an intentional compatibility change for the
+existing Audio Overlay API. Audio Overlay has no customer admission limit
+today; after this release, a workspace at its Plan's shared active capacity may
+receive `429 media_processing_capacity_exceeded` when creating another Audio
+Overlay job. Audio Overlay does not consume the rolling GIF conversion limit.
+Document this behavior in the API Reference and changelog before rollout.
+
 ## 10. Backend architecture
 
 ### 10.1 Services
@@ -509,6 +559,19 @@ A dedicated Railway Media Worker:
 Move the currently in-process Audio Overlay Worker out of the API runtime as
 part of this release. The API and Media Worker may share an image, but their
 process commands and resource allocation must be separate.
+
+Reuse the existing dedicated post-delivery process-mode pattern rather than
+creating a second application entry point:
+
+- add `UNIPOST_PROCESS=media-worker` to the existing binary;
+- serve only `/health` in Media Worker mode;
+- start Media Processing and Media cleanup loops only in that mode after the
+  dedicated service is verified;
+- add Media Worker-specific database pool sizing;
+- keep an API-process fallback during the infrastructure-only deployment;
+- after the dedicated worker is healthy, set
+  `MEDIA_PROCESSING_WORKER_DISABLE_API_PROCESSING=true` on API services and
+  verify that no API instance continues claiming Media Processing jobs.
 
 ### 10.2 Worker concurrency and fairness
 
@@ -561,6 +624,32 @@ The current table is Audio Overlay-specific. Additive migration requirements:
 - add or preserve an indexed claim path by `kind`, `status`, `created_at`, and
   `id`;
 - preserve the unique workspace idempotency constraint.
+
+Add a kind-specific input constraint so the newly nullable columns cannot
+create structurally invalid jobs:
+
+```sql
+CHECK (
+  (
+    kind = 'audio_overlay'
+    AND input_video_media_id IS NOT NULL
+    AND input_audio_media_id IS NOT NULL
+    AND input_media_id IS NULL
+  )
+  OR
+  (
+    kind = 'gif_to_mp4'
+    AND input_media_id IS NOT NULL
+    AND input_video_media_id IS NULL
+    AND input_audio_media_id IS NULL
+  )
+)
+```
+
+Changing the existing input columns to nullable changes the generated sqlc
+types. Update the Audio Overlay handler, Worker, tests, and create query in the
+same infrastructure deployment so existing Audio Overlay rows and requests
+continue to use both required inputs.
 
 Normalized GIF request JSON:
 
@@ -698,6 +787,48 @@ AND no active/future processing usage
 The actual SQL must evaluate blockers across both ledgers. A due reference must
 never delete an object still protected by another reference.
 
+`media_post_usages` and `media_processing_usages` deliberately have different
+schemas: the former uses `post_status`, while the latter uses `role` and
+processing `status`. Do not assume a shared `role` column. The due query should
+express each ledger independently, with this logical shape:
+
+```sql
+WHERE (
+  m.status = 'deleted'
+  OR m.cleanup_after_at <= NOW()
+  OR EXISTS (
+    SELECT 1 FROM media_post_usages p_due
+    WHERE p_due.media_id = m.id
+      AND p_due.cleanup_after_at <= NOW()
+  )
+  OR EXISTS (
+    SELECT 1 FROM media_processing_usages x_due
+    WHERE x_due.media_id = m.id
+      AND x_due.cleanup_after_at <= NOW()
+  )
+)
+AND (m.cleanup_after_at IS NULL OR m.cleanup_after_at <= NOW())
+AND NOT EXISTS (
+  SELECT 1 FROM media_post_usages p_blocker
+  WHERE p_blocker.media_id = m.id
+    AND (
+      p_blocker.cleanup_after_at IS NULL
+      OR p_blocker.cleanup_after_at > NOW()
+    )
+)
+AND NOT EXISTS (
+  SELECT 1 FROM media_processing_usages x_blocker
+  WHERE x_blocker.media_id = m.id
+    AND (
+      x_blocker.cleanup_after_at IS NULL
+      OR x_blocker.cleanup_after_at > NOW()
+    )
+)
+```
+
+The implementation may use CTEs or a union for performance, but its semantics
+must match the independent due and blocker checks above.
+
 The cleanup worker remains business-state-driven and runs once on startup and
 then daily. Cloudflare R2 age-based lifecycle remains disabled for post Media.
 
@@ -745,7 +876,8 @@ Required sequence:
 
 1. Add or alter generalized job columns and constraints.
 2. Add `media_processing_usages` and indexes.
-3. Add the new claim indexes without removing the old path until code is ready.
+3. Add kind-aware claim queries and indexes without removing the old Audio
+   path until the infrastructure-only deployment is verified.
 4. Backfill input usages for existing Audio Overlay jobs.
 5. Backfill output usages where `output_media_id` exists.
 6. Use `active` with no deadline for existing `queued` or `processing` jobs.
@@ -764,6 +896,58 @@ Required sequence:
 
 The backfill must be idempotent or protected so a retried deployment does not
 create duplicate usages or shorten retention.
+
+### 13.1 Mandatory rolling-deployment gate
+
+Kind-aware claiming is a launch blocker, not a normal implementation detail.
+The current claim query selects every `queued` Media Processing job, changes it
+to `processing`, and increments `attempts` before the Audio Overlay Worker
+checks `kind`. An old API instance can therefore claim a GIF job, return without
+processing it, and leave it stuck indefinitely under the current code. Once the
+new stale recovery exists, the same old instance could reclaim the requeued job
+until its attempts are exhausted.
+
+Use two separate deployments with an observed drain between them:
+
+1. **Infrastructure deployment:** ship the additive schema, kind-aware claims,
+   updated Audio Overlay code, dedicated Media Worker process mode, lifecycle
+   ledgers, and cleanup changes. Do not register
+   `POST /v1/media/gif-conversions`, and do not allow any code path to insert
+   `kind = 'gif_to_mp4'`.
+2. Wait until every old API instance has drained, every live API instance runs
+   the kind-aware code, the dedicated Media Worker is healthy, and API-process
+   Media claiming is disabled.
+3. In development, use controlled queued Audio Overlay and `gif_to_mp4`
+   sentinel rows plus claim metrics to prove that each worker claims only its
+   supported kind. Remove the sentinel before continuing.
+4. **Feature deployment:** only then register the GIF create/status routes and
+   enable `gif_to_mp4` insertion and processing.
+
+This gate uses deployment ordering and route absence, not a Feature Flag.
+
+### 13.2 Soft-delete transition gate
+
+Roll out soft-delete cleanup without exposing in-use Media to physical
+deletion:
+
+1. Add the blocker-aware cleanup query and audit historical soft-deleted rows
+   for missing active Post or Processing usages.
+2. Backfill any missing active usages before the query is allowed to delete
+   those rows.
+3. Verify soft-deleted rows with active references are excluded while unused
+   soft-deleted rows are eligible.
+4. Then change `DELETE /v1/media/{id}` to return `409 media_in_use` and set an
+   immediate base deadline only for unused Media.
+
+At no point may `status = 'deleted'` bypass Post or Processing blockers.
+
+### 13.3 Cleanup ownership
+
+Move the seven-day `pending` abandoned-upload sweep out of
+`AnalyticsRefreshWorker` into the Media cleanup component hosted by the
+dedicated Media Worker. Preserve its hourly cadence and 100-row batching unless
+load testing justifies a change. Keep terminal Plan-based cleanup on its daily
+cadence. After cutover, AnalyticsRefreshWorker must no longer delete Media.
 
 ## 14. Worker success and failure ordering
 
@@ -1004,7 +1188,7 @@ due cleanup, and cleanup activity after processing outputs are introduced.
 
 No feature flag is added.
 
-### Phase 1: Unified Media Processing infrastructure
+### Deployment A: Unified Media Processing infrastructure
 
 - generalize `media_processing_jobs`;
 - add kind-specific claims and shared Worker fairness;
@@ -1013,8 +1197,18 @@ No feature flag is added.
 - fix unattached and soft-deleted Media cleanup;
 - move Audio Overlay to the dedicated Media Worker;
 - backfill Audio Overlay lifecycle references and output deadlines.
+- add `UNIPOST_PROCESS=media-worker` by following the existing post-delivery
+  worker pattern;
+- deploy kind-aware claims to every API instance;
+- keep GIF conversion routes absent;
+- verify and disable API-process Media claiming;
+- move pending-upload cleanup out of AnalyticsRefreshWorker;
+- complete the soft-delete transition gate.
 
-### Phase 2: GIF conversion backend
+Do not continue until the mandatory rolling-deployment gate in §13.1 passes in
+the real environment.
+
+### Deployment B: GIF conversion backend
 
 - add create/get endpoints;
 - add GIF probing, limits, FFmpeg rendering, and output hydration;
@@ -1022,7 +1216,9 @@ No feature flag is added.
 - add API Reference;
 - add SDK methods and tests.
 
-### Phase 3: Dashboard
+Only Deployment B can create `kind = 'gif_to_mp4'` jobs.
+
+### Deployment C: Dashboard
 
 - detect conversion-required destinations;
 - add background selection;
@@ -1030,9 +1226,9 @@ No feature flag is added.
 - persist conversion ID in drafts;
 - update Guidance and publishing examples.
 
-All three phases are one launch outcome. Do not announce general availability
-until backend, SDK, Dashboard, retention cleanup, and real environment
-acceptance have passed.
+All three deployments are one launch outcome. Do not announce general
+availability until backend, SDK, Dashboard, retention cleanup, and real
+environment acceptance have passed.
 
 ## 22. Rollback
 
@@ -1055,15 +1251,23 @@ acceptance have passed.
 
 - request validation;
 - workspace ownership isolation;
+- GET returns the same `404 not_found` response for a missing conversion and a
+  conversion owned by another workspace;
 - hydration and missing-object behavior;
 - idempotent replay and conflict;
 - Plan active-job admission under concurrency;
 - rolling 24-hour limits;
 - kind-specific claim isolation;
+- rolling-deployment regression proving an Audio Overlay worker cannot claim a
+  `gif_to_mp4` row;
 - round-robin kind fairness;
 - retry classification and attempt limits;
 - stale processing recovery;
 - migration and idempotent backfill;
+- kind-specific input CHECK constraints and nullable sqlc compatibility;
+- `UNIPOST_PROCESS=media-worker` startup and health-only HTTP behavior;
+- shared active-cap rejection for Audio Overlay without charging the rolling
+  GIF limit;
 - processing usage transitions;
 - base unattached deadlines;
 - soft-delete cleanup eligibility;
@@ -1078,7 +1282,10 @@ acceptance have passed.
 - transparent GIF with default white background;
 - transparent GIF with custom background;
 - static single-frame GIF;
+- bounded metadata preflight rejects unsafe dimensions, frames, duration, and
+  decoded-pixel budgets before FFprobe/FFmpeg rendering begins;
 - short loop repeated to at least five seconds;
+- 4.9-second loop renders two complete cycles, approximately 9.8 seconds;
 - loop exactly five seconds;
 - loop between five and 60 seconds;
 - loop exactly 60 seconds;
@@ -1091,6 +1298,8 @@ acceptance have passed.
 - decoded-pixel boundary;
 - malformed and truncated files;
 - decompression-bomb fixtures;
+- metadata preflight respects allocation and execution bounds on malformed
+  block structures;
 - no audio stream;
 - H.264, `yuv420p`, 30 FPS, faststart metadata;
 - output Media hydration;
@@ -1103,6 +1312,8 @@ acceptance have passed.
 - conversion-required single destination;
 - mixed X plus conversion-required destination;
 - transparent background notice and custom color;
+- static single-frame copy explains that the output is a five-second still
+  video;
 - queued and processing status;
 - successful global replacement;
 - preview metadata;
@@ -1145,13 +1356,19 @@ After pushing to `origin/dev`:
 
 1. Wait for GitHub Actions, Vercel, Railway API, and Railway Media Worker
    deployments to finish successfully.
-2. Open the real development Dashboard at `https://dev-app.unipost.dev`.
-3. Upload an opaque GIF and a transparent GIF.
-4. Confirm a conversion-required destination presents **Convert to MP4**.
-5. Confirm default white and custom Hex backgrounds.
-6. Confirm success automatically replaces the GIF with a playable MP4.
-7. Confirm the user must still click Publish.
-8. Probe the stored output and verify:
+2. For Deployment A, verify all old API instances have drained, claim metrics
+   are kind-aware, the dedicated Media Worker is healthy, API-process Media
+   claiming is disabled, and no GIF create route exists.
+3. Only after that gate passes, deploy the GIF backend and confirm the create
+   route can insert `gif_to_mp4` jobs without any Audio Overlay worker claiming
+   them.
+4. Open the real development Dashboard at `https://dev-app.unipost.dev`.
+5. Upload an opaque GIF and a transparent GIF.
+6. Confirm a conversion-required destination presents **Convert to MP4**.
+7. Confirm default white and custom Hex backgrounds.
+8. Confirm success automatically replaces the GIF with a playable MP4.
+9. Confirm the user must still click Publish.
+10. Probe the stored output and verify:
    - MP4 container;
    - H.264 video;
    - `yuv420p`;
@@ -1159,16 +1376,17 @@ After pushing to `origin/dev`:
    - no audio;
    - even dimensions;
    - duration follows complete-loop rules.
-9. Publish a generated MP4 through at least one real development account for a
+11. Publish a generated MP4 through at least one real development account for a
    conversion-required platform.
-10. Confirm X and Facebook direct GIF publishing still works with real
+12. Confirm X and Facebook direct GIF publishing still works with real
     development accounts.
-11. Verify an active Processing usage prevents input cleanup.
-12. Verify an unused source/output pair receives correct Plan deadlines.
-13. Exercise or safely shorten a development-only deadline to verify the
+13. Verify an active Processing usage prevents input cleanup.
+14. Verify an unused source/output pair receives correct Plan deadlines.
+15. Exercise or safely shorten a development-only deadline to verify the
     cleanup Worker removes the R2 object, pull copy, Media row, and usage rows.
-14. Confirm the Admin Object Storage page reflects object creation and cleanup.
-15. Run one Audio Overlay job and publish its output after the Worker migration.
+16. Confirm the Admin Object Storage page reflects object creation and cleanup.
+17. Run one Audio Overlay job and publish its output after the Worker migration,
+    including the documented shared active-cap behavior.
 
 The task is not complete until the real development environment matches this
 expected outcome.
@@ -1208,6 +1426,11 @@ Internal:
 - [Existing Media cleanup Worker](../../../api/internal/worker/media_cleanup.go)
 - [Existing Audio Overlay handler](../../../api/internal/handler/media_audio_overlays.go)
 - [Existing Audio Overlay Worker](../../../api/internal/worker/media_audio_overlay.go)
+- [Existing Media Processing job queries](../../../api/internal/db/queries/media_processing_jobs.sql)
+- [Existing API process-mode pattern](../../../api/cmd/api/main.go)
+- [Railway process-mode configuration](../../../api/railway.toml)
+- [Migration 052: legacy two-hour Media policy](../../../api/internal/db/migrations/052_media_cleanup_after.sql)
+- [Migration 097: Post usage ledger and legacy-policy shutdown](../../../api/internal/db/migrations/097_media_post_usage_retention.sql)
 - [R2 Media Retention PRD](../../prd-r2-media-retention-and-free-scheduled-cap.md)
 
 Official platform references to revalidate during implementation:
@@ -1237,5 +1460,7 @@ The following product decisions were explicitly approved:
 - dedicated GIF endpoint backed by generalized Media Processing;
 - unified lifecycle for GIF conversion and Audio Overlay;
 - the stated Plan concurrency and rolling 24-hour limits;
+- the shared Plan active-job cap applies to existing Audio Overlay creation,
+  while the rolling GIF limit does not;
 - dedicated shared Media Worker;
 - the stated SDK, error, validation, rollout, monitoring, and acceptance design.
