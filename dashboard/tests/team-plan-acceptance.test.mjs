@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   CleanupLedger,
   clerkRequest,
+  clickPrimaryAuthButton,
   fillPassword,
   loadAcceptanceConfig,
   runWithCleanup,
@@ -105,6 +106,20 @@ test("Clerk password entry targets only the password input", async () => {
 
   assert.equal(selector, 'input[type="password"]');
   assert.equal(filled, "synthetic-password");
+});
+
+test("Clerk auth submission targets only its primary form button", async () => {
+  let selector;
+  let clicked = false;
+  await clickPrimaryAuthButton({
+    locator(value) {
+      selector = value;
+      return { async click() { clicked = true; } };
+    },
+  });
+
+  assert.equal(selector, 'button[data-localization-key="formButtonPrimary"]');
+  assert.equal(clicked, true);
 });
 
 test("cleanup runs after a failed acceptance assertion", async () => {

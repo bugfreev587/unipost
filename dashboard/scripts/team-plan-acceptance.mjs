@@ -341,10 +341,10 @@ async function verifyDashboard(config, email, password, profileID) {
     await page.goto(config.appUrl, { waitUntil: "domcontentloaded" });
     if (page.url().includes("clerk") || page.url().includes("sign-in")) {
       await page.getByLabel(/email/i).fill(email);
-      const next = page.getByRole("button", { name: /continue|next/i });
-      if (await next.isVisible().catch(() => false)) await next.click();
+      const next = page.locator('button[data-localization-key="formButtonPrimary"]');
+      if (await next.isVisible().catch(() => false)) await clickPrimaryAuthButton(page);
       await fillPassword(page, password);
-      await page.getByRole("button", { name: /continue|sign in|log in/i }).click();
+      await clickPrimaryAuthButton(page);
       await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
     }
 
@@ -372,6 +372,10 @@ async function verifyDashboard(config, email, password, profileID) {
 
 export async function fillPassword(page, password) {
   await page.locator('input[type="password"]').fill(password);
+}
+
+export async function clickPrimaryAuthButton(page) {
+  await page.locator('button[data-localization-key="formButtonPrimary"]').click();
 }
 
 async function apiRequest(config, token, path, options = {}) {
