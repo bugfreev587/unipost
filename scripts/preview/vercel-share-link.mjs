@@ -47,6 +47,21 @@ function responseCandidates(payload) {
   const candidates = [];
   for (const [key, value] of Object.entries(payload)) {
     if (
+      /^protectionBypass$/i.test(key) &&
+      value &&
+      typeof value === "object"
+    ) {
+      for (const [secret, metadata] of Object.entries(value)) {
+        if (
+          metadata &&
+          typeof metadata === "object" &&
+          metadata.scope === "shareable-link"
+        ) {
+          candidates.push(secret);
+        }
+      }
+    }
+    if (
       /^(protectionBypassUrl|shareableUrl|url|value|secret|token)$/i.test(key)
     ) {
       candidates.push(...responseCandidates(value));

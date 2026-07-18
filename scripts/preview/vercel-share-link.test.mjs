@@ -60,6 +60,20 @@ test("builds an alias-scoped URL from Vercel's raw share token response", () => 
     ),
     `https://${expectedHost}/?_vercel_share=nested_share-token.123456`,
   );
+  assert.equal(
+    extractShareableURL(
+      {
+        protectionBypass: {
+          "mapped_share-token.123456": {
+            scope: "shareable-link",
+            createdAt: 1_755_000_000_000,
+          },
+        },
+      },
+      expectedHost,
+    ),
+    `https://${expectedHost}/?_vercel_share=mapped_share-token.123456`,
+  );
 
   assert.throws(
     () => extractShareableURL({ value: "unsafe token" }, expectedHost),
