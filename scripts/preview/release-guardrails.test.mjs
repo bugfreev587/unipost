@@ -66,3 +66,12 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(workflow, /https:\/\/api\.unipost\.dev/);
   assert.doesNotMatch(workflow, /pk_live_/);
 });
+
+test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
+  const config = await read("dashboard/playwright.regression.config.ts");
+  assert.match(
+    config,
+    /testIgnore:\s*["']preview-environment\.spec\.ts["']/,
+    "dashboard regression would collect the preview-only spec without its required deployment identity",
+  );
+});
