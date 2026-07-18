@@ -35,7 +35,7 @@ jobs:
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      PREVIEW_HOST: unipost-dev-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}.vercel.app
+      PREVIEW_ALIAS_HOST: unipost-dev-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}.vercel.app
       VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
@@ -124,10 +124,10 @@ jobs:
           set -euo pipefail
           echo "vercel-build" > artifacts/preview/current-stage
           export NEXT_PUBLIC_API_URL="${{ steps.railway.outputs.api_url }}"
-          export NEXT_PUBLIC_APP_URL="https://${PREVIEW_HOST}"
-          export NEXT_PUBLIC_BASE_URL="https://${PREVIEW_HOST}"
-          export NEXT_PUBLIC_LANDING_URL="https://${PREVIEW_HOST}"
-          export NEXT_PUBLIC_APP_HOST="${PREVIEW_HOST}"
+          export NEXT_PUBLIC_APP_URL="https://${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_BASE_URL="https://${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_LANDING_URL="https://${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_APP_HOST="${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_UNIPOST_ENV="development"
           npx --yes vercel@50.26.1 build \
             --token="$VERCEL_TOKEN" \
@@ -156,17 +156,22 @@ jobs:
               2> >(tee artifacts/preview/vercel-deploy.stderr.log >&2)
           )"
           test "${deployment_url#https://}" != "$deployment_url"
+          deployment_host="${deployment_url#https://}"
+          test "${deployment_host#*/}" = "$deployment_host"
           printf '%s\n' "$deployment_url" | tee artifacts/preview/vercel-url.txt
           echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "deployment_host=$deployment_host" >> "$GITHUB_OUTPUT"
           npx --yes vercel@50.26.1 alias set \
             "$deployment_url" \
-            "$PREVIEW_HOST" \
+            "$PREVIEW_ALIAS_HOST" \
             --token="$VERCEL_TOKEN" \
             --scope="$VERCEL_TEAM_SLUG" \
             2>&1 | tee artifacts/preview/vercel-alias.log
 
       - name: Create a temporary Vercel shareable link
         id: vercel_share
+        env:
+          PREVIEW_HOST: ${{ steps.vercel.outputs.deployment_host }}
         run: |
           set -euo pipefail
           echo "vercel-share-link" > artifacts/preview/current-stage
@@ -183,7 +188,7 @@ jobs:
       - name: Run deployed preview regression
         working-directory: dashboard
         env:
-          DASHBOARD_BASE_URL: https://${{ env.PREVIEW_HOST }}
+          DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.deployment_url }}
           VERCEL_SHAREABLE_URL: ${{ steps.vercel_share.outputs.shareable_url }}
           EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
           EXPECTED_PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
@@ -213,7 +218,7 @@ jobs:
             echo "- Railway environment: \`${{ steps.railway.outputs.railway_environment }}\`"
             echo "- Railway API: ${{ steps.railway.outputs.api_url }}"
             echo "- Vercel deployment: ${{ steps.vercel.outputs.deployment_url }}"
-            echo "- Vercel branch alias: https://${PREVIEW_HOST}"
+            echo "- Vercel branch alias: https://${PREVIEW_ALIAS_HOST}"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish failure evidence

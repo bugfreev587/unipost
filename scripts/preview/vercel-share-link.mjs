@@ -5,7 +5,7 @@ import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const hostPattern =
-  /^unipost-dev-pr-\d+-\d+-\d+\.vercel\.app$/;
+  /^(?:unipost-dev-pr-\d+-\d+-\d+|unipost-[a-z0-9]+-xiaobo-yus-projects)\.vercel\.app$/;
 
 function candidateToURL(candidate, expectedHost) {
   if (typeof candidate !== "string") {

@@ -21,6 +21,24 @@ test("extracts an alias-scoped Vercel shareable URL", () => {
   );
 });
 
+test("extracts a shareable URL for an immutable Vercel deployment host", () => {
+  const expectedHost =
+    "unipost-6dw4q8d2k-xiaobo-yus-projects.vercel.app";
+  assert.equal(
+    extractShareableURL(
+      {
+        protectionBypass: {
+          "deployment_share-token.123456": {
+            scope: "shareable-link",
+          },
+        },
+      },
+      expectedHost,
+    ),
+    `https://${expectedHost}/?_vercel_share=deployment_share-token.123456`,
+  );
+});
+
 test("accepts Vercel short share URLs and rejects unsafe responses", () => {
   assert.equal(
     extractShareableURL(
@@ -83,7 +101,7 @@ test("builds an alias-scoped URL from Vercel's raw share token response", () => 
 
 test("creates a one-day shareable link for the isolated alias", async () => {
   let request;
-  const host = "unipost-dev-pr-215-12345-1.vercel.app";
+  const host = "unipost-6dw4q8d2k-xiaobo-yus-projects.vercel.app";
   const url = await createShareableLink({
     host,
     teamId: "team-id",
@@ -108,7 +126,7 @@ test("creates a one-day shareable link for the isolated alias", async () => {
   );
   assert.match(
     request.endpoint,
-    /\/aliases\/unipost-dev-pr-215-12345-1\.vercel\.app\/protection-bypass\?teamId=team-id$/,
+    /\/aliases\/unipost-6dw4q8d2k-xiaobo-yus-projects\.vercel\.app\/protection-bypass\?teamId=team-id$/,
   );
   assert.equal(request.method, "PATCH");
   assert.equal(request.authorization, "Bearer token");

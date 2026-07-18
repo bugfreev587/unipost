@@ -72,6 +72,10 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /test:regression:preview/);
   assert.match(workflow, /vercel-share-link\.mjs/);
   assert.match(workflow, /VERCEL_SHAREABLE_URL/);
+  assert.match(
+    workflow,
+    /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+  );
   assert.match(workflow, /vercel-alias-cleanup\.mjs/);
   assert.match(
     workflow,
