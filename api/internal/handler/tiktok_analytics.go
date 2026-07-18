@@ -96,6 +96,12 @@ func (h *SocialAccountHandler) loadTikTokForAnalytics(w http.ResponseWriter, r *
 		writeError(w, http.StatusConflict, "WRONG_PLATFORM", "Account is not a TikTok account")
 		return nil, nil, "", false
 	}
+	if status, code, message, reason, blocked := tiktokAnalyticsAccountStateError(acc); blocked {
+		writeErrorWithDetails(w, status, code, message, ErrorDetails{
+			Details: map[string]any{"reason": reason},
+		})
+		return nil, nil, "", false
+	}
 
 	adapter, err := platform.Get("tiktok")
 	if err != nil {
@@ -111,10 +117,34 @@ func (h *SocialAccountHandler) loadTikTokForAnalytics(w http.ResponseWriter, r *
 	accessToken, err := h.encryptor.Decrypt(acc.AccessToken)
 	if err != nil || strings.TrimSpace(accessToken) == "" {
 		slog.Warn("tiktok analytics: decrypt access token failed", "account_id", acc.ID, "error", err)
-		writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Please reconnect the account.")
+		writeErrorWithDetails(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Reconnect the account.", ErrorDetails{
+			Details: map[string]any{"reason": platform.TikTokAccountTokenInvalid},
+		})
 		return nil, nil, "", false
 	}
 	return acc, tiktokAdapter, accessToken, true
+}
+
+func tiktokAnalyticsAccountStateError(acc *db.SocialAccount) (int, string, string, platform.TikTokAnalyticsReason, bool) {
+	if acc == nil {
+		return 0, "", "", "", false
+	}
+	status := strings.ToLower(strings.TrimSpace(acc.Status))
+	if status == "disconnected" || acc.DisconnectedAt.Valid {
+		return http.StatusConflict,
+			"ACCOUNT_DISCONNECTED",
+			"This TikTok account is disconnected. Reconnect it to continue.",
+			platform.TikTokAnalyticsReason("account_disconnected"),
+			true
+	}
+	if status == "reconnect_required" {
+		return http.StatusConflict,
+			"NEEDS_RECONNECT",
+			"Your TikTok connection has expired. Reconnect the account.",
+			platform.TikTokAccountTokenInvalid,
+			true
+	}
+	return 0, "", "", "", false
 }
 
 func accountIDFromRequest(r *http.Request) string {
@@ -130,11 +160,43 @@ func chiURLParam(r *http.Request, key string) string {
 }
 
 func writeTikTokAnalyticsError(w http.ResponseWriter, err error) {
-	if looksLikeTikTokAuthError(err) || looksLikeTikTokMissingScopeError(err) {
-		writeError(w, http.StatusConflict, "NEEDS_RECONNECT", "Reconnect TikTok to enable analytics.")
+	reason, ok := platform.TikTokAnalyticsErrorReasonOf(err)
+	if !ok {
+		switch {
+		case looksLikeTikTokMissingScopeError(err):
+			reason, ok = platform.TikTokAnalyticsScopeRequired, true
+		case looksLikeTikTokAuthError(err):
+			reason, ok = platform.TikTokAccountTokenInvalid, true
+		}
+	}
+	if !ok {
+		writeError(w, http.StatusBadGateway, "TIKTOK_ERROR", err.Error())
 		return
 	}
-	writeError(w, http.StatusBadGateway, "TIKTOK_ERROR", err.Error())
+
+	status := http.StatusBadGateway
+	code := "TIKTOK_ANALYTICS_UNAVAILABLE"
+	message := "TikTok analytics are unavailable for this video right now."
+	switch reason {
+	case platform.TikTokAccountTokenInvalid:
+		status = http.StatusConflict
+		code = "NEEDS_RECONNECT"
+		message = "Your TikTok connection has expired. Reconnect the account."
+	case platform.TikTokAnalyticsScopeRequired:
+		status = http.StatusConflict
+		code = "NEEDS_RECONNECT"
+		message = "Reconnect TikTok to grant the permissions required for analytics."
+	case platform.TikTokProviderRateLimited:
+		status = http.StatusTooManyRequests
+		code = "UPSTREAM_RATE_LIMITED"
+		message = "TikTok is temporarily rate limiting analytics requests. Try again later."
+	case platform.TikTokProviderTemporaryError:
+		code = "TIKTOK_TEMPORARY_ERROR"
+		message = "TikTok analytics are temporarily unavailable. Try again later."
+	}
+	writeErrorWithDetails(w, status, code, message, ErrorDetails{
+		Details: map[string]any{"reason": reason},
+	})
 }
 
 func looksLikeTikTokMissingScopeError(err error) bool {
