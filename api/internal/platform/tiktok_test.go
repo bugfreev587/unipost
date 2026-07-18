@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -473,6 +474,99 @@ func TestTikTokCheckPublishStatusRejectsInvalidResponses(t *testing.T) {
 				t.Fatal("CheckPublishStatus error = nil, want error")
 			}
 		})
+	}
+}
+
+func TestTikTokAnalyticsErrorReasonSurvivesWrapping(t *testing.T) {
+	err := fmt.Errorf("outer: %w", NewTikTokAnalyticsError(
+		TikTokAnalyticsScopeRequired,
+		"video.query",
+		http.StatusForbidden,
+		"scope_not_authorized",
+		errors.New("denied"),
+	))
+	if got, ok := TikTokAnalyticsErrorReasonOf(err); !ok || got != TikTokAnalyticsScopeRequired {
+		t.Fatalf("reason = %q, ok=%v", got, ok)
+	}
+}
+
+func TestTikTokAnalyticsProviderErrorClassification(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   TikTokAnalyticsReason
+	}{
+		{name: "invalid token code", status: http.StatusBadRequest, body: `{"error":{"code":"access_token_invalid","message":"expired"}}`, want: TikTokAccountTokenInvalid},
+		{name: "unauthorized", status: http.StatusUnauthorized, body: `{}`, want: TikTokAccountTokenInvalid},
+		{name: "scope code", status: http.StatusBadRequest, body: `{"error":{"code":"scope_not_authorized","message":"missing"}}`, want: TikTokAnalyticsScopeRequired},
+		{name: "forbidden", status: http.StatusForbidden, body: `{}`, want: TikTokAnalyticsScopeRequired},
+		{name: "rate limited", status: http.StatusTooManyRequests, body: `{}`, want: TikTokProviderRateLimited},
+		{name: "server error", status: http.StatusBadGateway, body: `{}`, want: TikTokProviderTemporaryError},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := newTikTokAnalyticsResponseError("video.query", tc.status, []byte(tc.body))
+			if got, ok := TikTokAnalyticsErrorReasonOf(err); !ok || got != tc.want {
+				t.Fatalf("reason = %q, ok=%v, want %q (err=%v)", got, ok, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestTikTokAnalyticsPendingAndUnavailableAreErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		statusBody string
+		videoBody  string
+		want       TikTokAnalyticsReason
+	}{
+		{
+			name:       "publish not ready",
+			statusBody: `{"data":{"status":"PROCESSING_UPLOAD"},"error":{"code":"ok"}}`,
+			want:       TikTokVideoNotReady,
+		},
+		{
+			name:       "video not found",
+			statusBody: `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7663542984343883021"]},"error":{"code":"ok"}}`,
+			videoBody:  `{"data":{"videos":[]},"error":{"code":"ok"}}`,
+			want:       TikTokVideoNotFound,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			adapter := NewTikTokAdapter()
+			adapter.client = &http.Client{Transport: &tiktokAnalyticsTransport{
+				statusBody: tc.statusBody,
+				videoBody:  tc.videoBody,
+			}}
+			_, err := adapter.GetAnalytics(context.Background(), "token", "publish_1")
+			if got, ok := TikTokAnalyticsErrorReasonOf(err); !ok || got != tc.want {
+				t.Fatalf("reason = %q, ok=%v, want %q (err=%v)", got, ok, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestTikTokAnalyticsMatchedZeroRowIsSuccessful(t *testing.T) {
+	const exactID = "7663542984343883021"
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: &tiktokAnalyticsTransport{
+		statusBody: `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":[7663542984343883021]},"error":{"code":"ok"}}`,
+		videoBody:  `{"data":{"videos":[{"id":"7663542984343883021","view_count":0,"like_count":0,"comment_count":0,"share_count":0}]},"error":{"code":"ok"}}`,
+	}}
+	got, err := adapter.GetAnalytics(context.Background(), "token", "publish_1")
+	if err != nil {
+		t.Fatalf("GetAnalytics: %v", err)
+	}
+	if got.VideoViews != 0 || got.Likes != 0 || got.PlatformSpecific["tiktok_video_id"] != exactID {
+		t.Fatalf("metrics = %#v", got)
 	}
 }
 
