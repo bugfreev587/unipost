@@ -44,3 +44,25 @@ func TestAPICORSAllowsIdempotentXInboxReplyAndExposesOperationID(t *testing.T) {
 		t.Fatalf("Access-Control-Expose-Headers = %q, want X-UniPost-Operation-Id", got)
 	}
 }
+
+func TestAPICORSAllowsConfiguredVercelPreviewOrigins(t *testing.T) {
+	t.Setenv("CORS_ALLOWED_ORIGINS", "https://*.vercel.app")
+
+	handler := cors.Handler(apiCORSOptions())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	origin := "https://unipost-dev-git-dev-example-xiaobo-yus-projects.vercel.app"
+	preflight := httptest.NewRequest(http.MethodOptions, "/health", nil)
+	preflight.Header.Set("Origin", origin)
+	preflight.Header.Set("Access-Control-Request-Method", http.MethodGet)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, preflight)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("preflight status = %d, want 200", response.Code)
+	}
+	if got := response.Header().Get("Access-Control-Allow-Origin"); got != origin {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want %q", got, origin)
+	}
+}
