@@ -1,8 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.DASHBOARD_BASE_URL;
-if (!baseURL) {
-  throw new Error("DASHBOARD_BASE_URL is required for preview acceptance");
+const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+if (!baseURL || !bypassSecret) {
+  throw new Error(
+    "DASHBOARD_BASE_URL and VERCEL_AUTOMATION_BYPASS_SECRET are required for preview acceptance",
+  );
 }
 
 export default defineConfig({
@@ -22,6 +25,10 @@ export default defineConfig({
   ],
   use: {
     baseURL,
+    extraHTTPHeaders: {
+      "x-vercel-protection-bypass": bypassSecret,
+      "x-vercel-set-bypass-cookie": "true",
+    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

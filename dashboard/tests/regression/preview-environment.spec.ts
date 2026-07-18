@@ -21,6 +21,7 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
 
   const manifestResponse = await page.request.get("/__unipost-preview.json");
   expect(manifestResponse.ok()).toBeTruthy();
+  expect(manifestResponse.headers()["content-type"]).toContain("application/json");
   const manifest = await manifestResponse.json();
   expect(manifest.sha).toBe(expectedSHA);
   expect(manifest.apiURL).toBe(expectedAPIURL);
