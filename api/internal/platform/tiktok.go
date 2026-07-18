@@ -1059,6 +1059,9 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 	if err != nil {
 		return nil, fmt.Errorf("tiktok analytics: public post ID: %w", err)
 	}
+	slog.Info("tiktok analytics: resolved exact public video ID",
+		"publish_id", externalID,
+		"video_id", videoID)
 
 	// Step 2: query the video for stats.
 	body, _ := json.Marshal(map[string]any{
@@ -1128,6 +1131,9 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 	}
 
 	v := result.Data.Videos[0]
+	slog.Info("tiktok analytics: matched public video",
+		"publish_id", externalID,
+		"video_id", videoID)
 	// TikTok exposes view_count (= video plays) but not display impressions in
 	// the basic video query. EngagementRate is computed by the analytics handler.
 	return &PostMetrics{
