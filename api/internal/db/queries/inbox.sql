@@ -15,6 +15,7 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 WHERE i.workspace_id = $1
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
+  AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
   AND (sqlc.narg('source')::TEXT IS NULL OR i.source = sqlc.narg('source')::TEXT)
   AND (sqlc.narg('is_read')::BOOLEAN IS NULL OR i.is_read = sqlc.narg('is_read')::BOOLEAN)
   AND (sqlc.narg('is_own')::BOOLEAN IS NULL OR i.is_own = sqlc.narg('is_own')::BOOLEAN)
@@ -318,7 +319,9 @@ WHERE i.social_account_id = @social_account_id
 -- name: MarkAllInboxItemsRead :execrows
 UPDATE inbox_items
 SET is_read = true
-WHERE workspace_id = $1 AND is_read = false;
+WHERE workspace_id = @workspace_id
+  AND is_read = false
+  AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR source <> 'x_dm');
 
 -- name: UpdateInboxThreadState :execrows
 UPDATE inbox_items
@@ -343,6 +346,7 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 WHERE i.workspace_id = $1
   AND i.is_read = false
   AND i.is_own = false
+  AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL;
 

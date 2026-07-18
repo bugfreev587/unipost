@@ -1688,6 +1688,29 @@ export interface XCreditsAllowance {
   connection_mode_note: string;
 }
 
+export type UniPostFeatureFlagKey = "x_dms_v1" | "x_credits_billing_v1";
+
+export interface WorkspaceFeatureFlags {
+  environment: string;
+  provider: "unipost";
+  flags: Record<UniPostFeatureFlagKey, boolean>;
+  plan_gates?: Record<string, boolean>;
+}
+
+export interface PublicFeatureFlags {
+  flags: Record<UniPostFeatureFlagKey, boolean>;
+}
+
+export interface AdminFeatureFlag {
+  key: UniPostFeatureFlagKey;
+  label: string;
+  description: string;
+  owner_area: string;
+  enabled: boolean;
+  updated_by: string;
+  updated_at: string;
+}
+
 export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
@@ -1716,6 +1739,33 @@ export async function updateXInboundDailyCap(
       inbound_daily_limit: inboundDailyLimit,
       acknowledged_exposure: acknowledgedExposure,
     }),
+  });
+}
+
+export async function getWorkspaceFeatureFlags(
+  token: string,
+): Promise<ApiResponse<WorkspaceFeatureFlags>> {
+  return request("/v1/me/features", token);
+}
+
+export async function getPublicFeatureFlags(): Promise<ApiResponse<PublicFeatureFlags>> {
+  return requestPublic("/v1/public/features");
+}
+
+export async function listAdminFeatureFlags(
+  token: string,
+): Promise<ApiResponse<AdminFeatureFlag[]>> {
+  return request("/v1/admin/feature-flags", token);
+}
+
+export async function updateAdminFeatureFlag(
+  token: string,
+  key: UniPostFeatureFlagKey,
+  enabled: boolean,
+): Promise<ApiResponse<AdminFeatureFlag>> {
+  return request(`/v1/admin/feature-flags/${encodeURIComponent(key)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify({ enabled }),
   });
 }
 

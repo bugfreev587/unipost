@@ -4,6 +4,13 @@ import Link from "next/link";
 import { notFound, useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Check, Copy, X } from "lucide-react";
+import { getPublicFeatureFlags } from "@/lib/api";
+import {
+  CLOSED_PUBLIC_DOCS_FLAGS,
+  filterDocsNavigation,
+  normalizePublicDocsFeatureFlags,
+  type PublicDocsFeatureFlags,
+} from "@/lib/docs-feature-flags";
 import { DocsCodeTabs, DocsPage, DocsTable, renderDocsRichContent } from "../../_components/docs-shell";
 import { PLATFORM_CREDENTIAL_GUIDES } from "./_data";
 
@@ -47,6 +54,9 @@ export default function PlatformCredentialGuidePage() {
   const params = useParams<{ platform: string }>();
   const guide = PLATFORM_CREDENTIAL_GUIDES[params.platform];
   const [zoomedImage, setZoomedImage] = useState<{ src: string; alt: string } | null>(null);
+  const [publicFeatureFlags, setPublicFeatureFlags] = useState<PublicDocsFeatureFlags>(
+    CLOSED_PUBLIC_DOCS_FLAGS,
+  );
   if (!guide) notFound();
 
   useEffect(() => {
@@ -61,6 +71,58 @@ export default function PlatformCredentialGuidePage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [zoomedImage]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPublicFeatureFlags()
+      .then((response) => {
+        if (!cancelled) {
+          setPublicFeatureFlags(normalizePublicDocsFeatureFlags(response.data.flags));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPublicFeatureFlags(CLOSED_PUBLIC_DOCS_FLAGS);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const isTwitter = guide.slug === "twitter";
+  const relatedLinks = filterDocsNavigation(guide.relatedLinks ?? [], publicFeatureFlags)
+    .map((link) => {
+      if (!isTwitter || xDMsEnabled) return link;
+      const descriptions: Record<string, string> = {
+        "/docs/api/inbox/list": "Filter connected-account public replies.",
+        "/docs/api/inbox/reply": "Send an idempotent X public reply.",
+        "/docs/api/inbox/sync": "Run a bounded X public-reply backfill.",
+      };
+      return { ...link, description: descriptions[link.href] ?? link.description };
+    });
+  const fieldMap = isTwitter && !xDMsEnabled
+    ? guide.fieldMap.map((row) => (
+        row[0] === "Consumer Secret"
+          ? [row[0], row[1], "Stored with the workspace X app credentials; not used by comments or publishing."]
+          : row
+      ))
+    : guide.fieldMap;
+  const gotchas = isTwitter && !xDMsEnabled
+    ? guide.gotchas.map((row) => (
+        row[0] === "Partial Inbox credentials"
+          ? [row[0], "Publishing can stay available with Client ID and Client Secret. X comments additionally require the app Bearer Token."]
+          : row
+      ))
+    : guide.gotchas;
+  const doneChecklist = isTwitter && !xDMsEnabled
+    ? guide.doneChecklist.map((item) => (
+        item.includes("dm.read")
+          ? "The account has tweet.read, tweet.write, users.read, and offline.access."
+          : item
+      ))
+    : guide.doneChecklist;
 
   return (
     <DocsPage
@@ -160,8 +222,8 @@ export default function PlatformCredentialGuidePage() {
 
       <h2 id="what-to-paste-into-unipost">What to paste into UniPost</h2>
       <DocsTable
-        columns={guide.fieldMap[0]}
-        rows={guide.fieldMap.slice(1)}
+        columns={fieldMap[0]}
+        rows={fieldMap.slice(1)}
       />
       <p className="wlp-note">
         Save the credentials first, then start a fresh connection attempt. Troubleshooting an OAuth flow against stale credentials usually creates false leads.
@@ -215,12 +277,12 @@ export default function PlatformCredentialGuidePage() {
       <h2 id="common-blockers">Common blockers</h2>
       <DocsTable
         columns={["Blocker", "What to do about it"]}
-        rows={guide.gotchas}
+        rows={gotchas}
       />
 
       <h2 id="definition-of-done">Definition of done</h2>
       <ul className="docs-checklist">
-        {guide.doneChecklist.map((item) => (
+        {doneChecklist.map((item) => (
           <li key={item}>{item}</li>
         ))}
       </ul>
@@ -248,13 +310,13 @@ export default function PlatformCredentialGuidePage() {
             Publishing rules, media limits, and platform-specific post behavior after setup is complete.
           </div>
         </Link>
-        {guide.relatedLinks ? guide.relatedLinks.map((link) => (
+        {relatedLinks.map((link) => (
           <Link key={link.href} href={link.href} className="wlp-next-card">
             <div className="wlp-next-kicker">X Inbox</div>
             <div className="wlp-next-title">{link.label}</div>
             <div className="wlp-next-body">{link.description}</div>
           </Link>
-        )) : null}
+        ))}
       </div>
 
       {zoomedImage ? (

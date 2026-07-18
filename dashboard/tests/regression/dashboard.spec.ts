@@ -11,8 +11,7 @@ const publicRoutes = [
   { path: "/docs/guides", marker: /Task guides|Analytics guides/i },
   { path: "/docs/guides/analytics", marker: /Analytics Guides|Unified-first Analytics/i },
   { path: "/docs/guides/analytics/tiktok-followers", marker: /Get TikTok followers|user\.info\.stats/i },
-  { path: "/docs/guides/x/credits", marker: /Plan and monitor X Credits|Estimate the operation mix/i },
-  { path: "/pricing", marker: /What your included X Credits can do/i },
+  { path: "/pricing", marker: /Start free|Compare plans/i },
   { path: "/tools", marker: /TikTok Analytics|YouTube Analytics|Instagram Analytics|Threads Analytics|Pinterest Analytics/i },
   { path: "/tools/tiktok-analytics", marker: /TikTok Analytics/i },
   { path: "/tools/youtube-analytics", marker: /YouTube Analytics/i },
@@ -20,7 +19,6 @@ const publicRoutes = [
   { path: "/tools/threads-analytics", marker: /Threads Analytics/i },
   { path: "/tools/pinterest-analytics", marker: /Pinterest Analytics/i },
   { path: "/docs/api", marker: /List analytics posts|Export analytics posts/i },
-  { path: "/docs/api/x-credits", marker: /X Credits|GET\s+\/v1\/billing\/x-credits/i },
   { path: "/docs/api/analytics/posts-list", marker: /List analytics posts|GET\s+\/v1\/analytics\/posts/i },
   { path: "/docs/api/analytics/posts/export", marker: /Export analytics posts|GET\s+\/v1\/analytics\/posts\/export/i },
   { path: "/docs/api/analytics/rollup", marker: /Analytics rollup|GET\s+\/v1\/analytics\/rollup/i },
@@ -38,6 +36,12 @@ const publicRoutes = [
   { path: "/docs/api/api-metrics/status-codes", marker: /Status-Code|GET\s+\/v1\/api-metrics\/status-codes/i },
 ];
 
+const controlledDocsRoutes = [
+  { path: "/docs/guides/x/direct-messages", marker: /Receive and reply to X direct messages|dm\.received/i },
+  { path: "/docs/guides/x/credits", marker: /Plan and monitor X Credits|Estimate the operation mix/i },
+  { path: "/docs/api/x-credits", marker: /X Credits|GET\s+\/v1\/billing\/x-credits/i },
+];
+
 test.describe("public dashboard surfaces", () => {
   for (const route of publicRoutes) {
     test(`${route.path} loads without server errors`, async ({ page }) => {
@@ -51,6 +55,24 @@ test.describe("public dashboard surfaces", () => {
       await page.goto(route.path, { waitUntil: "domcontentloaded" });
       const surface = route.path.startsWith("/docs") ? page.locator("article").first() : page;
       await expect(surface.getByText(route.marker).first()).toBeVisible();
+      expect(serverErrors).toEqual([]);
+    });
+  }
+
+  for (const route of controlledDocsRoutes) {
+    test(`${route.path} follows its public feature flag without server errors`, async ({ page }) => {
+      const serverErrors: string[] = [];
+      page.on("response", (response) => {
+        if (response.status() >= 500) {
+          serverErrors.push(`${response.status()} ${response.url()}`);
+        }
+      });
+
+      const response = await page.goto(route.path, { waitUntil: "domcontentloaded" });
+      expect([200, 404]).toContain(response?.status());
+      if (response?.status() === 200) {
+        await expect(page.locator("article").first().getByText(route.marker).first()).toBeVisible();
+      }
       expect(serverErrors).toEqual([]);
     });
   }

@@ -2,8 +2,11 @@ import Link from "next/link";
 import { DocsPage, DocsTable } from "../_components/docs-shell";
 import { ApiInlineLink } from "../api/_components/doc-components";
 import { X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 
-export default function DocsPricingPage() {
+export default async function DocsPricingPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+
   return (
     <DocsPage
       breadcrumbItems={[
@@ -43,39 +46,42 @@ export default function DocsPricingPage() {
         ]}
       />
 
-      <h2 id="x-credits">Included X Credits</h2>
-      <p className="docs-guide-note">
-        <strong>X Credits are separate from posts/month.</strong>{" "}
-        They apply to managed X API usage, reset each billing period, and stop new managed-X work at the hard limit.
-        Bring-your-own X API connections do not consume UniPost X Credits. See the{" "}
-        <Link href="/docs/api/x-credits">X Credits API Reference</Link> and the{" "}
-        <Link href="/docs/guides/x/credits">X Credits planning guide</Link>.
-      </p>
-      <DocsTable
-        columns={["Plan", "Credits", "Normal posts", "URL posts", "Complete comments", "Complete DMs"]}
-        rows={X_CREDIT_PLANS.map((plan) => [
-          plan.label,
-          plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString(),
-          plan.capacity == null ? "Custom" : plan.capacity.normal_posts.toLocaleString(),
-          plan.capacity == null ? "Custom" : plan.capacity.url_posts.toLocaleString(),
-          !plan.inbox_eligible
-            ? "Inbox not included"
-            : plan.capacity == null
-              ? "Custom"
-              : plan.capacity.comment_interactions.toLocaleString(),
-          !plan.inbox_eligible
-            ? "Inbox not included"
-            : plan.capacity == null
-              ? "Custom"
-              : plan.capacity.dm_interactions.toLocaleString(),
-        ])}
-      />
-      <p className="docs-guide-note">
-        Each operation column assumes the full shared allowance is spent on that one operation type. A complete
-        comment means one received comment plus one reply; a complete DM means one received DM plus one sent DM.
-        Comment and DM figures are capacity planning for phased X Inbox support and do not indicate API availability
-        before that production phase ships. The independent safety cap of 20 X posts per connected account per UTC day still applies.
-      </p>
+      {publicFeatureFlags.x_credits_billing_v1 ? (
+        <>
+          <h2 id="x-credits">Included X Credits</h2>
+          <p className="docs-guide-note">
+            <strong>X Credits are separate from posts/month.</strong>{" "}
+            They apply to managed X API usage, reset each billing period, and stop new managed-X work at the hard limit.
+            Bring-your-own X API connections do not consume UniPost X Credits. See the{" "}
+            <Link href="/docs/api/x-credits">X Credits API Reference</Link> and the{" "}
+            <Link href="/docs/guides/x/credits">X Credits planning guide</Link>.
+          </p>
+          <DocsTable
+            columns={["Plan", "Credits", "Normal posts", "URL posts", "Complete comments", "Complete DMs"]}
+            rows={X_CREDIT_PLANS.map((plan) => [
+              plan.label,
+              plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString(),
+              plan.capacity == null ? "Custom" : plan.capacity.normal_posts.toLocaleString(),
+              plan.capacity == null ? "Custom" : plan.capacity.url_posts.toLocaleString(),
+              !plan.inbox_eligible
+                ? "Inbox not included"
+                : plan.capacity == null
+                  ? "Custom"
+                  : plan.capacity.comment_interactions.toLocaleString(),
+              !plan.inbox_eligible
+                ? "Inbox not included"
+                : plan.capacity == null
+                  ? "Custom"
+                  : plan.capacity.dm_interactions.toLocaleString(),
+            ])}
+          />
+          <p className="docs-guide-note">
+            Each operation column assumes the full shared allowance is spent on that one operation type. A complete
+            comment means one received comment plus one reply; a complete DM means one received DM plus one sent DM.
+            The independent safety cap of 20 X posts per connected account per UTC day still applies.
+          </p>
+        </>
+      ) : null}
 
       <h2 id="usage-limits">Usage limits</h2>
       <p className="docs-guide-note">

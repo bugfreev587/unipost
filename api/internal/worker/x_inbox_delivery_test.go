@@ -337,7 +337,7 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 	}
 }
 
-func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.T) {
+func TestXInboxDeliveryReconcilePersistsCommentsRuleWithoutPrivateDMSubscription(t *testing.T) {
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
 	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionID: "subscription-1"}
 	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
@@ -358,25 +358,19 @@ func TestXInboxDeliveryReconcilePersistsRuleAndPrivateDMSubscription(t *testing.
 	}
 	got := store.states[len(store.states)-1]
 	if got.FilteredStreamRuleID != "rule-1" ||
-		got.ActivityDMSubscriptionID != "subscription-1" ||
+		got.ActivityDMSubscriptionID != "" ||
 		got.DeliveryStatus != xinbox.DeliveryStatusActive {
 		t.Fatalf("state = %+v", got)
 	}
 	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
 		t.Fatalf("rule tokens = %v, want app bearer", api.ruleTokens)
 	}
-	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
-		t.Fatalf("subscription tokens = %v, want app bearer", api.subscriptionTokens)
-	}
-	if want := []string{"2244994945"}; !reflect.DeepEqual(api.subscriptionUserIDs, want) {
-		t.Fatalf("subscription user IDs = %v, want X platform account ID", api.subscriptionUserIDs)
-	}
-	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
-		t.Fatalf("webhook URLs = %v, want app-specific URL %v", api.webhookURLs, want)
+	if len(api.subscriptionTokens) != 0 || len(api.webhookURLs) != 0 {
+		t.Fatalf("private activity provisioning calls = subscriptions:%v webhooks:%v, want none", api.subscriptionTokens, api.webhookURLs)
 	}
 }
 
-func TestXInboxDeliverySourceTracksActivityWebhookRouteGeneration(t *testing.T) {
+func TestXInboxDeliverySourceDisablesPrivateActivityProvisioning(t *testing.T) {
 	source, err := os.ReadFile("x_inbox_delivery.go")
 	if err != nil {
 		t.Fatal(err)
@@ -385,11 +379,14 @@ func TestXInboxDeliverySourceTracksActivityWebhookRouteGeneration(t *testing.T) 
 	for _, required := range []string{
 		"ActivityWebhookRouteKey",
 		"activity_webhook_route_key",
-		"state.ActivityWebhookRouteKey != account.WebhookRouteKey",
+		"dmsDesired := false",
 	} {
 		if !strings.Contains(text, required) {
-			t.Fatalf("delivery reconciler missing route-generation contract %q", required)
+			t.Fatalf("delivery reconciler missing disabled-private-activity contract %q", required)
 		}
+	}
+	if strings.Contains(text, "subscription, err := w.api.EnsureDMSubscription") {
+		t.Fatal("delivery reconciler must not provision private Activity subscriptions")
 	}
 }
 
@@ -407,7 +404,7 @@ func TestXInboxDeliverySourceUsesXPlatformAccountIDForActivityFilter(t *testing.
 	}
 }
 
-func TestXInboxDeliveryRouteGenerationMismatchRecreatesActivitySubscription(t *testing.T) {
+func TestXInboxDeliveryExistingActivitySubscriptionIsRemovedWithoutReplacement(t *testing.T) {
 	account := activeManagedXInboxAccount()
 	account.ActivityDMSubscriptionID = "old-subscription"
 	account.ActivityWebhookRouteKey = "old-route-key"
@@ -428,17 +425,16 @@ func TestXInboxDeliveryRouteGenerationMismatchRecreatesActivitySubscription(t *t
 	if want := []string{"old-subscription"}; !reflect.DeepEqual(api.deletedSubs, want) {
 		t.Fatalf("deleted subscriptions = %v, want route-mismatched generation %v", api.deletedSubs, want)
 	}
-	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
-		t.Fatalf("webhook URLs = %v, want current generation %v", api.webhookURLs, want)
+	if len(api.webhookURLs) != 0 || len(api.subscriptionTokens) != 0 {
+		t.Fatalf("private activity provisioning calls = webhooks:%v subscriptions:%v, want none", api.webhookURLs, api.subscriptionTokens)
 	}
 	got := store.states[len(store.states)-1]
-	if got.ActivityDMSubscriptionID != "new-subscription" ||
-		got.ActivityWebhookRouteKey != "managed-route-key" {
-		t.Fatalf("final state = %+v, want recreated subscription on current route", got)
+	if got.ActivityDMSubscriptionID != "" || got.ActivityWebhookRouteKey != "" {
+		t.Fatalf("final state = %+v, want private subscription cleared", got)
 	}
 }
 
-func TestXInboxDeliveryPersistsRuleBeforeSubscriptionFailure(t *testing.T) {
+func TestXInboxDeliveryPersistsRuleWithoutAttemptingFailingSubscription(t *testing.T) {
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
 	api := &fakeXInboxDeliveryAPI{
 		ruleID:          "rule-1",
@@ -455,8 +451,8 @@ func TestXInboxDeliveryPersistsRuleBeforeSubscriptionFailure(t *testing.T) {
 		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
 	})
 
-	if err := worker.ReconcileOnce(context.Background()); err == nil {
-		t.Fatal("expected subscription error")
+	if err := worker.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	foundDurableRule := false
 	for _, state := range store.states {
@@ -465,7 +461,10 @@ func TestXInboxDeliveryPersistsRuleBeforeSubscriptionFailure(t *testing.T) {
 		}
 	}
 	if !foundDurableRule {
-		t.Fatalf("states = %+v, want rule id persisted before later failure", store.states)
+		t.Fatalf("states = %+v, want comments rule persisted", store.states)
+	}
+	if len(api.subscriptionTokens) != 0 {
+		t.Fatalf("subscription calls = %v, want none", api.subscriptionTokens)
 	}
 }
 

@@ -364,14 +364,16 @@ func (s *PostgresStore) admitInbound(
 		return InboundAdmission{}, err
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO x_usage_periods (
-			workspace_id, period_start, period_end, weighted_units_used, weighted_units_limit
-		) VALUES ($1, $2, $3, 0, $4)
-		ON CONFLICT (workspace_id, period_start, period_end)
-		DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
-	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.MonthlyAllowance); err != nil {
-		return InboundAdmission{}, err
+	if req.AccountingEnabled {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO x_usage_periods (
+				workspace_id, period_start, period_end, weighted_units_used, weighted_units_limit
+			) VALUES ($1, $2, $3, 0, $4)
+			ON CONFLICT (workspace_id, period_start, period_end)
+			DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
+		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.MonthlyAllowance); err != nil {
+			return InboundAdmission{}, err
+		}
 	}
 
 	dailyLimit := req.InboundDailyLimit
@@ -407,13 +409,15 @@ func (s *PostgresStore) admitInbound(
 	}
 
 	var monthlyUsed int64
-	if err := tx.QueryRow(ctx, `
-		SELECT weighted_units_used
-		FROM x_usage_periods
-		WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
-		FOR UPDATE
-	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(&monthlyUsed); err != nil {
-		return InboundAdmission{}, err
+	if req.AccountingEnabled {
+		if err := tx.QueryRow(ctx, `
+			SELECT weighted_units_used
+			FROM x_usage_periods
+			WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+			FOR UPDATE
+		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(&monthlyUsed); err != nil {
+			return InboundAdmission{}, err
+		}
 	}
 
 	admission := InboundAdmission{
@@ -436,18 +440,22 @@ func (s *PostgresStore) admitInbound(
 		}
 		claim100Percent = true
 	} else {
-		tag, err := tx.Exec(ctx, `
-			UPDATE x_usage_periods
-			SET weighted_units_used = weighted_units_used + $4, updated_at = NOW()
-			WHERE workspace_id = $1
-			  AND period_start = $2
-			  AND period_end = $3
-			  AND weighted_units_used + $4 <= weighted_units_limit
-		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.WeightedUnits)
-		if err != nil {
-			return InboundAdmission{}, err
+		withinMonthlyAllowance := true
+		if req.AccountingEnabled {
+			tag, err := tx.Exec(ctx, `
+				UPDATE x_usage_periods
+				SET weighted_units_used = weighted_units_used + $4, updated_at = NOW()
+				WHERE workspace_id = $1
+				  AND period_start = $2
+				  AND period_end = $3
+				  AND weighted_units_used + $4 <= weighted_units_limit
+			`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.WeightedUnits)
+			if err != nil {
+				return InboundAdmission{}, err
+			}
+			withinMonthlyAllowance = tag.RowsAffected() == 1
 		}
-		if tag.RowsAffected() != 1 {
+		if !withinMonthlyAllowance {
 			admission.Decision = InboundDecisionSuppressedMonthlyAllowance
 			suppressed++
 			if _, err := tx.Exec(ctx, `
@@ -459,7 +467,9 @@ func (s *PostgresStore) admitInbound(
 			}
 		} else {
 			dailyUsed += req.WeightedUnits
-			monthlyUsed += req.WeightedUnits
+			if req.AccountingEnabled {
+				monthlyUsed += req.WeightedUnits
+			}
 			accepted++
 			if _, err := tx.Exec(ctx, `
 				UPDATE x_inbound_daily_usage
@@ -470,23 +480,25 @@ func (s *PostgresStore) admitInbound(
 			`, req.WorkspaceID, req.UTCDate, req.WeightedUnits); err != nil {
 				return InboundAdmission{}, err
 			}
-			inboundID := fmt.Sprintf(
-				"inbound:%s:%s:%s",
-				req.SocialAccountID,
-				req.UpstreamResourceType,
-				req.UpstreamResourceID,
-			)
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO x_usage_events (
-					workspace_id, social_account_id, period_start, period_end,
-					operation_key, catalog_version, source, idempotency_key,
-					weighted_units, status, connection_mode
-				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'finalized', $10)
-				ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
-			`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
-				req.OperationKey, req.CatalogVersion, req.Source, inboundID,
-				req.WeightedUnits, req.AppMode); err != nil {
-				return InboundAdmission{}, err
+			if req.AccountingEnabled {
+				inboundID := fmt.Sprintf(
+					"inbound:%s:%s:%s",
+					req.SocialAccountID,
+					req.UpstreamResourceType,
+					req.UpstreamResourceID,
+				)
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO x_usage_events (
+						workspace_id, social_account_id, period_start, period_end,
+						operation_key, catalog_version, source, idempotency_key,
+						weighted_units, status, connection_mode
+					) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'finalized', $10)
+					ON CONFLICT (workspace_id, idempotency_key) DO NOTHING
+				`, req.WorkspaceID, req.SocialAccountID, req.PeriodStart, req.PeriodEnd,
+					req.OperationKey, req.CatalogVersion, req.Source, inboundID,
+					req.WeightedUnits, req.AppMode); err != nil {
+					return InboundAdmission{}, err
+				}
 			}
 			if dailyLimit > 0 && dailyUsed*100 >= dailyLimit*80 {
 				claim80Percent = true
@@ -506,7 +518,8 @@ func (s *PostgresStore) admitInbound(
 		admission.MonthlyRemaining = 0
 	}
 	switch {
-	case admission.Decision == InboundDecisionSuppressedMonthlyAllowance || admission.MonthlyRemaining == 0:
+	case req.AccountingEnabled &&
+		(admission.Decision == InboundDecisionSuppressedMonthlyAllowance || admission.MonthlyRemaining == 0):
 		admission.PausePaidSources = true
 		admission.PauseReason = PauseReasonMonthlyAllowance
 	case admission.Decision == InboundDecisionSuppressedDailyCap:

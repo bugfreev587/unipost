@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePublicDocsFeatureFlags } from "@/lib/use-public-docs-feature-flags";
 import {
   ApiInlineLink,
   EnumValues,
@@ -518,6 +519,8 @@ const RESPONSE_SNIPPETS = [
 ];
 
 export function CreatePostContent() {
+  const publicFeatureFlags = usePublicDocsFeatureFlags();
+
   return (
     <SingleEndpointReferencePage
       section="publishing"
@@ -543,7 +546,7 @@ export function CreatePostContent() {
       responseSnippets={RESPONSE_SNIPPETS}
     >
       <div style={{ paddingTop: 8 }}>
-        <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
+        {publicFeatureFlags.x_credits_billing_v1 ? <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
           <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>
             Media Inputs
           </h2>
@@ -558,7 +561,7 @@ export function CreatePostContent() {
               <strong style={{ color: "var(--docs-text)" }}>GIF conversion:</strong> X and Facebook can publish the original GIF. For a video-only destination, call <ApiInlineLink endpoint="POST /v1/media/gif-conversions" href="/docs/api/media/gif-conversions" />, wait for success, and send the returned <code style={{ color: "var(--docs-accent)", fontFamily: "var(--docs-mono)", fontSize: 13 }}>output_media_id</code> here as normal video media. Conversion does not create the post automatically.
             </p>
           </div>
-        </section>
+        </section> : null}
 
         <section style={{ display: "grid", gap: 14, marginBottom: 24 }}>
           <h2 style={{ color: "var(--docs-text)", fontSize: 21, lineHeight: 1.25, letterSpacing: "-.02em", margin: 0 }}>

@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage, DocsRichText, DocsTable } from "../../_components/docs-shell";
 import { ApiInlineLink } from "../../api/_components/doc-components";
 import { PLATFORMS, type PlatformDoc, type PlatformSummary } from "./_data";
@@ -190,6 +192,28 @@ export default async function PlatformDetailPage({
   const { platform } = await params;
   const data = PLATFORMS[platform];
   if (!data) notFound();
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const inboxLinks = filterDocsNavigation(data.inbox?.links ?? [], publicFeatureFlags);
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const capabilityRows = platform === "twitter" && !xDMsEnabled
+    ? data.capabilities.filter((row) => row[0] !== "Inbox / legacy DMs")
+    : data.capabilities;
+  const inboxRows = platform === "twitter" && !xDMsEnabled
+    ? (data.inbox?.rows ?? []).filter((row) => row[0] !== "Legacy direct messages")
+    : data.inbox?.rows ?? [];
+  const inboxNote = platform === "twitter" && !xDMsEnabled
+    ? "Public X replies are available through OAuth 2.0 and normalized as x_reply."
+    : data.inbox?.note;
+  const displayedInboxLinks = platform === "twitter" && !xDMsEnabled
+    ? inboxLinks.map((link) => {
+        const descriptions: Record<string, string> = {
+          "/docs/api/inbox/list": "Filter connected-account public replies.",
+          "/docs/api/inbox/reply": "Send an idempotent public reply.",
+          "/docs/api/inbox/sync": "Run a bounded public-reply backfill.",
+        };
+        return { ...link, description: descriptions[link.href] ?? link.description };
+      })
+    : inboxLinks;
 
   const supportsManagedUploads = data.requirements.some(
     (row) => row[0].includes("media_urls") || row[0].includes("media_ids"),
@@ -241,7 +265,7 @@ export default async function PlatformDetailPage({
       </div>
 
       <h2 id="feature-matrix">Feature matrix</h2>
-      <DocsTable columns={["Feature", "Support", "Notes"]} rows={data.capabilities} />
+      <DocsTable columns={["Feature", "Support", "Notes"]} rows={capabilityRows} />
 
       <h2 id="limitations">Known constraints</h2>
       <DocsTable columns={["Limitation", "Why"]} rows={data.limitations} />
@@ -299,14 +323,14 @@ export default async function PlatformDetailPage({
       {data.inbox ? (
         <>
           <h2 id="inbox">Inbox</h2>
-          {data.inbox.note ? <p className="docs-note">{data.inbox.note}</p> : null}
+          {inboxNote ? <p className="docs-note">{inboxNote}</p> : null}
           <DocsTable
             columns={["Surface", "Support", "Notes"]}
-            rows={data.inbox.rows}
+            rows={inboxRows}
           />
-          {data.inbox.links?.length ? (
+          {displayedInboxLinks.length ? (
             <div className="docs-next-grid">
-              {data.inbox.links.map((link) => (
+              {displayedInboxLinks.map((link) => (
                 <Link key={link.href} href={link.href} className="docs-next-card">
                   <div className="docs-next-kicker">X Inbox</div>
                   <div className="docs-next-title">{link.label}</div>

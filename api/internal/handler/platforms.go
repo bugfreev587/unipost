@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
@@ -21,6 +23,16 @@ import (
 type PlatformHandler struct {
 	queries *db.Queries
 	quota   *quota.Checker
+	flags   interface {
+		ForWorkspace(context.Context, string, string) (bool, error)
+	}
+}
+
+func (h *PlatformHandler) SetFeatureFlags(flags interface {
+	ForWorkspace(context.Context, string, string) (bool, error)
+}) *PlatformHandler {
+	h.flags = flags
+	return h
 }
 
 func NewPlatformHandler(queries *db.Queries, quotaCheckers ...*quota.Checker) *PlatformHandler {
@@ -113,8 +125,17 @@ func (h *PlatformHandler) GetAccountCapabilities(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "X account app identity is invalid; reconnect required")
 			return
 		}
+		dmsAvailable := true
+		if h.flags != nil {
+			dmsAvailable, err = h.flags.ForWorkspace(r.Context(), workspaceID, featureflags.XDMSV1)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to evaluate X DM availability")
+				return
+			}
+		}
 		input := xinbox.CapabilityInput{
 			PlanAllowsInbox: h.quota == nil || h.quota.PlanAllowsInbox(r.Context(), workspaceID),
+			DMsAvailable:    &dmsAvailable,
 			AccountStatus:   acc.Status,
 			Scopes:          acc.Scope,
 			AppMode:         appMode,
