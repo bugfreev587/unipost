@@ -58,10 +58,8 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'dev-'\)/);
   assert.match(workflow, /vercel@50\.26\.1/);
-  assert.match(
-    workflow,
-    /VERCEL_AUTOMATION_BYPASS_SECRET:.*secrets\.UNIPOST_VERCEL_PREVIEW_BYPASS/,
-  );
+  assert.match(workflow, /github\.run_id/);
+  assert.match(workflow, /github\.run_attempt/);
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
   assert.match(workflow, /RAILWAY_PROJECT_ID:.*vars\.RAILWAY_PROJECT_ID/);
   assert.match(workflow, /railway-deployments\.mjs/);
@@ -71,17 +69,25 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     "the Vercel project already has dashboard as its Root Directory",
   );
   assert.match(workflow, /test:regression:preview/);
+  assert.match(workflow, /vercel-share-link\.mjs/);
+  assert.match(workflow, /VERCEL_SHAREABLE_URL/);
+  assert.match(workflow, /vercel-alias-cleanup\.mjs/);
+  assert.match(
+    workflow,
+    /cleanup-preview-alias:[\s\S]*ref: \$\{\{ github\.event\.pull_request\.head\.sha \}\}/,
+  );
   assert.match(workflow, /preview-failure-drill/);
   assert.match(workflow, /if: always\(\)/);
   assert.match(workflow, /if: failure\(\)/);
-  assert.match(workflow, /alias rm/);
   assert.doesNotMatch(workflow, /https:\/\/api\.unipost\.dev/);
   assert.doesNotMatch(workflow, /pk_live_/);
 
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
-  assert.match(previewConfig, /x-vercel-protection-bypass/);
-  assert.match(previewConfig, /x-vercel-set-bypass-cookie/);
-  assert.match(previewConfig, /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/);
+  assert.match(previewConfig, /VERCEL_SHAREABLE_URL/);
+  assert.doesNotMatch(previewConfig, /x-vercel-protection-bypass/);
+
+  const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
+  assert.match(previewTest, /page\.goto\(shareableURL/);
 });
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {

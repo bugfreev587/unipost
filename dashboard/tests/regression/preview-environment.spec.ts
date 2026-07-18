@@ -3,10 +3,11 @@ import { expect, test } from "@playwright/test";
 const expectedSHA = process.env.EXPECTED_PREVIEW_SHA;
 const expectedAPIURL = process.env.EXPECTED_PREVIEW_API_URL?.replace(/\/+$/, "");
 const dashboardBaseURL = process.env.DASHBOARD_BASE_URL;
+const shareableURL = process.env.VERCEL_SHAREABLE_URL;
 
-if (!expectedSHA || !expectedAPIURL || !dashboardBaseURL) {
+if (!expectedSHA || !expectedAPIURL || !dashboardBaseURL || !shareableURL) {
   throw new Error(
-    "EXPECTED_PREVIEW_SHA, EXPECTED_PREVIEW_API_URL, and DASHBOARD_BASE_URL are required",
+    "EXPECTED_PREVIEW_SHA, EXPECTED_PREVIEW_API_URL, DASHBOARD_BASE_URL, and VERCEL_SHAREABLE_URL are required",
   );
 }
 
@@ -18,6 +19,13 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
     "dev-app.unipost.dev",
     "staging-app.unipost.dev",
   ]).not.toContain(dashboardHost);
+
+  await page.goto(shareableURL, { waitUntil: "domcontentloaded" });
+  await expect(page).toHaveURL(
+    new RegExp(
+      `^${dashboardBaseURL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    ),
+  );
 
   const manifestResponse = await page.request.get("/__unipost-preview.json");
   expect(manifestResponse.ok()).toBeTruthy();

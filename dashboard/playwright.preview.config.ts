@@ -1,10 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.DASHBOARD_BASE_URL;
-const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
-if (!baseURL || !bypassSecret) {
+const shareableURL = process.env.VERCEL_SHAREABLE_URL;
+if (!baseURL || !shareableURL) {
   throw new Error(
-    "DASHBOARD_BASE_URL and VERCEL_AUTOMATION_BYPASS_SECRET are required for preview acceptance",
+    "DASHBOARD_BASE_URL and VERCEL_SHAREABLE_URL are required for preview acceptance",
   );
 }
 
@@ -25,10 +25,6 @@ export default defineConfig({
   ],
   use: {
     baseURL,
-    extraHTTPHeaders: {
-      "x-vercel-protection-bypass": bypassSecret,
-      "x-vercel-set-bypass-cookie": "true",
-    },
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
     video: "retain-on-failure",

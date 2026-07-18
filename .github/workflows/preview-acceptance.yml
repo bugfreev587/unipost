@@ -35,12 +35,11 @@ jobs:
       HEAD_REF: ${{ github.event.pull_request.head.ref }}
       HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
-      PREVIEW_HOST: unipost-dev-pr-${{ github.event.pull_request.number }}.vercel.app
+      PREVIEW_HOST: unipost-dev-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}.vercel.app
       VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-      VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.UNIPOST_VERCEL_PREVIEW_BYPASS }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
     steps:
@@ -63,7 +62,6 @@ jobs:
           test -n "$VERCEL_PROJECT_ID"
           test -n "$VERCEL_TEAM_SLUG"
           test -n "$VERCEL_TOKEN"
-          test -n "$VERCEL_AUTOMATION_BYPASS_SECRET"
           test -n "$RAILWAY_PROJECT_ID"
           test -n "$RAILWAY_API_TOKEN"
           test "${#HEAD_SHA}" -eq 40
@@ -166,6 +164,14 @@ jobs:
             --scope="$VERCEL_TEAM_SLUG" \
             2>&1 | tee artifacts/preview/vercel-alias.log
 
+      - name: Create a temporary Vercel shareable link
+        id: vercel_share
+        run: |
+          set -euo pipefail
+          echo "vercel-share-link" > artifacts/preview/current-stage
+          node scripts/preview/vercel-share-link.mjs \
+            2>&1 | tee artifacts/preview/vercel-share-link.log
+
       - name: Install Playwright Chromium
         working-directory: dashboard
         run: |
@@ -177,6 +183,7 @@ jobs:
         working-directory: dashboard
         env:
           DASHBOARD_BASE_URL: https://${{ env.PREVIEW_HOST }}
+          VERCEL_SHAREABLE_URL: ${{ steps.vercel_share.outputs.shareable_url }}
           EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
           EXPECTED_PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
@@ -246,15 +253,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      PREVIEW_HOST: unipost-dev-pr-${{ github.event.pull_request.number }}.vercel.app
-      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
     steps:
-      - name: Remove the Vercel preview alias
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Remove the pull request's Vercel preview aliases
         run: |
           set -euo pipefail
-          npx --yes vercel@50.26.1 alias rm \
-            "$PREVIEW_HOST" \
-            --yes \
-            --token="$VERCEL_TOKEN" \
-            --scope="$VERCEL_TEAM_SLUG"
+          node scripts/preview/vercel-alias-cleanup.mjs
