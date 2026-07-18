@@ -74,10 +74,16 @@ export async function cleanupPreviewAliases({
     }
   }
 
-  const matches = selectPreviewAliases(aliases, pullRequestNumber);
-  for (const alias of matches) {
+  const matchedAliases = new Set(
+    selectPreviewAliases(aliases, pullRequestNumber),
+  );
+  const matches = aliases.filter((item) => matchedAliases.has(item?.alias));
+  for (const { alias, uid } of matches) {
+    if (!uid) {
+      throw new Error(`Vercel alias ${alias} is missing its uid`);
+    }
     const endpoint = new URL(
-      `https://api.vercel.com/v2/aliases/${encodeURIComponent(alias)}`,
+      `https://api.vercel.com/v2/aliases/${encodeURIComponent(uid)}`,
     );
     endpoint.searchParams.set("teamId", teamId);
     const response = await fetchImpl(endpoint, {
@@ -96,7 +102,7 @@ export async function cleanupPreviewAliases({
   }
 
   console.log(`Cleaned ${matches.length} Vercel Preview alias(es)`);
-  return matches;
+  return matches.map((item) => item.alias);
 }
 
 if (

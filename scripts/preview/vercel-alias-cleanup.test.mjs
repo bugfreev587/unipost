@@ -39,8 +39,14 @@ test("lists and deletes only aliases owned by the pull request", async () => {
       return new Response(
         JSON.stringify({
           aliases: [
-            { alias: "unipost-dev-pr-215-12345-1.vercel.app" },
-            { alias: "unipost-dev-pr-216-12345-1.vercel.app" },
+            {
+              alias: "unipost-dev-pr-215-12345-1.vercel.app",
+              uid: "alias-uid-215",
+            },
+            {
+              alias: "unipost-dev-pr-216-12345-1.vercel.app",
+              uid: "alias-uid-216",
+            },
           ],
           pagination: {},
         }),
@@ -68,7 +74,7 @@ test("lists and deletes only aliases owned by the pull request", async () => {
   assert.match(requests[0].url, /projectId=project-id/);
   assert.match(
     requests[1].url,
-    /\/v2\/aliases\/unipost-dev-pr-215-12345-1\.vercel\.app\?/,
+    /\/v2\/aliases\/alias-uid-215\?/,
   );
   assert.equal(requests[1].method, "DELETE");
   assert.equal(requests[1].authorization, "Bearer token");
@@ -80,7 +86,10 @@ test("treats an already-missing alias as successfully cleaned", async () => {
       return new Response(
         JSON.stringify({
           aliases: [
-            { alias: "unipost-dev-pr-215-12345-1.vercel.app" },
+            {
+              alias: "unipost-dev-pr-215-12345-1.vercel.app",
+              uid: "alias-uid-215",
+            },
           ],
           pagination: {},
         }),
