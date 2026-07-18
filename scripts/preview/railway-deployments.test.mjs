@@ -4,127 +4,123 @@ import { test } from "node:test";
 import {
   PreviewPendingError,
   PreviewTerminalError,
-  selectReadyRailwayAPI,
+  selectRailwayEnvironment,
+  selectRailwayPreviewAPI,
 } from "./railway-deployments.mjs";
 
 const sha = "a".repeat(40);
 
-test("selects the successful Railway API deployment for the exact SHA", () => {
-  const result = selectReadyRailwayAPI([
+test("resolves the Railway environment ID from the exact successful GitHub deployment", () => {
+  const result = selectRailwayEnvironment([
     {
-      id: 1,
+      id: 41,
       sha,
-      environment: "pr-42",
+      environment: "UniPost / unipost-pr-42",
+      payload: { environmentId: "env-pr-42" },
       statuses: [{
         state: "success",
-        environment_url: "https://api-pr-42.up.railway.app",
-        created_at: "2026-07-17T18:00:00Z",
-      }],
-    },
-    {
-      id: 2,
-      sha,
-      environment: "pr-42-worker",
-      statuses: [{ state: "success", environment_url: "" }],
-    },
-    {
-      id: 3,
-      sha,
-      environment: "Preview",
-      statuses: [{
-        state: "success",
-        environment_url: "https://unipost.vercel.app",
+        environment_url: "https://railway.com/project/project-id?environmentId=env-pr-42",
       }],
     },
   ], sha);
 
   assert.deepEqual(result, {
-    apiURL: "https://api-pr-42.up.railway.app",
-    deploymentId: 1,
-    environment: "pr-42",
+    environmentId: "env-pr-42",
+    deploymentId: 41,
+    environment: "UniPost / unipost-pr-42",
     sha,
   });
 });
 
-test("rejects a successful Railway URL attached to another SHA", () => {
+test("selects only the preview API whose Railway deployment matches the exact SHA", () => {
+  const result = selectRailwayPreviewAPI({
+    id: "env-pr-42",
+    name: "unipost-pr-42",
+    serviceInstances: {
+      edges: [{
+        node: {
+          serviceName: "preview-api",
+          latestDeployment: {
+            status: "SUCCESS",
+            meta: { commitHash: sha },
+          },
+          domains: {
+            serviceDomains: [{ domain: "preview-api-unipost-pr-42.up.railway.app" }],
+            customDomains: [],
+          },
+        },
+      }],
+    },
+  }, sha);
+
+  assert.deepEqual(result, {
+    apiURL: "https://preview-api-unipost-pr-42.up.railway.app",
+    railwayEnvironmentId: "env-pr-42",
+    railwayEnvironmentName: "unipost-pr-42",
+  });
+});
+
+test("rejects a Railway environment attached to another SHA", () => {
   assert.throws(
-    () => selectReadyRailwayAPI([
+    () => selectRailwayEnvironment([
       {
         id: 1,
         sha: "b".repeat(40),
-        environment: "pr-42",
-        statuses: [{
-          state: "success",
-          environment_url: "https://api-pr-42.up.railway.app",
-        }],
+        environment: "UniPost / unipost-pr-42",
+        payload: { environmentId: "env-pr-42" },
+        statuses: [{ state: "success" }],
       },
     ], sha),
     (error) => error instanceof PreviewPendingError && /exact head SHA/.test(error.message),
   );
 });
 
-test("rejects a terminal Railway failure for the exact SHA", () => {
+test("rejects a terminal Railway environment failure for the exact SHA", () => {
   assert.throws(
-    () => selectReadyRailwayAPI([
+    () => selectRailwayEnvironment([
       {
         id: 1,
         sha,
-        environment: "pr-42",
-        statuses: [{
-          state: "failure",
-          environment_url: "https://api-pr-42.up.railway.app",
-        }],
+        environment: "UniPost / unipost-pr-42",
+        payload: { environmentId: "env-pr-42" },
+        statuses: [{ state: "failure" }],
       },
     ], sha),
     (error) => error instanceof PreviewTerminalError && /failure/.test(error.message),
   );
 });
 
-test("does not accept persistent or missing Railway URLs", () => {
+test("rejects a persistent Railway environment", () => {
   assert.throws(
-    () => selectReadyRailwayAPI([
-      {
-        id: 1,
-        sha,
-        environment: "dev",
-        statuses: [{
-          state: "success",
-          environment_url: "https://dev-api.unipost.dev",
-        }],
-      },
-      {
-        id: 2,
-        sha,
-        environment: "pr-42-worker",
-        statuses: [{ state: "success", environment_url: "" }],
-      },
-    ], sha),
-    (error) => error instanceof PreviewPendingError && /ready Railway PR API/.test(error.message),
+    () => selectRailwayPreviewAPI({
+      id: "dev-id",
+      name: "dev",
+      serviceInstances: { edges: [] },
+    }, sha),
+    (error) => error instanceof PreviewTerminalError && /not an ephemeral/.test(error.message),
   );
 });
 
-test("rejects multiple distinct Railway API URLs for one SHA", () => {
+test("rejects a successful preview API built from another SHA", () => {
   assert.throws(
-    () => selectReadyRailwayAPI([
-      {
-        id: 1,
-        sha,
-        environment: "pr-42",
-        statuses: [{
-          state: "success",
-          environment_url: "https://api-pr-42.up.railway.app",
+    () => selectRailwayPreviewAPI({
+      id: "env-pr-42",
+      name: "unipost-pr-42",
+      serviceInstances: {
+        edges: [{
+          node: {
+            serviceName: "preview-api",
+            latestDeployment: {
+              status: "SUCCESS",
+              meta: { commitHash: "b".repeat(40) },
+            },
+            domains: {
+              serviceDomains: [{ domain: "preview-api-unipost-pr-42.up.railway.app" }],
+            },
+          },
         }],
       },
-      {
-        id: 2,
-        sha,
-        environment: "pr-43",
-        statuses: [{
-          state: "success",
-          environment_url: "https://api-pr-43.up.railway.app",
-        }],
-      },
-    ], sha),
-    (error) => error instanceof PreviewTerminalError && /multiple Railway PR API/.test(error.message),
+    }, sha),
+    (error) => error instanceof PreviewPendingError && /exact head SHA/.test(error.message),
   );
 });

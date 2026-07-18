@@ -58,6 +58,8 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'dev-'\)/);
   assert.match(workflow, /vercel@50\.26\.1/);
+  assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
+  assert.match(workflow, /railway-deployments\.mjs/);
   assert.match(workflow, /test:regression:preview/);
   assert.match(workflow, /preview-failure-drill/);
   assert.match(workflow, /if: always\(\)/);
