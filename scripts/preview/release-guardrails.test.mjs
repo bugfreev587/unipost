@@ -57,6 +57,7 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /github\.event\.pull_request\.head\.sha/);
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'dev-'\)/);
+  assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'hotfix-'\)/);
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /--prebuilt[\s\S]*--archive=tgz/);
   assert.match(workflow, /github\.run_id/);
