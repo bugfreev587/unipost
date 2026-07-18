@@ -7,8 +7,10 @@ UniPost uses two layers of CI so development stays fast while production remains
 `.github/workflows/ci.yml` runs on:
 
 - pull requests targeting `dev`
+- pull requests targeting `staging`
 - pull requests targeting `main`
 - pushes to `dev`
+- pushes to `staging`
 - pushes to `main`
 - manual `workflow_dispatch`
 
@@ -16,6 +18,7 @@ The required checks should be:
 
 - `API tests`
 - `Dashboard build`
+- `Preview Acceptance` for task pull requests targeting `dev`
 
 This covers the minimum production-safety bar before merging:
 
@@ -25,7 +28,15 @@ This covers the minimum production-safety bar before merging:
 
 The current backend statement coverage baseline measured during setup is 9.7%. The required CI floor starts at 9.0% so the gate blocks major regressions without pretending the codebase is already well covered. Raise `API_COVERAGE_MIN` in `.github/workflows/ci.yml` as focused tests are added. The biggest current backend gaps are generated DB query wrappers, worker loops, billing/webhook integration edges, and platform adapters that depend on third-party APIs.
 
-The local dashboard smoke in CI uses the public GitHub Actions variable `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` so public pages can initialize Clerk with a valid frontend key. It pairs that with a dummy `CLERK_SECRET_KEY` placeholder because `clerkMiddleware` requires the variable at server startup, but public-page smoke coverage does not authenticate or call Clerk server APIs. Authenticated dashboard regression still requires real Clerk test credentials and stays in the deployed regression workflow.
+The local dashboard smoke in CI uses the public GitHub Actions variable `NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY` so public pages can initialize Clerk with a valid non-production frontend key. It pairs that with a dummy `CLERK_SECRET_KEY` placeholder because `clerkMiddleware` requires the variable at server startup, but public-page smoke coverage does not authenticate or call Clerk server APIs. Authenticated dashboard regression still requires real Clerk test credentials and stays in the deployed regression workflow.
+
+Pull request CI must use `NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY` and local non-production origins. It must never build a pull request with the production API URL or Clerk Production key.
+
+## Preview acceptance gate
+
+Every normal `dev-*` task branch opens a Draft pull request to `dev`. Railway creates an isolated PR Environment from the sanitized `preview-base`, and Vercel builds the exact pull request SHA against that ephemeral API. The required `Preview Acceptance` check verifies the API health, frontend identity manifest, browser-visible API CORS, and public frontend health before the pull request may merge.
+
+Any failed, errored, timed-out, cancelled, skipped, missing, unable-to-start, or SHA-mismatched required result is a hard stop. The failure report must include the environment, branch, SHA, workflow, job, suite, test case, exact message and relevant log excerpt, run URL, artifact URLs, and whether any deployment or promotion already occurred.
 
 Dashboard lint is intentionally not a required check yet because the existing codebase currently has lint errors. Once those are cleaned up, add `npm run lint` to the dashboard job and make it required.
 
@@ -54,7 +65,8 @@ Configure these GitHub repository secrets and variables for deployed regression:
 
 Recommended GitHub branch protection:
 
-- For `dev`, require PRs from `dev-*` branches and require `API tests` plus `Dashboard build`.
-- For `main`, require PRs from `dev` and require the same checks.
+- For `dev`, require PRs from `dev-*` branches and require `API tests`, `Dashboard build`, and `Preview Acceptance`.
+- For `staging`, require promotion PRs from `dev` and require `API tests` plus `Dashboard build`.
+- For `main`, require production PRs from `staging` and require `API tests` plus `Dashboard build`.
 - Require branches to be up to date before merging when GitHub offers the option.
-- Keep direct pushes to `main` disabled except for emergency admin override.
+- Keep direct pushes to `dev`, `staging`, and `main` disabled. Emergency exceptions require the user's explicit authorization after the blocking evidence is reported.
