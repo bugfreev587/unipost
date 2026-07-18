@@ -1,7 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.DASHBOARD_BASE_URL;
-const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
 if (!baseURL || !bypassSecret) {
   throw new Error(
     "DASHBOARD_BASE_URL and VERCEL_AUTOMATION_BYPASS_SECRET are required for preview acceptance",

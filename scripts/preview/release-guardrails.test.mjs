@@ -81,6 +81,7 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
   assert.match(previewConfig, /x-vercel-protection-bypass/);
   assert.match(previewConfig, /x-vercel-set-bypass-cookie/);
+  assert.match(previewConfig, /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/);
 });
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
