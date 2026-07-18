@@ -60,7 +60,7 @@ Closing or merging the pull request destroys its ephemeral Railway resources. Th
 
 Railway native PR Environments will be enabled for the UniPost project with:
 
-- base environment: `dev`;
+- base environment: a persistent `preview-base` derived from `dev` but stripped of outbound and production-capable credentials before its first deployment;
 - automatic PR Environments enabled;
 - Bot PR Environments enabled;
 - Focused PR Environments enabled where service dependency behavior is proven;
@@ -69,6 +69,8 @@ Railway native PR Environments will be enabled for the UniPost project with:
 The ephemeral environment must deploy the pull request head SHA. The API service must expose a unique HTTPS URL and pass `/health` before frontend preview construction begins.
 
 The preview environment uses isolated Postgres and Redis services. It must never point to the persistent development, staging, or production databases or queues.
+
+`preview-base` is configuration-only infrastructure, not a shared feature-validation target. Its API, MCP, and worker replicas remain at zero. PR Environments inherit its sanitized variables and create the task-specific runtime. This avoids the unsafe interval that would occur if a PR environment copied live development credentials and only sanitized them after services had already started.
 
 ### Vercel frontend
 
@@ -103,7 +105,7 @@ If the Railway API URL, deployment SHA, or service identity is missing or mismat
 
 ## Preview runtime safety
 
-Railway PR Environments copy configuration from a base environment, so isolation requires explicit preview-safe overrides. Preview defaults must:
+Railway PR Environments copy configuration from a base environment, so `preview-base` must be sanitized before it is allowed to deploy or become the PR Environment source. Preview defaults must:
 
 - use an isolated Postgres database and Redis instance;
 - use Clerk Development;
@@ -246,7 +248,7 @@ The rollout is complete only when a test pull request proves all of the followin
 2. Add static tests for the workflow and rule invariants.
 3. Add the preview workflow and reporting scripts.
 4. Add GitHub variables and secrets without exposing values.
-5. Enable and configure Railway PR Environments with base `dev`.
+5. Create and sanitize `preview-base`, then enable Railway PR Environments with `preview-base` as their source.
 6. Correct Railway MCP branch mappings.
 7. Configure Vercel Preview variables and authoritative orchestration.
 8. Push the task branch and open a Draft PR to `dev`.
