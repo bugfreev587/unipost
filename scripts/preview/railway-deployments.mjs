@@ -1,0 +1,221 @@
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+
+const permanentHosts = new Set([
+  "api.unipost.dev",
+  "dev-api.unipost.dev",
+  "staging-api.unipost.dev",
+  "unipost-dev.up.railway.app",
+  "unipost-production.up.railway.app",
+  "unipost-staging.up.railway.app",
+]);
+
+const terminalStates = new Set(["error", "failure", "inactive"]);
+
+export class PreviewPendingError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "PreviewPendingError";
+  }
+}
+
+export class PreviewTerminalError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "PreviewTerminalError";
+  }
+}
+
+function railwayPreviewURL(rawURL) {
+  if (!rawURL) return null;
+
+  let url;
+  try {
+    url = new URL(rawURL);
+  } catch {
+    return null;
+  }
+
+  if (url.protocol !== "https:") return null;
+  if (!url.hostname.endsWith(".up.railway.app")) return null;
+  if (permanentHosts.has(url.hostname)) return null;
+  return `${url.origin}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/, "");
+}
+
+export function selectReadyRailwayAPI(deployments, expectedSHA) {
+  if (!/^[a-f0-9]{40}$/i.test(expectedSHA)) {
+    throw new PreviewTerminalError("Expected a full 40-character pull request head SHA");
+  }
+
+  const exact = deployments.filter((deployment) => deployment.sha === expectedSHA);
+  if (exact.length === 0) {
+    throw new PreviewPendingError("No Railway deployment matches the exact head SHA yet");
+  }
+
+  const candidates = [];
+  const terminal = [];
+
+  for (const deployment of exact) {
+    for (const status of deployment.statuses ?? []) {
+      const apiURL = railwayPreviewURL(status.environment_url);
+      if (!apiURL) continue;
+
+      if (terminalStates.has(status.state)) {
+        terminal.push({ apiURL, deployment, status });
+      }
+      if (status.state === "success") {
+        candidates.push({ apiURL, deployment, status });
+      }
+    }
+  }
+
+  if (terminal.length > 0 && candidates.length === 0) {
+    const states = [...new Set(terminal.map(({ status }) => status.state))].join(", ");
+    throw new PreviewTerminalError(`Railway PR API deployment reached terminal state: ${states}`);
+  }
+
+  const byURL = new Map();
+  for (const candidate of candidates) {
+    const existing = byURL.get(candidate.apiURL);
+    const candidateTime = Date.parse(candidate.status.created_at ?? 0) || 0;
+    const existingTime = Date.parse(existing?.status.created_at ?? 0) || 0;
+    if (!existing || candidateTime >= existingTime) {
+      byURL.set(candidate.apiURL, candidate);
+    }
+  }
+
+  if (byURL.size === 0) {
+    throw new PreviewPendingError("No ready Railway PR API deployment with an ephemeral URL yet");
+  }
+  if (byURL.size > 1) {
+    throw new PreviewTerminalError("Found multiple Railway PR API URLs for the exact head SHA");
+  }
+
+  const [{ apiURL, deployment }] = byURL.values();
+  return {
+    apiURL,
+    deploymentId: deployment.id,
+    environment: deployment.environment,
+    sha: expectedSHA,
+  };
+}
+
+function parseArgs(argv) {
+  const values = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (!argument.startsWith("--")) {
+      throw new Error(`Unexpected argument: ${argument}`);
+    }
+    const [rawKey, inlineValue] = argument.slice(2).split("=", 2);
+    const value = inlineValue ?? argv[index + 1];
+    if (inlineValue === undefined) index += 1;
+    if (!value || value.startsWith("--")) {
+      throw new Error(`Missing value for --${rawKey}`);
+    }
+    values[rawKey] = value;
+  }
+  return values;
+}
+
+async function githubJSON(url, token) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${token}`,
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (!response.ok) {
+    throw new PreviewTerminalError(`GitHub deployments API returned ${response.status}`);
+  }
+  return response.json();
+}
+
+async function loadDeployments(repo, sha, token) {
+  const deployments = await githubJSON(
+    `https://api.github.com/repos/${repo}/deployments?sha=${sha}&per_page=100`,
+    token,
+  );
+
+  return Promise.all(deployments.map(async (deployment) => ({
+    id: deployment.id,
+    sha: deployment.sha,
+    environment: deployment.environment,
+    statuses: await githubJSON(deployment.statuses_url, token),
+  })));
+}
+
+async function healthIsReady(apiURL) {
+  try {
+    const response = await fetch(`${apiURL}/health`, {
+      headers: { Accept: "application/json" },
+      redirect: "error",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForRailwayPreview({
+  repo,
+  sha,
+  token,
+  timeoutMs = 25 * 60 * 1000,
+  pollMs = 10_000,
+}) {
+  const deadline = Date.now() + timeoutMs;
+  let lastPending = "Railway PR API deployment has not appeared";
+
+  while (Date.now() < deadline) {
+    const deployments = await loadDeployments(repo, sha, token);
+    try {
+      const preview = selectReadyRailwayAPI(deployments, sha);
+      if (await healthIsReady(preview.apiURL)) return preview;
+      lastPending = `Railway PR API health is not ready at ${preview.apiURL}`;
+    } catch (error) {
+      if (error instanceof PreviewTerminalError) throw error;
+      if (!(error instanceof PreviewPendingError)) throw error;
+      lastPending = error.message;
+    }
+
+    console.log(`${lastPending}; polling again`);
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+
+  throw new PreviewTerminalError(`Timed out waiting for Railway preview: ${lastPending}`);
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const repo = args.repo;
+  const sha = args.sha;
+  const token = args.token || process.env.GITHUB_TOKEN;
+  const output = args.output || process.env.GITHUB_OUTPUT;
+  const manifest = args.manifest || "artifacts/preview/railway.json";
+
+  if (!repo || !sha || !token || !output) {
+    throw new Error("--repo, --sha, --token, and --output are required");
+  }
+
+  const preview = await waitForRailwayPreview({ repo, sha, token });
+  await mkdir(path.dirname(manifest), { recursive: true });
+  await writeFile(manifest, `${JSON.stringify(preview, null, 2)}\n`, { mode: 0o600 });
+  await appendFile(output, [
+    `api_url=${preview.apiURL}`,
+    `railway_deployment_id=${preview.deploymentId}`,
+    `railway_environment=${preview.environment}`,
+    "",
+  ].join("\n"));
+  console.log(`Railway preview is ready for ${sha} at ${preview.apiURL}`);
+}
+
+const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : "";
+if (import.meta.url === invokedPath) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}
