@@ -127,6 +127,7 @@ type StoreInboundRequest struct {
 	PeriodEnd            time.Time
 	UTCDate              time.Time
 	CapManagementURL     string
+	AccountingEnabled    bool
 }
 
 type InboundAdmission struct {
@@ -222,6 +223,7 @@ type StoreExposureReservationRequest struct {
 	PeriodStart       time.Time
 	PeriodEnd         time.Time
 	UTCDate           time.Time
+	AccountingEnabled bool
 }
 
 type ExposureReservation struct {
@@ -417,6 +419,14 @@ func (s *Service) ReserveExposure(
 	ctx context.Context,
 	req ExposureReservationRequest,
 ) (ExposureReservation, error) {
+	return s.reserveExposure(ctx, req, true)
+}
+
+func (s *Service) reserveExposure(
+	ctx context.Context,
+	req ExposureReservationRequest,
+	accountingEnabled bool,
+) (ExposureReservation, error) {
 	mode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
 	if err != nil {
 		return ExposureReservation{}, err
@@ -462,6 +472,7 @@ func (s *Service) ReserveExposure(
 		PeriodStart:                period.Start,
 		PeriodEnd:                  period.End,
 		UTCDate:                    time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC),
+		AccountingEnabled:          accountingEnabled,
 	})
 }
 
@@ -537,7 +548,7 @@ func (s *Service) ReconcilePendingExposures(
 }
 
 func (s *Service) AdmitInbound(ctx context.Context, req InboundRequest) (InboundAdmission, error) {
-	return s.admitInbound(ctx, req, nil)
+	return s.admitInbound(ctx, req, nil, true)
 }
 
 func (s *Service) AdmitInboundWithMutation(
@@ -548,13 +559,14 @@ func (s *Service) AdmitInboundWithMutation(
 	if mutation == nil {
 		return s.AdmitInbound(ctx, req)
 	}
-	return s.admitInbound(ctx, req, mutation)
+	return s.admitInbound(ctx, req, mutation, true)
 }
 
 func (s *Service) admitInbound(
 	ctx context.Context,
 	req InboundRequest,
 	mutation InboundMutation,
+	accountingEnabled bool,
 ) (InboundAdmission, error) {
 	appMode, err := xinbox.NormalizePersistedAppMode(req.AppMode)
 	if err != nil {
@@ -629,6 +641,7 @@ func (s *Service) admitInbound(
 		PeriodEnd:            period.End,
 		UTCDate:              utcDate,
 		CapManagementURL:     s.appBaseURL + "/settings/billing#x-inbound-cap",
+		AccountingEnabled:    accountingEnabled,
 	}
 	var admission InboundAdmission
 	if mutation != nil {

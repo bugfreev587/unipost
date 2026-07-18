@@ -15,6 +15,7 @@ import {
   listSocialPostSummaries,
   getInboxMediaContext,
   getAccountCapabilities,
+  getWorkspaceFeatureFlags,
   getXCreditsAllowance,
   getXInboxOutboundOperation,
   type InboxItem,
@@ -681,6 +682,8 @@ function InboxPageInner() {
   const [xSyncState, setXSyncState] = useState<XSyncState>({ kind: "idle" });
   const [xCapabilities, setXCapabilities] = useState<Record<string, XInboxCapabilities>>({});
   const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
+  const [xDMsEnabled, setXDMsEnabled] = useState(false);
+  const [xCreditsEnabled, setXCreditsEnabled] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
   const [replyFeedback, setReplyFeedback] = useState<string | null>(null);
   const [xOutboundOperations, setXOutboundOperations] = useState<XInboxClientOutboundOperation[]>([]);
@@ -712,11 +715,16 @@ function InboxPageInner() {
       setPageError(null);
       const token = await getToken();
       if (!token) return;
-      const [recentItemsRes, unreadRes, socialPostsRes] = await Promise.all([
+      const [recentItemsRes, unreadRes, socialPostsRes, featureFlagsRes] = await Promise.all([
         listInboxItems(token, { limit: INBOX_RECENT_ITEM_LIMIT }),
         getInboxUnreadCount(token),
         listSocialPostSummaries(token),
+        getWorkspaceFeatureFlags(token),
       ]);
+      const nextXDMsEnabled = featureFlagsRes.data.flags.x_dms_v1;
+      const nextXCreditsEnabled = featureFlagsRes.data.flags.x_credits_billing_v1;
+      setXDMsEnabled(nextXDMsEnabled);
+      setXCreditsEnabled(nextXCreditsEnabled);
       const unreadTotal = unreadRes.data.count;
       const unreadFetchLimit = Math.min(
         INBOX_UNREAD_ITEM_LIMIT,
@@ -730,7 +738,10 @@ function InboxPageInner() {
           })
         : null;
       const accountsRes = profileId ? await listSocialAccounts(token, profileId) : null;
-      setItems(mergeInboxItems(recentItemsRes.data || [], unreadItemsRes?.data || []));
+      setItems(
+        mergeInboxItems(recentItemsRes.data || [], unreadItemsRes?.data || [])
+          .filter((item) => nextXDMsEnabled || item.source !== "x_dm"),
+      );
       setUnreadCount(unreadTotal);
       setSocialPosts(socialPostsRes.data || []);
       if (accountsRes?.data) {
@@ -743,7 +754,7 @@ function InboxPageInner() {
               capabilities: (await getAccountCapabilities(token, account.id)).data.x_inbox,
             })),
           ),
-          getXCreditsAllowance(token).catch(() => null),
+          nextXCreditsEnabled ? getXCreditsAllowance(token).catch(() => null) : Promise.resolve(null),
         ]);
         const nextCapabilities: Record<string, XInboxCapabilities> = {};
         for (const result of capabilityResults) {
@@ -752,7 +763,7 @@ function InboxPageInner() {
           }
         }
         setXCapabilities(nextCapabilities);
-        setXCredits(creditsResult?.data || null);
+        setXCredits(nextXCreditsEnabled ? creditsResult?.data || null : null);
       }
     } catch (err) {
       setPageError(err instanceof Error ? err.message : "Failed to load Inbox");
@@ -840,6 +851,7 @@ function InboxPageInner() {
   const { connected: wsConnected } = useInboxWebSocket(
     !!workspaceId,
     (newItem) => {
+      if (!xDMsEnabled && newItem.source === "x_dm") return;
       setItems((prev) => {
         if (prev.some((i) => i.id === newItem.id)) return prev;
         return [...prev, newItem];
@@ -894,8 +906,8 @@ function InboxPageInner() {
   const dmGroups = useMemo(() => [
     ...groupItems(items, "ig_dm"),
     ...groupItems(items, "fb_dm"),
-    ...groupItems(items, "x_dm"),
-  ], [items]);
+    ...(xDMsEnabled ? groupItems(items, "x_dm") : []),
+  ], [items, xDMsEnabled]);
   const threadsGroups = useMemo(() => groupItems(items, "threads_reply").map(enrichGroupTitle), [items, enrichGroupTitle]);
 
   const activeGroups = useMemo(() => {
@@ -1003,7 +1015,7 @@ function InboxPageInner() {
           lookback_days: 7,
           max_items: 20,
           include_replies: true,
-          include_dms: true,
+          include_dms: xDMsEnabled,
           confirmation_token: confirmationToken,
         },
       });
@@ -1122,12 +1134,14 @@ function InboxPageInner() {
         setItems((prev) => prev.some((item) => item.id === result.data.id)
           ? prev
           : [...prev, result.data]);
-        if (isX) {
+        if (isX && xCreditsEnabled) {
           const credits = result.data.x_credits_counted ?? 0;
           const mode = result.data.x_credit_billing_mode === "workspace_x_app"
             ? "Workspace X app; no UniPost X Credits used."
             : `${credits.toLocaleString()} X Credits used.`;
           setReplyFeedback(`Sent on X. ${mode}`);
+        } else if (isX) {
+          setReplyFeedback("Sent on X.");
         }
         setReplyDrafts((prev) =>
           Object.fromEntries(Object.entries(prev).filter(([key]) => key !== targetItem.id && key !== "__dm_bottom__"))
@@ -1675,7 +1689,7 @@ function InboxPageInner() {
           <SyncStateCard
             icon={<ShieldAlert style={{ width: 16, height: 16 }} />}
             title="Reconnect X for Inbox permissions"
-            body={`${xReconnectAccounts.length} X account${xReconnectAccounts.length === 1 ? "" : "s"} can keep publishing, but comments or DMs need the latest X scopes. Reconnect to grant the missing permissions.`}
+            body={`${xReconnectAccounts.length} X account${xReconnectAccounts.length === 1 ? "" : "s"} can keep publishing, but ${xDMsEnabled ? "comments or DMs need" : "comments need"} the latest X scopes. Reconnect to grant the missing permissions.`}
             tone="warn"
             actionHref={profileId ? `/projects/${profileId}/accounts` : undefined}
             actionLabel="Review X connection"
@@ -1695,7 +1709,9 @@ function InboxPageInner() {
           <SyncStateCard
             icon={<AlertTriangle style={{ width: 16, height: 16 }} />}
             title="X Inbox delivery needs attention"
-            body="UniPost could not activate the X stream or DM subscription for at least one account. Review the connection and integration logs before retrying sync."
+            body={xDMsEnabled
+              ? "UniPost could not activate X Inbox delivery for at least one account. Review the connection and integration logs before retrying sync."
+              : "UniPost could not activate the X comments stream for at least one account. Review the connection and integration logs before retrying sync."}
             tone="error"
             actionHref={profileId ? `/projects/${profileId}/logs` : undefined}
             actionLabel="Review logs"
@@ -1725,7 +1741,9 @@ function InboxPageInner() {
           <SyncStateCard
             icon={<PlatformIcon platform="twitter" size={16} />}
             title="Confirm X Inbox sync"
-            body={`This 7-day backfill can use up to ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits across ${xSyncState.result.accounts_checked} account(s). The final charge is based on the server-returned result.`}
+            body={xCreditsEnabled
+              ? `This 7-day backfill can use up to ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits across ${xSyncState.result.accounts_checked} account(s). The final charge is based on the server-returned result.`
+              : `This 7-day X comments backfill will check ${xSyncState.result.accounts_checked} account(s).`}
             tone="warn"
             onAction={() => handleXSync(xSyncState.result.confirmation_token)}
             actionLabel={xSyncing ? "Syncing..." : "Confirm and sync"}
@@ -1743,7 +1761,7 @@ function InboxPageInner() {
           <SyncStateCard
             icon={<CheckCheck style={{ width: 16, height: 16 }} />}
             title="X Inbox sync complete"
-            body={`${(xSyncState.result.accepted ?? 0).toLocaleString()} added, ${(xSyncState.result.duplicates ?? 0).toLocaleString()} duplicates, ${(xSyncState.result.suppressed ?? 0).toLocaleString()} suppressed. Estimated ceiling: ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits.`}
+            body={`${(xSyncState.result.accepted ?? 0).toLocaleString()} added, ${(xSyncState.result.duplicates ?? 0).toLocaleString()} duplicates, ${(xSyncState.result.suppressed ?? 0).toLocaleString()} suppressed.${xCreditsEnabled ? ` Estimated ceiling: ${xSyncState.result.estimated_x_credits.toLocaleString()} X Credits.` : ""}`}
           />
         ) : xSyncState.kind === "error" ? (
           <SyncStateCard

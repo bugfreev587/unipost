@@ -3,11 +3,14 @@ import { ALL_COMPETITORS } from "@/data/competitors";
 import { MONEY_PAGES, SOLUTION_PAGES } from "@/data/seo-growth-pages";
 import { SEO_RESOURCES } from "@/data/seo-resources";
 import { blogPosts, staticBlogPosts } from "@/lib/blog";
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 
 const BASE = "https://unipost.dev";
 
-export default function sitemap(): MetadataRoute.Sitemap {
+export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
 
   const staticRoutes = [
     { path: "", changeFrequency: "weekly", priority: 1 },
@@ -32,7 +35,12 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { path: "/terms", changeFrequency: "yearly", priority: 0.3 },
   ] as const;
 
-  const staticPages: MetadataRoute.Sitemap = staticRoutes.map((route) => ({
+  const availableStaticRoutes = filterDocsNavigation(
+    staticRoutes.map((route) => ({ ...route, href: route.path })),
+    publicFeatureFlags,
+  );
+
+  const staticPages: MetadataRoute.Sitemap = availableStaticRoutes.map((route) => ({
     url: `${BASE}${route.path}`,
     lastModified: now,
     changeFrequency: route.changeFrequency,

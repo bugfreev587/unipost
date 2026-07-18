@@ -33,6 +33,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/emailpolicy"
 	"github.com/xiaoboyu/unipost-api/internal/errortriage"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/handler"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
@@ -201,6 +202,10 @@ func main() {
 	}
 
 	queries := db.New(pool)
+	superAdminChecker := auth.NewSuperAdminChecker(queries)
+	featureFlagStore := featureflags.NewPostgresStore(pool)
+	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
+	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
@@ -417,8 +422,9 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
-	xCreditsService := xcredits.NewPostgresService(pool, queries).
+	baseXCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
+	xCreditsService := xcredits.NewRolloutService(baseXCreditsService, featureFlagEvaluator)
 	managedXWebhookRouteKey := xinbox.WebhookRouteKey(
 		os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET"),
 		os.Getenv("TWITTER_CLIENT_ID"),
@@ -435,6 +441,9 @@ func main() {
 	}
 	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
 		Store: xIngestionStore,
+		DMsAvailable: func(ctx context.Context, workspaceID string) (bool, error) {
+			return featureFlagEvaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
+		},
 		AtomicProcess: func(ctx context.Context, req xinbox.InboundAdmissionRequest, item xinbox.InboxItem) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
 			var insertedItem xinbox.InboxItem
 			var inserted bool
@@ -639,13 +648,13 @@ func main() {
 	apiKeyHandler := handler.NewAPIKeyHandler(queries)
 	cliSetupTokenHandler := handler.NewCLISetupTokenHandler(queries).WithAPIBaseURL(os.Getenv("API_BASE_URL"))
 	webhookSubHandler := handler.NewWebhookSubscriptionHandler(queries)
-	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	socialAccountHandler := handler.NewSocialAccountHandler(queries, encryptor, eventBus, superAdminChecker).
 		SetXTokenRefresher(xTokenRefresher)
 	oauthHandler := handler.NewOAuthHandler(queries, encryptor, superAdminChecker).SetIntegrationLogger(integrationLogger)
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
-		SetXCreditsService(xCreditsService)
+		SetXCreditsService(xCreditsService).
+		SetFeatureFlags(featureFlagEvaluator)
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetHoldReconciler(paidQuotaHoldReconciler).
@@ -655,7 +664,7 @@ func main() {
 	// dynamic GROUP BY clause sqlc can't model.
 	analyticsRollupHandler := handler.NewAnalyticsRollupHandler(pool)
 	analyticsExplorerHandler := handler.NewAnalyticsExplorerHandler(pool)
-	platformHandler := handler.NewPlatformHandler(queries, quotaChecker)
+	platformHandler := handler.NewPlatformHandler(queries, quotaChecker).SetFeatureFlags(featureFlagEvaluator)
 	mediaHandler := handler.NewMediaHandler(queries, storageClient)
 	mediaProcessingAdmitter := mediaprocessing.NewPostgresAdmitter(pool)
 	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient).WithAdmitter(mediaProcessingAdmitter)
@@ -667,7 +676,10 @@ func main() {
 	apiMetricsRecorder := metrics.NewRecorder(queries)
 	landingAttributionHandler := handler.NewLandingAttributionHandler(pool)
 	adminChecker := auth.NewAdminChecker(queries)
-	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker).SetQuotaChecker(quotaChecker).SetLoopsSyncer(loopsSyncer)
+	meHandler := handler.NewMeHandler(queries, adminChecker, superAdminChecker).
+		SetQuotaChecker(quotaChecker).
+		SetFeatureFlags(featureFlagEvaluator).
+		SetLoopsSyncer(loopsSyncer)
 	aiPostAssistHandler := handler.NewAIPostAssistHandler(queries, superAdminChecker).WithAIProviders(aiProviderService)
 	// Sprint 3 PR2: Connect sessions handler. Reuses NEXT_PUBLIC_APP_URL
 	// for the hosted-page origin so the same env var that drives the
@@ -804,6 +816,7 @@ func main() {
 	// target. Both are unauthenticated; oauth_state + the URL session
 	// id are the bearer.
 	r.Get("/v1/public/connect/sessions/{id}/authorize", connectCallbackHandler.Authorize)
+	r.Get("/v1/public/features", featureFlagsHandler.Public)
 	r.Get("/v1/connect/callback/{platform}", connectCallbackHandler.Callback)
 
 	// Sprint 4 PR7: Meta App Review data-deletion callback. No auth —
@@ -913,6 +926,10 @@ func main() {
 			Delete("/v1/admin/ai-provider-routing/{surface}", aiProviderHandler.Unroute)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "AI provider keys are restricted to super admins")).
 			Get("/v1/admin/ai-providers/events", aiProviderHandler.Events)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Feature flags are restricted to super admins")).
+			Get("/v1/admin/feature-flags", featureFlagsHandler.ListAdmin)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Feature flags are restricted to super admins")).
+			Patch("/v1/admin/feature-flags/{key}", featureFlagsHandler.UpdateAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
 			Get("/v1/admin/changelog-candidates/{id}", changelogAutomationHandler.GetAdminCandidate)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
@@ -1197,7 +1214,8 @@ func main() {
 				xIngestionService,
 				xTokenRefresher,
 				[]byte(os.Getenv("X_INBOX_WEBHOOK_ROUTE_SECRET")),
-			)
+			).
+			SetFeatureFlags(featureFlagEvaluator)
 		if value, err := strconv.ParseInt(strings.TrimSpace(os.Getenv("X_INBOX_BACKFILL_SAFE_CREDITS")), 10, 64); err == nil && value > 0 {
 			inboxHandler.SetXBackfillSafeCredits(value)
 		}

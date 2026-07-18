@@ -43,14 +43,16 @@ func (s *PostgresStore) ReserveExposure(
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return ExposureReservation{}, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO x_usage_periods (
-			workspace_id, period_start, period_end, weighted_units_used, weighted_units_limit
-		) VALUES ($1, $2, $3, 0, $4)
-		ON CONFLICT (workspace_id, period_start, period_end)
-		DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
-	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.MonthlyAllowance); err != nil {
-		return ExposureReservation{}, err
+	if req.AccountingEnabled {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO x_usage_periods (
+				workspace_id, period_start, period_end, weighted_units_used, weighted_units_limit
+			) VALUES ($1, $2, $3, 0, $4)
+			ON CONFLICT (workspace_id, period_start, period_end)
+			DO UPDATE SET weighted_units_limit = EXCLUDED.weighted_units_limit, updated_at = NOW()
+		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, req.MonthlyAllowance); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	effectiveDailyLimit := req.InboundDailyLimit
 	err = tx.QueryRow(ctx, `
@@ -73,13 +75,15 @@ func (s *PostgresStore) ReserveExposure(
 		return ExposureReservation{}, err
 	}
 	var monthlyUsed, dailyUsed, dailyLimit int64
-	if err := tx.QueryRow(ctx, `
-		SELECT weighted_units_used
-		FROM x_usage_periods
-		WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
-		FOR UPDATE
-	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(&monthlyUsed); err != nil {
-		return ExposureReservation{}, err
+	if req.AccountingEnabled {
+		if err := tx.QueryRow(ctx, `
+			SELECT weighted_units_used
+			FROM x_usage_periods
+			WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+			FOR UPDATE
+		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd).Scan(&monthlyUsed); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	if err := tx.QueryRow(ctx, `
 		SELECT weighted_units_used, weighted_units_limit
@@ -89,7 +93,10 @@ func (s *PostgresStore) ReserveExposure(
 	`, req.WorkspaceID, req.UTCDate).Scan(&dailyUsed, &dailyLimit); err != nil {
 		return ExposureReservation{}, err
 	}
-	monthlyResources := (req.MonthlyAllowance - monthlyUsed) / req.UnitsPerResource
+	monthlyResources := int64(req.RequestedResources)
+	if req.AccountingEnabled {
+		monthlyResources = (req.MonthlyAllowance - monthlyUsed) / req.UnitsPerResource
+	}
 	safetyBuffer := dailyLimit / 10
 	if safetyBuffer < 20 {
 		safetyBuffer = 20
@@ -113,12 +120,14 @@ func (s *PostgresStore) ReserveExposure(
 		return ExposureReservation{}, ErrInboundDailyCapExceeded
 	}
 	units := resources * req.UnitsPerResource
-	if _, err := tx.Exec(ctx, `
-		UPDATE x_usage_periods
-		SET weighted_units_used = weighted_units_used + $4, updated_at = NOW()
-		WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
-	`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, units); err != nil {
-		return ExposureReservation{}, err
+	if req.AccountingEnabled {
+		if _, err := tx.Exec(ctx, `
+			UPDATE x_usage_periods
+			SET weighted_units_used = weighted_units_used + $4, updated_at = NOW()
+			WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+		`, req.WorkspaceID, req.PeriodStart, req.PeriodEnd, units); err != nil {
+			return ExposureReservation{}, err
+		}
 	}
 	if _, err := tx.Exec(ctx, `
 		UPDATE x_inbound_daily_usage
@@ -137,12 +146,12 @@ func (s *PostgresStore) ReserveExposure(
 		INSERT INTO x_inbox_backfill_exposure_reservations (
 			workspace_id, social_account_id, operation_key, idempotency_key,
 			requested_resources, reserved_units, period_start, period_end, utc_date,
-			reconciliation_deadline, next_attempt_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+			reconciliation_deadline, next_attempt_at, accounting_enabled
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10, $11)
 		RETURNING id
 	`, req.WorkspaceID, req.SocialAccountID, req.OperationKey, req.IdempotencyKey,
 		req.RequestedResources, units, req.PeriodStart, req.PeriodEnd, req.UTCDate,
-		req.Now.Add(30*time.Minute)).Scan(&reservation.ID)
+		req.Now.Add(30*time.Minute), req.AccountingEnabled).Scan(&reservation.ID)
 	if err != nil {
 		return ExposureReservation{}, err
 	}
@@ -263,12 +272,13 @@ func (s *PostgresStore) settleExposure(
 	var periodStart, periodEnd time.Time
 	var utcDate time.Time
 	var reservedUnits int64
+	var accountingEnabled bool
 	err = tx.QueryRow(ctx, `
-		SELECT workspace_id, period_start, period_end, utc_date, reserved_units, status
+		SELECT workspace_id, period_start, period_end, utc_date, reserved_units, status, accounting_enabled
 		FROM x_inbox_backfill_exposure_reservations
 		WHERE id = $1
 		FOR UPDATE
-	`, id).Scan(&workspaceID, &periodStart, &periodEnd, &utcDate, &reservedUnits, &status)
+	`, id).Scan(&workspaceID, &periodStart, &periodEnd, &utcDate, &reservedUnits, &status, &accountingEnabled)
 	if err != nil {
 		return err
 	}
@@ -280,12 +290,14 @@ func (s *PostgresStore) settleExposure(
 	}
 	delta := reservedUnits - actualUnits
 	if delta > 0 {
-		if _, err := tx.Exec(ctx, `
-			UPDATE x_usage_periods
-			SET weighted_units_used = weighted_units_used - $4, updated_at = NOW()
-			WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
-		`, workspaceID, periodStart, periodEnd, delta); err != nil {
-			return err
+		if accountingEnabled {
+			if _, err := tx.Exec(ctx, `
+				UPDATE x_usage_periods
+				SET weighted_units_used = weighted_units_used - $4, updated_at = NOW()
+				WHERE workspace_id = $1 AND period_start = $2 AND period_end = $3
+			`, workspaceID, periodStart, periodEnd, delta); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE x_inbound_daily_usage

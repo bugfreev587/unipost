@@ -112,14 +112,14 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
     title: "Twitter / X",
     brandColor: "#0f172a",
     icon: icons.twitter,
-    tagline: "Short-form publishing, public replies, and legacy direct messages.",
-    lead: "Publish, schedule, and thread posts on X, then receive eligible public replies and legacy DMs in UniPost Inbox.",
+    tagline: "Short-form publishing and eligible public replies, with controlled legacy DM access.",
+    lead: "Publish, schedule, and thread posts on X, receive eligible public replies in UniPost Inbox, and prepare for the controlled legacy DM rollout.",
     badges: ["Publishing", "Scheduling", "Analytics", "Threads", "Inbox", "White-label"],
     summary: {
       publishing: "full",
       scheduling: "full",
       analytics: "full",
-      inbox: "full",
+      inbox: "limited",
       connection: "OAuth — Quickstart and Platform Credentials supported; paid plan required",
     },
     capabilities: [
@@ -131,7 +131,7 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["First comment", yes, "Posted as a reply after publish"],
       ["Scheduling", yes, "Use `scheduled_at`"],
       ["Inbox / public replies", yes, "Eligible replies that summon the connected account"],
-      ["Inbox / legacy DMs", yes, "Requires dm.read and dm.write"],
+      ["Inbox / legacy DMs", partial, "Controlled by x_dms_v1; private real-time subscription delivery is not currently provisioned"],
     ],
     requirements: [
       ["Plan", "Required", "Any paid plan", "Free plans cannot publish to or newly connect X accounts. Existing connections on Free workspaces remain visible (read-only) until the workspace upgrades."],
@@ -181,10 +181,10 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Video views", no, "Not exposed for org accounts today"],
     ],
     inbox: {
-      note: "Start with the unified Inbox overview, then use the endpoint reference for contracts and the X guides for complete workflows.",
+      note: "Public X replies are available independently. Legacy X DMs are a controlled rollout: bounded OAuth 2.0 lookup/send may be enabled per workspace, but private real-time subscription delivery is not currently provisioned.",
       rows: [
         ["Public replies", yes, "Normalized as x_reply when the author summons the connected account"],
-        ["Legacy direct messages", yes, "Normalized as x_dm when dm.read and dm.write are granted"],
+        ["Legacy direct messages", partial, "Normalized as x_dm only when x_dms_v1 is enabled and dm.read/dm.write are granted"],
       ],
       links: [
         { label: "Inbox overview", href: "/docs/api/inbox", description: "Supported sources and normalized Inbox fields." },
@@ -243,8 +243,8 @@ export const PLATFORMS: Record<string, PlatformDoc> = {
       ["Daily safety cap", "20 publishes/day per connected X account (UTC reset). Protects accounts from being flagged for spam — failed posts do not count."],
       ["Paid plan required", "X publishing and new connections require any paid plan ($10/mo and up); the Free plan covers the other 8 platforms."],
       ["Credential choice", "Quickstart uses UniPost's shared X OAuth app; Platform Credentials use your own X app identity and quota"],
-      ["Inbox plan", "X comments and DMs require the Basic plan or higher"],
-      ["Inbox permissions", "Reconnect with tweet.read, tweet.write, users.read, offline.access, dm.read, and dm.write"],
+      ["Inbox plan", "X comments require Basic or higher; X DMs additionally require the controlled rollout"],
+      ["Inbox permissions", "Comments use OAuth 2.0 tweet.read/tweet.write/users.read/offline.access. DM-only missing scopes do not trigger reconnect until X DMs are enabled."],
       ["Inbox app identity", "unipost_managed_app consumes the workspace allowance; workspace_x_app uses the workspace X app and requires all four app credentials"],
       ["Rate limits follow your X tier", "Free X-API tier is not enough for production publish volume"],
     ],

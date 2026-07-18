@@ -119,16 +119,18 @@ type IngestionConfig struct {
 	Store         IngestionStore
 	Admit         func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
 	AtomicProcess func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
+	DMsAvailable  func(context.Context, string) (bool, error)
 	Notify        func(context.Context, string, InboxItem)
 	Now           func() time.Time
 }
 
 type IngestionService struct {
-	store  IngestionStore
-	admit  func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
-	atomic func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
-	notify func(context.Context, string, InboxItem)
-	now    func() time.Time
+	store        IngestionStore
+	admit        func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
+	atomic       func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
+	dmsAvailable func(context.Context, string) (bool, error)
+	notify       func(context.Context, string, InboxItem)
+	now          func() time.Time
 }
 
 func NewIngestionService(config IngestionConfig) *IngestionService {
@@ -137,11 +139,12 @@ func NewIngestionService(config IngestionConfig) *IngestionService {
 		now = time.Now
 	}
 	return &IngestionService{
-		store:  config.Store,
-		admit:  config.Admit,
-		atomic: config.AtomicProcess,
-		notify: config.Notify,
-		now:    now,
+		store:        config.Store,
+		admit:        config.Admit,
+		atomic:       config.AtomicProcess,
+		dmsAvailable: config.DMsAvailable,
+		notify:       config.Notify,
+		now:          now,
 	}
 }
 
@@ -296,6 +299,15 @@ func (s *IngestionService) admitAndInsertResult(
 ) (IngestionResult, error) {
 	if item.ExternalID == "" {
 		return IngestionResult{}, nil
+	}
+	if item.Source == "x_dm" && s.dmsAvailable != nil {
+		available, err := s.dmsAvailable(ctx, account.WorkspaceID)
+		if err != nil {
+			return IngestionResult{}, err
+		}
+		if !available {
+			return IngestionResult{}, nil
+		}
 	}
 	request := InboundAdmissionRequest{
 		WorkspaceID:          account.WorkspaceID,

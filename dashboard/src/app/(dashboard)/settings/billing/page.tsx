@@ -6,6 +6,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import {
   getBilling,
+  getWorkspaceFeatureFlags,
   getXCreditsAllowance,
   updateXInboundDailyCap,
   createCheckout,
@@ -59,6 +60,7 @@ function BillingSettingsContent() {
   const { getToken } = useAuth();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
+  const [xCreditsEnabled, setXCreditsEnabled] = useState(false);
   const [xCreditsLoading, setXCreditsLoading] = useState(true);
   const [xCreditsError, setXCreditsError] = useState<string | null>(null);
   const [xInboundCapDraft, setXInboundCapDraft] = useState("");
@@ -77,27 +79,36 @@ function BillingSettingsContent() {
       setXCreditsLoading(true);
       const token = await getToken();
       if (!token) return;
-      const [billingResult, xCreditsResult] = await Promise.allSettled([
+      const [billingResult, featureFlagsResult] = await Promise.allSettled([
         getBilling(token),
-        getXCreditsAllowance(token),
+        getWorkspaceFeatureFlags(token),
       ]);
       if (billingResult.status === "rejected") {
         throw billingResult.reason;
       }
       setBilling(billingResult.value.data);
-      if (xCreditsResult.status === "fulfilled") {
-        setXCredits(xCreditsResult.value.data);
-        setXInboundCapDraft(
-          xCreditsResult.value.data.inbound_daily_limit == null
-            ? ""
-            : String(xCreditsResult.value.data.inbound_daily_limit),
-        );
+      const enabled =
+        featureFlagsResult.status === "fulfilled" &&
+        featureFlagsResult.value.data.flags.x_credits_billing_v1;
+      setXCreditsEnabled(enabled);
+      if (enabled) {
+        try {
+          const xCreditsResult = await getXCreditsAllowance(token);
+          setXCredits(xCreditsResult.data);
+          setXInboundCapDraft(
+            xCreditsResult.data.inbound_daily_limit == null
+              ? ""
+              : String(xCreditsResult.data.inbound_daily_limit),
+          );
+        } catch (err) {
+          setXCredits(null);
+          setXCreditsError(
+            err instanceof Error ? err.message : "Failed to load X Credits allowance",
+          );
+        }
       } else {
-        setXCreditsError(
-          xCreditsResult.reason instanceof Error
-            ? xCreditsResult.reason.message
-            : "Failed to load X Credits allowance",
-        );
+        setXCredits(null);
+        setXCreditsError(null);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to load billing";
@@ -384,7 +395,7 @@ function BillingSettingsContent() {
         </div>
       )}
 
-      <section
+      {xCreditsEnabled ? <section
         aria-labelledby="x-credits-heading"
         style={{
           marginBottom: 24,
@@ -536,7 +547,7 @@ function BillingSettingsContent() {
           Managed-X work stops at the hard limit. The independent safety cap of 20 X posts per connected account per UTC day still applies.
           Bring-your-own X API connections do not consume this allowance. Comment and DM totals include the live X Inbox rollout.
         </div>
-      </section>
+      </section> : null}
 
       <div style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>

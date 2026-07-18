@@ -1323,6 +1323,29 @@ func TestInboxXUnknownWriteOutcomeReturnsReconciliationState(t *testing.T) {
 	}
 }
 
+type inboxFeatureFlags bool
+
+func (f inboxFeatureFlags) ForWorkspace(context.Context, string, string) (bool, error) {
+	return bool(f), nil
+}
+
+func TestInboxXDMSGateUsesWorkspaceFeatureEvaluation(t *testing.T) {
+	handler := (&InboxHandler{}).SetFeatureFlags(inboxFeatureFlags(false))
+	available, err := handler.xDMsAvailable(context.Background(), "workspace-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if available {
+		t.Fatal("xDMsAvailable = true, want false")
+	}
+
+	recorder := httptest.NewRecorder()
+	handler.writeXDMSUnavailable(recorder)
+	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "FEATURE_NOT_AVAILABLE") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
 func TestInboxXSuccessfulWriteDefersFinalizationToDurableCompletion(t *testing.T) {
 	adapter := &fakeXInboxReplyAdapter{}
 	credits := &fakeXInboxCredits{
