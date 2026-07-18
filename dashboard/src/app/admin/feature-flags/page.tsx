@@ -5,6 +5,14 @@ import { Check, LoaderCircle, ShieldCheck, ToggleLeft, ToggleRight } from "lucid
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   listAdminFeatureFlags,
   updateAdminFeatureFlag,
   type AdminFeatureFlag,
@@ -14,12 +22,19 @@ import { AdminShell } from "../_components/admin-ui";
 
 const FLAG_ORDER = ["x_dms_v1", "x_credits_billing_v1"] as const;
 
+type PendingChange = {
+  flag: AdminFeatureFlag;
+  enabled: boolean;
+};
+
 export default function AdminFeatureFlagsPage() {
   const { getToken } = useAuth();
   const [flags, setFlags] = useState<AdminFeatureFlag[]>([]);
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
+  const [dialogError, setDialogError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -44,20 +59,26 @@ export default function AdminFeatureFlagsPage() {
     void load();
   }, [load]);
 
-  async function setEnabled(flag: AdminFeatureFlag, enabled: boolean) {
-    const audience = enabled ? "available to regular users" : "unavailable to regular users";
-    if (!window.confirm(`Turn ${flag.label} ${enabled ? "ON" : "OFF"}?\n\nIt will be ${audience}.`)) {
-      return;
-    }
+  function requestChange(flag: AdminFeatureFlag, enabled: boolean) {
+    setDialogError(null);
+    setPendingChange({ flag, enabled });
+  }
+
+  async function confirmPendingChange() {
+    if (!pendingChange || savingKey) return;
+
+    const { flag, enabled } = pendingChange;
     setSavingKey(flag.key);
     setError(null);
+    setDialogError(null);
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       const response = await updateAdminFeatureFlag(token, flag.key, enabled);
       setFlags((current) => current.map((item) => (item.key === flag.key ? response.data : item)));
+      setPendingChange(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update feature flag");
+      setDialogError(err instanceof Error ? err.message : "Failed to update feature flag");
     } finally {
       setSavingKey(null);
     }
@@ -109,7 +130,7 @@ export default function AdminFeatureFlagsPage() {
                 <button
                   type="button"
                   className={`aff-toggle ${flag.enabled ? "is-on" : ""}`}
-                  onClick={() => void setEnabled(flag, !flag.enabled)}
+                  onClick={() => requestChange(flag, !flag.enabled)}
                   disabled={saving}
                   aria-label={`${flag.enabled ? "Disable" : "Enable"} ${flag.label}`}
                   aria-pressed={flag.enabled}
@@ -142,6 +163,79 @@ export default function AdminFeatureFlagsPage() {
           );
         })}
       </div>
+
+      <Dialog
+        open={pendingChange !== null}
+        onOpenChange={(open) => {
+          if (!open && !savingKey) {
+            setPendingChange(null);
+            setDialogError(null);
+          }
+        }}
+      >
+        <DialogContent
+          className="aff-dialog"
+          showCloseButton={!savingKey}
+        >
+          {pendingChange ? (
+            <>
+              <DialogHeader>
+                <div className={`aff-dialog-state ${pendingChange.enabled ? "is-on" : ""}`}>
+                  {pendingChange.enabled ? "Turning ON" : "Turning OFF"}
+                </div>
+                <DialogTitle>
+                  Turn {pendingChange.flag.label} {pendingChange.enabled ? "ON" : "OFF"}?
+                </DialogTitle>
+                <DialogDescription>
+                  This changes availability for every regular user in this deployment.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="aff-dialog-impact">
+                <strong>
+                  {pendingChange.enabled
+                    ? "The feature will become available to regular users."
+                    : "The feature will no longer be available to regular users."}
+                </strong>
+                <span>
+                  {pendingChange.enabled
+                    ? "Existing workspace and API behavior will start enforcing this feature immediately."
+                    : "Super Admin-owned workspaces will retain access for acceptance testing."}
+                </span>
+              </div>
+
+              {dialogError ? (
+                <div className="aff-dialog-error" role="alert">{dialogError}</div>
+              ) : null}
+
+              <DialogFooter>
+                <button
+                  type="button"
+                  className="dbtn dbtn-ghost"
+                  onClick={() => {
+                    setPendingChange(null);
+                    setDialogError(null);
+                  }}
+                  disabled={Boolean(savingKey)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="dbtn dbtn-primary aff-dialog-confirm"
+                  onClick={() => void confirmPendingChange()}
+                  disabled={Boolean(savingKey)}
+                >
+                  {savingKey ? <LoaderCircle className="aff-spin" aria-hidden="true" /> : null}
+                  {savingKey
+                    ? "Saving…"
+                    : <>Turn {pendingChange.enabled ? "ON" : "OFF"}</>}
+                </button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </AdminShell>
   );
 }
@@ -231,9 +325,67 @@ const featureFlagsCss = `
   color: var(--dmuted);
 }
 .aff-loading svg, .aff-spin { animation: aff-spin .8s linear infinite; }
+.aff-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-width: 440px;
+  gap: 18px;
+  padding: 22px;
+  border: 1px solid var(--dborder2);
+  border-radius: 14px;
+  background: var(--surface);
+  color: var(--dtext);
+  box-shadow: 0 24px 80px color-mix(in srgb, var(--dtext) 18%, transparent);
+}
+.aff-dialog [data-slot="dialog-header"] { gap: 9px; padding-right: 30px; }
+.aff-dialog [data-slot="dialog-title"] { font-size: 18px; letter-spacing: -0.02em; }
+.aff-dialog [data-slot="dialog-description"] { color: var(--dmuted); line-height: 1.55; }
+.aff-dialog [data-slot="dialog-footer"] {
+  margin: 0 -22px -22px;
+  padding: 14px 22px;
+  border-color: var(--dborder);
+  background: var(--surface2);
+}
+.aff-dialog-state {
+  width: fit-content;
+  padding: 4px 8px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--dborder));
+  border-radius: 999px;
+  color: var(--danger);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.aff-dialog-state.is-on {
+  border-color: color-mix(in srgb, var(--success) 32%, var(--dborder));
+  color: var(--success);
+}
+.aff-dialog-impact {
+  display: grid;
+  gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid var(--dborder);
+  border-radius: 9px;
+  background: var(--surface2);
+}
+.aff-dialog-impact strong { font-size: 13px; line-height: 1.45; }
+.aff-dialog-impact span { color: var(--dmuted); font-size: 12px; line-height: 1.55; }
+.aff-dialog-error {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+  border-radius: 8px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.aff-dialog-confirm { min-width: 94px; }
+.aff-dialog-confirm svg { width: 14px; height: 14px; }
 @keyframes aff-spin { to { transform: rotate(360deg); } }
 @media (max-width: 560px) {
   .aff-card-top { display: grid; }
   .aff-toggle { width: 100%; justify-content: center; }
+  .aff-dialog [data-slot="dialog-footer"] { flex-direction: column-reverse; }
+  .aff-dialog [data-slot="dialog-footer"] button { width: 100%; }
 }
 `;

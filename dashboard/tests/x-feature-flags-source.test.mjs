@@ -16,7 +16,14 @@ test("admin feature flags page is super-admin-only and exposes both rollout swit
   assert.match(page, /x_credits_billing_v1/);
   assert.match(page, /available to regular users/i);
   assert.match(page, /Super Admin-owned workspaces/i);
-  assert.match(page, /window\.confirm/);
+  assert.doesNotMatch(page, /window\.confirm/);
+  assert.match(page, /DialogContent/);
+  assert.match(page, /DialogTitle/);
+  assert.match(page, /DialogDescription/);
+  assert.match(page, /DialogFooter/);
+  assert.match(page, /pendingChange/);
+  assert.match(page, /Cancel/);
+  assert.match(page, /Turn \{pendingChange\.enabled \? "ON" : "OFF"\}/);
 });
 
 test("feature flag clients use the backend authority surfaces", () => {
