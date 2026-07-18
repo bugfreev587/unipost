@@ -96,14 +96,14 @@ jobs:
         run: |
           set -euo pipefail
           echo "vercel-configuration" > artifacts/preview/current-stage
-          mkdir -p dashboard/.vercel
-          node -e 'const fs=require("node:fs"); fs.writeFileSync("dashboard/.vercel/project.json", JSON.stringify({orgId:process.env.VERCEL_ORG_ID,projectId:process.env.VERCEL_PROJECT_ID})+"\\n", {mode:0o600})'
+          mkdir -p .vercel
+          node -e 'const fs=require("node:fs"); fs.writeFileSync(".vercel/project.json", JSON.stringify({orgId:process.env.VERCEL_ORG_ID,projectId:process.env.VERCEL_PROJECT_ID})+"\\n", {mode:0o600})'
           npx --yes vercel@50.26.1 pull \
             --yes \
             --environment=preview \
             --token="$VERCEL_TOKEN" \
             --scope="$VERCEL_TEAM_SLUG" \
-            --cwd dashboard \
+            --cwd . \
             2>&1 | tee artifacts/preview/vercel-pull.log
 
       - name: Write the preview identity manifest
@@ -130,7 +130,7 @@ jobs:
           npx --yes vercel@50.26.1 build \
             --token="$VERCEL_TOKEN" \
             --scope="$VERCEL_TEAM_SLUG" \
-            --cwd dashboard \
+            --cwd . \
             2>&1 | tee artifacts/preview/vercel-build.log
 
       - name: Deploy and alias the Vercel Preview
@@ -145,7 +145,7 @@ jobs:
               --yes \
               --token="$VERCEL_TOKEN" \
               --scope="$VERCEL_TEAM_SLUG" \
-              --cwd dashboard \
+              --cwd . \
               --meta "githubCommitRef=${HEAD_REF}" \
               --meta "githubCommitSha=${HEAD_SHA}" \
               --meta "githubOrg=${GITHUB_REPOSITORY_OWNER}" \

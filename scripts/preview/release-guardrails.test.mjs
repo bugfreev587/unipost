@@ -60,6 +60,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
   assert.match(workflow, /railway-deployments\.mjs/);
+  assert.doesNotMatch(
+    workflow,
+    /--cwd dashboard/,
+    "the Vercel project already has dashboard as its Root Directory",
+  );
   assert.match(workflow, /test:regression:preview/);
   assert.match(workflow, /preview-failure-drill/);
   assert.match(workflow, /if: always\(\)/);
