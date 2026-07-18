@@ -12,7 +12,7 @@ const permanentHosts = new Set([
 ]);
 
 const terminalStates = new Set(["error", "failure"]);
-const railwayTerminalStates = new Set(["CRASHED", "FAILED", "REMOVED"]);
+const railwayTerminalStates = new Set(["CRASHED", "FAILED", "REMOVED", "SKIPPED"]);
 
 export class PreviewPendingError extends Error {
   constructor(message) {
@@ -63,8 +63,7 @@ export function selectRailwayEnvironment(deployments, expectedSHA) {
     for (const status of deployment.statuses ?? []) {
       if (terminalStates.has(status.state)) {
         terminal.push({ deployment, environmentId, status });
-      }
-      if (status.state === "success") {
+      } else {
         candidates.push({ deployment, environmentId, status });
       }
     }
@@ -87,23 +86,24 @@ export function selectRailwayEnvironment(deployments, expectedSHA) {
 
   if (byEnvironment.size === 0) {
     throw new PreviewPendingError(
-      "No successful Railway PR environment deployment with an environmentId yet",
+      "No Railway PR environment deployment with an environmentId yet",
     );
   }
   if (byEnvironment.size > 1) {
     throw new PreviewTerminalError("Found multiple Railway PR environments for the exact head SHA");
   }
 
-  const [{ deployment, environmentId }] = byEnvironment.values();
+  const [{ deployment, environmentId, status }] = byEnvironment.values();
   return {
     environmentId,
     deploymentId: deployment.id,
     environment: deployment.environment,
+    githubState: status.state,
     sha: expectedSHA,
   };
 }
 
-export function selectRailwayPreviewAPI(environment, expectedSHA) {
+export function selectRailwayPreviewService(environment) {
   if (!environment || !/^unipost-pr-\d+$/.test(environment.name ?? "")) {
     throw new PreviewTerminalError("Railway environment is not an ephemeral UniPost PR environment");
   }
@@ -119,7 +119,11 @@ export function selectRailwayPreviewAPI(environment, expectedSHA) {
     throw new PreviewTerminalError("Railway PR environment contains multiple preview-api services");
   }
 
-  const [service] = services;
+  return services[0];
+}
+
+export function selectRailwayPreviewAPI(environment, expectedSHA) {
+  const service = selectRailwayPreviewService(environment);
   const deployment = service.latestDeployment;
   if (!deployment) {
     throw new PreviewPendingError("Railway preview-api deployment has not appeared yet");
@@ -129,7 +133,7 @@ export function selectRailwayPreviewAPI(environment, expectedSHA) {
       `Railway preview-api deployment reached terminal state: ${deployment.status}`,
     );
   }
-  if (deployment.status !== "SUCCESS") {
+  if (!["SUCCESS", "SLEEPING"].includes(deployment.status)) {
     throw new PreviewPendingError(
       `Railway preview-api deployment is ${deployment.status ?? "not ready"}`,
     );
@@ -203,7 +207,7 @@ async function loadDeployments(repo, sha, token) {
   })));
 }
 
-async function loadRailwayEnvironment(environmentId, token) {
+async function railwayGraphQL(query, variables, token) {
   const response = await fetch("https://backboard.railway.com/graphql/v2", {
     method: "POST",
     headers: {
@@ -212,13 +216,32 @@ async function loadRailwayEnvironment(environmentId, token) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      query: `query environment($id: String!) {
+      query,
+      variables,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new PreviewTerminalError(`Railway API returned ${response.status}`);
+  }
+  const payload = await response.json();
+  if (payload.errors?.length) {
+    const message = payload.errors.map(({ message }) => message).join("; ");
+    throw new PreviewTerminalError(`Railway API error: ${message}`);
+  }
+  return payload.data;
+}
+
+async function loadRailwayEnvironment(environmentId, token) {
+  const data = await railwayGraphQL(
+    `query environment($id: String!) {
         environment(id: $id) {
           id
           name
           serviceInstances {
             edges {
               node {
+                serviceId
                 serviceName
                 latestDeployment {
                   id
@@ -235,22 +258,37 @@ async function loadRailwayEnvironment(environmentId, token) {
           }
         }
       }`,
-      variables: { id: environmentId },
-    }),
-  });
-
-  if (!response.ok) {
-    throw new PreviewTerminalError(`Railway API returned ${response.status}`);
-  }
-  const payload = await response.json();
-  if (payload.errors?.length) {
-    const message = payload.errors.map(({ message }) => message).join("; ");
-    throw new PreviewTerminalError(`Railway API error: ${message}`);
-  }
-  if (!payload.data?.environment) {
+    { id: environmentId },
+    token,
+  );
+  if (!data?.environment) {
     throw new PreviewPendingError(`Railway environment ${environmentId} is not queryable yet`);
   }
-  return payload.data.environment;
+  return data.environment;
+}
+
+async function triggerRailwayPreview({
+  projectId,
+  environmentId,
+  serviceId,
+  token,
+}) {
+  const data = await railwayGraphQL(
+    `mutation environmentTriggersDeploy($input: EnvironmentTriggersDeployInput!) {
+      environmentTriggersDeploy(input: $input)
+    }`,
+    {
+      input: {
+        projectId,
+        environmentId,
+        serviceId,
+      },
+    },
+    token,
+  );
+  if (data?.environmentTriggersDeploy !== true) {
+    throw new PreviewTerminalError("Railway API did not accept the preview-api deployment trigger");
+  }
 }
 
 async function healthIsReady(apiURL) {
@@ -268,6 +306,7 @@ async function healthIsReady(apiURL) {
 async function waitForRailwayPreview({
   repo,
   sha,
+  projectId,
   githubToken,
   railwayToken,
   timeoutMs = 25 * 60 * 1000,
@@ -275,6 +314,7 @@ async function waitForRailwayPreview({
 }) {
   const deadline = Date.now() + timeoutMs;
   let lastPending = "Railway PR API deployment has not appeared";
+  let deploymentTriggered = false;
 
   while (Date.now() < deadline) {
     const deployments = await loadDeployments(repo, sha, githubToken);
@@ -284,6 +324,25 @@ async function waitForRailwayPreview({
         githubDeployment.environmentId,
         railwayToken,
       );
+      const service = selectRailwayPreviewService(environment);
+      if (service.latestDeployment?.meta?.commitHash !== sha) {
+        const githubIsRunning = ["in_progress", "pending", "queued"].includes(
+          githubDeployment.githubState,
+        );
+        if (!githubIsRunning && !deploymentTriggered) {
+          await triggerRailwayPreview({
+            projectId,
+            environmentId: environment.id,
+            serviceId: service.serviceId,
+            token: railwayToken,
+          });
+          deploymentTriggered = true;
+          console.log(`Triggered Railway preview-api for exact SHA ${sha}`);
+        }
+        throw new PreviewPendingError(
+          "Railway preview-api deployment does not match the exact head SHA yet",
+        );
+      }
       const railwayPreview = selectRailwayPreviewAPI(environment, sha);
       const preview = { ...githubDeployment, ...railwayPreview };
       if (await healthIsReady(preview.apiURL)) return preview;
@@ -305,20 +364,22 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const repo = args.repo;
   const sha = args.sha;
+  const projectId = args["project-id"] || process.env.RAILWAY_PROJECT_ID;
   const githubToken = args.token || process.env.GITHUB_TOKEN;
   const railwayToken = args["railway-token"] || process.env.RAILWAY_API_TOKEN;
   const output = args.output || process.env.GITHUB_OUTPUT;
   const manifest = args.manifest || "artifacts/preview/railway.json";
 
-  if (!repo || !sha || !githubToken || !railwayToken || !output) {
+  if (!repo || !sha || !projectId || !githubToken || !railwayToken || !output) {
     throw new Error(
-      "--repo, --sha, --token, --railway-token, and --output are required",
+      "--repo, --sha, --project-id, --token, --railway-token, and --output are required",
     );
   }
 
   const preview = await waitForRailwayPreview({
     repo,
     sha,
+    projectId,
     githubToken,
     railwayToken,
   });

@@ -36,7 +36,7 @@ Pull request CI must use `NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY` and loc
 
 Every normal `dev-*` task branch opens a Draft pull request to `dev`. Railway creates an isolated PR Environment from the sanitized `preview-base`, and Vercel builds the exact pull request SHA against that ephemeral API. The required `Preview Acceptance` check verifies the API health, frontend identity manifest, browser-visible API CORS, and public frontend health before the pull request may merge.
 
-Preview Acceptance requires the repository secrets `VERCEL_TOKEN` and `RAILWAY_API_TOKEN`. `RAILWAY_API_TOKEN` must be a dedicated Railway workspace token so the workflow can resolve the ephemeral environment ID from Railway's GitHub Deployment record and read that environment's `preview-api` domain and exact deployed commit. Do not use a production project token or a personal account-wide token.
+Preview Acceptance requires the repository secrets `VERCEL_TOKEN` and `RAILWAY_API_TOKEN`, plus the repository variable `RAILWAY_PROJECT_ID`. `RAILWAY_API_TOKEN` must be a dedicated Railway workspace token so the workflow can resolve the ephemeral environment ID from Railway's GitHub Deployment record, trigger that environment's `preview-api` when Railway skips an unchanged monorepo path, and read its domain and exact deployed commit. Do not use a production project token or a personal account-wide token.
 
 The Railway `preview-base` service `preview-api` must use the repository-wide watch path `**/*`. This intentionally rebuilds the isolated API for every PR head, including frontend-only and documentation-only commits, so Preview Acceptance can prove that both deployed surfaces correspond to the same exact SHA.
 

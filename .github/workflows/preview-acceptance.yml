@@ -40,6 +40,7 @@ jobs:
       VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -61,6 +62,7 @@ jobs:
           test -n "$VERCEL_PROJECT_ID"
           test -n "$VERCEL_TEAM_SLUG"
           test -n "$VERCEL_TOKEN"
+          test -n "$RAILWAY_PROJECT_ID"
           test -n "$RAILWAY_API_TOKEN"
           test "${#HEAD_SHA}" -eq 40
 

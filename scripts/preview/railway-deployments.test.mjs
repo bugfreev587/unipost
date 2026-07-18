@@ -28,6 +28,7 @@ test("resolves the Railway environment ID from the exact successful GitHub deplo
     environmentId: "env-pr-42",
     deploymentId: 41,
     environment: "UniPost / unipost-pr-42",
+    githubState: "success",
     sha,
   });
 });
@@ -90,21 +91,19 @@ test("rejects a terminal Railway environment failure for the exact SHA", () => {
   );
 });
 
-test("keeps an inactive GitHub deployment pending until the exact Railway service is ready", () => {
-  assert.throws(
-    () => selectRailwayEnvironment([
-      {
-        id: 1,
-        sha,
-        environment: "UniPost / unipost-pr-42",
-        payload: { environmentId: "env-pr-42" },
-        statuses: [{ state: "inactive" }],
-      },
-    ], sha),
-    (error) => error instanceof PreviewPendingError && /successful Railway PR environment/.test(
-      error.message,
-    ),
-  );
+test("uses an inactive GitHub deployment to discover the exact PR environment", () => {
+  const result = selectRailwayEnvironment([
+    {
+      id: 1,
+      sha,
+      environment: "UniPost / unipost-pr-42",
+      payload: { environmentId: "env-pr-42" },
+      statuses: [{ state: "inactive" }],
+    },
+  ], sha);
+
+  assert.equal(result.environmentId, "env-pr-42");
+  assert.equal(result.githubState, "inactive");
 });
 
 test("rejects a persistent Railway environment", () => {
@@ -140,4 +139,27 @@ test("rejects a successful preview API built from another SHA", () => {
     }, sha),
     (error) => error instanceof PreviewPendingError && /exact head SHA/.test(error.message),
   );
+});
+
+test("accepts an exact preview API that has gone to sleep", () => {
+  const result = selectRailwayPreviewAPI({
+    id: "env-pr-42",
+    name: "unipost-pr-42",
+    serviceInstances: {
+      edges: [{
+        node: {
+          serviceName: "preview-api",
+          latestDeployment: {
+            status: "SLEEPING",
+            meta: { commitHash: sha },
+          },
+          domains: {
+            serviceDomains: [{ domain: "preview-api-unipost-pr-42.up.railway.app" }],
+          },
+        },
+      }],
+    },
+  }, sha);
+
+  assert.equal(result.apiURL, "https://preview-api-unipost-pr-42.up.railway.app");
 });
