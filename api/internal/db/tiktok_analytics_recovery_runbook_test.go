@@ -29,7 +29,7 @@ func TestTikTokAnalyticsRecoveryRunbook(t *testing.T) {
 		`sp.deleted_at is null`,
 		`on conflict (social_post_result_id) do update`,
 		`set fetched_at = excluded.fetched_at`,
-		`post_analytics.fetched_at < :'deployment_timestamp'::timestamptz`,
+		`post_analytics.fetched_at < :deployment_timestamp::timestamptz`,
 		`'1970-01-01 00:00:00+00'::timestamptz`,
 		`\if :execute`,
 		`\if :execute`,
@@ -45,6 +45,9 @@ func TestTikTokAnalyticsRecoveryRunbook(t *testing.T) {
 	}
 	if strings.Contains(source, "last_refreshed_at") {
 		t.Error("recovery SQL must not use social_accounts.last_refreshed_at")
+	}
+	if strings.Contains(source, `:'deployment_timestamp'`) {
+		t.Error("deployment_timestamp is already passed as a quoted SQL literal and must not be quoted twice")
 	}
 
 	conflictStart := strings.Index(source, "on conflict (social_post_result_id) do update")
