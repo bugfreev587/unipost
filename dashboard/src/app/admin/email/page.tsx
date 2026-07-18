@@ -5,6 +5,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
+  listAdminEmailNotificationFilterOptions,
   listAdminEmailNotifications,
   retryAdminPaidQuotaEmailNotification,
   type AdminEmailNotificationListParams,
@@ -14,6 +15,7 @@ import {
 
 import { AdminShell, StatCard, fmtDate, fmtNumber, fmtRelative } from "../_components/admin-ui";
 import { SearchHistoryInput } from "../_components/search-history-input";
+import { buildAttemptedDateRange } from "./filters";
 
 const STATUS_OPTIONS = [
   "all",
@@ -79,19 +81,50 @@ export default function AdminEmailPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [emailOptions, setEmailOptions] = useState<string[]>([]);
+  const [emailOptionsLoading, setEmailOptionsLoading] = useState(true);
+  const [filterOptionsError, setFilterOptionsError] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [email, setEmail] = useState("all");
   const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]>("all");
   const [provider, setProvider] = useState<(typeof PROVIDER_OPTIONS)[number]>("all");
   const [eventKey, setEventKey] = useState("");
   const [threshold, setThreshold] = useState<(typeof THRESHOLD_OPTIONS)[number]>("all");
   const [period, setPeriod] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [limit, setLimit] = useState<(typeof LIMIT_OPTIONS)[number]>(100);
   const [offset, setOffset] = useState(0);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const range = useMemo(
+    () => buildAttemptedDateRange(startDate, endDate),
+    [endDate, startDate],
+  );
+
+  const loadFilterOptions = useCallback(async () => {
+    setEmailOptionsLoading(true);
+    setFilterOptionsError(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const res = await listAdminEmailNotificationFilterOptions(token);
+      setEmailOptions(res.data.emails);
+    } catch (e) {
+      setFilterOptionsError(
+        e instanceof Error ? e.message : "Failed to load email filter options",
+      );
+    } finally {
+      setEmailOptionsLoading(false);
+    }
+  }, [getToken]);
 
   const loadNotifications = useCallback(async () => {
+    if (range.error) {
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -102,8 +135,11 @@ export default function AdminEmailPage() {
         status,
         provider,
         event_key: eventKey || undefined,
+        email,
         threshold,
         period: period || undefined,
+        start_at: range.start_at,
+        end_at: range.end_at,
         limit,
         offset,
       };
@@ -115,7 +151,11 @@ export default function AdminEmailPage() {
     } finally {
       setLoading(false);
     }
-  }, [eventKey, getToken, limit, offset, period, provider, search, status, threshold]);
+  }, [email, eventKey, getToken, limit, offset, period, provider, range.end_at, range.error, range.start_at, search, status, threshold]);
+
+  const refreshPage = useCallback(async () => {
+    await Promise.all([loadNotifications(), loadFilterOptions()]);
+  }, [loadFilterOptions, loadNotifications]);
 
   const retryNotification = useCallback(async (notificationId: string) => {
     setRetryingId(notificationId);
@@ -137,6 +177,10 @@ export default function AdminEmailPage() {
   }, [loadNotifications]);
 
   useEffect(() => {
+    loadFilterOptions();
+  }, [loadFilterOptions]);
+
+  useEffect(() => {
     const timer = setTimeout(() => {
       setSearch(searchInput);
       setOffset(0);
@@ -146,7 +190,7 @@ export default function AdminEmailPage() {
 
   useEffect(() => {
     setOffset(0);
-  }, [eventKey, limit, period, provider, status, threshold]);
+  }, [email, endDate, eventKey, limit, period, provider, startDate, status, threshold]);
 
   const visibleRange = useMemo(() => {
     if (rows.length === 0) return "0";
@@ -161,11 +205,16 @@ export default function AdminEmailPage() {
   const canPageForward = offset + rows.length < total;
 
   return (
-    <AdminShell title="Email" loading={loading} onRefresh={loadNotifications}>
+    <AdminShell title="Email" loading={loading} onRefresh={refreshPage}>
       <style>{emailCss}</style>
       {error && (
         <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
           {error}
+        </div>
+      )}
+      {filterOptionsError && (
+        <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
+          Email filter options: {filterOptionsError}
         </div>
       )}
 
@@ -184,6 +233,63 @@ export default function AdminEmailPage() {
         </div>
       </div>
 
+      <div className="ae-primary-filters">
+        <label className="ae-filter-field ae-email-filter">
+          <span>Email</span>
+          <select
+            value={email}
+            disabled={emailOptionsLoading}
+            aria-label="Filter by recipient email"
+            aria-busy={emailOptionsLoading}
+            onChange={(event) => setEmail(event.target.value)}
+          >
+            <option value="all">All emails</option>
+            {emailOptions.map((option) => (
+              <option key={option.toLowerCase()} value={option}>
+                {option}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="ae-filter-field ae-status-filter">
+          <span>Status</span>
+          <select
+            value={status}
+            aria-label="Filter by status"
+            onChange={(event) => setStatus(event.target.value as typeof status)}
+          >
+            {STATUS_OPTIONS.map((value) => (
+              <option key={value} value={value}>
+                {value === "all" ? "All statuses" : value}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="ae-filter-field ae-date-filter">
+          <span>Attempted from</span>
+          <input
+            type="date"
+            value={startDate}
+            aria-label="Attempted from"
+            onChange={(event) => setStartDate(event.target.value)}
+          />
+        </label>
+        <label className="ae-filter-field ae-date-filter">
+          <span>Attempted through</span>
+          <input
+            type="date"
+            value={endDate}
+            aria-label="Attempted through"
+            onChange={(event) => setEndDate(event.target.value)}
+          />
+        </label>
+      </div>
+      {range.error ? (
+        <div className="ae-range-error" role="alert">
+          {range.error}
+        </div>
+      ) : null}
+
       <div className="ad-filter-bar" style={{ marginBottom: 16 }}>
         <SearchHistoryInput
           fieldKey="admin.email.search"
@@ -193,13 +299,6 @@ export default function AdminEmailPage() {
           onChange={setSearchInput}
           style={{ width: 320 }}
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
-          {STATUS_OPTIONS.map((value) => (
-            <option key={value} value={value}>
-              {value === "all" ? "All statuses" : `Status: ${value}`}
-            </option>
-          ))}
-        </select>
         <select value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
           {PROVIDER_OPTIONS.map((value) => (
             <option key={value} value={value}>
@@ -416,6 +515,63 @@ export default function AdminEmailPage() {
 }
 
 const emailCss = `
+.ae-primary-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.ae-filter-field {
+  display: grid;
+  gap: 5px;
+}
+.ae-filter-field > span {
+  color: var(--dmuted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.ae-filter-field select,
+.ae-filter-field input {
+  min-height: 31px;
+  background: var(--surface2);
+  border: 1px solid var(--dborder2);
+  border-radius: 6px;
+  color: var(--dtext);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  padding: 5px 10px;
+}
+.ae-filter-field select {
+  cursor: pointer;
+}
+.ae-filter-field select:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.ae-filter-field select:focus,
+.ae-filter-field input:focus {
+  border-color: color-mix(in srgb, var(--primary) 32%, transparent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+.ae-email-filter {
+  flex: 1 1 280px;
+  max-width: 400px;
+}
+.ae-status-filter {
+  width: 190px;
+}
+.ae-date-filter {
+  width: 158px;
+}
+.ae-range-error {
+  margin: -2px 0 12px;
+  color: var(--danger);
+  font-size: 11.5px;
+}
 .ae-period-actions {
   display: flex;
   align-items: center;
@@ -469,6 +625,16 @@ const emailCss = `
   font-size: 12px;
 }
 @media (max-width: 720px) {
+  .ae-primary-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .ae-email-filter,
+  .ae-status-filter,
+  .ae-date-filter {
+    width: 100%;
+    max-width: none;
+  }
   .ae-period-actions {
     width: 100%;
     justify-content: flex-start;

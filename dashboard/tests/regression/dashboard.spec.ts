@@ -200,6 +200,21 @@ test.describe("admin email notifications", () => {
     expect(filterSource).toContain("buildAttemptedDateRange");
     expect(filterSource).toContain("endExclusive.setDate(endExclusive.getDate() + 1)");
   });
+
+  test("renders complete recipient and attempted-date controls", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/admin/email/page.tsx"), "utf8");
+
+    expect(pageSource).toContain("listAdminEmailNotificationFilterOptions");
+    expect(pageSource).toContain("buildAttemptedDateRange");
+    expect(pageSource).toContain("All emails");
+    expect(pageSource).toContain('aria-label="Filter by recipient email"');
+    expect(pageSource).toContain('aria-label="Attempted from"');
+    expect(pageSource).toContain('aria-label="Attempted through"');
+    expect(pageSource).toContain('type="date"');
+    expect(pageSource).toContain("range.error");
+    expect(pageSource).toContain("setOffset(0)");
+    expect(pageSource).toContain("loadFilterOptions");
+  });
 });
 
 test.describe("authenticated dashboard smoke", () => {
