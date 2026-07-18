@@ -49,6 +49,15 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
   await page.goto("/docs", { waitUntil: "domcontentloaded" });
   await expect(page.locator("article").first()).toContainText(/UniPost|API/);
 
+  const dashboardOrigin = new URL(dashboardBaseURL).origin;
+  const corsProbe = await page.request.get(`${manifest.apiURL}/health`, {
+    headers: { Origin: dashboardOrigin },
+  });
+  expect(corsProbe.ok()).toBeTruthy();
+  expect(corsProbe.headers()["access-control-allow-origin"]).toBe(
+    dashboardOrigin,
+  );
+
   const health = await page.evaluate(async (apiURL) => {
     const response = await fetch(`${apiURL}/health`, {
       credentials: "include",
@@ -57,14 +66,12 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
     return {
       ok: response.ok,
       status: response.status,
-      allowedOrigin: response.headers.get("access-control-allow-origin"),
     };
   }, manifest.apiURL);
 
   expect(health).toEqual({
     ok: true,
     status: 200,
-    allowedOrigin: new URL(dashboardBaseURL).origin,
   });
   expect(serverErrors).toEqual([]);
 });
