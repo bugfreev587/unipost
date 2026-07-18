@@ -2,7 +2,7 @@ import type { MetadataRoute } from "next";
 import { ALL_COMPETITORS } from "@/data/competitors";
 import { MONEY_PAGES, SOLUTION_PAGES } from "@/data/seo-growth-pages";
 import { SEO_RESOURCES } from "@/data/seo-resources";
-import { staticBlogPosts } from "@/lib/blog";
+import { blogPosts, staticBlogPosts } from "@/lib/blog";
 import { filterDocsNavigation } from "@/lib/docs-feature-flags";
 import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 
@@ -80,9 +80,14 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     priority: path === "/tools" ? 0.7 : 0.6,
   }));
 
-  const blogPages: MetadataRoute.Sitemap = staticBlogPosts.map((post) => ({
-    url: `${BASE}/blog/${post.slug}`,
-    lastModified: new Date(post.updatedAt),
+  const blogSlugs = new Set(staticBlogPosts.map((post) => post.slug));
+  for (const post of blogPosts) {
+    blogSlugs.add(post.slug);
+  }
+
+  const blogPages: MetadataRoute.Sitemap = Array.from(blogSlugs).map((slug) => ({
+    url: `${BASE}/blog/${slug}`,
+    lastModified: now,
     changeFrequency: "monthly" as const,
     priority: 0.6,
   }));
