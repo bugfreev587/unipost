@@ -384,7 +384,10 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 
 	targetStatus := xinbox.DeliveryStatusPending
 	commentsDesired := account.AccountActive && account.PlanAllowsInbox && hasXInboxScopes(account.Scopes, "tweet.read", "tweet.write", "users.read")
-	dmsDesired := commentsDesired && hasXInboxScopes(account.Scopes, "dm.read", "dm.write")
+	// OAuth 2.0 private Activity subscriptions currently fail at X with 403.
+	// Keep comments on Filtered Stream, clean up any legacy DM subscription,
+	// and do not provision a replacement until the integration is production-ready.
+	dmsDesired := false
 	appBearerToken, webhookRouteKey, consumerSecretConfigured, appTokenErr := w.resolveAccountAppToken(account)
 	app := XInboxAppStream{
 		Identity:                 safeAppIdentity(webhookRouteKey),
@@ -453,19 +456,6 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			return app, streamDesired(), true, err
 		}
 	}
-	if dmsDesired &&
-		state.ActivityDMSubscriptionID != "" &&
-		state.ActivityWebhookRouteKey != account.WebhookRouteKey {
-		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
-			return fail(err)
-		}
-		state.ActivityDMSubscriptionID = ""
-		state.ActivityWebhookRouteKey = ""
-		if err := w.store.SaveState(ctx, state); err != nil {
-			return app, streamDesired(), true, err
-		}
-	}
-
 	if commentsDesired && state.FilteredStreamRuleID == "" {
 		if account.Handle == "" {
 			return fail(errors.New("connected X account has no handle"))
@@ -479,35 +469,6 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			return app, streamDesired(), true, err
 		}
 	}
-	if dmsDesired && state.ActivityDMSubscriptionID == "" {
-		if w.webhookURL == "" {
-			return fail(errors.New("X_INBOX_WEBHOOK_URL is not configured"))
-		}
-		appWebhookURL, err := xinbox.AppWebhookURL(w.webhookURL, account.WebhookRouteKey)
-		if err != nil {
-			return fail(err)
-		}
-		webhook, err := w.api.EnsureWebhook(ctx, appBearerToken, appWebhookURL)
-		if err != nil {
-			return fail(err)
-		}
-		subscription, err := w.api.EnsureDMSubscription(
-			ctx,
-			appBearerToken,
-			account.SocialAccountID,
-			account.ExternalAccountID,
-			webhook.ID,
-		)
-		if err != nil {
-			return fail(err)
-		}
-		state.ActivityDMSubscriptionID = subscription.ID
-		state.ActivityWebhookRouteKey = account.WebhookRouteKey
-		if err := w.store.SaveState(ctx, state); err != nil {
-			return app, streamDesired(), true, err
-		}
-	}
-
 	if commentsDesired || dmsDesired {
 		state.DeliveryStatus = xinbox.DeliveryStatusActive
 	} else {

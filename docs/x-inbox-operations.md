@@ -1,6 +1,14 @@
 # X Inbox operations runbook
 
-This runbook covers X reply and DM ingestion, delivery resources, inbound-credit controls, manual backfill, and upstream cleanup in the development environment. Do not use it to promote changes to staging or production.
+This runbook covers X reply and DM ingestion, delivery resources, inbound-cost controls, manual backfill, and upstream cleanup. Use the matching environment domain and X application; never validate one environment against another.
+
+## Current rollout state
+
+- `x_dms_v1` is OFF by default. Regular workspaces cannot list, sync, or send X DMs. Super Admin-owned workspaces retain controlled OAuth 2.0 manual testing.
+- Private X Activity subscription provisioning is disabled. The verified OAuth 2.0 user-token subscription request returns 403, and this release does not add OAuth 1.0a.
+- X comments/replies continue through the persistent Filtered Stream path and are not blocked by the DM flag.
+- `x_credits_billing_v1` is OFF by default. Customer monthly X Credits accounting is bypassed, but the inbound cost-safety counter and 20 X publishes/account/day cap remain active.
+- Do not turn either flag ON until its real staging and production acceptance criteria are explicitly approved.
 
 ## Ownership and escalation
 
@@ -18,7 +26,7 @@ The X billing owner must confirm the active X subscription, account-level spendi
 
 Escalate immediately when any of these conditions persists through two reconciliation intervals:
 
-- filtered-stream or Activity subscription capacity is at or above 95%;
+- filtered-stream capacity is at or above 95%, or a future approved Activity subscription path approaches its capacity;
 - an accepted write remains in `needs_reconciliation`;
 - provisional usage, notification claims, or cleanup leases are stale;
 - a source remains paused after its cap/allowance/plan condition is resolved;
@@ -40,12 +48,12 @@ The development API/worker deployment requires the following variables. Values b
 | `TWITTER_CLIENT_ID` | Managed X OAuth application client ID |
 | `TWITTER_CLIENT_SECRET` | Managed X OAuth application client secret |
 | `TWITTER_BEARER_TOKEN` | Managed app bearer for filtered-stream/resource management |
-| `TWITTER_CONSUMER_SECRET` | Managed X Activity webhook signature secret |
+| `TWITTER_CONSUMER_SECRET` | Reserved for an approved X Activity webhook signature path; not used to provision DM subscriptions in the current rollout |
 | `X_INBOX_WEBHOOK_ROUTE_SECRET` | Stable, independent webhook route-key secret |
 | `X_INBOX_WEBHOOK_URL` | Absolute HTTPS base URL for the development X webhook |
 | `X_INBOX_BACKFILL_SAFE_CREDITS` | Safety reserve retained during estimated backfill admission |
 | `X_INBOX_MANAGED_FILTERED_STREAM_RULE_CAPACITY` | Managed developer-app rule capacity used for 70/85/95 alerts |
-| `X_INBOX_MANAGED_ACTIVITY_SUBSCRIPTION_CAPACITY` | Managed developer-app Activity capacity used for 70/85/95 alerts |
+| `X_INBOX_MANAGED_ACTIVITY_SUBSCRIPTION_CAPACITY` | Future approved Activity capacity; does not authorize provisioning while the OAuth 2.0 path is disabled |
 | `X_INBOX_WORKSPACE_APP_CAPACITIES_JSON` | Per-workspace-app capacities keyed by the opaque `workspace_<16 hex>` scope emitted by reconciliation |
 
 Workspace X applications additionally require their own OAuth client, consumer secret, and app bearer through the encrypted workspace-credential flow. They must not inherit managed-app credentials. Capacity is never aggregated across X applications: managed resources use the managed limits, while each workspace application and resource type has a separate opaque scope and configured limit. The JSON capacity value has the shape `{"workspace_<opaque>":{"filtered_stream_rules":25,"activity_subscriptions":10}}`; never use a raw X client ID as its key. Missing capacity emits `app_capacity_input_missing` and blocks the promotion gate.
@@ -53,7 +61,7 @@ Workspace X applications additionally require their own OAuth client, consumer s
 Before deployment:
 
 1. Confirm the callback and webhook URLs are development URLs only.
-2. Confirm the X application has the OAuth scopes required for post reads/writes, offline access, and DMs.
+2. Confirm the X application has the OAuth 2.0 scopes required for post reads/writes, offline access, and controlled DM lookup/send testing.
 3. Confirm the X API subscription, spend limit, and resource capacities with `<X_BILLING_OWNER>`.
 4. Run migrations through migration 116 and verify the delivery, receipt, notification, durable-operation, exposure-reservation, cleanup-intent tables, current-state partial indexes, and completed-day evidence indexes exist.
 5. Redeploy the API, then verify one `x_inbox_operations_snapshot` event arrives without customer identifiers or content.
@@ -79,7 +87,7 @@ Recommended alerts:
 | `suppressed_daily_cap_events` / `suppressed_allowance_events` | unexpected increase | Confirm cap, allowance, plan, and notification delivery |
 | notification claims minus enqueued | positive for two intervals | Inspect notification outbox worker and retry lease |
 | pause or restore-pending age | above 10 minutes | Run source pause/restore procedure |
-| `stale_delivery_resources` | greater than zero | Reconcile stream rule and Activity subscription state |
+| `stale_delivery_resources` | greater than zero | Reconcile the comments stream rule; remove stale DM subscription intent without creating a replacement |
 | cleanup overdue/stale lease | greater than zero | Run disconnect/deletion cleanup procedure |
 | outbound outcome-unknown / needs-reconciliation | greater than zero | Do not resend; reconcile the durable write, including BYO writes with no usage event |
 | confirmation or exposure stale/reconciliation state | greater than zero | Inspect lease/recovery state before starting another paid read |
@@ -88,11 +96,11 @@ Recommended alerts:
 ## Capacity and delivery-resource reconciliation
 
 1. Check the latest aggregate snapshot. Do not add counts across developer applications unless their configured capacities are also combined on the same basis.
-2. In the X developer console, confirm the actual rule/subscription counts and current plan limits with the application owner.
-3. Compare X state with `x_inbox_delivery_resources`: filtered-stream rules cover X replies/mentions and Activity subscriptions cover DMs.
+2. In the X developer console, confirm the actual Filtered Stream rule count and current plan limits with the application owner. Do not create a DM subscription manually as a substitute for production automation.
+3. Compare X state with `x_inbox_delivery_resources`: active filtered-stream rules may cover X replies/mentions; current DM Activity resources should be absent or pending cleanup.
 4. Treat an `active` resource with no recent `last_synced_at`, or an old `pending`/`error` resource, as stale. Let the delivery worker reconcile once before manual intervention.
 5. At 85%, identify unused/disconnected resources and verify their durable cleanup intents. At 95%, stop provisioning managed resources and escalate.
-6. Never delete an upstream rule or subscription based only on a label. Match the stable UniPost tag/application identity and the exact stored upstream resource ID.
+6. Never delete an upstream rule or stale subscription based only on a label. Match the stable UniPost tag/application identity and the exact stored upstream resource ID.
 
 Live resources and durable cleanup intents are de-duplicated by exact upstream resource ID inside each app scope. A missing workspace credential falls back to an isolated opaque account scope; it must never be merged into another workspace application's count.
 
@@ -127,7 +135,7 @@ To restore a source, first resolve the causal condition: wait for UTC reset, inc
 
 ## Manual backfill confirmation
 
-Manual X backfill is a paid read and requires an estimate/confirmation operation.
+Manual X backfill is a paid read and requires an estimate/confirmation operation. X DM backfill additionally requires an evaluated `x_dms_v1=true`, which currently means a Super Admin-owned workspace while the global flag is OFF.
 
 1. Request an estimate for the exact selected account set and requested source.
 2. Present the estimated X credits and expiration to the authorized operator.

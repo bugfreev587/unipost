@@ -5,6 +5,25 @@ import (
 	"testing"
 )
 
+func boolPointer(value bool) *bool { return &value }
+
+func TestXInboxCapabilityFlagOffKeepsCommentsWithoutDMReconnect(t *testing.T) {
+	got := EvaluateCapabilities(CapabilityInput{
+		PlanAllowsInbox: true,
+		DMsAvailable:    boolPointer(false),
+		AccountStatus:   "active",
+		Scopes:          []string{"tweet.read", "tweet.write", "users.read", "offline.access"},
+		AppMode:         AppModeUniPostManaged,
+	})
+
+	if !got.CommentsEnabled || got.DMsEnabled {
+		t.Fatalf("capabilities = %+v, want comments only", got)
+	}
+	if got.ReconnectRequired || len(got.MissingScopes) != 0 {
+		t.Fatalf("capabilities = %+v, want no DM reconnect prompt while rollout is off", got)
+	}
+}
+
 func TestXInboxCapabilityKeepsPublishingAndCommentsWhenDMScopesAreMissing(t *testing.T) {
 	got := EvaluateCapabilities(CapabilityInput{
 		PlanAllowsInbox: true,

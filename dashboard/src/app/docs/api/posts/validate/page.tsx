@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePublicDocsFeatureFlags } from "@/lib/use-public-docs-feature-flags";
 import { ApiInlineLink, type ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -378,6 +379,8 @@ const RESPONSE_SNIPPETS = [
 ];
 
 export default function ValidatePage() {
+  const publicFeatureFlags = usePublicDocsFeatureFlags();
+
   return (
     <SingleEndpointReferencePage
       section="publishing"
@@ -412,15 +415,17 @@ export default function ValidatePage() {
           the recommended <code>platform_posts[]</code> shape expects flat destination options.
         </p>
       </section>
-      <section className="api-field-section">
-        <h2 className="api-field-section-title">X Credits Preflight</h2>
-        <p>
-          Validation does not consume X Credits. Use this endpoint to catch request and platform constraints before
-          calling <Link href="/docs/api/posts/create">POST /v1/posts</Link>, then inspect the live allowance with{" "}
-          <Link href="/docs/api/x-credits">GET /v1/billing/x-credits</Link>. Managed X publishes consume the allowance;
-          bring-your-own X API connections do not.
-        </p>
-      </section>
+      {publicFeatureFlags.x_credits_billing_v1 ? (
+        <section className="api-field-section">
+          <h2 className="api-field-section-title">X Credits Preflight</h2>
+          <p>
+            Validation does not consume X Credits. Use this endpoint to catch request and platform constraints before
+            calling <Link href="/docs/api/posts/create">POST /v1/posts</Link>, then inspect the live allowance with{" "}
+            <Link href="/docs/api/x-credits">GET /v1/billing/x-credits</Link>. Managed X publishes consume the allowance;
+            bring-your-own X API connections do not.
+          </p>
+        </section>
+      ) : null}
       <section className="api-field-section">
         <h2 className="api-field-section-title">Platform Options Shape</h2>
         <p>

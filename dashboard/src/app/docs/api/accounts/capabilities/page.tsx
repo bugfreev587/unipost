@@ -1,5 +1,7 @@
 "use client";
 
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { usePublicDocsFeatureFlags } from "@/lib/use-public-docs-feature-flags";
 import type { ApiFieldItem } from "../../_components/doc-components";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 
@@ -22,8 +24,8 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
   { name: "capability.scheduling", type: "object", description: "Whether UniPost can schedule posts for this platform." },
   { name: "capability.first_comment", type: "object", description: "Whether first comments are supported and any extra limits." },
   { name: "x_inbox.comments_enabled", type: "boolean", description: "Whether this X account can receive and answer eligible public replies." },
-  { name: "x_inbox.dms_enabled", type: "boolean", description: "Whether this X account can receive and send legacy direct messages." },
-  { name: "x_inbox.missing_scopes", type: "string[]", description: "Permissions that require OAuth reconnect, including dm.read or dm.write." },
+  { name: "x_inbox.dms_enabled", type: "boolean", description: "Whether the workspace rollout and account scopes permit bounded legacy X DM lookup/send. Private real-time subscription delivery is not currently provisioned." },
+  { name: "x_inbox.missing_scopes", type: "string[]", description: "Permissions that require OAuth reconnect for currently available features. DM-only missing scopes are excluded while X DMs are unavailable." },
   { name: "x_inbox.reconnect_required", type: "boolean", description: "Whether the account must repeat X OAuth." },
   { name: "x_inbox.delivery_status", type: "string", description: "pending, active, paused_cap, paused_allowance, paused_plan, or error." },
   { name: "x_inbox.app_mode", type: "string", description: "unipost_managed_app, workspace_x_app, or legacy_unknown." },
@@ -152,6 +154,41 @@ const RESPONSE_SNIPPETS = [
 ];
 
 export default function AccountCapabilitiesPage() {
+  const publicFeatureFlags = usePublicDocsFeatureFlags();
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const responseFields = RESPONSE_200_FIELDS.filter((field) => (
+    xDMsEnabled
+    || !["x_inbox.dms_enabled", "x_inbox.missing_scopes"].includes(field.name)
+  ));
+  const responseSnippets = xDMsEnabled
+    ? RESPONSE_SNIPPETS
+    : [
+        {
+          lang: "json",
+          label: "200",
+          code: `{
+  "data": {
+    "schema_version": "1.7",
+    "account_id": "sa_x_123",
+    "platform": "twitter",
+    "x_inbox": {
+      "comments_enabled": true,
+      "reconnect_required": false,
+      "delivery_status": "active",
+      "app_mode": "unipost_managed_app",
+      "missing_app_credentials": []
+    }
+  }
+}`,
+        },
+        RESPONSE_SNIPPETS[1],
+      ];
+  const guideLinks = filterDocsNavigation([
+    { label: "Reconnect X Inbox permissions", href: "/docs/guides/x/reconnect-permissions" },
+    { label: "Receive X comments", href: "/docs/guides/x/comments" },
+    { label: "Receive X direct messages", href: "/docs/guides/x/direct-messages" },
+  ], publicFeatureFlags);
+
   return (
     <SingleEndpointReferencePage
       section="accounts"
@@ -164,18 +201,14 @@ export default function AccountCapabilitiesPage() {
         { title: "Path Params", items: PATH_FIELDS },
       ]}
       responses={[
-        { code: "200", fields: RESPONSE_200_FIELDS },
+        { code: "200", fields: responseFields },
         { code: "401", fields: ERROR_FIELDS },
         { code: "404", fields: ERROR_FIELDS },
         { code: "500", fields: ERROR_FIELDS },
       ]}
       snippets={SNIPPETS}
-      responseSnippets={RESPONSE_SNIPPETS}
-      guideLinks={[
-        { label: "Reconnect X Inbox permissions", href: "/docs/guides/x/reconnect-permissions" },
-        { label: "Receive X comments", href: "/docs/guides/x/comments" },
-        { label: "Receive X direct messages", href: "/docs/guides/x/direct-messages" },
-      ]}
+      responseSnippets={responseSnippets}
+      guideLinks={guideLinks}
     />
   );
 }

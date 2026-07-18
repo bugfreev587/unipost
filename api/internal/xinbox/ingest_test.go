@@ -138,6 +138,40 @@ func TestXIngestDMSuppressionNeverPersistsPrivateBody(t *testing.T) {
 	}
 }
 
+func TestXIngestDMFeatureOffNeverAdmitsOrPersistsPrivateBody(t *testing.T) {
+	store := &fakeIngestStore{
+		accounts: map[string]InboxAccount{
+			"client-1:account-1": {
+				ID: "account-1", WorkspaceID: "workspace-1",
+				ExternalUserID: "owner-1", AppMode: AppModeUniPostManaged,
+				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			},
+		},
+		insertedNew: true,
+	}
+	admitted := false
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		DMsAvailable: func(context.Context, string) (bool, error) {
+			return false, nil
+		},
+		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+			admitted = true
+			return InboundAdmission{Accepted: true}, nil
+		},
+	})
+	err := service.IngestActivityEvent(context.Background(), "client-1", ActivityEvent{
+		AccountID: "account-1", ExternalID: "dm-flag-off", ConversationID: "private-thread",
+		SenderID: "sender-1", RecipientID: "owner-1", Text: "must not persist",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if admitted || len(store.inserted) != 0 {
+		t.Fatalf("admitted=%v inserted=%#v, want DM dropped before admission", admitted, store.inserted)
+	}
+}
+
 func TestXIngestDMUsesCanonicalConversationIDAndDeduplicates(t *testing.T) {
 	store := &fakeIngestStore{
 		accounts: map[string]InboxAccount{

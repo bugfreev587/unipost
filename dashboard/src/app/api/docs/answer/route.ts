@@ -2,9 +2,12 @@ import { generateText, gateway, type GatewayModelId } from "ai";
 import { NextResponse } from "next/server";
 import {
   buildGroundedDocsAnswer,
+  DOCS_AI_INDEX,
   searchDocsIndex,
   type GroundedDocsAnswer,
 } from "@/lib/docs-ai-search-index";
+import { filterDocsSearchChunks } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 
 export const runtime = "nodejs";
 
@@ -152,7 +155,11 @@ export async function POST(request: Request) {
     return badRequest(`query must be ${MAX_QUERY_LENGTH} characters or fewer.`);
   }
 
-  const search = searchDocsIndex(query, { limit: 5 });
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const search = searchDocsIndex(query, {
+    limit: 5,
+    chunks: filterDocsSearchChunks(DOCS_AI_INDEX, publicFeatureFlags),
+  });
   const groundedAnswer = buildGroundedDocsAnswer(query, search);
 
   if (groundedAnswer.confidence === "none") {

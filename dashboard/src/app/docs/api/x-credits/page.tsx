@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import {
   ApiReferencePage,
@@ -11,6 +9,7 @@ import {
   type ParamRow,
 } from "../_components/doc-components";
 import { X_CREDIT_OPERATIONS, X_CREDITS_CATALOG_VERSION } from "@/data/x-credits-catalog.generated";
+import { requirePublicDocsFeature } from "@/lib/public-feature-flags-server";
 
 const RESPONSE_FIELDS: ParamRow[] = [
   { name: "mode", type: "string", required: true, description: 'Always "monthly_allowance" in the bounded-usage phase.' },
@@ -43,13 +42,15 @@ const RESPONSE_EXAMPLE = `{
   "request_id": "req_123"
 }`;
 
-export default function XCreditsReferencePage() {
+export default async function XCreditsReferencePage() {
+  const publicFeatureFlags = await requirePublicDocsFeature("x_credits_billing_v1");
+
   return (
     <ApiReferencePage
       breadcrumbItems={[{ label: "API Reference", href: "/docs/api" }, { label: "X Credits" }]}
       section="api"
       title="X Credits"
-      description="Inspect the workspace's included managed-X allowance, current weighted usage, remaining capacity, billing-period reset, and inbound safety limit."
+      description="Inspect the workspace's included managed-X allowance after X Credits billing is enabled. The endpoint is unavailable during the controlled rollout for regular workspaces."
     >
       <EndpointHeader
         method="GET"
@@ -60,6 +61,12 @@ export default function XCreditsReferencePage() {
 
       <div style={{ display: "grid", gap: 34 }}>
         <DocSection id="request" title="Request">
+          <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
+            X Credits billing is controlled by <code>x_credits_billing_v1</code>. Until it is enabled for the workspace,
+            managed X calls do not count against or block on the customer monthly balance and this endpoint returns
+            <code> FEATURE_NOT_AVAILABLE</code>. The 20 X publishes/account/day limit and internal inbound safety cap
+            remain active.
+          </p>
           <CodeTabs
             snippets={[
               {
@@ -120,6 +127,7 @@ export default function XCreditsReferencePage() {
           <ErrorTable
             errors={[
               { code: "unauthorized", http: 401, description: "The request is missing valid workspace authentication." },
+              { code: "feature_not_available", http: 403, description: "X Credits billing is not enabled for this workspace yet." },
               { code: "x_monthly_usage_limit_exceeded", http: 402, description: "The managed-X hard limit has been reached for this billing period. Wait for reset or upgrade/contact UniPost." },
               { code: "internal_error", http: 500, description: "The allowance snapshot could not be loaded. Retry and include request_id if contacting support." },
             ]}
@@ -129,8 +137,9 @@ export default function XCreditsReferencePage() {
         <DocSection id="next" title="Next steps">
           <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
             Use the <Link href="/docs/guides/x/credits">X Credits guide</Link> to estimate operations and handle
-            exhaustion. Continue with <Link href="/docs/guides/x/comments">X comments</Link> or{" "}
-            <Link href="/docs/guides/x/direct-messages">X direct messages</Link>. Compare included plan capacity in{" "}
+            exhaustion. Continue with <Link href="/docs/guides/x/comments">X comments</Link>
+            {publicFeatureFlags.x_dms_v1 ? <> or <Link href="/docs/guides/x/direct-messages">X direct messages</Link></> : null}.
+            Compare included plan capacity in{" "}
             <Link href="/docs/pricing">Plans and limits</Link>.
           </p>
         </DocSection>

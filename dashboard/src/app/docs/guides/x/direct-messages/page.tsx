@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requirePublicDocsFeature } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
 
 const LIST = `# GET /v1/inbox
@@ -24,21 +25,36 @@ curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
 {"x_backfill":{"account_id":"sa_x_01","lookback_days":30,"max_items":50,"include_replies":false,"include_dms":true,"confirmation_token":"$CONFIRMATION_TOKEN"}}
 JSON`;
 
-export default function XDirectMessagesGuidePage() {
+export default async function XDirectMessagesGuidePage() {
+  const publicFeatureFlags = await requirePublicDocsFeature("x_dms_v1");
+
   return (
     <DocsPage
       eyebrow="X Guides"
       title="Receive and reply to X direct messages"
-      lead="Use UniPost Inbox for legacy X direct-message events, private threads, bounded history sync, and idempotent replies."
+      lead="Prepare for the controlled X DM rollout, then use UniPost Inbox for legacy direct-message lookup, private threads, bounded history sync, and idempotent replies when the workspace is enabled."
       className="docs-page-guide-redesign"
     >
       <div className="docs-guide-badges">
         <span className="docs-guide-badge">Basic plan or higher</span>
+        <span className="docs-guide-badge">Controlled availability</span>
         <span className="docs-guide-badge">Legacy DM API</span>
         <span className="docs-guide-badge">Private content</span>
       </div>
 
-      <h2 id="prerequisites">1. Confirm DM access</h2>
+      <h2 id="availability">Availability</h2>
+      <p>
+        X DMs are currently controlled by the UniPost <code>x_dms_v1</code> rollout. When it is unavailable for the
+        workspace, <code>source=x_dm</code>, DM-only sync, and DM replies return
+        <code> FEATURE_NOT_AVAILABLE</code>. X comments and ordinary X publishing continue to work.
+      </p>
+      <p>
+        UniPost uses OAuth 2.0 for bounded DM lookup and send. Private real-time X Activity subscription provisioning
+        is disabled because the verified OAuth 2.0 user-token subscription path returns 403. No OAuth 1.0a or second
+        authorization is required by the current release.
+      </p>
+
+      <h2 id="prerequisites">1. Confirm DM access after enablement</h2>
       <p>
         Read <Link href="/docs/api/accounts/capabilities">account capabilities</Link> and require
         <code> x_inbox.dms_enabled</code>. The connected X account needs <code>dm.read</code>, <code>dm.write</code>,
@@ -80,6 +96,7 @@ export default function XDirectMessagesGuidePage() {
 
       <h2 id="limits">5. Branch on stable conditions</h2>
       <ul className="docs-checklist">
+        <li><code>feature_not_available</code>: the workspace is not included in the controlled X DM rollout.</li>
         <li><code>plan_feature_not_available</code>: Inbox requires the Basic plan or higher.</li>
         <li><code>x_monthly_usage_limit_exceeded</code>: stop managed-X work until allowance becomes available.</li>
         <li><code>x_inbound_daily_cap_exceeded</code>: new inbound DMs are suppressed at the UTC-day safety boundary.</li>
@@ -87,13 +104,14 @@ export default function XDirectMessagesGuidePage() {
         <li><code>x_write_outcome_pending</code>: reuse the original idempotency key; never blindly resend.</li>
       </ul>
 
-      <h2 id="related">Related Inbox and X Credits docs</h2>
+      <h2 id="related">Related Inbox docs</h2>
       <p>
         Start from the <Link href="/docs/api/inbox">Inbox API overview</Link>. For public conversations, use the{" "}
         <Link href="/docs/guides/x/comments">X comments guide</Link>. Diagnose missing access with the{" "}
-        <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>. Inspect live allowance fields in the{" "}
-        <Link href="/docs/api/x-credits">X Credits API reference</Link> and plan the operation mix with the{" "}
-        <Link href="/docs/guides/x/credits">X Credits guide</Link>.
+        <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>.
+        {publicFeatureFlags.x_credits_billing_v1 ? <> Inspect live allowance fields in the{" "}
+          <Link href="/docs/api/x-credits">X Credits API reference</Link> and plan the operation mix with the{" "}
+          <Link href="/docs/guides/x/credits">X Credits guide</Link>.</> : null}
       </p>
     </DocsPage>
   );
