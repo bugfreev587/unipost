@@ -38,7 +38,7 @@ Every normal `dev-*` task branch opens a Draft pull request to `dev`. Railway cr
 
 Preview Acceptance requires the repository secrets `VERCEL_TOKEN` and `RAILWAY_API_TOKEN`. `RAILWAY_API_TOKEN` must be a dedicated Railway workspace token so the workflow can resolve the ephemeral environment ID from Railway's GitHub Deployment record and read that environment's `preview-api` domain and exact deployed commit. Do not use a production project token or a personal account-wide token.
 
-The Railway `preview-base` service `preview-api` must use the repository-wide watch path `/**`. This intentionally rebuilds the isolated API for every PR head, including frontend-only and documentation-only commits, so Preview Acceptance can prove that both deployed surfaces correspond to the same exact SHA.
+The Railway `preview-base` service `preview-api` must use the repository-wide watch path `**/*`. This intentionally rebuilds the isolated API for every PR head, including frontend-only and documentation-only commits, so Preview Acceptance can prove that both deployed surfaces correspond to the same exact SHA.
 
 Any failed, errored, timed-out, cancelled, skipped, missing, unable-to-start, or SHA-mismatched required result is a hard stop. The failure report must include the environment, branch, SHA, workflow, job, suite, test case, exact message and relevant log excerpt, run URL, artifact URLs, and whether any deployment or promotion already occurred.
 
