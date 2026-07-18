@@ -488,6 +488,21 @@ func TestAdminEmailNotificationsResponseExposesPreferencePolicy(t *testing.T) {
 	}
 }
 
+func TestAdminEmailNotificationFilterOptionsUseCompleteDistinctRecipientSet(t *testing.T) {
+	sql := adminEmailNotificationFilterOptionsSQL()
+
+	for _, want := range []string{
+		"email_notifications AS",
+		"SELECT DISTINCT ON (LOWER(email)) email",
+		"WHERE BTRIM(email) <> ''",
+		"ORDER BY LOWER(email), email",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin email filter options SQL missing %q:\n%s", want, sql)
+		}
+	}
+}
+
 func TestNormalizeAdminEmailNotificationStatusAllowsSkipped(t *testing.T) {
 	got, ok := normalizeAdminEmailNotificationStatus("skipped")
 	if !ok || got != "skipped" {
@@ -504,6 +519,7 @@ func TestAdminEmailNotificationsRouteIsRegistered(t *testing.T) {
 		t.Fatalf("admin email notifications route is not registered")
 	}
 	for _, route := range []string{
+		`r.Get("/v1/admin/email-notifications/filter-options", adminHandler.ListEmailNotificationFilterOptions)`,
 		`r.Post("/v1/admin/email-notifications/{id}/retry", adminHandler.RetryPaidQuotaEmailNotification)`,
 		`r.Get("/v1/admin/paid-quota-follow-ups", adminHandler.ListPaidQuotaFollowUps)`,
 		`r.Patch("/v1/admin/paid-quota-follow-ups/{id}", adminHandler.UpdatePaidQuotaFollowUp)`,

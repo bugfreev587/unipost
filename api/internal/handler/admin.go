@@ -1438,6 +1438,18 @@ func adminEmailNotificationsBaseSelect() string {
 ORDER BY attempted_at DESC, created_at DESC`
 }
 
+func adminEmailNotificationFilterOptionsSQL() string {
+	return adminEmailNotificationsCTESQL + `
+SELECT email
+FROM (
+  SELECT DISTINCT ON (LOWER(email)) email
+  FROM email_notifications
+  WHERE BTRIM(email) <> ''
+  ORDER BY LOWER(email), email
+) distinct_emails
+ORDER BY LOWER(email), email`
+}
+
 func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
 	status := strings.TrimSpace(strings.ToLower(raw))
 	switch status {
@@ -2780,6 +2792,27 @@ LIMIT $10 OFFSET $11`, append(args, limit, offset)...)
 	return out, total, nil
 }
 
+func (h *AdminHandler) queryEmailNotificationFilterOptions(ctx context.Context) ([]string, error) {
+	rows, err := h.pool.Query(ctx, adminEmailNotificationFilterOptionsSQL())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	emails := make([]string, 0)
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		emails = append(emails, email)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return emails, nil
+}
+
 // ListEmailNotifications serves GET /v1/admin/email-notifications.
 // It is the read-only operational view for user-facing email sends and
 // migration audit rows across Loops, quota, support, and legacy
@@ -2830,6 +2863,17 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 	}
 
 	writeSuccessWithListMeta(w, out, int(total), limit)
+}
+
+// ListEmailNotificationFilterOptions serves
+// GET /v1/admin/email-notifications/filter-options.
+func (h *AdminHandler) ListEmailNotificationFilterOptions(w http.ResponseWriter, r *http.Request) {
+	emails, err := h.queryEmailNotificationFilterOptions(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email notification filter options: "+err.Error())
+		return
+	}
+	writeSuccess(w, map[string]any{"emails": emails})
 }
 
 func (h *AdminHandler) RetryPaidQuotaEmailNotification(w http.ResponseWriter, r *http.Request) {
