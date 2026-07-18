@@ -80,11 +80,16 @@ export async function cleanupPreviewAliases({
       `https://api.vercel.com/v2/aliases/${encodeURIComponent(alias)}`,
     );
     endpoint.searchParams.set("teamId", teamId);
+    const response = await fetchImpl(endpoint, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 404) {
+      console.log(`Vercel alias ${alias} was already absent`);
+      continue;
+    }
     await checkedJSON(
-      await fetchImpl(endpoint, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      }),
+      response,
       `Deleting Vercel alias ${alias}`,
     );
     console.log(`Deleted Vercel alias ${alias}`);

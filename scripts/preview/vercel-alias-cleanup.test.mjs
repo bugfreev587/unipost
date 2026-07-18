@@ -73,3 +73,33 @@ test("lists and deletes only aliases owned by the pull request", async () => {
   assert.equal(requests[1].method, "DELETE");
   assert.equal(requests[1].authorization, "Bearer token");
 });
+
+test("treats an already-missing alias as successfully cleaned", async () => {
+  const fetchImpl = async (_url, options = {}) => {
+    if ((options.method ?? "GET") === "GET") {
+      return new Response(
+        JSON.stringify({
+          aliases: [
+            { alias: "unipost-dev-pr-215-12345-1.vercel.app" },
+          ],
+          pagination: {},
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(
+      JSON.stringify({ error: { message: "Alias not found" } }),
+      { status: 404, statusText: "Not Found" },
+    );
+  };
+
+  await assert.doesNotReject(
+    cleanupPreviewAliases({
+      pullRequestNumber: "215",
+      projectId: "project-id",
+      teamId: "team-id",
+      token: "token",
+      fetchImpl,
+    }),
+  );
+});
