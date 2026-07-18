@@ -886,8 +886,27 @@ func (a *TikTokAdapter) CheckPublishStatus(ctx context.Context, accessToken stri
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok publish status: read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("tiktok publish status returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
 	var result map[string]any
-	json.NewDecoder(resp.Body).Decode(&result)
+	decoder := json.NewDecoder(bytes.NewReader(respBody))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, fmt.Errorf("tiktok publish status: decode: %w", err)
+	}
+	if errObj, ok := result["error"].(map[string]any); ok {
+		code, _ := errObj["code"].(string)
+		if code != "" && code != "ok" {
+			message, _ := errObj["message"].(string)
+			return nil, fmt.Errorf("tiktok publish status: %s: %s", code, message)
+		}
+	}
 	return result, nil
 }
 
@@ -1028,9 +1047,9 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 		return &PostMetrics{}, nil
 	}
 
-	videoID := tiktokExtractPublicPostID(data)
-	if videoID == "" {
-		return nil, fmt.Errorf("tiktok analytics: no public post ID in publish status response")
+	videoID, err := tiktokExtractPublicPostID(data)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok analytics: public post ID: %w", err)
 	}
 
 	// Step 2: query the video for stats.
@@ -1111,7 +1130,7 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 // response. TikTok's field name is "publicaly_available_post_id" (their typo);
 // we also check spellings they might fix it to. Values can come back as
 // numbers or strings depending on API version.
-func tiktokExtractPublicPostID(data map[string]any) string {
+func tiktokExtractPublicPostID(data map[string]any) (string, error) {
 	for _, key := range []string{
 		"publicaly_available_post_id",  // TikTok's current (typo'd) spelling
 		"publically_available_post_id", // possible future fix
@@ -1121,16 +1140,26 @@ func tiktokExtractPublicPostID(data map[string]any) string {
 		if !ok || len(arr) == 0 {
 			continue
 		}
+		var id string
 		switch v := arr[0].(type) {
 		case string:
-			if v != "" {
-				return v
-			}
-		case float64:
-			return fmt.Sprintf("%.0f", v)
+			id = v
+		case json.Number:
+			id = v.String()
+		default:
+			return "", fmt.Errorf("%s has unsupported value type %T", key, arr[0])
 		}
+		if id == "" {
+			return "", fmt.Errorf("%s is empty", key)
+		}
+		for _, digit := range id {
+			if digit < '0' || digit > '9' {
+				return "", fmt.Errorf("%s %q is not an unsigned base-10 integer", key, id)
+			}
+		}
+		return id, nil
 	}
-	return ""
+	return "", fmt.Errorf("no public post ID in publish status response")
 }
 
 func TikTokPublicPostURL(postID string) string {
@@ -1157,7 +1186,11 @@ func TikTokPublicPostURLFromStatusData(data map[string]any) string {
 	if data == nil {
 		return ""
 	}
-	return TikTokPublicPostURL(tiktokExtractPublicPostID(data))
+	postID, err := tiktokExtractPublicPostID(data)
+	if err != nil {
+		return ""
+	}
+	return TikTokPublicPostURL(postID)
 }
 
 func (a *TikTokAdapter) ResolvePostOrProfileURL(ctx context.Context, accessToken string, status map[string]any) string {
