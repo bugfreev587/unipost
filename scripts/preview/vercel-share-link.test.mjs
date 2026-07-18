@@ -40,6 +40,22 @@ test("accepts Vercel short share URLs and rejects unsafe responses", () => {
   );
 });
 
+test("builds an alias-scoped URL from Vercel's raw share token response", () => {
+  const expectedHost = "unipost-dev-pr-215-12345-1.vercel.app";
+  assert.equal(
+    extractShareableURL(
+      { value: "temporary_share-token.123456" },
+      expectedHost,
+    ),
+    `https://${expectedHost}/?_vercel_share=temporary_share-token.123456`,
+  );
+
+  assert.throws(
+    () => extractShareableURL({ value: "unsafe token" }, expectedHost),
+    /valid Vercel shareable URL/,
+  );
+});
+
 test("creates a one-day shareable link for the isolated alias", async () => {
   let request;
   const host = "unipost-dev-pr-215-12345-1.vercel.app";
@@ -55,9 +71,7 @@ test("creates a one-day shareable link for the isolated alias", async () => {
         body: JSON.parse(options.body),
       };
       return new Response(
-        JSON.stringify({
-          protectionBypassUrl: `https://${host}/?_vercel_share=temporary-token`,
-        }),
+        JSON.stringify("temporary_share-token.123456"),
         { status: 200 },
       );
     },
@@ -65,7 +79,7 @@ test("creates a one-day shareable link for the isolated alias", async () => {
 
   assert.equal(
     url,
-    `https://${host}/?_vercel_share=temporary-token`,
+    `https://${host}/?_vercel_share=temporary_share-token.123456`,
   );
   assert.match(
     request.endpoint,

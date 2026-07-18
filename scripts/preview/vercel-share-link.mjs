@@ -20,7 +20,14 @@ export function extractShareableURL(payload, expectedHost) {
   try {
     url = new URL(candidate);
   } catch {
-    throw new Error("Vercel did not return a valid Vercel shareable URL");
+    if (
+      typeof candidate !== "string" ||
+      !/^[A-Za-z0-9._~-]{16,512}$/.test(candidate)
+    ) {
+      throw new Error("Vercel did not return a valid Vercel shareable URL");
+    }
+    url = new URL(`https://${expectedHost}/`);
+    url.searchParams.set("_vercel_share", candidate);
   }
 
   const isAliasShare =
