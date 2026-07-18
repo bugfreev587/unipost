@@ -2996,10 +2996,17 @@ export interface AdminEmailNotificationListParams {
   status?: "all" | AdminEmailNotificationStatus;
   provider?: "all" | string;
   event_key?: string;
+  email?: "all" | string;
   threshold?: "all" | 80 | 85 | 90 | 95 | 100 | 105 | 110 | 115 | 120;
   period?: string;
+  start_at?: string;
+  end_at?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface AdminEmailNotificationFilterOptions {
+  emails: string[];
 }
 
 export interface AdminPaidQuotaFollowUpRow {
@@ -3750,12 +3757,21 @@ export async function listAdminEmailNotifications(
   if (params?.status && params.status !== "all") qs.set("status", params.status);
   if (params?.provider && params.provider !== "all") qs.set("provider", params.provider);
   if (params?.event_key) qs.set("event_key", params.event_key);
+  if (params?.email && params.email !== "all") qs.set("email", params.email);
   if (params?.threshold && params.threshold !== "all") qs.set("threshold", String(params.threshold));
   if (params?.period) qs.set("period", params.period);
+  if (params?.start_at) qs.set("start_at", params.start_at);
+  if (params?.end_at) qs.set("end_at", params.end_at);
   if (params?.limit != null) qs.set("limit", String(params.limit));
   if (params?.offset != null) qs.set("offset", String(params.offset));
   const s = qs.toString();
   return request(`/v1/admin/email-notifications${s ? `?${s}` : ""}`, token);
+}
+
+export async function listAdminEmailNotificationFilterOptions(
+  token: string,
+): Promise<ApiResponse<AdminEmailNotificationFilterOptions>> {
+  return request("/v1/admin/email-notifications/filter-options", token);
 }
 
 export async function retryAdminPaidQuotaEmailNotification(

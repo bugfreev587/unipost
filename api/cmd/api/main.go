@@ -900,6 +900,7 @@ func main() {
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
 		r.Get("/v1/admin/email-notifications", adminHandler.ListEmailNotifications)
+		r.Get("/v1/admin/email-notifications/filter-options", adminHandler.ListEmailNotificationFilterOptions)
 		r.Post("/v1/admin/email-notifications/{id}/retry", adminHandler.RetryPaidQuotaEmailNotification)
 		r.Get("/v1/admin/paid-quota-follow-ups", adminHandler.ListPaidQuotaFollowUps)
 		r.Patch("/v1/admin/paid-quota-follow-ups/{id}", adminHandler.UpdatePaidQuotaFollowUp)
