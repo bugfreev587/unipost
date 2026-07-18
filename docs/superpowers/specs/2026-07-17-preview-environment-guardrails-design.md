@@ -70,7 +70,7 @@ The ephemeral environment must deploy the pull request head SHA. The API service
 
 The preview environment uses isolated Postgres and Redis services. It must never point to the persistent development, staging, or production databases or queues.
 
-`preview-base` is configuration-only infrastructure, not a shared feature-validation target. Its API, MCP, and worker replicas remain at zero. PR Environments inherit its sanitized variables and create the task-specific runtime. This avoids the unsafe interval that would occur if a PR environment copied live development credentials and only sanitized them after services had already started.
+`preview-base` is configuration infrastructure, not a shared feature-validation target. Its sanitized API keeps one sleep-enabled replica so Railway PR Environments inherit a deployable web service; MCP and worker replicas remain at zero. PR Environments inherit its sanitized variables and create the task-specific runtime. This avoids the unsafe interval that would occur if a PR environment copied live development credentials and only sanitized them after services had already started.
 
 ### Vercel frontend
 
@@ -209,7 +209,6 @@ The Railway MCP source branches must be corrected to match their environments. P
 
 GitHub Actions will require:
 
-- `RAILWAY_API_TOKEN`, scoped narrowly enough to create, inspect, and remove PR environments;
 - `VERCEL_TOKEN`;
 - `VERCEL_ORG_ID`;
 - `VERCEL_PROJECT_ID` for `unipost-dev`;
@@ -221,7 +220,7 @@ Secret values must never be committed, printed, included in artifacts, or copied
 ## Cleanup and cost controls
 
 - Railway PR environments are deleted when a PR closes or merges.
-- A scheduled cleanup audit detects orphaned `pr-*` environments whose pull request is closed.
+- Codex verifies that Railway removes the task PR Environment when the pull request closes or merges.
 - Vercel preview retention follows project policy; branch previews cease updating after branch deletion.
 - Focused PR Environments are enabled only after verifying that API, worker, database, and Redis dependencies are neither omitted nor unnecessarily replicated.
 - Preview workers remain disabled by default to avoid duplicate background processing and third-party side effects.
