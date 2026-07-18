@@ -416,6 +416,54 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 	}
 }
 
+func TestAdminEmailNotificationsSQLFiltersRecipientAndAttemptedRange(t *testing.T) {
+	sql := adminEmailNotificationsWhereSQL
+
+	for _, want := range []string{
+		"LOWER(email) = LOWER($7)",
+		"attempted_at >= $8",
+		"attempted_at < $9",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("admin email notifications filter missing %q:\n%s", want, sql)
+		}
+	}
+}
+
+func TestParseAdminEmailNotificationRange(t *testing.T) {
+	start, end, err := parseAdminEmailNotificationRange(
+		"2026-07-01T07:00:00Z",
+		"2026-07-03T07:00:00Z",
+	)
+	if err != nil || start == nil || end == nil {
+		t.Fatalf("valid range = %v/%v/%v", start, end, err)
+	}
+
+	start, end, err = parseAdminEmailNotificationRange("", "2026-07-03T07:00:00Z")
+	if err != nil || start != nil || end == nil {
+		t.Fatalf("end-only range = %v/%v/%v", start, end, err)
+	}
+
+	if _, _, err := parseAdminEmailNotificationRange("bad", ""); err == nil {
+		t.Fatal("malformed start_at should fail")
+	}
+	if _, _, err := parseAdminEmailNotificationRange("", "bad"); err == nil {
+		t.Fatal("malformed end_at should fail")
+	}
+	if _, _, err := parseAdminEmailNotificationRange(
+		"2026-07-03T07:00:00Z",
+		"2026-07-03T07:00:00Z",
+	); err == nil {
+		t.Fatal("zero-length range should fail")
+	}
+	if _, _, err := parseAdminEmailNotificationRange(
+		"2026-07-04T07:00:00Z",
+		"2026-07-03T07:00:00Z",
+	); err == nil {
+		t.Fatal("reversed range should fail")
+	}
+}
+
 func TestAdminEmailNotificationsResponseExposesPreferencePolicy(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {
