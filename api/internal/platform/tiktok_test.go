@@ -3,6 +3,7 @@ package platform
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -370,6 +371,239 @@ func TestTikTokPublicPostURLFromStatusDataMissingID(t *testing.T) {
 	}
 	if got := TikTokPublicPostURLFromStatusData(data); got != "" {
 		t.Fatalf("url = %q, want empty", got)
+	}
+}
+
+func TestTikTokGetAnalyticsPreservesNumericPublicVideoID(t *testing.T) {
+	const exactID = "7663542984343883021"
+	transport := &tiktokAnalyticsTransport{
+		statusBody: `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":[7663542984343883021]},"error":{"code":"ok"}}`,
+		videoBody:  `{"data":{"videos":[{"id":"7663542984343883021","view_count":283,"like_count":6,"comment_count":2,"share_count":1}]},"error":{"code":"ok"}}`,
+	}
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: transport}
+
+	got, err := adapter.GetAnalytics(context.Background(), "token", "publish_1")
+	if err != nil {
+		t.Fatalf("GetAnalytics: %v", err)
+	}
+	if transport.queriedVideoID != exactID {
+		t.Fatalf("queried video id = %q, want %q", transport.queriedVideoID, exactID)
+	}
+	if got.VideoViews != 283 || got.Views != 283 || got.Likes != 6 || got.Comments != 2 || got.Shares != 1 {
+		t.Fatalf("metrics = %#v", got)
+	}
+	if got.PlatformSpecific["tiktok_video_id"] != exactID {
+		t.Fatalf("platform_specific = %#v, want exact video id", got.PlatformSpecific)
+	}
+}
+
+func TestTikTokExtractPublicPostID(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		key   string
+		value any
+		want  string
+	}{
+		{name: "string", key: "publicaly_available_post_id", value: "7663542984343883021", want: "7663542984343883021"},
+		{name: "json number", key: "publicaly_available_post_id", value: json.Number("7663542984343883021"), want: "7663542984343883021"},
+		{name: "alternate spelling", key: "publically_available_post_id", value: "7663542984343883022", want: "7663542984343883022"},
+		{name: "correct spelling", key: "publicly_available_post_id", value: "7663542984343883023", want: "7663542984343883023"},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tiktokExtractPublicPostID(map[string]any{tc.key: []any{tc.value}})
+			if err != nil {
+				t.Fatalf("tiktokExtractPublicPostID: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("id = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTikTokExtractPublicPostIDRejectsInexactOrMalformedValues(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name string
+		data map[string]any
+	}{
+		{name: "float64", data: map[string]any{"publicaly_available_post_id": []any{float64(7663542984343883021)}}},
+		{name: "signed", data: map[string]any{"publicaly_available_post_id": []any{json.Number("-7663542984343883021")}}},
+		{name: "decimal", data: map[string]any{"publicaly_available_post_id": []any{json.Number("7663542984343883021.0")}}},
+		{name: "empty string", data: map[string]any{"publicaly_available_post_id": []any{""}}},
+		{name: "empty array", data: map[string]any{"publicaly_available_post_id": []any{}}},
+		{name: "missing field", data: map[string]any{"status": "PUBLISH_COMPLETE"}},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got, err := tiktokExtractPublicPostID(tc.data); err == nil {
+				t.Fatalf("id = %q, want error", got)
+			}
+		})
+	}
+}
+
+func TestTikTokCheckPublishStatusRejectsInvalidResponses(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		statusCode int
+		body       string
+	}{
+		{name: "malformed json", statusCode: http.StatusOK, body: `{"data":`},
+		{name: "non 200", statusCode: http.StatusBadGateway, body: `{"error":{"code":"server_error"}}`},
+		{name: "provider envelope", statusCode: http.StatusOK, body: `{"error":{"code":"access_token_invalid","message":"expired"}}`},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			adapter := NewTikTokAdapter()
+			adapter.client = &http.Client{Transport: &tiktokAnalyticsTransport{
+				statusStatus: tc.statusCode,
+				statusBody:   tc.body,
+			}}
+			if _, err := adapter.CheckPublishStatus(context.Background(), "token", "publish_1"); err == nil {
+				t.Fatal("CheckPublishStatus error = nil, want error")
+			}
+		})
+	}
+}
+
+func TestTikTokAnalyticsErrorReasonSurvivesWrapping(t *testing.T) {
+	err := fmt.Errorf("outer: %w", NewTikTokAnalyticsError(
+		TikTokAnalyticsScopeRequired,
+		"video.query",
+		http.StatusForbidden,
+		"scope_not_authorized",
+		errors.New("denied"),
+	))
+	if got, ok := TikTokAnalyticsErrorReasonOf(err); !ok || got != TikTokAnalyticsScopeRequired {
+		t.Fatalf("reason = %q, ok=%v", got, ok)
+	}
+}
+
+func TestTikTokAnalyticsProviderErrorClassification(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   TikTokAnalyticsReason
+	}{
+		{name: "invalid token code", status: http.StatusBadRequest, body: `{"error":{"code":"access_token_invalid","message":"expired"}}`, want: TikTokAccountTokenInvalid},
+		{name: "unauthorized", status: http.StatusUnauthorized, body: `{}`, want: TikTokAccountTokenInvalid},
+		{name: "scope code", status: http.StatusBadRequest, body: `{"error":{"code":"scope_not_authorized","message":"missing"}}`, want: TikTokAnalyticsScopeRequired},
+		{name: "forbidden", status: http.StatusForbidden, body: `{}`, want: TikTokAnalyticsScopeRequired},
+		{name: "rate limited", status: http.StatusTooManyRequests, body: `{}`, want: TikTokProviderRateLimited},
+		{name: "server error", status: http.StatusBadGateway, body: `{}`, want: TikTokProviderTemporaryError},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := newTikTokAnalyticsResponseError("video.query", tc.status, []byte(tc.body))
+			if got, ok := TikTokAnalyticsErrorReasonOf(err); !ok || got != tc.want {
+				t.Fatalf("reason = %q, ok=%v, want %q (err=%v)", got, ok, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestTikTokAnalyticsPendingAndUnavailableAreErrors(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		statusBody string
+		videoBody  string
+		want       TikTokAnalyticsReason
+	}{
+		{
+			name:       "publish not ready",
+			statusBody: `{"data":{"status":"PROCESSING_UPLOAD"},"error":{"code":"ok"}}`,
+			want:       TikTokVideoNotReady,
+		},
+		{
+			name:       "video not found",
+			statusBody: `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7663542984343883021"]},"error":{"code":"ok"}}`,
+			videoBody:  `{"data":{"videos":[]},"error":{"code":"ok"}}`,
+			want:       TikTokVideoNotFound,
+		},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			adapter := NewTikTokAdapter()
+			adapter.client = &http.Client{Transport: &tiktokAnalyticsTransport{
+				statusBody: tc.statusBody,
+				videoBody:  tc.videoBody,
+			}}
+			_, err := adapter.GetAnalytics(context.Background(), "token", "publish_1")
+			if got, ok := TikTokAnalyticsErrorReasonOf(err); !ok || got != tc.want {
+				t.Fatalf("reason = %q, ok=%v, want %q (err=%v)", got, ok, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestTikTokAnalyticsMatchedZeroRowIsSuccessful(t *testing.T) {
+	const exactID = "7663542984343883021"
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: &tiktokAnalyticsTransport{
+		statusBody: `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":[7663542984343883021]},"error":{"code":"ok"}}`,
+		videoBody:  `{"data":{"videos":[{"id":"7663542984343883021","view_count":0,"like_count":0,"comment_count":0,"share_count":0}]},"error":{"code":"ok"}}`,
+	}}
+	got, err := adapter.GetAnalytics(context.Background(), "token", "publish_1")
+	if err != nil {
+		t.Fatalf("GetAnalytics: %v", err)
+	}
+	if got.VideoViews != 0 || got.Likes != 0 || got.PlatformSpecific["tiktok_video_id"] != exactID {
+		t.Fatalf("metrics = %#v", got)
+	}
+}
+
+type tiktokAnalyticsTransport struct {
+	statusStatus   int
+	statusBody     string
+	videoStatus    int
+	videoBody      string
+	queriedVideoID string
+}
+
+func (t *tiktokAnalyticsTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch {
+	case strings.Contains(req.URL.Path, "/status/fetch/"):
+		status := t.statusStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		return tiktokHTTPResponse(status, t.statusBody, req), nil
+	case strings.Contains(req.URL.Path, "/video/query/"):
+		body, _ := io.ReadAll(req.Body)
+		var payload struct {
+			Filters struct {
+				VideoIDs []string `json:"video_ids"`
+			} `json:"filters"`
+		}
+		_ = json.Unmarshal(body, &payload)
+		if len(payload.Filters.VideoIDs) > 0 {
+			t.queriedVideoID = payload.Filters.VideoIDs[0]
+		}
+		status := t.videoStatus
+		if status == 0 {
+			status = http.StatusOK
+		}
+		return tiktokHTTPResponse(status, t.videoBody, req), nil
+	default:
+		return tiktokHTTPResponse(http.StatusNotFound, `{}`, req), nil
 	}
 }
 

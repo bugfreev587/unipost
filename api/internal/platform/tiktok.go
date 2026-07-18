@@ -882,12 +882,30 @@ func (a *TikTokAdapter) CheckPublishStatus(ctx context.Context, accessToken stri
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, newTikTokAnalyticsTransportError("publish.status", err)
 	}
 	defer resp.Body.Close()
 
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newTikTokAnalyticsTransportError("publish.status", fmt.Errorf("read response: %w", err))
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, newTikTokAnalyticsResponseError("publish.status", resp.StatusCode, respBody)
+	}
+
 	var result map[string]any
-	json.NewDecoder(resp.Body).Decode(&result)
+	decoder := json.NewDecoder(bytes.NewReader(respBody))
+	decoder.UseNumber()
+	if err := decoder.Decode(&result); err != nil {
+		return nil, newTikTokAnalyticsTransportError("publish.status", fmt.Errorf("decode response: %w", err))
+	}
+	if errObj, ok := result["error"].(map[string]any); ok {
+		code, _ := errObj["code"].(string)
+		if code != "" && code != "ok" {
+			return nil, newTikTokAnalyticsResponseError("publish.status", resp.StatusCode, respBody)
+		}
+	}
 	return result, nil
 }
 
@@ -1016,22 +1034,34 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 	}
 	data, _ := statusResp["data"].(map[string]any)
 	if data == nil {
-		return nil, fmt.Errorf("tiktok analytics: publish status returned no data")
+		return nil, NewTikTokAnalyticsError(
+			TikTokProviderTemporaryError,
+			"publish.status",
+			http.StatusOK,
+			"",
+			fmt.Errorf("publish status returned no data"),
+		)
 	}
 	publishStatus, _ := data["status"].(string)
 	if publishStatus != "PUBLISH_COMPLETE" {
-		// Post isn't fully published yet (still uploading, processing, or
-		// failed). Nothing to fetch. Return zero metrics with no error so the
-		// handler caches this and tries again on the next refresh.
 		slog.Info("tiktok analytics: post not yet published",
 			"publish_id", externalID, "status", publishStatus)
-		return &PostMetrics{}, nil
+		return nil, NewTikTokAnalyticsError(
+			TikTokVideoNotReady,
+			"publish.status",
+			http.StatusOK,
+			"",
+			fmt.Errorf("publish status is %q", publishStatus),
+		)
 	}
 
-	videoID := tiktokExtractPublicPostID(data)
-	if videoID == "" {
-		return nil, fmt.Errorf("tiktok analytics: no public post ID in publish status response")
+	videoID, err := tiktokExtractPublicPostID(data)
+	if err != nil {
+		return nil, fmt.Errorf("tiktok analytics: public post ID: %w", err)
 	}
+	slog.Info("tiktok analytics: resolved exact public video ID",
+		"publish_id", externalID,
+		"video_id", videoID)
 
 	// Step 2: query the video for stats.
 	body, _ := json.Marshal(map[string]any{
@@ -1051,23 +1081,20 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("tiktok analytics: video query request failed: %w", err)
+		return nil, newTikTokAnalyticsTransportError("video.query", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newTikTokAnalyticsTransportError("video.query", fmt.Errorf("read response: %w", err))
+	}
 	if resp.StatusCode != http.StatusOK {
 		slog.Warn("tiktok analytics: video query non-200",
 			"status", resp.StatusCode,
 			"video_id", videoID,
 			"body", string(respBody))
-		// 401 here almost always means the account was connected before the
-		// video.list scope was added — surface a clearer error so the user
-		// knows to reconnect.
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return nil, fmt.Errorf("tiktok analytics: missing video.list scope (reconnect the account)")
-		}
-		return nil, fmt.Errorf("tiktok analytics: video query returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, newTikTokAnalyticsResponseError("video.query", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1079,20 +1106,34 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 				ShareCount   int64 `json:"share_count"`
 			} `json:"videos"`
 		} `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("tiktok analytics: decode failed: %w", err)
+		return nil, newTikTokAnalyticsTransportError("video.query", fmt.Errorf("decode response: %w", err))
+	}
+	if result.Error.Code != "" && result.Error.Code != "ok" {
+		return nil, newTikTokAnalyticsResponseError("video.query", resp.StatusCode, respBody)
 	}
 
 	if len(result.Data.Videos) == 0 {
-		// Video query succeeded but returned no rows — usually means the video
-		// is private or was deleted. Cache zeros to avoid retry storms.
 		slog.Warn("tiktok analytics: video not found in query response",
 			"video_id", videoID)
-		return &PostMetrics{}, nil
+		return nil, NewTikTokAnalyticsError(
+			TikTokVideoNotFound,
+			"video.query",
+			http.StatusOK,
+			"",
+			fmt.Errorf("video %s was not returned", videoID),
+		)
 	}
 
 	v := result.Data.Videos[0]
+	slog.Info("tiktok analytics: matched public video",
+		"publish_id", externalID,
+		"video_id", videoID)
 	// TikTok exposes view_count (= video plays) but not display impressions in
 	// the basic video query. EngagementRate is computed by the analytics handler.
 	return &PostMetrics{
@@ -1111,7 +1152,7 @@ func (a *TikTokAdapter) GetAnalytics(ctx context.Context, accessToken string, ex
 // response. TikTok's field name is "publicaly_available_post_id" (their typo);
 // we also check spellings they might fix it to. Values can come back as
 // numbers or strings depending on API version.
-func tiktokExtractPublicPostID(data map[string]any) string {
+func tiktokExtractPublicPostID(data map[string]any) (string, error) {
 	for _, key := range []string{
 		"publicaly_available_post_id",  // TikTok's current (typo'd) spelling
 		"publically_available_post_id", // possible future fix
@@ -1121,16 +1162,26 @@ func tiktokExtractPublicPostID(data map[string]any) string {
 		if !ok || len(arr) == 0 {
 			continue
 		}
+		var id string
 		switch v := arr[0].(type) {
 		case string:
-			if v != "" {
-				return v
-			}
-		case float64:
-			return fmt.Sprintf("%.0f", v)
+			id = v
+		case json.Number:
+			id = v.String()
+		default:
+			return "", fmt.Errorf("%s has unsupported value type %T", key, arr[0])
 		}
+		if id == "" {
+			return "", fmt.Errorf("%s is empty", key)
+		}
+		for _, digit := range id {
+			if digit < '0' || digit > '9' {
+				return "", fmt.Errorf("%s %q is not an unsigned base-10 integer", key, id)
+			}
+		}
+		return id, nil
 	}
-	return ""
+	return "", fmt.Errorf("no public post ID in publish status response")
 }
 
 func TikTokPublicPostURL(postID string) string {
@@ -1157,7 +1208,11 @@ func TikTokPublicPostURLFromStatusData(data map[string]any) string {
 	if data == nil {
 		return ""
 	}
-	return TikTokPublicPostURL(tiktokExtractPublicPostID(data))
+	postID, err := tiktokExtractPublicPostID(data)
+	if err != nil {
+		return ""
+	}
+	return TikTokPublicPostURL(postID)
 }
 
 func (a *TikTokAdapter) ResolvePostOrProfileURL(ctx context.Context, accessToken string, status map[string]any) string {
@@ -1214,16 +1269,16 @@ func (a *TikTokAdapter) getUserInfo(ctx context.Context, accessToken string, fie
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, newTikTokAnalyticsTransportError("user.info", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newTikTokAnalyticsTransportError("user.info", fmt.Errorf("read response: %w", err))
+	}
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return nil, fmt.Errorf("tiktok user info: missing profile/stats scope or invalid token")
-		}
-		return nil, fmt.Errorf("tiktok user info (%d): %s", resp.StatusCode, string(respBody))
+		return nil, newTikTokAnalyticsResponseError("user.info", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1249,10 +1304,10 @@ func (a *TikTokAdapter) getUserInfo(ctx context.Context, accessToken string, fie
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("tiktok user info decode: %w", err)
+		return nil, newTikTokAnalyticsTransportError("user.info", fmt.Errorf("decode response: %w", err))
 	}
 	if result.Error.Code != "" && result.Error.Code != "ok" {
-		return nil, fmt.Errorf("tiktok user info: %s", result.Error.Message)
+		return nil, newTikTokAnalyticsResponseError("user.info", resp.StatusCode, respBody)
 	}
 
 	return &tiktokUserInfo{
@@ -1356,16 +1411,16 @@ func (a *TikTokAdapter) ListVideos(ctx context.Context, accessToken string, curs
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("tiktok video list: %w", err)
+		return nil, newTikTokAnalyticsTransportError("video.list", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newTikTokAnalyticsTransportError("video.list", fmt.Errorf("read response: %w", err))
+	}
 	if resp.StatusCode != http.StatusOK {
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			return nil, fmt.Errorf("tiktok video list: missing video.list scope or invalid token")
-		}
-		return nil, fmt.Errorf("tiktok video list (%d): %s", resp.StatusCode, string(respBody))
+		return nil, newTikTokAnalyticsResponseError("video.list", resp.StatusCode, respBody)
 	}
 
 	var result struct {
@@ -1376,10 +1431,10 @@ func (a *TikTokAdapter) ListVideos(ctx context.Context, accessToken string, curs
 		} `json:"error"`
 	}
 	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("tiktok video list decode: %w", err)
+		return nil, newTikTokAnalyticsTransportError("video.list", fmt.Errorf("decode response: %w", err))
 	}
 	if result.Error.Code != "" && result.Error.Code != "ok" {
-		return nil, fmt.Errorf("tiktok video list: %s", result.Error.Message)
+		return nil, newTikTokAnalyticsResponseError("video.list", resp.StatusCode, respBody)
 	}
 	if result.Data.Videos == nil {
 		result.Data.Videos = []TikTokVideo{}
