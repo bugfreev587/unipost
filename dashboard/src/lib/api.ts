@@ -113,6 +113,7 @@ export interface ApiError {
     docs_url?: string;
     issues?: SocialPostValidationIssue[];
     details?: {
+      reason?: string;
       plan_id?: string;
       period?: string;
       completed_posts?: number;

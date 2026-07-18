@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
@@ -32,6 +32,11 @@ import {
 } from "@/lib/api";
 import { PlatformIcon } from "@/components/platform-icons";
 import { buildTikTokPostRows, type TikTokPostRow } from "./tiktok-analytics-rows";
+import {
+  scopeReadinessState,
+  tiktokAnalyticsIssue,
+  type TikTokAnalyticsIssue,
+} from "./tiktok-analytics-state";
 
 const REQUIRED_SCOPES = ["user.info.profile", "user.info.stats", "video.list"] as const;
 
@@ -120,8 +125,9 @@ type TikTokAnalyticsViewProps = {
   preview?: boolean;
 };
 
-function formatNumber(n: number | undefined): string {
-  if (!Number.isFinite(n || 0) || !n) return "0";
+function formatNumber(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "N/A";
+  if (n === 0) return "0";
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "k";
   return String(n);
@@ -132,10 +138,13 @@ function formatDate(seconds?: number): string {
   return new Date(seconds * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function metricSpecificNumber(metrics: AccountMetrics | null, key: string): number {
+function metricSpecificNumber(metrics: AccountMetrics | null, key: string): number | null {
+  if (!metrics) return null;
   const raw = metrics?.platform_specific?.[key];
-  return typeof raw === "number" ? raw : 0;
+  return typeof raw === "number" ? raw : null;
 }
+
+type SectionIssues = Partial<Record<"profile" | "metrics" | "videos" | "posts", TikTokAnalyticsIssue>>;
 
 export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyticsViewProps) {
   const { getToken } = useAuth();
@@ -149,7 +158,7 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
     connection_type: "byo",
     scope: [...REQUIRED_SCOPES, "user.info.basic", "video.publish", "video.upload"],
   }] : []);
-  const [selectedAccountId, setSelectedAccountId] = useState("sa_tiktok_preview");
+  const [selectedAccountId, setSelectedAccountId] = useState(preview ? "sa_tiktok_preview" : "");
   const [profile, setProfile] = useState<TikTokProfile | null>(preview ? previewProfile : null);
   const [metrics, setMetrics] = useState<AccountMetrics | null>(preview ? previewMetrics : null);
   const [videos, setVideos] = useState<TikTokVideo[]>(preview ? previewVideos : []);
@@ -157,6 +166,9 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
   const [loading, setLoading] = useState(!preview);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const [sectionIssues, setSectionIssues] = useState<SectionIssues>({});
+  const requestGenerationRef = useRef(0);
+  const activeAccountIdRef = useRef(preview ? "sa_tiktok_preview" : "");
 
   const selectedAccount = useMemo(
     () => accounts.find((account) => account.id === selectedAccountId) || accounts[0],
@@ -168,64 +180,121 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
     return REQUIRED_SCOPES.filter((scope) => !granted.has(scope));
   }, [selectedAccount?.scope]);
 
+  const runtimeReason = useMemo(
+    () => Object.values(sectionIssues)
+      .map((issue) => issue?.reason)
+      .find((reason) => reason === "analytics_scope_required" || reason === "account_token_invalid" || reason === "account_disconnected"),
+    [sectionIssues],
+  );
+
   const loadData = useCallback(async () => {
     if (preview || !profileId) return;
+    const generation = requestGenerationRef.current += 1;
     try {
       setError("");
-      setLoading((wasLoading) => wasLoading || accounts.length === 0);
+      setSectionIssues({});
+      setLoading(true);
       setRefreshing(true);
       const token = await getToken();
-      if (!token) return;
+      if (requestGenerationRef.current !== generation) return;
+      if (!token) {
+        setError("Your dashboard session expired. Sign in again to load TikTok analytics.");
+        return;
+      }
 
       const accountRes = await listSocialAccounts(token, profileId, { platform: "tiktok" });
+      if (requestGenerationRef.current !== generation) return;
       const tiktokAccounts = accountRes.data || [];
       setAccounts(tiktokAccounts);
       const account = tiktokAccounts.find((a) => a.id === selectedAccountId) || tiktokAccounts[0];
       if (!account) {
+        activeAccountIdRef.current = "";
         setProfile(null);
         setMetrics(null);
         setVideos([]);
         setPostRows([]);
         return;
       }
-      if (account.id !== selectedAccountId) setSelectedAccountId(account.id);
+      activeAccountIdRef.current = account.id;
+      if (account.id !== selectedAccountId) {
+        setSelectedAccountId(account.id);
+      }
+      const isCurrentRequest = () =>
+        requestGenerationRef.current === generation &&
+        activeAccountIdRef.current === account.id;
 
-      const [profileRes, metricsRes, videosRes, postsRes] = await Promise.all([
+      setProfile(null);
+      setMetrics(null);
+      setVideos([]);
+      setPostRows([]);
+
+      const [profileResult, metricsResult, videosResult, postsResult] = await Promise.allSettled([
         getTikTokProfile(token, profileId, account.id),
         getAccountMetrics(token, profileId, account.id),
         getTikTokVideos(token, profileId, account.id, { limit: 20 }),
         listAllSocialPosts(token),
       ]);
+      if (!isCurrentRequest()) return;
 
-      setProfile(profileRes.data);
-      setMetrics(metricsRes.data);
-      setVideos(videosRes.data.videos || []);
+      const nextIssues: SectionIssues = {};
+      if (profileResult.status === "fulfilled") {
+        setProfile(profileResult.value.data);
+      } else {
+        nextIssues.profile = tiktokAnalyticsIssue(profileResult.reason);
+      }
+      if (metricsResult.status === "fulfilled") {
+        setMetrics(metricsResult.value.data);
+      } else {
+        nextIssues.metrics = tiktokAnalyticsIssue(metricsResult.reason);
+      }
+      if (videosResult.status === "fulfilled") {
+        setVideos(videosResult.value.data.videos || []);
+      } else {
+        nextIssues.videos = tiktokAnalyticsIssue(videosResult.reason);
+      }
 
-      const published = (postsRes.data || []).filter((post) =>
-        post.status === "published" &&
-        post.results?.some((result) => result.social_account_id === account.id)
-      );
-      const analyticsSettled = await Promise.allSettled(
-        published.map((post) => getPostAnalytics(token, post.id))
-      );
-      setPostRows(buildTikTokPostRows(published, analyticsSettled, account.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load TikTok analytics");
+      if (postsResult.status === "fulfilled") {
+        const published = (postsResult.value.data || []).filter((post) =>
+          post.status === "published" &&
+          post.results?.some((result) => result.social_account_id === account.id)
+        );
+        const analyticsSettled = await Promise.allSettled(
+          published.map((post) => getPostAnalytics(token, post.id))
+        );
+        if (!isCurrentRequest()) return;
+        setPostRows(buildTikTokPostRows(published, analyticsSettled, account.id));
+        const failedAnalytics = analyticsSettled.find((result) => result.status === "rejected");
+        if (failedAnalytics?.status === "rejected") {
+          nextIssues.posts = tiktokAnalyticsIssue(failedAnalytics.reason);
+        }
+      } else {
+        nextIssues.posts = tiktokAnalyticsIssue(postsResult.reason);
+      }
+      setSectionIssues(nextIssues);
+    } catch {
+      if (requestGenerationRef.current === generation) {
+        setError("TikTok accounts could not be loaded. Try again later.");
+      }
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestGenerationRef.current === generation) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
-  }, [accounts.length, getToken, preview, profileId, selectedAccountId]);
+  }, [getToken, preview, profileId, selectedAccountId]);
 
   useEffect(() => {
     loadData();
+    return () => {
+      requestGenerationRef.current += 1;
+    };
   }, [loadData]);
 
   const stats = [
-    { label: "Followers", value: metrics?.follower_count || 0, icon: Users, scope: "user.info.stats" },
-    { label: "Following", value: metrics?.following_count || 0, icon: UserRoundCheck, scope: "user.info.stats" },
+    { label: "Followers", value: metrics?.follower_count ?? null, icon: Users, scope: "user.info.stats" },
+    { label: "Following", value: metrics?.following_count ?? null, icon: UserRoundCheck, scope: "user.info.stats" },
     { label: "Total Likes", value: metricSpecificNumber(metrics, "likes_count"), icon: Heart, scope: "user.info.stats" },
-    { label: "Public Videos", value: metrics?.post_count || 0, icon: ListVideo, scope: "user.info.stats" },
+    { label: "Public Videos", value: metrics?.post_count ?? null, icon: ListVideo, scope: "user.info.stats" },
   ];
 
   return (
@@ -263,7 +332,10 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
           <span className="dt-label" style={{ color: "var(--dmuted2)" }}>Account</span>
           <select
             value={selectedAccount?.id || ""}
-            onChange={(event) => setSelectedAccountId(event.target.value)}
+            onChange={(event) => {
+              activeAccountIdRef.current = event.target.value;
+              setSelectedAccountId(event.target.value);
+            }}
             style={{ padding: "7px 10px", border: "1px solid var(--dborder)", borderRadius: 6, background: "var(--surface1)", color: "var(--dtext)" }}
           >
             {accounts.map((account) => (
@@ -283,40 +355,53 @@ export function TikTokAnalyticsView({ profileId, preview = false }: TikTokAnalyt
         </div>
       ) : (
         <>
-          <ScopeReadiness missingScopes={missingScopes} />
+          <ScopeReadiness missingScopes={missingScopes} runtimeReason={runtimeReason} />
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))", gap: 16, marginBottom: 24 }}>
-            <ProfilePanel profile={profile} account={selectedAccount} />
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
-              {stats.map((item) => <MetricCard key={item.label} {...item} />)}
+            <ProfilePanel profile={profile} account={selectedAccount} issue={sectionIssues.profile} />
+            <div>
+              <InlineSectionIssue issue={sectionIssues.metrics} />
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 12 }}>
+                {stats.map((item) => <MetricCard key={item.label} {...item} />)}
+              </div>
             </div>
           </div>
-          <VideosTable videos={videos} />
-          <TikTokPostsTable rows={postRows} />
+          <VideosTable videos={videos} issue={sectionIssues.videos} />
+          <TikTokPostsTable rows={postRows} issue={sectionIssues.posts} />
         </>
       )}
     </>
   );
 }
 
-function ScopeReadiness({ missingScopes }: { missingScopes: readonly string[] }) {
-  const ready = missingScopes.length === 0;
+function ScopeReadiness({ missingScopes, runtimeReason }: { missingScopes: readonly string[]; runtimeReason?: string }) {
+  const state = scopeReadinessState(missingScopes, runtimeReason);
+  const ready = state.tone === "ready";
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 16, padding: "12px 14px", borderRadius: 10, border: "1px solid var(--dborder)", background: "var(--surface1)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0 }}>
         <ShieldCheck style={{ width: 18, height: 18, color: ready ? "var(--success)" : "var(--warning)" }} />
         <div>
-          <div style={{ color: "var(--dtext)", fontSize: 13, fontWeight: 650 }}>{ready ? "Analytics scopes ready" : "Reconnect required for analytics"}</div>
+          <div style={{ color: "var(--dtext)", fontSize: 13, fontWeight: 650 }}>{state.title}</div>
           <div style={{ color: "var(--dmuted)", fontSize: 12, marginTop: 3 }}>
-            {ready ? REQUIRED_SCOPES.join(", ") : `Missing: ${missingScopes.join(", ")}`}
+            {state.description}
           </div>
         </div>
       </div>
-      <span className={`dbadge ${ready ? "dbadge-green" : "dbadge-amber"}`}><span className="dbadge-dot" />{ready ? "Ready" : "Reconnect"}</span>
+      <span className={`dbadge ${ready ? "dbadge-green" : "dbadge-amber"}`}><span className="dbadge-dot" />{state.badge}</span>
     </div>
   );
 }
 
-function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; account: SocialAccount }) {
+function InlineSectionIssue({ issue }: { issue?: TikTokAnalyticsIssue }) {
+  if (!issue) return null;
+  return (
+    <div style={{ marginBottom: 10, padding: "9px 11px", border: "1px solid color-mix(in srgb, var(--warning) 30%, var(--dborder))", borderRadius: 8, color: "var(--dmuted)", background: "var(--surface2)", fontSize: 12.5 }}>
+      {issue.message}
+    </div>
+  );
+}
+
+function ProfilePanel({ profile, account, issue }: { profile: TikTokProfile | null; account: SocialAccount; issue?: TikTokAnalyticsIssue }) {
   const displayName = profile?.display_name || account.account_name || "TikTok account";
   const username = profile?.username || account.account_name || "";
   const avatarUrl = profile?.avatar_url || account.account_avatar_url || "";
@@ -334,6 +419,7 @@ function ProfilePanel({ profile, account }: { profile: TikTokProfile | null; acc
         </div>
       </div>
       <div className="settings-section-body">
+        <InlineSectionIssue issue={issue} />
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <ProfileAvatar src={avatarUrl} label={displayName} />
           <div style={{ minWidth: 0 }}>
@@ -389,7 +475,7 @@ function ProfileAvatar({ src, label }: { src: string; label: string }) {
   );
 }
 
-function MetricCard({ label, value, scope, icon: Icon }: { label: string; value: number; scope: string; icon: LucideIcon }) {
+function MetricCard({ label, value, scope, icon: Icon }: { label: string; value: number | null; scope: string; icon: LucideIcon }) {
   return (
     <div style={{ border: "1px solid var(--dborder)", background: "var(--surface1)", borderRadius: 10, padding: "14px 16px", minHeight: 104, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
@@ -402,10 +488,11 @@ function MetricCard({ label, value, scope, icon: Icon }: { label: string; value:
   );
 }
 
-function VideosTable({ videos }: { videos: TikTokVideo[] }) {
+function VideosTable({ videos, issue }: { videos: TikTokVideo[]; issue?: TikTokAnalyticsIssue }) {
   return (
     <div style={{ marginBottom: 28 }}>
       <div style={sectionLabelStyle}>Public Videos</div>
+      <InlineSectionIssue issue={issue} />
       <div className="settings-section">
         <div className="settings-section-body">
         <table style={tableStyle}>
@@ -468,10 +555,11 @@ function VideoThumb({ video }: { video: TikTokVideo }) {
   );
 }
 
-function TikTokPostsTable({ rows }: { rows: TikTokPostRow[] }) {
+function TikTokPostsTable({ rows, issue }: { rows: TikTokPostRow[]; issue?: TikTokAnalyticsIssue }) {
   return (
     <div>
       <div style={sectionLabelStyle}>UniPost Published Posts</div>
+      <InlineSectionIssue issue={issue} />
       <div className="settings-section">
         <div className="settings-section-body">
         <table style={tableStyle}>
