@@ -40,3 +40,29 @@ test("CI covers every integration branch without production runtime targets", as
     /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:.*NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY/,
   );
 });
+
+test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
+  const workflow = await read(".github/workflows/preview-acceptance.yml");
+  for (const event of [
+    "opened",
+    "synchronize",
+    "reopened",
+    "ready_for_review",
+    "labeled",
+    "unlabeled",
+    "closed",
+  ]) {
+    assert.ok(workflow.includes(event), `Preview workflow omits ${event}`);
+  }
+  assert.match(workflow, /github\.event\.pull_request\.head\.sha/);
+  assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
+  assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'dev-'\)/);
+  assert.match(workflow, /vercel@50\.26\.1/);
+  assert.match(workflow, /test:regression:preview/);
+  assert.match(workflow, /preview-failure-drill/);
+  assert.match(workflow, /if: always\(\)/);
+  assert.match(workflow, /if: failure\(\)/);
+  assert.match(workflow, /alias rm/);
+  assert.doesNotMatch(workflow, /https:\/\/api\.unipost\.dev/);
+  assert.doesNotMatch(workflow, /pk_live_/);
+});
