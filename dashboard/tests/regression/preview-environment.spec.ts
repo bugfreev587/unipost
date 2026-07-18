@@ -3,11 +3,17 @@ import { expect, test } from "@playwright/test";
 const expectedSHA = process.env.EXPECTED_PREVIEW_SHA;
 const expectedAPIURL = process.env.EXPECTED_PREVIEW_API_URL?.replace(/\/+$/, "");
 const dashboardBaseURL = process.env.DASHBOARD_BASE_URL;
-const shareableURL = process.env.VERCEL_SHAREABLE_URL;
+const automationBypassSecret =
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
 
-if (!expectedSHA || !expectedAPIURL || !dashboardBaseURL || !shareableURL) {
+if (
+  !expectedSHA ||
+  !expectedAPIURL ||
+  !dashboardBaseURL ||
+  !automationBypassSecret
+) {
   throw new Error(
-    "EXPECTED_PREVIEW_SHA, EXPECTED_PREVIEW_API_URL, DASHBOARD_BASE_URL, and VERCEL_SHAREABLE_URL are required",
+    "EXPECTED_PREVIEW_SHA, EXPECTED_PREVIEW_API_URL, DASHBOARD_BASE_URL, and VERCEL_AUTOMATION_BYPASS_SECRET are required",
   );
 }
 
@@ -20,14 +26,12 @@ test("frontend and API are the same isolated preview pair", async ({ page }) => 
     "staging-app.unipost.dev",
   ]).not.toContain(dashboardHost);
 
-  await page.goto(shareableURL, { waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(
-    new RegExp(
-      `^${dashboardBaseURL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-    ),
-  );
-
-  const manifestResponse = await page.request.get("/__unipost-preview.json");
+  const manifestResponse = await page.request.get("/__unipost-preview.json", {
+    headers: {
+      "x-vercel-protection-bypass": automationBypassSecret,
+      "x-vercel-set-bypass-cookie": "true",
+    },
+  });
   expect(manifestResponse.ok()).toBeTruthy();
   expect(manifestResponse.headers()["content-type"]).toContain("application/json");
   const manifest = await manifestResponse.json();

@@ -1,10 +1,9 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.DASHBOARD_BASE_URL;
-const shareableURL = process.env.VERCEL_SHAREABLE_URL;
-if (!baseURL || !shareableURL) {
+if (!baseURL) {
   throw new Error(
-    "DASHBOARD_BASE_URL and VERCEL_SHAREABLE_URL are required for preview acceptance",
+    "DASHBOARD_BASE_URL is required for preview acceptance",
   );
 }
 

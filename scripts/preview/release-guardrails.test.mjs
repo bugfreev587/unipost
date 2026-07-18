@@ -70,8 +70,12 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     "the Vercel project already has dashboard as its Root Directory",
   );
   assert.match(workflow, /test:regression:preview/);
-  assert.match(workflow, /vercel-share-link\.mjs/);
-  assert.match(workflow, /VERCEL_SHAREABLE_URL/);
+  assert.match(
+    workflow,
+    /Run deployed preview regression[\s\S]*VERCEL_AUTOMATION_BYPASS_SECRET:.*secrets\.VERCEL_AUTOMATION_BYPASS_SECRET/,
+  );
+  assert.doesNotMatch(workflow, /vercel-share-link\.mjs/);
+  assert.doesNotMatch(workflow, /VERCEL_SHAREABLE_URL/);
   assert.match(
     workflow,
     /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
@@ -88,11 +92,16 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(workflow, /pk_live_/);
 
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
-  assert.match(previewConfig, /VERCEL_SHAREABLE_URL/);
-  assert.doesNotMatch(previewConfig, /x-vercel-protection-bypass/);
+  assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
+  assert.doesNotMatch(previewConfig, /extraHTTPHeaders/);
 
   const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
-  assert.match(previewTest, /page\.goto\(shareableURL/);
+  assert.doesNotMatch(previewTest, /shareableURL/);
+  assert.match(previewTest, /x-vercel-protection-bypass/);
+  assert.match(previewTest, /x-vercel-set-bypass-cookie/);
+
+  const proxy = await read("dashboard/src/proxy.ts");
+  assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
 });
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
