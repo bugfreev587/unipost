@@ -56,7 +56,7 @@ WHERE sa.platform = 'tiktok'
   AND (
     pa.social_post_result_id IS NULL
     OR (
-      (pa.fetched_at IS NULL OR pa.fetched_at < :'deployment_timestamp'::timestamptz)
+      (pa.fetched_at IS NULL OR pa.fetched_at < :deployment_timestamp::timestamptz)
       AND pa.fetched_at IS DISTINCT FROM '1970-01-01 00:00:00+00'::timestamptz
     )
   );
@@ -86,7 +86,7 @@ FROM tiktok_analytics_recovery_eligible;
     SET fetched_at = EXCLUDED.fetched_at
     WHERE post_analytics.fetched_at IS NULL
        OR (
-         post_analytics.fetched_at < :'deployment_timestamp'::timestamptz
+         post_analytics.fetched_at < :deployment_timestamp::timestamptz
          AND post_analytics.fetched_at IS DISTINCT FROM EXCLUDED.fetched_at
        )
     RETURNING social_post_result_id
