@@ -12,7 +12,8 @@
     "test:team-plan": "node --test tests/team-plan-contract-source.test.mjs tests/enterprise-pricing-source.test.mjs",
     "test:team-plan-acceptance": "node --test tests/team-plan-acceptance.test.mjs",
     "acceptance:team-plan": "node scripts/team-plan-acceptance.mjs",
-    "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts"
+    "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts",
+    "test:regression:preview": "playwright test --config=playwright.preview.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.3.0",
