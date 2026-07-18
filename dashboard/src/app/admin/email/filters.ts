@@ -4,9 +4,9 @@ export type AttemptedDateRange = {
   error?: string;
 };
 
-function localMidnight(date: string): Date {
+function localMidnight(date: string, dayOffset = 0): Date {
   const [year, month, day] = date.split("-").map(Number);
-  return new Date(year, month - 1, day);
+  return new Date(year, month - 1, day + dayOffset);
 }
 
 export function buildAttemptedDateRange(
@@ -22,8 +22,7 @@ export function buildAttemptedDateRange(
     range.start_at = localMidnight(startDate).toISOString();
   }
   if (endDate) {
-    const endExclusive = localMidnight(endDate);
-    endExclusive.setDate(endExclusive.getDate() + 1);
+    const endExclusive = localMidnight(endDate, 1);
     range.end_at = endExclusive.toISOString();
   }
   return range;

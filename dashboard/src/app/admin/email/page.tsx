@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   listAdminEmailNotificationFilterOptions,
@@ -98,6 +98,7 @@ export default function AdminEmailPage() {
   const [limit, setLimit] = useState<(typeof LIMIT_OPTIONS)[number]>(100);
   const [offset, setOffset] = useState(0);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
   const range = useMemo(
     () => buildAttemptedDateRange(startDate, endDate),
     [endDate, startDate],
@@ -121,7 +122,9 @@ export default function AdminEmailPage() {
   }, [getToken]);
 
   const loadNotifications = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     if (range.error) {
+      setError(null);
       setLoading(false);
       return;
     }
@@ -144,14 +147,32 @@ export default function AdminEmailPage() {
         offset,
       };
       const res = await listAdminEmailNotifications(token, params);
+      if (generation !== requestGeneration.current) return;
       setRows(res.data);
       setTotal(res.meta?.total ?? res.data.length);
     } catch (e) {
+      if (generation !== requestGeneration.current) return;
       setError(e instanceof Error ? e.message : "Failed to load email notifications");
     } finally {
-      setLoading(false);
+      if (generation === requestGeneration.current) {
+        setLoading(false);
+      }
     }
-  }, [email, eventKey, getToken, limit, offset, period, provider, range.end_at, range.error, range.start_at, search, status, threshold]);
+  }, [
+    email,
+    eventKey,
+    getToken,
+    limit,
+    offset,
+    period,
+    provider,
+    range.end_at,
+    range.error,
+    range.start_at,
+    search,
+    status,
+    threshold,
+  ]);
 
   const refreshPage = useCallback(async () => {
     await Promise.all([loadNotifications(), loadFilterOptions()]);
@@ -173,7 +194,10 @@ export default function AdminEmailPage() {
   }, [getToken, loadNotifications]);
 
   useEffect(() => {
-    loadNotifications();
+    void loadNotifications();
+    return () => {
+      requestGeneration.current += 1;
+    };
   }, [loadNotifications]);
 
   useEffect(() => {
@@ -187,10 +211,6 @@ export default function AdminEmailPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
-
-  useEffect(() => {
-    setOffset(0);
-  }, [email, endDate, eventKey, limit, period, provider, startDate, status, threshold]);
 
   const visibleRange = useMemo(() => {
     if (rows.length === 0) return "0";
@@ -224,10 +244,24 @@ export default function AdminEmailPage() {
           <div className="ad-section-meta">User-facing email attempts, Loops audit rows, and migration skip records</div>
         </div>
         <div className="ae-period-actions">
-          <button type="button" className="ad-btn ad-btn-ghost" onClick={() => setPeriod(currentPeriod())}>
+          <button
+            type="button"
+            className="ad-btn ad-btn-ghost"
+            onClick={() => {
+              setOffset(0);
+              setPeriod(currentPeriod());
+            }}
+          >
             This month
           </button>
-          <button type="button" className="ad-btn ad-btn-ghost" onClick={() => setPeriod("")}>
+          <button
+            type="button"
+            className="ad-btn ad-btn-ghost"
+            onClick={() => {
+              setOffset(0);
+              setPeriod("");
+            }}
+          >
             All periods
           </button>
         </div>
@@ -241,7 +275,10 @@ export default function AdminEmailPage() {
             disabled={emailOptionsLoading}
             aria-label="Filter by recipient email"
             aria-busy={emailOptionsLoading}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              setOffset(0);
+              setEmail(event.target.value);
+            }}
           >
             <option value="all">All emails</option>
             {emailOptions.map((option) => (
@@ -256,7 +293,10 @@ export default function AdminEmailPage() {
           <select
             value={status}
             aria-label="Filter by status"
-            onChange={(event) => setStatus(event.target.value as typeof status)}
+            onChange={(event) => {
+              setOffset(0);
+              setStatus(event.target.value as typeof status);
+            }}
           >
             {STATUS_OPTIONS.map((value) => (
               <option key={value} value={value}>
@@ -271,7 +311,12 @@ export default function AdminEmailPage() {
             type="date"
             value={startDate}
             aria-label="Attempted from"
-            onChange={(event) => setStartDate(event.target.value)}
+            aria-invalid={Boolean(range.error)}
+            aria-describedby={range.error ? "email-attempted-range-error" : undefined}
+            onChange={(event) => {
+              setOffset(0);
+              setStartDate(event.target.value);
+            }}
           />
         </label>
         <label className="ae-filter-field ae-date-filter">
@@ -280,12 +325,17 @@ export default function AdminEmailPage() {
             type="date"
             value={endDate}
             aria-label="Attempted through"
-            onChange={(event) => setEndDate(event.target.value)}
+            aria-invalid={Boolean(range.error)}
+            aria-describedby={range.error ? "email-attempted-range-error" : undefined}
+            onChange={(event) => {
+              setOffset(0);
+              setEndDate(event.target.value);
+            }}
           />
         </label>
       </div>
       {range.error ? (
-        <div className="ae-range-error" role="alert">
+        <div id="email-attempted-range-error" className="ae-range-error" role="alert">
           {range.error}
         </div>
       ) : null}
@@ -299,7 +349,13 @@ export default function AdminEmailPage() {
           onChange={setSearchInput}
           style={{ width: 320 }}
         />
-        <select value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
+        <select
+          value={provider}
+          onChange={(event) => {
+            setOffset(0);
+            setProvider(event.target.value as typeof provider);
+          }}
+        >
           {PROVIDER_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All providers" : `Provider: ${value}`}
@@ -310,10 +366,23 @@ export default function AdminEmailPage() {
           className="ad-search ae-event-key-input"
           placeholder="Event key"
           value={eventKey}
-          onChange={(event) => setEventKey(event.target.value.trim())}
+          onChange={(event) => {
+            setOffset(0);
+            setEventKey(event.target.value.trim());
+          }}
           aria-label="Filter by email event key"
         />
-        <select value={threshold} onChange={(e) => setThreshold(e.target.value === "all" ? "all" : Number(e.target.value) as typeof threshold)}>
+        <select
+          value={threshold}
+          onChange={(event) => {
+            setOffset(0);
+            setThreshold(
+              event.target.value === "all"
+                ? "all"
+                : Number(event.target.value) as typeof threshold,
+            );
+          }}
+        >
           {THRESHOLD_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All quota triggers" : `Quota: ${value}%`}
@@ -324,10 +393,19 @@ export default function AdminEmailPage() {
           className="ad-search ae-period-input"
           placeholder="Period YYYY-MM"
           value={period}
-          onChange={(event) => setPeriod(event.target.value.trim())}
+          onChange={(event) => {
+            setOffset(0);
+            setPeriod(event.target.value.trim());
+          }}
           aria-label="Filter by period"
         />
-        <select value={limit} onChange={(e) => setLimit(Number(e.target.value) as typeof limit)}>
+        <select
+          value={limit}
+          onChange={(event) => {
+            setOffset(0);
+            setLimit(Number(event.target.value) as typeof limit);
+          }}
+        >
           {LIMIT_OPTIONS.map((value) => (
             <option key={value} value={value}>{value} rows</option>
           ))}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1414,7 +1415,7 @@ WHERE ($1::TEXT = '' OR status = $1 OR ($1 = 'skipped' AND status LIKE 'skipped_
   AND ($3::TEXT = '' OR period = $3)
   AND ($5::TEXT = '' OR provider = $5)
   AND ($6::TEXT = '' OR event_key = $6)
-  AND ($7::TEXT = '' OR LOWER(email) = LOWER($7))
+  AND ($7::TEXT = '' OR LOWER(BTRIM(email)) = LOWER(BTRIM($7)))
   AND ($8::TIMESTAMPTZ IS NULL OR attempted_at >= $8)
   AND ($9::TIMESTAMPTZ IS NULL OR attempted_at < $9)
   AND (
@@ -1442,10 +1443,10 @@ func adminEmailNotificationFilterOptionsSQL() string {
 	return adminEmailNotificationsCTESQL + `
 SELECT email
 FROM (
-  SELECT DISTINCT ON (LOWER(email)) email
+  SELECT DISTINCT ON (LOWER(BTRIM(email))) BTRIM(email) AS email
   FROM email_notifications
   WHERE BTRIM(email) <> ''
-  ORDER BY LOWER(email), email
+  ORDER BY LOWER(BTRIM(email)), BTRIM(email)
 ) distinct_emails
 ORDER BY LOWER(email), email`
 }
@@ -2870,7 +2871,8 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 func (h *AdminHandler) ListEmailNotificationFilterOptions(w http.ResponseWriter, r *http.Request) {
 	emails, err := h.queryEmailNotificationFilterOptions(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email notification filter options: "+err.Error())
+		slog.Error("admin email filter options query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email notification filter options")
 		return
 	}
 	writeSuccess(w, map[string]any{"emails": emails})

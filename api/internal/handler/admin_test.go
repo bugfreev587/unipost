@@ -420,7 +420,7 @@ func TestAdminEmailNotificationsSQLFiltersRecipientAndAttemptedRange(t *testing.
 	sql := adminEmailNotificationsWhereSQL
 
 	for _, want := range []string{
-		"LOWER(email) = LOWER($7)",
+		"LOWER(BTRIM(email)) = LOWER(BTRIM($7))",
 		"attempted_at >= $8",
 		"attempted_at < $9",
 	} {
@@ -493,7 +493,7 @@ func TestAdminEmailNotificationFilterOptionsUseCompleteDistinctRecipientSet(t *t
 
 	for _, want := range []string{
 		"email_notifications AS",
-		"SELECT DISTINCT ON (LOWER(email)) email",
+		"SELECT DISTINCT ON (LOWER(BTRIM(email))) BTRIM(email) AS email",
 		"WHERE BTRIM(email) <> ''",
 		"ORDER BY LOWER(email), email",
 	} {
