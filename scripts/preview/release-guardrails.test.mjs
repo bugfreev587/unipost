@@ -60,7 +60,7 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(
     workflow,
-    /VERCEL_AUTOMATION_BYPASS_SECRET:.*secrets\.VERCEL_AUTOMATION_BYPASS_SECRET/,
+    /VERCEL_AUTOMATION_BYPASS_SECRET:.*secrets\.UNIPOST_VERCEL_PREVIEW_BYPASS/,
   );
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
   assert.match(workflow, /RAILWAY_PROJECT_ID:.*vars\.RAILWAY_PROJECT_ID/);
