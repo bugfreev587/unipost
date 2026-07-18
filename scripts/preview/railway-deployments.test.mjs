@@ -90,6 +90,23 @@ test("rejects a terminal Railway environment failure for the exact SHA", () => {
   );
 });
 
+test("keeps an inactive GitHub deployment pending until the exact Railway service is ready", () => {
+  assert.throws(
+    () => selectRailwayEnvironment([
+      {
+        id: 1,
+        sha,
+        environment: "UniPost / unipost-pr-42",
+        payload: { environmentId: "env-pr-42" },
+        statuses: [{ state: "inactive" }],
+      },
+    ], sha),
+    (error) => error instanceof PreviewPendingError && /successful Railway PR environment/.test(
+      error.message,
+    ),
+  );
+});
+
 test("rejects a persistent Railway environment", () => {
   assert.throws(
     () => selectRailwayPreviewAPI({

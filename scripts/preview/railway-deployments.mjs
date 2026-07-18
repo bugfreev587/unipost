@@ -11,7 +11,7 @@ const permanentHosts = new Set([
   "unipost-staging.up.railway.app",
 ]);
 
-const terminalStates = new Set(["error", "failure", "inactive"]);
+const terminalStates = new Set(["error", "failure"]);
 const railwayTerminalStates = new Set(["CRASHED", "FAILED", "REMOVED"]);
 
 export class PreviewPendingError extends Error {
