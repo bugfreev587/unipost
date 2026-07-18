@@ -83,6 +83,7 @@ func requestIDFromResponse(w http.ResponseWriter) string {
 
 var normalizedErrorCodeMap = map[string]string{
 	"ACCOUNT_ALREADY_CONNECTED":          "account_already_connected",
+	"ACCOUNT_DISCONNECTED":               "account_disconnected",
 	"ACCOUNT_NOT_AVAILABLE_ON_FREE_PLAN": "account_not_available_on_free_plan",
 	"BAD_REQUEST":                        "bad_request",
 	"CONFLICT":                           "conflict",
@@ -135,9 +136,12 @@ var normalizedErrorCodeMap = map[string]string{
 	"SETUP_TOKEN_USED":                "setup_token_used",
 	"STORAGE_NOT_CONFIGURED":          "storage_not_configured",
 	"TIKTOK_ERROR":                    "tiktok_error",
+	"TIKTOK_ANALYTICS_UNAVAILABLE":    "tiktok_analytics_unavailable",
+	"TIKTOK_TEMPORARY_ERROR":          "tiktok_temporary_error",
 	"UNAUTHORIZED":                    "unauthorized",
 	"UNKNOWN_PAGE":                    "unknown_page",
 	"UPSTREAM_ERROR":                  "upstream_error",
+	"UPSTREAM_RATE_LIMITED":           "upstream_rate_limited",
 	"VALIDATION_ERROR":                "validation_error",
 	"WRONG_PLATFORM":                  "wrong_platform",
 }

@@ -17,6 +17,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -70,7 +71,14 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if acc.DisconnectedAt.Valid {
+	if acc.Platform == "tiktok" {
+		if status, code, message, reason, blocked := tiktokAnalyticsAccountStateError(&acc); blocked {
+			writeErrorWithDetails(w, status, code, message, ErrorDetails{
+				Details: map[string]any{"reason": reason},
+			})
+			return
+		}
+	} else if acc.DisconnectedAt.Valid {
 		writeError(w, http.StatusConflict, "ACCOUNT_DISCONNECTED",
 			"Account is disconnected — reconnect before fetching metrics")
 		return
@@ -91,9 +99,15 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 	}
 
 	accessToken, decErr := h.encryptor.Decrypt(acc.AccessToken)
-	if decErr != nil {
+	if decErr != nil || strings.TrimSpace(accessToken) == "" {
 		slog.Warn("account metrics: decrypt token failed",
 			"account_id", acc.ID, "platform", acc.Platform, "err", decErr)
+		if acc.Platform == "tiktok" {
+			writeErrorWithDetails(w, http.StatusConflict, "NEEDS_RECONNECT", "Your TikTok connection has expired. Reconnect the account.", ErrorDetails{
+				Details: map[string]any{"reason": platform.TikTokAccountTokenInvalid},
+			})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to decrypt token")
 		return
 	}
@@ -156,6 +170,10 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 
 	metrics, err := metricsAdapter.GetAccountMetrics(r.Context(), accessToken, acc.ExternalAccountID)
 	if err != nil {
+		if acc.Platform == "tiktok" {
+			writeTikTokAnalyticsError(w, err)
+			return
+		}
 		if status, code, message, ok := accountMetricsPlatformErrorResponse(acc.Platform, err); ok {
 			writeError(w, status, code, message)
 			return
