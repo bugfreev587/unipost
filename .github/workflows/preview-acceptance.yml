@@ -1,0 +1,273 @@
+name: Preview Acceptance
+
+on:
+  pull_request:
+    branches:
+      - dev
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+      - labeled
+      - unlabeled
+      - closed
+
+permissions:
+  contents: read
+  deployments: read
+  pull-requests: read
+
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    name: Preview Acceptance
+    if: >-
+      github.event.action != 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (startsWith(github.event.pull_request.head.ref, 'dev-') ||
+      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_ALIAS_HOST: unipost-dev-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}-${{ github.run_attempt }}.vercel.app
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
+      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Validate preview configuration
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/preview
+          echo "configuration" > artifacts/preview/current-stage
+          test -n "$VERCEL_ORG_ID"
+          test -n "$VERCEL_PROJECT_ID"
+          test -n "$VERCEL_TEAM_SLUG"
+          test -n "$VERCEL_TOKEN"
+          test -n "$VERCEL_AUTOMATION_BYPASS_SECRET"
+          test -n "$RAILWAY_PROJECT_ID"
+          test -n "$RAILWAY_API_TOKEN"
+          test "${#HEAD_SHA}" -eq 40
+
+      - name: Validate release contracts
+        run: |
+          set -euo pipefail
+          echo "release-contracts" > artifacts/preview/current-stage
+          node --test scripts/preview/*.test.mjs 2>&1 | tee artifacts/preview/release-contracts.log
+
+      - name: Wait for the matching Railway PR API
+        id: railway
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "railway-api" > artifacts/preview/current-stage
+          node scripts/preview/railway-deployments.mjs \
+            --repo "$GITHUB_REPOSITORY" \
+            --sha "$HEAD_SHA" \
+            --token "$GITHUB_TOKEN" \
+            --output "$GITHUB_OUTPUT" \
+            --manifest artifacts/preview/railway.json \
+            2>&1 | tee artifacts/preview/railway-wait.log
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: |
+          set -euo pipefail
+          echo "dashboard-dependencies" > ../artifacts/preview/current-stage
+          npm ci 2>&1 | tee ../artifacts/preview/npm-ci.log
+
+      - name: Pull Vercel Preview configuration
+        run: |
+          set -euo pipefail
+          echo "vercel-configuration" > artifacts/preview/current-stage
+          mkdir -p .vercel
+          node -e 'const fs=require("node:fs"); fs.writeFileSync(".vercel/project.json", JSON.stringify({orgId:process.env.VERCEL_ORG_ID,projectId:process.env.VERCEL_PROJECT_ID})+"\\n", {mode:0o600})'
+          npx --yes vercel@50.26.1 pull \
+            --yes \
+            --environment=preview \
+            --token="$VERCEL_TOKEN" \
+            --scope="$VERCEL_TEAM_SLUG" \
+            --cwd . \
+            2>&1 | tee artifacts/preview/vercel-pull.log
+
+      - name: Write the preview identity manifest
+        run: |
+          set -euo pipefail
+          echo "preview-manifest" > artifacts/preview/current-stage
+          node scripts/preview/write-manifest.mjs \
+            --sha "$HEAD_SHA" \
+            --branch "$HEAD_REF" \
+            --api-url "${{ steps.railway.outputs.api_url }}" \
+            --output dashboard/public/__unipost-preview.json
+          cp dashboard/public/__unipost-preview.json artifacts/preview/frontend.json
+
+      - name: Build the Vercel Preview
+        run: |
+          set -euo pipefail
+          echo "vercel-build" > artifacts/preview/current-stage
+          export NEXT_PUBLIC_API_URL="${{ steps.railway.outputs.api_url }}"
+          export NEXT_PUBLIC_APP_URL="https://${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_BASE_URL="https://${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_LANDING_URL="https://${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_APP_HOST="${PREVIEW_ALIAS_HOST}"
+          export NEXT_PUBLIC_UNIPOST_ENV="development"
+          npx --yes vercel@50.26.1 build \
+            --token="$VERCEL_TOKEN" \
+            --scope="$VERCEL_TEAM_SLUG" \
+            --cwd . \
+            2>&1 | tee artifacts/preview/vercel-build.log
+
+      - name: Deploy and alias the Vercel Preview
+        id: vercel
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "vercel-deploy" > artifacts/preview/current-stage
+          deployment_url="$(
+            npx --yes vercel@50.26.1 deploy \
+              --prebuilt \
+              --archive=tgz \
+              --yes \
+              --token="$VERCEL_TOKEN" \
+              --scope="$VERCEL_TEAM_SLUG" \
+              --cwd . \
+              --meta "githubCommitRef=${HEAD_REF}" \
+              --meta "githubCommitSha=${HEAD_SHA}" \
+              --meta "githubOrg=${GITHUB_REPOSITORY_OWNER}" \
+              --meta "githubRepo=${GITHUB_REPOSITORY#*/}" \
+              2> >(tee artifacts/preview/vercel-deploy.stderr.log >&2)
+          )"
+          test "${deployment_url#https://}" != "$deployment_url"
+          deployment_host="${deployment_url#https://}"
+          test "${deployment_host#*/}" = "$deployment_host"
+          printf '%s\n' "$deployment_url" | tee artifacts/preview/vercel-url.txt
+          echo "deployment_url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "deployment_host=$deployment_host" >> "$GITHUB_OUTPUT"
+          npx --yes vercel@50.26.1 alias set \
+            "$deployment_url" \
+            "$PREVIEW_ALIAS_HOST" \
+            --token="$VERCEL_TOKEN" \
+            --scope="$VERCEL_TEAM_SLUG" \
+            2>&1 | tee artifacts/preview/vercel-alias.log
+
+      - name: Install Playwright Chromium
+        working-directory: dashboard
+        run: |
+          set -euo pipefail
+          echo "playwright-install" > ../artifacts/preview/current-stage
+          npx playwright install --with-deps chromium 2>&1 | tee ../artifacts/preview/playwright-install.log
+
+      - name: Run deployed preview regression
+        working-directory: dashboard
+        env:
+          DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.deployment_url }}
+          EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
+          EXPECTED_PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "preview-regression" > ../artifacts/preview/current-stage
+          npm run test:regression:preview 2>&1 | tee ../artifacts/preview/preview-regression.log
+
+      - name: Exercise the requested failure drill
+        if: contains(github.event.pull_request.labels.*.name, 'preview-failure-drill')
+        run: |
+          set -euo pipefail
+          echo "preview-failure-drill" > artifacts/preview/current-stage
+          echo "Intentional Preview Acceptance failure: preview-failure-drill label is present." \
+            | tee artifacts/preview/failure-drill.log
+          exit 1
+
+      - name: Publish success summary
+        if: success()
+        run: |
+          {
+            echo "## Preview Acceptance passed"
+            echo
+            echo "- PR: #${PR_NUMBER}"
+            echo "- Branch: \`${HEAD_REF}\`"
+            echo "- SHA: \`${HEAD_SHA}\`"
+            echo "- Railway environment: \`${{ steps.railway.outputs.railway_environment }}\`"
+            echo "- Railway API: ${{ steps.railway.outputs.api_url }}"
+            echo "- Vercel deployment: ${{ steps.vercel.outputs.deployment_url }}"
+            echo "- Vercel branch alias: https://${PREVIEW_ALIAS_HOST}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish failure evidence
+        if: failure()
+        run: |
+          stage="$(cat artifacts/preview/current-stage 2>/dev/null || echo unknown)"
+          {
+            echo "## Preview Acceptance failed"
+            echo
+            echo "- PR: #${PR_NUMBER}"
+            echo "- Branch: \`${HEAD_REF}\`"
+            echo "- SHA: \`${HEAD_SHA}\`"
+            echo "- Failed stage: \`${stage}\`"
+            echo "- Railway API: ${{ steps.railway.outputs.api_url || 'not resolved' }}"
+            echo "- Vercel deployment: ${{ steps.vercel.outputs.deployment_url || 'not created' }}"
+            echo "- Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "- Artifacts: preview evidence and Playwright reports are uploaded below"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload preview evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-evidence-pr-${{ github.event.pull_request.number }}
+          path: |
+            artifacts/preview
+            dashboard/playwright-report-preview
+            dashboard/test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+  cleanup-preview-alias:
+    name: Preview Cleanup
+    if: >-
+      github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      (startsWith(github.event.pull_request.head.ref, 'dev-') ||
+      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Remove the pull request's Vercel preview aliases
+        run: |
+          set -euo pipefail
+          node scripts/preview/vercel-alias-cleanup.mjs

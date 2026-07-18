@@ -47,6 +47,22 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "gif-guidance-copy",
+    date: "2026-07-17",
+    displayDate: "July 17, 2026",
+    title: "GIF Guidance Copy Clarification",
+    summary: "Clarified GIF conversion guidance copy to better communicate available options.",
+    category: "dx",
+    impact: "improved",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 7954767", href: "https://github.com/bugfreev587/unipost/commit/7954767949746b8e76b9c8688bdce6904114787e" },
+    { label: "Commit 5857889", href: "https://github.com/bugfreev587/unipost/commit/58578892a93322cadfc93e6be8350821c608eb0a" },
+    { label: "Commit d85f73d", href: "https://github.com/bugfreev587/unipost/commit/d85f73d70f4cd7a91a3271d3c4877c08752033c2" },
+  ],
+  },
+  {
     id: "platform-options-guide",
     date: "2026-07-15",
     displayDate: "July 15, 2026",

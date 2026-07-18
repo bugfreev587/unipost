@@ -40,6 +40,7 @@ function isDashboardHost(hostname: string) {
 
 function isPublicPagePath(pathname: string) {
   return (
+    pathname === "/__unipost-preview.json" ||
     pathname === "/terms" ||
     pathname === "/privacy" ||
     pathname === "/sitemap.xml" ||

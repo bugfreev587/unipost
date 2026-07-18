@@ -4,10 +4,12 @@ on:
   pull_request:
     branches:
       - dev
+      - staging
       - main
   push:
     branches:
       - dev
+      - staging
       - main
   workflow_dispatch:
 
@@ -74,18 +76,22 @@ jobs:
       NEXT_TELEMETRY_DISABLED: "1"
       DASHBOARD_BASE_URL: http://localhost:3000
       DASHBOARD_WEB_SERVER: "1"
-      NEXT_PUBLIC_API_URL: https://api.unipost.dev
+      NEXT_PUBLIC_API_URL: http://localhost:8080
       NEXT_PUBLIC_APP_URL: http://localhost:3000
-      NEXT_PUBLIC_BASE_URL: https://unipost.dev
-      NEXT_PUBLIC_LANDING_URL: https://unipost.dev
+      NEXT_PUBLIC_BASE_URL: http://localhost:3000
+      NEXT_PUBLIC_LANDING_URL: http://localhost:3000
       NEXT_PUBLIC_APP_HOST: localhost:3000
-      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY }}
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
       CLERK_SECRET_KEY: sk_test_dummy
     defaults:
       run:
         working-directory: dashboard
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate release guardrails
+        working-directory: ${{ github.workspace }}
+        run: node --test scripts/preview/*.test.mjs
 
       - uses: actions/setup-node@v4
         with:
