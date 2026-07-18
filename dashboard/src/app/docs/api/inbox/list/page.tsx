@@ -1,5 +1,5 @@
-"use client";
-
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 import type { ApiFieldItem } from "../../_components/doc-components";
 
@@ -28,16 +28,42 @@ const ERRORS: ApiFieldItem[] = [
   { name: "request_id", type: "string", description: "Request identifier for support." },
 ];
 
-export default function InboxListPage() {
+export default async function InboxListPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const xCreditsEnabled = publicFeatureFlags.x_credits_billing_v1;
+  const query = QUERY.map((field) => (
+    field.name === "source"
+      ? {
+          ...field,
+          description: `Filter by ig_comment, ig_dm, threads_reply, fb_comment, fb_dm, x_reply${xDMsEnabled ? ", or x_dm" : ""}.`,
+        }
+      : field
+  ));
+  const response = RESPONSE
+    .filter((field) => xCreditsEnabled || !field.name.startsWith("data[].x_credit"))
+    .map((field) => (
+      field.name === "data[].body" && !xDMsEnabled
+        ? { ...field, description: "Comment or reply text." }
+        : field
+    ));
+  const errors = ERRORS.filter((field) => xDMsEnabled || field.name !== "error.code");
+  const guideLinks = filterDocsNavigation([
+    { label: "Work with X comments", href: "/docs/guides/x/comments" },
+    { label: "Work with X direct messages", href: "/docs/guides/x/direct-messages" },
+  ], publicFeatureFlags);
+
   return (
     <SingleEndpointReferencePage
       section="inbox"
       title="List Inbox items"
-      description="Returns the normalized Inbox contract for Instagram, Facebook, Threads, and X. X replies use source x_reply; legacy X direct messages use x_dm only when the workspace is included in the controlled rollout."
+      description={xDMsEnabled
+        ? "Returns the normalized Inbox contract for Instagram, Facebook, Threads, and X. X replies use source x_reply; legacy X direct messages use x_dm."
+        : "Returns the normalized Inbox contract for Instagram, Facebook, Threads, and X. X public replies use source x_reply."}
       method="GET"
       path="/v1/inbox"
-      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Query Params", items: QUERY }]}
-      responses={[{ code: "200", fields: RESPONSE }, { code: "402", fields: ERRORS }]}
+      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Query Params", items: query }]}
+      responses={[{ code: "200", fields: response }, { code: "402", fields: errors }]}
       snippets={[{ lang: "curl", label: "cURL", code: `curl "https://api.unipost.dev/v1/inbox?source=x_reply&is_own=false&limit=50" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"` }]}
       responseSnippets={[{ lang: "json", label: "200", code: `{
@@ -58,10 +84,7 @@ export default function InboxListPage() {
   "error": { "code": "PLAN_FEATURE_NOT_AVAILABLE", "message": "Inbox requires the Basic plan or higher." },
   "request_id": "req_01"
 }` }]}
-      guideLinks={[
-        { label: "Work with X comments", href: "/docs/guides/x/comments" },
-        { label: "Work with X direct messages", href: "/docs/guides/x/direct-messages" },
-      ]}
+      guideLinks={guideLinks}
     />
   );
 }

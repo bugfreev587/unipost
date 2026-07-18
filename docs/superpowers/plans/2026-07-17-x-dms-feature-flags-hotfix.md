@@ -273,6 +273,220 @@ git commit -m "docs: document X rollout controls"
 
 ## Task 7: Full local verification
 
+### Task 7A: Replace the browser confirmation with a centered in-app dialog
+
+**Files:**
+- Modify: `dashboard/tests/x-feature-flags-source.test.mjs`
+- Modify: `dashboard/src/app/admin/feature-flags/page.tsx`
+
+- [ ] **Step 1: Write a failing source-contract test**
+
+Replace the existing `window.confirm` assertion with:
+
+```js
+assert.doesNotMatch(page, /window\.confirm/);
+assert.match(page, /DialogContent/);
+assert.match(page, /DialogTitle/);
+assert.match(page, /DialogDescription/);
+assert.match(page, /DialogFooter/);
+assert.match(page, /pendingChange/);
+assert.match(page, /Cancel/);
+assert.match(page, /Turn \{pendingChange\.enabled \? "ON" : "OFF"\}/);
+```
+
+- [ ] **Step 2: Run the focused test and observe the expected failure**
+
+```bash
+cd dashboard
+node --test tests/x-feature-flags-source.test.mjs
+```
+
+Expected: the first subtest fails because `page.tsx` still contains `window.confirm` and does not render the shared dialog primitives.
+
+- [ ] **Step 3: Implement the minimal controlled dialog**
+
+In `page.tsx`, import the existing dialog primitives:
+
+```tsx
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+```
+
+Add one pending-change state:
+
+```tsx
+type PendingChange = {
+  flag: AdminFeatureFlag;
+  enabled: boolean;
+};
+
+const [pendingChange, setPendingChange] = useState<PendingChange | null>(null);
+const [dialogError, setDialogError] = useState<string | null>(null);
+```
+
+The row toggle opens the dialog without changing server state:
+
+```tsx
+onClick={() => {
+  setDialogError(null);
+  setPendingChange({ flag, enabled: !flag.enabled });
+}}
+```
+
+Move the PATCH call into `confirmPendingChange()`. Keep the dialog open and show `dialogError` on failure; close it only after the returned flag replaces the matching row. Render a controlled `Dialog` with centered `DialogContent`, impact copy, `Cancel`, and a confirm button labeled by the requested state. Disable dismissal and both actions while the request is saving.
+
+- [ ] **Step 4: Run focused tests until green**
+
+```bash
+cd dashboard
+node --test tests/x-feature-flags-source.test.mjs
+```
+
+Expected: 4 passing tests and no `window.confirm` source reference.
+
+- [ ] **Step 5: Run the Dashboard build and regression suite**
+
+```bash
+cd dashboard
+npm run build
+npm run test:regression:dashboard
+```
+
+Expected: build succeeds; Dashboard regression has no failures.
+
+- [ ] **Step 6: Commit the correction**
+
+```bash
+git add dashboard/tests/x-feature-flags-source.test.mjs dashboard/src/app/admin/feature-flags/page.tsx docs/superpowers/plans/2026-07-17-x-dms-feature-flags-hotfix.md
+git commit -m "fix: use in-app feature flag confirmation"
+```
+
+### Task 7B: Gate unfinished X documentation with the same public flags
+
+**Files:**
+- Create: `dashboard/src/lib/docs-feature-flags.ts`
+- Create: `dashboard/src/lib/public-feature-flags-server.ts`
+- Create: `dashboard/tests/x-feature-flag-docs-source.test.mjs`
+- Modify: `dashboard/src/app/docs/_components/docs-shell.tsx`
+- Modify: `dashboard/src/app/docs/guides/page.tsx`
+- Modify: `dashboard/src/app/docs/api/page.tsx`
+- Modify: `dashboard/src/app/docs/guides/x/direct-messages/page.tsx`
+- Modify: `dashboard/src/app/docs/guides/x/credits/page.tsx`
+- Modify: `dashboard/src/app/docs/api/x-credits/page.tsx`
+- Modify: `dashboard/src/app/docs/guides/x/comments/page.tsx`
+- Modify: `dashboard/src/app/docs/guides/x/reconnect-permissions/page.tsx`
+- Modify: shared Inbox API Reference pages under `dashboard/src/app/docs/api/inbox/`
+- Modify: X discovery data under `dashboard/src/app/docs/platforms/[platform]/_data.tsx` and `dashboard/src/app/docs/platform-credentials/[platform]/_data.tsx`
+- Modify: `dashboard/src/lib/docs-ai-search-index.ts`
+- Modify: `dashboard/src/app/api/docs/answer/route.ts`
+- Modify: `dashboard/src/app/sitemap.ts`
+- Modify: affected dashboard source/regression tests
+
+- [x] **Step 1: Write failing source-contract tests**
+
+Add tests proving:
+
+```js
+assert.match(serverFlags, /cache:\s*"no-store"/);
+assert.match(serverFlags, /CLOSED_PUBLIC_DOCS_FLAGS/);
+assert.match(dmGuide, /requirePublicDocsFeature\("x_dms_v1"\)/);
+assert.match(creditsGuide, /requirePublicDocsFeature\("x_credits_billing_v1"\)/);
+assert.match(creditsReference, /requirePublicDocsFeature\("x_credits_billing_v1"\)/);
+assert.match(docsShell, /getPublicFeatureFlags/);
+assert.match(docsShell, /filterDocsNavigation/);
+assert.match(sitemap, /getPublicDocsFeatureFlags/);
+assert.match(aiRoute, /getPublicDocsFeatureFlags/);
+assert.match(aiRoute, /filterDocsSearchChunks/);
+```
+
+Also update existing documentation tests so they require X Comments to remain public while DM- and Credits-specific discovery links are controlled by the corresponding flag.
+
+- [x] **Step 2: Run focused tests and observe expected failures**
+
+```bash
+cd dashboard
+node --test \
+  tests/x-feature-flag-docs-source.test.mjs \
+  tests/x-feature-flags-source.test.mjs \
+  tests/x-inbox-docs-source.test.mjs \
+  tests/x-credits-foundation-source.test.mjs
+```
+
+Expected: the new test fails because the runtime flag helpers and docs gates do not exist yet.
+
+- [x] **Step 3: Add fail-closed runtime docs flag helpers**
+
+Implement:
+
+```ts
+export type PublicDocsFeatureFlags = {
+  x_dms_v1: boolean;
+  x_credits_billing_v1: boolean;
+};
+
+export const CLOSED_PUBLIC_DOCS_FLAGS: PublicDocsFeatureFlags = {
+  x_dms_v1: false,
+  x_credits_billing_v1: false,
+};
+```
+
+Map dedicated DM and Credits paths to their flag, and expose pure functions that filter navigation, discovery links, sitemap entries, and AI search chunks. The server helper fetches `/v1/public/features` with `cache: "no-store"`, validates booleans, and returns the closed defaults on any error. `requirePublicDocsFeature()` calls Next.js `notFound()` when the required flag is disabled.
+
+- [x] **Step 4: Gate dedicated pages and every discovery surface**
+
+Make the three dedicated pages asynchronous server pages and call:
+
+```ts
+await requirePublicDocsFeature("x_dms_v1");
+```
+
+or:
+
+```ts
+await requirePublicDocsFeature("x_credits_billing_v1");
+```
+
+Filter the Docs sidebar, local Docs search, Guides/API landing cards, X platform discovery links, sitemap, and AI Docs search using the public/global flags. Client surfaces start from the closed defaults to prevent a flash of unavailable links. Server surfaces fail closed if the public feature endpoint is unavailable.
+
+- [x] **Step 5: Remove gated-only content from shared pages**
+
+Keep X Comments and the shared Inbox/Reconnect pages public. When `x_dms_v1` is off, omit DM-only links, fields, examples, and explanations from shared Inbox and reconnect documentation. When `x_credits_billing_v1` is off, omit Credits-only links. Split or tag mixed AI search chunks so disabled DM/Credits content cannot be returned from a shared-page search result.
+
+- [x] **Step 6: Run focused tests until green**
+
+```bash
+cd dashboard
+node --test \
+  tests/x-feature-flag-docs-source.test.mjs \
+  tests/x-feature-flags-source.test.mjs \
+  tests/x-inbox-docs-source.test.mjs \
+  tests/x-credits-foundation-source.test.mjs
+```
+
+- [x] **Step 7: Run full Dashboard verification**
+
+```bash
+cd dashboard
+npm run build
+npm run test:regression:dashboard
+```
+
+Expected: build succeeds and the Dashboard regression suite has no failures.
+
+- [x] **Step 8: Commit the docs gating**
+
+```bash
+git add dashboard/src dashboard/tests docs/superpowers/plans/2026-07-17-x-dms-feature-flags-hotfix.md
+git commit -m "fix: gate unfinished X documentation"
+```
+
 - [ ] Run backend CI-equivalent checks:
 
 ```bash

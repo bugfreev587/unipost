@@ -1,5 +1,5 @@
-"use client";
-
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 import type { ApiFieldItem } from "../../_components/doc-components";
 
@@ -27,22 +27,44 @@ const ERRORS: ApiFieldItem[] = [
   { name: "x_remote_accepted_reconciling", type: "202", description: "X accepted the write and UniPost is finishing local persistence." },
 ];
 
-export default function InboxReplyPage() {
-  return (
-    <SingleEndpointReferencePage
-      section="inbox"
-      title="Reply to an Inbox item"
-      description="Sends an eligible public reply or, for an enabled workspace, a legacy direct message. Managed X operations consume X Credits only after that billing rollout is enabled; workspace-owned X app operations use that app's X access."
-      method="POST"
-      path="/v1/inbox/:id/reply"
-      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Path Params", items: PATH }, { title: "Request Body", items: BODY }]}
-      responses={[{ code: "200", fields: RESPONSE }, { code: "202", fields: ERRORS }, { code: "402", fields: ERRORS }, { code: "409", fields: ERRORS }]}
-      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/inbox_x_01/reply" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
-  -H "Idempotency-Key: reply-inbox-x-01-v1" \\
-  -H "Content-Type: application/json" \\
-  -d '{"text":"Release notes are available at docs.example.com/releases."}'` }]}
-      responseSnippets={[{ lang: "json", label: "200", code: `{
+export default async function InboxReplyPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const xCreditsEnabled = publicFeatureFlags.x_credits_billing_v1;
+  const auth = AUTH.map((field) => (
+    field.name === "Idempotency-Key" && !xDMsEnabled
+      ? { ...field, description: "Required for x_reply. Reuse the same key only for the exact same item and text." }
+      : field
+  ));
+  const body = BODY.map((field) => (
+    field.name === "text" && !xDMsEnabled
+      ? { ...field, description: "Non-empty public reply text." }
+      : field
+  ));
+  const response = RESPONSE
+    .filter((field) => {
+      if (!xCreditsEnabled && field.name.startsWith("data.x_credit")) return false;
+      return true;
+    })
+    .map((field) => {
+      if (field.name === "data.source" && !xDMsEnabled) {
+        return { ...field, description: "x_reply for an X response." };
+      }
+      if (field.name === "data.x_credit_operation" && !xDMsEnabled) {
+        return {
+          ...field,
+          description: "A URL-free X reply uses post.reply_summoned and costs 10 managed-X Credits. A reply containing a URL or domain-like candidate uses post.create_url and costs 200.",
+        };
+      }
+      return field;
+    });
+  const errors = ERRORS.filter((field) => {
+    if (!xDMsEnabled && field.name === "feature_not_available") return false;
+    if (!xCreditsEnabled && field.name === "x_monthly_usage_limit_exceeded") return false;
+    return true;
+  });
+  const responseBody = xCreditsEnabled
+    ? `{
   "data": {
     "id": "inbox_x_02",
     "source": "x_reply",
@@ -52,11 +74,43 @@ export default function InboxReplyPage() {
     "x_credit_operation": "post.create_url",
     "x_credit_billing_mode": "unipost_managed_app"
   }
-}` }, { lang: "json", label: "202", code: `{ "error": { "code": "X_REMOTE_ACCEPTED_RECONCILING", "message": "X accepted the reply; UniPost is reconciling the local Inbox result" } }` }, { lang: "json", label: "402", code: `{ "error": { "code": "X_MONTHLY_USAGE_LIMIT_EXCEEDED", "normalized_code": "x_monthly_usage_limit_exceeded" } }` }, { lang: "json", label: "409", code: `{ "error": { "code": "X_RECONNECT_REQUIRED", "message": "Reconnect the X account to grant missing scopes" } }` }]}
-      guideLinks={[
-        { label: "Reply to X comments", href: "/docs/guides/x/comments" },
-        { label: "Reply to X direct messages", href: "/docs/guides/x/direct-messages" },
+}`
+    : `{
+  "data": {
+    "id": "inbox_x_02",
+    "source": "x_reply",
+    "body": "Release notes are available at docs.example.com/releases.",
+    "is_own": true
+  }
+}`;
+  const guideLinks = filterDocsNavigation([
+    { label: "Reply to X comments", href: "/docs/guides/x/comments" },
+    { label: "Reply to X direct messages", href: "/docs/guides/x/direct-messages" },
+  ], publicFeatureFlags);
+
+  return (
+    <SingleEndpointReferencePage
+      section="inbox"
+      title="Reply to an Inbox item"
+      description={xDMsEnabled
+        ? "Sends an eligible public reply or legacy direct message. Use a stable idempotency key for X responses."
+        : "Sends an eligible public reply. Use a stable idempotency key for X responses."}
+      method="POST"
+      path="/v1/inbox/:id/reply"
+      requestSections={[{ title: "Authorization", items: auth }, { title: "Path Params", items: PATH }, { title: "Request Body", items: body }]}
+      responses={[{ code: "200", fields: response }, { code: "202", fields: errors }, { code: "402", fields: errors }, { code: "409", fields: errors }]}
+      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/inbox_x_01/reply" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Idempotency-Key: reply-inbox-x-01-v1" \\
+  -H "Content-Type: application/json" \\
+  -d '{"text":"Release notes are available at docs.example.com/releases."}'` }]}
+      responseSnippets={[
+        { lang: "json", label: "200", code: responseBody },
+        { lang: "json", label: "202", code: `{ "error": { "code": "X_REMOTE_ACCEPTED_RECONCILING", "message": "X accepted the reply; UniPost is reconciling the local Inbox result" } }` },
+        ...(xCreditsEnabled ? [{ lang: "json", label: "402", code: `{ "error": { "code": "X_MONTHLY_USAGE_LIMIT_EXCEEDED", "normalized_code": "x_monthly_usage_limit_exceeded" } }` }] : []),
+        { lang: "json", label: "409", code: `{ "error": { "code": "X_RECONNECT_REQUIRED", "message": "Reconnect the X account to grant missing scopes" } }` },
       ]}
+      guideLinks={guideLinks}
     />
   );
 }

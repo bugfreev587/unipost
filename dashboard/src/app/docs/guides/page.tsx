@@ -1,7 +1,23 @@
 import Link from "next/link";
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { DocsPage } from "../_components/docs-shell";
 
-export default function GuidesIndexPage() {
+export default async function GuidesIndexPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const controlledGuides = filterDocsNavigation([
+    {
+      href: "/docs/guides/x/direct-messages",
+      title: "X direct messages",
+      description: "Receive and respond to legacy X DM events while protecting private conversation data.",
+    },
+    {
+      href: "/docs/guides/x/credits",
+      title: "X Credits",
+      description: "Estimate managed-X usage, inspect the monthly allowance, and handle hard-limit exhaustion.",
+    },
+  ], publicFeatureFlags);
+
   return (
     <DocsPage
       eyebrow="Guides"
@@ -18,18 +34,22 @@ export default function GuidesIndexPage() {
           <div className="docs-card-title">X comments</div>
           <p>List eligible X replies, send idempotent responses, and run a bounded public-reply backfill.</p>
         </Link>
-        <Link href="/docs/guides/x/direct-messages" className="docs-card" style={{ textDecoration: "none" }}>
-          <div className="docs-card-title">X direct messages</div>
-          <p>Receive and respond to legacy X DM events while protecting private conversation data.</p>
-        </Link>
+        {controlledGuides.filter((guide) => guide.href.includes("direct-messages")).map((guide) => (
+          <Link key={guide.href} href={guide.href} className="docs-card" style={{ textDecoration: "none" }}>
+            <div className="docs-card-title">{guide.title}</div>
+            <p>{guide.description}</p>
+          </Link>
+        ))}
         <Link href="/docs/guides/x/reconnect-permissions" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Reconnect X Inbox permissions</div>
           <p>Inspect capability state, complete workspace-app credentials, and grant the current X scopes.</p>
         </Link>
-        <Link href="/docs/guides/x/credits" className="docs-card" style={{ textDecoration: "none" }}>
-          <div className="docs-card-title">X Credits</div>
-          <p>Estimate managed-X usage, inspect the monthly allowance, and handle hard-limit exhaustion.</p>
-        </Link>
+        {controlledGuides.filter((guide) => guide.href.includes("/credits")).map((guide) => (
+          <Link key={guide.href} href={guide.href} className="docs-card" style={{ textDecoration: "none" }}>
+            <div className="docs-card-title">{guide.title}</div>
+            <p>{guide.description}</p>
+          </Link>
+        ))}
         <Link href="/docs/guides/platform-options" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Platform options examples</div>
           <p>Copy safe platform_posts[] options for YouTube, Instagram, TikTok, Facebook, and Pinterest.</p>

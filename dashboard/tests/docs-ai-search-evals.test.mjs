@@ -62,6 +62,30 @@ function answerFor(query) {
   };
 }
 
+function answerForPublicFlags(query, flags) {
+  const chunks = docsAi.DOCS_AI_INDEX.filter((chunk) => {
+    if (chunk.path === "/docs/guides/x/direct-messages" && !flags.x_dms_v1) return false;
+    if (
+      ["/docs/guides/x/credits", "/docs/api/x-credits"].includes(chunk.path)
+      && !flags.x_credits_billing_v1
+    ) return false;
+    return !chunk.required_feature || flags[chunk.required_feature];
+  });
+  const search = docsAi.searchDocsIndex(query, { limit: 5, chunks });
+  return docsAi.buildGroundedDocsAnswer(query, search);
+}
+
+test("public X comments remain searchable while disabled DM and Credits chunks stay hidden", () => {
+  const flags = { x_dms_v1: false, x_credits_billing_v1: false };
+  const comments = answerForPublicFlags("How do I reply to X comments?", flags);
+  const dms = answerForPublicFlags("How do I use X direct messages?", flags);
+  const credits = answerForPublicFlags("How do X Credits work?", flags);
+
+  assert.ok(comments.sources.some((source) => source.path === "/docs/guides/x/comments"));
+  assert.ok(dms.sources.every((source) => source.path !== "/docs/guides/x/direct-messages"));
+  assert.ok(credits.sources.every((source) => !["/docs/guides/x/credits", "/docs/api/x-credits"].includes(source.path)));
+});
+
 test("TikTok connect API questions route to Connect Sessions, not analytics followers", () => {
   const { answer } = answerFor("how to connect tiktok to unipost with API?");
 

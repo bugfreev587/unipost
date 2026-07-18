@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { requirePublicDocsFeature } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
 
 const LIST = `# GET /v1/inbox
@@ -24,7 +25,9 @@ curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
 {"x_backfill":{"account_id":"sa_x_01","lookback_days":30,"max_items":50,"include_replies":false,"include_dms":true,"confirmation_token":"$CONFIRMATION_TOKEN"}}
 JSON`;
 
-export default function XDirectMessagesGuidePage() {
+export default async function XDirectMessagesGuidePage() {
+  const publicFeatureFlags = await requirePublicDocsFeature("x_dms_v1");
+
   return (
     <DocsPage
       eyebrow="X Guides"
@@ -101,13 +104,14 @@ export default function XDirectMessagesGuidePage() {
         <li><code>x_write_outcome_pending</code>: reuse the original idempotency key; never blindly resend.</li>
       </ul>
 
-      <h2 id="related">Related Inbox and X Credits docs</h2>
+      <h2 id="related">Related Inbox docs</h2>
       <p>
         Start from the <Link href="/docs/api/inbox">Inbox API overview</Link>. For public conversations, use the{" "}
         <Link href="/docs/guides/x/comments">X comments guide</Link>. Diagnose missing access with the{" "}
-        <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>. Inspect live allowance fields in the{" "}
-        <Link href="/docs/api/x-credits">X Credits API reference</Link> and plan the operation mix with the{" "}
-        <Link href="/docs/guides/x/credits">X Credits guide</Link>.
+        <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>.
+        {publicFeatureFlags.x_credits_billing_v1 ? <> Inspect live allowance fields in the{" "}
+          <Link href="/docs/api/x-credits">X Credits API reference</Link> and plan the operation mix with the{" "}
+          <Link href="/docs/guides/x/credits">X Credits guide</Link>.</> : null}
       </p>
     </DocsPage>
   );

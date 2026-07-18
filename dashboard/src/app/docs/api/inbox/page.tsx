@@ -1,5 +1,3 @@
-"use client";
-
 import {
   ApiReferencePage,
   ApiReferenceGrid,
@@ -9,6 +7,7 @@ import {
   EnumValues,
   type ApiFieldItem,
 } from "../_components/doc-components";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 
 const AVAILABILITY_FIELDS: ApiFieldItem[] = [
   {
@@ -210,7 +209,47 @@ const RESPONSE_SNIPPETS = [
   },
 ];
 
-export default function InboxPage() {
+export default async function InboxPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const availabilityFields = AVAILABILITY_FIELDS.map((field) => (
+    field.name === "Current support"
+      ? {
+          ...field,
+          type: xDMsEnabled ? "7 available sources" : "6 available sources",
+          description: xDMsEnabled
+            ? "Instagram, Facebook, Threads, X replies, and legacy X DMs are available."
+            : "Instagram, Facebook, Threads, and X replies are available.",
+        }
+      : field
+  ));
+  const endpointFields = ENDPOINT_FIELDS.map((field) => (
+    field.name === "POST /v1/inbox/{id}/reply" && !xDMsEnabled
+      ? { ...field, description: <>Reply to a supported comment or thread. See the <a href="/docs/api/inbox/reply">endpoint reference</a>.</> }
+      : field
+  ));
+  const sourceFields = SOURCE_FIELDS.filter((field) => xDMsEnabled || field.name !== "x_dm");
+  const sourceValues = ["ig_comment", "ig_dm", "threads_reply", "fb_comment", "fb_dm", "x_reply"];
+  if (xDMsEnabled) sourceValues.push("x_dm");
+  const queryFields = QUERY_FIELDS.map((field) => (
+    field.name === "source?"
+      ? { ...field, description: <>Filter by normalized source.<EnumValues values={sourceValues} /></> }
+      : field
+  ));
+  const responseFields = RESPONSE_FIELDS.map((field) => (
+    field.name === "data[].source"
+      ? {
+          ...field,
+          description: `One of ${sourceValues.join(", ")}.`,
+        }
+      : field
+  ));
+  const errorFields = ERROR_FIELDS.map((field) => (
+    field.name === "error.code" && !xDMsEnabled
+      ? { ...field, description: "UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." }
+      : field
+  ));
+
   return (
     <ApiReferencePage
       section="inbox"
@@ -223,32 +262,32 @@ export default function InboxPage() {
             <div className="api-field-sections">
               <section className="api-field-section" style={{ paddingTop: 0 }}>
                 <h2 className="api-field-section-title">Availability</h2>
-                <ApiFieldList items={AVAILABILITY_FIELDS} />
+                <ApiFieldList items={availabilityFields} />
               </section>
 
               <section className="api-field-section">
                 <h2 className="api-field-section-title">Supported endpoints</h2>
-                <ApiFieldList items={ENDPOINT_FIELDS} />
+                <ApiFieldList items={endpointFields} />
               </section>
 
               <section className="api-field-section">
                 <h2 className="api-field-section-title">Supported sources</h2>
-                <ApiFieldList items={SOURCE_FIELDS} />
+                <ApiFieldList items={sourceFields} />
               </section>
 
               <section className="api-field-section">
                 <h2 className="api-field-section-title">Query params</h2>
-                <ApiFieldList items={QUERY_FIELDS} />
+                <ApiFieldList items={queryFields} />
               </section>
             </div>
 
             <section className="api-field-section api-response-field-section">
               <h2 className="api-field-section-title">Response</h2>
               <ApiAccordion title="200 OK" defaultOpen>
-                <ApiFieldList items={RESPONSE_FIELDS} />
+                <ApiFieldList items={responseFields} />
               </ApiAccordion>
               <ApiAccordion title="Errors">
-                <ApiFieldList items={ERROR_FIELDS} />
+                <ApiFieldList items={errorFields} />
               </ApiAccordion>
             </section>
           </div>

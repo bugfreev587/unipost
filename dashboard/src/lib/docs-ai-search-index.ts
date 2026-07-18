@@ -1,4 +1,5 @@
 import { PLATFORM_METRICS } from "@/lib/platform-capabilities";
+import type { UniPostFeatureFlagKey } from "@/lib/api";
 
 export type DocsAiConfidence = "high" | "medium" | "low" | "none";
 export type DocsAiIntent = "analytics" | "auth" | "connect" | "credentials" | "posting" | "reference" | "unknown";
@@ -28,6 +29,7 @@ export type DocsAiChunk = {
   intent_tags: DocsAiIntent[];
   endpoint_aliases: string[];
   platforms: string[];
+  required_feature?: UniPostFeatureFlagKey;
   last_indexed_at: string;
 };
 
@@ -107,11 +109,26 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     primary_nav: "API Reference",
     section_title: "GET Inbox items",
     product_area: "inbox",
-    tags: ["inbox list", "x replies", "x direct messages", "x_reply", "x_dm"],
+    tags: ["inbox list", "x replies", "x_reply"],
     intent_tags: ["reference"],
     endpoint_aliases: ["GET /v1/inbox", "/v1/inbox"],
     platforms: ["twitter", "instagram", "threads", "facebook"],
-    content: "GET /v1/inbox lists normalized Inbox items. Use source x_reply for eligible public X replies and x_dm for legacy X direct messages. Inbox requires the Basic plan or higher. Responses include thread keys, message ownership, timestamps, and X billing metadata when present.",
+    content: "GET /v1/inbox lists normalized Inbox items. Use source x_reply for eligible public X replies. Inbox requires the Basic plan or higher. Responses include thread keys, message ownership, and timestamps.",
+  }),
+  chunk({
+    id: "api-inbox-list-x-dm",
+    title: "List X direct messages in Inbox",
+    path: "/docs/api/inbox/list",
+    section_id: "response-x-dm",
+    primary_nav: "API Reference",
+    section_title: "GET Inbox items for X DMs",
+    product_area: "inbox",
+    tags: ["inbox list", "x direct messages", "x_dm"],
+    intent_tags: ["reference"],
+    endpoint_aliases: ["GET /v1/inbox", "/v1/inbox"],
+    platforms: ["twitter"],
+    required_feature: "x_dms_v1",
+    content: "When X DMs are enabled, use source x_dm to list legacy X direct messages. Treat message bodies, participants, and thread metadata as private customer data.",
   }),
   chunk({
     id: "api-inbox-reply-x",
@@ -121,11 +138,41 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     primary_nav: "API Reference",
     section_title: "POST Inbox reply",
     product_area: "inbox",
-    tags: ["inbox reply", "x comment reply", "x dm send", "idempotency"],
+    tags: ["inbox reply", "x comment reply", "idempotency"],
     intent_tags: ["reference", "posting"],
     endpoint_aliases: ["POST /v1/inbox/{id}/reply", "POST /v1/inbox/:id/reply"],
     platforms: ["twitter", "instagram", "threads", "facebook"],
-    content: "POST /v1/inbox/:id/reply sends a supported response. X replies and DMs require Idempotency-Key. Managed X writes consume the monthly allowance; workspace X app writes bypass UniPost X Credits. Reuse the same key after uncertain outcomes and never blindly resend.",
+    content: "POST /v1/inbox/:id/reply sends a supported public response. X replies require Idempotency-Key. Reuse the same key after uncertain outcomes and never blindly resend.",
+  }),
+  chunk({
+    id: "api-inbox-reply-x-dm",
+    title: "Reply to an X direct message",
+    path: "/docs/api/inbox/reply",
+    section_id: "request-x-dm",
+    primary_nav: "API Reference",
+    section_title: "POST X DM reply",
+    product_area: "inbox",
+    tags: ["inbox reply", "x dm send", "x direct messages", "idempotency"],
+    intent_tags: ["reference", "posting"],
+    endpoint_aliases: ["POST /v1/inbox/{id}/reply", "POST /v1/inbox/:id/reply"],
+    platforms: ["twitter"],
+    required_feature: "x_dms_v1",
+    content: "When X DMs are enabled, POST /v1/inbox/:id/reply sends a private X response. Always use Idempotency-Key and reuse the same key after an uncertain outcome.",
+  }),
+  chunk({
+    id: "api-inbox-reply-x-credits",
+    title: "X Credits for Inbox replies",
+    path: "/docs/api/inbox/reply",
+    section_id: "x-credits",
+    primary_nav: "API Reference",
+    section_title: "X Credits",
+    product_area: "billing",
+    tags: ["x credits", "inbox reply", "monthly allowance", "managed x"],
+    intent_tags: ["reference", "posting"],
+    endpoint_aliases: ["POST /v1/inbox/{id}/reply", "POST /v1/inbox/:id/reply"],
+    platforms: ["twitter"],
+    required_feature: "x_credits_billing_v1",
+    content: "When X Credits billing is enabled, managed X writes consume the monthly allowance while workspace X app writes bypass UniPost X Credits.",
   }),
   chunk({
     id: "api-inbox-sync-x",
@@ -139,7 +186,37 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     intent_tags: ["reference"],
     endpoint_aliases: ["POST /v1/inbox/sync", "/v1/inbox/sync"],
     platforms: ["twitter", "instagram", "threads", "facebook"],
-    content: "POST /v1/inbox/sync runs existing polling or a bounded X backfill. Managed X reads reserve monthly allowance and inbound daily capacity before a paid read. Larger estimates return a short-lived confirmation token bound to the exact accounts and request.",
+    content: "POST /v1/inbox/sync runs existing polling or a bounded public X reply backfill. Larger estimates return a short-lived confirmation token bound to the exact accounts and request.",
+  }),
+  chunk({
+    id: "api-inbox-sync-x-dm",
+    title: "Backfill X direct messages",
+    path: "/docs/api/inbox/sync",
+    section_id: "x-backfill-dm",
+    primary_nav: "API Reference",
+    section_title: "POST X DM sync",
+    product_area: "inbox",
+    tags: ["inbox sync", "x dm backfill", "x direct messages", "confirmation token"],
+    intent_tags: ["reference"],
+    endpoint_aliases: ["POST /v1/inbox/sync", "/v1/inbox/sync"],
+    platforms: ["twitter"],
+    required_feature: "x_dms_v1",
+    content: "When X DMs are enabled, POST /v1/inbox/sync can run a bounded legacy X DM backfill. A confirmed request must retain the same account, lookback, maximum, and include fields.",
+  }),
+  chunk({
+    id: "api-inbox-sync-x-credits",
+    title: "X Credits for Inbox sync",
+    path: "/docs/api/inbox/sync",
+    section_id: "x-credits",
+    primary_nav: "API Reference",
+    section_title: "X Credits",
+    product_area: "billing",
+    tags: ["x credits", "inbox sync", "monthly allowance", "inbound daily capacity"],
+    intent_tags: ["reference"],
+    endpoint_aliases: ["POST /v1/inbox/sync", "/v1/inbox/sync"],
+    platforms: ["twitter"],
+    required_feature: "x_credits_billing_v1",
+    content: "When X Credits billing is enabled, managed X reads reserve monthly allowance and inbound daily capacity before a paid read.",
   }),
   chunk({
     id: "guide-x-comments",
@@ -177,11 +254,26 @@ export const DOCS_AI_INDEX: DocsAiChunk[] = [
     primary_nav: "Guides",
     section_title: "Restore X Inbox capability",
     product_area: "inbox",
-    tags: ["x reconnect", "missing scopes", "dm.read", "workspace x app credentials"],
+    tags: ["x reconnect", "missing scopes", "workspace x app credentials", "x comments"],
     intent_tags: ["auth", "connect"],
     endpoint_aliases: ["GET /v1/accounts/{id}/capabilities", "GET /v1/accounts/:id/capabilities"],
     platforms: ["twitter"],
-    content: "Read x_inbox capability state first. X comments use OAuth 2.0 tweet.read, tweet.write, users.read, and offline.access. While X DMs are unavailable, DM-only missing scopes do not require reconnect. When the DM rollout opens, accounts missing dm.read or dm.write reconnect once; accounts that already granted them do not reconnect again.",
+    content: "Read x_inbox capability state first. X comments use OAuth 2.0 tweet.read, tweet.write, users.read, and offline.access. Reconnect only when the comment capability reports missing required access.",
+  }),
+  chunk({
+    id: "guide-x-reconnect-permissions-dm",
+    title: "Reconnect X direct-message permissions",
+    path: "/docs/guides/x/reconnect-permissions",
+    section_id: "dm-scopes",
+    primary_nav: "Guides",
+    section_title: "Restore X DM capability",
+    product_area: "inbox",
+    tags: ["x reconnect", "missing scopes", "dm.read", "dm.write", "x direct messages"],
+    intent_tags: ["auth", "connect"],
+    endpoint_aliases: ["GET /v1/accounts/{id}/capabilities", "GET /v1/accounts/:id/capabilities"],
+    platforms: ["twitter"],
+    required_feature: "x_dms_v1",
+    content: "When the X DM rollout is enabled, accounts missing dm.read or dm.write reconnect once. Accounts that already granted both DM scopes do not reconnect again.",
   }),
   chunk({
     id: "guide-x-credits",
@@ -877,6 +969,15 @@ function detectIntent(query: string): DocsAiIntent {
     /\bredirect uri\b/,
     /\bcallback url\b/,
   ]);
+  const inboxIntent = hasAny(normalizedQuery, [
+    /\binbox\b/,
+    /\bx comments?\b/,
+    /\bx repl(?:y|ies)\b/,
+    /\bx direct messages?\b/,
+    /\bx dms?\b/,
+    /\bx_reply\b/,
+    /\bx_dm\b/,
+  ]);
   const analyticsIntent = hasAny(normalizedQuery, [
     /\banalytics?\b/,
     /\bmetrics?\b/,
@@ -920,6 +1021,7 @@ function detectIntent(query: string): DocsAiIntent {
   if (hasEndpoint && !connectIntent && !analyticsIntent && !credentialsIntent && !postingIntent && !authIntent) return "reference";
   if (connectIntent) return "connect";
   if (credentialsIntent) return "credentials";
+  if (inboxIntent) return "reference";
   if (analyticsIntent) return "analytics";
   if (authIntent) return "auth";
   if (postingIntent) return "posting";
@@ -1019,7 +1121,10 @@ function coverageReasonFor(hits: DocsAiSearchHit[], intent: DocsAiIntent, confid
   return undefined;
 }
 
-export function searchDocsIndex(query: string, options: { limit?: number } = {}): DocsAiSearchResult {
+export function searchDocsIndex(
+  query: string,
+  options: { limit?: number; chunks?: readonly DocsAiChunk[] } = {},
+): DocsAiSearchResult {
   const trimmed = query.trim();
   if (!trimmed) {
     return { hits: [], confidence: "none", intent: "unknown", coverage_reason: "empty query" };
@@ -1027,7 +1132,7 @@ export function searchDocsIndex(query: string, options: { limit?: number } = {})
 
   const intent = detectIntent(trimmed);
   const terms = tokenize(trimmed);
-  const hits = DOCS_AI_INDEX
+  const hits = (options.chunks ?? DOCS_AI_INDEX)
     .map((chunkItem) => {
       const scored = scoreChunk(chunkItem, trimmed, terms, intent);
       return { chunk: chunkItem, score: scored.score, matchedTerms: scored.matchedTerms };

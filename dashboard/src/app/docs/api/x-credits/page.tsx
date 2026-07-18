@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import {
   ApiReferencePage,
@@ -11,6 +9,7 @@ import {
   type ParamRow,
 } from "../_components/doc-components";
 import { X_CREDIT_OPERATIONS, X_CREDITS_CATALOG_VERSION } from "@/data/x-credits-catalog.generated";
+import { requirePublicDocsFeature } from "@/lib/public-feature-flags-server";
 
 const RESPONSE_FIELDS: ParamRow[] = [
   { name: "mode", type: "string", required: true, description: 'Always "monthly_allowance" in the bounded-usage phase.' },
@@ -43,7 +42,9 @@ const RESPONSE_EXAMPLE = `{
   "request_id": "req_123"
 }`;
 
-export default function XCreditsReferencePage() {
+export default async function XCreditsReferencePage() {
+  const publicFeatureFlags = await requirePublicDocsFeature("x_credits_billing_v1");
+
   return (
     <ApiReferencePage
       breadcrumbItems={[{ label: "API Reference", href: "/docs/api" }, { label: "X Credits" }]}
@@ -136,8 +137,9 @@ export default function XCreditsReferencePage() {
         <DocSection id="next" title="Next steps">
           <p style={{ fontSize: 14.5, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 0 }}>
             Use the <Link href="/docs/guides/x/credits">X Credits guide</Link> to estimate operations and handle
-            exhaustion. Continue with <Link href="/docs/guides/x/comments">X comments</Link> or{" "}
-            <Link href="/docs/guides/x/direct-messages">X direct messages</Link>. Compare included plan capacity in{" "}
+            exhaustion. Continue with <Link href="/docs/guides/x/comments">X comments</Link>
+            {publicFeatureFlags.x_dms_v1 ? <> or <Link href="/docs/guides/x/direct-messages">X direct messages</Link></> : null}.
+            Compare included plan capacity in{" "}
             <Link href="/docs/pricing">Plans and limits</Link>.
           </p>
         </DocSection>
