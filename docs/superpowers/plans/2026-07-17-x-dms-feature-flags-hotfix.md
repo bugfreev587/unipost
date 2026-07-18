@@ -389,7 +389,7 @@ git commit -m "fix: use in-app feature flag confirmation"
 - Modify: `dashboard/src/app/sitemap.ts`
 - Modify: affected dashboard source/regression tests
 
-- [ ] **Step 1: Write failing source-contract tests**
+- [x] **Step 1: Write failing source-contract tests**
 
 Add tests proving:
 
@@ -408,7 +408,7 @@ assert.match(aiRoute, /filterDocsSearchChunks/);
 
 Also update existing documentation tests so they require X Comments to remain public while DM- and Credits-specific discovery links are controlled by the corresponding flag.
 
-- [ ] **Step 2: Run focused tests and observe expected failures**
+- [x] **Step 2: Run focused tests and observe expected failures**
 
 ```bash
 cd dashboard
@@ -421,7 +421,7 @@ node --test \
 
 Expected: the new test fails because the runtime flag helpers and docs gates do not exist yet.
 
-- [ ] **Step 3: Add fail-closed runtime docs flag helpers**
+- [x] **Step 3: Add fail-closed runtime docs flag helpers**
 
 Implement:
 
@@ -439,7 +439,7 @@ export const CLOSED_PUBLIC_DOCS_FLAGS: PublicDocsFeatureFlags = {
 
 Map dedicated DM and Credits paths to their flag, and expose pure functions that filter navigation, discovery links, sitemap entries, and AI search chunks. The server helper fetches `/v1/public/features` with `cache: "no-store"`, validates booleans, and returns the closed defaults on any error. `requirePublicDocsFeature()` calls Next.js `notFound()` when the required flag is disabled.
 
-- [ ] **Step 4: Gate dedicated pages and every discovery surface**
+- [x] **Step 4: Gate dedicated pages and every discovery surface**
 
 Make the three dedicated pages asynchronous server pages and call:
 
@@ -455,11 +455,11 @@ await requirePublicDocsFeature("x_credits_billing_v1");
 
 Filter the Docs sidebar, local Docs search, Guides/API landing cards, X platform discovery links, sitemap, and AI Docs search using the public/global flags. Client surfaces start from the closed defaults to prevent a flash of unavailable links. Server surfaces fail closed if the public feature endpoint is unavailable.
 
-- [ ] **Step 5: Remove gated-only content from shared pages**
+- [x] **Step 5: Remove gated-only content from shared pages**
 
 Keep X Comments and the shared Inbox/Reconnect pages public. When `x_dms_v1` is off, omit DM-only links, fields, examples, and explanations from shared Inbox and reconnect documentation. When `x_credits_billing_v1` is off, omit Credits-only links. Split or tag mixed AI search chunks so disabled DM/Credits content cannot be returned from a shared-page search result.
 
-- [ ] **Step 6: Run focused tests until green**
+- [x] **Step 6: Run focused tests until green**
 
 ```bash
 cd dashboard
@@ -470,7 +470,7 @@ node --test \
   tests/x-credits-foundation-source.test.mjs
 ```
 
-- [ ] **Step 7: Run full Dashboard verification**
+- [x] **Step 7: Run full Dashboard verification**
 
 ```bash
 cd dashboard
@@ -480,7 +480,7 @@ npm run test:regression:dashboard
 
 Expected: build succeeds and the Dashboard regression suite has no failures.
 
-- [ ] **Step 8: Commit the docs gating**
+- [x] **Step 8: Commit the docs gating**
 
 ```bash
 git add dashboard/src dashboard/tests docs/superpowers/plans/2026-07-17-x-dms-feature-flags-hotfix.md

@@ -1,5 +1,5 @@
-"use client";
-
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 import type { ApiFieldItem } from "../../_components/doc-components";
 
@@ -29,21 +29,32 @@ const ERRORS: ApiFieldItem[] = [
   { name: "not_found", type: "404", description: "No eligible X account matched the request." },
 ];
 
-export default function InboxSyncPage() {
-  return (
-    <SingleEndpointReferencePage
-      section="inbox"
-      title="Sync and backfill Inbox"
-      description="Runs existing Inbox polling or a bounded X backfill. X comments remain available independently; DM reads require the controlled rollout. Managed-X reads reserve monthly allowance only when X Credits billing is enabled, while the inbound safety cap remains active."
-      method="POST"
-      path="/v1/inbox/sync"
-      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Request Body", items: BODY }]}
-      responses={[{ code: "200", fields: RESPONSE }, { code: "400", fields: ERRORS }, { code: "402", fields: ERRORS }, { code: "409", fields: ERRORS }]}
-      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
-  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
-  -H "Content-Type: application/json" \\
-  -d '{"x_backfill":{"account_id":"sa_x_01","lookback_days":7,"max_items":50,"include_replies":true,"include_dms":true}}'` }]}
-      responseSnippets={[{ lang: "json", label: "200", code: `{
+export default async function InboxSyncPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const xCreditsEnabled = publicFeatureFlags.x_credits_billing_v1;
+  const body = BODY
+    .filter((field) => xDMsEnabled || field.name !== "x_backfill.include_dms")
+    .map((field) => {
+      if (field.name === "x_backfill" && !xDMsEnabled) {
+        return { ...field, description: "Include this object to run a bounded X public-reply backfill. Omit it for the existing non-X Inbox sync." };
+      }
+      if (field.name === "x_backfill.lookback_days" && !xDMsEnabled) {
+        return { ...field, description: "1-7 days for X public-reply lookup." };
+      }
+      return field;
+    });
+  const response = RESPONSE
+    .filter((field) => xCreditsEnabled || field.name !== "data.estimated_x_credits")
+    .map((field) => (
+      field.name === "data.suppressed" && !xCreditsEnabled
+        ? { ...field, description: "Items stopped by the inbound daily safety cap." }
+        : field
+    ));
+  const errors = ERRORS.filter((field) => xDMsEnabled || field.name !== "feature_not_available");
+  const syncBody = `{"x_backfill":{"account_id":"sa_x_01","lookback_days":7,"max_items":50,"include_replies":true${xDMsEnabled ? ',"include_dms":true' : ""}}}`;
+  const responseBody = xCreditsEnabled
+    ? `{
   "data": {
     "estimated_x_credits": 1750,
     "confirmation_required": true,
@@ -54,12 +65,41 @@ export default function InboxSyncPage() {
     "accepted": 0,
     "suppressed": 0
   }
-}` }, { lang: "json", label: "400", code: `{ "error": { "code": "VALIDATION_ERROR", "message": "invalid X backfill confirmation token" } }` }, { lang: "json", label: "402", code: `{ "error": { "code": "PLAN_FEATURE_NOT_AVAILABLE", "message": "Inbox requires the Basic plan or higher." } }` }, { lang: "json", label: "409", code: `{ "error": { "code": "VALIDATION_ERROR", "message": "X backfill account selection or request changed after confirmation" } }` }]}
-      guideLinks={[
-        { label: "Sync X comments", href: "/docs/guides/x/comments" },
-        { label: "Sync X direct messages", href: "/docs/guides/x/direct-messages" },
-        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions" },
-      ]}
+}`
+    : `{
+  "data": {
+    "confirmation_required": true,
+    "confirmation_operation_id": "xop_01",
+    "confirmation_token": "opaque-one-time-token",
+    "confirmation_expires_at": "2026-07-16T19:10:00Z",
+    "accounts_checked": 1,
+    "accepted": 0,
+    "suppressed": 0
+  }
+}`;
+  const guideLinks = filterDocsNavigation([
+    { label: "Sync X comments", href: "/docs/guides/x/comments" },
+    { label: "Sync X direct messages", href: "/docs/guides/x/direct-messages" },
+    { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions" },
+  ], publicFeatureFlags);
+
+  return (
+    <SingleEndpointReferencePage
+      section="inbox"
+      title="Sync and backfill Inbox"
+      description={xDMsEnabled
+        ? "Runs existing Inbox polling or a bounded X public-reply or direct-message backfill. The inbound safety cap remains active."
+        : "Runs existing Inbox polling or a bounded X public-reply backfill. The inbound safety cap remains active."}
+      method="POST"
+      path="/v1/inbox/sync"
+      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Request Body", items: body }]}
+      responses={[{ code: "200", fields: response }, { code: "400", fields: errors }, { code: "402", fields: errors }, { code: "409", fields: errors }]}
+      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '${syncBody}'` }]}
+      responseSnippets={[{ lang: "json", label: "200", code: responseBody }, { lang: "json", label: "400", code: `{ "error": { "code": "VALIDATION_ERROR", "message": "invalid X backfill confirmation token" } }` }, { lang: "json", label: "402", code: `{ "error": { "code": "PLAN_FEATURE_NOT_AVAILABLE", "message": "Inbox requires the Basic plan or higher." } }` }, { lang: "json", label: "409", code: `{ "error": { "code": "VALIDATION_ERROR", "message": "X backfill account selection or request changed after confirmation" } }` }]}
+      guideLinks={guideLinks}
     />
   );
 }

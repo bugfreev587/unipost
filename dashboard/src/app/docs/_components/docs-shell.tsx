@@ -8,7 +8,15 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties, type Keyboard
 import { createPortal } from "react-dom";
 import { UniPostMark } from "@/components/brand/unipost-logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { getPublicFeatureFlags } from "@/lib/api";
 import { splitDocsAiAnswerParagraphs } from "@/lib/docs-ai-answer-formatting";
+import {
+  CLOSED_PUBLIC_DOCS_FLAGS,
+  filterDocsNavigation,
+  filterDocsSearchIndex,
+  normalizePublicDocsFeatureFlags,
+  type PublicDocsFeatureFlags,
+} from "@/lib/docs-feature-flags";
 import { ApiInlineLink } from "../api/_components/doc-components";
 import { CodeBlock, CodeTabs, codeBlockStyles, type CodeSnippet } from "./code-block";
 import { DocsContentBreadcrumb } from "./docs-content-breadcrumb";
@@ -695,6 +703,24 @@ function buildDocsSearchIndex(): DocsSearchResult[] {
 
 const DOCS_SEARCH_INDEX = buildDocsSearchIndex();
 
+function filterSidebarSections(
+  sections: readonly DocsSidebarSection[],
+  flags: PublicDocsFeatureFlags,
+): DocsSidebarSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.flatMap<SidebarItem>((item) => {
+        if ("children" in item) {
+          const children = filterDocsNavigation<NavLeaf>(item.children, flags);
+          return children.length > 0 ? [{ ...item, children } as NavGroup] : [];
+        }
+        return filterDocsNavigation<NavLeaf>([item], flags);
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
 function scoreDocsSearchResult(result: DocsSearchResult, query: string) {
   const q = query.trim().toLowerCase();
   if (!q) return 1;
@@ -716,7 +742,7 @@ function scoreDocsSearchResult(result: DocsSearchResult, query: string) {
   return score;
 }
 
-function DocsSearch() {
+function DocsSearch({ searchIndex }: { searchIndex: DocsSearchResult[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -733,8 +759,8 @@ function DocsSearch() {
   const results = useMemo(() => {
     const trimmed = query.trim();
     if (!trimmed) {
-      const current = DOCS_SEARCH_INDEX.find((result) => result.href === pathname);
-      const suggested = DOCS_SEARCH_INDEX
+      const current = searchIndex.find((result) => result.href === pathname);
+      const suggested = searchIndex
         .map((result) => {
           let score = 0;
           if (result.href === pathname) score += 120;
@@ -750,13 +776,13 @@ function DocsSearch() {
       return suggested.slice(0, 7).map((item) => item.result);
     }
 
-    const scored = DOCS_SEARCH_INDEX
+    const scored = searchIndex
       .map((result) => ({ result, score: scoreDocsSearchResult(result, trimmed) }))
       .filter((item) => item.score > 0)
       .sort((a, b) => b.score - a.score || a.result.title.localeCompare(b.result.title));
 
     return scored.slice(0, 8).map((item) => item.result);
-  }, [pathname, query]);
+  }, [pathname, query, searchIndex]);
   const answerParagraphs = answer ? splitDocsAiAnswerParagraphs(answer.answer) : [];
 
   useEffect(() => {
@@ -3016,14 +3042,42 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
   const [mobilePanel, setMobilePanel] = useState<MobileDocsPanel>(null);
   const [showUserChooser, setShowUserChooser] = useState(false);
   const [dontShowChooserAgain, setDontShowChooserAgain] = useState(false);
+  const [publicFeatureFlags, setPublicFeatureFlags] = useState<PublicDocsFeatureFlags>(
+    CLOSED_PUBLIC_DOCS_FLAGS,
+  );
   const dragStartXRef = useRef(0);
   const dragStartWidthRef = useRef(API_SIDEBAR_DEFAULT_WIDTH);
   const activePrimaryNav = getActivePrimaryNav(pathname);
-  const sidebarSections = DOCS_SIDEBAR_NAV[activePrimaryNav];
+  const sidebarSections = useMemo(
+    () => filterSidebarSections(DOCS_SIDEBAR_NAV[activePrimaryNav], publicFeatureFlags),
+    [activePrimaryNav, publicFeatureFlags],
+  );
+  const docsSearchIndex = useMemo(
+    () => filterDocsSearchIndex(DOCS_SEARCH_INDEX, publicFeatureFlags),
+    [publicFeatureFlags],
+  );
   const isApiPage = pathname.startsWith("/docs/api");
   const useGuideRedesign = isOverviewGuidePath(pathname);
   const useApiReferenceRedesign = isApiPage || useGuideRedesign;
   const hasPageContents = !isApiPage && headings.length > 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    void getPublicFeatureFlags()
+      .then((response) => {
+        if (!cancelled) {
+          setPublicFeatureFlags(normalizePublicDocsFeatureFlags(response.data.flags));
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setPublicFeatureFlags(CLOSED_PUBLIC_DOCS_FLAGS);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -3416,7 +3470,7 @@ export function DocsShell({ children }: { children: React.ReactNode }) {
               Dashboard
             </a>
             <ThemeToggle />
-            <DocsSearch />
+            <DocsSearch searchIndex={docsSearchIndex} />
             {isLoaded ? (
               isSignedIn ? (
                 <div className="docs-auth-actions">

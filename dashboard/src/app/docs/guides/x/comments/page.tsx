@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
 
 const LIST = `# GET /v1/inbox
@@ -24,7 +25,11 @@ curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
 {"x_backfill":{"account_id":"sa_x_01","lookback_days":7,"max_items":50,"include_replies":true,"include_dms":false,"confirmation_token":"$CONFIRMATION_TOKEN"}}
 JSON`;
 
-export default function XCommentsGuidePage() {
+export default async function XCommentsGuidePage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const xDMsEnabled = publicFeatureFlags.x_dms_v1;
+  const xCreditsEnabled = publicFeatureFlags.x_credits_billing_v1;
+
   return (
     <DocsPage
       eyebrow="X Guides"
@@ -38,19 +43,18 @@ export default function XCommentsGuidePage() {
         <span className="docs-guide-badge">Managed or workspace X app</span>
       </div>
       <p className="docs-guide-note">
-        X comments use OAuth 2.0 and remain available independently of the controlled X DM rollout. When X Credits
-        billing is not yet enabled for a workspace, customer monthly allowance fields and hard-limit errors are not
-        applied; UniPost still enforces its internal inbound safety boundary.
+        X comments use OAuth 2.0 and remain available independently. UniPost still enforces its internal inbound safety
+        boundary.
       </p>
 
       <h2 id="prerequisites">1. Verify account capability</h2>
       <p>
         Call <Link href="/docs/api/accounts/capabilities">Get account capabilities</Link> and require
         <code> x_inbox.comments_enabled</code>. For <code>unipost_managed_app</code>, UniPost operates the X app and
-        managed reads, inbound events, and replies consume the workspace allowance when X Credits billing is enabled.
-        For <code>workspace_x_app</code>,
+        managed reads, inbound events, and replies use the managed X connection. For <code>workspace_x_app</code>,
         your X app must have Client ID, Client Secret, app Bearer Token, and Consumer Secret configured; those operations
-        use your X access and do not consume UniPost X Credits.
+        use your X access.
+        {xCreditsEnabled ? " Managed-X operations consume the workspace X Credits allowance; workspace-app operations do not." : null}
       </p>
       <p>
         Inbox is available on Basic and higher plans. If the API returns <code>plan_feature_not_available</code>, upgrade
@@ -86,19 +90,20 @@ export default function XCommentsGuidePage() {
 
       <h2 id="limits">5. Handle allowance and cap boundaries</h2>
       <ul className="docs-checklist">
-        <li><code>x_monthly_usage_limit_exceeded</code>: managed-X allowance is exhausted; stop automatic retries.</li>
+        {xCreditsEnabled ? <li><code>x_monthly_usage_limit_exceeded</code>: managed-X allowance is exhausted; stop automatic retries.</li> : null}
         <li><code>x_inbound_daily_cap_exceeded</code>: inbound admission paused for the current UTC day; resume after reset or an administrator changes the cap.</li>
         <li><code>x_write_outcome_pending</code>: do not resend with a new key; poll or retry with the original key.</li>
         <li><code>x_reconnect_required</code>: reconnect with tweet.read, tweet.write, users.read, and offline.access.</li>
       </ul>
 
-      <h2 id="related">Related Inbox and X Credits docs</h2>
+      <h2 id="related">Related Inbox docs</h2>
       <p>
-        Start from the <Link href="/docs/api/inbox">Inbox API overview</Link>. For private conversations, continue to
-        the <Link href="/docs/guides/x/direct-messages">X direct messages guide</Link>. Use the{" "}
-        <Link href="/docs/api/x-credits">X Credits API reference</Link> for live allowance fields and the{" "}
-        <Link href="/docs/guides/x/credits">X Credits guide</Link> for operation planning. Permission problems belong
-        in the <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>.
+        Start from the <Link href="/docs/api/inbox">Inbox API overview</Link>. Permission problems belong in the{" "}
+        <Link href="/docs/guides/x/reconnect-permissions">reconnect guide</Link>.
+        {xDMsEnabled ? <> For private conversations, continue to the{" "}
+          <Link href="/docs/guides/x/direct-messages">X direct messages guide</Link>.</> : null}
+        {xCreditsEnabled ? <> Use the <Link href="/docs/api/x-credits">X Credits API reference</Link> for live allowance
+          fields and the <Link href="/docs/guides/x/credits">X Credits guide</Link> for operation planning.</> : null}
       </p>
     </DocsPage>
   );

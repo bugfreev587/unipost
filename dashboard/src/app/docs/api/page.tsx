@@ -1,6 +1,6 @@
-"use client";
-
 import Link from "next/link";
+import { filterDocsNavigation } from "@/lib/docs-feature-flags";
+import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { ApiReferencePage, MethodBadge } from "./_components/doc-components";
 
 type Endpoint = {
@@ -137,7 +137,15 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
   },
 ];
 
-export default function ApiReferenceIndexPage() {
+export default async function ApiReferenceIndexPage() {
+  const publicFeatureFlags = await getPublicDocsFeatureFlags();
+  const endpointGroups = ENDPOINT_GROUPS
+    .map((group) => ({
+      ...group,
+      endpoints: filterDocsNavigation(group.endpoints, publicFeatureFlags),
+    }))
+    .filter((group) => group.endpoints.length > 0);
+
   return (
     <ApiReferencePage
       breadcrumbItems={[{ label: "API Reference" }]}
@@ -146,7 +154,7 @@ export default function ApiReferenceIndexPage() {
       description="Explore the public UniPost API by resource. Each endpoint page includes authentication, parameters, responses, and runnable examples."
     >
       <div style={{ display: "grid", gap: 26 }}>
-        {ENDPOINT_GROUPS.map((group) => (
+        {endpointGroups.map((group) => (
           <section key={group.title} aria-labelledby={`api-group-${group.title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`}>
             <div style={{ display: "grid", gridTemplateColumns: "minmax(180px, 0.32fr) minmax(0, 1fr)", gap: 18, alignItems: "start" }}>
               <div>

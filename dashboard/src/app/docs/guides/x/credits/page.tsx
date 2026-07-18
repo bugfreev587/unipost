@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { DocsPage, DocsTable } from "../../../_components/docs-shell";
 import { X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
+import { requirePublicDocsFeature } from "@/lib/public-feature-flags-server";
 
-export default function XCreditsGuidePage() {
+export default async function XCreditsGuidePage() {
+  const publicFeatureFlags = await requirePublicDocsFeature("x_credits_billing_v1");
+
   return (
     <DocsPage
       eyebrow="X Guides"
@@ -90,11 +93,13 @@ export default function XCreditsGuidePage() {
           <div className="docs-guide-next-title">X comments</div>
           <div className="docs-guide-next-body">List, reply, sync, and handle managed-X boundaries.</div>
         </Link>
-        <Link href="/docs/guides/x/direct-messages" className="docs-guide-next-card">
-          <div className="docs-guide-next-kicker">Inbox</div>
-          <div className="docs-guide-next-title">X direct messages</div>
-          <div className="docs-guide-next-body">Work with private legacy DM threads safely.</div>
-        </Link>
+        {publicFeatureFlags.x_dms_v1 ? (
+          <Link href="/docs/guides/x/direct-messages" className="docs-guide-next-card">
+            <div className="docs-guide-next-kicker">Inbox</div>
+            <div className="docs-guide-next-title">X direct messages</div>
+            <div className="docs-guide-next-body">Work with private legacy DM threads safely.</div>
+          </Link>
+        ) : null}
         <Link href="/docs/api/posts/validate" className="docs-guide-next-card">
           <div className="docs-guide-next-kicker">Preflight</div>
           <div className="docs-guide-next-title">Validate post</div>

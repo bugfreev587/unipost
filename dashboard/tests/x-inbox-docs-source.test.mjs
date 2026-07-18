@@ -124,8 +124,10 @@ test("X platform, credential, and workflow pages expose the complete Inbox disco
       assert.match(corpus, new RegExp(path.replaceAll("/", "\\/")), label + " is missing " + path);
     }
   }
-  assert.match(platformPage, /data\.inbox\.links\.map/);
-  assert.match(credentialPage, /guide\.relatedLinks\.map/);
+  assert.match(platformPage, /filterDocsNavigation/);
+  assert.match(platformPage, /inboxLinks\.map/);
+  assert.match(credentialPage, /filterDocsNavigation/);
+  assert.match(credentialPage, /relatedLinks\.map/);
 });
 
 test("X comments and DM guides show the complete confirmation follow-up request", async () => {

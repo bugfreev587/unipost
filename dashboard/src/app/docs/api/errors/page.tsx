@@ -1,5 +1,6 @@
 "use client";
 
+import { usePublicDocsFeatureFlags } from "@/lib/use-public-docs-feature-flags";
 import { ApiInlineLink, ApiReferencePage, CodeTabs, DocSection, ErrorTable, ParamTable, type ParamRow } from "../_components/doc-components";
 
 const ERROR_FIELDS: ParamRow[] = [
@@ -108,6 +109,8 @@ const FAILED_RESULT_EXAMPLE = `{
 }`;
 
 export default function ApiErrorsPage() {
+  const publicFeatureFlags = usePublicDocsFeatureFlags();
+
   return (
     <ApiReferencePage
       breadcrumbItems={[{ label: "API Reference", href: "/docs/api" }, { label: "Errors" }]}
@@ -143,13 +146,13 @@ export default function ApiErrorsPage() {
                 { code: "media_error", http: 400, description: "The provider rejected media format, dimensions, duration, URL, or processing state." },
                 { code: "temporary_platform_error", http: 503, description: "The platform or async worker path failed transiently. Check retry_policy.will_retry to know whether UniPost scheduled retry." },
                 { code: "rate_limit", http: 429, description: "Wait before retrying. Respect Retry-After when present." },
-                { code: "x_monthly_usage_limit_exceeded", http: 402, description: "The workspace has reached its managed-X Credits hard limit for the current billing period. Show the reset date or an upgrade/contact path; do not retry-loop." },
+                ...(publicFeatureFlags.x_credits_billing_v1 ? [{ code: "x_monthly_usage_limit_exceeded", http: 402, description: "The workspace has reached its managed-X Credits hard limit for the current billing period. Show the reset date or an upgrade/contact path; do not retry-loop." }] : []),
                 { code: "x_inbound_daily_cap_exceeded", http: 402, description: "Managed-X inbound admission reached the workspace UTC-day safety cap. New events are suppressed until reset or an administrator changes the cap." },
-                { code: "x_reconnect_required", http: 409, description: "Reconnect X and approve the missing tweet or DM scopes before retrying the Inbox operation." },
+                { code: "x_reconnect_required", http: 409, description: publicFeatureFlags.x_dms_v1 ? "Reconnect X and approve the missing tweet or DM scopes before retrying the Inbox operation." : "Reconnect X and approve the missing tweet scopes before retrying the Inbox operation." },
                 { code: "idempotency_key_conflict", http: 409, description: "The X Inbox reply key was used with a different item or payload. Do not reuse the key for a different write." },
                 { code: "x_write_outcome_pending", http: 409, description: "X may have accepted the write. Reuse the same key to inspect state; do not create a second write." },
                 { code: "x_write_needs_reconciliation", http: 409, description: "UniPost cannot safely determine the X write outcome. Do not resend automatically." },
-                { code: "x_usage_reversal_pending", http: 409, description: "X rejected the write and UniPost is still reversing provisional managed-X usage. Retry later with the same key." },
+                ...(publicFeatureFlags.x_credits_billing_v1 ? [{ code: "x_usage_reversal_pending", http: 409, description: "X rejected the write and UniPost is still reversing provisional managed-X usage. Retry later with the same key." }] : []),
                 { code: "x_remote_accepted_reconciling", http: 202, description: "X accepted the reply and UniPost is finishing durable local persistence." },
                 { code: "account_reconnect_required", http: 409, description: "Reconnect the affected social account before retrying." },
                 { code: "missing_permission", http: 403, description: "Reconnect or update platform permissions and scopes." },
