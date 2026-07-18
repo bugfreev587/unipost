@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -212,9 +213,8 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 		// query that only bumps fetched_at + increments the failure
 		// counter, preserving any real metrics from a prior successful
 		// fetch (important for transient errors).
-		failureReason := metErr.Error()
-		if r.Platform == "pinterest" && looksLikePinterestAuthError(metErr) {
-			failureReason = "Pinterest rejected the analytics token. Reconnect Pinterest to refresh analytics access; contact support if this continues after reconnecting."
+		failureReason, markReconnectRequired := analyticsRefreshFailurePolicy(r.Platform, metErr)
+		if markReconnectRequired {
 			if _, markErr := w.queries.MarkSocialAccountReconnectRequired(ctx, r.SocialAccountID); markErr != nil {
 				slog.Warn("analytics refresh: mark reconnect required failed",
 					"result_id", r.SocialPostResultID, "platform", r.Platform, "account_id", r.SocialAccountID, "error", markErr)
@@ -259,6 +259,26 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 		slog.Warn("analytics refresh: upsert failed",
 			"result_id", r.SocialPostResultID, "error", err)
 	}
+}
+
+func analyticsRefreshFailurePolicy(platformName string, err error) (string, bool) {
+	if platformName == "tiktok" {
+		var tiktokErr *platform.TikTokAnalyticsError
+		if errors.As(err, &tiktokErr) && tiktokErr != nil {
+			return fmt.Sprintf(
+				"TikTok analytics unavailable: %s (%s)",
+				tiktokErr.Reason,
+				tiktokErr.Operation,
+			), false
+		}
+	}
+	if platformName == "pinterest" && looksLikePinterestAuthError(err) {
+		return "Pinterest rejected the analytics token. Reconnect Pinterest to refresh analytics access; contact support if this continues after reconnecting.", true
+	}
+	if err == nil {
+		return "analytics refresh failed", false
+	}
+	return err.Error(), false
 }
 
 // numericFromFloat mirrors the helper in handler/analytics.go. Duplicated here
