@@ -241,6 +241,24 @@ Only one pending flag change can exist at a time. Opening the dialog does not mu
 
 The page and APIs require Super Admin access.
 
+## 8.1 Documentation flag coverage
+
+The same public flag values control whether unfinished X documentation is discoverable or directly reachable. Documentation uses the public/global value only; it does not apply the workspace Super Admin bypass because public docs requests do not carry a workspace identity.
+
+When `x_dms_v1` is `OFF`:
+
+- `/docs/guides/x/direct-messages` returns the standard Next.js 404 response;
+- X Direct Messages is omitted from Docs navigation, the Guides landing page, local Docs search, AI Docs search, platform discovery cards, and the sitemap;
+- shared Inbox API and X reconnect documentation omit DM-only links, examples, fields, and explanatory sections;
+- X Comments documentation and the public-comment portions of shared Inbox pages remain available.
+
+When `x_credits_billing_v1` is `OFF`:
+
+- `/docs/guides/x/credits` and `/docs/api/x-credits` return the standard Next.js 404 response;
+- both pages are omitted from Docs navigation, the Guides and API landing pages, local Docs search, AI Docs search, platform discovery cards, and the sitemap.
+
+Turning a flag `ON` makes its dedicated pages and discovery surfaces available without another deployment. Server-side dedicated-page checks and sitemap generation fail closed when the public feature endpoint is unavailable. Client-side Docs navigation and local search initialize hidden, then expose enabled entries after reading `/v1/public/features`, preventing an OFF feature from flashing into view.
+
 ## 9. Documentation
 
 Update:
@@ -284,6 +302,9 @@ Dashboard tests prove:
 - loading, error, empty, saving, confirmation, and success states exist;
 - the confirmation is an accessible centered in-app dialog and no `window.confirm` call remains;
 - canceling the dialog performs no update, while confirming shows a pending state and closes only after success;
+- OFF documentation flags return 404 for their dedicated pages and remove those pages from navigation, both Docs search paths, discovery cards, and sitemap;
+- the X DM flag removes DM-only material from shared Inbox/Reconnect documentation while leaving X Comments visible;
+- ON documentation flags restore the dedicated pages and discovery entries without a deployment;
 - ordinary users do not see X DM controls while closed;
 - a Super Admin can still test X DMs;
 - ordinary users do not see X Credits Billing/allowance/capacity UI while closed;
