@@ -18,7 +18,7 @@ async function loadTikTokAnalyticsRowsModule() {
 
 const { buildTikTokPostRows } = await loadTikTokAnalyticsRowsModule();
 
-test("TikTok post rows tolerate fulfilled analytics envelopes with null data", () => {
+test("TikTok post rows show unavailable metrics as null when analytics did not match a video", () => {
   const rows = buildTikTokPostRows(
     [
       {
@@ -48,10 +48,45 @@ test("TikTok post rows tolerate fulfilled analytics envelopes with null data", (
       title: "Launch recap",
       status: "published",
       videoId: "7390000000000000001",
-      views: 0,
-      likes: 0,
-      comments: 0,
-      shares: 0,
+      views: null,
+      likes: null,
+      comments: null,
+      shares: null,
     },
   ]);
+});
+
+test("TikTok post rows preserve legitimate zero metrics for a matched video", () => {
+  const rows = buildTikTokPostRows(
+    [
+      {
+        id: "post_2",
+        caption: "Fresh post",
+        status: "published",
+        results: [{ social_account_id: "sa_tiktok_1", status: "published", external_id: "publish_2" }],
+      },
+    ],
+    [
+      {
+        status: "fulfilled",
+        value: {
+          data: [{
+            social_account_id: "sa_tiktok_1",
+            video_views: 0,
+            likes: 0,
+            comments: 0,
+            shares: 0,
+            platform_specific: { tiktok_video_id: "7663542984343883021" },
+          }],
+        },
+      },
+    ],
+    "sa_tiktok_1",
+  );
+
+  assert.equal(rows[0].videoId, "7663542984343883021");
+  assert.equal(rows[0].views, 0);
+  assert.equal(rows[0].likes, 0);
+  assert.equal(rows[0].comments, 0);
+  assert.equal(rows[0].shares, 0);
 });
