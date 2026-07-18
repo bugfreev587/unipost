@@ -144,6 +144,7 @@ jobs:
           deployment_url="$(
             npx --yes vercel@50.26.1 deploy \
               --prebuilt \
+              --archive=tgz \
               --yes \
               --token="$VERCEL_TOKEN" \
               --scope="$VERCEL_TEAM_SLUG" \
