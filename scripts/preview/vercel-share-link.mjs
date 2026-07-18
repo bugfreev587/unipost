@@ -7,24 +7,16 @@ import { pathToFileURL } from "node:url";
 const hostPattern =
   /^unipost-dev-pr-\d+-\d+-\d+\.vercel\.app$/;
 
-export function extractShareableURL(payload, expectedHost) {
-  const candidate =
-    typeof payload === "string"
-      ? payload
-      : payload?.protectionBypassUrl ??
-        payload?.shareableUrl ??
-        payload?.url ??
-        payload?.value;
-
+function candidateToURL(candidate, expectedHost) {
+  if (typeof candidate !== "string") {
+    return;
+  }
   let url;
   try {
     url = new URL(candidate);
   } catch {
-    if (
-      typeof candidate !== "string" ||
-      !/^[A-Za-z0-9._~-]{16,512}$/.test(candidate)
-    ) {
-      throw new Error("Vercel did not return a valid Vercel shareable URL");
+    if (!/^[A-Za-z0-9._~-]{16,512}$/.test(candidate)) {
+      return;
     }
     url = new URL(`https://${expectedHost}/`);
     url.searchParams.set("_vercel_share", candidate);
@@ -39,11 +31,50 @@ export function extractShareableURL(payload, expectedHost) {
     url.hostname === "vercel.sh" &&
     url.pathname.startsWith("/s/");
 
-  if (!isAliasShare && !isShortShare) {
-    throw new Error("Vercel did not return a valid Vercel shareable URL");
+  if (isAliasShare || isShortShare) {
+    return url.toString();
+  }
+}
+
+function responseCandidates(payload) {
+  if (typeof payload === "string") {
+    return [payload];
+  }
+  if (!payload || typeof payload !== "object") {
+    return [];
   }
 
-  return url.toString();
+  const candidates = [];
+  for (const [key, value] of Object.entries(payload)) {
+    if (
+      /^(protectionBypassUrl|shareableUrl|url|value|secret|token)$/i.test(key)
+    ) {
+      candidates.push(...responseCandidates(value));
+    } else if (/protection|bypass|share/i.test(key)) {
+      candidates.push(...responseCandidates(value));
+    }
+  }
+  return candidates;
+}
+
+export function extractShareableURL(payload, expectedHost) {
+  const urls = responseCandidates(payload)
+    .map((candidate) => candidateToURL(candidate, expectedHost))
+    .filter(Boolean);
+  const explicitURL = urls.find(
+    (url) => url.startsWith("https://vercel.sh/s/") || url.includes(expectedHost),
+  );
+
+  if (!explicitURL) {
+    const keys =
+      payload && typeof payload === "object"
+        ? Object.keys(payload).slice(0, 10).join(",")
+        : typeof payload;
+    throw new Error(
+      `Vercel did not return a valid Vercel shareable URL (response keys: ${keys || "none"})`,
+    );
+  }
+  return explicitURL;
 }
 
 async function responseError(response) {
