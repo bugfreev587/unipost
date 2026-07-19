@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "Free Social Media Tools for Developers | UniPost",
   description:
     "Free tools for social media developers. Character counter, AI caption generator, thread splitter, and more. Built by UniPost.",
+  alternates: { canonical: "https://unipost.dev/tools" },
   keywords: [
     "social media tools for developers",
     "free social media tools",

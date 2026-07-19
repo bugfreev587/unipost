@@ -356,4 +356,20 @@ describe("audited public routes expose self-referencing canonicals", () => {
       assert.match(source, /alternates:\s*{\s*canonical:/s);
     }
   });
+
+  it("declares exact self-canonicals for audited legal and tools routes", () => {
+    const routes = [
+      ["src/app/privacy/page.tsx", "https://unipost.dev/privacy"],
+      ["src/app/terms/page.tsx", "https://unipost.dev/terms"],
+      ["src/app/tools/page.tsx", "https://unipost.dev/tools"],
+      ["src/app/tools/agentpost/page.tsx", "https://unipost.dev/tools/agentpost"],
+      ["src/app/tools/character-counter/page.tsx", "https://unipost.dev/tools/character-counter"],
+    ];
+
+    for (const [routePath, canonical] of routes) {
+      const source = read(routePath);
+      assert.equal(source.includes(canonical), true);
+      assert.match(source, /alternates:\s*{\s*canonical:/s);
+    }
+  });
 });
