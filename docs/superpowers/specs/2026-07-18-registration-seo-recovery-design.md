@@ -42,11 +42,35 @@ This is not a broad organic visibility collapse. Search visibility increased, bu
 ### Homepage metadata regression
 
 - A July 8 production change used the descriptive title `UniPost | Social Media Posting API for Developers`.
-- A July 9 automated content change replaced it with the generic title `Unipost` and a generic multi-channel publishing description.
+- On July 9, CiteLoop opened a sequence of four commits with the same `Rewrite homepage title and meta description for query relevance` subject. Two were no-ops; two changed `dashboard/src/app/marketing/page.tsx`.
+- The first changing commit, `8cb2b639`, incorrectly set `HOMEPAGE_TITLE` to the commit-message text `Rewrite homepage title and meta description for query relevance`.
+- The later changing commit, `ff988e56`, replaced that invalid title with the generic title `Unipost` and a generic multi-channel publishing description.
+- Those commits were single-parent commits on the CiteLoop PR branch, not merge commits themselves. They entered production through pull request #175.
 - After the generic title change, impressions and clicks for the exact `unipost` query increased sharply, driven overwhelmingly by Italy.
 - The Italian postal and financial-services brand at `uniposte.it` creates a credible query-intent collision.
 
 The metadata change is the strongest code-correlated explanation for the irrelevant traffic shift. It does not by itself prove causality, but it is specific, reversible, and consistent with the query and country data.
+
+### CiteLoop production-change audit
+
+The audit found 12 commits on `origin/main` authored by `citeloop[bot]` or `CiteLoop` between June 17 and July 18:
+
+- Eight commits changed repository content and four were no-ops.
+- Three changing commits published new generated articles on or after July 7.
+- Two changing commits caused the homepage metadata regression described above.
+- A July 14 Doctor Site Fix shortened one generated article's display title.
+- A second July 14 Doctor Site Fix changed `dashboard/src/app/sitemap.ts` so generated `blogPosts` are eligible for sitemap inclusion.
+- CiteLoop remained active after the metadata incident, publishing articles on July 16 and July 18. At the time of the audit, the latest `origin/main` commit was the July 18 CiteLoop publish commit `fca9033d`.
+
+The service therefore had continuing authority to propose and merge production SEO/GEO changes; the homepage regression was not an isolated manual edit. The user has now stopped all CiteLoop changes to UniPost until a separate CiteLoop remediation is approved. That operational stop is a prerequisite for this recovery. If CiteLoop resumes touching UniPost before its remediation is approved, implementation and promotion must stop.
+
+The current repository contains 16 files under `content/citeloop/blog`. The production loader:
+
+- Ignores the `canonical` values in generated frontmatter and constructs the rendered canonical as `https://unipost.dev/blog/<slug>`.
+- Excludes the `citeloop-dev-verification` fixture from production blog data.
+- Rejects generated sources that fail its parser or safety checks.
+
+Therefore, incorrect `dev.unipost.dev` or `/blogs/` canonical strings in generated source frontmatter are not currently emitted as production canonical metadata and are not part of the emergency fix. Generated content still requires a later factual-quality and query-cannibalization review as part of CiteLoop remediation.
 
 ### Google systems
 
@@ -62,14 +86,17 @@ The spam update is a possible secondary influence, but the production evidence d
 - Search Console reported 13 indexed pages and 38 non-indexed pages at its latest July 9 update.
 - The non-indexed set included expected exclusions such as `noindex`, redirects, 401 responses, and 404 responses, plus 9 crawled-but-not-indexed URLs requiring review.
 - No sitemap had been submitted in Search Console.
+- The current production sitemap returned 50 URLs during the July 18 audit. Every listed URL returned HTTP 200 without a redirect.
+- Only three `/blog/` entries were present in the live sitemap during that audit, despite the source implementation allowing generated `blogPosts`. This is an observed source/deployment-output mismatch to test, not evidence that invalid generated URLs are currently in the sitemap.
 
 ## Diagnosis
 
-Three separate problems are currently being conflated:
+Four separate problems are currently being conflated:
 
-1. **Search intent:** the homepage metadata encouraged Google to interpret `Unipost` as a generic brand query, producing a surge of likely irrelevant Italian traffic.
-2. **Indexing hygiene:** the site has no submitted sitemap and has unresolved canonical/index-status cases, limiting confidence in page discovery and consolidation.
-3. **Measurement:** visitor bindings, mutable user rows, incomplete referrer detection, and automated scans prevent the current dashboard from reporting a trustworthy acquisition funnel.
+1. **Automation governance:** CiteLoop retained permission to change production SEO/GEO surfaces after producing an invalid title and then a harmful generic title. Restoring metadata without containing that writer would be temporary.
+2. **Search intent:** the generic homepage metadata encouraged Google to interpret `Unipost` as an ambiguous brand query, producing a surge of likely irrelevant Italian traffic.
+3. **Sitemap submission and regression protection:** the live sitemap is currently clean at the HTTP-status level, but it has not been submitted to Search Console and lacks a deployed-output contract that would prevent future invalid entries or source/runtime drift.
+4. **Measurement:** visitor bindings, mutable user rows, incomplete referrer detection, and automated scans prevent the current dashboard from reporting a trustworthy acquisition funnel.
 
 The implementation must address these independently so a movement in one layer does not masquerade as success or failure in another.
 
@@ -77,7 +104,8 @@ The implementation must address these independently so a movement in one layer d
 
 - Restore homepage metadata that explicitly identifies UniPost as a social-media posting API for developers.
 - Reduce ambiguity with unrelated `UniPost`/`UniPoste` brand intent.
-- Ensure the submitted sitemap contains only canonical, indexable, public 200 responses.
+- Prevent automated changes from silently reducing the homepage title to a generic brand or arbitrary task text.
+- Submit the existing sitemap and enforce that its deployed entries remain public, indexable 200 responses without redirect or conflicting canonical metadata.
 - Establish an immutable registration fact independent of user deletion and later visitor activity.
 - Capture first-touch acquisition once without allowing return visits to overwrite it.
 - Distinguish new signups, attributed signups, activated signups, bound users, and qualified visitors.
@@ -93,6 +121,9 @@ The implementation must address these independently so a movement in one layer d
 - Hard-coding a country exclusion into attribution.
 - Building a general-purpose bot-defense or WAF product.
 - Rewriting all marketing content.
+- Redesigning CiteLoop, its prompt logic, permissions, or approval workflow. That is a separate remediation project.
+- Bulk deleting or rewriting CiteLoop-generated articles without page-level search and factual evidence.
+- Adding homepage JSON-LD as part of the emergency metadata repair.
 - Adding a feature flag. The approved design uses independent, reversible changes instead.
 - Promoting beyond `dev` without explicit user authorization.
 
@@ -100,11 +131,13 @@ The implementation must address these independently so a movement in one layer d
 
 Work is divided into three sequential batches:
 
-1. P0 restores homepage search intent.
-2. P1 corrects sitemap, canonical, and indexability fundamentals.
+1. P0 restores and protects homepage search intent.
+2. P1 submits the existing sitemap and adds a deployed-output regression contract.
 3. P2 establishes the trustworthy registration and attribution funnel.
 
 Each batch has its own focused diff, tests, Preview Acceptance, and rollback boundary. The conversation continues to use only its exclusive `dev-registration-seo-analysis` branch and worktree. If multiple pull requests are needed, they are opened sequentially from that same owned branch after synchronizing it with the newly merged `origin/dev`; no second task branch or worktree is introduced.
+
+CiteLoop's UniPost writer is already stopped by the user. This recovery adds repository-level regression protection, but the separate CiteLoop remediation remains responsible for permanently restricting its target files and correcting its SEO/GEO decision logic.
 
 ## Online-user safety contract
 
@@ -139,6 +172,17 @@ Production promotion is outside the current authorization. If it is authorized l
 
 ## P0: Homepage search-intent recovery
 
+### Root-cause containment
+
+The user-confirmed CiteLoop stop is the immediate containment control. P0 must also add a repository regression test covering the homepage metadata contract so any future PR, including an automated PR, fails CI when it:
+
+- Uses a standalone generic `Unipost` title.
+- Copies a task, prompt, or commit-message phrase into the title.
+- Removes the developer/API positioning.
+- Produces inconsistent title or description values across primary, Open Graph, and Twitter metadata.
+
+The test must run in the normal dashboard CI path. Making the check required and preventing administrative bypass are repository-governance actions to verify before CiteLoop is ever re-enabled; they do not replace the upstream CiteLoop remediation.
+
 ### Metadata
 
 Use the descriptive homepage title:
@@ -151,14 +195,15 @@ The same product positioning must be reflected in:
 
 - Next.js metadata title and description.
 - Open Graph title and description.
-- Twitter title and description.
-- Any homepage JSON-LD product/application description that currently repeats the generic wording.
+- A newly added Twitter summary-card title and description.
 
 The page must retain one canonical URL for `https://unipost.dev`.
 
+The current homepage has no Twitter metadata and no homepage JSON-LD. P0 adds Twitter metadata and its regression assertions. It does not add JSON-LD; structured data can be designed separately when there is a supported schema and a measurable purpose.
+
 ### Disambiguation
 
-Use descriptive product terms rather than the standalone title `Unipost`. Structured data may identify the product as a software application or service only when the existing page and schema support those claims. It must not manufacture reviews, ratings, company facts, or other unsupported rich-result fields.
+Use descriptive product terms rather than the standalone title `Unipost`. Do not add homepage structured data in P0, and do not manufacture reviews, ratings, company facts, or other unsupported rich-result fields.
 
 No country-specific blocking or `UniPoste` keyword manipulation is included. Search intent is corrected by clearly describing the actual product.
 
@@ -166,7 +211,7 @@ No country-specific blocking or `UniPoste` keyword manipulation is included. Sea
 
 - The server-rendered homepage contains the approved title, description, canonical, Open Graph, and Twitter values.
 - The public page and signed-out registration CTA remain functional.
-- A regression test fails if the homepage title is reduced to the standalone brand name.
+- A regression test fails for the standalone brand title, the observed CiteLoop commit-message title, missing developer/API intent, or inconsistent primary/social metadata.
 - The dashboard production build succeeds.
 - Preview browser inspection confirms the rendered head and normal homepage behavior on the exact PR SHA.
 
@@ -174,19 +219,21 @@ No country-specific blocking or `UniPoste` keyword manipulation is included. Sea
 
 P0 is a metadata-only rollback. Reverting its focused commit restores the preceding values without a data migration.
 
-## P1: Indexing hygiene
+## P1: Sitemap submission and deployed-output contract
 
-### Sitemap contract
+### Current-state constraint
 
-The generated sitemap may contain only URLs that are:
+Do not rebuild or broadly refactor the sitemap. The July 18 production sample contained 50 entries and all returned HTTP 200 without redirect. P1 preserves the existing curated and data-backed route construction unless a deployed test exposes a specific invalid entry.
+
+The deployed sitemap contract is that every emitted URL is:
 
 - Publicly accessible without authentication.
-- Canonical.
+- Free of a declared canonical that points to a different page or host.
 - Intended to be indexed.
-- Expected to return HTTP 200.
+- Returning HTTP 200 without redirect.
 - Not hidden behind a runtime or feature condition.
 
-The sitemap must exclude login/app routes, 401 responses, redirects, 404s, `noindex` pages, duplicated host variants, and conditional content that is unavailable in production.
+The contract rejects authenticated routes, redirects, 404s, explicit `noindex`, conflicting canonical declarations, duplicated host variants, and unavailable conditional content. An otherwise valid page's lack of an explicit canonical is not, by itself, a P1 emergency failure.
 
 ### Canonical host
 
@@ -203,15 +250,19 @@ Review the 9 crawled-but-not-indexed URLs individually:
 
 The existing `noindex`, 401, redirect, and 404 groups should be sampled to confirm they are intentional before changing them.
 
+This is a Search Console diagnosis task, not evidence that the current sitemap contains those URLs. No page is changed solely to increase the indexed count.
+
 ### Search Console action
 
 After the deployed sitemap is verified, submit `https://unipost.dev/sitemap.xml` in Search Console. This is a separate external-state action and must be announced immediately before execution. A successful submission does not guarantee indexing.
 
 ### P1 acceptance
 
-- Every sitemap URL resolves to an indexable canonical 200 response in the target environment.
+- A deployed check fetches the generated sitemap and then requests every entry.
+- Every sitemap URL resolves directly to an indexable 200 response.
 - No authenticated, redirecting, missing, or explicitly excluded URL is present.
-- The canonical host is consistent in rendered metadata and sitemap output.
+- Any declared canonical uses the production apex host and does not conflict with the sitemap URL.
+- The source/runtime discrepancy in generated-blog sitemap inclusion is explained or removed; the test validates deployed output rather than assuming source enumeration.
 - Search Console accepts the sitemap without a parsing or fetch error after production deployment.
 
 ### P1 rollback
@@ -334,14 +385,15 @@ Emit GA4's `sign_up` event after confirmed registration where consent and the ex
 ### P0 tests
 
 - Metadata unit/static regression coverage for the approved title, description, canonical, Open Graph, and Twitter fields.
-- A guard against the standalone homepage title `Unipost`.
+- Guards against the standalone title `Unipost`, the observed CiteLoop task-text title, missing developer/API intent, and inconsistent primary/social metadata.
 - `npm run build` from `dashboard/`.
 - Preview browser verification of rendered metadata, homepage load, and the signed-out registration CTA.
 
 ### P1 tests
 
-- A focused sitemap test that enumerates all generated entries and rejects non-canonical, private, redirecting, missing, or `noindex` routes.
-- Canonical-host assertions.
+- A focused source-level test for stable sitemap construction and accidental inclusion of known private route classes.
+- A deployed Preview check that fetches the actual sitemap, requests every entry without following redirects, and rejects non-200, redirecting, private, or `noindex` results.
+- A deployed check rejects a declared off-host or conflicting canonical but does not fail solely because a page omits an explicit canonical.
 - `npm run build` from `dashboard/`.
 - Browser or HTTP verification against the deployed Preview for representative sitemap URLs.
 - Search Console validation only after an explicitly authorized production deployment.
@@ -386,11 +438,13 @@ The measurement clock starts when Google has re-crawled and adopted the correcte
 
 ### Fourteen-day leading indicators
 
-- At least 10 real new signups.
-- At least 3 Google first-touch signups.
+- Directional target: approximately 10 real new signups.
+- Directional target: approximately 3 Google first-touch signups.
 - New-signup and attribution counts reconcile with the authoritative event tables.
 - The Italian share of exact-`unipost` clicks moves materially downward, with an initial target below 25%.
 - Developer/API-related non-brand impressions or clicks do not fall by more than 20%.
+
+The signup counts are observation targets, not release gates or automatic rollback thresholds. At the current traffic volume, normal day-to-day variance is too large for a 14-day count to establish causality by itself.
 
 ### Twenty-eight-day outcome
 
@@ -403,6 +457,7 @@ Total clicks may decline without failing the change. A decline caused by removin
 ## Decision rules after observation
 
 - If Google retains the old title after re-crawl, inspect duplicate metadata, canonical selection, rendering, and title rewriting before changing copy again.
+- If CiteLoop resumes modifying UniPost before its separate remediation is approved, stop the recovery flow and restore the containment boundary.
 - If ambiguous Italian brand traffic remains dominant after 28 days, refine product disambiguation and relevant structured data using new query evidence; do not block Italy.
 - If qualified developer traffic remains healthy but registration conversion stays low, begin a separate CTA, pricing, and onboarding investigation.
 - If registrations increase but activation does not, treat acquisition quality or onboarding as the next problem rather than declaring SEO success.
@@ -416,6 +471,7 @@ Total clicks may decline without failing the change. A decline caused by removin
 - A P2 application rollback leaves the new tables in place and stops new reads/writes through code; it does not drop captured events.
 - No destructive down migration is used as the normal rollback path.
 - Existing raw visitor rows remain available for audit.
+- Re-enabling CiteLoop is not a rollback mechanism and is outside this recovery.
 
 ## Completion criteria
 
@@ -424,7 +480,7 @@ The design is implemented only when:
 - All three batches satisfy their local and exact-SHA Preview gates.
 - Existing signup, authentication, account connection, publishing, billing, and public API behavior passes regression acceptance.
 - Homepage search intent is explicit and protected by regression coverage.
-- Sitemap and canonical behavior pass the indexability contract.
+- The deployed sitemap passes its HTTP/indexability contract and is ready for an explicitly authorized Search Console submission.
 - Registration events are idempotent and independent of return visits.
 - First-touch attribution is frozen and tested.
 - Automated traffic is classified without deleting evidence or blocking users.
