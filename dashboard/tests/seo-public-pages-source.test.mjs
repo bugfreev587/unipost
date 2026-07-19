@@ -314,3 +314,29 @@ describe("homepage and about page carry entity SEO intent", () => {
     assert.match(source, /<span className="about-platform-name">\{platform\.name\}<\/span>/);
   });
 });
+
+describe("audited public routes expose self-referencing canonicals", () => {
+  const platformRoutes = [
+    ["src/app/(platforms)/bluesky-api/page.tsx", "bluesky"],
+    ["src/app/(platforms)/instagram-api/page.tsx", "instagram"],
+    ["src/app/(platforms)/linkedin-api/page.tsx", "linkedin"],
+    ["src/app/(platforms)/pinterest-api/page.tsx", "pinterest"],
+    ["src/app/(platforms)/threads-api/page.tsx", "threads"],
+    ["src/app/(platforms)/tiktok-api/page.tsx", "tiktok"],
+    ["src/app/(platforms)/twitter-api/page.tsx", "twitter"],
+    ["src/app/(platforms)/youtube-api/page.tsx", "youtube"],
+  ];
+
+  it("builds every platform page metadata through the canonical helper", () => {
+    const helperPath = "src/app/(platforms)/_config/metadata.ts";
+    assert.equal(existsSync(join(root, helperPath)), true);
+    const helper = read(helperPath);
+    assert.match(helper, /const canonical = `https:\/\/unipost\.dev\/\$\{platform\.slug\}-api`/);
+    assert.match(helper, /alternates:\s*{\s*canonical\s*}/s);
+
+    for (const [routePath, platformName] of platformRoutes) {
+      const source = read(routePath);
+      assert.match(source, new RegExp(`buildPlatformMetadata\\(${platformName}\\)`));
+    }
+  });
+});

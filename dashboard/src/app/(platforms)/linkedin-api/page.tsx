@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { linkedin } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: linkedin.seo.title,
-  description: linkedin.seo.description,
-  keywords: linkedin.seo.keywords,
-  openGraph: {
-    title: `${linkedin.name} API for Developers | UniPost`,
-    description: linkedin.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(linkedin);
 
 export default function LinkedInApiPage() {
   return (
