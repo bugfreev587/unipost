@@ -41,6 +41,14 @@ test("CI covers every integration branch without production runtime targets", as
   );
 });
 
+test("CI makes the dashboard SEO regression blocking", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  assert.match(
+    workflow,
+    /Run dashboard SEO source regression[\s\S]*npm run test:seo/,
+  );
+});
+
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
   for (const event of [
