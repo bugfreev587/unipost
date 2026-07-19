@@ -5,6 +5,7 @@ export const metadata: Metadata = {
   title: "AgentPost — AI Social Media Posting Tool | UniPost",
   description:
     "Describe what you shipped and AI posts it to Twitter, LinkedIn, Instagram, Threads, TikTok, YouTube, and Bluesky. Free. No install required.",
+  alternates: { canonical: "https://unipost.dev/tools/agentpost" },
   keywords: [
     "ai social media posting tool",
     "agentpost",
