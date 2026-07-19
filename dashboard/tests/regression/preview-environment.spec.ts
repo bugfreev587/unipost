@@ -4,7 +4,7 @@ const expectedSHA = process.env.EXPECTED_PREVIEW_SHA;
 const expectedAPIURL = process.env.EXPECTED_PREVIEW_API_URL?.replace(/\/+$/, "");
 const dashboardBaseURL = process.env.DASHBOARD_BASE_URL;
 const automationBypassSecret =
-  process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
 
 if (
   !expectedSHA ||
