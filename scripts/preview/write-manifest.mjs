@@ -15,8 +15,10 @@ export function createPreviewManifest({ sha, branch, apiURL }) {
   if (!/^[a-f0-9]{40}$/i.test(sha ?? "")) {
     throw new Error("Preview manifest requires a full 40-character commit SHA");
   }
-  if (!/^dev-[a-z0-9][a-z0-9-]*$/i.test(branch ?? "")) {
-    throw new Error("Preview manifest branch must use the dev-<task-slug> form");
+  if (!/^(?:dev-|hotfix-)[a-z0-9][a-z0-9-]*$/i.test(branch ?? "")) {
+    throw new Error(
+      "Preview manifest branch must use the dev-<task-slug> or hotfix-<task-slug> form",
+    );
   }
 
   let parsedAPI;

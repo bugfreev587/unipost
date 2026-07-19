@@ -1,6 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "https://unipost.dev/docs/guides/x/reconnect-permissions" },
+};
 
 const CAPABILITIES = `curl "https://api.unipost.dev/v1/accounts/sa_x_01/capabilities" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`;

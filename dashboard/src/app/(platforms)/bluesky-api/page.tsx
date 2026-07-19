@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { bluesky } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: bluesky.seo.title,
-  description: bluesky.seo.description,
-  keywords: bluesky.seo.keywords,
-  openGraph: {
-    title: `${bluesky.name} API for Developers | UniPost`,
-    description: bluesky.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(bluesky);
 
 export default function BlueskyApiPage() {
   return (

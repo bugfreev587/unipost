@@ -138,6 +138,13 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     "SEO API requests must not ask Vercel to set a bypass cookie because the cookie handshake is a same-path redirect",
   );
 
+  const previewManifest = await read("scripts/preview/write-manifest.mjs");
+  assert.match(
+    previewManifest,
+    /dev-\|hotfix-/,
+    "preview manifests must support required hotfix sync pull requests",
+  );
+
   const proxy = await read("dashboard/src/proxy.ts");
   assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
 });

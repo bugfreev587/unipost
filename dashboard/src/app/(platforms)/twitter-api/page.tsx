@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { twitter } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: twitter.seo.title,
-  description: twitter.seo.description,
-  keywords: twitter.seo.keywords,
-  openGraph: {
-    title: `${twitter.name} API for Developers | UniPost`,
-    description: twitter.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(twitter);
 
 export default function TwitterApiPage() {
   return (

@@ -4,6 +4,7 @@ import { UniPostMark } from "@/components/brand/unipost-logo";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — UniPost",
+  alternates: { canonical: "https://unipost.dev/privacy" },
 };
 
 export default function PrivacyPage() {

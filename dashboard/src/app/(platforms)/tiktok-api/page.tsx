@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { tiktok } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: tiktok.seo.title,
-  description: tiktok.seo.description,
-  keywords: tiktok.seo.keywords,
-  openGraph: {
-    title: `${tiktok.name} API for Developers | UniPost`,
-    description: tiktok.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(tiktok);
 
 export default function TikTokApiPage() {
   return (

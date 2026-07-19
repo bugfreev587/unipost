@@ -4,6 +4,7 @@ import { UniPostMark } from "@/components/brand/unipost-logo";
 
 export const metadata: Metadata = {
   title: "Terms of Service — UniPost",
+  alternates: { canonical: "https://unipost.dev/terms" },
 };
 
 export default function TermsPage() {
