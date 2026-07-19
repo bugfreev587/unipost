@@ -11,22 +11,28 @@ import {
 import { PlatformIcon } from "@/components/platform-icons";
 import { MarketingCTA, PublicSiteHeader } from "@/components/marketing/nav";
 
-const HOMEPAGE_TITLE = "Unipost";
+const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
 const HOMEPAGE_DESCRIPTION =
-  "Unipost helps you publish and manage posts across your channels from one place. Learn what Unipost offers and get started.";
+  "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
+const HOMEPAGE_URL = "https://unipost.dev/";
 
 export const metadata: Metadata = {
   title: HOMEPAGE_TITLE,
   description: HOMEPAGE_DESCRIPTION,
   alternates: {
-    canonical: "https://unipost.dev/",
+    canonical: HOMEPAGE_URL,
   },
   openGraph: {
     title: HOMEPAGE_TITLE,
     description: HOMEPAGE_DESCRIPTION,
-    url: "https://unipost.dev/",
+    url: HOMEPAGE_URL,
     siteName: "UniPost",
     type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: HOMEPAGE_TITLE,
+    description: HOMEPAGE_DESCRIPTION,
   },
 };
 
