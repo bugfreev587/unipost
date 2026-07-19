@@ -95,11 +95,28 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
   assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
   assert.doesNotMatch(previewConfig, /extraHTTPHeaders/);
+  assert.match(
+    previewConfig,
+    /trace:\s*"off"/,
+    "preview traces must stay disabled because request headers contain the automation bypass secret",
+  );
 
   const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
   assert.doesNotMatch(previewTest, /shareableURL/);
   assert.match(previewTest, /x-vercel-protection-bypass/);
   assert.match(previewTest, /x-vercel-set-bypass-cookie/);
+  assert.match(
+    previewTest,
+    /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,
+    "preview tests must strip accidental whitespace from the automation bypass secret",
+  );
+
+  const previewManifest = await read("scripts/preview/write-manifest.mjs");
+  assert.match(
+    previewManifest,
+    /dev-\|hotfix-/,
+    "preview manifests must support required hotfix sync pull requests",
+  );
 
   const proxy = await read("dashboard/src/proxy.ts");
   assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
