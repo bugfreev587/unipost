@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { threads } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: threads.seo.title,
-  description: threads.seo.description,
-  keywords: threads.seo.keywords,
-  openGraph: {
-    title: `${threads.name} API for Developers | UniPost`,
-    description: threads.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(threads);
 
 export default function ThreadsApiPage() {
   return (
