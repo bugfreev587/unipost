@@ -1,7 +1,12 @@
+import type { Metadata } from "next";
 import { filterDocsNavigation } from "@/lib/docs-feature-flags";
 import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { SingleEndpointReferencePage } from "../../_components/single-endpoint-page";
 import type { ApiFieldItem } from "../../_components/doc-components";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "https://unipost.dev/docs/api/inbox/reply" },
+};
 
 const AUTH: ApiFieldItem[] = [
   { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key. Inbox requires the Basic plan or higher." },
