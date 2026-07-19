@@ -339,4 +339,21 @@ describe("audited public routes expose self-referencing canonicals", () => {
       assert.match(source, new RegExp(`buildPlatformMetadata\\(${platformName}\\)`));
     }
   });
+
+  it("declares exact self-canonicals for audited docs routes", () => {
+    const routes = [
+      ["src/app/docs/page.tsx", "https://unipost.dev/docs"],
+      ["src/app/docs/api/inbox/list/page.tsx", "https://unipost.dev/docs/api/inbox/list"],
+      ["src/app/docs/api/inbox/reply/page.tsx", "https://unipost.dev/docs/api/inbox/reply"],
+      ["src/app/docs/api/inbox/sync/page.tsx", "https://unipost.dev/docs/api/inbox/sync"],
+      ["src/app/docs/guides/x/comments/page.tsx", "https://unipost.dev/docs/guides/x/comments"],
+      ["src/app/docs/guides/x/reconnect-permissions/page.tsx", "https://unipost.dev/docs/guides/x/reconnect-permissions"],
+    ];
+
+    for (const [routePath, canonical] of routes) {
+      const source = read(routePath);
+      assert.equal(source.includes(canonical), true);
+      assert.match(source, /alternates:\s*{\s*canonical:/s);
+    }
+  });
 });
