@@ -2,7 +2,7 @@ import { expect, test, type APIRequestContext } from "@playwright/test";
 
 const dashboardBaseURL = process.env.DASHBOARD_BASE_URL;
 const automationBypassSecret =
-  process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  process.env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim();
 
 if (!dashboardBaseURL || !automationBypassSecret) {
   throw new Error(

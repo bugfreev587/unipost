@@ -114,6 +114,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(previewTest, /shareableURL/);
   assert.match(previewTest, /x-vercel-protection-bypass/);
   assert.match(previewTest, /x-vercel-set-bypass-cookie/);
+  assert.match(
+    previewTest,
+    /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,
+    "preview tests must strip accidental whitespace from the automation bypass secret",
+  );
 
   const seoPreviewTest = await read(
     "dashboard/tests/regression/seo-preview.spec.ts",
@@ -122,6 +127,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(seoPreviewTest, /maxRedirects:\s*0/);
   assert.match(seoPreviewTest, /noindex/i);
   assert.match(seoPreviewTest, /UniPost \| Social Media Posting API for Developers/);
+  assert.match(
+    seoPreviewTest,
+    /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,
+    "SEO preview tests must strip accidental whitespace from the automation bypass secret",
+  );
   assert.doesNotMatch(
     seoPreviewTest,
     /x-vercel-set-bypass-cookie/,
