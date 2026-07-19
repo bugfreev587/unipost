@@ -15,6 +15,18 @@ test("creates a non-secret manifest for one preview SHA", () => {
   });
 });
 
+test("creates a non-secret manifest for a hotfix sync branch", () => {
+  assert.deepEqual(createPreviewManifest({
+    sha: "b".repeat(40),
+    branch: "hotfix-seo-rescue-20260719",
+    apiURL: "https://api-pr-223.up.railway.app",
+  }), {
+    sha: "b".repeat(40),
+    branch: "hotfix-seo-rescue-20260719",
+    apiURL: "https://api-pr-223.up.railway.app",
+  });
+});
+
 test("rejects persistent API targets", () => {
   for (const apiURL of [
     "https://api.unipost.dev",
@@ -48,7 +60,7 @@ test("rejects malformed SHAs, branches, and non-HTTPS API URLs", () => {
       branch: "main",
       apiURL: "https://api-pr-42.up.railway.app",
     }),
-    /dev-/,
+    /dev-|hotfix-/,
   );
   assert.throws(
     () => createPreviewManifest({
