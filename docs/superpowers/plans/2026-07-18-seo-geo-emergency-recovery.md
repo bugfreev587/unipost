@@ -540,14 +540,32 @@ Expected: Next.js production build completes successfully.
 
 - [ ] **Step 4: Run dashboard smoke regression**
 
-Run:
+First prove that the conversation-owned port is free, then start the already-built
+dashboard from this worktree on that dedicated port:
 
 ```bash
 cd dashboard
+lsof -nP -iTCP:3100 -sTCP:LISTEN
+npm run start -- --hostname 127.0.0.1 --port 3100
+```
+
+Expected: the `lsof` command prints no listener before startup, and the Next.js
+server process has this worktree as its current working directory.
+
+In a second shell rooted at the same owned worktree, run:
+
+```bash
+cd dashboard
+CI=1 \
+DASHBOARD_BASE_URL=http://localhost:3100 \
+DASHBOARD_WEB_SERVER=0 \
 npm run test:regression:dashboard
 ```
 
-Expected: all Playwright dashboard regression tests PASS. The preview-only specs are not collected.
+Expected: all enabled Playwright dashboard regression tests PASS against port
+3100. The preview-only specs are not collected. Stop the owned server after the
+suite completes. Never use `reuseExistingServer`, port 3000, or a server whose
+process belongs to another worktree.
 
 - [ ] **Step 5: Perform the final local diff audit**
 
