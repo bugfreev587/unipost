@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { youtube } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: youtube.seo.title,
-  description: youtube.seo.description,
-  keywords: youtube.seo.keywords,
-  openGraph: {
-    title: `${youtube.name} API for Developers | UniPost`,
-    description: youtube.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(youtube);
 
 export default function YouTubeApiPage() {
   return (

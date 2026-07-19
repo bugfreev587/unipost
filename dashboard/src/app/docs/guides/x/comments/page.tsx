@@ -1,6 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { getPublicDocsFeatureFlags } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "https://unipost.dev/docs/guides/x/comments" },
+};
 
 const LIST = `# GET /v1/inbox
 curl "https://api.unipost.dev/v1/inbox?source=x_reply&is_own=false&limit=50" \\

@@ -1,5 +1,10 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { DocsPage } from "./_components/docs-shell";
+
+export const metadata: Metadata = {
+  alternates: { canonical: "https://unipost.dev/docs" },
+};
 
 export default function DocsHomePage() {
   return (
