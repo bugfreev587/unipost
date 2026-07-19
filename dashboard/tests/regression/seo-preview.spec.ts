@@ -12,7 +12,6 @@ if (!dashboardBaseURL || !automationBypassSecret) {
 
 const bypassHeaders = {
   "x-vercel-protection-bypass": automationBypassSecret,
-  "x-vercel-set-bypass-cookie": "true",
 };
 const productionOrigin = "https://unipost.dev";
 const expectedTitle = "UniPost | Social Media Posting API for Developers";
@@ -65,10 +64,11 @@ test("homepage renders the protected developer API metadata", async ({ page }) =
     "content",
     expectedDescription,
   );
-  await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
-    "href",
-    `${productionOrigin}/`,
-  );
+  const canonical = await page
+    .locator('link[rel="canonical"]')
+    .getAttribute("href");
+  expect(canonical).not.toBeNull();
+  expect(new URL(canonical!).href).toBe(new URL(productionOrigin).href);
   await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
     "content",
     expectedTitle,

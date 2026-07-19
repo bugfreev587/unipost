@@ -27,7 +27,7 @@ export default defineConfig({
   ],
   use: {
     baseURL,
-    trace: "retain-on-failure",
+    trace: "off",
     screenshot: "only-on-failure",
     video: "retain-on-failure",
   },

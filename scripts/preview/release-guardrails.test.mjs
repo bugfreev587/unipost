@@ -104,6 +104,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
   assert.doesNotMatch(previewConfig, /extraHTTPHeaders/);
   assert.match(previewConfig, /seo-preview\.spec\.ts/);
+  assert.match(
+    previewConfig,
+    /trace:\s*"off"/,
+    "preview traces must stay disabled because request headers contain the automation bypass secret",
+  );
 
   const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
   assert.doesNotMatch(previewTest, /shareableURL/);
@@ -117,6 +122,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(seoPreviewTest, /maxRedirects:\s*0/);
   assert.match(seoPreviewTest, /noindex/i);
   assert.match(seoPreviewTest, /UniPost \| Social Media Posting API for Developers/);
+  assert.doesNotMatch(
+    seoPreviewTest,
+    /x-vercel-set-bypass-cookie/,
+    "SEO API requests must not ask Vercel to set a bypass cookie because the cookie handshake is a same-path redirect",
+  );
 
   const proxy = await read("dashboard/src/proxy.ts");
   assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
