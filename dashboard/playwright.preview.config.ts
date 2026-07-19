@@ -9,7 +9,10 @@ if (!baseURL) {
 
 export default defineConfig({
   testDir: "./tests/regression",
-  testMatch: "preview-environment.spec.ts",
+  testMatch: [
+    "preview-environment.spec.ts",
+    "seo-preview.spec.ts",
+  ],
   timeout: 45_000,
   expect: {
     timeout: 10_000,

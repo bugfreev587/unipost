@@ -103,11 +103,20 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
   assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
   assert.doesNotMatch(previewConfig, /extraHTTPHeaders/);
+  assert.match(previewConfig, /seo-preview\.spec\.ts/);
 
   const previewTest = await read("dashboard/tests/regression/preview-environment.spec.ts");
   assert.doesNotMatch(previewTest, /shareableURL/);
   assert.match(previewTest, /x-vercel-protection-bypass/);
   assert.match(previewTest, /x-vercel-set-bypass-cookie/);
+
+  const seoPreviewTest = await read(
+    "dashboard/tests/regression/seo-preview.spec.ts",
+  );
+  assert.match(seoPreviewTest, /\/sitemap\.xml/);
+  assert.match(seoPreviewTest, /maxRedirects:\s*0/);
+  assert.match(seoPreviewTest, /noindex/i);
+  assert.match(seoPreviewTest, /UniPost \| Social Media Posting API for Developers/);
 
   const proxy = await read("dashboard/src/proxy.ts");
   assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
@@ -115,9 +124,6 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
   const config = await read("dashboard/playwright.regression.config.ts");
-  assert.match(
-    config,
-    /testIgnore:\s*["']preview-environment\.spec\.ts["']/,
-    "dashboard regression would collect the preview-only spec without its required deployment identity",
-  );
+  assert.match(config, /testIgnore:\s*\[[\s\S]*preview-environment\.spec\.ts/);
+  assert.match(config, /testIgnore:\s*\[[\s\S]*seo-preview\.spec\.ts/);
 });
