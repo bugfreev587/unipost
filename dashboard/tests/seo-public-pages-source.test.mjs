@@ -261,16 +261,31 @@ describe("crawl surfaces are explicit", () => {
 });
 
 describe("homepage and about page carry entity SEO intent", () => {
-  it("homepage metadata matches the current production brand positioning", () => {
+  it("homepage metadata protects the developer API search intent", () => {
     const source = read("src/app/marketing/page.tsx");
-    assert.match(source, /const HOMEPAGE_TITLE = "Unipost"/);
     assert.match(
       source,
-      /Unipost helps you publish and manage posts across your channels from one place\. Learn what Unipost offers and get started\./,
+      /const HOMEPAGE_TITLE = "UniPost \| Social Media Posting API for Developers"/,
+    );
+    assert.match(
+      source,
+      /UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms\./,
+    );
+    assert.doesNotMatch(source, /const HOMEPAGE_TITLE = "Unipost"/);
+    assert.doesNotMatch(
+      source,
+      /const HOMEPAGE_TITLE = "Rewrite homepage title and meta description for query relevance"/,
     );
     assert.match(source, /canonical:\s*"https:\/\/unipost\.dev\/"/);
+    assert.match(
+      source,
+      /openGraph:\s*{[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
+    );
+    assert.match(
+      source,
+      /twitter:\s*{[\s\S]*card:\s*"summary",[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
+    );
     assert.match(source, /Post to every social platform with one API/);
-    assert.match(source, /openGraph:\s*{/);
   });
 
   it("about page exists with entity metadata and structured data", () => {
