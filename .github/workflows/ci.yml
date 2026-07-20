@@ -105,6 +105,9 @@ jobs:
       - name: Run dashboard source regression
         run: npm run test:docs-ai
 
+      - name: Run dashboard SEO source regression
+        run: npm run test:seo
+
       - name: Build dashboard
         run: npm run build
 

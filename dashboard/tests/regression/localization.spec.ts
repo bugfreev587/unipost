@@ -1,5 +1,9 @@
 import { expect, test } from "@playwright/test";
 
+const expectedAppHost = new URL(
+  process.env.DASHBOARD_APP_BASE_URL || "https://app.unipost.dev",
+).hostname;
+
 const routes = [
   {
     path: "/",
@@ -90,7 +94,7 @@ test.describe("localized public conversion path", () => {
     const response = await page.request.get("/api/private", { maxRedirects: 0 });
 
     expect(response.status()).toBe(307);
-    expect(new URL(response.headers().location).hostname).toBe("app.unipost.dev");
+    expect(new URL(response.headers().location).hostname).toBe(expectedAppHost);
   });
 
   for (const path of ["/vi", "/vi/pricing", "/fr", "/zh-cn/pricing"]) {

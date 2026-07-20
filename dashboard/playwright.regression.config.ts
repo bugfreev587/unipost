@@ -1,7 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
-const baseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
 const startLocalServer = process.env.DASHBOARD_WEB_SERVER === "1";
+const localPort = process.env.DASHBOARD_REGRESSION_PORT || "3000";
+const baseURL =
+  process.env.DASHBOARD_BASE_URL ||
+  (startLocalServer ? `http://localhost:${localPort}` : "https://app.unipost.dev");
 const authenticatedRegressionEnabled = Boolean(
   process.env.DASHBOARD_TEST_EMAIL &&
     process.env.CLERK_SECRET_KEY &&
@@ -10,7 +13,10 @@ const authenticatedRegressionEnabled = Boolean(
 
 export default defineConfig({
   testDir: "./tests/regression",
-  testIgnore: "preview-environment.spec.ts",
+  testIgnore: [
+    "preview-environment.spec.ts",
+    "seo-preview.spec.ts",
+  ],
   timeout: 45_000,
   expect: {
     timeout: 10_000,
@@ -29,7 +35,7 @@ export default defineConfig({
   },
   webServer: startLocalServer
     ? {
-        command: "npm run start -- --hostname 0.0.0.0 --port 3000",
+        command: `npm run start -- --hostname 0.0.0.0 --port ${localPort}`,
         url: `${baseURL}/docs`,
         reuseExistingServer: !process.env.CI,
         timeout: 120_000,
@@ -54,6 +60,7 @@ export default defineConfig({
       name: "chromium",
       testIgnore: [
         "preview-environment.spec.ts",
+        "seo-preview.spec.ts",
         "localization.spec.ts",
         /clerk\.setup\.ts$/,
         /dashboard-authenticated\.spec\.ts$/,

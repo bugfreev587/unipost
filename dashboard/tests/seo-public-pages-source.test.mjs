@@ -261,16 +261,31 @@ describe("crawl surfaces are explicit", () => {
 });
 
 describe("homepage and about page carry entity SEO intent", () => {
-  it("homepage metadata matches the current production brand positioning", () => {
+  it("homepage metadata protects the developer API search intent", () => {
     const source = read("src/app/marketing/page.tsx");
-    assert.match(source, /const HOMEPAGE_TITLE = "Unipost"/);
     assert.match(
       source,
-      /Unipost helps you publish and manage posts across your channels from one place\. Learn what Unipost offers and get started\./,
+      /const HOMEPAGE_TITLE = "UniPost \| Social Media Posting API for Developers"/,
+    );
+    assert.match(
+      source,
+      /UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms\./,
+    );
+    assert.doesNotMatch(source, /const HOMEPAGE_TITLE = "Unipost"/);
+    assert.doesNotMatch(
+      source,
+      /const HOMEPAGE_TITLE = "Rewrite homepage title and meta description for query relevance"/,
     );
     assert.match(source, /canonical:\s*"https:\/\/unipost\.dev\/"/);
+    assert.match(
+      source,
+      /openGraph:\s*{[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
+    );
+    assert.match(
+      source,
+      /twitter:\s*{[\s\S]*card:\s*"summary",[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
+    );
     assert.match(source, /Post to every social platform with one API/);
-    assert.match(source, /openGraph:\s*{/);
   });
 
   it("about page exists with entity metadata and structured data", () => {
@@ -293,5 +308,64 @@ describe("homepage and about page carry entity SEO intent", () => {
     }
     assert.match(source, /<PlatformIcon platform=\{platform\.platform\}/);
     assert.match(source, /<span className="about-platform-name">\{platform\.name\}<\/span>/);
+  });
+});
+
+describe("audited public routes expose self-referencing canonicals", () => {
+  const platformRoutes = [
+    ["src/app/(platforms)/bluesky-api/page.tsx", "bluesky"],
+    ["src/app/(platforms)/instagram-api/page.tsx", "instagram"],
+    ["src/app/(platforms)/linkedin-api/page.tsx", "linkedin"],
+    ["src/app/(platforms)/pinterest-api/page.tsx", "pinterest"],
+    ["src/app/(platforms)/threads-api/page.tsx", "threads"],
+    ["src/app/(platforms)/tiktok-api/page.tsx", "tiktok"],
+    ["src/app/(platforms)/twitter-api/page.tsx", "twitter"],
+    ["src/app/(platforms)/youtube-api/page.tsx", "youtube"],
+  ];
+
+  it("builds every platform page metadata through the canonical helper", () => {
+    const helperPath = "src/app/(platforms)/_config/metadata.ts";
+    assert.equal(existsSync(join(root, helperPath)), true);
+    const helper = read(helperPath);
+    assert.match(helper, /const canonical = `https:\/\/unipost\.dev\/\$\{platform\.slug\}-api`/);
+    assert.match(helper, /alternates:\s*{\s*canonical\s*}/s);
+
+    for (const [routePath, platformName] of platformRoutes) {
+      const source = read(routePath);
+      assert.match(source, new RegExp(`buildPlatformMetadata\\(${platformName}\\)`));
+    }
+  });
+
+  it("declares exact self-canonicals for audited docs routes", () => {
+    const routes = [
+      ["src/app/docs/page.tsx", "https://unipost.dev/docs"],
+      ["src/app/docs/api/inbox/list/page.tsx", "https://unipost.dev/docs/api/inbox/list"],
+      ["src/app/docs/api/inbox/reply/page.tsx", "https://unipost.dev/docs/api/inbox/reply"],
+      ["src/app/docs/api/inbox/sync/page.tsx", "https://unipost.dev/docs/api/inbox/sync"],
+      ["src/app/docs/guides/x/comments/page.tsx", "https://unipost.dev/docs/guides/x/comments"],
+      ["src/app/docs/guides/x/reconnect-permissions/page.tsx", "https://unipost.dev/docs/guides/x/reconnect-permissions"],
+    ];
+
+    for (const [routePath, canonical] of routes) {
+      const source = read(routePath);
+      assert.equal(source.includes(canonical), true);
+      assert.match(source, /alternates:\s*{\s*canonical:/s);
+    }
+  });
+
+  it("declares exact self-canonicals for audited legal and tools routes", () => {
+    const routes = [
+      ["src/app/privacy/page.tsx", "https://unipost.dev/privacy"],
+      ["src/app/terms/page.tsx", "https://unipost.dev/terms"],
+      ["src/app/tools/page.tsx", "https://unipost.dev/tools"],
+      ["src/app/tools/agentpost/page.tsx", "https://unipost.dev/tools/agentpost"],
+      ["src/app/tools/character-counter/page.tsx", "https://unipost.dev/tools/character-counter"],
+    ];
+
+    for (const [routePath, canonical] of routes) {
+      const source = read(routePath);
+      assert.equal(source.includes(canonical), true);
+      assert.match(source, /alternates:\s*{\s*canonical:/s);
+    }
   });
 });

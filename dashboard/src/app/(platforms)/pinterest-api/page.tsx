@@ -1,18 +1,8 @@
-import type { Metadata } from "next";
 import PlatformPage from "../_components/platform-page";
+import { buildPlatformMetadata } from "../_config/metadata";
 import { pinterest } from "../_config/platforms";
 
-export const metadata: Metadata = {
-  title: pinterest.seo.title,
-  description: pinterest.seo.description,
-  keywords: pinterest.seo.keywords,
-  openGraph: {
-    title: `${pinterest.name} API for Developers | UniPost`,
-    description: pinterest.seo.description,
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+export const metadata = buildPlatformMetadata(pinterest);
 
 export default function PinterestApiPage() {
   return (

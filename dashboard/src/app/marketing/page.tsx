@@ -35,6 +35,11 @@ export async function generateMetadata(): Promise<Metadata> {
       siteName: "UniPost",
       type: "website",
     },
+    twitter: {
+      card: "summary",
+      title: t("metadata.title"),
+      description: t("metadata.description"),
+    },
   };
 }
 

@@ -207,6 +207,7 @@ jobs:
       - name: Run deployed localization regression
         working-directory: dashboard
         env:
+          DASHBOARD_APP_BASE_URL: ${{ steps.vercel.outputs.app_url }}
           DASHBOARD_LANDING_BASE_URL: ${{ steps.vercel.outputs.landing_url }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
