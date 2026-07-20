@@ -36,9 +36,19 @@ export default defineConfig({
       testMatch: /clerk\.setup\.ts$/,
     },
     {
-      name: "chromium",
-      testIgnore: ["preview-environment.spec.ts", /clerk\.setup\.ts$/],
+      name: "authenticated-dashboard",
+      testMatch: /dashboard-authenticated\.spec\.ts$/,
       dependencies: ["clerk-setup"],
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "chromium",
+      testIgnore: [
+        "preview-environment.spec.ts",
+        /clerk\.setup\.ts$/,
+        /dashboard-authenticated\.spec\.ts$/,
+      ],
+      dependencies: ["authenticated-dashboard"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],

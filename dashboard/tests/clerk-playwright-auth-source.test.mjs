@@ -7,7 +7,7 @@ const dashboardRoot = process.cwd();
 
 test("dashboard regression uses Clerk's passwordless Playwright helper", async () => {
   const source = await readFile(
-    path.join(dashboardRoot, "tests/regression/dashboard.spec.ts"),
+    path.join(dashboardRoot, "tests/regression/dashboard-authenticated.spec.ts"),
     "utf8",
   );
 
@@ -31,7 +31,9 @@ test("dashboard regression runs Clerk setup before Chromium", async () => {
 
   assert.match(config, /name: "clerk-setup"/);
   assert.match(config, /testMatch: \/clerk\\\.setup\\\.ts\$\//);
-  assert.match(config, /dependencies: \["clerk-setup"\]/);
+  assert.match(config, /name: "authenticated-dashboard"/);
+  assert.match(config, /testMatch: \/dashboard-authenticated\\\.spec\\\.ts\$\//);
+  assert.match(config, /dependencies: \["authenticated-dashboard"\]/);
   assert.match(setup, /clerkSetup\(\)/);
 });
 
