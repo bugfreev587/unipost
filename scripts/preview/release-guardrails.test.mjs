@@ -72,6 +72,12 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /github\.run_attempt/);
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
   assert.match(workflow, /RAILWAY_PROJECT_ID:.*vars\.RAILWAY_PROJECT_ID/);
+  assert.match(
+    workflow,
+    /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:.*vars\.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY/,
+    "Preview builds must use Clerk Development instead of relying on project defaults",
+  );
+  assert.match(workflow, /test -n "\$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"/);
   assert.match(workflow, /railway-deployments\.mjs/);
   assert.doesNotMatch(
     workflow,
