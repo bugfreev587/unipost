@@ -93,11 +93,27 @@ test("Docs AI browser routes stay public for unauthenticated docs visitors", asy
 
   assert.match(proxy, /\/api\/docs\/answer/);
   assert.match(proxy, /\/api\/docs\/feedback/);
-  assert.match(proxy, /isPublicDocsApi/);
-  assert.match(proxy, /isPublicPage \|\| isPublicDocsApi/);
+  assert.match(proxy, /isPublicDocsApiPath/);
   assert.equal(proxy.includes("export default clerkMiddleware("), false);
+
+  const apiBoundary = proxy.indexOf('if (pathname.startsWith("/api"))');
+  const publicDocsBoundary = proxy.indexOf(
+    "if (isPublicDocsApiPath(pathname))",
+    apiBoundary,
+  );
+  const publicDocsResponse = proxy.indexOf(
+    "return withCountryCookie(NextResponse.next(), request)",
+    publicDocsBoundary,
+  );
+  const protectedApiResponse = proxy.indexOf(
+    "return protectedProxy(request, event)",
+    publicDocsResponse,
+  );
+
+  assert.ok(apiBoundary >= 0, "API routes need an explicit pre-locale boundary");
+  assert.ok(publicDocsBoundary > apiBoundary, "docs APIs must be classified inside the API boundary");
   assert.ok(
-    proxy.indexOf("if (isPublicPage || isPublicDocsApi)") < proxy.indexOf("return protectedProxy(request, event)"),
-    "public docs routes should bypass Clerk middleware before auth is initialized",
+    publicDocsResponse > publicDocsBoundary && publicDocsResponse < protectedApiResponse,
+    "only public docs APIs should bypass Clerk before other API routes are protected",
   );
 });
