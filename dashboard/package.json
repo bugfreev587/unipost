@@ -12,6 +12,7 @@
     "test:team-plan": "node --test tests/team-plan-contract-source.test.mjs tests/enterprise-pricing-source.test.mjs",
     "test:team-plan-acceptance": "node --test tests/team-plan-acceptance.test.mjs",
     "test:admin-email-filters": "node --test tests/admin-email-filters.test.mjs",
+    "test:clerk-auth-source": "node --test tests/clerk-playwright-auth-source.test.mjs",
     "acceptance:team-plan": "node scripts/team-plan-acceptance.mjs",
     "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts",
     "test:regression:preview": "playwright test --config=playwright.preview.config.ts"

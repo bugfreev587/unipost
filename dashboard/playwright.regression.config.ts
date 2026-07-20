@@ -32,7 +32,13 @@ export default defineConfig({
     : undefined,
   projects: [
     {
+      name: "clerk-setup",
+      testMatch: /clerk\.setup\.ts$/,
+    },
+    {
       name: "chromium",
+      testIgnore: ["preview-environment.spec.ts", /clerk\.setup\.ts$/],
+      dependencies: ["clerk-setup"],
       use: { ...devices["Desktop Chrome"] },
     },
   ],

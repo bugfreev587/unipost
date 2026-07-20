@@ -1,10 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
+import { clerk } from "@clerk/testing/playwright";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 const testEmail = process.env.DASHBOARD_TEST_EMAIL;
-const testPassword = process.env.DASHBOARD_TEST_PASSWORD;
 const configuredProfileId = process.env.DASHBOARD_TEST_PROFILE_ID;
+
+if (!testEmail) {
+  throw new Error("DASHBOARD_TEST_EMAIL is required for authenticated dashboard regression.");
+}
 
 const publicRoutes = [
   { path: "/docs", marker: /UniPost|Dashboard|API/i },
@@ -220,10 +224,8 @@ test.describe("admin email notifications", () => {
 });
 
 test.describe("authenticated dashboard smoke", () => {
-  test.skip(!testEmail || !testPassword, "Set DASHBOARD_TEST_EMAIL and DASHBOARD_TEST_PASSWORD to enable authenticated dashboard regression.");
-
   test("core dashboard routes load and preserve plan-gated navigation", async ({ page }) => {
-    await signIn(page, testEmail!, testPassword!);
+    await signIn(page, testEmail);
     const profileId = configuredProfileId || await resolveProfileId(page);
 
     await expectDashboardRoute(page, `/projects/${profileId}`);
@@ -240,21 +242,10 @@ test.describe("authenticated dashboard smoke", () => {
   });
 });
 
-async function signIn(page: Page, email: string, password: string) {
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  if (!page.url().includes("clerk") && !page.url().includes("sign-in")) {
-    await expect(page.getByText(/Navigate|Profiles|Posts|Dashboard/i).first()).toBeVisible();
-    return;
-  }
-
-  await page.getByLabel(/email/i).fill(email);
-  const continueButton = page.locator('button[data-localization-key="formButtonPrimary"]');
-  if (await continueButton.isVisible().catch(() => false)) {
-    await continueButton.click();
-  }
-  await page.locator('input[type="password"]').fill(password);
-  await page.locator('button[data-localization-key="formButtonPrimary"]').click();
-  await page.waitForURL((url) => !url.hostname.includes("clerk") && !url.pathname.includes("sign-in"), { timeout: 30_000 });
+async function signIn(page: Page, emailAddress: string) {
+  await page.goto("/pricing", { waitUntil: "domcontentloaded" });
+  await clerk.signIn({ page, emailAddress });
+  await page.goto("/projects", { waitUntil: "networkidle" });
 }
 
 async function resolveProfileId(page: Page): Promise<string> {
