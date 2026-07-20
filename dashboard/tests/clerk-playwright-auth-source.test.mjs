@@ -48,3 +48,14 @@ test("mobile landing regression resolves every environment without skipping", as
   assert.match(source, /landing\.localhost/);
   assert.doesNotMatch(source, /test\.skip\(/);
 });
+
+test("remote dashboard regression uses development Clerk without a password", async () => {
+  const workflow = await readFile(
+    path.join(dashboardRoot, "../.github/workflows/dashboard-regression.yml"),
+    "utf8",
+  );
+
+  assert.match(workflow, /https:\/\/dev-app\.unipost\.dev/);
+  assert.match(workflow, /CLERK_DEVELOPMENT_SECRET_KEY/);
+  assert.doesNotMatch(workflow, /DASHBOARD_TEST_PASSWORD/);
+});

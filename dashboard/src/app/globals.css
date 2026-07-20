@@ -472,6 +472,57 @@
   color: var(--marketing-muted);
 }
 
+.mk-language-trigger {
+  min-height: 40px;
+  border: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.mk-language-trigger svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 140ms ease;
+}
+
+.mk-language-trigger[data-popup-open] svg,
+.mk-language-trigger[data-open] svg {
+  transform: rotate(180deg);
+}
+
+.mk-language-menu {
+  width: 164px;
+}
+
+.mk-language-item {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--marketing-text);
+  outline: none;
+}
+
+.mk-language-item:hover,
+.mk-language-item:focus-visible,
+.mk-language-item[data-highlighted] {
+  background: color-mix(in srgb, var(--marketing-surface-alt) 90%, transparent);
+}
+
+.mk-language-item svg {
+  width: 15px;
+  height: 15px;
+  color: var(--marketing-link);
+}
+
 .mk-auth-row {
   display: flex;
   align-items: center;

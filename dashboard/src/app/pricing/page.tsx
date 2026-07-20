@@ -1,23 +1,33 @@
 import type { Metadata } from "next";
+import { getLocale, getTranslations } from "next-intl/server";
 import PricingPageClient from "./pricing-page-client";
 
-const description =
-  "Start free with 100 posts/month, then scale UniPost's unified social media API, dashboard, analytics, webhooks, and inbox with product-stage pricing.";
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
+  const t = await getTranslations("pricing");
+  const canonical =
+    locale === "es" ? "https://unipost.dev/es/pricing" : "https://unipost.dev/pricing";
 
-export const metadata: Metadata = {
-  title: "UniPost Pricing | Social Media API Plans",
-  description,
-  alternates: {
-    canonical: "https://unipost.dev/pricing",
-  },
-  openGraph: {
-    title: "UniPost Pricing",
-    description,
-    url: "https://unipost.dev/pricing",
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+  return {
+    title: t("metadata.title"),
+    description: t("metadata.description"),
+    alternates: {
+      canonical,
+      languages: {
+        en: "https://unipost.dev/pricing",
+        es: "https://unipost.dev/es/pricing",
+        "x-default": "https://unipost.dev/pricing",
+      },
+    },
+    openGraph: {
+      title: t("metadata.openGraphTitle"),
+      description: t("metadata.description"),
+      url: canonical,
+      siteName: "UniPost",
+      type: "website",
+    },
+  };
+}
 
 export default function PricingPage() {
   return <PricingPageClient />;

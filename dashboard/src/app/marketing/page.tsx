@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { getLocale, getTranslations } from "next-intl/server";
 import {
   ArrowDown,
   ArrowRight,
@@ -11,24 +12,31 @@ import {
 import { PlatformIcon } from "@/components/platform-icons";
 import { MarketingCTA, PublicSiteHeader } from "@/components/marketing/nav";
 
-const HOMEPAGE_TITLE = "Unipost";
-const HOMEPAGE_DESCRIPTION =
-  "Unipost helps you publish and manage posts across your channels from one place. Learn what Unipost offers and get started.";
+export async function generateMetadata(): Promise<Metadata> {
+  const locale = await getLocale();
+  const t = await getTranslations("marketing");
+  const canonical = locale === "es" ? "https://unipost.dev/es" : "https://unipost.dev/";
 
-export const metadata: Metadata = {
-  title: HOMEPAGE_TITLE,
-  description: HOMEPAGE_DESCRIPTION,
-  alternates: {
-    canonical: "https://unipost.dev/",
-  },
-  openGraph: {
-    title: HOMEPAGE_TITLE,
-    description: HOMEPAGE_DESCRIPTION,
-    url: "https://unipost.dev/",
-    siteName: "UniPost",
-    type: "website",
-  },
-};
+  return {
+    title: t("metadata.title"),
+    description: t("metadata.description"),
+    alternates: {
+      canonical,
+      languages: {
+        en: "https://unipost.dev/",
+        es: "https://unipost.dev/es",
+        "x-default": "https://unipost.dev/",
+      },
+    },
+    openGraph: {
+      title: t("metadata.title"),
+      description: t("metadata.description"),
+      url: canonical,
+      siteName: "UniPost",
+      type: "website",
+    },
+  };
+}
 
 const PLATFORMS = [
   { name: "X", key: "twitter" },
@@ -42,70 +50,65 @@ const PLATFORMS = [
   { name: "Bluesky", key: "bluesky" },
 ] as const;
 
-const WHY_ITEMS = [
-  "Different OAuth flows",
-  "Different media rules",
-  "Different rate limits",
-  "Different publishing APIs",
-];
+const WHY_ITEM_KEYS = ["oauth", "media", "limits", "apis"] as const;
 
 const HOW_STEPS = [
   {
-    title: "Get API Key",
-    body: "Create a UniPost API key from your workspace and use it to authenticate every publish, media, and account request.",
+    titleKey: "workflow.keyTitle",
+    bodyKey: "workflow.keyBody",
   },
   {
-    title: "Connect accounts",
-    body: "Send customers through hosted OAuth flows, then store the returned connected account IDs in your product.",
+    titleKey: "workflow.connectTitle",
+    bodyKey: "workflow.connectBody",
   },
   {
-    title: "Publish content",
-    body: "Submit text, media, or per-platform variants in one request and let UniPost handle validation and delivery.",
+    titleKey: "workflow.publishTitle",
+    bodyKey: "workflow.publishBody",
   },
-];
+] as const;
 
 const API_SURFACE = [
   {
-    area: "Connect",
+    areaKey: "capabilities.connectArea",
     method: "POST",
     path: "/v1/connect/sessions",
     href: "/docs/api/connect/sessions/create",
-    body: "Create a hosted OAuth session for customer account onboarding.",
+    bodyKey: "capabilities.connectBody",
   },
   {
-    area: "Posts",
+    areaKey: "capabilities.postsArea",
     method: "POST",
     path: "/v1/posts",
     href: "/docs/api/posts/create",
-    body: "Publish, schedule, or draft content across connected destinations.",
+    bodyKey: "capabilities.postsBody",
   },
   {
-    area: "Analytics",
+    areaKey: "capabilities.analyticsArea",
     method: "GET",
     path: "/v1/analytics/summary",
     href: "/docs/api/analytics/summary",
-    body: "Fetch workspace-wide reporting totals and trend breakdowns.",
+    bodyKey: "capabilities.analyticsBody",
   },
   {
-    area: "Webhooks",
+    areaKey: "capabilities.webhooksArea",
     method: "POST",
     path: "/v1/webhooks",
     href: "/docs/api/webhooks/create",
-    body: "Receive publish outcomes and account lifecycle events without polling.",
+    bodyKey: "capabilities.webhooksBody",
   },
   {
-    area: "API keys",
+    areaKey: "capabilities.keysArea",
     method: "POST",
     path: "/v1/api-keys",
     href: "/docs/api/api-keys/create",
-    body: "Create workspace keys for server-side UniPost API access.",
+    bodyKey: "capabilities.keysBody",
   },
   {
-    area: "Inbox",
+    areaKey: "capabilities.inboxArea",
     method: "GET",
     path: "/v1/inbox",
     href: "/docs/api/inbox",
-    body: "Read comments, DMs, and reply workflows across supported social channels.",
+    bodyKey: "capabilities.inboxBody",
   },
 ] as const;
 
@@ -825,7 +828,9 @@ body{
 }
 `;
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  const t = await getTranslations("marketing");
+
   return (
     <>
       <style dangerouslySetInnerHTML={{ __html: CSS }} />
@@ -836,33 +841,32 @@ export default function LandingPage() {
             <div className="lp-hero-inner">
               <div className="lp-hero-grid">
                 <div className="lp-hero-copy">
-                  <p className="lp-eyebrow">Unified social publishing API</p>
-                  <h1>Post to every social platform with one API</h1>
+                  <p className="lp-eyebrow">{t("hero.eyebrow")}</p>
+                  <h1>{t("hero.title")}</h1>
                   <p className="lp-hero-sub">
-                    Connect customer accounts, upload media, and publish to X, LinkedIn,
-                    Instagram, TikTok, Threads, YouTube, and more through one unified API.
+                    {t("hero.body")}
                   </p>
                   <div className="lp-hero-actions">
                     <MarketingCTA
                       className="lp-btn lp-btn-primary"
-                      label="Start Building"
+                      label={t("hero.primaryCta")}
                       showArrow
                     />
                     <Link href="/docs" className="lp-btn lp-btn-outline">
                       <BookOpen size={17} />
-                      View Docs
+                      {t("hero.secondaryCta")}
                     </Link>
                   </div>
-                  <p className="lp-hero-note">Built for developers adding social publishing to apps, workflows, and agents.</p>
+                  <p className="lp-hero-note">{t("hero.note")}</p>
                 </div>
 
-                <div className="lp-model" aria-label="UniPost publishing model">
+                <div className="lp-model" aria-label={t("model.ariaLabel")}>
                   <div className="lp-model-node">
                     <div className="lp-model-label">
                       <span className="lp-model-icon"><Plug size={20} /></span>
                       <span>
-                        <span className="lp-model-title">Your app</span>
-                        <span className="lp-model-copy">Scheduling tools, SaaS products, internal workflows, and agents.</span>
+                        <span className="lp-model-title">{t("model.yourApp")}</span>
+                        <span className="lp-model-copy">{t("model.yourAppBody")}</span>
                       </span>
                     </div>
                   </div>
@@ -872,7 +876,7 @@ export default function LandingPage() {
                       <span className="lp-model-icon"><KeyRound size={20} /></span>
                       <span>
                         <span className="lp-model-title">UniPost API</span>
-                        <span className="lp-model-copy">Connect accounts, upload media, publish posts, and track delivery.</span>
+                        <span className="lp-model-copy">{t("model.apiBody")}</span>
                       </span>
                     </div>
                   </div>
@@ -890,7 +894,7 @@ export default function LandingPage() {
             </div>
           </section>
 
-          <section className="lp-section compact" aria-label="Supported platforms">
+          <section className="lp-section compact" aria-label={t("model.supportedPlatforms")}>
             <div className="lp-wide-inner">
               <div className="lp-platform-strip">
                 {PLATFORMS.map((platform) => (
@@ -907,34 +911,31 @@ export default function LandingPage() {
             <div className="lp-inner lp-split">
               <div>
                 <div className="lp-section-head left">
-                  <p className="lp-eyebrow">Why UniPost</p>
-                  <h2>Stop maintaining separate social media integrations</h2>
-                  <p>
-                    Every platform has its own connection model, content constraints, media behavior,
-                    publish lifecycle, and failure modes. UniPost turns those differences into one API.
-                  </p>
+                  <p className="lp-eyebrow">{t("why.eyebrow")}</p>
+                  <h2>{t("why.title")}</h2>
+                  <p>{t("why.body")}</p>
                 </div>
                 <div className="lp-problem-list">
-                  {WHY_ITEMS.map((item) => (
-                    <div className="lp-problem-item" key={item}>
+                  {WHY_ITEM_KEYS.map((key) => (
+                    <div className="lp-problem-item" key={key}>
                       <CheckCircle2 size={18} />
-                      {item}
+                      {t(`why.${key}`)}
                     </div>
                   ))}
                 </div>
               </div>
 
               <div className="lp-unifies">
-                <h3 className="lp-unifies-title">One product feature instead of nine integration projects</h3>
+                <h3 className="lp-unifies-title">{t("why.summary")}</h3>
                 <div className="lp-unifies-row">
                   <div className="lp-unifies-box">
-                    <strong>Before UniPost</strong>
-                    <span>Custom OAuth, media validation, retry logic, result tracking, and platform-specific code for each network.</span>
+                    <strong>{t("why.beforeTitle")}</strong>
+                    <span>{t("why.beforeBody")}</span>
                   </div>
                   <div className="lp-unifies-arrow"><ArrowRight size={24} /></div>
                   <div className="lp-unifies-box">
-                    <strong>With UniPost</strong>
-                    <span>Connect accounts once, publish by account ID, and monitor delivery with one API and webhook surface.</span>
+                    <strong>{t("why.afterTitle")}</strong>
+                    <span>{t("why.afterBody")}</span>
                   </div>
                 </div>
               </div>
@@ -944,19 +945,16 @@ export default function LandingPage() {
           <section className="lp-section">
             <div className="lp-wide-inner">
               <div className="lp-section-head center">
-                <p className="lp-eyebrow">How it works</p>
-                <h2>Get an API key, connect accounts, publish content</h2>
-                <p>
-                  The production path is three steps: authenticate your app, connect customer
-                  accounts, then send publish requests through one API.
-                </p>
+                <p className="lp-eyebrow">{t("workflow.eyebrow")}</p>
+                <h2>{t("workflow.title")}</h2>
+                <p>{t("workflow.body")}</p>
               </div>
               <div className="lp-steps">
                 {HOW_STEPS.map((step, index) => (
-                  <div className="lp-step" key={step.title}>
+                  <div className="lp-step" key={step.titleKey}>
                     <div className="lp-step-number">{String(index + 1).padStart(2, "0")}</div>
-                    <h3>{step.title}</h3>
-                    <p>{step.body}</p>
+                    <h3>{t(step.titleKey)}</h3>
+                    <p>{t(step.bodyKey)}</p>
                   </div>
                 ))}
               </div>
@@ -966,22 +964,19 @@ export default function LandingPage() {
           <section className="lp-section lp-api-section">
             <div className="lp-wide-inner">
               <div className="lp-section-head center">
-                <p className="lp-eyebrow">What you can do</p>
-                <h2>One API surface for the social layer</h2>
-                <p>
-                  Pick the endpoint for the job: onboard accounts, publish posts,
-                  report analytics, receive delivery events, and handle inbox workflows.
-                </p>
+                <p className="lp-eyebrow">{t("capabilities.eyebrow")}</p>
+                <h2>{t("capabilities.title")}</h2>
+                <p>{t("capabilities.body")}</p>
               </div>
               <div className="lp-api-list">
                 {API_SURFACE.map((item) => (
-                  <Link href={item.href} className="lp-api-row" key={item.area}>
-                    <div className="lp-api-area">{item.area}</div>
+                  <Link href={item.href} className="lp-api-row" key={item.areaKey}>
+                    <div className="lp-api-area">{t(item.areaKey)}</div>
                     <div className="lp-api-endpoint">
                       <span className={`lp-api-method ${item.method.toLowerCase()}`}>{item.method}</span>
                       <span className="lp-api-path">{item.path}</span>
                     </div>
-                    <p className="lp-api-body">{item.body}</p>
+                    <p className="lp-api-body">{t(item.bodyKey)}</p>
                     <span className="lp-api-link" aria-hidden="true">
                       <ArrowRight size={18} />
                     </span>
@@ -994,15 +989,12 @@ export default function LandingPage() {
           <section className="lp-section">
             <div className="lp-inner lp-code-layout">
               <div className="lp-code-copy">
-                <p className="lp-eyebrow">Developer quickstart</p>
-                <h2>A publish call should feel boring</h2>
-                <p>
-                  Once accounts are connected, your app sends one request. UniPost handles the
-                  platform-specific rules behind it.
-                </p>
+                <p className="lp-eyebrow">{t("quickstart.eyebrow")}</p>
+                <h2>{t("quickstart.title")}</h2>
+                <p>{t("quickstart.body")}</p>
                 <div className="lp-hero-actions lp-code-actions">
-                  <Link href="/docs/quickstart" className="lp-btn lp-btn-primary">Read Quickstart</Link>
-                  <Link href="/docs/api/posts/create" className="lp-btn lp-btn-outline">Create Post API</Link>
+                  <Link href="/docs/quickstart" className="lp-btn lp-btn-primary">{t("quickstart.primaryCta")}</Link>
+                  <Link href="/docs/api/posts/create" className="lp-btn lp-btn-outline">{t("quickstart.secondaryCta")}</Link>
                 </div>
               </div>
               <div className="lp-code-window">
@@ -1019,20 +1011,17 @@ export default function LandingPage() {
 
           <section className="lp-cta">
             <div className="lp-cta-inner">
-              <p className="lp-eyebrow">Start building</p>
-              <h2>Build the social layer once</h2>
-              <p>
-                Add account connection, media upload, multi-platform publishing, and delivery monitoring
-                without maintaining every social integration yourself.
-              </p>
+              <p className="lp-eyebrow">{t("cta.eyebrow")}</p>
+              <h2>{t("cta.title")}</h2>
+              <p>{t("cta.body")}</p>
               <div className="lp-cta-actions">
                 <MarketingCTA
                   className="lp-btn lp-btn-primary"
-                  label="Start Building"
+                  label={t("cta.primary")}
                   showArrow
                 />
                 <Link href="/alternatives/zernio" className="lp-btn lp-btn-outline">
-                  Compare alternatives
+                  {t("cta.secondary")}
                 </Link>
               </div>
             </div>

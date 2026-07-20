@@ -2,6 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 const baseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
 const startLocalServer = process.env.DASHBOARD_WEB_SERVER === "1";
+const authenticatedRegressionEnabled = Boolean(
+  process.env.DASHBOARD_TEST_EMAIL &&
+    process.env.CLERK_SECRET_KEY &&
+    process.env.CLERK_SECRET_KEY !== "sk_test_dummy",
+);
 
 export default defineConfig({
   testDir: "./tests/regression",
@@ -31,24 +36,31 @@ export default defineConfig({
       }
     : undefined,
   projects: [
-    {
-      name: "clerk-setup",
-      testMatch: /clerk\.setup\.ts$/,
-    },
-    {
-      name: "authenticated-dashboard",
-      testMatch: /dashboard-authenticated\.spec\.ts$/,
-      dependencies: ["clerk-setup"],
-      use: { ...devices["Desktop Chrome"] },
-    },
+    ...(authenticatedRegressionEnabled
+      ? [
+          {
+            name: "clerk-setup",
+            testMatch: /clerk\.setup\.ts$/,
+          },
+          {
+            name: "authenticated-dashboard",
+            testMatch: /dashboard-authenticated\.spec\.ts$/,
+            dependencies: ["clerk-setup"],
+            use: { ...devices["Desktop Chrome"] },
+          },
+        ]
+      : []),
     {
       name: "chromium",
       testIgnore: [
         "preview-environment.spec.ts",
+        "localization.spec.ts",
         /clerk\.setup\.ts$/,
         /dashboard-authenticated\.spec\.ts$/,
       ],
-      dependencies: ["authenticated-dashboard"],
+      ...(authenticatedRegressionEnabled
+        ? { dependencies: ["authenticated-dashboard"] }
+        : {}),
       use: { ...devices["Desktop Chrome"] },
     },
   ],

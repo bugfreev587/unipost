@@ -2,12 +2,19 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
 import { useAuth, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { ArrowRight, BookOpen, ChevronDown, History } from "lucide-react";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
 import { LandingAttribution } from "@/components/marketing/landing-attribution";
+import { LanguageSelector } from "@/components/marketing/language-selector";
 import { appendLandingSessionId } from "@/lib/landing-attribution";
 import { ThemeToggle } from "@/components/theme-toggle";
+import {
+  defaultLocale,
+  isReleasedLocale,
+  localizePublicPathname,
+} from "@/i18n/locales";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,15 +41,15 @@ const userButtonAppearance = {
 };
 
 const PUBLIC_NAV_ITEMS = [
-  { href: "/solutions", label: "Solutions", key: "solutions" },
-  { href: "/tools", label: "Tools", key: "tools" },
-  { href: "/pricing", label: "Pricing", key: "pricing" },
-  { href: "/blog", label: "Blog", key: "blog" },
+  { href: "/solutions", labelKey: "solutions", key: "solutions" },
+  { href: "/tools", labelKey: "tools", key: "tools" },
+  { href: "/pricing", labelKey: "pricing", key: "pricing" },
+  { href: "/blog", labelKey: "blog", key: "blog" },
 ] as const;
 
 const DEVELOPER_NAV_ITEMS = [
-  { href: "/docs", label: "Docs", description: "Quickstarts, API reference, SDKs, CLI, and MCP.", icon: BookOpen },
-  { href: "/changelog", label: "Change Logs", description: "Major product, API, and SDK releases.", icon: History },
+  { href: "/docs", labelKey: "developer.docs", descriptionKey: "developer.docsDescription", icon: BookOpen },
+  { href: "/changelog", labelKey: "developer.changeLogs", descriptionKey: "developer.changeLogsDescription", icon: History },
 ] as const;
 
 type PublicNavKey = (typeof PUBLIC_NAV_ITEMS)[number]["key"] | "developer";
@@ -54,10 +61,18 @@ function useLandingRedirectUrls() {
   });
 
   useEffect(() => {
-    setUrls({
-      appUrl: appendLandingSessionId(APP_URL),
-      signUpRedirectUrl: appendLandingSessionId(SIGN_UP_REDIRECT_URL),
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setUrls({
+        appUrl: appendLandingSessionId(APP_URL),
+        signUpRedirectUrl: appendLandingSessionId(SIGN_UP_REDIRECT_URL),
+      });
     });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return urls;
@@ -66,6 +81,7 @@ function useLandingRedirectUrls() {
 export function MarketingNav() {
   const { isSignedIn, isLoaded } = useAuth();
   const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
+  const t = useTranslations("common");
 
   let controls: ReactNode;
 
@@ -76,7 +92,7 @@ export function MarketingNav() {
       <div className="mk-auth-controls">
         <ThemeToggle />
         <a href={appUrl} className="mk-auth-btn mk-auth-btn-primary">
-          Go to Dashboard
+          {t("actions.goToDashboard")}
         </a>
         <UserButton appearance={userButtonAppearance} />
       </div>
@@ -87,12 +103,12 @@ export function MarketingNav() {
         <ThemeToggle />
         <SignInButton mode="redirect" forceRedirectUrl={appUrl}>
           <button className="mk-auth-btn mk-auth-btn-ghost">
-            Sign in
+            {t("actions.signIn")}
           </button>
         </SignInButton>
         <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
           <button className="mk-auth-btn mk-auth-btn-primary">
-            Get Started Free
+            {t("actions.getStartedFree")}
           </button>
         </SignUpButton>
       </div>
@@ -108,11 +124,15 @@ export function MarketingNav() {
 }
 
 export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
+  const requestedLocale = useLocale();
+  const locale = isReleasedLocale(requestedLocale) ? requestedLocale : defaultLocale;
+  const t = useTranslations("navigation");
+
   return (
     <nav className="mk-nav">
       <div className="mk-nav-inner">
         <div className="mk-nav-left">
-          <Link href="/" className="mk-logo">
+          <Link href={localizePublicPathname("/", locale)} className="mk-logo">
             <UniPostLogo markSize={28} wordmarkColor="var(--marketing-text)" />
           </Link>
         </div>
@@ -120,10 +140,10 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
           {PUBLIC_NAV_ITEMS.map((item) => (
             <Link
               key={item.key}
-              href={item.href}
+              href={localizePublicPathname(item.href, locale)}
               className={`mk-nav-link${active === item.key ? " active" : ""}`}
             >
-              {item.label}
+              {t(item.labelKey)}
             </Link>
           ))}
           <DropdownMenu>
@@ -135,7 +155,7 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
                 />
               }
             >
-              <span>Developer</span>
+              <span>{t("developer.label")}</span>
               <ChevronDown aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -153,14 +173,15 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
                   >
                     <Icon aria-hidden="true" />
                     <span>
-                      <strong>{item.label}</strong>
-                      <small>{item.description}</small>
+                      <strong>{t(item.labelKey)}</strong>
+                      <small>{t(item.descriptionKey)}</small>
                     </span>
                   </DropdownMenuItem>
                 );
               })}
             </DropdownMenuContent>
           </DropdownMenu>
+          <LanguageSelector />
         </div>
         <MarketingNav />
       </div>
@@ -170,7 +191,7 @@ export function PublicSiteHeader({ active }: { active?: PublicNavKey }) {
 
 export function MarketingCTA({
   className = "lp-btn lp-btn-primary lp-btn-lg",
-  label = "Get Started Free",
+  label,
   showArrow = false,
 }: {
   className?: string;
@@ -179,13 +200,15 @@ export function MarketingCTA({
 } = {}) {
   const { isSignedIn, isLoaded } = useAuth();
   const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
+  const t = useTranslations("common");
+  const resolvedLabel = label ?? t("actions.getStartedFree");
 
   if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
       <a href={appUrl} className={className}>
-        Go to Dashboard
+        {t("actions.goToDashboard")}
         {showArrow ? <ArrowRight size={17} aria-hidden="true" /> : null}
       </a>
     );
@@ -194,7 +217,7 @@ export function MarketingCTA({
   return (
     <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className={className} style={{ cursor: "pointer" }}>
-        {label}
+        {resolvedLabel}
         {showArrow ? <ArrowRight size={17} aria-hidden="true" /> : null}
       </button>
     </SignUpButton>
@@ -204,13 +227,14 @@ export function MarketingCTA({
 export function MarketingCTALight() {
   const { isSignedIn, isLoaded } = useAuth();
   const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
+  const t = useTranslations("common");
 
   if (!isLoaded) return <div style={{ height: 48 }} />;
 
   if (isSignedIn) {
     return (
       <a href={appUrl} className="lp-btn lp-btn-outline lp-btn-lg">
-        Go to Dashboard
+        {t("actions.goToDashboard")}
       </a>
     );
   }
@@ -218,7 +242,7 @@ export function MarketingCTALight() {
   return (
     <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className="lp-btn lp-btn-outline lp-btn-lg" style={{ cursor: "pointer" }}>
-        Sign Up Free
+        {t("actions.signUpFree")}
       </button>
     </SignUpButton>
   );
@@ -232,6 +256,7 @@ export function PricingNav() {
 export function PricingCTA({ className = "pr-btn-free", label, href }: { className?: string; label?: string; href?: string }) {
   const { isSignedIn, isLoaded } = useAuth();
   const { appUrl, signUpRedirectUrl } = useLandingRedirectUrls();
+  const t = useTranslations("common");
 
   if (!isLoaded) return <div style={{ height: 44 }} />;
 
@@ -247,7 +272,7 @@ export function PricingCTA({ className = "pr-btn-free", label, href }: { classNa
   if (isSignedIn) {
     return (
       <a href={appUrl} className={`pr-btn ${className}`}>
-        {className.includes("paid") ? "Upgrade" : "Go to Dashboard"}
+        {className.includes("paid") ? t("actions.upgrade") : t("actions.goToDashboard")}
       </a>
     );
   }
@@ -255,7 +280,7 @@ export function PricingCTA({ className = "pr-btn-free", label, href }: { classNa
   return (
     <SignUpButton mode="redirect" forceRedirectUrl={signUpRedirectUrl}>
       <button className={`pr-btn ${className}`} style={{ cursor: "pointer" }}>
-        {className.includes("paid") ? "Get Started" : "Get Started Free"}
+        {className.includes("paid") ? t("actions.getStarted") : t("actions.getStartedFree")}
       </button>
     </SignUpButton>
   );

@@ -32,6 +32,15 @@ test.describe("authenticated dashboard smoke", () => {
 });
 
 async function signIn(page: Page, emailAddress: string) {
+  const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+  if (bypassSecret) {
+    await page.request.get("/pricing", {
+      headers: {
+        "x-vercel-protection-bypass": bypassSecret,
+        "x-vercel-set-bypass-cookie": "true",
+      },
+    });
+  }
   await page.goto("/pricing", { waitUntil: "domcontentloaded" });
   await clerk.signIn({ page, emailAddress });
   await page.goto("/projects", { waitUntil: "networkidle" });

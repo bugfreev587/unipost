@@ -45,7 +45,57 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     lastModified: now,
     changeFrequency: route.changeFrequency,
     priority: route.priority,
+    ...(route.path === ""
+      ? {
+          alternates: {
+            languages: {
+              en: "https://unipost.dev/",
+              es: "https://unipost.dev/es",
+              "x-default": "https://unipost.dev/",
+            },
+          },
+        }
+      : route.path === "/pricing"
+        ? {
+            alternates: {
+              languages: {
+                en: "https://unipost.dev/pricing",
+                es: "https://unipost.dev/es/pricing",
+                "x-default": "https://unipost.dev/pricing",
+              },
+            },
+          }
+        : {}),
   }));
+
+  const localizedSpanishPages: MetadataRoute.Sitemap = [
+    {
+      url: "https://unipost.dev/es",
+      lastModified: now,
+      changeFrequency: "weekly",
+      priority: 1,
+      alternates: {
+        languages: {
+          en: "https://unipost.dev/",
+          es: "https://unipost.dev/es",
+          "x-default": "https://unipost.dev/",
+        },
+      },
+    },
+    {
+      url: "https://unipost.dev/es/pricing",
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.8,
+      alternates: {
+        languages: {
+          en: "https://unipost.dev/pricing",
+          es: "https://unipost.dev/es/pricing",
+          "x-default": "https://unipost.dev/pricing",
+        },
+      },
+    },
+  ];
 
   const platformSlugs = [
     "instagram",
@@ -128,6 +178,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
 
   return [
     ...staticPages,
+    ...localizedSpanishPages,
     ...moneyPages,
     ...solutionPages,
     ...resourcePages,

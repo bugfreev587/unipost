@@ -1,0 +1,32 @@
+{
+  "actions": {
+    "signIn": "Sign in",
+    "getStartedFree": "Get Started Free",
+    "signUpFree": "Sign Up Free",
+    "goToDashboard": "Go to Dashboard",
+    "getStarted": "Get Started",
+    "upgrade": "Upgrade",
+    "contactSales": "Contact Sales"
+  },
+  "footer": {
+    "homeLabel": "UniPost home",
+    "descriptionLine1": "Unified social media API for developers.",
+    "descriptionLine2": "Connect, publish, and monitor across 9 platforms.",
+    "product": "Product",
+    "platforms": "Platforms",
+    "compare": "Compare",
+    "legal": "Legal",
+    "overview": "Overview",
+    "about": "About",
+    "socialMediaApi": "Social Media API",
+    "postingApi": "Posting API",
+    "resources": "Resources",
+    "pricing": "Pricing",
+    "blog": "Blog",
+    "docs": "Docs",
+    "changeLogs": "Change Logs",
+    "privacy": "Privacy",
+    "terms": "Terms",
+    "allComparisons": "All Comparisons →"
+  }
+}

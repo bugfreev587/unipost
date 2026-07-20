@@ -1,0 +1,32 @@
+{
+  "actions": {
+    "signIn": "Iniciar sesión",
+    "getStartedFree": "Empezar gratis",
+    "signUpFree": "Registrarse gratis",
+    "goToDashboard": "Ir al panel",
+    "getStarted": "Empezar",
+    "upgrade": "Mejorar plan",
+    "contactSales": "Contactar con ventas"
+  },
+  "footer": {
+    "homeLabel": "Inicio de UniPost",
+    "descriptionLine1": "API unificada de redes sociales para desarrolladores.",
+    "descriptionLine2": "Conecta, publica y supervisa en 9 plataformas.",
+    "product": "Producto",
+    "platforms": "Plataformas",
+    "compare": "Comparar",
+    "legal": "Legal",
+    "overview": "Descripción general",
+    "about": "Acerca de",
+    "socialMediaApi": "API de redes sociales",
+    "postingApi": "API de publicación",
+    "resources": "Recursos",
+    "pricing": "Precios",
+    "blog": "Blog",
+    "docs": "Documentación",
+    "changeLogs": "Registro de cambios",
+    "privacy": "Privacidad",
+    "terms": "Términos",
+    "allComparisons": "Todas las comparaciones →"
+  }
+}

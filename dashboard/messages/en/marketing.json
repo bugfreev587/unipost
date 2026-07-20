@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "title": "Unipost",
+    "description": "Unipost helps you publish and manage posts across your channels from one place. Learn what Unipost offers and get started."
+  },
+  "hero": {
+    "eyebrow": "Unified social publishing API",
+    "title": "Post to every social platform with one API",
+    "body": "Connect customer accounts, upload media, and publish to X, LinkedIn, Instagram, TikTok, Threads, YouTube, and more through one unified API.",
+    "primaryCta": "Start Building",
+    "secondaryCta": "View Docs",
+    "note": "Built for developers adding social publishing to apps, workflows, and agents."
+  },
+  "model": {
+    "ariaLabel": "UniPost publishing model",
+    "yourApp": "Your app",
+    "yourAppBody": "Scheduling tools, SaaS products, internal workflows, and agents.",
+    "apiBody": "Connect accounts, upload media, publish posts, and track delivery.",
+    "supportedPlatforms": "Supported platforms"
+  },
+  "why": {
+    "eyebrow": "Why UniPost",
+    "title": "Stop maintaining separate social media integrations",
+    "body": "Every platform has its own connection model, content constraints, media behavior, publish lifecycle, and failure modes. UniPost turns those differences into one API.",
+    "oauth": "Different OAuth flows",
+    "media": "Different media rules",
+    "limits": "Different rate limits",
+    "apis": "Different publishing APIs",
+    "summary": "One product feature instead of nine integration projects",
+    "beforeTitle": "Before UniPost",
+    "beforeBody": "Custom OAuth, media validation, retry logic, result tracking, and platform-specific code for each network.",
+    "afterTitle": "With UniPost",
+    "afterBody": "Connect accounts once, publish by account ID, and monitor delivery with one API and webhook surface."
+  },
+  "workflow": {
+    "eyebrow": "How it works",
+    "title": "Get an API key, connect accounts, publish content",
+    "body": "The production path is three steps: authenticate your app, connect customer accounts, then send publish requests through one API.",
+    "keyTitle": "Get API Key",
+    "keyBody": "Create a UniPost API key from your workspace and use it to authenticate every publish, media, and account request.",
+    "connectTitle": "Connect accounts",
+    "connectBody": "Send customers through hosted OAuth flows, then store the returned connected account IDs in your product.",
+    "publishTitle": "Publish content",
+    "publishBody": "Submit text, media, or per-platform variants in one request and let UniPost handle validation and delivery."
+  },
+  "capabilities": {
+    "eyebrow": "What you can do",
+    "title": "One API surface for the social layer",
+    "body": "Pick the endpoint for the job: onboard accounts, publish posts, report analytics, receive delivery events, and handle inbox workflows.",
+    "connectArea": "Connect",
+    "connectBody": "Create a hosted OAuth session for customer account onboarding.",
+    "postsArea": "Posts",
+    "postsBody": "Publish, schedule, or draft content across connected destinations.",
+    "analyticsArea": "Analytics",
+    "analyticsBody": "Fetch workspace-wide reporting totals and trend breakdowns.",
+    "webhooksArea": "Webhooks",
+    "webhooksBody": "Receive publish outcomes and account lifecycle events without polling.",
+    "keysArea": "API keys",
+    "keysBody": "Create workspace keys for server-side UniPost API access.",
+    "inboxArea": "Inbox",
+    "inboxBody": "Read comments, DMs, and reply workflows across supported social channels."
+  },
+  "quickstart": {
+    "eyebrow": "Developer quickstart",
+    "title": "A publish call should feel boring",
+    "body": "Once accounts are connected, your app sends one request. UniPost handles the platform-specific rules behind it.",
+    "primaryCta": "Read Quickstart",
+    "secondaryCta": "Create Post API"
+  },
+  "cta": {
+    "eyebrow": "Start building",
+    "title": "Build the social layer once",
+    "body": "Add account connection, media upload, multi-platform publishing, and delivery monitoring without maintaining every social integration yourself.",
+    "primary": "Start Building",
+    "secondary": "Compare alternatives"
+  }
+}

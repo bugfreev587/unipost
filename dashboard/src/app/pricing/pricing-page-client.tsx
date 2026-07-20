@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useTranslations } from "next-intl";
 import { useAuth } from "@clerk/nextjs";
 import { PublicSiteHeader, PricingCTA } from "@/components/marketing/nav";
 import { getBilling, getPublicFeatureFlags, listProfiles } from "@/lib/api";
@@ -168,6 +169,26 @@ const FAQS = [
   { q: "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", a: "UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. For an embedded app with 100 end users connecting 2 social accounts each, UniPost Growth is $59/mo if total usage fits under 7,500 posts/month; Zernio's current account-meter pricing is $418/mo for those 200 connected accounts. PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." },
 ];
 
+const COMPARE_VALUE_KEYS: Record<string, string> = {
+  Unlimited: "comparison.values.unlimited",
+  "Hard cap": "comparison.values.hardCap",
+  "Soft publish + schedule guard": "comparison.values.softGuard",
+  "8 (no X)": "comparison.values.noX",
+  "Within monthly capacity": "comparison.values.withinMonthlyCapacity",
+  "1 day": "comparison.values.oneDay",
+  "2 days": "comparison.values.twoDays",
+  "4 days": "comparison.values.fourDays",
+  "8 days": "comparison.values.eightDays",
+  "15 days": "comparison.values.fifteenDays",
+  "30 days": "comparison.values.thirtyDays",
+  "60 days": "comparison.values.sixtyDays",
+  "read-only API": "comparison.values.readOnlyApi",
+  "1 shared platform": "comparison.values.oneSharedPlatform",
+  "All supported": "comparison.values.allSupported",
+  Shown: "comparison.values.shown",
+  Optional: "comparison.values.optional",
+};
+
 // ── Icons ──
 function CheckIcon({ className = "" }: { className?: string }) { return <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.2" width="15" height="15" style={{ flexShrink: 0 }}><path d="M3 8l4 4 6-7" /></svg>; }
 function XIcon({ className = "" }: { className?: string }) { return <svg className={className} viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" width="15" height="15" style={{ flexShrink: 0 }}><path d="M4 8h8" /></svg>; }
@@ -235,6 +256,7 @@ export default function PricingPage() {
   const [profileId, setProjectId] = useState<string | null>(null);
   const [xCreditsEnabled, setXCreditsEnabled] = useState(false);
   const { isSignedIn, getToken } = useAuth();
+  const t = useTranslations("pricing");
 
   const APP_URL = "https://app.unipost.dev";
 
@@ -285,13 +307,10 @@ export default function PricingPage() {
       <div className="pr-page">
         {/* HERO */}
         <div className="pr-hero">
-          <h1 className="pr-hero-title">Start free.<br />Upgrade for visibility,<br />collaboration, and scale.</h1>
-          <p className="pr-hero-sub">
-            Start with 100 posts/month on a permanent Free plan. Paid plans unlock Inbox, Analytics,
-            X publishing, one shared custom platform or all-platform custom mode, and team workflows.
-          </p>
+          <h1 className="pr-hero-title">{t("hero.titleLine1")}<br />{t("hero.titleLine2")}<br />{t("hero.titleLine3")}</h1>
+          <p className="pr-hero-sub">{t("hero.body")}</p>
           <p className="pr-hero-altlink">
-            Comparing alternatives?{" "}
+            {t("hero.compare")}{" "}
             <Link href="/alternatives/postforme">vs PostForMe</Link>
             {" · "}
             <Link href="/alternatives/zernio">vs Zernio</Link>
@@ -302,44 +321,44 @@ export default function PricingPage() {
 
         {/* CARDS */}
         <div className="pr-cards">
-          {TIERS.map((t) => {
-            const isCurrent = currentPlan === t.id;
+          {TIERS.map((tier) => {
+            const isCurrent = currentPlan === tier.id;
             const buttonHref = isCurrent
               ? (profileId ? `${APP_URL}/projects/${profileId}/billing` : APP_URL)
               : profileId
-                ? `${APP_URL}/projects/${profileId}/billing?upgrade=${t.id}`
+                ? `${APP_URL}/projects/${profileId}/billing?upgrade=${tier.id}`
                 : undefined;
             const ctaLabel = isCurrent
-              ? "Go to Dashboard"
-              : t.price === 0
-                ? "Get started"
-                : t.cta ?? "Choose plan";
+              ? t("labels.goToDashboard")
+              : tier.price === 0
+                ? t("labels.getStarted")
+                : t("labels.choosePlan");
             return (
-              <div key={t.id} className={`pr-card ${t.highlight ? "hi" : ""} ${isCurrent ? "current" : ""}`}>
-                {t.highlight && !isCurrent && <div className="pr-ribbon">Most popular</div>}
-                {isCurrent && <div className="pr-current-badge">Current Plan</div>}
-                <div className="pr-tname">{t.name}</div>
-                {t.price === null ? (
-                  <div className="pr-tprice custom">{t.priceLabel ?? "Custom"}</div>
+              <div key={tier.id} className={`pr-card ${tier.highlight ? "hi" : ""} ${isCurrent ? "current" : ""}`}>
+                {tier.highlight && !isCurrent && <div className="pr-ribbon">{t("labels.mostPopular")}</div>}
+                {isCurrent && <div className="pr-current-badge">{t("labels.currentPlan")}</div>}
+                <div className="pr-tname">{t(`plans.${tier.id}.name`)}</div>
+                {tier.price === null ? (
+                  <div className="pr-tprice custom">{tier.priceLabel ?? t("labels.custom")}</div>
                 ) : (
-                  <div className="pr-tprice">${t.price}<span className="mo">/mo</span></div>
+                  <div className="pr-tprice">${tier.price}<span className="mo">{t("labels.perMonth")}</span></div>
                 )}
-                <div className="pr-tposts">{t.posts}</div>
-                <div className="pr-tblurb">{t.blurb}</div>
+                <div className="pr-tposts">{t(`plans.${tier.id}.posts`)}</div>
+                <div className="pr-tblurb">{t(`plans.${tier.id}.blurb`)}</div>
                 <div className="pr-tdivider" />
                 <div className="pr-tfeats">
-                  {t.features.map((f, i) => (
+                  {tier.features.map((f, i) => (
                     <div key={i} className={`pr-tfeat ${f.kind === "headline" ? "headline" : ""} ${f.kind === "exclude" ? "dim" : ""}`}>
                       {f.kind === "include" && <CheckIcon className="chk" />}
                       {f.kind === "exclude" && <XIcon className="chk-no" />}
-                      {f.text}
+                      {t(`plans.${tier.id}.features.${i}`)}
                     </div>
                   ))}
                 </div>
                 {buttonHref ? (
-                  <PricingCTA className={`pr-btn pr-btn-tier ${t.highlight ? "pr-btn-tier-hi" : ""}`} label={ctaLabel} href={buttonHref} />
+                  <PricingCTA className={`pr-btn pr-btn-tier ${tier.highlight ? "pr-btn-tier-hi" : ""}`} label={ctaLabel} href={buttonHref} />
                 ) : (
-                  <PricingCTA className={`pr-btn pr-btn-tier ${t.highlight ? "pr-btn-tier-hi" : ""}`} label={ctaLabel} />
+                  <PricingCTA className={`pr-btn pr-btn-tier ${tier.highlight ? "pr-btn-tier-hi" : ""}`} label={ctaLabel} />
                 )}
               </div>
             );
@@ -349,19 +368,19 @@ export default function PricingPage() {
         {/* Enterprise */}
         <div className="pr-ent">
           <div className="pr-ent-copy">
-            <div className="pr-ent-title">Enterprise</div>
-            <div className="pr-ent-desc">Dedicated support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.</div>
-            <div className="pr-ent-chips">{["Capacity planning", "Platform-volume terms", "SLA and security", "Dedicated support"].map((c) => (<div key={c} className="pr-ent-chip"><CheckIcon />{c}</div>))}</div>
+            <div className="pr-ent-title">{t("enterprise.title")}</div>
+            <div className="pr-ent-desc">{t("enterprise.description")}</div>
+            <div className="pr-ent-chips">{[0, 1, 2, 3].map((index) => (<div key={index} className="pr-ent-chip"><CheckIcon />{t(`enterprise.chips.${index}`)}</div>))}</div>
           </div>
-          <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">Contact sales</a>
+          <a href="mailto:support@unipost.dev" className="pr-btn pr-btn-ent">{t("enterprise.contact")}</a>
         </div>
 
         {/* Embedded apps */}
         <div className="pr-soft">
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><path d="M4 8h8M8 4v8" /><circle cx="8" cy="8" r="6.5" /></svg></div>
           <div>
-            <div className="pr-soft-title">Built for embedded apps without a connected-account tax.</div>
-            <div className="pr-soft-desc">UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. If your app has 100 end users connecting 2 social accounts each, Growth is $59/mo when total usage fits under 7,500 posts/month; Zernio&apos;s current account-meter pricing is $418/mo for those 200 connected accounts. <Link href="/alternatives/zernio">See the Zernio comparison</Link>.</div>
+            <div className="pr-soft-title">{t("embedded.title")}</div>
+            <div className="pr-soft-desc">{t("embedded.description")} <Link href="/alternatives/zernio">{t("embedded.link")}</Link>.</div>
           </div>
         </div>
 
@@ -369,46 +388,42 @@ export default function PricingPage() {
         <div className="pr-soft">
           <div className="pr-soft-icon"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20"><circle cx="8" cy="8" r="6.5" /><path d="M8 5v3M8 10v1" /></svg></div>
           <div>
-            <div className="pr-soft-title">Free has a clear cap. Paid plans stay flexible.</div>
-            <div className="pr-soft-desc">Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 undeleted parent posts in scheduled status at once. On API, Basic, and Growth, immediate publishing remains available during soft overage. New schedules pause when completed plus committed scheduled usage reaches 100%; cancel or move scheduled posts, wait for reset, or upgrade to restore capacity. Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply.</div>
+            <div className="pr-soft-title">{t("quota.title")}</div>
+            <div className="pr-soft-desc">{t("quota.description")}</div>
           </div>
         </div>
 
         {xCreditsEnabled ? <section className="pr-xcredits" aria-labelledby="x-credits-capacity">
           <div className="pr-xcredits-head">
-            <h2 id="x-credits-capacity" className="pr-xcredits-title">What your included X Credits can do</h2>
-            <p className="pr-xcredits-copy">
-              X Credits are separate from posts/month. The allowance resets each billing period. Each example below assumes the
-              whole shared allowance is used for one operation type. Managed X requests stop at the hard limit;
-              bring-your-own X API connections do not consume UniPost X Credits.
-            </p>
+            <h2 id="x-credits-capacity" className="pr-xcredits-title">{t("xCredits.title")}</h2>
+            <p className="pr-xcredits-copy">{t("xCredits.description")}</p>
           </div>
           <div className="pr-xcredits-wrap">
             <table className="pr-xcredits-table">
               <thead>
                 <tr>
-                  <th>Plan</th>
-                  <th>Included Credits</th>
-                  <th>Normal X posts</th>
-                  <th>Posts with URL</th>
-                  <th>Complete comments</th>
-                  <th>Complete DMs</th>
+                  <th>{t("xCredits.plan")}</th>
+                  <th>{t("xCredits.included")}</th>
+                  <th>{t("xCredits.normalPosts")}</th>
+                  <th>{t("xCredits.urlPosts")}</th>
+                  <th>{t("xCredits.comments")}</th>
+                  <th>{t("xCredits.dms")}</th>
                 </tr>
               </thead>
               <tbody>
                 {X_CREDIT_PLANS.map((plan) => (
                   <tr key={plan.id} className={currentPlan === plan.id ? "current" : ""}>
                     <td><span className="pr-xcredits-plan">{plan.label}</span></td>
-                    <td>{plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString()}</td>
-                    <td>{plan.capacity?.normal_posts.toLocaleString() ?? "Custom"}</td>
-                    <td>{plan.capacity?.url_posts.toLocaleString() ?? "Custom"}</td>
+                    <td>{plan.monthly_allowance == null ? t("labels.custom") : plan.monthly_allowance.toLocaleString()}</td>
+                    <td>{plan.capacity?.normal_posts.toLocaleString() ?? t("labels.custom")}</td>
+                    <td>{plan.capacity?.url_posts.toLocaleString() ?? t("labels.custom")}</td>
                     <td>
-                      {plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}
-                      <span className="pr-xcredits-muted">One received comment + one reply.</span>
+                      {plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? t("labels.custom") : t("xCredits.inboxNotIncluded")}
+                      <span className="pr-xcredits-muted">{t("xCredits.commentNote")}</span>
                     </td>
                     <td>
-                      {plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}
-                      <span className="pr-xcredits-muted">One received DM + one sent DM.</span>
+                      {plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? t("labels.custom") : t("xCredits.inboxNotIncluded")}
+                      <span className="pr-xcredits-muted">{t("xCredits.dmNote")}</span>
                     </td>
                   </tr>
                 ))}
@@ -420,50 +435,48 @@ export default function PricingPage() {
               <article key={plan.id} className={`pr-xcredits-card ${currentPlan === plan.id ? "current" : ""}`}>
                 <div className="pr-xcredits-card-head">
                   <span className="pr-xcredits-plan">{plan.label}</span>
-                  {currentPlan === plan.id && <span className="pr-xcredits-current">Current plan</span>}
+                  {currentPlan === plan.id && <span className="pr-xcredits-current">{t("labels.currentPlan")}</span>}
                 </div>
                 <div className="pr-xcredits-card-grid">
-                  <div><span className="pr-xcredits-card-label">Included Credits</span><span className="pr-xcredits-card-value">{plan.monthly_allowance == null ? "Custom" : plan.monthly_allowance.toLocaleString()}</span></div>
-                  <div><span className="pr-xcredits-card-label">Normal X posts</span><span className="pr-xcredits-card-value">{plan.capacity?.normal_posts.toLocaleString() ?? "Custom"}</span></div>
-                  <div><span className="pr-xcredits-card-label">Posts with URL</span><span className="pr-xcredits-card-value">{plan.capacity?.url_posts.toLocaleString() ?? "Custom"}</span></div>
-                  <div><span className="pr-xcredits-card-label">Complete comments</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}</span></div>
-                  <div><span className="pr-xcredits-card-label">Complete DMs</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? "Custom" : "Inbox not included"}</span></div>
+                  <div><span className="pr-xcredits-card-label">{t("xCredits.included")}</span><span className="pr-xcredits-card-value">{plan.monthly_allowance == null ? t("labels.custom") : plan.monthly_allowance.toLocaleString()}</span></div>
+                  <div><span className="pr-xcredits-card-label">{t("xCredits.normalPosts")}</span><span className="pr-xcredits-card-value">{plan.capacity?.normal_posts.toLocaleString() ?? t("labels.custom")}</span></div>
+                  <div><span className="pr-xcredits-card-label">{t("xCredits.urlPosts")}</span><span className="pr-xcredits-card-value">{plan.capacity?.url_posts.toLocaleString() ?? t("labels.custom")}</span></div>
+                  <div><span className="pr-xcredits-card-label">{t("xCredits.comments")}</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.comment_interactions.toLocaleString() ?? t("labels.custom") : t("xCredits.inboxNotIncluded")}</span></div>
+                  <div><span className="pr-xcredits-card-label">{t("xCredits.dms")}</span><span className="pr-xcredits-card-value">{plan.inbox_eligible ? plan.capacity?.dm_interactions.toLocaleString() ?? t("labels.custom") : t("xCredits.inboxNotIncluded")}</span></div>
                 </div>
               </article>
             ))}
           </div>
-          <p className="pr-xcredits-note">
-            Enterprise X Credits and inbound limits are contract-defined. The independent safety cap of 20 X posts
-            per connected account per UTC day still applies on every plan. Comment and DM figures are capacity
-            planning for phased X Inbox support; they do not indicate API availability before that phase ships.
-          </p>
+          <p className="pr-xcredits-note">{t("xCredits.note")}</p>
         </section> : null}
 
         {/* Compare */}
         <div className="pr-compare">
-          <h2 className="pr-compare-title">Compare plans</h2>
+          <h2 className="pr-compare-title">{t("labels.comparePlans")}</h2>
           <div className="pr-compare-wrap">
             <div className="pr-compare-hdr">
-              <div className="pr-ch">Capability</div>
+              <div className="pr-ch">{t("comparison.capability")}</div>
               <div className="pr-ch">Free</div>
               <div className="pr-ch">API</div>
               <div className="pr-ch hl">Basic</div>
               <div className="pr-ch">Growth</div>
               <div className="pr-ch">Team</div>
             </div>
-            {COMPARE_ROWS.map((row) => (
+            {COMPARE_ROWS.map((row, rowIndex) => (
               <div key={row.name} className="pr-compare-row">
                 <div className="pr-cr pr-cr-feat">
-                  <span className="pr-cr-name">{row.name}</span>
-                  {row.sub && <span className="pr-cr-sub">{row.sub}</span>}
+                  <span className="pr-cr-name">{t(`comparison.rows.${rowIndex}.name`)}</span>
+                  {row.sub && <span className="pr-cr-sub">{t(`comparison.rows.${rowIndex}.sub`)}</span>}
                 </div>
                 {(["free", "api", "basic", "growth", "team"] as const).map((col) => {
                   const v = row[col];
+                  const valueKey = typeof v === "string" ? COMPARE_VALUE_KEYS[v] : undefined;
+                  const renderedValue = valueKey ? t(valueKey) : v;
                   return (
                     <div key={col} className="pr-cr">
                       {v === true ? <CheckIcon className="pr-chk" />
                         : v === false ? <span className="pr-dash">—</span>
-                        : <span className={`pr-cr-val ${col === "basic" ? "hl" : ""}`}>{v}</span>}
+                        : <span className={`pr-cr-val ${col === "basic" ? "hl" : ""}`}>{renderedValue}</span>}
                     </div>
                   );
                 })}
@@ -473,9 +486,9 @@ export default function PricingPage() {
         </div>
 
         {/* FAQ */}
-        <h2 className="pr-faq-title">Frequently asked questions</h2>
+        <h2 className="pr-faq-title">{t("labels.frequentlyAskedQuestions")}</h2>
         <div className="pr-faq-grid">
-          {FAQS.map((f) => (<div key={f.q} className="pr-faq-item"><div className="pr-faq-q">{f.q}</div><div className="pr-faq-a">{f.a}</div></div>))}
+          {FAQS.map((f, index) => (<div key={f.q} className="pr-faq-item"><div className="pr-faq-q">{t(`faq.${index}.question`)}</div><div className="pr-faq-a">{t(`faq.${index}.answer`)}</div></div>))}
         </div>
       </div>
     </>

@@ -3,6 +3,8 @@ import Script from "next/script";
 import { Geist, Geist_Mono, Inter } from "next/font/google";
 import { DM_Sans, Fira_Code } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { NextIntlClientProvider } from "next-intl";
+import { getLocale, getMessages } from "next-intl/server";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SiteFooterGate } from "@/components/marketing/site-footer";
 import { LandingAttributionBinder } from "@/components/marketing/landing-attribution-binder";
@@ -117,11 +119,14 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const locale = await getLocale();
+  const messages = await getMessages();
+
   return (
     <ClerkProvider
       signInForceRedirectUrl={APP_URL}
@@ -178,7 +183,7 @@ export default function RootLayout({
       }}
     >
       <html
-        lang="en"
+        lang={locale}
         suppressHydrationWarning
         className={`${dmSans.variable} ${firaCode.variable} ${geistSans.variable} ${geistMono.variable} ${inter.variable} h-full antialiased`}
         style={{ fontFamily: "var(--font-dm-sans), system-ui, sans-serif" }}
@@ -193,11 +198,13 @@ export default function RootLayout({
           <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         </head>
         <body className="min-h-full flex flex-col bg-[var(--app-bg)] text-[var(--text)]">
-          <ThemeProvider>
-            <LandingAttributionBinder />
-            {children}
-            <SiteFooterGate />
-          </ThemeProvider>
+          <NextIntlClientProvider locale={locale} messages={messages}>
+            <ThemeProvider>
+              <LandingAttributionBinder />
+              {children}
+              <SiteFooterGate />
+            </ThemeProvider>
+          </NextIntlClientProvider>
           <Script
             id="google-tag-loader"
             src={`https://www.googletagmanager.com/gtag/js?id=${GOOGLE_TAG_ID}`}

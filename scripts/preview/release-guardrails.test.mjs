@@ -71,6 +71,10 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     "the Vercel project already has dashboard as its Root Directory",
   );
   assert.match(workflow, /test:regression:preview/);
+  assert.match(workflow, /test:regression:localization/);
+  assert.match(workflow, /--project=authenticated-dashboard/);
+  assert.match(workflow, /PREVIEW_APP_ALIAS_HOST/);
+  assert.match(workflow, /PREVIEW_LANDING_ALIAS_HOST/);
   assert.match(
     workflow,
     /Run deployed preview regression[\s\S]*VERCEL_AUTOMATION_BYPASS_SECRET:.*secrets\.VERCEL_AUTOMATION_BYPASS_SECRET/,
@@ -79,7 +83,7 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(workflow, /VERCEL_SHAREABLE_URL/);
   assert.match(
     workflow,
-    /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+    /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.app_url \}\}/,
   );
   assert.match(workflow, /vercel-alias-cleanup\.mjs/);
   assert.match(

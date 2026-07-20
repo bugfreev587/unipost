@@ -5,7 +5,7 @@ import { pathToFileURL } from "node:url";
 export function selectPreviewAliases(aliases, pullRequestNumber) {
   const legacyAlias = `unipost-dev-pr-${pullRequestNumber}.vercel.app`;
   const isolatedAliasPattern = new RegExp(
-    `^unipost-dev-pr-${pullRequestNumber}-\\d+-\\d+\\.vercel\\.app$`,
+    `^unipost-dev-pr-${pullRequestNumber}-\\d+-\\d+(?:-(?:app|landing))?\\.vercel\\.app$`,
   );
   return aliases
     .map((item) => item?.alias)
