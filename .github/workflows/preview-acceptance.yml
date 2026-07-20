@@ -197,7 +197,7 @@ jobs:
       - name: Run deployed preview regression
         working-directory: dashboard
         env:
-          DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.app_url }}
+          DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.landing_url }}
           EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
           EXPECTED_PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
