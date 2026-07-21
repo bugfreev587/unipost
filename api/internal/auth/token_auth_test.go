@@ -44,24 +44,27 @@ func TestAuthenticateAPIKeyTokenPreservesStableFailures(t *testing.T) {
 	}{
 		{
 			name:    "invalid",
-			store:   &apiKeyAuthTestDB{apiKeyErr: pgx.ErrNoRows, execContexts: make(chan context.Context, 1)},
+			store:   &apiKeyAuthTestDB{apiKeyErr: pgx.ErrNoRows},
 			message: "Invalid API key",
 		},
 		{
 			name:    "revoked",
-			store:   &apiKeyAuthTestDB{revokedAt: time.Now(), execContexts: make(chan context.Context, 1)},
+			store:   &apiKeyAuthTestDB{revokedAt: time.Now()},
 			message: "API key has been revoked",
 		},
 		{
 			name:    "expired",
-			store:   &apiKeyAuthTestDB{expiresAt: time.Now().Add(-time.Minute), execContexts: make(chan context.Context, 1)},
+			store:   &apiKeyAuthTestDB{expiresAt: time.Now().Add(-time.Minute)},
 			message: "API key has expired",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, failure := AuthenticateAPIKeyToken(context.Background(), db.New(tt.store), apiKeyAuthTestToken)
+			scheduledKeys := make([]string, 0, 1)
+			ctx, failure := authenticateAPIKeyToken(context.Background(), db.New(tt.store), apiKeyAuthTestToken, func(keyID string) {
+				scheduledKeys = append(scheduledKeys, keyID)
+			})
 
 			if ctx != nil {
 				t.Fatalf("context = %#v, want nil", ctx)
@@ -72,7 +75,9 @@ func TestAuthenticateAPIKeyTokenPreservesStableFailures(t *testing.T) {
 			if failure.Status != http.StatusUnauthorized || failure.Code != "UNAUTHORIZED" || failure.Message != tt.message {
 				t.Fatalf("failure = %#v, want message %q", failure, tt.message)
 			}
-			assertNoLastUsedUpdate(t, tt.store.execContexts)
+			if len(scheduledKeys) != 0 {
+				t.Fatalf("scheduled last-used updates = %v, want none", scheduledKeys)
+			}
 		})
 	}
 }
@@ -178,15 +183,16 @@ func TestAuthenticateAPIKeyTokenRejectsMissingOrInactiveCreatorMembership(t *tes
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			execContexts := make(chan context.Context, 1)
 			store := &apiKeyAuthTestDB{
 				membershipRole:   RoleAdmin,
 				membershipStatus: tt.membershipStatus,
 				membershipErr:    tt.membershipErr,
-				execContexts:     execContexts,
 			}
+			scheduledKeys := make([]string, 0, 1)
 
-			ctx, failure := AuthenticateAPIKeyToken(context.Background(), db.New(store), apiKeyAuthTestToken)
+			ctx, failure := authenticateAPIKeyToken(context.Background(), db.New(store), apiKeyAuthTestToken, func(keyID string) {
+				scheduledKeys = append(scheduledKeys, keyID)
+			})
 
 			if ctx != nil {
 				t.Fatalf("context = %#v, want nil", ctx)
@@ -197,16 +203,9 @@ func TestAuthenticateAPIKeyTokenRejectsMissingOrInactiveCreatorMembership(t *tes
 			if failure.Status != 401 || failure.Code != "UNAUTHORIZED" || failure.Message != "API key is no longer authorized" {
 				t.Fatalf("failure = %#v, want stable unauthorized response", failure)
 			}
-			assertNoLastUsedUpdate(t, execContexts)
+			if len(scheduledKeys) != 0 {
+				t.Fatalf("scheduled last-used updates = %v, want none", scheduledKeys)
+			}
 		})
-	}
-}
-
-func assertNoLastUsedUpdate(t *testing.T, updates <-chan context.Context) {
-	t.Helper()
-	select {
-	case <-updates:
-		t.Fatal("last-used update called for rejected API key")
-	case <-time.After(100 * time.Millisecond):
 	}
 }
