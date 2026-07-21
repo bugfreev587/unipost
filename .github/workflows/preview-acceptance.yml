@@ -43,6 +43,7 @@ jobs:
       VERCEL_TEAM_SLUG: ${{ vars.VERCEL_TEAM_SLUG }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
       RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
       RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
     steps:
@@ -58,7 +59,6 @@ jobs:
 
       - name: Validate preview configuration
         env:
-          CLERK_DEVELOPMENT_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
           DASHBOARD_TEST_EMAIL: ${{ secrets.DASHBOARD_TEST_EMAIL }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
         run: |
@@ -70,8 +70,8 @@ jobs:
           test -n "$VERCEL_TEAM_SLUG"
           test -n "$VERCEL_TOKEN"
           test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+          test -n "$CLERK_SECRET_KEY"
           test -n "$VERCEL_AUTOMATION_BYPASS_SECRET"
-          test -n "$CLERK_DEVELOPMENT_SECRET_KEY"
           test -n "$DASHBOARD_TEST_EMAIL"
           test -n "$RAILWAY_PROJECT_ID"
           test -n "$RAILWAY_API_TOKEN"
@@ -157,6 +157,8 @@ jobs:
               --prebuilt \
               --archive=tgz \
               --yes \
+              --env "CLERK_SECRET_KEY=${CLERK_SECRET_KEY}" \
+              --env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}" \
               --token="$VERCEL_TOKEN" \
               --scope="$VERCEL_TEAM_SLUG" \
               --cwd . \

@@ -51,6 +51,10 @@ test("CI makes the dashboard SEO regression blocking", async () => {
 
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
+  const previewJobEnv = workflow.match(
+    /  preview:\n[\s\S]*?    env:\n([\s\S]*?)    steps:/,
+  )?.[1];
+  assert.ok(previewJobEnv, "Preview workflow needs a job-level environment");
   for (const event of [
     "opened",
     "synchronize",
@@ -77,7 +81,18 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:.*vars\.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY/,
     "Preview builds must use Clerk Development instead of relying on project defaults",
   );
+  assert.match(
+    previewJobEnv,
+    /CLERK_SECRET_KEY:.*secrets\.CLERK_DEVELOPMENT_SECRET_KEY/,
+    "Preview runtime must use the Clerk Development secret that issues test tickets",
+  );
   assert.match(workflow, /test -n "\$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"/);
+  assert.match(workflow, /test -n "\$CLERK_SECRET_KEY"/);
+  assert.match(
+    workflow,
+    /Deploy and alias the Vercel Preview[\s\S]*--env "CLERK_SECRET_KEY=\$\{CLERK_SECRET_KEY\}"[\s\S]*--env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=\$\{NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\}"/,
+    "prebuilt Preview deployments must override both Clerk runtime keys",
+  );
   assert.match(workflow, /railway-deployments\.mjs/);
   assert.doesNotMatch(
     workflow,
