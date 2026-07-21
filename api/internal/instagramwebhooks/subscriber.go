@@ -31,6 +31,39 @@ func NewSubscriber(client *http.Client, graphBase string) *Subscriber {
 	}
 }
 
+func (s *Subscriber) FetchWebhookUserID(ctx context.Context, accessToken string) (string, error) {
+	query := url.Values{
+		"fields":       {"user_id"},
+		"access_token": {accessToken},
+	}
+	endpoint := fmt.Sprintf("%s/me?%s", s.graphBase, query.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("instagram webhook identity request could not be created")
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("instagram webhook identity request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("instagram webhook identity request failed (%d)", resp.StatusCode)
+	}
+
+	var result struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("instagram webhook identity response invalid")
+	}
+	result.UserID = strings.TrimSpace(result.UserID)
+	if result.UserID == "" {
+		return "", fmt.Errorf("instagram webhook identity response missing user_id")
+	}
+	return result.UserID, nil
+}
+
 func (s *Subscriber) Subscribe(ctx context.Context, accountID, accessToken string) error {
 	form := url.Values{
 		"access_token":      {accessToken},

@@ -52,6 +52,76 @@ func TestSubscriberSubscribe(t *testing.T) {
 	}
 }
 
+func TestSubscriberFetchWebhookUserID(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"user_id":"webhook_user_123"}`)
+	}))
+	defer server.Close()
+
+	subscriber := NewSubscriber(server.Client(), server.URL)
+	got, err := subscriber.FetchWebhookUserID(context.Background(), "token_123")
+	if err != nil {
+		t.Fatalf("FetchWebhookUserID: %v", err)
+	}
+	if got != "webhook_user_123" {
+		t.Fatalf("webhook user id = %q, want webhook_user_123", got)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/me" {
+		t.Fatalf("path = %q, want /me", gotPath)
+	}
+	if gotQuery.Get("fields") != "user_id" {
+		t.Fatalf("fields = %q, want user_id", gotQuery.Get("fields"))
+	}
+	if gotQuery.Get("access_token") != "token_123" {
+		t.Fatalf("access_token = %q, want token_123", gotQuery.Get("access_token"))
+	}
+}
+
+func TestSubscriberFetchWebhookUserIDRejectsMissingIDWithoutLeakingToken(t *testing.T) {
+	const accessToken = "secret_resolver_token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"app_scoped_id","debug":"secret_resolver_token"}`)
+	}))
+	defer server.Close()
+
+	subscriber := NewSubscriber(server.Client(), server.URL)
+	_, err := subscriber.FetchWebhookUserID(context.Background(), accessToken)
+	if err == nil {
+		t.Fatal("expected missing webhook user id error")
+	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
+func TestSubscriberFetchWebhookUserIDHTTPFailureDoesNotLeakToken(t *testing.T) {
+	const accessToken = "secret_resolver_token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"secret_resolver_token"}}`)
+	}))
+	defer server.Close()
+
+	subscriber := NewSubscriber(server.Client(), server.URL)
+	_, err := subscriber.FetchWebhookUserID(context.Background(), accessToken)
+	if err == nil {
+		t.Fatal("expected resolver HTTP error")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("error = %q, want HTTP status", err)
+	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
 func TestInstagramWebhookSubscriptionHTTPFailureDoesNotLeakToken(t *testing.T) {
 	const accessToken = "secret_subscriber_token"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
