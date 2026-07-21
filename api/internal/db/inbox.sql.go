@@ -142,7 +142,10 @@ WHERE p.workspace_id = $1
   AND sa.id = ANY($2::TEXT[])
   AND (
     $3::BOOLEAN
-    OR sa.external_user_id = $4::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $4::TEXT
+    )
   )
 `
 
@@ -174,7 +177,10 @@ WHERE i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     $2::BOOLEAN
-    OR sa.external_user_id = $3::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $3::TEXT
+    )
   )
   AND i.is_read = false
   AND i.is_own = false
@@ -457,7 +463,10 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
   AND (
     $2::BOOLEAN
-    OR sa.external_user_id = $3::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $3::TEXT
+    )
   )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
@@ -702,7 +711,10 @@ WHERE i.id = $1
   AND p.workspace_id = $2
   AND (
     $3::BOOLEAN
-    OR sa.external_user_id = $4::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $4::TEXT
+    )
   )
 `
 
@@ -1126,7 +1138,10 @@ WHERE i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     $3::BOOLEAN
-    OR sa.external_user_id = $4::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $4::TEXT
+    )
   )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
@@ -1352,7 +1367,10 @@ WHERE sa.id = i.social_account_id
   AND p.workspace_id = $1
   AND (
     $2::BOOLEAN
-    OR sa.external_user_id = $3::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $3::TEXT
+    )
   )
   AND i.is_read = false
   AND (NOT $4::BOOLEAN OR i.source <> 'x_dm')
@@ -1389,7 +1407,10 @@ WHERE sa.id = i.social_account_id
   AND p.workspace_id = $2
   AND (
     $3::BOOLEAN
-    OR sa.external_user_id = $4::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $4::TEXT
+    )
   )
 `
 
@@ -1760,7 +1781,10 @@ WHERE sa.id = i.social_account_id
   AND p.workspace_id = $1
   AND (
     $7::BOOLEAN
-    OR sa.external_user_id = $8::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = $8::TEXT
+    )
   )
   AND i.social_account_id = $2
   AND i.source = $3
