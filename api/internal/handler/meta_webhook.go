@@ -26,6 +26,7 @@
 package handler
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -50,19 +51,25 @@ import (
 // MetaWebhookHandler owns GET/POST /webhooks/meta.
 type MetaWebhookHandler struct {
 	queries     *db.Queries
-	pool        *pgxpool.Pool // for pg_notify (ws.Notify)
 	encryptor   *crypto.AESEncryptor
 	appSecret   string
 	verifyToken string
+	notify      func(context.Context, string, any)
+	notifyEvent func(context.Context, string, map[string]any)
 }
 
 func NewMetaWebhookHandler(queries *db.Queries, pool *pgxpool.Pool, encryptor *crypto.AESEncryptor, appSecret, verifyToken string) *MetaWebhookHandler {
 	return &MetaWebhookHandler{
 		queries:     queries,
-		pool:        pool,
 		encryptor:   encryptor,
 		appSecret:   strings.TrimSpace(appSecret),
 		verifyToken: strings.TrimSpace(verifyToken),
+		notify: func(ctx context.Context, workspaceID string, item any) {
+			ws.Notify(ctx, pool, workspaceID, item)
+		},
+		notifyEvent: func(ctx context.Context, workspaceID string, event map[string]any) {
+			ws.NotifyEvent(ctx, pool, workspaceID, event)
+		},
 	}
 }
 
@@ -181,27 +188,29 @@ func (h *MetaWebhookHandler) Handle(w http.ResponseWriter, r *http.Request) {
 // Entry.ID is the Instagram user ID. Changes contain comment events;
 // Messaging contains DM events.
 func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWebhookEntry) {
-	// Look up ALL active IG accounts to fan out the event to every workspace.
-	// Meta webhooks send the IGBA ID which doesn't match our stored IG Login ID,
-	// so we find all active IG accounts and insert for each.
-	accounts, err := h.findAllActiveAccounts(r, "instagram")
-	if err != nil || len(accounts) == 0 {
-		slog.Warn("meta webhook: no active IG accounts found",
-			"webhook_ig_id", entry.ID, "err", err)
+	accounts, err := h.findInstagramAccountsByWebhookUserID(r, entry.ID)
+	if err != nil {
+		slog.Warn("meta webhook: exact routing query failed",
+			"platform", "instagram",
+			"entry_id", entry.ID,
+			"error_class", "database_query")
 		return
 	}
-	slog.Info("meta webhook: fanning out to IG accounts",
-		"webhook_ig_id", entry.ID, "account_count", len(accounts))
+	if len(accounts) == 0 {
+		slog.Warn("meta webhook: exact routing found no account",
+			"platform", "instagram",
+			"entry_id", entry.ID,
+			"match_count", 0)
+		return
+	}
+	slog.Info("meta webhook: exact routing matched accounts",
+		"platform", "instagram",
+		"entry_id", entry.ID,
+		"match_count", len(accounts))
 
 	for _, account := range accounts {
-
 		// Process changes (comments).
-		slog.Info("meta webhook: processing entry",
-			"ig_user_id", entry.ID,
-			"changes_count", len(entry.Changes),
-			"messaging_count", len(entry.Messaging))
 		for _, change := range entry.Changes {
-			slog.Info("meta webhook: change", "field", change.Field)
 			switch change.Field {
 			case "comments":
 				h.handleIGComment(r, account, change.Value)
@@ -216,7 +225,7 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			if msg.Message == nil {
 				continue
 			}
-			isOwn := msg.Sender.ID == account.ExternalAccountID
+			isOwn := msg.Sender.ID == account.WebhookAccountID
 			ts := time.Unix(msg.Timestamp, 0)
 
 			// Look up the existing thread for this sender so webhook
@@ -263,7 +272,7 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			if err != nil {
 				slog.Warn("meta webhook: upsert DM failed", "err", err)
 			} else {
-				ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+				h.notify(r.Context(), account.WorkspaceID, toInboxResponse(dmItem))
 			}
 		}
 	} // end for accounts
@@ -287,18 +296,11 @@ type igCommentValue struct {
 }
 
 func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAccount, raw json.RawMessage) {
-	slog.Info("meta webhook: raw comment value", "payload", string(raw))
-
 	var val igCommentValue
 	if err := json.Unmarshal(raw, &val); err != nil {
 		slog.Warn("meta webhook: decode comment value failed", "err", err)
 		return
 	}
-
-	slog.Info("meta webhook: parsed comment",
-		"id", val.ID, "media_id", val.MediaID, "parent_id", val.ParentID,
-		"from_id", val.From.ID, "from_username", val.From.Username,
-		"text", val.Text)
 
 	// Resolve media ID: nested media.id (Instagram Login) or flat media_id (legacy).
 	mediaID := val.Media.ID
@@ -310,7 +312,7 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 		parentID = val.ParentID
 	}
 
-	isOwn := val.From.ID == account.ExternalAccountID
+	isOwn := val.From.ID == account.WebhookAccountID
 	ts := time.Unix(val.Timestamp, 0)
 	if val.Timestamp == 0 {
 		ts = time.Now()
@@ -336,7 +338,7 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 	if err != nil {
 		slog.Warn("meta webhook: upsert comment failed", "err", err)
 	} else {
-		ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(commentItem))
+		h.notify(r.Context(), account.WorkspaceID, toInboxResponse(commentItem))
 	}
 }
 
@@ -355,65 +357,75 @@ type webhookAccount struct {
 	ID                string
 	WorkspaceID       string
 	ExternalAccountID string
+	WebhookAccountID  string
 	AccessToken       string
 }
 
-// findAccountByExternalID finds a social account by platform + external_account_id,
-// joining through profiles to get the workspace_id.
-func (h *MetaWebhookHandler) findAccountByExternalID(r *http.Request, plat, externalAccountID string) (*webhookAccount, error) {
-	acc, err := h.queries.FindSocialAccountByPlatformAndExternalID(
-		r.Context(),
-		db.FindSocialAccountByPlatformAndExternalIDParams{
-			Platform:          plat,
-			ExternalAccountID: externalAccountID,
-		},
-	)
+func (h *MetaWebhookHandler) findInstagramAccountsByWebhookUserID(r *http.Request, webhookUserID string) ([]*webhookAccount, error) {
+	rows, err := h.queries.FindAllActiveInstagramAccountsByWebhookUserID(r.Context(), webhookUserID)
 	if err != nil {
 		return nil, err
 	}
-	return &webhookAccount{
-		ID:                acc.ID,
-		WorkspaceID:       acc.WorkspaceID,
-		ExternalAccountID: acc.ExternalAccountID,
-	}, nil
+	accounts := make([]*webhookAccount, 0, len(rows))
+	for _, row := range rows {
+		accounts = append(accounts, &webhookAccount{
+			ID:                row.ID,
+			WorkspaceID:       row.WorkspaceID,
+			ExternalAccountID: row.ExternalAccountID,
+			WebhookAccountID:  row.InstagramWebhookUserID,
+		})
+	}
+	return accounts, nil
 }
 
-// findAnyActiveAccount is a fallback for when Meta sends a different
-// ID format than what we store. Returns any active account for the platform.
-func (h *MetaWebhookHandler) findAnyActiveAccount(r *http.Request, plat string) (*webhookAccount, error) {
-	acc, err := h.queries.FindAnyActiveAccountByPlatform(r.Context(), plat)
+func (h *MetaWebhookHandler) findAccountsByExternalID(r *http.Request, plat, externalAccountID string) ([]*webhookAccount, error) {
+	rows, err := h.queries.FindAllSocialAccountsByPlatformAndExternalID(r.Context(), db.FindAllSocialAccountsByPlatformAndExternalIDParams{
+		Platform:          plat,
+		ExternalAccountID: externalAccountID,
+	})
 	if err != nil {
 		return nil, err
 	}
-	return &webhookAccount{
-		ID:                acc.ID,
-		WorkspaceID:       acc.WorkspaceID,
-		ExternalAccountID: acc.ExternalAccountID,
-	}, nil
+	accounts := make([]*webhookAccount, 0, len(rows))
+	for _, row := range rows {
+		accounts = append(accounts, &webhookAccount{
+			ID:                row.ID,
+			WorkspaceID:       row.WorkspaceID,
+			ExternalAccountID: row.ExternalAccountID,
+			WebhookAccountID:  row.ExternalAccountID,
+		})
+	}
+	return accounts, nil
 }
 
 // handleThreadsEntry processes a single Threads webhook entry.
 // Entry.ID is the Threads user ID. Changes contain reply events.
 func (h *MetaWebhookHandler) handleThreadsEntry(r *http.Request, entry metaWebhookEntry) {
-	account, err := h.findAccountByExternalID(r, "threads", entry.ID)
+	accounts, err := h.findAccountsByExternalID(r, "threads", entry.ID)
 	if err != nil {
-		account, err = h.findAnyActiveAccount(r, "threads")
-		if err != nil {
-			slog.Warn("meta webhook: no active Threads account found",
-				"webhook_threads_id", entry.ID, "err", err)
-			return
-		}
-		slog.Info("meta webhook: matched Threads account via fallback",
-			"webhook_threads_id", entry.ID, "account_id", account.ID)
+		slog.Warn("meta webhook: exact routing query failed",
+			"platform", "threads",
+			"entry_id", entry.ID,
+			"error_class", "database_query")
+		return
+	}
+	if len(accounts) == 0 {
+		slog.Warn("meta webhook: exact routing found no account",
+			"platform", "threads",
+			"entry_id", entry.ID,
+			"match_count", 0)
+		return
 	}
 
-	for _, change := range entry.Changes {
-		switch change.Field {
-		case "replies":
-			h.handleThreadsReply(r, account, change.Value)
-		default:
-			slog.Info("meta webhook: unhandled threads change field",
-				"field", change.Field, "threads_user_id", entry.ID)
+	for _, account := range accounts {
+		for _, change := range entry.Changes {
+			switch change.Field {
+			case "replies":
+				h.handleThreadsReply(r, account, change.Value)
+			default:
+				slog.Info("meta webhook: unhandled threads change field",
+					"field", change.Field, "threads_user_id", entry.ID)
+			}
 		}
 	}
 }
@@ -443,7 +455,7 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 		parentID = val.ParentID
 	}
 
-	isOwn := val.From.ID == account.ExternalAccountID
+	isOwn := val.From.ID == account.WebhookAccountID
 	ts := time.Unix(val.Timestamp, 0)
 	if val.Timestamp == 0 {
 		ts = time.Now()
@@ -469,7 +481,7 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 	if err != nil {
 		slog.Warn("meta webhook: upsert threads reply failed", "err", err)
 	} else {
-		ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(replyItem))
+		h.notify(r.Context(), account.WorkspaceID, toInboxResponse(replyItem))
 	}
 }
 
@@ -477,39 +489,26 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 // Entry.ID is the Page ID. Feed events (comments, posts, reactions)
 // arrive in Changes with field="feed"; Messenger events arrive in
 // Messaging the same way Instagram DMs do.
-//
-// We mirror the fallback pattern used by the Threads handler: look up
-// the account by ExternalAccountID first, then fall back to any active
-// Facebook account if Meta's webhook uses an ID we can't match.
 func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebhookEntry) {
 	if h.queries == nil {
 		slog.Warn("meta webhook: facebook entry skipped because queries is nil")
 		return
 	}
 
-	rows, err := h.queries.FindAllSocialAccountsByPlatformAndExternalID(r.Context(), db.FindAllSocialAccountsByPlatformAndExternalIDParams{
-		Platform:          "facebook",
-		ExternalAccountID: entry.ID,
-	})
-	var accounts []*webhookAccount
-	if err == nil && len(rows) > 0 {
-		for _, row := range rows {
-			accounts = append(accounts, &webhookAccount{
-				ID:                row.ID,
-				WorkspaceID:       row.WorkspaceID,
-				ExternalAccountID: row.ExternalAccountID,
-			})
-		}
-	} else {
-		account, fallbackErr := h.findAnyActiveAccount(r, "facebook")
-		if fallbackErr != nil {
-			slog.Warn("meta webhook: no active Facebook account found",
-				"webhook_page_id", entry.ID, "err", err, "fallback_err", fallbackErr)
-			return
-		}
-		slog.Info("meta webhook: matched Facebook account via fallback",
-			"webhook_page_id", entry.ID, "account_id", account.ID)
-		accounts = []*webhookAccount{account}
+	accounts, err := h.findAccountsByExternalID(r, "facebook", entry.ID)
+	if err != nil {
+		slog.Warn("meta webhook: exact routing query failed",
+			"platform", "facebook",
+			"entry_id", entry.ID,
+			"error_class", "database_query")
+		return
+	}
+	if len(accounts) == 0 {
+		slog.Warn("meta webhook: exact routing found no account",
+			"platform", "facebook",
+			"entry_id", entry.ID,
+			"match_count", 0)
+		return
 	}
 
 	// Decrypt the Page access token for each matched account so the
@@ -556,7 +555,7 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 			if msg.Message == nil {
 				continue
 			}
-			isOwn := msg.Sender.ID == account.ExternalAccountID
+			isOwn := msg.Sender.ID == account.WebhookAccountID
 			ts := time.Unix(msg.Timestamp/1000, (msg.Timestamp%1000)*int64(time.Millisecond))
 			if msg.Timestamp == 0 {
 				ts = time.Now()
@@ -626,7 +625,7 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 			if err != nil {
 				slog.Warn("meta webhook: upsert fb dm failed", "err", err)
 			} else {
-				ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(dmItem))
+				h.notify(r.Context(), account.WorkspaceID, toInboxResponse(dmItem))
 			}
 		}
 	}
@@ -682,7 +681,7 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		parentID = val.ParentID
 	}
 
-	isOwn := authorID != "" && authorID == account.ExternalAccountID
+	isOwn := authorID != "" && authorID == account.WebhookAccountID
 	ts := time.Unix(val.CreatedTime, 0)
 	if val.CreatedTime == 0 {
 		ts = time.Now()
@@ -699,7 +698,7 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		if author, fetchErr := fb.FetchCommentAuthor(r.Context(), account.AccessToken, val.CommentID); fetchErr == nil && author != nil {
 			if author.ID != "" {
 				authorID = author.ID
-				isOwn = authorID == account.ExternalAccountID
+				isOwn = authorID == account.WebhookAccountID
 			}
 			if author.Name != "" {
 				authorName = author.Name
@@ -746,7 +745,7 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 			if mergeErr != nil {
 				slog.Warn("meta webhook: merge facebook comment author failed", "err", mergeErr)
 			} else if rows > 0 {
-				ws.NotifyEvent(r.Context(), h.pool, account.WorkspaceID, map[string]any{
+				h.notifyEvent(r.Context(), account.WorkspaceID, map[string]any{
 					"type":      "inbox.sync_complete",
 					"new_items": 0,
 				})
@@ -756,24 +755,7 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		slog.Warn("meta webhook: upsert facebook comment failed", "err", err)
 		return
 	}
-	ws.Notify(r.Context(), h.pool, account.WorkspaceID, toInboxResponse(item))
-}
-
-// findAllActiveAccounts returns all active accounts for a platform.
-func (h *MetaWebhookHandler) findAllActiveAccounts(r *http.Request, plat string) ([]*webhookAccount, error) {
-	rows, err := h.queries.FindAllActiveAccountsByPlatform(r.Context(), plat)
-	if err != nil {
-		return nil, err
-	}
-	var accounts []*webhookAccount
-	for _, row := range rows {
-		accounts = append(accounts, &webhookAccount{
-			ID:                row.ID,
-			WorkspaceID:       row.WorkspaceID,
-			ExternalAccountID: row.ExternalAccountID,
-		})
-	}
-	return accounts, nil
+	h.notify(r.Context(), account.WorkspaceID, toInboxResponse(item))
 }
 
 // verifyMetaWebhookSignature checks the X-Hub-Signature-256 header
