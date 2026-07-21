@@ -255,7 +255,7 @@ export default function InboxIntegrationGuidePage() {
       <h2 id="reads">4. Read one user&apos;s Inbox</h2>
       <p>
         Read the list with <ApiInlineLink endpoint="GET /v1/inbox" />, get the badge count from
-        <code> GET /v1/inbox/unread-count</code>, and fetch a single item with <code>GET /v1/inbox/{id}</code>. The list
+        <code> GET /v1/inbox/unread-count</code>, and fetch a single item with <code>{"GET /v1/inbox/{id}"}</code>. The list
         <code> limit</code> defaults to <code>50</code> and caps at <code>500</code>; it is a bounded result size, not cursor
         pagination or an unbounded history export.
       </p>
@@ -267,8 +267,8 @@ export default function InboxIntegrationGuidePage() {
 
       <h2 id="writes">5. Perform scoped writes</h2>
       <p>
-        Use <code>POST /v1/inbox/{id}/read</code>, <code>POST /v1/inbox/mark-all-read</code>,
-        <ApiInlineLink endpoint="POST /v1/inbox/{id}/reply" />, and <code>POST /v1/inbox/{id}/thread-state</code> through the
+        Use <code>{"POST /v1/inbox/{id}/read"}</code>, <code>POST /v1/inbox/mark-all-read</code>,
+        <ApiInlineLink endpoint="POST /v1/inbox/{id}/reply" />, and <code>{"POST /v1/inbox/{id}/thread-state"}</code> through the
         same helper. UniPost rechecks the selected scope for each item ID; cross-scope item operations return
         <code> 404</code>.
       </p>
