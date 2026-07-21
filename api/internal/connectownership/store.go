@@ -1,13 +1,16 @@
 package connectownership
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -20,6 +23,14 @@ func (*OwnershipConflictError) Error() string {
 }
 
 var ErrOwnershipConflict = &OwnershipConflictError{}
+
+type InvalidOwnershipRequestError struct{}
+
+func (*InvalidOwnershipRequestError) Error() string {
+	return "INVALID_ACCOUNT_OWNERSHIP_REQUEST"
+}
+
+var ErrInvalidOwnershipRequest = &InvalidOwnershipRequestError{}
 
 type DecisionKind string
 
@@ -53,7 +64,11 @@ type SaveRequest struct {
 	Create           db.CreateManagedSocialAccountParams
 }
 
-type ownershipQueries interface {
+type ownershipCheckQueries interface {
+	CheckActiveAccountsByWorkspaceProviderIdentity(context.Context, db.CheckActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error)
+}
+
+type ownershipSaveQueries interface {
 	ListActiveAccountsByWorkspaceProviderIdentity(context.Context, db.ListActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error)
 	RefreshConnectedSocialAccount(context.Context, db.RefreshConnectedSocialAccountParams) (db.SocialAccount, error)
 	UpsertManagedSocialAccount(context.Context, db.UpsertManagedSocialAccountParams) (db.SocialAccount, error)
@@ -67,9 +82,9 @@ type ownershipTx interface {
 }
 
 type Store struct {
-	queries    ownershipQueries
+	queries    ownershipCheckQueries
 	beginTx    func(context.Context) (ownershipTx, error)
-	queriesFor func(db.DBTX) ownershipQueries
+	queriesFor func(db.DBTX) ownershipSaveQueries
 }
 
 func NewStore(pool *pgxpool.Pool) *Store {
@@ -78,18 +93,18 @@ func NewStore(pool *pgxpool.Pool) *Store {
 		beginTx: func(ctx context.Context) (ownershipTx, error) {
 			return pool.BeginTx(ctx, pgx.TxOptions{})
 		},
-		queriesFor: func(tx db.DBTX) ownershipQueries {
+		queriesFor: func(tx db.DBTX) ownershipSaveQueries {
 			return db.New(tx)
 		},
 	}
 }
 
 func (s *Store) Check(ctx context.Context, key OwnershipKey) (Decision, error) {
-	matches, err := s.queries.ListActiveAccountsByWorkspaceProviderIdentity(ctx, ownershipLookupParams(
-		key.WorkspaceID,
-		key.Platform,
-		key.ProviderIdentity,
-	))
+	matches, err := s.queries.CheckActiveAccountsByWorkspaceProviderIdentity(ctx, db.CheckActiveAccountsByWorkspaceProviderIdentityParams{
+		WorkspaceID:      key.WorkspaceID,
+		Platform:         key.Platform,
+		ProviderIdentity: key.ProviderIdentity,
+	})
 	if err != nil {
 		return Decision{}, fmt.Errorf("check connect account ownership: %w", err)
 	}
@@ -97,6 +112,12 @@ func (s *Store) Check(ctx context.Context, key OwnershipKey) (Decision, error) {
 }
 
 func (s *Store) Save(ctx context.Context, request SaveRequest) (db.SocialAccount, error) {
+	normalized, err := normalizeSaveRequest(request)
+	if err != nil {
+		return db.SocialAccount{}, err
+	}
+	request = normalized
+
 	tx, err := s.beginTx(ctx)
 	if err != nil {
 		return db.SocialAccount{}, fmt.Errorf("begin connect account ownership save: %w", err)
@@ -127,6 +148,114 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) (db.SocialAccount
 		return db.SocialAccount{}, fmt.Errorf("commit connect account ownership: %w", err)
 	}
 	return account, nil
+}
+
+func normalizeSaveRequest(request SaveRequest) (SaveRequest, error) {
+	for _, required := range []string{
+		request.WorkspaceID,
+		request.ProfileID,
+		request.Platform,
+		request.ProviderIdentity,
+		request.ExternalUserID,
+	} {
+		if strings.TrimSpace(required) == "" {
+			return SaveRequest{}, ErrInvalidOwnershipRequest
+		}
+	}
+
+	if !compatibleText(request.Refresh.ExternalUserID, request.ExternalUserID) ||
+		(request.Refresh.ConnectionType != "" && request.Refresh.ConnectionType != "managed") {
+		return SaveRequest{}, ErrInvalidOwnershipRequest
+	}
+	request.Refresh.ExternalUserID = managedUserID(request.ExternalUserID)
+	request.Refresh.ConnectionType = "managed"
+	if request.Platform == "instagram" {
+		metadata, err := bindInstagramWebhookIdentity(request.Refresh.Metadata, request.ProviderIdentity)
+		if err != nil {
+			return SaveRequest{}, err
+		}
+		request.Refresh.Metadata = metadata
+	} else {
+		if !compatibleString(request.Refresh.ExternalAccountID, request.ProviderIdentity) {
+			return SaveRequest{}, ErrInvalidOwnershipRequest
+		}
+		request.Refresh.ExternalAccountID = request.ProviderIdentity
+	}
+
+	if request.Platform == "bluesky" {
+		if !compatibleString(request.Create.ProfileID, request.ProfileID) ||
+			!compatibleString(request.Create.Platform, request.Platform) ||
+			!compatibleString(request.Create.ExternalAccountID, request.ProviderIdentity) ||
+			!compatibleText(request.Create.ExternalUserID, request.ExternalUserID) {
+			return SaveRequest{}, ErrInvalidOwnershipRequest
+		}
+		request.Create.ProfileID = request.ProfileID
+		request.Create.Platform = request.Platform
+		request.Create.ExternalAccountID = request.ProviderIdentity
+		request.Create.ExternalUserID = managedUserID(request.ExternalUserID)
+		return request, nil
+	}
+
+	if !compatibleString(request.Upsert.ProfileID, request.ProfileID) ||
+		!compatibleString(request.Upsert.Platform, request.Platform) ||
+		!compatibleText(request.Upsert.ExternalUserID, request.ExternalUserID) {
+		return SaveRequest{}, ErrInvalidOwnershipRequest
+	}
+	request.Upsert.ProfileID = request.ProfileID
+	request.Upsert.Platform = request.Platform
+	request.Upsert.ExternalUserID = managedUserID(request.ExternalUserID)
+	if request.Platform == "instagram" {
+		metadata, err := bindInstagramWebhookIdentity(request.Upsert.Metadata, request.ProviderIdentity)
+		if err != nil {
+			return SaveRequest{}, err
+		}
+		request.Upsert.Metadata = metadata
+	} else {
+		if !compatibleString(request.Upsert.ExternalAccountID, request.ProviderIdentity) {
+			return SaveRequest{}, ErrInvalidOwnershipRequest
+		}
+		request.Upsert.ExternalAccountID = request.ProviderIdentity
+	}
+	return request, nil
+}
+
+func compatibleString(value, canonical string) bool {
+	return value == "" || value == canonical
+}
+
+func compatibleText(value pgtype.Text, canonical string) bool {
+	return !value.Valid || value.String == "" || value.String == canonical
+}
+
+func managedUserID(externalUserID string) pgtype.Text {
+	return pgtype.Text{String: externalUserID, Valid: true}
+}
+
+func bindInstagramWebhookIdentity(metadata []byte, providerIdentity string) ([]byte, error) {
+	object := make(map[string]json.RawMessage)
+	if len(bytes.TrimSpace(metadata)) != 0 {
+		if err := json.Unmarshal(metadata, &object); err != nil || object == nil {
+			return nil, ErrInvalidOwnershipRequest
+		}
+	}
+
+	const field = "instagram_webhook_user_id"
+	if encoded, exists := object[field]; exists {
+		var existing string
+		if err := json.Unmarshal(encoded, &existing); err != nil || !compatibleString(existing, providerIdentity) {
+			return nil, ErrInvalidOwnershipRequest
+		}
+	}
+	encodedIdentity, err := json.Marshal(providerIdentity)
+	if err != nil {
+		return nil, ErrInvalidOwnershipRequest
+	}
+	object[field] = encodedIdentity
+	normalized, err := json.Marshal(object)
+	if err != nil {
+		return nil, ErrInvalidOwnershipRequest
+	}
+	return normalized, nil
 }
 
 func connectOwnershipLockKey(workspaceID, platform, providerIdentity string) string {
@@ -169,7 +298,7 @@ func decide(matches []db.SocialAccount, profileID, externalUserID string) Decisi
 
 func applyDecision(
 	ctx context.Context,
-	queries ownershipQueries,
+	queries ownershipSaveQueries,
 	decision Decision,
 	request SaveRequest,
 ) (db.SocialAccount, error) {

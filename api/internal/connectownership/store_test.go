@@ -2,6 +2,7 @@ package connectownership
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"regexp"
@@ -121,8 +122,28 @@ func TestConnectOwnershipQuery(t *testing.T) {
 		t.Fatalf("read social account queries: %v", err)
 	}
 
-	query := extractSQLQuery(t, string(source), "ListActiveAccountsByWorkspaceProviderIdentity")
-	compact := strings.Join(strings.Fields(strings.ToLower(query)), " ")
+	checkQuery := extractSQLQuery(t, string(source), "CheckActiveAccountsByWorkspaceProviderIdentity")
+	checkCompact := strings.Join(strings.Fields(strings.ToLower(checkQuery)), " ")
+	if strings.Contains(checkCompact, "for update") {
+		t.Fatalf("read-only Check ownership query must not lock rows: %s", checkCompact)
+	}
+	checkContract := strings.ReplaceAll(checkCompact, "::text", "")
+	for _, want := range []string{
+		"join profiles p on p.id = sa.profile_id",
+		"p.workspace_id = @workspace_id",
+		"sa.platform = @platform",
+		"sa.status = 'active'",
+		"sa.disconnected_at is null",
+		"@platform = 'instagram' and sa.metadata->>'instagram_webhook_user_id' = @provider_identity",
+		"@platform <> 'instagram' and sa.external_account_id = @provider_identity",
+	} {
+		if !strings.Contains(checkContract, want) {
+			t.Errorf("read-only Check ownership query missing %q: %s", want, checkCompact)
+		}
+	}
+
+	saveQuery := extractSQLQuery(t, string(source), "ListActiveAccountsByWorkspaceProviderIdentity")
+	compact := strings.Join(strings.Fields(strings.ToLower(saveQuery)), " ")
 	contract := strings.ReplaceAll(compact, "::text", "")
 
 	for _, want := range []string{
@@ -163,6 +184,10 @@ func TestConnectOwnershipQuery(t *testing.T) {
 	if !paramsPattern.Match(generated) {
 		t.Fatal("generated ownership query must accept provider identity as text")
 	}
+	checkParamsPattern := regexp.MustCompile(`(?s)type CheckActiveAccountsByWorkspaceProviderIdentityParams struct \{.*?ProviderIdentity\s+string\s+`)
+	if !checkParamsPattern.Match(generated) || !strings.Contains(string(generated), "func (q *Queries) CheckActiveAccountsByWorkspaceProviderIdentity") {
+		t.Fatal("generated read-only Check ownership query is missing or has non-text provider identity")
+	}
 }
 
 func TestStoreCheckIsReadOnlyClassification(t *testing.T) {
@@ -188,8 +213,8 @@ func TestStoreCheckIsReadOnlyClassification(t *testing.T) {
 	if decision != (Decision{Kind: Reconnect, AccountID: "account-a"}) {
 		t.Fatalf("Check() decision = %+v", decision)
 	}
-	if queries.lookupCalls != 1 || queries.mutationCalls != 0 {
-		t.Fatalf("lookup calls = %d, mutation calls = %d", queries.lookupCalls, queries.mutationCalls)
+	if queries.checkLookupCalls != 1 || queries.lockingLookupCalls != 0 || queries.mutationCalls != 0 {
+		t.Fatalf("check/locking/mutation calls = %d/%d/%d", queries.checkLookupCalls, queries.lockingLookupCalls, queries.mutationCalls)
 	}
 	if got := queries.lookupParams; got.WorkspaceID != "workspace-a" || got.Platform != "instagram" || got.ProviderIdentity != "provider-a" {
 		t.Fatalf("lookup params = %+v", got)
@@ -214,7 +239,7 @@ func TestStoreSaveRepeatsLookupUnderAdvisoryLock(t *testing.T) {
 			events = append(events, "begin")
 			return tx, nil
 		},
-		queriesFor: func(db.DBTX) ownershipQueries { return authoritativeQueries },
+		queriesFor: func(db.DBTX) ownershipSaveQueries { return authoritativeQueries },
 	}
 
 	decision, err := store.Check(context.Background(), OwnershipKey{
@@ -248,7 +273,7 @@ func TestStoreSaveRepeatsLookupUnderAdvisoryLock(t *testing.T) {
 	if authoritativeQueries.mutationCalls != 0 || tx.commitCalls != 0 {
 		t.Fatalf("mutation calls = %d, commit calls = %d", authoritativeQueries.mutationCalls, tx.commitCalls)
 	}
-	wantEvents := []string{"lookup", "begin", "lock", "lookup", "rollback"}
+	wantEvents := []string{"check_lookup", "begin", "lock", "lookup", "rollback"}
 	if strings.Join(events, ",") != strings.Join(wantEvents, ",") {
 		t.Fatalf("events = %v, want %v", events, wantEvents)
 	}
@@ -332,7 +357,7 @@ func TestStoreSaveAppliesOnlyCreateOrReconnect(t *testing.T) {
 			}
 			store := &Store{
 				beginTx:    func(context.Context) (ownershipTx, error) { return tx, nil },
-				queriesFor: func(db.DBTX) ownershipQueries { return queries },
+				queriesFor: func(db.DBTX) ownershipSaveQueries { return queries },
 			}
 
 			account, err := store.Save(context.Background(), SaveRequest{
@@ -355,6 +380,18 @@ func TestStoreSaveAppliesOnlyCreateOrReconnect(t *testing.T) {
 			if test.wantRefreshCalls == 1 && queries.refreshParams.ID != "existing-a" {
 				t.Fatalf("refresh account ID = %q, want DB-derived existing-a", queries.refreshParams.ID)
 			}
+			if test.wantRefreshCalls == 1 {
+				if queries.refreshParams.ConnectionType != "managed" || queries.refreshParams.ExternalUserID != (pgtype.Text{String: "managed-a", Valid: true}) {
+					t.Fatalf("normalized refresh identity = %+v", queries.refreshParams)
+				}
+				assertInstagramWebhookIdentity(t, queries.refreshParams.Metadata, "provider-a")
+			}
+			if test.wantUpsertCalls == 1 {
+				assertManagedCreateIdentity(t, queries.upsertParams.ProfileID, queries.upsertParams.Platform, queries.upsertParams.ExternalAccountID, queries.upsertParams.ExternalUserID, "threads")
+			}
+			if test.wantCreateCalls == 1 {
+				assertManagedCreateIdentity(t, queries.createParams.ProfileID, queries.createParams.Platform, queries.createParams.ExternalAccountID, queries.createParams.ExternalUserID, "bluesky")
+			}
 			if tx.commitCalls != 1 {
 				t.Fatalf("commit calls = %d, want 1", tx.commitCalls)
 			}
@@ -362,11 +399,191 @@ func TestStoreSaveAppliesOnlyCreateOrReconnect(t *testing.T) {
 	}
 }
 
+func TestStoreSaveRejectsNestedIdentityMismatchBeforeTransaction(t *testing.T) {
+	tests := []struct {
+		name    string
+		request SaveRequest
+	}{
+		{
+			name: "Refresh cannot target a different Instagram webhook identity",
+			request: SaveRequest{
+				WorkspaceID:      "workspace-a",
+				ProfileID:        "profile-a",
+				Platform:         "instagram",
+				ProviderIdentity: "provider-a",
+				ExternalUserID:   "managed-a",
+				Refresh: db.RefreshConnectedSocialAccountParams{
+					Metadata:       []byte(`{"instagram_webhook_user_id":"provider-b"}`),
+					ExternalUserID: pgtype.Text{String: "managed-a", Valid: true},
+				},
+			},
+		},
+		{
+			name: "Upsert cannot target a different external account",
+			request: SaveRequest{
+				WorkspaceID:      "workspace-a",
+				ProfileID:        "profile-a",
+				Platform:         "threads",
+				ProviderIdentity: "provider-a",
+				ExternalUserID:   "managed-a",
+				Upsert: db.UpsertManagedSocialAccountParams{
+					ProfileID:         "profile-a",
+					Platform:          "threads",
+					ExternalAccountID: "provider-b",
+					ExternalUserID:    pgtype.Text{String: "managed-a", Valid: true},
+				},
+			},
+		},
+		{
+			name: "Create cannot target a different managed user",
+			request: SaveRequest{
+				WorkspaceID:      "workspace-a",
+				ProfileID:        "profile-a",
+				Platform:         "bluesky",
+				ProviderIdentity: "provider-a",
+				ExternalUserID:   "managed-a",
+				Create: db.CreateManagedSocialAccountParams{
+					ProfileID:         "profile-a",
+					Platform:          "bluesky",
+					ExternalAccountID: "provider-a",
+					ExternalUserID:    pgtype.Text{String: "managed-b", Valid: true},
+				},
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			beginCalls := 0
+			queries := &fakeOwnershipQueries{}
+			store := &Store{
+				beginTx: func(context.Context) (ownershipTx, error) {
+					beginCalls++
+					return &fakeOwnershipTx{}, nil
+				},
+				queriesFor: func(db.DBTX) ownershipSaveQueries { return queries },
+			}
+
+			_, err := store.Save(context.Background(), test.request)
+			if !errors.Is(err, ErrInvalidOwnershipRequest) {
+				t.Fatalf("Save() error = %v, want invalid ownership request", err)
+			}
+			if err.Error() != "INVALID_ACCOUNT_OWNERSHIP_REQUEST" {
+				t.Fatalf("invalid request error leaked details: %q", err.Error())
+			}
+			if beginCalls != 0 || queries.mutationCalls != 0 {
+				t.Fatalf("begin calls = %d, mutation calls = %d; mismatch must be rejected before transaction", beginCalls, queries.mutationCalls)
+			}
+		})
+	}
+}
+
+func TestStoreSaveRejectsEmptyCanonicalIdentityBeforeTransaction(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*SaveRequest)
+	}{
+		{name: "workspace", mutate: func(request *SaveRequest) { request.WorkspaceID = "" }},
+		{name: "profile", mutate: func(request *SaveRequest) { request.ProfileID = "" }},
+		{name: "platform", mutate: func(request *SaveRequest) { request.Platform = "" }},
+		{name: "provider identity", mutate: func(request *SaveRequest) { request.ProviderIdentity = "" }},
+		{name: "external user", mutate: func(request *SaveRequest) { request.ExternalUserID = "" }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := SaveRequest{
+				WorkspaceID:      "workspace-a",
+				ProfileID:        "profile-a",
+				Platform:         "threads",
+				ProviderIdentity: "provider-a",
+				ExternalUserID:   "managed-a",
+			}
+			test.mutate(&request)
+			beginCalls := 0
+			store := &Store{beginTx: func(context.Context) (ownershipTx, error) {
+				beginCalls++
+				return &fakeOwnershipTx{}, nil
+			}}
+
+			_, err := store.Save(context.Background(), request)
+			if !errors.Is(err, ErrInvalidOwnershipRequest) {
+				t.Fatalf("Save() error = %v, want invalid ownership request", err)
+			}
+			if beginCalls != 0 {
+				t.Fatalf("begin calls = %d, want 0", beginCalls)
+			}
+		})
+	}
+}
+
+func TestStoreSavePreservesUnrelatedInstagramProviderPayload(t *testing.T) {
+	queries := &fakeOwnershipQueries{
+		matches: []db.SocialAccount{{
+			ID:             "account-a",
+			ProfileID:      "profile-a",
+			ExternalUserID: pgtype.Text{String: "managed-a", Valid: true},
+		}},
+		refreshResult: db.SocialAccount{ID: "account-a"},
+	}
+	store := &Store{
+		beginTx:    func(context.Context) (ownershipTx, error) { return &fakeOwnershipTx{}, nil },
+		queriesFor: func(db.DBTX) ownershipSaveQueries { return queries },
+	}
+
+	_, err := store.Save(context.Background(), SaveRequest{
+		WorkspaceID:      "workspace-a",
+		ProfileID:        "profile-a",
+		Platform:         "instagram",
+		ProviderIdentity: "webhook-a",
+		ExternalUserID:   "managed-a",
+		Refresh: db.RefreshConnectedSocialAccountParams{
+			ExternalAccountID: "business-account-a",
+			Metadata:          []byte(`{"username":"alice","provider_payload":{"page_id":"page-a"}}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if queries.refreshParams.ExternalAccountID != "business-account-a" {
+		t.Fatalf("Instagram external account ID = %q, want preserved business-account-a", queries.refreshParams.ExternalAccountID)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(queries.refreshParams.Metadata, &metadata); err != nil {
+		t.Fatalf("decode normalized metadata: %v", err)
+	}
+	if metadata["username"] != "alice" || metadata["instagram_webhook_user_id"] != "webhook-a" {
+		t.Fatalf("normalized Instagram metadata = %#v", metadata)
+	}
+	payload, ok := metadata["provider_payload"].(map[string]any)
+	if !ok || payload["page_id"] != "page-a" {
+		t.Fatalf("unrelated provider payload was overwritten: %#v", metadata["provider_payload"])
+	}
+}
+
+func assertManagedCreateIdentity(t *testing.T, profileID, platform, externalAccountID string, externalUserID pgtype.Text, wantPlatform string) {
+	t.Helper()
+	if profileID != "profile-a" || platform != wantPlatform || externalAccountID != "provider-a" || externalUserID != (pgtype.Text{String: "managed-a", Valid: true}) {
+		t.Fatalf("normalized managed identity = profile=%q platform=%q account=%q user=%+v", profileID, platform, externalAccountID, externalUserID)
+	}
+}
+
+func assertInstagramWebhookIdentity(t *testing.T, metadata []byte, want string) {
+	t.Helper()
+	var object map[string]any
+	if err := json.Unmarshal(metadata, &object); err != nil {
+		t.Fatalf("decode Instagram metadata: %v", err)
+	}
+	if object["instagram_webhook_user_id"] != want {
+		t.Fatalf("Instagram webhook identity = %#v, want %q", object["instagram_webhook_user_id"], want)
+	}
+}
+
 func TestStoreSaveSerializesConcurrentOwnershipDecisions(t *testing.T) {
 	database := &serializedOwnershipDB{}
 	store := &Store{
 		beginTx: database.begin,
-		queriesFor: func(tx db.DBTX) ownershipQueries {
+		queriesFor: func(tx db.DBTX) ownershipSaveQueries {
 			return &serializedOwnershipQueries{tx: tx.(*serializedOwnershipTx)}
 		},
 	}
@@ -417,22 +634,36 @@ func TestStoreSaveSerializesConcurrentOwnershipDecisions(t *testing.T) {
 }
 
 type fakeOwnershipQueries struct {
-	events        *[]string
-	matches       []db.SocialAccount
-	lookupParams  db.ListActiveAccountsByWorkspaceProviderIdentityParams
-	lookupCalls   int
-	mutationCalls int
-	refreshCalls  int
-	upsertCalls   int
-	createCalls   int
-	refreshParams db.RefreshConnectedSocialAccountParams
-	refreshResult db.SocialAccount
-	upsertResult  db.SocialAccount
-	createResult  db.SocialAccount
+	events             *[]string
+	matches            []db.SocialAccount
+	lookupParams       db.ListActiveAccountsByWorkspaceProviderIdentityParams
+	checkLookupCalls   int
+	lockingLookupCalls int
+	mutationCalls      int
+	refreshCalls       int
+	upsertCalls        int
+	createCalls        int
+	refreshParams      db.RefreshConnectedSocialAccountParams
+	upsertParams       db.UpsertManagedSocialAccountParams
+	createParams       db.CreateManagedSocialAccountParams
+	refreshResult      db.SocialAccount
+	upsertResult       db.SocialAccount
+	createResult       db.SocialAccount
+}
+
+func (f *fakeOwnershipQueries) CheckActiveAccountsByWorkspaceProviderIdentity(_ context.Context, params db.CheckActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error) {
+	f.checkLookupCalls++
+	f.lookupParams = db.ListActiveAccountsByWorkspaceProviderIdentityParams{
+		WorkspaceID:      params.WorkspaceID,
+		Platform:         params.Platform,
+		ProviderIdentity: params.ProviderIdentity,
+	}
+	f.record("check_lookup")
+	return f.matches, nil
 }
 
 func (f *fakeOwnershipQueries) ListActiveAccountsByWorkspaceProviderIdentity(_ context.Context, params db.ListActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error) {
-	f.lookupCalls++
+	f.lockingLookupCalls++
 	f.lookupParams = params
 	f.record("lookup")
 	return f.matches, nil
@@ -446,16 +677,18 @@ func (f *fakeOwnershipQueries) RefreshConnectedSocialAccount(_ context.Context, 
 	return f.refreshResult, nil
 }
 
-func (f *fakeOwnershipQueries) UpsertManagedSocialAccount(_ context.Context, _ db.UpsertManagedSocialAccountParams) (db.SocialAccount, error) {
+func (f *fakeOwnershipQueries) UpsertManagedSocialAccount(_ context.Context, params db.UpsertManagedSocialAccountParams) (db.SocialAccount, error) {
 	f.mutationCalls++
 	f.upsertCalls++
+	f.upsertParams = params
 	f.record("upsert")
 	return f.upsertResult, nil
 }
 
-func (f *fakeOwnershipQueries) CreateManagedSocialAccount(_ context.Context, _ db.CreateManagedSocialAccountParams) (db.SocialAccount, error) {
+func (f *fakeOwnershipQueries) CreateManagedSocialAccount(_ context.Context, params db.CreateManagedSocialAccountParams) (db.SocialAccount, error) {
 	f.mutationCalls++
 	f.createCalls++
+	f.createParams = params
 	f.record("create")
 	return f.createResult, nil
 }
