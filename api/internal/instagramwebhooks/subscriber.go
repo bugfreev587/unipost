@@ -39,28 +39,28 @@ func (s *Subscriber) Subscribe(ctx context.Context, accountID, accessToken strin
 	endpoint := fmt.Sprintf("%s/%s/subscribed_apps", s.graphBase, url.PathEscape(accountID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return err
+		return fmt.Errorf("instagram webhook subscription request could not be created")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("instagram webhook subscription: %w", err)
+		return fmt.Errorf("instagram webhook subscription request failed")
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("instagram webhook subscription %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("instagram webhook subscription failed (%d)", resp.StatusCode)
 	}
 
 	var result struct {
 		Success bool `json:"success"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("instagram webhook subscription decode: %w", err)
+		return fmt.Errorf("instagram webhook subscription response invalid")
 	}
 	if !result.Success {
-		return fmt.Errorf("instagram webhook subscription rejected: %s", string(body))
+		return fmt.Errorf("instagram webhook subscription rejected")
 	}
 	return nil
 }

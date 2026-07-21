@@ -1,9 +1,11 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -1007,6 +1009,11 @@ func TestConnectCallback_InstagramMissingWebhookAccountIDFailsBeforePersistence(
 }
 
 func TestConnectCallback_InstagramSubscriptionFailureRequiresReconnect(t *testing.T) {
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
 	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
 	if err != nil {
 		t.Fatalf("encryptor: %v", err)
@@ -1016,7 +1023,7 @@ func TestConnectCallback_InstagramSubscriptionFailureRequiresReconnect(t *testin
 		allowQuickstart:        true,
 		activeAccountLookupErr: pgx.ErrNoRows,
 	}
-	subscriber := &fakeInstagramWebhookSubscriber{err: fmt.Errorf("meta subscription denied")}
+	subscriber := &fakeInstagramWebhookSubscriber{err: fmt.Errorf("meta subscription denied access_token=access-token")}
 	h := NewConnectCallbackHandler(
 		db.New(fdb),
 		encryptor,
@@ -1043,6 +1050,76 @@ func TestConnectCallback_InstagramSubscriptionFailureRequiresReconnect(t *testin
 	}
 	if !strings.Contains(rec.Body.String(), "webhook_subscription_failed") {
 		t.Fatalf("body = %q, want webhook subscription failure", rec.Body.String())
+	}
+	for outputName, output := range map[string]string{"response": rec.Body.String(), "logs": logs.String()} {
+		if strings.Contains(output, "access-token") || strings.Contains(strings.ToLower(output), "access_token=") {
+			t.Fatalf("%s leaked access token: %q", outputName, output)
+		}
+	}
+}
+
+func TestConnectCallback_InstagramWebhookSubscriptionContainmentFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		reconnectErr     error
+		reconnectRows    int64
+		reconnectRowsSet bool
+	}{
+		{name: "database error", reconnectErr: fmt.Errorf("database echoed access_token=access-token")},
+		{name: "zero rows", reconnectRowsSet: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+			encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+			if err != nil {
+				t.Fatalf("encryptor: %v", err)
+			}
+			fdb := &connectSessionTestDB{
+				platform:                 "instagram",
+				allowQuickstart:          true,
+				activeAccountLookupErr:   pgx.ErrNoRows,
+				reconnectRequiredErr:     tc.reconnectErr,
+				reconnectRequiredRows:    tc.reconnectRows,
+				reconnectRequiredRowsSet: tc.reconnectRowsSet,
+			}
+			subscriber := &fakeInstagramWebhookSubscriber{err: fmt.Errorf("meta subscription denied")}
+			h := NewConnectCallbackHandler(
+				db.New(fdb),
+				encryptor,
+				events.NoopBus{},
+				connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
+				"https://api.example.com",
+				nil,
+			)
+			h.instagramWebhookSubscriber = subscriber
+			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
+			req = withChiParam(req, "platform", "instagram")
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "webhook_subscription_containment_failed") {
+				t.Fatalf("body = %q, want containment failure", rec.Body.String())
+			}
+			if fdb.completedAcctID != "" {
+				t.Fatalf("completed social account = %q, want empty", fdb.completedAcctID)
+			}
+			if fdb.reconnectRequiredCalls != 1 {
+				t.Fatalf("reconnect required calls = %d, want 1", fdb.reconnectRequiredCalls)
+			}
+			for outputName, output := range map[string]string{"response": rec.Body.String(), "logs": logs.String()} {
+				if strings.Contains(output, "access-token") || strings.Contains(strings.ToLower(output), "access_token=") {
+					t.Fatalf("%s leaked access token: %q", outputName, output)
+				}
+			}
+		})
 	}
 }
 
@@ -1144,6 +1221,9 @@ type connectSessionTestDB struct {
 	createConnectSessionCalls int
 	setSessionXAppModeCalls   int
 	reconnectRequiredCalls    int
+	reconnectRequiredErr      error
+	reconnectRequiredRows     int64
+	reconnectRequiredRowsSet  bool
 	xAppMode                  pgtype.Text
 	savedMetadata             []byte
 	operationLog              *[]string
@@ -1157,6 +1237,14 @@ type connectSessionTestDB struct {
 func (f *connectSessionTestDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
 	if strings.Contains(query, "-- name: MarkSocialAccountReconnectRequired") {
 		f.reconnectRequiredCalls++
+		if f.reconnectRequiredErr != nil {
+			return pgconn.CommandTag{}, f.reconnectRequiredErr
+		}
+		rows := int64(1)
+		if f.reconnectRequiredRowsSet {
+			rows = f.reconnectRequiredRows
+		}
+		return pgconn.NewCommandTag(fmt.Sprintf("UPDATE %d", rows)), nil
 	}
 	return pgconn.CommandTag{}, nil
 }

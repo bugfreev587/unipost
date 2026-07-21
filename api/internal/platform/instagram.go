@@ -808,18 +808,17 @@ func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (
 	req, err := http.NewRequestWithContext(ctx, "GET",
 		"https://graph.instagram.com/v21.0/me?"+params.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instagram profile request could not be created")
 	}
 
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instagram profile request failed")
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("failed to get profile (%d): %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("instagram profile request failed (%d)", resp.StatusCode)
 	}
 
 	var profile struct {
@@ -829,7 +828,7 @@ func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (
 		ProfilePictureURL string `json:"profile_picture_url"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instagram profile response invalid")
 	}
 	if profile.ID == "" {
 		return nil, fmt.Errorf("empty profile ID")

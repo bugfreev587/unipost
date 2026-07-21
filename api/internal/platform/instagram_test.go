@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -97,6 +98,43 @@ func TestInstagramExchangeCodeMissingWebhookUserIDFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "user_id") {
 		t.Fatalf("error = %q, want missing user_id diagnostic", err)
+	}
+}
+
+func TestInstagramGetProfileErrorsDoNotLeakAccessToken(t *testing.T) {
+	const accessToken = "secret_ig_profile_token"
+	for _, tc := range []struct {
+		name     string
+		response instagramHTTPResponse
+		want     string
+	}{
+		{
+			name:     "transport error",
+			response: instagramHTTPResponse{err: fmt.Errorf("transport echoed access_token=%s", accessToken)},
+			want:     "instagram profile request failed",
+		},
+		{
+			name:     "non-200 response",
+			response: instagramHTTPResponse{status: http.StatusUnauthorized, body: `{"error":"access_token=secret_ig_profile_token"}`},
+			want:     "instagram profile request failed (401)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := &InstagramAdapter{client: &http.Client{Transport: &instagramSequenceTransport{
+				responses: []instagramHTTPResponse{tc.response},
+			}}}
+
+			_, err := adapter.getProfile(context.Background(), accessToken)
+			if err == nil {
+				t.Fatal("expected profile error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), accessToken) || strings.Contains(strings.ToLower(err.Error()), "access_token=") {
+				t.Fatalf("error leaked access token: %q", err)
+			}
+		})
 	}
 }
 
@@ -250,6 +288,7 @@ func withInstagramPollConfig(t *testing.T, attempts int, interval time.Duration)
 type instagramHTTPResponse struct {
 	status int
 	body   string
+	err    error
 }
 
 type instagramSequenceTransport struct {
@@ -270,6 +309,9 @@ func (t *instagramSequenceTransport) RoundTrip(req *http.Request) (*http.Respons
 	resp := t.responses[0]
 	if len(t.responses) > 1 {
 		t.responses = t.responses[1:]
+	}
+	if resp.err != nil {
+		return nil, resp.err
 	}
 	return &http.Response{
 		StatusCode: resp.status,
