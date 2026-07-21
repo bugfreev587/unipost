@@ -1434,6 +1434,84 @@ func TestConnectCallbackAllowsExactSameOwnerReconnect(t *testing.T) {
 	}
 }
 
+func TestConnectCallbackUsesSingleAuthoritativeWorkspaceResolution(t *testing.T) {
+	t.Run("transient redundant lookup cannot bypass managed user quota", func(t *testing.T) {
+		encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fdb := &connectSessionTestDB{
+			platform:                         "threads",
+			allowQuickstart:                  true,
+			profileLookupErrAfterFirst:       true,
+			managedUserCount:                 3,
+			existingExternalUserAccountCount: 0,
+		}
+		store := &fakeManagedOwnershipStore{
+			checkDecision: connectownership.Decision{Kind: connectownership.Create},
+			saveAccount:   db.SocialAccount{ID: "sa_must_not_save"},
+		}
+		bus := &recordingConnectBus{}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, bus,
+			connect.NewRegistry(fakeOAuthConnector{platform: "threads"}),
+			"https://api.example.com", nil, store,
+		)
+		req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/threads?code=auth-code&state=state_1", nil)
+		req = withChiParam(req, "platform", "threads")
+		rec := httptest.NewRecorder()
+
+		h.Callback(rec, req)
+
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if fdb.profileLookupCalls != 1 {
+			t.Fatalf("GetProfile calls = %d, want one authoritative resolution", fdb.profileLookupCalls)
+		}
+		if store.saveCalls != 0 || bus.calls != 0 || fdb.completedAcctID != "" {
+			t.Fatalf("save/publish/completed = %d/%d/%q", store.saveCalls, bus.calls, fdb.completedAcctID)
+		}
+	})
+
+	t.Run("account connected event always uses resolved workspace", func(t *testing.T) {
+		encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+		if err != nil {
+			t.Fatal(err)
+		}
+		fdb := &connectSessionTestDB{
+			platform:                   "threads",
+			allowQuickstart:            true,
+			profileLookupErrAfterFirst: true,
+		}
+		store := &fakeManagedOwnershipStore{
+			checkDecision: connectownership.Decision{Kind: connectownership.Create},
+			saveAccount:   db.SocialAccount{ID: "sa_owned_1"},
+		}
+		bus := &recordingConnectBus{}
+		h := NewConnectCallbackHandler(
+			db.New(fdb), encryptor, bus,
+			connect.NewRegistry(fakeOAuthConnector{platform: "threads"}),
+			"https://api.example.com", nil, store,
+		)
+		req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/threads?code=auth-code&state=state_1", nil)
+		req = withChiParam(req, "platform", "threads")
+		rec := httptest.NewRecorder()
+
+		h.Callback(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if fdb.profileLookupCalls != 1 {
+			t.Fatalf("GetProfile calls = %d, want one authoritative resolution", fdb.profileLookupCalls)
+		}
+		if bus.calls != 1 || bus.workspaceID != "ws_1" || bus.workspaceID == "pr_1" {
+			t.Fatalf("event calls/workspace = %d/%q, want 1/ws_1", bus.calls, bus.workspaceID)
+		}
+	})
+}
+
 type fakeManagedOwnershipStore struct {
 	checkDecision connectownership.Decision
 	checkErr      error
@@ -1498,32 +1576,34 @@ func (b *recordingConnectBus) Publish(_ context.Context, workspaceID, event stri
 }
 
 type connectSessionTestDB struct {
-	platform                  string
-	status                    string
-	completedAcctID           string
-	allowQuickstart           bool
-	planID                    string
-	subscriptionErr           error
-	customPlatformSlot        string
-	profileBranding           bool
-	credentialSecretValue     string
-	credentialErr             error
-	platformCredentialLookups int
-	activeAccountLookupErr    error
-	createManagedErr          error
-	reusedManagedID           string
-	createManagedCalls        int
-	upsertManagedCalls        int
-	refreshManagedCalls       int
-	createConnectSessionCalls int
-	setSessionXAppModeCalls   int
-	reconnectRequiredCalls    int
-	reconnectRequiredErr      error
-	reconnectRequiredRows     int64
-	reconnectRequiredRowsSet  bool
-	xAppMode                  pgtype.Text
-	savedMetadata             []byte
-	operationLog              *[]string
+	platform                   string
+	status                     string
+	completedAcctID            string
+	allowQuickstart            bool
+	planID                     string
+	subscriptionErr            error
+	customPlatformSlot         string
+	profileBranding            bool
+	credentialSecretValue      string
+	credentialErr              error
+	platformCredentialLookups  int
+	activeAccountLookupErr     error
+	createManagedErr           error
+	reusedManagedID            string
+	createManagedCalls         int
+	upsertManagedCalls         int
+	refreshManagedCalls        int
+	createConnectSessionCalls  int
+	setSessionXAppModeCalls    int
+	reconnectRequiredCalls     int
+	reconnectRequiredErr       error
+	reconnectRequiredRows      int64
+	reconnectRequiredRowsSet   bool
+	xAppMode                   pgtype.Text
+	savedMetadata              []byte
+	operationLog               *[]string
+	profileLookupCalls         int
+	profileLookupErrAfterFirst bool
 
 	managedUserCount                         int32
 	existingExternalUserAccountCount         int32
@@ -1553,6 +1633,10 @@ func (f *connectSessionTestDB) Query(context.Context, string, ...interface{}) (p
 func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: GetProfile"):
+		f.profileLookupCalls++
+		if f.profileLookupErrAfterFirst && f.profileLookupCalls > 1 {
+			return scanRow{err: fmt.Errorf("transient profile lookup failure")}
+		}
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 		logoURL := pgtype.Text{}
 		displayName := pgtype.Text{}

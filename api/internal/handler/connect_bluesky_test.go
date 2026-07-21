@@ -143,6 +143,24 @@ func TestConnectBlueskyOwnershipConflictsHaveZeroDownstreamSideEffects(t *testin
 			},
 		},
 		{
+			name: "early managed user mismatch",
+			checkDecision: connectownership.Decision{
+				Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictManagedUserMismatch, MatchCount: 1,
+			},
+		},
+		{
+			name: "early cross profile conflict",
+			checkDecision: connectownership.Decision{
+				Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictProfileMismatch, MatchCount: 1,
+			},
+		},
+		{
+			name: "early ambiguous matches",
+			checkDecision: connectownership.Decision{
+				Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictAmbiguousMatches, MatchCount: 2,
+			},
+		},
+		{
 			name:          "late authoritative conflict",
 			checkDecision: connectownership.Decision{Kind: connectownership.Create},
 			saveErr:       connectownership.ErrOwnershipConflict,
@@ -174,12 +192,53 @@ func TestConnectBlueskyOwnershipConflictsHaveZeroDownstreamSideEffects(t *testin
 			if store.saveCalls != tc.wantSaveCalls || bus.calls != 0 || fdb.completedAcctID != "" {
 				t.Fatalf("save/publish/completed = %d/%d/%q", store.saveCalls, bus.calls, fdb.completedAcctID)
 			}
+			if fdb.refreshManagedCalls != 0 || fdb.createManagedCalls != 0 || fdb.upsertManagedCalls != 0 {
+				t.Fatalf("legacy writes = refresh %d/create %d/upsert %d", fdb.refreshManagedCalls, fdb.createManagedCalls, fdb.upsertManagedCalls)
+			}
 			for _, secret := range []string{"provider-secret", "access-secret", "refresh-secret", "user_123"} {
 				if strings.Contains(rec.Body.String(), secret) {
 					t.Fatalf("response leaked %q: %s", secret, rec.Body.String())
 				}
 			}
 		})
+	}
+}
+
+func TestConnectBlueskyAllowsExactSameOwnerReconnect(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{platform: "bluesky", allowQuickstart: true}
+	store := &fakeManagedOwnershipStore{
+		checkDecision: connectownership.Decision{Kind: connectownership.Reconnect, AccountID: "sa_existing"},
+		saveAccount:   db.SocialAccount{ID: "sa_existing"},
+	}
+	bus := &recordingConnectBus{}
+	h := NewConnectBlueskyHandler(db.New(fdb), encryptor, bus, store)
+	h.connectAccount = func(context.Context, map[string]string) (*platform.ConnectResult, error) {
+		return &platform.ConnectResult{
+			AccessToken:       "access-secret",
+			RefreshToken:      "refresh-secret",
+			ExternalAccountID: "did:plc:verified",
+			AccountName:       "robyn.bsky.social",
+		}, nil
+	}
+	rec := httptest.NewRecorder()
+
+	h.SubmitForm(rec, blueskySubmitRequest("cs_1", "state_1"))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.checkCalls != 1 || store.saveCalls != 1 || store.saveRequest.ProviderIdentity != "did:plc:verified" {
+		t.Fatalf("check/save/provider = %d/%d/%q", store.checkCalls, store.saveCalls, store.saveRequest.ProviderIdentity)
+	}
+	if fdb.refreshManagedCalls != 0 || fdb.createManagedCalls != 0 || fdb.upsertManagedCalls != 0 {
+		t.Fatalf("legacy writes = refresh %d/create %d/upsert %d", fdb.refreshManagedCalls, fdb.createManagedCalls, fdb.upsertManagedCalls)
+	}
+	if fdb.completedAcctID != "sa_existing" || bus.calls != 1 || bus.workspaceID != "ws_1" {
+		t.Fatalf("completed/event/workspace = %q/%d/%q", fdb.completedAcctID, bus.calls, bus.workspaceID)
 	}
 }
 

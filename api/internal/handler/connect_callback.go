@@ -500,7 +500,13 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		renderConnectError(w, http.StatusGone, "This Connect link has expired.")
 		return
 	}
-	workspaceID := h.workspaceIDForProfile(r.Context(), session.ProfileID)
+	managedProfile, err := h.queries.GetProfile(r.Context(), session.ProfileID)
+	if err != nil || strings.TrimSpace(managedProfile.WorkspaceID) == "" {
+		slog.Error("connect.callback: workspace resolution failed", "platform", platformName, "error_class", "workspace_resolution_failed")
+		renderConnectError(w, http.StatusInternalServerError, "Failed to verify workspace.")
+		return
+	}
+	workspaceID := managedProfile.WorkspaceID
 	resolved, err := h.resolveConnectorForStoredMode(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds, session.XAppMode)
 	if err != nil {
 		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)
@@ -589,30 +595,23 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	prof, profErr := h.queries.GetProfile(r.Context(), session.ProfileID)
 	hidePoweredBy := false
-	if profErr == nil {
-		if sub, subErr := h.queries.GetSubscriptionByWorkspace(r.Context(), prof.WorkspaceID); subErr == nil {
-			hidePoweredBy = planAllowsHidePoweredBy(sub.PlanID) && prof.BrandingHidePoweredBy
-		}
+	if sub, subErr := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID); subErr == nil {
+		hidePoweredBy = planAllowsHidePoweredBy(sub.PlanID) && managedProfile.BrandingHidePoweredBy
 	}
-	if profErr == nil {
-		if blocked, msg, limitErr := h.freePlanManagedConnectBlocked(r.Context(), prof.WorkspaceID, session.ExternalUserID, platformName, ownershipDecision.Kind == connectownership.Create); limitErr != nil {
-			slog.Error("connect.callback: managed connect limit check failed", "workspace_id", prof.WorkspaceID, "profile_id", session.ProfileID, "platform", platformName, "err", limitErr)
-			renderConnectError(w, http.StatusInternalServerError, "Failed to check plan limits.")
-			return
-		} else if blocked {
-			renderConnectError(w, http.StatusPaymentRequired, msg)
-			return
-		}
+	if blocked, msg, limitErr := h.freePlanManagedConnectBlocked(r.Context(), workspaceID, session.ExternalUserID, platformName, ownershipDecision.Kind == connectownership.Create); limitErr != nil {
+		slog.Error("connect.callback: managed connect limit check failed", "workspace_id", workspaceID, "profile_id", session.ProfileID, "platform", platformName, "err", limitErr)
+		renderConnectError(w, http.StatusInternalServerError, "Failed to check plan limits.")
+		return
+	} else if blocked {
+		renderConnectError(w, http.StatusPaymentRequired, msg)
+		return
 	}
-	if profErr == nil {
-		if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, prof.WorkspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
-			slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", prof.WorkspaceID, "err", shareErr)
-		} else if blocked {
-			renderConnectError(w, http.StatusConflict, accountNotAvailableOnFreePlanMessage)
-			return
-		}
+	if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, workspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
+		slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", workspaceID, "err", shareErr)
+	} else if blocked {
+		renderConnectError(w, http.StatusConflict, accountNotAvailableOnFreePlanMessage)
+		return
 	}
 
 	encAccess, err := h.encryptor.Encrypt(tokens.AccessToken)
@@ -759,12 +758,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		CompletedSocialAccountID: pgtype.Text{String: saved.ID, Valid: true},
 	})
 
-	// Webhooks are workspace-scoped; resolve workspace_id from profile.
-	wsID := session.ProfileID
-	if profErr == nil {
-		wsID = prof.WorkspaceID
-	}
-	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
+	h.bus.Publish(r.Context(), workspaceID, events.EventAccountConnected, map[string]any{
 		"social_account_id": saved.ID,
 		"profile_id":        session.ProfileID,
 		"platform":          platformName,
@@ -779,7 +773,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		"external_user_id", session.ExternalUserID,
 		"account_id", saved.ID,
 	)
-	h.logOAuthEvent(r.Context(), wsID, integrationlogs.Event{
+	h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 		Level:           integrationlogs.LevelInfo,
 		Status:          integrationlogs.StatusSuccess,
 		Action:          integrationlogs.ActionAccountConnectCallbackOK,
