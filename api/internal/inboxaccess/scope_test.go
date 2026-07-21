@@ -48,6 +48,14 @@ func TestResolve(t *testing.T) {
 			wantCode:   "INBOX_SCOPE_INVALID",
 		},
 		{
+			name:       "API key rejects unknown scope",
+			rawURL:     "/v1/inbox?inbox_scope=bogus",
+			apiKeyID:   "key_1",
+			role:       auth.RoleOwner,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "INBOX_SCOPE_INVALID",
+		},
+		{
 			name:       "API key rejects duplicate scope",
 			rawURL:     "/v1/inbox?inbox_scope=workspace&inbox_scope=workspace",
 			apiKeyID:   "key_1",
