@@ -75,6 +75,7 @@ func (h *InboxHandler) completeKnownXInboxOutbound(
 	if h == nil || h.pool == nil || h.encryptor == nil {
 		return db.InboxItem{}, xInboxSendResult{}, errors.New("X Inbox outbound completion is not configured")
 	}
+	workspaceScope, externalUserID := inboxQueryScope(ctx)
 	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return db.InboxItem{}, xInboxSendResult{}, err
@@ -90,7 +91,10 @@ func (h *InboxHandler) completeKnownXInboxOutbound(
 			return db.InboxItem{}, xInboxSendResult{}, errors.New("completed X Inbox outbound request is missing response item")
 		}
 		item, loadErr := queries.GetInboxItem(ctx, db.GetInboxItemParams{
-			ID: outbound.ResponseInboxItemID.String, WorkspaceID: outbound.WorkspaceID,
+			ID:             outbound.ResponseInboxItemID.String,
+			WorkspaceID:    outbound.WorkspaceID,
+			WorkspaceScope: workspaceScope,
+			ExternalUserID: externalUserID,
 		})
 		if loadErr != nil {
 			return db.InboxItem{}, xInboxSendResult{}, loadErr
@@ -110,7 +114,10 @@ func (h *InboxHandler) completeKnownXInboxOutbound(
 		return db.InboxItem{}, xInboxSendResult{}, fmt.Errorf("decrypt X Inbox outbound payload: %w", err)
 	}
 	target, err := queries.GetInboxItem(ctx, db.GetInboxItemParams{
-		ID: outbound.InboxItemID, WorkspaceID: outbound.WorkspaceID,
+		ID:             outbound.InboxItemID,
+		WorkspaceID:    outbound.WorkspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
 	})
 	if err != nil {
 		return db.InboxItem{}, xInboxSendResult{}, err

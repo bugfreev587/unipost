@@ -26,6 +26,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -189,6 +190,26 @@ func inboxListLimit(r *http.Request) int32 {
 	return int32(n)
 }
 
+func inboxQueryScope(ctx context.Context) (bool, string) {
+	scope, ok := inboxaccess.FromContext(ctx)
+	if !ok {
+		return false, ""
+	}
+	return scope.WorkspaceWide(), scope.ExternalUserID
+}
+
+func logInboxScopeObjectRejected(ctx context.Context, workspaceID, routeClass string) {
+	scopeMode := "missing"
+	if scope, ok := inboxaccess.FromContext(ctx); ok {
+		scopeMode = string(scope.Mode)
+	}
+	slog.Warn("inbox_scope_object_rejected",
+		"workspace_id", workspaceID,
+		"route_class", routeClass,
+		"scope_mode", scopeMode,
+	)
+}
+
 // inboxItemResponse is the JSON shape returned to the frontend.
 type inboxItemResponse struct {
 	ID               string  `json:"id"`
@@ -265,6 +286,7 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 // GET /v1/inbox?source=ig_comment&is_read=false
 func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 	if !ok {
 		return
@@ -275,9 +297,11 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := db.ListInboxItemsByWorkspaceParams{
-		WorkspaceID: workspaceID,
-		Limit:       inboxListLimit(r),
-		ExcludeXDms: !dmsAvailable,
+		WorkspaceID:    workspaceID,
+		Limit:          inboxListLimit(r),
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+		ExcludeXDms:    !dmsAvailable,
 	}
 	if s := r.URL.Query().Get("source"); s != "" {
 		params.Source = pgtype.Text{String: s, Valid: true}
@@ -409,13 +433,16 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/unread-count
 func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 	if !ok {
 		return
 	}
 	count, err := h.queries.CountUnreadByWorkspace(r.Context(), db.CountUnreadByWorkspaceParams{
-		WorkspaceID: workspaceID,
-		ExcludeXDms: !dmsAvailable,
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+		ExcludeXDms:    !dmsAvailable,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to count unread")
@@ -428,12 +455,14 @@ func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/{id}
 func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "get")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -454,10 +483,14 @@ func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 // POST /v1/inbox/{id}/read
 func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
-	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{ID: id, WorkspaceID: workspaceID})
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
+	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "mark_read")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -472,7 +505,7 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.queries.MarkInboxItemRead(r.Context(), db.MarkInboxItemReadParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark read")
 		return
@@ -484,13 +517,16 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 // POST /v1/inbox/mark-all-read
 func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 	if !ok {
 		return
 	}
 	count, err := h.queries.MarkAllInboxItemsRead(r.Context(), db.MarkAllInboxItemsReadParams{
-		WorkspaceID: workspaceID,
-		ExcludeXDms: !dmsAvailable,
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+		ExcludeXDms:    !dmsAvailable,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark all read")
@@ -503,12 +539,14 @@ func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/{id}/media-context
 func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "media_context")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -647,6 +685,7 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 // Body: { "text": "..." }
 func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
 	var body struct {
@@ -659,9 +698,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 
 	// Load the inbox item.
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "reply")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -759,8 +799,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			if (outboundRequest.Status == "completed" || outboundRequest.Status == "succeeded") &&
 				outboundRequest.ResponseInboxItemID.Valid {
 				replayed, replayErr := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-					ID:          outboundRequest.ResponseInboxItemID.String,
-					WorkspaceID: workspaceID,
+					ID:             outboundRequest.ResponseInboxItemID.String,
+					WorkspaceID:    workspaceID,
+					WorkspaceScope: workspaceScope,
+					ExternalUserID: externalUserID,
 				})
 				if replayErr != nil {
 					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load the prior X Inbox reply")
@@ -1115,17 +1157,22 @@ func (h *InboxHandler) writeXInboxReplyError(w http.ResponseWriter, err error) {
 // encrypted reply/DM payload.
 func (h *InboxHandler) XOutboundStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	requestID := chi.URLParam(r, "requestID")
 	outbound, err := h.queries.GetXInboxOutboundRequestByID(r.Context(), requestID)
 	if err != nil || outbound.WorkspaceID != workspaceID {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "x_outbound_status")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
 		return
 	}
 	target, targetErr := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID:          outbound.InboxItemID,
-		WorkspaceID: workspaceID,
+		ID:             outbound.InboxItemID,
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
 	})
 	if targetErr != nil || target.SocialAccountID != outbound.SocialAccountID {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "x_outbound_status")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
 		return
 	}
@@ -1218,6 +1265,7 @@ func applyXReplyMetadata(response *inboxItemResponse, raw []byte) {
 // Body: { "thread_status": "open" | "assigned" | "resolved", "assigned_to": "..." }
 func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
 	var body struct {
@@ -1236,9 +1284,10 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 	}
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "thread_state")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -1265,6 +1314,8 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 		ThreadKey:       threadKey,
 		ThreadStatus:    body.ThreadStatus,
 		Column6:         body.AssignedTo,
+		WorkspaceScope:  workspaceScope,
+		ExternalUserID:  externalUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update thread state")
@@ -1272,7 +1323,7 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 	}
 
 	updated, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reload inbox item")
