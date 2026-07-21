@@ -190,6 +190,44 @@ func TestConnectOwnershipQuery(t *testing.T) {
 	}
 }
 
+func TestManagedSharingQueryUsesCanonicalProviderIdentity(t *testing.T) {
+	source, err := os.ReadFile("../db/queries/social_accounts.sql")
+	if err != nil {
+		t.Fatalf("read social account queries: %v", err)
+	}
+
+	query := extractSQLQuery(t, string(source), "ExistsActiveAccountInOtherWorkspaceByProviderIdentity")
+	compact := strings.Join(strings.Fields(strings.ToLower(query)), " ")
+	contract := strings.ReplaceAll(compact, "::text", "")
+	for _, want := range []string{
+		"select exists",
+		"join profiles p on p.id = sa.profile_id",
+		"p.workspace_id <> @workspace_id",
+		"sa.platform = @platform",
+		"sa.status = 'active'",
+		"sa.disconnected_at is null",
+		"@platform = 'instagram' and sa.metadata->>'instagram_webhook_user_id' = @provider_identity",
+		"@platform <> 'instagram' and sa.external_account_id = @provider_identity",
+	} {
+		if !strings.Contains(contract, want) {
+			t.Errorf("managed sharing query missing %q: %s", want, compact)
+		}
+	}
+	for _, forbidden := range []string{"select sa.*", "access_token", "refresh_token", "external_user_id", "external_user_email"} {
+		if strings.Contains(compact, forbidden) {
+			t.Errorf("managed sharing query exposes %q: %s", forbidden, compact)
+		}
+	}
+
+	generated, err := os.ReadFile("../db/social_accounts.sql.go")
+	if err != nil {
+		t.Fatalf("read generated social account queries: %v", err)
+	}
+	if !strings.Contains(string(generated), "func (q *Queries) ExistsActiveAccountInOtherWorkspaceByProviderIdentity") {
+		t.Fatal("generated canonical managed sharing query is missing")
+	}
+}
+
 func TestStoreCheckIsReadOnlyClassification(t *testing.T) {
 	queries := &fakeOwnershipQueries{
 		matches: []db.SocialAccount{{

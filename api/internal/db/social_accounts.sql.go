@@ -397,6 +397,41 @@ func (q *Queries) DismissSocialAccount(ctx context.Context, arg DismissSocialAcc
 	return result.RowsAffected(), nil
 }
 
+const existsActiveAccountInOtherWorkspaceByProviderIdentity = `-- name: ExistsActiveAccountInOtherWorkspaceByProviderIdentity :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id <> $1
+    AND sa.platform = $2
+    AND sa.status = 'active'
+    AND sa.disconnected_at IS NULL
+    AND (
+      (
+        $2 = 'instagram'
+        AND sa.metadata->>'instagram_webhook_user_id' = $3::TEXT
+      )
+      OR (
+        $2 <> 'instagram'
+        AND sa.external_account_id = $3::TEXT
+      )
+    )
+) AS exists_in_other_workspace
+`
+
+type ExistsActiveAccountInOtherWorkspaceByProviderIdentityParams struct {
+	WorkspaceID      string `json:"workspace_id"`
+	Platform         string `json:"platform"`
+	ProviderIdentity string `json:"provider_identity"`
+}
+
+func (q *Queries) ExistsActiveAccountInOtherWorkspaceByProviderIdentity(ctx context.Context, arg ExistsActiveAccountInOtherWorkspaceByProviderIdentityParams) (bool, error) {
+	row := q.db.QueryRow(ctx, existsActiveAccountInOtherWorkspaceByProviderIdentity, arg.WorkspaceID, arg.Platform, arg.ProviderIdentity)
+	var exists_in_other_workspace bool
+	err := row.Scan(&exists_in_other_workspace)
+	return exists_in_other_workspace, err
+}
+
 const findActiveManagedSocialAccountByExternalAccount = `-- name: FindActiveManagedSocialAccountByExternalAccount :one
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,

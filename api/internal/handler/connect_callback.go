@@ -191,6 +191,23 @@ func verifiedOAuthProviderIdentity(platformName string, profile *connect.Profile
 	return identity, identity != ""
 }
 
+var errConnectSessionCompletionMismatch = errors.New("CONNECT_SESSION_COMPLETION_MISMATCH")
+
+func claimConnectSessionCompletion(ctx context.Context, queries *db.Queries, sessionID, socialAccountID string) error {
+	completed, err := queries.MarkConnectSessionCompleted(ctx, db.MarkConnectSessionCompletedParams{
+		ID:                       sessionID,
+		CompletedSocialAccountID: pgtype.Text{String: socialAccountID, Valid: true},
+	})
+	if err != nil {
+		return err
+	}
+	if completed.ID != sessionID || completed.Status != "completed" ||
+		!completed.CompletedSocialAccountID.Valid || completed.CompletedSocialAccountID.String != socialAccountID {
+		return errConnectSessionCompletionMismatch
+	}
+	return nil
+}
+
 func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, profileID string) string {
 	if profileID == "" {
 		return ""
@@ -607,8 +624,10 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		renderConnectError(w, http.StatusPaymentRequired, msg)
 		return
 	}
-	if blocked, shareErr := freePlanSharingBlocked(r.Context(), h.queries, h.superAdminChecker, workspaceID, platformName, profile.ExternalAccountID); shareErr != nil {
-		slog.Warn("connect.callback: free-plan sharing check failed", "platform", platformName, "external_id", profile.ExternalAccountID, "workspace_id", workspaceID, "err", shareErr)
+	if blocked, shareErr := freePlanManagedSharingBlocked(r.Context(), h.queries, h.superAdminChecker, workspaceID, platformName, providerIdentity); shareErr != nil {
+		slog.Error("connect.callback: managed sharing check failed", "workspace_id", workspaceID, "platform", platformName, "error_class", "managed_sharing_lookup_failed")
+		renderConnectError(w, http.StatusInternalServerError, "Failed to verify account availability.")
+		return
 	} else if blocked {
 		renderConnectError(w, http.StatusConflict, accountNotAvailableOnFreePlanMessage)
 		return
@@ -753,10 +772,19 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	_, _ = h.queries.MarkConnectSessionCompleted(r.Context(), db.MarkConnectSessionCompletedParams{
-		ID:                       session.ID,
-		CompletedSocialAccountID: pgtype.Text{String: saved.ID, Valid: true},
-	})
+	// Save has already committed. If the completion claim fails, a retry is a
+	// same-owner reconnect through the ownership store; only the successful
+	// pending -> completed claimant may publish or return success.
+	if completionErr := claimConnectSessionCompletion(r.Context(), h.queries, session.ID, saved.ID); completionErr != nil {
+		if errors.Is(completionErr, pgx.ErrNoRows) {
+			slog.Warn("connect.callback: completion claim lost", "workspace_id", workspaceID, "platform", platformName, "error_class", "completion_claim_lost")
+			renderConnectError(w, http.StatusConflict, "This Connect link has already been used.")
+			return
+		}
+		slog.Error("connect.callback: completion claim failed", "workspace_id", workspaceID, "platform", platformName, "error_class", "completion_claim_failed")
+		renderConnectError(w, http.StatusInternalServerError, "Failed to complete connection.")
+		return
+	}
 
 	h.bus.Publish(r.Context(), workspaceID, events.EventAccountConnected, map[string]any{
 		"social_account_id": saved.ID,

@@ -170,6 +170,27 @@ WHERE p.workspace_id = @workspace_id
 ORDER BY sa.connected_at DESC, sa.id
 FOR UPDATE OF sa;
 
+-- name: ExistsActiveAccountInOtherWorkspaceByProviderIdentity :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id <> @workspace_id
+    AND sa.platform = @platform
+    AND sa.status = 'active'
+    AND sa.disconnected_at IS NULL
+    AND (
+      (
+        @platform = 'instagram'
+        AND sa.metadata->>'instagram_webhook_user_id' = @provider_identity::TEXT
+      )
+      OR (
+        @platform <> 'instagram'
+        AND sa.external_account_id = @provider_identity::TEXT
+      )
+    )
+) AS exists_in_other_workspace;
+
 -- name: CountActiveManagedAccountsByWorkspace :one
 SELECT COUNT(*)::INTEGER AS total
 FROM social_accounts sa

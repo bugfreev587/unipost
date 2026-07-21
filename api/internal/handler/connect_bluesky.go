@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/connectownership"
@@ -228,6 +229,16 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		renderBlueskyResult(w, blueskyTplData{Error: message})
 		return
 	}
+	if blocked, sharingErr := freePlanManagedSharingBlocked(r.Context(), h.queries, nil, profile.WorkspaceID, "bluesky", providerIdentity); sharingErr != nil {
+		slog.Error("connect.bluesky: managed sharing check failed", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "managed_sharing_lookup_failed")
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account availability."})
+		return
+	} else if blocked {
+		w.WriteHeader(http.StatusConflict)
+		renderBlueskyResult(w, blueskyTplData{Error: accountNotAvailableOnFreePlanMessage})
+		return
+	}
 
 	encAccess, err := h.encryptor.Encrypt(connectResult.AccessToken)
 	if err != nil {
@@ -305,11 +316,20 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	}
 	savedID := saved.ID
 
-	// Mark the session completed and link to the saved account.
-	_, _ = h.queries.MarkConnectSessionCompleted(r.Context(), db.MarkConnectSessionCompletedParams{
-		ID:                       session.ID,
-		CompletedSocialAccountID: pgtype.Text{String: savedID, Valid: true},
-	})
+	// Save has already committed. A retry remains a safe same-owner reconnect;
+	// only the successful pending -> completed claimant may publish or succeed.
+	if completionErr := claimConnectSessionCompletion(r.Context(), h.queries, session.ID, savedID); completionErr != nil {
+		if errors.Is(completionErr, pgx.ErrNoRows) {
+			slog.Warn("connect.bluesky: completion claim lost", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "completion_claim_lost")
+			w.WriteHeader(http.StatusConflict)
+			renderBlueskyResult(w, blueskyTplData{Error: "This Connect link has already been used."})
+			return
+		}
+		slog.Error("connect.bluesky: completion claim failed", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "completion_claim_failed")
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Failed to complete connection."})
+		return
+	}
 
 	// Fire account.connected webhook. Best-effort — never blocks.
 	// Webhooks are workspace-scoped; resolve workspace_id from profile.
