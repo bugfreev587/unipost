@@ -26,6 +26,10 @@ export default async function GuidesIndexPage() {
       className="docs-page-wide"
     >
       <div className="docs-grid">
+        <Link href="/docs/guides/inbox-integration" className="docs-card" style={{ textDecoration: "none" }}>
+          <div className="docs-card-title">Inbox integration</div>
+          <p>Connect each app user, isolate reads and writes, relay real-time events, and build an owner/admin aggregate.</p>
+        </Link>
         <Link href="/docs/guides/publish-gifs" className="docs-card" style={{ textDecoration: "none" }}>
           <div className="docs-card-title">Publish GIFs</div>
           <p>Publish a hosted or local GIF to X and Facebook, compare platform support, and convert GIFs to MP4 for video destinations.</p>
