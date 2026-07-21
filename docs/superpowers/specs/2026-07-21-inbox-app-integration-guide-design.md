@@ -1,7 +1,7 @@
 # Inbox App Integration Guide Design
 
 Date: 2026-07-21
-Status: Awaiting written-spec review
+Status: Reviewed; awaiting implementation-plan approval
 Owner area: Dashboard documentation / Inbox
 
 ## Objective
@@ -55,8 +55,8 @@ The deployed Inbox overview already documents `inbox_scope`, `external_user_id`,
    - `POST /v1/inbox/sync`
    - `GET /v1/inbox/x-outbound-operations/{requestID}`
    - `GET /v1/inbox/ws`
-3. Explain that API-key WebSocket authentication uses the `Authorization` header. An API key must never be placed in a WebSocket URL.
-4. Expand the shared scope errors to cover missing, invalid, duplicate, or disallowed scope fields, managed-user lookup failure, authorization failure, plan gates, and scoped `NOT_FOUND` behavior.
+3. Explain both deployed WebSocket authentication paths: customer backends use an API key in the `Authorization` header, while UniPost's own Dashboard uses its Clerk session token in the `token` query field. An API key must never be placed in a WebSocket URL or query field.
+4. Expand the shared scope errors to cover missing, invalid, duplicate, or disallowed scope fields, transient managed-user lookup failure (`500 INBOX_SCOPE_LOOKUP_FAILED`), authorization failure, plan gates, and scoped `NOT_FOUND` behavior.
 5. Link the overview to the production integration guide.
 
 The existing feature-flag-aware X DM descriptions remain dynamic. The guide must not imply that X DMs are generally available when `x_dms_v1` is disabled.
@@ -92,13 +92,15 @@ The existing feature-flag-aware X DM descriptions remain dynamic. The guide must
    - create a Connect Session from the backend;
    - pass the app-derived `external_user_id`;
    - redirect the browser only to the returned hosted URL;
-   - store the completion result and account ID.
+   - store the completion result and account ID;
+   - handle an ownership conflict as a failed-closed Connect result: if the same provider account is already owned by another `external_user_id`, the hosted Connect flow returns HTTP `409` with “This social account is already connected and cannot be reassigned.” The internal `ACCOUNT_OWNERSHIP_CONFLICT` sentinel is not presented as a public JSON error contract; the app must resolve the identity/ownership conflict rather than silently reassigning the account.
 5. **Build a user-scoped backend boundary**
    - derive the current app user from the app's session;
    - add `inbox_scope=managed_user` and the derived `external_user_id` on every UniPost Inbox request;
    - never accept either scope field as an unrestricted browser-controlled value.
 6. **Read the Inbox**
    - list items;
+   - set `limit` when a bounded page size is needed; the deployed API defaults to `50`, caps the value at `500`, and does not expose cursor pagination, so the guide must not call this cursor-based pagination or imply an unbounded history result;
    - read unread count;
    - fetch a single item;
    - treat scoped `404` as unavailable without attempting to distinguish missing from cross-user.
@@ -107,7 +109,8 @@ The existing feature-flag-aware X DM descriptions remain dynamic. The guide must
    - mark all selected-scope items read;
    - reply to an item;
    - update `thread_status` and `assigned_to`;
-   - run a selected-scope manual sync.
+   - run a selected-scope manual sync;
+   - distinguish the ordinary non-X sync from the optional `x_backfill` operation. X backfill can consume managed X Credits, returns an estimate, and requires the caller to repeat the exact scope/account/request with the short-lived confirmation token when the estimate exceeds the safe threshold. Do not describe every manual sync as metered.
 8. **Receive real-time events**
    - establish `GET /v1/inbox/ws` from a trusted backend process;
    - send the API key only in the upgrade `Authorization` header;
@@ -120,11 +123,13 @@ The existing feature-flag-aware X DM descriptions remain dynamic. The guide must
    - enforce the app's owner/admin role before the server makes the call;
    - keep aggregate endpoints separate from user-scoped endpoints.
 10. **Handle errors safely**
+    - explain that HTTP middleware evaluates authentication and explicit Inbox scope before the Inbox plan gate, then the selected endpoint runs; a request that is both malformed or mis-scoped and plan-ineligible therefore returns its scope error before `402`;
     - `400` for malformed or missing scope input;
     - `401` for invalid or inactive credentials;
     - `403` for insufficient role, creatorless aggregate key, or controlled feature denial;
     - `404` for missing managed user or an item outside the selected scope;
     - `402` for plan gates;
+    - `500 INBOX_SCOPE_LOOKUP_FAILED` for a transient failure while resolving managed-user scope. Because this failure occurs before the selected endpoint runs, the same request may be retried with bounded exponential backoff; do not generalize that guarantee to every `5xx`, especially replies or other writes after an uncertain outcome;
     - provider and X idempotency errors link to exact endpoint references.
 11. **Production security checklist**
     - API key is server-only and excluded from logs;
@@ -210,7 +215,10 @@ Examples must fail closed:
 - reject an unauthenticated app session before calling UniPost;
 - derive scope server-side;
 - do not fall back from managed-user scope to workspace scope;
+- retry `INBOX_SCOPE_LOOKUP_FAILED` only with bounded exponential backoff; retry other `5xx` responses only where the endpoint is idempotent or has a documented stable idempotency contract;
 - do not retry an X reply with a new idempotency key after an uncertain outcome;
+- do not auto-reassign a provider account after a Connect ownership conflict;
+- do not run scheduled `x_backfill` operations without accounting for the returned X Credit estimate and confirmation flow;
 - reconnect real-time transport, then refresh authoritative state;
 - avoid returning raw upstream or credential-bearing errors to the browser.
 
@@ -227,6 +235,9 @@ Add or extend Dashboard source tests to assert that:
 - the WebSocket example uses an `Authorization` header;
 - navigation, sitemap, and search index contain the guide;
 - the guide contains A/B isolation acceptance steps;
+- the guide distinguishes bounded `limit` behavior from cursor pagination;
+- the guide documents pre-plan scope-check ordering and the narrowly retryable `INBOX_SCOPE_LOOKUP_FAILED` case;
+- the guide documents Connect ownership conflict and X backfill credit/confirmation behavior without exposing internal-only error sentinels as public contracts;
 - no YouTube Inbox source is introduced.
 
 ### Build and preview
