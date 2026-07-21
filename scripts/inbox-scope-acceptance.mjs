@@ -47,6 +47,26 @@ if (!['postgres:', 'postgresql:'].includes(eventDatabaseURL.protocol)) {
 const inboxEventChannel = "inbox_events";
 assert.match(inboxEventChannel, /^[a-z][a-z0-9_]{0,62}$/, "Inbox event channel must be canonical");
 
+const httpTimeoutMs = timeoutSetting("INBOX_ACCEPT_HTTP_TIMEOUT_MS", 10_000, 1_000, 60_000);
+const wsUpgradeTimeoutMs = timeoutSetting("INBOX_ACCEPT_WS_UPGRADE_TIMEOUT_MS", 10_000, 1_000, 60_000);
+const wsEventTimeoutMs = timeoutSetting("INBOX_ACCEPT_WS_EVENT_TIMEOUT_MS", 5_000, 500, 60_000);
+const wsReadyTimeoutMs = timeoutSetting("INBOX_ACCEPT_WS_READY_TIMEOUT_MS", 20_000, 2_000, 120_000);
+const psqlTimeoutMs = timeoutSetting("INBOX_ACCEPT_PSQL_TIMEOUT_MS", 10_000, 1_000, 60_000);
+const psqlKillGraceMs = timeoutSetting("INBOX_ACCEPT_PSQL_KILL_GRACE_MS", 1_000, 100, 5_000);
+
+function timeoutSetting(name, defaultValue, minimum, maximum) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === "") return defaultValue;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`${name} must be an integer from ${minimum} through ${maximum}`);
+  }
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} through ${maximum}`);
+  }
+  return value;
+}
+
 function fixtureComponent(name) {
   const value = process.env[name];
   if (value.trim() !== value || !/^[A-Za-z0-9._:@+-]{1,200}$/.test(value)) {
@@ -69,25 +89,37 @@ function endpoint(pathname, query) {
 }
 
 async function api(method, pathname, query, body) {
-  const response = await fetch(endpoint(pathname, query), {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    redirect: "error",
-  });
-  const raw = await response.text();
-  let payload = null;
-  if (raw !== "") {
-    try {
-      payload = JSON.parse(raw);
-    } catch {
-      throw new Error(`${method} ${pathname} returned non-JSON status ${response.status}`);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), httpTimeoutMs);
+  try {
+    const response = await fetch(endpoint(pathname, query), {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      redirect: "error",
+      signal: controller.signal,
+    });
+    const raw = await response.text();
+    let payload = null;
+    if (raw !== "") {
+      try {
+        payload = JSON.parse(raw);
+      } catch {
+        throw new Error(`${method} ${pathname} returned non-JSON status ${response.status}`);
+      }
     }
+    return { status: response.status, payload };
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`${method} ${pathname} timed out after ${httpTimeoutMs}ms`, { cause: error });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return { status: response.status, payload };
 }
 
 function responseData(result, label) {
@@ -127,17 +159,19 @@ class AcceptanceWebSocket {
   constructor(label, target) {
     this.label = label;
     this.target = target;
+    this.upgradeTimeoutMs = wsUpgradeTimeoutMs;
+    this.eventTimeoutMs = wsEventTimeoutMs;
     this.buffer = Buffer.alloc(0);
     this.messages = [];
     this.waiters = new Set();
     this.socket = null;
+    this.socketHandlers = null;
   }
 
   async connect() {
     const key = randomBytes(16).toString("base64");
     const requester = this.target.protocol === "wss:" ? httpsRequest : httpRequest;
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`${this.label} WebSocket upgrade timed out`)), 10_000);
       const request = requester(this.target, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
@@ -147,30 +181,74 @@ class AcceptanceWebSocket {
           "Sec-WebSocket-Version": "13",
         },
       });
-      request.once("upgrade", (response, socket, head) => {
-        clearTimeout(timer);
+      let timer = null;
+      let settled = false;
+      let upgradedSocket = null;
+      const cleanup = () => {
+        if (timer !== null) clearTimeout(timer);
+        request.off("upgrade", onUpgrade);
+        request.off("response", onResponse);
+        request.off("error", onError);
+      };
+      const finish = (callback, value) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        callback(value);
+      };
+      const onUpgrade = (response, socket, head) => {
+        upgradedSocket = socket;
         const expected = createHash("sha1").update(key + webSocketGUID).digest("base64");
         if (response.statusCode !== 101 || response.headers["sec-websocket-accept"] !== expected) {
           socket.destroy();
-          reject(new Error(`${this.label} WebSocket returned an invalid upgrade response`));
+          finish(reject, new Error(`${this.label} WebSocket returned an invalid upgrade response`));
           return;
         }
         this.socket = socket;
-        socket.on("data", (chunk) => this.consume(chunk));
-        socket.on("error", (error) => this.rejectWaiters(error));
-        socket.on("close", () => this.rejectWaiters(new Error(`${this.label} WebSocket closed`)));
-        if (head.length > 0) this.consume(head);
-        resolve();
-      });
-      request.once("response", (response) => {
-        clearTimeout(timer);
+        const onData = (chunk) => {
+          try {
+            this.consume(chunk);
+          } catch (error) {
+            this.rejectWaiters(error);
+            socket.destroy();
+          }
+        };
+        const onSocketError = (error) => this.rejectWaiters(error);
+        const onSocketClose = () => {
+          this.rejectWaiters(new Error(`${this.label} WebSocket closed`));
+          this.detachSocket(socket);
+        };
+        this.socketHandlers = { onData, onSocketError, onSocketClose };
+        socket.on("data", onData);
+        socket.on("error", onSocketError);
+        socket.on("close", onSocketClose);
+        try {
+          if (head.length > 0) this.consume(head);
+        } catch (error) {
+          socket.destroy();
+          finish(reject, error);
+          return;
+        }
+        finish(resolve);
+      };
+      const onResponse = (response) => {
         response.resume();
-        reject(new Error(`${this.label} WebSocket upgrade failed with status ${response.statusCode}`));
-      });
-      request.once("error", (error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
+        request.destroy();
+        finish(reject, new Error(`${this.label} WebSocket upgrade failed with status ${response.statusCode}`));
+      };
+      const onError = (error) => {
+        upgradedSocket?.destroy();
+        finish(reject, error);
+      };
+      request.once("upgrade", onUpgrade);
+      request.once("response", onResponse);
+      request.once("error", onError);
+      timer = setTimeout(() => {
+        const error = new Error(`${this.label} WebSocket upgrade timed out after ${this.upgradeTimeoutMs}ms`);
+        request.destroy();
+        upgradedSocket?.destroy();
+        finish(reject, error);
+      }, this.upgradeTimeoutMs);
       request.end();
     });
   }
@@ -216,7 +294,8 @@ class AcceptanceWebSocket {
     }
   }
 
-  waitFor(predicate, timeoutMs = 10_000) {
+  waitFor(predicate, timeoutMs = this.eventTimeoutMs) {
+    assert.ok(Number.isFinite(timeoutMs) && timeoutMs > 0, "WebSocket waiter timeout must be finite and positive");
     const existing = this.messages.find(predicate);
     if (existing) return Promise.resolve(existing);
     return new Promise((resolve, reject) => {
@@ -247,10 +326,27 @@ class AcceptanceWebSocket {
     this.waiters.clear();
   }
 
+  detachSocket(socket) {
+    if (this.socket !== socket || !this.socketHandlers) return;
+    socket.off("data", this.socketHandlers.onData);
+    socket.off("error", this.socketHandlers.onSocketError);
+    socket.off("close", this.socketHandlers.onSocketClose);
+    this.socketHandlers = null;
+    this.socket = null;
+  }
+
   close() {
-    if (!this.socket || this.socket.destroyed) return;
-    this.socket.write(maskedClientFrame(0x8, Buffer.alloc(0)));
-    this.socket.destroy();
+    const socket = this.socket;
+    this.rejectWaiters(new Error(`${this.label} WebSocket closed by acceptance cleanup`));
+    if (!socket) return;
+    this.detachSocket(socket);
+    if (socket.destroyed) return;
+    try {
+      socket.write(maskedClientFrame(0x8, Buffer.alloc(0)));
+    } catch {
+    } finally {
+      socket.destroy();
+    }
   }
 }
 
@@ -267,39 +363,144 @@ function maskedClientFrame(opcode, payload) {
   return frame;
 }
 
-async function emitFixtureEvent(workspaceID, externalUserID, probeID) {
-  const payload = JSON.stringify({
-    type: "inbox.acceptance_probe",
+const fixtureEventType = "inbox.acceptance_probe";
+
+function fixtureEvent(workspaceID, externalUserID, probeID) {
+  for (const [label, value] of [
+    ["workspace_id", workspaceID],
+    ["external_user_id", externalUserID],
+    ["probe_id", probeID],
+  ]) {
+    if (typeof value !== "string" || !/^[A-Za-z0-9._:@+-]{1,200}$/.test(value)) {
+      throw new Error(`${label} must be a canonical fixture event component`);
+    }
+  }
+  return {
+    type: fixtureEventType,
     workspace_id: workspaceID,
     external_user_id: externalUserID,
     probe_id: probeID,
+  };
+}
+
+function fixtureEventMatcher(expected) {
+  return (message) => message?.type === expected.type &&
+    message?.probe_id === expected.probe_id &&
+    message?.workspace_id === expected.workspace_id &&
+    message?.external_user_id === expected.external_user_id;
+}
+
+async function emitFixtureEvents(events) {
+  assert.ok(Array.isArray(events) && events.length > 0 && events.length <= 10, "fixture event batch must contain 1 through 10 events");
+  const statements = events.map((event, index) => {
+    const payload = JSON.stringify(event);
+    assert.ok(Buffer.byteLength(payload, "utf8") < 7_900, "fixture event must fit PostgreSQL NOTIFY limits");
+    const delimiter = `$inbox_acceptance_payload_${index}$`;
+    assert.doesNotMatch(payload, new RegExp(delimiter.replaceAll("$", "\\$")));
+    return `SELECT pg_notify('${inboxEventChannel}', ${delimiter}${payload}${delimiter});`;
   });
-  assert.doesNotMatch(payload, /\$inbox_acceptance_payload\$/);
-  const sql = `BEGIN READ ONLY;\nSELECT pg_notify('${inboxEventChannel}', $inbox_acceptance_payload$${payload}$inbox_acceptance_payload$);\nCOMMIT;\n`;
+  const sql = `BEGIN READ ONLY;\n${statements.join("\n")}\nCOMMIT;\n`;
+  const childEnvironment = {
+    PGAPPNAME: "unipost-inbox-scope-acceptance",
+    PGCONNECT_TIMEOUT: String(Math.max(1, Math.ceil(psqlTimeoutMs / 1_000))),
+    PGDATABASE: process.env.INBOX_ACCEPT_EVENT_DATABASE_URL,
+  };
+  if (process.env.PATH) childEnvironment.PATH = process.env.PATH;
 
   await new Promise((resolve, reject) => {
     const child = spawn("psql", ["-X", "--no-psqlrc", "--set", "ON_ERROR_STOP=1"], {
-      env: {
-        ...process.env,
-        PGDATABASE: process.env.INBOX_ACCEPT_EVENT_DATABASE_URL,
-        INBOX_ACCEPT_EVENT_DATABASE_URL: "",
-        INBOX_ACCEPT_API_KEY: "",
-      },
+      env: childEnvironment,
       stdio: ["pipe", "pipe", "pipe"],
       shell: false,
     });
+    let processError = null;
+    let inputError = null;
+    let timedOut = false;
+    let settled = false;
+    let killTimer = null;
+    const runTimer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        child.stdin.destroy();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.unref();
+        finish(new Error(`psql fixture event timed out after ${psqlTimeoutMs}ms`));
+      }, psqlKillGraceMs);
+    }, psqlTimeoutMs);
+    const cleanup = () => {
+      clearTimeout(runTimer);
+      if (killTimer !== null) clearTimeout(killTimer);
+      child.off("error", onError);
+      child.off("close", onClose);
+      child.stdin.off("error", onInputError);
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error) => {
+      processError = error;
+    };
+    const onInputError = (error) => {
+      inputError = error;
+    };
+    const onClose = (code, signal) => {
+      if (timedOut) {
+        finish(new Error(`psql fixture event timed out after ${psqlTimeoutMs}ms`));
+      } else if (processError?.code === "ENOENT") {
+        finish(new Error("psql is required for the ephemeral WebSocket fixture event"));
+      } else if (processError || inputError) {
+        finish(new Error("psql fixture event process failed; connection details were suppressed"));
+      } else if (code === 0) {
+        finish();
+      } else {
+        finish(new Error(`psql fixture event failed with exit ${code ?? "none"} and signal ${signal ?? "none"}; connection details were suppressed`));
+      }
+    };
+    child.once("error", onError);
+    child.once("close", onClose);
+    child.stdin.once("error", onInputError);
     child.stderr.resume();
     child.stdout.resume();
-    child.once("error", (error) => {
-      if (error.code === "ENOENT") reject(new Error("psql is required for the ephemeral WebSocket fixture event"));
-      else reject(error);
-    });
-    child.once("close", (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`psql fixture event failed with exit ${code}; connection details were suppressed`));
-    });
     child.stdin.end(sql);
   });
+}
+
+function requireFulfilled(label, results) {
+  const rejected = results.find((result) => result.status === "rejected");
+  if (!rejected) return;
+  const detail = rejected.reason instanceof Error ? rejected.reason.message : "unknown event waiter failure";
+  throw new Error(`${label}: ${detail}`);
+}
+
+async function establishWebSocketReadiness(managedSocket, aggregateSocket, workspaceID) {
+  const deadline = Date.now() + wsReadyTimeoutMs;
+  let attempts = 0;
+  while (Date.now() < deadline) {
+    attempts += 1;
+    const readinessEvent = fixtureEvent(
+      workspaceID,
+      externalUserA,
+      `ready-a-${attempts}-${randomBytes(8).toString("hex")}`,
+    );
+    await emitFixtureEvents([readinessEvent]);
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
+    const attemptTimeoutMs = Math.max(1, Math.min(wsEventTimeoutMs, remainingMs));
+    const matchesReadiness = fixtureEventMatcher(readinessEvent);
+    const results = await Promise.allSettled([
+      managedSocket.waitFor(matchesReadiness, attemptTimeoutMs),
+      aggregateSocket.waitFor(matchesReadiness, attemptTimeoutMs),
+    ]);
+    if (results.every((result) => result.status === "fulfilled")) return;
+  }
+  throw new Error(`WebSocket registration readiness was not observed within ${wsReadyTimeoutMs}ms`);
 }
 
 const managedAQuery = scopedQuery("managed_user", externalUserA);
@@ -334,9 +535,7 @@ assert.match(fixtureB.thread_status, /^(open|assigned|resolved)$/, "fixture B mu
 
 await assertNotFound("cross-scope get", "GET", `/v1/inbox/${encodeURIComponent(itemB)}`);
 await assertNotFound("cross-scope read", "POST", `/v1/inbox/${encodeURIComponent(itemB)}/read`);
-await assertNotFound("cross-scope reply", "POST", `/v1/inbox/${encodeURIComponent(itemB)}/reply`, {
-  text: "UniPost synthetic isolation probe. The fixture adapter must reject delivery.",
-});
+await assertNotFound("cross-scope reply", "POST", `/v1/inbox/${encodeURIComponent(itemB)}/reply`, {});
 await assertNotFound("cross-scope thread-state", "POST", `/v1/inbox/${encodeURIComponent(itemB)}/thread-state`, {
   thread_status: fixtureB.thread_status,
   assigned_to: fixtureB.assigned_to ?? "",
@@ -350,19 +549,36 @@ const managedSocket = new AcceptanceWebSocket("managed user A", webSocketURL("ma
 const aggregateSocket = new AcceptanceWebSocket("owner/admin aggregate", webSocketURL("workspace"));
 try {
   await Promise.all([managedSocket.connect(), aggregateSocket.connect()]);
-  await new Promise((resolve) => setTimeout(resolve, 150));
-  const probeA = `accept-a-${randomBytes(8).toString("hex")}`;
+  await establishWebSocketReadiness(managedSocket, aggregateSocket, workspaceID);
   const probeB = `accept-b-${randomBytes(8).toString("hex")}`;
-  await emitFixtureEvent(workspaceID, externalUserA, probeA);
-  await emitFixtureEvent(workspaceID, externalUserB, probeB);
-  const isProbe = (probeID) => (message) => message?.type === "inbox.acceptance_probe" && message?.probe_id === probeID;
-  await Promise.all([
-    managedSocket.waitFor(isProbe(probeA)),
-    aggregateSocket.waitFor(isProbe(probeA)),
-    aggregateSocket.waitFor(isProbe(probeB)),
+  const barrierA = `barrier-a-${randomBytes(8).toString("hex")}`;
+  const orderedIsolationEvents = [
+    fixtureEvent(workspaceID, externalUserB, probeB),
+    fixtureEvent(workspaceID, externalUserA, barrierA),
+  ];
+  const [eventB, barrierEventA] = orderedIsolationEvents;
+  const matchesB = fixtureEventMatcher(eventB);
+  const matchesBarrierA = fixtureEventMatcher(barrierEventA);
+  await emitFixtureEvents(orderedIsolationEvents);
+  const isolationResults = await Promise.allSettled([
+    aggregateSocket.waitFor(matchesB),
+    aggregateSocket.waitFor(matchesBarrierA),
+    managedSocket.waitFor(matchesBarrierA),
   ]);
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  assert.ok(!managedSocket.messages.some(isProbe(probeB)), "managed user A WebSocket must exclude fixture B events");
+  requireFulfilled("WebSocket causal isolation barrier failed", isolationResults);
+
+  const aggregateBIndex = aggregateSocket.messages.findIndex(matchesB);
+  const aggregateBarrierIndex = aggregateSocket.messages.findIndex(matchesBarrierA);
+  assert.ok(aggregateBIndex >= 0 && aggregateBarrierIndex >= 0, "owner/admin aggregate must receive both ordered isolation events");
+  assert.ok(aggregateBIndex < aggregateBarrierIndex, "owner/admin aggregate must observe B before the A barrier");
+
+  const managedBarrierIndex = managedSocket.messages.findIndex(matchesBarrierA);
+  assert.ok(managedBarrierIndex >= 0, "managed user A must observe its causal barrier");
+  assert.equal(
+    managedSocket.messages.slice(0, managedBarrierIndex + 1).some(matchesB),
+    false,
+    "managed user A must not receive the exact B probe before its causal barrier",
+  );
 } finally {
   managedSocket.close();
   aggregateSocket.close();
