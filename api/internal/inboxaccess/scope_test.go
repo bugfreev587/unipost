@@ -3,6 +3,7 @@ package inboxaccess
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,24 @@ func TestResolve(t *testing.T) {
 			role:       auth.RoleOwner,
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "INBOX_SCOPE_DUPLICATE",
+		},
+		{
+			name:         "API key rejects malformed semicolon query without accepting partial scope",
+			rawURL:       "/v1/inbox?inbox_scope=workspace&external_user_id=user_a;ignored=1",
+			apiKeyID:     "key_1",
+			creatorBound: true,
+			role:         auth.RoleOwner,
+			wantStatus:   http.StatusBadRequest,
+			wantCode:     "INBOX_QUERY_INVALID",
+		},
+		{
+			name:              "API key rejects malformed percent encoding before managed-user lookup",
+			rawURL:            "/v1/inbox?inbox_scope=managed_user&external_user_id=user%ZZ",
+			apiKeyID:          "key_1",
+			managedUserExists: true,
+			role:              auth.RoleOwner,
+			wantStatus:        http.StatusBadRequest,
+			wantCode:          "INBOX_QUERY_INVALID",
 		},
 		{
 			name:              "managed user exists in authenticated workspace",
@@ -283,6 +302,20 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestInboxManagedUserExistsSQLContract(t *testing.T) {
+	store := &scopeTestDB{exists: true}
+	exists, err := db.New(store).InboxManagedUserExists(context.Background(), db.InboxManagedUserExistsParams{
+		WorkspaceID:    "workspace_1",
+		ExternalUserID: pgtype.Text{String: "managed_1", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("InboxManagedUserExists() error = %v", err)
+	}
+	if !exists {
+		t.Fatal("InboxManagedUserExists() = false, want true")
+	}
+}
+
 func TestScopeContextRoundTrip(t *testing.T) {
 	want := Scope{WorkspaceID: "workspace_1", Mode: ModeManagedUser, ExternalUserID: "managed_1"}
 	ctx := WithContext(context.Background(), want)
@@ -336,6 +369,9 @@ func (f *scopeTestDB) QueryRow(_ context.Context, query string, args ...interfac
 	if !strings.Contains(query, "-- name: InboxManagedUserExists") {
 		return scopeTestRow{err: errors.New("unexpected QueryRow")}
 	}
+	if err := validateInboxManagedUserExistsSQL(query); err != nil {
+		return scopeTestRow{err: err}
+	}
 	f.queries++
 	if len(args) == 2 {
 		f.workspaceID, _ = args[0].(string)
@@ -349,6 +385,22 @@ func (f *scopeTestDB) QueryRow(_ context.Context, query string, args ...interfac
 		}
 	}
 	return scopeTestRow{exists: f.exists, err: f.err}
+}
+
+func validateInboxManagedUserExistsSQL(query string) error {
+	normalized := strings.Join(strings.Fields(query), " ")
+	requiredFragments := []string{
+		"JOIN profiles p ON p.id = sa.profile_id",
+		"p.workspace_id = $1",
+		"sa.connection_type = 'managed'",
+		"sa.external_user_id = $2",
+	}
+	for _, fragment := range requiredFragments {
+		if !strings.Contains(normalized, fragment) {
+			return fmt.Errorf("InboxManagedUserExists SQL missing tenant predicate %q", fragment)
+		}
+	}
+	return nil
 }
 
 type scopeTestRow struct {

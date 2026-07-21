@@ -3,6 +3,7 @@ package inboxaccess
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -51,7 +52,10 @@ func Resolve(r *http.Request, queries *db.Queries) (Scope, *Failure) {
 		return Scope{}, failure(http.StatusUnauthorized, "UNAUTHORIZED", "Authenticated workspace is required")
 	}
 
-	query := r.URL.Query()
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return Scope{}, failure(http.StatusBadRequest, "INBOX_QUERY_INVALID", "Inbox query parameters are malformed")
+	}
 	isAPIKey := auth.GetAPIKeyID(r.Context()) != ""
 	mode, resolveFailure := resolveMode(query["inbox_scope"], isAPIKey)
 	if resolveFailure != nil {
