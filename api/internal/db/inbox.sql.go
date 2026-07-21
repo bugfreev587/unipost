@@ -141,16 +141,22 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $2::BOOLEAN
+    OR sa.external_user_id = $3::TEXT
+  )
   AND i.is_read = false
   AND i.is_own = false
-  AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
+  AND (NOT $4::BOOLEAN OR i.source <> 'x_dm')
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
 `
 
 type CountUnreadByWorkspaceParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	ExcludeXDms bool   `json:"exclude_x_dms"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
+	ExcludeXDms    bool   `json:"exclude_x_dms"`
 }
 
 // Mirrors the inbox UI's "unread" filter exactly: items the user
@@ -161,7 +167,12 @@ type CountUnreadByWorkspaceParams struct {
 // per-tab counts on the page. is_own is set in the webhook / sync
 // upsert based on author_id == account.external_account_id.
 func (q *Queries) CountUnreadByWorkspace(ctx context.Context, arg CountUnreadByWorkspaceParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countUnreadByWorkspace, arg.WorkspaceID, arg.ExcludeXDms)
+	row := q.db.QueryRow(ctx, countUnreadByWorkspace,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+		arg.ExcludeXDms,
+	)
 	var count int32
 	err := row.Scan(&count)
 	return count, err
@@ -638,15 +649,26 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
 `
 
 type GetInboxItemParams struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
 }
 
 func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (InboxItem, error) {
-	row := q.db.QueryRow(ctx, getInboxItem, arg.ID, arg.WorkspaceID)
+	row := q.db.QueryRow(ctx, getInboxItem,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+	)
 	var i InboxItem
 	err := row.Scan(
 		&i.ID,
@@ -1049,29 +1071,37 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
-  AND (NOT $3::BOOLEAN OR i.source <> 'x_dm')
-  AND ($4::TEXT IS NULL OR i.source = $4::TEXT)
-  AND ($5::BOOLEAN IS NULL OR i.is_read = $5::BOOLEAN)
-  AND ($6::BOOLEAN IS NULL OR i.is_own = $6::BOOLEAN)
+  AND (NOT $5::BOOLEAN OR i.source <> 'x_dm')
+  AND ($6::TEXT IS NULL OR i.source = $6::TEXT)
+  AND ($7::BOOLEAN IS NULL OR i.is_read = $7::BOOLEAN)
+  AND ($8::BOOLEAN IS NULL OR i.is_own = $8::BOOLEAN)
 ORDER BY i.received_at DESC
 LIMIT $2
 `
 
 type ListInboxItemsByWorkspaceParams struct {
-	WorkspaceID string      `json:"workspace_id"`
-	Limit       int32       `json:"limit"`
-	ExcludeXDms bool        `json:"exclude_x_dms"`
-	Source      pgtype.Text `json:"source"`
-	IsRead      pgtype.Bool `json:"is_read"`
-	IsOwn       pgtype.Bool `json:"is_own"`
+	WorkspaceID    string      `json:"workspace_id"`
+	Limit          int32       `json:"limit"`
+	WorkspaceScope bool        `json:"workspace_scope"`
+	ExternalUserID string      `json:"external_user_id"`
+	ExcludeXDms    bool        `json:"exclude_x_dms"`
+	Source         pgtype.Text `json:"source"`
+	IsRead         pgtype.Bool `json:"is_read"`
+	IsOwn          pgtype.Bool `json:"is_own"`
 }
 
 func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxItemsByWorkspaceParams) ([]InboxItem, error) {
 	rows, err := q.db.Query(ctx, listInboxItemsByWorkspace,
 		arg.WorkspaceID,
 		arg.Limit,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
 		arg.ExcludeXDms,
 		arg.Source,
 		arg.IsRead,

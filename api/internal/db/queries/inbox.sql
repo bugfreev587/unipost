@@ -15,6 +15,10 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
@@ -30,7 +34,11 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.id = $1
   AND i.workspace_id = $2
-  AND p.workspace_id = $2;
+  AND p.workspace_id = $2
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  );
 
 -- name: GetInboxItemByExternalID :one
 SELECT * FROM inbox_items
@@ -369,6 +377,10 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  )
   AND i.is_read = false
   AND i.is_own = false
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func readInboxTenantIsolationContractFile(t *testing.T, path string) string {
@@ -167,14 +169,15 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 		name          string
 		workspaceExpr string
 		mutation      bool
+		managedRead   bool
 	}{
-		{name: "ListInboxItemsByWorkspace", workspaceExpr: "$1"},
-		{name: "GetInboxItem", workspaceExpr: "$2"},
+		{name: "ListInboxItemsByWorkspace", workspaceExpr: "$1", managedRead: true},
+		{name: "GetInboxItem", workspaceExpr: "$2", managedRead: true},
 		{name: "MarkInboxItemRead", workspaceExpr: "$2", mutation: true},
 		{name: "UpdateInboxItemAuthorMetadata", workspaceExpr: "@workspace_id", mutation: true},
 		{name: "MarkAllInboxItemsRead", workspaceExpr: "@workspace_id", mutation: true},
 		{name: "UpdateInboxThreadState", workspaceExpr: "$1", mutation: true},
-		{name: "CountUnreadByWorkspace", workspaceExpr: "$1"},
+		{name: "CountUnreadByWorkspace", workspaceExpr: "$1", managedRead: true},
 	}
 
 	for _, tt := range tests {
@@ -195,6 +198,19 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 			if tt.mutation && !strings.Contains(query, " from social_accounts sa") {
 				t.Errorf("%s must authorize through UPDATE ... FROM, got %s", tt.name, query)
 			}
+			if tt.managedRead {
+				for _, want := range []string{
+					"sqlc.arg('workspace_scope')::boolean",
+					"sa.external_user_id = sqlc.arg('external_user_id')::text",
+				} {
+					if !strings.Contains(query, want) {
+						t.Errorf("%s must require an explicit workspace or managed-user scope; missing %q in %s", tt.name, want, query)
+					}
+				}
+				if strings.Contains(query, "coalesce(") {
+					t.Errorf("%s must not infer workspace scope from a nullable or empty managed-user id: %s", tt.name, query)
+				}
+			}
 		})
 	}
 
@@ -206,6 +222,60 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestInboxManagedUserGeneratedReadScopeParamsAreExplicit(t *testing.T) {
+	type expectedField struct {
+		name   string
+		typeOf reflect.Type
+	}
+
+	stringType := reflect.TypeOf("")
+	boolType := reflect.TypeOf(false)
+	int32Type := reflect.TypeOf(int32(0))
+	pgTextType := reflect.TypeOf(pgtype.Text{})
+	pgBoolType := reflect.TypeOf(pgtype.Bool{})
+
+	assertFields := func(t *testing.T, value any, want []expectedField) {
+		t.Helper()
+		got := reflect.TypeOf(value)
+		if got.NumField() != len(want) {
+			t.Fatalf("%s has %d fields, want %d explicit ordered fields", got.Name(), got.NumField(), len(want))
+		}
+		for index, expected := range want {
+			field := got.Field(index)
+			if field.Name != expected.name || field.Type != expected.typeOf {
+				t.Errorf("%s field %d = %s %s, want %s %s", got.Name(), index, field.Name, field.Type, expected.name, expected.typeOf)
+			}
+		}
+	}
+
+	assertFields(t, ListInboxItemsByWorkspaceParams{}, []expectedField{
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "Limit", typeOf: int32Type},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+		{name: "ExcludeXDms", typeOf: boolType},
+		{name: "Source", typeOf: pgTextType},
+		{name: "IsRead", typeOf: pgBoolType},
+		{name: "IsOwn", typeOf: pgBoolType},
+	})
+	assertFields(t, CountUnreadByWorkspaceParams{}, []expectedField{
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+		{name: "ExcludeXDms", typeOf: boolType},
+	})
+	assertFields(t, GetInboxItemParams{}, []expectedField{
+		{name: "ID", typeOf: stringType},
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+	})
+
+	var _ func(*Queries, context.Context, ListInboxItemsByWorkspaceParams) ([]InboxItem, error) = (*Queries).ListInboxItemsByWorkspace
+	var _ func(*Queries, context.Context, CountUnreadByWorkspaceParams) (int32, error) = (*Queries).CountUnreadByWorkspace
+	var _ func(*Queries, context.Context, GetInboxItemParams) (InboxItem, error) = (*Queries).GetInboxItem
 }
 
 func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
@@ -356,16 +426,29 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO social_accounts (
-		  id, profile_id, platform, access_token, external_account_id, metadata
+		  id, profile_id, platform, access_token, external_account_id, metadata,
+		  connection_type, external_user_id
 		)
 		VALUES
 		  (
-		    'inbox-isolation-account-1', 'inbox-isolation-profile-1', 'instagram',
-		    'token-1', 'external-1', '{"instagram_webhook_user_id":"webhook-user-1"}'::jsonb
+		    'inbox-isolation-account-a', 'inbox-isolation-profile-1', 'instagram',
+		    'token-a', 'external-a', '{"instagram_webhook_user_id":"webhook-user-a"}'::jsonb,
+		    'managed', 'managed-a'
+		  ),
+		  (
+		    'inbox-isolation-account-b', 'inbox-isolation-profile-1', 'instagram',
+		    'token-b', 'external-b', '{"instagram_webhook_user_id":"webhook-user-b"}'::jsonb,
+		    'managed', 'managed-b'
+		  ),
+		  (
+		    'inbox-isolation-account-byo', 'inbox-isolation-profile-1', 'instagram',
+		    'token-byo', 'external-byo', '{"instagram_webhook_user_id":"webhook-user-byo"}'::jsonb,
+		    'byo', NULL
 		  ),
 		  (
 		    'inbox-isolation-account-2', 'inbox-isolation-profile-2', 'instagram',
-		    'token-2', 'external-2', '{"instagram_webhook_user_id":"webhook-user-2"}'::jsonb
+		    'token-2', 'external-2', '{"instagram_webhook_user_id":"webhook-user-2"}'::jsonb,
+		    'managed', 'managed-other'
 		  )
 	`); err != nil {
 		t.Fatalf("seed social accounts: %v", err)
@@ -376,9 +459,19 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		)
 		VALUES
 		  (
-		    'inbox-isolation-valid-1', 'inbox-isolation-account-1',
-		    'inbox-isolation-workspace-1', 'ig_comment', 'valid-external-1',
-		    'valid one', 'valid-thread-1'
+		    'inbox-isolation-valid-a', 'inbox-isolation-account-a',
+		    'inbox-isolation-workspace-1', 'ig_comment', 'valid-external-a',
+		    'valid a', 'valid-thread-a'
+		  ),
+		  (
+		    'inbox-isolation-valid-b', 'inbox-isolation-account-b',
+		    'inbox-isolation-workspace-1', 'ig_comment', 'valid-external-b',
+		    'valid b', 'valid-thread-b'
+		  ),
+		  (
+		    'inbox-isolation-valid-byo', 'inbox-isolation-account-byo',
+		    'inbox-isolation-workspace-1', 'ig_comment', 'valid-external-byo',
+		    'valid byo', 'valid-thread-byo'
 		  ),
 		  (
 		    'inbox-isolation-valid-2', 'inbox-isolation-account-2',
@@ -386,7 +479,7 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		    'valid two', 'valid-thread-2'
 		  ),
 		  (
-		    'inbox-isolation-forged-1', 'inbox-isolation-account-1',
+		    'inbox-isolation-forged-1', 'inbox-isolation-account-a',
 		    'inbox-isolation-workspace-2', 'ig_comment', 'forged-external-1',
 		    'forged one', 'forged-thread-1'
 		  ),
@@ -400,27 +493,131 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 	}
 
 	queries := New(tx)
+	assertIDs := func(label string, items []InboxItem, want ...string) {
+		t.Helper()
+		got := make(map[string]int, len(items))
+		for _, item := range items {
+			got[item.ID]++
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s IDs = %v, want %v", label, got, want)
+		}
+		for _, id := range want {
+			if got[id] != 1 {
+				t.Fatalf("%s IDs = %v, want exactly one %s", label, got, id)
+			}
+		}
+	}
+	assertUnread := func(label, workspaceID string, workspaceScope bool, externalUserID string, want int32) {
+		t.Helper()
+		got, err := queries.CountUnreadByWorkspace(ctx, CountUnreadByWorkspaceParams{
+			WorkspaceID:    workspaceID,
+			WorkspaceScope: workspaceScope,
+			ExternalUserID: externalUserID,
+			ExcludeXDms:    false,
+		})
+		if err != nil || got != want {
+			t.Fatalf("%s unread count = %d, error %v; want %d", label, got, err, want)
+		}
+	}
+	assertGet := func(label, id, workspaceID string, workspaceScope bool, externalUserID string, want bool) {
+		t.Helper()
+		item, err := queries.GetInboxItem(ctx, GetInboxItemParams{
+			ID:             id,
+			WorkspaceID:    workspaceID,
+			WorkspaceScope: workspaceScope,
+			ExternalUserID: externalUserID,
+		})
+		if !want {
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("%s GetInboxItem error = %v, want pgx.ErrNoRows", label, err)
+			}
+			return
+		}
+		if err != nil || item.ID != id {
+			t.Fatalf("%s GetInboxItem = %+v, %v; want %s", label, item, err, id)
+		}
+	}
+
 	items, err := queries.ListInboxItemsByWorkspace(ctx, ListInboxItemsByWorkspaceParams{
-		WorkspaceID: "inbox-isolation-workspace-2",
-		Limit:       20,
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		Limit:          20,
+		WorkspaceScope: false,
+		ExternalUserID: "managed-a",
+	})
+	if err != nil {
+		t.Fatalf("managed-a ListInboxItemsByWorkspace: %v", err)
+	}
+	assertIDs("managed-a Inbox list", items, "inbox-isolation-valid-a")
+	assertUnread("managed-a", "inbox-isolation-workspace-1", false, "managed-a", 1)
+	assertGet("managed-a own row", "inbox-isolation-valid-a", "inbox-isolation-workspace-1", false, "managed-a", true)
+	assertGet("managed-a cross-scope row", "inbox-isolation-valid-b", "inbox-isolation-workspace-1", false, "managed-a", false)
+
+	items, err = queries.ListInboxItemsByWorkspace(ctx, ListInboxItemsByWorkspaceParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		Limit:          20,
+		WorkspaceScope: false,
+		ExternalUserID: "managed-b",
+	})
+	if err != nil {
+		t.Fatalf("managed-b ListInboxItemsByWorkspace: %v", err)
+	}
+	assertIDs("managed-b Inbox list", items, "inbox-isolation-valid-b")
+	assertUnread("managed-b", "inbox-isolation-workspace-1", false, "managed-b", 1)
+	assertGet("managed-b own row", "inbox-isolation-valid-b", "inbox-isolation-workspace-1", false, "managed-b", true)
+	assertGet("managed-b cross-scope row", "inbox-isolation-valid-a", "inbox-isolation-workspace-1", false, "managed-b", false)
+
+	items, err = queries.ListInboxItemsByWorkspace(ctx, ListInboxItemsByWorkspaceParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		Limit:          20,
+		WorkspaceScope: true,
+		ExternalUserID: "ignored-in-workspace-mode",
+	})
+	if err != nil {
+		t.Fatalf("workspace ListInboxItemsByWorkspace: %v", err)
+	}
+	assertIDs(
+		"workspace Inbox list",
+		items,
+		"inbox-isolation-valid-a",
+		"inbox-isolation-valid-b",
+		"inbox-isolation-valid-byo",
+	)
+	assertUnread("workspace", "inbox-isolation-workspace-1", true, "ignored-in-workspace-mode", 3)
+	for _, id := range []string{
+		"inbox-isolation-valid-a",
+		"inbox-isolation-valid-b",
+		"inbox-isolation-valid-byo",
+	} {
+		assertGet("workspace row "+id, id, "inbox-isolation-workspace-1", true, "ignored-in-workspace-mode", true)
+	}
+
+	items, err = queries.ListInboxItemsByWorkspace(ctx, ListInboxItemsByWorkspaceParams{
+		WorkspaceID:    "inbox-isolation-workspace-2",
+		Limit:          20,
+		WorkspaceScope: true,
+		ExternalUserID: "ignored-in-workspace-mode",
 	})
 	if err != nil {
 		t.Fatalf("ListInboxItemsByWorkspace: %v", err)
 	}
-	if len(items) != 1 || items[0].ID != "inbox-isolation-valid-2" {
-		t.Fatalf("workspace-2 Inbox list = %+v, want only its consistent row", items)
-	}
+	assertIDs("workspace-2 Inbox list", items, "inbox-isolation-valid-2")
+	assertUnread("workspace-2", "inbox-isolation-workspace-2", true, "ignored-in-workspace-mode", 1)
 
 	_, err = queries.GetInboxItem(ctx, GetInboxItemParams{
-		ID:          "inbox-isolation-forged-1",
-		WorkspaceID: "inbox-isolation-workspace-2",
+		ID:             "inbox-isolation-forged-1",
+		WorkspaceID:    "inbox-isolation-workspace-2",
+		WorkspaceScope: true,
+		ExternalUserID: "ignored-in-workspace-mode",
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("GetInboxItem forged row error = %v, want pgx.ErrNoRows", err)
 	}
 	item, err := queries.GetInboxItem(ctx, GetInboxItemParams{
-		ID:          "inbox-isolation-valid-2",
-		WorkspaceID: "inbox-isolation-workspace-2",
+		ID:             "inbox-isolation-valid-2",
+		WorkspaceID:    "inbox-isolation-workspace-2",
+		WorkspaceScope: true,
+		ExternalUserID: "ignored-in-workspace-mode",
 	})
 	if err != nil || item.ID != "inbox-isolation-valid-2" {
 		t.Fatalf("GetInboxItem consistent row = %+v, %v", item, err)
@@ -465,7 +662,7 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 
 	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
 		WorkspaceID:     "inbox-isolation-workspace-2",
-		SocialAccountID: "inbox-isolation-account-1",
+		SocialAccountID: "inbox-isolation-account-a",
 		Source:          "ig_comment",
 		ThreadKey:       "forged-thread-1",
 		ThreadStatus:    "resolved",
