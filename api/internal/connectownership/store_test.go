@@ -51,7 +51,7 @@ func TestDecideOwnership(t *testing.T) {
 			}},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict},
+			want:           Decision{Kind: Conflict, ConflictClass: ConflictManagedUserMismatch, MatchCount: 1},
 		},
 		{
 			name: "owner BYO null ownership conflicts",
@@ -62,7 +62,7 @@ func TestDecideOwnership(t *testing.T) {
 			}},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict},
+			want:           Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: 1},
 		},
 		{
 			name: "empty stored managed ownership conflicts",
@@ -73,7 +73,7 @@ func TestDecideOwnership(t *testing.T) {
 			}},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict},
+			want:           Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: 1},
 		},
 		{
 			name: "same managed user in a different profile conflicts",
@@ -84,7 +84,7 @@ func TestDecideOwnership(t *testing.T) {
 			}},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict},
+			want:           Decision{Kind: Conflict, ConflictClass: ConflictProfileMismatch, MatchCount: 1},
 		},
 		{
 			name: "multiple active matches conflict even when one is an exact reconnect",
@@ -102,7 +102,7 @@ func TestDecideOwnership(t *testing.T) {
 			},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict},
+			want:           Decision{Kind: Conflict, ConflictClass: ConflictAmbiguousMatches, MatchCount: 2},
 		},
 	}
 
@@ -269,6 +269,9 @@ func TestStoreSaveRepeatsLookupUnderAdvisoryLock(t *testing.T) {
 	var conflict *OwnershipConflictError
 	if !errors.As(err, &conflict) {
 		t.Fatalf("Save() error type = %T, want *OwnershipConflictError", err)
+	}
+	if conflict.ConflictClass != ConflictManagedUserMismatch || conflict.MatchCount != 1 {
+		t.Fatalf("Save() conflict details = class %q/count %d", conflict.ConflictClass, conflict.MatchCount)
 	}
 	if authoritativeQueries.mutationCalls != 0 || tx.commitCalls != 0 {
 		t.Fatalf("mutation calls = %d, commit calls = %d", authoritativeQueries.mutationCalls, tx.commitCalls)

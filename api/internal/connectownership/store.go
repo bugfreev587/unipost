@@ -16,10 +16,28 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
-type OwnershipConflictError struct{}
+type ConflictClass string
+
+const (
+	ConflictOwnerBYO            ConflictClass = "owner_byo"
+	ConflictManagedUserMismatch ConflictClass = "managed_user_mismatch"
+	ConflictProfileMismatch     ConflictClass = "profile_mismatch"
+	ConflictAmbiguousMatches    ConflictClass = "ambiguous_matches"
+	ConflictAuthoritative       ConflictClass = "authoritative_conflict"
+)
+
+type OwnershipConflictError struct {
+	ConflictClass ConflictClass
+	MatchCount    int
+}
 
 func (*OwnershipConflictError) Error() string {
 	return "ACCOUNT_OWNERSHIP_CONFLICT"
+}
+
+func (*OwnershipConflictError) Is(target error) bool {
+	_, ok := target.(*OwnershipConflictError)
+	return ok
 }
 
 var ErrOwnershipConflict = &OwnershipConflictError{}
@@ -41,8 +59,10 @@ const (
 )
 
 type Decision struct {
-	Kind      DecisionKind
-	AccountID string
+	Kind          DecisionKind
+	AccountID     string
+	ConflictClass ConflictClass
+	MatchCount    int
 }
 
 type OwnershipKey struct {
@@ -282,15 +302,18 @@ func decide(matches []db.SocialAccount, profileID, externalUserID string) Decisi
 		return Decision{Kind: Create}
 	}
 	if len(matches) != 1 {
-		return Decision{Kind: Conflict}
+		return Decision{Kind: Conflict, ConflictClass: ConflictAmbiguousMatches, MatchCount: len(matches)}
 	}
 
 	match := matches[0]
-	if match.ProfileID != profileID ||
-		!match.ExternalUserID.Valid ||
-		match.ExternalUserID.String == "" ||
-		match.ExternalUserID.String != externalUserID {
-		return Decision{Kind: Conflict}
+	if match.ProfileID != profileID {
+		return Decision{Kind: Conflict, ConflictClass: ConflictProfileMismatch, MatchCount: 1}
+	}
+	if !match.ExternalUserID.Valid || match.ExternalUserID.String == "" {
+		return Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: 1}
+	}
+	if match.ExternalUserID.String != externalUserID {
+		return Decision{Kind: Conflict, ConflictClass: ConflictManagedUserMismatch, MatchCount: 1}
 	}
 
 	return Decision{Kind: Reconnect, AccountID: match.ID}
@@ -312,6 +335,9 @@ func applyDecision(
 		}
 		return queries.UpsertManagedSocialAccount(ctx, request.Upsert)
 	default:
-		return db.SocialAccount{}, ErrOwnershipConflict
+		return db.SocialAccount{}, &OwnershipConflictError{
+			ConflictClass: decision.ConflictClass,
+			MatchCount:    decision.MatchCount,
+		}
 	}
 }

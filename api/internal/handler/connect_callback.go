@@ -11,8 +11,9 @@
 //	GET /v1/connect/callback/{platform}?code=...&state=...
 //	    → the redirect target after the user consents on the platform.
 //	      Verifies state, runs Connector.ExchangeCode + FetchProfile,
-//	      upserts the social_accounts row, fires the account.connected
-//	      webhook, and 302s back to the customer's return_url.
+//	      persists through workspace-level managed ownership checks,
+//	      fires the account.connected webhook, and 302s back to the
+//	      customer's return_url.
 //
 // Both endpoints are HTML-shaped (HTTP 302 + HTML error pages); they
 // never return JSON. Cancellations / failures redirect to return_url
@@ -24,6 +25,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
@@ -38,6 +40,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
+	"github.com/xiaoboyu/unipost-api/internal/connectownership"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
@@ -49,6 +52,11 @@ import (
 
 type instagramWebhookSubscriber interface {
 	Subscribe(context.Context, string, string) error
+}
+
+type managedAccountOwnershipStore interface {
+	Check(context.Context, connectownership.OwnershipKey) (connectownership.Decision, error)
+	Save(context.Context, connectownership.SaveRequest) (db.SocialAccount, error)
 }
 
 // ConnectCallbackHandler owns the OAuth dance for managed accounts.
@@ -66,9 +74,10 @@ type ConnectCallbackHandler struct {
 	superAdminChecker          *auth.SuperAdminChecker
 	quota                      *quota.Checker
 	instagramWebhookSubscriber instagramWebhookSubscriber
+	ownershipStore             managedAccountOwnershipStore
 }
 
-func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker) *ConnectCallbackHandler {
+func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker, ownershipStore managedAccountOwnershipStore) *ConnectCallbackHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
@@ -85,6 +94,7 @@ func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncrypt
 		superAdminChecker:          superAdminChecker,
 		quota:                      quota.NewChecker(queries),
 		instagramWebhookSubscriber: instagramwebhooks.NewSubscriber(nil, ""),
+		ownershipStore:             ownershipStore,
 	}
 }
 
@@ -94,12 +104,19 @@ func (h *ConnectCallbackHandler) SetIntegrationLogger(logger *integrationlogs.Lo
 }
 
 func (h *ConnectCallbackHandler) freePlanManagedConnectBlocked(ctx context.Context, workspaceID, externalUserID, platform string, wouldCreateManagedAccount bool) (bool, string, error) {
-	if h == nil || h.quota == nil || workspaceID == "" || externalUserID == "" {
+	if h == nil {
+		return false, "", nil
+	}
+	return freePlanManagedConnectBlocked(ctx, h.queries, h.quota, workspaceID, externalUserID, platform, wouldCreateManagedAccount)
+}
+
+func freePlanManagedConnectBlocked(ctx context.Context, queries *db.Queries, checker *quota.Checker, workspaceID, externalUserID, platform string, wouldCreateManagedAccount bool) (bool, string, error) {
+	if queries == nil || checker == nil || workspaceID == "" || externalUserID == "" {
 		return false, "", nil
 	}
 	externalUser := pgtype.Text{String: externalUserID, Valid: true}
-	if cap, hasCap := h.quota.MaxManagedUsersForPlan(ctx, workspaceID); hasCap {
-		existingForUser, err := h.queries.CountManagedAccountsByWorkspaceAndExternalUser(ctx, db.CountManagedAccountsByWorkspaceAndExternalUserParams{
+	if cap, hasCap := checker.MaxManagedUsersForPlan(ctx, workspaceID); hasCap {
+		existingForUser, err := queries.CountManagedAccountsByWorkspaceAndExternalUser(ctx, db.CountManagedAccountsByWorkspaceAndExternalUserParams{
 			WorkspaceID:    workspaceID,
 			ExternalUserID: externalUser,
 		})
@@ -107,7 +124,7 @@ func (h *ConnectCallbackHandler) freePlanManagedConnectBlocked(ctx context.Conte
 			return false, "", err
 		}
 		if existingForUser == 0 {
-			currentUsers, err := h.queries.CountManagedUsersByWorkspace(ctx, workspaceID)
+			currentUsers, err := queries.CountManagedUsersByWorkspace(ctx, workspaceID)
 			if err != nil {
 				return false, "", err
 			}
@@ -119,8 +136,8 @@ func (h *ConnectCallbackHandler) freePlanManagedConnectBlocked(ctx context.Conte
 	if !wouldCreateManagedAccount {
 		return false, "", nil
 	}
-	if cap, hasCap := h.quota.MaxManagedAccountsForPlan(ctx, workspaceID); hasCap {
-		existingForUserPlatform, err := h.queries.CountManagedAccountsByWorkspaceExternalUserAndPlatform(ctx, db.CountManagedAccountsByWorkspaceExternalUserAndPlatformParams{
+	if cap, hasCap := checker.MaxManagedAccountsForPlan(ctx, workspaceID); hasCap {
+		existingForUserPlatform, err := queries.CountManagedAccountsByWorkspaceExternalUserAndPlatform(ctx, db.CountManagedAccountsByWorkspaceExternalUserAndPlatformParams{
 			WorkspaceID:    workspaceID,
 			ExternalUserID: externalUser,
 			Platform:       platform,
@@ -131,7 +148,7 @@ func (h *ConnectCallbackHandler) freePlanManagedConnectBlocked(ctx context.Conte
 		if existingForUserPlatform > 0 {
 			return false, "", nil
 		}
-		currentAccounts, err := h.queries.CountActiveManagedAccountsByWorkspace(ctx, workspaceID)
+		currentAccounts, err := queries.CountActiveManagedAccountsByWorkspace(ctx, workspaceID)
 		if err != nil {
 			return false, "", err
 		}
@@ -140,6 +157,38 @@ func (h *ConnectCallbackHandler) freePlanManagedConnectBlocked(ctx context.Conte
 		}
 	}
 	return false, "", nil
+}
+
+func logManagedOwnershipConflict(workspaceID, platformName string, decision connectownership.Decision, err error) {
+	conflictClass := decision.ConflictClass
+	matchCount := decision.MatchCount
+	var conflict *connectownership.OwnershipConflictError
+	if errors.As(err, &conflict) {
+		if conflict.ConflictClass != "" {
+			conflictClass = conflict.ConflictClass
+		}
+		matchCount = conflict.MatchCount
+	}
+	if conflictClass == "" {
+		conflictClass = connectownership.ConflictAuthoritative
+	}
+	slog.Warn("managed account ownership conflict",
+		"workspace_id", workspaceID,
+		"platform", platformName,
+		"conflict_class", conflictClass,
+		"match_count", matchCount)
+}
+
+func verifiedOAuthProviderIdentity(platformName string, profile *connect.Profile) (string, bool) {
+	if profile == nil {
+		return "", false
+	}
+	if platformName == "instagram" {
+		identity := strings.TrimSpace(profile.WebhookAccountID)
+		return identity, identity != ""
+	}
+	identity := strings.TrimSpace(profile.ExternalAccountID)
+	return identity, identity != ""
 }
 
 func (h *ConnectCallbackHandler) workspaceIDForProfile(ctx context.Context, profileID string) string {
@@ -510,9 +559,33 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
 		return
 	}
-	if platformName == "instagram" && strings.TrimSpace(profile.WebhookAccountID) == "" {
-		slog.Error("connect.callback: instagram profile missing webhook account id")
-		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
+	providerIdentity, hasProviderIdentity := verifiedOAuthProviderIdentity(platformName, profile)
+	if !hasProviderIdentity {
+		slog.Error("connect.callback: verified provider identity missing", "platform", platformName, "workspace_id", workspaceID)
+		renderConnectError(w, http.StatusBadGateway, "Provider account identity is missing.")
+		return
+	}
+	if workspaceID == "" || h.ownershipStore == nil {
+		slog.Error("connect.callback: ownership store unavailable", "platform", platformName, "workspace_id", workspaceID)
+		renderConnectError(w, http.StatusInternalServerError, "Failed to verify account ownership.")
+		return
+	}
+	ownershipKey := connectownership.OwnershipKey{
+		WorkspaceID:      workspaceID,
+		ProfileID:        session.ProfileID,
+		Platform:         platformName,
+		ProviderIdentity: providerIdentity,
+		ExternalUserID:   session.ExternalUserID,
+	}
+	ownershipDecision, ownershipErr := h.ownershipStore.Check(r.Context(), ownershipKey)
+	if ownershipErr != nil {
+		slog.Error("connect.callback: ownership check failed", "platform", platformName, "workspace_id", workspaceID, "error_class", "ownership_check_failed")
+		renderConnectError(w, http.StatusInternalServerError, "Failed to verify account ownership.")
+		return
+	}
+	if ownershipDecision.Kind == connectownership.Conflict {
+		logManagedOwnershipConflict(workspaceID, platformName, ownershipDecision, nil)
+		renderConnectError(w, http.StatusConflict, "This social account is already connected and cannot be reassigned.")
 		return
 	}
 
@@ -523,18 +596,8 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 			hidePoweredBy = planAllowsHidePoweredBy(sub.PlanID) && prof.BrandingHidePoweredBy
 		}
 	}
-	activeAccount, lookupErr := h.queries.FindActiveManagedSocialAccountByExternalAccount(r.Context(), db.FindActiveManagedSocialAccountByExternalAccountParams{
-		ProfileID:         session.ProfileID,
-		Platform:          platformName,
-		ExternalAccountID: profile.ExternalAccountID,
-	})
-	if lookupErr != nil && lookupErr != pgx.ErrNoRows {
-		slog.Error("connect.callback: lookup failed", "platform", platformName, "err", lookupErr)
-		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
-		return
-	}
 	if profErr == nil {
-		if blocked, msg, limitErr := h.freePlanManagedConnectBlocked(r.Context(), prof.WorkspaceID, session.ExternalUserID, platformName, lookupErr == pgx.ErrNoRows); limitErr != nil {
+		if blocked, msg, limitErr := h.freePlanManagedConnectBlocked(r.Context(), prof.WorkspaceID, session.ExternalUserID, platformName, ownershipDecision.Kind == connectownership.Create); limitErr != nil {
 			slog.Error("connect.callback: managed connect limit check failed", "workspace_id", prof.WorkspaceID, "profile_id", session.ProfileID, "platform", platformName, "err", limitErr)
 			renderConnectError(w, http.StatusInternalServerError, "Failed to check plan limits.")
 			return
@@ -571,7 +634,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		"display_name": profile.DisplayName,
 	}
 	if platformName == "instagram" {
-		accountMetadata["instagram_webhook_user_id"] = profile.WebhookAccountID
+		accountMetadata["instagram_webhook_user_id"] = providerIdentity
 	}
 	metadata, _ := json.Marshal(accountMetadata)
 
@@ -582,44 +645,57 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	connectSessionID := pgtype.Text{String: session.ID, Valid: true}
 	externalUserID := pgtype.Text{String: session.ExternalUserID, Valid: true}
 
-	var saved db.SocialAccount
-	switch {
-	case lookupErr == nil:
-		saved, err = h.queries.RefreshConnectedSocialAccount(r.Context(), db.RefreshConnectedSocialAccountParams{
-			ID:                activeAccount.ID,
-			AccessToken:       encAccess,
-			RefreshToken:      refreshToken,
-			TokenExpiresAt:    tokenExpiresAt,
-			ExternalAccountID: profile.ExternalAccountID,
-			AccountName:       accountName,
-			AccountAvatarUrl:  accountAvatarURL,
-			Metadata:          metadata,
-			Scope:             tokens.Scopes,
-			ConnectionType:    "managed",
-			ConnectSessionID:  connectSessionID,
-			ExternalUserID:    externalUserID,
-			ExternalUserEmail: session.ExternalUserEmail,
-			XAppMode:          resolved.xAppMode,
-		})
-	case lookupErr == pgx.ErrNoRows:
-		saved, err = h.queries.UpsertManagedSocialAccount(r.Context(), db.UpsertManagedSocialAccountParams{
-			ProfileID:         session.ProfileID,
-			Platform:          platformName,
-			AccessToken:       encAccess,
-			RefreshToken:      refreshToken,
-			TokenExpiresAt:    tokenExpiresAt,
-			ExternalAccountID: profile.ExternalAccountID,
-			AccountName:       accountName,
-			AccountAvatarUrl:  accountAvatarURL,
-			Metadata:          metadata,
-			Scope:             tokens.Scopes,
-			ConnectSessionID:  connectSessionID,
-			ExternalUserID:    externalUserID,
-			ExternalUserEmail: session.ExternalUserEmail,
-			XAppMode:          resolved.xAppMode,
-		})
+	refreshParams := db.RefreshConnectedSocialAccountParams{
+		AccessToken:       encAccess,
+		RefreshToken:      refreshToken,
+		TokenExpiresAt:    tokenExpiresAt,
+		ExternalAccountID: profile.ExternalAccountID,
+		AccountName:       accountName,
+		AccountAvatarUrl:  accountAvatarURL,
+		Metadata:          metadata,
+		Scope:             tokens.Scopes,
+		ConnectionType:    "managed",
+		ConnectSessionID:  connectSessionID,
+		ExternalUserID:    externalUserID,
+		ExternalUserEmail: session.ExternalUserEmail,
+		XAppMode:          resolved.xAppMode,
 	}
+	upsertParams := db.UpsertManagedSocialAccountParams{
+		ProfileID:         session.ProfileID,
+		Platform:          platformName,
+		AccessToken:       encAccess,
+		RefreshToken:      refreshToken,
+		TokenExpiresAt:    tokenExpiresAt,
+		ExternalAccountID: profile.ExternalAccountID,
+		AccountName:       accountName,
+		AccountAvatarUrl:  accountAvatarURL,
+		Metadata:          metadata,
+		Scope:             tokens.Scopes,
+		ConnectSessionID:  connectSessionID,
+		ExternalUserID:    externalUserID,
+		ExternalUserEmail: session.ExternalUserEmail,
+		XAppMode:          resolved.xAppMode,
+	}
+	saved, err := h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
+		WorkspaceID:      workspaceID,
+		ProfileID:        session.ProfileID,
+		Platform:         platformName,
+		ProviderIdentity: providerIdentity,
+		ExternalUserID:   session.ExternalUserID,
+		Refresh:          refreshParams,
+		Upsert:           upsertParams,
+	})
 	if err != nil {
+		if errors.Is(err, connectownership.ErrOwnershipConflict) {
+			logManagedOwnershipConflict(workspaceID, platformName, ownershipDecision, err)
+			renderConnectError(w, http.StatusConflict, "This social account is already connected and cannot be reassigned.")
+			return
+		}
+		if errors.Is(err, connectownership.ErrInvalidOwnershipRequest) {
+			slog.Error("connect.callback: invalid ownership save request", "platform", platformName, "workspace_id", workspaceID, "error_class", "invalid_ownership_request")
+			renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
+			return
+		}
 		slog.Error("connect.callback: save failed", "platform", platformName, "err", err)
 		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 			Level:     integrationlogs.LevelError,
@@ -640,7 +716,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 
 	if platformName == "instagram" {
-		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), profile.WebhookAccountID, tokens.AccessToken); err != nil {
+		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), providerIdentity, tokens.AccessToken); err != nil {
 			reconnectRows, reconnectErr := h.queries.MarkSocialAccountReconnectRequired(r.Context(), saved.ID)
 			failureReason := "webhook_subscription_failed"
 			failureMessage := "Instagram webhook subscription failed."

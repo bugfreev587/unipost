@@ -28,6 +28,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/changelog"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
+	"github.com/xiaoboyu/unipost-api/internal/connectownership"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/emailpolicy"
@@ -685,10 +686,11 @@ func main() {
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
 	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"), quotaChecker).SetIntegrationLogger(integrationLogger)
+	connectOwnershipStore := connectownership.NewStore(pool)
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
-	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus)
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore)
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)
@@ -721,7 +723,7 @@ func main() {
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
-	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker).SetIntegrationLogger(integrationLogger)
+	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.

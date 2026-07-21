@@ -11,61 +11,76 @@
 // inspect it.
 //
 // On valid credentials we run BlueskyAdapter.Connect (the existing
-// BYO path), encrypt the resulting accessJwt + refreshJwt, upsert
-// into social_accounts as a managed row, mark the connect_session
-// completed, fire the account.connected webhook, and 302 the user
-// to the customer's return_url.
+// BYO path), verify workspace-level managed ownership of the returned
+// DID, encrypt the resulting accessJwt + refreshJwt, persist through
+// the authoritative ownership store, mark the connect_session completed,
+// fire the account.connected webhook, and 302 the user to the customer's
+// return_url.
 //
 // On invalid credentials or session errors we render a server-side
 // HTML page that includes the form again (handle pre-filled, password
 // blank) plus an inline error. No JSON, no fetch, no client-side
 // state.
 //
-// Per Sprint 3 decision #1 the upsert is keyed on
-// (profile_id, external_account_id) for Bluesky — the DID/handle —
-// because the same external_user_id may legitimately map to multiple
-// Bluesky handles (different aliases for one human).
+// A verified DID may reconnect only when its workspace, profile, and
+// external_user_id ownership exactly match. Conflicting or ambiguous
+// workspace matches are rejected before downstream side effects.
 
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/connectownership"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // ConnectBlueskyHandler owns the public Bluesky form endpoint. It
 // shares the database + encryption + event bus dependencies with
 // the rest of the handler package.
 type ConnectBlueskyHandler struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	bus       events.EventBus
-	limiter   *ipLimiter
+	queries        *db.Queries
+	encryptor      *crypto.AESEncryptor
+	bus            events.EventBus
+	limiter        *ipLimiter
+	quota          *quota.Checker
+	ownershipStore managedAccountOwnershipStore
+	connectAccount func(context.Context, map[string]string) (*platform.ConnectResult, error)
 }
 
-func NewConnectBlueskyHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus) *ConnectBlueskyHandler {
+func NewConnectBlueskyHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, ownershipStore managedAccountOwnershipStore) *ConnectBlueskyHandler {
 	if bus == nil {
 		bus = events.NoopBus{}
 	}
+	adapter, adapterErr := platform.Get("bluesky")
+	var connectAccount func(context.Context, map[string]string) (*platform.ConnectResult, error)
+	if adapterErr == nil {
+		connectAccount = adapter.Connect
+	}
 	return &ConnectBlueskyHandler{
-		queries:   queries,
-		encryptor: encryptor,
-		bus:       bus,
-		limiter:   newIPLimiter(10, time.Minute),
+		queries:        queries,
+		encryptor:      encryptor,
+		bus:            bus,
+		limiter:        newIPLimiter(10, time.Minute),
+		quota:          quota.NewChecker(queries),
+		ownershipStore: ownershipStore,
+		connectAccount: connectAccount,
 	}
 }
 
@@ -146,8 +161,12 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	// the post pipeline. The trade-off is that if the Bluesky JWT
 	// chain ever breaks the user has to reconnect; we accept that
 	// for Sprint 3 because the chain typically lasts months.
-	adapter, _ := platform.Get("bluesky")
-	connectResult, err := adapter.Connect(r.Context(), map[string]string{
+	if h.connectAccount == nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Bluesky connection is unavailable."})
+		return
+	}
+	connectResult, err := h.connectAccount(r.Context(), map[string]string{
 		"handle":       handle,
 		"app_password": appPassword,
 	})
@@ -163,6 +182,50 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 			State:     state,
 			Error:     "Bluesky rejected those credentials. Double-check your handle and app password.",
 		})
+		return
+	}
+	providerIdentity := strings.TrimSpace(connectResult.ExternalAccountID)
+	if providerIdentity == "" {
+		slog.Error("connect.bluesky: verified provider identity missing", "platform", "bluesky")
+		w.WriteHeader(http.StatusBadGateway)
+		renderBlueskyResult(w, blueskyTplData{Error: "Provider account identity is missing."})
+		return
+	}
+	profile, profileErr := h.queries.GetProfile(r.Context(), session.ProfileID)
+	if profileErr != nil || profile.WorkspaceID == "" || h.ownershipStore == nil {
+		slog.Error("connect.bluesky: ownership store unavailable", "platform", "bluesky", "error_class", "ownership_store_unavailable")
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account ownership."})
+		return
+	}
+	ownershipKey := connectownership.OwnershipKey{
+		WorkspaceID:      profile.WorkspaceID,
+		ProfileID:        session.ProfileID,
+		Platform:         "bluesky",
+		ProviderIdentity: providerIdentity,
+		ExternalUserID:   session.ExternalUserID,
+	}
+	ownershipDecision, ownershipErr := h.ownershipStore.Check(r.Context(), ownershipKey)
+	if ownershipErr != nil {
+		slog.Error("connect.bluesky: ownership check failed", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "ownership_check_failed")
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account ownership."})
+		return
+	}
+	if ownershipDecision.Kind == connectownership.Conflict {
+		logManagedOwnershipConflict(profile.WorkspaceID, "bluesky", ownershipDecision, nil)
+		w.WriteHeader(http.StatusConflict)
+		renderBlueskyResult(w, blueskyTplData{Error: "This social account is already connected and cannot be reassigned."})
+		return
+	}
+	if blocked, message, limitErr := freePlanManagedConnectBlocked(r.Context(), h.queries, h.quota, profile.WorkspaceID, session.ExternalUserID, "bluesky", ownershipDecision.Kind == connectownership.Create); limitErr != nil {
+		slog.Error("connect.bluesky: managed connect limit check failed", "workspace_id", profile.WorkspaceID, "profile_id", session.ProfileID, "platform", "bluesky")
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Failed to check plan limits."})
+		return
+	} else if blocked {
+		w.WriteHeader(http.StatusPaymentRequired)
+		renderBlueskyResult(w, blueskyTplData{Error: message})
 		return
 	}
 
@@ -181,15 +244,6 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 
 	metadataJSON, _ := json.Marshal(connectResult.Metadata)
 
-	// Reuse an existing managed row for this DID inside the profile.
-	// BYO Bluesky rows stay independent so Quickstart / white-label and
-	// managed developer users do not overwrite each other.
-	existing, lookupErr := h.queries.FindActiveManagedSocialAccountByExternalAccount(r.Context(), db.FindActiveManagedSocialAccountByExternalAccountParams{
-		ProfileID:         session.ProfileID,
-		Platform:          "bluesky",
-		ExternalAccountID: connectResult.ExternalAccountID,
-	})
-
 	accountName := pgtype.Text{String: connectResult.AccountName, Valid: connectResult.AccountName != ""}
 	accountAvatarURL := pgtype.Text{String: connectResult.AvatarURL, Valid: connectResult.AvatarURL != ""}
 	refreshToken := pgtype.Text{String: encRefresh, Valid: encRefresh != ""}
@@ -197,56 +251,59 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	connectSessionID := pgtype.Text{String: session.ID, Valid: true}
 	externalUserID := pgtype.Text{String: session.ExternalUserID, Valid: true}
 
-	var savedID string
-	if lookupErr == nil {
-		updated, err := h.queries.RefreshConnectedSocialAccount(r.Context(), db.RefreshConnectedSocialAccountParams{
-			ID:                existing.ID,
-			AccessToken:       encAccess,
-			RefreshToken:      refreshToken,
-			TokenExpiresAt:    tokenExpiresAt,
-			ExternalAccountID: connectResult.ExternalAccountID,
-			AccountName:       accountName,
-			AccountAvatarUrl:  accountAvatarURL,
-			Metadata:          metadataJSON,
-			Scope:             nil,
-			ConnectionType:    "managed",
-			ConnectSessionID:  connectSessionID,
-			ExternalUserID:    externalUserID,
-			ExternalUserEmail: session.ExternalUserEmail,
-		})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			renderBlueskyResult(w, blueskyTplData{Error: "Internal error saving account."})
+	refreshParams := db.RefreshConnectedSocialAccountParams{
+		AccessToken:       encAccess,
+		RefreshToken:      refreshToken,
+		TokenExpiresAt:    tokenExpiresAt,
+		ExternalAccountID: providerIdentity,
+		AccountName:       accountName,
+		AccountAvatarUrl:  accountAvatarURL,
+		Metadata:          metadataJSON,
+		Scope:             nil,
+		ConnectionType:    "managed",
+		ConnectSessionID:  connectSessionID,
+		ExternalUserID:    externalUserID,
+		ExternalUserEmail: session.ExternalUserEmail,
+	}
+	createParams := db.CreateManagedSocialAccountParams{
+		ProfileID:         session.ProfileID,
+		Platform:          "bluesky",
+		AccessToken:       encAccess,
+		RefreshToken:      refreshToken,
+		TokenExpiresAt:    tokenExpiresAt,
+		ExternalAccountID: providerIdentity,
+		AccountName:       accountName,
+		AccountAvatarUrl:  accountAvatarURL,
+		Metadata:          metadataJSON,
+		Scope:             nil,
+		ConnectSessionID:  connectSessionID,
+		ExternalUserID:    externalUserID,
+		ExternalUserEmail: session.ExternalUserEmail,
+	}
+	saved, err := h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
+		WorkspaceID:      profile.WorkspaceID,
+		ProfileID:        session.ProfileID,
+		Platform:         "bluesky",
+		ProviderIdentity: providerIdentity,
+		ExternalUserID:   session.ExternalUserID,
+		Refresh:          refreshParams,
+		Create:           createParams,
+	})
+	if err != nil {
+		if errors.Is(err, connectownership.ErrOwnershipConflict) {
+			logManagedOwnershipConflict(profile.WorkspaceID, "bluesky", ownershipDecision, err)
+			w.WriteHeader(http.StatusConflict)
+			renderBlueskyResult(w, blueskyTplData{Error: "This social account is already connected and cannot be reassigned."})
 			return
 		}
-		savedID = updated.ID
-	} else if lookupErr == pgx.ErrNoRows {
-		created, err := h.queries.CreateManagedSocialAccount(r.Context(), db.CreateManagedSocialAccountParams{
-			ProfileID:         session.ProfileID,
-			Platform:          "bluesky",
-			AccessToken:       encAccess,
-			RefreshToken:      refreshToken,
-			TokenExpiresAt:    tokenExpiresAt,
-			ExternalAccountID: connectResult.ExternalAccountID,
-			AccountName:       accountName,
-			AccountAvatarUrl:  accountAvatarURL,
-			Metadata:          metadataJSON,
-			Scope:             nil,
-			ConnectSessionID:  connectSessionID,
-			ExternalUserID:    externalUserID,
-			ExternalUserEmail: session.ExternalUserEmail,
-		})
-		if err != nil {
-			w.WriteHeader(http.StatusInternalServerError)
-			renderBlueskyResult(w, blueskyTplData{Error: "Internal error saving account."})
-			return
+		if errors.Is(err, connectownership.ErrInvalidOwnershipRequest) {
+			slog.Error("connect.bluesky: invalid ownership save request", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "invalid_ownership_request")
 		}
-		savedID = created.ID
-	} else {
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Internal error saving account."})
 		return
 	}
+	savedID := saved.ID
 
 	// Mark the session completed and link to the saved account.
 	_, _ = h.queries.MarkConnectSessionCompleted(r.Context(), db.MarkConnectSessionCompletedParams{
@@ -256,11 +313,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 
 	// Fire account.connected webhook. Best-effort — never blocks.
 	// Webhooks are workspace-scoped; resolve workspace_id from profile.
-	wsID := session.ProfileID
-	if prof, pErr := h.queries.GetProfile(r.Context(), session.ProfileID); pErr == nil {
-		wsID = prof.WorkspaceID
-	}
-	h.bus.Publish(r.Context(), wsID, events.EventAccountConnected, map[string]any{
+	h.bus.Publish(r.Context(), profile.WorkspaceID, events.EventAccountConnected, map[string]any{
 		"social_account_id": savedID,
 		"profile_id":        session.ProfileID,
 		"platform":          "bluesky",

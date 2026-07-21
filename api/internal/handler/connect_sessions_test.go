@@ -20,6 +20,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
+	"github.com/xiaoboyu/unipost-api/internal/connectownership"
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
@@ -269,7 +270,7 @@ func TestResolveConnectorUsesStoredTwitterAppMode(t *testing.T) {
 		h := NewConnectCallbackHandler(
 			db.New(fdb), encryptor, events.NoopBus{},
 			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-			"https://api.example.com", nil,
+			"https://api.example.com", nil, nil,
 		)
 		connector, ok, err := h.resolveConnector(
 			context.Background(), "ws_1", "twitter", true,
@@ -287,7 +288,7 @@ func TestResolveConnectorUsesStoredTwitterAppMode(t *testing.T) {
 		h := NewConnectCallbackHandler(
 			db.New(fdb), encryptor, events.NoopBus{},
 			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-			"https://api.example.com", nil,
+			"https://api.example.com", nil, nil,
 		)
 		connector, ok, err := h.resolveConnector(
 			context.Background(), "ws_1", "twitter", true,
@@ -321,7 +322,7 @@ func TestResolveTwitterConnectorForRollingNullModeUsesLegacyPolicy(t *testing.T)
 		h := NewConnectCallbackHandler(
 			db.New(fdb), encryptor, events.NoopBus{},
 			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-			"https://api.example.com", nil,
+			"https://api.example.com", nil, nil,
 		)
 		resolved, err := h.resolveConnectorForStoredMode(
 			context.Background(), "ws_1", "twitter", false, pgtype.Text{},
@@ -342,7 +343,7 @@ func TestResolveTwitterConnectorForRollingNullModeUsesLegacyPolicy(t *testing.T)
 		h := NewConnectCallbackHandler(
 			db.New(fdb), encryptor, events.NoopBus{},
 			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-			"https://api.example.com", nil,
+			"https://api.example.com", nil, nil,
 		)
 		resolved, err := h.resolveConnectorForStoredMode(
 			context.Background(), "ws_1", "twitter", true, pgtype.Text{},
@@ -363,7 +364,7 @@ func TestResolveTwitterConnectorForRollingNullModeUsesLegacyPolicy(t *testing.T)
 		h := NewConnectCallbackHandler(
 			db.New(fdb), encryptor, events.NoopBus{},
 			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-			"https://api.example.com", nil,
+			"https://api.example.com", nil, nil,
 		)
 		resolved, err := h.resolveConnectorForStoredMode(
 			context.Background(), "ws_1", "twitter", false, pgtype.Text{},
@@ -381,7 +382,7 @@ func TestResolveTwitterConnectorForRollingNullModeUsesLegacyPolicy(t *testing.T)
 		h := NewConnectCallbackHandler(
 			db.New(fdb), encryptor, events.NoopBus{},
 			connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-			"https://api.example.com", nil,
+			"https://api.example.com", nil, nil,
 		)
 		_, err := h.resolveConnectorForStoredMode(
 			context.Background(), "ws_1", "twitter", true,
@@ -409,7 +410,7 @@ func TestConnectCallbackPersistsResolvedModeForRollingNullTwitterSession(t *test
 	h := NewConnectCallbackHandler(
 		db.New(fdb), encryptor, events.NoopBus{},
 		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-		"https://api.example.com", nil,
+		"https://api.example.com", nil, newConnectSessionOwnershipStore(fdb),
 	)
 	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/twitter?code=auth-code&state=state_1", nil)
 	req = withChiParam(req, "platform", "twitter")
@@ -437,7 +438,7 @@ func TestConnectAuthorizePersistsResolvedModeForRollingNullTwitterSession(t *tes
 	h := NewConnectCallbackHandler(
 		db.New(fdb), encryptor, events.NoopBus{},
 		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-		"https://api.example.com", nil,
+		"https://api.example.com", nil, nil,
 	)
 	req := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
 	req = withChiParam(req, "id", "cs_1")
@@ -473,7 +474,7 @@ func TestConnectCallbackUsesModePersistedByAuthorizeAfterWorkspacePolicyChanges(
 	h := NewConnectCallbackHandler(
 		db.New(fdb), encryptor, events.NoopBus{},
 		connect.NewRegistry(fakeOAuthConnector{platform: "twitter"}),
-		"https://api.example.com", nil,
+		"https://api.example.com", nil, newConnectSessionOwnershipStore(fdb),
 	)
 
 	authorizeReq := httptest.NewRequest(http.MethodGet, "/v1/public/connect/sessions/cs_1/authorize?state=state_1", nil)
@@ -687,6 +688,7 @@ func TestResolveConnector_BasicIgnoresCredentialsOutsideCustomPlatformSlot(t *te
 		connect.NewRegistry(fakeOAuthConnector{platform: "linkedin"}),
 		"https://api.example.com",
 		nil,
+		nil,
 	)
 
 	connector, ok, err := h.resolveConnector(context.Background(), "ws_1", "linkedin", true)
@@ -720,6 +722,7 @@ func TestResolveConnector_NoSubscriptionDoesNotUseWorkspaceCredentials(t *testin
 		events.NoopBus{},
 		connect.NewRegistry(fakeOAuthConnector{platform: "linkedin"}),
 		"https://api.example.com",
+		nil,
 		nil,
 	)
 
@@ -868,6 +871,7 @@ func TestConnectCallbackReusesDisconnectedManagedAccountForExternalUser(t *testi
 		connect.NewRegistry(fakeOAuthConnector{platform: "tiktok"}),
 		"https://api.example.com",
 		nil,
+		newConnectSessionOwnershipStore(fdb),
 	)
 	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
 	req = withChiParam(req, "platform", "tiktok")
@@ -921,6 +925,7 @@ func TestConnectCallback_InstagramSubscribesWithWebhookAccountIDAfterPersistence
 				connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
 				"https://api.example.com",
 				nil,
+				newConnectSessionOwnershipStore(fdb),
 			)
 			h.instagramWebhookSubscriber = subscriber
 			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
@@ -989,6 +994,7 @@ func TestConnectCallback_InstagramMissingWebhookAccountIDFailsBeforePersistence(
 		}),
 		"https://api.example.com",
 		nil,
+		nil,
 	)
 	h.instagramWebhookSubscriber = subscriber
 	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
@@ -997,7 +1003,7 @@ func TestConnectCallback_InstagramMissingWebhookAccountIDFailsBeforePersistence(
 
 	h.Callback(rec, req)
 
-	if rec.Code != http.StatusBadRequest {
+	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 	if fdb.upsertManagedCalls != 0 || fdb.refreshManagedCalls != 0 {
@@ -1031,6 +1037,7 @@ func TestConnectCallback_InstagramSubscriptionFailureRequiresReconnect(t *testin
 		connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
 		"https://api.example.com",
 		nil,
+		newConnectSessionOwnershipStore(fdb),
 	)
 	h.instagramWebhookSubscriber = subscriber
 	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
@@ -1094,6 +1101,7 @@ func TestConnectCallback_InstagramWebhookSubscriptionContainmentFailure(t *testi
 				connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
 				"https://api.example.com",
 				nil,
+				newConnectSessionOwnershipStore(fdb),
 			)
 			h.instagramWebhookSubscriber = subscriber
 			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
@@ -1143,6 +1151,7 @@ func TestConnectCallback_FreePlanRejectsNewManagedUserAfterCap(t *testing.T) {
 		connect.NewRegistry(fakeOAuthConnector{platform: "tiktok"}),
 		"https://api.example.com",
 		nil,
+		newConnectSessionOwnershipStore(fdb),
 	)
 	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
 	req = withChiParam(req, "platform", "tiktok")
@@ -1182,6 +1191,7 @@ func TestConnectCallback_FreePlanRejectsNewManagedAccountAfterCap(t *testing.T) 
 		connect.NewRegistry(fakeOAuthConnector{platform: "tiktok"}),
 		"https://api.example.com",
 		nil,
+		newConnectSessionOwnershipStore(fdb),
 	)
 	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/tiktok?code=auth-code&state=state_1", nil)
 	req = withChiParam(req, "platform", "tiktok")
@@ -1198,6 +1208,293 @@ func TestConnectCallback_FreePlanRejectsNewManagedAccountAfterCap(t *testing.T) 
 	if fdb.completedAcctID != "" {
 		t.Fatalf("completed social account = %q, want empty", fdb.completedAcctID)
 	}
+}
+
+func TestConnectCallbackUsesVerifiedProviderIdentityForEveryOAuthPlatform(t *testing.T) {
+	platforms := []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"}
+	for _, platformName := range platforms {
+		t.Run(platformName, func(t *testing.T) {
+			encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+			if err != nil {
+				t.Fatal(err)
+			}
+			profile := &connect.Profile{
+				ExternalAccountID: "verified-provider-id",
+				WebhookAccountID:  "  verified-instagram-webhook-id  ",
+				Username:          "Robyn",
+			}
+			fdb := &connectSessionTestDB{platform: platformName, allowQuickstart: true}
+			store := &fakeManagedOwnershipStore{
+				checkDecision: connectownership.Decision{Kind: connectownership.Create},
+				saveAccount:   db.SocialAccount{ID: "sa_owned_1"},
+			}
+			bus := &recordingConnectBus{}
+			h := NewConnectCallbackHandler(
+				db.New(fdb), encryptor, bus,
+				connect.NewRegistry(fakeOAuthConnector{platform: platformName, profile: profile}),
+				"https://api.example.com", nil, store,
+			)
+			subscriber := &fakeInstagramWebhookSubscriber{}
+			h.instagramWebhookSubscriber = subscriber
+			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/"+platformName+"?code=auth-code&state=state_1", nil)
+			req = withChiParam(req, "platform", platformName)
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if store.checkCalls != 1 || store.saveCalls != 1 {
+				t.Fatalf("ownership check/save calls = %d/%d, want 1/1", store.checkCalls, store.saveCalls)
+			}
+			wantProviderIdentity := "verified-provider-id"
+			if platformName == "instagram" {
+				wantProviderIdentity = "verified-instagram-webhook-id"
+			}
+			if store.checkKey.WorkspaceID != "ws_1" || store.checkKey.ProfileID != "pr_1" ||
+				store.checkKey.Platform != platformName || store.checkKey.ProviderIdentity != wantProviderIdentity ||
+				store.checkKey.ExternalUserID != "user_123" {
+				t.Fatalf("ownership check key = %+v", store.checkKey)
+			}
+			if store.saveRequest.WorkspaceID != "ws_1" || store.saveRequest.ProfileID != "pr_1" ||
+				store.saveRequest.Platform != platformName || store.saveRequest.ProviderIdentity != wantProviderIdentity ||
+				store.saveRequest.ExternalUserID != "user_123" {
+				t.Fatalf("ownership save request = %+v", store.saveRequest)
+			}
+			if fdb.refreshManagedCalls != 0 || fdb.upsertManagedCalls != 0 || fdb.createManagedCalls != 0 {
+				t.Fatalf("legacy save calls = refresh %d/upsert %d/create %d", fdb.refreshManagedCalls, fdb.upsertManagedCalls, fdb.createManagedCalls)
+			}
+			if fdb.completedAcctID != "sa_owned_1" || bus.calls != 1 {
+				t.Fatalf("completed account/bus calls = %q/%d", fdb.completedAcctID, bus.calls)
+			}
+			if platformName == "instagram" {
+				if subscriber.calls != 1 || subscriber.accountID != wantProviderIdentity {
+					t.Fatalf("Instagram subscriber = calls %d/account %q", subscriber.calls, subscriber.accountID)
+				}
+			} else if subscriber.calls != 0 {
+				t.Fatalf("non-Instagram subscriber calls = %d", subscriber.calls)
+			}
+		})
+	}
+}
+
+func TestConnectCallbackRejectsEveryOwnershipConflictWithoutSideEffects(t *testing.T) {
+	conflicts := []connectownership.Decision{
+		{Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictOwnerBYO, MatchCount: 1},
+		{Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictManagedUserMismatch, MatchCount: 1},
+		{Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictProfileMismatch, MatchCount: 1},
+		{Kind: connectownership.Conflict, ConflictClass: connectownership.ConflictAmbiguousMatches, MatchCount: 2},
+	}
+	for _, conflict := range conflicts {
+		t.Run(string(conflict.ConflictClass), func(t *testing.T) {
+			var logs bytes.Buffer
+			previousLogger := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+			encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fdb := &connectSessionTestDB{platform: "instagram", allowQuickstart: true}
+			store := &fakeManagedOwnershipStore{checkDecision: conflict}
+			bus := &recordingConnectBus{}
+			h := NewConnectCallbackHandler(
+				db.New(fdb), encryptor, bus,
+				connect.NewRegistry(fakeOAuthConnector{platform: "instagram", profile: &connect.Profile{
+					ExternalAccountID: "provider-secret",
+					WebhookAccountID:  "webhook-secret",
+					Username:          "Robyn",
+				}}),
+				"https://api.example.com", nil, store,
+			)
+			subscriber := &fakeInstagramWebhookSubscriber{}
+			h.instagramWebhookSubscriber = subscriber
+			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
+			req = withChiParam(req, "platform", "instagram")
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if store.saveCalls != 0 || subscriber.calls != 0 || bus.calls != 0 || fdb.completedAcctID != "" {
+				t.Fatalf("save/subscribe/publish/completed = %d/%d/%d/%q", store.saveCalls, subscriber.calls, bus.calls, fdb.completedAcctID)
+			}
+			output := logs.String() + rec.Body.String()
+			for _, forbidden := range []string{"provider-secret", "webhook-secret", "user_123", "access-token", "refresh-token"} {
+				if strings.Contains(output, forbidden) {
+					t.Fatalf("ownership conflict output leaked %q: %s", forbidden, output)
+				}
+			}
+			for _, required := range []string{"workspace_id=ws_1", "platform=instagram", "conflict_class=" + string(conflict.ConflictClass), fmt.Sprintf("match_count=%d", conflict.MatchCount)} {
+				if !strings.Contains(logs.String(), required) {
+					t.Fatalf("ownership conflict log missing %q: %s", required, logs.String())
+				}
+			}
+		})
+	}
+}
+
+func TestConnectCallbackLateOwnershipConflictHasZeroDownstreamSideEffects(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{platform: "instagram", allowQuickstart: true}
+	store := &fakeManagedOwnershipStore{
+		checkDecision: connectownership.Decision{Kind: connectownership.Create},
+		saveErr:       connectownership.ErrOwnershipConflict,
+	}
+	bus := &recordingConnectBus{}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, bus,
+		connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
+		"https://api.example.com", nil, store,
+	)
+	subscriber := &fakeInstagramWebhookSubscriber{}
+	h.instagramWebhookSubscriber = subscriber
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "instagram")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if store.saveCalls != 1 || subscriber.calls != 0 || bus.calls != 0 || fdb.completedAcctID != "" {
+		t.Fatalf("save/subscribe/publish/completed = %d/%d/%d/%q", store.saveCalls, subscriber.calls, bus.calls, fdb.completedAcctID)
+	}
+}
+
+func TestConnectCallbackRejectsMissingVerifiedProviderIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		platform string
+		profile  *connect.Profile
+	}{
+		{name: "Instagram webhook identity", platform: "instagram", profile: &connect.Profile{ExternalAccountID: "provider-a"}},
+		{name: "non-Instagram external account identity", platform: "threads", profile: &connect.Profile{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+			if err != nil {
+				t.Fatal(err)
+			}
+			fdb := &connectSessionTestDB{platform: tc.platform, allowQuickstart: true}
+			store := &fakeManagedOwnershipStore{}
+			bus := &recordingConnectBus{}
+			h := NewConnectCallbackHandler(
+				db.New(fdb), encryptor, bus,
+				connect.NewRegistry(fakeOAuthConnector{platform: tc.platform, profile: tc.profile}),
+				"https://api.example.com", nil, store,
+			)
+			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/"+tc.platform+"?code=auth-code&state=state_1", nil)
+			req = withChiParam(req, "platform", tc.platform)
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			if rec.Code != http.StatusBadGateway {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if store.checkCalls != 0 || store.saveCalls != 0 || bus.calls != 0 || fdb.completedAcctID != "" {
+				t.Fatalf("check/save/publish/completed = %d/%d/%d/%q", store.checkCalls, store.saveCalls, bus.calls, fdb.completedAcctID)
+			}
+		})
+	}
+}
+
+func TestConnectCallbackAllowsExactSameOwnerReconnect(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fdb := &connectSessionTestDB{platform: "threads", allowQuickstart: true}
+	store := &fakeManagedOwnershipStore{
+		checkDecision: connectownership.Decision{Kind: connectownership.Reconnect, AccountID: "sa_existing"},
+		saveAccount:   db.SocialAccount{ID: "sa_existing"},
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{},
+		connect.NewRegistry(fakeOAuthConnector{platform: "threads"}),
+		"https://api.example.com", nil, store,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/threads?code=auth-code&state=state_1", nil)
+	req = withChiParam(req, "platform", "threads")
+	rec := httptest.NewRecorder()
+
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusOK || store.saveCalls != 1 || fdb.completedAcctID != "sa_existing" {
+		t.Fatalf("status/save/completed = %d/%d/%q body=%s", rec.Code, store.saveCalls, fdb.completedAcctID, rec.Body.String())
+	}
+}
+
+type fakeManagedOwnershipStore struct {
+	checkDecision connectownership.Decision
+	checkErr      error
+	saveAccount   db.SocialAccount
+	saveErr       error
+	checkCalls    int
+	saveCalls     int
+	checkKey      connectownership.OwnershipKey
+	saveRequest   connectownership.SaveRequest
+}
+
+type connectSessionOwnershipStore struct {
+	database *connectSessionTestDB
+}
+
+func newConnectSessionOwnershipStore(database *connectSessionTestDB) *connectSessionOwnershipStore {
+	return &connectSessionOwnershipStore{database: database}
+}
+
+func (s *connectSessionOwnershipStore) Check(context.Context, connectownership.OwnershipKey) (connectownership.Decision, error) {
+	switch s.database.activeAccountLookupErr {
+	case nil:
+		return connectownership.Decision{Kind: connectownership.Reconnect, AccountID: "sa_active_1"}, nil
+	case pgx.ErrNoRows:
+		return connectownership.Decision{Kind: connectownership.Create}, nil
+	default:
+		return connectownership.Decision{}, s.database.activeAccountLookupErr
+	}
+}
+
+func (s *connectSessionOwnershipStore) Save(ctx context.Context, request connectownership.SaveRequest) (db.SocialAccount, error) {
+	queries := db.New(s.database)
+	if s.database.activeAccountLookupErr == nil {
+		request.Refresh.ID = "sa_active_1"
+		return queries.RefreshConnectedSocialAccount(ctx, request.Refresh)
+	}
+	return queries.UpsertManagedSocialAccount(ctx, request.Upsert)
+}
+
+func (f *fakeManagedOwnershipStore) Check(_ context.Context, key connectownership.OwnershipKey) (connectownership.Decision, error) {
+	f.checkCalls++
+	f.checkKey = key
+	return f.checkDecision, f.checkErr
+}
+
+func (f *fakeManagedOwnershipStore) Save(_ context.Context, request connectownership.SaveRequest) (db.SocialAccount, error) {
+	f.saveCalls++
+	f.saveRequest = request
+	return f.saveAccount, f.saveErr
+}
+
+type recordingConnectBus struct {
+	calls       int
+	workspaceID string
+	event       string
+}
+
+func (b *recordingConnectBus) Publish(_ context.Context, workspaceID, event string, _ any) {
+	b.calls++
+	b.workspaceID = workspaceID
+	b.event = event
 }
 
 type connectSessionTestDB struct {
