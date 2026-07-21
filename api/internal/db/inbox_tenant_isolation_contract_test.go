@@ -54,7 +54,8 @@ func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
 	return compactInboxTenantIsolationSQL(inboxTenantIsolationRawQuery(t, source, name))
 }
 
-const inboxManagedScopePredicate = "and ( sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text )"
+const inboxManagedScopeOrTerm = "sqlc.arg('workspace_scope')::boolean or ( sa.connection_type = 'managed' and sa.external_user_id = sqlc.arg('external_user_id')::text )"
+const inboxManagedScopePredicate = "and ( " + inboxManagedScopeOrTerm + " )"
 
 func inboxManagedScopePredicateViolation(query, workspaceExpr string) string {
 	if count := strings.Count(query, inboxManagedScopePredicate); count != 1 {
@@ -283,7 +284,7 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 
 func TestInboxManagedUserReadScopeContractRejectsSemanticMutations(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
-	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+	orTerm := inboxManagedScopeOrTerm
 
 	for _, tt := range []struct {
 		name          string
@@ -347,7 +348,7 @@ func TestInboxManagedUserAccountEnumeration(t *testing.T) {
 		t.Fatal("account enumeration must not infer workspace scope from a nullable or empty managed-user id")
 	}
 
-	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+	orTerm := inboxManagedScopeOrTerm
 	mutations := []struct {
 		name  string
 		query string
@@ -415,7 +416,7 @@ func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
 		}
 	}
 
-	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+	orTerm := inboxManagedScopeOrTerm
 	mutations := []struct {
 		name  string
 		query string
@@ -447,7 +448,7 @@ func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
 		"join profiles p on p.id = sa.profile_id",
 		"where p.workspace_id = $1",
 		"and sa.id = any($2::text[])",
-		"and ( $3::boolean or sa.external_user_id = $4::text )",
+		"and ( $3::boolean or ( sa.connection_type = 'managed' and sa.external_user_id = $4::text ) )",
 	} {
 		if !strings.Contains(generatedQuery, want) {
 			t.Errorf("generated CountInboxAccountsInScope missing %q in %s", want, generatedQuery)
@@ -504,7 +505,7 @@ func TestInboxManagedUserAccountEnumerationCallSites(t *testing.T) {
 
 func TestInboxManagedUserMutations(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
-	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+	orTerm := inboxManagedScopeOrTerm
 
 	for _, tt := range []struct {
 		name          string
@@ -777,6 +778,7 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		INSERT INTO profiles (id, name, workspace_id)
 		VALUES
 		  ('inbox-isolation-profile-1', 'Inbox Isolation One', 'inbox-isolation-workspace-1'),
+		  ('inbox-isolation-profile-byo', 'Inbox Isolation BYO', 'inbox-isolation-workspace-1'),
 		  ('inbox-isolation-profile-2', 'Inbox Isolation Two', 'inbox-isolation-workspace-2')
 	`); err != nil {
 		t.Fatalf("seed profiles: %v", err)
@@ -827,10 +829,11 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		    'token-b-twitter', 'external-b-twitter', '{}'::jsonb,
 		    'managed', 'managed-b', 'active', NULL
 		  ),
+		  -- Deliberately model a legacy/anomalous BYO row that carries a managed-user ID.
 		  (
-		    'inbox-isolation-account-byo', 'inbox-isolation-profile-1', 'instagram',
+		    'inbox-isolation-account-byo', 'inbox-isolation-profile-byo', 'instagram',
 		    'token-byo', 'external-byo', '{"instagram_webhook_user_id":"webhook-user-byo"}'::jsonb,
-		    'byo', NULL, 'active', NULL
+		    'byo', 'managed-a', 'active', NULL
 		  ),
 		  (
 		    'inbox-isolation-account-byo-facebook', 'inbox-isolation-profile-1', 'facebook',

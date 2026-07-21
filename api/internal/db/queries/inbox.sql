@@ -17,7 +17,10 @@ WHERE i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
@@ -37,7 +40,10 @@ WHERE i.id = $1
   AND p.workspace_id = $2
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   );
 
 -- name: GetInboxItemByExternalID :one
@@ -281,7 +287,10 @@ WHERE sa.id = i.social_account_id
   AND p.workspace_id = $2
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   );
 
 -- name: UpdateInboxItemAuthorMetadata :execrows
@@ -353,7 +362,10 @@ WHERE sa.id = i.social_account_id
   AND p.workspace_id = @workspace_id
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   )
   AND i.is_read = false
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm');
@@ -369,7 +381,10 @@ WHERE sa.id = i.social_account_id
   AND p.workspace_id = $1
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   )
   AND i.social_account_id = $2
   AND i.source = $3
@@ -391,7 +406,10 @@ WHERE i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   )
   AND i.is_read = false
   AND i.is_own = false
@@ -513,7 +531,10 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = sqlc.arg('workspace_id')
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
@@ -528,7 +549,10 @@ WHERE p.workspace_id = @workspace_id
   AND sa.id = ANY(@account_ids::TEXT[])
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
-    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
   );
 
 -- name: FindXInboxAccountForApp :one
