@@ -54,6 +54,25 @@ func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
 	return compactInboxTenantIsolationSQL(inboxTenantIsolationRawQuery(t, source, name))
 }
 
+const inboxManagedReadScopePredicate = "and ( sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text )"
+
+func inboxManagedReadScopePredicateViolation(query, workspaceExpr string) string {
+	if count := strings.Count(query, inboxManagedReadScopePredicate); count != 1 {
+		return "managed read scope predicate must occur exactly once with OR grouped inside parentheses"
+	}
+
+	storedWorkspaceAt := strings.Index(query, "i.workspace_id = "+workspaceExpr)
+	derivedWorkspaceAt := strings.Index(query, "p.workspace_id = "+workspaceExpr)
+	managedScopeAt := strings.Index(query, inboxManagedReadScopePredicate)
+	if storedWorkspaceAt < 0 || derivedWorkspaceAt < 0 {
+		return "stored and derived workspace predicates must both be present"
+	}
+	if managedScopeAt <= storedWorkspaceAt || managedScopeAt <= derivedWorkspaceAt {
+		return "managed read scope predicate must follow stored and derived workspace predicates"
+	}
+	return ""
+}
+
 func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "migrations/119_inbox_tenant_isolation.sql")
 	parts := strings.Split(source, "-- +goose Down")
@@ -199,13 +218,8 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 				t.Errorf("%s must authorize through UPDATE ... FROM, got %s", tt.name, query)
 			}
 			if tt.managedRead {
-				for _, want := range []string{
-					"sqlc.arg('workspace_scope')::boolean",
-					"sa.external_user_id = sqlc.arg('external_user_id')::text",
-				} {
-					if !strings.Contains(query, want) {
-						t.Errorf("%s must require an explicit workspace or managed-user scope; missing %q in %s", tt.name, want, query)
-					}
+				if violation := inboxManagedReadScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
+					t.Errorf("%s %s: %s", tt.name, violation, query)
 				}
 				if strings.Contains(query, "coalesce(") {
 					t.Errorf("%s must not infer workspace scope from a nullable or empty managed-user id: %s", tt.name, query)
@@ -221,6 +235,50 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 				t.Errorf("%s must retain existing active-account filter %q", name, want)
 			}
 		}
+	}
+}
+
+func TestInboxManagedUserReadScopeContractRejectsSemanticMutations(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+
+	for _, tt := range []struct {
+		name          string
+		workspaceExpr string
+	}{
+		{name: "ListInboxItemsByWorkspace", workspaceExpr: "$1"},
+		{name: "CountUnreadByWorkspace", workspaceExpr: "$1"},
+		{name: "GetInboxItem", workspaceExpr: "$2"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, tt.name)
+			if violation := inboxManagedReadScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
+				t.Fatalf("valid query rejected: %s", violation)
+			}
+
+			mutations := []struct {
+				name  string
+				query string
+			}{
+				{name: "OR changed to AND", query: strings.Replace(
+					query,
+					orTerm,
+					"sqlc.arg('workspace_scope')::boolean and sa.external_user_id = sqlc.arg('external_user_id')::text",
+					1,
+				)},
+				{name: "grouping removed", query: strings.Replace(query, "and ( "+orTerm+" )", "and "+orTerm, 1)},
+			}
+			for _, mutation := range mutations {
+				t.Run(mutation.name, func(t *testing.T) {
+					if mutation.query == query {
+						t.Fatal("test mutation did not change the query")
+					}
+					if violation := inboxManagedReadScopePredicateViolation(mutation.query, tt.workspaceExpr); violation == "" {
+						t.Fatalf("semantic mutation escaped the managed read scope contract: %s", mutation.query)
+					}
+				})
+			}
+		})
 	}
 }
 
