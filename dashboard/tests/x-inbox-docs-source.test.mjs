@@ -74,6 +74,22 @@ test("Inbox API docs keep explicit scope API-key-only and publish the canonical 
   }
 });
 
+test("Inbox list flag-off docs retain general scope and authorization errors", async () => {
+  const list = await source(apiPages[1]);
+  assert.doesNotMatch(list, /ERRORS\.filter\([^\n]*error\.code/, "flag-off docs must not remove the entire error.code field");
+  assert.match(list, /const errors = ERRORS\.map\(\(field\) => \(/, "flag-off docs must map the error description in place");
+
+  const errorsStart = list.indexOf("const errors = ERRORS.map");
+  const errorsEnd = list.indexOf("const guideLinks", errorsStart);
+  assert.ok(errorsStart >= 0 && errorsEnd > errorsStart, "flag-off error mapping must be inspectable");
+  const flagOffMapping = list.slice(errorsStart, errorsEnd);
+  assert.match(flagOffMapping, /field\.name === "error\.code" && !xDMsEnabled/);
+  for (const code of ["INBOX_SCOPE_REQUIRED", "INBOX_SCOPE_INVALID", "MANAGED_USER_NOT_FOUND", "INSUFFICIENT_ROLE", "API_KEY_CREATOR_REQUIRED", "UNAUTHORIZED", "PLAN_FEATURE_NOT_AVAILABLE"]) {
+    assert.match(flagOffMapping, new RegExp(`\\b${code}\\b`), `flag-off error docs must retain ${code}`);
+  }
+  assert.doesNotMatch(flagOffMapping, /\bFEATURE_NOT_AVAILABLE\b/, "flag-off error docs must omit only the X DM rollout error");
+});
+
 test("deployed Inbox acceptance is fixture-only and covers HTTP plus WebSocket isolation", async () => {
   const acceptance = await source("../scripts/inbox-scope-acceptance.mjs");
   for (const name of [

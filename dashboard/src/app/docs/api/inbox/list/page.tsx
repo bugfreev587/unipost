@@ -54,7 +54,11 @@ export default async function InboxListPage() {
         ? { ...field, description: "Comment or reply text." }
         : field
     ));
-  const errors = ERRORS.filter((field) => xDMsEnabled || field.name !== "error.code");
+  const errors = ERRORS.map((field) => (
+    field.name === "error.code" && !xDMsEnabled
+      ? { ...field, description: "INBOX_SCOPE_REQUIRED, INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, or PLAN_FEATURE_NOT_AVAILABLE." }
+      : field
+  ));
   const guideLinks = filterDocsNavigation([
     { label: "Work with X comments", href: "/docs/guides/x/comments" },
     { label: "Work with X direct messages", href: "/docs/guides/x/direct-messages" },
