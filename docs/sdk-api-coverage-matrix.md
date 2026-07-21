@@ -113,10 +113,12 @@ These routes exist in the backend but are not yet covered by the hourly publishe
 | `GET /v1/limits` | Direct smoke | Covered by `scripts/smoke-test.sh`. |
 | `GET /v1/members` | Direct smoke | Read path covered by `scripts/smoke-test.sh`; mutating invite/role paths are not covered. |
 | `GET /v1/audit-log` | Direct smoke | Covered by `scripts/smoke-test.sh`. |
-| `GET /v1/inbox/*` and `POST /v1/inbox/*` | Partial direct smoke | `unread-count` is covered by `scripts/smoke-test.sh` and may pass as 200 or 402 plan-gated. |
+| `GET /v1/inbox/*` and `POST /v1/inbox/*` | Scoped smoke + deployed acceptance | `unread-count` is covered with explicit owner/admin `inbox_scope=workspace` and may pass as 200 or 402 plan-gated. `scripts/inbox-scope-acceptance.mjs` covers managed-user A/B list isolation, cross-scope 404s for get/read/reply/thread-state, missing-scope rejection, owner/admin aggregate reads, and WebSocket fan-out. |
 | `GET /v1/me/*`, notifications, tutorials, activation | No | Clerk-session-only; not suitable for API-key SDK regression. |
 | `GET /v1/admin/*` | No | Admin-session-only; separate admin smoke recommended. |
 
 ## Notes
 
 - `facebook/page-insights`, `platform-credentials`, `retryResult`, `deliveryJobs.retry`, `deliveryJobs.cancel`, and live publish are environment-sensitive. Validation covers them conditionally or via safe negative-path checks so the scripts remain runnable in normal workspaces.
+- Inbox deployed acceptance requires UniPost-owned, non-customer fixtures in one workspace: two managed-user IDs, one existing Inbox item per managed user, a server-side creator-bound API key whose creator is still an owner/admin, and an explicit target API URL. Fixture B must already be read, its thread-state mutation repeats its current value, and its reply credential must be non-deliverable so the negative cross-scope probe cannot reach a provider.
+- WebSocket isolation acceptance additionally requires `INBOX_ACCEPT_EVENT_DATABASE_URL` and the explicit opt-in `INBOX_ACCEPT_ALLOW_PG_NOTIFY=1`. The script requires `psql`, sends only ephemeral `pg_notify` events on `inbox_events`, performs no database table reads or writes, never calls provider APIs, and must not be run with customer accounts.

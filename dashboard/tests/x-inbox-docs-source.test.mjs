@@ -22,6 +22,8 @@ const guidePages = [
   "src/app/docs/guides/x/reconnect-permissions/page.tsx",
 ];
 
+const scopedInboxPages = [...apiPages, ...guidePages];
+
 const publicPaths = [
   "/docs/api/inbox/list",
   "/docs/api/inbox/reply",
@@ -37,6 +39,53 @@ test("Inbox docs publish only the shipped normalized source contract", async () 
     assert.match(inboxReference, new RegExp(`\\b${value}\\b`), `${value} should be documented`);
   }
   assert.doesNotMatch(inboxReference, /youtube_comment/);
+});
+
+test("Inbox API docs require explicit server-side scope on every example", async () => {
+  const files = await Promise.all(scopedInboxPages.map(source));
+  const inboxReference = files[0];
+  const corpus = files.join("\n");
+
+  assert.match(inboxReference, /inbox_scope=managed_user&external_user_id=user_123/);
+  assert.match(inboxReference, /inbox_scope=workspace/);
+  assert.match(inboxReference, /INBOX_SCOPE_REQUIRED/);
+  assert.match(corpus, /API key[^\n]{0,160}server-side/i);
+  assert.match(corpus, /authenticated[^\n]{0,160}external_user_id/i);
+
+  for (const [index, file] of files.entries()) {
+    const urls = file.match(/https:\/\/api\.unipost\.dev\/v1\/inbox[^"`\\\s]*/g) ?? [];
+    assert.ok(urls.length > 0, `${scopedInboxPages[index]} must include an Inbox request example`);
+    for (const url of urls) {
+      assert.match(url, /[?&]inbox_scope=(managed_user|workspace)(?:&|$)/, `${scopedInboxPages[index]} has an unscoped Inbox URL: ${url}`);
+      if (url.includes("inbox_scope=managed_user")) {
+        assert.match(url, /[?&]external_user_id=user_123(?:&|$)/, `${scopedInboxPages[index]} managed-user example lacks external_user_id: ${url}`);
+      }
+    }
+  }
+});
+
+test("deployed Inbox acceptance is fixture-only and covers HTTP plus WebSocket isolation", async () => {
+  const acceptance = await source("../scripts/inbox-scope-acceptance.mjs");
+  for (const name of [
+    "INBOX_ACCEPT_API_URL",
+    "INBOX_ACCEPT_API_KEY",
+    "INBOX_ACCEPT_EXTERNAL_USER_A",
+    "INBOX_ACCEPT_EXTERNAL_USER_B",
+    "INBOX_ACCEPT_ITEM_A",
+    "INBOX_ACCEPT_ITEM_B",
+    "INBOX_ACCEPT_EVENT_DATABASE_URL",
+    "INBOX_ACCEPT_ALLOW_PG_NOTIFY",
+  ]) {
+    assert.match(acceptance, new RegExp(name));
+  }
+  for (const operation of ["get", "read", "reply", "thread-state"]) {
+    assert.match(acceptance, new RegExp(operation));
+  }
+  assert.match(acceptance, /INBOX_SCOPE_REQUIRED/);
+  assert.match(acceptance, /WebSocket/);
+  assert.match(acceptance, /pg_notify/);
+  assert.match(acceptance, /fixture/i);
+  assert.doesNotMatch(acceptance, /api\.unipost\.dev\/2|graph\.facebook\.com|api\.x\.com|api\.instagram\.com/);
 });
 
 test("X Inbox references and guides link to each other in both directions", async () => {
@@ -134,7 +183,7 @@ test("X comments and DM guides show the complete confirmation follow-up request"
   for (const path of [guidePages[0], guidePages[1]]) {
     const guide = await source(path);
     assert.ok(
-      guide.match(/curl -X POST "https:\/\/api\.unipost\.dev\/v1\/inbox\/sync"/g)?.length >= 2,
+      guide.match(/curl -X POST "https:\/\/api\.unipost\.dev\/v1\/inbox\/sync\?inbox_scope=managed_user&external_user_id=user_123"/g)?.length >= 2,
       path + " must show both estimate and confirmed sync calls",
     );
     assert.match(guide, /confirmation_token/);

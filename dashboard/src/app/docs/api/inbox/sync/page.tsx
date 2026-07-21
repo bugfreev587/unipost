@@ -8,7 +8,11 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://unipost.dev/docs/api/inbox/sync" },
 };
 
-const AUTH: ApiFieldItem[] = [{ name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key. Inbox requires the Basic plan or higher." }];
+const AUTH: ApiFieldItem[] = [{ name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key kept server-side. Inbox requires the Basic plan or higher." }];
+const QUERY: ApiFieldItem[] = [
+  { name: "inbox_scope", type: "string", description: "Required for API-key requests. Use managed_user for one app user or workspace with a creator-bound owner/admin key." },
+  { name: "external_user_id", type: "string", optional: true, description: "Required only for managed_user. Derive it from the authenticated app user on your server." },
+];
 const BODY: ApiFieldItem[] = [
   { name: "x_backfill", type: "object", description: "Include this object to run a bounded X reply/DM backfill. Omit it for the existing non-X Inbox sync." },
   { name: "x_backfill.account_id", type: "string", optional: true, description: "Limit the operation to one eligible connected X account." },
@@ -28,6 +32,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.details[].missing_scopes", type: "string[]", optional: true, description: "X permissions that require reconnect." },
 ];
 const ERRORS: ApiFieldItem[] = [
+  { name: "inbox_scope_required", type: "400", description: "Every Inbox request must choose managed_user or workspace scope." },
   { name: "feature_not_available", type: "403", description: "A DM-only backfill was requested while X DMs are unavailable to the workspace." },
   { name: "plan_feature_not_available", type: "402", description: "Inbox is unavailable below Basic." },
   { name: "validation_error", type: "400/409", description: "The confirmation token is invalid, expired, already consumed, or no longer matches the frozen request." },
@@ -97,9 +102,9 @@ export default async function InboxSyncPage() {
         : "Runs existing Inbox polling or a bounded X public-reply backfill. The inbound safety cap remains active."}
       method="POST"
       path="/v1/inbox/sync"
-      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Request Body", items: body }]}
-      responses={[{ code: "200", fields: response }, { code: "400", fields: errors }, { code: "402", fields: errors }, { code: "409", fields: errors }]}
-      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+      requestSections={[{ title: "Authorization", items: AUTH }, { title: "Query Params", items: QUERY }, { title: "Request Body", items: body }]}
+      responses={[{ code: "200", fields: response }, { code: "400", fields: errors }, { code: "403", fields: errors }, { code: "404", fields: errors }, { code: "402", fields: errors }, { code: "409", fields: errors }]}
+      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/sync?inbox_scope=managed_user&external_user_id=user_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '${syncBody}'` }]}
