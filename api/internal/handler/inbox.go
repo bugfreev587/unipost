@@ -549,7 +549,10 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
+	account, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+		ID:          item.SocialAccountID,
+		WorkspaceID: workspaceID,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Account not found")
 		return
@@ -1122,7 +1125,11 @@ func (h *InboxHandler) XOutboundStatus(w http.ResponseWriter, r *http.Request) {
 		ID:          outbound.InboxItemID,
 		WorkspaceID: workspaceID,
 	})
-	if targetErr == nil && target.Source == "x_dm" {
+	if targetErr != nil || target.SocialAccountID != outbound.SocialAccountID {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
+		return
+	}
+	if target.Source == "x_dm" {
 		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 		if !ok {
 			return
