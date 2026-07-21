@@ -471,7 +471,7 @@ WHERE social_account_id = $1
 -- subscription response. Multiple workspaces may intentionally share it.
 SELECT sa.id, sa.external_account_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
-       p.workspace_id
+       p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = 'instagram'
@@ -487,7 +487,7 @@ ORDER BY sa.connected_at DESC, sa.id;
 -- dedicated worker; including it here keeps shared Inbox discovery complete.
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode,
+       sa.x_app_mode, sa.external_user_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
        COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
@@ -605,7 +605,7 @@ ORDER BY sa.connected_at DESC, sa.id;
 -- name: FindAllSocialAccountsByPlatformAndExternalID :many
 -- Webhook routing: find every active social account for platform +
 -- external_account_id, joining to profiles for workspace_id.
-SELECT sa.id, sa.external_account_id, p.workspace_id
+SELECT sa.id, sa.external_account_id, p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1

@@ -89,6 +89,33 @@ func inboxAccountScopePredicateViolation(query string) string {
 	return ""
 }
 
+func TestInboxScopedNotificationOwnerProjectionContract(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	generated := readInboxTenantIsolationContractFile(t, "inbox.sql.go")
+
+	for _, queryName := range []string{
+		"FindAllActiveInstagramAccountsByWebhookUserID",
+		"FindAllSocialAccountsByPlatformAndExternalID",
+		"ListAllInboxAccounts",
+	} {
+		t.Run(queryName, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, queryName)
+			if count := strings.Count(query, "sa.external_user_id"); count != 1 {
+				t.Fatalf("%s must project nullable DB notification owner exactly once, got %d in %s", queryName, count, query)
+			}
+			if strings.Contains(query, "coalesce(sa.external_user_id") {
+				t.Fatalf("%s must preserve NULL/BYO ownership without COALESCE: %s", queryName, query)
+			}
+
+			structName := queryName + "Row"
+			structPattern := regexp.MustCompile(`(?s)type ` + regexp.QuoteMeta(structName) + ` struct \{.*?ExternalUserID\s+pgtype\.Text\s+`)
+			if !structPattern.MatchString(generated) {
+				t.Fatalf("generated %s must expose ExternalUserID as pgtype.Text", structName)
+			}
+		})
+	}
+}
+
 func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "migrations/119_inbox_tenant_isolation.sql")
 	parts := strings.Split(source, "-- +goose Down")

@@ -317,7 +317,7 @@ func (q *Queries) DeleteXInboxOutboundAfterUsageReversal(ctx context.Context, id
 const findAllActiveInstagramAccountsByWebhookUserID = `-- name: FindAllActiveInstagramAccountsByWebhookUserID :many
 SELECT sa.id, sa.external_account_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
-       p.workspace_id
+       p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = 'instagram'
@@ -328,10 +328,11 @@ ORDER BY sa.connected_at DESC, sa.id
 `
 
 type FindAllActiveInstagramAccountsByWebhookUserIDRow struct {
-	ID                     string `json:"id"`
-	ExternalAccountID      string `json:"external_account_id"`
-	InstagramWebhookUserID string `json:"instagram_webhook_user_id"`
-	WorkspaceID            string `json:"workspace_id"`
+	ID                     string      `json:"id"`
+	ExternalAccountID      string      `json:"external_account_id"`
+	InstagramWebhookUserID string      `json:"instagram_webhook_user_id"`
+	WorkspaceID            string      `json:"workspace_id"`
+	ExternalUserID         pgtype.Text `json:"external_user_id"`
 }
 
 // Route Instagram webhook payloads only through the identity captured from the
@@ -350,6 +351,7 @@ func (q *Queries) FindAllActiveInstagramAccountsByWebhookUserID(ctx context.Cont
 			&i.ExternalAccountID,
 			&i.InstagramWebhookUserID,
 			&i.WorkspaceID,
+			&i.ExternalUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -362,7 +364,7 @@ func (q *Queries) FindAllActiveInstagramAccountsByWebhookUserID(ctx context.Cont
 }
 
 const findAllSocialAccountsByPlatformAndExternalID = `-- name: FindAllSocialAccountsByPlatformAndExternalID :many
-SELECT sa.id, sa.external_account_id, p.workspace_id
+SELECT sa.id, sa.external_account_id, p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
@@ -378,9 +380,10 @@ type FindAllSocialAccountsByPlatformAndExternalIDParams struct {
 }
 
 type FindAllSocialAccountsByPlatformAndExternalIDRow struct {
-	ID                string `json:"id"`
-	ExternalAccountID string `json:"external_account_id"`
-	WorkspaceID       string `json:"workspace_id"`
+	ID                string      `json:"id"`
+	ExternalAccountID string      `json:"external_account_id"`
+	WorkspaceID       string      `json:"workspace_id"`
+	ExternalUserID    pgtype.Text `json:"external_user_id"`
 }
 
 // Webhook routing: find every active social account for platform +
@@ -394,7 +397,12 @@ func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Conte
 	items := []FindAllSocialAccountsByPlatformAndExternalIDRow{}
 	for rows.Next() {
 		var i FindAllSocialAccountsByPlatformAndExternalIDRow
-		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExternalAccountID,
+			&i.WorkspaceID,
+			&i.ExternalUserID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -990,7 +998,7 @@ func (q *Queries) GetXInboxReplyByIdempotencyKey(ctx context.Context, arg GetXIn
 const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode,
+       sa.x_app_mode, sa.external_user_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
        COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
@@ -1014,6 +1022,7 @@ type ListAllInboxAccountsRow struct {
 	Scope                  []string    `json:"scope"`
 	ConnectionType         string      `json:"connection_type"`
 	XAppMode               pgtype.Text `json:"x_app_mode"`
+	ExternalUserID         pgtype.Text `json:"external_user_id"`
 	InstagramWebhookUserID string      `json:"instagram_webhook_user_id"`
 	PlanID                 string      `json:"plan_id"`
 	PlanAllowsInbox        bool        `json:"plan_allows_inbox"`
@@ -1042,6 +1051,7 @@ func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccou
 			&i.Scope,
 			&i.ConnectionType,
 			&i.XAppMode,
+			&i.ExternalUserID,
 			&i.InstagramWebhookUserID,
 			&i.PlanID,
 			&i.PlanAllowsInbox,

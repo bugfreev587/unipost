@@ -50,6 +50,61 @@ func TestInboxXBackfillEstimateIsDeterministicAndBYOIsFree(t *testing.T) {
 	}
 }
 
+func TestInboxManagedSyncNotificationCounts(t *testing.T) {
+	counts := newInboxSyncNotificationCounts()
+	counts.Record(pgtype.Text{String: "managed-a", Valid: true})
+	counts.Record(pgtype.Text{String: "managed-a", Valid: true})
+	counts.Record(pgtype.Text{String: "managed-b", Valid: true})
+	counts.Record(pgtype.Text{})
+
+	managed := map[string]int{}
+	aggregate := 0
+	notifyInboxSyncComplete(
+		context.Background(), "workspace-1", counts,
+		func(_ context.Context, workspaceID, externalUserID string, event map[string]any) {
+			if workspaceID != "workspace-1" || event["type"] != "inbox.sync_complete" {
+				t.Fatalf("managed event = workspace %q payload %#v", workspaceID, event)
+			}
+			managed[externalUserID] = event["new_items"].(int)
+		},
+		func(_ context.Context, workspaceID string, event map[string]any) {
+			if workspaceID != "workspace-1" || event["type"] != "inbox.sync_complete" {
+				t.Fatalf("aggregate event = workspace %q payload %#v", workspaceID, event)
+			}
+			aggregate = event["new_items"].(int)
+		},
+	)
+
+	if want := map[string]int{"managed-a": 2, "managed-b": 1}; !reflect.DeepEqual(managed, want) {
+		t.Fatalf("managed counts = %#v, want %#v", managed, want)
+	}
+	if aggregate != 4 {
+		t.Fatalf("aggregate count = %d, want 4 including BYO", aggregate)
+	}
+}
+
+func TestInboxXBackfillManagedSyncNotificationCountsUseDatabaseOwners(t *testing.T) {
+	accounts := []db.SocialAccount{
+		{ID: "account-a", ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},
+		{ID: "account-b", ExternalUserID: pgtype.Text{String: "managed-b", Valid: true}},
+		{ID: "account-byo"},
+	}
+	results := []xBackfillAccountResult{
+		{AccountID: "account-a", Accepted: 2},
+		{AccountID: "account-b", Accepted: 1},
+		{AccountID: "account-byo", Accepted: 3},
+		{AccountID: "payload-managed-b", Accepted: 100},
+	}
+
+	counts := xBackfillSyncNotificationCounts(accounts, results)
+	if got, want := counts.Total(), 6; got != want {
+		t.Fatalf("aggregate accepted = %d, want %d", got, want)
+	}
+	if got, want := counts.Managed(), map[string]int{"managed-a": 2, "managed-b": 1}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("managed accepted = %#v, want DB-owned %#v", got, want)
+	}
+}
+
 func TestInboxXBackfillOperationTokenReferencesOnlyPersistedOperation(t *testing.T) {
 	token, err := signXBackfillOperationToken([]byte("secret"), "operation-1", "nonce-1")
 	if err != nil {

@@ -252,11 +252,55 @@ func TestMetaWebhookInstagramRoutingLogsDoNotContainContent(t *testing.T) {
 	}
 }
 
-func newMetaWebhookRoutingHandler(database *metaWebhookRoutingDB) (*MetaWebhookHandler, *[]string) {
+func TestMetaWebhookNotificationOwnerComesFromDatabaseRoute(t *testing.T) {
+	t.Run("managed owner overrides conflicting payload", func(t *testing.T) {
+		database := &metaWebhookRoutingDB{instagram: map[string][]metaWebhookRoutingAccount{
+			"webhook_user_1": {{
+				id: "sa_1", externalAccountID: "app_scoped_1", webhookAccountID: "webhook_user_1",
+				workspaceID: "ws_1", externalUserID: "managed-a",
+			}},
+		}}
+		handler, notifications := newMetaWebhookRoutingHandler(database)
+		entry := decodeMetaWebhookRoutingEntry(t, `{
+			"id":"webhook_user_1",
+			"changes":[{"field":"comments","value":{"id":"comment_1","text":"private","external_user_id":"managed-b"}}]
+		}`)
+
+		handler.handleInstagramEntry(httptest.NewRequest(http.MethodPost, "/webhooks/meta", nil), entry)
+
+		if got, want := *notifications, []metaWebhookRoutingNotification{{workspaceID: "ws_1", externalUserID: "managed-a"}}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("notifications = %#v, want DB owner %#v", got, want)
+		}
+	})
+
+	t.Run("BYO null owner remains aggregate only", func(t *testing.T) {
+		database := &metaWebhookRoutingDB{external: map[string][]metaWebhookRoutingAccount{
+			"threads:threads_user_1": {{id: "sa_1", externalAccountID: "threads_user_1", workspaceID: "ws_1"}},
+		}}
+		handler, notifications := newMetaWebhookRoutingHandler(database)
+		entry := decodeMetaWebhookRoutingEntry(t, `{
+			"id":"threads_user_1",
+			"changes":[{"field":"replies","value":{"id":"reply_1","text":"private","external_user_id":"managed-b"}}]
+		}`)
+
+		handler.handleThreadsEntry(httptest.NewRequest(http.MethodPost, "/webhooks/meta", nil), entry)
+
+		if got, want := *notifications, []metaWebhookRoutingNotification{{workspaceID: "ws_1"}}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("notifications = %#v, want BYO aggregate %#v", got, want)
+		}
+	})
+}
+
+type metaWebhookRoutingNotification struct {
+	workspaceID    string
+	externalUserID string
+}
+
+func newMetaWebhookRoutingHandler(database *metaWebhookRoutingDB) (*MetaWebhookHandler, *[]metaWebhookRoutingNotification) {
 	handler := NewMetaWebhookHandler(db.New(database), nil, nil, "secret", "verify")
-	notifications := &[]string{}
-	handler.notify = func(_ context.Context, workspaceID string, _ any) {
-		*notifications = append(*notifications, workspaceID)
+	notifications := &[]metaWebhookRoutingNotification{}
+	handler.notify = func(_ context.Context, workspaceID, externalUserID string, _ any) {
+		*notifications = append(*notifications, metaWebhookRoutingNotification{workspaceID: workspaceID, externalUserID: externalUserID})
 	}
 	return handler, notifications
 }
@@ -286,6 +330,7 @@ type metaWebhookRoutingAccount struct {
 	externalAccountID string
 	webhookAccountID  string
 	workspaceID       string
+	externalUserID    string
 }
 
 type metaWebhookRoutingDB struct {
@@ -309,14 +354,14 @@ func (f *metaWebhookRoutingDB) Query(_ context.Context, query string, args ...in
 		accounts = f.instagram[args[0].(string)]
 		values := make([][]any, 0, len(accounts))
 		for _, account := range accounts {
-			values = append(values, []any{account.id, account.externalAccountID, account.webhookAccountID, account.workspaceID})
+			values = append(values, []any{account.id, account.externalAccountID, account.webhookAccountID, account.workspaceID, pgtype.Text{String: account.externalUserID, Valid: account.externalUserID != ""}})
 		}
 		return &metaWebhookRoutingRows{values: values}, nil
 	case strings.Contains(query, "-- name: FindAllSocialAccountsByPlatformAndExternalID"):
 		accounts = f.external[args[0].(string)+":"+args[1].(string)]
 		values := make([][]any, 0, len(accounts))
 		for _, account := range accounts {
-			values = append(values, []any{account.id, account.externalAccountID, account.workspaceID})
+			values = append(values, []any{account.id, account.externalAccountID, account.workspaceID, pgtype.Text{String: account.externalUserID, Valid: account.externalUserID != ""}})
 		}
 		return &metaWebhookRoutingRows{values: values}, nil
 	default:

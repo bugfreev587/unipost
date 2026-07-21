@@ -298,7 +298,7 @@ func (h *Hub) broadcastInboxKey(key scopeKey, msg []byte) {
 }
 
 // BroadcastInboxItem serializes an inbox item and broadcasts it.
-func (h *Hub) BroadcastInboxItem(workspaceID string, item any) {
+func (h *Hub) BroadcastInboxItem(workspaceID, externalUserID string, item any) {
 	msg, err := json.Marshal(map[string]any{
 		"type": "inbox.new_item",
 		"item": item,
@@ -306,7 +306,7 @@ func (h *Hub) BroadcastInboxItem(workspaceID string, item any) {
 	if err != nil {
 		return
 	}
-	h.Broadcast(workspaceID, msg)
+	h.BroadcastInbox(workspaceID, externalUserID, msg)
 }
 
 // ServeConn runs the read/write pumps for a connection. Blocks until

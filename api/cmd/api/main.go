@@ -481,8 +481,8 @@ func main() {
 				PauseReason: admission.PauseReason,
 			}, insertedItem, inserted, nil
 		},
-		Notify: func(ctx context.Context, workspaceID string, item xinbox.InboxItem) {
-			ws.Notify(ctx, pool, workspaceID, item)
+		Notify: func(ctx context.Context, workspaceID, externalUserID string, item xinbox.InboxItem) {
+			ws.Notify(ctx, pool, workspaceID, externalUserID, item)
 		},
 	})
 	xAppSecretResolver := xinbox.NewAppSecretResolver(xinbox.AppSecretResolverConfig{

@@ -60,7 +60,7 @@ func TestXIngestReplyUsesConversationIDAndNotifiesOnlyAfterInsert(t *testing.T) 
 			admitted = append(admitted, req)
 			return InboundAdmission{Accepted: true}, nil
 		},
-		Notify: func(_ context.Context, _ string, item InboxItem) {
+		Notify: func(_ context.Context, _, _ string, item InboxItem) {
 			notified = append(notified, item)
 		},
 	})
@@ -235,7 +235,7 @@ func TestXIngestDoesNotNotifyWhenInsertFails(t *testing.T) {
 		AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
 			return InboundAdmission{}, InboxItem{}, false, errors.New("database unavailable")
 		},
-		Notify: func(context.Context, string, InboxItem) { notified = true },
+		Notify: func(context.Context, string, string, InboxItem) { notified = true },
 	})
 	event := ActivityEvent{AccountID: "account-1", ExternalID: "dm-1", ConversationID: "c-1"}
 	if err := service.IngestActivityEvent(context.Background(), "client-1", event); err == nil {
@@ -271,7 +271,7 @@ func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
 			t.Fatal("split admission path must not run when atomic processor is configured")
 			return InboundAdmission{}, nil
 		},
-		Notify: func(context.Context, string, InboxItem) { notified++ },
+		Notify: func(context.Context, string, string, InboxItem) { notified++ },
 	})
 	err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
 		AccountID: "account-1", ExternalID: "dm-1", ConversationID: "conversation-1",
@@ -283,6 +283,62 @@ func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
 	}
 	if atomicCalls != 1 || notified != 1 || len(store.inserted) != 0 {
 		t.Fatalf("atomicCalls=%d notified=%d split inserts=%d", atomicCalls, notified, len(store.inserted))
+	}
+}
+
+func TestXRealtimeOwnerUsesDatabaseAccountInsteadOfPayload(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		atomic       bool
+		accountOwner string
+		wantOwner    string
+	}{
+		{name: "non-atomic managed", accountOwner: "managed-a", wantOwner: "managed-a"},
+		{name: "atomic managed", atomic: true, accountOwner: "managed-a", wantOwner: "managed-a"},
+		{name: "non-atomic BYO", wantOwner: ""},
+		{name: "atomic BYO", atomic: true, wantOwner: ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeIngestStore{
+				accounts: map[string]InboxAccount{
+					"client-1:account-1": {
+						ID: "account-1", WorkspaceID: "workspace-1", ExternalUserID: test.accountOwner,
+						AppMode: AppModeWorkspace, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+					},
+				},
+				insertedNew: true,
+			}
+			var notifiedWorkspace, notifiedOwner string
+			notified := 0
+			config := IngestionConfig{
+				Store: store,
+				Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+					return InboundAdmission{Accepted: true}, nil
+				},
+				Notify: func(_ context.Context, workspaceID, externalUserID string, _ InboxItem) {
+					notified++
+					notifiedWorkspace = workspaceID
+					notifiedOwner = externalUserID
+				},
+			}
+			if test.atomic {
+				config.AtomicProcess = func(_ context.Context, _ InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
+					return InboundAdmission{Accepted: true}, item, true, nil
+				}
+			}
+			service := NewIngestionService(config)
+			event := ActivityEvent{
+				AccountID: "account-1", ExternalUserID: "managed-b", ExternalID: "dm-1",
+				ConversationID: "conversation-1", SenderID: "sender-1", RecipientID: "managed-b",
+			}
+
+			if err := service.IngestActivityEvent(context.Background(), "client-1", event); err != nil {
+				t.Fatalf("IngestActivityEvent: %v", err)
+			}
+			if notified != 1 || notifiedWorkspace != "workspace-1" || notifiedOwner != test.wantOwner {
+				t.Fatalf("notification = count %d workspace %q owner %q, want 1/workspace-1/%q", notified, notifiedWorkspace, notifiedOwner, test.wantOwner)
+			}
+		})
 	}
 }
 

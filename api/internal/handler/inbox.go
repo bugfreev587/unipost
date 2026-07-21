@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,13 +87,15 @@ func inboxReplyPlatformError(source string, err error) (message string, reconnec
 type InboxHandler struct {
 	queries                     *db.Queries
 	encryptor                   *crypto.AESEncryptor
-	pool                        *pgxpool.Pool // for inbox WebSocket notifications
+	pool                        *pgxpool.Pool
 	xCredits                    xInboxCreditsService
 	xIngestion                  *xinbox.IngestionService
 	xTokenRefresher             xinbox.TokenRefresher
 	xAdapterFactory             func() xInboxBackfillAdapter
 	xBackfillConfirmationSecret []byte
 	xBackfillSafeCredits        int64
+	notifyEvent                 func(context.Context, string, string, map[string]any)
+	notifyWorkspaceEvent        func(context.Context, string, map[string]any)
 	featureFlags                interface {
 		ForWorkspace(context.Context, string, string) (bool, error)
 	}
@@ -100,11 +103,91 @@ type InboxHandler struct {
 
 func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxHandler {
 	return &InboxHandler{
-		queries:              queries,
-		encryptor:            encryptor,
-		pool:                 pool,
-		xAdapterFactory:      func() xInboxBackfillAdapter { return platform.NewTwitterAdapter() },
+		queries:   queries,
+		encryptor: encryptor,
+		pool:      pool,
+		xAdapterFactory: func() xInboxBackfillAdapter {
+			return platform.NewTwitterAdapter()
+		},
 		xBackfillSafeCredits: defaultXBackfillSafeCredits,
+		notifyEvent: func(ctx context.Context, workspaceID, externalUserID string, event map[string]any) {
+			ws.NotifyEvent(ctx, pool, workspaceID, externalUserID, event)
+		},
+		notifyWorkspaceEvent: func(ctx context.Context, workspaceID string, event map[string]any) {
+			ws.NotifyWorkspaceEvent(ctx, pool, workspaceID, event)
+		},
+	}
+}
+
+type inboxSyncNotificationCounts struct {
+	total   int
+	managed map[string]int
+}
+
+func newInboxSyncNotificationCounts() *inboxSyncNotificationCounts {
+	return &inboxSyncNotificationCounts{managed: make(map[string]int)}
+}
+
+func (c *inboxSyncNotificationCounts) Record(externalUserID pgtype.Text) {
+	c.RecordN(externalUserID, 1)
+}
+
+func (c *inboxSyncNotificationCounts) RecordN(externalUserID pgtype.Text, count int) {
+	if c == nil || count <= 0 {
+		return
+	}
+	c.total += count
+	if externalUserID.Valid && externalUserID.String != "" && strings.TrimSpace(externalUserID.String) == externalUserID.String {
+		c.managed[externalUserID.String] += count
+	}
+}
+
+func (c *inboxSyncNotificationCounts) Total() int {
+	if c == nil {
+		return 0
+	}
+	return c.total
+}
+
+func (c *inboxSyncNotificationCounts) Managed() map[string]int {
+	result := make(map[string]int)
+	if c == nil {
+		return result
+	}
+	for externalUserID, count := range c.managed {
+		result[externalUserID] = count
+	}
+	return result
+}
+
+func notifyInboxSyncComplete(
+	ctx context.Context,
+	workspaceID string,
+	counts *inboxSyncNotificationCounts,
+	notifyManaged func(context.Context, string, string, map[string]any),
+	notifyWorkspace func(context.Context, string, map[string]any),
+) {
+	if counts == nil || counts.total <= 0 {
+		return
+	}
+	owners := make([]string, 0, len(counts.managed))
+	for externalUserID := range counts.managed {
+		owners = append(owners, externalUserID)
+	}
+	sort.Strings(owners)
+	if notifyManaged != nil {
+		for _, externalUserID := range owners {
+			notifyManaged(ctx, workspaceID, externalUserID, map[string]any{
+				"type":      "inbox.sync_complete",
+				"new_items": counts.managed[externalUserID],
+			})
+		}
+	}
+	if notifyWorkspace != nil {
+		notifyWorkspace(ctx, workspaceID, map[string]any{
+			"type":      "inbox.sync_complete",
+			"new_items": counts.total,
+		})
 	}
 }
 
@@ -1396,7 +1479,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		CommentsFound int    `json:"comments_found"`
 	}
 
-	totalNew := 0
+	syncNotifications := newInboxSyncNotificationCounts()
 	var errors []syncError
 	var details []syncAccountDetail
 	for _, acc := range accounts {
@@ -1462,7 +1545,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							syncNotifications.Record(acc.ExternalUserID)
 						}
 					}
 				}
@@ -1499,7 +1582,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						syncNotifications.Record(acc.ExternalUserID)
 					}
 				}
 				// Reconcile: if webhook created items with thread_key = senderID,
@@ -1560,7 +1643,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							syncNotifications.Record(acc.ExternalUserID)
 						}
 					}
 				}
@@ -1654,7 +1737,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							syncNotifications.Record(acc.ExternalUserID)
 						}
 						mergeInboxItemAuthorMetadata(r.Context(), h.queries, acc.ID, e.ExternalID, e.AuthorName, e.AuthorID, e.AuthorAvatarURL)
 					}
@@ -1688,7 +1771,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						syncNotifications.Record(acc.ExternalUserID)
 					}
 					mergeInboxItemAuthorMetadata(r.Context(), h.queries, acc.ID, e.ExternalID, e.AuthorName, e.AuthorID, e.AuthorAvatarURL)
 				}
@@ -1698,14 +1781,12 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		details = append(details, detail)
 	}
 
+	totalNew := syncNotifications.Total()
 	slog.Info("inbox sync complete", "new_items", totalNew, "accounts", len(accounts), "errors", len(errors))
 
 	// Notify all connected WebSocket clients to refresh if new items arrived.
 	if totalNew > 0 {
-		ws.NotifyEvent(r.Context(), h.pool, workspaceID, map[string]any{
-			"type":      "inbox.sync_complete",
-			"new_items": totalNew,
-		})
+		notifyInboxSyncComplete(r.Context(), workspaceID, syncNotifications, h.notifyEvent, h.notifyWorkspaceEvent)
 	}
 
 	writeSuccess(w, map[string]any{
@@ -1946,7 +2027,27 @@ func (h *InboxHandler) syncXBackfill(
 			return
 		}
 	}
+	notifyInboxSyncComplete(
+		r.Context(), workspaceID, xBackfillSyncNotificationCounts(xAccounts, results),
+		h.notifyEvent, h.notifyWorkspaceEvent,
+	)
 	writeSuccess(w, response)
+}
+
+func xBackfillSyncNotificationCounts(accounts []db.SocialAccount, results []xBackfillAccountResult) *inboxSyncNotificationCounts {
+	owners := make(map[string]pgtype.Text, len(accounts))
+	for _, account := range accounts {
+		owners[account.ID] = account.ExternalUserID
+	}
+	counts := newInboxSyncNotificationCounts()
+	for _, result := range results {
+		owner, ok := owners[result.AccountID]
+		if !ok {
+			continue
+		}
+		counts.RecordN(owner, result.Accepted)
+	}
+	return counts
 }
 
 func (h *InboxHandler) runXBackfillPages(
