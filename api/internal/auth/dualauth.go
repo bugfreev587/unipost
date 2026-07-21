@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/clerk/clerk-sdk-go/v2"
 	"github.com/clerk/clerk-sdk-go/v2/jwks"
@@ -48,8 +47,11 @@ func DualAuthMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 			}
 
 			if strings.HasPrefix(token, apikey.PrefixLive) || strings.HasPrefix(token, apikey.PrefixTest) {
-				ctx, ok := authenticateAPIKey(w, r, queries, token)
-				if !ok {
+				ctx, failure := AuthenticateAPIKeyToken(r.Context(), queries, token)
+				if failure != nil {
+					writeJSON(w, failure.Status, map[string]any{
+						"error": map[string]any{"code": failure.Code, "message": failure.Message},
+					})
 					return
 				}
 				next.ServeHTTP(w, r.WithContext(ctx))
@@ -63,59 +65,6 @@ func DualAuthMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
-}
-
-func authenticateAPIKey(w http.ResponseWriter, r *http.Request, queries *db.Queries, token string) (context.Context, bool) {
-	hash := apikey.Hash(token)
-	ak, err := queries.GetAPIKeyByHash(r.Context(), hash)
-	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error": map[string]any{"code": "UNAUTHORIZED", "message": "Invalid API key"},
-		})
-		return nil, false
-	}
-	if ak.RevokedAt.Valid {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error": map[string]any{"code": "UNAUTHORIZED", "message": "API key has been revoked"},
-		})
-		return nil, false
-	}
-	if ak.ExpiresAt.Valid && ak.ExpiresAt.Time.Before(time.Now()) {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error": map[string]any{"code": "UNAUTHORIZED", "message": "API key has expired"},
-		})
-		return nil, false
-	}
-	go func() {
-		if err := queries.UpdateAPIKeyLastUsedAt(context.Background(), ak.ID); err != nil {
-			slog.Error("failed to update last_used_at", "key_id", ak.ID, "error", err)
-		}
-	}()
-	ctx := context.WithValue(r.Context(), WorkspaceIDKey, ak.WorkspaceID)
-	ctx = context.WithValue(ctx, APIKeyIDKey, ak.ID)
-	// RBAC migration 063: derive role from the key creator's current
-	// active membership. Creator-bound keys fail closed when that
-	// membership is missing, inactive, or temporarily unreadable so a
-	// removed member's surviving key can never escalate to owner.
-	// A nice property: changing the creator's role at the membership
-	// level automatically changes the key's effective permissions
-	// without rotating the key.
-	role := RoleOwner
-	if ak.CreatedByUserID != "" {
-		mem, err := queries.GetMembership(r.Context(), db.GetMembershipParams{
-			WorkspaceID: ak.WorkspaceID,
-			UserID:      ak.CreatedByUserID,
-		})
-		if err != nil || mem.Status != "active" {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{
-				"error": map[string]any{"code": "UNAUTHORIZED", "message": "API key is no longer authorized"},
-			})
-			return nil, false
-		}
-		role = mem.Role
-	}
-	ctx = context.WithValue(ctx, RoleKey, role)
-	return ctx, true
 }
 
 func authenticateClerk(w http.ResponseWriter, r *http.Request, queries *db.Queries, token string) (context.Context, bool) {
