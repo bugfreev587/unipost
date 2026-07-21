@@ -272,44 +272,6 @@ func (q *Queries) DeleteXInboxOutboundAfterUsageReversal(ctx context.Context, id
 	return result.RowsAffected(), nil
 }
 
-const findAllActiveAccountsByPlatform = `-- name: FindAllActiveAccountsByPlatform :many
-SELECT sa.id, sa.external_account_id, p.workspace_id
-FROM social_accounts sa
-JOIN profiles p ON p.id = sa.profile_id
-WHERE sa.platform = $1
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
-ORDER BY sa.connected_at DESC
-`
-
-type FindAllActiveAccountsByPlatformRow struct {
-	ID                string `json:"id"`
-	ExternalAccountID string `json:"external_account_id"`
-	WorkspaceID       string `json:"workspace_id"`
-}
-
-// DEPRECATED: Unsafe cross-workspace fanout retained only until webhook
-// handlers use exact platform identities exclusively.
-func (q *Queries) FindAllActiveAccountsByPlatform(ctx context.Context, platform string) ([]FindAllActiveAccountsByPlatformRow, error) {
-	rows, err := q.db.Query(ctx, findAllActiveAccountsByPlatform, platform)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []FindAllActiveAccountsByPlatformRow{}
-	for rows.Next() {
-		var i FindAllActiveAccountsByPlatformRow
-		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const findAllActiveInstagramAccountsByWebhookUserID = `-- name: FindAllActiveInstagramAccountsByWebhookUserID :many
 SELECT sa.id, sa.external_account_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
@@ -399,32 +361,6 @@ func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Conte
 		return nil, err
 	}
 	return items, nil
-}
-
-const findAnyActiveAccountByPlatform = `-- name: FindAnyActiveAccountByPlatform :one
-SELECT sa.id, sa.external_account_id, p.workspace_id
-FROM social_accounts sa
-JOIN profiles p ON p.id = sa.profile_id
-WHERE sa.platform = $1
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
-ORDER BY sa.connected_at DESC
-LIMIT 1
-`
-
-type FindAnyActiveAccountByPlatformRow struct {
-	ID                string `json:"id"`
-	ExternalAccountID string `json:"external_account_id"`
-	WorkspaceID       string `json:"workspace_id"`
-}
-
-// DEPRECATED: Unsafe global fallback retained only until webhook handlers use
-// exact platform identities exclusively.
-func (q *Queries) FindAnyActiveAccountByPlatform(ctx context.Context, platform string) (FindAnyActiveAccountByPlatformRow, error) {
-	row := q.db.QueryRow(ctx, findAnyActiveAccountByPlatform, platform)
-	var i FindAnyActiveAccountByPlatformRow
-	err := row.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID)
-	return i, err
 }
 
 const findDMThreadKeyBySender = `-- name: FindDMThreadKeyBySender :one
@@ -533,37 +469,6 @@ func (q *Queries) FindLinkedPostIDForInboxParent(ctx context.Context, arg FindLi
 	var post_id string
 	err := row.Scan(&post_id)
 	return post_id, err
-}
-
-const findSocialAccountByPlatformAndExternalID = `-- name: FindSocialAccountByPlatformAndExternalID :one
-SELECT sa.id, sa.external_account_id, p.workspace_id
-FROM social_accounts sa
-JOIN profiles p ON p.id = sa.profile_id
-WHERE sa.platform = $1
-  AND sa.external_account_id = $2
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
-LIMIT 1
-`
-
-type FindSocialAccountByPlatformAndExternalIDParams struct {
-	Platform          string `json:"platform"`
-	ExternalAccountID string `json:"external_account_id"`
-}
-
-type FindSocialAccountByPlatformAndExternalIDRow struct {
-	ID                string `json:"id"`
-	ExternalAccountID string `json:"external_account_id"`
-	WorkspaceID       string `json:"workspace_id"`
-}
-
-// DEPRECATED: Unsafe singular selection retained only until webhook handlers
-// consume every exact platform-identity match.
-func (q *Queries) FindSocialAccountByPlatformAndExternalID(ctx context.Context, arg FindSocialAccountByPlatformAndExternalIDParams) (FindSocialAccountByPlatformAndExternalIDRow, error) {
-	row := q.db.QueryRow(ctx, findSocialAccountByPlatformAndExternalID, arg.Platform, arg.ExternalAccountID)
-	var i FindSocialAccountByPlatformAndExternalIDRow
-	err := row.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID)
-	return i, err
 }
 
 const findXInboxAccountForApp = `-- name: FindXInboxAccountForApp :one

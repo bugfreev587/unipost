@@ -216,9 +216,8 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 		"FindAllActiveAccountsByPlatform",
 		"FindSocialAccountByPlatformAndExternalID",
 	} {
-		query := strings.ToLower(inboxTenantIsolationRawQuery(t, source, legacy))
-		if !strings.Contains(query, "deprecated") || !strings.Contains(query, "unsafe") {
-			t.Errorf("temporarily retained legacy query %s must be marked deprecated and unsafe", legacy)
+		if strings.Contains(source, "-- name: "+legacy+" ") {
+			t.Errorf("unsafe legacy webhook routing query %s must be removed", legacy)
 		}
 	}
 
