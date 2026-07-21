@@ -44,9 +44,13 @@ import (
 // customer in their dashboard.
 type Profile struct {
 	ExternalAccountID string
-	Username          string
-	DisplayName       string
-	AvatarURL         string
+	// WebhookAccountID is the platform identity required to subscribe to
+	// webhooks when it differs from ExternalAccountID. It is empty for
+	// connectors that do not expose a separate webhook identity.
+	WebhookAccountID string
+	Username         string
+	DisplayName      string
+	AvatarURL        string
 }
 
 // TokenSet is what we get back from a token-endpoint round trip.

@@ -2,6 +2,7 @@ package platform
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -43,6 +44,97 @@ func TestInstagramAuthURLUsesBusinessLoginContract(t *testing.T) {
 	want := strings.Join(config.Scopes, ",")
 	if scope != want {
 		t.Fatalf("scope = %q, want %q", scope, want)
+	}
+}
+
+func TestInstagramExchangeCodePersistsWebhookAccountID(t *testing.T) {
+	transport := &instagramSequenceTransport{responses: []instagramHTTPResponse{
+		{status: http.StatusOK, body: `{"access_token":"SHORT-AT","user_id":12345}`},
+		{status: http.StatusOK, body: `{"access_token":"LONG-AT","token_type":"bearer","expires_in":5184000}`},
+		{status: http.StatusOK, body: `{"id":"app-scoped-99","user_id":"professional-42","username":"shipper","profile_picture_url":"https://example.com/p.jpg"}`},
+	}}
+	adapter := &InstagramAdapter{client: &http.Client{Transport: transport}}
+	config := adapter.DefaultOAuthConfig("https://api.example.com")
+	config.ClientID = "ig-client"
+	config.ClientSecret = "ig-secret"
+	config.TokenURL = "https://api.instagram.test/oauth/access_token"
+
+	result, err := adapter.ExchangeCode(context.Background(), config, "auth-code")
+	if err != nil {
+		t.Fatalf("ExchangeCode: %v", err)
+	}
+	if len(transport.requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(transport.requests))
+	}
+	if got, want := transport.requests[2].URL.Query().Get("fields"), "id,user_id,username,profile_picture_url"; got != want {
+		t.Fatalf("profile fields = %q, want %q", got, want)
+	}
+	if result.ExternalAccountID != "app-scoped-99" {
+		t.Fatalf("external account id = %q", result.ExternalAccountID)
+	}
+	if got := result.Metadata["ig_user_id"]; got != "app-scoped-99" {
+		t.Fatalf("ig_user_id metadata = %#v", got)
+	}
+	if got := result.Metadata["instagram_webhook_user_id"]; got != "professional-42" {
+		t.Fatalf("instagram_webhook_user_id metadata = %#v", got)
+	}
+}
+
+func TestInstagramExchangeCodeMissingWebhookUserIDFails(t *testing.T) {
+	transport := &instagramSequenceTransport{responses: []instagramHTTPResponse{
+		{status: http.StatusOK, body: `{"access_token":"SHORT-AT","user_id":12345}`},
+		{status: http.StatusOK, body: `{"access_token":"LONG-AT","token_type":"bearer","expires_in":5184000}`},
+		{status: http.StatusOK, body: `{"id":"app-scoped-99","username":"shipper"}`},
+	}}
+	adapter := &InstagramAdapter{client: &http.Client{Transport: transport}}
+	config := adapter.DefaultOAuthConfig("https://api.example.com")
+	config.ClientID = "ig-client"
+	config.ClientSecret = "ig-secret"
+	config.TokenURL = "https://api.instagram.test/oauth/access_token"
+
+	_, err := adapter.ExchangeCode(context.Background(), config, "auth-code")
+	if err == nil {
+		t.Fatal("expected missing user_id error")
+	}
+	if !strings.Contains(err.Error(), "user_id") {
+		t.Fatalf("error = %q, want missing user_id diagnostic", err)
+	}
+}
+
+func TestInstagramGetProfileErrorsDoNotLeakAccessToken(t *testing.T) {
+	const accessToken = "secret_ig_profile_token"
+	for _, tc := range []struct {
+		name     string
+		response instagramHTTPResponse
+		want     string
+	}{
+		{
+			name:     "transport error",
+			response: instagramHTTPResponse{err: fmt.Errorf("transport echoed access_token=%s", accessToken)},
+			want:     "instagram profile request failed",
+		},
+		{
+			name:     "non-200 response",
+			response: instagramHTTPResponse{status: http.StatusUnauthorized, body: `{"error":"access_token=secret_ig_profile_token"}`},
+			want:     "instagram profile request failed (401)",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			adapter := &InstagramAdapter{client: &http.Client{Transport: &instagramSequenceTransport{
+				responses: []instagramHTTPResponse{tc.response},
+			}}}
+
+			_, err := adapter.getProfile(context.Background(), accessToken)
+			if err == nil {
+				t.Fatal("expected profile error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %q, want %q", err, tc.want)
+			}
+			if strings.Contains(err.Error(), accessToken) || strings.Contains(strings.ToLower(err.Error()), "access_token=") {
+				t.Fatalf("error leaked access token: %q", err)
+			}
+		})
 	}
 }
 
@@ -196,13 +288,16 @@ func withInstagramPollConfig(t *testing.T, attempts int, interval time.Duration)
 type instagramHTTPResponse struct {
 	status int
 	body   string
+	err    error
 }
 
 type instagramSequenceTransport struct {
 	responses []instagramHTTPResponse
+	requests  []*http.Request
 }
 
 func (t *instagramSequenceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.requests = append(t.requests, req)
 	if len(t.responses) == 0 {
 		return &http.Response{
 			StatusCode: http.StatusOK,
@@ -214,6 +309,9 @@ func (t *instagramSequenceTransport) RoundTrip(req *http.Request) (*http.Respons
 	resp := t.responses[0]
 	if len(t.responses) > 1 {
 		t.responses = t.responses[1:]
+	}
+	if resp.err != nil {
+		return nil, resp.err
 	}
 	return &http.Response{
 		StatusCode: resp.status,

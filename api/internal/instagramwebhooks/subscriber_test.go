@@ -2,6 +2,7 @@ package instagramwebhooks
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -51,21 +52,141 @@ func TestSubscriberSubscribe(t *testing.T) {
 	}
 }
 
-func TestSubscriberSubscribeIncludesMetaFailure(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = io.WriteString(w, `{"error":{"message":"missing permission"}}`)
+func TestSubscriberFetchWebhookUserID(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotQuery url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		gotQuery = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"user_id":"webhook_user_123"}`)
 	}))
 	defer server.Close()
 
 	subscriber := NewSubscriber(server.Client(), server.URL)
-	err := subscriber.Subscribe(context.Background(), "ig_123", "token_123")
+	got, err := subscriber.FetchWebhookUserID(context.Background(), "token_123")
+	if err != nil {
+		t.Fatalf("FetchWebhookUserID: %v", err)
+	}
+	if got != "webhook_user_123" {
+		t.Fatalf("webhook user id = %q, want webhook_user_123", got)
+	}
+	if gotMethod != http.MethodGet {
+		t.Fatalf("method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/me" {
+		t.Fatalf("path = %q, want /me", gotPath)
+	}
+	if gotQuery.Get("fields") != "user_id" {
+		t.Fatalf("fields = %q, want user_id", gotQuery.Get("fields"))
+	}
+	if gotQuery.Get("access_token") != "token_123" {
+		t.Fatalf("access_token = %q, want token_123", gotQuery.Get("access_token"))
+	}
+}
+
+func TestSubscriberFetchWebhookUserIDRejectsMissingIDWithoutLeakingToken(t *testing.T) {
+	const accessToken = "secret_resolver_token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"id":"app_scoped_id","debug":"secret_resolver_token"}`)
+	}))
+	defer server.Close()
+
+	subscriber := NewSubscriber(server.Client(), server.URL)
+	_, err := subscriber.FetchWebhookUserID(context.Background(), accessToken)
+	if err == nil {
+		t.Fatal("expected missing webhook user id error")
+	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
+func TestSubscriberFetchWebhookUserIDHTTPFailureDoesNotLeakToken(t *testing.T) {
+	const accessToken = "secret_resolver_token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":{"message":"secret_resolver_token"}}`)
+	}))
+	defer server.Close()
+
+	subscriber := NewSubscriber(server.Client(), server.URL)
+	_, err := subscriber.FetchWebhookUserID(context.Background(), accessToken)
+	if err == nil {
+		t.Fatal("expected resolver HTTP error")
+	}
+	if !strings.Contains(err.Error(), "401") {
+		t.Fatalf("error = %q, want HTTP status", err)
+	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
+func TestInstagramWebhookSubscriptionHTTPFailureDoesNotLeakToken(t *testing.T) {
+	const accessToken = "secret_subscriber_token"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, `{"error":{"message":"access_token=secret_subscriber_token"}}`)
+	}))
+	defer server.Close()
+
+	subscriber := NewSubscriber(server.Client(), server.URL)
+	err := subscriber.Subscribe(context.Background(), "ig_123", accessToken)
 	if err == nil {
 		t.Fatal("expected subscription error")
 	}
-	for _, want := range []string{"403", "missing permission"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("error = %q, want %q", err.Error(), want)
-		}
+	if !strings.Contains(err.Error(), "403") {
+		t.Fatalf("error = %q, want HTTP status", err)
 	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
+func TestInstagramWebhookSubscriptionTransportFailureDoesNotLeakToken(t *testing.T) {
+	const accessToken = "secret_subscriber_token"
+	subscriber := NewSubscriber(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("transport echoed access_token=%s", accessToken)
+	})}, "https://graph.instagram.test/v21.0")
+
+	err := subscriber.Subscribe(context.Background(), "ig_123", accessToken)
+	if err == nil {
+		t.Fatal("expected subscription error")
+	}
+	if !strings.Contains(err.Error(), "request failed") {
+		t.Fatalf("error = %q, want request failure context", err)
+	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
+func TestInstagramWebhookSubscriptionRejectedResponseDoesNotLeakToken(t *testing.T) {
+	const accessToken = "secret_subscriber_token"
+	subscriber := NewSubscriber(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"success":false,"debug":"access_token=secret_subscriber_token"}`)),
+			Header:     make(http.Header),
+			Request:    req,
+		}, nil
+	})}, "https://graph.instagram.test/v21.0")
+
+	err := subscriber.Subscribe(context.Background(), "ig_123", accessToken)
+	if err == nil {
+		t.Fatal("expected rejected subscription error")
+	}
+	if !strings.Contains(err.Error(), "rejected") {
+		t.Fatalf("error = %q, want rejection context", err)
+	}
+	assertSubscriberErrorDoesNotLeakToken(t, err, accessToken)
+}
+
+func assertSubscriberErrorDoesNotLeakToken(t *testing.T, err error, accessToken string) {
+	t.Helper()
+	if strings.Contains(err.Error(), accessToken) || strings.Contains(strings.ToLower(err.Error()), "access_token=") {
+		t.Fatalf("error leaked access token: %q", err)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }

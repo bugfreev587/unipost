@@ -212,30 +212,30 @@ func (c *InstagramConnector) exchangeLongLived(ctx context.Context, shortToken s
 	return raw.AccessToken, raw.ExpiresIn, nil
 }
 
-// FetchProfile reads /v21.0/me?fields=id,username,profile_picture_url
-// to populate the social_accounts row. Instagram's id field is the
-// stable account identifier — username can change, id never does.
+// FetchProfile reads the app-scoped id used for account identity and the
+// professional user_id required by Meta's webhook subscription endpoint.
 func (c *InstagramConnector) FetchProfile(ctx context.Context, accessToken string) (*Profile, error) {
 	q := url.Values{}
-	q.Set("fields", "id,username,profile_picture_url")
+	q.Set("fields", "id,user_id,username,profile_picture_url")
 	q.Set("access_token", accessToken)
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.ProfileEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("instagram profile request could not be created")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("instagram profile: %w", err)
+		return nil, fmt.Errorf("instagram profile request failed")
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("instagram profile %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("instagram profile %d", resp.StatusCode)
 	}
 
 	var raw struct {
 		ID                string `json:"id"`
+		UserID            string `json:"user_id"`
 		Username          string `json:"username"`
 		ProfilePictureURL string `json:"profile_picture_url"`
 	}
@@ -243,10 +243,14 @@ func (c *InstagramConnector) FetchProfile(ctx context.Context, accessToken strin
 		return nil, fmt.Errorf("instagram profile decode: %w", err)
 	}
 	if raw.ID == "" {
-		return nil, fmt.Errorf("instagram profile empty id: %s", string(body))
+		return nil, fmt.Errorf("instagram profile empty id")
+	}
+	if raw.UserID == "" {
+		return nil, fmt.Errorf("instagram profile empty user_id")
 	}
 	return &Profile{
 		ExternalAccountID: raw.ID,
+		WebhookAccountID:  raw.UserID,
 		Username:          raw.Username,
 		DisplayName:       raw.Username, // IG has no separate display name in this endpoint
 		AvatarURL:         raw.ProfilePictureURL,

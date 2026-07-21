@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -30,6 +31,7 @@ import (
 )
 
 type inboxInstagramWebhookSubscriber interface {
+	FetchWebhookUserID(context.Context, string) (string, error)
 	Subscribe(context.Context, string, string) error
 }
 
@@ -127,18 +129,46 @@ func (w *InboxSyncWorker) ensureInstagramWebhookSubscription(ctx context.Context
 		w.igWebhookSubscriptions = make(map[string]bool)
 	}
 
-	if err := w.instagramWebhookSubscriber.Subscribe(ctx, acc.ExternalAccountID, accessToken); err != nil {
+	webhookUserID := strings.TrimSpace(acc.InstagramWebhookUserID)
+	if webhookUserID == "" {
+		resolvedID, err := w.instagramWebhookSubscriber.FetchWebhookUserID(ctx, accessToken)
+		if err != nil {
+			slog.Warn("inbox sync worker: instagram webhook identity repair failed",
+				"account_id", acc.ID)
+			return
+		}
+		webhookUserID = strings.TrimSpace(resolvedID)
+		if webhookUserID == "" {
+			slog.Warn("inbox sync worker: instagram webhook identity repair returned empty id",
+				"account_id", acc.ID)
+			return
+		}
+		if w.queries == nil {
+			slog.Warn("inbox sync worker: instagram webhook identity repair cannot persist",
+				"account_id", acc.ID)
+			return
+		}
+		rowsAffected, err := w.queries.SetInstagramWebhookUserID(ctx, db.SetInstagramWebhookUserIDParams{
+			InstagramWebhookUserID: webhookUserID,
+			ID:                     acc.ID,
+		})
+		if err != nil || rowsAffected != 1 {
+			slog.Warn("inbox sync worker: instagram webhook identity repair was not confirmed",
+				"account_id", acc.ID,
+				"rows_affected", rowsAffected)
+			return
+		}
+	}
+
+	if err := w.instagramWebhookSubscriber.Subscribe(ctx, webhookUserID, accessToken); err != nil {
 		slog.Warn("inbox sync worker: instagram webhook subscription repair failed",
-			"account_id", acc.ID,
-			"external_account_id", acc.ExternalAccountID,
-			"err", err)
+			"account_id", acc.ID)
 		return
 	}
 
 	w.igWebhookSubscriptions[acc.ID] = true
 	slog.Info("inbox sync worker: instagram webhook subscription active",
-		"account_id", acc.ID,
-		"external_account_id", acc.ExternalAccountID)
+		"account_id", acc.ID)
 }
 
 func (w *InboxSyncWorker) Start(ctx context.Context) {
