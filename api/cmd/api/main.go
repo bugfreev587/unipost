@@ -1228,6 +1228,7 @@ func main() {
 			go xExposureRecoveryWorker.Start(workerCtx)
 		}
 		r.Route("/v1/inbox", func(r chi.Router) {
+			r.Use(handler.RequireInboxAccessScope(queries))
 			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)
