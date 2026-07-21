@@ -1,7 +1,7 @@
 # Managed-User Inbox Authorization Hotfix Design
 
 **Date:** 2026-07-20
-**Status:** Approved direction; written-spec review pending
+**Status:** Revised after external review; written-spec approval pending
 **Incident:** Inbox comments and DMs visible across managed users in one owner workspace
 
 ## Context
@@ -14,19 +14,34 @@ The customer's workspace API key is stored only on the customer's backend. Manag
 
 The API key remains a privileged workspace credential: UniPost cannot independently prove that an `external_user_id` chosen by a valid key matches the customer app's current end user. Managed-user isolation therefore depends on the customer backend deriving that value from its authenticated app session and never exposing the key. UniPost's responsibility is to make the chosen scope explicit and prevent every object lookup, mutation, sync, and realtime path from escaping it.
 
+The first hotfix correctly rejected a caller-provided `external_user_id` as authentication because trusting an unverified query parameter would only move the IDOR. This design does not reverse that rule. It uses `external_user_id` only as an explicit scope selector after workspace authentication, in a server-to-server architecture where the customer backend is the trusted end-user authorization layer.
+
 ## Goal
 
-Make `(authenticated workspace_id, authorized external_user_id)` the mandatory authorization boundary for managed-user Inbox access while preserving an explicit workspace-wide aggregate scope for workspace owners and admins.
+Make `(authenticated workspace_id, selected external_user_id)` the mandatory request-confinement boundary for managed-user Inbox access while preserving an explicit workspace-wide aggregate scope for workspace owners and admins.
 
 The boundary must cover comments and DMs on every supported Inbox platform and every read, mutation, sync, outbound-status, and realtime path. Guessing an Inbox item ID, social account ID, operation ID, or WebSocket subscription must never cross the selected managed-user scope.
+
+## Security guarantee and trust boundary
+
+UniPost guarantees all of the following:
+
+1. A request declared as `managed_user=X` can return or mutate only data owned by X inside the API-key-authenticated workspace; it cannot silently upgrade to workspace scope.
+2. An object identifier from another managed-user scope returns `404` and does not reveal whether that object exists.
+3. Workspace aggregate scope is available only to a current workspace owner or admin.
+
+UniPost does not independently authenticate the customer's managed user. A backend holding a valid workspace API key can deliberately select any `external_user_id` in that workspace. End-to-end isolation therefore also requires the customer backend to authenticate its app session, derive the correct `external_user_id`, keep the API key server-side, and avoid forwarding an arbitrary browser-supplied value. This hotfix supplies scope confinement and defense in depth; it does not replace the customer application's end-user authorization.
 
 ## Non-goals
 
 - Managed users will not receive UniPost workspace API keys.
 - This hotfix will not treat a bare `external_user_id` supplied by an untrusted browser as authentication.
 - It will not redesign customer-app login, issue end-user JWTs, or add a feature flag.
+- It will not add a direct browser-to-UniPost managed-user WebSocket token; realtime managed-user access remains server-to-server through the customer backend.
 - It will not blanket-restore quarantined Instagram rows.
 - It will not change exact webhook routing back to workspace enumeration or fallback behavior.
+- It will not add a workspace-level database uniqueness index or automatically merge/delete historical account-ownership conflicts during the emergency rollout.
+- It will not add a separate Inbox scope for owner-connected accounts whose `external_user_id` is `NULL`.
 
 ## Approaches considered
 
@@ -77,6 +92,7 @@ Rules:
 - An `external_user_id` with no ownership record in the authenticated workspace returns `404` without exposing another workspace's identifiers.
 - A disconnected social account follows the existing Inbox-history retention policy; disconnection must not transfer or erase its managed-user ownership boundary.
 - Workspace scope is allowed only when the API key creator's current workspace role is `owner` or `admin`.
+- A legacy API key with no attributable creator cannot request workspace scope; it returns `403` until the key is reissued or safely attributed. This Inbox-specific check must not rely on the current legacy `RoleOwner` fallback.
 - The customer's backend must derive scope from its authenticated app session. It must not forward an arbitrary browser query parameter unchanged.
 - Scope omission never falls back to workspace-wide access.
 
@@ -112,6 +128,8 @@ Workspace mode requires the two workspace predicates and an owner/admin scope al
 
 SQL receives an explicit scope mode; a null or empty external-user value must never mean workspace-wide access. Cross-scope item lookups return `404`, including when the item ID exists in the same workspace.
 
+Workspace mode includes owner-connected/BYO accounts whose `social_accounts.external_user_id` is `NULL`. Managed-user mode never treats `NULL` as a selectable managed user. An owner who wants only the `NULL` subset must use client-side filtering or a future dedicated scope; the hotfix provides either one named managed user or the authorized workspace aggregate.
+
 ## Covered Inbox surfaces
 
 The same scope is mandatory for:
@@ -134,14 +152,23 @@ Manual sync must enumerate only accounts whose `external_user_id` matches manage
 
 ## Realtime isolation
 
-The current WebSocket hub is workspace-oriented, so database query isolation alone is insufficient. A managed-user WebSocket subscription must be keyed by both workspace and external user.
+The current `/v1/inbox/ws` implementation accepts only a Clerk JWT from `?token=`, resolves the user's default workspace, and registers the connection in a workspace-only hub. It has no API-key path. This hotfix therefore adds a real server-to-server API-key WebSocket authentication path; changing only the subscription key would be insufficient.
 
-Inbound notifications will carry or derive the owning `external_user_id` from the exact `social_account_id`. The hub will deliver:
+The Inbox WebSocket handshake supports exactly one authentication form:
+
+- Clerk Dashboard: the existing short-lived Clerk JWT query parameter. The handler resolves the active workspace membership and allows workspace scope only for owner/admin. An owner/admin may choose a managed-user filter.
+- Customer backend: `Authorization: Bearer <workspace-api-key>` on the WebSocket HTTP upgrade request, plus the same mandatory `inbox_scope` query parameters as HTTP. The API key must never be placed in a URL query parameter or sent to the browser.
+
+Supplying both credential forms or neither fails authentication. API-key workspace scope uses the same current creator-role and legacy-key checks as HTTP. The logs WebSocket is unchanged.
+
+The Inbox WebSocket hub will register connections under a structured scope containing workspace ID, mode, and optional external user rather than a workspace-only string. A managed-user subscription is keyed by both workspace and external user; an owner/admin aggregate subscription is keyed by workspace mode.
+
+Inbound notifications will carry the owning `external_user_id` derived internally from the exact `social_account_id`; it is never copied from the WebSocket client. The PostgreSQL notification envelope and listener must preserve this value. The hub will deliver:
 
 - every workspace event to authorized owner/admin workspace subscriptions;
 - only exact external-user events to managed-user subscriptions.
 
-Sync-complete and count-update events must use the same scope. A managed-user connection must not receive event metadata, counts, or refresh signals caused solely by another managed user.
+Account-specific sync-complete and count-update events use the same exact external-user scope. Workspace-wide control events go only to aggregate subscriptions unless the producer can partition them safely. A managed-user connection must not receive event metadata, counts, or refresh signals caused solely by another managed user.
 
 ## Ingestion and write ownership
 
@@ -153,7 +180,20 @@ The deployed ingress hotfix remains authoritative:
 - Unmatched events fail closed and create no Inbox row.
 - Periodic recovery sync uses each social account's own provider token.
 
-Exact routing no longer fans out across a workspace. It may still find more than one local connection for the same real provider account. The connection flow must reject assigning the same `(workspace, platform, provider account identity)` to two different nonempty `external_user_id` values. This check must run transactionally or under an account-identity advisory lock so concurrent Connect callbacks cannot create ambiguous managed ownership.
+Exact routing no longer enumerates every account in a workspace, but more than one local row for the same real provider account can still make the exact identity ambiguous. Current reconnect lookup and uniqueness are profile-scoped, and `RefreshConnectedSocialAccount` can silently overwrite `external_user_id`. The hotfix must replace that behavior with a workspace-scoped ownership check in every managed Connect completion path.
+
+The lock and lookup use the canonical identity used by exact ingress routing, not a caller label: Instagram uses the verified webhook user ID, while Facebook, Threads, X, and other platforms use their canonical provider account ID. The value is normalized with the same platform-specific rules before both lookup and lock-key construction.
+
+After that provider identity and workspace are known, the Connect flow must:
+
+1. Start a transaction and acquire a transaction-scoped advisory lock derived from `(workspace_id, platform, normalized provider account identity)`.
+2. Query active matching social-account rows across every profile in the workspace, including managed rows and owner/BYO rows, while holding the lock.
+3. Allow token refresh only when the existing row is in the requested profile and its nonempty `external_user_id` exactly matches the Connect session.
+4. Return `409 ACCOUNT_OWNERSHIP_CONFLICT` without changing tokens, profile, or ownership when the identity belongs to another external user or to an owner/BYO `NULL` row.
+5. Return the same conflict rather than silently moving or duplicating an account when the same external user already owns it under another profile; an explicit move workflow is outside this hotfix.
+6. Fail closed and emit sanitized telemetry when multiple active matches already exist. The hotfix must not automatically merge, delete, or reassign them.
+
+The existing profile-level unique index remains as defense in depth. A workspace-level unique database index is deferred because it would require a preexisting-data cleanup decision and a carefully staged online migration. The transactional application check and advisory lock are mandatory for the hotfix and must cover concurrent callbacks.
 
 User-initiated writes are separately protected by `InboxAccessScope`; the webhook fix alone does not authorize mark-read, reply, thread-state, sync, or outbound operations.
 
@@ -172,6 +212,9 @@ This is intentionally fail closed and is a breaking change for API-key Inbox cal
 - Clerk owner/admin Dashboard behavior remains workspace-wide by default.
 - Customer-backend managed-user calls add `inbox_scope=managed_user` and `external_user_id` to every Inbox request, including WebSocket and object routes.
 - Customer-backend owner/admin aggregate calls add `inbox_scope=workspace`.
+- HTTP rollout is customer-backend first: the customer deploys the new query parameters while the old UniPost API still ignores them, then UniPost enables mandatory enforcement. Production promotion is blocked until this readiness is confirmed.
+- Managed-user realtime remains on HTTP polling until the new server-to-server WebSocket handshake passes staging acceptance; the customer backend may then enable its WebSocket proxy/client path.
+- There is no compatibility mode that serves workspace-wide data when scope is absent. If coordination is incomplete, calls fail with an explicit 400 rather than disclose data.
 - No feature flag is used; tenant isolation must not be optional.
 - Existing correctly owned Inbox rows do not require migration or deletion. The authorization boundary applies immediately after deployment.
 
@@ -183,9 +226,12 @@ The documentation and generated API examples must clearly state that the workspa
 
 - Scope parser rejects missing, contradictory, empty, and unknown scope values.
 - API-key workspace scope requires current owner/admin role.
+- Creatorless legacy API keys cannot use workspace aggregate scope.
 - Clerk owner/admin defaults to workspace scope.
 - Every Inbox SQL query contains both derived workspace ownership and explicit scope predicates.
-- Connection ownership rejects one provider account assigned to different managed users in one workspace.
+- Workspace mode includes BYO/owner `NULL` accounts; managed-user mode does not.
+- Connection ownership permits same-user/same-profile reconnect, rejects cross-user, BYO-to-managed, and cross-profile reassignment, and never overwrites ownership on conflict.
+- Concurrent Connect callbacks for one provider identity serialize under the advisory lock and at most one ownership decision commits.
 
 ### Handler authorization matrix
 
@@ -204,11 +250,14 @@ Create two managed users, A and B, in one workspace with separate social account
 - A managed-user WebSocket receives A events and never B events.
 - B receives B events and never A events.
 - Owner/admin workspace WebSocket receives both.
+- The API-key WebSocket path authenticates from the upgrade Authorization header and rejects API keys in query parameters.
 - Sync-complete and unread-count notifications follow the same partition.
 
 ### Deployed acceptance
 
 - Preview and staging use synthetic managed users A and B under one test workspace.
+- A read-only preflight audits active creatorless API keys and ambiguous `(workspace, platform, provider account identity)` rows. Any match blocks automatic promotion and is reported for an explicit reissue or ownership decision; the hotfix performs no automatic data rewrite.
+- The customer backend must confirm that scoped HTTP calls are deployed before production API enforcement. WebSocket activation waits for staging acceptance and may continue polling meanwhile.
 - Production verification uses a UniPost-owned test workspace or content-free aggregate queries; it must not log in as or click through a customer's managed-user account.
 - The affected production workspace must retain zero cross-managed-user duplicate events, zero workspace ownership mismatches, and scoped query counts that reconcile to the owner/admin aggregate.
 - Required CI, Railway, Vercel, deployed regression, and browser acceptance must pass on the exact promoted SHA.
@@ -226,7 +275,7 @@ The hotfix is complete only when:
 1. API-key Inbox requests cannot omit scope.
 2. Managed-user scope is enforced on every HTTP, mutation, sync, X, and WebSocket path.
 3. Owner/admin aggregate behavior is identical in Dashboard and API.
-4. Managed users A and B in one workspace cannot observe or mutate each other's Inbox data.
+4. Requests scoped by the trusted customer backend to A and B cannot observe or mutate the other scope, including through guessed object IDs; the customer backend remains responsible for selecting the authenticated user's correct external ID.
 5. Webhook and periodic sync writes remain exact-account routed.
 6. The same provider account cannot be assigned to two managed users in one workspace without an explicit ownership conflict.
 7. Preview, staging, and production acceptance pass without using a customer managed-user login.
