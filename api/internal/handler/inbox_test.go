@@ -15,8 +15,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -1343,6 +1347,232 @@ func TestInboxXDMSGateUsesWorkspaceFeatureEvaluation(t *testing.T) {
 	handler.writeXDMSUnavailable(recorder)
 	if recorder.Code != http.StatusForbidden || !strings.Contains(recorder.Body.String(), "FEATURE_NOT_AVAILABLE") {
 		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestInboxTenantIsolationMediaContextScopesAccountLookup(t *testing.T) {
+	store := &inboxTenantIsolationDB{
+		item: db.InboxItem{
+			ID:              "item-1",
+			SocialAccountID: "account-1",
+			WorkspaceID:     "workspace-1",
+			Source:          "ig_comment",
+			ExternalID:      "comment-1",
+		},
+	}
+	recorder := httptest.NewRecorder()
+	request := inboxTenantIsolationRequest(http.MethodGet, "/v1/inbox/item-1/media-context", "workspace-1", "id", "item-1")
+
+	NewInboxHandler(db.New(store), nil, nil).MediaContext(recorder, request)
+
+	if !store.called("-- name: GetSocialAccountByIDAndWorkspace") {
+		t.Fatal("MediaContext did not use the workspace-scoped social-account lookup")
+	}
+	if store.called("-- name: GetSocialAccount :one") {
+		t.Fatal("MediaContext used the unscoped social-account lookup")
+	}
+}
+
+func TestInboxTenantIsolationReplyReturnsNotFoundWhenDerivedLookupRejectsTarget(t *testing.T) {
+	store := &inboxTenantIsolationDB{itemErr: pgx.ErrNoRows}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/inbox/item-1/reply", strings.NewReader(`{"text":"hello"}`))
+	request = request.WithContext(auth.SetWorkspaceID(request.Context(), "workspace-1"))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("id", "item-1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+
+	NewInboxHandler(db.New(store), nil, nil).Reply(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !store.called("-- name: GetInboxItem") {
+		t.Fatal("Reply did not use the derived-workspace Inbox lookup")
+	}
+	if store.called("-- name: GetSocialAccount") {
+		t.Fatal("Reply continued to account or adapter work after target rejection")
+	}
+}
+
+func TestXOutboundStatusTenantIsolation(t *testing.T) {
+	now := pgtype.Timestamptz{Time: time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), Valid: true}
+	baseOutbound := db.XInboxOutboundRequest{
+		ID:                 "request-1",
+		WorkspaceID:        "workspace-1",
+		SocialAccountID:    "account-1",
+		InboxItemID:        "item-1",
+		IdempotencyKey:     "key-1",
+		PayloadHash:        "hash-1",
+		Status:             "needs_reconciliation",
+		EncryptedPayload:   pgtype.Text{String: "ciphertext", Valid: true},
+		CreatedAt:          now,
+		UpdatedAt:          now,
+		NextAttemptAt:      now,
+		CompletionAttempts: 2,
+	}
+
+	tests := []struct {
+		name       string
+		target     db.InboxItem
+		targetErr  error
+		wantStatus int
+	}{
+		{
+			name:       "missing derived target fails closed",
+			targetErr:  pgx.ErrNoRows,
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "mismatched target account fails closed",
+			target: db.InboxItem{
+				ID:              "item-1",
+				WorkspaceID:     "workspace-1",
+				SocialAccountID: "account-2",
+				Source:          "x_reply",
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "matching target returns safe status",
+			target: db.InboxItem{
+				ID:              "item-1",
+				WorkspaceID:     "workspace-1",
+				SocialAccountID: "account-1",
+				Source:          "x_reply",
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store := &inboxTenantIsolationDB{
+				outbound: baseOutbound,
+				item:     test.target,
+				itemErr:  test.targetErr,
+			}
+			recorder := httptest.NewRecorder()
+			request := inboxTenantIsolationRequest(http.MethodGet, "/v1/inbox/x/outbound/request-1", "workspace-1", "requestID", "request-1")
+
+			NewInboxHandler(db.New(store), nil, nil).XOutboundStatus(recorder, request)
+
+			if recorder.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", recorder.Code, test.wantStatus, recorder.Body.String())
+			}
+			if strings.Contains(recorder.Body.String(), "ciphertext") || strings.Contains(recorder.Body.String(), "encrypted_payload") {
+				t.Fatalf("response exposed protected payload: %s", recorder.Body.String())
+			}
+		})
+	}
+}
+
+type inboxTenantIsolationQueryCall struct {
+	query string
+	args  []interface{}
+}
+
+type inboxTenantIsolationDB struct {
+	item     db.InboxItem
+	itemErr  error
+	outbound db.XInboxOutboundRequest
+	calls    []inboxTenantIsolationQueryCall
+}
+
+func (f *inboxTenantIsolationDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("unexpected Exec call")
+}
+
+func (f *inboxTenantIsolationDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query call")
+}
+
+func (f *inboxTenantIsolationDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	f.calls = append(f.calls, inboxTenantIsolationQueryCall{query: query, args: args})
+	switch {
+	case strings.Contains(query, "-- name: GetXInboxOutboundRequestByID"):
+		return metaWebhookRoutingRow{values: inboxTenantIsolationOutboundValues(f.outbound)}
+	case strings.Contains(query, "-- name: GetInboxItem"):
+		if f.itemErr != nil {
+			return metaWebhookRoutingRow{err: f.itemErr}
+		}
+		return metaWebhookRoutingRow{values: inboxTenantIsolationItemValues(f.item)}
+	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: GetSocialAccount :one"):
+		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
+	default:
+		return metaWebhookRoutingRow{err: errors.New("unexpected QueryRow call")}
+	}
+}
+
+func (f *inboxTenantIsolationDB) called(marker string) bool {
+	for _, call := range f.calls {
+		if strings.Contains(call.query, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func inboxTenantIsolationRequest(method, target, workspaceID, param, value string) *http.Request {
+	request := httptest.NewRequest(method, target, nil)
+	request = request.WithContext(auth.SetWorkspaceID(request.Context(), workspaceID))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add(param, value)
+	return request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+}
+
+func inboxTenantIsolationItemValues(item db.InboxItem) []any {
+	return []any{
+		item.ID,
+		item.SocialAccountID,
+		item.WorkspaceID,
+		item.Source,
+		item.ExternalID,
+		item.ParentExternalID,
+		item.AuthorName,
+		item.AuthorID,
+		item.AuthorAvatarUrl,
+		item.Body,
+		item.IsRead,
+		item.IsOwn,
+		item.ReceivedAt,
+		item.CreatedAt,
+		item.Metadata,
+		item.ThreadKey,
+		item.ThreadStatus,
+		item.AssignedTo,
+		item.LinkedPostID,
+	}
+}
+
+func inboxTenantIsolationOutboundValues(outbound db.XInboxOutboundRequest) []any {
+	return []any{
+		outbound.ID,
+		outbound.WorkspaceID,
+		outbound.SocialAccountID,
+		outbound.InboxItemID,
+		outbound.IdempotencyKey,
+		outbound.PayloadHash,
+		outbound.Status,
+		outbound.ResponseInboxItemID,
+		outbound.CreatedAt,
+		outbound.UpdatedAt,
+		outbound.EncryptedPayload,
+		outbound.BodyHash,
+		outbound.UsageEventID,
+		outbound.OperationKey,
+		outbound.ReservedUnits,
+		outbound.RemoteExternalID,
+		outbound.RemoteConversationID,
+		outbound.RemoteUrl,
+		outbound.SendStartedAt,
+		outbound.RemoteOutcomeKnownAt,
+		outbound.ReconciliationDeadline,
+		outbound.CompletionAttempts,
+		outbound.NextAttemptAt,
+		outbound.LastError,
 	}
 }
 

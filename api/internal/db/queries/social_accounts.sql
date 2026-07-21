@@ -295,6 +295,14 @@ SET status = 'reconnect_required',
 WHERE id = $1
   AND status = 'active';
 
+-- name: SetInstagramWebhookUserID :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', @instagram_webhook_user_id::TEXT)
+WHERE id = @id
+  AND platform = 'instagram'
+  AND status = 'active'
+  AND disconnected_at IS NULL;
+
 -- name: ArmSocialAccountDisconnectNotification :execrows
 UPDATE social_accounts
 SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('disconnect_notified_at', NOW()::TEXT)

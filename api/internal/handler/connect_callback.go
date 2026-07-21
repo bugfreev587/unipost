@@ -510,6 +510,11 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
 		return
 	}
+	if platformName == "instagram" && strings.TrimSpace(profile.WebhookAccountID) == "" {
+		slog.Error("connect.callback: instagram profile missing webhook account id")
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
+		return
+	}
 
 	prof, profErr := h.queries.GetProfile(r.Context(), session.ProfileID)
 	hidePoweredBy := false
@@ -561,10 +566,14 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	metadata, _ := json.Marshal(map[string]any{
+	accountMetadata := map[string]any{
 		"username":     profile.Username,
 		"display_name": profile.DisplayName,
-	})
+	}
+	if platformName == "instagram" {
+		accountMetadata["instagram_webhook_user_id"] = profile.WebhookAccountID
+	}
+	metadata, _ := json.Marshal(accountMetadata)
 
 	accountName := pgtype.Text{String: nonEmpty(profile.Username, profile.DisplayName), Valid: profile.Username != "" || profile.DisplayName != ""}
 	accountAvatarURL := pgtype.Text{String: profile.AvatarURL, Valid: profile.AvatarURL != ""}
@@ -631,28 +640,40 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 
 	if platformName == "instagram" {
-		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), profile.ExternalAccountID, tokens.AccessToken); err != nil {
-			_, _ = h.queries.MarkSocialAccountReconnectRequired(r.Context(), saved.ID)
+		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), profile.WebhookAccountID, tokens.AccessToken); err != nil {
+			reconnectRows, reconnectErr := h.queries.MarkSocialAccountReconnectRequired(r.Context(), saved.ID)
+			failureReason := "webhook_subscription_failed"
+			failureMessage := "Instagram webhook subscription failed."
+			containmentConfirmed := reconnectErr == nil && reconnectRows == 1
+			if !containmentConfirmed {
+				failureReason = "webhook_subscription_containment_failed"
+				failureMessage = "Instagram webhook subscription failed and reconnect containment could not be confirmed."
+				slog.Error("connect.callback: instagram webhook subscription containment failed",
+					"account_id", saved.ID,
+					"external_account_id", profile.ExternalAccountID,
+					"rows_affected", reconnectRows,
+					"transition_error", reconnectErr != nil)
+			}
 			slog.Error("connect.callback: instagram webhook subscription failed",
 				"account_id", saved.ID,
 				"external_account_id", profile.ExternalAccountID,
-				"err", err)
+				"containment_confirmed", containmentConfirmed)
 			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
 				Level:     integrationlogs.LevelError,
 				Status:    integrationlogs.StatusError,
 				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-				Message:   "Instagram webhook subscription failed.",
+				Message:   failureMessage,
 				ProfileID: session.ProfileID,
 				Platform:  platformName,
-				ErrorCode: "webhook_subscription_failed",
+				ErrorCode: failureReason,
 				Metadata: map[string]any{
 					"connect_session_id": session.ID,
 					"external_user_id":   session.ExternalUserID,
 					"social_account_id":  saved.ID,
 				},
-				ResponsePayload: map[string]any{"error": err.Error()},
+				ResponsePayload: map[string]any{"error": "instagram webhook subscription failed"},
 			})
-			h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "webhook_subscription_failed", hidePoweredBy)
+			h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", failureReason, hidePoweredBy)
 			return
 		}
 	}
