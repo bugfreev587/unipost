@@ -255,11 +255,34 @@ func TestStoreSaveRepeatsLookupUnderAdvisoryLock(t *testing.T) {
 	if tx.lockSQL != "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))" {
 		t.Fatalf("lock SQL = %q", tx.lockSQL)
 	}
-	if len(tx.lockArgs) != 1 || tx.lockArgs[0] != "workspace-a\x00facebook\x00provider-a" {
+	if len(tx.lockArgs) != 1 || tx.lockArgs[0] != "11:776f726b73706163652d61;8:66616365626f6f6b;10:70726f76696465722d61;" {
 		t.Fatalf("lock args = %#v", tx.lockArgs)
+	}
+	if strings.Contains(tx.lockArgs[0].(string), "\x00") {
+		t.Fatalf("PostgreSQL text lock argument contains NUL: %#v", tx.lockArgs[0])
 	}
 	if got := authoritativeQueries.lookupParams; got.WorkspaceID != "workspace-a" || got.Platform != "facebook" || got.ProviderIdentity != "provider-a" {
 		t.Fatalf("authoritative lookup params = %+v", got)
+	}
+}
+
+func TestConnectOwnershipLockKeyIsNULFreeAndUnambiguous(t *testing.T) {
+	keys := []string{
+		connectOwnershipLockKey("a", "b\x00c", "d"),
+		connectOwnershipLockKey("a\x00b", "c", "d"),
+		connectOwnershipLockKey("a:1", "b;2", "c"),
+		connectOwnershipLockKey("a", "1:b", "2;c"),
+	}
+
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if strings.Contains(key, "\x00") {
+			t.Fatalf("lock key contains NUL: %q", key)
+		}
+		if _, exists := seen[key]; exists {
+			t.Fatalf("distinct ownership tuples produced duplicate lock key %q", key)
+		}
+		seen[key] = struct{}{}
 	}
 }
 

@@ -2,7 +2,10 @@ package connectownership
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -100,7 +103,7 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) (db.SocialAccount
 	}
 	defer tx.Rollback(ctx)
 
-	lockValue := request.WorkspaceID + "\x00" + request.Platform + "\x00" + request.ProviderIdentity
+	lockValue := connectOwnershipLockKey(request.WorkspaceID, request.Platform, request.ProviderIdentity)
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", lockValue); err != nil {
 		return db.SocialAccount{}, fmt.Errorf("lock connect account ownership: %w", err)
 	}
@@ -124,6 +127,17 @@ func (s *Store) Save(ctx context.Context, request SaveRequest) (db.SocialAccount
 		return db.SocialAccount{}, fmt.Errorf("commit connect account ownership: %w", err)
 	}
 	return account, nil
+}
+
+func connectOwnershipLockKey(workspaceID, platform, providerIdentity string) string {
+	var encoded strings.Builder
+	for _, component := range []string{workspaceID, platform, providerIdentity} {
+		encoded.WriteString(strconv.Itoa(len(component)))
+		encoded.WriteByte(':')
+		encoded.WriteString(hex.EncodeToString([]byte(component)))
+		encoded.WriteByte(';')
+	}
+	return encoded.String()
 }
 
 func ownershipLookupParams(workspaceID, platform, providerIdentity string) db.ListActiveAccountsByWorkspaceProviderIdentityParams {
