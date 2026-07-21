@@ -68,6 +68,7 @@ func TestXInboxSecurityMigrationExecutesAndInstallsDateIndependentReceiptKey(t *
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
+	bootstrapMigrationBaselineIfEmptyForTest(t, ctx, tx, 111)
 
 	var hasReceipts bool
 	if err := tx.QueryRowContext(ctx, `

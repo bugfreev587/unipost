@@ -4,8 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 
@@ -97,26 +95,9 @@ func TestXInboxReconciliationIndexesFreshDownUp(t *testing.T) {
 	}
 	defer database.Close()
 
-	paths, err := filepath.Glob("migrations/*.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	sort.Strings(paths)
 	ctx := context.Background()
-	for _, path := range paths {
-		if filepath.Base(path) == "116_x_inbox_reconciliation_indexes.sql" {
-			continue
-		}
-		migration, readErr := os.ReadFile(path)
-		if readErr != nil {
-			t.Fatal(readErr)
-		}
-		up := strings.Split(string(migration), "-- +goose Down")[0]
-		up = strings.Replace(up, "-- +goose Up", "", 1)
-		if _, execErr := database.ExecContext(ctx, up); execErr != nil {
-			t.Fatalf("fresh apply %s: %v", path, execErr)
-		}
-	}
+	requireEmptyPublicSchemaForTest(t, ctx, database)
+	applyMigrationRangeForTest(t, ctx, database, 1, 115)
 
 	if _, err := goose.EnsureDBVersion(database); err != nil {
 		t.Fatalf("initialize Goose version table: %v", err)
