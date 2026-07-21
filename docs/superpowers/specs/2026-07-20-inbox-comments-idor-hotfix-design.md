@@ -54,6 +54,8 @@ The code deployment and data cleanup are intentionally ordered to avoid the old 
 4. Copy every suspect row to the quarantine table, then delete those rows from `inbox_items` in the same transaction.
 5. The operation is idempotent through a unique constraint on `(incident_key, original_inbox_item_id)` and produces before/moved/remaining counts for the release record.
 
+The schema migration is additive and performs no Inbox data mutation. The operator script defaults to a rolled-back dry run. An apply requires an explicit flag, the exact candidate count and candidate-set digest from the immediately preceding dry run, confirmation that the environment has a usable recovery snapshot/PITR, and explicit user approval for production. It locks the captured rows, preserves their complete JSONB before deletion, verifies preserved/deleted/remaining counts inside one transaction, and rolls back on any mismatch. Migration rollback must refuse to drop a non-empty evidence table.
+
 Instagram comment and DM external IDs identify one upstream event. The same event appearing under different Instagram account IDs is therefore evidence of the fan-out defect. Every copy is quarantined because the stored rows do not retain enough trustworthy routing evidence to identify the one correct account locally. Quarantining all copies fails closed and preserves a reversible record.
 
 The quarantine must run only after the fixed API deployment is serving traffic. It will first run in staging, then in production after the production deployment passes health checks. No message body will be printed in command output or release evidence.
@@ -101,9 +103,9 @@ The owned `hotfix-inbox-comments-idor` branch is based on the latest `origin/sta
 2. Audit the exact commits and files unique to the branch.
 3. Wait for every required GitHub, Railway, and Vercel check on the exact head SHA.
 4. Merge only after all checks pass, wait for staging deployment, verify Instagram identifier backfill and exact routing, then run the quarantine dry run in staging.
-5. Execute the staging quarantine only after mapping coverage is recorded, wait for account-scoped sync, and verify no cross-account event groups remain.
+5. Execute the staging quarantine only after mapping coverage, snapshot readiness, and dry-run count/digest are recorded; wait for account-scoped sync and verify no cross-account event groups remain.
 6. Open `staging` to `main`, re-audit promotion content, and wait for all production checks and deployments.
-7. Verify the fixed API version is serving production, run and record the Instagram identifier-mapping backfill/coverage check, and only then execute the production quarantine.
+7. Verify the fixed API version is serving production, run and record the Instagram identifier-mapping backfill/coverage check, confirm recovery readiness, and present the production dry-run count/digest for explicit user approval before executing the production quarantine.
 8. Record quarantine counts without bodies, wait for account-scoped restoration, verify the affected workspace and the global duplicate query, and exercise the critical Inbox flow in production.
 9. Sync the owned hotfix branch with the latest `origin/dev`, rerun the required suite, open the hotfix pull request to `dev`, complete Preview Acceptance, merge, wait for development deployment, and verify the development environment.
 
