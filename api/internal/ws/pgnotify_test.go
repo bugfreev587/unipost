@@ -106,6 +106,50 @@ func TestNotifyEventScopedNotificationOverridesRoutingFields(t *testing.T) {
 	}
 }
 
+func TestNotifyItemWithExecutorBuildsScopedNewItemEnvelope(t *testing.T) {
+	tests := []struct {
+		name           string
+		externalUserID string
+		wantOwner      string
+		wantOwnerKey   bool
+	}{
+		{name: "managed owner", externalUserID: "managed-a", wantOwner: "managed-a", wantOwnerKey: true},
+		{name: "BYO owner omitted"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &captureNotifyExecutor{}
+			item := map[string]any{
+				"id":               "item-a",
+				"workspace_id":     "payload-workspace",
+				"external_user_id": "payload-managed-b",
+			}
+
+			notifyItemWithExecutor(context.Background(), executor, "workspace-a", test.externalUserID, item)
+
+			if len(executor.calls) != 1 {
+				t.Fatalf("pg_notify calls = %d, want 1", len(executor.calls))
+			}
+			payload := decodeCapturedPGNotify(t, executor.calls[0])
+			if payload["type"] != "inbox.new_item" || payload["workspace_id"] != "workspace-a" {
+				t.Fatalf("routing envelope = %#v", payload)
+			}
+			owner, hasOwner := payload["external_user_id"]
+			if hasOwner != test.wantOwnerKey {
+				t.Fatalf("external_user_id presence = %t, want %t in %#v", hasOwner, test.wantOwnerKey, payload)
+			}
+			if test.wantOwnerKey && owner != test.wantOwner {
+				t.Fatalf("external_user_id = %#v, want DB owner %q", owner, test.wantOwner)
+			}
+			gotItem, ok := payload["item"].(map[string]any)
+			if !ok || !reflect.DeepEqual(gotItem, item) {
+				t.Fatalf("item = %#v, want preserved %#v", payload["item"], item)
+			}
+		})
+	}
+}
+
 func TestBroadcastInboxItemScopedNotification(t *testing.T) {
 	hub := NewHub()
 	aggregate := mustSubscribeInboxScope(t, hub, inboxaccess.Scope{WorkspaceID: "workspace-1", Mode: inboxaccess.ModeWorkspace})
