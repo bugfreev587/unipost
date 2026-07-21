@@ -36,6 +36,7 @@ type tokenAuthenticator func(context.Context, *db.Queries, string) (context.Cont
 type clerkTokenVerifier func(context.Context, string) (string, error)
 type webSocketAcceptor func(http.ResponseWriter, *http.Request, *websocket.AcceptOptions) (*websocket.Conn, error)
 type webSocketServer func(context.Context, string, *websocket.Conn)
+type scopedWebSocketServer func(context.Context, inboxaccess.Scope, *websocket.Conn)
 
 // Handler upgrades an HTTP request to a WebSocket connection. Clerk sessions
 // resolve their current active workspace membership exactly like
@@ -51,6 +52,7 @@ type Handler struct {
 	legacyClerkTokenVerifier clerkTokenVerifier
 	acceptWebSocket          webSocketAcceptor
 	serveWebSocket           webSocketServer
+	serveScopedWebSocket     scopedWebSocketServer
 }
 
 func NewHandler(hub *Hub, queries *db.Queries) *Handler {
@@ -62,6 +64,7 @@ func NewHandler(hub *Hub, queries *db.Queries) *Handler {
 		legacyClerkTokenVerifier: auth.VerifyClerkSessionToken,
 		acceptWebSocket:          websocket.Accept,
 		serveWebSocket:           hub.ServeConn,
+		serveScopedWebSocket:     hub.ServeScopedConn,
 	}
 }
 
@@ -151,7 +154,7 @@ func (h *Handler) serveScopedInbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authenticatedRequest = authenticatedRequest.WithContext(inboxaccess.WithContext(authenticated, scope))
-	h.acceptAndServe(w, authenticatedRequest, scope.WorkspaceID)
+	h.acceptAndServeScoped(w, authenticatedRequest, scope)
 }
 
 func (h *Handler) serveClerkOnly(w http.ResponseWriter, r *http.Request) {
@@ -192,6 +195,23 @@ func (h *Handler) acceptAndServe(w http.ResponseWriter, r *http.Request, workspa
 
 	slog.Info("ws: upgrading", "workspace_id", workspaceID)
 	h.serveWebSocket(r.Context(), workspaceID, connection)
+}
+
+func (h *Handler) acceptAndServeScoped(w http.ResponseWriter, r *http.Request, scope inboxaccess.Scope) {
+	if !h.ensureInboxPlanAllowed(w, r, scope.WorkspaceID) {
+		return
+	}
+
+	connection, err := h.acceptWebSocket(w, r, &websocket.AcceptOptions{
+		OriginPatterns: []string{"*.unipost.dev", "localhost:*", "*"},
+	})
+	if err != nil {
+		slog.Warn("ws: accept failed")
+		return
+	}
+
+	slog.Info("ws: upgrading inbox connection", "workspace_id", scope.WorkspaceID, "scope_mode", scope.Mode)
+	h.serveScopedWebSocket(r.Context(), scope, connection)
 }
 
 func validScopedInboxQuery(query url.Values) bool {

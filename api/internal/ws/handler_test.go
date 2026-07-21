@@ -52,16 +52,19 @@ func (g *recordingInboxPlanGate) PlanAllowsInbox(ctx context.Context, workspaceI
 }
 
 type webSocketTestHarness struct {
-	handler     *Handler
-	store       *webSocketTestDB
-	plan        *recordingInboxPlanGate
-	clerkCalls  int
-	apiCalls    int
-	legacyCalls int
-	accepts     int
-	serves      int
-	serveWS     string
-	serveScope  inboxaccess.Scope
+	handler           *Handler
+	store             *webSocketTestDB
+	plan              *recordingInboxPlanGate
+	clerkCalls        int
+	apiCalls          int
+	legacyCalls       int
+	accepts           int
+	serves            int
+	legacyServes      int
+	scopedServes      int
+	serveWS           string
+	serveScope        inboxaccess.Scope
+	serveContextScope inboxaccess.Scope
 }
 
 func newInboxWebSocketTestHandler() *webSocketTestHarness {
@@ -98,8 +101,15 @@ func newInboxWebSocketTestHandler() *webSocketTestHarness {
 	}
 	harness.handler.serveWebSocket = func(ctx context.Context, workspaceID string, _ *websocket.Conn) {
 		harness.serves++
+		harness.legacyServes++
 		harness.serveWS = workspaceID
-		harness.serveScope, _ = inboxaccess.FromContext(ctx)
+		harness.serveContextScope, _ = inboxaccess.FromContext(ctx)
+	}
+	harness.handler.serveScopedWebSocket = func(ctx context.Context, scope inboxaccess.Scope, _ *websocket.Conn) {
+		harness.serves++
+		harness.scopedServes++
+		harness.serveScope = scope
+		harness.serveContextScope, _ = inboxaccess.FromContext(ctx)
 	}
 	return harness
 }
@@ -388,6 +398,9 @@ func TestInboxWebSocketPreservesLogsClerkOnlyMode(t *testing.T) {
 		if harness.accepts != 1 || harness.serves != 1 || harness.serveWS != "workspace_1" {
 			t.Fatalf("accept/serve/workspace = %d/%d/%q, want 1/1/workspace_1", harness.accepts, harness.serves, harness.serveWS)
 		}
+		if harness.legacyServes != 1 || harness.scopedServes != 0 {
+			t.Fatalf("legacy/scoped serves = %d/%d, want 1/0", harness.legacyServes, harness.scopedServes)
+		}
 		if harness.legacyCalls != 1 || harness.clerkCalls != 0 || harness.apiCalls != 0 {
 			t.Fatalf("legacy/scoped Clerk/API auth calls = %d/%d/%d, want 1/0/0", harness.legacyCalls, harness.clerkCalls, harness.apiCalls)
 		}
@@ -501,11 +514,14 @@ func assertWebSocketAccepted(t *testing.T, harness *webSocketTestHarness, want i
 	if harness.plan.calls != 1 || harness.accepts != 1 || harness.serves != 1 {
 		t.Fatalf("plan/accept/serve calls = %d/%d/%d, want 1/1/1", harness.plan.calls, harness.accepts, harness.serves)
 	}
-	if harness.plan.workspaceID != want.WorkspaceID || harness.serveWS != want.WorkspaceID {
-		t.Fatalf("plan/serve workspaces = %q/%q, want %q", harness.plan.workspaceID, harness.serveWS, want.WorkspaceID)
+	if harness.legacyServes != 0 || harness.scopedServes != 1 {
+		t.Fatalf("legacy/scoped serves = %d/%d, want 0/1", harness.legacyServes, harness.scopedServes)
 	}
-	if harness.plan.scope != want || harness.serveScope != want {
-		t.Fatalf("plan/serve scopes = %#v/%#v, want %#v", harness.plan.scope, harness.serveScope, want)
+	if harness.plan.workspaceID != want.WorkspaceID || harness.serveScope.WorkspaceID != want.WorkspaceID {
+		t.Fatalf("plan/serve workspaces = %q/%q, want %q", harness.plan.workspaceID, harness.serveScope.WorkspaceID, want.WorkspaceID)
+	}
+	if harness.plan.scope != want || harness.serveScope != want || harness.serveContextScope != want {
+		t.Fatalf("plan/serve/context scopes = %#v/%#v/%#v, want %#v", harness.plan.scope, harness.serveScope, harness.serveContextScope, want)
 	}
 }
 
