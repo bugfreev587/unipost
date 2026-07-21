@@ -12,7 +12,9 @@ RETURNING *;
 -- name: ListInboxItemsByWorkspace :many
 SELECT i.* FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
+  AND p.workspace_id = $1
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
@@ -23,8 +25,12 @@ ORDER BY i.received_at DESC
 LIMIT $2;
 
 -- name: GetInboxItem :one
-SELECT * FROM inbox_items
-WHERE id = $1 AND workspace_id = $2;
+SELECT i.* FROM inbox_items i
+JOIN social_accounts sa ON sa.id = i.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
+WHERE i.id = $1
+  AND i.workspace_id = $2
+  AND p.workspace_id = $2;
 
 -- name: GetInboxItemByExternalID :one
 SELECT * FROM inbox_items
@@ -257,17 +263,26 @@ WHERE id = @id
   AND status = 'pending';
 
 -- name: MarkInboxItemRead :exec
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET is_read = true
-WHERE id = $1 AND workspace_id = $2;
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.id = $1
+  AND i.workspace_id = $2
+  AND p.workspace_id = $2;
 
 -- name: UpdateInboxItemAuthorMetadata :execrows
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET author_name = NULLIF(@author_name::TEXT, ''),
     author_id = NULLIF(@author_id::TEXT, ''),
     author_avatar_url = NULLIF(@author_avatar_url::TEXT, '')
-WHERE id = @id
-  AND workspace_id = @workspace_id;
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.id = @id
+  AND i.workspace_id = @workspace_id
+  AND p.workspace_id = @workspace_id;
 
 -- name: MergeInboxItemAuthorMetadataByExternalID :execrows
 WITH incoming AS (
@@ -317,20 +332,28 @@ WHERE i.social_account_id = @social_account_id
   );
 
 -- name: MarkAllInboxItemsRead :execrows
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET is_read = true
-WHERE workspace_id = @workspace_id
-  AND is_read = false
-  AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR source <> 'x_dm');
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.workspace_id = @workspace_id
+  AND p.workspace_id = @workspace_id
+  AND i.is_read = false
+  AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm');
 
 -- name: UpdateInboxThreadState :execrows
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET thread_status = $5,
     assigned_to = NULLIF($6, '')
-WHERE workspace_id = $1
-  AND social_account_id = $2
-  AND source = $3
-  AND thread_key = $4;
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.workspace_id = $1
+  AND p.workspace_id = $1
+  AND i.social_account_id = $2
+  AND i.source = $3
+  AND i.thread_key = $4;
 
 -- name: CountUnreadByWorkspace :one
 -- Mirrors the inbox UI's "unread" filter exactly: items the user
@@ -343,7 +366,9 @@ WHERE workspace_id = $1
 SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
+  AND p.workspace_id = $1
   AND i.is_read = false
   AND i.is_own = false
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
@@ -417,9 +442,23 @@ WHERE social_account_id = $1
   AND thread_key = $2
   AND thread_key != $3;
 
+-- name: FindAllActiveInstagramAccountsByWebhookUserID :many
+-- Route Instagram webhook payloads only through the identity captured from the
+-- subscription response. Multiple workspaces may intentionally share it.
+SELECT sa.id, sa.external_account_id,
+       CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
+       p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = 'instagram'
+  AND sa.metadata->>'instagram_webhook_user_id' = @instagram_webhook_user_id::TEXT
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC, sa.id;
+
 -- name: FindAnyActiveAccountByPlatform :one
--- Webhook fallback: find any active account for a platform.
--- Used when Meta sends a different ID format than what we store.
+-- DEPRECATED: Unsafe global fallback retained only until webhook handlers use
+-- exact platform identities exclusively.
 SELECT sa.id, sa.external_account_id, p.workspace_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
@@ -430,8 +469,8 @@ ORDER BY sa.connected_at DESC
 LIMIT 1;
 
 -- name: FindAllActiveAccountsByPlatform :many
--- Returns ALL active accounts for a platform across all workspaces.
--- Used by webhooks to fan out comments/replies to every workspace.
+-- DEPRECATED: Unsafe cross-workspace fanout retained only until webhook
+-- handlers use exact platform identities exclusively.
 SELECT sa.id, sa.external_account_id, p.workspace_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
@@ -441,8 +480,8 @@ WHERE sa.platform = $1
 ORDER BY sa.connected_at DESC;
 
 -- name: FindSocialAccountByPlatformAndExternalID :one
--- Webhook routing: find an active social account by platform + external_account_id,
--- joining to profiles for workspace_id. Returns the first match.
+-- DEPRECATED: Unsafe singular selection retained only until webhook handlers
+-- consume every exact platform-identity match.
 SELECT sa.id, sa.external_account_id, p.workspace_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
@@ -459,7 +498,9 @@ LIMIT 1;
 -- dedicated worker; including it here keeps shared Inbox discovery complete.
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode, COALESCE(sub.plan_id, 'free') AS plan_id,
+       sa.x_app_mode,
+       CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
+       COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id

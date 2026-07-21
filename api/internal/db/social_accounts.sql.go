@@ -1272,6 +1272,28 @@ func (q *Queries) RefreshConnectedSocialAccount(ctx context.Context, arg Refresh
 	return i, err
 }
 
+const setInstagramWebhookUserID = `-- name: SetInstagramWebhookUserID :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', $1::TEXT)
+WHERE id = $2
+  AND platform = 'instagram'
+  AND status = 'active'
+  AND disconnected_at IS NULL
+`
+
+type SetInstagramWebhookUserIDParams struct {
+	InstagramWebhookUserID string `json:"instagram_webhook_user_id"`
+	ID                     string `json:"id"`
+}
+
+func (q *Queries) SetInstagramWebhookUserID(ctx context.Context, arg SetInstagramWebhookUserIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setInstagramWebhookUserID, arg.InstagramWebhookUserID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const updateManagedBlueskyAccount = `-- name: UpdateManagedBlueskyAccount :one
 UPDATE social_accounts
 SET access_token       = $2,

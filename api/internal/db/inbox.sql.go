@@ -138,7 +138,9 @@ const countUnreadByWorkspace = `-- name: CountUnreadByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
+  AND p.workspace_id = $1
   AND i.is_read = false
   AND i.is_own = false
   AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
@@ -286,8 +288,8 @@ type FindAllActiveAccountsByPlatformRow struct {
 	WorkspaceID       string `json:"workspace_id"`
 }
 
-// Returns ALL active accounts for a platform across all workspaces.
-// Used by webhooks to fan out comments/replies to every workspace.
+// DEPRECATED: Unsafe cross-workspace fanout retained only until webhook
+// handlers use exact platform identities exclusively.
 func (q *Queries) FindAllActiveAccountsByPlatform(ctx context.Context, platform string) ([]FindAllActiveAccountsByPlatformRow, error) {
 	rows, err := q.db.Query(ctx, findAllActiveAccountsByPlatform, platform)
 	if err != nil {
@@ -298,6 +300,53 @@ func (q *Queries) FindAllActiveAccountsByPlatform(ctx context.Context, platform 
 	for rows.Next() {
 		var i FindAllActiveAccountsByPlatformRow
 		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findAllActiveInstagramAccountsByWebhookUserID = `-- name: FindAllActiveInstagramAccountsByWebhookUserID :many
+SELECT sa.id, sa.external_account_id,
+       CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
+       p.workspace_id
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.platform = 'instagram'
+  AND sa.metadata->>'instagram_webhook_user_id' = $1::TEXT
+  AND sa.disconnected_at IS NULL
+  AND sa.status = 'active'
+ORDER BY sa.connected_at DESC, sa.id
+`
+
+type FindAllActiveInstagramAccountsByWebhookUserIDRow struct {
+	ID                     string `json:"id"`
+	ExternalAccountID      string `json:"external_account_id"`
+	InstagramWebhookUserID string `json:"instagram_webhook_user_id"`
+	WorkspaceID            string `json:"workspace_id"`
+}
+
+// Route Instagram webhook payloads only through the identity captured from the
+// subscription response. Multiple workspaces may intentionally share it.
+func (q *Queries) FindAllActiveInstagramAccountsByWebhookUserID(ctx context.Context, instagramWebhookUserID string) ([]FindAllActiveInstagramAccountsByWebhookUserIDRow, error) {
+	rows, err := q.db.Query(ctx, findAllActiveInstagramAccountsByWebhookUserID, instagramWebhookUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FindAllActiveInstagramAccountsByWebhookUserIDRow{}
+	for rows.Next() {
+		var i FindAllActiveInstagramAccountsByWebhookUserIDRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExternalAccountID,
+			&i.InstagramWebhookUserID,
+			&i.WorkspaceID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -369,8 +418,8 @@ type FindAnyActiveAccountByPlatformRow struct {
 	WorkspaceID       string `json:"workspace_id"`
 }
 
-// Webhook fallback: find any active account for a platform.
-// Used when Meta sends a different ID format than what we store.
+// DEPRECATED: Unsafe global fallback retained only until webhook handlers use
+// exact platform identities exclusively.
 func (q *Queries) FindAnyActiveAccountByPlatform(ctx context.Context, platform string) (FindAnyActiveAccountByPlatformRow, error) {
 	row := q.db.QueryRow(ctx, findAnyActiveAccountByPlatform, platform)
 	var i FindAnyActiveAccountByPlatformRow
@@ -508,8 +557,8 @@ type FindSocialAccountByPlatformAndExternalIDRow struct {
 	WorkspaceID       string `json:"workspace_id"`
 }
 
-// Webhook routing: find an active social account by platform + external_account_id,
-// joining to profiles for workspace_id. Returns the first match.
+// DEPRECATED: Unsafe singular selection retained only until webhook handlers
+// consume every exact platform-identity match.
 func (q *Queries) FindSocialAccountByPlatformAndExternalID(ctx context.Context, arg FindSocialAccountByPlatformAndExternalIDParams) (FindSocialAccountByPlatformAndExternalIDRow, error) {
 	row := q.db.QueryRow(ctx, findSocialAccountByPlatformAndExternalID, arg.Platform, arg.ExternalAccountID)
 	var i FindSocialAccountByPlatformAndExternalIDRow
@@ -678,8 +727,12 @@ func (q *Queries) FindXInboxAccountsForExternalUserApp(ctx context.Context, arg 
 }
 
 const getInboxItem = `-- name: GetInboxItem :one
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
-WHERE id = $1 AND workspace_id = $2
+SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
+JOIN social_accounts sa ON sa.id = i.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
+WHERE i.id = $1
+  AND i.workspace_id = $2
+  AND p.workspace_id = $2
 `
 
 type GetInboxItemParams struct {
@@ -967,7 +1020,9 @@ func (q *Queries) GetXInboxReplyByIdempotencyKey(ctx context.Context, arg GetXIn
 const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode, COALESCE(sub.plan_id, 'free') AS plan_id,
+       sa.x_app_mode,
+       CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
+       COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
@@ -980,17 +1035,18 @@ ORDER BY sa.connected_at DESC
 `
 
 type ListAllInboxAccountsRow struct {
-	ID                string      `json:"id"`
-	Platform          string      `json:"platform"`
-	AccessToken       string      `json:"access_token"`
-	ExternalAccountID string      `json:"external_account_id"`
-	AccountName       pgtype.Text `json:"account_name"`
-	WorkspaceID       string      `json:"workspace_id"`
-	Scope             []string    `json:"scope"`
-	ConnectionType    string      `json:"connection_type"`
-	XAppMode          pgtype.Text `json:"x_app_mode"`
-	PlanID            string      `json:"plan_id"`
-	PlanAllowsInbox   bool        `json:"plan_allows_inbox"`
+	ID                     string      `json:"id"`
+	Platform               string      `json:"platform"`
+	AccessToken            string      `json:"access_token"`
+	ExternalAccountID      string      `json:"external_account_id"`
+	AccountName            pgtype.Text `json:"account_name"`
+	WorkspaceID            string      `json:"workspace_id"`
+	Scope                  []string    `json:"scope"`
+	ConnectionType         string      `json:"connection_type"`
+	XAppMode               pgtype.Text `json:"x_app_mode"`
+	InstagramWebhookUserID string      `json:"instagram_webhook_user_id"`
+	PlanID                 string      `json:"plan_id"`
+	PlanAllowsInbox        bool        `json:"plan_allows_inbox"`
 }
 
 // All active Inbox accounts across all workspaces,
@@ -1016,6 +1072,7 @@ func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccou
 			&i.Scope,
 			&i.ConnectionType,
 			&i.XAppMode,
+			&i.InstagramWebhookUserID,
 			&i.PlanID,
 			&i.PlanAllowsInbox,
 		); err != nil {
@@ -1084,7 +1141,9 @@ func (q *Queries) ListInboxItemsByParent(ctx context.Context, arg ListInboxItems
 const listInboxItemsByWorkspace = `-- name: ListInboxItemsByWorkspace :many
 SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
+JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
+  AND p.workspace_id = $1
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
   AND (NOT $3::BOOLEAN OR i.source <> 'x_dm')
@@ -1296,11 +1355,15 @@ func (q *Queries) ListXInboxOutboundWebhookCandidates(ctx context.Context, arg L
 }
 
 const markAllInboxItemsRead = `-- name: MarkAllInboxItemsRead :execrows
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET is_read = true
-WHERE workspace_id = $1
-  AND is_read = false
-  AND (NOT $2::BOOLEAN OR source <> 'x_dm')
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.workspace_id = $1
+  AND p.workspace_id = $1
+  AND i.is_read = false
+  AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
 `
 
 type MarkAllInboxItemsReadParams struct {
@@ -1317,9 +1380,14 @@ func (q *Queries) MarkAllInboxItemsRead(ctx context.Context, arg MarkAllInboxIte
 }
 
 const markInboxItemRead = `-- name: MarkInboxItemRead :exec
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET is_read = true
-WHERE id = $1 AND workspace_id = $2
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.id = $1
+  AND i.workspace_id = $2
+  AND p.workspace_id = $2
 `
 
 type MarkInboxItemReadParams struct {
@@ -1637,12 +1705,16 @@ func (q *Queries) RecordXInboxOutboundRemoteSuccessFromWebhook(ctx context.Conte
 }
 
 const updateInboxItemAuthorMetadata = `-- name: UpdateInboxItemAuthorMetadata :execrows
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET author_name = NULLIF($1::TEXT, ''),
     author_id = NULLIF($2::TEXT, ''),
     author_avatar_url = NULLIF($3::TEXT, '')
-WHERE id = $4
-  AND workspace_id = $5
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.id = $4
+  AND i.workspace_id = $5
+  AND p.workspace_id = $5
 `
 
 type UpdateInboxItemAuthorMetadataParams struct {
@@ -1668,13 +1740,17 @@ func (q *Queries) UpdateInboxItemAuthorMetadata(ctx context.Context, arg UpdateI
 }
 
 const updateInboxThreadState = `-- name: UpdateInboxThreadState :execrows
-UPDATE inbox_items
+UPDATE inbox_items AS i
 SET thread_status = $5,
     assigned_to = NULLIF($6, '')
-WHERE workspace_id = $1
-  AND social_account_id = $2
-  AND source = $3
-  AND thread_key = $4
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE sa.id = i.social_account_id
+  AND i.workspace_id = $1
+  AND p.workspace_id = $1
+  AND i.social_account_id = $2
+  AND i.source = $3
+  AND i.thread_key = $4
 `
 
 type UpdateInboxThreadStateParams struct {
