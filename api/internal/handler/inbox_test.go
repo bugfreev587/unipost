@@ -1373,6 +1373,28 @@ func TestInboxTenantIsolationMediaContextScopesAccountLookup(t *testing.T) {
 	}
 }
 
+func TestInboxTenantIsolationReplyReturnsNotFoundWhenDerivedLookupRejectsTarget(t *testing.T) {
+	store := &inboxTenantIsolationDB{itemErr: pgx.ErrNoRows}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/inbox/item-1/reply", strings.NewReader(`{"text":"hello"}`))
+	request = request.WithContext(auth.SetWorkspaceID(request.Context(), "workspace-1"))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("id", "item-1")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, routeContext))
+
+	NewInboxHandler(db.New(store), nil, nil).Reply(recorder, request)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !store.called("-- name: GetInboxItem") {
+		t.Fatal("Reply did not use the derived-workspace Inbox lookup")
+	}
+	if store.called("-- name: GetSocialAccount") {
+		t.Fatal("Reply continued to account or adapter work after target rejection")
+	}
+}
+
 func TestXOutboundStatusTenantIsolation(t *testing.T) {
 	now := pgtype.Timestamptz{Time: time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC), Valid: true}
 	baseOutbound := db.XInboxOutboundRequest{
