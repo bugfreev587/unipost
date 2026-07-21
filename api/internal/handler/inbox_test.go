@@ -24,6 +24,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
@@ -1516,7 +1517,9 @@ func TestInboxManagedScopeObjectDenialsStopBeforeSensitiveWork(t *testing.T) {
 		{name: "media", method: http.MethodGet, target: "/v1/inbox/item-b/media-context", param: "id", value: "item-b", routeClass: "media_context", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.MediaContext(w, r) }, allowedMarkers: []string{"-- name: GetInboxItem"}},
 		{name: "mark read", method: http.MethodPost, target: "/v1/inbox/item-b/read", param: "id", value: "item-b", routeClass: "mark_read", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.MarkRead(w, r) }, allowedMarkers: []string{"-- name: GetInboxItem"}},
 		{name: "reply", method: http.MethodPost, target: "/v1/inbox/item-b/reply", param: "id", value: "item-b", body: `{"text":"managed-scope-test-body"}`, routeClass: "reply", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.Reply(w, r) }, allowedMarkers: []string{"-- name: GetInboxItem"}},
+		{name: "reply malformed body", method: http.MethodPost, target: "/v1/inbox/item-b/reply", param: "id", value: "item-b", body: `{`, routeClass: "reply", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.Reply(w, r) }, allowedMarkers: []string{"-- name: GetInboxItem"}},
 		{name: "thread", method: http.MethodPost, target: "/v1/inbox/item-b/thread-state", param: "id", value: "item-b", body: `{"thread_status":"resolved"}`, routeClass: "thread_state", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.UpdateThreadState(w, r) }, allowedMarkers: []string{"-- name: GetInboxItem"}},
+		{name: "thread malformed body", method: http.MethodPost, target: "/v1/inbox/item-b/thread-state", param: "id", value: "item-b", body: `{`, routeClass: "thread_state", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.UpdateThreadState(w, r) }, allowedMarkers: []string{"-- name: GetInboxItem"}},
 		{name: "X outbound status", method: http.MethodGet, target: "/v1/inbox/x/outbound/operation-b", param: "requestID", value: "operation-b", routeClass: "x_outbound_status", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.XOutboundStatus(w, r) }, allowedMarkers: []string{"-- name: GetXInboxOutboundRequestByID", "-- name: GetInboxItem"}},
 	}
 
@@ -1568,6 +1571,229 @@ func TestInboxManagedScopeObjectDenialsStopBeforeSensitiveWork(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestInboxManagedScopeMalformedPayloadInScopeRemainsBadRequest(t *testing.T) {
+	routes := []struct {
+		name   string
+		target string
+		handle func(*InboxHandler, http.ResponseWriter, *http.Request)
+	}{
+		{name: "reply", target: "/v1/inbox/item-a/reply", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.Reply(w, r) }},
+		{name: "thread state", target: "/v1/inbox/item-a/thread-state", handle: func(h *InboxHandler, w http.ResponseWriter, r *http.Request) { h.UpdateThreadState(w, r) }},
+	}
+	for _, route := range routes {
+		t.Run(route.name, func(t *testing.T) {
+			store := &inboxTenantIsolationDB{item: db.InboxItem{
+				ID:              "item-a",
+				SocialAccountID: "account-a",
+				WorkspaceID:     "workspace-1",
+				Source:          "ig_comment",
+			}}
+			recorder := httptest.NewRecorder()
+			request := managedInboxRequest(http.MethodPost, route.target, "id", "item-a")
+			request.Body = io.NopCloser(strings.NewReader(`{`))
+
+			route.handle(NewInboxHandler(db.New(store), nil, nil), recorder, request)
+
+			if recorder.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d, want 400; body=%s", recorder.Code, recorder.Body.String())
+			}
+			calls := store.callsFor("-- name: GetInboxItem")
+			if len(calls) != 1 {
+				t.Fatalf("scoped authorization calls=%d, want 1; calls=%#v", len(calls), store.calls)
+			}
+			workspaceScope, externalUserID := inboxTenantIsolationScopeArgs(t, "-- name: GetInboxItem", calls[0].args)
+			if workspaceScope || externalUserID != "managed-a" {
+				t.Fatalf("authorization scope=(%v,%q), want (false,managed-a)", workspaceScope, externalUserID)
+			}
+		})
+	}
+}
+
+func TestInboxManagedScopeReplyCompletedIdempotentReloadPreservesExactScope(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedToken, err := encryptor.Encrypt("x-access-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name               string
+		request            func(method, target, param, value string) *http.Request
+		wantWorkspaceScope bool
+		wantExternalUserID string
+	}{
+		{name: "managed user", request: managedInboxRequest, wantExternalUserID: "managed-a"},
+		{name: "workspace aggregate", request: workspaceInboxRequest, wantWorkspaceScope: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := db.InboxItem{
+				ID:              "item-a",
+				SocialAccountID: "account-a",
+				WorkspaceID:     "workspace-1",
+				Source:          "x_reply",
+				ExternalID:      "tweet-a",
+				Metadata:        []byte(`{"reply_eligible":true}`),
+			}
+			replayed := db.InboxItem{
+				ID:              "reply-a",
+				SocialAccountID: "account-a",
+				WorkspaceID:     "workspace-1",
+				Source:          "x_reply",
+				ExternalID:      "tweet-reply-a",
+				IsOwn:           true,
+			}
+			store := &inboxTenantIsolationDB{
+				items:    []db.InboxItem{target, replayed},
+				claimErr: pgx.ErrNoRows,
+				account: db.SocialAccount{
+					ID:                "account-a",
+					ProfileID:         "profile-a",
+					Platform:          "twitter",
+					AccessToken:       encryptedToken,
+					ExternalAccountID: "x-account-a",
+					Scope:             []string{"tweet.read", "tweet.write", "users.read"},
+					Status:            "active",
+					ConnectionType:    "managed",
+				},
+				outbound: db.XInboxOutboundRequest{
+					ID:                     "operation-a",
+					WorkspaceID:            "workspace-1",
+					SocialAccountID:        "account-a",
+					InboxItemID:            "item-a",
+					IdempotencyKey:         "idempotency-a",
+					PayloadHash:            xInboxReplyPayloadHash(target, "hello"),
+					Status:                 "completed",
+					ResponseInboxItemID:    pgtype.Text{String: "reply-a", Valid: true},
+					ReconciliationDeadline: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
+				},
+			}
+			recorder := httptest.NewRecorder()
+			request := test.request(http.MethodPost, "/v1/inbox/item-a/reply", "id", "item-a")
+			request.Body = io.NopCloser(strings.NewReader(`{"text":"hello"}`))
+			request.Header.Set("Idempotency-Key", "idempotency-a")
+
+			NewInboxHandler(db.New(store), encryptor, nil).Reply(recorder, request)
+
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status=%d, want 200; body=%s calls=%#v", recorder.Code, recorder.Body.String(), store.calls)
+			}
+			calls := store.callsFor("-- name: GetInboxItem")
+			if len(calls) != 2 {
+				t.Fatalf("GetInboxItem calls=%d, want initial+reload; calls=%#v", len(calls), store.calls)
+			}
+			for index, call := range calls {
+				workspaceScope, externalUserID := inboxTenantIsolationScopeArgs(t, "-- name: GetInboxItem", call.args)
+				if workspaceScope != test.wantWorkspaceScope || externalUserID != test.wantExternalUserID {
+					t.Fatalf("GetInboxItem[%d] scope=(%v,%q), want (%v,%q)", index, workspaceScope, externalUserID, test.wantWorkspaceScope, test.wantExternalUserID)
+				}
+			}
+		})
+	}
+}
+
+func TestInboxManagedScopeCompleteKnownOutboundBranchesPreserveExactScope(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedPayload, err := encryptor.Encrypt("reply body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	managedContext := managedInboxRequest(http.MethodGet, "/v1/inbox", "", "").Context()
+
+	t.Run("completed response reload", func(t *testing.T) {
+		tx := &inboxCompleteKnownTx{
+			outbound: db.XInboxOutboundRequest{
+				ID:                  "operation-a",
+				WorkspaceID:         "workspace-1",
+				SocialAccountID:     "account-a",
+				InboxItemID:         "item-a",
+				Status:              "completed",
+				ResponseInboxItemID: pgtype.Text{String: "reply-a", Valid: true},
+			},
+			item: db.InboxItem{ID: "reply-a", SocialAccountID: "account-a", WorkspaceID: "workspace-1"},
+		}
+
+		item, _, err := (&InboxHandler{encryptor: encryptor}).completeKnownXInboxOutboundWithTx(managedContext, "operation-a", tx)
+		if err != nil || item.ID != "reply-a" {
+			t.Fatalf("completed reload = %+v, %v", item, err)
+		}
+		assertInboxCompleteKnownScope(t, tx, false, "managed-a")
+		if !tx.committed {
+			t.Fatal("completed branch did not commit")
+		}
+	})
+
+	t.Run("remote succeeded target reload", func(t *testing.T) {
+		tx := &inboxCompleteKnownTx{
+			outbound: db.XInboxOutboundRequest{
+				ID:                   "operation-a",
+				WorkspaceID:          "workspace-1",
+				SocialAccountID:      "account-a",
+				InboxItemID:          "item-a",
+				Status:               "remote_succeeded",
+				EncryptedPayload:     pgtype.Text{String: encryptedPayload, Valid: true},
+				RemoteExternalID:     pgtype.Text{String: "tweet-reply-a", Valid: true},
+				RemoteConversationID: pgtype.Text{String: "conversation-a", Valid: true},
+			},
+			itemErr: pgx.ErrNoRows,
+		}
+
+		_, _, err := (&InboxHandler{encryptor: encryptor}).completeKnownXInboxOutboundWithTx(managedContext, "operation-a", tx)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("remote target reload error=%v, want pgx.ErrNoRows", err)
+		}
+		assertInboxCompleteKnownScope(t, tx, false, "managed-a")
+		if tx.committed {
+			t.Fatal("remote target miss committed")
+		}
+	})
+}
+
+func TestInboxManagedScopeCompleteKnownOutboundMissingContextFailsClosed(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx := &inboxCompleteKnownTx{
+		outbound: db.XInboxOutboundRequest{
+			ID:                  "operation-a",
+			WorkspaceID:         "workspace-1",
+			SocialAccountID:     "account-a",
+			InboxItemID:         "item-a",
+			Status:              "completed",
+			ResponseInboxItemID: pgtype.Text{String: "reply-a", Valid: true},
+		},
+		item:               db.InboxItem{ID: "reply-a", SocialAccountID: "account-a", WorkspaceID: "workspace-1"},
+		rejectMissingScope: true,
+	}
+
+	_, _, err = (&InboxHandler{encryptor: encryptor}).completeKnownXInboxOutboundWithTx(context.Background(), "operation-a", tx)
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing-scope completion error=%v, want pgx.ErrNoRows", err)
+	}
+	assertInboxCompleteKnownScope(t, tx, false, "")
+	if tx.committed {
+		t.Fatal("missing-scope completion committed")
+	}
+}
+
+func assertInboxCompleteKnownScope(t *testing.T, tx *inboxCompleteKnownTx, wantWorkspaceScope bool, wantExternalUserID string) {
+	t.Helper()
+	if len(tx.getInboxCalls) != 1 {
+		t.Fatalf("GetInboxItem calls=%d, want 1", len(tx.getInboxCalls))
+	}
+	workspaceScope, externalUserID := inboxTenantIsolationScopeArgs(t, "-- name: GetInboxItem", tx.getInboxCalls[0])
+	if workspaceScope != wantWorkspaceScope || externalUserID != wantExternalUserID {
+		t.Fatalf("GetInboxItem scope=(%v,%q), want (%v,%q)", workspaceScope, externalUserID, wantWorkspaceScope, wantExternalUserID)
 	}
 }
 
@@ -1674,8 +1900,12 @@ type inboxTenantIsolationQueryCall struct {
 
 type inboxTenantIsolationDB struct {
 	item      db.InboxItem
+	items     []db.InboxItem
 	itemErr   error
+	itemCalls int
+	account   db.SocialAccount
 	outbound  db.XInboxOutboundRequest
+	claimErr  error
 	calls     []inboxTenantIsolationQueryCall
 	execCalls int
 }
@@ -1704,7 +1934,11 @@ func (f *inboxTenantIsolationDB) Query(_ context.Context, query string, args ...
 func (f *inboxTenantIsolationDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	f.calls = append(f.calls, inboxTenantIsolationQueryCall{query: query, args: args})
 	switch {
+	case strings.Contains(query, "-- name: ClaimXInboxOutboundRequest"):
+		return metaWebhookRoutingRow{err: f.claimErr}
 	case strings.Contains(query, "-- name: GetXInboxOutboundRequestByID"):
+		return metaWebhookRoutingRow{values: inboxTenantIsolationOutboundValues(f.outbound)}
+	case strings.Contains(query, "-- name: GetXInboxOutboundRequest"):
 		return metaWebhookRoutingRow{values: inboxTenantIsolationOutboundValues(f.outbound)}
 	case strings.Contains(query, "-- name: CountUnreadByWorkspace"):
 		return metaWebhookRoutingRow{values: []any{int32(0)}}
@@ -1721,8 +1955,19 @@ func (f *inboxTenantIsolationDB) QueryRow(_ context.Context, query string, args 
 		if f.itemErr != nil {
 			return metaWebhookRoutingRow{err: f.itemErr}
 		}
+		if len(f.items) > 0 {
+			if f.itemCalls >= len(f.items) {
+				return metaWebhookRoutingRow{err: pgx.ErrNoRows}
+			}
+			item := f.items[f.itemCalls]
+			f.itemCalls++
+			return metaWebhookRoutingRow{values: inboxTenantIsolationItemValues(item)}
+		}
 		return metaWebhookRoutingRow{values: inboxTenantIsolationItemValues(f.item)}
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		if f.account.ID != "" {
+			return metaWebhookRoutingRow{values: inboxTenantIsolationSocialAccountValues(f.account)}
+		}
 		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "-- name: GetSocialAccount :one"):
 		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
@@ -1885,6 +2130,91 @@ func inboxTenantIsolationOutboundValues(outbound db.XInboxOutboundRequest) []any
 		outbound.LastError,
 	}
 }
+
+func inboxTenantIsolationSocialAccountValues(account db.SocialAccount) []any {
+	return []any{
+		account.ID,
+		account.ProfileID,
+		account.Platform,
+		account.AccessToken,
+		account.RefreshToken,
+		account.TokenExpiresAt,
+		account.ExternalAccountID,
+		account.AccountName,
+		account.AccountAvatarUrl,
+		account.ConnectedAt,
+		account.DisconnectedAt,
+		account.Metadata,
+		account.Scope,
+		account.Status,
+		account.ConnectionType,
+		account.ConnectSessionID,
+		account.ExternalUserID,
+		account.ExternalUserEmail,
+		account.LastRefreshedAt,
+		account.XAppMode,
+	}
+}
+
+type inboxCompleteKnownTx struct {
+	outbound           db.XInboxOutboundRequest
+	item               db.InboxItem
+	itemErr            error
+	rejectMissingScope bool
+	getInboxCalls      [][]interface{}
+	committed          bool
+}
+
+func (f *inboxCompleteKnownTx) Begin(context.Context) (pgx.Tx, error) {
+	return nil, errors.New("unexpected Begin")
+}
+
+func (f *inboxCompleteKnownTx) Commit(context.Context) error {
+	f.committed = true
+	return nil
+}
+
+func (f *inboxCompleteKnownTx) Rollback(context.Context) error { return nil }
+
+func (f *inboxCompleteKnownTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected CopyFrom")
+}
+
+func (f *inboxCompleteKnownTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults { return nil }
+
+func (f *inboxCompleteKnownTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
+
+func (f *inboxCompleteKnownTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("unexpected Prepare")
+}
+
+func (f *inboxCompleteKnownTx) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+}
+
+func (f *inboxCompleteKnownTx) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *inboxCompleteKnownTx) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetXInboxOutboundRequestByIDForUpdate"):
+		return metaWebhookRoutingRow{values: inboxTenantIsolationOutboundValues(f.outbound)}
+	case strings.Contains(query, "-- name: GetInboxItem"):
+		f.getInboxCalls = append(f.getInboxCalls, append([]interface{}(nil), args...))
+		if f.rejectMissingScope && len(args) >= 4 && args[2] == false && args[3] == "" {
+			return metaWebhookRoutingRow{err: pgx.ErrNoRows}
+		}
+		if f.itemErr != nil {
+			return metaWebhookRoutingRow{err: f.itemErr}
+		}
+		return metaWebhookRoutingRow{values: inboxTenantIsolationItemValues(f.item)}
+	default:
+		return metaWebhookRoutingRow{err: errors.New("unexpected QueryRow")}
+	}
+}
+
+func (f *inboxCompleteKnownTx) Conn() *pgx.Conn { return nil }
 
 func TestInboxXSuccessfulWriteDefersFinalizationToDurableCompletion(t *testing.T) {
 	adapter := &fakeXInboxReplyAdapter{}

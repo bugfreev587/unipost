@@ -688,21 +688,22 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
-	var body struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Text == "" {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "text is required")
-		return
-	}
-
-	// Load the inbox item.
+	// Authorize the target before parsing the payload so callers cannot use
+	// validation differences to probe whether another managed user's item exists.
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
 		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
 		logInboxScopeObjectRejected(r.Context(), workspaceID, "reply")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
+
+	var body struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Text == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "text is required")
 		return
 	}
 	if item.Source == "x_dm" {
@@ -1268,6 +1269,17 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
+	// Keep object authorization ahead of payload validation to avoid exposing
+	// whether an ID belongs to a different managed-user scope.
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
+	})
+	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "thread_state")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
+
 	var body struct {
 		ThreadStatus string `json:"thread_status"`
 		AssignedTo   string `json:"assigned_to"`
@@ -1283,14 +1295,6 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
-	})
-	if err != nil {
-		logInboxScopeObjectRejected(r.Context(), workspaceID, "thread_state")
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
-		return
-	}
 	if item.Source == "x_dm" {
 		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 		if !ok {

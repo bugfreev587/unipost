@@ -75,11 +75,19 @@ func (h *InboxHandler) completeKnownXInboxOutbound(
 	if h == nil || h.pool == nil || h.encryptor == nil {
 		return db.InboxItem{}, xInboxSendResult{}, errors.New("X Inbox outbound completion is not configured")
 	}
-	workspaceScope, externalUserID := inboxQueryScope(ctx)
 	tx, err := h.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return db.InboxItem{}, xInboxSendResult{}, err
 	}
+	return h.completeKnownXInboxOutboundWithTx(ctx, requestID, tx)
+}
+
+func (h *InboxHandler) completeKnownXInboxOutboundWithTx(
+	ctx context.Context,
+	requestID string,
+	tx pgx.Tx,
+) (db.InboxItem, xInboxSendResult, error) {
+	workspaceScope, externalUserID := inboxQueryScope(ctx)
 	defer tx.Rollback(ctx)
 	queries := db.New(tx)
 	outbound, err := queries.GetXInboxOutboundRequestByIDForUpdate(ctx, requestID)
