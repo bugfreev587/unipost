@@ -3,11 +3,13 @@ package handler
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 )
 
 type XInboxOutboundReconcileStats struct {
@@ -20,7 +22,7 @@ type XInboxOutboundReconcileStats struct {
 
 type xInboxOutboundRecoveryStore interface {
 	ListRecoverable(context.Context, int32) ([]db.XInboxOutboundRequest, error)
-	CompleteKnown(context.Context, string) error
+	CompleteKnown(context.Context, db.XInboxOutboundRequest) error
 	ReverseUsage(context.Context, db.XInboxOutboundRequest) error
 	ClaimPendingRecovery(context.Context, string) (bool, error)
 	ReversePendingUsage(context.Context, db.XInboxOutboundRequest) error
@@ -108,7 +110,7 @@ func (s *XInboxOutboundRecoveryService) ProcessOnce(
 			continue
 		}
 		if row.Status == "remote_succeeded" && row.RemoteExternalID.Valid {
-			if err := s.store.CompleteKnown(ctx, row.ID); err != nil {
+			if err := s.store.CompleteKnown(ctx, row); err != nil {
 				stats.Deferred++
 				_ = s.store.Defer(ctx, row.ID, now.Add(time.Minute), err.Error())
 				continue
@@ -132,7 +134,8 @@ func (s *XInboxOutboundRecoveryService) ProcessOnce(
 }
 
 type postgresXInboxOutboundRecoveryStore struct {
-	handler *InboxHandler
+	handler       *InboxHandler
+	completeKnown func(context.Context, string) (db.InboxItem, xInboxSendResult, error)
 }
 
 func xInboxOutboundUsageIdempotencyKey(row db.XInboxOutboundRequest) string {
@@ -146,8 +149,23 @@ func (s postgresXInboxOutboundRecoveryStore) ListRecoverable(
 	return s.handler.queries.ListRecoverableXInboxOutboundRequests(ctx, limit)
 }
 
-func (s postgresXInboxOutboundRecoveryStore) CompleteKnown(ctx context.Context, id string) error {
-	_, _, err := s.handler.completeKnownXInboxOutbound(ctx, id)
+func (s postgresXInboxOutboundRecoveryStore) CompleteKnown(
+	ctx context.Context,
+	row db.XInboxOutboundRequest,
+) error {
+	scope := inboxaccess.Scope{WorkspaceID: row.WorkspaceID, Mode: inboxaccess.ModeWorkspace}
+	if strings.TrimSpace(row.ID) == "" || !validInboxAccessScope(scope) {
+		return errXInboxOutboundOutsideScope
+	}
+	completeKnown := s.completeKnown
+	if completeKnown == nil {
+		if s.handler == nil {
+			return errors.New("X Inbox outbound completion is not configured")
+		}
+		completeKnown = s.handler.completeKnownXInboxOutbound
+	}
+	trustedCtx := inboxaccess.WithContext(ctx, scope)
+	_, _, err := completeKnown(trustedCtx, row.ID)
 	return err
 }
 

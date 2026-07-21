@@ -345,6 +345,111 @@ func TestInboxManagedUserAccountEnumeration(t *testing.T) {
 	}
 }
 
+func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	raw := inboxTenantIsolationRawQuery(t, source, "CountInboxAccountsInScope")
+	query := compactInboxTenantIsolationSQL(raw)
+	if !strings.Contains(raw, "-- name: CountInboxAccountsInScope :one") {
+		t.Fatal("CountInboxAccountsInScope must retain its :one annotation")
+	}
+	for _, want := range []string{
+		"select count(*)::integer",
+		"from social_accounts sa",
+		"join profiles p on p.id = sa.profile_id",
+		"p.workspace_id = @workspace_id",
+		"sa.id = any(@account_ids::text[])",
+		inboxManagedScopePredicate,
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("CountInboxAccountsInScope missing %q in %s", want, query)
+		}
+	}
+	countScopeViolation := func(candidate string) string {
+		if count := strings.Count(candidate, inboxManagedScopePredicate); count != 1 {
+			return "managed scope predicate must occur exactly once with OR grouped inside parentheses"
+		}
+		workspaceAt := strings.Index(candidate, "p.workspace_id = @workspace_id")
+		accountIDsAt := strings.Index(candidate, "sa.id = any(@account_ids::text[])")
+		scopeAt := strings.Index(candidate, inboxManagedScopePredicate)
+		if workspaceAt < 0 || accountIDsAt < 0 {
+			return "workspace and account-ID predicates must both be present"
+		}
+		if scopeAt <= workspaceAt || scopeAt <= accountIDsAt {
+			return "managed scope predicate must follow workspace and account-ID predicates"
+		}
+		return ""
+	}
+	if violation := countScopeViolation(query); violation != "" {
+		t.Fatalf("CountInboxAccountsInScope scope placement is unsafe: %s: %s", violation, query)
+	}
+	for _, forbidden := range []string{"sa.status", "sa.disconnected_at", "coalesce("} {
+		if strings.Contains(query, forbidden) {
+			t.Errorf("CountInboxAccountsInScope must reconcile historical operation ownership without %q: %s", forbidden, query)
+		}
+	}
+
+	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+	mutations := []struct {
+		name  string
+		query string
+	}{
+		{name: "OR changed to AND", query: strings.Replace(query, orTerm,
+			"sqlc.arg('workspace_scope')::boolean and sa.external_user_id = sqlc.arg('external_user_id')::text", 1)},
+		{name: "grouping removed", query: strings.Replace(query, "and ( "+orTerm+" )", "and "+orTerm, 1)},
+		{name: "scope moved before workspace", query: strings.Replace(
+			strings.Replace(query, " "+inboxManagedScopePredicate, "", 1),
+			"where p.workspace_id", "where "+strings.TrimPrefix(inboxManagedScopePredicate, "and ")+" and p.workspace_id", 1,
+		)},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			if mutation.query == query {
+				t.Fatal("test mutation did not change CountInboxAccountsInScope")
+			}
+			if violation := countScopeViolation(mutation.query); violation == "" {
+				t.Fatalf("semantic mutation escaped CountInboxAccountsInScope contract: %s", mutation.query)
+			}
+		})
+	}
+
+	generated := readInboxTenantIsolationContractFile(t, "inbox.sql.go")
+	generatedQuery := inboxTenantIsolationQuery(t, generated, "CountInboxAccountsInScope")
+	for _, want := range []string{
+		"select count(*)::integer",
+		"from social_accounts sa",
+		"join profiles p on p.id = sa.profile_id",
+		"where p.workspace_id = $1",
+		"and sa.id = any($2::text[])",
+		"and ( $3::boolean or sa.external_user_id = $4::text )",
+	} {
+		if !strings.Contains(generatedQuery, want) {
+			t.Errorf("generated CountInboxAccountsInScope missing %q in %s", want, generatedQuery)
+		}
+	}
+
+	paramsType := reflect.TypeOf(CountInboxAccountsInScopeParams{})
+	wantFields := []struct {
+		name   string
+		typeOf reflect.Type
+	}{
+		{name: "WorkspaceID", typeOf: reflect.TypeOf("")},
+		{name: "AccountIds", typeOf: reflect.TypeOf([]string{})},
+		{name: "WorkspaceScope", typeOf: reflect.TypeOf(false)},
+		{name: "ExternalUserID", typeOf: reflect.TypeOf("")},
+	}
+	if paramsType.NumField() != len(wantFields) {
+		t.Fatalf("CountInboxAccountsInScopeParams fields=%d, want %d", paramsType.NumField(), len(wantFields))
+	}
+	for index, want := range wantFields {
+		field := paramsType.Field(index)
+		if field.Name != want.name || field.Type != want.typeOf {
+			t.Errorf("CountInboxAccountsInScopeParams field %d = %s %s, want %s %s",
+				index, field.Name, field.Type, want.name, want.typeOf)
+		}
+	}
+	var _ func(*Queries, context.Context, CountInboxAccountsInScopeParams) (int32, error) = (*Queries).CountInboxAccountsInScope
+}
+
 func TestInboxManagedUserAccountEnumerationCallSites(t *testing.T) {
 	handlerSource := readInboxTenantIsolationContractFile(t, "../handler/inbox.go")
 	if got := strings.Count(handlerSource, ".FindInboxAccountsByWorkspace("); got != 1 {
@@ -843,6 +948,50 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		"inbox-isolation-account-byo-facebook",
 		"inbox-isolation-account-byo-threads",
 		"inbox-isolation-account-byo-twitter",
+	)
+	assertScopedAccountCount := func(
+		label, workspaceID string,
+		accountIDs []string,
+		workspaceScope bool,
+		externalUserID string,
+		want int32,
+	) {
+		t.Helper()
+		got, err := queries.CountInboxAccountsInScope(ctx, CountInboxAccountsInScopeParams{
+			WorkspaceID:    workspaceID,
+			AccountIds:     accountIDs,
+			WorkspaceScope: workspaceScope,
+			ExternalUserID: externalUserID,
+		})
+		if err != nil || got != want {
+			t.Fatalf("%s CountInboxAccountsInScope = %d, %v; want %d", label, got, err, want)
+		}
+	}
+	managedAAccountIDs := []string{
+		"inbox-isolation-account-a",
+		"inbox-isolation-account-a-facebook",
+		"inbox-isolation-account-a-threads",
+		"inbox-isolation-account-a-twitter",
+	}
+	assertScopedAccountCount(
+		"managed A exact snapshot", "inbox-isolation-workspace-1",
+		managedAAccountIDs, false, "managed-a", int32(len(managedAAccountIDs)),
+	)
+	assertScopedAccountCount(
+		"managed A snapshot under managed B", "inbox-isolation-workspace-1",
+		managedAAccountIDs, false, "managed-b", 0,
+	)
+	assertScopedAccountCount(
+		"mixed managed A and B snapshot under managed A", "inbox-isolation-workspace-1",
+		[]string{"inbox-isolation-account-a", "inbox-isolation-account-b"}, false, "managed-a", 1,
+	)
+	assertScopedAccountCount(
+		"workspace snapshot includes BYO", "inbox-isolation-workspace-1",
+		[]string{"inbox-isolation-account-a", "inbox-isolation-account-b", "inbox-isolation-account-byo"}, true, "", 3,
+	)
+	assertScopedAccountCount(
+		"workspace snapshot excludes another workspace", "inbox-isolation-workspace-1",
+		[]string{"inbox-isolation-account-a", "inbox-isolation-account-2"}, true, "", 1,
 	)
 	assertIDs := func(label string, items []InboxItem, want ...string) {
 		t.Helper()

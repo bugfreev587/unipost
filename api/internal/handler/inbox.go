@@ -198,6 +198,20 @@ func inboxQueryScope(ctx context.Context) (bool, string) {
 	return scope.WorkspaceWide(), scope.ExternalUserID
 }
 
+func validInboxAccessScope(scope inboxaccess.Scope) bool {
+	if strings.TrimSpace(scope.WorkspaceID) == "" {
+		return false
+	}
+	switch scope.Mode {
+	case inboxaccess.ModeWorkspace:
+		return strings.TrimSpace(scope.ExternalUserID) == ""
+	case inboxaccess.ModeManagedUser:
+		return strings.TrimSpace(scope.ExternalUserID) != ""
+	default:
+		return false
+	}
+}
+
 func logInboxScopeObjectRejected(ctx context.Context, workspaceID, routeClass string) {
 	scopeMode := "missing"
 	if scope, ok := inboxaccess.FromContext(ctx); ok {
@@ -1803,9 +1817,14 @@ func (h *InboxHandler) syncXBackfill(
 			})
 			return
 		}
+		confirmationScope, scopeOK := inboxaccess.FromContext(r.Context())
+		if !scopeOK || !validInboxAccessScope(confirmationScope) || confirmationScope.WorkspaceID != workspaceID {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", errXBackfillConfirmationOutsideScope.Error())
+			return
+		}
 		operation, operationErr := h.beginXBackfillConfirmationOperation(
 			r.Context(),
-			workspaceID,
+			confirmationScope,
 			request.ConfirmationToken,
 			time.Now(),
 		)

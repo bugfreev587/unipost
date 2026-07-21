@@ -134,6 +134,37 @@ func (q *Queries) CompleteXInboxOutboundRequest(ctx context.Context, arg Complet
 	return err
 }
 
+const countInboxAccountsInScope = `-- name: CountInboxAccountsInScope :one
+SELECT COUNT(*)::INTEGER
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.id = ANY($2::TEXT[])
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
+`
+
+type CountInboxAccountsInScopeParams struct {
+	WorkspaceID    string   `json:"workspace_id"`
+	AccountIds     []string `json:"account_ids"`
+	WorkspaceScope bool     `json:"workspace_scope"`
+	ExternalUserID string   `json:"external_user_id"`
+}
+
+func (q *Queries) CountInboxAccountsInScope(ctx context.Context, arg CountInboxAccountsInScopeParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countInboxAccountsInScope,
+		arg.WorkspaceID,
+		arg.AccountIds,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUnreadByWorkspace = `-- name: CountUnreadByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i

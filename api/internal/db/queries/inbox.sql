@@ -520,6 +520,17 @@ WHERE p.workspace_id = sqlc.arg('workspace_id')
   AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
 ORDER BY sa.connected_at DESC, sa.id;
 
+-- name: CountInboxAccountsInScope :one
+SELECT COUNT(*)::INTEGER
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = @workspace_id
+  AND sa.id = ANY(@account_ids::TEXT[])
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  );
+
 -- name: FindXInboxAccountForApp :one
 SELECT
   sa.id,

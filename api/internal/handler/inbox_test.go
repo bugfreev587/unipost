@@ -69,6 +69,135 @@ func TestInboxXBackfillOperationTokenReferencesOnlyPersistedOperation(t *testing
 	}
 }
 
+func TestXBackfillConfirmationRejectsCrossManagedScope(t *testing.T) {
+	now := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	accounts := []xBackfillAccountSnapshot{
+		{ID: "account-a", AppMode: string(xinbox.AppModeUniPostManaged)},
+		{ID: "account-a-2", AppMode: string(xinbox.AppModeWorkspace)},
+	}
+	accountJSON, err := json.Marshal(accounts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestJSON, err := json.Marshal(xBackfillRequest{MaxItems: 10, IncludeReplies: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := inboxaccess.Scope{
+		WorkspaceID:    "workspace-1",
+		Mode:           inboxaccess.ModeManagedUser,
+		ExternalUserID: "managed-b",
+	}
+
+	tests := []struct {
+		name           string
+		status         string
+		expiresAt      time.Time
+		executionOwner pgtype.Text
+		executionLease pgtype.Timestamptz
+		result         []byte
+	}{
+		{name: "pending", status: "pending", expiresAt: now.Add(time.Hour), result: []byte(`null`)},
+		{name: "expired pending", status: "pending", expiresAt: now.Add(-time.Second), result: []byte(`null`)},
+		{
+			name:           "running with expired lease",
+			status:         "running",
+			expiresAt:      now.Add(time.Hour),
+			executionOwner: pgtype.Text{String: "sensitive-owner", Valid: true},
+			executionLease: pgtype.Timestamptz{Time: now.Add(-time.Second), Valid: true},
+			result:         []byte(`null`),
+		},
+		{
+			name:      "completed with stored result",
+			status:    "completed",
+			expiresAt: now.Add(time.Hour),
+			result:    []byte(`{"sensitive":"managed-a-result"}`),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tx := &xBackfillConfirmationTx{
+				operationValues: []any{
+					"operation-a", "workspace-1", accountJSON, xBackfillAccountFingerprint(accounts),
+					requestJSON, int64(350), "nonce-a", tt.status, tt.result, tt.expiresAt,
+					tt.executionOwner, tt.executionLease,
+				},
+				ownedCount: 0,
+			}
+			operation, beginErr := (&InboxHandler{}).beginXBackfillConfirmationOperationWithTx(
+				context.Background(), scope, "operation-a", "nonce-a", now, tx,
+			)
+			if beginErr == nil {
+				t.Fatalf("cross-managed confirmation succeeded: %+v", operation)
+			}
+			if beginErr.Error() != errXBackfillConfirmationOutsideScope.Error() {
+				t.Fatalf("cross-managed error=%q, want generic %q", beginErr, errXBackfillConfirmationOutsideScope)
+			}
+			if !reflect.DeepEqual(operation, xBackfillConfirmationOperation{}) {
+				t.Fatalf("cross-managed confirmation exposed operation state: %+v", operation)
+			}
+			if got, want := tx.events, []string{"load_operation", "count_accounts"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("transaction event order=%#v, want %#v", got, want)
+			}
+			if len(tx.countArgs) != 4 || tx.countArgs[0] != "workspace-1" ||
+				!reflect.DeepEqual(tx.countArgs[1], []string{"account-a", "account-a-2"}) ||
+				tx.countArgs[2] != false || tx.countArgs[3] != "managed-b" {
+				t.Fatalf("CountInboxAccountsInScope args=%#v", tx.countArgs)
+			}
+			if len(tx.execQueries) != 0 || tx.committed {
+				t.Fatalf("outside-scope replay mutated/committed: exec=%#v committed=%t", tx.execQueries, tx.committed)
+			}
+		})
+	}
+
+	t.Run("count failure uses same safe error", func(t *testing.T) {
+		tx := &xBackfillConfirmationTx{
+			operationValues: []any{
+				"operation-a", "workspace-1", accountJSON, xBackfillAccountFingerprint(accounts),
+				requestJSON, int64(350), "nonce-a", "pending", []byte(`null`), now.Add(time.Hour),
+				pgtype.Text{}, pgtype.Timestamptz{},
+			},
+			countErr: errors.New("database detail must not escape"),
+		}
+		_, beginErr := (&InboxHandler{}).beginXBackfillConfirmationOperationWithTx(
+			context.Background(), scope, "operation-a", "nonce-a", now, tx,
+		)
+		if beginErr == nil || beginErr.Error() != errXBackfillConfirmationOutsideScope.Error() {
+			t.Fatalf("count failure error=%v, want generic %q", beginErr, errXBackfillConfirmationOutsideScope)
+		}
+		if len(tx.execQueries) != 0 || tx.committed {
+			t.Fatalf("count failure mutated/committed: exec=%#v committed=%t", tx.execQueries, tx.committed)
+		}
+	})
+
+	t.Run("matching managed scope counts before transition", func(t *testing.T) {
+		tx := &xBackfillConfirmationTx{
+			operationValues: []any{
+				"operation-a", "workspace-1", accountJSON, xBackfillAccountFingerprint(accounts),
+				requestJSON, int64(350), "nonce-a", "pending", []byte(`null`), now.Add(time.Hour),
+				pgtype.Text{}, pgtype.Timestamptz{},
+			},
+			ownedCount: int32(len(accounts)),
+		}
+		operation, beginErr := (&InboxHandler{}).beginXBackfillConfirmationOperationWithTx(
+			context.Background(), inboxaccess.Scope{
+				WorkspaceID:    "workspace-1",
+				Mode:           inboxaccess.ModeManagedUser,
+				ExternalUserID: "managed-a",
+			}, "operation-a", "nonce-a", now, tx,
+		)
+		if beginErr != nil {
+			t.Fatalf("matching scope confirmation: %v", beginErr)
+		}
+		if operation.Status != "running" || !operation.StartedByThisCall || operation.ExecutionOwner == "" {
+			t.Fatalf("matching scope operation did not transition: %+v", operation)
+		}
+		if got, want := tx.events, []string{"load_operation", "count_accounts", "mutation", "commit"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("matching scope transaction order=%#v, want %#v", got, want)
+		}
+	})
+}
+
 func TestInboxXBackfillExecutionOwnersAreOpaqueAndUnique(t *testing.T) {
 	first, err := newXBackfillExecutionOwner()
 	if err != nil {
@@ -1777,12 +1906,11 @@ func TestInboxManagedScopeCompleteKnownOutboundMissingContextFailsClosed(t *test
 	}
 
 	_, _, err = (&InboxHandler{encryptor: encryptor}).completeKnownXInboxOutboundWithTx(context.Background(), "operation-a", tx)
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("missing-scope completion error=%v, want pgx.ErrNoRows", err)
+	if err == nil || err.Error() != errXInboxOutboundOutsideScope.Error() {
+		t.Fatalf("missing-scope completion error=%v, want generic %q", err, errXInboxOutboundOutsideScope)
 	}
-	assertInboxCompleteKnownScope(t, tx, false, "")
-	if tx.committed {
-		t.Fatal("missing-scope completion committed")
+	if len(tx.getInboxCalls) != 0 || tx.committed {
+		t.Fatalf("missing-scope completion reached scoped item/commit: calls=%#v committed=%t", tx.getInboxCalls, tx.committed)
 	}
 }
 
@@ -2312,6 +2440,69 @@ func inboxTenantIsolationSocialAccountValues(account db.SocialAccount) []any {
 		account.XAppMode,
 	}
 }
+
+type xBackfillConfirmationTx struct {
+	operationValues []any
+	ownedCount      int32
+	countErr        error
+	events          []string
+	countArgs       []interface{}
+	execQueries     []string
+	committed       bool
+}
+
+func (f *xBackfillConfirmationTx) Begin(context.Context) (pgx.Tx, error) {
+	return nil, errors.New("unexpected Begin")
+}
+
+func (f *xBackfillConfirmationTx) Commit(context.Context) error {
+	f.events = append(f.events, "commit")
+	f.committed = true
+	return nil
+}
+
+func (f *xBackfillConfirmationTx) Rollback(context.Context) error { return nil }
+
+func (f *xBackfillConfirmationTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected CopyFrom")
+}
+
+func (f *xBackfillConfirmationTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults { return nil }
+
+func (f *xBackfillConfirmationTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
+
+func (f *xBackfillConfirmationTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("unexpected Prepare")
+}
+
+func (f *xBackfillConfirmationTx) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	f.events = append(f.events, "mutation")
+	f.execQueries = append(f.execQueries, query)
+	return pgconn.NewCommandTag("UPDATE 1"), nil
+}
+
+func (f *xBackfillConfirmationTx) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *xBackfillConfirmationTx) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "FROM x_inbox_backfill_confirmation_operations"):
+		f.events = append(f.events, "load_operation")
+		return metaWebhookRoutingRow{values: f.operationValues}
+	case strings.Contains(query, "-- name: CountInboxAccountsInScope"):
+		f.events = append(f.events, "count_accounts")
+		f.countArgs = append([]interface{}(nil), args...)
+		if f.countErr != nil {
+			return metaWebhookRoutingRow{err: f.countErr}
+		}
+		return metaWebhookRoutingRow{values: []any{f.ownedCount}}
+	default:
+		return metaWebhookRoutingRow{err: errors.New("unexpected QueryRow")}
+	}
+}
+
+func (f *xBackfillConfirmationTx) Conn() *pgx.Conn { return nil }
 
 type inboxCompleteKnownTx struct {
 	outbound           db.XInboxOutboundRequest
