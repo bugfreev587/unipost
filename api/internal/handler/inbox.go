@@ -1341,6 +1341,7 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 // POST /v1/inbox/sync
 func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	var request struct {
 		XBackfill *xBackfillRequest `json:"x_backfill"`
 	}
@@ -1351,14 +1352,17 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if request.XBackfill != nil {
-		h.syncXBackfill(w, r, workspaceID, *request.XBackfill)
-		return
-	}
-
-	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
+	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), db.FindInboxAccountsByWorkspaceParams{
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find accounts")
+		return
+	}
+	if request.XBackfill != nil {
+		h.syncXBackfill(w, r, workspaceID, accounts, *request.XBackfill)
 		return
 	}
 
@@ -1735,6 +1739,7 @@ func (h *InboxHandler) syncXBackfill(
 	w http.ResponseWriter,
 	r *http.Request,
 	workspaceID string,
+	accounts []db.SocialAccount,
 	request xBackfillRequest,
 ) {
 	requestedOnlyDMs := request.IncludeDMs && !request.IncludeReplies
@@ -1750,11 +1755,6 @@ func (h *InboxHandler) syncXBackfill(
 		}
 		request.IncludeDMs = false
 		request.IncludeReplies = true
-	}
-	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find X accounts")
-		return
 	}
 	xAccounts := make([]db.SocialAccount, 0, len(accounts))
 	estimate := int64(0)

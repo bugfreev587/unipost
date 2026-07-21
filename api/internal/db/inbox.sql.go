@@ -416,13 +416,25 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
+  AND (
+    $2::BOOLEAN
+    OR sa.external_user_id = $3::TEXT
+  )
+  AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
   AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
+ORDER BY sa.connected_at DESC, sa.id
 `
 
+type FindInboxAccountsByWorkspaceParams struct {
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
+}
+
 // Distinct social accounts that have inbox items, for the sync handler.
-func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, workspaceID string) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, findInboxAccountsByWorkspace, workspaceID)
+func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, arg FindInboxAccountsByWorkspaceParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, findInboxAccountsByWorkspace, arg.WorkspaceID, arg.WorkspaceScope, arg.ExternalUserID)
 	if err != nil {
 		return nil, err
 	}

@@ -1893,6 +1893,141 @@ func TestXOutboundStatusTenantIsolation(t *testing.T) {
 	}
 }
 
+func TestInboxManagedScopeSync(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedToken, err := encryptor.Encrypt("x-access-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	account := func(id, externalUserID string) db.SocialAccount {
+		return db.SocialAccount{
+			ID:                id,
+			ProfileID:         "profile-1",
+			Platform:          "twitter",
+			AccessToken:       encryptedToken,
+			ExternalAccountID: "external-" + id,
+			Status:            "active",
+			ConnectionType:    "managed",
+			ExternalUserID:    pgtype.Text{String: externalUserID, Valid: true},
+			XAppMode:          pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+		}
+	}
+	accounts := []db.SocialAccount{account("account-a", "managed-a"), account("account-b", "managed-b")}
+
+	assertScope := func(t *testing.T, store *inboxTenantIsolationDB, wantWorkspaceScope bool, wantExternalUserID string) {
+		t.Helper()
+		calls := store.callsFor("-- name: FindInboxAccountsByWorkspace")
+		if len(calls) != 1 {
+			t.Fatalf("FindInboxAccountsByWorkspace calls=%d, want 1; calls=%#v", len(calls), store.calls)
+		}
+		if len(calls[0].args) != 3 {
+			t.Fatalf("FindInboxAccountsByWorkspace args=%#v, want workspace plus explicit bool/string scope", calls[0].args)
+		}
+		if calls[0].args[0] != "workspace-1" || calls[0].args[1] != wantWorkspaceScope || calls[0].args[2] != wantExternalUserID {
+			t.Fatalf(
+				"FindInboxAccountsByWorkspace args=%#v, want (%q,%v,%q)",
+				calls[0].args,
+				"workspace-1",
+				wantWorkspaceScope,
+				wantExternalUserID,
+			)
+		}
+	}
+
+	t.Run("normal managed sync passes managed A scope", func(t *testing.T) {
+		store := &inboxTenantIsolationDB{}
+		recorder := httptest.NewRecorder()
+		request := managedInboxRequest(http.MethodPost, "/v1/inbox/sync", "", "")
+
+		NewInboxHandler(db.New(store), encryptor, nil).Sync(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200; body=%s", recorder.Code, recorder.Body.String())
+		}
+		assertScope(t, store, false, "managed-a")
+	})
+
+	t.Run("managed A cannot select managed B X account", func(t *testing.T) {
+		store := &inboxTenantIsolationDB{accounts: accounts}
+		adapter := &fakeXInboxBackfillAdapter{}
+		adapterConstructions := 0
+		handler := NewInboxHandler(db.New(store), encryptor, nil)
+		handler.xCredits = &fakeXInboxCredits{}
+		handler.xIngestion = &xinbox.IngestionService{}
+		handler.xAdapterFactory = func() xInboxBackfillAdapter {
+			adapterConstructions++
+			return adapter
+		}
+		recorder := httptest.NewRecorder()
+		request := managedInboxRequest(http.MethodPost, "/v1/inbox/sync", "", "")
+		request.Body = io.NopCloser(strings.NewReader(`{"x_backfill":{"account_id":"account-b","include_replies":true,"max_items":1}}`))
+
+		handler.Sync(recorder, request)
+
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("status=%d, want 404; body=%s", recorder.Code, recorder.Body.String())
+		}
+		assertScope(t, store, false, "managed-a")
+		if adapterConstructions != 0 || len(adapter.mentionPageSizes) != 0 || len(adapter.dmPageSizes) != 0 {
+			t.Fatalf(
+				"cross-scope B reached X adapter/provider: constructions=%d mention_reads=%d dm_reads=%d",
+				adapterConstructions,
+				len(adapter.mentionPageSizes),
+				len(adapter.dmPageSizes),
+			)
+		}
+	})
+
+	t.Run("managed A account reaches the in-scope X stage", func(t *testing.T) {
+		store := &inboxTenantIsolationDB{accounts: accounts}
+		adapter := &fakeXInboxBackfillAdapter{}
+		adapterConstructions := 0
+		handler := NewInboxHandler(db.New(store), encryptor, nil)
+		handler.xCredits = &fakeXInboxCredits{}
+		handler.xIngestion = &xinbox.IngestionService{}
+		handler.xAdapterFactory = func() xInboxBackfillAdapter {
+			adapterConstructions++
+			return adapter
+		}
+		recorder := httptest.NewRecorder()
+		request := managedInboxRequest(http.MethodPost, "/v1/inbox/sync", "", "")
+		request.Body = io.NopCloser(strings.NewReader(`{"x_backfill":{"account_id":"account-a","include_replies":true,"max_items":1}}`))
+
+		handler.Sync(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200; body=%s", recorder.Code, recorder.Body.String())
+		}
+		assertScope(t, store, false, "managed-a")
+		if adapterConstructions != 1 {
+			t.Fatalf("in-scope adapter constructions=%d, want 1", adapterConstructions)
+		}
+		if len(adapter.mentionPageSizes) != 0 || len(adapter.dmPageSizes) != 0 {
+			t.Fatalf("missing-scope account unexpectedly read provider: mentions=%d dms=%d", len(adapter.mentionPageSizes), len(adapter.dmPageSizes))
+		}
+		if !strings.Contains(recorder.Body.String(), `"account_id":"account-a"`) ||
+			!strings.Contains(recorder.Body.String(), `"stop_reason":"reconnect_required"`) {
+			t.Fatalf("in-scope result did not reach account capability stage: %s", recorder.Body.String())
+		}
+	})
+
+	t.Run("workspace aggregate passes explicit workspace scope", func(t *testing.T) {
+		store := &inboxTenantIsolationDB{}
+		recorder := httptest.NewRecorder()
+		request := workspaceInboxRequest(http.MethodPost, "/v1/inbox/sync", "", "")
+
+		NewInboxHandler(db.New(store), encryptor, nil).Sync(recorder, request)
+
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("status=%d, want 200; body=%s", recorder.Code, recorder.Body.String())
+		}
+		assertScope(t, store, true, "")
+	})
+}
+
 type inboxTenantIsolationQueryCall struct {
 	query string
 	args  []interface{}
@@ -1904,6 +2039,7 @@ type inboxTenantIsolationDB struct {
 	itemErr   error
 	itemCalls int
 	account   db.SocialAccount
+	accounts  []db.SocialAccount
 	outbound  db.XInboxOutboundRequest
 	claimErr  error
 	calls     []inboxTenantIsolationQueryCall
@@ -1925,8 +2061,29 @@ func (f *inboxTenantIsolationDB) Exec(_ context.Context, query string, args ...i
 
 func (f *inboxTenantIsolationDB) Query(_ context.Context, query string, args ...interface{}) (pgx.Rows, error) {
 	f.calls = append(f.calls, inboxTenantIsolationQueryCall{query: query, args: args})
-	if strings.Contains(query, "-- name: ListInboxItemsByWorkspace") {
+	switch {
+	case strings.Contains(query, "-- name: ListInboxItemsByWorkspace"):
 		return &metaWebhookRoutingRows{}, nil
+	case strings.Contains(query, "-- name: FindInboxAccountsByWorkspace"):
+		accounts := f.accounts
+		if len(args) >= 3 {
+			workspaceScope, _ := args[1].(bool)
+			externalUserID, _ := args[2].(string)
+			if !workspaceScope {
+				filtered := make([]db.SocialAccount, 0, len(accounts))
+				for _, account := range accounts {
+					if account.ExternalUserID.Valid && account.ExternalUserID.String == externalUserID {
+						filtered = append(filtered, account)
+					}
+				}
+				accounts = filtered
+			}
+		}
+		values := make([][]any, 0, len(accounts))
+		for _, account := range accounts {
+			values = append(values, inboxTenantIsolationSocialAccountValues(account))
+		}
+		return &metaWebhookRoutingRows{values: values}, nil
 	}
 	return nil, errors.New("unexpected Query call")
 }

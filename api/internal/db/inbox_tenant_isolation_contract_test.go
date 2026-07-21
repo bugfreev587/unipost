@@ -73,6 +73,22 @@ func inboxManagedScopePredicateViolation(query, workspaceExpr string) string {
 	return ""
 }
 
+func inboxAccountScopePredicateViolation(query string) string {
+	if count := strings.Count(query, inboxManagedScopePredicate); count != 1 {
+		return "account scope predicate must occur exactly once with OR grouped inside parentheses"
+	}
+
+	workspaceAt := strings.Index(query, "p.workspace_id = sqlc.arg('workspace_id')")
+	managedScopeAt := strings.Index(query, inboxManagedScopePredicate)
+	if workspaceAt < 0 {
+		return "derived workspace predicate must be present"
+	}
+	if managedScopeAt <= workspaceAt {
+		return "managed account scope predicate must follow the derived workspace predicate"
+	}
+	return ""
+}
+
 func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "migrations/119_inbox_tenant_isolation.sql")
 	parts := strings.Split(source, "-- +goose Down")
@@ -282,6 +298,78 @@ func TestInboxManagedUserReadScopeContractRejectsSemanticMutations(t *testing.T)
 	}
 }
 
+func TestInboxManagedUserAccountEnumeration(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	query := inboxTenantIsolationQuery(t, source, "FindInboxAccountsByWorkspace")
+	if violation := inboxAccountScopePredicateViolation(query); violation != "" {
+		t.Fatalf("valid account enumeration query rejected: %s: %s", violation, query)
+	}
+	for _, want := range []string{
+		"select distinct sa.id, sa.profile_id, sa.platform, sa.access_token",
+		"p.workspace_id = sqlc.arg('workspace_id')",
+		"sa.status = 'active'",
+		"sa.disconnected_at is null",
+		"sa.platform in ('instagram', 'threads', 'facebook', 'twitter')",
+		"order by sa.connected_at desc, sa.id",
+	} {
+		if !strings.Contains(query, want) {
+			t.Errorf("FindInboxAccountsByWorkspace missing %q in %s", want, query)
+		}
+	}
+	if strings.Contains(query, "coalesce(") {
+		t.Fatal("account enumeration must not infer workspace scope from a nullable or empty managed-user id")
+	}
+
+	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+	mutations := []struct {
+		name  string
+		query string
+	}{
+		{name: "OR changed to AND", query: strings.Replace(
+			query,
+			orTerm,
+			"sqlc.arg('workspace_scope')::boolean and sa.external_user_id = sqlc.arg('external_user_id')::text",
+			1,
+		)},
+		{name: "grouping removed", query: strings.Replace(query, "and ( "+orTerm+" )", "and "+orTerm, 1)},
+	}
+	for _, mutation := range mutations {
+		t.Run(mutation.name, func(t *testing.T) {
+			if mutation.query == query {
+				t.Fatal("test mutation did not change the account query")
+			}
+			if violation := inboxAccountScopePredicateViolation(mutation.query); violation == "" {
+				t.Fatalf("semantic mutation escaped the account scope contract: %s", mutation.query)
+			}
+		})
+	}
+}
+
+func TestInboxManagedUserAccountEnumerationCallSites(t *testing.T) {
+	handlerSource := readInboxTenantIsolationContractFile(t, "../handler/inbox.go")
+	if got := strings.Count(handlerSource, ".FindInboxAccountsByWorkspace("); got != 1 {
+		t.Fatalf("HTTP Inbox account enumeration call sites=%d, want one shared scoped lookup", got)
+	}
+	for _, want := range []string{
+		"workspaceScope, externalUserID := inboxQueryScope(r.Context())",
+		"WorkspaceScope: workspaceScope",
+		"ExternalUserID: externalUserID",
+		"h.syncXBackfill(w, r, workspaceID, accounts, *request.XBackfill)",
+	} {
+		if !strings.Contains(handlerSource, want) {
+			t.Fatalf("HTTP Inbox sync call site missing %q", want)
+		}
+	}
+
+	workerSource := readInboxTenantIsolationContractFile(t, "../worker/inbox_sync.go")
+	if strings.Contains(workerSource, "FindInboxAccountsByWorkspace(") {
+		t.Fatal("background worker must not manufacture request-managed scope for account enumeration")
+	}
+	if got := strings.Count(workerSource, ".ListAllInboxAccounts(ctx)"); got != 1 {
+		t.Fatalf("background internal all-workspace discovery calls=%d, want one explicit purpose-built lookup", got)
+	}
+}
+
 func TestInboxManagedUserMutations(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
 	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
@@ -400,6 +488,11 @@ func TestInboxManagedUserGeneratedReadScopeParamsAreExplicit(t *testing.T) {
 		{name: "WorkspaceScope", typeOf: boolType},
 		{name: "ExternalUserID", typeOf: stringType},
 	})
+	assertFields(t, FindInboxAccountsByWorkspaceParams{}, []expectedField{
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+	})
 
 	var _ func(*Queries, context.Context, ListInboxItemsByWorkspaceParams) ([]InboxItem, error) = (*Queries).ListInboxItemsByWorkspace
 	var _ func(*Queries, context.Context, CountUnreadByWorkspaceParams) (int32, error) = (*Queries).CountUnreadByWorkspace
@@ -407,6 +500,7 @@ func TestInboxManagedUserGeneratedReadScopeParamsAreExplicit(t *testing.T) {
 	var _ func(*Queries, context.Context, MarkInboxItemReadParams) error = (*Queries).MarkInboxItemRead
 	var _ func(*Queries, context.Context, MarkAllInboxItemsReadParams) (int64, error) = (*Queries).MarkAllInboxItemsRead
 	var _ func(*Queries, context.Context, UpdateInboxThreadStateParams) (int64, error) = (*Queries).UpdateInboxThreadState
+	var _ func(*Queries, context.Context, FindInboxAccountsByWorkspaceParams) ([]SocialAccount, error) = (*Queries).FindInboxAccountsByWorkspace
 }
 
 func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
@@ -558,28 +652,83 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO social_accounts (
 		  id, profile_id, platform, access_token, external_account_id, metadata,
-		  connection_type, external_user_id
+		  connection_type, external_user_id, status, disconnected_at
 		)
 		VALUES
 		  (
 		    'inbox-isolation-account-a', 'inbox-isolation-profile-1', 'instagram',
 		    'token-a', 'external-a', '{"instagram_webhook_user_id":"webhook-user-a"}'::jsonb,
-		    'managed', 'managed-a'
+		    'managed', 'managed-a', 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-a-facebook', 'inbox-isolation-profile-1', 'facebook',
+		    'token-a-facebook', 'external-a-facebook', '{}'::jsonb,
+		    'managed', 'managed-a', 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-a-threads', 'inbox-isolation-profile-1', 'threads',
+		    'token-a-threads', 'external-a-threads', '{}'::jsonb,
+		    'managed', 'managed-a', 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-a-twitter', 'inbox-isolation-profile-1', 'twitter',
+		    'token-a-twitter', 'external-a-twitter', '{}'::jsonb,
+		    'managed', 'managed-a', 'active', NULL
 		  ),
 		  (
 		    'inbox-isolation-account-b', 'inbox-isolation-profile-1', 'instagram',
 		    'token-b', 'external-b', '{"instagram_webhook_user_id":"webhook-user-b"}'::jsonb,
-		    'managed', 'managed-b'
+		    'managed', 'managed-b', 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-b-facebook', 'inbox-isolation-profile-1', 'facebook',
+		    'token-b-facebook', 'external-b-facebook', '{}'::jsonb,
+		    'managed', 'managed-b', 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-b-threads', 'inbox-isolation-profile-1', 'threads',
+		    'token-b-threads', 'external-b-threads', '{}'::jsonb,
+		    'managed', 'managed-b', 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-b-twitter', 'inbox-isolation-profile-1', 'twitter',
+		    'token-b-twitter', 'external-b-twitter', '{}'::jsonb,
+		    'managed', 'managed-b', 'active', NULL
 		  ),
 		  (
 		    'inbox-isolation-account-byo', 'inbox-isolation-profile-1', 'instagram',
 		    'token-byo', 'external-byo', '{"instagram_webhook_user_id":"webhook-user-byo"}'::jsonb,
-		    'byo', NULL
+		    'byo', NULL, 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-byo-facebook', 'inbox-isolation-profile-1', 'facebook',
+		    'token-byo-facebook', 'external-byo-facebook', '{}'::jsonb,
+		    'byo', NULL, 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-byo-threads', 'inbox-isolation-profile-1', 'threads',
+		    'token-byo-threads', 'external-byo-threads', '{}'::jsonb,
+		    'byo', NULL, 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-byo-twitter', 'inbox-isolation-profile-1', 'twitter',
+		    'token-byo-twitter', 'external-byo-twitter', '{}'::jsonb,
+		    'byo', NULL, 'active', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-inactive', 'inbox-isolation-profile-1', 'facebook',
+		    'token-inactive', 'external-inactive', '{}'::jsonb,
+		    'managed', 'managed-inactive', 'reconnect_required', NULL
+		  ),
+		  (
+		    'inbox-isolation-account-disconnected', 'inbox-isolation-profile-1', 'threads',
+		    'token-disconnected', 'external-disconnected', '{}'::jsonb,
+		    'managed', 'managed-disconnected', 'disconnected', NOW()
 		  ),
 		  (
 		    'inbox-isolation-account-2', 'inbox-isolation-profile-2', 'instagram',
 		    'token-2', 'external-2', '{"instagram_webhook_user_id":"webhook-user-2"}'::jsonb,
-		    'managed', 'managed-other'
+		    'managed', 'managed-other', 'active', NULL
 		  )
 	`); err != nil {
 		t.Fatalf("seed social accounts: %v", err)
@@ -624,6 +773,77 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 	}
 
 	queries := New(tx)
+	assertAccountIDs := func(label string, accounts []SocialAccount, want ...string) {
+		t.Helper()
+		got := make(map[string]int, len(accounts))
+		for _, account := range accounts {
+			got[account.ID]++
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s IDs = %v, want %v", label, got, want)
+		}
+		for _, id := range want {
+			if got[id] != 1 {
+				t.Fatalf("%s IDs = %v, want exactly one %s", label, got, id)
+			}
+		}
+	}
+	accounts, err := queries.FindInboxAccountsByWorkspace(ctx, FindInboxAccountsByWorkspaceParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		WorkspaceScope: false,
+		ExternalUserID: "managed-a",
+	})
+	if err != nil {
+		t.Fatalf("managed-a FindInboxAccountsByWorkspace: %v", err)
+	}
+	assertAccountIDs(
+		"managed-a account enumeration",
+		accounts,
+		"inbox-isolation-account-a",
+		"inbox-isolation-account-a-facebook",
+		"inbox-isolation-account-a-threads",
+		"inbox-isolation-account-a-twitter",
+	)
+	accounts, err = queries.FindInboxAccountsByWorkspace(ctx, FindInboxAccountsByWorkspaceParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		WorkspaceScope: false,
+		ExternalUserID: "managed-b",
+	})
+	if err != nil {
+		t.Fatalf("managed-b FindInboxAccountsByWorkspace: %v", err)
+	}
+	assertAccountIDs(
+		"managed-b account enumeration",
+		accounts,
+		"inbox-isolation-account-b",
+		"inbox-isolation-account-b-facebook",
+		"inbox-isolation-account-b-threads",
+		"inbox-isolation-account-b-twitter",
+	)
+	accounts, err = queries.FindInboxAccountsByWorkspace(ctx, FindInboxAccountsByWorkspaceParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		WorkspaceScope: true,
+		ExternalUserID: "",
+	})
+	if err != nil {
+		t.Fatalf("workspace FindInboxAccountsByWorkspace: %v", err)
+	}
+	assertAccountIDs(
+		"workspace account enumeration",
+		accounts,
+		"inbox-isolation-account-a",
+		"inbox-isolation-account-a-facebook",
+		"inbox-isolation-account-a-threads",
+		"inbox-isolation-account-a-twitter",
+		"inbox-isolation-account-b",
+		"inbox-isolation-account-b-facebook",
+		"inbox-isolation-account-b-threads",
+		"inbox-isolation-account-b-twitter",
+		"inbox-isolation-account-byo",
+		"inbox-isolation-account-byo-facebook",
+		"inbox-isolation-account-byo-threads",
+		"inbox-isolation-account-byo-twitter",
+	)
 	assertIDs := func(label string, items []InboxItem, want ...string) {
 		t.Helper()
 		got := make(map[string]int, len(items))

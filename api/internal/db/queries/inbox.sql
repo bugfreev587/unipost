@@ -510,9 +510,15 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
        sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
-WHERE p.workspace_id = $1
+WHERE p.workspace_id = sqlc.arg('workspace_id')
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  )
+  AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter');
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
+ORDER BY sa.connected_at DESC, sa.id;
 
 -- name: FindXInboxAccountForApp :one
 SELECT
