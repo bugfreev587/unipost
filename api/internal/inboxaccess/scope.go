@@ -47,6 +47,10 @@ func WithContext(ctx context.Context, scope Scope) context.Context {
 }
 
 func Resolve(r *http.Request, queries *db.Queries) (Scope, *Failure) {
+	if auth.GetWorkspaceID(r.Context()) == "" {
+		return Scope{}, failure(http.StatusUnauthorized, "UNAUTHORIZED", "Authenticated workspace is required")
+	}
+
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		return Scope{}, failure(http.StatusBadRequest, "INBOX_QUERY_INVALID", "Inbox query parameters are malformed")

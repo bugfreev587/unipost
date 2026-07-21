@@ -302,6 +302,48 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestResolveAuthenticationPrecedesMalformedQuery(t *testing.T) {
+	tests := []struct {
+		name          string
+		authenticated bool
+		wantStatus    int
+		wantCode      string
+	}{
+		{
+			name:       "missing workspace remains unauthorized",
+			wantStatus: http.StatusUnauthorized,
+			wantCode:   "UNAUTHORIZED",
+		},
+		{
+			name:          "authenticated malformed query remains bad request",
+			authenticated: true,
+			wantStatus:    http.StatusBadRequest,
+			wantCode:      "INBOX_QUERY_INVALID",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/v1/inbox", nil)
+			req.URL.RawQuery = "inbox_scope=%ZZ"
+			if tt.authenticated {
+				ctx := auth.SetWorkspaceID(req.Context(), "workspace_auth")
+				ctx = auth.SetRole(ctx, auth.RoleOwner)
+				req = req.WithContext(ctx)
+			}
+
+			scope, failure := Resolve(req, db.New(&scopeTestDB{}))
+
+			if scope != (Scope{}) {
+				t.Fatalf("scope = %#v, want zero value", scope)
+			}
+			if failure == nil || failure.Status != tt.wantStatus || failure.Code != tt.wantCode {
+				t.Fatalf("failure = %#v, want status=%d code=%q", failure, tt.wantStatus, tt.wantCode)
+			}
+		})
+	}
+}
+
 func TestInboxManagedUserExistsSQLContract(t *testing.T) {
 	store := &scopeTestDB{exists: true}
 	exists, err := db.New(store).InboxManagedUserExists(context.Background(), db.InboxManagedUserExistsParams{
