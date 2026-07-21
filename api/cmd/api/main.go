@@ -28,6 +28,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/changelog"
 	"github.com/xiaoboyu/unipost-api/internal/connect"
+	"github.com/xiaoboyu/unipost-api/internal/connectownership"
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/emailpolicy"
@@ -481,8 +482,8 @@ func main() {
 				PauseReason: admission.PauseReason,
 			}, insertedItem, inserted, nil
 		},
-		Notify: func(ctx context.Context, workspaceID string, item xinbox.InboxItem) {
-			ws.Notify(ctx, pool, workspaceID, item)
+		Notify: func(ctx context.Context, workspaceID, externalUserID string, item xinbox.InboxItem) {
+			ws.Notify(ctx, pool, workspaceID, externalUserID, item)
 		},
 	})
 	xAppSecretResolver := xinbox.NewAppSecretResolver(xinbox.AppSecretResolverConfig{
@@ -685,10 +686,11 @@ func main() {
 	// for the hosted-page origin so the same env var that drives the
 	// preview link drives the connect link.
 	connectSessionHandler := handler.NewConnectSessionHandler(queries, os.Getenv("NEXT_PUBLIC_APP_URL"), quotaChecker).SetIntegrationLogger(integrationLogger)
+	connectOwnershipStore := connectownership.NewStore(pool)
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
-	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus)
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore)
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)
@@ -721,7 +723,7 @@ func main() {
 	// connectRegistry was built in the worker section above so the
 	// managed token refresh worker could take it as a dependency.
 	// We just hand the same registry to the callback handler here.
-	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker).SetIntegrationLogger(integrationLogger)
+	connectCallbackHandler := handler.NewConnectCallbackHandler(queries, encryptor, webhookWorker, connectRegistry, apiBaseURL, superAdminChecker, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
 	// Preview handler shares the dashboard origin (B3) and reuses
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
@@ -770,9 +772,12 @@ func main() {
 	r.Get("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.CRC)
 	r.Post("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.Handle)
 
-	// WebSocket — auth via ?token= query param (browser WS API
-	// doesn't support custom headers). Handler validates Clerk JWT.
-	inboxWSHandler := ws.NewHandler(inboxHub, queries).WithInboxPlanGate(quotaChecker)
+	// Dashboard WebSockets use a Clerk token query value because the browser
+	// API cannot set headers. Customer backends use workspace API keys only in
+	// the Inbox upgrade Authorization header; logs remain Clerk-query-only.
+	inboxWSHandler := ws.NewHandler(inboxHub, queries).
+		WithInboxPlanGate(quotaChecker).
+		WithInboxScopeAuth()
 	logsWSHandler := ws.NewHandler(logsHub, queries)
 	r.Get("/v1/inbox/ws", inboxWSHandler.ServeHTTP)
 	r.Get("/v1/logs/ws", logsWSHandler.ServeHTTP)
@@ -1228,6 +1233,7 @@ func main() {
 			go xExposureRecoveryWorker.Start(workerCtx)
 		}
 		r.Route("/v1/inbox", func(r chi.Router) {
+			r.Use(handler.RequireInboxAccessScope(queries))
 			r.Use(handler.RequirePlanInbox(quotaChecker))
 			r.Get("/", inboxHandler.List)
 			r.Get("/unread-count", inboxHandler.UnreadCount)

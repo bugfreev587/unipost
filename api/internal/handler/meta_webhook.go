@@ -54,8 +54,8 @@ type MetaWebhookHandler struct {
 	encryptor   *crypto.AESEncryptor
 	appSecret   string
 	verifyToken string
-	notify      func(context.Context, string, any)
-	notifyEvent func(context.Context, string, map[string]any)
+	notify      func(context.Context, string, string, any)
+	notifyEvent func(context.Context, string, string, map[string]any)
 }
 
 func NewMetaWebhookHandler(queries *db.Queries, pool *pgxpool.Pool, encryptor *crypto.AESEncryptor, appSecret, verifyToken string) *MetaWebhookHandler {
@@ -64,11 +64,11 @@ func NewMetaWebhookHandler(queries *db.Queries, pool *pgxpool.Pool, encryptor *c
 		encryptor:   encryptor,
 		appSecret:   strings.TrimSpace(appSecret),
 		verifyToken: strings.TrimSpace(verifyToken),
-		notify: func(ctx context.Context, workspaceID string, item any) {
-			ws.Notify(ctx, pool, workspaceID, item)
+		notify: func(ctx context.Context, workspaceID, externalUserID string, item any) {
+			ws.Notify(ctx, pool, workspaceID, externalUserID, item)
 		},
-		notifyEvent: func(ctx context.Context, workspaceID string, event map[string]any) {
-			ws.NotifyEvent(ctx, pool, workspaceID, event)
+		notifyEvent: func(ctx context.Context, workspaceID, externalUserID string, event map[string]any) {
+			ws.NotifyEvent(ctx, pool, workspaceID, externalUserID, event)
 		},
 	}
 }
@@ -272,7 +272,7 @@ func (h *MetaWebhookHandler) handleInstagramEntry(r *http.Request, entry metaWeb
 			if err != nil {
 				slog.Warn("meta webhook: upsert DM failed", "err", err)
 			} else {
-				h.notify(r.Context(), account.WorkspaceID, toInboxResponse(dmItem))
+				h.notify(r.Context(), account.WorkspaceID, account.ExternalUserID, toInboxResponse(dmItem))
 			}
 		}
 	} // end for accounts
@@ -338,7 +338,7 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 	if err != nil {
 		slog.Warn("meta webhook: upsert comment failed", "err", err)
 	} else {
-		h.notify(r.Context(), account.WorkspaceID, toInboxResponse(commentItem))
+		h.notify(r.Context(), account.WorkspaceID, account.ExternalUserID, toInboxResponse(commentItem))
 	}
 }
 
@@ -356,6 +356,7 @@ func (h *MetaWebhookHandler) handleIGComment(r *http.Request, account *webhookAc
 type webhookAccount struct {
 	ID                string
 	WorkspaceID       string
+	ExternalUserID    string
 	ExternalAccountID string
 	WebhookAccountID  string
 	AccessToken       string
@@ -373,6 +374,7 @@ func (h *MetaWebhookHandler) findInstagramAccountsByWebhookUserID(r *http.Reques
 			WorkspaceID:       row.WorkspaceID,
 			ExternalAccountID: row.ExternalAccountID,
 			WebhookAccountID:  row.InstagramWebhookUserID,
+			ExternalUserID:    nullableExternalUserID(row.ExternalUserID),
 		})
 	}
 	return accounts, nil
@@ -393,6 +395,7 @@ func (h *MetaWebhookHandler) findAccountsByExternalID(r *http.Request, plat, ext
 			WorkspaceID:       row.WorkspaceID,
 			ExternalAccountID: row.ExternalAccountID,
 			WebhookAccountID:  row.ExternalAccountID,
+			ExternalUserID:    nullableExternalUserID(row.ExternalUserID),
 		})
 	}
 	return accounts, nil
@@ -481,7 +484,7 @@ func (h *MetaWebhookHandler) handleThreadsReply(r *http.Request, account *webhoo
 	if err != nil {
 		slog.Warn("meta webhook: upsert threads reply failed", "err", err)
 	} else {
-		h.notify(r.Context(), account.WorkspaceID, toInboxResponse(replyItem))
+		h.notify(r.Context(), account.WorkspaceID, account.ExternalUserID, toInboxResponse(replyItem))
 	}
 }
 
@@ -625,7 +628,7 @@ func (h *MetaWebhookHandler) handleFacebookEntry(r *http.Request, entry metaWebh
 			if err != nil {
 				slog.Warn("meta webhook: upsert fb dm failed", "err", err)
 			} else {
-				h.notify(r.Context(), account.WorkspaceID, toInboxResponse(dmItem))
+				h.notify(r.Context(), account.WorkspaceID, account.ExternalUserID, toInboxResponse(dmItem))
 			}
 		}
 	}
@@ -745,7 +748,7 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 			if mergeErr != nil {
 				slog.Warn("meta webhook: merge facebook comment author failed", "err", mergeErr)
 			} else if rows > 0 {
-				h.notifyEvent(r.Context(), account.WorkspaceID, map[string]any{
+				h.notifyEvent(r.Context(), account.WorkspaceID, account.ExternalUserID, map[string]any{
 					"type":      "inbox.sync_complete",
 					"new_items": 0,
 				})
@@ -755,7 +758,14 @@ func (h *MetaWebhookHandler) handleFacebookFeedChange(r *http.Request, account *
 		slog.Warn("meta webhook: upsert facebook comment failed", "err", err)
 		return
 	}
-	h.notify(r.Context(), account.WorkspaceID, toInboxResponse(item))
+	h.notify(r.Context(), account.WorkspaceID, account.ExternalUserID, toInboxResponse(item))
+}
+
+func nullableExternalUserID(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
 }
 
 // verifyMetaWebhookSignature checks the X-Hub-Signature-256 header

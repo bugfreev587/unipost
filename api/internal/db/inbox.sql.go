@@ -134,6 +134,37 @@ func (q *Queries) CompleteXInboxOutboundRequest(ctx context.Context, arg Complet
 	return err
 }
 
+const countInboxAccountsInScope = `-- name: CountInboxAccountsInScope :one
+SELECT COUNT(*)::INTEGER
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.id = ANY($2::TEXT[])
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
+`
+
+type CountInboxAccountsInScopeParams struct {
+	WorkspaceID    string   `json:"workspace_id"`
+	AccountIds     []string `json:"account_ids"`
+	WorkspaceScope bool     `json:"workspace_scope"`
+	ExternalUserID string   `json:"external_user_id"`
+}
+
+func (q *Queries) CountInboxAccountsInScope(ctx context.Context, arg CountInboxAccountsInScopeParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countInboxAccountsInScope,
+		arg.WorkspaceID,
+		arg.AccountIds,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countUnreadByWorkspace = `-- name: CountUnreadByWorkspace :one
 SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i
@@ -141,16 +172,22 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $2::BOOLEAN
+    OR sa.external_user_id = $3::TEXT
+  )
   AND i.is_read = false
   AND i.is_own = false
-  AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
+  AND (NOT $4::BOOLEAN OR i.source <> 'x_dm')
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
 `
 
 type CountUnreadByWorkspaceParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	ExcludeXDms bool   `json:"exclude_x_dms"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
+	ExcludeXDms    bool   `json:"exclude_x_dms"`
 }
 
 // Mirrors the inbox UI's "unread" filter exactly: items the user
@@ -161,7 +198,12 @@ type CountUnreadByWorkspaceParams struct {
 // per-tab counts on the page. is_own is set in the webhook / sync
 // upsert based on author_id == account.external_account_id.
 func (q *Queries) CountUnreadByWorkspace(ctx context.Context, arg CountUnreadByWorkspaceParams) (int32, error) {
-	row := q.db.QueryRow(ctx, countUnreadByWorkspace, arg.WorkspaceID, arg.ExcludeXDms)
+	row := q.db.QueryRow(ctx, countUnreadByWorkspace,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+		arg.ExcludeXDms,
+	)
 	var count int32
 	err := row.Scan(&count)
 	return count, err
@@ -275,7 +317,7 @@ func (q *Queries) DeleteXInboxOutboundAfterUsageReversal(ctx context.Context, id
 const findAllActiveInstagramAccountsByWebhookUserID = `-- name: FindAllActiveInstagramAccountsByWebhookUserID :many
 SELECT sa.id, sa.external_account_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
-       p.workspace_id
+       p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = 'instagram'
@@ -286,10 +328,11 @@ ORDER BY sa.connected_at DESC, sa.id
 `
 
 type FindAllActiveInstagramAccountsByWebhookUserIDRow struct {
-	ID                     string `json:"id"`
-	ExternalAccountID      string `json:"external_account_id"`
-	InstagramWebhookUserID string `json:"instagram_webhook_user_id"`
-	WorkspaceID            string `json:"workspace_id"`
+	ID                     string      `json:"id"`
+	ExternalAccountID      string      `json:"external_account_id"`
+	InstagramWebhookUserID string      `json:"instagram_webhook_user_id"`
+	WorkspaceID            string      `json:"workspace_id"`
+	ExternalUserID         pgtype.Text `json:"external_user_id"`
 }
 
 // Route Instagram webhook payloads only through the identity captured from the
@@ -308,6 +351,7 @@ func (q *Queries) FindAllActiveInstagramAccountsByWebhookUserID(ctx context.Cont
 			&i.ExternalAccountID,
 			&i.InstagramWebhookUserID,
 			&i.WorkspaceID,
+			&i.ExternalUserID,
 		); err != nil {
 			return nil, err
 		}
@@ -320,7 +364,7 @@ func (q *Queries) FindAllActiveInstagramAccountsByWebhookUserID(ctx context.Cont
 }
 
 const findAllSocialAccountsByPlatformAndExternalID = `-- name: FindAllSocialAccountsByPlatformAndExternalID :many
-SELECT sa.id, sa.external_account_id, p.workspace_id
+SELECT sa.id, sa.external_account_id, p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
@@ -336,9 +380,10 @@ type FindAllSocialAccountsByPlatformAndExternalIDParams struct {
 }
 
 type FindAllSocialAccountsByPlatformAndExternalIDRow struct {
-	ID                string `json:"id"`
-	ExternalAccountID string `json:"external_account_id"`
-	WorkspaceID       string `json:"workspace_id"`
+	ID                string      `json:"id"`
+	ExternalAccountID string      `json:"external_account_id"`
+	WorkspaceID       string      `json:"workspace_id"`
+	ExternalUserID    pgtype.Text `json:"external_user_id"`
 }
 
 // Webhook routing: find every active social account for platform +
@@ -352,7 +397,12 @@ func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Conte
 	items := []FindAllSocialAccountsByPlatformAndExternalIDRow{}
 	for rows.Next() {
 		var i FindAllSocialAccountsByPlatformAndExternalIDRow
-		if err := rows.Scan(&i.ID, &i.ExternalAccountID, &i.WorkspaceID); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.ExternalAccountID,
+			&i.WorkspaceID,
+			&i.ExternalUserID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -405,13 +455,25 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
+  AND (
+    $2::BOOLEAN
+    OR sa.external_user_id = $3::TEXT
+  )
+  AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
   AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
+ORDER BY sa.connected_at DESC, sa.id
 `
 
+type FindInboxAccountsByWorkspaceParams struct {
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
+}
+
 // Distinct social accounts that have inbox items, for the sync handler.
-func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, workspaceID string) ([]SocialAccount, error) {
-	rows, err := q.db.Query(ctx, findInboxAccountsByWorkspace, workspaceID)
+func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, arg FindInboxAccountsByWorkspaceParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, findInboxAccountsByWorkspace, arg.WorkspaceID, arg.WorkspaceScope, arg.ExternalUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -638,15 +700,26 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
 `
 
 type GetInboxItemParams struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
 }
 
 func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (InboxItem, error) {
-	row := q.db.QueryRow(ctx, getInboxItem, arg.ID, arg.WorkspaceID)
+	row := q.db.QueryRow(ctx, getInboxItem,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+	)
 	var i InboxItem
 	err := row.Scan(
 		&i.ID,
@@ -925,7 +998,7 @@ func (q *Queries) GetXInboxReplyByIdempotencyKey(ctx context.Context, arg GetXIn
 const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode,
+       sa.x_app_mode, sa.external_user_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
        COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
@@ -949,6 +1022,7 @@ type ListAllInboxAccountsRow struct {
 	Scope                  []string    `json:"scope"`
 	ConnectionType         string      `json:"connection_type"`
 	XAppMode               pgtype.Text `json:"x_app_mode"`
+	ExternalUserID         pgtype.Text `json:"external_user_id"`
 	InstagramWebhookUserID string      `json:"instagram_webhook_user_id"`
 	PlanID                 string      `json:"plan_id"`
 	PlanAllowsInbox        bool        `json:"plan_allows_inbox"`
@@ -977,6 +1051,7 @@ func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccou
 			&i.Scope,
 			&i.ConnectionType,
 			&i.XAppMode,
+			&i.ExternalUserID,
 			&i.InstagramWebhookUserID,
 			&i.PlanID,
 			&i.PlanAllowsInbox,
@@ -1049,29 +1124,37 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
-  AND (NOT $3::BOOLEAN OR i.source <> 'x_dm')
-  AND ($4::TEXT IS NULL OR i.source = $4::TEXT)
-  AND ($5::BOOLEAN IS NULL OR i.is_read = $5::BOOLEAN)
-  AND ($6::BOOLEAN IS NULL OR i.is_own = $6::BOOLEAN)
+  AND (NOT $5::BOOLEAN OR i.source <> 'x_dm')
+  AND ($6::TEXT IS NULL OR i.source = $6::TEXT)
+  AND ($7::BOOLEAN IS NULL OR i.is_read = $7::BOOLEAN)
+  AND ($8::BOOLEAN IS NULL OR i.is_own = $8::BOOLEAN)
 ORDER BY i.received_at DESC
 LIMIT $2
 `
 
 type ListInboxItemsByWorkspaceParams struct {
-	WorkspaceID string      `json:"workspace_id"`
-	Limit       int32       `json:"limit"`
-	ExcludeXDms bool        `json:"exclude_x_dms"`
-	Source      pgtype.Text `json:"source"`
-	IsRead      pgtype.Bool `json:"is_read"`
-	IsOwn       pgtype.Bool `json:"is_own"`
+	WorkspaceID    string      `json:"workspace_id"`
+	Limit          int32       `json:"limit"`
+	WorkspaceScope bool        `json:"workspace_scope"`
+	ExternalUserID string      `json:"external_user_id"`
+	ExcludeXDms    bool        `json:"exclude_x_dms"`
+	Source         pgtype.Text `json:"source"`
+	IsRead         pgtype.Bool `json:"is_read"`
+	IsOwn          pgtype.Bool `json:"is_own"`
 }
 
 func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxItemsByWorkspaceParams) ([]InboxItem, error) {
 	rows, err := q.db.Query(ctx, listInboxItemsByWorkspace,
 		arg.WorkspaceID,
 		arg.Limit,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
 		arg.ExcludeXDms,
 		arg.Source,
 		arg.IsRead,
@@ -1267,17 +1350,28 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $2::BOOLEAN
+    OR sa.external_user_id = $3::TEXT
+  )
   AND i.is_read = false
-  AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
+  AND (NOT $4::BOOLEAN OR i.source <> 'x_dm')
 `
 
 type MarkAllInboxItemsReadParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	ExcludeXDms bool   `json:"exclude_x_dms"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
+	ExcludeXDms    bool   `json:"exclude_x_dms"`
 }
 
 func (q *Queries) MarkAllInboxItemsRead(ctx context.Context, arg MarkAllInboxItemsReadParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markAllInboxItemsRead, arg.WorkspaceID, arg.ExcludeXDms)
+	result, err := q.db.Exec(ctx, markAllInboxItemsRead,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+		arg.ExcludeXDms,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1293,15 +1387,26 @@ WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
 `
 
 type MarkInboxItemReadParams struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
 }
 
 func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadParams) error {
-	_, err := q.db.Exec(ctx, markInboxItemRead, arg.ID, arg.WorkspaceID)
+	_, err := q.db.Exec(ctx, markInboxItemRead,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+	)
 	return err
 }
 
@@ -1653,6 +1758,10 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $7::BOOLEAN
+    OR sa.external_user_id = $8::TEXT
+  )
   AND i.social_account_id = $2
   AND i.source = $3
   AND i.thread_key = $4
@@ -1665,6 +1774,8 @@ type UpdateInboxThreadStateParams struct {
 	ThreadKey       string      `json:"thread_key"`
 	ThreadStatus    string      `json:"thread_status"`
 	Column6         interface{} `json:"column_6"`
+	WorkspaceScope  bool        `json:"workspace_scope"`
+	ExternalUserID  string      `json:"external_user_id"`
 }
 
 func (q *Queries) UpdateInboxThreadState(ctx context.Context, arg UpdateInboxThreadStateParams) (int64, error) {
@@ -1675,6 +1786,8 @@ func (q *Queries) UpdateInboxThreadState(ctx context.Context, arg UpdateInboxThr
 		arg.ThreadKey,
 		arg.ThreadStatus,
 		arg.Column6,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
 	)
 	if err != nil {
 		return 0, err
