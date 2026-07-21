@@ -1,10 +1,14 @@
 package db
 
 import (
+	"context"
+	"errors"
 	"os"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5"
 )
 
 func readInboxTenantIsolationContractFile(t *testing.T, path string) string {
@@ -18,10 +22,17 @@ func readInboxTenantIsolationContractFile(t *testing.T, path string) string {
 }
 
 func compactInboxTenantIsolationSQL(sql string) string {
-	return strings.Join(strings.Fields(strings.ToLower(sql)), " ")
+	withoutBlockComments := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllString(sql, " ")
+	lines := strings.Split(withoutBlockComments, "\n")
+	for index, line := range lines {
+		if commentAt := strings.Index(line, "--"); commentAt >= 0 {
+			lines[index] = line[:commentAt]
+		}
+	}
+	return strings.Join(strings.Fields(strings.ToLower(strings.Join(lines, "\n"))), " ")
 }
 
-func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
+func inboxTenantIsolationRawQuery(t *testing.T, source, name string) string {
 	t.Helper()
 
 	marker := "-- name: " + name + " "
@@ -33,7 +44,12 @@ func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
 	if next := strings.Index(rest[len(marker):], "-- name: "); next >= 0 {
 		rest = rest[:len(marker)+next]
 	}
-	return compactInboxTenantIsolationSQL(rest)
+	return rest
+}
+
+func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
+	t.Helper()
+	return compactInboxTenantIsolationSQL(inboxTenantIsolationRawQuery(t, source, name))
 }
 
 func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
@@ -43,15 +59,16 @@ func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
 		t.Fatalf("migration must have exactly one Goose Down section, got %d", len(parts)-1)
 	}
 
-	up := compactInboxTenantIsolationSQL(parts[0])
-	down := compactInboxTenantIsolationSQL(parts[1])
-	if !strings.Contains(up, "-- +goose no transaction") {
+	if !strings.Contains(strings.ToLower(parts[0]), "-- +goose no transaction") {
 		t.Fatal("migration must use Goose NO TRANSACTION for concurrent indexes")
 	}
 
-	createTableStart := strings.Index(up, "create table inbox_item_quarantine (")
+	up := compactInboxTenantIsolationSQL(parts[0])
+	down := compactInboxTenantIsolationSQL(parts[1])
+
+	createTableStart := strings.Index(up, "create table if not exists inbox_item_quarantine (")
 	if createTableStart < 0 {
-		t.Fatal("migration must create inbox_item_quarantine")
+		t.Fatal("migration must create inbox_item_quarantine idempotently")
 	}
 	createTableEnd := strings.Index(up[createTableStart:], ");")
 	if createTableEnd < 0 {
@@ -79,21 +96,39 @@ func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
 		t.Fatal("inbox_item_quarantine must not have foreign keys so incident evidence survives source-row cleanup")
 	}
 
-	mutatesInboxItems := regexp.MustCompile(`(?i)\b(insert\s+into|update|delete\s+from)\s+inbox_items\b`)
-	if mutatesInboxItems.MatchString(parts[0]) {
+	mutatesInboxItems := regexp.MustCompile(`\b(insert\s+into|update|delete\s+from)\s+inbox_items\b`)
+	if mutatesInboxItems.MatchString(up) {
 		t.Fatal("migration Up must not mutate inbox_items")
 	}
 
-	for _, want := range []string{
-		"create index concurrently if not exists social_accounts_active_instagram_webhook_user_id_idx",
-		"on social_accounts ((metadata->>'instagram_webhook_user_id'))",
-		"where platform = 'instagram' and status = 'active' and disconnected_at is null",
-		"create index concurrently if not exists social_accounts_active_platform_external_account_id_idx",
-		"on social_accounts (platform, external_account_id)",
-		"where status = 'active' and disconnected_at is null",
-	} {
-		if !strings.Contains(up, want) {
-			t.Errorf("migration Up missing %q", want)
+	indexes := []struct {
+		name       string
+		definition string
+		predicate  string
+	}{
+		{
+			name:       "social_accounts_active_instagram_webhook_user_id_idx",
+			definition: "on social_accounts ((metadata->>'instagram_webhook_user_id'))",
+			predicate:  "where platform = 'instagram' and status = 'active' and disconnected_at is null",
+		},
+		{
+			name:       "social_accounts_active_platform_external_account_id_idx",
+			definition: "on social_accounts (platform, external_account_id)",
+			predicate:  "where status = 'active' and disconnected_at is null",
+		},
+	}
+	for _, index := range indexes {
+		drop := "drop index concurrently if exists " + index.name
+		create := "create index concurrently if not exists " + index.name
+		for _, want := range []string{drop, create, index.definition, index.predicate} {
+			if !strings.Contains(up, want) {
+				t.Errorf("migration Up missing %q", want)
+			}
+		}
+		dropAt := strings.Index(up, drop)
+		createAt := strings.Index(up, create)
+		if dropAt < 0 || createAt < 0 || dropAt > createAt {
+			t.Errorf("migration Up must drop %s before recreating it", index.name)
 		}
 	}
 	if strings.Contains(up, "create unique index") {
@@ -101,20 +136,25 @@ func TestInboxTenantIsolationMigration119PreservesEvidence(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"if exists (select 1 from inbox_item_quarantine)",
-		"raise exception",
 		"drop index concurrently if exists social_accounts_active_instagram_webhook_user_id_idx",
 		"drop index concurrently if exists social_accounts_active_platform_external_account_id_idx",
-		"drop table inbox_item_quarantine",
+		"to_regclass('public.inbox_item_quarantine')",
+		"execute 'lock table inbox_item_quarantine in access exclusive mode'",
+		"execute 'select exists (select 1 from inbox_item_quarantine)' into has_rows",
+		"if has_rows then raise exception",
+		"execute 'drop table if exists inbox_item_quarantine'",
 	} {
 		if !strings.Contains(down, want) {
-			t.Errorf("migration Down missing %q", want)
+			t.Errorf("migration Down missing executable guard %q", want)
 		}
 	}
-	guardAt := strings.Index(down, "if exists (select 1 from inbox_item_quarantine)")
-	dropAt := strings.Index(down, "drop table inbox_item_quarantine")
-	if guardAt < 0 || dropAt < 0 || guardAt > dropAt {
-		t.Fatal("migration Down must refuse non-empty evidence before dropping inbox_item_quarantine")
+	lockAt := strings.Index(down, "execute 'lock table inbox_item_quarantine in access exclusive mode'")
+	checkAt := strings.Index(down, "execute 'select exists (select 1 from inbox_item_quarantine)' into has_rows")
+	dropAt := strings.Index(down, "execute 'drop table if exists inbox_item_quarantine'")
+	doStart := strings.Index(down, "do $$")
+	doEnd := strings.LastIndex(down, "$$;")
+	if doStart < 0 || doEnd < 0 || lockAt < doStart || checkAt < lockAt || dropAt < checkAt || dropAt > doEnd {
+		t.Fatal("migration Down must lock, inspect, and dynamically drop evidence atomically in one DO statement")
 	}
 	if strings.Contains(down, "drop table inbox_item_quarantine cascade") {
 		t.Fatal("migration Down must not cascade evidence-table deletion")
@@ -176,15 +216,17 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 		"FindAllActiveAccountsByPlatform",
 		"FindSocialAccountByPlatformAndExternalID",
 	} {
-		query := inboxTenantIsolationQuery(t, source, legacy)
+		query := strings.ToLower(inboxTenantIsolationRawQuery(t, source, legacy))
 		if !strings.Contains(query, "deprecated") || !strings.Contains(query, "unsafe") {
 			t.Errorf("temporarily retained legacy query %s must be marked deprecated and unsafe", legacy)
 		}
 	}
 
 	instagram := inboxTenantIsolationQuery(t, source, "FindAllActiveInstagramAccountsByWebhookUserID")
+	if !strings.Contains(source, "-- name: FindAllActiveInstagramAccountsByWebhookUserID :many") {
+		t.Fatal("FindAllActiveInstagramAccountsByWebhookUserID must retain its :many annotation")
+	}
 	for _, want := range []string{
-		":many",
 		"select sa.id, sa.external_account_id",
 		"cast(coalesce(sa.metadata->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id",
 		"p.workspace_id",
@@ -200,8 +242,10 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 	}
 
 	exact := inboxTenantIsolationQuery(t, source, "FindAllSocialAccountsByPlatformAndExternalID")
+	if !strings.Contains(source, "-- name: FindAllSocialAccountsByPlatformAndExternalID :many") {
+		t.Fatal("FindAllSocialAccountsByPlatformAndExternalID must retain its :many annotation")
+	}
 	for _, want := range []string{
-		":many",
 		"sa.platform = $1",
 		"sa.external_account_id = $2",
 		"sa.disconnected_at is null",
@@ -221,8 +265,10 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 func TestInboxTenantIsolationCanPersistInstagramWebhookIdentity(t *testing.T) {
 	source := readInboxTenantIsolationContractFile(t, "queries/social_accounts.sql")
 	query := inboxTenantIsolationQuery(t, source, "SetInstagramWebhookUserID")
+	if !strings.Contains(source, "-- name: SetInstagramWebhookUserID :execrows") {
+		t.Fatal("SetInstagramWebhookUserID must retain its :execrows annotation")
+	}
 	for _, want := range []string{
-		":execrows",
 		"update social_accounts",
 		"set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', @instagram_webhook_user_id::text)",
 		"where id = @id",
@@ -240,11 +286,204 @@ func TestInboxTenantIsolationCanPersistInstagramWebhookIdentity(t *testing.T) {
 }
 
 func TestInboxTenantIsolationGeneratedWebhookIdentitiesAreStrings(t *testing.T) {
-	generated := readInboxTenantIsolationContractFile(t, "inbox.sql.go")
-	if strings.Contains(generated, "InstagramWebhookUserID interface{}") {
-		t.Fatal("sqlc must expose projected Instagram webhook identities as strings, not interface{}")
+	var route FindAllActiveInstagramAccountsByWebhookUserIDRow
+	var account ListAllInboxAccountsRow
+	var _ string = route.InstagramWebhookUserID
+	var _ string = account.InstagramWebhookUserID
+	var _ func(*Queries, context.Context, string) ([]FindAllActiveInstagramAccountsByWebhookUserIDRow, error) = (*Queries).FindAllActiveInstagramAccountsByWebhookUserID
+	var _ func(*Queries, context.Context, SetInstagramWebhookUserIDParams) (int64, error) = (*Queries).SetInstagramWebhookUserID
+}
+
+func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string) {
+	t.Helper()
+
+	ctx := context.Background()
+	conn, err := pgx.Connect(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect for Inbox tenant-isolation verification: %v", err)
 	}
-	if got := strings.Count(generated, "InstagramWebhookUserID string"); got != 2 {
-		t.Fatalf("generated Inbox routing rows contain %d string webhook identity fields, want 2", got)
+	defer conn.Close(ctx)
+
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin Inbox tenant-isolation verification: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for _, indexName := range []string{
+		"social_accounts_active_instagram_webhook_user_id_idx",
+		"social_accounts_active_platform_external_account_id_idx",
+	} {
+		var valid, unique bool
+		err := tx.QueryRow(ctx, `
+			SELECT i.indisvalid, i.indisunique
+			FROM pg_index i
+			JOIN pg_class c ON c.oid = i.indexrelid
+			JOIN pg_namespace n ON n.oid = c.relnamespace
+			WHERE n.nspname = current_schema()
+			  AND c.relname = $1
+		`, indexName).Scan(&valid, &unique)
+		if err != nil {
+			t.Fatalf("inspect routing index %s: %v", indexName, err)
+		}
+		if !valid || unique {
+			t.Fatalf("routing index %s valid=%t unique=%t, want valid non-unique", indexName, valid, unique)
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO users (id, email, name)
+		VALUES
+		  ('inbox-isolation-user-1', 'inbox-isolation-1@example.com', 'Inbox Isolation One'),
+		  ('inbox-isolation-user-2', 'inbox-isolation-2@example.com', 'Inbox Isolation Two')
+	`); err != nil {
+		t.Fatalf("seed users: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO workspaces (id, user_id, name)
+		VALUES
+		  ('inbox-isolation-workspace-1', 'inbox-isolation-user-1', 'Inbox Isolation One'),
+		  ('inbox-isolation-workspace-2', 'inbox-isolation-user-2', 'Inbox Isolation Two')
+	`); err != nil {
+		t.Fatalf("seed workspaces: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO profiles (id, name, workspace_id)
+		VALUES
+		  ('inbox-isolation-profile-1', 'Inbox Isolation One', 'inbox-isolation-workspace-1'),
+		  ('inbox-isolation-profile-2', 'Inbox Isolation Two', 'inbox-isolation-workspace-2')
+	`); err != nil {
+		t.Fatalf("seed profiles: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO social_accounts (
+		  id, profile_id, platform, access_token, external_account_id, metadata
+		)
+		VALUES
+		  (
+		    'inbox-isolation-account-1', 'inbox-isolation-profile-1', 'instagram',
+		    'token-1', 'external-1', '{"instagram_webhook_user_id":"webhook-user-1"}'::jsonb
+		  ),
+		  (
+		    'inbox-isolation-account-2', 'inbox-isolation-profile-2', 'instagram',
+		    'token-2', 'external-2', '{"instagram_webhook_user_id":"webhook-user-2"}'::jsonb
+		  )
+	`); err != nil {
+		t.Fatalf("seed social accounts: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO inbox_items (
+		  id, social_account_id, workspace_id, source, external_id, body, thread_key
+		)
+		VALUES
+		  (
+		    'inbox-isolation-valid-1', 'inbox-isolation-account-1',
+		    'inbox-isolation-workspace-1', 'ig_comment', 'valid-external-1',
+		    'valid one', 'valid-thread-1'
+		  ),
+		  (
+		    'inbox-isolation-valid-2', 'inbox-isolation-account-2',
+		    'inbox-isolation-workspace-2', 'ig_comment', 'valid-external-2',
+		    'valid two', 'valid-thread-2'
+		  ),
+		  (
+		    'inbox-isolation-forged-1', 'inbox-isolation-account-1',
+		    'inbox-isolation-workspace-2', 'ig_comment', 'forged-external-1',
+		    'forged one', 'forged-thread-1'
+		  ),
+		  (
+		    'inbox-isolation-forged-2', 'inbox-isolation-account-2',
+		    'inbox-isolation-workspace-1', 'ig_comment', 'forged-external-2',
+		    'forged two', 'forged-thread-2'
+		  )
+	`); err != nil {
+		t.Fatalf("seed inbox items: %v", err)
+	}
+
+	queries := New(tx)
+	items, err := queries.ListInboxItemsByWorkspace(ctx, ListInboxItemsByWorkspaceParams{
+		WorkspaceID: "inbox-isolation-workspace-2",
+		Limit:       20,
+	})
+	if err != nil {
+		t.Fatalf("ListInboxItemsByWorkspace: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "inbox-isolation-valid-2" {
+		t.Fatalf("workspace-2 Inbox list = %+v, want only its consistent row", items)
+	}
+
+	_, err = queries.GetInboxItem(ctx, GetInboxItemParams{
+		ID:          "inbox-isolation-forged-1",
+		WorkspaceID: "inbox-isolation-workspace-2",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("GetInboxItem forged row error = %v, want pgx.ErrNoRows", err)
+	}
+	item, err := queries.GetInboxItem(ctx, GetInboxItemParams{
+		ID:          "inbox-isolation-valid-2",
+		WorkspaceID: "inbox-isolation-workspace-2",
+	})
+	if err != nil || item.ID != "inbox-isolation-valid-2" {
+		t.Fatalf("GetInboxItem consistent row = %+v, %v", item, err)
+	}
+
+	if err := queries.MarkInboxItemRead(ctx, MarkInboxItemReadParams{
+		ID:          "inbox-isolation-forged-1",
+		WorkspaceID: "inbox-isolation-workspace-2",
+	}); err != nil {
+		t.Fatalf("MarkInboxItemRead forged row: %v", err)
+	}
+	assertRead := func(id string, want bool) {
+		t.Helper()
+		var got bool
+		if err := tx.QueryRow(ctx, "SELECT is_read FROM inbox_items WHERE id = $1", id).Scan(&got); err != nil {
+			t.Fatalf("read %s is_read: %v", id, err)
+		}
+		if got != want {
+			t.Fatalf("%s is_read = %t, want %t", id, got, want)
+		}
+	}
+	assertRead("inbox-isolation-forged-1", false)
+	if err := queries.MarkInboxItemRead(ctx, MarkInboxItemReadParams{
+		ID:          "inbox-isolation-valid-2",
+		WorkspaceID: "inbox-isolation-workspace-2",
+	}); err != nil {
+		t.Fatalf("MarkInboxItemRead consistent row: %v", err)
+	}
+	assertRead("inbox-isolation-valid-2", true)
+	if _, err := tx.Exec(ctx, "UPDATE inbox_items SET is_read = false WHERE id = 'inbox-isolation-valid-2'"); err != nil {
+		t.Fatalf("reset consistent row read state: %v", err)
+	}
+
+	updated, err := queries.MarkAllInboxItemsRead(ctx, MarkAllInboxItemsReadParams{
+		WorkspaceID: "inbox-isolation-workspace-2",
+	})
+	if err != nil || updated != 1 {
+		t.Fatalf("MarkAllInboxItemsRead updated %d rows, error %v; want 1", updated, err)
+	}
+	assertRead("inbox-isolation-valid-2", true)
+	assertRead("inbox-isolation-forged-1", false)
+
+	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
+		WorkspaceID:     "inbox-isolation-workspace-2",
+		SocialAccountID: "inbox-isolation-account-1",
+		Source:          "ig_comment",
+		ThreadKey:       "forged-thread-1",
+		ThreadStatus:    "resolved",
+		Column6:         "",
+	})
+	if err != nil || updated != 0 {
+		t.Fatalf("UpdateInboxThreadState forged row updated %d rows, error %v; want 0", updated, err)
+	}
+	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
+		WorkspaceID:     "inbox-isolation-workspace-2",
+		SocialAccountID: "inbox-isolation-account-2",
+		Source:          "ig_comment",
+		ThreadKey:       "valid-thread-2",
+		ThreadStatus:    "resolved",
+		Column6:         "",
+	})
+	if err != nil || updated != 1 {
+		t.Fatalf("UpdateInboxThreadState consistent row updated %d rows, error %v; want 1", updated, err)
 	}
 }
