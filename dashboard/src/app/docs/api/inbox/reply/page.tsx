@@ -27,7 +27,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.x_credit_billing_mode", type: "string", description: "unipost_managed_app or workspace_x_app." },
 ];
 const ERRORS: ApiFieldItem[] = [
-  { name: "inbox_scope_required", type: "400", description: "Every Inbox request must choose managed_user or workspace scope." },
+  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED when an API-key request omits inbox_scope." },
   { name: "not_found", type: "404", description: "The item does not exist inside the selected scope; cross-scope items are not disclosed." },
   { name: "feature_not_available", type: "403", description: "X DMs are not available to this workspace. X public replies remain available." },
   { name: "x_monthly_usage_limit_exceeded", type: "402", description: "Managed-X allowance exhausted. Do not retry until capacity resets or changes." },

@@ -32,7 +32,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.details[].missing_scopes", type: "string[]", optional: true, description: "X permissions that require reconnect." },
 ];
 const ERRORS: ApiFieldItem[] = [
-  { name: "inbox_scope_required", type: "400", description: "Every Inbox request must choose managed_user or workspace scope." },
+  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED when an API-key request omits inbox_scope." },
   { name: "feature_not_available", type: "403", description: "A DM-only backfill was requested while X DMs are unavailable to the workspace." },
   { name: "plan_feature_not_available", type: "402", description: "Inbox is unavailable below Basic." },
   { name: "validation_error", type: "400/409", description: "The confirmation token is invalid, expired, already consumed, or no longer matches the frozen request." },

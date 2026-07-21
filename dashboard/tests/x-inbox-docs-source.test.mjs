@@ -64,6 +64,16 @@ test("Inbox API docs require explicit server-side scope on every example", async
   }
 });
 
+test("Inbox API docs keep explicit scope API-key-only and publish the canonical error code", async () => {
+  const references = await Promise.all(apiPages.map(source));
+  for (const [index, reference] of references.entries()) {
+    assert.match(reference, /Required (?:for|on every) API-key[^\n]{0,80}(?:request|Inbox request)/, `${apiPages[index]} must limit explicit-scope requirements to API-key requests`);
+    assert.match(reference, /name: "error\.code"[^\n]{0,240}INBOX_SCOPE_REQUIRED/, `${apiPages[index]} must publish canonical error.code INBOX_SCOPE_REQUIRED`);
+    assert.doesNotMatch(reference, /Every Inbox request must choose/i, `${apiPages[index]} must not require explicit scope for dashboard-session requests`);
+    assert.doesNotMatch(reference, /name: "inbox_scope_required"/i, `${apiPages[index]} must not present a normalized code as the canonical API field`);
+  }
+});
+
 test("deployed Inbox acceptance is fixture-only and covers HTTP plus WebSocket isolation", async () => {
   const acceptance = await source("../scripts/inbox-scope-acceptance.mjs");
   for (const name of [
