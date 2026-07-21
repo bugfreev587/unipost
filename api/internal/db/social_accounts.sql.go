@@ -688,6 +688,29 @@ func (q *Queries) GetSocialAccountByIDAndWorkspace(ctx context.Context, arg GetS
 	return i, err
 }
 
+const inboxManagedUserExists = `-- name: InboxManagedUserExists :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id = $1
+    AND sa.connection_type = 'managed'
+    AND sa.external_user_id = $2
+)
+`
+
+type InboxManagedUserExistsParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+}
+
+func (q *Queries) InboxManagedUserExists(ctx context.Context, arg InboxManagedUserExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, inboxManagedUserExists, arg.WorkspaceID, arg.ExternalUserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listAllSocialAccountsByProfile = `-- name: ListAllSocialAccountsByProfile :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,

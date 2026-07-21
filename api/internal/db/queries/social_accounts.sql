@@ -137,6 +137,16 @@ WHERE p.workspace_id = $1
   AND sa.external_user_id IS NOT NULL
   AND COALESCE(sa.metadata->>'dismissed_at', '') = '';
 
+-- name: InboxManagedUserExists :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id = @workspace_id
+    AND sa.connection_type = 'managed'
+    AND sa.external_user_id = @external_user_id
+);
+
 -- name: CountManagedAccountsByWorkspaceAndExternalUser :one
 SELECT COUNT(*)::INTEGER AS total
 FROM social_accounts sa
