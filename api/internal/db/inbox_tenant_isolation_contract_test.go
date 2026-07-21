@@ -54,21 +54,21 @@ func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
 	return compactInboxTenantIsolationSQL(inboxTenantIsolationRawQuery(t, source, name))
 }
 
-const inboxManagedReadScopePredicate = "and ( sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text )"
+const inboxManagedScopePredicate = "and ( sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text )"
 
-func inboxManagedReadScopePredicateViolation(query, workspaceExpr string) string {
-	if count := strings.Count(query, inboxManagedReadScopePredicate); count != 1 {
-		return "managed read scope predicate must occur exactly once with OR grouped inside parentheses"
+func inboxManagedScopePredicateViolation(query, workspaceExpr string) string {
+	if count := strings.Count(query, inboxManagedScopePredicate); count != 1 {
+		return "managed scope predicate must occur exactly once with OR grouped inside parentheses"
 	}
 
 	storedWorkspaceAt := strings.Index(query, "i.workspace_id = "+workspaceExpr)
 	derivedWorkspaceAt := strings.Index(query, "p.workspace_id = "+workspaceExpr)
-	managedScopeAt := strings.Index(query, inboxManagedReadScopePredicate)
+	managedScopeAt := strings.Index(query, inboxManagedScopePredicate)
 	if storedWorkspaceAt < 0 || derivedWorkspaceAt < 0 {
 		return "stored and derived workspace predicates must both be present"
 	}
 	if managedScopeAt <= storedWorkspaceAt || managedScopeAt <= derivedWorkspaceAt {
-		return "managed read scope predicate must follow stored and derived workspace predicates"
+		return "managed scope predicate must follow stored and derived workspace predicates"
 	}
 	return ""
 }
@@ -218,7 +218,7 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 				t.Errorf("%s must authorize through UPDATE ... FROM, got %s", tt.name, query)
 			}
 			if tt.managedRead {
-				if violation := inboxManagedReadScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
+				if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
 					t.Errorf("%s %s: %s", tt.name, violation, query)
 				}
 				if strings.Contains(query, "coalesce(") {
@@ -252,7 +252,7 @@ func TestInboxManagedUserReadScopeContractRejectsSemanticMutations(t *testing.T)
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			query := inboxTenantIsolationQuery(t, source, tt.name)
-			if violation := inboxManagedReadScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
+			if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
 				t.Fatalf("valid query rejected: %s", violation)
 			}
 
@@ -273,8 +273,55 @@ func TestInboxManagedUserReadScopeContractRejectsSemanticMutations(t *testing.T)
 					if mutation.query == query {
 						t.Fatal("test mutation did not change the query")
 					}
-					if violation := inboxManagedReadScopePredicateViolation(mutation.query, tt.workspaceExpr); violation == "" {
+					if violation := inboxManagedScopePredicateViolation(mutation.query, tt.workspaceExpr); violation == "" {
 						t.Fatalf("semantic mutation escaped the managed read scope contract: %s", mutation.query)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestInboxManagedUserMutations(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	orTerm := "sqlc.arg('workspace_scope')::boolean or sa.external_user_id = sqlc.arg('external_user_id')::text"
+
+	for _, tt := range []struct {
+		name          string
+		workspaceExpr string
+	}{
+		{name: "MarkInboxItemRead", workspaceExpr: "$2"},
+		{name: "MarkAllInboxItemsRead", workspaceExpr: "@workspace_id"},
+		{name: "UpdateInboxThreadState", workspaceExpr: "$1"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, tt.name)
+			if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
+				t.Fatalf("%s: %s", violation, query)
+			}
+			if strings.Contains(query, "coalesce(") {
+				t.Fatalf("mutation must not infer workspace scope from a nullable or empty managed-user id: %s", query)
+			}
+
+			mutations := []struct {
+				name  string
+				query string
+			}{
+				{name: "OR changed to AND", query: strings.Replace(
+					query,
+					orTerm,
+					"sqlc.arg('workspace_scope')::boolean and sa.external_user_id = sqlc.arg('external_user_id')::text",
+					1,
+				)},
+				{name: "grouping removed", query: strings.Replace(query, "and ( "+orTerm+" )", "and "+orTerm, 1)},
+			}
+			for _, mutation := range mutations {
+				t.Run(mutation.name, func(t *testing.T) {
+					if mutation.query == query {
+						t.Fatal("test mutation did not change the query")
+					}
+					if violation := inboxManagedScopePredicateViolation(mutation.query, tt.workspaceExpr); violation == "" {
+						t.Fatalf("semantic mutation escaped the managed scope contract: %s", mutation.query)
 					}
 				})
 			}
@@ -293,6 +340,7 @@ func TestInboxManagedUserGeneratedReadScopeParamsAreExplicit(t *testing.T) {
 	int32Type := reflect.TypeOf(int32(0))
 	pgTextType := reflect.TypeOf(pgtype.Text{})
 	pgBoolType := reflect.TypeOf(pgtype.Bool{})
+	interfaceType := reflect.TypeOf((*interface{})(nil)).Elem()
 
 	assertFields := func(t *testing.T, value any, want []expectedField) {
 		t.Helper()
@@ -330,10 +378,35 @@ func TestInboxManagedUserGeneratedReadScopeParamsAreExplicit(t *testing.T) {
 		{name: "WorkspaceScope", typeOf: boolType},
 		{name: "ExternalUserID", typeOf: stringType},
 	})
+	assertFields(t, MarkInboxItemReadParams{}, []expectedField{
+		{name: "ID", typeOf: stringType},
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+	})
+	assertFields(t, MarkAllInboxItemsReadParams{}, []expectedField{
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+		{name: "ExcludeXDms", typeOf: boolType},
+	})
+	assertFields(t, UpdateInboxThreadStateParams{}, []expectedField{
+		{name: "WorkspaceID", typeOf: stringType},
+		{name: "SocialAccountID", typeOf: stringType},
+		{name: "Source", typeOf: stringType},
+		{name: "ThreadKey", typeOf: stringType},
+		{name: "ThreadStatus", typeOf: stringType},
+		{name: "Column6", typeOf: interfaceType},
+		{name: "WorkspaceScope", typeOf: boolType},
+		{name: "ExternalUserID", typeOf: stringType},
+	})
 
 	var _ func(*Queries, context.Context, ListInboxItemsByWorkspaceParams) ([]InboxItem, error) = (*Queries).ListInboxItemsByWorkspace
 	var _ func(*Queries, context.Context, CountUnreadByWorkspaceParams) (int32, error) = (*Queries).CountUnreadByWorkspace
 	var _ func(*Queries, context.Context, GetInboxItemParams) (InboxItem, error) = (*Queries).GetInboxItem
+	var _ func(*Queries, context.Context, MarkInboxItemReadParams) error = (*Queries).MarkInboxItemRead
+	var _ func(*Queries, context.Context, MarkAllInboxItemsReadParams) (int64, error) = (*Queries).MarkAllInboxItemsRead
+	var _ func(*Queries, context.Context, UpdateInboxThreadStateParams) (int64, error) = (*Queries).UpdateInboxThreadState
 }
 
 func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
@@ -681,12 +754,6 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		t.Fatalf("GetInboxItem consistent row = %+v, %v", item, err)
 	}
 
-	if err := queries.MarkInboxItemRead(ctx, MarkInboxItemReadParams{
-		ID:          "inbox-isolation-forged-1",
-		WorkspaceID: "inbox-isolation-workspace-2",
-	}); err != nil {
-		t.Fatalf("MarkInboxItemRead forged row: %v", err)
-	}
 	assertRead := func(id string, want bool) {
 		t.Helper()
 		var got bool
@@ -697,23 +764,107 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 			t.Fatalf("%s is_read = %t, want %t", id, got, want)
 		}
 	}
-	assertRead("inbox-isolation-forged-1", false)
-	if err := queries.MarkInboxItemRead(ctx, MarkInboxItemReadParams{
-		ID:          "inbox-isolation-valid-2",
-		WorkspaceID: "inbox-isolation-workspace-2",
-	}); err != nil {
-		t.Fatalf("MarkInboxItemRead consistent row: %v", err)
+	markItemRead := func(label, id, workspaceID string, workspaceScope bool, externalUserID string) {
+		t.Helper()
+		if err := queries.MarkInboxItemRead(ctx, MarkInboxItemReadParams{
+			ID:             id,
+			WorkspaceID:    workspaceID,
+			WorkspaceScope: workspaceScope,
+			ExternalUserID: externalUserID,
+		}); err != nil {
+			t.Fatalf("%s MarkInboxItemRead: %v", label, err)
+		}
 	}
-	assertRead("inbox-isolation-valid-2", true)
-	if _, err := tx.Exec(ctx, "UPDATE inbox_items SET is_read = false WHERE id = 'inbox-isolation-valid-2'"); err != nil {
-		t.Fatalf("reset consistent row read state: %v", err)
+	resetRead := func(ids ...string) {
+		t.Helper()
+		if _, err := tx.Exec(ctx, "UPDATE inbox_items SET is_read = false WHERE id = ANY($1)", ids); err != nil {
+			t.Fatalf("reset read state for %v: %v", ids, err)
+		}
 	}
 
+	markItemRead("forged cross-workspace row", "inbox-isolation-forged-1", "inbox-isolation-workspace-2", true, "ignored-in-workspace-mode")
+	assertRead("inbox-isolation-forged-1", false)
+
+	markItemRead("managed-a own row", "inbox-isolation-valid-a", "inbox-isolation-workspace-1", false, "managed-a")
+	assertRead("inbox-isolation-valid-a", true)
+	resetRead("inbox-isolation-valid-a")
+
+	markItemRead("managed-a cross-scope row", "inbox-isolation-valid-b", "inbox-isolation-workspace-1", false, "managed-a")
+	assertRead("inbox-isolation-valid-b", false)
+	markItemRead("managed-b own row", "inbox-isolation-valid-b", "inbox-isolation-workspace-1", false, "managed-b")
+	assertRead("inbox-isolation-valid-b", true)
+	resetRead("inbox-isolation-valid-b")
+
+	for _, id := range []string{
+		"inbox-isolation-valid-a",
+		"inbox-isolation-valid-b",
+		"inbox-isolation-valid-byo",
+	} {
+		markItemRead("workspace row "+id, id, "inbox-isolation-workspace-1", true, "ignored-in-workspace-mode")
+		assertRead(id, true)
+	}
+	resetRead(
+		"inbox-isolation-valid-a",
+		"inbox-isolation-valid-b",
+		"inbox-isolation-valid-byo",
+	)
+
+	markItemRead("consistent workspace-2 row", "inbox-isolation-valid-2", "inbox-isolation-workspace-2", true, "ignored-in-workspace-mode")
+	assertRead("inbox-isolation-valid-2", true)
+	resetRead("inbox-isolation-valid-2")
+
 	updated, err := queries.MarkAllInboxItemsRead(ctx, MarkAllInboxItemsReadParams{
-		WorkspaceID: "inbox-isolation-workspace-2",
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		WorkspaceScope: false,
+		ExternalUserID: "managed-a",
+		ExcludeXDms:    false,
 	})
 	if err != nil || updated != 1 {
-		t.Fatalf("MarkAllInboxItemsRead updated %d rows, error %v; want 1", updated, err)
+		t.Fatalf("managed-a MarkAllInboxItemsRead updated %d rows, error %v; want 1", updated, err)
+	}
+	assertRead("inbox-isolation-valid-a", true)
+	assertRead("inbox-isolation-valid-b", false)
+	assertRead("inbox-isolation-valid-byo", false)
+
+	updated, err = queries.MarkAllInboxItemsRead(ctx, MarkAllInboxItemsReadParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		WorkspaceScope: false,
+		ExternalUserID: "managed-b",
+		ExcludeXDms:    false,
+	})
+	if err != nil || updated != 1 {
+		t.Fatalf("managed-b MarkAllInboxItemsRead updated %d rows, error %v; want 1", updated, err)
+	}
+	assertRead("inbox-isolation-valid-a", true)
+	assertRead("inbox-isolation-valid-b", true)
+	assertRead("inbox-isolation-valid-byo", false)
+
+	resetRead(
+		"inbox-isolation-valid-a",
+		"inbox-isolation-valid-b",
+		"inbox-isolation-valid-byo",
+	)
+	updated, err = queries.MarkAllInboxItemsRead(ctx, MarkAllInboxItemsReadParams{
+		WorkspaceID:    "inbox-isolation-workspace-1",
+		WorkspaceScope: true,
+		ExternalUserID: "ignored-in-workspace-mode",
+		ExcludeXDms:    false,
+	})
+	if err != nil || updated != 3 {
+		t.Fatalf("workspace MarkAllInboxItemsRead updated %d rows, error %v; want 3", updated, err)
+	}
+	assertRead("inbox-isolation-valid-a", true)
+	assertRead("inbox-isolation-valid-b", true)
+	assertRead("inbox-isolation-valid-byo", true)
+
+	updated, err = queries.MarkAllInboxItemsRead(ctx, MarkAllInboxItemsReadParams{
+		WorkspaceID:    "inbox-isolation-workspace-2",
+		WorkspaceScope: true,
+		ExternalUserID: "ignored-in-workspace-mode",
+		ExcludeXDms:    false,
+	})
+	if err != nil || updated != 1 {
+		t.Fatalf("workspace-2 MarkAllInboxItemsRead updated %d rows, error %v; want 1", updated, err)
 	}
 	assertRead("inbox-isolation-valid-2", true)
 	assertRead("inbox-isolation-forged-1", false)
@@ -725,10 +876,94 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		ThreadKey:       "forged-thread-1",
 		ThreadStatus:    "resolved",
 		Column6:         "",
+		WorkspaceScope:  true,
+		ExternalUserID:  "ignored-in-workspace-mode",
 	})
 	if err != nil || updated != 0 {
 		t.Fatalf("UpdateInboxThreadState forged row updated %d rows, error %v; want 0", updated, err)
 	}
+	assertThreadState := func(id, want string) {
+		t.Helper()
+		var got string
+		if err := tx.QueryRow(ctx, "SELECT thread_status FROM inbox_items WHERE id = $1", id).Scan(&got); err != nil {
+			t.Fatalf("read %s thread_status: %v", id, err)
+		}
+		if got != want {
+			t.Fatalf("%s thread_status = %q, want %q", id, got, want)
+		}
+	}
+	assertThreadState("inbox-isolation-forged-1", "open")
+
+	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
+		WorkspaceID:     "inbox-isolation-workspace-1",
+		SocialAccountID: "inbox-isolation-account-a",
+		Source:          "ig_comment",
+		ThreadKey:       "valid-thread-a",
+		ThreadStatus:    "resolved",
+		Column6:         "",
+		WorkspaceScope:  false,
+		ExternalUserID:  "managed-a",
+	})
+	if err != nil || updated != 1 {
+		t.Fatalf("managed-a own UpdateInboxThreadState updated %d rows, error %v; want 1", updated, err)
+	}
+	assertThreadState("inbox-isolation-valid-a", "resolved")
+
+	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
+		WorkspaceID:     "inbox-isolation-workspace-1",
+		SocialAccountID: "inbox-isolation-account-b",
+		Source:          "ig_comment",
+		ThreadKey:       "valid-thread-b",
+		ThreadStatus:    "resolved",
+		Column6:         "",
+		WorkspaceScope:  false,
+		ExternalUserID:  "managed-a",
+	})
+	if err != nil || updated != 0 {
+		t.Fatalf("managed-a cross-scope UpdateInboxThreadState updated %d rows, error %v; want 0", updated, err)
+	}
+	assertThreadState("inbox-isolation-valid-b", "open")
+
+	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
+		WorkspaceID:     "inbox-isolation-workspace-1",
+		SocialAccountID: "inbox-isolation-account-b",
+		Source:          "ig_comment",
+		ThreadKey:       "valid-thread-b",
+		ThreadStatus:    "resolved",
+		Column6:         "",
+		WorkspaceScope:  false,
+		ExternalUserID:  "managed-b",
+	})
+	if err != nil || updated != 1 {
+		t.Fatalf("managed-b own UpdateInboxThreadState updated %d rows, error %v; want 1", updated, err)
+	}
+	assertThreadState("inbox-isolation-valid-b", "resolved")
+
+	for _, tt := range []struct {
+		accountID string
+		threadKey string
+		itemID    string
+	}{
+		{accountID: "inbox-isolation-account-a", threadKey: "valid-thread-a", itemID: "inbox-isolation-valid-a"},
+		{accountID: "inbox-isolation-account-b", threadKey: "valid-thread-b", itemID: "inbox-isolation-valid-b"},
+		{accountID: "inbox-isolation-account-byo", threadKey: "valid-thread-byo", itemID: "inbox-isolation-valid-byo"},
+	} {
+		updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
+			WorkspaceID:     "inbox-isolation-workspace-1",
+			SocialAccountID: tt.accountID,
+			Source:          "ig_comment",
+			ThreadKey:       tt.threadKey,
+			ThreadStatus:    "assigned",
+			Column6:         "",
+			WorkspaceScope:  true,
+			ExternalUserID:  "ignored-in-workspace-mode",
+		})
+		if err != nil || updated != 1 {
+			t.Fatalf("workspace UpdateInboxThreadState for %s updated %d rows, error %v; want 1", tt.itemID, updated, err)
+		}
+		assertThreadState(tt.itemID, "assigned")
+	}
+
 	updated, err = queries.UpdateInboxThreadState(ctx, UpdateInboxThreadStateParams{
 		WorkspaceID:     "inbox-isolation-workspace-2",
 		SocialAccountID: "inbox-isolation-account-2",
@@ -736,6 +971,8 @@ func verifyInboxTenantIsolationAgainstPostgres(t *testing.T, databaseURL string)
 		ThreadKey:       "valid-thread-2",
 		ThreadStatus:    "resolved",
 		Column6:         "",
+		WorkspaceScope:  true,
+		ExternalUserID:  "ignored-in-workspace-mode",
 	})
 	if err != nil || updated != 1 {
 		t.Fatalf("UpdateInboxThreadState consistent row updated %d rows, error %v; want 1", updated, err)

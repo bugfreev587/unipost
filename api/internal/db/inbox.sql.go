@@ -1297,17 +1297,28 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $2::BOOLEAN
+    OR sa.external_user_id = $3::TEXT
+  )
   AND i.is_read = false
-  AND (NOT $2::BOOLEAN OR i.source <> 'x_dm')
+  AND (NOT $4::BOOLEAN OR i.source <> 'x_dm')
 `
 
 type MarkAllInboxItemsReadParams struct {
-	WorkspaceID string `json:"workspace_id"`
-	ExcludeXDms bool   `json:"exclude_x_dms"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
+	ExcludeXDms    bool   `json:"exclude_x_dms"`
 }
 
 func (q *Queries) MarkAllInboxItemsRead(ctx context.Context, arg MarkAllInboxItemsReadParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markAllInboxItemsRead, arg.WorkspaceID, arg.ExcludeXDms)
+	result, err := q.db.Exec(ctx, markAllInboxItemsRead,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+		arg.ExcludeXDms,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -1323,15 +1334,26 @@ WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND (
+    $3::BOOLEAN
+    OR sa.external_user_id = $4::TEXT
+  )
 `
 
 type MarkInboxItemReadParams struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	WorkspaceScope bool   `json:"workspace_scope"`
+	ExternalUserID string `json:"external_user_id"`
 }
 
 func (q *Queries) MarkInboxItemRead(ctx context.Context, arg MarkInboxItemReadParams) error {
-	_, err := q.db.Exec(ctx, markInboxItemRead, arg.ID, arg.WorkspaceID)
+	_, err := q.db.Exec(ctx, markInboxItemRead,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
+	)
 	return err
 }
 
@@ -1683,6 +1705,10 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    $7::BOOLEAN
+    OR sa.external_user_id = $8::TEXT
+  )
   AND i.social_account_id = $2
   AND i.source = $3
   AND i.thread_key = $4
@@ -1695,6 +1721,8 @@ type UpdateInboxThreadStateParams struct {
 	ThreadKey       string      `json:"thread_key"`
 	ThreadStatus    string      `json:"thread_status"`
 	Column6         interface{} `json:"column_6"`
+	WorkspaceScope  bool        `json:"workspace_scope"`
+	ExternalUserID  string      `json:"external_user_id"`
 }
 
 func (q *Queries) UpdateInboxThreadState(ctx context.Context, arg UpdateInboxThreadStateParams) (int64, error) {
@@ -1705,6 +1733,8 @@ func (q *Queries) UpdateInboxThreadState(ctx context.Context, arg UpdateInboxThr
 		arg.ThreadKey,
 		arg.ThreadStatus,
 		arg.Column6,
+		arg.WorkspaceScope,
+		arg.ExternalUserID,
 	)
 	if err != nil {
 		return 0, err

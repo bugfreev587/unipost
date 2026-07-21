@@ -278,7 +278,11 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
-  AND p.workspace_id = $2;
+  AND p.workspace_id = $2
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  );
 
 -- name: UpdateInboxItemAuthorMetadata :execrows
 UPDATE inbox_items AS i
@@ -347,6 +351,10 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = @workspace_id
   AND p.workspace_id = @workspace_id
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  )
   AND i.is_read = false
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm');
 
@@ -359,6 +367,10 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+  )
   AND i.social_account_id = $2
   AND i.source = $3
   AND i.thread_key = $4;
