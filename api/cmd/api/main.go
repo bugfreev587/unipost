@@ -770,9 +770,12 @@ func main() {
 	r.Get("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.CRC)
 	r.Post("/v1/webhooks/twitter/{webhook_route_key}", xWebhookHandler.Handle)
 
-	// WebSocket — auth via ?token= query param (browser WS API
-	// doesn't support custom headers). Handler validates Clerk JWT.
-	inboxWSHandler := ws.NewHandler(inboxHub, queries).WithInboxPlanGate(quotaChecker)
+	// Dashboard WebSockets use a Clerk token query value because the browser
+	// API cannot set headers. Customer backends use workspace API keys only in
+	// the Inbox upgrade Authorization header; logs remain Clerk-query-only.
+	inboxWSHandler := ws.NewHandler(inboxHub, queries).
+		WithInboxPlanGate(quotaChecker).
+		WithInboxScopeAuth()
 	logsWSHandler := ws.NewHandler(logsHub, queries)
 	r.Get("/v1/inbox/ws", inboxWSHandler.ServeHTTP)
 	r.Get("/v1/logs/ws", logsWSHandler.ServeHTTP)
