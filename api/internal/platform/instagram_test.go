@@ -46,6 +46,60 @@ func TestInstagramAuthURLUsesBusinessLoginContract(t *testing.T) {
 	}
 }
 
+func TestInstagramExchangeCodePersistsWebhookAccountID(t *testing.T) {
+	transport := &instagramSequenceTransport{responses: []instagramHTTPResponse{
+		{status: http.StatusOK, body: `{"access_token":"SHORT-AT","user_id":12345}`},
+		{status: http.StatusOK, body: `{"access_token":"LONG-AT","token_type":"bearer","expires_in":5184000}`},
+		{status: http.StatusOK, body: `{"id":"app-scoped-99","user_id":"professional-42","username":"shipper","profile_picture_url":"https://example.com/p.jpg"}`},
+	}}
+	adapter := &InstagramAdapter{client: &http.Client{Transport: transport}}
+	config := adapter.DefaultOAuthConfig("https://api.example.com")
+	config.ClientID = "ig-client"
+	config.ClientSecret = "ig-secret"
+	config.TokenURL = "https://api.instagram.test/oauth/access_token"
+
+	result, err := adapter.ExchangeCode(context.Background(), config, "auth-code")
+	if err != nil {
+		t.Fatalf("ExchangeCode: %v", err)
+	}
+	if len(transport.requests) != 3 {
+		t.Fatalf("request count = %d, want 3", len(transport.requests))
+	}
+	if got, want := transport.requests[2].URL.Query().Get("fields"), "id,user_id,username,profile_picture_url"; got != want {
+		t.Fatalf("profile fields = %q, want %q", got, want)
+	}
+	if result.ExternalAccountID != "app-scoped-99" {
+		t.Fatalf("external account id = %q", result.ExternalAccountID)
+	}
+	if got := result.Metadata["ig_user_id"]; got != "app-scoped-99" {
+		t.Fatalf("ig_user_id metadata = %#v", got)
+	}
+	if got := result.Metadata["instagram_webhook_user_id"]; got != "professional-42" {
+		t.Fatalf("instagram_webhook_user_id metadata = %#v", got)
+	}
+}
+
+func TestInstagramExchangeCodeMissingWebhookUserIDFails(t *testing.T) {
+	transport := &instagramSequenceTransport{responses: []instagramHTTPResponse{
+		{status: http.StatusOK, body: `{"access_token":"SHORT-AT","user_id":12345}`},
+		{status: http.StatusOK, body: `{"access_token":"LONG-AT","token_type":"bearer","expires_in":5184000}`},
+		{status: http.StatusOK, body: `{"id":"app-scoped-99","username":"shipper"}`},
+	}}
+	adapter := &InstagramAdapter{client: &http.Client{Transport: transport}}
+	config := adapter.DefaultOAuthConfig("https://api.example.com")
+	config.ClientID = "ig-client"
+	config.ClientSecret = "ig-secret"
+	config.TokenURL = "https://api.instagram.test/oauth/access_token"
+
+	_, err := adapter.ExchangeCode(context.Background(), config, "auth-code")
+	if err == nil {
+		t.Fatal("expected missing user_id error")
+	}
+	if !strings.Contains(err.Error(), "user_id") {
+		t.Fatalf("error = %q, want missing user_id diagnostic", err)
+	}
+}
+
 func TestInstagramWaitForContainerErrorIncludesDiagnostics(t *testing.T) {
 	withInstagramPollConfig(t, 3, 0)
 	adapter := &InstagramAdapter{client: &http.Client{Transport: &instagramSequenceTransport{
@@ -200,9 +254,11 @@ type instagramHTTPResponse struct {
 
 type instagramSequenceTransport struct {
 	responses []instagramHTTPResponse
+	requests  []*http.Request
 }
 
 func (t *instagramSequenceTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.requests = append(t.requests, req)
 	if len(t.responses) == 0 {
 		return &http.Response{
 			StatusCode: http.StatusOK,

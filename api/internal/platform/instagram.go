@@ -111,9 +111,10 @@ func (a *InstagramAdapter) ExchangeCode(ctx context.Context, config OAuthConfig,
 		AvatarURL:         profile.profilePicURL,
 		Scopes:            config.Scopes,
 		Metadata: map[string]any{
-			"ig_user_id":     profile.id,
-			"username":       profile.username,
-			"granted_scopes": config.Scopes,
+			"ig_user_id":                profile.id,
+			"instagram_webhook_user_id": profile.webhookUserID,
+			"username":                  profile.username,
+			"granted_scopes":            config.Scopes,
 		},
 	}, nil
 }
@@ -786,6 +787,7 @@ func (a *InstagramAdapter) exchangeForLongLivedToken(ctx context.Context, config
 
 type igProfile struct {
 	id            string
+	webhookUserID string
 	username      string
 	profilePicURL string
 }
@@ -800,8 +802,11 @@ type InstagramProfile struct {
 }
 
 func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (*igProfile, error) {
+	params := url.Values{}
+	params.Set("fields", "id,user_id,username,profile_picture_url")
+	params.Set("access_token", accessToken)
 	req, err := http.NewRequestWithContext(ctx, "GET",
-		"https://graph.instagram.com/v21.0/me?fields=id,username,profile_picture_url&access_token="+accessToken, nil)
+		"https://graph.instagram.com/v21.0/me?"+params.Encode(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -819,6 +824,7 @@ func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (
 
 	var profile struct {
 		ID                string `json:"id"`
+		UserID            string `json:"user_id"`
 		Username          string `json:"username"`
 		ProfilePictureURL string `json:"profile_picture_url"`
 	}
@@ -828,9 +834,13 @@ func (a *InstagramAdapter) getProfile(ctx context.Context, accessToken string) (
 	if profile.ID == "" {
 		return nil, fmt.Errorf("empty profile ID")
 	}
+	if profile.UserID == "" {
+		return nil, fmt.Errorf("empty profile user_id")
+	}
 
 	return &igProfile{
 		id:            profile.ID,
+		webhookUserID: profile.UserID,
 		username:      profile.Username,
 		profilePicURL: profile.ProfilePictureURL,
 	}, nil

@@ -510,6 +510,11 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
 		return
 	}
+	if platformName == "instagram" && strings.TrimSpace(profile.WebhookAccountID) == "" {
+		slog.Error("connect.callback: instagram profile missing webhook account id")
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
+		return
+	}
 
 	prof, profErr := h.queries.GetProfile(r.Context(), session.ProfileID)
 	hidePoweredBy := false
@@ -561,10 +566,14 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	metadata, _ := json.Marshal(map[string]any{
+	accountMetadata := map[string]any{
 		"username":     profile.Username,
 		"display_name": profile.DisplayName,
-	})
+	}
+	if platformName == "instagram" {
+		accountMetadata["instagram_webhook_user_id"] = profile.WebhookAccountID
+	}
+	metadata, _ := json.Marshal(accountMetadata)
 
 	accountName := pgtype.Text{String: nonEmpty(profile.Username, profile.DisplayName), Valid: profile.Username != "" || profile.DisplayName != ""}
 	accountAvatarURL := pgtype.Text{String: profile.AvatarURL, Valid: profile.AvatarURL != ""}
@@ -631,7 +640,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	}
 
 	if platformName == "instagram" {
-		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), profile.ExternalAccountID, tokens.AccessToken); err != nil {
+		if err := h.instagramWebhookSubscriber.Subscribe(r.Context(), profile.WebhookAccountID, tokens.AccessToken); err != nil {
 			_, _ = h.queries.MarkSocialAccountReconnectRequired(r.Context(), saved.ID)
 			slog.Error("connect.callback: instagram webhook subscription failed",
 				"account_id", saved.ID,

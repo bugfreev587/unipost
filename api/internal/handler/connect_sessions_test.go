@@ -887,7 +887,82 @@ func TestConnectCallbackReusesDisconnectedManagedAccountForExternalUser(t *testi
 	}
 }
 
-func TestConnectCallback_InstagramSubscribesBeforeCompleting(t *testing.T) {
+func TestConnectCallback_InstagramSubscribesWithWebhookAccountIDAfterPersistence(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		lookupErr     error
+		wantSaveOp    string
+		wantSavedID   string
+		wantUpserts   int
+		wantRefreshes int
+	}{
+		{name: "upsert", lookupErr: pgx.ErrNoRows, wantSaveOp: "upsert", wantSavedID: "sa_upserted_1", wantUpserts: 1},
+		{name: "refresh", wantSaveOp: "refresh", wantSavedID: "sa_active_1", wantRefreshes: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+			if err != nil {
+				t.Fatalf("encryptor: %v", err)
+			}
+			operations := []string{}
+			fdb := &connectSessionTestDB{
+				platform:               "instagram",
+				allowQuickstart:        true,
+				activeAccountLookupErr: tc.lookupErr,
+				operationLog:           &operations,
+			}
+			subscriber := &fakeInstagramWebhookSubscriber{operationLog: &operations}
+			h := NewConnectCallbackHandler(
+				db.New(fdb),
+				encryptor,
+				events.NoopBus{},
+				connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
+				"https://api.example.com",
+				nil,
+			)
+			h.instagramWebhookSubscriber = subscriber
+			req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/instagram?code=auth-code&state=state_1", nil)
+			req = withChiParam(req, "platform", "instagram")
+			rec := httptest.NewRecorder()
+
+			h.Callback(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if subscriber.calls != 1 {
+				t.Fatalf("subscriber calls = %d, want 1", subscriber.calls)
+			}
+			if subscriber.accountID != "instagram-professional-user-new" {
+				t.Fatalf("subscriber account id = %q", subscriber.accountID)
+			}
+			if subscriber.accessToken != "access-token" {
+				t.Fatalf("subscriber access token = %q", subscriber.accessToken)
+			}
+			if fdb.completedAcctID != tc.wantSavedID {
+				t.Fatalf("completed social account = %q, want %q", fdb.completedAcctID, tc.wantSavedID)
+			}
+			if fdb.upsertManagedCalls != tc.wantUpserts || fdb.refreshManagedCalls != tc.wantRefreshes {
+				t.Fatalf("save calls: upsert=%d refresh=%d, want upsert=%d refresh=%d", fdb.upsertManagedCalls, fdb.refreshManagedCalls, tc.wantUpserts, tc.wantRefreshes)
+			}
+			var metadata map[string]any
+			if err := json.Unmarshal(fdb.savedMetadata, &metadata); err != nil {
+				t.Fatalf("decode saved metadata: %v", err)
+			}
+			if got := metadata["instagram_webhook_user_id"]; got != "instagram-professional-user-new" {
+				t.Fatalf("saved instagram_webhook_user_id = %#v", got)
+			}
+			if got := metadata["username"]; got != "Robyn" {
+				t.Fatalf("saved username = %#v", got)
+			}
+			if want := []string{tc.wantSaveOp, "subscribe"}; !reflect.DeepEqual(operations, want) {
+				t.Fatalf("operation order = %v, want %v", operations, want)
+			}
+		})
+	}
+}
+
+func TestConnectCallback_InstagramMissingWebhookAccountIDFailsBeforePersistence(t *testing.T) {
 	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
 	if err != nil {
 		t.Fatalf("encryptor: %v", err)
@@ -902,7 +977,14 @@ func TestConnectCallback_InstagramSubscribesBeforeCompleting(t *testing.T) {
 		db.New(fdb),
 		encryptor,
 		events.NoopBus{},
-		connect.NewRegistry(fakeOAuthConnector{platform: "instagram"}),
+		connect.NewRegistry(fakeOAuthConnector{
+			platform: "instagram",
+			profile: &connect.Profile{
+				ExternalAccountID: "platform-account-new",
+				Username:          "Robyn",
+				DisplayName:       "Robyn",
+			},
+		}),
 		"https://api.example.com",
 		nil,
 	)
@@ -913,20 +995,14 @@ func TestConnectCallback_InstagramSubscribesBeforeCompleting(t *testing.T) {
 
 	h.Callback(rec, req)
 
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
-	if subscriber.calls != 1 {
-		t.Fatalf("subscriber calls = %d, want 1", subscriber.calls)
+	if fdb.upsertManagedCalls != 0 || fdb.refreshManagedCalls != 0 {
+		t.Fatalf("save calls: upsert=%d refresh=%d, want none", fdb.upsertManagedCalls, fdb.refreshManagedCalls)
 	}
-	if subscriber.accountID != "platform-account-new" {
-		t.Fatalf("subscriber account id = %q", subscriber.accountID)
-	}
-	if subscriber.accessToken != "access-token" {
-		t.Fatalf("subscriber access token = %q", subscriber.accessToken)
-	}
-	if fdb.completedAcctID != "sa_upserted_1" {
-		t.Fatalf("completed social account = %q", fdb.completedAcctID)
+	if subscriber.calls != 0 {
+		t.Fatalf("subscriber calls = %d, want 0", subscriber.calls)
 	}
 }
 
@@ -1064,10 +1140,13 @@ type connectSessionTestDB struct {
 	reusedManagedID           string
 	createManagedCalls        int
 	upsertManagedCalls        int
+	refreshManagedCalls       int
 	createConnectSessionCalls int
 	setSessionXAppModeCalls   int
 	reconnectRequiredCalls    int
 	xAppMode                  pgtype.Text
+	savedMetadata             []byte
+	operationLog              *[]string
 
 	managedUserCount                         int32
 	existingExternalUserAccountCount         int32
@@ -1197,8 +1276,15 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 			return scanRow{err: f.createManagedErr}
 		}
 		return f.socialAccountRow("sa_created_1", f.platform, stringArg(args, 5), pgTextString(args, 11), "active")
+	case strings.Contains(query, "-- name: RefreshConnectedSocialAccount"):
+		f.refreshManagedCalls++
+		f.captureSavedMetadata(args, 6)
+		f.appendOperation("refresh")
+		return f.socialAccountRow(stringArg(args, 13), f.platform, stringArg(args, 3), pgTextString(args, 10), "active")
 	case strings.Contains(query, "-- name: UpsertManagedSocialAccount"):
 		f.upsertManagedCalls++
+		f.captureSavedMetadata(args, 8)
+		f.appendOperation("upsert")
 		if len(args) > 13 {
 			f.xAppMode, _ = args[13].(pgtype.Text)
 		}
@@ -1216,6 +1302,20 @@ func (f *connectSessionTestDB) QueryRow(_ context.Context, query string, args ..
 		return f.connectSessionRow(f.platform, "completed", f.completedAcctID, "user_123", pgtype.Text{}, pgtype.Text{}, "state_1", pgtype.Text{}, futureTimestamptz(), f.allowQuickstart)
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
+	}
+}
+
+func (f *connectSessionTestDB) captureSavedMetadata(args []interface{}, index int) {
+	if index >= len(args) {
+		return
+	}
+	metadata, _ := args[index].([]byte)
+	f.savedMetadata = append(f.savedMetadata[:0], metadata...)
+}
+
+func (f *connectSessionTestDB) appendOperation(operation string) {
+	if f.operationLog != nil {
+		*f.operationLog = append(*f.operationLog, operation)
 	}
 }
 
@@ -1353,19 +1453,24 @@ func pgTextString(args []interface{}, index int) string {
 
 type fakeOAuthConnector struct {
 	platform string
+	profile  *connect.Profile
 }
 
 type fakeInstagramWebhookSubscriber struct {
-	calls       int
-	accountID   string
-	accessToken string
-	err         error
+	calls        int
+	accountID    string
+	accessToken  string
+	err          error
+	operationLog *[]string
 }
 
 func (f *fakeInstagramWebhookSubscriber) Subscribe(_ context.Context, accountID, accessToken string) error {
 	f.calls++
 	f.accountID = accountID
 	f.accessToken = accessToken
+	if f.operationLog != nil {
+		*f.operationLog = append(*f.operationLog, "subscribe")
+	}
 	return f.err
 }
 
@@ -1387,11 +1492,18 @@ func (f fakeOAuthConnector) ExchangeCode(context.Context, connect.SessionView, s
 }
 
 func (f fakeOAuthConnector) FetchProfile(context.Context, string) (*connect.Profile, error) {
-	return &connect.Profile{
+	if f.profile != nil {
+		return f.profile, nil
+	}
+	profile := &connect.Profile{
 		ExternalAccountID: "platform-account-new",
 		Username:          "Robyn",
 		DisplayName:       "Robyn",
-	}, nil
+	}
+	if f.platform == "instagram" {
+		profile.WebhookAccountID = "instagram-professional-user-new"
+	}
+	return profile, nil
 }
 
 func (f fakeOAuthConnector) Refresh(context.Context, string) (*connect.TokenSet, error) {

@@ -144,18 +144,19 @@ func TestInstagramExchangeCode_LongLivedFailIsFatal(t *testing.T) {
 	}
 }
 
-// TestInstagramFetchProfile — happy path. The id field is the
-// stable identifier; username is the human-readable handle.
+// TestInstagramFetchProfile — happy path. Instagram returns both an
+// app-scoped id used for account identity and the professional user_id
+// required by Meta's webhook subscription endpoint.
 func TestInstagramFetchProfile(t *testing.T) {
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
 		if q.Get("access_token") != "AT-1" {
 			t.Errorf("access_token: %q", q.Get("access_token"))
 		}
-		if !strings.Contains(q.Get("fields"), "username") {
-			t.Errorf("fields missing username: %q", q.Get("fields"))
+		if got, want := q.Get("fields"), "id,user_id,username,profile_picture_url"; got != want {
+			t.Errorf("fields = %q, want %q", got, want)
 		}
-		_, _ = io.WriteString(w, `{"id":"ig-99","username":"shipper","profile_picture_url":"https://example.com/p.jpg"}`)
+		_, _ = io.WriteString(w, `{"id":"app-scoped-99","user_id":"professional-42","username":"shipper","profile_picture_url":"https://example.com/p.jpg"}`)
 	}))
 	defer mock.Close()
 
@@ -166,8 +167,30 @@ func TestInstagramFetchProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchProfile: %v", err)
 	}
-	if p.ExternalAccountID != "ig-99" || p.Username != "shipper" {
+	if p.ExternalAccountID != "app-scoped-99" || p.WebhookAccountID != "professional-42" || p.Username != "shipper" {
 		t.Errorf("profile: %+v", p)
+	}
+}
+
+func TestInstagramFetchProfileMissingWebhookUserIDFailsWithoutLeakingToken(t *testing.T) {
+	const accessToken = "secret-profile-token"
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"id":"app-scoped-99","username":"shipper","debug":"secret-profile-token"}`)
+	}))
+	defer mock.Close()
+
+	c := NewInstagramConnector("c", "s", "https://api.example.com")
+	c.ProfileEndpoint = mock.URL
+
+	_, err := c.FetchProfile(context.Background(), accessToken)
+	if err == nil {
+		t.Fatal("expected missing user_id error")
+	}
+	if !strings.Contains(err.Error(), "user_id") {
+		t.Fatalf("error = %q, want missing user_id diagnostic", err)
+	}
+	if strings.Contains(err.Error(), accessToken) {
+		t.Fatalf("error leaked access token: %q", err)
 	}
 }
 
