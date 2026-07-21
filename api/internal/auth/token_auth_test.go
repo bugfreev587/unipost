@@ -44,17 +44,17 @@ func TestAuthenticateAPIKeyTokenPreservesStableFailures(t *testing.T) {
 	}{
 		{
 			name:    "invalid",
-			store:   &apiKeyAuthTestDB{apiKeyErr: pgx.ErrNoRows},
+			store:   &apiKeyAuthTestDB{apiKeyErr: pgx.ErrNoRows, execContexts: make(chan context.Context, 1)},
 			message: "Invalid API key",
 		},
 		{
 			name:    "revoked",
-			store:   &apiKeyAuthTestDB{revokedAt: time.Now()},
+			store:   &apiKeyAuthTestDB{revokedAt: time.Now(), execContexts: make(chan context.Context, 1)},
 			message: "API key has been revoked",
 		},
 		{
 			name:    "expired",
-			store:   &apiKeyAuthTestDB{expiresAt: time.Now().Add(-time.Minute)},
+			store:   &apiKeyAuthTestDB{expiresAt: time.Now().Add(-time.Minute), execContexts: make(chan context.Context, 1)},
 			message: "API key has expired",
 		},
 	}
@@ -72,13 +72,15 @@ func TestAuthenticateAPIKeyTokenPreservesStableFailures(t *testing.T) {
 			if failure.Status != http.StatusUnauthorized || failure.Code != "UNAUTHORIZED" || failure.Message != tt.message {
 				t.Fatalf("failure = %#v, want message %q", failure, tt.message)
 			}
+			assertNoLastUsedUpdate(t, tt.store.execContexts)
 		})
 	}
 }
 
 func TestAuthenticateAPIKeyTokenUsesDetachedLastUsedContext(t *testing.T) {
 	execContexts := make(chan context.Context, 1)
-	store := &apiKeyAuthTestDB{execContexts: execContexts}
+	execRelease := make(chan struct{})
+	store := &apiKeyAuthTestDB{execContexts: execContexts, execRelease: execRelease}
 	requestContext, cancel := context.WithCancel(context.Background())
 
 	ctx, failure := AuthenticateAPIKeyToken(requestContext, db.New(store), apiKeyAuthTestToken)
@@ -91,6 +93,22 @@ func TestAuthenticateAPIKeyTokenUsesDetachedLastUsedContext(t *testing.T) {
 	case updateContext := <-execContexts:
 		if err := updateContext.Err(); err != nil {
 			t.Fatalf("last-used context error = %v, want detached context", err)
+		}
+		deadline, ok := updateContext.Deadline()
+		if !ok {
+			t.Fatal("last-used context has no deadline")
+		}
+		if remaining := time.Until(deadline); remaining <= 0 || remaining > time.Minute {
+			t.Fatalf("last-used context deadline remaining = %v, want a small positive bound", remaining)
+		}
+		close(execRelease)
+		select {
+		case <-updateContext.Done():
+			if !errors.Is(updateContext.Err(), context.Canceled) {
+				t.Fatalf("last-used context error after update = %v, want cancellation", updateContext.Err())
+			}
+		case <-time.After(time.Second):
+			t.Fatal("last-used context was not canceled after update returned")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for last-used update")
@@ -160,10 +178,12 @@ func TestAuthenticateAPIKeyTokenRejectsMissingOrInactiveCreatorMembership(t *tes
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			execContexts := make(chan context.Context, 1)
 			store := &apiKeyAuthTestDB{
 				membershipRole:   RoleAdmin,
 				membershipStatus: tt.membershipStatus,
 				membershipErr:    tt.membershipErr,
+				execContexts:     execContexts,
 			}
 
 			ctx, failure := AuthenticateAPIKeyToken(context.Background(), db.New(store), apiKeyAuthTestToken)
@@ -177,6 +197,16 @@ func TestAuthenticateAPIKeyTokenRejectsMissingOrInactiveCreatorMembership(t *tes
 			if failure.Status != 401 || failure.Code != "UNAUTHORIZED" || failure.Message != "API key is no longer authorized" {
 				t.Fatalf("failure = %#v, want stable unauthorized response", failure)
 			}
+			assertNoLastUsedUpdate(t, execContexts)
 		})
+	}
+}
+
+func assertNoLastUsedUpdate(t *testing.T, updates <-chan context.Context) {
+	t.Helper()
+	select {
+	case <-updates:
+		t.Fatal("last-used update called for rejected API key")
+	case <-time.After(100 * time.Millisecond):
 	}
 }

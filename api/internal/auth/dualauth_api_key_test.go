@@ -89,11 +89,15 @@ type apiKeyAuthTestDB struct {
 	revokedAt         time.Time
 	expiresAt         time.Time
 	execContexts      chan context.Context
+	execRelease       chan struct{}
 }
 
 func (f *apiKeyAuthTestDB) Exec(ctx context.Context, _ string, _ ...interface{}) (pgconn.CommandTag, error) {
 	if f.execContexts != nil {
 		f.execContexts <- ctx
+	}
+	if f.execRelease != nil {
+		<-f.execRelease
 	}
 	return pgconn.CommandTag{}, nil
 }

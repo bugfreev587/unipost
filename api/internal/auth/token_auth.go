@@ -18,6 +18,8 @@ type TokenAuthFailure struct {
 
 const apiKeyCreatorBoundKey contextKey = "apiKeyCreatorBound"
 
+const apiKeyLastUsedUpdateTimeout = 5 * time.Second
+
 func GetAPIKeyCreatorBound(ctx context.Context) bool {
 	value, _ := ctx.Value(apiKeyCreatorBoundKey).(bool)
 	return value
@@ -39,12 +41,6 @@ func AuthenticateAPIKeyToken(ctx context.Context, queries *db.Queries, token str
 		return nil, unauthorizedTokenFailure("API key has expired")
 	}
 
-	go func() {
-		if err := queries.UpdateAPIKeyLastUsedAt(context.Background(), ak.ID); err != nil {
-			slog.Error("failed to update last_used_at", "key_id", ak.ID, "error", err)
-		}
-	}()
-
 	role := RoleOwner
 	creatorBound := ak.CreatedByUserID != ""
 	if creatorBound {
@@ -62,6 +58,15 @@ func AuthenticateAPIKeyToken(ctx context.Context, queries *db.Queries, token str
 	authenticated = SetAPIKeyID(authenticated, ak.ID)
 	authenticated = SetAPIKeyCreatorBound(authenticated, creatorBound)
 	authenticated = SetRole(authenticated, role)
+
+	go func() {
+		updateCtx, cancel := context.WithTimeout(context.Background(), apiKeyLastUsedUpdateTimeout)
+		defer cancel()
+		if err := queries.UpdateAPIKeyLastUsedAt(updateCtx, ak.ID); err != nil {
+			slog.Error("failed to update last_used_at", "key_id", ak.ID, "error", err)
+		}
+	}()
+
 	return authenticated, nil
 }
 
