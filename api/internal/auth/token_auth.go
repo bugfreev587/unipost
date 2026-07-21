@@ -42,7 +42,7 @@ func SetAPIKeyCreatorBound(ctx context.Context, bound bool) context.Context {
 // structured failure so non-HTTP middleware, including WebSocket handshakes,
 // can preserve the API's status/code/message contract without writing early.
 func AuthenticateClerkToken(ctx context.Context, queries *db.Queries, token string) (context.Context, *TokenAuthFailure) {
-	return authenticateClerkToken(ctx, queries, token, verifyClerkToken)
+	return authenticateClerkToken(ctx, queries, token, VerifyClerkSessionToken)
 }
 
 func authenticateClerkToken(ctx context.Context, queries *db.Queries, token string, verify clerkTokenVerifier) (context.Context, *TokenAuthFailure) {
@@ -101,7 +101,10 @@ func authenticateClerkToken(ctx context.Context, queries *db.Queries, token stri
 	return authenticated, nil
 }
 
-func verifyClerkToken(ctx context.Context, token string) (string, error) {
+// VerifyClerkSessionToken verifies a Clerk JWT and returns only its subject.
+// Callers remain responsible for choosing the workspace resolution behavior
+// appropriate to their route.
+func VerifyClerkSessionToken(ctx context.Context, token string) (string, error) {
 	secretKey := os.Getenv("CLERK_SECRET_KEY")
 	clerk.SetKey(secretKey)
 	client := jwks.NewClient(&clerk.ClientConfig{

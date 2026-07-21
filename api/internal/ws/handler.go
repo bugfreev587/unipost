@@ -33,6 +33,7 @@ type inboxPlanChecker interface {
 }
 
 type tokenAuthenticator func(context.Context, *db.Queries, string) (context.Context, *auth.TokenAuthFailure)
+type clerkTokenVerifier func(context.Context, string) (string, error)
 type webSocketAcceptor func(http.ResponseWriter, *http.Request, *websocket.AcceptOptions) (*websocket.Conn, error)
 type webSocketServer func(context.Context, string, *websocket.Conn)
 
@@ -47,6 +48,7 @@ type Handler struct {
 	scopedInboxAuth          bool
 	clerkTokenAuthenticator  tokenAuthenticator
 	apiKeyTokenAuthenticator tokenAuthenticator
+	legacyClerkTokenVerifier clerkTokenVerifier
 	acceptWebSocket          webSocketAcceptor
 	serveWebSocket           webSocketServer
 }
@@ -57,6 +59,7 @@ func NewHandler(hub *Hub, queries *db.Queries) *Handler {
 		queries:                  queries,
 		clerkTokenAuthenticator:  auth.AuthenticateClerkToken,
 		apiKeyTokenAuthenticator: auth.AuthenticateAPIKeyToken,
+		legacyClerkTokenVerifier: auth.VerifyClerkSessionToken,
 		acceptWebSocket:          websocket.Accept,
 		serveWebSocket:           hub.ServeConn,
 	}
@@ -107,7 +110,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) serveScopedInbox(w http.ResponseWriter, r *http.Request) {
 	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || hasForbiddenURLCredential(query) {
+	if err != nil || !validScopedInboxQuery(query) {
 		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid WebSocket credentials")
 		return
 	}
@@ -142,7 +145,7 @@ func (h *Handler) serveScopedInbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	authenticatedRequest := r.WithContext(authenticated)
-	scope, scopeFailure := inboxaccess.Resolve(authenticatedRequest, h.queries)
+	scope, scopeFailure := inboxaccess.ResolveQuery(authenticatedRequest, h.queries, query)
 	if scopeFailure != nil {
 		writeWSError(w, authenticatedRequest, scopeFailure.Status, scopeFailure.Code, scopeFailure.Message)
 		return
@@ -158,13 +161,20 @@ func (h *Handler) serveClerkOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	authenticated, failure := h.clerkTokenAuthenticator(r.Context(), h.queries, token)
-	if failure != nil {
-		writeWSError(w, r, failure.Status, failure.Code, failure.Message)
+	userID, err := h.legacyClerkTokenVerifier(r.Context(), token)
+	if err != nil {
+		slog.Warn("ws: auth failed")
+		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid token")
 		return
 	}
-	authenticatedRequest := r.WithContext(authenticated)
-	h.acceptAndServe(w, authenticatedRequest, auth.GetWorkspaceID(authenticated))
+
+	workspace, err := h.queries.GetDefaultWorkspaceForUser(r.Context(), userID)
+	if err != nil {
+		slog.Warn("ws: no workspace for user", "user_id", userID)
+		writeWSError(w, r, http.StatusForbidden, "FORBIDDEN", "No workspace found for user")
+		return
+	}
+	h.acceptAndServe(w, r, workspace.ID)
 }
 
 func (h *Handler) acceptAndServe(w http.ResponseWriter, r *http.Request, workspaceID string) {
@@ -184,14 +194,23 @@ func (h *Handler) acceptAndServe(w http.ResponseWriter, r *http.Request, workspa
 	h.serveWebSocket(r.Context(), workspaceID, connection)
 }
 
-func hasForbiddenURLCredential(query url.Values) bool {
-	for name := range query {
-		switch strings.ToLower(name) {
-		case "api_key", "apikey", "api-key", "access_token", "authorization":
-			return true
+func validScopedInboxQuery(query url.Values) bool {
+	for _, values := range query {
+		for _, value := range values {
+			if isAPIKeyToken(strings.TrimSpace(value)) {
+				return false
+			}
 		}
 	}
-	return false
+	for name := range query {
+		switch name {
+		case "token", "inbox_scope", "external_user_id":
+			// Allowed. Cardinality and mode-specific rules are enforced below.
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validCredentialToken(token string) bool {

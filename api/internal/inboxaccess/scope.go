@@ -47,15 +47,23 @@ func WithContext(ctx context.Context, scope Scope) context.Context {
 }
 
 func Resolve(r *http.Request, queries *db.Queries) (Scope, *Failure) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		return Scope{}, failure(http.StatusBadRequest, "INBOX_QUERY_INVALID", "Inbox query parameters are malformed")
+	}
+	return ResolveQuery(r, queries, query)
+}
+
+// ResolveQuery resolves an already strictly parsed query. It lets transports
+// such as the Inbox WebSocket handshake validate their route-specific query
+// contract without reparsing RawQuery and potentially accepting a different
+// partial interpretation.
+func ResolveQuery(r *http.Request, queries *db.Queries, query url.Values) (Scope, *Failure) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
 		return Scope{}, failure(http.StatusUnauthorized, "UNAUTHORIZED", "Authenticated workspace is required")
 	}
 
-	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		return Scope{}, failure(http.StatusBadRequest, "INBOX_QUERY_INVALID", "Inbox query parameters are malformed")
-	}
 	isAPIKey := auth.GetAPIKeyID(r.Context()) != ""
 	mode, resolveFailure := resolveMode(query["inbox_scope"], isAPIKey)
 	if resolveFailure != nil {

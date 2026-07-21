@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/jackc/pgx/v5"
@@ -22,8 +23,10 @@ import (
 )
 
 const (
-	testClerkToken = "clerk-session-token"
-	testAPIKey     = "up_test_11111111111111111111111111111111"
+	testClerkToken        = "clerk-session-token"
+	testAPIKey            = "up_test_11111111111111111111111111111111"
+	testLiveAPIKey        = "up_live_22222222222222222222222222222222"
+	testEncodedLiveAPIKey = "%75p_live_22222222222222222222222222222222"
 )
 
 type staticInboxPlanGate struct {
@@ -49,19 +52,20 @@ func (g *recordingInboxPlanGate) PlanAllowsInbox(ctx context.Context, workspaceI
 }
 
 type webSocketTestHarness struct {
-	handler    *Handler
-	store      *webSocketTestDB
-	plan       *recordingInboxPlanGate
-	clerkCalls int
-	apiCalls   int
-	accepts    int
-	serves     int
-	serveWS    string
-	serveScope inboxaccess.Scope
+	handler     *Handler
+	store       *webSocketTestDB
+	plan        *recordingInboxPlanGate
+	clerkCalls  int
+	apiCalls    int
+	legacyCalls int
+	accepts     int
+	serves      int
+	serveWS     string
+	serveScope  inboxaccess.Scope
 }
 
 func newInboxWebSocketTestHandler() *webSocketTestHarness {
-	store := &webSocketTestDB{managedUserExists: true}
+	store := &webSocketTestDB{managedUserExists: true, defaultWorkspaceExists: true}
 	plan := &recordingInboxPlanGate{allow: true}
 	harness := &webSocketTestHarness{store: store, plan: plan}
 	harness.handler = NewHandler(NewHub(), db.New(store)).
@@ -80,6 +84,13 @@ func newInboxWebSocketTestHandler() *webSocketTestHarness {
 			return nil, &auth.TokenAuthFailure{Status: http.StatusUnauthorized, Code: "UNAUTHORIZED", Message: "Invalid API key"}
 		}
 		return apiKeyWebSocketContext(ctx, auth.RoleOwner, true), nil
+	}
+	harness.handler.legacyClerkTokenVerifier = func(_ context.Context, token string) (string, error) {
+		harness.legacyCalls++
+		if token != testClerkToken {
+			return "", errors.New("invalid Clerk token")
+		}
+		return "user_1", nil
 	}
 	harness.handler.acceptWebSocket = func(http.ResponseWriter, *http.Request, *websocket.AcceptOptions) (*websocket.Conn, error) {
 		harness.accepts++
@@ -265,6 +276,23 @@ func TestInboxWebSocketRejectsAmbiguousOrMalformedCredentials(t *testing.T) {
 			return httptest.NewRequest(http.MethodGet, "/v1/inbox/ws?token="+testClerkToken+"&API_KEY="+testAPIKey, nil)
 		}},
 		{
+			name: "case-variant token alias with valid API header",
+			request: func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "/v1/inbox/ws?Token="+testClerkToken+"&inbox_scope=workspace", nil)
+				req.Header.Set("Authorization", "Bearer "+testAPIKey)
+				return req
+			},
+		},
+		{name: "API key under arbitrary query key", request: func() *http.Request {
+			return httptest.NewRequest(http.MethodGet, "/v1/inbox/ws?token="+testClerkToken+"&foo="+testAPIKey, nil)
+		}},
+		{name: "percent-encoded API key under arbitrary query key", request: func() *http.Request {
+			return httptest.NewRequest(http.MethodGet, "/v1/inbox/ws?token="+testClerkToken+"&foo="+testEncodedLiveAPIKey, nil)
+		}},
+		{name: "unknown benign query key", request: func() *http.Request {
+			return httptest.NewRequest(http.MethodGet, "/v1/inbox/ws?token="+testClerkToken+"&foo=bar", nil)
+		}},
+		{
 			name: "Clerk token in Authorization",
 			request: func() *http.Request {
 				req := httptest.NewRequest(http.MethodGet, "/v1/inbox/ws?inbox_scope=workspace", nil)
@@ -319,7 +347,7 @@ func TestInboxWebSocketRejectsAmbiguousOrMalformedCredentials(t *testing.T) {
 			if harness.clerkCalls != 0 || harness.apiCalls != 0 {
 				t.Fatalf("auth calls = clerk:%d api:%d, want none", harness.clerkCalls, harness.apiCalls)
 			}
-			for _, secret := range []string{testAPIKey, testClerkToken} {
+			for _, secret := range []string{testAPIKey, testLiveAPIKey, testEncodedLiveAPIKey, testClerkToken} {
 				if strings.Contains(logs.String(), secret) {
 					t.Fatalf("logs contain credential %q", secret)
 				}
@@ -360,10 +388,20 @@ func TestInboxWebSocketPreservesLogsClerkOnlyMode(t *testing.T) {
 		if harness.accepts != 1 || harness.serves != 1 || harness.serveWS != "workspace_1" {
 			t.Fatalf("accept/serve/workspace = %d/%d/%q, want 1/1/workspace_1", harness.accepts, harness.serves, harness.serveWS)
 		}
+		if harness.legacyCalls != 1 || harness.clerkCalls != 0 || harness.apiCalls != 0 {
+			t.Fatalf("legacy/scoped Clerk/API auth calls = %d/%d/%d, want 1/0/0", harness.legacyCalls, harness.clerkCalls, harness.apiCalls)
+		}
+		if harness.store.defaultWorkspaceQueries != 1 {
+			t.Fatalf("default workspace queries = %d, want 1", harness.store.defaultWorkspaceQueries)
+		}
+		if harness.store.activeMembershipQueries != 0 || harness.store.listWorkspaceQueries != 0 || harness.store.membershipCreates != 0 {
+			t.Fatalf("active membership/list/self-heal queries = %d/%d/%d, want 0/0/0", harness.store.activeMembershipQueries, harness.store.listWorkspaceQueries, harness.store.membershipCreates)
+		}
 	})
 
 	t.Run("header API key is not enabled", func(t *testing.T) {
 		beforeAPICalls := harness.apiCalls
+		beforeLegacyCalls := harness.legacyCalls
 		req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws", nil)
 		req.Header.Set("Authorization", "Bearer "+testAPIKey)
 		rec := httptest.NewRecorder()
@@ -373,6 +411,64 @@ func TestInboxWebSocketPreservesLogsClerkOnlyMode(t *testing.T) {
 		assertWebSocketRejected(t, rec, http.StatusUnauthorized, "UNAUTHORIZED")
 		if harness.apiCalls != beforeAPICalls {
 			t.Fatalf("API authenticator calls changed from %d to %d", beforeAPICalls, harness.apiCalls)
+		}
+		if harness.legacyCalls != beforeLegacyCalls {
+			t.Fatalf("legacy verifier calls changed from %d to %d", beforeLegacyCalls, harness.legacyCalls)
+		}
+	})
+}
+
+func TestLogsWebSocketPreservesLegacyFailureEnvelope(t *testing.T) {
+	t.Run("missing token", func(t *testing.T) {
+		harness := newInboxWebSocketTestHandler()
+		harness.handler.scopedInboxAuth = false
+		harness.handler.planChecker = nil
+		req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws", nil)
+		rec := httptest.NewRecorder()
+
+		harness.handler.ServeHTTP(rec, req)
+
+		assertWebSocketRejectedMessage(t, rec, http.StatusUnauthorized, "UNAUTHORIZED", "Missing token query param")
+		if harness.legacyCalls != 0 || harness.store.defaultWorkspaceQueries != 0 || harness.accepts != 0 {
+			t.Fatalf("legacy/default workspace/accept calls = %d/%d/%d, want 0/0/0", harness.legacyCalls, harness.store.defaultWorkspaceQueries, harness.accepts)
+		}
+	})
+
+	t.Run("invalid token", func(t *testing.T) {
+		harness := newInboxWebSocketTestHandler()
+		harness.handler.scopedInboxAuth = false
+		harness.handler.planChecker = nil
+		harness.handler.legacyClerkTokenVerifier = func(context.Context, string) (string, error) {
+			harness.legacyCalls++
+			return "", errors.New("invalid")
+		}
+		req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws?token=invalid", nil)
+		rec := httptest.NewRecorder()
+
+		harness.handler.ServeHTTP(rec, req)
+
+		assertWebSocketRejectedMessage(t, rec, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid token")
+		if harness.store.defaultWorkspaceQueries != 0 || harness.accepts != 0 {
+			t.Fatalf("default workspace/accept calls = %d/%d, want 0/0", harness.store.defaultWorkspaceQueries, harness.accepts)
+		}
+	})
+
+	t.Run("no default workspace", func(t *testing.T) {
+		harness := newInboxWebSocketTestHandler()
+		harness.handler.scopedInboxAuth = false
+		harness.handler.planChecker = nil
+		harness.store.defaultWorkspaceExists = false
+		req := httptest.NewRequest(http.MethodGet, "/v1/logs/ws?token="+testClerkToken, nil)
+		rec := httptest.NewRecorder()
+
+		harness.handler.ServeHTTP(rec, req)
+
+		assertWebSocketRejectedMessage(t, rec, http.StatusForbidden, "FORBIDDEN", "No workspace found for user")
+		if harness.store.defaultWorkspaceQueries != 1 || harness.accepts != 0 {
+			t.Fatalf("default workspace/accept calls = %d/%d, want 1/0", harness.store.defaultWorkspaceQueries, harness.accepts)
+		}
+		if harness.store.activeMembershipQueries != 0 || harness.store.listWorkspaceQueries != 0 || harness.store.membershipCreates != 0 {
+			t.Fatalf("active membership/list/self-heal queries = %d/%d/%d, want 0/0/0", harness.store.activeMembershipQueries, harness.store.listWorkspaceQueries, harness.store.membershipCreates)
 		}
 	})
 }
@@ -422,6 +518,11 @@ func assertNoPlanOrAccept(t *testing.T, harness *webSocketTestHarness) {
 
 func assertWebSocketRejected(t *testing.T, recorder *httptest.ResponseRecorder, wantStatus int, wantCode string) {
 	t.Helper()
+	assertWebSocketRejectedMessage(t, recorder, wantStatus, wantCode, "")
+}
+
+func assertWebSocketRejectedMessage(t *testing.T, recorder *httptest.ResponseRecorder, wantStatus int, wantCode, wantMessage string) {
+	t.Helper()
 	if recorder.Code != wantStatus {
 		t.Fatalf("status = %d, want %d; body=%s", recorder.Code, wantStatus, recorder.Body.String())
 	}
@@ -432,23 +533,55 @@ func assertWebSocketRejected(t *testing.T, recorder *httptest.ResponseRecorder, 
 	if response.Error.Code != wantCode {
 		t.Fatalf("error code = %q, want %q; body=%s", response.Error.Code, wantCode, recorder.Body.String())
 	}
+	if wantMessage != "" && response.Error.Message != wantMessage {
+		t.Fatalf("error message = %q, want %q; body=%s", response.Error.Message, wantMessage, recorder.Body.String())
+	}
 }
 
 type webSocketTestDB struct {
-	managedUserExists bool
-	managedQueries    int
+	managedUserExists       bool
+	defaultWorkspaceExists  bool
+	managedQueries          int
+	defaultWorkspaceQueries int
+	activeMembershipQueries int
+	listWorkspaceQueries    int
+	membershipCreates       int
 }
 
 func (*webSocketTestDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
 	return pgconn.CommandTag{}, errors.New("unexpected Exec")
 }
 
-func (*webSocketTestDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+func (f *webSocketTestDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	if strings.Contains(query, "-- name: ListWorkspacesByUser") {
+		f.listWorkspaceQueries++
+	}
 	return nil, errors.New("unexpected Query")
 }
 
 func (f *webSocketTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
-	if !strings.Contains(query, "-- name: InboxManagedUserExists") {
+	switch {
+	case strings.Contains(query, "-- name: GetDefaultWorkspaceForUser"):
+		f.defaultWorkspaceQueries++
+		if !f.defaultWorkspaceExists {
+			return webSocketWorkspaceRow{err: pgx.ErrNoRows}
+		}
+		if len(args) != 1 || args[0] != "user_1" {
+			return webSocketWorkspaceRow{err: errors.New("default workspace lookup used unexpected user")}
+		}
+		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		return webSocketWorkspaceRow{values: []any{
+			"workspace_1", "user_1", "Workspace", pgtype.Int4{}, now, now, []string{"direct"}, pgtype.Text{},
+		}}
+	case strings.Contains(query, "-- name: GetActiveMembership"):
+		f.activeMembershipQueries++
+		return webSocketWorkspaceRow{err: errors.New("unexpected active membership lookup")}
+	case strings.Contains(query, "-- name: CreateMembership"):
+		f.membershipCreates++
+		return webSocketWorkspaceRow{err: errors.New("unexpected membership self-heal")}
+	case strings.Contains(query, "-- name: InboxManagedUserExists"):
+		// Continue with the managed-user existence result below.
+	default:
 		return webSocketTestRow{err: errors.New("unexpected QueryRow")}
 	}
 	f.managedQueries++
@@ -460,6 +593,37 @@ func (f *webSocketTestDB) QueryRow(_ context.Context, query string, args ...inte
 		return webSocketTestRow{err: errors.New("managed-user lookup used invalid external user")}
 	}
 	return webSocketTestRow{value: f.managedUserExists}
+}
+
+type webSocketWorkspaceRow struct {
+	values []any
+	err    error
+}
+
+func (r webSocketWorkspaceRow) Scan(dest ...interface{}) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) != len(r.values) {
+		return errors.New("unexpected workspace scan destination count")
+	}
+	for index := range dest {
+		switch target := dest[index].(type) {
+		case *string:
+			*target = r.values[index].(string)
+		case *pgtype.Int4:
+			*target = r.values[index].(pgtype.Int4)
+		case *pgtype.Timestamptz:
+			*target = r.values[index].(pgtype.Timestamptz)
+		case *[]string:
+			*target = r.values[index].([]string)
+		case *pgtype.Text:
+			*target = r.values[index].(pgtype.Text)
+		default:
+			return errors.New("unsupported workspace scan destination")
+		}
+	}
+	return nil
 }
 
 type webSocketTestRow struct {
