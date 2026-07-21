@@ -24,10 +24,9 @@ if (process.env.INBOX_ACCEPT_ALLOW_PG_NOTIFY !== "1") {
 }
 
 const apiURL = new URL(process.env.INBOX_ACCEPT_API_URL);
-if (apiURL.protocol !== "https:" || apiURL.username || apiURL.password || apiURL.search || apiURL.hash) {
+if (apiURL.protocol !== "https:" || apiURL.username || apiURL.password || apiURL.pathname !== "/" || apiURL.search || apiURL.hash) {
   throw new Error("INBOX_ACCEPT_API_URL must be an explicit credential-free HTTPS origin");
 }
-apiURL.pathname = apiURL.pathname.replace(/\/$/, "");
 
 const apiKey = process.env.INBOX_ACCEPT_API_KEY;
 if (apiKey.trim() !== apiKey || /[\x00-\x20\x7f]/.test(apiKey)) {
@@ -82,8 +81,7 @@ function scopedQuery(mode, externalUserID) {
 }
 
 function endpoint(pathname, query) {
-  const target = new URL(apiURL);
-  target.pathname = `${apiURL.pathname}${pathname}`;
+  const target = new URL(pathname, apiURL);
   target.search = query?.toString() ?? "";
   return target;
 }
@@ -171,8 +169,10 @@ class AcceptanceWebSocket {
   async connect() {
     const key = randomBytes(16).toString("base64");
     const requester = this.target.protocol === "wss:" ? httpsRequest : httpRequest;
+    const requestTarget = new URL(this.target);
+    requestTarget.protocol = this.target.protocol === "wss:" ? "https:" : "http:";
     await new Promise((resolve, reject) => {
-      const request = requester(this.target, {
+      const request = requester(requestTarget, {
         headers: {
           Authorization: `Bearer ${apiKey}`,
           Connection: "Upgrade",
@@ -403,8 +403,14 @@ async function emitFixtureEvents(events) {
   const childEnvironment = {
     PGAPPNAME: "unipost-inbox-scope-acceptance",
     PGCONNECT_TIMEOUT: String(Math.max(1, Math.ceil(psqlTimeoutMs / 1_000))),
-    PGDATABASE: process.env.INBOX_ACCEPT_EVENT_DATABASE_URL,
+    PGHOST: eventDatabaseURL.hostname,
+    PGPORT: eventDatabaseURL.port || "5432",
+    PGUSER: decodeURIComponent(eventDatabaseURL.username),
+    PGPASSWORD: decodeURIComponent(eventDatabaseURL.password),
+    PGDATABASE: decodeURIComponent(eventDatabaseURL.pathname.slice(1)),
   };
+  const sslMode = eventDatabaseURL.searchParams.get("sslmode");
+  if (sslMode) childEnvironment.PGSSLMODE = sslMode;
   if (process.env.PATH) childEnvironment.PATH = process.env.PATH;
 
   await new Promise((resolve, reject) => {

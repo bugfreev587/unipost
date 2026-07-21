@@ -15,6 +15,41 @@ function section(startMarker, endMarker) {
   return acceptance.slice(start, end);
 }
 
+test("credential-free HTTPS origin cannot produce a double-slash API path", () => {
+  const urlSetup = section("const apiURL =", "const apiKey =");
+  assert.match(urlSetup, /apiURL\.pathname !== "\/"/, "acceptance URL input must be an origin, not a base path");
+  assert.doesNotMatch(urlSetup, /apiURL\.pathname\s*=/, "origin normalization must not assign an empty URL pathname that normalizes back to slash");
+
+  const endpointBuilder = section("function endpoint(", "async function api(");
+  assert.match(endpointBuilder, /new URL\(pathname, apiURL\)/, "absolute API paths must resolve directly against the validated origin");
+  assert.doesNotMatch(endpointBuilder, /apiURL\.pathname/, "endpoint construction must not prepend the origin slash");
+});
+
+test("WebSocket upgrade uses an HTTP transport URL", () => {
+  const connect = section("  async connect()", "  consume(chunk)");
+  assert.match(connect, /const requestTarget = new URL\(this\.target\)/, "upgrade transport must not mutate the scoped WebSocket URL");
+  assert.match(
+    connect,
+    /requestTarget\.protocol = this\.target\.protocol === "wss:" \? "https:" : "http:"/,
+    "wss and ws must map to the protocols accepted by the Node HTTP request clients",
+  );
+  assert.match(connect, /requester\(requestTarget,/, "the upgrade request must use the mapped transport URL");
+});
+
+test("psql receives decomposed libpq connection variables", () => {
+  const psql = section("async function emitFixtureEvents", "const managedAQuery");
+  assert.match(psql, /PGHOST:\s*eventDatabaseURL\.hostname/);
+  assert.match(psql, /PGPORT:\s*eventDatabaseURL\.port \|\| "5432"/);
+  assert.match(psql, /PGUSER:\s*decodeURIComponent\(eventDatabaseURL\.username\)/);
+  assert.match(psql, /PGPASSWORD:\s*decodeURIComponent\(eventDatabaseURL\.password\)/);
+  assert.match(psql, /PGDATABASE:\s*decodeURIComponent\(eventDatabaseURL\.pathname\.slice\(1\)\)/);
+  assert.doesNotMatch(
+    psql,
+    /PGDATABASE:\s*process\.env\.INBOX_ACCEPT_EVENT_DATABASE_URL/,
+    "libpq must not receive a PostgreSQL URL through PGDATABASE",
+  );
+});
+
 test("cross-scope reply is validation-safe before any provider path", () => {
   const replyProbe = section('await assertNotFound("cross-scope reply"', 'await assertNotFound("cross-scope thread-state"');
   assert.match(replyProbe, /\/reply`, \{\s*\}\s*\);/s, "cross-scope reply must send an empty JSON object");
