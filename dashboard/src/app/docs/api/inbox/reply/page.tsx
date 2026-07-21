@@ -9,8 +9,12 @@ export const metadata: Metadata = {
 };
 
 const AUTH: ApiFieldItem[] = [
-  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key. Inbox requires the Basic plan or higher." },
+  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key kept server-side. Inbox requires the Basic plan or higher." },
   { name: "Idempotency-Key", type: "string", meta: "In header", description: "Required for x_reply and x_dm. Reuse the same key only for the exact same item and text." },
+];
+const QUERY: ApiFieldItem[] = [
+  { name: "inbox_scope", type: "string", description: "Required for API-key requests. Use managed_user for one app user or workspace with a creator-bound owner/admin key." },
+  { name: "external_user_id", type: "string", optional: true, description: "Required only for managed_user. Derive it from the authenticated app user on your server." },
 ];
 const PATH: ApiFieldItem[] = [{ name: "id", type: "string", description: "Inbound Inbox item ID." }];
 const BODY: ApiFieldItem[] = [{ name: "text", type: "string", description: "Non-empty public reply or private-message text." }];
@@ -23,6 +27,8 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data.x_credit_billing_mode", type: "string", description: "unipost_managed_app or workspace_x_app." },
 ];
 const ERRORS: ApiFieldItem[] = [
+  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED when an API-key request omits inbox_scope." },
+  { name: "not_found", type: "404", description: "The item does not exist inside the selected scope; cross-scope items are not disclosed." },
   { name: "feature_not_available", type: "403", description: "X DMs are not available to this workspace. X public replies remain available." },
   { name: "x_monthly_usage_limit_exceeded", type: "402", description: "Managed-X allowance exhausted. Do not retry until capacity resets or changes." },
   { name: "x_reconnect_required", type: "409", description: "Reconnect the account with the required X scopes." },
@@ -102,9 +108,9 @@ export default async function InboxReplyPage() {
         : "Sends an eligible public reply. Use a stable idempotency key for X responses."}
       method="POST"
       path="/v1/inbox/:id/reply"
-      requestSections={[{ title: "Authorization", items: auth }, { title: "Path Params", items: PATH }, { title: "Request Body", items: body }]}
-      responses={[{ code: "200", fields: response }, { code: "202", fields: errors }, { code: "402", fields: errors }, { code: "409", fields: errors }]}
-      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/inbox_x_01/reply" \\
+      requestSections={[{ title: "Authorization", items: auth }, { title: "Query Params", items: QUERY }, { title: "Path Params", items: PATH }, { title: "Request Body", items: body }]}
+      responses={[{ code: "200", fields: response }, { code: "202", fields: errors }, { code: "400", fields: errors }, { code: "403", fields: errors }, { code: "404", fields: errors }, { code: "402", fields: errors }, { code: "409", fields: errors }]}
+      snippets={[{ lang: "curl", label: "cURL", code: `curl -X POST "https://api.unipost.dev/v1/inbox/inbox_x_01/reply?inbox_scope=managed_user&external_user_id=user_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Idempotency-Key: reply-inbox-x-01-v1" \\
   -H "Content-Type: application/json" \\

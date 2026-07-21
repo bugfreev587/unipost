@@ -24,7 +24,12 @@ const AVAILABILITY_FIELDS: ApiFieldItem[] = [
     name: "Auth model",
     type: "Bearer <token>",
     meta: "In header",
-    description: "Use a workspace API key or an authenticated dashboard token with workspace access.",
+    description: "Use a workspace API key or authenticated dashboard token. Keep API keys server-side, and derive the authenticated app user's external_user_id instead of accepting arbitrary client input.",
+  },
+  {
+    name: "Scope model",
+    type: "required",
+    description: "API-key requests must use managed_user plus external_user_id for one managed user, or workspace for an aggregate. Workspace scope requires a creator-bound key whose creator is still owner/admin.",
   },
 ];
 
@@ -106,6 +111,16 @@ const SOURCE_FIELDS: ApiFieldItem[] = [
 
 const QUERY_FIELDS: ApiFieldItem[] = [
   {
+    name: "inbox_scope",
+    type: "string",
+    description: <>Required on every API-key Inbox request.<EnumValues values={["managed_user", "workspace"]} /></>,
+  },
+  {
+    name: "external_user_id",
+    type: "string",
+    description: "Required for managed_user scope and rejected for workspace scope. Derive it from the authenticated app user on your server.",
+  },
+  {
     name: "source?",
     type: "string",
     description: <>Filter by normalized source.<EnumValues values={["ig_comment", "ig_dm", "threads_reply", "fb_comment", "fb_dm", "x_reply", "x_dm"]} /></>,
@@ -143,7 +158,7 @@ const RESPONSE_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "UNAUTHORIZED, FEATURE_NOT_AVAILABLE, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
+  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED when API-key scope is omitted; also INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, FEATURE_NOT_AVAILABLE, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
@@ -152,13 +167,13 @@ const REQUEST_SNIPPETS = [
   {
     lang: "curl",
     label: "List",
-    code: `curl "https://api.unipost.dev/v1/inbox?source=ig_comment&is_read=false&is_own=false&limit=100" \\
+    code: `curl "https://api.unipost.dev/v1/inbox?inbox_scope=managed_user&external_user_id=user_123&source=ig_comment&is_read=false&is_own=false&limit=100" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
     lang: "curl",
     label: "Reply",
-    code: `curl -X POST "https://api.unipost.dev/v1/inbox/inbox_item_123/reply" \\
+    code: `curl -X POST "https://api.unipost.dev/v1/inbox/inbox_item_123/reply?inbox_scope=managed_user&external_user_id=user_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"text":"Thanks for reaching out. We will take a look."}'`,
@@ -166,7 +181,13 @@ const REQUEST_SNIPPETS = [
   {
     lang: "curl",
     label: "Sync",
-    code: `curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+    code: `curl -X POST "https://api.unipost.dev/v1/inbox/sync?inbox_scope=managed_user&external_user_id=user_123" \\
+  -H "Authorization: Bearer $UNIPOST_API_KEY"`,
+  },
+  {
+    lang: "curl",
+    label: "Owner/admin aggregate",
+    code: `curl "https://api.unipost.dev/v1/inbox?inbox_scope=workspace&limit=100" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
 ];
@@ -246,7 +267,7 @@ export default async function InboxPage() {
   ));
   const errorFields = ERROR_FIELDS.map((field) => (
     field.name === "error.code" && !xDMsEnabled
-      ? { ...field, description: "UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." }
+      ? { ...field, description: "INBOX_SCOPE_REQUIRED when API-key scope is omitted; also INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." }
       : field
   ));
 

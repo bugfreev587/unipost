@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -76,6 +77,103 @@ func TestXInboxOutboundRecoveryHealsTransientCompletionFailureWithoutResend(t *t
 	if store.upstreamCalls != 0 {
 		t.Fatalf("recovery attempted upstream resend: %d", store.upstreamCalls)
 	}
+}
+
+func TestXInboxOutboundRecoveryPassesExactListedRowToCompletion(t *testing.T) {
+	row := db.XInboxOutboundRequest{
+		ID:                   "request-1",
+		WorkspaceID:          "workspace-1",
+		SocialAccountID:      "account-1",
+		InboxItemID:          "item-1",
+		IdempotencyKey:       "idempotency-1",
+		Status:               "remote_succeeded",
+		RemoteExternalID:     pgtype.Text{String: "tweet-2", Valid: true},
+		RemoteConversationID: pgtype.Text{String: "conversation-1", Valid: true},
+	}
+	store := &fakeXInboxOutboundRecoveryStore{rows: []db.XInboxOutboundRequest{row}}
+	stats, err := newXInboxOutboundRecoveryService(store, time.Now).ProcessOnce(context.Background())
+	if err != nil {
+		t.Fatalf("ProcessOnce: %v", err)
+	}
+	if stats.Completed != 1 || len(store.completedRows) != 1 {
+		t.Fatalf("stats/completed rows = %+v/%#v", stats, store.completedRows)
+	}
+	if !reflect.DeepEqual(store.completedRows[0], row) {
+		t.Fatalf("completion row=%+v, want exact listed row %+v", store.completedRows[0], row)
+	}
+}
+
+func TestXInboxOutboundRecoveryPostgresInjectsListedWorkspaceScope(t *testing.T) {
+	newStore := func(tx *inboxCompleteKnownTx) postgresXInboxOutboundRecoveryStore {
+		handler := &InboxHandler{}
+		return postgresXInboxOutboundRecoveryStore{
+			handler: handler,
+			completeKnown: func(ctx context.Context, id string) (db.InboxItem, xInboxSendResult, error) {
+				return handler.completeKnownXInboxOutboundWithTx(ctx, id, tx)
+			},
+		}
+	}
+
+	t.Run("listed workspace reaches scoped Get", func(t *testing.T) {
+		tx := &inboxCompleteKnownTx{
+			outbound: db.XInboxOutboundRequest{
+				ID:                  "request-1",
+				WorkspaceID:         "workspace-1",
+				Status:              "completed",
+				ResponseInboxItemID: pgtype.Text{String: "reply-1", Valid: true},
+			},
+			item: db.InboxItem{ID: "reply-1", WorkspaceID: "workspace-1"},
+		}
+		err := newStore(tx).CompleteKnown(context.Background(), db.XInboxOutboundRequest{
+			ID: "request-1", WorkspaceID: "workspace-1",
+		})
+		if err != nil {
+			t.Fatalf("CompleteKnown: %v", err)
+		}
+		assertInboxCompleteKnownScope(t, tx, true, "")
+		if !tx.committed {
+			t.Fatal("scoped recovery completion did not commit")
+		}
+	})
+
+	t.Run("wrong listed workspace fails closed", func(t *testing.T) {
+		tx := &inboxCompleteKnownTx{
+			outbound: db.XInboxOutboundRequest{
+				ID:                  "request-1",
+				WorkspaceID:         "workspace-1",
+				Status:              "completed",
+				ResponseInboxItemID: pgtype.Text{String: "reply-1", Valid: true},
+			},
+			item: db.InboxItem{ID: "reply-1", WorkspaceID: "workspace-1"},
+		}
+		err := newStore(tx).CompleteKnown(context.Background(), db.XInboxOutboundRequest{
+			ID: "request-1", WorkspaceID: "wrong-workspace",
+		})
+		if err == nil || err.Error() != errXInboxOutboundOutsideScope.Error() {
+			t.Fatalf("wrong-workspace error=%v, want generic %q", err, errXInboxOutboundOutsideScope)
+		}
+		if len(tx.getInboxCalls) != 0 || tx.committed {
+			t.Fatalf("wrong-workspace recovery reached scoped item/mutation: calls=%#v committed=%t", tx.getInboxCalls, tx.committed)
+		}
+	})
+
+	t.Run("empty listed workspace fails before completion", func(t *testing.T) {
+		completionCalls := 0
+		store := postgresXInboxOutboundRecoveryStore{
+			handler: &InboxHandler{},
+			completeKnown: func(context.Context, string) (db.InboxItem, xInboxSendResult, error) {
+				completionCalls++
+				return db.InboxItem{}, xInboxSendResult{}, nil
+			},
+		}
+		err := store.CompleteKnown(context.Background(), db.XInboxOutboundRequest{ID: "request-1"})
+		if err == nil || err.Error() != errXInboxOutboundOutsideScope.Error() {
+			t.Fatalf("empty-workspace error=%v, want generic %q", err, errXInboxOutboundOutsideScope)
+		}
+		if completionCalls != 0 {
+			t.Fatalf("empty workspace reached completion %d times", completionCalls)
+		}
+	})
 }
 
 func TestXInboxOutboundUnknownOutcomeBecomesManualReconciliationAfterDeadline(t *testing.T) {
@@ -233,6 +331,7 @@ type fakeXInboxOutboundRecoveryStore struct {
 	rows                []db.XInboxOutboundRequest
 	completeErrs        []error
 	completeCalls       int
+	completedRows       []db.XInboxOutboundRequest
 	deferCalls          int
 	manualCalls         int
 	reverseErrs         []error
@@ -253,8 +352,9 @@ func (f *fakeXInboxOutboundRecoveryStore) ListRecoverable(
 	return f.rows, nil
 }
 
-func (f *fakeXInboxOutboundRecoveryStore) CompleteKnown(context.Context, string) error {
+func (f *fakeXInboxOutboundRecoveryStore) CompleteKnown(_ context.Context, row db.XInboxOutboundRequest) error {
 	f.completeCalls++
+	f.completedRows = append(f.completedRows, row)
 	if len(f.completeErrs) == 0 {
 		return nil
 	}
@@ -394,7 +494,9 @@ func (s *concurrentPendingRecoveryStore) ReversePendingUsage(
 	return nil
 }
 
-func (*concurrentPendingRecoveryStore) CompleteKnown(context.Context, string) error { return nil }
+func (*concurrentPendingRecoveryStore) CompleteKnown(context.Context, db.XInboxOutboundRequest) error {
+	return nil
+}
 func (*concurrentPendingRecoveryStore) ReverseUsage(context.Context, db.XInboxOutboundRequest) error {
 	return nil
 }

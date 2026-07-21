@@ -57,3 +57,20 @@ func freePlanSharingBlocked(ctx context.Context, queries *db.Queries, checker *a
 	}
 	return false, nil
 }
+
+func freePlanManagedSharingBlocked(ctx context.Context, queries *db.Queries, checker *auth.SuperAdminChecker, workspaceID, platformName, providerIdentity string) (bool, error) {
+	if workspaceID == "" || platformName == "" || providerIdentity == "" {
+		return false, nil
+	}
+	if workspacePlanID(ctx, queries, workspaceID) != "free" {
+		return false, nil
+	}
+	if workspaceIsSuperAdmin(ctx, queries, checker, workspaceID) {
+		return false, nil
+	}
+	return queries.ExistsActiveAccountInOtherWorkspaceByProviderIdentity(ctx, db.ExistsActiveAccountInOtherWorkspaceByProviderIdentityParams{
+		WorkspaceID:      workspaceID,
+		Platform:         platformName,
+		ProviderIdentity: providerIdentity,
+	})
+}

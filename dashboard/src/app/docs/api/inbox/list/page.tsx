@@ -9,9 +9,11 @@ export const metadata: Metadata = {
 };
 
 const AUTH: ApiFieldItem[] = [
-  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key. Inbox requires the Basic plan or higher." },
+  { name: "Authorization", type: "Bearer <token>", meta: "In header", description: "Workspace API key kept server-side. Inbox requires the Basic plan or higher." },
 ];
 const QUERY: ApiFieldItem[] = [
+  { name: "inbox_scope", type: "string", description: "Required for API-key requests. Use managed_user for one app user or workspace with a creator-bound owner/admin key." },
+  { name: "external_user_id", type: "string", optional: true, description: "Required only for managed_user. Derive it from the authenticated app user on your server." },
   { name: "source", type: "string", optional: true, description: "Filter by ig_comment, ig_dm, threads_reply, fb_comment, fb_dm, x_reply, or x_dm." },
   { name: "is_read", type: "boolean", optional: true, description: "Return only read or unread items." },
   { name: "is_own", type: "boolean", optional: true, description: "Return outbound items when true or inbound items when false." },
@@ -29,7 +31,7 @@ const RESPONSE: ApiFieldItem[] = [
   { name: "data[].x_credit_billing_mode", type: "string", optional: true, description: "unipost_managed_app or workspace_x_app." },
 ];
 const ERRORS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "UNAUTHORIZED, FEATURE_NOT_AVAILABLE for a disabled X DM rollout, or PLAN_FEATURE_NOT_AVAILABLE." },
+  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED, INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, FEATURE_NOT_AVAILABLE, or PLAN_FEATURE_NOT_AVAILABLE." },
   { name: "request_id", type: "string", description: "Request identifier for support." },
 ];
 
@@ -52,7 +54,11 @@ export default async function InboxListPage() {
         ? { ...field, description: "Comment or reply text." }
         : field
     ));
-  const errors = ERRORS.filter((field) => xDMsEnabled || field.name !== "error.code");
+  const errors = ERRORS.map((field) => (
+    field.name === "error.code" && !xDMsEnabled
+      ? { ...field, description: "INBOX_SCOPE_REQUIRED, INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, or PLAN_FEATURE_NOT_AVAILABLE." }
+      : field
+  ));
   const guideLinks = filterDocsNavigation([
     { label: "Work with X comments", href: "/docs/guides/x/comments" },
     { label: "Work with X direct messages", href: "/docs/guides/x/direct-messages" },
@@ -68,8 +74,8 @@ export default async function InboxListPage() {
       method="GET"
       path="/v1/inbox"
       requestSections={[{ title: "Authorization", items: AUTH }, { title: "Query Params", items: query }]}
-      responses={[{ code: "200", fields: response }, { code: "402", fields: errors }]}
-      snippets={[{ lang: "curl", label: "cURL", code: `curl "https://api.unipost.dev/v1/inbox?source=x_reply&is_own=false&limit=50" \\
+      responses={[{ code: "200", fields: response }, { code: "400", fields: errors }, { code: "403", fields: errors }, { code: "404", fields: errors }, { code: "402", fields: errors }]}
+      snippets={[{ lang: "curl", label: "cURL", code: `curl "https://api.unipost.dev/v1/inbox?inbox_scope=managed_user&external_user_id=user_123&source=x_reply&is_own=false&limit=50" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"` }]}
       responseSnippets={[{ lang: "json", label: "200", code: `{
   "data": [{

@@ -370,8 +370,8 @@ else
   fail "GET /v1/logs/stream" "expected 200 text/event-stream, got '$STREAM_CT'"
 fi
 
-api GET "/v1/inbox/unread-count"
-assert_status_one_of "GET /v1/inbox/unread-count returns data or plan gate" "200" "402"
+api GET "/v1/inbox/unread-count?inbox_scope=workspace"
+assert_status_one_of "GET /v1/inbox/unread-count?inbox_scope=workspace returns data or plan gate" "200" "402"
 if [[ "$RESP_STATUS" == "200" ]]; then
   assert_jq_truthy '.data' 'inbox unread-count data present'
 fi

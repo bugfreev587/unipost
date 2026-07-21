@@ -3,22 +3,22 @@ import { requirePublicDocsFeature } from "@/lib/public-feature-flags-server";
 import { DocsCodeTabs, DocsPage } from "../../../_components/docs-shell";
 
 const LIST = `# GET /v1/inbox
-curl "https://api.unipost.dev/v1/inbox?source=x_dm&limit=50" \\
+curl "https://api.unipost.dev/v1/inbox?inbox_scope=managed_user&external_user_id=user_123&source=x_dm&limit=50" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`;
 const REPLY = `# POST /v1/inbox/:id/reply
-curl -X POST "https://api.unipost.dev/v1/inbox/inbox_x_dm_01/reply" \\
+curl -X POST "https://api.unipost.dev/v1/inbox/inbox_x_dm_01/reply?inbox_scope=managed_user&external_user_id=user_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Idempotency-Key: x-dm-inbox-x-dm-01-v1" \\
   -H "Content-Type: application/json" \\
   -d '{"text":"Thanks. A support specialist will follow up here."}'`;
 const SYNC = `# POST /v1/inbox/sync
-curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+curl -X POST "https://api.unipost.dev/v1/inbox/sync?inbox_scope=managed_user&external_user_id=user_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '{"x_backfill":{"account_id":"sa_x_01","lookback_days":30,"max_items":50,"include_replies":false,"include_dms":true}}'`;
 const CONFIRMED_SYNC = `# Repeat the exact request when confirmation_required is true.
 CONFIRMATION_TOKEN="paste-confirmation-token"
-curl -X POST "https://api.unipost.dev/v1/inbox/sync" \\
+curl -X POST "https://api.unipost.dev/v1/inbox/sync?inbox_scope=managed_user&external_user_id=user_123" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY" \\
   -H "Content-Type: application/json" \\
   --data-binary @- <<JSON
@@ -41,6 +41,10 @@ export default async function XDirectMessagesGuidePage() {
         <span className="docs-guide-badge">Legacy DM API</span>
         <span className="docs-guide-badge">Private content</span>
       </div>
+      <p className="docs-guide-note">
+        Keep the workspace API key server-side and derive <code>external_user_id</code> from the authenticated app user.
+        Use <code>inbox_scope=workspace</code> only for an owner/admin aggregate.
+      </p>
 
       <h2 id="availability">Availability</h2>
       <p>

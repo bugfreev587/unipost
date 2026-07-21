@@ -22,6 +22,8 @@ const guidePages = [
   "src/app/docs/guides/x/reconnect-permissions/page.tsx",
 ];
 
+const scopedInboxPages = [...apiPages, ...guidePages];
+
 const publicPaths = [
   "/docs/api/inbox/list",
   "/docs/api/inbox/reply",
@@ -37,6 +39,79 @@ test("Inbox docs publish only the shipped normalized source contract", async () 
     assert.match(inboxReference, new RegExp(`\\b${value}\\b`), `${value} should be documented`);
   }
   assert.doesNotMatch(inboxReference, /youtube_comment/);
+});
+
+test("Inbox API docs require explicit server-side scope on every example", async () => {
+  const files = await Promise.all(scopedInboxPages.map(source));
+  const inboxReference = files[0];
+  const corpus = files.join("\n");
+
+  assert.match(inboxReference, /inbox_scope=managed_user&external_user_id=user_123/);
+  assert.match(inboxReference, /inbox_scope=workspace/);
+  assert.match(inboxReference, /INBOX_SCOPE_REQUIRED/);
+  assert.match(corpus, /API key[^\n]{0,160}server-side/i);
+  assert.match(corpus, /authenticated[^\n]{0,160}external_user_id/i);
+
+  for (const [index, file] of files.entries()) {
+    const urls = file.match(/https:\/\/api\.unipost\.dev\/v1\/inbox[^"`\\\s]*/g) ?? [];
+    assert.ok(urls.length > 0, `${scopedInboxPages[index]} must include an Inbox request example`);
+    for (const url of urls) {
+      assert.match(url, /[?&]inbox_scope=(managed_user|workspace)(?:&|$)/, `${scopedInboxPages[index]} has an unscoped Inbox URL: ${url}`);
+      if (url.includes("inbox_scope=managed_user")) {
+        assert.match(url, /[?&]external_user_id=user_123(?:&|$)/, `${scopedInboxPages[index]} managed-user example lacks external_user_id: ${url}`);
+      }
+    }
+  }
+});
+
+test("Inbox API docs keep explicit scope API-key-only and publish the canonical error code", async () => {
+  const references = await Promise.all(apiPages.map(source));
+  for (const [index, reference] of references.entries()) {
+    assert.match(reference, /Required (?:for|on every) API-key[^\n]{0,80}(?:request|Inbox request)/, `${apiPages[index]} must limit explicit-scope requirements to API-key requests`);
+    assert.match(reference, /name: "error\.code"[^\n]{0,240}INBOX_SCOPE_REQUIRED/, `${apiPages[index]} must publish canonical error.code INBOX_SCOPE_REQUIRED`);
+    assert.doesNotMatch(reference, /Every Inbox request must choose/i, `${apiPages[index]} must not require explicit scope for dashboard-session requests`);
+    assert.doesNotMatch(reference, /name: "inbox_scope_required"/i, `${apiPages[index]} must not present a normalized code as the canonical API field`);
+  }
+});
+
+test("Inbox list flag-off docs retain general scope and authorization errors", async () => {
+  const list = await source(apiPages[1]);
+  assert.doesNotMatch(list, /ERRORS\.filter\([^\n]*error\.code/, "flag-off docs must not remove the entire error.code field");
+  assert.match(list, /const errors = ERRORS\.map\(\(field\) => \(/, "flag-off docs must map the error description in place");
+
+  const errorsStart = list.indexOf("const errors = ERRORS.map");
+  const errorsEnd = list.indexOf("const guideLinks", errorsStart);
+  assert.ok(errorsStart >= 0 && errorsEnd > errorsStart, "flag-off error mapping must be inspectable");
+  const flagOffMapping = list.slice(errorsStart, errorsEnd);
+  assert.match(flagOffMapping, /field\.name === "error\.code" && !xDMsEnabled/);
+  for (const code of ["INBOX_SCOPE_REQUIRED", "INBOX_SCOPE_INVALID", "MANAGED_USER_NOT_FOUND", "INSUFFICIENT_ROLE", "API_KEY_CREATOR_REQUIRED", "UNAUTHORIZED", "PLAN_FEATURE_NOT_AVAILABLE"]) {
+    assert.match(flagOffMapping, new RegExp(`\\b${code}\\b`), `flag-off error docs must retain ${code}`);
+  }
+  assert.doesNotMatch(flagOffMapping, /\bFEATURE_NOT_AVAILABLE\b/, "flag-off error docs must omit only the X DM rollout error");
+});
+
+test("deployed Inbox acceptance is fixture-only and covers HTTP plus WebSocket isolation", async () => {
+  const acceptance = await source("../scripts/inbox-scope-acceptance.mjs");
+  for (const name of [
+    "INBOX_ACCEPT_API_URL",
+    "INBOX_ACCEPT_API_KEY",
+    "INBOX_ACCEPT_EXTERNAL_USER_A",
+    "INBOX_ACCEPT_EXTERNAL_USER_B",
+    "INBOX_ACCEPT_ITEM_A",
+    "INBOX_ACCEPT_ITEM_B",
+    "INBOX_ACCEPT_EVENT_DATABASE_URL",
+    "INBOX_ACCEPT_ALLOW_PG_NOTIFY",
+  ]) {
+    assert.match(acceptance, new RegExp(name));
+  }
+  for (const operation of ["get", "read", "reply", "thread-state"]) {
+    assert.match(acceptance, new RegExp(operation));
+  }
+  assert.match(acceptance, /INBOX_SCOPE_REQUIRED/);
+  assert.match(acceptance, /WebSocket/);
+  assert.match(acceptance, /pg_notify/);
+  assert.match(acceptance, /fixture/i);
+  assert.doesNotMatch(acceptance, /api\.unipost\.dev\/2|graph\.facebook\.com|api\.x\.com|api\.instagram\.com/);
 });
 
 test("X Inbox references and guides link to each other in both directions", async () => {
@@ -134,7 +209,7 @@ test("X comments and DM guides show the complete confirmation follow-up request"
   for (const path of [guidePages[0], guidePages[1]]) {
     const guide = await source(path);
     assert.ok(
-      guide.match(/curl -X POST "https:\/\/api\.unipost\.dev\/v1\/inbox\/sync"/g)?.length >= 2,
+      guide.match(/curl -X POST "https:\/\/api\.unipost\.dev\/v1\/inbox\/sync\?inbox_scope=managed_user&external_user_id=user_123"/g)?.length >= 2,
       path + " must show both estimate and confirmed sync calls",
     );
     assert.match(guide, /confirmation_token/);

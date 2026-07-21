@@ -15,6 +15,13 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  )
   AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
@@ -30,7 +37,14 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.id = $1
   AND i.workspace_id = $2
-  AND p.workspace_id = $2;
+  AND p.workspace_id = $2
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  );
 
 -- name: GetInboxItemByExternalID :one
 SELECT * FROM inbox_items
@@ -270,7 +284,14 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
-  AND p.workspace_id = $2;
+  AND p.workspace_id = $2
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  );
 
 -- name: UpdateInboxItemAuthorMetadata :execrows
 UPDATE inbox_items AS i
@@ -339,6 +360,13 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = @workspace_id
   AND p.workspace_id = @workspace_id
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  )
   AND i.is_read = false
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm');
 
@@ -351,6 +379,13 @@ JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  )
   AND i.social_account_id = $2
   AND i.source = $3
   AND i.thread_key = $4;
@@ -369,6 +404,13 @@ JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  )
   AND i.is_read = false
   AND i.is_own = false
   AND (NOT sqlc.arg('exclude_x_dms')::BOOLEAN OR i.source <> 'x_dm')
@@ -447,7 +489,7 @@ WHERE social_account_id = $1
 -- subscription response. Multiple workspaces may intentionally share it.
 SELECT sa.id, sa.external_account_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
-       p.workspace_id
+       p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = 'instagram'
@@ -463,7 +505,7 @@ ORDER BY sa.connected_at DESC, sa.id;
 -- dedicated worker; including it here keeps shared Inbox discovery complete.
 SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
        sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode,
+       sa.x_app_mode, sa.external_user_id,
        CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
        COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
@@ -486,9 +528,32 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
        sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
-WHERE p.workspace_id = $1
+WHERE p.workspace_id = sqlc.arg('workspace_id')
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  )
+  AND sa.status = 'active'
   AND sa.disconnected_at IS NULL
-  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter');
+  AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
+ORDER BY sa.connected_at DESC, sa.id;
+
+-- name: CountInboxAccountsInScope :one
+SELECT COUNT(*)::INTEGER
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = @workspace_id
+  AND sa.id = ANY(@account_ids::TEXT[])
+  AND (
+    sqlc.arg('workspace_scope')::BOOLEAN
+    OR (
+      sa.connection_type = 'managed'
+      AND sa.external_user_id = sqlc.arg('external_user_id')::TEXT
+    )
+  );
 
 -- name: FindXInboxAccountForApp :one
 SELECT
@@ -564,7 +629,7 @@ ORDER BY sa.connected_at DESC, sa.id;
 -- name: FindAllSocialAccountsByPlatformAndExternalID :many
 -- Webhook routing: find every active social account for platform +
 -- external_account_id, joining to profiles for workspace_id.
-SELECT sa.id, sa.external_account_id, p.workspace_id
+SELECT sa.id, sa.external_account_id, p.workspace_id, sa.external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
