@@ -119,6 +119,32 @@ WHERE profile_id = $1
   AND disconnected_at IS NULL
 LIMIT 1;
 
+-- name: ListActiveAccountsByWorkspaceProviderIdentity :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = @workspace_id
+  AND sa.platform = @platform
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (
+    (
+      @platform = 'instagram'
+      AND sa.metadata->>'instagram_webhook_user_id' = @provider_identity::TEXT
+    )
+    OR (
+      @platform <> 'instagram'
+      AND sa.external_account_id = @provider_identity::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id
+FOR UPDATE OF sa;
+
 -- name: CountActiveManagedAccountsByWorkspace :one
 SELECT COUNT(*)::INTEGER AS total
 FROM social_accounts sa

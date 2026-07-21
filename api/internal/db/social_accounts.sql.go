@@ -711,6 +711,80 @@ func (q *Queries) InboxManagedUserExists(ctx context.Context, arg InboxManagedUs
 	return exists, err
 }
 
+const listActiveAccountsByWorkspaceProviderIdentity = `-- name: ListActiveAccountsByWorkspaceProviderIdentity :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.platform = $2
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (
+    (
+      $2 = 'instagram'
+      AND sa.metadata->>'instagram_webhook_user_id' = $3::TEXT
+    )
+    OR (
+      $2 <> 'instagram'
+      AND sa.external_account_id = $3::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id
+FOR UPDATE OF sa
+`
+
+type ListActiveAccountsByWorkspaceProviderIdentityParams struct {
+	WorkspaceID      string `json:"workspace_id"`
+	Platform         string `json:"platform"`
+	ProviderIdentity string `json:"provider_identity"`
+}
+
+func (q *Queries) ListActiveAccountsByWorkspaceProviderIdentity(ctx context.Context, arg ListActiveAccountsByWorkspaceProviderIdentityParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listActiveAccountsByWorkspaceProviderIdentity, arg.WorkspaceID, arg.Platform, arg.ProviderIdentity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+			&i.XAppMode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllSocialAccountsByProfile = `-- name: ListAllSocialAccountsByProfile :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
