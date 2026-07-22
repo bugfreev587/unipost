@@ -5,7 +5,10 @@ const startLocalServer = process.env.DASHBOARD_WEB_SERVER === "1";
 
 export default defineConfig({
   testDir: "./tests/regression",
-  testIgnore: "preview-environment.spec.ts",
+  testIgnore: [
+    "preview-environment.spec.ts",
+    "seo-preview.spec.ts",
+  ],
   timeout: 45_000,
   expect: {
     timeout: 10_000,

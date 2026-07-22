@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -1079,8 +1081,11 @@ type adminEmailNotificationsQuery struct {
 	Status    string
 	Provider  string
 	EventKey  string
+	Email     string
 	Threshold int
 	Period    string
+	StartAt   *time.Time
+	EndAt     *time.Time
 	Limit     int
 	Offset    int
 }
@@ -1410,6 +1415,9 @@ WHERE ($1::TEXT = '' OR status = $1 OR ($1 = 'skipped' AND status LIKE 'skipped_
   AND ($3::TEXT = '' OR period = $3)
   AND ($5::TEXT = '' OR provider = $5)
   AND ($6::TEXT = '' OR event_key = $6)
+  AND ($7::TEXT = '' OR LOWER(BTRIM(email)) = LOWER(BTRIM($7)))
+  AND ($8::TIMESTAMPTZ IS NULL OR attempted_at >= $8)
+  AND ($9::TIMESTAMPTZ IS NULL OR attempted_at < $9)
   AND (
     $4::TEXT = ''
     OR email ILIKE '%' || $4 || '%'
@@ -1429,6 +1437,18 @@ WHERE ($1::TEXT = '' OR status = $1 OR ($1 = 'skipped' AND status LIKE 'skipped_
 func adminEmailNotificationsBaseSelect() string {
 	return adminEmailNotificationsCTESQL + adminEmailNotificationsSelectSQL + adminEmailNotificationsWhereSQL + `
 ORDER BY attempted_at DESC, created_at DESC`
+}
+
+func adminEmailNotificationFilterOptionsSQL() string {
+	return adminEmailNotificationsCTESQL + `
+SELECT email
+FROM (
+  SELECT DISTINCT ON (LOWER(BTRIM(email))) BTRIM(email) AS email
+  FROM email_notifications
+  WHERE BTRIM(email) <> ''
+  ORDER BY LOWER(BTRIM(email)), BTRIM(email)
+) distinct_emails
+ORDER BY LOWER(email), email`
 }
 
 func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
@@ -1459,6 +1479,33 @@ func parseAdminEmailNotificationThreshold(raw string) (int, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func parseAdminEmailNotificationRange(startRaw, endRaw string) (*time.Time, *time.Time, error) {
+	parse := func(name, raw string) (*time.Time, error) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return nil, nil
+		}
+		value, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s must be an RFC3339 timestamp", name)
+		}
+		return &value, nil
+	}
+
+	start, err := parse("start_at", startRaw)
+	if err != nil {
+		return nil, nil, err
+	}
+	end, err := parse("end_at", endRaw)
+	if err != nil {
+		return nil, nil, err
+	}
+	if start != nil && end != nil && !end.After(*start) {
+		return nil, nil, errors.New("end_at must be after start_at")
+	}
+	return start, end, nil
 }
 
 func normalizeAdminPostFailurePeriod(raw string) string {
@@ -2671,6 +2718,9 @@ func (h *AdminHandler) queryEmailNotifications(ctx context.Context, opts adminEm
 		strings.TrimSpace(opts.Search),
 		strings.TrimSpace(opts.Provider),
 		strings.TrimSpace(opts.EventKey),
+		strings.TrimSpace(opts.Email),
+		opts.StartAt,
+		opts.EndAt,
 	}
 
 	var total int64
@@ -2682,7 +2732,7 @@ FROM email_notifications
 	}
 
 	rows, err := h.pool.Query(ctx, adminEmailNotificationsBaseSelect()+`
-LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
+LIMIT $10 OFFSET $11`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2743,6 +2793,27 @@ LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
 	return out, total, nil
 }
 
+func (h *AdminHandler) queryEmailNotificationFilterOptions(ctx context.Context) ([]string, error) {
+	rows, err := h.pool.Query(ctx, adminEmailNotificationFilterOptionsSQL())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	emails := make([]string, 0)
+	for rows.Next() {
+		var email string
+		if err := rows.Scan(&email); err != nil {
+			return nil, err
+		}
+		emails = append(emails, email)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return emails, nil
+}
+
 // ListEmailNotifications serves GET /v1/admin/email-notifications.
 // It is the read-only operational view for user-facing email sends and
 // migration audit rows across Loops, quota, support, and legacy
@@ -2760,6 +2831,11 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "threshold must be one of: 80, 85, 90, 95, 100, 105, 110, 115, 120")
 		return
 	}
+	startAt, endAt, err := parseAdminEmailNotificationRange(q.Get("start_at"), q.Get("end_at"))
+	if err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
+		return
+	}
 
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {
@@ -2774,8 +2850,11 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 		Status:    status,
 		Provider:  q.Get("provider"),
 		EventKey:  q.Get("event_key"),
+		Email:     q.Get("email"),
 		Threshold: threshold,
 		Period:    q.Get("period"),
+		StartAt:   startAt,
+		EndAt:     endAt,
 		Limit:     limit,
 		Offset:    offset,
 	})
@@ -2785,6 +2864,18 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 	}
 
 	writeSuccessWithListMeta(w, out, int(total), limit)
+}
+
+// ListEmailNotificationFilterOptions serves
+// GET /v1/admin/email-notifications/filter-options.
+func (h *AdminHandler) ListEmailNotificationFilterOptions(w http.ResponseWriter, r *http.Request) {
+	emails, err := h.queryEmailNotificationFilterOptions(r.Context())
+	if err != nil {
+		slog.Error("admin email filter options query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email notification filter options")
+		return
+	}
+	writeSuccess(w, map[string]any{"emails": emails})
 }
 
 func (h *AdminHandler) RetryPaidQuotaEmailNotification(w http.ResponseWriter, r *http.Request) {

@@ -186,6 +186,37 @@ test.describe("admin email notifications", () => {
     expect(apiSource).toContain('| "admin.email.search"');
     expect(apiSource).toContain("/v1/admin/email-notifications");
   });
+
+  test("serializes recipient and local attempted-date filters", async () => {
+    const filterSource = await readFile(path.join(process.cwd(), "src/app/admin/email/filters.ts"), "utf8");
+    const apiSource = await readFile(path.join(process.cwd(), "src/lib/api.ts"), "utf8");
+
+    expect(apiSource).toContain("AdminEmailNotificationFilterOptions");
+    expect(apiSource).toContain("listAdminEmailNotificationFilterOptions");
+    expect(apiSource).toContain('params.email !== "all"');
+    expect(apiSource).toContain('qs.set("email", params.email)');
+    expect(apiSource).toContain('qs.set("start_at", params.start_at)');
+    expect(apiSource).toContain('qs.set("end_at", params.end_at)');
+    expect(filterSource).toContain("buildAttemptedDateRange");
+    expect(filterSource).toContain("localMidnight(endDate, 1)");
+  });
+
+  test("renders complete recipient and attempted-date controls", async () => {
+    const pageSource = await readFile(path.join(process.cwd(), "src/app/admin/email/page.tsx"), "utf8");
+
+    expect(pageSource).toContain("listAdminEmailNotificationFilterOptions");
+    expect(pageSource).toContain("buildAttemptedDateRange");
+    expect(pageSource).toContain("All emails");
+    expect(pageSource).toContain('aria-label="Filter by recipient email"');
+    expect(pageSource).toContain('aria-label="Attempted from"');
+    expect(pageSource).toContain('aria-label="Attempted through"');
+    expect(pageSource).toContain('type="date"');
+    expect(pageSource).toContain("range.error");
+    expect(pageSource).toContain("setOffset(0)");
+    expect(pageSource).toContain("loadFilterOptions");
+    expect(pageSource).toContain("const requestGeneration = useRef(0)");
+    expect(pageSource).toContain("generation !== requestGeneration.current");
+  });
 });
 
 test.describe("authenticated dashboard smoke", () => {
