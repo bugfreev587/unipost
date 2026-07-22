@@ -51,6 +51,10 @@ test("CI makes the dashboard SEO regression blocking", async () => {
 
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
+  const previewJobEnv = workflow.match(
+    /  preview:\n[\s\S]*?    env:\n([\s\S]*?)    steps:/,
+  )?.[1];
+  assert.ok(previewJobEnv, "Preview workflow needs a job-level environment");
   for (const event of [
     "opened",
     "synchronize",
@@ -72,6 +76,23 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /github\.run_attempt/);
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
   assert.match(workflow, /RAILWAY_PROJECT_ID:.*vars\.RAILWAY_PROJECT_ID/);
+  assert.match(
+    workflow,
+    /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY:.*vars\.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY/,
+    "Preview builds must use Clerk Development instead of relying on project defaults",
+  );
+  assert.match(
+    previewJobEnv,
+    /CLERK_SECRET_KEY:.*secrets\.CLERK_DEVELOPMENT_SECRET_KEY/,
+    "Preview runtime must use the Clerk Development secret that issues test tickets",
+  );
+  assert.match(workflow, /test -n "\$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"/);
+  assert.match(workflow, /test -n "\$CLERK_SECRET_KEY"/);
+  assert.match(
+    workflow,
+    /Deploy and alias the Vercel Preview[\s\S]*--env "CLERK_SECRET_KEY=\$\{CLERK_SECRET_KEY\}"[\s\S]*--env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=\$\{NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY\}"/,
+    "prebuilt Preview deployments must override both Clerk runtime keys",
+  );
   assert.match(workflow, /railway-deployments\.mjs/);
   assert.doesNotMatch(
     workflow,
@@ -79,6 +100,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     "the Vercel project already has dashboard as its Root Directory",
   );
   assert.match(workflow, /test:regression:preview/);
+  assert.match(workflow, /test:regression:localization/);
+  assert.match(workflow, /DASHBOARD_APP_BASE_URL:.*steps\.vercel\.outputs\.app_url/);
+  assert.match(workflow, /--project=authenticated-dashboard/);
+  assert.match(workflow, /PREVIEW_APP_ALIAS_HOST/);
+  assert.match(workflow, /PREVIEW_LANDING_ALIAS_HOST/);
   assert.match(
     workflow,
     /Run deployed preview regression[\s\S]*VERCEL_AUTOMATION_BYPASS_SECRET:.*secrets\.VERCEL_AUTOMATION_BYPASS_SECRET/,
@@ -87,7 +113,8 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(workflow, /VERCEL_SHAREABLE_URL/);
   assert.match(
     workflow,
-    /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+    /Run deployed preview regression[\s\S]*DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.landing_url \}\}/,
+    "public SEO Preview acceptance must target the landing alias",
   );
   assert.match(workflow, /vercel-alias-cleanup\.mjs/);
   assert.match(
@@ -153,4 +180,9 @@ test("ordinary dashboard regression excludes deployed preview-only acceptance", 
   const config = await read("dashboard/playwright.regression.config.ts");
   assert.match(config, /testIgnore:\s*\[[\s\S]*preview-environment\.spec\.ts/);
   assert.match(config, /testIgnore:\s*\[[\s\S]*seo-preview\.spec\.ts/);
+  assert.equal(
+    config.match(/"seo-preview\.spec\.ts"/g)?.length,
+    2,
+    "global and Chromium project ignores must both exclude Preview-only SEO acceptance",
+  );
 });

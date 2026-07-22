@@ -1,5 +1,16 @@
 import { clerkMiddleware } from "@clerk/nextjs/server";
 import { type NextFetchEvent, type NextRequest, NextResponse } from "next/server";
+import {
+  defaultLocale,
+  isLocaleLikePrefix,
+  isLocalizedPublicBasePathname,
+  isLocalizedPublicPathname,
+  isReleasedLocale,
+  localeCookieName,
+  localizePublicPathname,
+  stripLocalePrefix,
+  type ReleasedLocale,
+} from "@/i18n/locales";
 
 const APP_HOST = process.env.NEXT_PUBLIC_APP_HOST || "app.unipost.dev";
 const COUNTRY_COOKIE = "unipost_country";
@@ -28,6 +39,45 @@ function withCountryCookie(response: NextResponse, request: Request) {
     maxAge: 60 * 60 * 24 * 30,
   });
   return response;
+}
+
+function requestHeadersWithLocale(request: NextRequest, locale: ReleasedLocale) {
+  const headers = new Headers(request.headers);
+  headers.set("X-NEXT-INTL-LOCALE", locale);
+  return headers;
+}
+
+function withLocaleCookie(
+  response: NextResponse,
+  request: NextRequest,
+  locale: ReleasedLocale,
+) {
+  const deployed =
+    request.nextUrl.hostname === "unipost.dev" ||
+    request.nextUrl.hostname.endsWith(".unipost.dev");
+
+  response.cookies.set(localeCookieName, locale, {
+    path: "/",
+    sameSite: "lax",
+    secure: request.nextUrl.protocol === "https:",
+    maxAge: 60 * 60 * 24 * 365,
+    ...(deployed ? { domain: ".unipost.dev" } : {}),
+  });
+  return response;
+}
+
+function nextWithLocale(request: NextRequest, locale: ReleasedLocale) {
+  return NextResponse.next({
+    request: { headers: requestHeadersWithLocale(request, locale) },
+  });
+}
+
+function rewriteWithLocale(request: NextRequest, pathname: string, locale: ReleasedLocale) {
+  const url = request.nextUrl.clone();
+  url.pathname = pathname;
+  return NextResponse.rewrite(url, {
+    request: { headers: requestHeadersWithLocale(request, locale) },
+  });
 }
 
 function isDashboardHost(hostname: string) {
@@ -85,21 +135,68 @@ export default function proxy(request: NextRequest, event: NextFetchEvent) {
   // Determine if this is the dashboard domain (app.unipost.dev)
   const isDashboard = isDashboardHost(hostname);
 
+  // API and provider callbacks never participate in locale routing.
+  if (pathname.startsWith("/api")) {
+    if (isPublicDocsApiPath(pathname)) {
+      return withCountryCookie(NextResponse.next(), request);
+    }
+
+    if (!isDashboard) {
+      const url = new URL(pathname, `https://${APP_HOST}`);
+      return NextResponse.redirect(url);
+    }
+
+    return protectedProxy(request, event);
+  }
+
+  const stripped = stripLocalePrefix(pathname);
+  const firstSegment = pathname.split("/")[1] || "";
+  const explicitLocale = isReleasedLocale(firstSegment) ? firstSegment : null;
+  const isLocalizedPublic = Boolean(explicitLocale) && isLocalizedPublicPathname(pathname);
+  const plannedLocalePathname = pathname.slice(firstSegment.length + 1) || "/";
+  const isUnsupportedLocalizedPublic =
+    isLocaleLikePrefix(firstSegment) &&
+    !isReleasedLocale(firstSegment) &&
+    isLocalizedPublicBasePathname(plannedLocalePathname);
+
+  if (isLocalizedPublic && explicitLocale) {
+    if (explicitLocale === defaultLocale) {
+      const url = request.nextUrl.clone();
+      url.pathname = stripped.pathname;
+      return withLocaleCookie(NextResponse.redirect(url), request, defaultLocale);
+    }
+
+    return withCountryCookie(
+      withLocaleCookie(nextWithLocale(request, explicitLocale), request, explicitLocale),
+      request,
+    );
+  }
+
+  if (isUnsupportedLocalizedPublic) {
+    return NextResponse.next();
+  }
+
+  const cookieLocale = request.cookies.get(localeCookieName)?.value;
+  const preferredLocale = isReleasedLocale(cookieLocale) ? cookieLocale : defaultLocale;
+  const isUnprefixedLocalizedPublic = pathname === "/pricing" || (!isDashboard && pathname === "/");
+
+  if (isUnprefixedLocalizedPublic && preferredLocale !== defaultLocale) {
+    const url = request.nextUrl.clone();
+    url.pathname = localizePublicPathname(pathname, preferredLocale);
+    return NextResponse.redirect(url);
+  }
+
   // Public pages (no auth, available on both domains)
   const isPublicPage = isPublicPagePath(pathname);
 
-  const isPublicDocsApi = isPublicDocsApiPath(pathname);
-
-  if (isPublicPage || isPublicDocsApi) {
-    return withCountryCookie(NextResponse.next(), request);
+  if (isPublicPage) {
+    return withCountryCookie(nextWithLocale(request, defaultLocale), request);
   }
 
   if (!isDashboard) {
     // Landing page domain (unipost.dev) — rewrite to /marketing
     if (pathname === "/") {
-      const url = request.nextUrl.clone();
-      url.pathname = "/marketing";
-      return withCountryCookie(NextResponse.rewrite(url), request);
+      return withCountryCookie(rewriteWithLocale(request, "/marketing", defaultLocale), request);
     }
     // Other paths on landing domain → redirect to dashboard domain
     const url = new URL(pathname, `https://${APP_HOST}`);

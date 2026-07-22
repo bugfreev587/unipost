@@ -1,0 +1,15 @@
+{
+  "languageName": "Español",
+  "languageSelectorLabel": "Elegir idioma",
+  "solutions": "Soluciones",
+  "tools": "Herramientas",
+  "pricing": "Precios",
+  "blog": "Blog",
+  "developer": {
+    "label": "Desarrolladores",
+    "docs": "Documentación",
+    "docsDescription": "Guías de inicio, referencia de API, SDK, CLI y MCP.",
+    "changeLogs": "Registro de cambios",
+    "changeLogsDescription": "Principales novedades del producto, la API y los SDK."
+  }
+}

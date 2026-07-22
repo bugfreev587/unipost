@@ -1,0 +1,195 @@
+{
+  "metadata": {
+    "title": "UniPost Pricing | Social Media API Plans",
+    "openGraphTitle": "UniPost Pricing",
+    "description": "Start free with 100 posts/month, then scale UniPost's unified social media API, dashboard, analytics, webhooks, and inbox with product-stage pricing."
+  },
+  "hero": {
+    "titleLine1": "Start free.",
+    "titleLine2": "Upgrade for visibility,",
+    "titleLine3": "collaboration, and scale.",
+    "body": "Start with 100 posts/month on a permanent Free plan. Paid plans unlock Inbox, Analytics, X publishing, one shared custom platform or all-platform custom mode, and team workflows.",
+    "compare": "Comparing alternatives?"
+  },
+  "labels": {
+    "mostPopular": "Most popular",
+    "currentPlan": "Current plan",
+    "perMonth": "/mo",
+    "comparePlans": "Compare plans",
+    "frequentlyAskedQuestions": "Frequently asked questions",
+    "goToDashboard": "Go to Dashboard",
+    "getStarted": "Get started",
+    "choosePlan": "Choose plan",
+    "custom": "Custom"
+  },
+  "plans": {
+    "free": {
+      "name": "Free",
+      "posts": "100 posts/mo",
+      "blurb": "A permanent free plan for real API and dashboard testing.",
+      "features": {
+        "0": "Dashboard + API",
+        "1": "8 platforms (excludes X)",
+        "2": "MCP server (AI agent ready)",
+        "3": "Webhooks + scheduling (50 active)",
+        "4": "Media kept 1d / 2d after final status",
+        "5": "1 profile · 1 user",
+        "6": "Inbox",
+        "7": "Analytics"
+      }
+    },
+    "api": {
+      "name": "API",
+      "posts": "1,000 posts/mo",
+      "blurb": "For developers who only need the publishing API.",
+      "features": {
+        "0": "Dashboard + API + Analytics",
+        "1": "All 9 platforms incl. X",
+        "2": "Read-only Analytics API",
+        "3": "Webhooks + scheduling",
+        "4": "Media kept 2d / 4d after final status",
+        "5": "2 profiles · 1 user",
+        "6": "Inbox"
+      }
+    },
+    "basic": {
+      "name": "Basic",
+      "posts": "2,500 posts/mo",
+      "blurb": "Operating console for solo builders and creators.",
+      "features": {
+        "0": "Custom Hosted + Inbox + Analytics",
+        "1": "All 9 platforms incl. X",
+        "2": "Inbox: DMs + comments",
+        "3": "Full Analytics suite",
+        "4": "Hosted Connect + credentials for 1 platform",
+        "5": "Media kept 4d / 8d after final status",
+        "6": "5 profiles · 1 user",
+        "7": "Hide Powered by UniPost"
+      }
+    },
+    "growth": {
+      "name": "Growth",
+      "posts": "7,500 posts/mo",
+      "blurb": "Embed UniPost into your own product.",
+      "features": {
+        "0": "All-platform custom mode",
+        "1": "Everything in Basic",
+        "2": "Hosted Connect + credentials on all supported platforms",
+        "3": "Optional removal of Powered by UniPost",
+        "4": "Branded OAuth flow",
+        "5": "Media kept 15d / 30d after final status",
+        "6": "25 profiles · 3 users"
+      }
+    },
+    "team": {
+      "name": "Team",
+      "posts": "Unlimited posts/mo",
+      "blurb": "For agencies and multi-operator teams.",
+      "features": {
+        "0": "RBAC + per-member API keys",
+        "1": "Everything in Growth",
+        "2": "Roles: owner / admin / editor",
+        "3": "Audit log",
+        "4": "Media kept 30d / 60d after final status",
+        "5": "Unlimited profiles · unlimited users",
+        "6": "Priority support"
+      }
+    }
+  },
+  "enterprise": {
+    "title": "Enterprise",
+    "description": "Dedicated support, capacity planning, and custom platform-volume terms for high-scale teams. Custom means contract-defined terms: no UniPost monthly post quota, SLA and security review, or account-specific guarantees when your contract includes them.",
+    "chips": {
+      "0": "Capacity planning",
+      "1": "Platform-volume terms",
+      "2": "SLA and security",
+      "3": "Dedicated support"
+    },
+    "contact": "Contact sales"
+  },
+  "embedded": {
+    "title": "Built for embedded apps without a connected-account tax.",
+    "description": "UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. If your app has 100 end users connecting 2 social accounts each, Growth is $59/mo when total usage fits under 7,500 posts/month; Zernio's current account-meter pricing is $418/mo for those 200 connected accounts.",
+    "link": "See the Zernio comparison"
+  },
+  "quota": {
+    "title": "Free has a clear cap. Paid plans stay flexible.",
+    "description": "Free workspaces stop accepting new publish requests after 100 posts/month and can hold up to 50 undeleted parent posts in scheduled status at once. On API, Basic, and Growth, immediate publishing remains available during soft overage. New schedules pause when completed plus committed scheduled usage reaches 100%; cancel or move scheduled posts, wait for reset, or upgrade to restore capacity. Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply."
+  },
+  "xCredits": {
+    "title": "What your included X Credits can do",
+    "description": "X Credits are separate from posts/month. The allowance resets each billing period. Each example below assumes the whole shared allowance is used for one operation type. Managed X requests stop at the hard limit; bring-your-own X API connections do not consume UniPost X Credits.",
+    "plan": "Plan",
+    "included": "Included Credits",
+    "normalPosts": "Normal X posts",
+    "urlPosts": "Posts with URL",
+    "comments": "Complete comments",
+    "dms": "Complete DMs",
+    "inboxNotIncluded": "Inbox not included",
+    "commentNote": "One received comment + one reply.",
+    "dmNote": "One received DM + one sent DM.",
+    "note": "Enterprise X Credits and inbound limits are contract-defined. The independent safety cap of 20 X posts per connected account per UTC day still applies on every plan. Comment and DM figures are capacity planning for phased X Inbox support; they do not indicate API availability before that phase ships."
+  },
+  "comparison": {
+    "capability": "Capability",
+    "values": {
+      "unlimited": "Unlimited",
+      "hardCap": "Hard cap",
+      "softGuard": "Soft publish + schedule guard",
+      "noX": "8 (no X)",
+      "withinMonthlyCapacity": "Within monthly capacity",
+      "oneDay": "1 day",
+      "twoDays": "2 days",
+      "fourDays": "4 days",
+      "eightDays": "8 days",
+      "fifteenDays": "15 days",
+      "thirtyDays": "30 days",
+      "sixtyDays": "60 days",
+      "readOnlyApi": "read-only API",
+      "oneSharedPlatform": "1 shared platform",
+      "allSupported": "All supported",
+      "shown": "Shown",
+      "optional": "Optional"
+    },
+    "rows": {
+      "0": { "name": "Monthly posts" },
+      "1": { "name": "Monthly quota behavior", "sub": "Immediate publishing stays soft on paid plans; new schedules pause when effective usage reaches 100%" },
+      "2": { "name": "Platforms", "sub": "X (Twitter), Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, Facebook" },
+      "3": { "name": "Profiles", "sub": "Brand groupings inside one workspace" },
+      "4": { "name": "Users", "sub": "Team members on the workspace" },
+      "5": { "name": "Per-account daily safety caps", "sub": "Protects connected accounts from spam flags — X 20/day, IG 100/day, FB 100/day, Threads 250/day, others 50/day" },
+      "6": { "name": "Posting API", "sub": "REST API for publish / schedule / validate" },
+      "7": { "name": "MCP server", "sub": "AI agent integration via MCP protocol" },
+      "8": { "name": "Webhooks", "sub": "Real-time event notifications" },
+      "9": { "name": "Scheduling", "sub": "Post at a future time" },
+      "10": { "name": "Active scheduled posts", "sub": "Free has a separate backlog cap. Paid schedules consume monthly capacity when committed." },
+      "11": { "name": "Media retention after success", "sub": "Uploaded UniPost media is kept after the parent post publishes successfully, then cleaned from storage." },
+      "12": { "name": "Media retention after failed/partial/cancelled", "sub": "Failed, partial, and cancelled posts share the same longer troubleshooting window. Scheduled, draft, and in-flight posts are retained." },
+      "13": { "name": "Dashboard UI", "sub": "Compose, account management, analytics, and workspace settings in browser" },
+      "14": { "name": "Inbox", "sub": "DMs and comments from connected accounts" },
+      "15": { "name": "Analytics", "sub": "Reach, impressions, engagement" },
+      "16": { "name": "Hosted Connect + Platform Credentials", "sub": "Shared custom platform scope for branding and BYO developer credentials" },
+      "17": { "name": "Hosted Connect attribution", "sub": "Powered by UniPost on hosted onboarding" },
+      "18": { "name": "RBAC + per-member API keys", "sub": "Roles: owner / admin / editor" },
+      "19": { "name": "Audit log", "sub": "Membership and config-change history" }
+    }
+  },
+  "faq": {
+    "0": { "question": "Why Free, API, Basic, Growth, Team?", "answer": "Each plan corresponds to a stage of how you use UniPost — evaluating the API, running it as your only integration point, using the dashboard as your operating console, embedding it into your product, or running it as a multi-operator team. Pick by which of those describes you, not by raw post volume." },
+    "1": { "question": "What counts as a post?", "answer": "One successful publish to a single connected social account. Posting the same content to 3 platforms counts as 3 posts. Failed or cancelled posts are never counted." },
+    "2": { "question": "Is there a free trial?", "answer": "The Free plan is the trial: 100 posts/month, no credit card, and no time limit. Paid plans do not include a separate time-limited trial." },
+    "3": { "question": "Why is X (Twitter) not on the Free plan?", "answer": "The X API has the highest per-call cost of any platform we support, and the Free plan's 100-post quota is too small to absorb that cost without distorting our pricing for everyone else. Free workspaces can read existing X data; new X publishes and connections require any paid plan starting at $10/mo." },
+    "4": { "question": "Why are there per-account daily limits?", "answer": "To protect your customers' accounts from being flagged for spam by the platforms themselves. Each connected account has its own daily ceiling — X 20/day, Instagram 100/day, Facebook 100/day, Threads 250/day, others 50/day. Limits reset at 00:00 UTC. Failed posts never count toward the cap." },
+    "5": { "question": "Can I change plans anytime?", "answer": "Yes. Upgrade instantly from your billing dashboard. Downgrades apply at the start of the next billing cycle. No lock-in, no cancellation fees." },
+    "6": { "question": "What happens if I go over my monthly post quota?", "answer": "Free workspaces stop accepting new publish requests once the 100-post monthly quota is reached. On API, Basic, and Growth, immediate publishing remains available, while new scheduled posts pause once completed plus committed scheduled usage reaches 100%. Cancel or move scheduled posts, wait for the monthly reset, or upgrade to restore scheduling capacity. Team includes unlimited monthly posts." },
+    "7": { "question": "Can I schedule posts on the Free plan?", "answer": "Yes. Free workspaces can schedule posts, but they can hold up to 50 undeleted parent posts in scheduled status at once. Published, failed, partial, draft, and cancelled posts do not count toward that active scheduled backlog. Paid plans do not have an active scheduled-post cap." },
+    "8": { "question": "How long does UniPost keep uploaded media after a post finishes?", "answer": "Scheduled, draft, queued, publishing, and processing posts keep their media. Once the parent post reaches a final state, uploaded media is retained by plan: Free 1 day after success or 2 days after failed/partial/cancelled; API 2/4 days; Basic 4/8 days; Growth 15/30 days; Team 30/60 days." },
+    "9": { "question": "What's the difference between API and Basic?", "answer": "API includes the dashboard, publishing API, MCP server, and read-only Analytics API. Basic adds Inbox for DMs/comments, full Analytics, and one shared custom platform for Hosted Connect branding plus Platform Credentials. Same publishing API on both." },
+    "10": { "question": "When do I need Growth?", "answer": "When Basic's one shared custom platform is no longer enough and you need Hosted Connect branding or BYO platform credentials across all supported platforms, or you want to remove Powered by UniPost from hosted onboarding." },
+    "11": { "question": "When do I need Team?", "answer": "When multiple people need to log in and collaborate, with role-based permissions, per-member API keys, and an audit log. Typical fit: agencies managing multiple client brands, internal marketing teams." },
+    "12": { "question": "What does unlimited Team usage mean?", "answer": "Team has no monthly UniPost post quota. Platform safety limits, third-party API quotas, abuse controls, and shared-infrastructure fairness still apply. Customers needing capacity planning, SLA, or custom platform-volume terms should use Enterprise." },
+    "13": { "question": "When do I need Enterprise instead of Team?", "answer": "Use Enterprise when you need dedicated support, capacity planning, custom platform-volume terms, SLA, security review, or procurement. It is a sales-led contract plan, not a sixth self-serve card." },
+    "14": { "question": "Can Enterprise increase third-party platform quotas?", "answer": "Enterprise can help plan, isolate, and contract around usage, but it cannot override platform-owned rate limits, app review, spam controls, or content policy enforcement. Custom means contract-defined terms and is not a smaller quota than Team." },
+    "15": { "question": "How does UniPost compare to Ayrshare, Zernio, or PostForMe?", "answer": "UniPost self-serve plans are based on product stage and monthly post capacity, not per connected social account. For an embedded app with 100 end users connecting 2 social accounts each, UniPost Growth is $59/mo if total usage fits under 7,500 posts/month; Zernio's current account-meter pricing is $418/mo for those 200 connected accounts. PostForMe is open-source at $10/mo — UniPost API matches that price and adds a permanent free tier and an Inbox. See full comparisons at unipost.dev/alternatives." }
+  }
+}

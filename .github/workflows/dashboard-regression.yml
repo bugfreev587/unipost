@@ -10,10 +10,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL || 'https://app.unipost.dev' }}
+      DASHBOARD_BASE_URL: https://dev-app.unipost.dev
       DASHBOARD_TEST_EMAIL: ${{ secrets.DASHBOARD_TEST_EMAIL }}
-      DASHBOARD_TEST_PASSWORD: ${{ secrets.DASHBOARD_TEST_PASSWORD }}
       DASHBOARD_TEST_PROFILE_ID: ${{ vars.DASHBOARD_TEST_PROFILE_ID }}
+      CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 

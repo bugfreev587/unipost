@@ -1,0 +1,77 @@
+{
+  "metadata": {
+    "title": "UniPost | API de publicación en redes sociales para desarrolladores",
+    "description": "UniPost ofrece a los desarrolladores una sola API para conectar las cuentas sociales de sus clientes, subir contenido multimedia, programar publicaciones y publicar en las principales plataformas sociales."
+  },
+  "hero": {
+    "eyebrow": "API unificada de publicación social",
+    "title": "Publica en todas las redes sociales con una sola API",
+    "body": "Conecta las cuentas de tus clientes, sube contenido multimedia y publica en X, LinkedIn, Instagram, TikTok, Threads, YouTube y más mediante una API unificada.",
+    "primaryCta": "Empezar a crear",
+    "secondaryCta": "Ver documentación",
+    "note": "Creada para desarrolladores que añaden publicación social a aplicaciones, flujos de trabajo y agentes."
+  },
+  "model": {
+    "ariaLabel": "Modelo de publicación de UniPost",
+    "yourApp": "Tu aplicación",
+    "yourAppBody": "Herramientas de programación, productos SaaS, flujos internos y agentes.",
+    "apiBody": "Conecta cuentas, sube contenido multimedia, publica y controla la entrega.",
+    "supportedPlatforms": "Plataformas compatibles"
+  },
+  "why": {
+    "eyebrow": "Por qué UniPost",
+    "title": "Deja de mantener integraciones separadas para cada red social",
+    "body": "Cada plataforma tiene su propio modelo de conexión, restricciones de contenido, comportamiento multimedia, ciclo de publicación y tipos de error. UniPost convierte esas diferencias en una sola API.",
+    "oauth": "Flujos OAuth diferentes",
+    "media": "Reglas multimedia diferentes",
+    "limits": "Límites de uso diferentes",
+    "apis": "API de publicación diferentes",
+    "summary": "Una función de producto en lugar de nueve proyectos de integración",
+    "beforeTitle": "Antes de UniPost",
+    "beforeBody": "OAuth personalizado, validación multimedia, reintentos, seguimiento de resultados y código específico para cada red.",
+    "afterTitle": "Con UniPost",
+    "afterBody": "Conecta las cuentas una vez, publica por identificador de cuenta y controla la entrega con una API y una superficie de webhooks."
+  },
+  "workflow": {
+    "eyebrow": "Cómo funciona",
+    "title": "Obtén una clave API, conecta cuentas y publica contenido",
+    "body": "El flujo de producción tiene tres pasos: autentica tu aplicación, conecta las cuentas de tus clientes y envía solicitudes de publicación mediante una sola API.",
+    "keyTitle": "Obtén una clave API",
+    "keyBody": "Crea una clave API de UniPost en tu espacio de trabajo y úsala para autenticar cada solicitud de publicación, contenido multimedia y cuenta.",
+    "connectTitle": "Conecta cuentas",
+    "connectBody": "Guía a tus clientes por flujos OAuth alojados y guarda en tu producto los identificadores de las cuentas conectadas.",
+    "publishTitle": "Publica contenido",
+    "publishBody": "Envía texto, contenido multimedia o variantes por plataforma en una sola solicitud y deja que UniPost gestione la validación y la entrega."
+  },
+  "capabilities": {
+    "eyebrow": "Qué puedes hacer",
+    "title": "Una sola superficie API para la capa social",
+    "body": "Elige el endpoint adecuado: incorpora cuentas, publica contenido, consulta analíticas, recibe eventos de entrega y gestiona los flujos de Inbox.",
+    "connectArea": "Conexión",
+    "connectBody": "Crea una sesión OAuth alojada para incorporar las cuentas de tus clientes.",
+    "postsArea": "Publicaciones",
+    "postsBody": "Publica, programa o guarda borradores en los destinos conectados.",
+    "analyticsArea": "Analíticas",
+    "analyticsBody": "Obtén totales de informes y tendencias de todo el espacio de trabajo.",
+    "webhooksArea": "Webhooks",
+    "webhooksBody": "Recibe resultados de publicación y eventos del ciclo de vida de las cuentas sin consultas periódicas.",
+    "keysArea": "Claves API",
+    "keysBody": "Crea claves del espacio de trabajo para acceder a la API de UniPost desde el servidor.",
+    "inboxArea": "Inbox",
+    "inboxBody": "Lee comentarios y mensajes directos y responde en los canales sociales compatibles."
+  },
+  "quickstart": {
+    "eyebrow": "Inicio rápido para desarrolladores",
+    "title": "Una llamada de publicación debería ser sencilla",
+    "body": "Cuando las cuentas están conectadas, tu aplicación envía una solicitud. UniPost se encarga de las reglas específicas de cada plataforma.",
+    "primaryCta": "Leer inicio rápido",
+    "secondaryCta": "API para crear publicaciones"
+  },
+  "cta": {
+    "eyebrow": "Empieza a crear",
+    "title": "Crea la capa social una sola vez",
+    "body": "Añade conexión de cuentas, carga multimedia, publicación multiplataforma y seguimiento de entregas sin mantener cada integración social por tu cuenta.",
+    "primary": "Empezar a crear",
+    "secondary": "Comparar alternativas"
+  }
+}

@@ -1,0 +1,195 @@
+{
+  "metadata": {
+    "title": "Precios de UniPost | Planes de API para redes sociales",
+    "openGraphTitle": "Precios de UniPost",
+    "description": "Empieza gratis con 100 publicaciones al mes y amplía la API unificada de redes sociales, el panel, las analíticas, los webhooks y la bandeja de entrada de UniPost con planes adaptados a cada etapa."
+  },
+  "hero": {
+    "titleLine1": "Empieza gratis.",
+    "titleLine2": "Mejora para ganar visibilidad,",
+    "titleLine3": "colaboración y escala.",
+    "body": "Empieza con 100 publicaciones al mes en un plan Free permanente. Los planes de pago desbloquean Inbox, Analytics, publicaciones en X, una plataforma personalizada compartida o el modo personalizado para todas las plataformas y flujos de trabajo en equipo.",
+    "compare": "¿Comparas alternativas?"
+  },
+  "labels": {
+    "mostPopular": "Más popular",
+    "currentPlan": "Plan actual",
+    "perMonth": "/mes",
+    "comparePlans": "Comparar planes",
+    "frequentlyAskedQuestions": "Preguntas frecuentes",
+    "goToDashboard": "Ir al panel",
+    "getStarted": "Empezar",
+    "choosePlan": "Elegir plan",
+    "custom": "Personalizado"
+  },
+  "plans": {
+    "free": {
+      "name": "Free",
+      "posts": "100 publicaciones/mes",
+      "blurb": "Un plan gratuito permanente para probar la API y el panel con casos reales.",
+      "features": {
+        "0": "Panel + API",
+        "1": "8 plataformas (sin X)",
+        "2": "Servidor MCP (listo para agentes de IA)",
+        "3": "Webhooks + programación (50 activas)",
+        "4": "Contenido conservado 1 d / 2 d tras el estado final",
+        "5": "1 perfil · 1 usuario",
+        "6": "Inbox",
+        "7": "Analytics"
+      }
+    },
+    "api": {
+      "name": "API",
+      "posts": "1.000 publicaciones/mes",
+      "blurb": "Para desarrolladores que solo necesitan la API de publicación.",
+      "features": {
+        "0": "Panel + API + Analytics",
+        "1": "Las 9 plataformas, incluida X",
+        "2": "API de Analytics de solo lectura",
+        "3": "Webhooks + programación",
+        "4": "Contenido conservado 2 d / 4 d tras el estado final",
+        "5": "2 perfiles · 1 usuario",
+        "6": "Inbox"
+      }
+    },
+    "basic": {
+      "name": "Basic",
+      "posts": "2.500 publicaciones/mes",
+      "blurb": "Consola operativa para desarrolladores independientes y creadores.",
+      "features": {
+        "0": "Hosted personalizado + Inbox + Analytics",
+        "1": "Las 9 plataformas, incluida X",
+        "2": "Inbox: mensajes directos + comentarios",
+        "3": "Suite completa de Analytics",
+        "4": "Hosted Connect + credenciales para 1 plataforma",
+        "5": "Contenido conservado 4 d / 8 d tras el estado final",
+        "6": "5 perfiles · 1 usuario",
+        "7": "Ocultar Powered by UniPost"
+      }
+    },
+    "growth": {
+      "name": "Growth",
+      "posts": "7.500 publicaciones/mes",
+      "blurb": "Integra UniPost en tu propio producto.",
+      "features": {
+        "0": "Modo personalizado para todas las plataformas",
+        "1": "Todo lo incluido en Basic",
+        "2": "Hosted Connect + credenciales en todas las plataformas compatibles",
+        "3": "Eliminación opcional de Powered by UniPost",
+        "4": "Flujo OAuth con tu marca",
+        "5": "Contenido conservado 15 d / 30 d tras el estado final",
+        "6": "25 perfiles · 3 usuarios"
+      }
+    },
+    "team": {
+      "name": "Team",
+      "posts": "Publicaciones ilimitadas/mes",
+      "blurb": "Para agencias y equipos con varios operadores.",
+      "features": {
+        "0": "RBAC + claves API por miembro",
+        "1": "Todo lo incluido en Growth",
+        "2": "Roles: propietario / administrador / editor",
+        "3": "Registro de auditoría",
+        "4": "Contenido conservado 30 d / 60 d tras el estado final",
+        "5": "Perfiles ilimitados · usuarios ilimitados",
+        "6": "Soporte prioritario"
+      }
+    }
+  },
+  "enterprise": {
+    "title": "Enterprise",
+    "description": "Soporte dedicado, planificación de capacidad y condiciones personalizadas de volumen por plataforma para equipos de gran escala. Personalizado significa condiciones definidas por contrato: sin cuota mensual de publicaciones de UniPost, con SLA, revisión de seguridad o garantías específicas cuando el contrato las incluya.",
+    "chips": {
+      "0": "Planificación de capacidad",
+      "1": "Condiciones por volumen de plataforma",
+      "2": "SLA y seguridad",
+      "3": "Soporte dedicado"
+    },
+    "contact": "Contactar con ventas"
+  },
+  "embedded": {
+    "title": "Creado para aplicaciones integradas, sin cargos por cuenta conectada.",
+    "description": "Los planes de autoservicio de UniPost se basan en la etapa del producto y la capacidad mensual de publicaciones, no en cada cuenta social conectada. Si tu aplicación tiene 100 usuarios que conectan 2 cuentas cada uno, Growth cuesta $59/mes cuando el uso total no supera 7.500 publicaciones al mes; el precio actual de Zernio por 200 cuentas conectadas es de $418/mes.",
+    "link": "Ver la comparación con Zernio"
+  },
+  "quota": {
+    "title": "Free tiene un límite claro. Los planes de pago mantienen la flexibilidad.",
+    "description": "Los espacios Free dejan de aceptar nuevas publicaciones al llegar a 100 al mes y pueden mantener hasta 50 publicaciones principales programadas y sin eliminar. En API, Basic y Growth, la publicación inmediata sigue disponible durante el exceso flexible. Las nuevas programaciones se pausan cuando el uso completado más el comprometido alcanza el 100 %; cancela o mueve publicaciones programadas, espera al reinicio o mejora el plan. Team no tiene cuota mensual de publicaciones de UniPost. Siguen aplicándose los límites de seguridad de las plataformas, las cuotas de terceros, los controles contra abusos y la equidad de la infraestructura compartida."
+  },
+  "xCredits": {
+    "title": "Qué puedes hacer con los X Credits incluidos",
+    "description": "Los X Credits son independientes de las publicaciones al mes. La asignación se reinicia en cada período de facturación. Cada ejemplo supone que toda la asignación compartida se dedica a un solo tipo de operación. Las solicitudes de X gestionadas se detienen en el límite estricto; las conexiones con tu propia API de X no consumen X Credits de UniPost.",
+    "plan": "Plan",
+    "included": "Créditos incluidos",
+    "normalPosts": "Publicaciones normales en X",
+    "urlPosts": "Publicaciones con URL",
+    "comments": "Comentarios completos",
+    "dms": "Mensajes directos completos",
+    "inboxNotIncluded": "Inbox no incluido",
+    "commentNote": "Un comentario recibido + una respuesta.",
+    "dmNote": "Un mensaje recibido + uno enviado.",
+    "note": "Los X Credits y los límites de entrada de Enterprise se definen por contrato. El límite de seguridad independiente de 20 publicaciones en X por cuenta conectada y día UTC se aplica a todos los planes. Las cifras de comentarios y mensajes directos sirven para planificar la capacidad del despliegue gradual de X Inbox; no indican disponibilidad de la API antes de esa fase."
+  },
+  "comparison": {
+    "capability": "Capacidad",
+    "values": {
+      "unlimited": "Ilimitado",
+      "hardCap": "Límite estricto",
+      "softGuard": "Publicación flexible + control de programación",
+      "noX": "8 (sin X)",
+      "withinMonthlyCapacity": "Dentro de la capacidad mensual",
+      "oneDay": "1 día",
+      "twoDays": "2 días",
+      "fourDays": "4 días",
+      "eightDays": "8 días",
+      "fifteenDays": "15 días",
+      "thirtyDays": "30 días",
+      "sixtyDays": "60 días",
+      "readOnlyApi": "API de solo lectura",
+      "oneSharedPlatform": "1 plataforma compartida",
+      "allSupported": "Todas las compatibles",
+      "shown": "Visible",
+      "optional": "Opcional"
+    },
+    "rows": {
+      "0": { "name": "Publicaciones mensuales" },
+      "1": { "name": "Comportamiento de la cuota mensual", "sub": "La publicación inmediata sigue siendo flexible en planes de pago; las nuevas programaciones se pausan cuando el uso efectivo llega al 100 %" },
+      "2": { "name": "Plataformas", "sub": "X (Twitter), Bluesky, LinkedIn, Instagram, Threads, TikTok, YouTube, Pinterest, Facebook" },
+      "3": { "name": "Perfiles", "sub": "Agrupaciones de marca dentro de un espacio de trabajo" },
+      "4": { "name": "Usuarios", "sub": "Miembros del equipo en el espacio de trabajo" },
+      "5": { "name": "Límites diarios de seguridad por cuenta", "sub": "Protegen las cuentas conectadas contra señales de spam: X 20/día, Instagram 100/día, Facebook 100/día, Threads 250/día y otras 50/día" },
+      "6": { "name": "API de publicación", "sub": "API REST para publicar, programar y validar" },
+      "7": { "name": "Servidor MCP", "sub": "Integración de agentes de IA mediante el protocolo MCP" },
+      "8": { "name": "Webhooks", "sub": "Notificaciones de eventos en tiempo real" },
+      "9": { "name": "Programación", "sub": "Publica en una fecha futura" },
+      "10": { "name": "Publicaciones programadas activas", "sub": "Free tiene un límite de cola independiente. En los planes de pago, las programaciones consumen capacidad mensual al confirmarse." },
+      "11": { "name": "Retención multimedia tras el éxito", "sub": "El contenido subido a UniPost se conserva después de que la publicación principal se complete y luego se elimina del almacenamiento." },
+      "12": { "name": "Retención tras error, resultado parcial o cancelación", "sub": "Los errores, resultados parciales y cancelaciones comparten una ventana de diagnóstico más larga. Se conservan las publicaciones programadas, en borrador y en curso." },
+      "13": { "name": "Interfaz del panel", "sub": "Composición, gestión de cuentas, analíticas y ajustes del espacio en el navegador" },
+      "14": { "name": "Inbox", "sub": "Mensajes directos y comentarios de cuentas conectadas" },
+      "15": { "name": "Analytics", "sub": "Alcance, impresiones e interacción" },
+      "16": { "name": "Hosted Connect + Platform Credentials", "sub": "Ámbito de plataforma personalizada compartida para marca y credenciales de desarrollador propias" },
+      "17": { "name": "Atribución de Hosted Connect", "sub": "Powered by UniPost en la incorporación alojada" },
+      "18": { "name": "RBAC + claves API por miembro", "sub": "Roles: propietario / administrador / editor" },
+      "19": { "name": "Registro de auditoría", "sub": "Historial de miembros y cambios de configuración" }
+    }
+  },
+  "faq": {
+    "0": { "question": "¿Por qué Free, API, Basic, Growth y Team?", "answer": "Cada plan corresponde a una etapa de uso de UniPost: evaluar la API, convertirla en tu único punto de integración, usar el panel como consola operativa, integrarla en tu producto o trabajar con varios operadores. Elige según tu forma de uso, no solo por el volumen de publicaciones." },
+    "1": { "question": "¿Qué cuenta como una publicación?", "answer": "Una publicación completada correctamente en una sola cuenta social conectada. Publicar el mismo contenido en 3 plataformas cuenta como 3 publicaciones. Los errores y cancelaciones nunca se contabilizan." },
+    "2": { "question": "¿Hay una prueba gratuita?", "answer": "El plan Free es la prueba: 100 publicaciones al mes, sin tarjeta y sin límite de tiempo. Los planes de pago no incluyen otra prueba temporal." },
+    "3": { "question": "¿Por qué X (Twitter) no está en el plan Free?", "answer": "La API de X tiene el coste por llamada más alto entre las plataformas compatibles y la cuota de 100 publicaciones de Free no permite absorberlo sin distorsionar los precios. Los espacios Free pueden leer datos existentes de X; las nuevas conexiones y publicaciones en X requieren cualquier plan de pago desde $10/mes." },
+    "4": { "question": "¿Por qué hay límites diarios por cuenta?", "answer": "Para evitar que las plataformas marquen como spam las cuentas de tus clientes. Cada cuenta conectada tiene su propio máximo diario: X 20, Instagram 100, Facebook 100, Threads 250 y otras 50. Los límites se reinician a las 00:00 UTC y los errores no consumen el límite." },
+    "5": { "question": "¿Puedo cambiar de plan en cualquier momento?", "answer": "Sí. Mejora al instante desde el panel de facturación. Las reducciones se aplican al inicio del siguiente ciclo. No hay permanencia ni cargos de cancelación." },
+    "6": { "question": "¿Qué ocurre si supero la cuota mensual?", "answer": "Free deja de aceptar publicaciones al llegar a 100 al mes. En API, Basic y Growth, la publicación inmediata continúa, mientras que las nuevas programaciones se pausan cuando el uso completado más el comprometido llega al 100 %. Cancela o mueve programaciones, espera al reinicio mensual o mejora el plan. Team incluye publicaciones mensuales ilimitadas." },
+    "7": { "question": "¿Puedo programar publicaciones con Free?", "answer": "Sí. Free permite programar, pero admite hasta 50 publicaciones principales programadas y sin eliminar a la vez. Las publicaciones completadas, fallidas, parciales, en borrador o canceladas no cuentan para esa cola. Los planes de pago no tienen este límite independiente." },
+    "8": { "question": "¿Cuánto tiempo conserva UniPost el contenido multimedia?", "answer": "Las publicaciones programadas, en borrador, en cola, publicándose o procesándose conservan sus archivos. Tras un estado final, la retención depende del plan: Free 1 día tras éxito o 2 tras error, resultado parcial o cancelación; API 2/4 días; Basic 4/8; Growth 15/30; Team 30/60." },
+    "9": { "question": "¿Qué diferencia hay entre API y Basic?", "answer": "API incluye el panel, la API de publicación, el servidor MCP y la API de Analytics de solo lectura. Basic añade Inbox para mensajes y comentarios, Analytics completo y una plataforma personalizada compartida para la marca de Hosted Connect y Platform Credentials. Ambos usan la misma API de publicación." },
+    "10": { "question": "¿Cuándo necesito Growth?", "answer": "Cuando la única plataforma personalizada compartida de Basic no basta y necesitas marca de Hosted Connect o credenciales propias en todas las plataformas compatibles, o quieres eliminar Powered by UniPost de la incorporación alojada." },
+    "11": { "question": "¿Cuándo necesito Team?", "answer": "Cuando varias personas necesitan iniciar sesión y colaborar con permisos por rol, claves API por miembro y registro de auditoría. Es habitual en agencias con varias marcas de clientes y equipos internos de marketing." },
+    "12": { "question": "¿Qué significa el uso ilimitado de Team?", "answer": "Team no tiene cuota mensual de publicaciones de UniPost. Siguen aplicándose los límites de seguridad de las plataformas, cuotas de terceros, controles contra abusos y reglas de equidad. Si necesitas planificación de capacidad, SLA o condiciones de volumen personalizadas, usa Enterprise." },
+    "13": { "question": "¿Cuándo necesito Enterprise en lugar de Team?", "answer": "Usa Enterprise si necesitas soporte dedicado, planificación de capacidad, condiciones de volumen personalizadas, SLA, revisión de seguridad o procesos de compras. Es un plan contractual gestionado por ventas, no una sexta tarjeta de autoservicio." },
+    "14": { "question": "¿Enterprise puede aumentar las cuotas de terceros?", "answer": "Enterprise puede ayudar a planificar, aislar y contratar el uso, pero no puede anular límites impuestos por las plataformas, revisiones de aplicaciones, controles de spam ni políticas de contenido. Personalizado significa condiciones contractuales, no una cuota inferior a Team." },
+    "15": { "question": "¿Cómo se compara UniPost con Ayrshare, Zernio o PostForMe?", "answer": "Los planes de UniPost se basan en la etapa del producto y la capacidad mensual, no en cada cuenta conectada. Para una aplicación con 100 usuarios y 2 cuentas por usuario, Growth cuesta $59/mes si el uso no supera 7.500 publicaciones; Zernio cuesta actualmente $418/mes por esas 200 cuentas. PostForMe es open source por $10/mes; UniPost API iguala el precio y añade un nivel gratuito permanente e Inbox. Consulta las comparaciones en unipost.dev/alternatives." }
+  }
+}

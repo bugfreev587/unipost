@@ -52,6 +52,18 @@ describe("public commercial pages expose SEO metadata from server routes", () =>
     it(`${route.name} page is a server route with metadata`, () => {
       const source = read(route.path);
       assert.notEqual(firstMeaningfulLine(source), '"use client";');
+
+      if (route.name === "pricing") {
+        const englishCatalog = read("messages/en/pricing.json");
+        assert.match(source, /export async function generateMetadata\(\): Promise<Metadata>/);
+        assert.match(source, /getTranslations\("pricing"\)/);
+        assert.match(source, /canonical,/);
+        assert.match(source, /languages:\s*{/);
+        assert.match(source, /openGraph:\s*{/);
+        assert.match(englishCatalog, new RegExp(route.titleNeedle));
+        return;
+      }
+
       assert.match(source, /export const metadata\s*:\s*Metadata\s*=/);
       assert.match(source, new RegExp(route.titleNeedle));
       assert.match(source, /alternates:\s*{\s*canonical:/s);
@@ -263,29 +275,33 @@ describe("crawl surfaces are explicit", () => {
 describe("homepage and about page carry entity SEO intent", () => {
   it("homepage metadata protects the developer API search intent", () => {
     const source = read("src/app/marketing/page.tsx");
+    const englishCatalog = read("messages/en/marketing.json");
     assert.match(
-      source,
-      /const HOMEPAGE_TITLE = "UniPost \| Social Media Posting API for Developers"/,
+      englishCatalog,
+      /UniPost \| Social Media Posting API for Developers/,
     );
     assert.match(
-      source,
+      englishCatalog,
       /UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms\./,
     );
-    assert.doesNotMatch(source, /const HOMEPAGE_TITLE = "Unipost"/);
+    assert.doesNotMatch(englishCatalog, /"title":\s*"Unipost"/);
     assert.doesNotMatch(
-      source,
-      /const HOMEPAGE_TITLE = "Rewrite homepage title and meta description for query relevance"/,
+      englishCatalog,
+      /Rewrite homepage title and meta description for query relevance/,
     );
-    assert.match(source, /canonical:\s*"https:\/\/unipost\.dev\/"/);
+    assert.match(source, /export async function generateMetadata\(\): Promise<Metadata>/);
+    assert.match(source, /getTranslations\("marketing"\)/);
+    assert.match(source, /"https:\/\/unipost\.dev\/"/);
+    assert.match(source, /languages:\s*{/);
     assert.match(
       source,
-      /openGraph:\s*{[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
+      /openGraph:\s*{[\s\S]*title:\s*t\("metadata\.title"\),[\s\S]*description:\s*t\("metadata\.description"\),/,
     );
     assert.match(
       source,
-      /twitter:\s*{[\s\S]*card:\s*"summary",[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
+      /twitter:\s*{[\s\S]*card:\s*"summary",[\s\S]*title:\s*t\("metadata\.title"\),[\s\S]*description:\s*t\("metadata\.description"\),/,
     );
-    assert.match(source, /Post to every social platform with one API/);
+    assert.match(englishCatalog, /Post to every social platform with one API/);
   });
 
   it("about page exists with entity metadata and structured data", () => {

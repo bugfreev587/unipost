@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useLocale, useTranslations } from "next-intl";
 import { usePathname } from "next/navigation";
 import { UniPostLogo } from "@/components/brand/unipost-logo";
+import { defaultLocale, isReleasedLocale, localizePublicPathname } from "@/i18n/locales";
 
 const FOOTER_CSS = `
 .site-footer{width:100%;margin-top:auto;background:#000;border-top:1px solid rgba(255,255,255,.06)}
@@ -53,7 +55,6 @@ const COMPARE_LINKS = [
   { label: "vs Ayrshare", href: "/alternatives/ayrshare" },
   { label: "vs Zernio", href: "/alternatives/zernio" },
   { label: "vs PostForMe", href: "/alternatives/postforme" },
-  { label: "All Comparisons →", href: "/compare" },
 ];
 
 function FooterColumn({
@@ -80,44 +81,53 @@ function FooterColumn({
 }
 
 export function SiteFooter() {
+  const requestedLocale = useLocale();
+  const locale = isReleasedLocale(requestedLocale) ? requestedLocale : defaultLocale;
+  const t = useTranslations("common");
+  const productLinks = [
+    { label: t("footer.overview"), href: localizePublicPathname("/", locale) },
+    { label: t("footer.about"), href: "/about" },
+    { label: t("footer.socialMediaApi"), href: "/social-media-api" },
+    { label: t("footer.postingApi"), href: "/social-media-posting-api" },
+    { label: t("footer.resources"), href: "/resources" },
+    { label: t("footer.pricing"), href: localizePublicPathname("/pricing", locale) },
+    { label: t("footer.blog"), href: "/blog" },
+    { label: t("footer.docs"), href: "/docs" },
+    { label: t("footer.changeLogs"), href: "/changelog" },
+  ];
+  const compareLinks = [
+    ...COMPARE_LINKS,
+    { label: t("footer.allComparisons"), href: "/compare" },
+  ];
+
   return (
     <footer className="site-footer">
       <style dangerouslySetInnerHTML={{ __html: FOOTER_CSS }} />
       <div className="site-footer-inner">
         <div className="site-footer-grid">
           <div className="site-footer-brand">
-            <Link href="/" aria-label="UniPost home" style={{ textDecoration: "none" }}>
+            <Link href={localizePublicPathname("/", locale)} aria-label={t("footer.homeLabel")} style={{ textDecoration: "none" }}>
               <UniPostLogo markSize={28} wordmarkColor="#f7f7f5" />
             </Link>
             <p className="site-footer-brand-copy">
-              Unified social media API for developers.
+              {t("footer.descriptionLine1")}
               <br />
-              Connect, publish, and monitor across 9 platforms.
+              {t("footer.descriptionLine2")}
             </p>
           </div>
 
           <FooterColumn
-            title="Product"
-            links={[
-              { label: "Overview", href: "/" },
-              { label: "About", href: "/about" },
-              { label: "Social Media API", href: "/social-media-api" },
-              { label: "Posting API", href: "/social-media-posting-api" },
-              { label: "Resources", href: "/resources" },
-              { label: "Pricing", href: "/pricing" },
-              { label: "Blog", href: "/blog" },
-              { label: "Docs", href: "/docs" },
-              { label: "Change Logs", href: "/changelog" },
-            ]}
+            title={t("footer.product")}
+            links={productLinks}
           />
 
-          <FooterColumn title="Platforms" links={PLATFORM_LINKS} />
-          <FooterColumn title="Compare" links={COMPARE_LINKS} />
+          <FooterColumn title={t("footer.platforms")} links={PLATFORM_LINKS} />
+          <FooterColumn title={t("footer.compare")} links={compareLinks} />
           <FooterColumn
-            title="Legal"
+            title={t("footer.legal")}
             links={[
-              { label: "Privacy", href: "/privacy" },
-              { label: "Terms", href: "/terms" },
+              { label: t("footer.privacy"), href: "/privacy" },
+              { label: t("footer.terms"), href: "/terms" },
             ]}
           />
         </div>

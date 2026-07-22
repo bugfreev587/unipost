@@ -1,0 +1,15 @@
+{
+  "languageName": "English",
+  "languageSelectorLabel": "Choose language",
+  "solutions": "Solutions",
+  "tools": "Tools",
+  "pricing": "Pricing",
+  "blog": "Blog",
+  "developer": {
+    "label": "Developer",
+    "docs": "Docs",
+    "docsDescription": "Quickstarts, API reference, SDKs, CLI, and MCP.",
+    "changeLogs": "Change Logs",
+    "changeLogsDescription": "Major product, API, and SDK releases."
+  }
+}
