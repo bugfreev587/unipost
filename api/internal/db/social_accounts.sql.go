@@ -26,6 +26,79 @@ func (q *Queries) ArmSocialAccountDisconnectNotification(ctx context.Context, id
 	return result.RowsAffected(), nil
 }
 
+const checkActiveAccountsByWorkspaceProviderIdentity = `-- name: CheckActiveAccountsByWorkspaceProviderIdentity :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.platform = $2
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (
+    (
+      $2 = 'instagram'
+      AND sa.metadata->>'instagram_webhook_user_id' = $3::TEXT
+    )
+    OR (
+      $2 <> 'instagram'
+      AND sa.external_account_id = $3::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id
+`
+
+type CheckActiveAccountsByWorkspaceProviderIdentityParams struct {
+	WorkspaceID      string `json:"workspace_id"`
+	Platform         string `json:"platform"`
+	ProviderIdentity string `json:"provider_identity"`
+}
+
+func (q *Queries) CheckActiveAccountsByWorkspaceProviderIdentity(ctx context.Context, arg CheckActiveAccountsByWorkspaceProviderIdentityParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, checkActiveAccountsByWorkspaceProviderIdentity, arg.WorkspaceID, arg.Platform, arg.ProviderIdentity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+			&i.XAppMode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const countActiveManagedAccountsByWorkspace = `-- name: CountActiveManagedAccountsByWorkspace :one
 SELECT COUNT(*)::INTEGER AS total
 FROM social_accounts sa
@@ -322,6 +395,41 @@ func (q *Queries) DismissSocialAccount(ctx context.Context, arg DismissSocialAcc
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const existsActiveAccountInOtherWorkspaceByProviderIdentity = `-- name: ExistsActiveAccountInOtherWorkspaceByProviderIdentity :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id <> $1
+    AND sa.platform = $2
+    AND sa.status = 'active'
+    AND sa.disconnected_at IS NULL
+    AND (
+      (
+        $2 = 'instagram'
+        AND sa.metadata->>'instagram_webhook_user_id' = $3::TEXT
+      )
+      OR (
+        $2 <> 'instagram'
+        AND sa.external_account_id = $3::TEXT
+      )
+    )
+) AS exists_in_other_workspace
+`
+
+type ExistsActiveAccountInOtherWorkspaceByProviderIdentityParams struct {
+	WorkspaceID      string `json:"workspace_id"`
+	Platform         string `json:"platform"`
+	ProviderIdentity string `json:"provider_identity"`
+}
+
+func (q *Queries) ExistsActiveAccountInOtherWorkspaceByProviderIdentity(ctx context.Context, arg ExistsActiveAccountInOtherWorkspaceByProviderIdentityParams) (bool, error) {
+	row := q.db.QueryRow(ctx, existsActiveAccountInOtherWorkspaceByProviderIdentity, arg.WorkspaceID, arg.Platform, arg.ProviderIdentity)
+	var exists_in_other_workspace bool
+	err := row.Scan(&exists_in_other_workspace)
+	return exists_in_other_workspace, err
 }
 
 const findActiveManagedSocialAccountByExternalAccount = `-- name: FindActiveManagedSocialAccountByExternalAccount :one
@@ -686,6 +794,103 @@ func (q *Queries) GetSocialAccountByIDAndWorkspace(ctx context.Context, arg GetS
 		&i.XAppMode,
 	)
 	return i, err
+}
+
+const inboxManagedUserExists = `-- name: InboxManagedUserExists :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id = $1
+    AND sa.connection_type = 'managed'
+    AND sa.external_user_id = $2
+)
+`
+
+type InboxManagedUserExistsParams struct {
+	WorkspaceID    string      `json:"workspace_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+}
+
+func (q *Queries) InboxManagedUserExists(ctx context.Context, arg InboxManagedUserExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, inboxManagedUserExists, arg.WorkspaceID, arg.ExternalUserID)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const listActiveAccountsByWorkspaceProviderIdentity = `-- name: ListActiveAccountsByWorkspaceProviderIdentity :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = $1
+  AND sa.platform = $2
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (
+    (
+      $2 = 'instagram'
+      AND sa.metadata->>'instagram_webhook_user_id' = $3::TEXT
+    )
+    OR (
+      $2 <> 'instagram'
+      AND sa.external_account_id = $3::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id
+FOR UPDATE OF sa
+`
+
+type ListActiveAccountsByWorkspaceProviderIdentityParams struct {
+	WorkspaceID      string `json:"workspace_id"`
+	Platform         string `json:"platform"`
+	ProviderIdentity string `json:"provider_identity"`
+}
+
+func (q *Queries) ListActiveAccountsByWorkspaceProviderIdentity(ctx context.Context, arg ListActiveAccountsByWorkspaceProviderIdentityParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, listActiveAccountsByWorkspaceProviderIdentity, arg.WorkspaceID, arg.Platform, arg.ProviderIdentity)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+			&i.XAppMode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAllSocialAccountsByProfile = `-- name: ListAllSocialAccountsByProfile :many
@@ -1270,6 +1475,28 @@ func (q *Queries) RefreshConnectedSocialAccount(ctx context.Context, arg Refresh
 		&i.XAppMode,
 	)
 	return i, err
+}
+
+const setInstagramWebhookUserID = `-- name: SetInstagramWebhookUserID :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', $1::TEXT)
+WHERE id = $2
+  AND platform = 'instagram'
+  AND status = 'active'
+  AND disconnected_at IS NULL
+`
+
+type SetInstagramWebhookUserIDParams struct {
+	InstagramWebhookUserID string `json:"instagram_webhook_user_id"`
+	ID                     string `json:"id"`
+}
+
+func (q *Queries) SetInstagramWebhookUserID(ctx context.Context, arg SetInstagramWebhookUserIDParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setInstagramWebhookUserID, arg.InstagramWebhookUserID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateManagedBlueskyAccount = `-- name: UpdateManagedBlueskyAccount :one

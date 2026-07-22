@@ -27,6 +27,7 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 		t.Fatal(err)
 	}
 	defer tx.Rollback()
+	bootstrapMigrationBaselineIfEmptyForTest(t, ctx, tx, 107)
 
 	var hasXAppMode bool
 	if err := tx.QueryRowContext(ctx, `
@@ -934,18 +935,5 @@ func TestXInboxDeliveryCleanupMigrationCapturesWorkspaceCascadeBeforeChildrenDis
 	}
 	if consumerSecretConfigured {
 		t.Fatal("consumer secret removal still appears delivery-eligible")
-	}
-}
-
-func applyMigrationUp(t *testing.T, ctx context.Context, tx *sql.Tx, path string) {
-	t.Helper()
-	migration, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	upSQL := strings.Split(string(migration), "-- +goose Down")[0]
-	upSQL = strings.Replace(upSQL, "-- +goose Up", "", 1)
-	if _, err := tx.ExecContext(ctx, upSQL); err != nil {
-		t.Fatalf("apply %s in transaction: %v", path, err)
 	}
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 )
 
 type xBackfillAccountSnapshot struct {
@@ -41,6 +42,8 @@ type xBackfillConfirmationOperation struct {
 }
 
 const xBackfillExecutionLease = 30 * time.Minute
+
+var errXBackfillConfirmationOutsideScope = errors.New("X backfill confirmation operation is unavailable for this Inbox scope")
 
 func xBackfillAccountSnapshots(accounts []db.SocialAccount) []xBackfillAccountSnapshot {
 	snapshots := make([]xBackfillAccountSnapshot, 0, len(accounts))
@@ -147,10 +150,13 @@ func (h *InboxHandler) createXBackfillConfirmationOperation(
 
 func (h *InboxHandler) beginXBackfillConfirmationOperation(
 	ctx context.Context,
-	workspaceID string,
+	scope inboxaccess.Scope,
 	token string,
 	now time.Time,
 ) (xBackfillConfirmationOperation, error) {
+	if !validInboxAccessScope(scope) {
+		return xBackfillConfirmationOperation{}, errXBackfillConfirmationOutsideScope
+	}
 	operationID, tokenNonce, err := verifyXBackfillOperationToken(h.xBackfillConfirmationSecret, token)
 	if err != nil {
 		return xBackfillConfirmationOperation{}, err
@@ -159,12 +165,28 @@ func (h *InboxHandler) beginXBackfillConfirmationOperation(
 	if err != nil {
 		return xBackfillConfirmationOperation{}, err
 	}
+	return h.beginXBackfillConfirmationOperationWithTx(
+		ctx, scope, operationID, tokenNonce, now, tx,
+	)
+}
+
+func (h *InboxHandler) beginXBackfillConfirmationOperationWithTx(
+	ctx context.Context,
+	scope inboxaccess.Scope,
+	operationID string,
+	tokenNonce string,
+	now time.Time,
+	tx pgx.Tx,
+) (xBackfillConfirmationOperation, error) {
 	defer tx.Rollback(ctx)
+	if !validInboxAccessScope(scope) {
+		return xBackfillConfirmationOperation{}, errXBackfillConfirmationOutsideScope
+	}
 	var operation xBackfillConfirmationOperation
 	var accountJSON, requestJSON, resultJSON []byte
 	var executionOwner pgtype.Text
 	var executionLease pgtype.Timestamptz
-	err = tx.QueryRow(ctx, `
+	err := tx.QueryRow(ctx, `
 		SELECT id, workspace_id, account_ids, account_fingerprint, request_snapshot,
 		       estimated_x_credits, nonce, status, COALESCE(result, 'null'::JSONB), expires_at,
 		       execution_owner, execution_lease_expires_at
@@ -179,8 +201,8 @@ func (h *InboxHandler) beginXBackfillConfirmationOperation(
 	if err != nil {
 		return xBackfillConfirmationOperation{}, err
 	}
-	if operation.WorkspaceID != workspaceID {
-		return xBackfillConfirmationOperation{}, errors.New("X backfill confirmation operation belongs to another workspace")
+	if operation.WorkspaceID != scope.WorkspaceID {
+		return xBackfillConfirmationOperation{}, errXBackfillConfirmationOutsideScope
 	}
 	if !hmac.Equal([]byte(operation.Nonce), []byte(tokenNonce)) {
 		return xBackfillConfirmationOperation{}, errors.New("invalid X backfill confirmation token")
@@ -190,6 +212,19 @@ func (h *InboxHandler) beginXBackfillConfirmationOperation(
 	}
 	if err := json.Unmarshal(requestJSON, &operation.Request); err != nil {
 		return xBackfillConfirmationOperation{}, err
+	}
+	accountIDs := make([]string, 0, len(operation.Accounts))
+	for _, account := range operation.Accounts {
+		accountIDs = append(accountIDs, account.ID)
+	}
+	owned, err := db.New(tx).CountInboxAccountsInScope(ctx, db.CountInboxAccountsInScopeParams{
+		WorkspaceID:    scope.WorkspaceID,
+		AccountIds:     accountIDs,
+		WorkspaceScope: scope.WorkspaceWide(),
+		ExternalUserID: scope.ExternalUserID,
+	})
+	if err != nil || int(owned) != len(accountIDs) {
+		return xBackfillConfirmationOperation{}, errXBackfillConfirmationOutsideScope
 	}
 	operation.Result = append([]byte(nil), resultJSON...)
 	if executionOwner.Valid {

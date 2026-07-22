@@ -31,6 +31,39 @@ func NewSubscriber(client *http.Client, graphBase string) *Subscriber {
 	}
 }
 
+func (s *Subscriber) FetchWebhookUserID(ctx context.Context, accessToken string) (string, error) {
+	query := url.Values{
+		"fields":       {"user_id"},
+		"access_token": {accessToken},
+	}
+	endpoint := fmt.Sprintf("%s/me?%s", s.graphBase, query.Encode())
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("instagram webhook identity request could not be created")
+	}
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("instagram webhook identity request failed")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("instagram webhook identity request failed (%d)", resp.StatusCode)
+	}
+
+	var result struct {
+		UserID string `json:"user_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("instagram webhook identity response invalid")
+	}
+	result.UserID = strings.TrimSpace(result.UserID)
+	if result.UserID == "" {
+		return "", fmt.Errorf("instagram webhook identity response missing user_id")
+	}
+	return result.UserID, nil
+}
+
 func (s *Subscriber) Subscribe(ctx context.Context, accountID, accessToken string) error {
 	form := url.Values{
 		"access_token":      {accessToken},
@@ -39,28 +72,28 @@ func (s *Subscriber) Subscribe(ctx context.Context, accountID, accessToken strin
 	endpoint := fmt.Sprintf("%s/%s/subscribed_apps", s.graphBase, url.PathEscape(accountID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
-		return err
+		return fmt.Errorf("instagram webhook subscription request could not be created")
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	resp, err := s.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("instagram webhook subscription: %w", err)
+		return fmt.Errorf("instagram webhook subscription request failed")
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("instagram webhook subscription %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("instagram webhook subscription failed (%d)", resp.StatusCode)
 	}
 
 	var result struct {
 		Success bool `json:"success"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("instagram webhook subscription decode: %w", err)
+		return fmt.Errorf("instagram webhook subscription response invalid")
 	}
 	if !result.Success {
-		return fmt.Errorf("instagram webhook subscription rejected: %s", string(body))
+		return fmt.Errorf("instagram webhook subscription rejected")
 	}
 	return nil
 }

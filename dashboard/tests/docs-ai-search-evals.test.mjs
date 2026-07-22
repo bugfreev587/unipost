@@ -133,6 +133,15 @@ test("video.list followers questions explain that video.list is not the follower
   assert.match(answer.answer, /GET \/v1\/accounts\/\{account_id\}\/metrics/);
 });
 
+test("managed-user Inbox integration questions rank the production guide", () => {
+  const { answer } = answerFor("How do I isolate each managed user's Inbox in my app?");
+
+  assert.equal(answer.sources[0]?.path, "/docs/guides/inbox-integration");
+  assert.match(answer.answer, /external_user_id/);
+  assert.match(answer.answer, /managed_user/);
+  assert.match(answer.answer, /server/i);
+});
+
 test("unsupported questions return no-answer fallback without cited answer sources", () => {
   const { answer } = answerFor("What is UniPost's refund policy for annual contracts?");
 

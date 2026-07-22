@@ -5,15 +5,15 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
-	"os"
+	"net/url"
 	"strings"
 
-	"github.com/clerk/clerk-sdk-go/v2"
-	"github.com/clerk/clerk-sdk-go/v2/jwks"
-	"github.com/clerk/clerk-sdk-go/v2/jwt"
 	"github.com/coder/websocket"
 
+	"github.com/xiaoboyu/unipost-api/internal/apikey"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 )
 
@@ -32,23 +32,52 @@ type inboxPlanChecker interface {
 	PlanAllowsInbox(context.Context, string) bool
 }
 
-// Handler upgrades an HTTP request to a WebSocket connection.
-// Auth: Clerk JWT is passed as ?token=<jwt> query param since the
-// browser WebSocket API doesn't support custom headers. The workspace
-// is resolved from the user's default workspace (single-workspace
-// product surface), matching DualAuthMiddleware's Clerk path.
+type tokenAuthenticator func(context.Context, *db.Queries, string) (context.Context, *auth.TokenAuthFailure)
+type clerkTokenVerifier func(context.Context, string) (string, error)
+type webSocketAcceptor func(http.ResponseWriter, *http.Request, *websocket.AcceptOptions) (*websocket.Conn, error)
+type webSocketServer func(context.Context, string, *websocket.Conn)
+type scopedWebSocketServer func(context.Context, inboxaccess.Scope, *websocket.Conn)
+
+// Handler upgrades an HTTP request to a WebSocket connection. Clerk sessions
+// resolve their current active workspace membership exactly like
+// DualAuthMiddleware. WithInboxScopeAuth additionally permits a workspace API
+// key in the Authorization header and resolves a canonical Inbox scope.
 type Handler struct {
-	Hub         *Hub
-	queries     *db.Queries
-	planChecker inboxPlanChecker
+	Hub                      *Hub
+	queries                  *db.Queries
+	planChecker              inboxPlanChecker
+	scopedInboxAuth          bool
+	clerkTokenAuthenticator  tokenAuthenticator
+	apiKeyTokenAuthenticator tokenAuthenticator
+	legacyClerkTokenVerifier clerkTokenVerifier
+	acceptWebSocket          webSocketAcceptor
+	serveWebSocket           webSocketServer
+	serveScopedWebSocket     scopedWebSocketServer
 }
 
 func NewHandler(hub *Hub, queries *db.Queries) *Handler {
-	return &Handler{Hub: hub, queries: queries}
+	return &Handler{
+		Hub:                      hub,
+		queries:                  queries,
+		clerkTokenAuthenticator:  auth.AuthenticateClerkToken,
+		apiKeyTokenAuthenticator: auth.AuthenticateAPIKeyToken,
+		legacyClerkTokenVerifier: auth.VerifyClerkSessionToken,
+		acceptWebSocket:          websocket.Accept,
+		serveWebSocket:           hub.ServeConn,
+		serveScopedWebSocket:     hub.ServeScopedConn,
+	}
 }
 
 func (h *Handler) WithInboxPlanGate(checker inboxPlanChecker) *Handler {
 	h.planChecker = checker
+	return h
+}
+
+// WithInboxScopeAuth enables the Inbox-only handshake contract: browser
+// Dashboard sessions use a Clerk JWT in the token query value, while customer
+// backends use a workspace API key exclusively in the Authorization header.
+func (h *Handler) WithInboxScopeAuth() *Handler {
+	h.scopedInboxAuth = true
 	return h
 }
 
@@ -75,47 +104,154 @@ func (h *Handler) ensureInboxPlanAllowed(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.scopedInboxAuth {
+		h.serveScopedInbox(w, r)
+		return
+	}
+	h.serveClerkOnly(w, r)
+}
+
+func (h *Handler) serveScopedInbox(w http.ResponseWriter, r *http.Request) {
+	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil || !validScopedInboxQuery(query) {
+		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid WebSocket credentials")
+		return
+	}
+
+	tokenValues, hasToken := query["token"]
+	authorizationValues := r.Header.Values("Authorization")
+	hasAuthorization := len(authorizationValues) > 0
+	if hasToken == hasAuthorization {
+		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Exactly one WebSocket credential is required")
+		return
+	}
+
+	var authenticated context.Context
+	var failure *auth.TokenAuthFailure
+	if hasToken {
+		if len(tokenValues) != 1 || !validCredentialToken(tokenValues[0]) || isAPIKeyToken(tokenValues[0]) {
+			writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid WebSocket credentials")
+			return
+		}
+		authenticated, failure = h.clerkTokenAuthenticator(r.Context(), h.queries, tokenValues[0])
+	} else {
+		apiKeyToken, ok := parseAPIKeyAuthorization(authorizationValues)
+		if !ok {
+			writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid WebSocket credentials")
+			return
+		}
+		authenticated, failure = h.apiKeyTokenAuthenticator(r.Context(), h.queries, apiKeyToken)
+	}
+	if failure != nil {
+		writeWSError(w, r, failure.Status, failure.Code, failure.Message)
+		return
+	}
+
+	authenticatedRequest := r.WithContext(authenticated)
+	scope, scopeFailure := inboxaccess.ResolveQuery(authenticatedRequest, h.queries, query)
+	if scopeFailure != nil {
+		writeWSError(w, authenticatedRequest, scopeFailure.Status, scopeFailure.Code, scopeFailure.Message)
+		return
+	}
+	authenticatedRequest = authenticatedRequest.WithContext(inboxaccess.WithContext(authenticated, scope))
+	h.acceptAndServeScoped(w, authenticatedRequest, scope)
+}
+
+func (h *Handler) serveClerkOnly(w http.ResponseWriter, r *http.Request) {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Missing token query param")
 		return
 	}
 
-	clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
-	client := jwks.NewClient(&clerk.ClientConfig{
-		BackendConfig: clerk.BackendConfig{
-			Key: clerk.String(os.Getenv("CLERK_SECRET_KEY")),
-		},
-	})
-	claims, err := jwt.Verify(r.Context(), &jwt.VerifyParams{
-		Token:      token,
-		JWKSClient: client,
-	})
+	userID, err := h.legacyClerkTokenVerifier(r.Context(), token)
 	if err != nil {
-		slog.Warn("ws: auth failed", "err", err)
+		slog.Warn("ws: auth failed")
 		writeWSError(w, r, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid token")
 		return
 	}
 
-	workspace, err := h.queries.GetDefaultWorkspaceForUser(r.Context(), claims.Subject)
+	workspace, err := h.queries.GetDefaultWorkspaceForUser(r.Context(), userID)
 	if err != nil {
-		slog.Warn("ws: no workspace for user", "user_id", claims.Subject, "err", err)
+		slog.Warn("ws: no workspace for user", "user_id", userID)
 		writeWSError(w, r, http.StatusForbidden, "FORBIDDEN", "No workspace found for user")
 		return
 	}
+	h.acceptAndServe(w, r, workspace.ID)
+}
 
-	if !h.ensureInboxPlanAllowed(w, r, workspace.ID) {
+func (h *Handler) acceptAndServe(w http.ResponseWriter, r *http.Request, workspaceID string) {
+	if !h.ensureInboxPlanAllowed(w, r, workspaceID) {
 		return
 	}
 
-	ws, err := websocket.Accept(w, r, &websocket.AcceptOptions{
+	connection, err := h.acceptWebSocket(w, r, &websocket.AcceptOptions{
 		OriginPatterns: []string{"*.unipost.dev", "localhost:*", "*"},
 	})
 	if err != nil {
-		slog.Warn("ws: accept failed", "err", err)
+		slog.Warn("ws: accept failed")
 		return
 	}
 
-	slog.Info("ws: upgrading", "workspace_id", workspace.ID)
-	h.Hub.ServeConn(r.Context(), workspace.ID, ws)
+	slog.Info("ws: upgrading", "workspace_id", workspaceID)
+	h.serveWebSocket(r.Context(), workspaceID, connection)
+}
+
+func (h *Handler) acceptAndServeScoped(w http.ResponseWriter, r *http.Request, scope inboxaccess.Scope) {
+	if !h.ensureInboxPlanAllowed(w, r, scope.WorkspaceID) {
+		return
+	}
+
+	connection, err := h.acceptWebSocket(w, r, &websocket.AcceptOptions{
+		OriginPatterns: []string{"*.unipost.dev", "localhost:*", "*"},
+	})
+	if err != nil {
+		slog.Warn("ws: accept failed")
+		return
+	}
+
+	slog.Info("ws: upgrading inbox connection", "workspace_id", scope.WorkspaceID, "scope_mode", scope.Mode)
+	h.serveScopedWebSocket(r.Context(), scope, connection)
+}
+
+func validScopedInboxQuery(query url.Values) bool {
+	for _, values := range query {
+		for _, value := range values {
+			if isAPIKeyToken(strings.TrimSpace(value)) {
+				return false
+			}
+		}
+	}
+	for name := range query {
+		switch name {
+		case "token", "inbox_scope", "external_user_id":
+			// Allowed. Cardinality and mode-specific rules are enforced below.
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func validCredentialToken(token string) bool {
+	return token != "" && !strings.ContainsAny(token, " \t\r\n,")
+}
+
+func isAPIKeyToken(token string) bool {
+	return strings.HasPrefix(token, apikey.PrefixLive) || strings.HasPrefix(token, apikey.PrefixTest)
+}
+
+func parseAPIKeyAuthorization(values []string) (string, bool) {
+	if len(values) != 1 {
+		return "", false
+	}
+	value := values[0]
+	if !strings.HasPrefix(value, "Bearer ") {
+		return "", false
+	}
+	token := strings.TrimPrefix(value, "Bearer ")
+	if !validCredentialToken(token) || !isAPIKeyToken(token) {
+		return "", false
+	}
+	return token, true
 }

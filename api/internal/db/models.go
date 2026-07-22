@@ -355,6 +355,19 @@ type InboxItem struct {
 	LinkedPostID     pgtype.Text        `json:"linked_post_id"`
 }
 
+type InboxItemQuarantine struct {
+	ID                  string             `json:"id"`
+	IncidentKey         string             `json:"incident_key"`
+	OriginalInboxItemID string             `json:"original_inbox_item_id"`
+	Source              string             `json:"source"`
+	ExternalID          string             `json:"external_id"`
+	SocialAccountID     string             `json:"social_account_id"`
+	WorkspaceID         string             `json:"workspace_id"`
+	AccountExternalID   string             `json:"account_external_id"`
+	OriginalRow         []byte             `json:"original_row"`
+	QuarantinedAt       pgtype.Timestamptz `json:"quarantined_at"`
+}
+
 type InboxMediaCache struct {
 	SocialAccountID string             `json:"social_account_id"`
 	ExternalID      string             `json:"external_id"`

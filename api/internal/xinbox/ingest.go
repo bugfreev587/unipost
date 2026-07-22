@@ -120,7 +120,7 @@ type IngestionConfig struct {
 	Admit         func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
 	AtomicProcess func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
 	DMsAvailable  func(context.Context, string) (bool, error)
-	Notify        func(context.Context, string, InboxItem)
+	Notify        func(context.Context, string, string, InboxItem)
 	Now           func() time.Time
 }
 
@@ -129,7 +129,7 @@ type IngestionService struct {
 	admit        func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
 	atomic       func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error)
 	dmsAvailable func(context.Context, string) (bool, error)
-	notify       func(context.Context, string, InboxItem)
+	notify       func(context.Context, string, string, InboxItem)
 	now          func() time.Time
 }
 
@@ -328,7 +328,7 @@ func (s *IngestionService) admitAndInsertResult(
 			return IngestionResult{}, errors.New("X atomic inbound processor inserted a suppressed event")
 		}
 		if inserted && s.notify != nil {
-			s.notify(ctx, account.WorkspaceID, insertedItem)
+			s.notify(ctx, account.WorkspaceID, account.ExternalUserID, insertedItem)
 		}
 		return IngestionResult{Admission: admission, Item: insertedItem, Inserted: inserted}, nil
 	}
@@ -348,7 +348,7 @@ func (s *IngestionService) admitAndInsertResult(
 		return IngestionResult{}, err
 	}
 	if inserted && s.notify != nil {
-		s.notify(ctx, account.WorkspaceID, insertedItem)
+		s.notify(ctx, account.WorkspaceID, account.ExternalUserID, insertedItem)
 	}
 	return IngestionResult{Admission: admission, Item: insertedItem, Inserted: inserted}, nil
 }

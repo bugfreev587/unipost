@@ -119,6 +119,78 @@ WHERE profile_id = $1
   AND disconnected_at IS NULL
 LIMIT 1;
 
+-- name: CheckActiveAccountsByWorkspaceProviderIdentity :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = @workspace_id
+  AND sa.platform = @platform
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (
+    (
+      @platform = 'instagram'
+      AND sa.metadata->>'instagram_webhook_user_id' = @provider_identity::TEXT
+    )
+    OR (
+      @platform <> 'instagram'
+      AND sa.external_account_id = @provider_identity::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id;
+
+-- name: ListActiveAccountsByWorkspaceProviderIdentity :many
+SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+WHERE p.workspace_id = @workspace_id
+  AND sa.platform = @platform
+  AND sa.status = 'active'
+  AND sa.disconnected_at IS NULL
+  AND (
+    (
+      @platform = 'instagram'
+      AND sa.metadata->>'instagram_webhook_user_id' = @provider_identity::TEXT
+    )
+    OR (
+      @platform <> 'instagram'
+      AND sa.external_account_id = @provider_identity::TEXT
+    )
+  )
+ORDER BY sa.connected_at DESC, sa.id
+FOR UPDATE OF sa;
+
+-- name: ExistsActiveAccountInOtherWorkspaceByProviderIdentity :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id <> @workspace_id
+    AND sa.platform = @platform
+    AND sa.status = 'active'
+    AND sa.disconnected_at IS NULL
+    AND (
+      (
+        @platform = 'instagram'
+        AND sa.metadata->>'instagram_webhook_user_id' = @provider_identity::TEXT
+      )
+      OR (
+        @platform <> 'instagram'
+        AND sa.external_account_id = @provider_identity::TEXT
+      )
+    )
+) AS exists_in_other_workspace;
+
 -- name: CountActiveManagedAccountsByWorkspace :one
 SELECT COUNT(*)::INTEGER AS total
 FROM social_accounts sa
@@ -136,6 +208,16 @@ WHERE p.workspace_id = $1
   AND sa.connection_type = 'managed'
   AND sa.external_user_id IS NOT NULL
   AND COALESCE(sa.metadata->>'dismissed_at', '') = '';
+
+-- name: InboxManagedUserExists :one
+SELECT EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+  WHERE p.workspace_id = @workspace_id
+    AND sa.connection_type = 'managed'
+    AND sa.external_user_id = @external_user_id
+);
 
 -- name: CountManagedAccountsByWorkspaceAndExternalUser :one
 SELECT COUNT(*)::INTEGER AS total
@@ -294,6 +376,14 @@ SET status = 'reconnect_required',
     metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('reconnect_required_at', NOW()::TEXT)
 WHERE id = $1
   AND status = 'active';
+
+-- name: SetInstagramWebhookUserID :execrows
+UPDATE social_accounts
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', @instagram_webhook_user_id::TEXT)
+WHERE id = @id
+  AND platform = 'instagram'
+  AND status = 'active'
+  AND disconnected_at IS NULL;
 
 -- name: ArmSocialAccountDisconnectNotification :execrows
 UPDATE social_accounts

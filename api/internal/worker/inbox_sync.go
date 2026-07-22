@@ -17,6 +17,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -30,6 +32,7 @@ import (
 )
 
 type inboxInstagramWebhookSubscriber interface {
+	FetchWebhookUserID(context.Context, string) (string, error)
 	Subscribe(context.Context, string, string) error
 }
 
@@ -74,9 +77,10 @@ func resolveInboxLinkedPostID(ctx context.Context, queries *db.Queries, socialAc
 }
 
 type InboxSyncWorker struct {
-	queries   *db.Queries
-	encryptor *crypto.AESEncryptor
-	pool      *pgxpool.Pool
+	queries              *db.Queries
+	encryptor            *crypto.AESEncryptor
+	notifyEvent          func(context.Context, string, string, map[string]any)
+	notifyWorkspaceEvent func(context.Context, string, map[string]any)
 
 	instagramWebhookSubscriber inboxInstagramWebhookSubscriber
 	igWebhookSubscriptions     map[string]bool
@@ -109,10 +113,82 @@ func NewInboxSyncWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, poo
 	return &InboxSyncWorker{
 		queries:                    queries,
 		encryptor:                  encryptor,
-		pool:                       pool,
 		fbDMFailureCounts:          make(map[string]int),
 		instagramWebhookSubscriber: instagramwebhooks.NewSubscriber(nil, ""),
 		igWebhookSubscriptions:     make(map[string]bool),
+		notifyEvent: func(ctx context.Context, workspaceID, externalUserID string, event map[string]any) {
+			ws.NotifyEvent(ctx, pool, workspaceID, externalUserID, event)
+		},
+		notifyWorkspaceEvent: func(ctx context.Context, workspaceID string, event map[string]any) {
+			ws.NotifyWorkspaceEvent(ctx, pool, workspaceID, event)
+		},
+	}
+}
+
+type workerInboxSyncWorkspaceCounts struct {
+	total   int
+	managed map[string]int
+}
+
+type workerInboxSyncNotificationCounts struct {
+	total      int
+	workspaces map[string]*workerInboxSyncWorkspaceCounts
+}
+
+func newWorkerInboxSyncNotificationCounts() *workerInboxSyncNotificationCounts {
+	return &workerInboxSyncNotificationCounts{workspaces: make(map[string]*workerInboxSyncWorkspaceCounts)}
+}
+
+func (c *workerInboxSyncNotificationCounts) Record(workspaceID string, externalUserID pgtype.Text) {
+	if c == nil || strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(workspaceID) != workspaceID {
+		return
+	}
+	workspace := c.workspaces[workspaceID]
+	if workspace == nil {
+		workspace = &workerInboxSyncWorkspaceCounts{managed: make(map[string]int)}
+		c.workspaces[workspaceID] = workspace
+	}
+	c.total++
+	workspace.total++
+	if externalUserID.Valid && externalUserID.String != "" && strings.TrimSpace(externalUserID.String) == externalUserID.String {
+		workspace.managed[externalUserID.String]++
+	}
+}
+
+func (c *workerInboxSyncNotificationCounts) Notify(
+	ctx context.Context,
+	notifyManaged func(context.Context, string, string, map[string]any),
+	notifyWorkspace func(context.Context, string, map[string]any),
+) {
+	if c == nil || c.total == 0 {
+		return
+	}
+	workspaceIDs := make([]string, 0, len(c.workspaces))
+	for workspaceID := range c.workspaces {
+		workspaceIDs = append(workspaceIDs, workspaceID)
+	}
+	sort.Strings(workspaceIDs)
+	for _, workspaceID := range workspaceIDs {
+		workspace := c.workspaces[workspaceID]
+		owners := make([]string, 0, len(workspace.managed))
+		for externalUserID := range workspace.managed {
+			owners = append(owners, externalUserID)
+		}
+		sort.Strings(owners)
+		if notifyManaged != nil {
+			for _, externalUserID := range owners {
+				notifyManaged(ctx, workspaceID, externalUserID, map[string]any{
+					"type":      "inbox.sync_complete",
+					"new_items": workspace.managed[externalUserID],
+				})
+			}
+		}
+		if notifyWorkspace != nil {
+			notifyWorkspace(ctx, workspaceID, map[string]any{
+				"type":      "inbox.sync_complete",
+				"new_items": workspace.total,
+			})
+		}
 	}
 }
 
@@ -127,18 +203,46 @@ func (w *InboxSyncWorker) ensureInstagramWebhookSubscription(ctx context.Context
 		w.igWebhookSubscriptions = make(map[string]bool)
 	}
 
-	if err := w.instagramWebhookSubscriber.Subscribe(ctx, acc.ExternalAccountID, accessToken); err != nil {
+	webhookUserID := strings.TrimSpace(acc.InstagramWebhookUserID)
+	if webhookUserID == "" {
+		resolvedID, err := w.instagramWebhookSubscriber.FetchWebhookUserID(ctx, accessToken)
+		if err != nil {
+			slog.Warn("inbox sync worker: instagram webhook identity repair failed",
+				"account_id", acc.ID)
+			return
+		}
+		webhookUserID = strings.TrimSpace(resolvedID)
+		if webhookUserID == "" {
+			slog.Warn("inbox sync worker: instagram webhook identity repair returned empty id",
+				"account_id", acc.ID)
+			return
+		}
+		if w.queries == nil {
+			slog.Warn("inbox sync worker: instagram webhook identity repair cannot persist",
+				"account_id", acc.ID)
+			return
+		}
+		rowsAffected, err := w.queries.SetInstagramWebhookUserID(ctx, db.SetInstagramWebhookUserIDParams{
+			InstagramWebhookUserID: webhookUserID,
+			ID:                     acc.ID,
+		})
+		if err != nil || rowsAffected != 1 {
+			slog.Warn("inbox sync worker: instagram webhook identity repair was not confirmed",
+				"account_id", acc.ID,
+				"rows_affected", rowsAffected)
+			return
+		}
+	}
+
+	if err := w.instagramWebhookSubscriber.Subscribe(ctx, webhookUserID, accessToken); err != nil {
 		slog.Warn("inbox sync worker: instagram webhook subscription repair failed",
-			"account_id", acc.ID,
-			"external_account_id", acc.ExternalAccountID,
-			"err", err)
+			"account_id", acc.ID)
 		return
 	}
 
 	w.igWebhookSubscriptions[acc.ID] = true
 	slog.Info("inbox sync worker: instagram webhook subscription active",
-		"account_id", acc.ID,
-		"external_account_id", acc.ExternalAccountID)
+		"account_id", acc.ID)
 }
 
 func (w *InboxSyncWorker) Start(ctx context.Context) {
@@ -179,12 +283,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 		return
 	}
 
-	totalNew := 0
-	newByWorkspace := map[string]int{}
-	recordNew := func(workspaceID string) {
-		totalNew++
-		newByWorkspace[workspaceID]++
-	}
+	notifications := newWorkerInboxSyncNotificationCounts()
 	for _, acc := range accounts {
 		// X replies and DMs are reconciled by XInboxDeliveryWorker and its
 		// shared metered ingestion service. Keep X in shared account discovery,
@@ -233,7 +332,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							recordNew(acc.WorkspaceID)
+							notifications.Record(acc.WorkspaceID, acc.ExternalUserID)
 						}
 					}
 				}
@@ -267,7 +366,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						recordNew(acc.WorkspaceID)
+						notifications.Record(acc.WorkspaceID, acc.ExternalUserID)
 					}
 				}
 				// Reconcile: if webhook created items with thread_key = senderID,
@@ -377,7 +476,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						recordNew(acc.WorkspaceID)
+						notifications.Record(acc.WorkspaceID, acc.ExternalUserID)
 					}
 					mergeInboxEntryAuthorMetadata(ctx, w.queries, acc.ID, e)
 				}
@@ -439,7 +538,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 						LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						recordNew(acc.WorkspaceID)
+						notifications.Record(acc.WorkspaceID, acc.ExternalUserID)
 					}
 					mergeInboxEntryAuthorMetadata(ctx, w.queries, acc.ID, e)
 				}
@@ -477,7 +576,7 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 							LinkedPostID:     resolveInboxLinkedPostID(ctx, w.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							recordNew(acc.WorkspaceID)
+							notifications.Record(acc.WorkspaceID, acc.ExternalUserID)
 						}
 					}
 				}
@@ -485,14 +584,9 @@ func (w *InboxSyncWorker) poll(ctx context.Context) {
 		}
 	}
 
-	if totalNew > 0 {
-		slog.Info("inbox sync worker: new items", "count", totalNew)
-		for workspaceID, newItems := range newByWorkspace {
-			ws.NotifyEvent(ctx, w.pool, workspaceID, map[string]any{
-				"type":      "inbox.sync_complete",
-				"new_items": newItems,
-			})
-		}
+	if notifications.total > 0 {
+		slog.Info("inbox sync worker: new items", "count", notifications.total)
+		notifications.Notify(ctx, w.notifyEvent, w.notifyWorkspaceEvent)
 	}
 }
 

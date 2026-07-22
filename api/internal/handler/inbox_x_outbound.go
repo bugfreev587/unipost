@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
 
@@ -20,6 +21,7 @@ const (
 )
 
 var errXInboxStateTransitionConflict = errors.New("X Inbox state transition conflict")
+var errXInboxOutboundOutsideScope = errors.New("X Inbox outbound request is unavailable for this Inbox scope")
 
 func detachedXInboxCompletionContext(parent context.Context) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.WithoutCancel(parent), xInboxOutboundCompletionTimeout)
@@ -79,18 +81,38 @@ func (h *InboxHandler) completeKnownXInboxOutbound(
 	if err != nil {
 		return db.InboxItem{}, xInboxSendResult{}, err
 	}
+	return h.completeKnownXInboxOutboundWithTx(ctx, requestID, tx)
+}
+
+func (h *InboxHandler) completeKnownXInboxOutboundWithTx(
+	ctx context.Context,
+	requestID string,
+	tx pgx.Tx,
+) (db.InboxItem, xInboxSendResult, error) {
 	defer tx.Rollback(ctx)
+	scope, ok := inboxaccess.FromContext(ctx)
+	if !ok || !validInboxAccessScope(scope) {
+		return db.InboxItem{}, xInboxSendResult{}, errXInboxOutboundOutsideScope
+	}
+	workspaceScope := scope.WorkspaceWide()
+	externalUserID := scope.ExternalUserID
 	queries := db.New(tx)
 	outbound, err := queries.GetXInboxOutboundRequestByIDForUpdate(ctx, requestID)
 	if err != nil {
 		return db.InboxItem{}, xInboxSendResult{}, err
+	}
+	if outbound.WorkspaceID != scope.WorkspaceID {
+		return db.InboxItem{}, xInboxSendResult{}, errXInboxOutboundOutsideScope
 	}
 	if outbound.Status == "completed" || outbound.Status == "succeeded" {
 		if !outbound.ResponseInboxItemID.Valid {
 			return db.InboxItem{}, xInboxSendResult{}, errors.New("completed X Inbox outbound request is missing response item")
 		}
 		item, loadErr := queries.GetInboxItem(ctx, db.GetInboxItemParams{
-			ID: outbound.ResponseInboxItemID.String, WorkspaceID: outbound.WorkspaceID,
+			ID:             outbound.ResponseInboxItemID.String,
+			WorkspaceID:    outbound.WorkspaceID,
+			WorkspaceScope: workspaceScope,
+			ExternalUserID: externalUserID,
 		})
 		if loadErr != nil {
 			return db.InboxItem{}, xInboxSendResult{}, loadErr
@@ -110,7 +132,10 @@ func (h *InboxHandler) completeKnownXInboxOutbound(
 		return db.InboxItem{}, xInboxSendResult{}, fmt.Errorf("decrypt X Inbox outbound payload: %w", err)
 	}
 	target, err := queries.GetInboxItem(ctx, db.GetInboxItemParams{
-		ID: outbound.InboxItemID, WorkspaceID: outbound.WorkspaceID,
+		ID:             outbound.InboxItemID,
+		WorkspaceID:    outbound.WorkspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
 	})
 	if err != nil {
 		return db.InboxItem{}, xInboxSendResult{}, err

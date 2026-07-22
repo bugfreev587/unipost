@@ -3,12 +3,9 @@ package auth
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/xiaoboyu/unipost-api/internal/apikey"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
@@ -57,8 +54,8 @@ func GetRole(ctx context.Context) string {
 }
 
 // APIKeyMiddleware verifies API keys by hashing the presented key and looking up
-// the hash in the database. It checks revocation and expiration, updates last_used_at
-// in a background goroutine, and injects the workspace_id into the request context.
+// the hash in the database. It checks revocation, expiration, and creator membership,
+// updates last_used_at in a background goroutine, and injects API-key auth context.
 func APIKeyMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -84,49 +81,13 @@ func APIKeyMiddleware(queries *db.Queries) func(http.Handler) http.Handler {
 				return
 			}
 
-			hash := apikey.Hash(key)
-
-			ak, err := queries.GetAPIKeyByHash(r.Context(), hash)
-			if err != nil {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{
-					"error": map[string]any{
-						"code":    "UNAUTHORIZED",
-						"message": "Invalid API key",
-					},
+			ctx, failure := AuthenticateAPIKeyToken(r.Context(), queries, key)
+			if failure != nil {
+				writeJSON(w, failure.Status, map[string]any{
+					"error": map[string]any{"code": failure.Code, "message": failure.Message},
 				})
 				return
 			}
-
-			// Check revocation
-			if ak.RevokedAt.Valid {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{
-					"error": map[string]any{
-						"code":    "UNAUTHORIZED",
-						"message": "API key has been revoked",
-					},
-				})
-				return
-			}
-
-			// Check expiration
-			if ak.ExpiresAt.Valid && ak.ExpiresAt.Time.Before(time.Now()) {
-				writeJSON(w, http.StatusUnauthorized, map[string]any{
-					"error": map[string]any{
-						"code":    "UNAUTHORIZED",
-						"message": "API key has expired",
-					},
-				})
-				return
-			}
-
-			// Update last_used_at in background
-			go func() {
-				if err := queries.UpdateAPIKeyLastUsedAt(context.Background(), ak.ID); err != nil {
-					slog.Error("failed to update last_used_at", "key_id", ak.ID, "error", err)
-				}
-			}()
-
-			ctx := context.WithValue(r.Context(), WorkspaceIDKey, ak.WorkspaceID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}

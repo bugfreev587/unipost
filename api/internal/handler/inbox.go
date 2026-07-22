@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/inboxaccess"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -85,13 +87,15 @@ func inboxReplyPlatformError(source string, err error) (message string, reconnec
 type InboxHandler struct {
 	queries                     *db.Queries
 	encryptor                   *crypto.AESEncryptor
-	pool                        *pgxpool.Pool // for inbox WebSocket notifications
+	pool                        *pgxpool.Pool
 	xCredits                    xInboxCreditsService
 	xIngestion                  *xinbox.IngestionService
 	xTokenRefresher             xinbox.TokenRefresher
 	xAdapterFactory             func() xInboxBackfillAdapter
 	xBackfillConfirmationSecret []byte
 	xBackfillSafeCredits        int64
+	notifyEvent                 func(context.Context, string, string, map[string]any)
+	notifyWorkspaceEvent        func(context.Context, string, map[string]any)
 	featureFlags                interface {
 		ForWorkspace(context.Context, string, string) (bool, error)
 	}
@@ -99,11 +103,91 @@ type InboxHandler struct {
 
 func NewInboxHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, pool *pgxpool.Pool) *InboxHandler {
 	return &InboxHandler{
-		queries:              queries,
-		encryptor:            encryptor,
-		pool:                 pool,
-		xAdapterFactory:      func() xInboxBackfillAdapter { return platform.NewTwitterAdapter() },
+		queries:   queries,
+		encryptor: encryptor,
+		pool:      pool,
+		xAdapterFactory: func() xInboxBackfillAdapter {
+			return platform.NewTwitterAdapter()
+		},
 		xBackfillSafeCredits: defaultXBackfillSafeCredits,
+		notifyEvent: func(ctx context.Context, workspaceID, externalUserID string, event map[string]any) {
+			ws.NotifyEvent(ctx, pool, workspaceID, externalUserID, event)
+		},
+		notifyWorkspaceEvent: func(ctx context.Context, workspaceID string, event map[string]any) {
+			ws.NotifyWorkspaceEvent(ctx, pool, workspaceID, event)
+		},
+	}
+}
+
+type inboxSyncNotificationCounts struct {
+	total   int
+	managed map[string]int
+}
+
+func newInboxSyncNotificationCounts() *inboxSyncNotificationCounts {
+	return &inboxSyncNotificationCounts{managed: make(map[string]int)}
+}
+
+func (c *inboxSyncNotificationCounts) Record(externalUserID pgtype.Text) {
+	c.RecordN(externalUserID, 1)
+}
+
+func (c *inboxSyncNotificationCounts) RecordN(externalUserID pgtype.Text, count int) {
+	if c == nil || count <= 0 {
+		return
+	}
+	c.total += count
+	if externalUserID.Valid && externalUserID.String != "" && strings.TrimSpace(externalUserID.String) == externalUserID.String {
+		c.managed[externalUserID.String] += count
+	}
+}
+
+func (c *inboxSyncNotificationCounts) Total() int {
+	if c == nil {
+		return 0
+	}
+	return c.total
+}
+
+func (c *inboxSyncNotificationCounts) Managed() map[string]int {
+	result := make(map[string]int)
+	if c == nil {
+		return result
+	}
+	for externalUserID, count := range c.managed {
+		result[externalUserID] = count
+	}
+	return result
+}
+
+func notifyInboxSyncComplete(
+	ctx context.Context,
+	workspaceID string,
+	counts *inboxSyncNotificationCounts,
+	notifyManaged func(context.Context, string, string, map[string]any),
+	notifyWorkspace func(context.Context, string, map[string]any),
+) {
+	if counts == nil || counts.total <= 0 {
+		return
+	}
+	owners := make([]string, 0, len(counts.managed))
+	for externalUserID := range counts.managed {
+		owners = append(owners, externalUserID)
+	}
+	sort.Strings(owners)
+	if notifyManaged != nil {
+		for _, externalUserID := range owners {
+			notifyManaged(ctx, workspaceID, externalUserID, map[string]any{
+				"type":      "inbox.sync_complete",
+				"new_items": counts.managed[externalUserID],
+			})
+		}
+	}
+	if notifyWorkspace != nil {
+		notifyWorkspace(ctx, workspaceID, map[string]any{
+			"type":      "inbox.sync_complete",
+			"new_items": counts.total,
+		})
 	}
 }
 
@@ -189,6 +273,40 @@ func inboxListLimit(r *http.Request) int32 {
 	return int32(n)
 }
 
+func inboxQueryScope(ctx context.Context) (bool, string) {
+	scope, ok := inboxaccess.FromContext(ctx)
+	if !ok {
+		return false, ""
+	}
+	return scope.WorkspaceWide(), scope.ExternalUserID
+}
+
+func validInboxAccessScope(scope inboxaccess.Scope) bool {
+	if strings.TrimSpace(scope.WorkspaceID) == "" {
+		return false
+	}
+	switch scope.Mode {
+	case inboxaccess.ModeWorkspace:
+		return strings.TrimSpace(scope.ExternalUserID) == ""
+	case inboxaccess.ModeManagedUser:
+		return strings.TrimSpace(scope.ExternalUserID) != ""
+	default:
+		return false
+	}
+}
+
+func logInboxScopeObjectRejected(ctx context.Context, workspaceID, routeClass string) {
+	scopeMode := "missing"
+	if scope, ok := inboxaccess.FromContext(ctx); ok {
+		scopeMode = string(scope.Mode)
+	}
+	slog.Warn("inbox_scope_object_rejected",
+		"workspace_id", workspaceID,
+		"route_class", routeClass,
+		"scope_mode", scopeMode,
+	)
+}
+
 // inboxItemResponse is the JSON shape returned to the frontend.
 type inboxItemResponse struct {
 	ID               string  `json:"id"`
@@ -265,6 +383,7 @@ func toInboxResponse(item db.InboxItem) inboxItemResponse {
 // GET /v1/inbox?source=ig_comment&is_read=false
 func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 	if !ok {
 		return
@@ -275,9 +394,11 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := db.ListInboxItemsByWorkspaceParams{
-		WorkspaceID: workspaceID,
-		Limit:       inboxListLimit(r),
-		ExcludeXDms: !dmsAvailable,
+		WorkspaceID:    workspaceID,
+		Limit:          inboxListLimit(r),
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+		ExcludeXDms:    !dmsAvailable,
 	}
 	if s := r.URL.Query().Get("source"); s != "" {
 		params.Source = pgtype.Text{String: s, Valid: true}
@@ -409,13 +530,16 @@ func (h *InboxHandler) List(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/unread-count
 func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 	if !ok {
 		return
 	}
 	count, err := h.queries.CountUnreadByWorkspace(r.Context(), db.CountUnreadByWorkspaceParams{
-		WorkspaceID: workspaceID,
-		ExcludeXDms: !dmsAvailable,
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+		ExcludeXDms:    !dmsAvailable,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to count unread")
@@ -428,12 +552,14 @@ func (h *InboxHandler) UnreadCount(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/{id}
 func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "get")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -454,10 +580,14 @@ func (h *InboxHandler) Get(w http.ResponseWriter, r *http.Request) {
 // POST /v1/inbox/{id}/read
 func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
-	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{ID: id, WorkspaceID: workspaceID})
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
+	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "mark_read")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -472,7 +602,7 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := h.queries.MarkInboxItemRead(r.Context(), db.MarkInboxItemReadParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark read")
 		return
@@ -484,13 +614,16 @@ func (h *InboxHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
 // POST /v1/inbox/mark-all-read
 func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	dmsAvailable, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 	if !ok {
 		return
 	}
 	count, err := h.queries.MarkAllInboxItemsRead(r.Context(), db.MarkAllInboxItemsReadParams{
-		WorkspaceID: workspaceID,
-		ExcludeXDms: !dmsAvailable,
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+		ExcludeXDms:    !dmsAvailable,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to mark all read")
@@ -503,12 +636,14 @@ func (h *InboxHandler) MarkAllRead(w http.ResponseWriter, r *http.Request) {
 // GET /v1/inbox/{id}/media-context
 func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
 
 	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "media_context")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
@@ -549,7 +684,10 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	account, err := h.queries.GetSocialAccount(r.Context(), item.SocialAccountID)
+	account, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+		ID:          item.SocialAccountID,
+		WorkspaceID: workspaceID,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Account not found")
 		return
@@ -644,22 +782,25 @@ func (h *InboxHandler) MediaContext(w http.ResponseWriter, r *http.Request) {
 // Body: { "text": "..." }
 func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
+
+	// Authorize the target before parsing the payload so callers cannot use
+	// validation differences to probe whether another managed user's item exists.
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
+	})
+	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "reply")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
 
 	var body struct {
 		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Text == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "text is required")
-		return
-	}
-
-	// Load the inbox item.
-	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
 		return
 	}
 	if item.Source == "x_dm" {
@@ -756,8 +897,10 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 			if (outboundRequest.Status == "completed" || outboundRequest.Status == "succeeded") &&
 				outboundRequest.ResponseInboxItemID.Valid {
 				replayed, replayErr := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-					ID:          outboundRequest.ResponseInboxItemID.String,
-					WorkspaceID: workspaceID,
+					ID:             outboundRequest.ResponseInboxItemID.String,
+					WorkspaceID:    workspaceID,
+					WorkspaceScope: workspaceScope,
+					ExternalUserID: externalUserID,
 				})
 				if replayErr != nil {
 					writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load the prior X Inbox reply")
@@ -1112,17 +1255,26 @@ func (h *InboxHandler) writeXInboxReplyError(w http.ResponseWriter, err error) {
 // encrypted reply/DM payload.
 func (h *InboxHandler) XOutboundStatus(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	requestID := chi.URLParam(r, "requestID")
 	outbound, err := h.queries.GetXInboxOutboundRequestByID(r.Context(), requestID)
 	if err != nil || outbound.WorkspaceID != workspaceID {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "x_outbound_status")
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
 		return
 	}
 	target, targetErr := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID:          outbound.InboxItemID,
-		WorkspaceID: workspaceID,
+		ID:             outbound.InboxItemID,
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
 	})
-	if targetErr == nil && target.Source == "x_dm" {
+	if targetErr != nil || target.SocialAccountID != outbound.SocialAccountID {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "x_outbound_status")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "X Inbox outbound operation not found")
+		return
+	}
+	if target.Source == "x_dm" {
 		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 		if !ok {
 			return
@@ -1211,7 +1363,19 @@ func applyXReplyMetadata(response *inboxItemResponse, raw []byte) {
 // Body: { "thread_status": "open" | "assigned" | "resolved", "assigned_to": "..." }
 func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	id := chi.URLParam(r, "id")
+
+	// Keep object authorization ahead of payload validation to avoid exposing
+	// whether an ID belongs to a different managed-user scope.
+	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
+	})
+	if err != nil {
+		logInboxScopeObjectRejected(r.Context(), workspaceID, "thread_state")
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
+		return
+	}
 
 	var body struct {
 		ThreadStatus string `json:"thread_status"`
@@ -1228,13 +1392,6 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	item, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "Inbox item not found")
-		return
-	}
 	if item.Source == "x_dm" {
 		available, ok := h.xDMAvailabilityForRequest(w, r, workspaceID)
 		if !ok {
@@ -1258,6 +1415,8 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 		ThreadKey:       threadKey,
 		ThreadStatus:    body.ThreadStatus,
 		Column6:         body.AssignedTo,
+		WorkspaceScope:  workspaceScope,
+		ExternalUserID:  externalUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update thread state")
@@ -1265,7 +1424,7 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 	}
 
 	updated, err := h.queries.GetInboxItem(r.Context(), db.GetInboxItemParams{
-		ID: id, WorkspaceID: workspaceID,
+		ID: id, WorkspaceID: workspaceID, WorkspaceScope: workspaceScope, ExternalUserID: externalUserID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reload inbox item")
@@ -1279,6 +1438,7 @@ func (h *InboxHandler) UpdateThreadState(w http.ResponseWriter, r *http.Request)
 // POST /v1/inbox/sync
 func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
+	workspaceScope, externalUserID := inboxQueryScope(r.Context())
 	var request struct {
 		XBackfill *xBackfillRequest `json:"x_backfill"`
 	}
@@ -1289,14 +1449,17 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if request.XBackfill != nil {
-		h.syncXBackfill(w, r, workspaceID, *request.XBackfill)
-		return
-	}
-
-	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
+	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), db.FindInboxAccountsByWorkspaceParams{
+		WorkspaceID:    workspaceID,
+		WorkspaceScope: workspaceScope,
+		ExternalUserID: externalUserID,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find accounts")
+		return
+	}
+	if request.XBackfill != nil {
+		h.syncXBackfill(w, r, workspaceID, accounts, *request.XBackfill)
 		return
 	}
 
@@ -1316,7 +1479,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		CommentsFound int    `json:"comments_found"`
 	}
 
-	totalNew := 0
+	syncNotifications := newInboxSyncNotificationCounts()
 	var errors []syncError
 	var details []syncAccountDetail
 	for _, acc := range accounts {
@@ -1382,7 +1545,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							syncNotifications.Record(acc.ExternalUserID)
 						}
 					}
 				}
@@ -1419,7 +1582,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						syncNotifications.Record(acc.ExternalUserID)
 					}
 				}
 				// Reconcile: if webhook created items with thread_key = senderID,
@@ -1480,7 +1643,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							syncNotifications.Record(acc.ExternalUserID)
 						}
 					}
 				}
@@ -1574,7 +1737,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 							LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 						})
 						if uErr == nil {
-							totalNew++
+							syncNotifications.Record(acc.ExternalUserID)
 						}
 						mergeInboxItemAuthorMetadata(r.Context(), h.queries, acc.ID, e.ExternalID, e.AuthorName, e.AuthorID, e.AuthorAvatarURL)
 					}
@@ -1608,7 +1771,7 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 						LinkedPostID:     resolveInboxLinkedPostID(r.Context(), h.queries, acc.ID, e.ParentExternalID),
 					})
 					if uErr == nil {
-						totalNew++
+						syncNotifications.Record(acc.ExternalUserID)
 					}
 					mergeInboxItemAuthorMetadata(r.Context(), h.queries, acc.ID, e.ExternalID, e.AuthorName, e.AuthorID, e.AuthorAvatarURL)
 				}
@@ -1618,14 +1781,12 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		details = append(details, detail)
 	}
 
+	totalNew := syncNotifications.Total()
 	slog.Info("inbox sync complete", "new_items", totalNew, "accounts", len(accounts), "errors", len(errors))
 
 	// Notify all connected WebSocket clients to refresh if new items arrived.
 	if totalNew > 0 {
-		ws.NotifyEvent(r.Context(), h.pool, workspaceID, map[string]any{
-			"type":      "inbox.sync_complete",
-			"new_items": totalNew,
-		})
+		notifyInboxSyncComplete(r.Context(), workspaceID, syncNotifications, h.notifyEvent, h.notifyWorkspaceEvent)
 	}
 
 	writeSuccess(w, map[string]any{
@@ -1673,6 +1834,7 @@ func (h *InboxHandler) syncXBackfill(
 	w http.ResponseWriter,
 	r *http.Request,
 	workspaceID string,
+	accounts []db.SocialAccount,
 	request xBackfillRequest,
 ) {
 	requestedOnlyDMs := request.IncludeDMs && !request.IncludeReplies
@@ -1688,11 +1850,6 @@ func (h *InboxHandler) syncXBackfill(
 		}
 		request.IncludeDMs = false
 		request.IncludeReplies = true
-	}
-	accounts, err := h.queries.FindInboxAccountsByWorkspace(r.Context(), workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find X accounts")
-		return
 	}
 	xAccounts := make([]db.SocialAccount, 0, len(accounts))
 	estimate := int64(0)
@@ -1741,9 +1898,14 @@ func (h *InboxHandler) syncXBackfill(
 			})
 			return
 		}
+		confirmationScope, scopeOK := inboxaccess.FromContext(r.Context())
+		if !scopeOK || !validInboxAccessScope(confirmationScope) || confirmationScope.WorkspaceID != workspaceID {
+			writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", errXBackfillConfirmationOutsideScope.Error())
+			return
+		}
 		operation, operationErr := h.beginXBackfillConfirmationOperation(
 			r.Context(),
-			workspaceID,
+			confirmationScope,
 			request.ConfirmationToken,
 			time.Now(),
 		)
@@ -1865,7 +2027,27 @@ func (h *InboxHandler) syncXBackfill(
 			return
 		}
 	}
+	notifyInboxSyncComplete(
+		r.Context(), workspaceID, xBackfillSyncNotificationCounts(xAccounts, results),
+		h.notifyEvent, h.notifyWorkspaceEvent,
+	)
 	writeSuccess(w, response)
+}
+
+func xBackfillSyncNotificationCounts(accounts []db.SocialAccount, results []xBackfillAccountResult) *inboxSyncNotificationCounts {
+	owners := make(map[string]pgtype.Text, len(accounts))
+	for _, account := range accounts {
+		owners[account.ID] = account.ExternalUserID
+	}
+	counts := newInboxSyncNotificationCounts()
+	for _, result := range results {
+		owner, ok := owners[result.AccountID]
+		if !ok {
+			continue
+		}
+		counts.RecordN(owner, result.Accepted)
+	}
+	return counts
 }
 
 func (h *InboxHandler) runXBackfillPages(
