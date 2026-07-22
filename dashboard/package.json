@@ -11,6 +11,7 @@
     "test:docs-ai": "node --test tests/docs-ai-answer-formatting.test.mjs tests/docs-ai-search-evals.test.mjs tests/docs-ai-search-implementation-source.test.mjs tests/docs-analytics-guides-source.test.mjs tests/platform-analytics-docs-source.test.mjs tests/platform-docs-production-alignment-source.test.mjs tests/tiktok-analytics-docs-source.test.mjs tests/youtube-analytics-dashboard-source.test.mjs tests/youtube-analytics-docs-blog-source.test.mjs tests/youtube-analytics-regression-source.test.mjs",
     "test:team-plan": "node --test tests/team-plan-contract-source.test.mjs tests/enterprise-pricing-source.test.mjs",
     "test:team-plan-acceptance": "node --test tests/team-plan-acceptance.test.mjs",
+    "test:admin-email-filters": "node --test tests/admin-email-filters.test.mjs",
     "acceptance:team-plan": "node scripts/team-plan-acceptance.mjs",
     "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts",
     "test:regression:preview": "playwright test --config=playwright.preview.config.ts"

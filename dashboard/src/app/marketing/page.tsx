@@ -14,18 +14,17 @@ import { MarketingCTA, PublicSiteHeader } from "@/components/marketing/nav";
 const HOMEPAGE_TITLE = "UniPost | Social Media Posting API for Developers";
 const HOMEPAGE_DESCRIPTION =
   "UniPost gives developers one API to connect customer social accounts, upload media, schedule posts, and publish across major social platforms.";
-const HOMEPAGE_URL = "https://unipost.dev/";
 
 export const metadata: Metadata = {
   title: HOMEPAGE_TITLE,
   description: HOMEPAGE_DESCRIPTION,
   alternates: {
-    canonical: HOMEPAGE_URL,
+    canonical: "https://unipost.dev/",
   },
   openGraph: {
     title: HOMEPAGE_TITLE,
     description: HOMEPAGE_DESCRIPTION,
-    url: HOMEPAGE_URL,
+    url: "https://unipost.dev/",
     siteName: "UniPost",
     type: "website",
   },

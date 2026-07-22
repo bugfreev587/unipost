@@ -41,6 +41,14 @@ test("CI covers every integration branch without production runtime targets", as
   );
 });
 
+test("CI makes the dashboard SEO regression blocking", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  assert.match(
+    workflow,
+    /Run dashboard SEO source regression[\s\S]*npm run test:seo/,
+  );
+});
+
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
   for (const event of [
@@ -95,6 +103,7 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
   assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
   assert.doesNotMatch(previewConfig, /extraHTTPHeaders/);
+  assert.match(previewConfig, /seo-preview\.spec\.ts/);
   assert.match(
     previewConfig,
     /trace:\s*"off"/,
@@ -111,6 +120,24 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
     "preview tests must strip accidental whitespace from the automation bypass secret",
   );
 
+  const seoPreviewTest = await read(
+    "dashboard/tests/regression/seo-preview.spec.ts",
+  );
+  assert.match(seoPreviewTest, /\/sitemap\.xml/);
+  assert.match(seoPreviewTest, /maxRedirects:\s*0/);
+  assert.match(seoPreviewTest, /noindex/i);
+  assert.match(seoPreviewTest, /UniPost \| Social Media Posting API for Developers/);
+  assert.match(
+    seoPreviewTest,
+    /VERCEL_AUTOMATION_BYPASS_SECRET\?\.trim\(\)/,
+    "SEO preview tests must strip accidental whitespace from the automation bypass secret",
+  );
+  assert.doesNotMatch(
+    seoPreviewTest,
+    /x-vercel-set-bypass-cookie/,
+    "SEO API requests must not ask Vercel to set a bypass cookie because the cookie handshake is a same-path redirect",
+  );
+
   const previewManifest = await read("scripts/preview/write-manifest.mjs");
   assert.match(
     previewManifest,
@@ -124,9 +151,6 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
   const config = await read("dashboard/playwright.regression.config.ts");
-  assert.match(
-    config,
-    /testIgnore:\s*["']preview-environment\.spec\.ts["']/,
-    "dashboard regression would collect the preview-only spec without its required deployment identity",
-  );
+  assert.match(config, /testIgnore:\s*\[[\s\S]*preview-environment\.spec\.ts/);
+  assert.match(config, /testIgnore:\s*\[[\s\S]*seo-preview\.spec\.ts/);
 });

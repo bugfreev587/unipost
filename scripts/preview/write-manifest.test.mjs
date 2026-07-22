@@ -18,12 +18,12 @@ test("creates a non-secret manifest for one preview SHA", () => {
 test("creates a non-secret manifest for a hotfix sync branch", () => {
   assert.deepEqual(createPreviewManifest({
     sha: "b".repeat(40),
-    branch: "hotfix-seo-rescue-20260719",
-    apiURL: "https://api-pr-223.up.railway.app",
+    branch: "hotfix-public-canonical-20260719",
+    apiURL: "https://api-pr-229.up.railway.app",
   }), {
     sha: "b".repeat(40),
-    branch: "hotfix-seo-rescue-20260719",
-    apiURL: "https://api-pr-223.up.railway.app",
+    branch: "hotfix-public-canonical-20260719",
+    apiURL: "https://api-pr-229.up.railway.app",
   });
 });
 
