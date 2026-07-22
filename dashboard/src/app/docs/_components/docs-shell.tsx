@@ -390,6 +390,16 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
   ],
   guides: [
     {
+      title: "Inbox Guides",
+      description: "Connect app users and keep every managed user's conversations isolated.",
+      items: [
+        { label: "Inbox integration", href: "/docs/guides/inbox-integration" },
+        { label: "X comments", href: "/docs/guides/x/comments" },
+        { label: "X direct messages", href: "/docs/guides/x/direct-messages" },
+        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions" },
+      ],
+    },
+    {
       title: "Analytics Guides",
       description: "Task-oriented docs that point back to UniPost's unified Analytics API.",
       items: [
@@ -418,9 +428,6 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
       description: "Plan managed-X usage and follow the phased X Inbox rollout.",
       items: [
         { label: "X Credits", href: "/docs/guides/x/credits" },
-        { label: "X comments", href: "/docs/guides/x/comments" },
-        { label: "X direct messages", href: "/docs/guides/x/direct-messages" },
-        { label: "Reconnect X permissions", href: "/docs/guides/x/reconnect-permissions" },
       ],
     },
   ],
