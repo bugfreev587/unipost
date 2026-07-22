@@ -1,3 +1,4 @@
+import Link from "next/link";
 import {
   ApiReferencePage,
   ApiReferenceGrid,
@@ -24,7 +25,7 @@ const AVAILABILITY_FIELDS: ApiFieldItem[] = [
     name: "Auth model",
     type: "Bearer <token>",
     meta: "In header",
-    description: "Use a workspace API key or authenticated dashboard token. Keep API keys server-side, and derive the authenticated app user's external_user_id instead of accepting arbitrary client input.",
+    description: "HTTP requests use a workspace API key or authenticated dashboard token. Customer WebSocket backends send the API key in the Authorization header; the UniPost Dashboard sends its Clerk session token in the token query field. Keep API keys server-side, map the authenticated app user to external_user_id, and never put API keys in a URL.",
   },
   {
     name: "Scope model",
@@ -37,22 +38,27 @@ const ENDPOINT_FIELDS: ApiFieldItem[] = [
   {
     name: "GET /v1/inbox",
     type: "list",
-    description: <>List inbox items for the current workspace. See the <a href="/docs/api/inbox/list">endpoint reference</a>.</>,
+    description: <>List inbox items for the selected scope. See the <a href="/docs/api/inbox/list">endpoint reference</a>.</>,
   },
   {
     name: "GET /v1/inbox/unread-count",
     type: "read",
-    description: "Return the current unread item count for sidebar badges and notification surfaces.",
-  },
-  {
-    name: "POST /v1/inbox/sync",
-    type: "sync",
-    description: <>Trigger polling or a bounded X backfill. See the <a href="/docs/api/inbox/sync">endpoint reference</a>.</>,
+    description: "Return the unread item count for the selected scope.",
   },
   {
     name: "GET /v1/inbox/{id}",
     type: "read",
-    description: "Fetch a single normalized inbox item.",
+    description: "Fetch one item only when it belongs to the selected scope.",
+  },
+  {
+    name: "POST /v1/inbox/{id}/read",
+    type: "write",
+    description: "Mark one item in the selected scope as read.",
+  },
+  {
+    name: "POST /v1/inbox/mark-all-read",
+    type: "write",
+    description: "Mark every item in the selected scope as read.",
   },
   {
     name: "POST /v1/inbox/{id}/reply",
@@ -62,7 +68,27 @@ const ENDPOINT_FIELDS: ApiFieldItem[] = [
   {
     name: "POST /v1/inbox/{id}/thread-state",
     type: "workflow",
-    description: "Update workflow state such as open, assigned, or resolved.",
+    description: "Update scoped workflow state such as open, assigned, or resolved.",
+  },
+  {
+    name: "GET /v1/inbox/{id}/media-context",
+    type: "read",
+    description: "Fetch scoped media context for a supported Inbox item.",
+  },
+  {
+    name: "POST /v1/inbox/sync",
+    type: "sync",
+    description: <>Trigger selected-scope polling or a bounded X backfill. See the <a href="/docs/api/inbox/sync">endpoint reference</a>.</>,
+  },
+  {
+    name: "GET /v1/inbox/x-outbound-operations/{requestID}",
+    type: "read",
+    description: "Inspect the durable outcome of a scoped X reply operation.",
+  },
+  {
+    name: "GET /v1/inbox/ws",
+    type: "realtime",
+    description: "Subscribe to events for one explicit Inbox scope.",
   },
 ];
 
@@ -158,7 +184,7 @@ const RESPONSE_FIELDS: ApiFieldItem[] = [
 ];
 
 const ERROR_FIELDS: ApiFieldItem[] = [
-  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED when API-key scope is omitted; also INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, FEATURE_NOT_AVAILABLE, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
+  { name: "error.code", type: "string", description: "INBOX_SCOPE_REQUIRED when API-key scope is omitted; also INBOX_SCOPE_INVALID, INBOX_SCOPE_LOOKUP_FAILED, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, FEATURE_NOT_AVAILABLE, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." },
   { name: "error.message", type: "string", description: "Human-readable error message." },
   { name: "request_id", type: "string", description: "Request identifier for debugging and support." },
 ];
@@ -228,6 +254,17 @@ const RESPONSE_SNIPPETS = [
   "request_id": "req_123"
 }`,
   },
+  {
+    lang: "json",
+    label: "500",
+    code: `{
+  "error": {
+    "code": "INBOX_SCOPE_LOOKUP_FAILED",
+    "message": "Unable to resolve Inbox access scope"
+  },
+  "request_id": "req_123"
+}`,
+  },
 ];
 
 export default async function InboxPage() {
@@ -267,7 +304,7 @@ export default async function InboxPage() {
   ));
   const errorFields = ERROR_FIELDS.map((field) => (
     field.name === "error.code" && !xDMsEnabled
-      ? { ...field, description: "INBOX_SCOPE_REQUIRED when API-key scope is omitted; also INBOX_SCOPE_INVALID, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." }
+      ? { ...field, description: "INBOX_SCOPE_REQUIRED when API-key scope is omitted; also INBOX_SCOPE_INVALID, INBOX_SCOPE_LOOKUP_FAILED, MANAGED_USER_NOT_FOUND, INSUFFICIENT_ROLE, API_KEY_CREATOR_REQUIRED, UNAUTHORIZED, PLAN_FEATURE_NOT_AVAILABLE, or VALIDATION_ERROR." }
       : field
   ));
 
@@ -299,6 +336,23 @@ export default async function InboxPage() {
               <section className="api-field-section">
                 <h2 className="api-field-section-title">Query params</h2>
                 <ApiFieldList items={queryFields} />
+              </section>
+
+              <section className="api-field-section">
+                <h2 className="api-field-section-title">Scope and authentication order</h2>
+                <p>
+                  Authentication and explicit scope resolution run before the Inbox plan gate. A request that is both
+                  mis-scoped and plan-ineligible therefore returns the scope error before <code>402</code>.
+                </p>
+                <p>
+                  <code>INBOX_SCOPE_LOOKUP_FAILED</code> is a transient <code>500</code> produced before the selected
+                  endpoint runs. Retry the same request with bounded exponential backoff. Do not treat every
+                  <code> 5xx</code> as safe to retry, especially after an uncertain write outcome.
+                </p>
+                <p>
+                  For the complete server boundary, Connect Session, real-time relay, and owner/admin workflow, follow
+                  the <Link href="/docs/guides/inbox-integration">Inbox integration guide</Link>.
+                </p>
               </section>
             </div>
 

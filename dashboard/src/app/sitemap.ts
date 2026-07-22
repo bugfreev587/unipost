@@ -21,6 +21,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { path: "/blog", changeFrequency: "weekly", priority: 0.7 },
     { path: "/docs", changeFrequency: "weekly", priority: 0.9 },
     { path: "/docs/api/x-credits", changeFrequency: "monthly", priority: 0.7 },
+    { path: "/docs/guides/inbox-integration", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/guides/x/credits", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/api/inbox/list", changeFrequency: "monthly", priority: 0.7 },
     { path: "/docs/api/inbox/reply", changeFrequency: "monthly", priority: 0.7 },

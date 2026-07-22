@@ -102,6 +102,39 @@ const platformCapabilitySummary = Object.entries(PLATFORM_METRICS)
 
 export const DOCS_AI_INDEX: DocsAiChunk[] = [
   chunk({
+    id: "guide-inbox-managed-user-integration",
+    title: "Isolate each managed user's Inbox in your app",
+    path: "/docs/guides/inbox-integration",
+    section_id: "backend-boundary",
+    primary_nav: "Guides",
+    section_title: "Managed-user Inbox boundary",
+    product_area: "inbox",
+    tags: ["managed user inbox", "inbox isolation", "app integration", "external_user_id", "managed_user"],
+    intent_tags: ["reference"],
+    endpoint_aliases: [
+      "POST /v1/connect/sessions",
+      "GET /v1/inbox",
+      "GET /v1/inbox/ws",
+      "POST /v1/inbox/{id}/reply",
+    ],
+    platforms: ["twitter", "instagram", "threads", "facebook"],
+    content: "To isolate each managed user's Inbox, derive one stable external_user_id from the authenticated app user on the server, reuse it in the Connect Session, keep the workspace API key server-side, and send inbox_scope=managed_user plus that external_user_id on every Inbox HTTP and WebSocket request. The browser must not choose an arbitrary UniPost scope or receive the API key.",
+  }),
+  chunk({
+    id: "guide-inbox-owner-admin-aggregate",
+    title: "Build an owner or admin Inbox aggregate",
+    path: "/docs/guides/inbox-integration",
+    section_id: "aggregate",
+    primary_nav: "Guides",
+    section_title: "Owner/admin aggregate",
+    product_area: "inbox",
+    tags: ["inbox aggregate", "workspace inbox", "owner admin inbox", "workspace scope"],
+    intent_tags: ["auth", "reference"],
+    endpoint_aliases: ["GET /v1/inbox", "GET /v1/inbox/ws"],
+    platforms: ["twitter", "instagram", "threads", "facebook"],
+    content: "Expose an aggregate Inbox only after the app verifies its own owner or admin role. The server calls UniPost with inbox_scope=workspace and no external_user_id, using a creator-bound API key whose creator is still a UniPost owner or admin. Keep aggregate handlers separate from managed-user handlers.",
+  }),
+  chunk({
     id: "api-inbox-list-x",
     title: "List Inbox items",
     path: "/docs/api/inbox/list",
@@ -1286,6 +1319,41 @@ function answerForCredentialsTask(query: string) {
   return null;
 }
 
+function answerForInboxTask(query: string, search: DocsAiSearchResult) {
+  const normalizedQuery = normalize(query);
+  const hasIntegrationGuide = search.hits.some((hit) => hit.chunk.id === "guide-inbox-managed-user-integration");
+  const asksForManagedUserIsolation = /\bmanaged user(?:'s|s)?\b|\bisolat|\bexternal_user_id\b/.test(normalizedQuery);
+
+  if (hasIntegrationGuide && asksForManagedUserIsolation) {
+    return {
+      answer:
+        "Derive one stable external_user_id from the authenticated app user on your server, reuse it for the Connect Session, and send inbox_scope=managed_user plus that external_user_id on every UniPost Inbox HTTP and WebSocket request. Keep the workspace API key server-side so the browser cannot choose another managed user's scope.",
+      steps: [
+        "Create the user's Connect Session from your backend with the app-derived external_user_id.",
+        "Proxy Inbox reads and writes through a server helper that always adds inbox_scope=managed_user and the same external_user_id.",
+        "Open the scoped Inbox WebSocket from your backend with the API key in the Authorization header, then relay only to that app user.",
+        "Verify synthetic user A cannot list, fetch, mutate, or receive real-time events for synthetic user B.",
+      ],
+    };
+  }
+
+  const hasAggregateGuide = search.hits.some((hit) => hit.chunk.id === "guide-inbox-owner-admin-aggregate");
+  const asksForAggregate = /\baggregate\b|\bowner\b|\badmin\b|\bworkspace scope\b/.test(normalizedQuery);
+  if (hasAggregateGuide && asksForAggregate) {
+    return {
+      answer:
+        "Expose an aggregate Inbox only after your app verifies its own owner or admin role. The server calls UniPost with inbox_scope=workspace and no external_user_id, using a creator-bound API key whose creator is still a UniPost owner or admin.",
+      steps: [
+        "Authorize the owner or admin in your application before calling UniPost.",
+        "Use a separate backend handler for inbox_scope=workspace and omit external_user_id.",
+        "Keep managed-user handlers on inbox_scope=managed_user so normal users cannot reach the aggregate path.",
+      ],
+    };
+  }
+
+  return null;
+}
+
 function answerForAnalyticsTask(query: string) {
   const normalizedQuery = normalize(query);
 
@@ -1369,6 +1437,11 @@ function answerForAnalyticsTask(query: string) {
 }
 
 function answerForKnownTask(query: string, search: DocsAiSearchResult) {
+  if (search.intent === "reference" || search.intent === "auth") {
+    const inboxAnswer = answerForInboxTask(query, search);
+    if (inboxAnswer) return inboxAnswer;
+  }
+
   if (search.intent === "connect" || search.intent === "reference") {
     const connectAnswer = answerForConnectTask(query, search);
     if (connectAnswer && search.hits.some((hit) => hit.chunk.intent_tags.includes("connect"))) return connectAnswer;
