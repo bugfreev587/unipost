@@ -3,6 +3,7 @@ package xinbox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,62 @@ import (
 	"testing"
 	"time"
 )
+
+func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
+	const (
+		bearerToken = "super-secret-bearer"
+		detail      = "provider detail must stay private"
+		bodySecret  = "raw response body must stay private"
+	)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+bearerToken {
+			t.Fatalf("Authorization = %q", got)
+		}
+		if r.Method != http.MethodGet || r.URL.Path != "/2/activity/subscriptions" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = fmt.Fprintf(w, `{"errors":[{"code":"client-not-enrolled","title":"Forbidden","status":403,"detail":%q},{"code":"ignored-second-error","title":"Ignored","status":429}],"debug":%q}`, detail, bodySecret)
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	_, err := client.ListActivitySubscriptions(context.Background(), bearerToken)
+	if err == nil {
+		t.Fatal("expected provider HTTP error")
+	}
+	var providerErr *ProviderHTTPError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
+	}
+	if providerErr.Method != http.MethodGet || providerErr.Path != "/2/activity/subscriptions" ||
+		providerErr.StatusCode != http.StatusForbidden || providerErr.Code != "client-not-enrolled" ||
+		providerErr.Title != "Forbidden" {
+		t.Fatalf("provider error = %+v", providerErr)
+	}
+	if !IsProviderHTTPStatus(fmt.Errorf("wrapped: %w", err), http.StatusForbidden) {
+		t.Fatal("wrapped provider error did not match HTTP 403")
+	}
+	message := err.Error()
+	for _, want := range []string{http.MethodGet, "/2/activity/subscriptions", "403", "client-not-enrolled", "Forbidden"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("error %q does not contain %q", message, want)
+		}
+	}
+	for _, forbidden := range []string{
+		"Authorization",
+		"Bearer",
+		bearerToken,
+		detail,
+		bodySecret,
+		"max_results=",
+		"ignored-second-error",
+	} {
+		if strings.Contains(message, forbidden) {
+			t.Errorf("error %q leaked %q", message, forbidden)
+		}
+	}
+}
 
 func TestXClientEnsureWebhookDiscoversConfiguredURL(t *testing.T) {
 	var calls int
@@ -455,6 +512,60 @@ func TestXClientDeleteActivitySubscriptionRequiresConfirmedDeletedTrue(t *testin
 			err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestDeleteActivitySubscriptionIdempotentProviderStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/subscription-1" {
+					t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"errors":[{"code":"cleanup-denied","title":"Cleanup denied","status":403,"detail":"private provider detail"}]}`))
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
+			if status == http.StatusForbidden {
+				if err == nil || !IsProviderHTTPStatus(err, http.StatusForbidden) {
+					t.Fatalf("err = %v, want provider HTTP 403", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want idempotent success", err)
+			}
+		})
+	}
+}
+
+func TestDeleteWebhookIdempotentProviderStatuses(t *testing.T) {
+	for _, status := range []int{http.StatusNoContent, http.StatusNotFound, http.StatusGone, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete || r.URL.Path != "/2/webhooks/webhook-1" {
+					t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"errors":[{"code":"cleanup-denied","title":"Cleanup denied","status":403,"detail":"private provider detail"}]}`))
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			err := client.DeleteWebhook(context.Background(), "app-token", "webhook-1")
+			if status == http.StatusForbidden {
+				if err == nil || !IsProviderHTTPStatus(err, http.StatusForbidden) {
+					t.Fatalf("err = %v, want provider HTTP 403", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("err = %v, want success", err)
 			}
 		})
 	}

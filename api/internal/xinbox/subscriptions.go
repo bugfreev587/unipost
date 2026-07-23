@@ -134,6 +134,15 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 	return wrapped.Data, nil
 }
 
+func (c *Client) DeleteWebhook(ctx context.Context, appBearerToken, webhookID string) error {
+	path := "/2/webhooks/" + url.PathEscape(webhookID)
+	err := c.doJSON(ctx, http.MethodDelete, path, appBearerToken, nil, nil)
+	if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
+		return nil
+	}
+	return err
+}
+
 func (c *Client) ListActivitySubscriptions(
 	ctx context.Context,
 	appBearerToken string,
@@ -265,6 +274,9 @@ func (c *Client) DeleteActivitySubscription(
 	}
 	status, err := c.do(ctx, http.MethodDelete, path, appBearerToken, nil, &response)
 	if err != nil {
+		if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
+			return nil
+		}
 		return err
 	}
 	if isIdempotentDeleteStatus(status) {
