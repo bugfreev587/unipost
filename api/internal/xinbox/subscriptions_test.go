@@ -480,22 +480,25 @@ func TestXClientDeleteActivitySubscriptionIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestXClientDeleteActivitySubscriptionRequiresConfirmedDeletedTrue(t *testing.T) {
+func TestXClientDeleteActivitySubscriptionAcceptsAny2xx(t *testing.T) {
 	tests := []struct {
-		name    string
-		body    string
-		wantErr bool
+		name   string
+		status int
+		body   string
 	}{
-		{name: "confirmed", body: `{"data":{"deleted":true},"meta":{"total_subscriptions":0}}`},
-		{name: "deleted false", body: `{"data":{"deleted":false}}`, wantErr: true},
+		{name: "confirmed JSON", status: http.StatusOK, body: `{"data":{"deleted":true},"meta":{"total_subscriptions":0}}`},
+		{name: "empty 200", status: http.StatusOK},
+		{name: "no content", status: http.StatusNoContent},
+		{name: "deleted false", status: http.StatusOK, body: `{"data":{"deleted":false}}`},
 		{
-			name:    "partial 200 error",
-			body:    `{"data":{"deleted":true},"errors":[{"title":"Invalid Request","type":"https://api.x.com/2/problems/invalid-request","detail":"partial failure","status":400}]}`,
-			wantErr: true,
+			name:   "partial 200 error body",
+			status: http.StatusOK,
+			body:   `{"data":{"deleted":true},"errors":[{"title":"Invalid Request","type":"https://api.x.com/2/problems/invalid-request","detail":"partial failure","status":400}]}`,
 		},
 		{
-			name: "explicit already missing",
-			body: `{"errors":[{"resource_id":"subscription-1","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"subscription missing","status":404}]}`,
+			name:   "explicit already missing body",
+			status: http.StatusOK,
+			body:   `{"errors":[{"resource_id":"subscription-1","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"subscription missing","status":404}]}`,
 		},
 	}
 	for _, tt := range tests {
@@ -504,14 +507,16 @@ func TestXClientDeleteActivitySubscriptionRequiresConfirmedDeletedTrue(t *testin
 				if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
 					t.Fatalf("Authorization = %q, want app bearer", got)
 				}
-				_, _ = w.Write([]byte(tt.body))
+				w.WriteHeader(tt.status)
+				if tt.body != "" {
+					_, _ = w.Write([]byte(tt.body))
+				}
 			}))
 			defer server.Close()
 
 			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-			err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			if err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1"); err != nil {
+				t.Fatalf("err = %v, want 2xx success", err)
 			}
 		})
 	}

@@ -266,33 +266,9 @@ func (c *Client) DeleteActivitySubscription(
 	subscriptionID string,
 ) error {
 	path := "/2/activity/subscriptions/" + url.PathEscape(subscriptionID)
-	var response struct {
-		Data struct {
-			Deleted bool `json:"deleted"`
-		} `json:"data"`
-		Errors []APIError `json:"errors"`
-	}
-	status, err := c.do(ctx, http.MethodDelete, path, appBearerToken, nil, &response)
-	if err != nil {
-		if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
-			return nil
-		}
-		return err
-	}
-	if isIdempotentDeleteStatus(status) {
+	err := c.doJSON(ctx, http.MethodDelete, path, appBearerToken, nil, nil)
+	if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
 		return nil
 	}
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("X delete activity subscription returned HTTP %d", status)
-	}
-	if len(response.Errors) > 0 {
-		if allErrorsAlreadyMissing(response.Errors, subscriptionID) {
-			return nil
-		}
-		return errors.New("X delete activity subscription returned errors without confirmed deletion")
-	}
-	if !response.Data.Deleted {
-		return errors.New("X delete activity subscription response did not confirm deleted=true")
-	}
-	return nil
+	return err
 }
