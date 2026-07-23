@@ -100,7 +100,7 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 	}
 
 	var raw json.RawMessage
-	status, err := c.do(
+	_, err = c.do(
 		ctx,
 		http.MethodPost,
 		"/2/webhooks",
@@ -110,9 +110,6 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 	)
 	if err != nil {
 		return Webhook{}, err
-	}
-	if status < 200 || status >= 300 {
-		return Webhook{}, fmt.Errorf("X API POST /2/webhooks returned HTTP %d", status)
 	}
 	var direct Webhook
 	if err := json.Unmarshal(raw, &direct); err != nil {
@@ -135,6 +132,9 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 }
 
 func (c *Client) DeleteWebhook(ctx context.Context, appBearerToken, webhookID string) error {
+	if err := validateProviderResourceID(webhookID); err != nil {
+		return err
+	}
 	path := "/2/webhooks/" + url.PathEscape(webhookID)
 	err := c.doJSON(ctx, http.MethodDelete, path, appBearerToken, nil, nil)
 	if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
@@ -265,10 +265,21 @@ func (c *Client) DeleteActivitySubscription(
 	appBearerToken string,
 	subscriptionID string,
 ) error {
+	if err := validateProviderResourceID(subscriptionID); err != nil {
+		return err
+	}
 	path := "/2/activity/subscriptions/" + url.PathEscape(subscriptionID)
 	err := c.doJSON(ctx, http.MethodDelete, path, appBearerToken, nil, nil)
 	if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
 		return nil
 	}
 	return err
+}
+
+func validateProviderResourceID(resourceID string) error {
+	if resourceID == "" || resourceID != strings.TrimSpace(resourceID) || resourceID == "." ||
+		resourceID == ".." || strings.ContainsAny(resourceID, "/?#") {
+		return errors.New("X provider resource ID is invalid")
+	}
+	return nil
 }

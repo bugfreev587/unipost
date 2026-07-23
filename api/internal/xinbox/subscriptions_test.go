@@ -5,13 +5,32 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+type trackingReadCloser struct {
+	reader    io.Reader
+	bytesRead int
+	closed    bool
+}
+
+func (b *trackingReadCloser) Read(p []byte) (int, error) {
+	n, err := b.reader.Read(p)
+	b.bytesRead += n
+	return n, err
+}
+
+func (b *trackingReadCloser) Close() error {
+	b.closed = true
+	return nil
+}
 
 func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 	const (
@@ -66,6 +85,118 @@ func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 		if strings.Contains(message, forbidden) {
 			t.Errorf("error %q leaked %q", message, forbidden)
 		}
+	}
+}
+
+func TestProviderTransportErrorIsSecretSafeAndPreservesCause(t *testing.T) {
+	const (
+		secretQuery = "cursor=secret-query-value"
+		bearerToken = "secret-bearer-value"
+	)
+	cause := errors.New("dial failed")
+	client := NewClient(ClientConfig{
+		BaseURL: "https://api.x.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			return nil, &url.Error{
+				Op:  "round trip",
+				URL: request.URL.String(),
+				Err: cause,
+			}
+		})},
+	})
+
+	err := client.doJSON(
+		context.Background(),
+		http.MethodGet,
+		"/2/webhooks?"+secretQuery,
+		bearerToken,
+		nil,
+		nil,
+	)
+	if !errors.Is(err, cause) {
+		t.Fatalf("err = %v, want wrapped transport cause", err)
+	}
+	message := err.Error()
+	for _, want := range []string{http.MethodGet, "/2/webhooks", cause.Error()} {
+		if !strings.Contains(message, want) {
+			t.Errorf("error %q does not contain %q", message, want)
+		}
+	}
+	for _, forbidden := range []string{secretQuery, "secret-query-value", bearerToken, "https://api.x.test"} {
+		if strings.Contains(message, forbidden) {
+			t.Errorf("error %q leaked %q", message, forbidden)
+		}
+	}
+}
+
+func TestProviderRequestErrorIsSecretSafe(t *testing.T) {
+	const (
+		secretQuery = "secret-query-value"
+		bearerToken = "secret-bearer-value"
+	)
+	client := NewClient(ClientConfig{BaseURL: "https://api.x.test"})
+	err := client.doJSON(
+		context.Background(),
+		http.MethodGet,
+		"/2/webhooks?cursor="+secretQuery+"\n",
+		bearerToken,
+		nil,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("expected request construction error")
+	}
+	message := err.Error()
+	for _, want := range []string{http.MethodGet, "/2/webhooks"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("error %q does not contain %q", message, want)
+		}
+	}
+	for _, forbidden := range []string{secretQuery, bearerToken, "cursor="} {
+		if strings.Contains(message, forbidden) {
+			t.Errorf("error %q leaked %q", message, forbidden)
+		}
+	}
+}
+
+func TestProviderHTTPErrorBodyIsBoundedAndClosed(t *testing.T) {
+	const responseLimit = 64
+	payload := `{"errors":[{"title":"` + strings.Repeat("x", 1024)
+	body := &trackingReadCloser{reader: strings.NewReader(payload)}
+	client := NewClient(ClientConfig{
+		BaseURL:              "https://api.x.test",
+		MaxJSONResponseBytes: responseLimit,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
+		})},
+	})
+
+	err := client.doJSON(context.Background(), http.MethodGet, "/2/webhooks", "app-token", nil, nil)
+	var providerErr *ProviderHTTPError
+	if !errors.As(err, &providerErr) || providerErr.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("err = %v, want provider HTTP 500", err)
+	}
+	if body.bytesRead > responseLimit || body.bytesRead >= len(payload) {
+		t.Fatalf("bytes read = %d, want bounded at %d of %d", body.bytesRead, responseLimit, len(payload))
+	}
+	if !body.closed {
+		t.Fatal("provider error response body was not closed")
+	}
+}
+
+func TestIsProviderHTTPStatusHandlesTypedNil(t *testing.T) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("IsProviderHTTPStatus panicked for typed nil: %v", recovered)
+		}
+	}()
+	var providerErr *ProviderHTTPError
+	if IsProviderHTTPStatus(providerErr, http.StatusNotFound) {
+		t.Fatal("typed nil must not match a provider HTTP status")
 	}
 }
 
@@ -549,8 +680,81 @@ func TestDeleteActivitySubscriptionIdempotentProviderStatuses(t *testing.T) {
 	}
 }
 
+func TestDeleteProviderResourceIDValidation(t *testing.T) {
+	deletes := []struct {
+		name   string
+		delete func(*Client, string) error
+	}{
+		{
+			name: "webhook",
+			delete: func(client *Client, resourceID string) error {
+				return client.DeleteWebhook(context.Background(), "app-token", resourceID)
+			},
+		},
+		{
+			name: "activity subscription",
+			delete: func(client *Client, resourceID string) error {
+				return client.DeleteActivitySubscription(context.Background(), "app-token", resourceID)
+			},
+		},
+	}
+	invalidIDs := []string{"", " ", "\t", ".", "..", "provider/id", "provider?id", "provider#id"}
+	for _, deleteCase := range deletes {
+		t.Run(deleteCase.name, func(t *testing.T) {
+			for _, resourceID := range invalidIDs {
+				t.Run(fmt.Sprintf("invalid_%q", resourceID), func(t *testing.T) {
+					calls := 0
+					client := NewClient(ClientConfig{
+						BaseURL: "https://api.x.test",
+						HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+							calls++
+							return &http.Response{
+								StatusCode: http.StatusNoContent,
+								Header:     make(http.Header),
+								Body:       io.NopCloser(strings.NewReader("")),
+							}, nil
+						})},
+					})
+					if err := deleteCase.delete(client, resourceID); err == nil {
+						t.Fatal("expected invalid provider resource ID error")
+					}
+					if calls != 0 {
+						t.Fatalf("provider calls = %d, want 0", calls)
+					}
+				})
+			}
+
+			calls := 0
+			client := NewClient(ClientConfig{
+				BaseURL: "https://api.x.test",
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					calls++
+					return &http.Response{
+						StatusCode: http.StatusNoContent,
+						Header:     make(http.Header),
+						Body:       io.NopCloser(strings.NewReader("")),
+					}, nil
+				})},
+			})
+			if err := deleteCase.delete(client, "provider-123_ABC"); err != nil {
+				t.Fatalf("valid provider ID: %v", err)
+			}
+			if calls != 1 {
+				t.Fatalf("provider calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
 func TestDeleteWebhookIdempotentProviderStatuses(t *testing.T) {
-	for _, status := range []int{http.StatusNoContent, http.StatusNotFound, http.StatusGone, http.StatusForbidden} {
+	for _, status := range []int{
+		http.StatusOK,
+		http.StatusAccepted,
+		http.StatusNoContent,
+		http.StatusNotFound,
+		http.StatusGone,
+		http.StatusForbidden,
+	} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodDelete || r.URL.Path != "/2/webhooks/webhook-1" {

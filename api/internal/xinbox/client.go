@@ -90,6 +90,9 @@ type ProviderHTTPError struct {
 }
 
 func (e *ProviderHTTPError) Error() string {
+	if e == nil {
+		return "X provider HTTP error"
+	}
 	message := fmt.Sprintf("X API %s %s returned HTTP %d", e.Method, e.Path, e.StatusCode)
 	if e.Code != "" {
 		message += fmt.Sprintf(" code=%q", e.Code)
@@ -102,7 +105,7 @@ func (e *ProviderHTTPError) Error() string {
 
 func IsProviderHTTPStatus(err error, status int) bool {
 	var providerErr *ProviderHTTPError
-	return errors.As(err, &providerErr) && providerErr.StatusCode == status
+	return errors.As(err, &providerErr) && providerErr != nil && providerErr.StatusCode == status
 }
 
 func NewClient(config ClientConfig) *Client {
@@ -243,18 +246,12 @@ func (c *Client) DeleteFilteredStreamRule(ctx context.Context, bearerToken, rule
 			} `json:"summary"`
 		} `json:"meta"`
 	}
-	status, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, &response)
+	_, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, &response)
 	if err != nil {
 		if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
 			return nil
 		}
 		return err
-	}
-	if isIdempotentDeleteStatus(status) {
-		return nil
-	}
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("X delete filtered stream rule returned HTTP %d", status)
 	}
 	if len(response.Errors) > 0 {
 		if allErrorsAlreadyMissing(response.Errors, ruleID) {
@@ -280,13 +277,14 @@ func (c *Client) ConsumeFilteredStream(
 		"expansions":   {"author_id,referenced_tweets.id,referenced_tweets.id.author_id"},
 		"user.fields":  {"id,name,username,profile_image_url"},
 	}
-	request, err := c.newRequest(streamCtx, http.MethodGet, "/2/tweets/search/stream?"+query.Encode(), bearerToken, nil)
+	path := "/2/tweets/search/stream?" + query.Encode()
+	request, err := c.newRequest(streamCtx, http.MethodGet, path, bearerToken, nil)
 	if err != nil {
 		return err
 	}
 	response, err := c.streamHTTP.Do(request)
 	if err != nil {
-		return fmt.Errorf("open X filtered stream: %w", err)
+		return wrapProviderRequestError(http.MethodGet, path, "open stream failed", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -387,7 +385,7 @@ func (c *Client) do(
 	}
 	response, err := c.controlHTTP.Do(request)
 	if err != nil {
-		return 0, fmt.Errorf("X API %s %s: %w", method, safePath, err)
+		return 0, wrapProviderRequestError(method, safePath, "request failed", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -399,7 +397,7 @@ func (c *Client) do(
 		decodeProviderHTTPError(response.Body, c.maxJSONResponseBytes, providerErr)
 		return response.StatusCode, providerErr
 	}
-	if responseBody != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+	if responseBody != nil {
 		limited := &io.LimitedReader{R: response.Body, N: c.maxJSONResponseBytes + 1}
 		payload, readErr := io.ReadAll(limited)
 		if readErr != nil {
@@ -429,6 +427,17 @@ func providerRequestPath(path string) string {
 	path, _, _ = strings.Cut(path, "?")
 	path, _, _ = strings.Cut(path, "#")
 	return path
+}
+
+func wrapProviderRequestError(method, path, operation string, cause error) error {
+	for {
+		urlErr, ok := cause.(*url.Error)
+		if !ok || urlErr == nil || urlErr.Err == nil {
+			break
+		}
+		cause = urlErr.Err
+	}
+	return fmt.Errorf("X API %s %s %s: %w", method, providerRequestPath(path), operation, cause)
 }
 
 func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPError) {
@@ -485,13 +494,13 @@ func (c *Client) newRequest(
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return nil, wrapProviderRequestError(method, path, "encode request failed", err)
 		}
 		reader = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
-		return nil, err
+		return nil, wrapProviderRequestError(method, path, "create request failed", err)
 	}
 	request.Header.Set("Authorization", "Bearer "+bearerToken)
 	if body != nil {
@@ -515,10 +524,6 @@ func newXTransport() *http.Transport {
 		ResponseHeaderTimeout: 10 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
-}
-
-func isIdempotentDeleteStatus(status int) bool {
-	return status == http.StatusNotFound || status == http.StatusGone
 }
 
 func allErrorsAlreadyMissing(apiErrors []APIError, resourceID string) bool {
