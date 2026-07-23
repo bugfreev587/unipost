@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,6 +21,8 @@ type PostgresIngestionStore struct {
 	pool                   *pgxpool.Pool
 	managedWebhookRouteKey string
 }
+
+var _ providerUserIngestionStore = (*PostgresIngestionStore)(nil)
 
 func NewPostgresIngestionStore(
 	queries *db.Queries,
@@ -38,6 +41,9 @@ func (s *PostgresIngestionStore) AccountForApp(
 	routeKey string,
 	accountID string,
 ) (InboxAccount, error) {
+	if s == nil || s.queries == nil {
+		return InboxAccount{}, errors.New("X inbox database queries are not configured")
+	}
 	row, err := s.queries.FindXInboxAccountForApp(ctx, db.FindXInboxAccountForAppParams{
 		AccountID:              accountID,
 		WebhookRouteKey:        routeKey,
@@ -68,6 +74,9 @@ func (s *PostgresIngestionStore) AccountsForProviderUser(
 	routeKey string,
 	providerUserID string,
 ) ([]InboxAccount, error) {
+	if s == nil || s.queries == nil {
+		return nil, errors.New("X inbox database queries are not configured")
+	}
 	rows, err := s.queries.FindXInboxAccountsForProviderUserApp(
 		ctx,
 		db.FindXInboxAccountsForProviderUserAppParams{
@@ -388,8 +397,11 @@ func inboxAccountFromRow(
 	planAllowsInbox bool,
 ) (InboxAccount, error) {
 	mode, err := NormalizePersistedAppMode(appMode)
-	if err != nil || (mode != AppModeUniPostManaged && mode != AppModeWorkspace) {
-		return InboxAccount{}, ErrInboxAccountNotFound
+	if err != nil {
+		return InboxAccount{}, fmt.Errorf("normalize persisted X app mode for account %q: %w", id, err)
+	}
+	if mode != AppModeUniPostManaged && mode != AppModeWorkspace {
+		return InboxAccount{}, fmt.Errorf("X inbox account %q has unsupported persisted app mode %q", id, mode)
 	}
 	return InboxAccount{
 		ID:                id,

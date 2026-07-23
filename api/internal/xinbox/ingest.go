@@ -119,6 +119,11 @@ type providerUserAccountStore interface {
 	AccountsForProviderUser(context.Context, string, string) ([]InboxAccount, error)
 }
 
+type providerUserIngestionStore interface {
+	IngestionStore
+	providerUserAccountStore
+}
+
 type IngestionConfig struct {
 	Store         IngestionStore
 	Admit         func(context.Context, InboundAdmissionRequest) (InboundAdmission, error)
@@ -363,17 +368,20 @@ func (s *IngestionService) admitAndInsertResult(
 }
 
 func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
+	type currentActivityData struct {
+		EventType string `json:"event_type"`
+		Filter    struct {
+			UserID string `json:"user_id"`
+		} `json:"filter"`
+		Tag       string          `json:"tag"`
+		CreatedAt string          `json:"created_at"`
+		Payload   json.RawMessage `json:"payload"`
+	}
 	var envelope struct {
-		Data struct {
-			EventType string `json:"event_type"`
-			Filter    struct {
-				UserID string `json:"user_id"`
-			} `json:"filter"`
-			Tag       string          `json:"tag"`
-			CreatedAt string          `json:"created_at"`
-			Payload   json.RawMessage `json:"payload"`
-		} `json:"data"`
-		ForUserID           string `json:"for_user_id"`
+		Data                json.RawMessage `json:"data"`
+		CurrentEventTypeRaw json.RawMessage `json:"event_type"`
+		CurrentPayloadRaw   json.RawMessage `json:"payload"`
+		ForUserID           string          `json:"for_user_id"`
 		DirectMessageEvents []struct {
 			Type             string `json:"type"`
 			ID               string `json:"id"`
@@ -397,12 +405,24 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("decode X activity envelope: %w", err)
 	}
-	if eventType := strings.TrimSpace(envelope.Data.EventType); eventType != "" && eventType != "dm.received" {
-		return []ActivityEvent{}, nil
-	}
-
-	events := make([]ActivityEvent, 0, 1+len(envelope.DirectMessageEvents))
-	if envelope.Data.EventType == "dm.received" && len(envelope.Data.Payload) > 0 {
+	currentShape := len(envelope.Data) > 0 || len(envelope.CurrentEventTypeRaw) > 0 || len(envelope.CurrentPayloadRaw) > 0
+	if currentShape {
+		var data currentActivityData
+		if len(envelope.Data) > 0 {
+			if err := json.Unmarshal(envelope.Data, &data); err != nil {
+				return nil, fmt.Errorf("%w: decode current X activity data: %v", ErrMalformedEvent, err)
+			}
+		}
+		eventType := strings.TrimSpace(data.EventType)
+		if eventType == "" {
+			return nil, fmt.Errorf("%w: current X activity envelope is missing event_type", ErrMalformedEvent)
+		}
+		if eventType != "dm.received" {
+			return []ActivityEvent{}, nil
+		}
+		if len(data.Payload) == 0 {
+			return nil, fmt.Errorf("%w: dm.received payload is missing", ErrMalformedEvent)
+		}
 		var payload struct {
 			ID               string   `json:"id"`
 			DMEventID        string   `json:"dm_event_id"`
@@ -414,10 +434,10 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 			ParticipantIDs   []string `json:"participant_ids"`
 			Text             string   `json:"text"`
 		}
-		if err := json.Unmarshal(envelope.Data.Payload, &payload); err != nil {
+		if err := json.Unmarshal(data.Payload, &payload); err != nil {
 			return nil, fmt.Errorf("decode X dm.received payload: %w", err)
 		}
-		recipientID := firstNonEmptyString(payload.RecipientID, envelope.Data.Filter.UserID)
+		recipientID := firstNonEmptyString(payload.RecipientID, data.Filter.UserID)
 		if recipientID == "" {
 			for _, participantID := range payload.ParticipantIDs {
 				if participantID != payload.SenderID {
@@ -427,24 +447,23 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 			}
 		}
 		event := ActivityEvent{
-			AccountID:      activityAccountID(envelope.Data.Tag),
-			ExternalUserID: envelope.Data.Filter.UserID,
+			AccountID:      activityAccountID(data.Tag),
+			ExternalUserID: data.Filter.UserID,
 			ExternalID:     firstNonEmptyString(payload.ID, payload.DMEventID),
 			ConversationID: firstNonEmptyString(payload.DMConversationID, payload.ConversationID),
 			SenderID:       payload.SenderID,
 			RecipientID:    recipientID,
 			Text:           payload.Text,
-			CreatedAt:      parseRFC3339(firstNonEmptyString(payload.CreatedAt, envelope.Data.CreatedAt)),
+			CreatedAt:      parseRFC3339(firstNonEmptyString(payload.CreatedAt, data.CreatedAt)),
 		}
 		if event.AccountID == "" || event.ExternalID == "" || event.ExternalUserID == "" || event.SenderID == "" ||
 			event.CreatedAt.IsZero() || (event.ConversationID == "" && event.RecipientID == "") {
 			return nil, fmt.Errorf("%w: dm.received is missing account tag, event id, routing user, participants, conversation, or timestamp", ErrMalformedEvent)
 		}
-		events = append(events, event)
-	} else if envelope.Data.EventType == "dm.received" {
-		return nil, fmt.Errorf("%w: dm.received payload is missing", ErrMalformedEvent)
+		return []ActivityEvent{event}, nil
 	}
 
+	events := make([]ActivityEvent, 0, len(envelope.DirectMessageEvents))
 	for _, dm := range envelope.DirectMessageEvents {
 		if dm.Type != "message_create" {
 			continue

@@ -471,6 +471,7 @@ func TestXIngestLegacyProviderUserRequiresExactlyOneAccountBeforeSideEffects(t *
 				providerErr: test.lookupErr,
 			}
 			admissions := 0
+			atomicCalls := 0
 			notifications := 0
 			service := NewIngestionService(IngestionConfig{
 				Store: store,
@@ -482,6 +483,10 @@ func TestXIngestLegacyProviderUserRequiresExactlyOneAccountBeforeSideEffects(t *
 					admissions++
 					return InboundAdmission{Accepted: true}, nil
 				},
+				AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
+					atomicCalls++
+					return InboundAdmission{Accepted: true}, InboxItem{}, true, nil
+				},
 				Notify: func(context.Context, string, string, InboxItem) { notifications++ },
 			})
 
@@ -492,8 +497,8 @@ func TestXIngestLegacyProviderUserRequiresExactlyOneAccountBeforeSideEffects(t *
 			if !errors.Is(err, test.wantErr) {
 				t.Fatalf("error = %v, want errors.Is(%v)", err, test.wantErr)
 			}
-			if admissions != 0 || len(store.inserted) != 0 || notifications != 0 {
-				t.Fatalf("side effects before exact-one routing: admissions=%d inserts=%d notifications=%d", admissions, len(store.inserted), notifications)
+			if admissions != 0 || atomicCalls != 0 || len(store.inserted) != 0 || notifications != 0 {
+				t.Fatalf("side effects before exact-one routing: admissions=%d atomic=%d inserts=%d notifications=%d", admissions, atomicCalls, len(store.inserted), notifications)
 			}
 		})
 	}
@@ -566,6 +571,62 @@ func TestXChatAndNonReceivedDMEventsNeverProduceActivityEvents(t *testing.T) {
 				t.Fatalf("%s produced x_dm candidates: %#v", eventType, events)
 			}
 		})
+	}
+}
+
+func TestParseXActivityCurrentEnvelopeNeverFallsBackToLegacyEvents(t *testing.T) {
+	currentPayload := `"filter":{"user_id":"owner"},"tag":"unipost:x:dm:account-1","payload":{"id":"current-dm","dm_conversation_id":"current-thread","sender_id":"sender","recipient_id":"owner","created_at":"2026-07-16T12:00:00Z"}`
+	for _, test := range []struct {
+		name          string
+		eventType     string
+		legacyEvent   string
+		wantCurrentID string
+	}{
+		{
+			name:          "valid attached legacy",
+			eventType:     "dm.received",
+			legacyEvent:   `{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"owner"},"sender_id":"sender","message_data":{"text":"legacy"}}}`,
+			wantCurrentID: "current-dm",
+		},
+		{
+			name:          "malformed attached legacy",
+			eventType:     "dm.received",
+			legacyEvent:   `{"type":"message_create"}`,
+			wantCurrentID: "current-dm",
+		},
+		{
+			name:          "trimmed current event type",
+			eventType:     " dm.received ",
+			legacyEvent:   `{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"owner"},"sender_id":"sender"}}`,
+			wantCurrentID: "current-dm",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			body := []byte(`{"data":{"event_type":"` + test.eventType + `",` + currentPayload + `},"for_user_id":"owner","direct_message_events":[` + test.legacyEvent + `]}`)
+			events, err := ParseActivityEvents(body)
+			if err != nil {
+				t.Fatalf("ParseActivityEvents: %v", err)
+			}
+			if len(events) != 1 || events[0].ExternalID != test.wantCurrentID || events[0].AccountID != "account-1" {
+				t.Fatalf("events = %#v, want only current event", events)
+			}
+		})
+	}
+}
+
+func TestParseXActivityCurrentShapeRequiresNonBlankEventType(t *testing.T) {
+	for _, data := range []string{
+		`"payload":{"id":"current-dm"}`,
+		`"event_type":"   ","payload":{"id":"current-dm"}`,
+	} {
+		body := []byte(`{"data":{` + data + `},"for_user_id":"owner","direct_message_events":[{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"owner"},"sender_id":"sender"}}]}`)
+		events, err := ParseActivityEvents(body)
+		if !errors.Is(err, ErrMalformedEvent) {
+			t.Fatalf("ParseActivityEvents(%s) = %#v, %v; want malformed current envelope", body, events, err)
+		}
+		if len(events) != 0 {
+			t.Fatalf("current-shaped envelope fell back to legacy: %#v", events)
+		}
 	}
 }
 
