@@ -90,42 +90,126 @@ func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 
 func TestProviderTransportErrorIsSecretSafeAndPreservesCause(t *testing.T) {
 	const (
-		secretQuery = "cursor=secret-query-value"
-		bearerToken = "secret-bearer-value"
+		secretURL   = "https://api.x.test/2/webhooks?access_token=secret-query-token"
+		bearerToken = "secret-bearer-token"
 	)
-	cause := errors.New("dial failed")
+	sentinel := errors.New("transport sentinel")
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "direct error contains URL",
+			err:  fmt.Errorf("dial failed for %s: %w", secretURL, sentinel),
+		},
+		{
+			name: "wrapped URL error",
+			err: fmt.Errorf("outer transport failure: %w", &url.Error{
+				Op:  "round trip",
+				URL: secretURL,
+				Err: sentinel,
+			}),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := NewClient(ClientConfig{
+				BaseURL: "https://api.x.test",
+				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+					return nil, tt.err
+				})},
+			})
+
+			err := client.doJSON(
+				context.Background(),
+				http.MethodGet,
+				"/2/webhooks?cursor=request-query-secret",
+				bearerToken,
+				nil,
+				nil,
+			)
+			if !errors.Is(err, sentinel) {
+				t.Fatalf("err = %v, want wrapped transport sentinel", err)
+			}
+			message := err.Error()
+			for _, want := range []string{http.MethodGet, "/2/webhooks", "request failed"} {
+				if !strings.Contains(message, want) {
+					t.Errorf("error %q does not contain %q", message, want)
+				}
+			}
+			for _, forbidden := range []string{
+				secretURL,
+				"secret-query-token",
+				"request-query-secret",
+				bearerToken,
+				tt.err.Error(),
+				sentinel.Error(),
+			} {
+				if strings.Contains(message, forbidden) {
+					t.Errorf("error %q leaked %q", message, forbidden)
+				}
+			}
+		})
+	}
+}
+
+func TestFilteredStreamProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
+	const (
+		bearerToken = "stream-secret-bearer"
+		detail      = "stream provider detail must stay private"
+		bodySecret  = "stream raw body must stay private"
+	)
+	payload := fmt.Sprintf(
+		`{"errors":[{"code":"stream-forbidden","title":"Forbidden","status":403,"detail":%q},{"code":"ignored-stream-error","title":"Ignored"}],"debug":%q}`,
+		detail,
+		bodySecret,
+	)
+	body := &trackingReadCloser{reader: strings.NewReader(payload)}
 	client := NewClient(ClientConfig{
 		BaseURL: "https://api.x.test",
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-			return nil, &url.Error{
-				Op:  "round trip",
-				URL: request.URL.String(),
-				Err: cause,
+		StreamHTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if got := request.Header.Get("Authorization"); got != "Bearer "+bearerToken {
+				t.Fatalf("Authorization = %q", got)
 			}
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
 		})},
 	})
 
-	err := client.doJSON(
-		context.Background(),
-		http.MethodGet,
-		"/2/webhooks?"+secretQuery,
-		bearerToken,
-		nil,
-		nil,
-	)
-	if !errors.Is(err, cause) {
-		t.Fatalf("err = %v, want wrapped transport cause", err)
+	err := client.ConsumeFilteredStream(context.Background(), bearerToken, func(StreamEvent) error {
+		t.Fatal("stream handler must not run for provider HTTP failure")
+		return nil
+	})
+	var providerErr *ProviderHTTPError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
+	}
+	if providerErr.Method != http.MethodGet || providerErr.Path != "/2/tweets/search/stream" ||
+		providerErr.StatusCode != http.StatusForbidden || providerErr.Code != "stream-forbidden" ||
+		providerErr.Title != "Forbidden" {
+		t.Fatalf("provider error = %+v", providerErr)
+	}
+	if !IsProviderHTTPStatus(err, http.StatusForbidden) {
+		t.Fatal("stream provider error did not match HTTP 403")
 	}
 	message := err.Error()
-	for _, want := range []string{http.MethodGet, "/2/webhooks", cause.Error()} {
-		if !strings.Contains(message, want) {
-			t.Errorf("error %q does not contain %q", message, want)
-		}
-	}
-	for _, forbidden := range []string{secretQuery, "secret-query-value", bearerToken, "https://api.x.test"} {
+	for _, forbidden := range []string{
+		"tweet.fields",
+		"expansions=",
+		bearerToken,
+		detail,
+		bodySecret,
+		"ignored-stream-error",
+	} {
 		if strings.Contains(message, forbidden) {
 			t.Errorf("error %q leaked %q", message, forbidden)
 		}
+	}
+	if !body.closed {
+		t.Fatal("stream provider error response body was not closed")
 	}
 }
 

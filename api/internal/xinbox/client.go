@@ -89,6 +89,26 @@ type ProviderHTTPError struct {
 	Title      string
 }
 
+type ProviderRequestError struct {
+	Method string
+	Path   string
+	cause  error
+}
+
+func (e *ProviderRequestError) Error() string {
+	if e == nil {
+		return "X provider request failed"
+	}
+	return fmt.Sprintf("X API %s %s request failed", e.Method, e.Path)
+}
+
+func (e *ProviderRequestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.cause
+}
+
 func (e *ProviderHTTPError) Error() string {
 	if e == nil {
 		return "X provider HTTP error"
@@ -284,12 +304,17 @@ func (c *Client) ConsumeFilteredStream(
 	}
 	response, err := c.streamHTTP.Do(request)
 	if err != nil {
-		return wrapProviderRequestError(http.MethodGet, path, "open stream failed", err)
+		return newProviderRequestError(http.MethodGet, path, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("open X filtered stream returned HTTP %d", response.StatusCode)
+		providerErr := &ProviderHTTPError{
+			Method:     http.MethodGet,
+			Path:       providerRequestPath(path),
+			StatusCode: response.StatusCode,
+		}
+		decodeProviderHTTPError(response.Body, c.maxJSONResponseBytes, providerErr)
+		return providerErr
 	}
 
 	type scanResult struct {
@@ -385,7 +410,7 @@ func (c *Client) do(
 	}
 	response, err := c.controlHTTP.Do(request)
 	if err != nil {
-		return 0, wrapProviderRequestError(method, safePath, "request failed", err)
+		return 0, newProviderRequestError(method, safePath, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
@@ -429,15 +454,12 @@ func providerRequestPath(path string) string {
 	return path
 }
 
-func wrapProviderRequestError(method, path, operation string, cause error) error {
-	for {
-		urlErr, ok := cause.(*url.Error)
-		if !ok || urlErr == nil || urlErr.Err == nil {
-			break
-		}
-		cause = urlErr.Err
+func newProviderRequestError(method, path string, cause error) error {
+	return &ProviderRequestError{
+		Method: method,
+		Path:   providerRequestPath(path),
+		cause:  cause,
 	}
-	return fmt.Errorf("X API %s %s %s: %w", method, providerRequestPath(path), operation, cause)
 }
 
 func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPError) {
@@ -494,13 +516,13 @@ func (c *Client) newRequest(
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, wrapProviderRequestError(method, path, "encode request failed", err)
+			return nil, newProviderRequestError(method, path, err)
 		}
 		reader = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
-		return nil, wrapProviderRequestError(method, path, "create request failed", err)
+		return nil, newProviderRequestError(method, path, err)
 	}
 	request.Header.Set("Authorization", "Bearer "+bearerToken)
 	if body != nil {
