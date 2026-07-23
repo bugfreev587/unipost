@@ -103,11 +103,17 @@ func (e *ProviderRequestError) Error() string {
 	return fmt.Sprintf("X API %s %s request failed", e.Method, e.Path)
 }
 
-func (e *ProviderRequestError) Unwrap() error {
-	if e == nil {
-		return nil
+func (e *ProviderRequestError) Is(target error) bool {
+	return e != nil && errors.Is(e.cause, target)
+}
+
+func (e *ProviderRequestError) Format(state fmt.State, verb rune) {
+	message := e.Error()
+	if verb == 'q' {
+		_, _ = fmt.Fprintf(state, "%q", message)
+		return
 	}
-	return e.cause
+	_, _ = io.WriteString(state, message)
 }
 
 func (e *ProviderHTTPError) Error() string {
@@ -464,6 +470,9 @@ func newProviderRequestError(method, path string, cause error) error {
 }
 
 func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPError) {
+	target.Code = fmt.Sprintf("provider_http_%d", target.StatusCode)
+	target.Title = "provider_error"
+
 	type providerError struct {
 		Code   json.RawMessage `json:"code"`
 		Type   string          `json:"type"`
@@ -484,12 +493,10 @@ func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPEr
 	if first := response.Errors[0]; len(first.Code) > 0 || first.Type != "" || first.Title != "" || first.Status != 0 {
 		providerErr = response.Errors[0]
 	}
-	target.Code = providerErrorCode(providerErr.Code)
-	if target.Code == "" {
-		target.Code = providerErrorClassification("provider_code", providerErr.Type)
-	}
-	if providerErr.Title != "" {
-		target.Title = "provider_error"
+	if code := providerErrorCode(providerErr.Code); code != "" {
+		target.Code = code
+	} else if errorType := providerErrorClassification("provider_code", providerErr.Type); errorType != "" {
+		target.Code = errorType
 	}
 }
 

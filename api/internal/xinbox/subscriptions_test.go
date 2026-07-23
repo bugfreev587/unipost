@@ -172,23 +172,91 @@ func TestProviderTransportErrorIsSecretSafeAndPreservesCause(t *testing.T) {
 			if !errors.Is(err, sentinel) {
 				t.Fatalf("err = %v, want wrapped transport sentinel", err)
 			}
-			message := err.Error()
+			if unwrapped := errors.Unwrap(err); unwrapped != nil {
+				t.Fatalf("errors.Unwrap(err) = %T, want nil", unwrapped)
+			}
+			var urlErr *url.Error
+			if errors.As(err, &urlErr) {
+				t.Fatalf("errors.As exposed raw URL error: %T", urlErr)
+			}
+			formatted := []string{
+				err.Error(),
+				fmt.Sprintf("%v", err),
+				fmt.Sprintf("%+v", err),
+				fmt.Sprintf("%#v", err),
+				fmt.Sprintf("%q", err),
+			}
+			message := formatted[0]
 			for _, want := range []string{http.MethodGet, "/2/webhooks", "request failed"} {
 				if !strings.Contains(message, want) {
 					t.Errorf("error %q does not contain %q", message, want)
 				}
 			}
-			for _, forbidden := range []string{
-				secretURL,
-				"secret-query-token",
-				"request-query-secret",
-				bearerToken,
-				tt.err.Error(),
-				sentinel.Error(),
-			} {
-				if strings.Contains(message, forbidden) {
-					t.Errorf("error %q leaked %q", message, forbidden)
+			for _, rendered := range formatted {
+				for _, forbidden := range []string{
+					secretURL,
+					"secret-query-token",
+					"request-query-secret",
+					bearerToken,
+					tt.err.Error(),
+					sentinel.Error(),
+				} {
+					if strings.Contains(rendered, forbidden) {
+						t.Errorf("formatted error %q leaked %q", rendered, forbidden)
+					}
 				}
+			}
+		})
+	}
+}
+
+func TestProviderHTTPErrorUsesSafeFallbackForUnclassifiedBodies(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       string
+		forbidden  string
+		bodyStatus int
+	}{
+		{
+			name:       "only detail",
+			body:       `{"detail":"dm-body-secret-must-stay-private"}`,
+			forbidden:  "dm-body-secret-must-stay-private",
+			bodyStatus: http.StatusForbidden,
+		},
+		{name: "empty", bodyStatus: http.StatusForbidden},
+		{
+			name:       "invalid",
+			body:       `not-json-secret-must-stay-private`,
+			forbidden:  "not-json-secret-must-stay-private",
+			bodyStatus: http.StatusForbidden,
+		},
+		{
+			name:       "truncated",
+			body:       `{"code":"truncated-secret-must-stay-private`,
+			forbidden:  "truncated-secret-must-stay-private",
+			bodyStatus: http.StatusForbidden,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.bodyStatus)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			err := client.doJSON(context.Background(), http.MethodGet, "/2/webhooks", "app-token", nil, nil)
+			var providerErr *ProviderHTTPError
+			if !errors.As(err, &providerErr) {
+				t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
+			}
+			if providerErr.Code != "provider_http_403" || providerErr.Title != "provider_error" {
+				t.Fatalf("provider error = %+v, want fixed safe fallback", providerErr)
+			}
+			if tt.forbidden != "" && (strings.Contains(err.Error(), tt.forbidden) ||
+				strings.Contains(providerErr.Code, tt.forbidden) || strings.Contains(providerErr.Title, tt.forbidden)) {
+				t.Fatalf("provider error %+v / %q leaked %q", providerErr, err, tt.forbidden)
 			}
 		})
 	}
