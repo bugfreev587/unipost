@@ -34,9 +34,12 @@ func (b *trackingReadCloser) Close() error {
 
 func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 	const (
-		bearerToken = "super-secret-bearer"
-		detail      = "provider detail must stay private"
-		bodySecret  = "raw response body must stay private"
+		bearerToken    = "super-secret-bearer"
+		typeSecret     = "bearer-sentinel-must-stay-private"
+		titleSecret    = "query-sentinel-must-stay-private"
+		detailSecret   = "dm-body-sentinel-must-stay-private"
+		bodySecret     = "raw response body must stay private"
+		secondErrorRaw = "ignored-second-error"
 	)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer "+bearerToken {
@@ -46,7 +49,15 @@ func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = fmt.Fprintf(w, `{"errors":[{"code":"client-not-enrolled","title":"Forbidden","status":403,"detail":%q},{"code":"ignored-second-error","title":"Ignored","status":429}],"debug":%q}`, detail, bodySecret)
+		_, _ = fmt.Fprintf(
+			w,
+			`{"errors":[{"type":%q,"title":%q,"status":403,"detail":%q},{"code":%q,"title":"Ignored","status":429}],"debug":%q}`,
+			typeSecret,
+			titleSecret,
+			detailSecret,
+			secondErrorRaw,
+			bodySecret,
+		)
 	}))
 	defer server.Close()
 
@@ -60,15 +71,20 @@ func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
 	}
 	if providerErr.Method != http.MethodGet || providerErr.Path != "/2/activity/subscriptions" ||
-		providerErr.StatusCode != http.StatusForbidden || providerErr.Code != "client-not-enrolled" ||
-		providerErr.Title != "Forbidden" {
+		providerErr.StatusCode != http.StatusForbidden {
 		t.Fatalf("provider error = %+v", providerErr)
+	}
+	if !strings.HasPrefix(providerErr.Code, "provider_code_") || len(providerErr.Code) != len("provider_code_")+12 {
+		t.Fatalf("provider error code = %q, want safe non-empty classification", providerErr.Code)
+	}
+	if providerErr.Title != "provider_error" {
+		t.Fatalf("provider error title = %q, want safe non-empty classification", providerErr.Title)
 	}
 	if !IsProviderHTTPStatus(fmt.Errorf("wrapped: %w", err), http.StatusForbidden) {
 		t.Fatal("wrapped provider error did not match HTTP 403")
 	}
 	message := err.Error()
-	for _, want := range []string{http.MethodGet, "/2/activity/subscriptions", "403", "client-not-enrolled", "Forbidden"} {
+	for _, want := range []string{http.MethodGet, "/2/activity/subscriptions", "403", providerErr.Code, providerErr.Title} {
 		if !strings.Contains(message, want) {
 			t.Errorf("error %q does not contain %q", message, want)
 		}
@@ -77,14 +93,39 @@ func TestProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T) {
 		"Authorization",
 		"Bearer",
 		bearerToken,
-		detail,
+		typeSecret,
+		titleSecret,
+		detailSecret,
 		bodySecret,
 		"max_results=",
-		"ignored-second-error",
+		secondErrorRaw,
 	} {
-		if strings.Contains(message, forbidden) {
-			t.Errorf("error %q leaked %q", message, forbidden)
+		if strings.Contains(message, forbidden) || strings.Contains(providerErr.Code, forbidden) ||
+			strings.Contains(providerErr.Title, forbidden) {
+			t.Errorf("provider error %+v / %q leaked %q", providerErr, message, forbidden)
 		}
+	}
+}
+
+func TestProviderHTTPErrorRawCodeIsClassifiedWithoutLeaking(t *testing.T) {
+	const codeSecret = "provider-code-must-stay-private"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{"code":%q}`, codeSecret)
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	err := client.doJSON(context.Background(), http.MethodGet, "/2/webhooks", "app-token", nil, nil)
+	var providerErr *ProviderHTTPError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
+	}
+	if !strings.HasPrefix(providerErr.Code, "provider_code_") || strings.Contains(providerErr.Code, codeSecret) {
+		t.Fatalf("provider error code = %q, want safe classification", providerErr.Code)
+	}
+	if strings.Contains(err.Error(), codeSecret) {
+		t.Fatalf("error %q leaked raw provider code", err)
 	}
 }
 
@@ -188,8 +229,8 @@ func TestFilteredStreamProviderHTTPErrorIsStatusAwareAndSecretSafe(t *testing.T)
 		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
 	}
 	if providerErr.Method != http.MethodGet || providerErr.Path != "/2/tweets/search/stream" ||
-		providerErr.StatusCode != http.StatusForbidden || providerErr.Code != "stream-forbidden" ||
-		providerErr.Title != "Forbidden" {
+		providerErr.StatusCode != http.StatusForbidden ||
+		!strings.HasPrefix(providerErr.Code, "provider_code_") || providerErr.Title != "provider_error" {
 		t.Fatalf("provider error = %+v", providerErr)
 	}
 	if !IsProviderHTTPStatus(err, http.StatusForbidden) {
@@ -424,6 +465,103 @@ func TestXClientEnsureWebhookAcceptsWrappedCreateResponseWithoutRetry(t *testing
 	}
 	if webhook.ID != "webhook-wrapped" || calls != 2 {
 		t.Fatalf("webhook=%+v calls=%d", webhook, calls)
+	}
+}
+
+func TestXClientEnsureWebhookPollsUntilCreatedWebhookIsExactAndValid(t *testing.T) {
+	const configuredURL = "https://dev-api.unipost.dev/v1/webhooks/twitter"
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}`))
+		case 3:
+			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
+		case 4:
+			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
+		default:
+			t.Fatalf("unexpected request %d", calls)
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{
+		BaseURL:                  server.URL,
+		HTTPClient:               server.Client(),
+		WebhookValidationPolls:   3,
+		WebhookValidationBackoff: time.Millisecond,
+		Sleep:                    func(context.Context, time.Duration) error { return nil },
+	})
+	webhook, err := client.EnsureWebhook(context.Background(), "app-token", configuredURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if webhook.ID != "webhook-new" || webhook.URL != configuredURL || !webhook.Valid || calls != 4 {
+		t.Fatalf("webhook=%+v calls=%d", webhook, calls)
+	}
+}
+
+func TestXClientEnsureWebhookRejectsCreatedWebhookWithWrongURLImmediately(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"data":{"id":"webhook-wrapped","url":"https://wrong.example/webhook","valid":true}}`))
+		default:
+			t.Fatalf("unexpected poll after wrong create URL")
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	_, err := client.EnsureWebhook(
+		context.Background(),
+		"app-token",
+		"https://dev-api.unipost.dev/v1/webhooks/twitter",
+	)
+	if err == nil || !strings.Contains(err.Error(), "configured URL") {
+		t.Fatalf("err = %v, want mismatched configured URL error", err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want no validation polls", calls)
+	}
+}
+
+func TestXClientEnsureWebhookTimesOutWhenCreatedWebhookIsNeverConfirmed(t *testing.T) {
+	const configuredURL = "https://dev-api.unipost.dev/v1/webhooks/twitter"
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		switch calls {
+		case 1:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"data":{"id":"webhook-wrapped","valid":false}}`))
+		default:
+			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-wrapped","url":"https://wrong.example/webhook","valid":true}]}`))
+		}
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{
+		BaseURL:                  server.URL,
+		HTTPClient:               server.Client(),
+		WebhookValidationPolls:   2,
+		WebhookValidationBackoff: time.Millisecond,
+		Sleep:                    func(context.Context, time.Duration) error { return nil },
+	})
+	_, err := client.EnsureWebhook(context.Background(), "app-token", configuredURL)
+	if err == nil || !strings.Contains(err.Error(), "did not become valid") {
+		t.Fatalf("err = %v, want validation timeout", err)
+	}
+	if calls != 4 {
+		t.Fatalf("calls = %d, want list, create, and two polls", calls)
 	}
 }
 
@@ -695,25 +833,29 @@ func TestXClientDeleteActivitySubscriptionIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestXClientDeleteActivitySubscriptionAcceptsAny2xx(t *testing.T) {
+func TestXClientDeleteActivitySubscriptionRequiresOfficialConfirmation(t *testing.T) {
 	tests := []struct {
-		name   string
-		status int
-		body   string
+		name    string
+		status  int
+		body    string
+		wantErr bool
 	}{
 		{name: "confirmed JSON", status: http.StatusOK, body: `{"data":{"deleted":true},"meta":{"total_subscriptions":0}}`},
-		{name: "empty 200", status: http.StatusOK},
-		{name: "no content", status: http.StatusNoContent},
-		{name: "deleted false", status: http.StatusOK, body: `{"data":{"deleted":false}}`},
+		{name: "empty 200", status: http.StatusOK, wantErr: true},
+		{name: "accepted", status: http.StatusAccepted, body: `{"data":{"deleted":true}}`, wantErr: true},
+		{name: "no content", status: http.StatusNoContent, wantErr: true},
+		{name: "deleted false", status: http.StatusOK, body: `{"data":{"deleted":false}}`, wantErr: true},
 		{
-			name:   "partial 200 error body",
-			status: http.StatusOK,
-			body:   `{"data":{"deleted":true},"errors":[{"title":"Invalid Request","type":"https://api.x.com/2/problems/invalid-request","detail":"partial failure","status":400}]}`,
+			name:    "partial 200 error body",
+			status:  http.StatusOK,
+			body:    `{"data":{"deleted":true},"errors":[{"title":"Invalid Request","type":"https://api.x.com/2/problems/invalid-request","detail":"partial failure","status":400}]}`,
+			wantErr: true,
 		},
 		{
-			name:   "explicit already missing body",
-			status: http.StatusOK,
-			body:   `{"errors":[{"resource_id":"subscription-1","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"subscription missing","status":404}]}`,
+			name:    "explicit already missing body",
+			status:  http.StatusOK,
+			body:    `{"errors":[{"resource_id":"subscription-1","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"subscription missing","status":404}]}`,
+			wantErr: true,
 		},
 	}
 	for _, tt := range tests {
@@ -730,10 +872,39 @@ func TestXClientDeleteActivitySubscriptionAcceptsAny2xx(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-			if err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1"); err != nil {
-				t.Fatalf("err = %v, want 2xx success", err)
+			err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestXClientDeleteActivitySubscriptionResponseIsBoundedAndClosed(t *testing.T) {
+	const responseLimit = 64
+	payload := `{"data":{"deleted":true},"padding":"` + strings.Repeat("x", 1024)
+	body := &trackingReadCloser{reader: strings.NewReader(payload)}
+	client := NewClient(ClientConfig{
+		BaseURL:              "https://api.x.test",
+		MaxJSONResponseBytes: responseLimit,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
+		})},
+	})
+
+	err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
+	if err == nil || !strings.Contains(err.Error(), "response exceeded") {
+		t.Fatalf("err = %v, want bounded response error", err)
+	}
+	if body.bytesRead > responseLimit+1 || body.bytesRead >= len(payload) {
+		t.Fatalf("bytes read = %d, want bounded near %d of %d", body.bytesRead, responseLimit, len(payload))
+	}
+	if !body.closed {
+		t.Fatal("delete response body was not closed")
 	}
 }
 
@@ -766,17 +937,22 @@ func TestDeleteActivitySubscriptionIdempotentProviderStatuses(t *testing.T) {
 
 func TestDeleteProviderResourceIDValidation(t *testing.T) {
 	deletes := []struct {
-		name   string
-		delete func(*Client, string) error
+		name        string
+		delete      func(*Client, string) error
+		validStatus int
+		validBody   string
 	}{
 		{
-			name: "webhook",
+			name:        "webhook",
+			validStatus: http.StatusNoContent,
 			delete: func(client *Client, resourceID string) error {
 				return client.DeleteWebhook(context.Background(), "app-token", resourceID)
 			},
 		},
 		{
-			name: "activity subscription",
+			name:        "activity subscription",
+			validStatus: http.StatusOK,
+			validBody:   `{"data":{"deleted":true}}`,
 			delete: func(client *Client, resourceID string) error {
 				return client.DeleteActivitySubscription(context.Background(), "app-token", resourceID)
 			},
@@ -814,9 +990,9 @@ func TestDeleteProviderResourceIDValidation(t *testing.T) {
 				HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 					calls++
 					return &http.Response{
-						StatusCode: http.StatusNoContent,
+						StatusCode: deleteCase.validStatus,
 						Header:     make(http.Header),
-						Body:       io.NopCloser(strings.NewReader("")),
+						Body:       io.NopCloser(strings.NewReader(deleteCase.validBody)),
 					}, nil
 				})},
 			})
@@ -875,10 +1051,23 @@ func TestAppWebhookURLDerivesAppSpecificHTTPSRoute(t *testing.T) {
 	if want := "https://dev-api.unipost.dev/v1/webhooks/twitter/workspace-client-id"; got != want {
 		t.Fatalf("URL = %q, want %q", got, want)
 	}
-	if _, err := AppWebhookURL("http://localhost/webhook", "client"); err == nil {
-		t.Fatal("expected non-HTTPS webhook URL rejection")
+	invalid := []struct {
+		name     string
+		baseURL  string
+		routeKey string
+	}{
+		{name: "non HTTPS", baseURL: "http://localhost/webhook", routeKey: "client"},
+		{name: "missing route key", baseURL: "https://dev-api.unipost.dev/v1/webhooks/twitter", routeKey: ""},
+		{name: "userinfo", baseURL: "https://user:password@dev-api.unipost.dev/webhook", routeKey: "client"},
+		{name: "query", baseURL: "https://dev-api.unipost.dev/webhook?token=secret", routeKey: "client"},
+		{name: "force query", baseURL: "https://dev-api.unipost.dev/webhook?", routeKey: "client"},
+		{name: "fragment", baseURL: "https://dev-api.unipost.dev/webhook#secret", routeKey: "client"},
 	}
-	if _, err := AppWebhookURL("https://dev-api.unipost.dev/v1/webhooks/twitter", ""); err == nil {
-		t.Fatal("expected missing app client id rejection")
+	for _, tt := range invalid {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := AppWebhookURL(tt.baseURL, tt.routeKey); err == nil {
+				t.Fatalf("AppWebhookURL() = %q, want rejection", got)
+			}
+		})
 	}
 }

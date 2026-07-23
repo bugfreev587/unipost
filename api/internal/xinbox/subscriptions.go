@@ -42,7 +42,8 @@ func AppWebhookURL(baseURL, webhookRouteKey string) (string, error) {
 		return "", errors.New("X webhook route key is not configured")
 	}
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" {
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return "", errors.New("X_INBOX_WEBHOOK_URL must be an absolute HTTPS URL")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + url.PathEscape(webhookRouteKey)
@@ -116,7 +117,7 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 		return Webhook{}, fmt.Errorf("decode X create webhook response: %w", err)
 	}
 	if direct.ID != "" {
-		return direct, nil
+		return c.confirmCreatedWebhook(ctx, appBearerToken, configuredURL, direct)
 	}
 
 	var wrapped struct {
@@ -128,7 +129,36 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 	if wrapped.Data.ID == "" {
 		return Webhook{}, errors.New("X create webhook response missing webhook id")
 	}
-	return wrapped.Data, nil
+	return c.confirmCreatedWebhook(ctx, appBearerToken, configuredURL, wrapped.Data)
+}
+
+func (c *Client) confirmCreatedWebhook(
+	ctx context.Context,
+	appBearerToken string,
+	configuredURL string,
+	created Webhook,
+) (Webhook, error) {
+	if created.URL != "" && created.URL != configuredURL {
+		return Webhook{}, errors.New("X create webhook response did not match configured URL")
+	}
+	if created.URL == configuredURL && created.Valid {
+		return created, nil
+	}
+	for poll := 0; poll < c.webhookValidationPolls; poll++ {
+		if err := c.sleep(ctx, c.webhookValidationBackoff); err != nil {
+			return Webhook{}, err
+		}
+		current, err := c.ListWebhooks(ctx, appBearerToken)
+		if err != nil {
+			return Webhook{}, err
+		}
+		for _, candidate := range current {
+			if candidate.ID == created.ID && candidate.URL == configuredURL && candidate.Valid {
+				return candidate, nil
+			}
+		}
+	}
+	return Webhook{}, errors.New("X created webhook did not become valid before polling limit")
 }
 
 func (c *Client) DeleteWebhook(ctx context.Context, appBearerToken, webhookID string) error {
@@ -269,11 +299,29 @@ func (c *Client) DeleteActivitySubscription(
 		return err
 	}
 	path := "/2/activity/subscriptions/" + url.PathEscape(subscriptionID)
-	err := c.doJSON(ctx, http.MethodDelete, path, appBearerToken, nil, nil)
-	if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
-		return nil
+	var response struct {
+		Data struct {
+			Deleted bool `json:"deleted"`
+		} `json:"data"`
+		Errors []APIError `json:"errors"`
 	}
-	return err
+	status, err := c.do(ctx, http.MethodDelete, path, appBearerToken, nil, &response)
+	if err != nil {
+		if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
+			return nil
+		}
+		return err
+	}
+	if status != http.StatusOK {
+		return errors.New("X delete activity subscription returned an unconfirmed status")
+	}
+	if len(response.Errors) > 0 {
+		return errors.New("X delete activity subscription returned provider errors")
+	}
+	if !response.Data.Deleted {
+		return errors.New("X delete activity subscription response did not confirm deletion")
+	}
+	return nil
 }
 
 func validateProviderResourceID(resourceID string) error {

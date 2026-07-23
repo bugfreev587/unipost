@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -485,9 +486,11 @@ func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPEr
 	}
 	target.Code = providerErrorCode(providerErr.Code)
 	if target.Code == "" {
-		target.Code = providerErr.Type
+		target.Code = providerErrorClassification("provider_code", providerErr.Type)
 	}
-	target.Title = providerErr.Title
+	if providerErr.Title != "" {
+		target.Title = "provider_error"
+	}
 }
 
 func providerErrorCode(raw json.RawMessage) string {
@@ -496,13 +499,21 @@ func providerErrorCode(raw json.RawMessage) string {
 	}
 	var code string
 	if err := json.Unmarshal(raw, &code); err == nil {
-		return code
+		return providerErrorClassification("provider_code", code)
 	}
 	var number json.Number
 	if err := json.Unmarshal(raw, &number); err == nil {
-		return number.String()
+		return providerErrorClassification("provider_code", number.String())
 	}
 	return ""
+}
+
+func providerErrorClassification(prefix, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%s_%x", prefix, digest[:6])
 }
 
 func (c *Client) newRequest(
