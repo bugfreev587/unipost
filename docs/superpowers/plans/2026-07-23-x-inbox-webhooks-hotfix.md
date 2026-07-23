@@ -91,7 +91,7 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Prove evaluator errors fail closed for DMs and make no DM creation call.
 - [ ] Prove eligible state calls EnsureWebhook before EnsureDMSubscription with dm.received, exact provider user ID, and stable account tag.
 - [ ] Prove route replacement deletes only the exact recorded account subscription, persists the cleared subscription and route, then ensures the app-level webhook and replacement subscription, and converges idempotently on the next cycle.
-- [ ] Prove per-account reconciliation never lists or deletes app-scoped webhooks. Stale app-webhook cleanup requires a future generation-aware, leased app-level design.
+- [ ] Prove the per-account worker does not directly enumerate app-scoped webhooks to identify stale resources and never calls DeleteWebhook. EnsureWebhook may internally list, reuse, revalidate, or create the exact configured URL; stale app-webhook cleanup requires a future generation-aware, leased app-level design.
 - [ ] Prove subscription-create 403 stores the dedicated fingerprint, preserves comments, and suppresses later provider calls while unchanged.
 - [ ] Prove flag-off, canary removal, and deliberate off-to-on clear the latch.
 - [ ] Prove app mode, app identity, non-secret webhook URL, or provider-user changes allow one controlled retry. Bearer/consumer-secret-only replacement requires deliberate off-to-on.
