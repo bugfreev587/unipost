@@ -248,6 +248,9 @@ func (s *IngestionService) IngestActivityEvent(ctx context.Context, appClientID 
 			return fmt.Errorf("%w: provider user %q matched %d accounts", ErrInboxAccountAmbiguous, providerUserID, len(accounts))
 		}
 	}
+	if err := s.requireDMFeatureEvaluator("x_dm"); err != nil {
+		return err
+	}
 	if !account.PlanAllowsInbox || !hasRequiredScopes(account.Scopes, "dm.read", "users.read") {
 		return nil
 	}
@@ -303,6 +306,9 @@ func (s *IngestionService) IngestRecovery(
 		item.WorkspaceID != "" && item.WorkspaceID != account.WorkspaceID {
 		return IngestionResult{}, errors.New("X recovery item does not match the account workspace")
 	}
+	if err := s.requireDMFeatureEvaluator(item.Source); err != nil {
+		return IngestionResult{}, err
+	}
 	item.SocialAccountID = account.ID
 	item.WorkspaceID = account.WorkspaceID
 	return s.admitAndInsertResult(ctx, account, item, operationKey, source, s.now().UTC())
@@ -316,13 +322,13 @@ func (s *IngestionService) admitAndInsertResult(
 	source string,
 	admissionAt time.Time,
 ) (IngestionResult, error) {
+	if err := s.requireDMFeatureEvaluator(item.Source); err != nil {
+		return IngestionResult{}, err
+	}
 	if item.ExternalID == "" {
 		return IngestionResult{}, nil
 	}
 	if item.Source == "x_dm" {
-		if s.dmsAvailable == nil {
-			return IngestionResult{}, ErrDMFeatureNotConfigured
-		}
 		available, err := s.dmsAvailable(ctx, account.WorkspaceID)
 		if err != nil {
 			return IngestionResult{}, err
@@ -373,6 +379,13 @@ func (s *IngestionService) admitAndInsertResult(
 		s.notify(ctx, account.WorkspaceID, account.ExternalUserID, insertedItem)
 	}
 	return IngestionResult{Admission: admission, Item: insertedItem, Inserted: inserted}, nil
+}
+
+func (s *IngestionService) requireDMFeatureEvaluator(source string) error {
+	if source == "x_dm" && (s == nil || s.dmsAvailable == nil) {
+		return ErrDMFeatureNotConfigured
+	}
+	return nil
 }
 
 func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
