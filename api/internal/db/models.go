@@ -1187,15 +1187,16 @@ type XInboxDeliveryCleanupIntent struct {
 }
 
 type XInboxDeliveryResource struct {
-	SocialAccountID          string             `json:"social_account_id"`
-	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
-	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
-	DeliveryStatus           string             `json:"delivery_status"`
-	LastError                pgtype.Text        `json:"last_error"`
-	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
-	CreatedAt                pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
-	ActivityWebhookRouteKey  pgtype.Text        `json:"activity_webhook_route_key"`
+	SocialAccountID                    string             `json:"social_account_id"`
+	FilteredStreamRuleID               pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID           pgtype.Text        `json:"activity_dm_subscription_id"`
+	DeliveryStatus                     string             `json:"delivery_status"`
+	LastError                          pgtype.Text        `json:"last_error"`
+	LastSyncedAt                       pgtype.Timestamptz `json:"last_synced_at"`
+	CreatedAt                          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                          pgtype.Timestamptz `json:"updated_at"`
+	ActivityWebhookRouteKey            pgtype.Text        `json:"activity_webhook_route_key"`
+	DmSubscriptionForbiddenFingerprint pgtype.Text        `json:"dm_subscription_forbidden_fingerprint"`
 }
 
 type XInboxOutboundRequest struct {

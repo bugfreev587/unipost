@@ -161,9 +161,47 @@ func (f *fakeXInboxDeliveryStore) SaveState(_ context.Context, state XInboxDeliv
 			f.accounts[i].FilteredStreamRuleID = state.FilteredStreamRuleID
 			f.accounts[i].ActivityDMSubscriptionID = state.ActivityDMSubscriptionID
 			f.accounts[i].ActivityWebhookRouteKey = state.ActivityWebhookRouteKey
+			f.accounts[i].DMSubscriptionForbiddenFingerprint = state.DMSubscriptionForbiddenFingerprint
 		}
 	}
 	return nil
+}
+
+func TestFakeXInboxDeliveryStorePersistsForbiddenFingerprintIndependentlyFromLastError(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		fingerprint string
+		lastError   string
+	}{
+		{name: "non-empty latch with empty error", fingerprint: "credentials-v1"},
+		{name: "empty latch with human-readable error", lastError: "X rejected DM subscription provisioning"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{{SocialAccountID: "account-1"}}}
+			state := XInboxDeliveryState{
+				SocialAccountID:                    "account-1",
+				DMSubscriptionForbiddenFingerprint: test.fingerprint,
+				LastError:                          test.lastError,
+			}
+			if err := store.SaveState(context.Background(), state); err != nil {
+				t.Fatal(err)
+			}
+
+			accounts, err := store.ListAccounts(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(accounts) != 1 {
+				t.Fatalf("account count = %d, want 1", len(accounts))
+			}
+			if got := accounts[0].DMSubscriptionForbiddenFingerprint; got != test.fingerprint {
+				t.Fatalf("forbidden fingerprint = %q, want %q", got, test.fingerprint)
+			}
+			if got := store.states[0].LastError; got != test.lastError {
+				t.Fatalf("last error = %q, want %q", got, test.lastError)
+			}
+		})
+	}
 }
 
 func (f *fakeXInboxDeliveryStore) ClaimCleanupIntents(

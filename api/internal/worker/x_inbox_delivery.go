@@ -65,30 +65,32 @@ type XInboxDeliveryStore interface {
 }
 
 type XInboxDeliveryAccount struct {
-	SocialAccountID          string
-	WorkspaceID              string
-	WebhookRouteKey          string
-	Handle                   string
-	ExternalAccountID        string
-	AppMode                  xinbox.AppMode
-	AppBearerTokenEncrypted  string
-	ConsumerSecretConfigured bool
-	Scopes                   []string
-	AccountActive            bool
-	PlanAllowsInbox          bool
-	FilteredStreamRuleID     string
-	ActivityDMSubscriptionID string
-	ActivityWebhookRouteKey  string
+	SocialAccountID                    string
+	WorkspaceID                        string
+	WebhookRouteKey                    string
+	Handle                             string
+	ExternalAccountID                  string
+	AppMode                            xinbox.AppMode
+	AppBearerTokenEncrypted            string
+	ConsumerSecretConfigured           bool
+	Scopes                             []string
+	AccountActive                      bool
+	PlanAllowsInbox                    bool
+	FilteredStreamRuleID               string
+	ActivityDMSubscriptionID           string
+	ActivityWebhookRouteKey            string
+	DMSubscriptionForbiddenFingerprint string
 }
 
 type XInboxDeliveryState struct {
-	SocialAccountID          string
-	FilteredStreamRuleID     string
-	ActivityDMSubscriptionID string
-	ActivityWebhookRouteKey  string
-	DeliveryStatus           string
-	LastError                string
-	LastSyncedAt             time.Time
+	SocialAccountID                    string
+	FilteredStreamRuleID               string
+	ActivityDMSubscriptionID           string
+	ActivityWebhookRouteKey            string
+	DMSubscriptionForbiddenFingerprint string
+	DeliveryStatus                     string
+	LastError                          string
+	LastSyncedAt                       time.Time
 }
 
 type XInboxCleanupIntent struct {
@@ -371,12 +373,13 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 ) (XInboxAppStream, bool, bool, error) {
 	now := w.now().UTC()
 	state := XInboxDeliveryState{
-		SocialAccountID:          account.SocialAccountID,
-		FilteredStreamRuleID:     account.FilteredStreamRuleID,
-		ActivityDMSubscriptionID: account.ActivityDMSubscriptionID,
-		ActivityWebhookRouteKey:  account.ActivityWebhookRouteKey,
-		DeliveryStatus:           xinbox.DeliveryStatusPending,
-		LastSyncedAt:             now,
+		SocialAccountID:                    account.SocialAccountID,
+		FilteredStreamRuleID:               account.FilteredStreamRuleID,
+		ActivityDMSubscriptionID:           account.ActivityDMSubscriptionID,
+		ActivityWebhookRouteKey:            account.ActivityWebhookRouteKey,
+		DMSubscriptionForbiddenFingerprint: account.DMSubscriptionForbiddenFingerprint,
+		DeliveryStatus:                     xinbox.DeliveryStatusPending,
+		LastSyncedAt:                       now,
 	}
 	if state.ActivityDMSubscriptionID == "" {
 		state.ActivityWebhookRouteKey = ""
@@ -804,7 +807,8 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox,
 			COALESCE(r.filtered_stream_rule_id, ''),
 			COALESCE(r.activity_dm_subscription_id, ''),
-			COALESCE(r.activity_webhook_route_key, '')
+			COALESCE(r.activity_webhook_route_key, ''),
+			COALESCE(r.dm_subscription_forbidden_fingerprint, '')
 		FROM social_accounts sa
 		JOIN profiles p ON p.id = sa.profile_id
 		LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
@@ -843,6 +847,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			&account.FilteredStreamRuleID,
 			&account.ActivityDMSubscriptionID,
 			&account.ActivityWebhookRouteKey,
+			&account.DMSubscriptionForbiddenFingerprint,
 		); err != nil {
 			return nil, err
 		}
@@ -854,13 +859,14 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 
 func (s *postgresXInboxDeliveryStore) SaveState(ctx context.Context, state XInboxDeliveryState) error {
 	_, err := s.queries.UpsertXInboxDeliveryResource(ctx, db.UpsertXInboxDeliveryResourceParams{
-		SocialAccountID:          state.SocialAccountID,
-		FilteredStreamRuleID:     nullableText(state.FilteredStreamRuleID),
-		ActivityDmSubscriptionID: nullableText(state.ActivityDMSubscriptionID),
-		ActivityWebhookRouteKey:  nullableText(state.ActivityWebhookRouteKey),
-		DeliveryStatus:           state.DeliveryStatus,
-		LastError:                nullableText(state.LastError),
-		LastSyncedAt:             pgtype.Timestamptz{Time: state.LastSyncedAt, Valid: !state.LastSyncedAt.IsZero()},
+		SocialAccountID:                    state.SocialAccountID,
+		FilteredStreamRuleID:               nullableText(state.FilteredStreamRuleID),
+		ActivityDmSubscriptionID:           nullableText(state.ActivityDMSubscriptionID),
+		ActivityWebhookRouteKey:            nullableText(state.ActivityWebhookRouteKey),
+		DmSubscriptionForbiddenFingerprint: nullableText(state.DMSubscriptionForbiddenFingerprint),
+		DeliveryStatus:                     state.DeliveryStatus,
+		LastError:                          nullableText(state.LastError),
+		LastSyncedAt:                       pgtype.Timestamptz{Time: state.LastSyncedAt, Valid: !state.LastSyncedAt.IsZero()},
 	})
 	return err
 }
