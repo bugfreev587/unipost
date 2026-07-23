@@ -44,6 +44,86 @@ type XInboxDeliveryAPI interface {
 	DeleteActivitySubscription(context.Context, string, string) error
 }
 
+type activitySubscriptionCatalogKey struct {
+	appMode  xinbox.AppMode
+	identity string
+}
+
+type activitySubscriptionCatalogEntry struct {
+	subscriptions []xinbox.ActivitySubscription
+	err           error
+}
+
+type activitySubscriptionCatalog struct {
+	api     XInboxDeliveryAPI
+	entries map[activitySubscriptionCatalogKey]*activitySubscriptionCatalogEntry
+}
+
+func newActivitySubscriptionCatalog(api XInboxDeliveryAPI) *activitySubscriptionCatalog {
+	return &activitySubscriptionCatalog{
+		api:     api,
+		entries: make(map[activitySubscriptionCatalogKey]*activitySubscriptionCatalogEntry),
+	}
+}
+
+func (c *activitySubscriptionCatalog) list(
+	ctx context.Context,
+	key activitySubscriptionCatalogKey,
+	appBearerToken string,
+) ([]xinbox.ActivitySubscription, error) {
+	if entry, ok := c.entries[key]; ok {
+		return entry.subscriptions, entry.err
+	}
+	subscriptions, err := c.api.ListActivitySubscriptions(ctx, appBearerToken)
+	entry := &activitySubscriptionCatalogEntry{
+		subscriptions: append([]xinbox.ActivitySubscription(nil), subscriptions...),
+		err:           err,
+	}
+	c.entries[key] = entry
+	return entry.subscriptions, entry.err
+}
+
+func (c *activitySubscriptionCatalog) delete(
+	ctx context.Context,
+	key activitySubscriptionCatalogKey,
+	appBearerToken string,
+	subscriptionID string,
+) error {
+	if err := c.api.DeleteActivitySubscription(ctx, appBearerToken, subscriptionID); err != nil {
+		return err
+	}
+	entry := c.entries[key]
+	if entry == nil || entry.err != nil {
+		return nil
+	}
+	for index := range entry.subscriptions {
+		if entry.subscriptions[index].ID == subscriptionID {
+			entry.subscriptions = append(entry.subscriptions[:index], entry.subscriptions[index+1:]...)
+			break
+		}
+	}
+	return nil
+}
+
+func (c *activitySubscriptionCatalog) create(
+	ctx context.Context,
+	key activitySubscriptionCatalogKey,
+	appBearerToken string,
+	accountID string,
+	userID string,
+	webhookID string,
+) (xinbox.ActivitySubscription, error) {
+	subscription, err := c.api.CreateDMSubscription(ctx, appBearerToken, accountID, userID, webhookID)
+	if err != nil {
+		return xinbox.ActivitySubscription{}, err
+	}
+	entry := c.entries[key]
+	if entry != nil && entry.err == nil {
+		entry.subscriptions = append(entry.subscriptions, subscription)
+	}
+	return subscription, nil
+}
+
 type XInboxUsageReader interface {
 	Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error)
 }
@@ -350,9 +430,10 @@ func (w *XInboxDeliveryWorker) reconcileDesiredUnlocked(
 		return nil, false, errors.Join(joined, fmt.Errorf("list X inbox delivery accounts: %w", err))
 	}
 	appsByIdentity := make(map[string]XInboxAppStream)
+	subscriptionCatalog := newActivitySubscriptionCatalog(w.api)
 	desiredComplete := true
 	for _, account := range accounts {
-		app, streamDesired, desiredKnown, err := w.reconcileAccount(ctx, account)
+		app, streamDesired, desiredKnown, err := w.reconcileAccount(ctx, account, subscriptionCatalog)
 		if !desiredKnown {
 			desiredComplete = false
 		}
@@ -412,6 +493,7 @@ func (w *XInboxDeliveryWorker) processCleanupBudget(ctx context.Context) error {
 func (w *XInboxDeliveryWorker) reconcileAccount(
 	ctx context.Context,
 	account XInboxDeliveryAccount,
+	subscriptionCatalog *activitySubscriptionCatalog,
 ) (XInboxAppStream, bool, bool, error) {
 	now := w.now().UTC()
 	state := XInboxDeliveryState{
@@ -439,6 +521,10 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		WebhookRouteKey:          webhookRouteKey,
 		BearerToken:              appBearerToken,
 		ConsumerSecretConfigured: consumerSecretConfigured,
+	}
+	subscriptionCatalogKey := activitySubscriptionCatalogKey{
+		appMode:  account.AppMode,
+		identity: app.Identity,
 	}
 	appModeSupported := account.AppMode == xinbox.AppModeUniPostManaged || account.AppMode == xinbox.AppModeWorkspace
 	dmsAvailable := false
@@ -536,6 +622,8 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		if appModeSupported && appTokenErr == nil {
 			cleanupErr := w.cleanupDMSubscriptions(
 				ctx,
+				subscriptionCatalog,
+				subscriptionCatalogKey,
 				appBearerToken,
 				account.SocialAccountID,
 				&state,
@@ -583,6 +671,8 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 				} else {
 					ensureErr = w.reconcileDMSubscription(
 						ctx,
+						subscriptionCatalog,
+						subscriptionCatalogKey,
 						appBearerToken,
 						account,
 						webhook.ID,
@@ -665,12 +755,14 @@ func persistDMSubscriptionState(persist func() error) error {
 
 func (w *XInboxDeliveryWorker) cleanupDMSubscriptions(
 	ctx context.Context,
+	subscriptionCatalog *activitySubscriptionCatalog,
+	subscriptionCatalogKey activitySubscriptionCatalogKey,
 	appBearerToken string,
 	socialAccountID string,
 	state *XInboxDeliveryState,
 	persist func() error,
 ) error {
-	subscriptions, err := w.api.ListActivitySubscriptions(ctx, appBearerToken)
+	subscriptions, err := subscriptionCatalog.list(ctx, subscriptionCatalogKey, appBearerToken)
 	if err != nil {
 		return err
 	}
@@ -691,7 +783,7 @@ func (w *XInboxDeliveryWorker) cleanupDMSubscriptions(
 	})
 
 	for _, subscription := range matching {
-		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, subscription.ID); err != nil {
+		if err := subscriptionCatalog.delete(ctx, subscriptionCatalogKey, appBearerToken, subscription.ID); err != nil {
 			return err
 		}
 		if state.ActivityDMSubscriptionID == subscription.ID {
@@ -714,6 +806,8 @@ func (w *XInboxDeliveryWorker) cleanupDMSubscriptions(
 
 func (w *XInboxDeliveryWorker) reconcileDMSubscription(
 	ctx context.Context,
+	subscriptionCatalog *activitySubscriptionCatalog,
+	subscriptionCatalogKey activitySubscriptionCatalogKey,
 	appBearerToken string,
 	account XInboxDeliveryAccount,
 	webhookID string,
@@ -721,7 +815,7 @@ func (w *XInboxDeliveryWorker) reconcileDMSubscription(
 	state *XInboxDeliveryState,
 	persist func() error,
 ) error {
-	subscriptions, err := w.api.ListActivitySubscriptions(ctx, appBearerToken)
+	subscriptions, err := subscriptionCatalog.list(ctx, subscriptionCatalogKey, appBearerToken)
 	if err != nil {
 		return err
 	}
@@ -758,7 +852,7 @@ func (w *XInboxDeliveryWorker) reconcileDMSubscription(
 		if keeper != nil && subscription.ID == keeper.ID {
 			continue
 		}
-		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, subscription.ID); err != nil {
+		if err := subscriptionCatalog.delete(ctx, subscriptionCatalogKey, appBearerToken, subscription.ID); err != nil {
 			return err
 		}
 		if state.ActivityDMSubscriptionID == subscription.ID {
@@ -796,8 +890,9 @@ func (w *XInboxDeliveryWorker) reconcileDMSubscription(
 		}
 	}
 
-	created, err := w.api.CreateDMSubscription(
+	created, err := subscriptionCatalog.create(
 		ctx,
+		subscriptionCatalogKey,
 		appBearerToken,
 		account.SocialAccountID,
 		account.ExternalAccountID,

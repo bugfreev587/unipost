@@ -186,39 +186,47 @@ func (c *Client) ListActivitySubscriptions(
 	appBearerToken string,
 ) ([]ActivitySubscription, error) {
 	const (
-		selfServeSubscriptionLimit = 1500
-		maxSubscriptionPageSize    = 1000
+		selfServeSubscriptionLimit = 1000
+		maxSubscriptionPageSize    = 100
+		maxSubscriptionPages       = 10
 	)
+	discoveryCtx, cancel := context.WithTimeout(ctx, c.controlTimeout)
+	defer cancel()
 	subscriptions := make([]ActivitySubscription, 0)
 	nextToken := ""
 	seenTokens := make(map[string]struct{})
-	for page := 0; page < selfServeSubscriptionLimit && len(subscriptions) < selfServeSubscriptionLimit; page++ {
-		pageSize := selfServeSubscriptionLimit - len(subscriptions)
-		if pageSize > maxSubscriptionPageSize {
-			pageSize = maxSubscriptionPageSize
-		}
-		query := url.Values{"max_results": {fmt.Sprintf("%d", pageSize)}}
+	seenIDs := make(map[string]struct{})
+	for page := 0; page < maxSubscriptionPages; page++ {
+		query := url.Values{"max_results": {fmt.Sprintf("%d", maxSubscriptionPageSize)}}
 		if nextToken != "" {
 			query.Set("pagination_token", nextToken)
 		}
 		var response struct {
-			Data []ActivitySubscription `json:"data"`
-			Meta struct {
+			Data   []ActivitySubscription `json:"data"`
+			Errors []APIError             `json:"errors"`
+			Meta   struct {
 				NextToken string `json:"next_token"`
 			} `json:"meta"`
 		}
 		path := "/2/activity/subscriptions?" + query.Encode()
-		if err := c.doJSON(ctx, http.MethodGet, path, appBearerToken, nil, &response); err != nil {
+		if err := c.doJSON(discoveryCtx, http.MethodGet, path, appBearerToken, nil, &response); err != nil {
 			return nil, err
 		}
+		if len(response.Errors) > 0 {
+			return nil, errors.New("X activity subscription discovery returned provider errors")
+		}
 		remaining := selfServeSubscriptionLimit - len(subscriptions)
-		if len(response.Data) > remaining {
+		if len(response.Data) > maxSubscriptionPageSize || len(response.Data) > remaining {
 			return nil, errors.New("X activity subscription page exceeded remaining self-serve capacity")
 		}
 		for _, subscription := range response.Data {
 			if err := validateProviderResourceID(subscription.ID); err != nil {
 				return nil, err
 			}
+			if _, duplicate := seenIDs[subscription.ID]; duplicate {
+				return nil, errors.New("X activity subscription discovery returned duplicate subscription id")
+			}
+			seenIDs[subscription.ID] = struct{}{}
 		}
 		subscriptions = append(subscriptions, response.Data...)
 		nextToken = response.Meta.NextToken
@@ -234,40 +242,6 @@ func (c *Client) ListActivitySubscriptions(
 		return nil, errors.New("X activity subscription pagination exceeded self-serve bound")
 	}
 	return subscriptions, nil
-}
-
-func (c *Client) EnsureDMSubscription(
-	ctx context.Context,
-	appBearerToken string,
-	accountID string,
-	userID string,
-	webhookID string,
-) (ActivitySubscription, error) {
-	if err := validateProviderResourceID(webhookID); err != nil {
-		return ActivitySubscription{}, err
-	}
-	subscriptions, err := c.ListActivitySubscriptions(ctx, appBearerToken)
-	if err != nil {
-		return ActivitySubscription{}, err
-	}
-	tag := DMSubscriptionTag(accountID)
-	for _, subscription := range subscriptions {
-		if subscription.Tag == tag {
-			if err := validateProviderResourceID(subscription.ID); err != nil {
-				return ActivitySubscription{}, err
-			}
-			if subscription.EventType == "dm.received" &&
-				subscription.Filter.UserID == userID &&
-				subscription.WebhookID == webhookID {
-				return subscription, nil
-			}
-			if err := c.DeleteActivitySubscription(ctx, appBearerToken, subscription.ID); err != nil {
-				return ActivitySubscription{}, err
-			}
-			break
-		}
-	}
-	return c.CreateDMSubscription(ctx, appBearerToken, accountID, userID, webhookID)
 }
 
 func (c *Client) CreateDMSubscription(

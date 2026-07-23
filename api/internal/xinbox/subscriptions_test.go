@@ -21,6 +21,189 @@ type trackingReadCloser struct {
 	closed    bool
 }
 
+func TestXClientListActivitySubscriptionsUsesBoundedProviderContract(t *testing.T) {
+	makePage := func(page int) []ActivitySubscription {
+		result := make([]ActivitySubscription, 100)
+		for i := range result {
+			result[i] = ActivitySubscription{
+				ID:        fmt.Sprintf("%d", 100000+page*100+i),
+				EventType: "dm.received",
+				Filter:    ActivityFilter{UserID: "2244994945"},
+				Tag:       fmt.Sprintf("tag-%d-%d", page, i),
+				WebhookID: "1001",
+			}
+		}
+		return result
+	}
+
+	t.Run("ten pages of one hundred reach the self serve limit", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("max_results"); got != "100" {
+				t.Fatalf("max_results = %q, want 100", got)
+			}
+			if calls == 0 {
+				if got := r.URL.Query().Get("pagination_token"); got != "" {
+					t.Fatalf("first pagination token = %q", got)
+				}
+			} else if got, want := r.URL.Query().Get("pagination_token"), fmt.Sprintf("token-%d", calls); got != want {
+				t.Fatalf("pagination token = %q, want %q", got, want)
+			}
+			response := map[string]any{"data": makePage(calls)}
+			calls++
+			if calls < 10 {
+				response["meta"] = map[string]any{"next_token": fmt.Sprintf("token-%d", calls)}
+			}
+			_ = json.NewEncoder(w).Encode(response)
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		subscriptions, err := client.ListActivitySubscriptions(context.Background(), "app-token")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(subscriptions) != 1000 || calls != 10 {
+			t.Fatalf("subscriptions=%d calls=%d, want 1000 and 10", len(subscriptions), calls)
+		}
+	})
+
+	t.Run("tenth page next token fails closed", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if got := r.URL.Query().Get("max_results"); got != "100" {
+				t.Fatalf("max_results = %q, want 100", got)
+			}
+			calls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": makePage(calls),
+				"meta": map[string]any{"next_token": fmt.Sprintf("token-%d", calls)},
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		_, err := client.ListActivitySubscriptions(context.Background(), "app-token")
+		if err == nil || !strings.Contains(err.Error(), "bound") {
+			t.Fatalf("error = %v, want bounded discovery failure", err)
+		}
+		if calls != 10 {
+			t.Fatalf("calls = %d, want exactly 10", calls)
+		}
+	})
+
+	t.Run("empty page token chain cannot exceed ten pages", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []ActivitySubscription{},
+				"meta": map[string]any{"next_token": fmt.Sprintf("empty-token-%d", calls)},
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		_, err := client.ListActivitySubscriptions(context.Background(), "app-token")
+		if err == nil || !strings.Contains(err.Error(), "bound") {
+			t.Fatalf("error = %v, want bounded discovery failure", err)
+		}
+		if calls != 10 {
+			t.Fatalf("calls = %d, want exactly 10", calls)
+		}
+	})
+
+	t.Run("repeated next token fails closed", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			calls++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []ActivitySubscription{},
+				"meta": map[string]any{"next_token": "repeated-token"},
+			})
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		_, err := client.ListActivitySubscriptions(context.Background(), "app-token")
+		if err == nil || !strings.Contains(err.Error(), "repeated next_token") {
+			t.Fatalf("error = %v, want repeated token failure", err)
+		}
+		if calls != 2 {
+			t.Fatalf("calls = %d, want 2", calls)
+		}
+	})
+}
+
+func TestXClientListActivitySubscriptionsUsesSingleAggregateDeadline(t *testing.T) {
+	var firstDeadline time.Time
+	calls := 0
+	client := NewClient(ClientConfig{
+		BaseURL:               "https://api.x.test",
+		ControlRequestTimeout: time.Minute,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			deadline, ok := r.Context().Deadline()
+			if !ok {
+				t.Fatal("request context has no deadline")
+			}
+			if calls == 1 {
+				firstDeadline = deadline
+			} else if !deadline.Equal(firstDeadline) {
+				t.Fatalf("page %d deadline = %s, want aggregate deadline %s", calls, deadline, firstDeadline)
+			}
+			body := `{"data":[]}`
+			if calls == 1 {
+				body = `{"data":[],"meta":{"next_token":"token-1"}}`
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(strings.NewReader(body)),
+			}, nil
+		})},
+	})
+
+	if _, err := client.ListActivitySubscriptions(context.Background(), "app-token"); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("calls = %d, want 2", calls)
+	}
+}
+
+func TestXClientListActivitySubscriptionsRejectsPartialProviderErrorsAndDuplicateIDs(t *testing.T) {
+	t.Run("HTTP 200 provider errors fail safely", func(t *testing.T) {
+		const secret = "provider-detail-must-not-leak"
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprintf(w, `{"data":[{"subscription_id":"2001"}],"errors":[{"title":%q,"detail":%q,"code":%q}]}`, secret, secret, secret)
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		_, err := client.ListActivitySubscriptions(context.Background(), "app-token")
+		if err == nil || err.Error() != "X activity subscription discovery returned provider errors" {
+			t.Fatalf("error = %v, want fixed safe provider error", err)
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Fatalf("error leaked provider detail: %v", err)
+		}
+	})
+
+	t.Run("duplicate subscription ID fails closed", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2001","event_type":"dm.received","filter":{"user_id":"1"},"tag":"one","webhook_id":"1001"},{"subscription_id":"2001","event_type":"dm.received","filter":{"user_id":"2"},"tag":"two","webhook_id":"1002"}]}`))
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		_, err := client.ListActivitySubscriptions(context.Background(), "app-token")
+		if err == nil || !strings.Contains(err.Error(), "duplicate") {
+			t.Fatalf("error = %v, want duplicate ID failure", err)
+		}
+	})
+}
+
 func TestXClientListActivitySubscriptionsFailsClosedOnProviderOverflow(t *testing.T) {
 	makeSubscriptions := func(start, count int) []ActivitySubscription {
 		subscriptions := make([]ActivitySubscription, count)
@@ -48,38 +231,6 @@ func TestXClientListActivitySubscriptionsFailsClosedOnProviderOverflow(t *testin
 		}
 	})
 
-	t.Run("provider advertises another page at total capacity", func(t *testing.T) {
-		calls := 0
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			calls++
-			switch calls {
-			case 1:
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"data": makeSubscriptions(1000, 1000),
-					"meta": map[string]any{"next_token": "NEXTTOKEN1234567"},
-				})
-			case 2:
-				if got := r.URL.Query().Get("pagination_token"); got != "NEXTTOKEN1234567" {
-					t.Fatalf("second pagination token = %q", got)
-				}
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"data": makeSubscriptions(2000, 500),
-					"meta": map[string]any{"next_token": "MORETOKEN12345678"},
-				})
-			default:
-				t.Fatalf("unexpected provider call %d", calls)
-			}
-		}))
-		defer server.Close()
-
-		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-		if _, err := client.ListActivitySubscriptions(context.Background(), "app-token"); err == nil || !strings.Contains(err.Error(), "bound") {
-			t.Fatalf("ListActivitySubscriptions() error = %v, want fail-closed bound error", err)
-		}
-		if calls != 2 {
-			t.Fatalf("provider calls = %d, want 2", calls)
-		}
-	})
 }
 
 func (b *trackingReadCloser) Read(p []byte) (int, error) {
@@ -743,57 +894,10 @@ func TestXClientEnsureWebhookRejectsMalformedProviderIDs(t *testing.T) {
 	}
 }
 
-func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndCreate(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		switch calls {
-		case 1:
-			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
-				t.Fatalf("list Authorization = %q, want app bearer", got)
-			}
-			if r.Method != http.MethodGet || r.URL.Path != "/2/activity/subscriptions" {
-				t.Fatalf("list request = %s %s", r.Method, r.URL.Path)
-			}
-			_, _ = w.Write([]byte(`{"data":[]}`))
-		case 2:
-			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
-				t.Fatalf("create Authorization = %q, want app bearer", got)
-			}
-			if r.Method != http.MethodPost || r.URL.Path != "/2/activity/subscriptions" {
-				t.Fatalf("create request = %s %s", r.Method, r.URL.Path)
-			}
-			var body ActivitySubscription
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatal(err)
-			}
-			want := ActivitySubscription{
-				EventType: "dm.received",
-				Filter:    ActivityFilter{UserID: "2244994945"},
-				Tag:       "unipost:x:dm:account-123",
-				WebhookID: "1001",
-			}
-			if !reflect.DeepEqual(body, want) {
-				t.Fatalf("body = %#v, want %#v", body, want)
-			}
-			_, _ = w.Write([]byte(`{"data":{"subscription":{"subscription_id":"2001","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}}`))
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	subscription, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"1001",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subscription.ID != "2001" || calls != 2 {
-		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
+func TestXClientDoesNotExposeSubscriptionReconciliationMethod(t *testing.T) {
+	methodName := "Ensure" + "DM" + "Subscription"
+	if _, exists := reflect.TypeOf((*Client)(nil)).MethodByName(methodName); exists {
+		t.Fatalf("Client unexpectedly exposes %s; reconciliation belongs to the worker", methodName)
 	}
 }
 
@@ -837,285 +941,6 @@ func TestXClientCreateDMSubscriptionIsPureCreate(t *testing.T) {
 	}
 	if subscription.ID != "2001" || calls != 1 {
 		t.Fatalf("subscription=%+v calls=%d, want one POST", subscription, calls)
-	}
-}
-
-func TestXClientEnsureDMSubscriptionReplacesStaleStableTag(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		switch calls {
-		case 1:
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2002","event_type":"dm.received","filter":{"user_id":"old-user"},"tag":"unipost:x:dm:account-123","webhook_id":"1004"}]}`))
-		case 2:
-			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
-				t.Fatalf("delete Authorization = %q, want app bearer", got)
-			}
-			if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/2002" {
-				t.Fatalf("delete request = %s %s", r.Method, r.URL.Path)
-			}
-			_, _ = w.Write([]byte(`{"data":{"deleted":true}}`))
-		case 3:
-			_, _ = w.Write([]byte(`{"data":{"subscription":{"subscription_id":"2003","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}}`))
-		default:
-			t.Fatalf("unexpected call %d", calls)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	subscription, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"1001",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subscription.ID != "2003" || calls != 3 {
-		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
-	}
-}
-
-func TestXClientEnsureDMSubscriptionFindsStableTagOnSecondPage(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.Method != http.MethodGet || r.URL.Path != "/2/activity/subscriptions" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
-		if r.URL.Query().Get("max_results") != "1000" {
-			t.Fatalf("max_results = %q", r.URL.Query().Get("max_results"))
-		}
-		switch calls {
-		case 1:
-			if got := r.URL.Query().Get("pagination_token"); got != "" {
-				t.Fatalf("first pagination token = %q", got)
-			}
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2999","event_type":"dm.received","filter":{"user_id":"another-user"},"tag":"another-tag","webhook_id":"1001"}],"meta":{"next_token":"NEXTTOKEN1234567","result_count":1}}`))
-		case 2:
-			if got := r.URL.Query().Get("pagination_token"); got != "NEXTTOKEN1234567" {
-				t.Fatalf("second pagination token = %q", got)
-			}
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2004","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}],"meta":{"result_count":1}}`))
-		default:
-			t.Fatalf("unexpected request %d", calls)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	subscription, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"1001",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subscription.ID != "2004" || calls != 2 {
-		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
-	}
-}
-
-func TestXClientEnsureDMSubscriptionFollowsFullFirstPageToItem1001(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		if r.Method != http.MethodGet || r.URL.Path != "/2/activity/subscriptions" {
-			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
-		}
-		switch calls {
-		case 1:
-			page := make([]ActivitySubscription, 1000)
-			for i := range page {
-				page[i] = ActivitySubscription{
-					ID:        fmt.Sprintf("%d", i+3000),
-					EventType: "dm.received",
-					Filter:    ActivityFilter{UserID: "another-user"},
-					Tag:       fmt.Sprintf("another-tag-%d", i),
-					WebhookID: "1001",
-				}
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": page,
-				"meta": map[string]any{
-					"next_token":   "NEXTTOKEN1234567",
-					"result_count": 1000,
-				},
-			})
-		case 2:
-			if got := r.URL.Query().Get("pagination_token"); got != "NEXTTOKEN1234567" {
-				t.Fatalf("second pagination token = %q", got)
-			}
-			if got := r.URL.Query().Get("max_results"); got != "500" {
-				t.Fatalf("second max_results = %q, want remaining self-serve capacity 500", got)
-			}
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2005","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}],"meta":{"result_count":1}}`))
-		default:
-			t.Fatalf("unexpected request %d", calls)
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	subscription, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"1001",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subscription.ID != "2005" || calls != 2 {
-		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
-	}
-}
-
-func TestXClientEnsureDMSubscriptionAcceptsDirectDataResponse(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		switch calls {
-		case 1:
-			_, _ = w.Write([]byte(`{"data":[]}`))
-		case 2:
-			_, _ = w.Write([]byte(`{"data":{"subscription_id":"2006","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}`))
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	subscription, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"1001",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subscription.ID != "2006" {
-		t.Fatalf("subscription = %+v", subscription)
-	}
-}
-
-func TestXClientEnsureDMSubscriptionAcceptsArrayDataResponse(t *testing.T) {
-	var calls int
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		calls++
-		switch calls {
-		case 1:
-			_, _ = w.Write([]byte(`{"data":[]}`))
-		case 2:
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2007","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}]}`))
-		}
-	}))
-	defer server.Close()
-
-	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	subscription, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"1001",
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if subscription.ID != "2007" {
-		t.Fatalf("subscription = %+v", subscription)
-	}
-}
-
-func TestXClientEnsureDMSubscriptionRejectsMalformedProviderIDs(t *testing.T) {
-	tests := []struct {
-		name      string
-		responses []string
-		wantCalls int
-	}{
-		{
-			name: "reused subscription",
-			responses: []string{
-				`{"data":[{"subscription_id":"invalid-subscription-id","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}]}`,
-			},
-			wantCalls: 1,
-		},
-		{
-			name: "stale subscription",
-			responses: []string{
-				`{"data":[{"subscription_id":"invalid-subscription-id","event_type":"dm.received","filter":{"user_id":"old-user"},"tag":"unipost:x:dm:account-123","webhook_id":"1004"}]}`,
-			},
-			wantCalls: 1,
-		},
-		{
-			name: "created subscription",
-			responses: []string{
-				`{"data":[]}`,
-				`{"data":{"subscription_id":"invalid-subscription-id"}}`,
-			},
-			wantCalls: 2,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var calls int
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				if calls >= len(tt.responses) {
-					t.Fatalf("unexpected provider request %d", calls+1)
-				}
-				_, _ = w.Write([]byte(tt.responses[calls]))
-				calls++
-			}))
-			defer server.Close()
-
-			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-			_, err := client.EnsureDMSubscription(
-				context.Background(),
-				"app-token",
-				"account-123",
-				"2244994945",
-				"1001",
-			)
-			if err == nil {
-				t.Fatal("expected malformed provider subscription ID error")
-			}
-			if calls != tt.wantCalls {
-				t.Fatalf("provider calls = %d, want %d", calls, tt.wantCalls)
-			}
-		})
-	}
-}
-
-func TestXClientEnsureDMSubscriptionRejectsMalformedWebhookIDWithoutProviderRequest(t *testing.T) {
-	var calls int
-	client := NewClient(ClientConfig{
-		BaseURL: "https://api.x.test",
-		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
-			calls++
-			return nil, errors.New("unexpected provider request")
-		})},
-	})
-	_, err := client.EnsureDMSubscription(
-		context.Background(),
-		"app-token",
-		"account-123",
-		"2244994945",
-		"invalid-webhook-id",
-	)
-	if err == nil {
-		t.Fatal("expected malformed webhook ID error")
-	}
-	if calls != 0 {
-		t.Fatalf("provider calls = %d, want 0", calls)
 	}
 }
 

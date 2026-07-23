@@ -66,6 +66,8 @@ type fakeXInboxDeliveryAPI struct {
 	webhookURLs              []string
 	activitySubscriptions    []xinbox.ActivitySubscription
 	listSubscriptionCalls    int
+	listIdentityByToken      map[string]string
+	listSubscriptionIdentity []string
 	createSubscriptionCalls  int
 	beforeCreateSubscription func()
 }
@@ -124,6 +126,12 @@ func (f *fakeXInboxDeliveryAPI) ListActivitySubscriptions(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.listSubscriptionCalls++
+	identity := f.listIdentityByToken[appToken]
+	if identity == "" {
+		identity = "x-app:test"
+	}
+	f.listSubscriptionIdentity = append(f.listSubscriptionIdentity, identity)
+	f.operations = append(f.operations, "list-subscriptions:"+identity)
 	if f.listSubscriptionErr != nil {
 		f.subscriptionTokens = append(f.subscriptionTokens, appToken)
 		return nil, f.listSubscriptionErr
@@ -589,6 +597,187 @@ func enabledXInboxDeliveryConfig(
 	}
 }
 
+func TestXInboxDeliveryActivitySubscriptionCatalogIsCycleScopedPerApp(t *testing.T) {
+	dmOnly := []string{"dm.read", "dm.write", "users.read"}
+
+	t.Run("same app global off accounts list once and clean exact tags", func(t *testing.T) {
+		first := activeManagedXInboxAccount()
+		first.Scopes = dmOnly
+		first.ActivityDMSubscriptionID = "2001"
+		second := first
+		second.SocialAccountID = "account-2"
+		second.WorkspaceID = "workspace-2"
+		second.ExternalAccountID = "2244994946"
+		second.ActivityDMSubscriptionID = "2002"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{first, second}}
+		identity := safeAppIdentity(first.WebhookRouteKey)
+		api := &fakeXInboxDeliveryAPI{
+			listIdentityByToken: map[string]string{"managed-app-token": identity},
+			activitySubscriptions: []xinbox.ActivitySubscription{
+				fakeDMActivitySubscription("2001", first, "1001"),
+				fakeDMActivitySubscription("2002", second, "1001"),
+			},
+		}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+		config.DMCanaryAccountIDs = map[string]struct{}{"account-1": {}, "account-2": {}}
+
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.listSubscriptionCalls != 1 || !reflect.DeepEqual(api.listSubscriptionIdentity, []string{identity}) {
+			t.Fatalf("list calls=%d identities=%v, want one safe app identity %q", api.listSubscriptionCalls, api.listSubscriptionIdentity, identity)
+		}
+		if want := []string{"2001", "2002"}; !reflect.DeepEqual(api.deletedSubs, want) {
+			t.Fatalf("deleted subscriptions=%v, want %v", api.deletedSubs, want)
+		}
+		wantOperations := []string{
+			"list-subscriptions:" + identity,
+			"delete-subscription:2001",
+			"delete-subscription:2002",
+		}
+		if !reflect.DeepEqual(api.operations, wantOperations) {
+			t.Fatalf("operations=%v, want list before mutation %v", api.operations, wantOperations)
+		}
+	})
+
+	t.Run("different workspace apps each list once", func(t *testing.T) {
+		first := activeManagedXInboxAccount()
+		first.AppMode = xinbox.AppModeWorkspace
+		first.AppBearerTokenEncrypted = "encrypted-a"
+		first.WebhookRouteKey = "workspace-route-a"
+		first.ActivityWebhookRouteKey = first.WebhookRouteKey
+		first.Scopes = dmOnly
+		first.ActivityDMSubscriptionID = "2101"
+		second := first
+		second.SocialAccountID = "account-2"
+		second.WorkspaceID = "workspace-2"
+		second.ExternalAccountID = "2244994946"
+		second.AppBearerTokenEncrypted = "encrypted-b"
+		second.WebhookRouteKey = "workspace-route-b"
+		second.ActivityWebhookRouteKey = second.WebhookRouteKey
+		second.ActivityDMSubscriptionID = "2102"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{first, second}}
+		identityA := safeAppIdentity(first.WebhookRouteKey)
+		identityB := safeAppIdentity(second.WebhookRouteKey)
+		api := &fakeXInboxDeliveryAPI{
+			listIdentityByToken: map[string]string{"workspace-token-a": identityA, "workspace-token-b": identityB},
+			activitySubscriptions: []xinbox.ActivitySubscription{
+				fakeDMActivitySubscription("2101", first, "1101"),
+				fakeDMActivitySubscription("2102", second, "1102"),
+			},
+		}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.Cipher = fakeXInboxCipher{values: map[string]string{
+			"encrypted-a": "workspace-token-a",
+			"encrypted-b": "workspace-token-b",
+		}}
+		config.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+		config.DMCanaryAccountIDs = map[string]struct{}{"account-1": {}, "account-2": {}}
+
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.listSubscriptionCalls != 2 || !reflect.DeepEqual(api.listSubscriptionIdentity, []string{identityA, identityB}) {
+			t.Fatalf("list calls=%d identities=%v, want each app once %v", api.listSubscriptionCalls, api.listSubscriptionIdentity, []string{identityA, identityB})
+		}
+	})
+
+	t.Run("list failure is cached and preserves all same app state", func(t *testing.T) {
+		first := activeManagedXInboxAccount()
+		first.Scopes = dmOnly
+		first.ActivityDMSubscriptionID = "2201"
+		first.ActivityWebhookRouteKey = "managed-route-key"
+		second := first
+		second.SocialAccountID = "account-2"
+		second.WorkspaceID = "workspace-2"
+		second.ExternalAccountID = "2244994946"
+		second.ActivityDMSubscriptionID = "2202"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{first, second}}
+		identity := safeAppIdentity(first.WebhookRouteKey)
+		api := &fakeXInboxDeliveryAPI{
+			listSubscriptionErr: errors.New("safe discovery failure"),
+			listIdentityByToken: map[string]string{"managed-app-token": identity},
+		}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+		config.DMCanaryAccountIDs = map[string]struct{}{"account-1": {}, "account-2": {}}
+
+		err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "safe discovery failure") {
+			t.Fatalf("error=%v, want cached discovery failure", err)
+		}
+		if api.listSubscriptionCalls != 1 || len(api.deletedSubs) != 0 || api.createSubscriptionCalls != 0 {
+			t.Fatalf("list=%d deletes=%v creates=%d, want one list and zero mutation", api.listSubscriptionCalls, api.deletedSubs, api.createSubscriptionCalls)
+		}
+		if got := []string{store.accounts[0].ActivityDMSubscriptionID, store.accounts[1].ActivityDMSubscriptionID}; !reflect.DeepEqual(got, []string{"2201", "2202"}) {
+			t.Fatalf("stored IDs=%v, want preserved", got)
+		}
+		if want := []string{"list-subscriptions:" + identity}; !reflect.DeepEqual(api.operations, want) {
+			t.Fatalf("operations=%v, want %v", api.operations, want)
+		}
+	})
+
+	t.Run("catalog reflects create for duplicate account row", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.Scopes = dmOnly
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account, account}}
+		identity := safeAppIdentity(account.WebhookRouteKey)
+		api := &fakeXInboxDeliveryAPI{
+			webhookID:             "1301",
+			subscriptionID:        "2301",
+			listIdentityByToken:   map[string]string{"managed-app-token": identity},
+			activitySubscriptions: []xinbox.ActivitySubscription{},
+		}
+		config := enabledXInboxDeliveryConfig(store, api)
+
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.listSubscriptionCalls != 1 || api.createSubscriptionCalls != 1 {
+			t.Fatalf("list=%d creates=%d, want one each with updated catalog reuse", api.listSubscriptionCalls, api.createSubscriptionCalls)
+		}
+		listIndex, createIndex := -1, -1
+		for i, operation := range api.operations {
+			if strings.HasPrefix(operation, "list-subscriptions:") && listIndex < 0 {
+				listIndex = i
+			}
+			if operation == "ensure-subscription:account-1" && createIndex < 0 {
+				createIndex = i
+			}
+		}
+		if listIndex < 0 || createIndex < 0 || listIndex > createIndex {
+			t.Fatalf("operations=%v, want list before create", api.operations)
+		}
+	})
+
+	t.Run("catalog reflects delete for duplicate account row", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.Scopes = dmOnly
+		account.ActivityDMSubscriptionID = "2401"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account, account}}
+		identity := safeAppIdentity(account.WebhookRouteKey)
+		api := &fakeXInboxDeliveryAPI{
+			listIdentityByToken: map[string]string{"managed-app-token": identity},
+			activitySubscriptions: []xinbox.ActivitySubscription{
+				fakeDMActivitySubscription("2401", account, "1401"),
+			},
+		}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.listSubscriptionCalls != 1 || !reflect.DeepEqual(api.deletedSubs, []string{"2401"}) {
+			t.Fatalf("list=%d deletes=%v, want one list and one delete", api.listSubscriptionCalls, api.deletedSubs)
+		}
+		if want := []string{"list-subscriptions:" + identity, "delete-subscription:2401"}; !reflect.DeepEqual(api.operations, want) {
+			t.Fatalf("operations=%v, want catalog-backed idempotence %v", api.operations, want)
+		}
+	})
+}
+
 func TestXInboxDeliveryDMDesiredRequiresFullConjunctionAndKeepsCommentsIndependent(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -872,7 +1061,7 @@ func TestXInboxDeliveryNilDMsAvailableFailsClosedOnlyForOtherwiseEligibleAccount
 		if err == nil || !strings.Contains(err.Error(), "DM availability evaluator is not configured") {
 			t.Fatalf("ReconcileOnce() error = %v, want missing DM evaluator", err)
 		}
-		if want := []string{"delete-subscription:subscription-existing"}; !reflect.DeepEqual(api.operations, want) {
+		if want := []string{"list-subscriptions:x-app:test", "delete-subscription:subscription-existing"}; !reflect.DeepEqual(api.operations, want) {
 			t.Fatalf("provider operations = %v, want exact DM cleanup only %v", api.operations, want)
 		}
 		got := store.states[len(store.states)-1]
@@ -928,7 +1117,7 @@ func TestXInboxDeliveryReconcilePersistsCommentsRuleAndLegacyDMSubscription(t *t
 	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
 		t.Fatalf("rule tokens = %v, want app bearer", api.ruleTokens)
 	}
-	if want := []string{"ensure-rule:account-1", "ensure-webhook", "ensure-subscription:account-1"}; !reflect.DeepEqual(api.operations, want) {
+	if want := []string{"ensure-rule:account-1", "ensure-webhook", "list-subscriptions:x-app:test", "ensure-subscription:account-1"}; !reflect.DeepEqual(api.operations, want) {
 		t.Fatalf("operations = %v, want %v", api.operations, want)
 	}
 	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
@@ -1089,6 +1278,7 @@ func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvision
 	if want := []string{
 		"ensure-rule:account-1",
 		"ensure-webhook",
+		"list-subscriptions:x-app:test",
 		"delete-subscription:old-subscription",
 		"ensure-subscription:account-1",
 	}; !reflect.DeepEqual(api.operations, want) {
@@ -1102,7 +1292,7 @@ func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvision
 	if len(api.deletedSubs) != 1 {
 		t.Fatalf("second cycle repeated subscription cleanup: %v", api.deletedSubs)
 	}
-	if want := []string{"ensure-webhook"}; !reflect.DeepEqual(api.operations, want) {
+	if want := []string{"ensure-webhook", "list-subscriptions:x-app:test"}; !reflect.DeepEqual(api.operations, want) {
 		t.Fatalf("second-cycle operations = %v, want exact subscription reuse without another POST %v", api.operations, want)
 	}
 }
@@ -1830,7 +2020,7 @@ func TestXInboxDeliveryDMForbiddenLatchClearsOnlyForDeliberateGates(t *testing.T
 			if want := []string{"subscription-existing"}; !reflect.DeepEqual(api.deletedSubs, want) {
 				t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
 			}
-			if want := []string{"delete-subscription:subscription-existing"}; !reflect.DeepEqual(api.operations, want) {
+			if want := []string{"list-subscriptions:x-app:test", "delete-subscription:subscription-existing"}; !reflect.DeepEqual(api.operations, want) {
 				t.Fatalf("gate-off provider operations = %v, want account subscription cleanup only %v", api.operations, want)
 			}
 		})
@@ -2187,6 +2377,7 @@ func TestXInboxCredentialReplacementReconcilesNewResourcesBeforeCleaningOldApp(t
 	}
 	if want := []string{
 		"ensure-rule:" + account.SocialAccountID,
+		"list-subscriptions:x-app:test",
 		"delete-rule:old-exact-rule",
 	}; !reflect.DeepEqual(api.operations, want) {
 		t.Fatalf("operations = %v, want new resource before old cleanup %v", api.operations, want)
