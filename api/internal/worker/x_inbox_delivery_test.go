@@ -1,9 +1,12 @@
 package worker
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"reflect"
@@ -48,6 +51,7 @@ type fakeXInboxDeliveryAPI struct {
 
 	ruleTokens             []string
 	webhookTokens          []string
+	listWebhookTokens      []string
 	subscriptionTokens     []string
 	subscriptionAccounts   []string
 	subscriptionUserIDs    []string
@@ -109,9 +113,10 @@ func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, token string, c
 	return xinbox.Webhook{ID: f.webhookID, URL: configuredURL, Valid: true}, nil
 }
 
-func (f *fakeXInboxDeliveryAPI) ListWebhooks(_ context.Context, _ string) ([]xinbox.Webhook, error) {
+func (f *fakeXInboxDeliveryAPI) ListWebhooks(_ context.Context, token string) ([]xinbox.Webhook, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listWebhookTokens = append(f.listWebhookTokens, token)
 	f.operations = append(f.operations, "list-webhooks")
 	if f.listWebhooksErr != nil {
 		return nil, f.listWebhooksErr
@@ -576,6 +581,57 @@ func TestXInboxDeliveryManagedMissingSpendSafetyFailsClosed(t *testing.T) {
 	})
 }
 
+func TestXInboxDeliveryManagedSpendSafetyErrorPreservesResourcesAndRunningStream(t *testing.T) {
+	account := activeManagedXInboxAccount()
+	account.FilteredStreamRuleID = "rule-existing"
+	account.ActivityDMSubscriptionID = "subscription-existing"
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{}
+	leader := &sharedTestLeader{}
+	runner := &managedStreamRunner{starts: make(chan XInboxAppStream, 2), stops: make(chan string, 2)}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.Usage = &fakeXInboxUsageReader{err: errors.New("usage snapshot unavailable")}
+	config.Leader = leader
+	config.Stream = runner
+	config.EventHandler = func(context.Context, string, xinbox.StreamEvent) error { return nil }
+	worker := NewXInboxDeliveryWorker(config)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	worker.syncDesiredStreams(ctx, []XInboxAppStream{{
+		Identity:        safeAppIdentity(account.WebhookRouteKey),
+		WebhookRouteKey: account.WebhookRouteKey,
+		BearerToken:     "managed-app-token",
+	}})
+	<-runner.starts
+
+	_, complete, err := worker.reconcileDesiredCycle(ctx)
+	if err == nil || !strings.Contains(err.Error(), "usage snapshot unavailable") {
+		t.Fatalf("reconcile error = %v, want spend snapshot error", err)
+	}
+	if complete {
+		t.Fatal("desired account set marked complete after spend snapshot error")
+	}
+	if len(api.operations) != 0 {
+		t.Fatalf("provider operations = %v, want zero create/delete calls", api.operations)
+	}
+	got := store.states[len(store.states)-1]
+	if got.FilteredStreamRuleID != "rule-existing" || got.ActivityDMSubscriptionID != "subscription-existing" {
+		t.Fatalf("state = %+v, want existing provider IDs preserved", got)
+	}
+
+	worker.reconcileAndStartStreams(ctx)
+	select {
+	case stopped := <-runner.stops:
+		t.Fatalf("incomplete spend cycle stopped running stream %q", stopped)
+	case restarted := <-runner.starts:
+		t.Fatalf("incomplete spend cycle replaced running stream %+v", restarted)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if len(api.operations) != 0 {
+		t.Fatalf("provider operations after stream sync = %v, want none", api.operations)
+	}
+}
+
 func TestXInboxDeliveryReconcilePersistsCommentsRuleAndLegacyDMSubscription(t *testing.T) {
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
 	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionID: "subscription-1"}
@@ -736,6 +792,15 @@ func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvision
 	if want := []string{"old-webhook"}; !reflect.DeepEqual(api.deletedWebhooks, want) {
 		t.Fatalf("deleted webhooks = %v, want exact stale route only %v", api.deletedWebhooks, want)
 	}
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.webhookTokens, want) {
+		t.Fatalf("EnsureWebhook tokens = %v, want managed bearer %v", api.webhookTokens, want)
+	}
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.listWebhookTokens, want) {
+		t.Fatalf("ListWebhooks tokens = %v, want managed bearer %v", api.listWebhookTokens, want)
+	}
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.deletedWebhookTokens, want) {
+		t.Fatalf("DeleteWebhook tokens = %v, want managed bearer %v", api.deletedWebhookTokens, want)
+	}
 	got := store.states[len(store.states)-1]
 	if got.ActivityDMSubscriptionID != "new-subscription" || got.ActivityWebhookRouteKey != "managed-route-key" {
 		t.Fatalf("final state = %+v, want replacement persisted", got)
@@ -848,6 +913,66 @@ func TestXInboxDeliveryDMCreate403LatchesSameFingerprintWithoutDisablingComments
 	}
 }
 
+func TestXInboxDeliveryDMForbiddenLogIsStructuredAndSecretSafe(t *testing.T) {
+	const (
+		bearerSentinel  = "managed-bearer-must-not-log"
+		privateSentinel = "private-dm-content-must-not-log"
+	)
+	account := activeManagedXInboxAccount()
+	account.Handle = privateSentinel
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{
+		ruleID:          "rule-1",
+		webhookID:       "webhook-1",
+		subscriptionErr: dmSubscriptionCreateForbidden(),
+	}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.ManagedAppBearer = bearerSentinel
+
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+	if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusForbidden) {
+		t.Fatalf("reconcile error = %v, want provider 403", err)
+	}
+	fingerprint := store.states[len(store.states)-1].DMSubscriptionForbiddenFingerprint
+	if fingerprint == "" {
+		t.Fatal("DM forbidden fingerprint was not persisted")
+	}
+
+	foundDMRecord := false
+	for _, line := range bytes.Split(bytes.TrimSpace(output.Bytes()), []byte("\n")) {
+		var record map[string]any
+		if err := json.Unmarshal(line, &record); err != nil {
+			t.Fatalf("decode structured log %q: %v", line, err)
+		}
+		if record["source"] != "dm" {
+			continue
+		}
+		foundDMRecord = true
+		if record["action"] != "reconcile" || record["provider_http_status"] != float64(http.StatusForbidden) {
+			t.Fatalf("DM record attributes = %+v, want source/action/status", record)
+		}
+	}
+	if !foundDMRecord {
+		t.Fatalf("logs = %s, want structured DM source record", output.String())
+	}
+	logged := output.String()
+	for _, forbidden := range []string{
+		bearerSentinel,
+		privateSentinel,
+		fingerprint,
+		"consumer_secret",
+		"consumer-secret",
+	} {
+		if strings.Contains(logged, forbidden) {
+			t.Fatalf("structured logs leaked forbidden value %q: %s", forbidden, logged)
+		}
+	}
+}
+
 func TestXInboxDeliveryDMProvisioning403LatchCoversEnsureReadWriteButNotNon403(t *testing.T) {
 	for _, test := range []struct {
 		name            string
@@ -939,6 +1064,9 @@ func TestXInboxDeliveryDMForbiddenLatchClearsOnlyForDeliberateGates(t *testing.T
 			}
 			if want := []string{"subscription-existing"}; !reflect.DeepEqual(api.deletedSubs, want) {
 				t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
+			}
+			if len(api.deletedWebhooks) != 0 {
+				t.Fatalf("DM gate-off deleted shared app webhook IDs %v", api.deletedWebhooks)
 			}
 		})
 	}
