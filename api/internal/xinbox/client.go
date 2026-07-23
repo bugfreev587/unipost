@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -79,6 +80,59 @@ type APIError struct {
 	Type       string `json:"type"`
 	Detail     string `json:"detail"`
 	Status     int    `json:"status"`
+}
+
+type ProviderHTTPError struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Code       string
+	Title      string
+}
+
+type ProviderRequestError struct {
+	Method string
+	Path   string
+	cause  error
+}
+
+func (e *ProviderRequestError) Error() string {
+	if e == nil {
+		return "X provider request failed"
+	}
+	return fmt.Sprintf("X API %s %s request failed", e.Method, e.Path)
+}
+
+func (e *ProviderRequestError) Is(target error) bool {
+	return e != nil && errors.Is(e.cause, target)
+}
+
+func (e *ProviderRequestError) Format(state fmt.State, verb rune) {
+	message := e.Error()
+	if verb == 'q' {
+		_, _ = fmt.Fprintf(state, "%q", message)
+		return
+	}
+	_, _ = io.WriteString(state, message)
+}
+
+func (e *ProviderHTTPError) Error() string {
+	if e == nil {
+		return "X provider HTTP error"
+	}
+	message := fmt.Sprintf("X API %s %s returned HTTP %d", e.Method, e.Path, e.StatusCode)
+	if e.Code != "" {
+		message += fmt.Sprintf(" code=%q", e.Code)
+	}
+	if e.Title != "" {
+		message += fmt.Sprintf(" title=%q", e.Title)
+	}
+	return message
+}
+
+func IsProviderHTTPStatus(err error, status int) bool {
+	var providerErr *ProviderHTTPError
+	return errors.As(err, &providerErr) && providerErr != nil && providerErr.StatusCode == status
 }
 
 func NewClient(config ClientConfig) *Client {
@@ -219,15 +273,12 @@ func (c *Client) DeleteFilteredStreamRule(ctx context.Context, bearerToken, rule
 			} `json:"summary"`
 		} `json:"meta"`
 	}
-	status, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, &response)
+	_, err := c.do(ctx, http.MethodPost, "/2/tweets/search/stream/rules", bearerToken, request, &response)
 	if err != nil {
+		if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
+			return nil
+		}
 		return err
-	}
-	if isIdempotentDeleteStatus(status) {
-		return nil
-	}
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("X delete filtered stream rule returned HTTP %d", status)
 	}
 	if len(response.Errors) > 0 {
 		if allErrorsAlreadyMissing(response.Errors, ruleID) {
@@ -253,18 +304,24 @@ func (c *Client) ConsumeFilteredStream(
 		"expansions":   {"author_id,referenced_tweets.id,referenced_tweets.id.author_id"},
 		"user.fields":  {"id,name,username,profile_image_url"},
 	}
-	request, err := c.newRequest(streamCtx, http.MethodGet, "/2/tweets/search/stream?"+query.Encode(), bearerToken, nil)
+	path := "/2/tweets/search/stream?" + query.Encode()
+	request, err := c.newRequest(streamCtx, http.MethodGet, path, bearerToken, nil)
 	if err != nil {
 		return err
 	}
 	response, err := c.streamHTTP.Do(request)
 	if err != nil {
-		return fmt.Errorf("open X filtered stream: %w", err)
+		return newProviderRequestError(http.MethodGet, path, err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("open X filtered stream returned HTTP %d", response.StatusCode)
+		providerErr := &ProviderHTTPError{
+			Method:     http.MethodGet,
+			Path:       providerRequestPath(path),
+			StatusCode: response.StatusCode,
+		}
+		decodeProviderHTTPError(response.Body, c.maxJSONResponseBytes, providerErr)
+		return providerErr
 	}
 
 	type scanResult struct {
@@ -339,14 +396,8 @@ func (c *Client) doJSON(
 	body any,
 	responseBody any,
 ) error {
-	status, err := c.do(ctx, method, path, bearerToken, body, responseBody)
-	if err != nil {
-		return err
-	}
-	if status < 200 || status >= 300 {
-		return fmt.Errorf("X API %s %s returned HTTP %d", method, path, status)
-	}
-	return nil
+	_, err := c.do(ctx, method, path, bearerToken, body, responseBody)
+	return err
 }
 
 func (c *Client) do(
@@ -357,6 +408,7 @@ func (c *Client) do(
 	body any,
 	responseBody any,
 ) (int, error) {
+	safePath := providerRequestPath(path)
 	requestCtx, cancel := context.WithTimeout(ctx, c.controlTimeout)
 	defer cancel()
 	request, err := c.newRequest(requestCtx, method, path, bearerToken, body)
@@ -365,30 +417,110 @@ func (c *Client) do(
 	}
 	response, err := c.controlHTTP.Do(request)
 	if err != nil {
-		return 0, fmt.Errorf("X API %s %s: %w", method, path, err)
+		return 0, newProviderRequestError(method, safePath, err)
 	}
 	defer response.Body.Close()
-	if responseBody != nil && response.StatusCode >= 200 && response.StatusCode < 300 {
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		providerErr := &ProviderHTTPError{
+			Method:     method,
+			Path:       safePath,
+			StatusCode: response.StatusCode,
+		}
+		decodeProviderHTTPError(response.Body, c.maxJSONResponseBytes, providerErr)
+		return response.StatusCode, providerErr
+	}
+	if responseBody != nil {
 		limited := &io.LimitedReader{R: response.Body, N: c.maxJSONResponseBytes + 1}
 		payload, readErr := io.ReadAll(limited)
 		if readErr != nil {
-			return response.StatusCode, fmt.Errorf("read X API %s %s response: %w", method, path, readErr)
+			return response.StatusCode, fmt.Errorf("read X API %s %s response: %w", method, safePath, readErr)
 		}
 		if int64(len(payload)) > c.maxJSONResponseBytes {
 			return response.StatusCode, fmt.Errorf(
 				"X API %s %s response exceeded %d bytes",
 				method,
-				path,
+				safePath,
 				c.maxJSONResponseBytes,
 			)
 		}
 		if err := json.Unmarshal(payload, responseBody); err != nil && len(bytes.TrimSpace(payload)) != 0 {
-			return response.StatusCode, fmt.Errorf("decode X API %s %s response: %w", method, path, err)
+			return response.StatusCode, fmt.Errorf("decode X API %s %s response: %w", method, safePath, err)
 		}
 	} else {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	}
 	return response.StatusCode, nil
+}
+
+func providerRequestPath(path string) string {
+	if parsed, err := url.Parse(path); err == nil && parsed.Path != "" {
+		return parsed.EscapedPath()
+	}
+	path, _, _ = strings.Cut(path, "?")
+	path, _, _ = strings.Cut(path, "#")
+	return path
+}
+
+func newProviderRequestError(method, path string, cause error) error {
+	return &ProviderRequestError{
+		Method: method,
+		Path:   providerRequestPath(path),
+		cause:  cause,
+	}
+}
+
+func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPError) {
+	target.Code = fmt.Sprintf("provider_http_%d", target.StatusCode)
+	target.Title = "provider_error"
+
+	type providerError struct {
+		Code   json.RawMessage `json:"code"`
+		Type   string          `json:"type"`
+		Title  string          `json:"title"`
+		Status int             `json:"status"`
+	}
+	type providerErrorResponse struct {
+		Errors [1]providerError `json:"errors"`
+		providerError
+	}
+
+	var response providerErrorResponse
+	decoder := json.NewDecoder(io.LimitReader(body, limit))
+	if err := decoder.Decode(&response); err != nil {
+		return
+	}
+	providerErr := response.providerError
+	if first := response.Errors[0]; len(first.Code) > 0 || first.Type != "" || first.Title != "" || first.Status != 0 {
+		providerErr = response.Errors[0]
+	}
+	if code := providerErrorCode(providerErr.Code); code != "" {
+		target.Code = code
+	} else if errorType := providerErrorClassification("provider_code", providerErr.Type); errorType != "" {
+		target.Code = errorType
+	}
+}
+
+func providerErrorCode(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var code string
+	if err := json.Unmarshal(raw, &code); err == nil {
+		return providerErrorClassification("provider_code", code)
+	}
+	var number json.Number
+	if err := json.Unmarshal(raw, &number); err == nil {
+		return providerErrorClassification("provider_code", number.String())
+	}
+	return ""
+}
+
+func providerErrorClassification(prefix, raw string) string {
+	if raw == "" {
+		return ""
+	}
+	digest := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%s_%x", prefix, digest[:6])
 }
 
 func (c *Client) newRequest(
@@ -402,13 +534,13 @@ func (c *Client) newRequest(
 	if body != nil {
 		encoded, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return nil, newProviderRequestError(method, path, err)
 		}
 		reader = bytes.NewReader(encoded)
 	}
 	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
 	if err != nil {
-		return nil, err
+		return nil, newProviderRequestError(method, path, err)
 	}
 	request.Header.Set("Authorization", "Bearer "+bearerToken)
 	if body != nil {
@@ -432,10 +564,6 @@ func newXTransport() *http.Transport {
 		ResponseHeaderTimeout: 10 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
-}
-
-func isIdempotentDeleteStatus(status int) bool {
-	return status == http.StatusNotFound || status == http.StatusGone
 }
 
 func allErrorsAlreadyMissing(apiErrors []APIError, resourceID string) bool {

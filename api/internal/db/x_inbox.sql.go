@@ -22,7 +22,7 @@ func (q *Queries) DeleteXInboxDeliveryResource(ctx context.Context, socialAccoun
 }
 
 const getXInboxDeliveryResource = `-- name: GetXInboxDeliveryResource :one
-SELECT social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key FROM x_inbox_delivery_resources
+SELECT social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key, dm_subscription_forbidden_fingerprint FROM x_inbox_delivery_resources
 WHERE social_account_id = $1
 `
 
@@ -39,6 +39,7 @@ func (q *Queries) GetXInboxDeliveryResource(ctx context.Context, socialAccountID
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActivityWebhookRouteKey,
+		&i.DmSubscriptionForbiddenFingerprint,
 	)
 	return i, err
 }
@@ -48,7 +49,7 @@ UPDATE x_inbox_delivery_resources
 SET activity_dm_subscription_id = $2,
     updated_at = NOW()
 WHERE social_account_id = $1
-RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key
+RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key, dm_subscription_forbidden_fingerprint
 `
 
 type UpdateXInboxActivityDMSubscriptionParams struct {
@@ -69,6 +70,7 @@ func (q *Queries) UpdateXInboxActivityDMSubscription(ctx context.Context, arg Up
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActivityWebhookRouteKey,
+		&i.DmSubscriptionForbiddenFingerprint,
 	)
 	return i, err
 }
@@ -78,22 +80,24 @@ UPDATE x_inbox_delivery_resources
 SET filtered_stream_rule_id = $2,
     activity_dm_subscription_id = $3,
     activity_webhook_route_key = $4,
-    delivery_status = $5,
-    last_error = $6,
-    last_synced_at = $7,
+    dm_subscription_forbidden_fingerprint = $5,
+    delivery_status = $6,
+    last_error = $7,
+    last_synced_at = $8,
     updated_at = NOW()
 WHERE social_account_id = $1
-RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key
+RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key, dm_subscription_forbidden_fingerprint
 `
 
 type UpdateXInboxDeliveryResourceParams struct {
-	SocialAccountID          string             `json:"social_account_id"`
-	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
-	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
-	ActivityWebhookRouteKey  pgtype.Text        `json:"activity_webhook_route_key"`
-	DeliveryStatus           string             `json:"delivery_status"`
-	LastError                pgtype.Text        `json:"last_error"`
-	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
+	SocialAccountID                    string             `json:"social_account_id"`
+	FilteredStreamRuleID               pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID           pgtype.Text        `json:"activity_dm_subscription_id"`
+	ActivityWebhookRouteKey            pgtype.Text        `json:"activity_webhook_route_key"`
+	DmSubscriptionForbiddenFingerprint pgtype.Text        `json:"dm_subscription_forbidden_fingerprint"`
+	DeliveryStatus                     string             `json:"delivery_status"`
+	LastError                          pgtype.Text        `json:"last_error"`
+	LastSyncedAt                       pgtype.Timestamptz `json:"last_synced_at"`
 }
 
 func (q *Queries) UpdateXInboxDeliveryResource(ctx context.Context, arg UpdateXInboxDeliveryResourceParams) (XInboxDeliveryResource, error) {
@@ -102,6 +106,7 @@ func (q *Queries) UpdateXInboxDeliveryResource(ctx context.Context, arg UpdateXI
 		arg.FilteredStreamRuleID,
 		arg.ActivityDmSubscriptionID,
 		arg.ActivityWebhookRouteKey,
+		arg.DmSubscriptionForbiddenFingerprint,
 		arg.DeliveryStatus,
 		arg.LastError,
 		arg.LastSyncedAt,
@@ -117,6 +122,7 @@ func (q *Queries) UpdateXInboxDeliveryResource(ctx context.Context, arg UpdateXI
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActivityWebhookRouteKey,
+		&i.DmSubscriptionForbiddenFingerprint,
 	)
 	return i, err
 }
@@ -126,7 +132,7 @@ UPDATE x_inbox_delivery_resources
 SET filtered_stream_rule_id = $2,
     updated_at = NOW()
 WHERE social_account_id = $1
-RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key
+RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key, dm_subscription_forbidden_fingerprint
 `
 
 type UpdateXInboxFilteredStreamRuleParams struct {
@@ -147,6 +153,7 @@ func (q *Queries) UpdateXInboxFilteredStreamRule(ctx context.Context, arg Update
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActivityWebhookRouteKey,
+		&i.DmSubscriptionForbiddenFingerprint,
 	)
 	return i, err
 }
@@ -157,30 +164,33 @@ INSERT INTO x_inbox_delivery_resources (
   filtered_stream_rule_id,
   activity_dm_subscription_id,
   activity_webhook_route_key,
+  dm_subscription_forbidden_fingerprint,
   delivery_status,
   last_error,
   last_synced_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (social_account_id) DO UPDATE
 SET filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
     activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
     activity_webhook_route_key = EXCLUDED.activity_webhook_route_key,
+    dm_subscription_forbidden_fingerprint = EXCLUDED.dm_subscription_forbidden_fingerprint,
     delivery_status = EXCLUDED.delivery_status,
     last_error = EXCLUDED.last_error,
     last_synced_at = EXCLUDED.last_synced_at,
     updated_at = NOW()
-RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key
+RETURNING social_account_id, filtered_stream_rule_id, activity_dm_subscription_id, delivery_status, last_error, last_synced_at, created_at, updated_at, activity_webhook_route_key, dm_subscription_forbidden_fingerprint
 `
 
 type UpsertXInboxDeliveryResourceParams struct {
-	SocialAccountID          string             `json:"social_account_id"`
-	FilteredStreamRuleID     pgtype.Text        `json:"filtered_stream_rule_id"`
-	ActivityDmSubscriptionID pgtype.Text        `json:"activity_dm_subscription_id"`
-	ActivityWebhookRouteKey  pgtype.Text        `json:"activity_webhook_route_key"`
-	DeliveryStatus           string             `json:"delivery_status"`
-	LastError                pgtype.Text        `json:"last_error"`
-	LastSyncedAt             pgtype.Timestamptz `json:"last_synced_at"`
+	SocialAccountID                    string             `json:"social_account_id"`
+	FilteredStreamRuleID               pgtype.Text        `json:"filtered_stream_rule_id"`
+	ActivityDmSubscriptionID           pgtype.Text        `json:"activity_dm_subscription_id"`
+	ActivityWebhookRouteKey            pgtype.Text        `json:"activity_webhook_route_key"`
+	DmSubscriptionForbiddenFingerprint pgtype.Text        `json:"dm_subscription_forbidden_fingerprint"`
+	DeliveryStatus                     string             `json:"delivery_status"`
+	LastError                          pgtype.Text        `json:"last_error"`
+	LastSyncedAt                       pgtype.Timestamptz `json:"last_synced_at"`
 }
 
 func (q *Queries) UpsertXInboxDeliveryResource(ctx context.Context, arg UpsertXInboxDeliveryResourceParams) (XInboxDeliveryResource, error) {
@@ -189,6 +199,7 @@ func (q *Queries) UpsertXInboxDeliveryResource(ctx context.Context, arg UpsertXI
 		arg.FilteredStreamRuleID,
 		arg.ActivityDmSubscriptionID,
 		arg.ActivityWebhookRouteKey,
+		arg.DmSubscriptionForbiddenFingerprint,
 		arg.DeliveryStatus,
 		arg.LastError,
 		arg.LastSyncedAt,
@@ -204,6 +215,7 @@ func (q *Queries) UpsertXInboxDeliveryResource(ctx context.Context, arg UpsertXI
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.ActivityWebhookRouteKey,
+		&i.DmSubscriptionForbiddenFingerprint,
 	)
 	return i, err
 }
