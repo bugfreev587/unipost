@@ -12,10 +12,11 @@ import (
 )
 
 var (
-	ErrInboxAccountNotFound  = errors.New("X inbox account not found")
-	ErrInboxAccountAmbiguous = errors.New("X inbox account routing is ambiguous")
-	ErrAppSecretNotFound     = errors.New("X app consumer secret not found")
-	ErrMalformedEvent        = errors.New("malformed recognized X inbox event")
+	ErrInboxAccountNotFound   = errors.New("X inbox account not found")
+	ErrInboxAccountAmbiguous  = errors.New("X inbox account routing is ambiguous")
+	ErrAppSecretNotFound      = errors.New("X app consumer secret not found")
+	ErrMalformedEvent         = errors.New("malformed recognized X inbox event")
+	ErrDMFeatureNotConfigured = errors.New("X DM feature evaluator is not configured")
 )
 
 type InboxAccount struct {
@@ -224,6 +225,10 @@ func (s *IngestionService) IngestActivityEvent(ctx context.Context, appClientID 
 		if err != nil {
 			return err
 		}
+		providerUserID := strings.TrimSpace(event.ExternalUserID)
+		if providerUserID == "" || providerUserID != strings.TrimSpace(account.ExternalAccountID) {
+			return fmt.Errorf("%w: tagged provider route mismatch", ErrInboxAccountNotFound)
+		}
 	} else {
 		providerStore, ok := s.store.(providerUserAccountStore)
 		if !ok {
@@ -314,7 +319,10 @@ func (s *IngestionService) admitAndInsertResult(
 	if item.ExternalID == "" {
 		return IngestionResult{}, nil
 	}
-	if item.Source == "x_dm" && s.dmsAvailable != nil {
+	if item.Source == "x_dm" {
+		if s.dmsAvailable == nil {
+			return IngestionResult{}, ErrDMFeatureNotConfigured
+		}
 		available, err := s.dmsAvailable(ctx, account.WorkspaceID)
 		if err != nil {
 			return IngestionResult{}, err

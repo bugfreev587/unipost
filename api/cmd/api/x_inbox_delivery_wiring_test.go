@@ -12,8 +12,12 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
+	"github.com/xiaoboyu/unipost-api/internal/worker"
+	"github.com/xiaoboyu/unipost-api/internal/xcredits"
+	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
 func TestXInboxDeliveryWorkerWiringUsesDevSafeEnvironmentContracts(t *testing.T) {
@@ -162,6 +166,241 @@ type fakeXDMFeatureEvaluator struct {
 	key         string
 	value       bool
 	err         error
+}
+
+type integrationXDMFeatureStore struct {
+	globalEnabled bool
+	globalErr     error
+	owner         string
+	ownerErr      error
+	globalKeys    []string
+	ownerSpaces   []string
+}
+
+func (s *integrationXDMFeatureStore) List(context.Context) ([]featureflags.Flag, error) {
+	return nil, nil
+}
+
+func (s *integrationXDMFeatureStore) Set(context.Context, string, bool, string) (featureflags.Flag, error) {
+	return featureflags.Flag{}, nil
+}
+
+func (s *integrationXDMFeatureStore) GlobalEnabled(_ context.Context, key string) (bool, error) {
+	s.globalKeys = append(s.globalKeys, key)
+	return s.globalEnabled, s.globalErr
+}
+
+func (s *integrationXDMFeatureStore) WorkspaceOwner(_ context.Context, workspaceID string) (string, error) {
+	s.ownerSpaces = append(s.ownerSpaces, workspaceID)
+	return s.owner, s.ownerErr
+}
+
+type integrationXDMSuperAdmins map[string]bool
+
+func (s integrationXDMSuperAdmins) IsSuperAdmin(_ context.Context, userID string) bool {
+	return s[userID]
+}
+
+type integrationXDMIngestStore struct {
+	account xinbox.InboxAccount
+	inserts int
+}
+
+func (s *integrationXDMIngestStore) AccountForApp(context.Context, string, string) (xinbox.InboxAccount, error) {
+	return s.account, nil
+}
+
+func (s *integrationXDMIngestStore) InsertInboxItem(_ context.Context, item xinbox.InboxItem) (xinbox.InboxItem, bool, error) {
+	s.inserts++
+	return item, true, nil
+}
+
+type integrationXDMDeliveryStore struct {
+	account worker.XInboxDeliveryAccount
+	states  []worker.XInboxDeliveryState
+}
+
+func (s *integrationXDMDeliveryStore) ListAccounts(context.Context) ([]worker.XInboxDeliveryAccount, error) {
+	return []worker.XInboxDeliveryAccount{s.account}, nil
+}
+
+func (s *integrationXDMDeliveryStore) SaveState(_ context.Context, state worker.XInboxDeliveryState) error {
+	s.states = append(s.states, state)
+	s.account.FilteredStreamRuleID = state.FilteredStreamRuleID
+	s.account.ActivityDMSubscriptionID = state.ActivityDMSubscriptionID
+	s.account.ActivityWebhookRouteKey = state.ActivityWebhookRouteKey
+	return nil
+}
+
+func (*integrationXDMDeliveryStore) ClaimCleanupIntents(context.Context, string, time.Time, time.Time, int) ([]worker.XInboxCleanupIntent, error) {
+	return nil, nil
+}
+
+func (*integrationXDMDeliveryStore) ReleaseCleanupIntent(context.Context, worker.XInboxCleanupIntent, time.Time) error {
+	return nil
+}
+
+func (*integrationXDMDeliveryStore) CompleteCleanupIntent(context.Context, string, string) error {
+	return nil
+}
+
+type integrationXDMDeliveryAPI struct {
+	ensureRules         int
+	ensureWebhooks      int
+	listSubscriptions   int
+	createSubscriptions int
+	deleteRules         int
+	deleteSubscriptions int
+}
+
+func (a *integrationXDMDeliveryAPI) EnsureFilteredStreamRule(context.Context, string, string, string) (xinbox.StreamRule, error) {
+	a.ensureRules++
+	return xinbox.StreamRule{ID: "101"}, nil
+}
+
+func (a *integrationXDMDeliveryAPI) DeleteFilteredStreamRule(context.Context, string, string) error {
+	a.deleteRules++
+	return nil
+}
+
+func (a *integrationXDMDeliveryAPI) EnsureWebhook(_ context.Context, _ string, configuredURL string) (xinbox.Webhook, error) {
+	a.ensureWebhooks++
+	return xinbox.Webhook{ID: "201", URL: configuredURL, Valid: true}, nil
+}
+
+func (a *integrationXDMDeliveryAPI) ListActivitySubscriptions(context.Context, string) ([]xinbox.ActivitySubscription, error) {
+	a.listSubscriptions++
+	return nil, nil
+}
+
+func (a *integrationXDMDeliveryAPI) CreateDMSubscription(_ context.Context, _ string, accountID, userID, webhookID string) (xinbox.ActivitySubscription, error) {
+	a.createSubscriptions++
+	return xinbox.ActivitySubscription{
+		ID: "301", EventType: "dm.received", Tag: xinbox.DMSubscriptionTag(accountID),
+		Filter: xinbox.ActivityFilter{UserID: userID}, WebhookID: webhookID,
+	}, nil
+}
+
+func (a *integrationXDMDeliveryAPI) DeleteActivitySubscription(context.Context, string, string) error {
+	a.deleteSubscriptions++
+	return nil
+}
+
+type integrationXDMCipher struct{}
+
+func (integrationXDMCipher) Decrypt(string) (string, error) { return "", nil }
+
+type integrationXDMUsage struct{}
+
+func (integrationXDMUsage) Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error) {
+	return xcredits.Snapshot{}, nil
+}
+
+func TestXDMRealEvaluatorWiringKeepsIngestionAndDeliveryInLockstep(t *testing.T) {
+	globalFailure := errors.New("global feature store unavailable")
+	ownerFailure := errors.New("workspace owner unavailable")
+	const accountID = "00000000-0000-4000-8000-000000000001"
+	for _, test := range []struct {
+		name                  string
+		globalEnabled         bool
+		globalErr             error
+		ownerErr              error
+		superAdmin            bool
+		canaryRaw             string
+		wantInserts           int
+		wantProvisioning      int
+		wantEvaluatorCalls    int
+		wantOwnerCalls        int
+		wantIngestionErr      error
+		wantReconciliationErr error
+		runIngestion          bool
+	}{
+		{name: "global off super admin owner", superAdmin: true, canaryRaw: accountID, wantInserts: 1, wantProvisioning: 1, wantEvaluatorCalls: 2, wantOwnerCalls: 2, runIngestion: true},
+		{name: "global off regular owner", canaryRaw: accountID, wantEvaluatorCalls: 2, wantOwnerCalls: 2, runIngestion: true},
+		{name: "global lookup error", globalErr: globalFailure, canaryRaw: accountID, wantEvaluatorCalls: 2, wantIngestionErr: globalFailure, wantReconciliationErr: globalFailure, runIngestion: true},
+		{name: "workspace owner lookup error", ownerErr: ownerFailure, canaryRaw: accountID, wantEvaluatorCalls: 2, wantOwnerCalls: 2, wantIngestionErr: ownerFailure, wantReconciliationErr: ownerFailure, runIngestion: true},
+		{name: "invalid canary", globalEnabled: true, canaryRaw: "invalid", wantEvaluatorCalls: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			flagStore := &integrationXDMFeatureStore{
+				globalEnabled: test.globalEnabled, globalErr: test.globalErr,
+				owner: "owner-1", ownerErr: test.ownerErr,
+			}
+			evaluator := featureflags.NewEvaluator(flagStore, integrationXDMSuperAdmins{"owner-1": test.superAdmin})
+			availability := xDMAvailability(evaluator)
+			ingestStore := &integrationXDMIngestStore{account: xinbox.InboxAccount{
+				ID: accountID, WorkspaceID: "workspace-1", ExternalUserID: "managed-user-1",
+				ExternalAccountID: "provider-user-1", AppMode: xinbox.AppModeUniPostManaged,
+				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+			}}
+			ingestion := xinbox.NewIngestionService(xinbox.IngestionConfig{
+				Store: ingestStore, DMsAvailable: availability,
+			})
+
+			if test.runIngestion {
+				err := ingestion.IngestActivityEvent(context.Background(), "route-1", xinbox.ActivityEvent{
+					AccountID: accountID, ExternalUserID: "provider-user-1", ExternalID: "dm-1",
+					ConversationID: "thread-1", SenderID: "sender-1", RecipientID: "provider-user-1",
+				})
+				if !errors.Is(err, test.wantIngestionErr) {
+					t.Fatalf("ingestion error = %v, want errors.Is(%v)", err, test.wantIngestionErr)
+				}
+			}
+
+			canary := parseXInboxDMCanary(test.canaryRaw)
+			if test.name == "invalid canary" && len(canary) != 0 {
+				t.Fatalf("invalid canary parsed as %#v, want empty", canary)
+			}
+			deliveryStore := &integrationXDMDeliveryStore{account: worker.XInboxDeliveryAccount{
+				SocialAccountID: accountID, WorkspaceID: "workspace-1", WebhookRouteKey: "route-key",
+				Handle: "unipostdev", ExternalAccountID: "provider-user-1", AppMode: xinbox.AppModeUniPostManaged,
+				ConsumerSecretConfigured: true,
+				Scopes:                   []string{"tweet.read", "tweet.write", "users.read", "dm.read", "dm.write"},
+				AccountActive:            true, PlanAllowsInbox: true,
+			}}
+			deliveryAPI := &integrationXDMDeliveryAPI{}
+			delivery := worker.NewXInboxDeliveryWorker(worker.XInboxDeliveryConfig{
+				Store: deliveryStore, API: deliveryAPI, Cipher: integrationXDMCipher{}, Usage: integrationXDMUsage{},
+				ManagedAppBearer: "not-recorded", ManagedConsumerSecretConfigured: true,
+				WebhookURL: "https://api.example.test/v1/webhooks/twitter", DMsAvailable: availability,
+				DMCanaryAccountIDs: canary,
+			})
+			err := delivery.ReconcileOnce(context.Background())
+			if !errors.Is(err, test.wantReconciliationErr) {
+				t.Fatalf("reconciliation error = %v, want errors.Is(%v)", err, test.wantReconciliationErr)
+			}
+
+			if ingestStore.inserts != test.wantInserts {
+				t.Fatalf("ingestion inserts = %d, want %d", ingestStore.inserts, test.wantInserts)
+			}
+			if deliveryAPI.ensureRules != 1 {
+				t.Fatalf("comment rule mutations = %d, want 1", deliveryAPI.ensureRules)
+			}
+			if deliveryAPI.ensureWebhooks != test.wantProvisioning || deliveryAPI.createSubscriptions != test.wantProvisioning {
+				t.Fatalf("DM provisioning mutations: webhooks=%d subscriptions=%d, want %d each",
+					deliveryAPI.ensureWebhooks, deliveryAPI.createSubscriptions, test.wantProvisioning)
+			}
+			if deliveryAPI.deleteRules != 0 || deliveryAPI.deleteSubscriptions != 0 {
+				t.Fatalf("unexpected destructive mutations: rules=%d subscriptions=%d", deliveryAPI.deleteRules, deliveryAPI.deleteSubscriptions)
+			}
+			if len(flagStore.globalKeys) != test.wantEvaluatorCalls || len(flagStore.ownerSpaces) != test.wantOwnerCalls {
+				t.Fatalf("evaluator calls: global=%v owner=%v", flagStore.globalKeys, flagStore.ownerSpaces)
+			}
+			for _, key := range flagStore.globalKeys {
+				if key != featureflags.XDMSV1 {
+					t.Fatalf("feature key = %q, want %q", key, featureflags.XDMSV1)
+				}
+			}
+			for _, workspaceID := range flagStore.ownerSpaces {
+				if workspaceID != "workspace-1" {
+					t.Fatalf("workspaceID = %q, want workspace-1", workspaceID)
+				}
+			}
+			if test.name == "invalid canary" && deliveryAPI.listSubscriptions != 1 {
+				t.Fatalf("invalid canary orphan discovery calls = %d, want one safe read-only cleanup list", deliveryAPI.listSubscriptions)
+			}
+		})
+	}
 }
 
 func (f *fakeXDMFeatureEvaluator) ForWorkspace(

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
 type fakeIngestStore struct {
 	accounts     map[string]InboxAccount
+	accountCalls int
 	provider     map[string][]InboxAccount
 	providerErr  error
 	providerKeys []string
@@ -21,11 +23,180 @@ type fakeIngestStore struct {
 }
 
 func (s *fakeIngestStore) AccountForApp(_ context.Context, appClientID, accountID string) (InboxAccount, error) {
+	s.accountCalls++
 	account, ok := s.accounts[appClientID+":"+accountID]
 	if !ok {
 		return InboxAccount{}, ErrInboxAccountNotFound
 	}
 	return account, nil
+}
+
+func TestXIngestTaggedDMRequiresExactProviderUserBeforeSideEffects(t *testing.T) {
+	for _, test := range []struct {
+		name                  string
+		eventProviderUserID   string
+		accountProviderUserID string
+	}{
+		{name: "missing event provider user", accountProviderUserID: "provider-owner"},
+		{name: "mismatched event provider user", eventProviderUserID: "provider-other", accountProviderUserID: "provider-owner"},
+		{name: "missing account provider user", eventProviderUserID: "provider-owner"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeIngestStore{accounts: map[string]InboxAccount{
+				"route-1:account-1": {
+					ID: "account-1", WorkspaceID: "workspace-1",
+					ExternalUserID: "managed-owner", ExternalAccountID: test.accountProviderUserID,
+					AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+				},
+			}}
+			featureCalls := 0
+			admissionCalls := 0
+			atomicCalls := 0
+			notifyCalls := 0
+			service := NewIngestionService(IngestionConfig{
+				Store: store,
+				DMsAvailable: func(context.Context, string) (bool, error) {
+					featureCalls++
+					return true, nil
+				},
+				Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+					admissionCalls++
+					return InboundAdmission{Accepted: true}, nil
+				},
+				AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
+					atomicCalls++
+					return InboundAdmission{Accepted: true}, InboxItem{}, true, nil
+				},
+				Notify: func(context.Context, string, string, InboxItem) { notifyCalls++ },
+			})
+
+			err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
+				AccountID: "account-1", ExternalUserID: test.eventProviderUserID, ExternalID: "dm-secret",
+				ConversationID: "private-thread", SenderID: "sender", RecipientID: "provider-owner",
+			})
+			if !errors.Is(err, ErrInboxAccountNotFound) {
+				t.Fatalf("error = %v, want route mismatch as account not found", err)
+			}
+			if err != nil && (strings.Contains(err.Error(), "provider-owner") || strings.Contains(err.Error(), "provider-other")) {
+				t.Fatalf("route error leaked provider identifier: %v", err)
+			}
+			if store.accountCalls != 1 || featureCalls != 0 || admissionCalls != 0 || atomicCalls != 0 || len(store.inserted) != 0 || notifyCalls != 0 {
+				t.Fatalf("side effects after route mismatch: account=%d feature=%d admission=%d atomic=%d insert=%d notify=%d",
+					store.accountCalls, featureCalls, admissionCalls, atomicCalls, len(store.inserted), notifyCalls)
+			}
+		})
+	}
+}
+
+func TestXIngestDMWithoutAvailabilityEvaluatorFailsBeforeSideEffects(t *testing.T) {
+	store := &fakeIngestStore{accounts: map[string]InboxAccount{
+		"route-1:account-1": {
+			ID: "account-1", WorkspaceID: "workspace-1",
+			ExternalUserID: "managed-owner", ExternalAccountID: "provider-owner",
+			AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+		},
+	}}
+	admissionCalls := 0
+	atomicCalls := 0
+	notifyCalls := 0
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+			admissionCalls++
+			return InboundAdmission{Accepted: true}, nil
+		},
+		AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
+			atomicCalls++
+			return InboundAdmission{Accepted: true}, InboxItem{}, true, nil
+		},
+		Notify: func(context.Context, string, string, InboxItem) { notifyCalls++ },
+	})
+
+	err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
+		AccountID: "account-1", ExternalUserID: "provider-owner", ExternalID: "dm-secret",
+		ConversationID: "private-thread", SenderID: "sender", RecipientID: "provider-owner",
+	})
+	if err == nil || err.Error() != "X DM feature evaluator is not configured" {
+		t.Fatalf("error = %v, want fixed missing evaluator error", err)
+	}
+	if admissionCalls != 0 || atomicCalls != 0 || len(store.inserted) != 0 || notifyCalls != 0 {
+		t.Fatalf("side effects without evaluator: admission=%d atomic=%d insert=%d notify=%d",
+			admissionCalls, atomicCalls, len(store.inserted), notifyCalls)
+	}
+}
+
+func TestXIngestDMAvailabilityMatrixBeforeAllSideEffects(t *testing.T) {
+	sentinel := errors.New("feature evaluator unavailable")
+	for _, path := range []string{"activity", "recovery"} {
+		for _, test := range []struct {
+			name         string
+			available    func(context.Context, string) (bool, error)
+			wantErr      error
+			wantFeature  int
+			wantAtomic   int
+			wantNotified int
+		}{
+			{name: "nil", wantErr: ErrDMFeatureNotConfigured},
+			{name: "false", available: func(context.Context, string) (bool, error) { return false, nil }, wantFeature: 1},
+			{name: "error", available: func(context.Context, string) (bool, error) { return false, sentinel }, wantErr: sentinel, wantFeature: 1},
+			{name: "true", available: func(context.Context, string) (bool, error) { return true, nil }, wantFeature: 1, wantAtomic: 1, wantNotified: 1},
+		} {
+			t.Run(path+"/"+test.name, func(t *testing.T) {
+				store := &fakeIngestStore{accounts: map[string]InboxAccount{
+					"route-1:account-1": {
+						ID: "account-1", WorkspaceID: "workspace-1",
+						ExternalUserID: "managed-owner", ExternalAccountID: "provider-owner",
+						AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+					},
+				}}
+				featureCalls := 0
+				available := test.available
+				if available != nil {
+					available = func(ctx context.Context, workspaceID string) (bool, error) {
+						featureCalls++
+						return test.available(ctx, workspaceID)
+					}
+				}
+				admissionCalls := 0
+				atomicCalls := 0
+				notifyCalls := 0
+				service := NewIngestionService(IngestionConfig{
+					Store: store, DMsAvailable: available,
+					Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+						admissionCalls++
+						return InboundAdmission{Accepted: true}, nil
+					},
+					AtomicProcess: func(_ context.Context, _ InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
+						atomicCalls++
+						return InboundAdmission{Accepted: true}, item, true, nil
+					},
+					Notify: func(context.Context, string, string, InboxItem) { notifyCalls++ },
+				})
+
+				var err error
+				if path == "activity" {
+					err = service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
+						AccountID: "account-1", ExternalUserID: "provider-owner", ExternalID: "dm-1",
+						ConversationID: "thread-1", SenderID: "sender", RecipientID: "provider-owner",
+					})
+				} else {
+					_, err = service.IngestRecovery(context.Background(), store.accounts["route-1:account-1"], InboxItem{
+						Source: "x_dm", ExternalID: "dm-1",
+					}, "dm.received", "recovery")
+				}
+				if !errors.Is(err, test.wantErr) {
+					t.Fatalf("error = %v, want errors.Is(%v)", err, test.wantErr)
+				}
+				if test.name == "error" && err != sentinel {
+					t.Fatalf("evaluator error = %v, want exact sentinel", err)
+				}
+				if featureCalls != test.wantFeature || atomicCalls != test.wantAtomic || notifyCalls != test.wantNotified || admissionCalls != 0 || len(store.inserted) != 0 {
+					t.Fatalf("side effects: feature=%d atomic=%d notify=%d admission=%d insert=%d",
+						featureCalls, atomicCalls, notifyCalls, admissionCalls, len(store.inserted))
+				}
+			})
+		}
+	}
 }
 
 func (s *fakeIngestStore) AccountsForProviderUser(_ context.Context, appClientID, providerUserID string) ([]InboxAccount, error) {
@@ -45,12 +216,14 @@ func (s *fakeIngestStore) InsertInboxItem(_ context.Context, item InboxItem) (In
 	return s.insertResult, s.insertedNew, nil
 }
 
+func allowXDMs(context.Context, string) (bool, error) { return true, nil }
+
 func TestXIngestReplyUsesConversationIDAndNotifiesOnlyAfterInsert(t *testing.T) {
 	store := &fakeIngestStore{
 		accounts: map[string]InboxAccount{
 			"client-1:account-1": {
 				ID: "account-1", WorkspaceID: "workspace-1",
-				ExternalUserID: "owner-1", AppMode: AppModeUniPostManaged,
+				ExternalUserID: "owner-1", ExternalAccountID: "provider-owner", AppMode: AppModeUniPostManaged,
 				Scopes: []string{"tweet.read", "users.read"}, PlanAllowsInbox: true,
 			},
 		},
@@ -114,19 +287,20 @@ func TestXIngestDMSuppressionNeverPersistsPrivateBody(t *testing.T) {
 		accounts: map[string]InboxAccount{
 			"client-1:account-1": {
 				ID: "account-1", WorkspaceID: "workspace-1",
-				ExternalUserID: "owner-1", AppMode: AppModeUniPostManaged,
+				ExternalUserID: "owner-1", ExternalAccountID: "provider-owner", AppMode: AppModeUniPostManaged,
 				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 			},
 		},
 	}
 	service := NewIngestionService(IngestionConfig{
-		Store: store,
+		Store: store, DMsAvailable: allowXDMs,
 		Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
 			return InboundAdmission{Accepted: false, Suppressed: true}, nil
 		},
 	})
 	event := ActivityEvent{
 		AccountID:      "account-1",
+		ExternalUserID: "provider-owner",
 		ExternalID:     "dm-1",
 		ConversationID: "dm-conversation-1",
 		SenderID:       "sender-1",
@@ -147,7 +321,7 @@ func TestXIngestDMFeatureOffNeverAdmitsOrPersistsPrivateBody(t *testing.T) {
 		accounts: map[string]InboxAccount{
 			"client-1:account-1": {
 				ID: "account-1", WorkspaceID: "workspace-1",
-				ExternalUserID: "owner-1", AppMode: AppModeUniPostManaged,
+				ExternalUserID: "owner-1", ExternalAccountID: "provider-owner", AppMode: AppModeUniPostManaged,
 				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 			},
 		},
@@ -165,7 +339,7 @@ func TestXIngestDMFeatureOffNeverAdmitsOrPersistsPrivateBody(t *testing.T) {
 		},
 	})
 	err := service.IngestActivityEvent(context.Background(), "client-1", ActivityEvent{
-		AccountID: "account-1", ExternalID: "dm-flag-off", ConversationID: "private-thread",
+		AccountID: "account-1", ExternalUserID: "provider-owner", ExternalID: "dm-flag-off", ConversationID: "private-thread",
 		SenderID: "sender-1", RecipientID: "owner-1", Text: "must not persist",
 	})
 	if err != nil {
@@ -181,7 +355,7 @@ func TestXIngestDMUsesCanonicalConversationIDAndDeduplicates(t *testing.T) {
 		accounts: map[string]InboxAccount{
 			"client-1:account-1": {
 				ID: "account-1", WorkspaceID: "workspace-1",
-				ExternalUserID: "owner-1", AppMode: AppModeWorkspace,
+				ExternalUserID: "owner-1", ExternalAccountID: "provider-owner", AppMode: AppModeWorkspace,
 				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 			},
 		},
@@ -189,7 +363,7 @@ func TestXIngestDMUsesCanonicalConversationIDAndDeduplicates(t *testing.T) {
 	}
 	admissions := 0
 	service := NewIngestionService(IngestionConfig{
-		Store: store,
+		Store: store, DMsAvailable: allowXDMs,
 		Admit: func(_ context.Context, req InboundAdmissionRequest) (InboundAdmission, error) {
 			admissions++
 			if req.OperationKey != "dm.received" || req.UpstreamResourceType != "x_dm" {
@@ -200,6 +374,7 @@ func TestXIngestDMUsesCanonicalConversationIDAndDeduplicates(t *testing.T) {
 	})
 	event := ActivityEvent{
 		AccountID:      "account-1",
+		ExternalUserID: "provider-owner",
 		ExternalID:     "dm-1",
 		ConversationID: "dm-conversation-1",
 		SenderID:       "sender-1",
@@ -227,7 +402,7 @@ func TestXIngestDoesNotNotifyWhenInsertFails(t *testing.T) {
 	store := &fakeIngestStore{
 		accounts: map[string]InboxAccount{
 			"client-1:account-1": {
-				ID: "account-1", WorkspaceID: "workspace-1", AppMode: AppModeWorkspace,
+				ID: "account-1", WorkspaceID: "workspace-1", ExternalAccountID: "provider-owner", AppMode: AppModeWorkspace,
 				Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 			},
 		},
@@ -235,13 +410,13 @@ func TestXIngestDoesNotNotifyWhenInsertFails(t *testing.T) {
 	}
 	notified := false
 	service := NewIngestionService(IngestionConfig{
-		Store: store,
+		Store: store, DMsAvailable: allowXDMs,
 		AtomicProcess: func(context.Context, InboundAdmissionRequest, InboxItem) (InboundAdmission, InboxItem, bool, error) {
 			return InboundAdmission{}, InboxItem{}, false, errors.New("database unavailable")
 		},
 		Notify: func(context.Context, string, string, InboxItem) { notified = true },
 	})
-	event := ActivityEvent{AccountID: "account-1", ExternalID: "dm-1", ConversationID: "c-1"}
+	event := ActivityEvent{AccountID: "account-1", ExternalUserID: "provider-owner", ExternalID: "dm-1", ConversationID: "c-1"}
 	if err := service.IngestActivityEvent(context.Background(), "client-1", event); err == nil {
 		t.Fatal("expected insert error")
 	}
@@ -255,14 +430,15 @@ func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
 		accounts: map[string]InboxAccount{
 			"route-1:account-1": {
 				ID: "account-1", WorkspaceID: "workspace-1", ExternalUserID: "owner-1",
-				AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+				ExternalAccountID: "provider-owner",
+				AppMode:           AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 			},
 		},
 	}
 	atomicCalls := 0
 	notified := 0
 	service := NewIngestionService(IngestionConfig{
-		Store: store,
+		Store: store, DMsAvailable: allowXDMs,
 		AtomicProcess: func(_ context.Context, req InboundAdmissionRequest, item InboxItem) (InboundAdmission, InboxItem, bool, error) {
 			atomicCalls++
 			if req.UpstreamResourceID != item.ExternalID {
@@ -278,7 +454,7 @@ func TestXIngestUsesAtomicAdmissionInsertPath(t *testing.T) {
 		Notify: func(context.Context, string, string, InboxItem) { notified++ },
 	})
 	err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
-		AccountID: "account-1", ExternalID: "dm-1", ConversationID: "conversation-1",
+		AccountID: "account-1", ExternalUserID: "provider-owner", ExternalID: "dm-1", ConversationID: "conversation-1",
 		SenderID: "sender-1", RecipientID: "owner-1", Text: "private",
 		CreatedAt: time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
 	})
@@ -307,7 +483,8 @@ func TestXRealtimeOwnerUsesDatabaseAccountInsteadOfPayload(t *testing.T) {
 				accounts: map[string]InboxAccount{
 					"client-1:account-1": {
 						ID: "account-1", WorkspaceID: "workspace-1", ExternalUserID: test.accountOwner,
-						AppMode: AppModeWorkspace, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+						ExternalAccountID: "provider-owner",
+						AppMode:           AppModeWorkspace, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 					},
 				},
 				insertedNew: true,
@@ -315,7 +492,7 @@ func TestXRealtimeOwnerUsesDatabaseAccountInsteadOfPayload(t *testing.T) {
 			var notifiedWorkspace, notifiedOwner string
 			notified := 0
 			config := IngestionConfig{
-				Store: store,
+				Store: store, DMsAvailable: allowXDMs,
 				Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
 					return InboundAdmission{Accepted: true}, nil
 				},
@@ -332,8 +509,8 @@ func TestXRealtimeOwnerUsesDatabaseAccountInsteadOfPayload(t *testing.T) {
 			}
 			service := NewIngestionService(config)
 			event := ActivityEvent{
-				AccountID: "account-1", ExternalUserID: "managed-b", ExternalID: "dm-1",
-				ConversationID: "conversation-1", SenderID: "sender-1", RecipientID: "managed-b",
+				AccountID: "account-1", ExternalUserID: "provider-owner", ExternalID: "dm-1",
+				ConversationID: "conversation-1", SenderID: "sender-1", RecipientID: "provider-owner",
 			}
 
 			if err := service.IngestActivityEvent(context.Background(), "client-1", event); err != nil {
@@ -507,7 +684,8 @@ func TestXIngestLegacyProviderUserRequiresExactlyOneAccountBeforeSideEffects(t *
 func TestXIngestCurrentTagAndLegacyProviderUserUseExactDatabaseRoutes(t *testing.T) {
 	currentAccount := InboxAccount{
 		ID: "current-account", WorkspaceID: "current-workspace", ExternalUserID: "current-db-owner",
-		AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+		ExternalAccountID: "provider-owner",
+		AppMode:           AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
 	}
 	legacyAccount := InboxAccount{
 		ID: "legacy-account", WorkspaceID: "legacy-workspace", ExternalUserID: "legacy-db-owner",
@@ -522,7 +700,7 @@ func TestXIngestCurrentTagAndLegacyProviderUserUseExactDatabaseRoutes(t *testing
 	var admissions []InboundAdmissionRequest
 	var notifications [][2]string
 	service := NewIngestionService(IngestionConfig{
-		Store: store,
+		Store: store, DMsAvailable: allowXDMs,
 		Admit: func(_ context.Context, req InboundAdmissionRequest) (InboundAdmission, error) {
 			admissions = append(admissions, req)
 			return InboundAdmission{Accepted: true}, nil
@@ -532,7 +710,7 @@ func TestXIngestCurrentTagAndLegacyProviderUserUseExactDatabaseRoutes(t *testing
 		},
 	})
 
-	currentBody := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"forged-payload-owner"},"tag":"unipost:x:dm:current-account","payload":{"id":"current-dm","dm_conversation_id":"current-thread","sender_id":"sender","recipient_id":"forged-payload-owner","workspace_id":"forged-workspace","owner_id":"forged-owner","created_at":"2026-07-16T12:00:00Z"}}}`)
+	currentBody := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"provider-owner"},"tag":"unipost:x:dm:current-account","payload":{"id":"current-dm","dm_conversation_id":"current-thread","sender_id":"sender","recipient_id":"provider-owner","workspace_id":"forged-workspace","owner_id":"forged-owner","created_at":"2026-07-16T12:00:00Z"}}}`)
 	legacyBody := []byte(`{"for_user_id":"provider-owner","workspace_id":"forged-workspace","owner_id":"forged-owner","direct_message_events":[{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"provider-owner"},"sender_id":"sender","message_data":{"text":"hello"}}}]}`)
 	for _, body := range [][]byte{currentBody, legacyBody} {
 		events, err := ParseActivityEvents(body)
@@ -562,6 +740,14 @@ func TestXIngestCurrentTagAndLegacyProviderUserUseExactDatabaseRoutes(t *testing
 func TestXChatAndNonReceivedDMEventsNeverProduceActivityEvents(t *testing.T) {
 	for _, eventType := range []string{"chat.received", "chat.sent", "chat.conversation_join", "dm.sent", "dm.read", "typing", "unknown"} {
 		t.Run(eventType, func(t *testing.T) {
+			admissions := 0
+			service := NewIngestionService(IngestionConfig{
+				Store: &fakeIngestStore{}, DMsAvailable: allowXDMs,
+				Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+					admissions++
+					return InboundAdmission{Accepted: true}, nil
+				},
+			})
 			body := []byte(`{"data":{"event_type":"` + eventType + `","payload":{"id":"current-event"}},"for_user_id":"provider-owner","direct_message_events":[{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"provider-owner"},"sender_id":"sender","message_data":{"text":"must be ignored"}}}]}`)
 			events, err := ParseActivityEvents(body)
 			if err != nil {
@@ -569,6 +755,14 @@ func TestXChatAndNonReceivedDMEventsNeverProduceActivityEvents(t *testing.T) {
 			}
 			if len(events) != 0 {
 				t.Fatalf("%s produced x_dm candidates: %#v", eventType, events)
+			}
+			for _, event := range events {
+				if err := service.IngestActivityEvent(context.Background(), "route-1", event); err != nil {
+					t.Fatalf("unexpected ingestion error: %v", err)
+				}
+			}
+			if admissions != 0 {
+				t.Fatalf("%s reached admission %d times, want zero", eventType, admissions)
 			}
 		})
 	}
