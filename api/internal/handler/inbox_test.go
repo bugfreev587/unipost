@@ -441,6 +441,7 @@ type fakeXInboxCredits struct {
 	exposure               xcredits.ExposureReservation
 	exposureErr            error
 	exposureFinalizedUnits int64
+	exposureFinalizedTotal int64
 	exposureReleased       bool
 	exposureReconciliation bool
 	exposureReconcileCalls int
@@ -516,6 +517,7 @@ func (f *fakeXInboxCredits) ReserveExposure(
 func (f *fakeXInboxCredits) FinalizeExposure(_ context.Context, _ string, units int64) error {
 	f.exposureFinalizeCalls++
 	f.exposureFinalizedUnits = units
+	f.exposureFinalizedTotal += units
 	return f.exposureFinalizeErr
 }
 func (f *fakeXInboxCredits) ReleaseExposure(context.Context, string) error {
@@ -814,7 +816,7 @@ func TestInboxXBackfillSettlesProviderResourcesBeforeLocalFiltering(t *testing.T
 	}
 }
 
-func TestInboxXBackfillContinuesPastLocallyFilteredProviderPage(t *testing.T) {
+func TestInboxXBackfillStopsBeforeFilteredPageCanExceedProviderScanBudget(t *testing.T) {
 	adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{
 		{ProviderResourcesRead: 5, NextToken: "page-2"},
 		{
@@ -841,11 +843,70 @@ func TestInboxXBackfillContinuesPastLocallyFilteredProviderPage(t *testing.T) {
 		xBackfillRequest{LookbackDays: 7, MaxItems: 1},
 		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-filtered-page", result,
 	)
-	if !reflect.DeepEqual(adapter.mentionTokens, []string{"", "page-2"}) {
-		t.Fatalf("pagination tokens=%v, want continuation to page-2", adapter.mentionTokens)
+	if !reflect.DeepEqual(adapter.mentionTokens, []string{""}) {
+		t.Fatalf("pagination tokens=%v, want no call beyond confirmed provider budget", adapter.mentionTokens)
 	}
-	if result.Read != 1 {
-		t.Fatalf("result=%+v, want one valid item from the second page", result)
+	if result.Read != 0 || !result.StoppedAtBoundary || result.StopReason != "provider_scan_budget_exhausted" {
+		t.Fatalf("result=%+v, want fail-closed provider scan boundary", result)
+	}
+}
+
+func TestInboxXBackfillContinuesFilteredPagesOnlyWithinProviderScanBudget(t *testing.T) {
+	credits := &fakeXInboxCredits{}
+	ingestion := xinbox.NewIngestionService(xinbox.IngestionConfig{
+		Store: fakeXInboxIngestionStore{},
+		AtomicProcess: func(
+			_ context.Context,
+			_ xinbox.InboundAdmissionRequest,
+			item xinbox.InboxItem,
+		) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
+			return xinbox.InboundAdmission{Accepted: true}, item, true, nil
+		},
+	})
+	adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{
+		{ProviderResourcesRead: 5, NextToken: "page-2"},
+		{
+			ProviderResourcesRead: 5,
+			NextToken:             "page-3",
+			Entries: []platform.TwitterInboxEntry{{
+				ExternalID: "tweet-valid",
+				ThreadKey:  "conversation-1",
+				AuthorID:   "author-1",
+				Timestamp:  time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+				Source:     "x_reply",
+			}},
+		},
+		{
+			ProviderResourcesRead: 5,
+			Entries:               []platform.TwitterInboxEntry{{ExternalID: "must-not-be-read"}},
+		},
+	}}
+	handler := &InboxHandler{xCredits: credits, xIngestion: ingestion}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "2039562772455809024",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 10},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-bounded-filtered-pages", result,
+	)
+	if !reflect.DeepEqual(adapter.mentionTokens, []string{"", "page-2"}) ||
+		!reflect.DeepEqual(adapter.mentionPageSizes, []int{10, 5}) {
+		t.Fatalf("tokens=%v page sizes=%v, want two calls within ten-resource budget",
+			adapter.mentionTokens, adapter.mentionPageSizes)
+	}
+	wantUnits := int64(10) *
+		(xcredits.OperationWeight("post.read") + xcredits.OperationWeight("user.read"))
+	if credits.exposureFinalizedTotal != wantUnits {
+		t.Fatalf("cumulative settlement=%d, want confirmed provider exposure %d",
+			credits.exposureFinalizedTotal, wantUnits)
+	}
+	if result.Read != 1 || !result.StoppedAtBoundary || result.StopReason != "provider_scan_budget_exhausted" {
+		t.Fatalf("result=%+v, want one valid item then scan-budget stop", result)
 	}
 }
 

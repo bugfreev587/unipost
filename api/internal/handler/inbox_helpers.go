@@ -55,18 +55,26 @@ func estimateXBackfillCredits(appMode string, request xBackfillRequest) int64 {
 	}
 	estimate := int64(0)
 	if request.IncludeReplies {
-		replyItems := maxItems
-		if replyItems > 0 && replyItems < xMentionsMinimumPageSize {
-			replyItems = xMentionsMinimumPageSize
-		}
+		replyItems := xBackfillProviderScanBudget("x_reply", maxItems)
 		estimate += int64(replyItems) * (xcredits.OperationWeight("post.read") +
 			xcredits.OperationWeight("user.read"))
 	}
 	if request.IncludeDMs {
-		estimate += int64(maxItems) * (xcredits.OperationWeight("dm.read") +
+		dmItems := xBackfillProviderScanBudget("x_dm", maxItems)
+		estimate += int64(dmItems) * (xcredits.OperationWeight("dm.read") +
 			xcredits.OperationWeight("user.read"))
 	}
 	return estimate
+}
+
+func xBackfillProviderScanBudget(source string, maxItems int) int {
+	if maxItems < 0 {
+		maxItems = 0
+	}
+	if source == "x_reply" && maxItems > 0 && maxItems < xMentionsMinimumPageSize {
+		return xMentionsMinimumPageSize
+	}
+	return maxItems
 }
 
 func xBackfillExposureKey(

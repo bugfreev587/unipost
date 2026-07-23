@@ -2110,7 +2110,13 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		result.MissingScopes = missingScopes
 		return
 	}
+	providerScanRemaining := xBackfillProviderScanBudget(source, remaining)
 	for remaining > 0 {
+		if providerScanRemaining < minPageSize {
+			result.StoppedAtBoundary = true
+			result.StopReason = "provider_scan_budget_exhausted"
+			return
+		}
 		if beforePaidRead != nil {
 			if err := beforePaidRead(ctx); err != nil {
 				result.StoppedAtBoundary = true
@@ -2124,6 +2130,9 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		}
 		if pageSize < minPageSize {
 			pageSize = minPageSize
+		}
+		if pageSize > providerScanRemaining {
+			pageSize = providerScanRemaining
 		}
 		unitsPerResource := xcredits.OperationWeight(operation) + xcredits.OperationWeight("user.read")
 		reservation, err := h.xCredits.ReserveExposure(
@@ -2283,6 +2292,7 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			result.StopReason = "upstream_read_exceeded_reservation"
 			return
 		}
+		providerScanRemaining -= providerResourcesRead
 		actualUnits := int64(providerResourcesRead) * unitsPerResource
 		if len(page.Entries) > remaining {
 			page.Entries = page.Entries[:remaining]
