@@ -493,6 +493,9 @@ func main() {
 		Decrypt:         encryptor.Decrypt,
 	})
 	if processMode == processModeAPI {
+		xInboxDMCanaryAccountIDs := parseXInboxDMCanary(
+			os.Getenv("X_INBOX_DM_CANARY_SOCIAL_ACCOUNT_IDS"),
+		)
 		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
 			databaseURL,
 			pool,
@@ -504,6 +507,10 @@ func main() {
 			strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
 			managedXWebhookRouteKey,
 			os.Getenv("X_INBOX_WEBHOOK_URL"),
+			func(ctx context.Context, workspaceID string) (bool, error) {
+				return featureFlagEvaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
+			},
+			xInboxDMCanaryAccountIDs,
 		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
 		workspaceXAppCapacities, capacityConfigErr := worker.ParseXInboxWorkspaceAppCapacities(
@@ -1352,6 +1359,16 @@ func positiveInt64Env(name string) int64 {
 		return 0
 	}
 	return value
+}
+
+func parseXInboxDMCanary(raw string) map[string]struct{} {
+	canary, err := worker.ParseXInboxDMCanary(raw)
+	if err != nil {
+		slog.Warn("invalid X Inbox DM canary configuration",
+			"error_class", "x_dm_canary_config_invalid")
+		return map[string]struct{}{}
+	}
+	return canary
 }
 
 func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorkerConfig) int32 {

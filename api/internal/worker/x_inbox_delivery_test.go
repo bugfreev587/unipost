@@ -243,6 +243,38 @@ func TestFakeXInboxDeliveryStorePersistsForbiddenFingerprintIndependentlyFromLas
 	}
 }
 
+func TestNewPostgresXInboxDeliveryWorkerPassesThroughDMGates(t *testing.T) {
+	const accountID = "00000000-0000-4000-8000-000000000001"
+	callbackCalls := 0
+	dmsAvailable := func(_ context.Context, workspaceID string) (bool, error) {
+		callbackCalls++
+		if workspaceID != "workspace-1" {
+			t.Fatalf("workspaceID = %q, want workspace-1", workspaceID)
+		}
+		return true, nil
+	}
+	canary := map[string]struct{}{accountID: {}}
+
+	subject := NewPostgresXInboxDeliveryWorker(
+		"", nil, nil, nil, nil, nil, "", false, "", "", dmsAvailable, canary,
+	)
+	canary["00000000-0000-4000-8000-000000000002"] = struct{}{}
+
+	available, err := subject.dmsAvailable(context.Background(), "workspace-1")
+	if err != nil {
+		t.Fatalf("dmsAvailable() error = %v", err)
+	}
+	if !available || callbackCalls != 1 {
+		t.Fatalf("dmsAvailable() = %v, calls = %d; want true, 1", available, callbackCalls)
+	}
+	if _, ok := subject.dmCanaryAccountIDs[accountID]; !ok {
+		t.Fatalf("worker canary set missing %q", accountID)
+	}
+	if len(subject.dmCanaryAccountIDs) != 1 {
+		t.Fatalf("worker canary set changed after input mutation: %v", subject.dmCanaryAccountIDs)
+	}
+}
+
 func (f *fakeXInboxDeliveryStore) ClaimCleanupIntents(
 	_ context.Context,
 	owner string,

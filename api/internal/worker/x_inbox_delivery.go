@@ -207,6 +207,8 @@ func NewPostgresXInboxDeliveryWorker(
 	managedConsumerSecretConfigured bool,
 	managedWebhookRouteKey string,
 	webhookURL string,
+	dmsAvailable func(context.Context, string) (bool, error),
+	dmCanaryAccountIDs map[string]struct{},
 ) *XInboxDeliveryWorker {
 	store := &postgresXInboxDeliveryStore{
 		pool:                   pool,
@@ -223,6 +225,8 @@ func NewPostgresXInboxDeliveryWorker(
 		ManagedAppBearer:                managedAppBearer,
 		ManagedConsumerSecretConfigured: managedConsumerSecretConfigured,
 		WebhookURL:                      webhookURL,
+		DMsAvailable:                    dmsAvailable,
+		DMCanaryAccountIDs:              dmCanaryAccountIDs,
 	})
 }
 
