@@ -1,6 +1,6 @@
 # X Inbox Webhook Hotfix PRD
 
-**Status:** Approved design; implementation not started
+**Status:** Approved design; external review findings resolved; implementation plan pending
 
 **Date:** 2026-07-23
 
@@ -20,7 +20,7 @@ The code contains the ingestion, signature verification, parser, routing, and pr
 
 This hotfix restores self-healing delivery with independent Comments and DM desired states. DM provisioning is protected by two required gates: the existing backend `x_dms_v1` workspace evaluator and an operational exact-account canary allowlist. It uses app bearer authentication for current X webhook and X Activity subscription management, admits legacy unencrypted `dm.received` events, explicitly excludes encrypted XChat `chat.received`, and preserves managed-user isolation by routing only to an exact social account or an unambiguous exact provider X user ID.
 
-The rollout is deliberately bounded. Staging must prove one user-owned canary before production. Production remains globally flag-off and permits only the user-owned production social account during acceptance. Any required check failure, timeout, skipped result, provider 403, ambiguous route, or different-SHA validation is a hard stop.
+The rollout is deliberately bounded. Staging must prove one user-owned canary before production. Production remains globally flag-off and permits only the user-owned production social account during acceptance. Under that global-off state, the existing evaluator returns true only while the fixture workspace owner is a Super Admin, so that evaluator result is an explicit pre-canary gate rather than an assumed property. Any required check failure, timeout, skipped result, provider 403, ambiguous route, or different-SHA validation is a hard stop.
 
 ## 2. Incident statement
 
@@ -56,6 +56,7 @@ The following facts were checked before any application code or environment chan
 - Production database state for the exact social account has no rule ID, DM subscription ID, or activity route generation.
 - Production delivery status is `error` with missing `TWITTER_CONSUMER_SECRET` and `TWITTER_BEARER_TOKEN` configuration errors.
 - The `x_dms_v1` global flag is `false`.
+- With the global flag off, `featureflags.Evaluator.ForWorkspace` can return true only when the workspace owner resolves as a Super Admin. The fixture's current evaluator result must be re-verified immediately before staging and production canary activation; it is not inferred from account scopes or capability output.
 - `api/internal/worker/x_inbox_delivery.go` hard-codes `dmsDesired := false` and has no active webhook/subscription creation path.
 - `api/internal/xinbox/subscriptions.go` already implements `/2/webhooks` and `/2/activity/subscriptions` using app bearer authentication and stable account tags.
 - `api/internal/xinbox/ingest.go` already parses current `dm.received` and legacy `direct_message_events` payloads.
@@ -133,7 +134,7 @@ Current X Activity events carry a stable subscription tag from which UniPost can
 9. Untagged legacy events route only through an unambiguous exact provider X user ID within the app route.
 10. Zero or multiple legacy candidates result in no Inbox write.
 11. `chat.*` events never become `x_dm` Inbox items.
-12. No token, consumer secret, webhook route secret, signature, private DM body, or previously pasted UniPost API key is logged or included in artifacts.
+12. No token, consumer secret, webhook route secret, signature, private DM body, or previously pasted UniPost API key is logged or included in artifacts. The pasted production UniPost API key is treated as exposed and must be revoked or rotated independently and promptly; it is not reused for hotfix acceptance.
 13. Provider resources are never considered removed unless the provider confirms deletion or returns a documented idempotent-not-found response.
 14. A failed, timed-out, cancelled, skipped, or different-SHA check blocks promotion.
 
@@ -161,7 +162,7 @@ This is preferred over a one-shot provisioning script because provider state mus
 | `featureflags.Evaluator` | Workspace DM eligibility | Reuse unchanged through a worker callback/interface |
 | X Inbox delivery worker | Desired state and lifecycle | Split Comments/DM logic, apply flag and allowlist, restore provisioning, add 403 latch |
 | X provider client | Webhook/subscription API | Preserve status in sanitized errors so 403 is machine-detectable |
-| X Inbox delivery store | Durable state | Load existing `last_error`; no new schema is required |
+| X Inbox delivery store | Durable state | Add and load a dedicated nullable `dm_subscription_forbidden_fingerprint`; keep `last_error` out of control flow |
 | X webhook handler | CRC, signature, parse, acknowledge | Keep current security behavior; admit only recognized legacy DM events |
 | X ingestion store | Provider route to local account | Make legacy fallback exact and unambiguous |
 | X ingestion service | Account-derived Inbox item | Preserve account/workspace ownership and feature gate |
@@ -215,6 +216,8 @@ DMs are desired when all of the following are true:
 
 DM desired state does not depend on Comments desired state or tweet scopes.
 
+When `x_dms_v1` is globally off, the existing evaluator makes workspace-owner Super Admin status a required input: the fixture is DM-eligible only while `ForWorkspace(ctx, workspaceID, XDMSV1)` returns `(true, nil)`. Before any staging or production provider mutation, a read-only pre-canary check must prove that exact evaluator result for the fixture workspace while the global flag remains off. A false result or evaluation error is a normal fail-closed stop: no DM ensure call occurs, any exact stored DM subscription is removed through the existing cleanup contract, and eligible Comments remain unaffected. Losing Super Admin status after activation therefore converges DMs to off rather than leaving an orphaned desired subscription.
+
 ### 8.4 Decision matrix
 
 | Condition | Comments | DMs | Required action |
@@ -229,6 +232,7 @@ DM desired state does not depend on Comments desired state or tweet scopes.
 | Consumer secret missing | Independently evaluated | Off | Keep Comments; save DM credential error |
 | Webhook URL missing/invalid | Independently evaluated | Off | Keep Comments; save DM configuration error |
 | Flag false | Independently evaluated | Off | Remove subscription; clear any previous 403 latch |
+| Global flag off and owner is not Super Admin | Independently evaluated | Off | Same as flag false; never infer eligibility from scopes or canary membership |
 | Flag evaluation error | Independently evaluated | Off | Remove subscription, retain Comments, return/surface evaluator error |
 | Not canary-allowlisted | Independently evaluated | Off | Remove subscription; this is a normal gated state |
 | Provider returns 403 while provisioning DM | Independently evaluated | Off/latched | Preserve Comments, save forbidden latch, stop unchanged retries |
@@ -248,7 +252,9 @@ Contract:
 - trim whitespace;
 - remove duplicates;
 - reject malformed UUID entries;
-- missing, empty, or invalid configuration yields an empty effective allowlist;
+- a missing or entirely empty configuration yields an empty effective allowlist;
+- any malformed or empty entry inside a non-empty list invalidates the whole list; do not partially apply the remaining valid entries;
+- invalid configuration therefore yields an empty effective allowlist for the entire process configuration;
 - invalid configuration produces one sanitized startup/reconciliation error and never broadens access;
 - the allowlist is an additional operational safety boundary, not a replacement for `x_dms_v1`.
 
@@ -273,6 +279,8 @@ Changing the allowlist is an environment configuration change and must be monito
 - If Comments are not desired, delete only the exact stored rule ID.
 - Comments failures do not cause DM deletion unless a shared common eligibility condition is false.
 
+Filtered Stream connection ownership remains app-wide, not account-wide. Reconciliation first evaluates every account, then deduplicates desired streams by stable app identity. One shared connection stays running while at least one Comments-desired account for that app has a persisted rule; disabling or deleting one account's rule must not restart or stop that shared connection while another desired rule remains. When the last Comments-desired account for the app drops, the worker stops that one app stream exactly once. DM-only gate, subscription, latch, or credential changes never start, stop, or restart Filtered Stream. If a reconciliation cycle cannot determine the complete desired app set, the worker preserves the current stream set and does not apply a partial start/stop decision.
+
 ### 10.2 App webhook
 
 - URL is derived through `AppWebhookURL(X_INBOX_WEBHOOK_URL, webhookRouteKey)`.
@@ -280,6 +288,7 @@ Changing the allowlist is an environment configuration change and must be monito
 - `EnsureWebhook` lists app webhooks, reuses an exact URL match, revalidates an invalid exact match, or creates one when absent.
 - A webhook is app-level and can be shared by multiple account subscriptions. Turning one account's DM desired state off does not delete the webhook.
 - Webhook creation/revalidation must pass CRC before it is considered valid.
+- Before a canary allowlist becomes non-empty, probe the already-deployed app-specific callback with a fresh non-secret synthetic `crc_token`. Require HTTP 200 and independently verify that `response_token` equals the expected HMAC-SHA256 result using the configured consumer secret without printing either value. This route-health probe is required before the first provider webhook create/revalidate call and does not substitute for the provider's own synchronous CRC validation.
 
 ### 10.3 DM subscription
 
@@ -314,11 +323,13 @@ Authorization headers, tokens, signatures, request bodies containing private dat
 
 ### 11.2 Persistent latch
 
-No schema migration is required. Reuse `x_inbox_delivery_resources.last_error` and load it into the worker account model.
+Add an additive nullable column to `x_inbox_delivery_resources`:
 
-When a DM ensure/list/create operation returns HTTP 403, save a structured stable prefix and a SHA-256 fingerprint of the non-secret desired configuration:
+`dm_subscription_forbidden_fingerprint TEXT`
 
-`X_DM_SUBSCRIPTION_FORBIDDEN:<fingerprint>`
+This dedicated field is the only durable control-flow state for the DM creation latch. Load it into the worker account model and update it through the delivery-resource store. `last_error` remains a human-readable, sanitized account-level summary of the most recent actionable reconciliation error and is never parsed or compared to decide whether a provider call is allowed. This prevents a simultaneous Comments error from clearing the DM retry latch and prevents a DM error from erasing the only durable evidence needed to bound retries.
+
+When a DM ensure/list/create operation returns HTTP 403, save the SHA-256 fingerprint of the non-secret desired configuration in `dm_subscription_forbidden_fingerprint`. Save a sanitized DM 403 summary in `last_error`, but do not depend on that text for latching.
 
 The fingerprint covers:
 
@@ -338,12 +349,16 @@ If the same account remains DM-desired with the same fingerprint, subsequent rec
 - keep delivery status `error` with the latch reason;
 - emit only bounded structured diagnostics rather than one provider call per minute.
 
+If a Comments error and a DM latch are simultaneously live, the dedicated fingerprint continues to suppress unchanged DM provider calls. `last_error` may contain whichever actionable failure was most recently persisted; bounded source-specific logs and metrics must preserve both source outcomes for observability. The hotfix intentionally retains one aggregate delivery status and does not pretend that `last_error` is a complete per-source error ledger.
+
 The latch resets when:
 
 - `x_dms_v1` evaluates false;
 - the account is removed from the canary allowlist;
 - required DM configuration changes and therefore produces a new fingerprint;
 - an operator deliberately runs an off→on gate cycle after correcting provider access.
+
+Resetting means persisting `NULL` to `dm_subscription_forbidden_fingerprint`; overwriting or clearing `last_error` alone never resets the latch.
 
 A 403 during deletion is not converted into a creation latch. It remains a cleanup failure and blocks promotion.
 
@@ -421,9 +436,11 @@ For legacy envelopes without a subscription tag:
 1. Treat `for_user_id` only as a provider X user ID.
 2. Query only `social_accounts.external_account_id` within the resolved app route.
 3. Do not compare it with `social_accounts.external_user_id`.
-4. Require exactly one active candidate.
-5. Zero candidates return the existing not-found behavior without a write.
-6. Multiple candidates return an ambiguity error without a write or notification.
+4. Keep the database query as `:many`, return every active exact provider-ID candidate in deterministic order, and do not add `LIMIT 1`.
+5. Convert every returned row strictly; a malformed candidate is an error, not a row that may be silently skipped and turn an ambiguous set into one apparent match.
+6. Enforce cardinality in the ingestion service before eligibility, admission, persistence, or notification: exactly one candidate is required.
+7. Zero candidates return the existing not-found behavior without a write.
+8. Multiple candidates return an explicit ambiguity error without a write or notification; no first-row-wins behavior is permitted.
 
 This fail-closed rule is required because an untagged legacy payload cannot prove which duplicate local connection owns the event.
 
@@ -451,7 +468,7 @@ The existing single account delivery status is retained for this hotfix.
 - `paused_plan`, `paused_cap`, `paused_allowance`: existing common pause meanings.
 - `error`: a desired source has a credential, evaluator, provider, routing, or persistence failure.
 
-An `error` status does not imply both sources are down. Source-specific IDs and `last_error` distinguish the failing path. For example, a DM 403 leaves the Comments rule and stream running while the account-level delivery status reports the actionable DM error.
+An `error` status does not imply both sources are down. Source-specific resource IDs, the dedicated DM forbidden fingerprint, and bounded source-specific logs distinguish the failing path. `last_error` is only the most recently persisted sanitized summary, so it may be overwritten by a later Comments or DM failure without changing latch behavior. For example, a DM 403 leaves the Comments rule and stream running while the account-level delivery status reports an actionable error and the dedicated fingerprint continues to suppress unchanged DM retries.
 
 ## 16. Configuration and secrets
 
@@ -476,6 +493,7 @@ The opaque route key is appended by the application and is never written into th
 
 ### 16.3 Credential operation policy
 
+- Treat the production UniPost API key previously pasted into chat as exposed. Revoke or rotate it promptly on its own security timeline, before production acceptance, and do not reuse it for this hotfix. This action is independent of X credential configuration and does not authorize printing, recovering, or handling the old value.
 - Do not show, copy, generate, regenerate, revoke, or rotate X credentials before the code/design gates require them.
 - Generate the missing App-Only Bearer Token only after staging code gates are ready for canary configuration.
 - Prefer revealing and storing the existing consumer secret over regenerating it.
@@ -495,6 +513,7 @@ Add bounded structured logs for reconciliation decisions and failures with:
 - action (`ensure`, `reuse`, `replace`, `delete`, `skip`, `latch`);
 - sanitized error class and HTTP status;
 - whether flag, canary, scope, credential, plan, or spend eligibility blocked the source.
+- whether a DM forbidden latch is absent, newly set, unchanged, or cleared, without logging the full fingerprint.
 
 Do not log:
 
@@ -519,14 +538,19 @@ Implementation begins with failing tests. At minimum the suite must prove the fo
 - Missing consumer secret disables DMs without disabling Comments.
 - Missing webhook URL disables DMs without disabling Comments.
 - DM provisioning occurs only when account active, plan allowed, DM scopes present, `x_dms_v1` true, exact account allowlisted, app bearer present, consumer secret present, webhook URL valid, and spend safety allows.
+- With the global flag off, a Super Admin-owned workspace can evaluate `x_dms_v1=true`; a non-Super-Admin-owned workspace evaluates false and performs no DM ensure call.
+- Losing Super Admin eligibility removes/does not recreate the DM subscription without deleting an eligible Comments rule.
 - Flag false removes/does not create DM subscriptions without deleting the Comments rule.
 - Flag evaluator error removes/does not create DM subscriptions, returns an error, and preserves Comments.
 - Missing/invalid/empty allowlist removes/does not create DM subscriptions and preserves Comments.
+- One malformed or empty entry in a non-empty multi-account allowlist invalidates the whole list; no valid subset is partially enabled.
 - Known spend pause prevents both paid sources according to existing policy.
 - Spend evaluation error creates neither source and does not start an unproven stream cycle.
 - Route generation mismatch deletes and replaces the DM subscription in order.
 - A healthy exact subscription is reused without creation or deletion.
 - Cleanup remains exact-ID, leased, retryable, and idempotent.
+- Two Comments-desired accounts sharing one app identity use one shared stream; disabling one keeps it running, disabling the last stops it once, and DM-only state changes do not churn it.
+- An incomplete desired-state cycle preserves the existing shared stream set rather than applying a partial app aggregate.
 
 ### 18.2 Provider-client tests
 
@@ -543,6 +567,8 @@ Implementation begins with failing tests. At minimum the suite must prove the fo
 - First unchanged 403 saves the stable latch fingerprint.
 - A second reconcile with the same desired fingerprint does not call provider provisioning.
 - Comments remain active during the DM latch.
+- A later Comments error may overwrite `last_error` but cannot clear or bypass `dm_subscription_forbidden_fingerprint`.
+- A later DM error may overwrite `last_error` without losing Comments failure diagnostics from source-specific logs/metrics.
 - Flag off clears the latch and removes any stored DM subscription.
 - Removing the account from the canary clears the latch.
 - A deliberate off→on cycle after corrected configuration permits exactly one new attempt.
@@ -556,6 +582,7 @@ Implementation begins with failing tests. At minimum the suite must prove the fo
 - Legacy `for_user_id` matches exact provider `external_account_id`, not customer `external_user_id`.
 - Zero legacy candidates produce no write.
 - Multiple legacy candidates fail closed and produce no write or notification.
+- The store returns all exact provider-ID candidates without `LIMIT 1`, and a malformed returned candidate fails closed instead of being skipped.
 - The exact account's customer-managed owner is used for WebSocket notification.
 - `chat.received` and all other `chat.*` events produce no `x_dm` event/item.
 - Current `dm.received` and legacy `direct_message_events` fixtures remain accepted.
@@ -575,6 +602,13 @@ Implementation begins with failing tests. At minimum the suite must prove the fo
 - `main.go` passes only parsed canary membership, not raw environment reads scattered through account reconciliation.
 - The managed webhook handler routes remain registered.
 - No user OAuth token is reintroduced into X Activity subscription management.
+
+### 18.7 Migration and callback readiness tests
+
+- The additive migration creates nullable `dm_subscription_forbidden_fingerprint` and the generated query/model/store paths round-trip it without changing existing resource IDs.
+- Existing delivery-resource rows migrate with a null latch and retain their Comments/DM IDs, route generation, status, and `last_error`.
+- A synthetic CRC probe receives HTTP 200 only when the route resolves the correct app-specific consumer secret, and its returned HMAC matches independently.
+- A failed CRC probe blocks canary activation before any provider webhook create/revalidate call.
 
 ## 19. Local validation
 
@@ -608,10 +642,11 @@ Any failed, errored, timed-out, cancelled, skipped, or missing result is a hard 
 - Confirm Comments behavior is unaffected by the empty DM gate.
 - Confirm no DM subscription is created for any account.
 - Confirm the evaluator and allowlist diagnostics contain no secrets.
+- With the allowlist still empty, probe the exact deployed app-specific callback using a fresh synthetic CRC token; require HTTP 200 and independently verify the response HMAC before any provider webhook create/revalidate call is allowed.
 
 ### 20.3 Fixture selection
 
-Use only a user-owned staging X test account. Resolve its exact staging `social_account_id`, provider X user ID, scopes, owner, and plan through read-only checks immediately before canary activation.
+Use only a user-owned staging X test account. Resolve its exact staging `social_account_id`, provider X user ID, scopes, owner, and plan through read-only checks immediately before canary activation. While the staging/global `x_dms_v1` state is off, call the same backend evaluator used by the worker and require `(true, nil)` for that exact workspace; canary membership or Super Admin assumptions are not substitutes for this result.
 
 If no suitable user-owned staging fixture exists, stop and ask the user to connect or designate one. Never substitute a customer account.
 
@@ -627,6 +662,8 @@ If any call may consume credits, report the maximum bounded canary cost and obta
 
 ### 20.5 Active canary
 
+- Reconfirm the exact fixture workspace still evaluates `x_dms_v1=true` immediately before the configuration change.
+- Reconfirm the synthetic CRC probe passes on the exact deployed SHA and app-specific route.
 - Set the allowlist to exactly the staging fixture.
 - Monitor the first reconciliation cycle and all deployments/checks.
 - Verify one exact Comments rule where Comments are eligible.
@@ -670,8 +707,12 @@ Only after code and staging gates pass:
 - configure the production webhook base URL;
 - initially keep the production canary allowlist empty;
 - confirm `x_dms_v1` global state remains off.
+- before using any UniPost API key for acceptance, confirm the previously exposed production key has been revoked or rotated and use only a replacement through secret-safe handling.
+- while the allowlist remains empty, run the synthetic CRC probe against the exact production app-specific route and require a valid independently checked response.
 
 ### 21.3 Production canary activation
+
+Before changing the allowlist, prove through the worker's backend evaluator that the exact acceptance workspace returns `x_dms_v1=true` while the global flag remains off. Confirm its owner currently resolves as a Super Admin and that the production synthetic CRC probe passed on the exact deployed SHA. A false/error evaluator result or CRC mismatch is a hard stop and no provider mutation is attempted.
 
 After the empty-gate production deployment is healthy, set:
 
@@ -754,10 +795,12 @@ The release stops immediately on any of the following:
 - required test failure, error, timeout, cancellation, skip, or missing result;
 - validation against a SHA different from the proposed head;
 - X 403 during required canary provisioning;
+- fixture workspace does not evaluate `x_dms_v1=true` through the backend evaluator immediately before canary activation;
 - invalid webhook CRC or signature verification;
 - ambiguous legacy provider-user routing;
 - managed-user isolation failure;
 - missing required secret that cannot be configured safely;
+- previously exposed production UniPost API key remains active or would need to be reused for acceptance;
 - provider call with unknown/possibly billable cost before approval;
 - no user-owned staging fixture;
 - deployment/check still pending;
@@ -769,16 +812,17 @@ The release stops immediately on any of the following:
 The hotfix is complete only when all of the following are true:
 
 - PRD and implementation plan are approved.
-- TDD tests cover every required desired-state, flag, canary, 403, lifecycle, routing, isolation, and XChat exclusion behavior.
+- TDD tests cover every required desired-state, Super Admin evaluator precondition, whole-list canary parsing, dedicated 403 latch, shared-stream lifecycle, CRC readiness, routing cardinality, isolation, and XChat exclusion behavior.
 - Full local API tests pass.
 - The hotfix PR merges to staging after all exact-SHA checks pass.
 - Staging canary and managed-user isolation pass with no 403.
 - The staging-to-main production PR passes and deploys successfully.
 - Production has exactly one intended rule, webhook, and DM subscription for the acceptance fixture.
+- The exact production workspace evaluates `x_dms_v1=true` with the global flag off immediately before activation, and the deployed app-specific CRC probe passes before provider webhook creation.
 - Fresh production reply and legacy DM arrive only in `sdk-inbox-x`.
 - Another managed user cannot access them.
 - Owner/admin/API-key aggregate behavior remains correct.
 - Publishing and analytics smoke checks show no regression.
 - The same hotfix is synced to dev through PR and dev acceptance passes.
 - All triggered CI, Vercel, Railway, regression, and browser checks finish successfully.
-- The user is reminded to revoke or rotate the production UniPost API key previously pasted into chat; the key is never repeated.
+- The production UniPost API key previously pasted into chat has been revoked or rotated before production acceptance; the exposed value is never repeated or reused.
