@@ -1,6 +1,6 @@
 -- +goose Up
 ALTER TABLE x_inbox_delivery_resources
-  ADD COLUMN dm_subscription_forbidden_fingerprint TEXT;
+  ADD COLUMN IF NOT EXISTS dm_subscription_forbidden_fingerprint TEXT;
 
 -- +goose Down
 ALTER TABLE x_inbox_delivery_resources

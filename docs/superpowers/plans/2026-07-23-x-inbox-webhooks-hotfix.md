@@ -89,7 +89,7 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Add failing tests for the full DM conjunction: account active, plan permits Inbox, dm.read present, workspace x_dms_v1 true, account in strict canary, managed app bearer present, consumer secret configured, webhook URL present, and spend safety permitted.
 - [ ] Prove comment and DM desired states are independent. Flag-off, evaluator error, missing DM scope, missing consumer secret, or missing webhook must not disable a valid comment stream.
 - [ ] Prove evaluator errors fail closed for DMs and make no DM creation call.
-- [ ] Prove eligible state calls EnsureWebhook before EnsureDMSubscription with dm.received, exact provider user ID, and stable account tag.
+- [ ] Prove eligible state calls EnsureWebhook before the worker lists app subscriptions and deterministically converges one dm.received subscription for the exact provider user ID, stable account tag, and selected webhook.
 - [ ] Prove route replacement deletes only the exact recorded account subscription, persists the cleared subscription and route, then ensures the app-level webhook and replacement subscription, and converges idempotently on the next cycle.
 - [ ] Prove the per-account worker does not directly enumerate app-scoped webhooks to identify stale resources and never calls DeleteWebhook. EnsureWebhook may internally list, reuse, revalidate, or create the exact configured URL; stale app-webhook cleanup requires a future generation-aware, leased app-level design.
 - [ ] Prove subscription-create 403 stores the dedicated fingerprint, preserves comments, and suppresses later provider calls while unchanged.
@@ -99,7 +99,7 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Run focused red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/worker -run 'TestXInboxDelivery|Test.*DM.*Desired|Test.*SharedStream' -count=1.
 - [ ] Add DMsAvailable func(context.Context, string) (bool, error) and DMCanaryAccountIDs map[string]struct{} to XInboxDeliveryConfig.
 - [ ] Replace the hard-coded DM false value with independent eligibility. Require consumer secret and webhook only for DMs; apply spend safety when either source is desired.
-- [ ] Restore EnsureWebhook then EnsureDMSubscription using the existing app-bearer client. Do not switch to user OAuth.
+- [ ] Restore EnsureWebhook, then let the worker own the complete subscription lifecycle: ListActivitySubscriptions, deterministic duplicate/stale convergence, durable state clear, and pure CreateDMSubscription/DeleteActivitySubscription calls using the existing app bearer. Do not switch to user OAuth.
 - [ ] Build the fingerprint only from non-secret app mode, app identity, social account, provider user, non-secret webhook URL, and event. Never include bearer or consumer secret values; a webhook URL change allows one controlled retry.
 - [ ] Keep last_error as the latest sanitized human summary only; never parse it for control flow. Preserve source-specific logs/metrics.
 - [ ] Run all worker tests and require PASS.

@@ -612,7 +612,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 			} else {
 				state.FilteredStreamRuleID = rule.ID
 				if err := persist(); err != nil {
-					return app, streamDesired(), true, err
+					return app, false, false, err
 				}
 			}
 		}

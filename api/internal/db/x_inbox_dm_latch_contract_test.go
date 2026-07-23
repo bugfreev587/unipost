@@ -18,7 +18,7 @@ func TestXInboxDMLatchContract(t *testing.T) {
 	migrationText := string(migration)
 	for _, required := range []string{
 		"ALTER TABLE x_inbox_delivery_resources",
-		"ADD COLUMN dm_subscription_forbidden_fingerprint TEXT",
+		"ADD COLUMN IF NOT EXISTS dm_subscription_forbidden_fingerprint TEXT",
 	} {
 		if !strings.Contains(migrationText, required) {
 			t.Fatalf("migration missing %q", required)

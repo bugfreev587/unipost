@@ -415,6 +415,69 @@ func TestXIngestReplyUsesConversationIDAndNotifiesOnlyAfterInsert(t *testing.T) 
 	}
 }
 
+func TestXIngestReplyIsOwnUsesTrimmedProviderUserID(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		managedUserID  string
+		providerUserID string
+		eventAuthorID  string
+		wantIsOwn      bool
+	}{
+		{
+			name:           "provider IDs match after trimming",
+			managedUserID:  "managed-owner",
+			providerUserID: " provider-owner ",
+			eventAuthorID:  " provider-owner ",
+			wantIsOwn:      true,
+		},
+		{
+			name:           "managed user match cannot impersonate provider owner",
+			managedUserID:  "managed-owner",
+			providerUserID: "provider-owner",
+			eventAuthorID:  "managed-owner",
+			wantIsOwn:      false,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeIngestStore{
+				accounts: map[string]InboxAccount{
+					"client-1:account-1": {
+						ID: "account-1", WorkspaceID: "workspace-1",
+						ExternalUserID: test.managedUserID, ExternalAccountID: test.providerUserID,
+						Scopes: []string{"tweet.read", "users.read"}, PlanAllowsInbox: true,
+					},
+				},
+				insertedNew: true,
+			}
+			var notified []InboxItem
+			service := NewIngestionService(IngestionConfig{
+				Store: store,
+				Notify: func(_ context.Context, _, _ string, item InboxItem) {
+					notified = append(notified, item)
+				},
+			})
+			event := StreamEvent{}
+			event.Data.ID = "tweet-own"
+			event.Data.Text = "reply"
+			event.Data.AuthorID = test.eventAuthorID
+			event.Data.CreatedAt = "2026-07-16T12:00:00Z"
+			event.Data.ConversationID = "conversation-own"
+			event.MatchingRules = []StreamRule{{Tag: FilteredStreamRuleTag("account-1")}}
+
+			if err := service.IngestStreamEvent(context.Background(), "client-1", event); err != nil {
+				t.Fatal(err)
+			}
+			if len(store.inserted) != 1 || len(notified) != 1 {
+				t.Fatalf("routing changed: inserted=%d notified=%d", len(store.inserted), len(notified))
+			}
+			if got := store.inserted[0].IsOwn; got != test.wantIsOwn {
+				t.Fatalf("IsOwn = %v, want %v (managed=%q provider=%q author=%q)",
+					got, test.wantIsOwn, test.managedUserID, test.providerUserID, test.eventAuthorID)
+			}
+		})
+	}
+}
+
 func TestXIngestDMSuppressionNeverPersistsPrivateBody(t *testing.T) {
 	store := &fakeIngestStore{
 		accounts: map[string]InboxAccount{

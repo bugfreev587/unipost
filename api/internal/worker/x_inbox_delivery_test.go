@@ -1817,6 +1817,74 @@ func TestXInboxDeliveryProviderMutationPersistenceFailuresConverge(t *testing.T)
 	})
 }
 
+func TestXInboxDeliveryFilteredStreamWaitsForDurableRuleBeforeStarting(t *testing.T) {
+	const bearerSentinel = "managed-bearer-must-not-log"
+	account := activeManagedXInboxAccount()
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{
+		accounts:   []XInboxDeliveryAccount{account},
+		saveErrors: map[int]error{1: errors.New("save rule failed")},
+	}
+	api := &fakeXInboxDeliveryAPI{ruleID: "stable-rule"}
+	runner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 2),
+		stops:  make(chan string, 2),
+	}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.ManagedAppBearer = bearerSentinel
+	config.Leader = &sharedTestLeader{}
+	config.Stream = runner
+	config.EventHandler = func(context.Context, string, xinbox.StreamEvent) error { return nil }
+	worker := NewXInboxDeliveryWorker(config)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		worker.stopAllStreams()
+	})
+
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	worker.reconcileAndStartStreams(ctx)
+	select {
+	case started := <-runner.starts:
+		t.Fatalf("stream started before rule state was durable: %+v", started)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if got := store.accounts[0].FilteredStreamRuleID; got != "" {
+		t.Fatalf("rule after failed save = %q, want local state unchanged", got)
+	}
+	if !strings.Contains(output.String(), "save rule failed") {
+		t.Fatalf("reconcile log = %q, want persistence failure", output.String())
+	}
+	if strings.Contains(output.String(), bearerSentinel) {
+		t.Fatalf("reconcile log leaked bearer: %s", output.String())
+	}
+
+	worker.reconcileAndStartStreams(ctx)
+	select {
+	case started := <-runner.starts:
+		if started.Identity != safeAppIdentity(account.WebhookRouteKey) {
+			t.Fatalf("started stream = %+v, want managed app identity", started)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stream did not start after rule state became durable")
+	}
+	select {
+	case duplicate := <-runner.starts:
+		t.Fatalf("durable rule started duplicate stream: %+v", duplicate)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if want := []string{bearerSentinel, bearerSentinel}; !reflect.DeepEqual(api.ruleTokens, want) {
+		t.Fatalf("stable rule ensures = %v, want retry %v", api.ruleTokens, want)
+	}
+	if len(api.deletedRules) != 0 || store.accounts[0].FilteredStreamRuleID != "stable-rule" {
+		t.Fatalf("deleted rules=%v final state=%+v, want stable provider rule reused", api.deletedRules, store.accounts[0])
+	}
+}
+
 func dmSubscriptionCreateForbidden() error {
 	return &xinbox.ProviderHTTPError{
 		Method:     http.MethodPost,

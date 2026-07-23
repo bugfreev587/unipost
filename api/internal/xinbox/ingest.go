@@ -197,7 +197,7 @@ func (s *IngestionService) IngestStreamEvent(ctx context.Context, appClientID st
 			AuthorID:         event.Data.AuthorID,
 			AuthorAvatarURL:  authorAvatar,
 			Body:             event.Data.Text,
-			IsOwn:            event.Data.AuthorID != "" && event.Data.AuthorID == account.ExternalUserID,
+			IsOwn:            strings.TrimSpace(event.Data.AuthorID) == strings.TrimSpace(account.ExternalAccountID),
 			ReceivedAt:       receivedAt,
 			ThreadKey:        firstNonEmptyString(event.Data.ConversationID, event.Data.ID),
 			ThreadStatus:     "open",
