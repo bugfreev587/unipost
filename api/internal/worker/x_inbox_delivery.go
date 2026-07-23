@@ -196,38 +196,58 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 	}
 }
 
-func NewPostgresXInboxDeliveryWorker(
-	databaseURL string,
-	pool *pgxpool.Pool,
-	queries *db.Queries,
-	encryptor *crypto.AESEncryptor,
-	usage XInboxUsageReader,
-	client *xinbox.Client,
-	managedAppBearer string,
-	managedConsumerSecretConfigured bool,
-	managedWebhookRouteKey string,
-	webhookURL string,
-	dmsAvailable func(context.Context, string) (bool, error),
-	dmCanaryAccountIDs map[string]struct{},
-) *XInboxDeliveryWorker {
+type PostgresXInboxDeliveryConfig struct {
+	DatabaseURL                     string
+	Pool                            *pgxpool.Pool
+	Queries                         *db.Queries
+	Encryptor                       *crypto.AESEncryptor
+	Usage                           XInboxUsageReader
+	Client                          *xinbox.Client
+	ManagedAppBearer                string
+	ManagedConsumerSecretConfigured bool
+	ManagedWebhookRouteKey          string
+	WebhookURL                      string
+	DMsAvailable                    func(context.Context, string) (bool, error)
+	DMCanaryAccountIDs              map[string]struct{}
+}
+
+func NewPostgresXInboxDeliveryWorker(config PostgresXInboxDeliveryConfig) *XInboxDeliveryWorker {
 	store := &postgresXInboxDeliveryStore{
-		pool:                   pool,
-		queries:                queries,
-		managedWebhookRouteKey: strings.TrimSpace(managedWebhookRouteKey),
+		pool:                   config.Pool,
+		queries:                config.Queries,
+		managedWebhookRouteKey: strings.TrimSpace(config.ManagedWebhookRouteKey),
 	}
-	return NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+	return NewXInboxDeliveryWorker(xInboxDeliveryConfigFromPostgres(
+		config,
+		store,
+		config.Client,
+		config.Encryptor,
+		NewPostgresStreamLockManager(config.DatabaseURL),
+		xinbox.NewStreamSupervisor(config.Client, xinbox.StreamSupervisorConfig{}),
+	))
+}
+
+func xInboxDeliveryConfigFromPostgres(
+	config PostgresXInboxDeliveryConfig,
+	store XInboxDeliveryStore,
+	api XInboxDeliveryAPI,
+	cipher XInboxCipher,
+	leader XInboxLeaderElector,
+	stream XInboxStreamRunner,
+) XInboxDeliveryConfig {
+	return XInboxDeliveryConfig{
 		Store:                           store,
-		API:                             client,
-		Cipher:                          encryptor,
-		Usage:                           usage,
-		Leader:                          NewPostgresStreamLockManager(databaseURL),
-		Stream:                          xinbox.NewStreamSupervisor(client, xinbox.StreamSupervisorConfig{}),
-		ManagedAppBearer:                managedAppBearer,
-		ManagedConsumerSecretConfigured: managedConsumerSecretConfigured,
-		WebhookURL:                      webhookURL,
-		DMsAvailable:                    dmsAvailable,
-		DMCanaryAccountIDs:              dmCanaryAccountIDs,
-	})
+		API:                             api,
+		Cipher:                          cipher,
+		Usage:                           config.Usage,
+		Leader:                          leader,
+		Stream:                          stream,
+		ManagedAppBearer:                config.ManagedAppBearer,
+		ManagedConsumerSecretConfigured: config.ManagedConsumerSecretConfigured,
+		WebhookURL:                      config.WebhookURL,
+		DMsAvailable:                    config.DMsAvailable,
+		DMCanaryAccountIDs:              config.DMCanaryAccountIDs,
+	}
 }
 
 func (w *XInboxDeliveryWorker) SetEventHandler(

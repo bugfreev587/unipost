@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"log/slog"
 	"net/http"
 	"os"
@@ -243,37 +246,89 @@ func TestFakeXInboxDeliveryStorePersistsForbiddenFingerprintIndependentlyFromLas
 	}
 }
 
-func TestNewPostgresXInboxDeliveryWorkerPassesThroughDMGates(t *testing.T) {
-	const accountID = "00000000-0000-4000-8000-000000000001"
-	callbackCalls := 0
-	dmsAvailable := func(_ context.Context, workspaceID string) (bool, error) {
-		callbackCalls++
-		if workspaceID != "workspace-1" {
-			t.Fatalf("workspaceID = %q, want workspace-1", workspaceID)
+func TestPostgresXInboxDeliveryConfigMappingDrivesObservableDMGates(t *testing.T) {
+	t.Run("canary account receives exact callback contract and error", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1"}
+		canary := map[string]struct{}{account.SocialAccountID: {}}
+		sentinel := errors.New("feature evaluator unavailable")
+		ctx := context.WithValue(context.Background(), xInboxDeliveryContextKey{}, &struct{}{})
+		var callbackCtx context.Context
+		var callbackWorkspaceID string
+		callbackCalls := 0
+		config := xInboxDeliveryConfigFromPostgres(
+			PostgresXInboxDeliveryConfig{
+				Usage:                           &fakeXInboxUsageReader{},
+				ManagedAppBearer:                "managed-app-token",
+				ManagedConsumerSecretConfigured: true,
+				WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
+				DMsAvailable: func(gotCtx context.Context, workspaceID string) (bool, error) {
+					callbackCalls++
+					callbackCtx = gotCtx
+					callbackWorkspaceID = workspaceID
+					return false, sentinel
+				},
+				DMCanaryAccountIDs: canary,
+			},
+			store,
+			api,
+			fakeXInboxCipher{},
+			nil,
+			nil,
+		)
+		subject := NewXInboxDeliveryWorker(config)
+		delete(canary, account.SocialAccountID)
+
+		err := subject.ReconcileOnce(ctx)
+
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("ReconcileOnce() error = %v, want sentinel evaluator error", err)
 		}
-		return true, nil
-	}
-	canary := map[string]struct{}{accountID: {}}
+		if callbackCalls != 1 || callbackCtx != ctx || callbackWorkspaceID != account.WorkspaceID {
+			t.Fatalf("callback calls = %d, context identity preserved = %v, workspace = %q; want 1, true, %q",
+				callbackCalls, callbackCtx == ctx, callbackWorkspaceID, account.WorkspaceID)
+		}
+		if len(api.webhookURLs) != 0 || len(api.subscriptionAccounts) != 0 {
+			t.Fatalf("DM provider calls = webhooks:%v subscriptions:%v, want none", api.webhookURLs, api.subscriptionAccounts)
+		}
+	})
 
-	subject := NewPostgresXInboxDeliveryWorker(
-		"", nil, nil, nil, nil, nil, "", false, "", "", dmsAvailable, canary,
-	)
-	canary["00000000-0000-4000-8000-000000000002"] = struct{}{}
+	t.Run("non-canary account never evaluates or provisions DMs", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1"}
+		callbackCalls := 0
+		config := xInboxDeliveryConfigFromPostgres(
+			PostgresXInboxDeliveryConfig{
+				Usage:                           &fakeXInboxUsageReader{},
+				ManagedAppBearer:                "managed-app-token",
+				ManagedConsumerSecretConfigured: true,
+				WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
+				DMsAvailable: func(context.Context, string) (bool, error) {
+					callbackCalls++
+					return true, nil
+				},
+				DMCanaryAccountIDs: map[string]struct{}{},
+			},
+			store,
+			api,
+			fakeXInboxCipher{},
+			nil,
+			nil,
+		)
 
-	available, err := subject.dmsAvailable(context.Background(), "workspace-1")
-	if err != nil {
-		t.Fatalf("dmsAvailable() error = %v", err)
-	}
-	if !available || callbackCalls != 1 {
-		t.Fatalf("dmsAvailable() = %v, calls = %d; want true, 1", available, callbackCalls)
-	}
-	if _, ok := subject.dmCanaryAccountIDs[accountID]; !ok {
-		t.Fatalf("worker canary set missing %q", accountID)
-	}
-	if len(subject.dmCanaryAccountIDs) != 1 {
-		t.Fatalf("worker canary set changed after input mutation: %v", subject.dmCanaryAccountIDs)
-	}
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+			t.Fatalf("ReconcileOnce() error = %v", err)
+		}
+		if callbackCalls != 0 || len(api.webhookURLs) != 0 || len(api.subscriptionAccounts) != 0 {
+			t.Fatalf("non-canary DM activity = callback:%d webhooks:%v subscriptions:%v, want none",
+				callbackCalls, api.webhookURLs, api.subscriptionAccounts)
+		}
+	})
 }
+
+type xInboxDeliveryContextKey struct{}
 
 func (f *fakeXInboxDeliveryStore) ClaimCleanupIntents(
 	_ context.Context,
@@ -2221,11 +2276,55 @@ func TestXInboxDeliveryUsesPostgresSessionAdvisoryLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(
-		string(deliverySource),
-		"Leader:                          NewPostgresStreamLockManager(databaseURL)",
-	) {
+	deliveryAST, err := parser.ParseFile(token.NewFileSet(), "x_inbox_delivery.go", deliverySource, 0)
+	if err != nil {
+		t.Fatalf("parse x_inbox_delivery.go: %v", err)
+	}
+	var constructor *ast.FuncDecl
+	for _, declaration := range deliveryAST.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if ok && function.Name.Name == "NewPostgresXInboxDeliveryWorker" {
+			constructor = function
+			break
+		}
+	}
+	if constructor == nil {
+		t.Fatal("Postgres delivery worker constructor is missing")
+	}
+	lockFromDatabaseURL := false
+	configMapped := false
+	ast.Inspect(constructor.Body, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		function, ok := call.Fun.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch function.Name {
+		case "NewPostgresStreamLockManager":
+			if len(call.Args) == 1 {
+				selector, selectorOK := call.Args[0].(*ast.SelectorExpr)
+				config, configOK := (*ast.Ident)(nil), false
+				if selectorOK {
+					config, configOK = selector.X.(*ast.Ident)
+				}
+				lockFromDatabaseURL = configOK && config.Name == "config" && selector.Sel.Name == "DatabaseURL"
+			}
+		case "xInboxDeliveryConfigFromPostgres":
+			if len(call.Args) > 0 {
+				config, ok := call.Args[0].(*ast.Ident)
+				configMapped = ok && config.Name == "config"
+			}
+		}
+		return true
+	})
+	if !lockFromDatabaseURL {
 		t.Fatal("Postgres worker must construct the isolated lock manager from DATABASE_URL")
+	}
+	if !configMapped {
+		t.Fatal("Postgres worker must map the named config into the delivery worker config")
 	}
 	if !strings.Contains(
 		string(deliverySource),
