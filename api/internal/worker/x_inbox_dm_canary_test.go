@@ -54,6 +54,24 @@ func TestParseXInboxDMCanary(t *testing.T) {
 			want:    map[string]struct{}{},
 			wantErr: true,
 		},
+		{
+			name:    "unhyphenated UUID among valid UUIDs",
+			raw:     firstID + ",11111111111141118111111111111111," + secondID,
+			want:    map[string]struct{}{},
+			wantErr: true,
+		},
+		{
+			name:    "UUID URN among valid UUIDs",
+			raw:     firstID + ",urn:uuid:" + secondID + "," + secondID,
+			want:    map[string]struct{}{},
+			wantErr: true,
+		},
+		{
+			name:    "braced UUID among valid UUIDs",
+			raw:     firstID + ",{11111111-1111-4111-8111-111111111111}," + secondID,
+			want:    map[string]struct{}{},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
