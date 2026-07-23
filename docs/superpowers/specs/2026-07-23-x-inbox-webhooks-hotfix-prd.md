@@ -572,7 +572,8 @@ Implementation begins with failing tests. At minimum the suite must prove the fo
 - Flag off clears the latch and removes any stored DM subscription.
 - Removing the account from the canary clears the latch.
 - A deliberate off→on cycle after corrected configuration permits exactly one new attempt.
-- Credential/route/provider-user changes produce a new fingerprint and permit controlled retry.
+- App mode, route identity, webhook URL, or provider-user changes produce a new fingerprint and permit one controlled retry.
+- A bearer-token or consumer-secret replacement alone does not enter the fingerprint; after correcting secret-only authorization, an operator must deliberately run the documented off→on gate cycle.
 - Delete 403 remains a cleanup error and is not treated as successful removal.
 
 ### 18.4 Routing and ingestion tests
