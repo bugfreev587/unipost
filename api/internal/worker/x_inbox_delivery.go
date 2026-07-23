@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -38,8 +37,6 @@ type XInboxDeliveryAPI interface {
 	EnsureFilteredStreamRule(context.Context, string, string, string) (xinbox.StreamRule, error)
 	DeleteFilteredStreamRule(context.Context, string, string) error
 	EnsureWebhook(context.Context, string, string) (xinbox.Webhook, error)
-	ListWebhooks(context.Context, string) ([]xinbox.Webhook, error)
-	DeleteWebhook(context.Context, string, string) error
 	EnsureDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
 	DeleteActivitySubscription(context.Context, string, string) error
 }
@@ -402,7 +399,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	commentsEligible := account.AccountActive && account.PlanAllowsInbox &&
 		hasXInboxScopes(account.Scopes, "tweet.read", "tweet.write", "users.read")
 	dmScopeEligible := account.AccountActive && account.PlanAllowsInbox &&
-		hasXInboxScopes(account.Scopes, "dm.read")
+		hasXInboxScopes(account.Scopes, "dm.read", "dm.write", "users.read")
 
 	_, dmCanaryEligible := w.dmCanaryAccountIDs[account.SocialAccountID]
 	appBearerToken, webhookRouteKey, consumerSecretConfigured, appTokenErr := w.resolveAccountAppToken(account)
@@ -534,8 +531,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 						return app, streamDesired(), true, err
 					}
 				}
-				oldRouteKey := state.ActivityWebhookRouteKey
-				if state.ActivityDMSubscriptionID != "" && oldRouteKey != webhookRouteKey {
+				if state.ActivityDMSubscriptionID != "" && state.ActivityWebhookRouteKey != webhookRouteKey {
 					if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
 						dmCleanupErr = err
 					} else {
@@ -579,14 +575,6 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 							if err := persist(); err != nil {
 								return app, streamDesired(), true, err
 							}
-							dmCleanupErr = w.cleanupStaleDMWebhooks(
-								ctx,
-								appBearerToken,
-								webhook,
-								appWebhookURL,
-								webhookRouteKey,
-								oldRouteKey,
-							)
 						}
 					}
 				}
@@ -685,61 +673,6 @@ func isDMProvisioningForbidden(err error) bool {
 	default:
 		return false
 	}
-}
-
-func (w *XInboxDeliveryWorker) cleanupStaleDMWebhooks(
-	ctx context.Context,
-	appBearerToken string,
-	current xinbox.Webhook,
-	currentURL string,
-	currentRouteKey string,
-	oldRouteKey string,
-) error {
-	webhooks, err := w.api.ListWebhooks(ctx, appBearerToken)
-	if err != nil {
-		return err
-	}
-	seen := make(map[string]struct{}, len(webhooks))
-	var joined error
-	for _, candidate := range webhooks {
-		if candidate.ID == current.ID {
-			continue
-		}
-		if _, duplicate := seen[candidate.ID]; duplicate {
-			continue
-		}
-		seen[candidate.ID] = struct{}{}
-		routeKey, ok := webhookURLRouteKey(candidate.URL)
-		if !ok {
-			continue
-		}
-		staleOldRoute := oldRouteKey != "" && oldRouteKey != currentRouteKey && routeKey == oldRouteKey
-		staleCurrentBase := routeKey == currentRouteKey && candidate.URL != currentURL
-		if !staleOldRoute && !staleCurrentBase {
-			continue
-		}
-		if err := w.api.DeleteWebhook(ctx, appBearerToken, candidate.ID); err != nil {
-			joined = errors.Join(joined, err)
-		}
-	}
-	return joined
-}
-
-func webhookURLRouteKey(rawURL string) (string, bool) {
-	parsed, err := url.Parse(rawURL)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", false
-	}
-	escapedPath := parsed.EscapedPath()
-	separator := strings.LastIndexByte(escapedPath, '/')
-	if separator < 0 || separator == len(escapedPath)-1 {
-		return "", false
-	}
-	routeKey, err := url.PathUnescape(escapedPath[separator+1:])
-	if err != nil || routeKey == "" {
-		return "", false
-	}
-	return routeKey, true
 }
 
 func logXInboxSourceError(
