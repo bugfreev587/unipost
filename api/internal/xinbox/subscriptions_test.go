@@ -403,7 +403,7 @@ func TestXClientEnsureWebhookDiscoversConfiguredURL(t *testing.T) {
 		if r.Method != http.MethodGet || r.URL.Path != "/2/webhooks" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"data":[{"id":"webhook-1","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
+		_, _ = w.Write([]byte(`{"data":[{"id":"1001","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
 	}))
 	defer server.Close()
 
@@ -412,7 +412,7 @@ func TestXClientEnsureWebhookDiscoversConfiguredURL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if webhook.ID != "webhook-1" || calls != 1 {
+	if webhook.ID != "1001" || calls != 1 {
 		t.Fatalf("webhook=%+v calls=%d", webhook, calls)
 	}
 }
@@ -423,16 +423,16 @@ func TestXClientEnsureWebhookRevalidatesConfiguredInvalidWebhook(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-1","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1001","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
 		case 2:
-			if r.Method != http.MethodPut || r.URL.Path != "/2/webhooks/webhook-1" {
+			if r.Method != http.MethodPut || r.URL.Path != "/2/webhooks/1001" {
 				t.Fatalf("revalidate request = %s %s", r.Method, r.URL.Path)
 			}
 			_, _ = w.Write([]byte(`{"data":{"attempted":true}}`))
 		case 3:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-1","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1001","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
 		case 4:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-1","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1001","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
 		}
 	}))
 	defer server.Close()
@@ -459,7 +459,7 @@ func TestXClientEnsureWebhookRetainsInvalidStateWhenCRCWasNotAttempted(t *testin
 		calls++
 		switch calls {
 		case 1:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-1","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1001","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
 		case 2:
 			_, _ = w.Write([]byte(`{"data":{"attempted":false}}`))
 		default:
@@ -496,7 +496,7 @@ func TestXClientEnsureWebhookCreatesConfiguredURLWhenMissing(t *testing.T) {
 			if body["url"] != "https://dev-api.unipost.dev/v1/webhooks/twitter" {
 				t.Fatalf("url = %q", body["url"])
 			}
-			_, _ = w.Write([]byte(`{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}`))
+			_, _ = w.Write([]byte(`{"id":"1002","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}`))
 		}
 	}))
 	defer server.Close()
@@ -506,7 +506,7 @@ func TestXClientEnsureWebhookCreatesConfiguredURLWhenMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if webhook.ID != "webhook-new" || calls != 2 {
+	if webhook.ID != "1002" || calls != 2 {
 		t.Fatalf("webhook=%+v calls=%d", webhook, calls)
 	}
 }
@@ -519,7 +519,7 @@ func TestXClientEnsureWebhookAcceptsWrappedCreateResponseWithoutRetry(t *testing
 		case 1:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			_, _ = w.Write([]byte(`{"data":{"id":"webhook-wrapped","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":"1003","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}}`))
 		default:
 			t.Fatalf("unexpected duplicate create request %d", calls)
 		}
@@ -531,7 +531,7 @@ func TestXClientEnsureWebhookAcceptsWrappedCreateResponseWithoutRetry(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if webhook.ID != "webhook-wrapped" || calls != 2 {
+	if webhook.ID != "1003" || calls != 2 {
 		t.Fatalf("webhook=%+v calls=%d", webhook, calls)
 	}
 }
@@ -545,11 +545,11 @@ func TestXClientEnsureWebhookPollsUntilCreatedWebhookIsExactAndValid(t *testing.
 		case 1:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			_, _ = w.Write([]byte(`{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}`))
+			_, _ = w.Write([]byte(`{"id":"1002","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}`))
 		case 3:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1002","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`))
 		case 4:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-new","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1002","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`))
 		default:
 			t.Fatalf("unexpected request %d", calls)
 		}
@@ -567,7 +567,7 @@ func TestXClientEnsureWebhookPollsUntilCreatedWebhookIsExactAndValid(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if webhook.ID != "webhook-new" || webhook.URL != configuredURL || !webhook.Valid || calls != 4 {
+	if webhook.ID != "1002" || webhook.URL != configuredURL || !webhook.Valid || calls != 4 {
 		t.Fatalf("webhook=%+v calls=%d", webhook, calls)
 	}
 }
@@ -580,7 +580,7 @@ func TestXClientEnsureWebhookRejectsCreatedWebhookWithWrongURLImmediately(t *tes
 		case 1:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			_, _ = w.Write([]byte(`{"data":{"id":"webhook-wrapped","url":"https://wrong.example/webhook","valid":true}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":"1003","url":"https://wrong.example/webhook","valid":true}}`))
 		default:
 			t.Fatalf("unexpected poll after wrong create URL")
 		}
@@ -610,9 +610,9 @@ func TestXClientEnsureWebhookTimesOutWhenCreatedWebhookIsNeverConfirmed(t *testi
 		case 1:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			_, _ = w.Write([]byte(`{"data":{"id":"webhook-wrapped","valid":false}}`))
+			_, _ = w.Write([]byte(`{"data":{"id":"1003","valid":false}}`))
 		default:
-			_, _ = w.Write([]byte(`{"data":[{"id":"webhook-wrapped","url":"https://wrong.example/webhook","valid":true}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"1003","url":"https://wrong.example/webhook","valid":true}]}`))
 		}
 	}))
 	defer server.Close()
@@ -630,6 +630,55 @@ func TestXClientEnsureWebhookTimesOutWhenCreatedWebhookIsNeverConfirmed(t *testi
 	}
 	if calls != 4 {
 		t.Fatalf("calls = %d, want list, create, and two polls", calls)
+	}
+}
+
+func TestXClientEnsureWebhookRejectsMalformedProviderIDs(t *testing.T) {
+	const configuredURL = "https://dev-api.unipost.dev/v1/webhooks/twitter"
+	tests := []struct {
+		name      string
+		responses []string
+		wantCalls int
+	}{
+		{
+			name:      "reused valid webhook",
+			responses: []string{`{"data":[{"id":"invalid-webhook-id","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}]}`},
+			wantCalls: 1,
+		},
+		{
+			name:      "revalidated webhook",
+			responses: []string{`{"data":[{"id":"invalid-webhook-id","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":false}]}`},
+			wantCalls: 1,
+		},
+		{
+			name: "created webhook",
+			responses: []string{
+				`{"data":[]}`,
+				`{"id":"invalid-webhook-id","url":"https://dev-api.unipost.dev/v1/webhooks/twitter","valid":true}`,
+			},
+			wantCalls: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if calls >= len(tt.responses) {
+					t.Fatalf("unexpected provider request %d", calls+1)
+				}
+				_, _ = w.Write([]byte(tt.responses[calls]))
+				calls++
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			if _, err := client.EnsureWebhook(context.Background(), "app-token", configuredURL); err == nil {
+				t.Fatal("expected malformed provider webhook ID error")
+			}
+			if calls != tt.wantCalls {
+				t.Fatalf("provider calls = %d, want %d", calls, tt.wantCalls)
+			}
+		})
 	}
 }
 
@@ -661,12 +710,12 @@ func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndCreate(t *testing.T) 
 				EventType: "dm.received",
 				Filter:    ActivityFilter{UserID: "2244994945"},
 				Tag:       "unipost:x:dm:account-123",
-				WebhookID: "webhook-1",
+				WebhookID: "1001",
 			}
 			if !reflect.DeepEqual(body, want) {
 				t.Fatalf("body = %#v, want %#v", body, want)
 			}
-			_, _ = w.Write([]byte(`{"data":{"subscription":{"subscription_id":"subscription-1","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"subscription":{"subscription_id":"2001","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}}`))
 		}
 	}))
 	defer server.Close()
@@ -677,12 +726,12 @@ func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndCreate(t *testing.T) 
 		"app-token",
 		"account-123",
 		"2244994945",
-		"webhook-1",
+		"1001",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.ID != "subscription-1" || calls != 2 {
+	if subscription.ID != "2001" || calls != 2 {
 		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
 	}
 }
@@ -693,17 +742,17 @@ func TestXClientEnsureDMSubscriptionReplacesStaleStableTag(t *testing.T) {
 		calls++
 		switch calls {
 		case 1:
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"subscription-old","event_type":"dm.received","filter":{"user_id":"old-user"},"tag":"unipost:x:dm:account-123","webhook_id":"old-webhook"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2002","event_type":"dm.received","filter":{"user_id":"old-user"},"tag":"unipost:x:dm:account-123","webhook_id":"1004"}]}`))
 		case 2:
 			if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
 				t.Fatalf("delete Authorization = %q, want app bearer", got)
 			}
-			if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/subscription-old" {
+			if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/2002" {
 				t.Fatalf("delete request = %s %s", r.Method, r.URL.Path)
 			}
 			_, _ = w.Write([]byte(`{"data":{"deleted":true}}`))
 		case 3:
-			_, _ = w.Write([]byte(`{"data":{"subscription":{"subscription_id":"subscription-new","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"subscription":{"subscription_id":"2003","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}}`))
 		default:
 			t.Fatalf("unexpected call %d", calls)
 		}
@@ -716,12 +765,12 @@ func TestXClientEnsureDMSubscriptionReplacesStaleStableTag(t *testing.T) {
 		"app-token",
 		"account-123",
 		"2244994945",
-		"webhook-1",
+		"1001",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.ID != "subscription-new" || calls != 3 {
+	if subscription.ID != "2003" || calls != 3 {
 		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
 	}
 }
@@ -741,12 +790,12 @@ func TestXClientEnsureDMSubscriptionFindsStableTagOnSecondPage(t *testing.T) {
 			if got := r.URL.Query().Get("pagination_token"); got != "" {
 				t.Fatalf("first pagination token = %q", got)
 			}
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"other","event_type":"dm.received","filter":{"user_id":"another-user"},"tag":"another-tag","webhook_id":"webhook-1"}],"meta":{"next_token":"NEXTTOKEN1234567","result_count":1}}`))
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2999","event_type":"dm.received","filter":{"user_id":"another-user"},"tag":"another-tag","webhook_id":"1001"}],"meta":{"next_token":"NEXTTOKEN1234567","result_count":1}}`))
 		case 2:
 			if got := r.URL.Query().Get("pagination_token"); got != "NEXTTOKEN1234567" {
 				t.Fatalf("second pagination token = %q", got)
 			}
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"subscription-page-2","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}],"meta":{"result_count":1}}`))
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2004","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}],"meta":{"result_count":1}}`))
 		default:
 			t.Fatalf("unexpected request %d", calls)
 		}
@@ -759,12 +808,12 @@ func TestXClientEnsureDMSubscriptionFindsStableTagOnSecondPage(t *testing.T) {
 		"app-token",
 		"account-123",
 		"2244994945",
-		"webhook-1",
+		"1001",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.ID != "subscription-page-2" || calls != 2 {
+	if subscription.ID != "2004" || calls != 2 {
 		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
 	}
 }
@@ -781,11 +830,11 @@ func TestXClientEnsureDMSubscriptionFollowsFullFirstPageToItem1001(t *testing.T)
 			page := make([]ActivitySubscription, 1000)
 			for i := range page {
 				page[i] = ActivitySubscription{
-					ID:        fmt.Sprintf("other-%d", i),
+					ID:        fmt.Sprintf("%d", i+3000),
 					EventType: "dm.received",
 					Filter:    ActivityFilter{UserID: "another-user"},
 					Tag:       fmt.Sprintf("another-tag-%d", i),
-					WebhookID: "webhook-1",
+					WebhookID: "1001",
 				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -802,7 +851,7 @@ func TestXClientEnsureDMSubscriptionFollowsFullFirstPageToItem1001(t *testing.T)
 			if got := r.URL.Query().Get("max_results"); got != "500" {
 				t.Fatalf("second max_results = %q, want remaining self-serve capacity 500", got)
 			}
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"subscription-1001","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}],"meta":{"result_count":1}}`))
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2005","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}],"meta":{"result_count":1}}`))
 		default:
 			t.Fatalf("unexpected request %d", calls)
 		}
@@ -815,12 +864,12 @@ func TestXClientEnsureDMSubscriptionFollowsFullFirstPageToItem1001(t *testing.T)
 		"app-token",
 		"account-123",
 		"2244994945",
-		"webhook-1",
+		"1001",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.ID != "subscription-1001" || calls != 2 {
+	if subscription.ID != "2005" || calls != 2 {
 		t.Fatalf("subscription=%+v calls=%d", subscription, calls)
 	}
 }
@@ -833,7 +882,7 @@ func TestXClientEnsureDMSubscriptionAcceptsDirectDataResponse(t *testing.T) {
 		case 1:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			_, _ = w.Write([]byte(`{"data":{"subscription_id":"subscription-direct","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}}`))
+			_, _ = w.Write([]byte(`{"data":{"subscription_id":"2006","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}`))
 		}
 	}))
 	defer server.Close()
@@ -844,12 +893,12 @@ func TestXClientEnsureDMSubscriptionAcceptsDirectDataResponse(t *testing.T) {
 		"app-token",
 		"account-123",
 		"2244994945",
-		"webhook-1",
+		"1001",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.ID != "subscription-direct" {
+	if subscription.ID != "2006" {
 		t.Fatalf("subscription = %+v", subscription)
 	}
 }
@@ -862,7 +911,7 @@ func TestXClientEnsureDMSubscriptionAcceptsArrayDataResponse(t *testing.T) {
 		case 1:
 			_, _ = w.Write([]byte(`{"data":[]}`))
 		case 2:
-			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"subscription-array","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"webhook-1"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"subscription_id":"2007","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}]}`))
 		}
 	}))
 	defer server.Close()
@@ -873,13 +922,96 @@ func TestXClientEnsureDMSubscriptionAcceptsArrayDataResponse(t *testing.T) {
 		"app-token",
 		"account-123",
 		"2244994945",
-		"webhook-1",
+		"1001",
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subscription.ID != "subscription-array" {
+	if subscription.ID != "2007" {
 		t.Fatalf("subscription = %+v", subscription)
+	}
+}
+
+func TestXClientEnsureDMSubscriptionRejectsMalformedProviderIDs(t *testing.T) {
+	tests := []struct {
+		name      string
+		responses []string
+		wantCalls int
+	}{
+		{
+			name: "reused subscription",
+			responses: []string{
+				`{"data":[{"subscription_id":"invalid-subscription-id","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}]}`,
+			},
+			wantCalls: 1,
+		},
+		{
+			name: "stale subscription",
+			responses: []string{
+				`{"data":[{"subscription_id":"invalid-subscription-id","event_type":"dm.received","filter":{"user_id":"old-user"},"tag":"unipost:x:dm:account-123","webhook_id":"1004"}]}`,
+			},
+			wantCalls: 1,
+		},
+		{
+			name: "created subscription",
+			responses: []string{
+				`{"data":[]}`,
+				`{"data":{"subscription_id":"invalid-subscription-id"}}`,
+			},
+			wantCalls: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if calls >= len(tt.responses) {
+					t.Fatalf("unexpected provider request %d", calls+1)
+				}
+				_, _ = w.Write([]byte(tt.responses[calls]))
+				calls++
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			_, err := client.EnsureDMSubscription(
+				context.Background(),
+				"app-token",
+				"account-123",
+				"2244994945",
+				"1001",
+			)
+			if err == nil {
+				t.Fatal("expected malformed provider subscription ID error")
+			}
+			if calls != tt.wantCalls {
+				t.Fatalf("provider calls = %d, want %d", calls, tt.wantCalls)
+			}
+		})
+	}
+}
+
+func TestXClientEnsureDMSubscriptionRejectsMalformedWebhookIDWithoutProviderRequest(t *testing.T) {
+	var calls int
+	client := NewClient(ClientConfig{
+		BaseURL: "https://api.x.test",
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			calls++
+			return nil, errors.New("unexpected provider request")
+		})},
+	})
+	_, err := client.EnsureDMSubscription(
+		context.Background(),
+		"app-token",
+		"account-123",
+		"2244994945",
+		"invalid-webhook-id",
+	)
+	if err == nil {
+		t.Fatal("expected malformed webhook ID error")
+	}
+	if calls != 0 {
+		t.Fatalf("provider calls = %d, want 0", calls)
 	}
 }
 
@@ -888,7 +1020,7 @@ func TestXClientDeleteActivitySubscriptionIsIdempotent(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
 			t.Fatalf("Authorization = %q", got)
 		}
-		if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/subscription-missing" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/2008" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusGone)
@@ -896,7 +1028,7 @@ func TestXClientDeleteActivitySubscriptionIsIdempotent(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-	if err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-missing"); err != nil {
+	if err := client.DeleteActivitySubscription(context.Background(), "app-token", "2008"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -910,6 +1042,7 @@ func TestXClientDeleteActivitySubscriptionRequiresOfficialConfirmation(t *testin
 	}{
 		{name: "confirmed JSON", status: http.StatusOK, body: `{"data":{"deleted":true},"meta":{"total_subscriptions":0}}`},
 		{name: "empty 200", status: http.StatusOK, wantErr: true},
+		{name: "malformed 200", status: http.StatusOK, body: `{`, wantErr: true},
 		{name: "accepted", status: http.StatusAccepted, body: `{"data":{"deleted":true}}`, wantErr: true},
 		{name: "no content", status: http.StatusNoContent, wantErr: true},
 		{name: "deleted false", status: http.StatusOK, body: `{"data":{"deleted":false}}`, wantErr: true},
@@ -922,7 +1055,7 @@ func TestXClientDeleteActivitySubscriptionRequiresOfficialConfirmation(t *testin
 		{
 			name:    "explicit already missing body",
 			status:  http.StatusOK,
-			body:    `{"errors":[{"resource_id":"subscription-1","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"subscription missing","status":404}]}`,
+			body:    `{"errors":[{"resource_id":"2001","title":"Not Found Error","type":"https://api.x.com/2/problems/resource-not-found","detail":"subscription missing","status":404}]}`,
 			wantErr: true,
 		},
 	}
@@ -940,7 +1073,7 @@ func TestXClientDeleteActivitySubscriptionRequiresOfficialConfirmation(t *testin
 			defer server.Close()
 
 			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-			err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
+			err := client.DeleteActivitySubscription(context.Background(), "app-token", "2001")
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -964,7 +1097,7 @@ func TestXClientDeleteActivitySubscriptionResponseIsBoundedAndClosed(t *testing.
 		})},
 	})
 
-	err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
+	err := client.DeleteActivitySubscription(context.Background(), "app-token", "2001")
 	if err == nil || !strings.Contains(err.Error(), "response exceeded") {
 		t.Fatalf("err = %v, want bounded response error", err)
 	}
@@ -980,7 +1113,7 @@ func TestDeleteActivitySubscriptionIdempotentProviderStatuses(t *testing.T) {
 	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/subscription-1" {
+				if r.Method != http.MethodDelete || r.URL.Path != "/2/activity/subscriptions/2001" {
 					t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 				}
 				w.WriteHeader(status)
@@ -989,7 +1122,7 @@ func TestDeleteActivitySubscriptionIdempotentProviderStatuses(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-			err := client.DeleteActivitySubscription(context.Background(), "app-token", "subscription-1")
+			err := client.DeleteActivitySubscription(context.Background(), "app-token", "2001")
 			if status == http.StatusForbidden {
 				if err == nil || !IsProviderHTTPStatus(err, http.StatusForbidden) {
 					t.Fatalf("err = %v, want provider HTTP 403", err)
@@ -1012,7 +1145,8 @@ func TestDeleteProviderResourceIDValidation(t *testing.T) {
 	}{
 		{
 			name:        "webhook",
-			validStatus: http.StatusNoContent,
+			validStatus: http.StatusOK,
+			validBody:   `{"data":{"deleted":true}}`,
 			delete: func(client *Client, resourceID string) error {
 				return client.DeleteWebhook(context.Background(), "app-token", resourceID)
 			},
@@ -1026,7 +1160,16 @@ func TestDeleteProviderResourceIDValidation(t *testing.T) {
 			},
 		},
 	}
-	invalidIDs := []string{"", " ", "\t", ".", "..", "provider/id", "provider?id", "provider#id"}
+	invalidIDs := []string{
+		"",
+		" ",
+		"12345678901234567890",
+		"provider",
+		"123-456",
+		"123/456",
+		"123?456",
+		"123#456",
+	}
 	for _, deleteCase := range deletes {
 		t.Run(deleteCase.name, func(t *testing.T) {
 			for _, resourceID := range invalidIDs {
@@ -1064,7 +1207,7 @@ func TestDeleteProviderResourceIDValidation(t *testing.T) {
 					}, nil
 				})},
 			})
-			if err := deleteCase.delete(client, "provider-123_ABC"); err != nil {
+			if err := deleteCase.delete(client, "1234567890123456789"); err != nil {
 				t.Fatalf("valid provider ID: %v", err)
 			}
 			if calls != 1 {
@@ -1074,18 +1217,79 @@ func TestDeleteProviderResourceIDValidation(t *testing.T) {
 	}
 }
 
+func TestXClientDeleteWebhookRequiresOfficialConfirmation(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		wantErr bool
+	}{
+		{name: "confirmed JSON", status: http.StatusOK, body: `{"data":{"deleted":true}}`},
+		{name: "empty 200", status: http.StatusOK, wantErr: true},
+		{name: "malformed 200", status: http.StatusOK, body: `{`, wantErr: true},
+		{name: "accepted", status: http.StatusAccepted, body: `{"data":{"deleted":true}}`, wantErr: true},
+		{name: "no content", status: http.StatusNoContent, wantErr: true},
+		{name: "deleted false", status: http.StatusOK, body: `{"data":{"deleted":false}}`, wantErr: true},
+		{
+			name:    "partial 200 error body",
+			status:  http.StatusOK,
+			body:    `{"data":{"deleted":true},"errors":[{"title":"Invalid Request","detail":"private provider detail"}]}`,
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete || r.URL.Path != "/2/webhooks/1001" {
+					t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer server.Close()
+
+			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+			err := client.DeleteWebhook(context.Background(), "app-token", "1001")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestXClientDeleteWebhookResponseIsBoundedAndClosed(t *testing.T) {
+	const responseLimit = 64
+	payload := `{"data":{"deleted":true},"padding":"` + strings.Repeat("x", 1024)
+	body := &trackingReadCloser{reader: strings.NewReader(payload)}
+	client := NewClient(ClientConfig{
+		BaseURL:              "https://api.x.test",
+		MaxJSONResponseBytes: responseLimit,
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       body,
+			}, nil
+		})},
+	})
+
+	err := client.DeleteWebhook(context.Background(), "app-token", "1001")
+	if err == nil || !strings.Contains(err.Error(), "response exceeded") {
+		t.Fatalf("err = %v, want bounded response error", err)
+	}
+	if body.bytesRead > responseLimit+1 || body.bytesRead >= len(payload) {
+		t.Fatalf("bytes read = %d, want bounded near %d of %d", body.bytesRead, responseLimit, len(payload))
+	}
+	if !body.closed {
+		t.Fatal("delete response body was not closed")
+	}
+}
+
 func TestDeleteWebhookIdempotentProviderStatuses(t *testing.T) {
-	for _, status := range []int{
-		http.StatusOK,
-		http.StatusAccepted,
-		http.StatusNoContent,
-		http.StatusNotFound,
-		http.StatusGone,
-		http.StatusForbidden,
-	} {
+	for _, status := range []int{http.StatusNotFound, http.StatusGone, http.StatusForbidden} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodDelete || r.URL.Path != "/2/webhooks/webhook-1" {
+				if r.Method != http.MethodDelete || r.URL.Path != "/2/webhooks/1001" {
 					t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 				}
 				w.WriteHeader(status)
@@ -1094,7 +1298,7 @@ func TestDeleteWebhookIdempotentProviderStatuses(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
-			err := client.DeleteWebhook(context.Background(), "app-token", "webhook-1")
+			err := client.DeleteWebhook(context.Background(), "app-token", "1001")
 			if status == http.StatusForbidden {
 				if err == nil || !IsProviderHTTPStatus(err, http.StatusForbidden) {
 					t.Fatalf("err = %v, want provider HTTP 403", err)
@@ -1102,7 +1306,7 @@ func TestDeleteWebhookIdempotentProviderStatuses(t *testing.T) {
 				return
 			}
 			if err != nil {
-				t.Fatalf("err = %v, want success", err)
+				t.Fatalf("err = %v, want idempotent success", err)
 			}
 		})
 	}
@@ -1126,6 +1330,8 @@ func TestAppWebhookURLDerivesAppSpecificHTTPSRoute(t *testing.T) {
 	}{
 		{name: "non HTTPS", baseURL: "http://localhost/webhook", routeKey: "client"},
 		{name: "missing route key", baseURL: "https://dev-api.unipost.dev/v1/webhooks/twitter", routeKey: ""},
+		{name: "port only", baseURL: "https://:443/webhook", routeKey: "client"},
+		{name: "explicit port", baseURL: "https://dev-api.unipost.dev:443/webhook", routeKey: "client"},
 		{name: "userinfo", baseURL: "https://user:password@dev-api.unipost.dev/webhook", routeKey: "client"},
 		{name: "query", baseURL: "https://dev-api.unipost.dev/webhook?token=secret", routeKey: "client"},
 		{name: "force query", baseURL: "https://dev-api.unipost.dev/webhook?", routeKey: "client"},
@@ -1138,4 +1344,16 @@ func TestAppWebhookURLDerivesAppSpecificHTTPSRoute(t *testing.T) {
 			}
 		})
 	}
+	t.Run("provider URL length boundary", func(t *testing.T) {
+		got, err := AppWebhookURL("https://example.com", strings.Repeat("a", 180))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 200 {
+			t.Fatalf("URL length = %d, want 200", len(got))
+		}
+		if got, err := AppWebhookURL("https://example.com", strings.Repeat("a", 181)); err == nil {
+			t.Fatalf("AppWebhookURL() length = %d, want over-limit rejection", len(got))
+		}
+	})
 }

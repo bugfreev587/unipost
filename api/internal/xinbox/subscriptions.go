@@ -28,6 +28,8 @@ type ActivitySubscription struct {
 	WebhookID string         `json:"webhook_id"`
 }
 
+const maxAppWebhookURLLength = 200
+
 func DMSubscriptionTag(accountID string) string {
 	return "unipost:x:dm:" + strings.TrimSpace(accountID)
 }
@@ -42,12 +44,16 @@ func AppWebhookURL(baseURL, webhookRouteKey string) (string, error) {
 		return "", errors.New("X webhook route key is not configured")
 	}
 	parsed, err := url.Parse(baseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil ||
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.Port() != "" || parsed.User != nil ||
 		parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
 		return "", errors.New("X_INBOX_WEBHOOK_URL must be an absolute HTTPS URL")
 	}
 	parsed.Path = strings.TrimRight(parsed.Path, "/") + "/" + url.PathEscape(webhookRouteKey)
-	return parsed.String(), nil
+	webhookURL := parsed.String()
+	if len(webhookURL) > maxAppWebhookURLLength {
+		return "", errors.New("X webhook URL exceeds provider length limit")
+	}
+	return webhookURL, nil
 }
 
 func (c *Client) ListWebhooks(ctx context.Context, appBearerToken string) ([]Webhook, error) {
@@ -67,6 +73,9 @@ func (c *Client) EnsureWebhook(ctx context.Context, appBearerToken, configuredUR
 	}
 	for _, webhook := range webhooks {
 		if webhook.URL == configuredURL {
+			if err := validateProviderResourceID(webhook.ID); err != nil {
+				return Webhook{}, err
+			}
 			if !webhook.Valid {
 				var response struct {
 					Data struct {
@@ -138,6 +147,9 @@ func (c *Client) confirmCreatedWebhook(
 	configuredURL string,
 	created Webhook,
 ) (Webhook, error) {
+	if err := validateProviderResourceID(created.ID); err != nil {
+		return Webhook{}, err
+	}
 	if created.URL != "" && created.URL != configuredURL {
 		return Webhook{}, errors.New("X create webhook response did not match configured URL")
 	}
@@ -166,11 +178,7 @@ func (c *Client) DeleteWebhook(ctx context.Context, appBearerToken, webhookID st
 		return err
 	}
 	path := "/2/webhooks/" + url.PathEscape(webhookID)
-	err := c.doJSON(ctx, http.MethodDelete, path, appBearerToken, nil, nil)
-	if IsProviderHTTPStatus(err, http.StatusNotFound) || IsProviderHTTPStatus(err, http.StatusGone) {
-		return nil
-	}
-	return err
+	return c.deleteConfirmedProviderResource(ctx, appBearerToken, path, "webhook")
 }
 
 func (c *Client) ListActivitySubscriptions(
@@ -230,6 +238,9 @@ func (c *Client) EnsureDMSubscription(
 	userID string,
 	webhookID string,
 ) (ActivitySubscription, error) {
+	if err := validateProviderResourceID(webhookID); err != nil {
+		return ActivitySubscription{}, err
+	}
 	subscriptions, err := c.ListActivitySubscriptions(ctx, appBearerToken)
 	if err != nil {
 		return ActivitySubscription{}, err
@@ -237,6 +248,9 @@ func (c *Client) EnsureDMSubscription(
 	tag := DMSubscriptionTag(accountID)
 	for _, subscription := range subscriptions {
 		if subscription.Tag == tag {
+			if err := validateProviderResourceID(subscription.ID); err != nil {
+				return ActivitySubscription{}, err
+			}
 			if subscription.EventType == "dm.received" &&
 				subscription.Filter.UserID == userID &&
 				subscription.WebhookID == webhookID {
@@ -287,6 +301,9 @@ func (c *Client) EnsureDMSubscription(
 	if subscription.ID == "" {
 		return ActivitySubscription{}, errors.New("X create activity subscription response missing subscription id")
 	}
+	if err := validateProviderResourceID(subscription.ID); err != nil {
+		return ActivitySubscription{}, err
+	}
 	return subscription, nil
 }
 
@@ -299,6 +316,15 @@ func (c *Client) DeleteActivitySubscription(
 		return err
 	}
 	path := "/2/activity/subscriptions/" + url.PathEscape(subscriptionID)
+	return c.deleteConfirmedProviderResource(ctx, appBearerToken, path, "activity subscription")
+}
+
+func (c *Client) deleteConfirmedProviderResource(
+	ctx context.Context,
+	appBearerToken string,
+	path string,
+	resourceName string,
+) error {
 	var response struct {
 		Data struct {
 			Deleted bool `json:"deleted"`
@@ -313,21 +339,25 @@ func (c *Client) DeleteActivitySubscription(
 		return err
 	}
 	if status != http.StatusOK {
-		return errors.New("X delete activity subscription returned an unconfirmed status")
+		return fmt.Errorf("X delete %s returned an unconfirmed status", resourceName)
 	}
 	if len(response.Errors) > 0 {
-		return errors.New("X delete activity subscription returned provider errors")
+		return fmt.Errorf("X delete %s returned provider errors", resourceName)
 	}
 	if !response.Data.Deleted {
-		return errors.New("X delete activity subscription response did not confirm deletion")
+		return fmt.Errorf("X delete %s response did not confirm deletion", resourceName)
 	}
 	return nil
 }
 
 func validateProviderResourceID(resourceID string) error {
-	if resourceID == "" || resourceID != strings.TrimSpace(resourceID) || resourceID == "." ||
-		resourceID == ".." || strings.ContainsAny(resourceID, "/?#") {
+	if len(resourceID) == 0 || len(resourceID) > 19 {
 		return errors.New("X provider resource ID is invalid")
+	}
+	for _, character := range resourceID {
+		if character < '0' || character > '9' {
+			return errors.New("X provider resource ID is invalid")
+		}
 	}
 	return nil
 }
