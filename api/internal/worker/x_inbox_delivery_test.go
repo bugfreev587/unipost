@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"strings"
@@ -34,21 +35,31 @@ type fakeXInboxDeliveryAPI struct {
 	ruleID            string
 	subscriptionID    string
 	webhookID         string
+	webhooks          []xinbox.Webhook
 	ruleErr           error
+	webhookErr        error
+	listWebhooksErr   error
 	subscriptionErr   error
 	deleteRuleErrors  map[string]error
+	deleteSubErrors   map[string]error
+	deleteWebhookErrs map[string]error
 	deleteRuleStarted chan string
 	deleteRuleRelease chan struct{}
 
-	ruleTokens          []string
-	subscriptionTokens  []string
-	subscriptionUserIDs []string
-	deletedRules        []string
-	deletedRuleTokens   []string
-	deletedSubs         []string
-	deletedSubTokens    []string
-	operations          []string
-	webhookURLs         []string
+	ruleTokens             []string
+	webhookTokens          []string
+	subscriptionTokens     []string
+	subscriptionAccounts   []string
+	subscriptionUserIDs    []string
+	subscriptionWebhookIDs []string
+	deletedRules           []string
+	deletedRuleTokens      []string
+	deletedSubs            []string
+	deletedSubTokens       []string
+	deletedWebhooks        []string
+	deletedWebhookTokens   []string
+	operations             []string
+	webhookURLs            []string
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
@@ -86,9 +97,44 @@ func (f *fakeXInboxDeliveryAPI) DeleteFilteredStreamRule(_ context.Context, toke
 	return nil
 }
 
-func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, _ string, configuredURL string) (xinbox.Webhook, error) {
+func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, token string, configuredURL string) (xinbox.Webhook, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.webhookTokens = append(f.webhookTokens, token)
 	f.webhookURLs = append(f.webhookURLs, configuredURL)
+	f.operations = append(f.operations, "ensure-webhook")
+	if f.webhookErr != nil {
+		return xinbox.Webhook{}, f.webhookErr
+	}
 	return xinbox.Webhook{ID: f.webhookID, URL: configuredURL, Valid: true}, nil
+}
+
+func (f *fakeXInboxDeliveryAPI) ListWebhooks(_ context.Context, _ string) ([]xinbox.Webhook, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.operations = append(f.operations, "list-webhooks")
+	if f.listWebhooksErr != nil {
+		return nil, f.listWebhooksErr
+	}
+	return append([]xinbox.Webhook(nil), f.webhooks...), nil
+}
+
+func (f *fakeXInboxDeliveryAPI) DeleteWebhook(_ context.Context, token, webhookID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletedWebhooks = append(f.deletedWebhooks, webhookID)
+	f.deletedWebhookTokens = append(f.deletedWebhookTokens, token)
+	f.operations = append(f.operations, "delete-webhook:"+webhookID)
+	if err := f.deleteWebhookErrs[webhookID]; err != nil {
+		return err
+	}
+	for i := range f.webhooks {
+		if f.webhooks[i].ID == webhookID {
+			f.webhooks = append(f.webhooks[:i], f.webhooks[i+1:]...)
+			break
+		}
+	}
+	return nil
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
@@ -99,7 +145,10 @@ func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.subscriptionTokens = append(f.subscriptionTokens, appToken)
+	f.subscriptionAccounts = append(f.subscriptionAccounts, accountID)
 	f.subscriptionUserIDs = append(f.subscriptionUserIDs, userID)
+	f.subscriptionWebhookIDs = append(f.subscriptionWebhookIDs, webhookID)
+	f.operations = append(f.operations, "ensure-subscription:"+accountID)
 	if f.subscriptionErr != nil {
 		return xinbox.ActivitySubscription{}, f.subscriptionErr
 	}
@@ -117,6 +166,10 @@ func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, ap
 	defer f.mu.Unlock()
 	f.deletedSubs = append(f.deletedSubs, subscriptionID)
 	f.deletedSubTokens = append(f.deletedSubTokens, appToken)
+	f.operations = append(f.operations, "delete-subscription:"+subscriptionID)
+	if err := f.deleteSubErrors[subscriptionID]; err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -248,6 +301,7 @@ func TestXInboxDeliveryCancelsRemovedStreamBeforeBudgetedCleanup(t *testing.T) {
 		Store:                           store,
 		API:                             api,
 		Cipher:                          fakeXInboxCipher{},
+		Usage:                           &fakeXInboxUsageReader{},
 		Leader:                          leader,
 		Stream:                          runner,
 		ManagedAppBearer:                "managed-token",
@@ -353,10 +407,13 @@ func (f *fakeXInboxDeliveryStore) CompleteCleanupIntent(_ context.Context, id, o
 
 type fakeXInboxUsageReader struct {
 	snapshot xcredits.Snapshot
+	err      error
+	calls    int
 }
 
-func (f fakeXInboxUsageReader) Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error) {
-	return f.snapshot, nil
+func (f *fakeXInboxUsageReader) Snapshot(context.Context, string, time.Time) (xcredits.Snapshot, error) {
+	f.calls++
+	return f.snapshot, f.err
 }
 
 func activeManagedXInboxAccount() XInboxDeliveryAccount {
@@ -375,18 +432,154 @@ func activeManagedXInboxAccount() XInboxDeliveryAccount {
 	}
 }
 
-func TestXInboxDeliveryReconcilePersistsCommentsRuleWithoutPrivateDMSubscription(t *testing.T) {
-	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
-	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionID: "subscription-1"}
-	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+func enabledXInboxDeliveryConfig(
+	store XInboxDeliveryStore,
+	api XInboxDeliveryAPI,
+) XInboxDeliveryConfig {
+	return XInboxDeliveryConfig{
 		Store:                           store,
 		API:                             api,
 		Cipher:                          fakeXInboxCipher{},
-		Usage:                           fakeXInboxUsageReader{},
+		Usage:                           &fakeXInboxUsageReader{},
 		ManagedAppBearer:                "managed-app-token",
 		ManagedConsumerSecretConfigured: true,
 		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
+		DMsAvailable:                    func(context.Context, string) (bool, error) { return true, nil },
+		DMCanaryAccountIDs:              map[string]struct{}{"account-1": {}},
+	}
+}
+
+func TestXInboxDeliveryDMDesiredRequiresFullConjunctionAndKeepsCommentsIndependent(t *testing.T) {
+	tests := []struct {
+		name          string
+		mutateAccount func(*XInboxDeliveryAccount)
+		mutateConfig  func(*XInboxDeliveryConfig)
+		wantComment   bool
+		wantUsageCall bool
+		wantErr       bool
+	}{
+		{name: "active happy path", wantComment: true, wantUsageCall: true},
+		{name: "inactive account", mutateAccount: func(a *XInboxDeliveryAccount) { a.AccountActive = false }},
+		{name: "plan disallows inbox", mutateAccount: func(a *XInboxDeliveryAccount) { a.PlanAllowsInbox = false }},
+		{name: "missing dm.read", mutateAccount: func(a *XInboxDeliveryAccount) {
+			a.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+		}, wantComment: true, wantUsageCall: true},
+		{name: "workspace flag off", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+		}, wantComment: true, wantUsageCall: true},
+		{name: "account outside strict canary", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.DMCanaryAccountIDs = map[string]struct{}{}
+		}, wantComment: true, wantUsageCall: true},
+		{name: "managed app bearer absent", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.ManagedAppBearer = ""
+		}, wantErr: true},
+		{name: "consumer secret absent", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.ManagedConsumerSecretConfigured = false
+		}, wantComment: true, wantUsageCall: true, wantErr: true},
+		{name: "webhook URL absent", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.WebhookURL = ""
+		}, wantComment: true, wantUsageCall: true, wantErr: true},
+		{name: "spend safety paused", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.Usage = &fakeXInboxUsageReader{snapshot: xcredits.Snapshot{PausePaidSources: true}}
+		}, wantUsageCall: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			account := activeManagedXInboxAccount()
+			if test.mutateAccount != nil {
+				test.mutateAccount(&account)
+			}
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+			api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionID: "subscription-1"}
+			config := enabledXInboxDeliveryConfig(store, api)
+			if test.mutateConfig != nil {
+				test.mutateConfig(&config)
+			}
+			usage, _ := config.Usage.(*fakeXInboxUsageReader)
+
+			err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+			if test.wantErr && err == nil {
+				t.Fatal("expected reconciliation error")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatal(err)
+			}
+			if got := len(api.ruleTokens) == 1; got != test.wantComment {
+				t.Fatalf("comments created = %v, want %v; operations=%v", got, test.wantComment, api.operations)
+			}
+			wantDM := test.name == "active happy path"
+			if got := len(api.subscriptionTokens) == 1; got != wantDM {
+				t.Fatalf("DM created = %v, want %v; operations=%v", got, wantDM, api.operations)
+			}
+			if usage != nil && (usage.calls > 0) != test.wantUsageCall {
+				t.Fatalf("usage called = %v, want %v", usage.calls > 0, test.wantUsageCall)
+			}
+		})
+	}
+}
+
+func TestXInboxDeliveryManagedMissingSpendSafetyFailsClosed(t *testing.T) {
+	t.Run("no existing resources", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "must-not-create", webhookID: "must-not-create", subscriptionID: "must-not-create"}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.Usage = nil
+
+		err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "spend safety") {
+			t.Fatalf("reconcile error = %v, want missing spend safety dependency", err)
+		}
+		if len(api.operations) != 0 {
+			t.Fatalf("provider operations = %v, want none", api.operations)
+		}
 	})
+
+	t.Run("existing resources and stream", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.FilteredStreamRuleID = "rule-existing"
+		account.ActivityDMSubscriptionID = "subscription-existing"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{}
+		leader := &sharedTestLeader{}
+		runner := &managedStreamRunner{starts: make(chan XInboxAppStream, 1), stops: make(chan string, 1)}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.Usage = nil
+		config.Leader = leader
+		config.Stream = runner
+		config.EventHandler = func(context.Context, string, xinbox.StreamEvent) error { return nil }
+		worker := NewXInboxDeliveryWorker(config)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		worker.syncDesiredStreams(ctx, []XInboxAppStream{{
+			Identity:        safeAppIdentity(account.WebhookRouteKey),
+			WebhookRouteKey: account.WebhookRouteKey,
+			BearerToken:     "managed-app-token",
+		}})
+		<-runner.starts
+
+		_, complete, err := worker.reconcileDesiredCycle(ctx)
+		if err == nil || !strings.Contains(err.Error(), "spend safety") {
+			t.Fatalf("reconcile error = %v, want missing spend safety dependency", err)
+		}
+		if complete {
+			t.Fatal("desired account set marked complete without spend safety")
+		}
+		if len(api.operations) != 0 {
+			t.Fatalf("provider operations = %v, want existing IDs preserved", api.operations)
+		}
+		select {
+		case stopped := <-runner.stops:
+			t.Fatalf("incomplete cycle stopped existing stream %q", stopped)
+		case <-time.After(20 * time.Millisecond):
+		}
+	})
+}
+
+func TestXInboxDeliveryReconcilePersistsCommentsRuleAndLegacyDMSubscription(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionID: "subscription-1"}
+	worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
 
 	if err := worker.ReconcileOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -396,35 +589,27 @@ func TestXInboxDeliveryReconcilePersistsCommentsRuleWithoutPrivateDMSubscription
 	}
 	got := store.states[len(store.states)-1]
 	if got.FilteredStreamRuleID != "rule-1" ||
-		got.ActivityDMSubscriptionID != "" ||
+		got.ActivityDMSubscriptionID != "subscription-1" ||
 		got.DeliveryStatus != xinbox.DeliveryStatusActive {
 		t.Fatalf("state = %+v", got)
 	}
 	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
 		t.Fatalf("rule tokens = %v, want app bearer", api.ruleTokens)
 	}
-	if len(api.subscriptionTokens) != 0 || len(api.webhookURLs) != 0 {
-		t.Fatalf("private activity provisioning calls = subscriptions:%v webhooks:%v, want none", api.subscriptionTokens, api.webhookURLs)
+	if want := []string{"ensure-rule:account-1", "ensure-webhook", "ensure-subscription:account-1", "list-webhooks"}; !reflect.DeepEqual(api.operations, want) {
+		t.Fatalf("operations = %v, want %v", api.operations, want)
 	}
-}
-
-func TestXInboxDeliverySourceDisablesPrivateActivityProvisioning(t *testing.T) {
-	source, err := os.ReadFile("x_inbox_delivery.go")
-	if err != nil {
-		t.Fatal(err)
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.subscriptionTokens, want) {
+		t.Fatalf("subscription tokens = %v, want app bearer", api.subscriptionTokens)
 	}
-	text := string(source)
-	for _, required := range []string{
-		"ActivityWebhookRouteKey",
-		"activity_webhook_route_key",
-		"dmsDesired := false",
-	} {
-		if !strings.Contains(text, required) {
-			t.Fatalf("delivery reconciler missing disabled-private-activity contract %q", required)
-		}
+	if want := []string{"account-1"}; !reflect.DeepEqual(api.subscriptionAccounts, want) {
+		t.Fatalf("subscription account IDs = %v, want stable tag account", api.subscriptionAccounts)
 	}
-	if strings.Contains(text, "subscription, err := w.api.EnsureDMSubscription") {
-		t.Fatal("delivery reconciler must not provision private Activity subscriptions")
+	if want := []string{"2244994945"}; !reflect.DeepEqual(api.subscriptionUserIDs, want) {
+		t.Fatalf("subscription user IDs = %v, want exact provider user", api.subscriptionUserIDs)
+	}
+	if want := []string{"webhook-1"}; !reflect.DeepEqual(api.subscriptionWebhookIDs, want) {
+		t.Fatalf("subscription webhook IDs = %v, want current webhook", api.subscriptionWebhookIDs)
 	}
 }
 
@@ -442,20 +627,105 @@ func TestXInboxDeliverySourceUsesXPlatformAccountIDForActivityFilter(t *testing.
 	}
 }
 
-func TestXInboxDeliveryExistingActivitySubscriptionIsRemovedWithoutReplacement(t *testing.T) {
+func TestXInboxDeliveryEvaluatorErrorFailsDMClosedCleansSubscriptionAndKeepsComments(t *testing.T) {
+	account := activeManagedXInboxAccount()
+	account.ActivityDMSubscriptionID = "existing-subscription"
+	account.ActivityWebhookRouteKey = account.WebhookRouteKey
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1"}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.DMsAvailable = func(context.Context, string) (bool, error) {
+		return false, errors.New("feature evaluator unavailable")
+	}
+
+	err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "feature evaluator unavailable") {
+		t.Fatalf("reconcile error = %v, want evaluator error", err)
+	}
+	if want := []string{"existing-subscription"}; !reflect.DeepEqual(api.deletedSubs, want) {
+		t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
+	}
+	if len(api.subscriptionTokens) != 0 || len(api.webhookURLs) != 0 {
+		t.Fatalf("DM provisioning calls = subscriptions:%v webhooks:%v, want none", api.subscriptionTokens, api.webhookURLs)
+	}
+	got := store.states[len(store.states)-1]
+	if got.FilteredStreamRuleID != "rule-1" || got.ActivityDMSubscriptionID != "" {
+		t.Fatalf("state = %+v, want comments active and DM cleaned", got)
+	}
+	if got.DeliveryStatus != xinbox.DeliveryStatusError || !strings.Contains(got.LastError, "dm source") {
+		t.Fatalf("state = %+v, want source-specific evaluator error", got)
+	}
+}
+
+func TestXInboxDeliveryEvaluatorErrorDoesNotAffectAccountWithoutDMScope(t *testing.T) {
+	account := activeManagedXInboxAccount()
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1"}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.DMsAvailable = func(context.Context, string) (bool, error) {
+		return false, errors.New("feature evaluator unavailable")
+	}
+
+	if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+		t.Fatalf("comments-only reconcile error = %v, want evaluator irrelevant", err)
+	}
+	got := store.states[len(store.states)-1]
+	if got.FilteredStreamRuleID != "rule-1" || got.DeliveryStatus != xinbox.DeliveryStatusActive || got.LastError != "" {
+		t.Fatalf("state = %+v, want comments-only active state", got)
+	}
+}
+
+func TestXInboxDeliveryDMDesiredWithoutCommentsAndCommentsFailureDoesNotBlockDM(t *testing.T) {
+	t.Run("DM only scopes", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.Scopes = []string{"dm.read"}
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{webhookID: "webhook-1", subscriptionID: "subscription-1"}
+
+		if err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if len(api.ruleTokens) != 0 || len(api.subscriptionTokens) != 1 {
+			t.Fatalf("calls = comments:%v DM:%v, want DM only", api.ruleTokens, api.subscriptionTokens)
+		}
+	})
+
+	t.Run("comments provider failure", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{
+			ruleErr:        errors.New("comments provider unavailable"),
+			webhookID:      "webhook-1",
+			subscriptionID: "subscription-1",
+		}
+		err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "comments source") {
+			t.Fatalf("reconcile error = %v, want comments source error", err)
+		}
+		got := store.states[len(store.states)-1]
+		if got.ActivityDMSubscriptionID != "subscription-1" {
+			t.Fatalf("state = %+v, want DM persisted despite comments failure", got)
+		}
+	})
+}
+
+func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvisioningAndCleansExactStaleWebhook(t *testing.T) {
 	account := activeManagedXInboxAccount()
 	account.ActivityDMSubscriptionID = "old-subscription"
 	account.ActivityWebhookRouteKey = "old-route-key"
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
-	api := &fakeXInboxDeliveryAPI{webhookID: "new-webhook", subscriptionID: "new-subscription"}
-	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
-		Store:                           store,
-		API:                             api,
-		Cipher:                          fakeXInboxCipher{values: map[string]string{"encrypted-user-token": "user-token"}},
-		ManagedAppBearer:                "managed-app-token",
-		ManagedConsumerSecretConfigured: true,
-		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
-	})
+	api := &fakeXInboxDeliveryAPI{
+		ruleID:         "rule-1",
+		webhookID:      "new-webhook",
+		subscriptionID: "new-subscription",
+		webhooks: []xinbox.Webhook{
+			{ID: "new-webhook", URL: "https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"},
+			{ID: "old-webhook", URL: "https://old-api.unipost.dev/v1/webhooks/twitter/old-route-key"},
+			{ID: "similar-route", URL: "https://old-api.unipost.dev/v1/webhooks/twitter/prefix-old-route-key"},
+			{ID: "unrelated", URL: "https://old-api.unipost.dev/v1/webhooks/twitter/unrelated"},
+		},
+	}
+	worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
 
 	if err := worker.ReconcileOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -463,12 +733,394 @@ func TestXInboxDeliveryExistingActivitySubscriptionIsRemovedWithoutReplacement(t
 	if want := []string{"old-subscription"}; !reflect.DeepEqual(api.deletedSubs, want) {
 		t.Fatalf("deleted subscriptions = %v, want route-mismatched generation %v", api.deletedSubs, want)
 	}
-	if len(api.webhookURLs) != 0 || len(api.subscriptionTokens) != 0 {
-		t.Fatalf("private activity provisioning calls = webhooks:%v subscriptions:%v, want none", api.webhookURLs, api.subscriptionTokens)
+	if want := []string{"old-webhook"}; !reflect.DeepEqual(api.deletedWebhooks, want) {
+		t.Fatalf("deleted webhooks = %v, want exact stale route only %v", api.deletedWebhooks, want)
 	}
 	got := store.states[len(store.states)-1]
-	if got.ActivityDMSubscriptionID != "" || got.ActivityWebhookRouteKey != "" {
-		t.Fatalf("final state = %+v, want private subscription cleared", got)
+	if got.ActivityDMSubscriptionID != "new-subscription" || got.ActivityWebhookRouteKey != "managed-route-key" {
+		t.Fatalf("final state = %+v, want replacement persisted", got)
+	}
+	foundCleared := false
+	for _, state := range store.states {
+		if state.ActivityDMSubscriptionID == "" && state.ActivityWebhookRouteKey == "" {
+			foundCleared = true
+			break
+		}
+	}
+	if !foundCleared {
+		t.Fatalf("states = %+v, want old subscription cleared before replacement", store.states)
+	}
+	if want := []string{
+		"ensure-rule:account-1",
+		"delete-subscription:old-subscription",
+		"ensure-webhook",
+		"ensure-subscription:account-1",
+		"list-webhooks",
+		"delete-webhook:old-webhook",
+	}; !reflect.DeepEqual(api.operations, want) {
+		t.Fatalf("operations = %v, want %v", api.operations, want)
+	}
+
+	api.operations = nil
+	if err := worker.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.deletedSubs) != 1 || len(api.deletedWebhooks) != 1 {
+		t.Fatalf("second cycle repeated cleanup: subscriptions=%v webhooks=%v", api.deletedSubs, api.deletedWebhooks)
+	}
+	if want := []string{"ensure-webhook", "ensure-subscription:account-1", "list-webhooks"}; !reflect.DeepEqual(api.operations, want) {
+		t.Fatalf("second-cycle operations = %v, want idempotent ensure %v", api.operations, want)
+	}
+}
+
+func TestXInboxDeliveryCurrentRouteBaseURLReplacementCleansOnlyStaleExactRouteWebhooks(t *testing.T) {
+	account := activeManagedXInboxAccount()
+	account.FilteredStreamRuleID = "rule-existing"
+	account.ActivityDMSubscriptionID = "subscription-existing"
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	api := &fakeXInboxDeliveryAPI{
+		webhookID:      "current-webhook",
+		subscriptionID: "subscription-current",
+		webhooks: []xinbox.Webhook{
+			{ID: "current-webhook", URL: "https://new-api.unipost.dev/v1/webhooks/twitter/managed-route-key"},
+			{ID: "shared-same-url", URL: "https://new-api.unipost.dev/v1/webhooks/twitter/managed-route-key"},
+			{ID: "stale-base", URL: "https://old-api.unipost.dev/v1/webhooks/twitter/managed-route-key"},
+			{ID: "contains-route", URL: "https://old-api.unipost.dev/v1/webhooks/twitter/managed-route-key-suffix"},
+		},
+	}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.WebhookURL = "https://new-api.unipost.dev/v1/webhooks/twitter"
+
+	if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"stale-base"}; !reflect.DeepEqual(api.deletedWebhooks, want) {
+		t.Fatalf("deleted webhooks = %v, want stale exact-route base only %v", api.deletedWebhooks, want)
+	}
+}
+
+func dmSubscriptionCreateForbidden() error {
+	return &xinbox.ProviderHTTPError{
+		Method:     http.MethodPost,
+		Path:       "/2/activity/subscriptions",
+		StatusCode: http.StatusForbidden,
+		Code:       "client-forbidden",
+		Title:      "Forbidden",
+	}
+}
+
+func TestXInboxDeliveryDMCreate403LatchesSameFingerprintWithoutDisablingComments(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+	api := &fakeXInboxDeliveryAPI{
+		ruleID:          "rule-1",
+		webhookID:       "webhook-1",
+		subscriptionErr: dmSubscriptionCreateForbidden(),
+	}
+	config := enabledXInboxDeliveryConfig(store, api)
+	worker := NewXInboxDeliveryWorker(config)
+
+	err := worker.ReconcileOnce(context.Background())
+	if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusForbidden) {
+		t.Fatalf("first reconcile error = %v, want provider 403", err)
+	}
+	first := store.states[len(store.states)-1]
+	if first.FilteredStreamRuleID != "rule-1" || first.DMSubscriptionForbiddenFingerprint == "" {
+		t.Fatalf("state = %+v, want comments active and DM latch persisted", first)
+	}
+	if strings.Contains(first.DMSubscriptionForbiddenFingerprint, "managed-route-key") ||
+		strings.Contains(first.DMSubscriptionForbiddenFingerprint, "managed-app-token") {
+		t.Fatalf("fingerprint leaked configuration or secret: %q", first.DMSubscriptionForbiddenFingerprint)
+	}
+	api.subscriptionErr = nil
+	api.operations = nil
+	if err := worker.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "latched") {
+		t.Fatalf("second reconcile error = %v, want latched summary", err)
+	}
+	if len(api.webhookURLs) != 1 || len(api.subscriptionTokens) != 1 {
+		t.Fatalf("latched cycle retried provider provisioning: webhooks=%v subscriptions=%v", api.webhookURLs, api.subscriptionTokens)
+	}
+	if len(api.operations) != 0 {
+		t.Fatalf("latched cycle operations = %v, want no provider calls", api.operations)
+	}
+	last := store.states[len(store.states)-1]
+	if last.FilteredStreamRuleID != "rule-1" || last.DeliveryStatus != xinbox.DeliveryStatusError {
+		t.Fatalf("latched state = %+v, want comments retained with aggregate error", last)
+	}
+}
+
+func TestXInboxDeliveryDMProvisioning403LatchCoversEnsureReadWriteButNotNon403(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		webhookErr      error
+		subscriptionErr error
+		wantLatch       bool
+	}{
+		{
+			name:       "webhook list GET forbidden",
+			webhookErr: &xinbox.ProviderHTTPError{Method: http.MethodGet, Path: "/2/webhooks", StatusCode: http.StatusForbidden},
+			wantLatch:  true,
+		},
+		{
+			name:       "webhook revalidation PUT forbidden",
+			webhookErr: &xinbox.ProviderHTTPError{Method: http.MethodPut, Path: "/2/webhooks/{id}", StatusCode: http.StatusForbidden},
+			wantLatch:  true,
+		},
+		{
+			name:            "subscription list GET forbidden",
+			subscriptionErr: &xinbox.ProviderHTTPError{Method: http.MethodGet, Path: "/2/activity/subscriptions", StatusCode: http.StatusForbidden},
+			wantLatch:       true,
+		},
+		{
+			name:            "subscription create POST forbidden",
+			subscriptionErr: dmSubscriptionCreateForbidden(),
+			wantLatch:       true,
+		},
+		{
+			name: "subscription internal DELETE forbidden",
+			subscriptionErr: &xinbox.ProviderHTTPError{
+				Method:     http.MethodDelete,
+				Path:       "/2/activity/subscriptions/{id}",
+				StatusCode: http.StatusForbidden,
+			},
+		},
+		{
+			name:            "subscription non-403 error",
+			subscriptionErr: errors.New("provider unavailable"),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+			api := &fakeXInboxDeliveryAPI{
+				ruleID:          "rule-1",
+				webhookID:       "webhook-1",
+				webhookErr:      test.webhookErr,
+				subscriptionErr: test.subscriptionErr,
+			}
+			err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+			if err == nil {
+				t.Fatal("expected DM provisioning error")
+			}
+			got := store.states[len(store.states)-1].DMSubscriptionForbiddenFingerprint != ""
+			if got != test.wantLatch {
+				t.Fatalf("latch set = %v, want %v; state=%+v", got, test.wantLatch, store.states[len(store.states)-1])
+			}
+		})
+	}
+}
+
+func TestXInboxDeliveryDMForbiddenLatchClearsOnlyForDeliberateGates(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		mutateConfig func(*XInboxDeliveryConfig)
+	}{
+		{name: "workspace flag off", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+		}},
+		{name: "canary removal", mutateConfig: func(c *XInboxDeliveryConfig) {
+			c.DMCanaryAccountIDs = map[string]struct{}{}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			account := activeManagedXInboxAccount()
+			account.FilteredStreamRuleID = "rule-existing"
+			account.ActivityDMSubscriptionID = "subscription-existing"
+			account.DMSubscriptionForbiddenFingerprint = "latched-fingerprint"
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+			api := &fakeXInboxDeliveryAPI{}
+			config := enabledXInboxDeliveryConfig(store, api)
+			test.mutateConfig(&config)
+
+			if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got := store.states[len(store.states)-1]
+			if got.DMSubscriptionForbiddenFingerprint != "" || got.ActivityDMSubscriptionID != "" {
+				t.Fatalf("state = %+v, want latch and subscription cleared", got)
+			}
+			if want := []string{"subscription-existing"}; !reflect.DeepEqual(api.deletedSubs, want) {
+				t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
+			}
+		})
+	}
+}
+
+func TestXInboxDeliveryDMForbiddenLatchDeliberateOffOnAllowsOneRetry(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+	api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionID: "subscription-1", subscriptionErr: dmSubscriptionCreateForbidden()}
+	config := enabledXInboxDeliveryConfig(store, api)
+
+	if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+		t.Fatal("first DM attempt must return 403")
+	}
+	off := config
+	off.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+	if err := NewXInboxDeliveryWorker(off).ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	api.subscriptionErr = nil
+	if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(api.subscriptionTokens) != 2 {
+		t.Fatalf("subscription attempts = %d, want initial 403 plus one off-on retry", len(api.subscriptionTokens))
+	}
+	if got := store.states[len(store.states)-1]; got.ActivityDMSubscriptionID != "subscription-1" || got.DMSubscriptionForbiddenFingerprint != "" {
+		t.Fatalf("state = %+v, want successful retry and cleared latch", got)
+	}
+}
+
+func TestXInboxDeliveryDMForbiddenFingerprintChangesOnlyForNonSecretConfiguration(t *testing.T) {
+	t.Run("provider user change retries", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionErr: dmSubscriptionCreateForbidden()}
+		config := enabledXInboxDeliveryConfig(store, api)
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("first DM attempt must return 403")
+		}
+		store.accounts[0].ExternalAccountID = "different-provider-user"
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("changed non-secret configuration must make one new attempt")
+		}
+		if len(api.subscriptionTokens) != 2 {
+			t.Fatalf("subscription attempts = %d, want retry after provider user change", len(api.subscriptionTokens))
+		}
+	})
+
+	t.Run("webhook route and app identity change retries", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionErr: dmSubscriptionCreateForbidden()}
+		config := enabledXInboxDeliveryConfig(store, api)
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("first DM attempt must return 403")
+		}
+		store.accounts[0].WebhookRouteKey = "replacement-route-key"
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("changed webhook route/app identity must make one new attempt")
+		}
+		if len(api.subscriptionTokens) != 2 {
+			t.Fatalf("subscription attempts = %d, want retry after route/app identity change", len(api.subscriptionTokens))
+		}
+	})
+
+	t.Run("webhook base URL change retries", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionErr: dmSubscriptionCreateForbidden()}
+		config := enabledXInboxDeliveryConfig(store, api)
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("first DM attempt must return 403")
+		}
+		config.WebhookURL = "https://replacement-api.unipost.dev/v1/webhooks/twitter"
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("changed webhook URL must make one new attempt")
+		}
+		if len(api.subscriptionTokens) != 2 {
+			t.Fatalf("subscription attempts = %d, want retry after webhook URL change", len(api.subscriptionTokens))
+		}
+	})
+
+	t.Run("app mode change retries", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionErr: dmSubscriptionCreateForbidden()}
+		config := enabledXInboxDeliveryConfig(store, api)
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("first DM attempt must return 403")
+		}
+		store.accounts[0].AppMode = xinbox.AppModeWorkspace
+		store.accounts[0].AppBearerTokenEncrypted = "workspace-bearer-encrypted"
+		config.Cipher = fakeXInboxCipher{values: map[string]string{"workspace-bearer-encrypted": "workspace-bearer"}}
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("changed app mode must make one new attempt")
+		}
+		if len(api.subscriptionTokens) != 2 {
+			t.Fatalf("subscription attempts = %d, want retry after app mode change", len(api.subscriptionTokens))
+		}
+	})
+
+	t.Run("bearer and consumer secret changes do not retry", func(t *testing.T) {
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+		api := &fakeXInboxDeliveryAPI{ruleID: "rule-1", webhookID: "webhook-1", subscriptionErr: dmSubscriptionCreateForbidden()}
+		config := enabledXInboxDeliveryConfig(store, api)
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("first DM attempt must return 403")
+		}
+		config.ManagedAppBearer = "rotated-managed-app-token"
+		config.ManagedConsumerSecretConfigured = false
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil {
+			t.Fatal("missing consumer secret must remain an actionable DM error")
+		}
+		config.ManagedConsumerSecretConfigured = true
+		api.subscriptionErr = nil
+		if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "latched") {
+			t.Fatalf("secret-only changed reconcile error = %v, want unchanged latch", err)
+		}
+		if len(api.subscriptionTokens) != 1 {
+			t.Fatalf("subscription attempts = %d, want no secret-only retry", len(api.subscriptionTokens))
+		}
+	})
+}
+
+func TestXInboxDeliveryDelete403IsHardCleanupError(t *testing.T) {
+	t.Run("subscription delete", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.FilteredStreamRuleID = "rule-existing"
+		account.ActivityDMSubscriptionID = "subscription-existing"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{deleteSubErrors: map[string]error{
+			"subscription-existing": &xinbox.ProviderHTTPError{Method: http.MethodDelete, Path: "/2/activity/subscriptions/{id}", StatusCode: http.StatusForbidden},
+		}}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.DMsAvailable = func(context.Context, string) (bool, error) { return false, nil }
+		err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+		if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusForbidden) {
+			t.Fatalf("reconcile error = %v, want delete 403", err)
+		}
+		if got := store.states[len(store.states)-1]; got.ActivityDMSubscriptionID != "subscription-existing" {
+			t.Fatalf("state = %+v, want failed cleanup ID retained", got)
+		}
+		if got := store.states[len(store.states)-1].DMSubscriptionForbiddenFingerprint; got != "" {
+			t.Fatalf("delete 403 set provisioning latch %q", got)
+		}
+	})
+
+	t.Run("stale webhook delete", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.FilteredStreamRuleID = "rule-existing"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{
+			webhookID:      "current-webhook",
+			subscriptionID: "subscription-current",
+			webhooks: []xinbox.Webhook{
+				{ID: "current-webhook", URL: "https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"},
+				{ID: "stale-webhook", URL: "https://old-api.unipost.dev/v1/webhooks/twitter/managed-route-key"},
+			},
+			deleteWebhookErrs: map[string]error{
+				"stale-webhook": &xinbox.ProviderHTTPError{Method: http.MethodDelete, Path: "/2/webhooks/{id}", StatusCode: http.StatusForbidden},
+			},
+		}
+		err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+		if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusForbidden) {
+			t.Fatalf("reconcile error = %v, want webhook delete 403", err)
+		}
+		if got := store.states[len(store.states)-1]; got.ActivityDMSubscriptionID != "subscription-current" {
+			t.Fatalf("state = %+v, want current subscription retained after stale webhook cleanup error", got)
+		}
+	})
+}
+
+func TestXInboxDeliveryLastErrorKeepsOnlyLatestSourceSummary(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+	api := &fakeXInboxDeliveryAPI{
+		ruleErr:         errors.New("comments provider unavailable"),
+		webhookID:       "webhook-1",
+		subscriptionErr: errors.New("DM provider unavailable"),
+	}
+	err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "comments source") || !strings.Contains(err.Error(), "dm source") {
+		t.Fatalf("returned error = %v, want both source failures", err)
+	}
+	lastError := store.states[len(store.states)-1].LastError
+	if !strings.HasPrefix(lastError, "dm source:") || strings.Contains(lastError, "comments source:") {
+		t.Fatalf("last_error = %q, want only latest DM source summary", lastError)
 	}
 }
 
@@ -483,7 +1135,7 @@ func TestXInboxDeliveryPersistsRuleWithoutAttemptingFailingSubscription(t *testi
 		Store:                           store,
 		API:                             api,
 		Cipher:                          fakeXInboxCipher{values: map[string]string{"encrypted-user-token": "user-oauth-token"}},
-		Usage:                           fakeXInboxUsageReader{},
+		Usage:                           &fakeXInboxUsageReader{},
 		ManagedAppBearer:                "managed-app-token",
 		ManagedConsumerSecretConfigured: true,
 		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
@@ -506,7 +1158,7 @@ func TestXInboxDeliveryPersistsRuleWithoutAttemptingFailingSubscription(t *testi
 	}
 }
 
-func TestXInboxDeliveryAfterConsumerSecretRemovalCleansAndDoesNotRecreate(t *testing.T) {
+func TestXInboxDeliveryAfterConsumerSecretRemovalKeepsCommentsAndCleansPriorGeneration(t *testing.T) {
 	account := activeManagedXInboxAccount()
 	account.AppMode = xinbox.AppModeWorkspace
 	account.WebhookRouteKey = "workspace-route-key"
@@ -523,7 +1175,7 @@ func TestXInboxDeliveryAfterConsumerSecretRemovalCleansAndDoesNotRecreate(t *tes
 			ActivityDMSubscriptionID: "existing-subscription",
 		}},
 	}
-	api := &fakeXInboxDeliveryAPI{ruleID: "must-not-create", subscriptionID: "must-not-create"}
+	api := &fakeXInboxDeliveryAPI{ruleID: "new-comments-rule", subscriptionID: "must-not-create"}
 	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
 		Store: store,
 		API:   api,
@@ -533,22 +1185,22 @@ func TestXInboxDeliveryAfterConsumerSecretRemovalCleansAndDoesNotRecreate(t *tes
 		WebhookURL: "https://dev-api.unipost.dev/v1/webhooks/twitter",
 	})
 
-	if err := worker.ReconcileOnce(context.Background()); err == nil ||
-		!strings.Contains(err.Error(), "consumer_secret") {
-		t.Fatalf("reconcile error = %v, want missing consumer_secret", err)
+	if err := worker.ReconcileOnce(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	got := store.states[len(store.states)-1]
-	if got.FilteredStreamRuleID != "" || got.ActivityDMSubscriptionID != "" {
-		t.Fatalf("state = %+v, want existing resources cleaned", got)
+	if got.FilteredStreamRuleID != "new-comments-rule" || got.ActivityDMSubscriptionID != "" {
+		t.Fatalf("state = %+v, want comments active and DM disabled", got)
 	}
-	if got.DeliveryStatus != xinbox.DeliveryStatusError ||
-		!strings.Contains(got.LastError, "consumer_secret") {
-		t.Fatalf("state = %+v, want consistent missing credential error", got)
+	if got.DeliveryStatus != xinbox.DeliveryStatusActive || got.LastError != "" {
+		t.Fatalf("state = %+v, want comments-only active state", got)
 	}
-	if len(api.ruleTokens) != 0 || len(api.subscriptionTokens) != 0 {
+	if want := []string{"workspace-bearer"}; !reflect.DeepEqual(api.ruleTokens, want) {
+		t.Fatalf("comment rule tokens = %v, want %v", api.ruleTokens, want)
+	}
+	if len(api.subscriptionTokens) != 0 {
 		t.Fatalf(
-			"creation calls = rules:%v subscriptions:%v, want none",
-			api.ruleTokens,
+			"subscription creation calls = %v, want none",
 			api.subscriptionTokens,
 		)
 	}
@@ -560,32 +1212,29 @@ func TestXInboxDeliveryAfterConsumerSecretRemovalCleansAndDoesNotRecreate(t *tes
 	}
 }
 
-func TestXInboxDeliveryManagedMissingConsumerSecretStaysDisabled(t *testing.T) {
+func TestXInboxDeliveryManagedMissingConsumerSecretDisablesOnlyDM(t *testing.T) {
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
-	api := &fakeXInboxDeliveryAPI{ruleID: "must-not-create", subscriptionID: "must-not-create"}
-	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
-		Store:                           store,
-		API:                             api,
-		Cipher:                          fakeXInboxCipher{},
-		ManagedAppBearer:                "managed-app-token",
-		ManagedConsumerSecretConfigured: false,
-		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
-	})
+	api := &fakeXInboxDeliveryAPI{ruleID: "comments-rule", subscriptionID: "must-not-create"}
+	config := enabledXInboxDeliveryConfig(store, api)
+	config.ManagedConsumerSecretConfigured = false
+	worker := NewXInboxDeliveryWorker(config)
 
 	if err := worker.ReconcileOnce(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "TWITTER_CONSUMER_SECRET") {
 		t.Fatalf("reconcile error = %v, want missing managed consumer secret", err)
 	}
 	got := store.states[len(store.states)-1]
-	if got.FilteredStreamRuleID != "" || got.ActivityDMSubscriptionID != "" ||
+	if got.FilteredStreamRuleID != "comments-rule" || got.ActivityDMSubscriptionID != "" ||
 		got.DeliveryStatus != xinbox.DeliveryStatusError ||
 		!strings.Contains(got.LastError, "TWITTER_CONSUMER_SECRET") {
-		t.Fatalf("state = %+v, want disabled missing credential state", got)
+		t.Fatalf("state = %+v, want comments retained with DM credential error", got)
 	}
-	if len(api.ruleTokens) != 0 || len(api.subscriptionTokens) != 0 {
+	if want := []string{"managed-app-token"}; !reflect.DeepEqual(api.ruleTokens, want) {
+		t.Fatalf("comment rule tokens = %v, want %v", api.ruleTokens, want)
+	}
+	if len(api.subscriptionTokens) != 0 {
 		t.Fatalf(
-			"creation calls = rules:%v subscriptions:%v, want none",
-			api.ruleTokens,
+			"subscription creation calls = %v, want none",
 			api.subscriptionTokens,
 		)
 	}
@@ -846,7 +1495,7 @@ func TestXInboxDeliveryDailyAllowancePauseRemovesPaidSources(t *testing.T) {
 		Store:                           store,
 		API:                             api,
 		Cipher:                          fakeXInboxCipher{values: map[string]string{"encrypted-user-token": "user-oauth-token"}},
-		Usage:                           fakeXInboxUsageReader{snapshot: xcredits.Snapshot{PausePaidSources: true, InboundPauseReason: xcredits.PauseReasonMonthlyAllowance}},
+		Usage:                           &fakeXInboxUsageReader{snapshot: xcredits.Snapshot{PausePaidSources: true, InboundPauseReason: xcredits.PauseReasonMonthlyAllowance}},
 		ManagedAppBearer:                "managed-app-token",
 		ManagedConsumerSecretConfigured: true,
 		WebhookURL:                      "https://dev-api.unipost.dev/v1/webhooks/twitter",
@@ -1092,6 +1741,74 @@ func TestXInboxDeliveryDesiredStreamsStopRemovedAndRestartChangedBearer(t *testi
 	}
 }
 
+func TestXInboxDeliverySharedStreamServesTwoAccountsUntilLastCommentsSourceStops(t *testing.T) {
+	leader := &sharedTestLeader{}
+	runner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 4),
+		stops:  make(chan string, 4),
+	}
+	first := activeManagedXInboxAccount()
+	first.FilteredStreamRuleID = "rule-first"
+	second := first
+	second.SocialAccountID = "account-2"
+	second.ExternalAccountID = "provider-user-2"
+	second.FilteredStreamRuleID = "rule-second"
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{first, second}}
+	api := &fakeXInboxDeliveryAPI{}
+	worker := NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+		Store:                           store,
+		API:                             api,
+		Cipher:                          fakeXInboxCipher{},
+		Usage:                           &fakeXInboxUsageReader{},
+		Leader:                          leader,
+		Stream:                          runner,
+		ManagedAppBearer:                "managed-token",
+		ManagedConsumerSecretConfigured: true,
+		EventHandler:                    func(context.Context, string, xinbox.StreamEvent) error { return nil },
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	worker.reconcileAndStartStreams(ctx)
+	<-runner.starts
+	select {
+	case duplicate := <-runner.starts:
+		t.Fatalf("two accounts started duplicate app stream: %+v", duplicate)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	store.mu.Lock()
+	store.accounts[0].Scopes = []string{"dm.read"}
+	store.mu.Unlock()
+	worker.reconcileAndStartStreams(ctx)
+	select {
+	case stopped := <-runner.stops:
+		t.Fatalf("disabling one account stopped shared stream %q", stopped)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	store.mu.Lock()
+	store.accounts[1].ActivityDMSubscriptionID = "dm-only-change"
+	store.accounts[1].DMSubscriptionForbiddenFingerprint = "dm-latch-only-change"
+	store.mu.Unlock()
+	worker.reconcileAndStartStreams(ctx)
+	select {
+	case stopped := <-runner.stops:
+		t.Fatalf("DM-only state change churned shared stream %q", stopped)
+	case started := <-runner.starts:
+		t.Fatalf("DM-only state change restarted shared stream %+v", started)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	store.mu.Lock()
+	store.accounts[1].Scopes = []string{"dm.read"}
+	store.mu.Unlock()
+	worker.reconcileAndStartStreams(ctx)
+	if stopped := <-runner.stops; stopped != safeAppIdentity("managed-route-key") {
+		t.Fatalf("last comments source stopped = %q", stopped)
+	}
+}
+
 func TestXInboxDeliveryReconciliationLockSerializesReplicas(t *testing.T) {
 	leader := &sharedTestLeader{}
 	store := &fakeXInboxDeliveryStore{
@@ -1138,6 +1855,7 @@ func TestXInboxDeliveryIncompleteAccountListRetainsPreviousDesiredStreams(t *tes
 		Store:                           store,
 		API:                             &fakeXInboxDeliveryAPI{},
 		Cipher:                          fakeXInboxCipher{},
+		Usage:                           &fakeXInboxUsageReader{},
 		Leader:                          leader,
 		Stream:                          runner,
 		ManagedAppBearer:                "managed-token",
