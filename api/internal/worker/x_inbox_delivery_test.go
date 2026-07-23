@@ -11,6 +11,7 @@ import (
 	"go/token"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -1895,6 +1896,17 @@ func dmSubscriptionCreateForbidden() error {
 	}
 }
 
+func dmSubscriptionCreateBadRequest() error {
+	return &xinbox.ProviderHTTPError{
+		Method:     http.MethodPost,
+		Path:       "/2/activity/subscriptions",
+		StatusCode: http.StatusBadRequest,
+		Code:       "invalid-request",
+		Title:      "Invalid Request",
+		Detail:     "One or more parameters to your request was invalid.",
+	}
+}
+
 func TestXInboxDeliveryDMCreate403LatchesSameFingerprintWithoutDisablingComments(t *testing.T) {
 	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
 	api := &fakeXInboxDeliveryAPI{
@@ -1931,6 +1943,68 @@ func TestXInboxDeliveryDMCreate403LatchesSameFingerprintWithoutDisablingComments
 	last := store.states[len(store.states)-1]
 	if last.FilteredStreamRuleID != "rule-1" || last.DeliveryStatus != xinbox.DeliveryStatusError {
 		t.Fatalf("latched state = %+v, want comments retained with aggregate error", last)
+	}
+}
+
+func TestXInboxDeliveryDMCreate400LatchesSameFingerprintWithoutDisablingComments(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+	api := &fakeXInboxDeliveryAPI{
+		ruleID:          "rule-1",
+		webhookID:       "webhook-1",
+		subscriptionErr: dmSubscriptionCreateBadRequest(),
+	}
+	worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
+
+	err := worker.ReconcileOnce(context.Background())
+	if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusBadRequest) {
+		t.Fatalf("first reconcile error = %v, want provider 400", err)
+	}
+	first := store.states[len(store.states)-1]
+	if first.FilteredStreamRuleID != "rule-1" || first.DMSubscriptionForbiddenFingerprint == "" {
+		t.Fatalf("state = %+v, want comments active and deterministic DM failure latched", first)
+	}
+
+	api.subscriptionErr = nil
+	api.operations = nil
+	if err := worker.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "latched") {
+		t.Fatalf("second reconcile error = %v, want latched summary", err)
+	}
+	if len(api.operations) != 0 {
+		t.Fatalf("latched cycle operations = %v, want no provider calls", api.operations)
+	}
+	last := store.states[len(store.states)-1]
+	if last.FilteredStreamRuleID != "rule-1" || last.DeliveryStatus != xinbox.DeliveryStatusError {
+		t.Fatalf("latched state = %+v, want comments retained with aggregate error", last)
+	}
+}
+
+func TestXInboxDeliveryDMClientErrorLogIncludesSanitizedProviderReason(t *testing.T) {
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{activeManagedXInboxAccount()}}
+	api := &fakeXInboxDeliveryAPI{
+		ruleID:          "rule-1",
+		webhookID:       "webhook-1",
+		subscriptionErr: dmSubscriptionCreateBadRequest(),
+	}
+
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+	if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusBadRequest) {
+		t.Fatalf("reconcile error = %v, want provider 400", err)
+	}
+	logged := output.String()
+	for _, want := range []string{
+		`"provider_http_status":400`,
+		`"provider_code":"invalid-request"`,
+		`"provider_title":"Invalid Request"`,
+		`"provider_detail":"One or more parameters to your request was invalid."`,
+	} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("structured log %q missing %q", logged, want)
+		}
 	}
 }
 
@@ -1994,7 +2068,7 @@ func TestXInboxDeliveryDMForbiddenLogIsStructuredAndSecretSafe(t *testing.T) {
 	}
 }
 
-func TestXInboxDeliveryDMProvisioning403LatchCoversEnsureReadWriteButNotNon403(t *testing.T) {
+func TestXInboxDeliveryDMProvisioningClientErrorLatchCoversEnsureReadWrite(t *testing.T) {
 	for _, test := range []struct {
 		name            string
 		webhookErr      error
@@ -2012,6 +2086,14 @@ func TestXInboxDeliveryDMProvisioning403LatchCoversEnsureReadWriteButNotNon403(t
 			wantLatch:  true,
 		},
 		{
+			name:       "webhook revalidation PUT not found remains recoverable",
+			webhookErr: &xinbox.ProviderHTTPError{Method: http.MethodPut, Path: "/2/webhooks/{id}", StatusCode: http.StatusNotFound},
+		},
+		{
+			name:       "webhook revalidation PUT gone remains recoverable",
+			webhookErr: &xinbox.ProviderHTTPError{Method: http.MethodPut, Path: "/2/webhooks/{id}", StatusCode: http.StatusGone},
+		},
+		{
 			name:            "subscription list GET forbidden",
 			subscriptionErr: &xinbox.ProviderHTTPError{Method: http.MethodGet, Path: "/2/activity/subscriptions", StatusCode: http.StatusForbidden},
 			wantLatch:       true,
@@ -2022,11 +2104,57 @@ func TestXInboxDeliveryDMProvisioning403LatchCoversEnsureReadWriteButNotNon403(t
 			wantLatch:       true,
 		},
 		{
+			name:            "subscription create POST invalid request",
+			subscriptionErr: dmSubscriptionCreateBadRequest(),
+			wantLatch:       true,
+		},
+		{
+			name: "subscription create POST unauthorized",
+			subscriptionErr: &xinbox.ProviderHTTPError{
+				Method:     http.MethodPost,
+				Path:       "/2/activity/subscriptions",
+				StatusCode: http.StatusUnauthorized,
+			},
+			wantLatch: true,
+		},
+		{
 			name: "subscription internal DELETE forbidden",
 			subscriptionErr: &xinbox.ProviderHTTPError{
 				Method:     http.MethodDelete,
 				Path:       "/2/activity/subscriptions/{id}",
 				StatusCode: http.StatusForbidden,
+			},
+		},
+		{
+			name: "subscription internal DELETE bad request",
+			subscriptionErr: &xinbox.ProviderHTTPError{
+				Method:     http.MethodDelete,
+				Path:       "/2/activity/subscriptions/{id}",
+				StatusCode: http.StatusBadRequest,
+			},
+		},
+		{
+			name: "subscription internal DELETE unauthorized",
+			subscriptionErr: &xinbox.ProviderHTTPError{
+				Method:     http.MethodDelete,
+				Path:       "/2/activity/subscriptions/{id}",
+				StatusCode: http.StatusUnauthorized,
+			},
+		},
+		{
+			name: "subscription internal DELETE not found",
+			subscriptionErr: &xinbox.ProviderHTTPError{
+				Method:     http.MethodDelete,
+				Path:       "/2/activity/subscriptions/{id}",
+				StatusCode: http.StatusNotFound,
+			},
+		},
+		{
+			name: "subscription internal DELETE rate limited",
+			subscriptionErr: &xinbox.ProviderHTTPError{
+				Method:     http.MethodDelete,
+				Path:       "/2/activity/subscriptions/{id}",
+				StatusCode: http.StatusTooManyRequests,
 			},
 		},
 		{
@@ -2050,7 +2178,103 @@ func TestXInboxDeliveryDMProvisioning403LatchCoversEnsureReadWriteButNotNon403(t
 			if got != test.wantLatch {
 				t.Fatalf("latch set = %v, want %v; state=%+v", got, test.wantLatch, store.states[len(store.states)-1])
 			}
+			if gotRule := store.states[len(store.states)-1].FilteredStreamRuleID; gotRule != "rule-1" {
+				t.Fatalf("comments rule = %q, want rule-1 retained", gotRule)
+			}
 		})
+	}
+}
+
+func TestXInboxDeliveryDMRetryableClientErrorsAllowNextCycle(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		webhookErr      error
+		subscriptionErr error
+	}{
+		{name: "request timeout", subscriptionErr: &xinbox.ProviderHTTPError{Method: http.MethodPost, Path: "/2/activity/subscriptions", StatusCode: http.StatusRequestTimeout}},
+		{name: "conflict", subscriptionErr: &xinbox.ProviderHTTPError{Method: http.MethodPost, Path: "/2/activity/subscriptions", StatusCode: http.StatusConflict}},
+		{name: "too early", subscriptionErr: &xinbox.ProviderHTTPError{Method: http.MethodPost, Path: "/2/activity/subscriptions", StatusCode: http.StatusTooEarly}},
+		{name: "rate limited", subscriptionErr: &xinbox.ProviderHTTPError{Method: http.MethodPost, Path: "/2/activity/subscriptions", StatusCode: http.StatusTooManyRequests}},
+		{name: "webhook disappeared before revalidation", webhookErr: &xinbox.ProviderHTTPError{Method: http.MethodPut, Path: "/2/webhooks/1001", StatusCode: http.StatusNotFound}},
+		{name: "webhook gone before revalidation", webhookErr: &xinbox.ProviderHTTPError{Method: http.MethodPut, Path: "/2/webhooks/1001", StatusCode: http.StatusGone}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			account := activeManagedXInboxAccount()
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+			api := &fakeXInboxDeliveryAPI{
+				ruleID:          "rule-1",
+				webhookID:       "webhook-1",
+				subscriptionID:  "subscription-1",
+				webhookErr:      test.webhookErr,
+				subscriptionErr: test.subscriptionErr,
+			}
+			worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
+
+			if err := worker.ReconcileOnce(context.Background()); err == nil {
+				t.Fatal("first reconcile unexpectedly succeeded")
+			}
+			first := store.states[len(store.states)-1]
+			if first.DMSubscriptionForbiddenFingerprint != "" || first.FilteredStreamRuleID != "rule-1" {
+				t.Fatalf("first state = %+v, want retryable DM failure with comments retained", first)
+			}
+
+			api.webhookErr = nil
+			api.subscriptionErr = nil
+			if err := worker.ReconcileOnce(context.Background()); err != nil {
+				t.Fatalf("second reconcile = %v, want recovery", err)
+			}
+			last := store.states[len(store.states)-1]
+			if last.ActivityDMSubscriptionID != "subscription-1" || last.FilteredStreamRuleID != "rule-1" {
+				t.Fatalf("recovered state = %+v, want comments and DM active", last)
+			}
+		})
+	}
+}
+
+func TestXInboxDeliveryOfficialProblemSecretNeverReachesLogOrState(t *testing.T) {
+	const secret = "up_test_abcdefghijklmnopqrstuvwxyz0123456789"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/2/webhooks" {
+			t.Fatalf("provider request = %s %s, want GET /2/webhooks", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{
+			"type":"https://api.x.com/2/problems/invalid-request",
+			"title":"Invalid Request",
+			"detail":"Authorization token %s was rejected",
+			"status":400
+		}`, secret)
+	}))
+	defer server.Close()
+
+	account := activeManagedXInboxAccount()
+	account.FilteredStreamRuleID = "rule-existing"
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	client := xinbox.NewClient(xinbox.ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	config := enabledXInboxDeliveryConfig(store, client)
+
+	var output bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+	if err == nil || !xinbox.IsProviderHTTPStatus(err, http.StatusBadRequest) {
+		t.Fatalf("reconcile error = %v, want provider 400", err)
+	}
+	state := store.states[len(store.states)-1]
+	if state.DMSubscriptionForbiddenFingerprint == "" || state.FilteredStreamRuleID != "rule-existing" {
+		t.Fatalf("state = %+v, want DM latch and comments retained", state)
+	}
+	for _, rendered := range []string{err.Error(), state.LastError, output.String()} {
+		if strings.Contains(rendered, secret) || strings.Contains(rendered, "Authorization token") {
+			t.Fatalf("secret-bearing provider detail leaked: %q", rendered)
+		}
+	}
+	for _, want := range []string{`"provider_code":"invalid-request"`, `"provider_title":"Invalid Request"`, `"provider_detail":""`} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("structured log %q missing %q", output.String(), want)
+		}
 	}
 }
 

@@ -88,6 +88,7 @@ type ProviderHTTPError struct {
 	StatusCode int
 	Code       string
 	Title      string
+	Detail     string
 }
 
 type ProviderRequestError struct {
@@ -126,6 +127,9 @@ func (e *ProviderHTTPError) Error() string {
 	}
 	if e.Title != "" {
 		message += fmt.Sprintf(" title=%q", e.Title)
+	}
+	if e.Detail != "" {
+		message += fmt.Sprintf(" detail=%q", e.Detail)
 	}
 	return message
 }
@@ -474,10 +478,12 @@ func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPEr
 	target.Title = "provider_error"
 
 	type providerError struct {
-		Code   json.RawMessage `json:"code"`
-		Type   string          `json:"type"`
-		Title  string          `json:"title"`
-		Status int             `json:"status"`
+		Code    json.RawMessage `json:"code"`
+		Type    string          `json:"type"`
+		Title   string          `json:"title"`
+		Detail  string          `json:"detail"`
+		Message string          `json:"message"`
+		Status  int             `json:"status"`
 	}
 	type providerErrorResponse struct {
 		Errors [1]providerError `json:"errors"`
@@ -489,15 +495,106 @@ func decodeProviderHTTPError(body io.Reader, limit int64, target *ProviderHTTPEr
 	if err := decoder.Decode(&response); err != nil {
 		return
 	}
-	providerErr := response.providerError
-	if first := response.Errors[0]; len(first.Code) > 0 || first.Type != "" || first.Title != "" || first.Status != 0 {
-		providerErr = response.Errors[0]
+	topLevel := response.providerError
+	providerErr := topLevel
+	if first := response.Errors[0]; len(first.Code) > 0 || first.Type != "" || first.Title != "" ||
+		first.Detail != "" || first.Message != "" || first.Status != 0 {
+		providerErr = first
 	}
-	if code := providerErrorCode(providerErr.Code); code != "" {
+	errorType := providerErr.Type
+	if errorType == "" {
+		errorType = topLevel.Type
+	}
+	if problemCode := trustedProviderProblemCode(errorType); problemCode != "" {
+		target.Code = problemCode
+		if title := safeProviderProblemText(firstNonEmptyProviderText(providerErr.Title, topLevel.Title), 96); title != "" {
+			target.Title = title
+		}
+		if detail := safeProviderProblemText(firstNonEmptyProviderText(
+			providerErr.Detail,
+			providerErr.Message,
+			topLevel.Detail,
+			topLevel.Message,
+		), 240); detail != "" {
+			target.Detail = detail
+		}
+	} else if code := providerErrorCode(providerErr.Code); code != "" {
 		target.Code = code
-	} else if errorType := providerErrorClassification("provider_code", providerErr.Type); errorType != "" {
-		target.Code = errorType
+	} else if classification := providerErrorClassification("provider_code", errorType); classification != "" {
+		target.Code = classification
 	}
+}
+
+func trustedProviderProblemCode(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return ""
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "api.x.com" && host != "api.twitter.com" {
+		return ""
+	}
+	const prefix = "/2/problems/"
+	if !strings.HasPrefix(parsed.EscapedPath(), prefix) {
+		return ""
+	}
+	code := strings.TrimPrefix(parsed.EscapedPath(), prefix)
+	if code == "" || len(code) > 64 || strings.Contains(code, "/") {
+		return ""
+	}
+	for _, char := range code {
+		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '-' && char != '_' {
+			return ""
+		}
+	}
+	return code
+}
+
+func firstNonEmptyProviderText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func safeProviderProblemText(raw string, maxLength int) string {
+	text := strings.TrimSpace(raw)
+	if text == "" || len(text) > maxLength {
+		return ""
+	}
+	lower := strings.ToLower(text)
+	for _, marker := range []string{
+		"authorization", "bearer", "token", "secret", "password", "api key", "api-key", "api_key",
+		"access key", "access-key", "access_key", "private key", "consumer key", "up_live_", "up_test_", "://",
+	} {
+		if strings.Contains(lower, marker) {
+			return ""
+		}
+	}
+	tokenRun := 0
+	digitRun := 0
+	for _, char := range text {
+		if char < 0x20 || char > 0x7e {
+			return ""
+		}
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' {
+			tokenRun++
+		} else {
+			tokenRun = 0
+		}
+		if char >= '0' && char <= '9' {
+			digitRun++
+		} else {
+			digitRun = 0
+		}
+		if tokenRun >= 32 || digitRun >= 12 {
+			return ""
+		}
+	}
+	return text
 }
 
 func providerErrorCode(raw json.RawMessage) string {

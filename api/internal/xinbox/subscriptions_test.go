@@ -341,6 +341,62 @@ func TestProviderHTTPErrorRawCodeIsClassifiedWithoutLeaking(t *testing.T) {
 	}
 }
 
+func TestProviderHTTPErrorPreservesSanitizedOfficialProblemDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{
+			"type":"https://api.x.com/2/problems/invalid-request",
+			"title":"Invalid Request",
+			"detail":"One or more parameters to your request was invalid.",
+			"status":400
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	err := client.doJSON(context.Background(), http.MethodPost, "/2/activity/subscriptions", "app-token", nil, nil)
+	var providerErr *ProviderHTTPError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
+	}
+	if providerErr.Code != "invalid-request" || providerErr.Title != "Invalid Request" ||
+		providerErr.Detail != "One or more parameters to your request was invalid." {
+		t.Fatalf("provider error = %+v, want sanitized official problem details", providerErr)
+	}
+	for _, want := range []string{providerErr.Code, providerErr.Title, providerErr.Detail} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q does not contain auditable provider detail %q", err, want)
+		}
+	}
+}
+
+func TestProviderHTTPErrorRejectsSensitiveOfficialProblemDetail(t *testing.T) {
+	const secret = "up_test_abcdefghijklmnopqrstuvwxyz0123456789"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(w, `{
+			"type":"https://api.x.com/2/problems/invalid-request",
+			"title":"Invalid Request",
+			"detail":"Authorization token %s was rejected",
+			"status":400
+		}`, secret)
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	err := client.doJSON(context.Background(), http.MethodPost, "/2/activity/subscriptions", "app-token", nil, nil)
+	var providerErr *ProviderHTTPError
+	if !errors.As(err, &providerErr) {
+		t.Fatalf("error type = %T, want *ProviderHTTPError: %v", err, err)
+	}
+	if providerErr.Code != "invalid-request" || providerErr.Title != "Invalid Request" || providerErr.Detail != "" {
+		t.Fatalf("provider error = %+v, want safe code/title and omitted detail", providerErr)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("error %q leaked provider detail secret", err)
+	}
+}
+
 func TestProviderTransportErrorIsSecretSafeAndPreservesCause(t *testing.T) {
 	const (
 		secretURL   = "https://api.x.test/2/webhooks?access_token=secret-query-token"
