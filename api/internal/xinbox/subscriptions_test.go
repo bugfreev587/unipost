@@ -21,6 +21,67 @@ type trackingReadCloser struct {
 	closed    bool
 }
 
+func TestXClientListActivitySubscriptionsFailsClosedOnProviderOverflow(t *testing.T) {
+	makeSubscriptions := func(start, count int) []ActivitySubscription {
+		subscriptions := make([]ActivitySubscription, count)
+		for i := range subscriptions {
+			subscriptions[i] = ActivitySubscription{
+				ID:        fmt.Sprintf("%d", start+i),
+				EventType: "dm.received",
+				Filter:    ActivityFilter{UserID: "2244994945"},
+				Tag:       fmt.Sprintf("tag-%d", start+i),
+				WebhookID: "1001",
+			}
+		}
+		return subscriptions
+	}
+
+	t.Run("single page exceeds remaining capacity", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": makeSubscriptions(1000, 1501)})
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		if _, err := client.ListActivitySubscriptions(context.Background(), "app-token"); err == nil || !strings.Contains(err.Error(), "capacity") {
+			t.Fatalf("ListActivitySubscriptions() error = %v, want fail-closed capacity error", err)
+		}
+	})
+
+	t.Run("provider advertises another page at total capacity", func(t *testing.T) {
+		calls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			switch calls {
+			case 1:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": makeSubscriptions(1000, 1000),
+					"meta": map[string]any{"next_token": "NEXTTOKEN1234567"},
+				})
+			case 2:
+				if got := r.URL.Query().Get("pagination_token"); got != "NEXTTOKEN1234567" {
+					t.Fatalf("second pagination token = %q", got)
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"data": makeSubscriptions(2000, 500),
+					"meta": map[string]any{"next_token": "MORETOKEN12345678"},
+				})
+			default:
+				t.Fatalf("unexpected provider call %d", calls)
+			}
+		}))
+		defer server.Close()
+
+		client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+		if _, err := client.ListActivitySubscriptions(context.Background(), "app-token"); err == nil || !strings.Contains(err.Error(), "bound") {
+			t.Fatalf("ListActivitySubscriptions() error = %v, want fail-closed bound error", err)
+		}
+		if calls != 2 {
+			t.Fatalf("provider calls = %d, want 2", calls)
+		}
+	})
+}
+
 func (b *trackingReadCloser) Read(p []byte) (int, error) {
 	n, err := b.reader.Read(p)
 	b.bytesRead += n

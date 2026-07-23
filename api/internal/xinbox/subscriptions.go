@@ -213,7 +213,7 @@ func (c *Client) ListActivitySubscriptions(
 		}
 		remaining := selfServeSubscriptionLimit - len(subscriptions)
 		if len(response.Data) > remaining {
-			response.Data = response.Data[:remaining]
+			return nil, errors.New("X activity subscription page exceeded remaining self-serve capacity")
 		}
 		for _, subscription := range response.Data {
 			if err := validateProviderResourceID(subscription.ID); err != nil {
@@ -230,7 +230,7 @@ func (c *Client) ListActivitySubscriptions(
 		}
 		seenTokens[nextToken] = struct{}{}
 	}
-	if nextToken != "" && len(subscriptions) < selfServeSubscriptionLimit {
+	if nextToken != "" {
 		return nil, errors.New("X activity subscription pagination exceeded self-serve bound")
 	}
 	return subscriptions, nil

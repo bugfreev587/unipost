@@ -533,16 +533,22 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	}
 
 	if !dmsDesired {
-		if state.ActivityDMSubscriptionID != "" {
-			if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
-				dmCleanupErr = err
-			} else {
-				state.ActivityDMSubscriptionID = ""
-				state.ActivityWebhookRouteKey = ""
-				state.DeliveryStatus = targetStatus
-				if err := persist(); err != nil {
-					return app, streamDesired(), true, err
+		if appModeSupported && appTokenErr == nil {
+			cleanupErr := w.cleanupDMSubscriptions(
+				ctx,
+				appBearerToken,
+				account.SocialAccountID,
+				&state,
+				persist,
+			)
+			if cleanupErr != nil {
+				var persistenceErr *dmSubscriptionPersistenceError
+				if errors.As(cleanupErr, &persistenceErr) {
+					return app, streamDesired(), true, cleanupErr
 				}
+				dmCleanupErr = cleanupErr
+			} else {
+				state.DeliveryStatus = targetStatus
 			}
 		}
 		if dmEvaluationNeeded && dmConfigErr == nil && dmEvaluatorErr != nil {
@@ -653,6 +659,55 @@ func (e *dmSubscriptionPersistenceError) Unwrap() error {
 func persistDMSubscriptionState(persist func() error) error {
 	if err := persist(); err != nil {
 		return &dmSubscriptionPersistenceError{cause: err}
+	}
+	return nil
+}
+
+func (w *XInboxDeliveryWorker) cleanupDMSubscriptions(
+	ctx context.Context,
+	appBearerToken string,
+	socialAccountID string,
+	state *XInboxDeliveryState,
+	persist func() error,
+) error {
+	subscriptions, err := w.api.ListActivitySubscriptions(ctx, appBearerToken)
+	if err != nil {
+		return err
+	}
+	tag := xinbox.DMSubscriptionTag(socialAccountID)
+	matching := make([]xinbox.ActivitySubscription, 0)
+	for _, subscription := range subscriptions {
+		if subscription.Tag == tag {
+			matching = append(matching, subscription)
+		}
+	}
+	sort.Slice(matching, func(i, j int) bool {
+		left, leftErr := strconv.ParseUint(matching[i].ID, 10, 64)
+		right, rightErr := strconv.ParseUint(matching[j].ID, 10, 64)
+		if leftErr == nil && rightErr == nil {
+			return left < right
+		}
+		return matching[i].ID < matching[j].ID
+	})
+
+	for _, subscription := range matching {
+		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, subscription.ID); err != nil {
+			return err
+		}
+		if state.ActivityDMSubscriptionID == subscription.ID {
+			state.ActivityDMSubscriptionID = ""
+			state.ActivityWebhookRouteKey = ""
+			if err := persistDMSubscriptionState(persist); err != nil {
+				return err
+			}
+		}
+	}
+	if state.ActivityDMSubscriptionID != "" || state.ActivityWebhookRouteKey != "" {
+		state.ActivityDMSubscriptionID = ""
+		state.ActivityWebhookRouteKey = ""
+		if err := persistDMSubscriptionState(persist); err != nil {
+			return err
+		}
 	}
 	return nil
 }
