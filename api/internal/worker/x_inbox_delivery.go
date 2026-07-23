@@ -282,10 +282,10 @@ func (w *XInboxDeliveryWorker) Start(ctx context.Context) {
 }
 
 func (w *XInboxDeliveryWorker) reconcileAndStartStreams(ctx context.Context) {
-	apps, complete, desiredErr := w.reconcileDesiredCycle(ctx)
-	if !complete {
-		apps = nil
-	} else {
+	apps, authoritative, complete, desiredErr := w.reconcileDesiredCycle(ctx)
+	if !authoritative {
+		w.syncDesiredStreams(ctx, nil)
+	} else if complete {
 		if w.eventHandler == nil {
 			apps = nil
 		}
@@ -298,34 +298,38 @@ func (w *XInboxDeliveryWorker) reconcileAndStartStreams(ctx context.Context) {
 }
 
 func (w *XInboxDeliveryWorker) ReconcileOnce(ctx context.Context) error {
-	_, _, desiredErr := w.reconcileDesiredCycle(ctx)
+	_, _, _, desiredErr := w.reconcileDesiredCycle(ctx)
 	return errors.Join(desiredErr, w.processCleanupBudget(ctx))
 }
 
 func (w *XInboxDeliveryWorker) reconcile(ctx context.Context) ([]XInboxAppStream, error) {
-	apps, _, desiredErr := w.reconcileDesiredCycle(ctx)
+	apps, _, _, desiredErr := w.reconcileDesiredCycle(ctx)
 	return apps, errors.Join(desiredErr, w.processCleanupBudget(ctx))
 }
 
 func (w *XInboxDeliveryWorker) reconcileDesiredCycle(
 	ctx context.Context,
-) (apps []XInboxAppStream, complete bool, resultErr error) {
+) (apps []XInboxAppStream, authoritative bool, complete bool, resultErr error) {
 	if w.leader != nil {
 		lease, acquired, err := w.leader.TryAcquire(ctx, "x-inbox-reconcile", nil)
 		if err != nil {
-			return nil, false, fmt.Errorf("acquire X inbox reconciliation lock: %w", err)
+			return nil, false, false, fmt.Errorf("acquire X inbox reconciliation lock: %w", err)
 		}
 		if !acquired {
-			return nil, false, nil
+			return nil, false, false, nil
 		}
+		authoritative = true
 		defer func() {
 			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := lease.Release(releaseCtx); err != nil {
 				resultErr = errors.Join(resultErr, fmt.Errorf("release X inbox reconciliation lock: %w", err))
+				authoritative = false
 				complete = false
 			}
 		}()
+	} else {
+		authoritative = true
 	}
 	apps, complete, resultErr = w.reconcileDesiredUnlocked(ctx)
 	return
@@ -435,28 +439,31 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	}
 	appModeSupported := account.AppMode == xinbox.AppModeUniPostManaged || account.AppMode == xinbox.AppModeWorkspace
 	dmsAvailable := false
+	dmAvailabilityKnown := false
 	var dmEvaluatorErr error
 	dmEvaluationNeeded := dmScopeEligible && dmCanaryEligible && appModeSupported && appTokenErr == nil
-	if dmEvaluationNeeded && w.dmsAvailable != nil {
-		dmsAvailable, dmEvaluatorErr = w.dmsAvailable(ctx, account.WorkspaceID)
-	}
-	if (dmEvaluationNeeded && dmEvaluatorErr == nil && !dmsAvailable) || !dmCanaryEligible {
-		state.DMSubscriptionForbiddenFingerprint = ""
-	}
-	commentsDesired := commentsEligible && appModeSupported && appTokenErr == nil
-	dmGatesDesired := dmEvaluationNeeded && dmsAvailable && dmEvaluatorErr == nil &&
-		dmCanaryEligible && appModeSupported && appTokenErr == nil
-
 	var dmConfigErr error
-	if dmGatesDesired {
+	if dmEvaluationNeeded {
 		dmConfigErr = errors.Join(
 			dmCredentialError(account.AppMode, app.ConsumerSecretConfigured),
 			requiredDMConfigurationError(w.webhookURL, account.ExternalAccountID),
 		)
 	}
-	dmsDesired := dmGatesDesired && dmConfigErr == nil
+	if dmEvaluationNeeded && dmConfigErr == nil {
+		if w.dmsAvailable == nil {
+			dmEvaluatorErr = errors.New("DM availability evaluator is not configured")
+		} else {
+			dmsAvailable, dmEvaluatorErr = w.dmsAvailable(ctx, account.WorkspaceID)
+			dmAvailabilityKnown = dmEvaluatorErr == nil
+		}
+	}
+	if (dmAvailabilityKnown && !dmsAvailable) || !dmCanaryEligible {
+		state.DMSubscriptionForbiddenFingerprint = ""
+	}
+	commentsDesired := commentsEligible && appModeSupported && appTokenErr == nil
+	dmsDesired := dmEvaluationNeeded && dmConfigErr == nil && dmsAvailable && dmEvaluatorErr == nil
 
-	if account.AppMode == xinbox.AppModeUniPostManaged && (commentsDesired || dmsDesired) {
+	if appModeSupported && (commentsDesired || dmsDesired) {
 		if w.usage == nil {
 			cause := errors.New("spend safety source: usage reader is not configured")
 			logXInboxSourceError(account, "shared", "evaluate_spend", cause)
@@ -535,7 +542,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 				}
 			}
 		}
-		if dmEvaluationNeeded && dmEvaluatorErr != nil {
+		if dmEvaluationNeeded && dmConfigErr == nil && dmEvaluatorErr != nil {
 			dmErr = fmt.Errorf("evaluate workspace DM availability: %w", dmEvaluatorErr)
 		} else if dmConfigErr != nil {
 			dmErr = dmConfigErr
@@ -890,11 +897,14 @@ func (w *XInboxDeliveryWorker) syncDesiredStreams(ctx context.Context, apps []XI
 
 	for _, active := range stopped {
 		active.cancel()
+	}
+	stopTimer := time.NewTimer(5 * time.Second)
+	defer stopTimer.Stop()
+	for _, active := range stopped {
 		select {
 		case <-active.done:
-		case <-ctx.Done():
+		case <-stopTimer.C:
 			return
-		case <-time.After(5 * time.Second):
 		}
 	}
 

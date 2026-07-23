@@ -637,7 +637,7 @@ func TestXInboxDeliveryManagedMissingSpendSafetyFailsClosed(t *testing.T) {
 		}})
 		<-runner.starts
 
-		_, complete, err := worker.reconcileDesiredCycle(ctx)
+		_, _, complete, err := worker.reconcileDesiredCycle(ctx)
 		if err == nil || !strings.Contains(err.Error(), "spend safety") {
 			t.Fatalf("reconcile error = %v, want missing spend safety dependency", err)
 		}
@@ -678,7 +678,7 @@ func TestXInboxDeliveryManagedSpendSafetyErrorPreservesResourcesAndRunningStream
 	}})
 	<-runner.starts
 
-	_, complete, err := worker.reconcileDesiredCycle(ctx)
+	_, _, complete, err := worker.reconcileDesiredCycle(ctx)
 	if err == nil || !strings.Contains(err.Error(), "usage snapshot unavailable") {
 		t.Fatalf("reconcile error = %v, want spend snapshot error", err)
 	}
@@ -703,6 +703,134 @@ func TestXInboxDeliveryManagedSpendSafetyErrorPreservesResourcesAndRunningStream
 	}
 	if len(api.operations) != 0 {
 		t.Fatalf("provider operations after stream sync = %v, want none", api.operations)
+	}
+}
+
+func TestXInboxDeliveryWorkspaceSpendSafety(t *testing.T) {
+	workspaceAccount := func() XInboxDeliveryAccount {
+		account := activeManagedXInboxAccount()
+		account.AppMode = xinbox.AppModeWorkspace
+		account.WebhookRouteKey = "workspace-route-key"
+		account.AppBearerTokenEncrypted = "encrypted-workspace-token"
+		account.FilteredStreamRuleID = "workspace-rule-existing"
+		account.ActivityDMSubscriptionID = "workspace-subscription-existing"
+		return account
+	}
+	newConfig := func(store XInboxDeliveryStore, api XInboxDeliveryAPI) XInboxDeliveryConfig {
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.Cipher = fakeXInboxCipher{values: map[string]string{
+			"encrypted-workspace-token": "workspace-token",
+		}}
+		return config
+	}
+
+	for _, test := range []struct {
+		name          string
+		usage         XInboxUsageReader
+		wantErr       string
+		wantStatus    string
+		wantDeletes   bool
+		wantUsageCall bool
+	}{
+		{name: "missing reader", wantErr: "spend safety"},
+		{name: "snapshot error", usage: &fakeXInboxUsageReader{err: errors.New("workspace usage unavailable")}, wantErr: "workspace usage unavailable", wantUsageCall: true},
+		{name: "paused", usage: &fakeXInboxUsageReader{snapshot: xcredits.Snapshot{PausePaidSources: true, InboundPauseReason: xcredits.PauseReasonMonthlyAllowance}}, wantStatus: xinbox.DeliveryStatusPausedAllowance, wantDeletes: true, wantUsageCall: true},
+		{name: "allowed", usage: &fakeXInboxUsageReader{}, wantStatus: xinbox.DeliveryStatusActive, wantUsageCall: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			account := workspaceAccount()
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+			api := &fakeXInboxDeliveryAPI{webhookID: "workspace-webhook", subscriptionID: account.ActivityDMSubscriptionID}
+			config := newConfig(store, api)
+			config.Usage = test.usage
+
+			err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("ReconcileOnce() error = %v, want %q", err, test.wantErr)
+				}
+				if len(api.operations) != 0 {
+					t.Fatalf("provider operations = %v, want none", api.operations)
+				}
+				got := store.states[len(store.states)-1]
+				if got.FilteredStreamRuleID != account.FilteredStreamRuleID ||
+					got.ActivityDMSubscriptionID != account.ActivityDMSubscriptionID {
+					t.Fatalf("state = %+v, want existing provider IDs preserved", got)
+				}
+			} else {
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := store.states[len(store.states)-1]
+				if got.DeliveryStatus != test.wantStatus {
+					t.Fatalf("delivery status = %q, want %q", got.DeliveryStatus, test.wantStatus)
+				}
+				if test.wantDeletes {
+					if want := []string{account.FilteredStreamRuleID}; !reflect.DeepEqual(api.deletedRules, want) {
+						t.Fatalf("deleted rules = %v, want %v", api.deletedRules, want)
+					}
+					if want := []string{account.ActivityDMSubscriptionID}; !reflect.DeepEqual(api.deletedSubs, want) {
+						t.Fatalf("deleted subscriptions = %v, want %v", api.deletedSubs, want)
+					}
+					if got.FilteredStreamRuleID != "" || got.ActivityDMSubscriptionID != "" {
+						t.Fatalf("state = %+v, want paused resources cleared", got)
+					}
+				}
+			}
+			if usage, ok := test.usage.(*fakeXInboxUsageReader); ok && (usage.calls > 0) != test.wantUsageCall {
+				t.Fatalf("usage called = %v, want %v", usage.calls > 0, test.wantUsageCall)
+			}
+		})
+	}
+}
+
+func TestXInboxDeliveryNilDMsAvailableFailsClosedOnlyForOtherwiseEligibleAccount(t *testing.T) {
+	t.Run("eligible account", func(t *testing.T) {
+		account := activeManagedXInboxAccount()
+		account.FilteredStreamRuleID = "rule-existing"
+		account.ActivityDMSubscriptionID = "subscription-existing"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{}
+		config := enabledXInboxDeliveryConfig(store, api)
+		config.DMsAvailable = nil
+
+		err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "DM availability evaluator is not configured") {
+			t.Fatalf("ReconcileOnce() error = %v, want missing DM evaluator", err)
+		}
+		if want := []string{"delete-subscription:subscription-existing"}; !reflect.DeepEqual(api.operations, want) {
+			t.Fatalf("provider operations = %v, want exact DM cleanup only %v", api.operations, want)
+		}
+		got := store.states[len(store.states)-1]
+		if got.FilteredStreamRuleID != "rule-existing" || got.ActivityDMSubscriptionID != "" {
+			t.Fatalf("state = %+v, want comments preserved and DM subscription cleared", got)
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*XInboxDeliveryAccount, *XInboxDeliveryConfig)
+	}{
+		{name: "missing DM scope", mutate: func(account *XInboxDeliveryAccount, _ *XInboxDeliveryConfig) {
+			account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+		}},
+		{name: "outside canary", mutate: func(_ *XInboxDeliveryAccount, config *XInboxDeliveryConfig) {
+			config.DMCanaryAccountIDs = map[string]struct{}{}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			account := activeManagedXInboxAccount()
+			account.FilteredStreamRuleID = "rule-existing"
+			store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+			api := &fakeXInboxDeliveryAPI{}
+			config := enabledXInboxDeliveryConfig(store, api)
+			config.DMsAvailable = nil
+			test.mutate(&store.accounts[0], &config)
+
+			if err := NewXInboxDeliveryWorker(config).ReconcileOnce(context.Background()); err != nil {
+				t.Fatalf("ReconcileOnce() error = %v, want nil evaluator irrelevant", err)
+			}
+		})
 	}
 }
 
@@ -1520,6 +1648,7 @@ func TestXInboxDeliveryAfterConsumerSecretRemovalKeepsCommentsAndCleansPriorGene
 		Cipher: fakeXInboxCipher{values: map[string]string{
 			"workspace-encrypted-bearer": "workspace-bearer",
 		}},
+		Usage:      &fakeXInboxUsageReader{},
 		WebhookURL: "https://dev-api.unipost.dev/v1/webhooks/twitter",
 	})
 
@@ -1639,6 +1768,7 @@ func TestXInboxCredentialReplacementReconcilesNewResourcesBeforeCleaningOldApp(t
 			"new-encrypted-app-token": "new-workspace-app-token",
 			"old-encrypted-app-token": "old-workspace-app-token",
 		}},
+		Usage: &fakeXInboxUsageReader{},
 	})
 
 	if err := worker.ReconcileOnce(context.Background()); err != nil {
@@ -1877,6 +2007,7 @@ func TestXInboxDeliveryKeepsWorkspaceXAppsIsolated(t *testing.T) {
 			"encrypted-app-one": "workspace-app-token-one",
 			"encrypted-app-two": "workspace-app-token-two",
 		}},
+		Usage: &fakeXInboxUsageReader{},
 	})
 
 	apps, err := worker.reconcile(context.Background())
@@ -2179,7 +2310,100 @@ func TestXInboxDeliveryReconciliationLockSerializesReplicas(t *testing.T) {
 	}
 }
 
-func TestXInboxDeliveryIncompleteAccountListRetainsPreviousDesiredStreams(t *testing.T) {
+func TestXInboxDeliveryLeadershipLossStopsLocalStreamAndReleasesLease(t *testing.T) {
+	leader := &sharedTestLeader{}
+	account := activeManagedXInboxAccount()
+	account.FilteredStreamRuleID = "rule-existing"
+	account.Scopes = []string{"tweet.read", "tweet.write", "users.read"}
+	store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+	firstRunner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 1),
+		stops:  make(chan string, 1),
+	}
+	secondRunner := &managedStreamRunner{
+		starts: make(chan XInboxAppStream, 1),
+		stops:  make(chan string, 1),
+	}
+	newWorker := func(owner string, runner XInboxStreamRunner) *XInboxDeliveryWorker {
+		return NewXInboxDeliveryWorker(XInboxDeliveryConfig{
+			Store:                           store,
+			API:                             &fakeXInboxDeliveryAPI{},
+			Cipher:                          fakeXInboxCipher{},
+			Usage:                           &fakeXInboxUsageReader{},
+			Leader:                          leader,
+			Stream:                          runner,
+			ManagedAppBearer:                "managed-token",
+			ManagedConsumerSecretConfigured: true,
+			EventHandler:                    func(context.Context, string, xinbox.StreamEvent) error { return nil },
+			CleanupOwner:                    owner,
+		})
+	}
+	first := newWorker("worker-one", firstRunner)
+	second := newWorker("worker-two", secondRunner)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(func() {
+		cancel()
+		first.stopAllStreams()
+		second.stopAllStreams()
+	})
+
+	first.reconcileAndStartStreams(ctx)
+	select {
+	case <-firstRunner.starts:
+	case <-time.After(time.Second):
+		t.Fatal("first worker did not start app stream")
+	}
+
+	store.mu.Lock()
+	store.listStarted = make(chan struct{}, 1)
+	store.listRelease = make(chan struct{})
+	listStarted := store.listStarted
+	listRelease := store.listRelease
+	store.mu.Unlock()
+	secondDone := make(chan struct{})
+	go func() {
+		second.reconcileAndStartStreams(ctx)
+		close(secondDone)
+	}()
+	select {
+	case <-listStarted:
+	case <-time.After(time.Second):
+		t.Fatal("second worker did not acquire reconciliation leadership")
+	}
+
+	first.reconcileAndStartStreams(ctx)
+	select {
+	case stopped := <-firstRunner.stops:
+		if stopped != safeAppIdentity(account.WebhookRouteKey) {
+			t.Fatalf("first worker stopped stream = %q", stopped)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first worker retained local stream after losing reconciliation leadership")
+	}
+
+	close(listRelease)
+	select {
+	case started := <-secondRunner.starts:
+		if started.Identity != safeAppIdentity(account.WebhookRouteKey) {
+			t.Fatalf("second worker started stream = %+v", started)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("second worker could not acquire released app stream lease")
+	}
+	select {
+	case <-secondDone:
+	case <-time.After(time.Second):
+		t.Fatal("second reconciliation did not finish")
+	}
+	cancel()
+	select {
+	case <-secondRunner.stops:
+	case <-time.After(time.Second):
+		t.Fatal("second worker stream did not stop during test cleanup")
+	}
+}
+
+func TestXInboxDeliveryAuthoritativeLeadershipIncompleteAccountListRetainsPreviousDesiredStreams(t *testing.T) {
 	leader := &sharedTestLeader{}
 	runner := &managedStreamRunner{
 		starts: make(chan XInboxAppStream, 2),
@@ -2236,6 +2460,7 @@ func TestXInboxDeliveryMissingWorkspaceCredentialCancelsDesiredStream(t *testing
 		Cipher: fakeXInboxCipher{values: map[string]string{
 			"encrypted-workspace-token": "workspace-token",
 		}},
+		Usage:        &fakeXInboxUsageReader{},
 		Leader:       leader,
 		Stream:       runner,
 		EventHandler: func(context.Context, string, xinbox.StreamEvent) error { return nil },
