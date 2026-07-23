@@ -16,7 +16,7 @@ Expected implementation surfaces:
 - api/internal/worker/x_inbox_delivery.go and tests
 - api/internal/xinbox/client.go, subscriptions.go, ingest.go, postgres_ingest.go and tests
 - api/internal/db/queries/inbox.sql and x_inbox.sql, generated sqlc files, and contract tests
-- api/migrations/120_x_inbox_dm_forbidden_latch.sql
+- api/internal/db/migrations/120_x_inbox_dm_forbidden_latch.sql
 - api/cmd/api/main.go and x_inbox_delivery_wiring_test.go
 
 No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
@@ -64,7 +64,7 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 
 **Files:**
 
-- Create: api/migrations/120_x_inbox_dm_forbidden_latch.sql
+- Create: api/internal/db/migrations/120_x_inbox_dm_forbidden_latch.sql
 - Create: api/internal/db/x_inbox_dm_latch_contract_test.go
 - Modify: api/internal/db/queries/x_inbox.sql
 - Regenerate: api/internal/db/x_inbox.sql.go and api/internal/db/models.go when changed
@@ -90,16 +90,17 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Prove comment and DM desired states are independent. Flag-off, evaluator error, missing DM scope, missing consumer secret, or missing webhook must not disable a valid comment stream.
 - [ ] Prove evaluator errors fail closed for DMs and make no DM creation call.
 - [ ] Prove eligible state calls EnsureWebhook before EnsureDMSubscription with dm.received, exact provider user ID, and stable account tag.
-- [ ] Prove route replacement deletes only the recorded old resource, persists cleared IDs, creates the replacement, and converges idempotently on the next cycle.
+- [ ] Prove route replacement deletes only the exact recorded account subscription, persists the cleared subscription and route, then ensures the app-level webhook and replacement subscription, and converges idempotently on the next cycle.
+- [ ] Prove per-account reconciliation never lists or deletes app-scoped webhooks. Stale app-webhook cleanup requires a future generation-aware, leased app-level design.
 - [ ] Prove subscription-create 403 stores the dedicated fingerprint, preserves comments, and suppresses later provider calls while unchanged.
 - [ ] Prove flag-off, canary removal, and deliberate off-to-on clear the latch.
-- [ ] Prove app mode, app identity, webhook route, or provider-user changes allow one controlled retry. Bearer/consumer-secret-only replacement requires deliberate off-to-on.
+- [ ] Prove app mode, app identity, non-secret webhook URL, or provider-user changes allow one controlled retry. Bearer/consumer-secret-only replacement requires deliberate off-to-on.
 - [ ] Prove shared stream semantics with two accounts on one app: one stream serves both, disabling one preserves it, disabling the last stops it, DM changes do not churn it, and incomplete discovery preserves existing streams.
 - [ ] Run focused red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/worker -run 'TestXInboxDelivery|Test.*DM.*Desired|Test.*SharedStream' -count=1.
 - [ ] Add DMsAvailable func(context.Context, string) (bool, error) and DMCanaryAccountIDs map[string]struct{} to XInboxDeliveryConfig.
 - [ ] Replace the hard-coded DM false value with independent eligibility. Require consumer secret and webhook only for DMs; apply spend safety when either source is desired.
 - [ ] Restore EnsureWebhook then EnsureDMSubscription using the existing app-bearer client. Do not switch to user OAuth.
-- [ ] Build the fingerprint only from non-secret app mode, app identity, social account, provider user, webhook route, and event.
+- [ ] Build the fingerprint only from non-secret app mode, app identity, social account, provider user, non-secret webhook URL, and event. Never include bearer or consumer secret values; a webhook URL change allows one controlled retry.
 - [ ] Keep last_error as the latest sanitized human summary only; never parse it for control flow. Preserve source-specific logs/metrics.
 - [ ] Run all worker tests and require PASS.
 - [ ] Commit: git commit -m \"fix: reconcile X comments and legacy DMs independently\".
