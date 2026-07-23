@@ -736,6 +736,49 @@ func TestXClientEnsureDMSubscriptionUsesAppBearerForListAndCreate(t *testing.T) 
 	}
 }
 
+func TestXClientCreateDMSubscriptionIsPureCreate(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if got := r.Header.Get("Authorization"); got != "Bearer app-token" {
+			t.Fatalf("Authorization = %q, want app bearer", got)
+		}
+		if r.Method != http.MethodPost || r.URL.Path != "/2/activity/subscriptions" {
+			t.Fatalf("request = %s %s, want pure create POST", r.Method, r.URL.Path)
+		}
+		var body ActivitySubscription
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		want := ActivitySubscription{
+			EventType: "dm.received",
+			Filter:    ActivityFilter{UserID: "2244994945"},
+			Tag:       DMSubscriptionTag("account-123"),
+			WebhookID: "1001",
+		}
+		if !reflect.DeepEqual(body, want) {
+			t.Fatalf("body = %#v, want %#v", body, want)
+		}
+		_, _ = w.Write([]byte(`{"data":{"subscription_id":"2001","event_type":"dm.received","filter":{"user_id":"2244994945"},"tag":"unipost:x:dm:account-123","webhook_id":"1001"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(ClientConfig{BaseURL: server.URL, HTTPClient: server.Client()})
+	subscription, err := client.CreateDMSubscription(
+		context.Background(),
+		"app-token",
+		"account-123",
+		"2244994945",
+		"1001",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subscription.ID != "2001" || calls != 1 {
+		t.Fatalf("subscription=%+v calls=%d, want one POST", subscription, calls)
+	}
+}
+
 func TestXClientEnsureDMSubscriptionReplacesStaleStableTag(t *testing.T) {
 	var calls int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

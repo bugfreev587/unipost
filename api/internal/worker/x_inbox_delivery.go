@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,7 +39,8 @@ type XInboxDeliveryAPI interface {
 	EnsureFilteredStreamRule(context.Context, string, string, string) (xinbox.StreamRule, error)
 	DeleteFilteredStreamRule(context.Context, string, string) error
 	EnsureWebhook(context.Context, string, string) (xinbox.Webhook, error)
-	EnsureDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
+	ListActivitySubscriptions(context.Context, string) ([]xinbox.ActivitySubscription, error)
+	CreateDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
 	DeleteActivitySubscription(context.Context, string, string) error
 }
 
@@ -562,49 +565,35 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 						return app, streamDesired(), true, err
 					}
 				}
-				if state.ActivityDMSubscriptionID != "" && state.ActivityWebhookRouteKey != webhookRouteKey {
-					if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
-						dmCleanupErr = err
-					} else {
-						state.ActivityDMSubscriptionID = ""
-						state.ActivityWebhookRouteKey = ""
+				webhook, ensureErr := w.api.EnsureWebhook(ctx, appBearerToken, appWebhookURL)
+				if ensureErr != nil {
+					dmErr = ensureErr
+					if isDMProvisioningForbidden(ensureErr) {
+						state.DMSubscriptionForbiddenFingerprint = fingerprint
 						if err := persist(); err != nil {
-							return app, streamDesired(), true, err
+							return app, streamDesired(), true, errors.Join(ensureErr, err)
 						}
 					}
-				}
-				if dmCleanupErr == nil {
-					webhook, ensureErr := w.api.EnsureWebhook(ctx, appBearerToken, appWebhookURL)
+				} else {
+					ensureErr = w.reconcileDMSubscription(
+						ctx,
+						appBearerToken,
+						account,
+						webhook.ID,
+						webhookRouteKey,
+						&state,
+						persist,
+					)
 					if ensureErr != nil {
+						var persistenceErr *dmSubscriptionPersistenceError
+						if errors.As(ensureErr, &persistenceErr) {
+							return app, streamDesired(), true, ensureErr
+						}
 						dmErr = ensureErr
 						if isDMProvisioningForbidden(ensureErr) {
 							state.DMSubscriptionForbiddenFingerprint = fingerprint
 							if err := persist(); err != nil {
 								return app, streamDesired(), true, errors.Join(ensureErr, err)
-							}
-						}
-					} else {
-						subscription, ensureErr := w.api.EnsureDMSubscription(
-							ctx,
-							appBearerToken,
-							account.SocialAccountID,
-							account.ExternalAccountID,
-							webhook.ID,
-						)
-						if ensureErr != nil {
-							dmErr = ensureErr
-							if isDMProvisioningForbidden(ensureErr) {
-								state.DMSubscriptionForbiddenFingerprint = fingerprint
-								if err := persist(); err != nil {
-									return app, streamDesired(), true, errors.Join(ensureErr, err)
-								}
-							}
-						} else {
-							state.ActivityDMSubscriptionID = subscription.ID
-							state.ActivityWebhookRouteKey = webhookRouteKey
-							state.DMSubscriptionForbiddenFingerprint = ""
-							if err := persist(); err != nil {
-								return app, streamDesired(), true, err
 							}
 						}
 					}
@@ -647,6 +636,125 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		return app, streamDesired(), true, err
 	}
 	return app, streamDesired(), true, joined
+}
+
+type dmSubscriptionPersistenceError struct {
+	cause error
+}
+
+func (e *dmSubscriptionPersistenceError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *dmSubscriptionPersistenceError) Unwrap() error {
+	return e.cause
+}
+
+func persistDMSubscriptionState(persist func() error) error {
+	if err := persist(); err != nil {
+		return &dmSubscriptionPersistenceError{cause: err}
+	}
+	return nil
+}
+
+func (w *XInboxDeliveryWorker) reconcileDMSubscription(
+	ctx context.Context,
+	appBearerToken string,
+	account XInboxDeliveryAccount,
+	webhookID string,
+	webhookRouteKey string,
+	state *XInboxDeliveryState,
+	persist func() error,
+) error {
+	subscriptions, err := w.api.ListActivitySubscriptions(ctx, appBearerToken)
+	if err != nil {
+		return err
+	}
+	tag := xinbox.DMSubscriptionTag(account.SocialAccountID)
+	matching := make([]xinbox.ActivitySubscription, 0)
+	recordedFound := false
+	for _, subscription := range subscriptions {
+		if subscription.ID == state.ActivityDMSubscriptionID {
+			recordedFound = true
+		}
+		if subscription.Tag == tag {
+			matching = append(matching, subscription)
+		}
+	}
+	sort.Slice(matching, func(i, j int) bool {
+		left, leftErr := strconv.ParseUint(matching[i].ID, 10, 64)
+		right, rightErr := strconv.ParseUint(matching[j].ID, 10, 64)
+		if leftErr == nil && rightErr == nil {
+			return left < right
+		}
+		return matching[i].ID < matching[j].ID
+	})
+
+	var keeper *xinbox.ActivitySubscription
+	for i := range matching {
+		subscription := &matching[i]
+		if keeper == nil && subscription.EventType == "dm.received" &&
+			subscription.Filter.UserID == account.ExternalAccountID &&
+			subscription.WebhookID == webhookID {
+			keeper = subscription
+		}
+	}
+	for _, subscription := range matching {
+		if keeper != nil && subscription.ID == keeper.ID {
+			continue
+		}
+		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, subscription.ID); err != nil {
+			return err
+		}
+		if state.ActivityDMSubscriptionID == subscription.ID {
+			state.ActivityDMSubscriptionID = ""
+			state.ActivityWebhookRouteKey = ""
+			if err := persistDMSubscriptionState(persist); err != nil {
+				return err
+			}
+		}
+	}
+
+	if state.ActivityDMSubscriptionID != "" &&
+		(!recordedFound || keeper == nil || state.ActivityDMSubscriptionID != keeper.ID) {
+		state.ActivityDMSubscriptionID = ""
+		state.ActivityWebhookRouteKey = ""
+		if err := persistDMSubscriptionState(persist); err != nil {
+			return err
+		}
+	}
+	if keeper != nil {
+		if state.ActivityDMSubscriptionID != keeper.ID || state.ActivityWebhookRouteKey != webhookRouteKey {
+			state.ActivityDMSubscriptionID = keeper.ID
+			state.ActivityWebhookRouteKey = webhookRouteKey
+			state.DMSubscriptionForbiddenFingerprint = ""
+			if err := persistDMSubscriptionState(persist); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if state.ActivityWebhookRouteKey != "" {
+		state.ActivityWebhookRouteKey = ""
+		if err := persistDMSubscriptionState(persist); err != nil {
+			return err
+		}
+	}
+
+	created, err := w.api.CreateDMSubscription(
+		ctx,
+		appBearerToken,
+		account.SocialAccountID,
+		account.ExternalAccountID,
+		webhookID,
+	)
+	if err != nil {
+		return err
+	}
+	state.ActivityDMSubscriptionID = created.ID
+	state.ActivityWebhookRouteKey = webhookRouteKey
+	state.DMSubscriptionForbiddenFingerprint = ""
+	return persistDMSubscriptionState(persist)
 }
 
 func dmCredentialError(appMode xinbox.AppMode, consumerSecretConfigured bool) error {

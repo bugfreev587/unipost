@@ -38,30 +38,36 @@ func (f fakeXInboxCipher) Decrypt(value string) (string, error) {
 type fakeXInboxDeliveryAPI struct {
 	mu sync.Mutex
 
-	ruleID            string
-	subscriptionID    string
-	webhookID         string
-	ruleErr           error
-	webhookErr        error
-	subscriptionErr   error
-	deleteRuleErrors  map[string]error
-	deleteSubErrors   map[string]error
-	deleteSubResults  map[string][]error
-	deleteRuleStarted chan string
-	deleteRuleRelease chan struct{}
+	ruleID                string
+	subscriptionID        string
+	webhookID             string
+	ruleErr               error
+	webhookErr            error
+	subscriptionErr       error
+	listSubscriptionErr   error
+	createSubscriptionErr error
+	deleteRuleErrors      map[string]error
+	deleteSubErrors       map[string]error
+	deleteSubResults      map[string][]error
+	deleteRuleStarted     chan string
+	deleteRuleRelease     chan struct{}
 
-	ruleTokens             []string
-	webhookTokens          []string
-	subscriptionTokens     []string
-	subscriptionAccounts   []string
-	subscriptionUserIDs    []string
-	subscriptionWebhookIDs []string
-	deletedRules           []string
-	deletedRuleTokens      []string
-	deletedSubs            []string
-	deletedSubTokens       []string
-	operations             []string
-	webhookURLs            []string
+	ruleTokens               []string
+	webhookTokens            []string
+	subscriptionTokens       []string
+	subscriptionAccounts     []string
+	subscriptionUserIDs      []string
+	subscriptionWebhookIDs   []string
+	deletedRules             []string
+	deletedRuleTokens        []string
+	deletedSubs              []string
+	deletedSubTokens         []string
+	operations               []string
+	webhookURLs              []string
+	activitySubscriptions    []xinbox.ActivitySubscription
+	listSubscriptionCalls    int
+	createSubscriptionCalls  int
+	beforeCreateSubscription func()
 }
 
 func (f *fakeXInboxDeliveryAPI) EnsureFilteredStreamRule(
@@ -111,28 +117,52 @@ func (f *fakeXInboxDeliveryAPI) EnsureWebhook(_ context.Context, token string, c
 	return xinbox.Webhook{ID: f.webhookID, URL: configuredURL, Valid: true}, nil
 }
 
-func (f *fakeXInboxDeliveryAPI) EnsureDMSubscription(
+func (f *fakeXInboxDeliveryAPI) ListActivitySubscriptions(
+	_ context.Context,
+	appToken string,
+) ([]xinbox.ActivitySubscription, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.listSubscriptionCalls++
+	if f.listSubscriptionErr != nil {
+		f.subscriptionTokens = append(f.subscriptionTokens, appToken)
+		return nil, f.listSubscriptionErr
+	}
+	if f.subscriptionErr != nil {
+		f.subscriptionTokens = append(f.subscriptionTokens, appToken)
+		return nil, f.subscriptionErr
+	}
+	return append([]xinbox.ActivitySubscription(nil), f.activitySubscriptions...), nil
+}
+
+func (f *fakeXInboxDeliveryAPI) CreateDMSubscription(
 	_ context.Context,
 	appToken string,
 	accountID, userID, webhookID string,
 ) (xinbox.ActivitySubscription, error) {
+	if f.beforeCreateSubscription != nil {
+		f.beforeCreateSubscription()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.createSubscriptionCalls++
 	f.subscriptionTokens = append(f.subscriptionTokens, appToken)
 	f.subscriptionAccounts = append(f.subscriptionAccounts, accountID)
 	f.subscriptionUserIDs = append(f.subscriptionUserIDs, userID)
 	f.subscriptionWebhookIDs = append(f.subscriptionWebhookIDs, webhookID)
 	f.operations = append(f.operations, "ensure-subscription:"+accountID)
-	if f.subscriptionErr != nil {
-		return xinbox.ActivitySubscription{}, f.subscriptionErr
+	if f.createSubscriptionErr != nil {
+		return xinbox.ActivitySubscription{}, f.createSubscriptionErr
 	}
-	return xinbox.ActivitySubscription{
+	subscription := xinbox.ActivitySubscription{
 		ID:        f.subscriptionID,
 		EventType: "dm.received",
 		Filter:    xinbox.ActivityFilter{UserID: userID},
 		Tag:       xinbox.DMSubscriptionTag(accountID),
 		WebhookID: webhookID,
-	}, nil
+	}
+	f.activitySubscriptions = append(f.activitySubscriptions, subscription)
+	return subscription, nil
 }
 
 func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, appToken string, subscriptionID string) error {
@@ -144,14 +174,27 @@ func (f *fakeXInboxDeliveryAPI) DeleteActivitySubscription(_ context.Context, ap
 	if results := f.deleteSubResults[subscriptionID]; len(results) > 0 {
 		result := results[0]
 		f.deleteSubResults[subscriptionID] = results[1:]
-		if xinbox.IsProviderHTTPStatus(result, http.StatusNotFound) ||
-			xinbox.IsProviderHTTPStatus(result, http.StatusGone) {
-			return nil
+		if result != nil &&
+			!xinbox.IsProviderHTTPStatus(result, http.StatusNotFound) &&
+			!xinbox.IsProviderHTTPStatus(result, http.StatusGone) {
+			return result
 		}
-		return result
+		for i := range f.activitySubscriptions {
+			if f.activitySubscriptions[i].ID == subscriptionID {
+				f.activitySubscriptions = append(f.activitySubscriptions[:i], f.activitySubscriptions[i+1:]...)
+				break
+			}
+		}
+		return nil
 	}
 	if err := f.deleteSubErrors[subscriptionID]; err != nil {
 		return err
+	}
+	for i := range f.activitySubscriptions {
+		if f.activitySubscriptions[i].ID == subscriptionID {
+			f.activitySubscriptions = append(f.activitySubscriptions[:i], f.activitySubscriptions[i+1:]...)
+			break
+		}
 	}
 	return nil
 }
@@ -976,6 +1019,11 @@ func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvision
 		ruleID:         "rule-1",
 		webhookID:      "new-webhook",
 		subscriptionID: "new-subscription",
+		activitySubscriptions: []xinbox.ActivitySubscription{{
+			ID: "old-subscription", EventType: "dm.received",
+			Filter: xinbox.ActivityFilter{UserID: account.ExternalAccountID},
+			Tag:    xinbox.DMSubscriptionTag(account.SocialAccountID), WebhookID: "old-webhook",
+		}},
 	}
 	worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
 
@@ -1004,8 +1052,8 @@ func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvision
 	}
 	if want := []string{
 		"ensure-rule:account-1",
-		"delete-subscription:old-subscription",
 		"ensure-webhook",
+		"delete-subscription:old-subscription",
 		"ensure-subscription:account-1",
 	}; !reflect.DeepEqual(api.operations, want) {
 		t.Fatalf("operations = %v, want %v", api.operations, want)
@@ -1018,9 +1066,206 @@ func TestXInboxDeliveryRouteReplacementClearsRecordedSubscriptionBeforeProvision
 	if len(api.deletedSubs) != 1 {
 		t.Fatalf("second cycle repeated subscription cleanup: %v", api.deletedSubs)
 	}
-	if want := []string{"ensure-webhook", "ensure-subscription:account-1"}; !reflect.DeepEqual(api.operations, want) {
-		t.Fatalf("second-cycle operations = %v, want idempotent ensure %v", api.operations, want)
+	if want := []string{"ensure-webhook"}; !reflect.DeepEqual(api.operations, want) {
+		t.Fatalf("second-cycle operations = %v, want exact subscription reuse without another POST %v", api.operations, want)
 	}
+}
+
+func TestXInboxDeliveryWorkerOwnsRecoverableDMSubscriptionLifecycle(t *testing.T) {
+	exact := func(id string) xinbox.ActivitySubscription {
+		return xinbox.ActivitySubscription{
+			ID:        id,
+			EventType: "dm.received",
+			Filter:    xinbox.ActivityFilter{UserID: "2244994945"},
+			Tag:       xinbox.DMSubscriptionTag("account-1"),
+			WebhookID: "1001",
+		}
+	}
+	stale := func(id string) xinbox.ActivitySubscription {
+		subscription := exact(id)
+		subscription.Filter.UserID = "old-provider-user"
+		return subscription
+	}
+	newAccount := func() XInboxDeliveryAccount {
+		account := activeManagedXInboxAccount()
+		account.FilteredStreamRuleID = "rule-existing"
+		return account
+	}
+
+	t.Run("reuses exact subscription and ignores another tag", func(t *testing.T) {
+		account := newAccount()
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{
+			webhookID: "1001",
+			activitySubscriptions: []xinbox.ActivitySubscription{
+				exact("2002"),
+				{ID: "9001", EventType: "dm.received", Filter: xinbox.ActivityFilter{UserID: "other-user"}, Tag: xinbox.DMSubscriptionTag("other-account"), WebhookID: "1001"},
+			},
+		}
+
+		if err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.createSubscriptionCalls != 0 || len(api.deletedSubs) != 0 {
+			t.Fatalf("create calls=%d deletes=%v, want exact reuse without mutation", api.createSubscriptionCalls, api.deletedSubs)
+		}
+		if got := store.accounts[0].ActivityDMSubscriptionID; got != "2002" {
+			t.Fatalf("persisted subscription = %q, want adopted 2002", got)
+		}
+	})
+
+	t.Run("duplicates converge deterministically and cleanup is idempotent", func(t *testing.T) {
+		account := newAccount()
+		account.ActivityDMSubscriptionID = "2002"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{
+			webhookID: "1001",
+			activitySubscriptions: []xinbox.ActivitySubscription{
+				exact("2002"), exact("2001"), stale("2003"),
+				{ID: "9001", EventType: "dm.received", Filter: xinbox.ActivityFilter{UserID: "other-user"}, Tag: xinbox.DMSubscriptionTag("other-account"), WebhookID: "1001"},
+			},
+		}
+		worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
+
+		if err := worker.ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"2002", "2003"}; !reflect.DeepEqual(api.deletedSubs, want) {
+			t.Fatalf("deleted subscriptions = %v, want deterministic duplicate/stale cleanup %v", api.deletedSubs, want)
+		}
+		if got := store.accounts[0].ActivityDMSubscriptionID; got != "2001" {
+			t.Fatalf("persisted subscription = %q, want deterministic keeper 2001", got)
+		}
+		if err := worker.ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"2002", "2003"}; !reflect.DeepEqual(api.deletedSubs, want) {
+			t.Fatalf("second reconcile deletes = %v, want idempotent %v", api.deletedSubs, want)
+		}
+		if len(api.activitySubscriptions) != 2 || api.activitySubscriptions[1].Tag != xinbox.DMSubscriptionTag("other-account") {
+			t.Fatalf("provider subscriptions = %+v, want keeper plus untouched other tag", api.activitySubscriptions)
+		}
+	})
+
+	t.Run("missing recorded state is cleared before create", func(t *testing.T) {
+		account := newAccount()
+		account.ActivityDMSubscriptionID = "2999"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{webhookID: "1001", subscriptionID: "2004"}
+		api.beforeCreateSubscription = func() {
+			if got := store.accounts[0].ActivityDMSubscriptionID; got != "" {
+				t.Fatalf("recorded subscription at create = %q, want durable clear first", got)
+			}
+		}
+
+		if err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if got := store.accounts[0].ActivityDMSubscriptionID; got != "2004" {
+			t.Fatalf("persisted subscription = %q, want replacement 2004", got)
+		}
+	})
+
+	t.Run("delete or clear failure prevents replacement", func(t *testing.T) {
+		for _, test := range []struct {
+			name       string
+			deleteErr  error
+			saveErrors map[int]error
+		}{
+			{name: "delete", deleteErr: errors.New("delete failed")},
+			{name: "clear", saveErrors: map[int]error{1: errors.New("clear failed")}},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				account := newAccount()
+				account.ActivityDMSubscriptionID = "2002"
+				store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}, saveErrors: test.saveErrors}
+				api := &fakeXInboxDeliveryAPI{
+					webhookID: "1001", subscriptionID: "2004",
+					activitySubscriptions: []xinbox.ActivitySubscription{stale("2002")},
+					deleteSubErrors:       map[string]error{"2002": test.deleteErr},
+				}
+
+				err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+				if err == nil {
+					t.Fatal("expected lifecycle failure")
+				}
+				if api.createSubscriptionCalls != 0 {
+					t.Fatalf("create calls = %d, want none after %s failure", api.createSubscriptionCalls, test.name)
+				}
+			})
+		}
+	})
+
+	t.Run("list failure does not mutate subscriptions", func(t *testing.T) {
+		account := newAccount()
+		account.ActivityDMSubscriptionID = "2002"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{webhookID: "1001", listSubscriptionErr: errors.New("list failed")}
+
+		err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "list failed") {
+			t.Fatalf("reconcile error = %v, want list failure", err)
+		}
+		if api.createSubscriptionCalls != 0 || len(api.deletedSubs) != 0 || store.accounts[0].ActivityDMSubscriptionID != "2002" {
+			t.Fatalf("after list failure create=%d deletes=%v state=%+v, want no subscription mutation", api.createSubscriptionCalls, api.deletedSubs, store.accounts[0])
+		}
+	})
+
+	t.Run("create failure leaves durable clear state", func(t *testing.T) {
+		account := newAccount()
+		account.ActivityDMSubscriptionID = "2999"
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}}
+		api := &fakeXInboxDeliveryAPI{webhookID: "1001", createSubscriptionErr: errors.New("create failed")}
+
+		err := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api)).ReconcileOnce(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "create failed") {
+			t.Fatalf("reconcile error = %v, want create failure", err)
+		}
+		if api.createSubscriptionCalls != 1 || store.accounts[0].ActivityDMSubscriptionID != "" {
+			t.Fatalf("after create failure calls=%d state=%+v, want one create and durable clear", api.createSubscriptionCalls, store.accounts[0])
+		}
+	})
+
+	t.Run("adoption persistence failure retries adoption without create", func(t *testing.T) {
+		account := newAccount()
+		account.ActivityWebhookRouteKey = ""
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}, saveErrors: map[int]error{1: errors.New("adopt failed")}}
+		api := &fakeXInboxDeliveryAPI{webhookID: "1001", activitySubscriptions: []xinbox.ActivitySubscription{exact("2002")}}
+		worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
+
+		if err := worker.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "adopt failed") {
+			t.Fatalf("first reconcile error = %v, want adoption persistence failure", err)
+		}
+		if api.createSubscriptionCalls != 0 || store.accounts[0].ActivityDMSubscriptionID != "" {
+			t.Fatalf("after failed adoption create=%d state=%+v", api.createSubscriptionCalls, store.accounts[0])
+		}
+		if err := worker.ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.createSubscriptionCalls != 0 || store.accounts[0].ActivityDMSubscriptionID != "2002" {
+			t.Fatalf("recovered adoption create=%d state=%+v", api.createSubscriptionCalls, store.accounts[0])
+		}
+	})
+
+	t.Run("create persistence failure is recovered by stable-tag adoption", func(t *testing.T) {
+		account := newAccount()
+		store := &fakeXInboxDeliveryStore{accounts: []XInboxDeliveryAccount{account}, saveErrors: map[int]error{2: errors.New("persist create failed")}}
+		api := &fakeXInboxDeliveryAPI{webhookID: "1001", subscriptionID: "2004"}
+		worker := NewXInboxDeliveryWorker(enabledXInboxDeliveryConfig(store, api))
+
+		if err := worker.ReconcileOnce(context.Background()); err == nil || !strings.Contains(err.Error(), "persist create failed") {
+			t.Fatalf("first reconcile error = %v, want persistence failure", err)
+		}
+		if api.createSubscriptionCalls != 1 || store.accounts[0].ActivityDMSubscriptionID != "" {
+			t.Fatalf("after failed persist create calls=%d state=%+v", api.createSubscriptionCalls, store.accounts[0])
+		}
+		if err := worker.ReconcileOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if api.createSubscriptionCalls != 1 || store.accounts[0].ActivityDMSubscriptionID != "2004" {
+			t.Fatalf("recovery create calls=%d state=%+v, want adoption without duplicate", api.createSubscriptionCalls, store.accounts[0])
+		}
+	})
 }
 
 func TestXInboxDeliveryCurrentRouteBaseURLReplacementUsesStableEnsureWithoutWebhookDeletion(t *testing.T) {
@@ -1054,7 +1299,7 @@ func TestXInboxDeliveryWorkerDoesNotOwnAppWebhookDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, forbidden := range []string{"ListWebhooks(", "DeleteWebhook(", "cleanupStaleDMWebhooks"} {
+	for _, forbidden := range []string{"ListWebhooks(", "DeleteWebhook(", "cleanupStaleDMWebhooks", "EnsureDMSubscription("} {
 		if strings.Contains(string(source), forbidden) {
 			t.Fatalf("delivery worker contains forbidden app-scoped webhook cleanup dependency %q", forbidden)
 		}
@@ -1076,6 +1321,11 @@ func TestXInboxDeliverySharedWebhookSurvivesAnotherAccountMigrationFailure(t *te
 	api := &fakeXInboxDeliveryAPI{
 		webhookID:      "shared-webhook",
 		subscriptionID: "subscription-account-2",
+		activitySubscriptions: []xinbox.ActivitySubscription{{
+			ID: "old-subscription-account-1", EventType: "dm.received",
+			Filter: xinbox.ActivityFilter{UserID: first.ExternalAccountID},
+			Tag:    xinbox.DMSubscriptionTag(first.SocialAccountID), WebhookID: "old-webhook",
+		}},
 		deleteSubErrors: map[string]error{
 			"old-subscription-account-1": errors.New("account migration failed"),
 		},
@@ -1087,8 +1337,11 @@ func TestXInboxDeliverySharedWebhookSurvivesAnotherAccountMigrationFailure(t *te
 	if err == nil || !strings.Contains(err.Error(), "account migration failed") {
 		t.Fatalf("reconcile error = %v, want first account migration failure", err)
 	}
-	if want := []string{"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key"}; !reflect.DeepEqual(api.webhookURLs, want) {
-		t.Fatalf("shared webhook ensures = %v, want second account to ensure shared webhook %v", api.webhookURLs, want)
+	if want := []string{
+		"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key",
+		"https://dev-api.unipost.dev/v1/webhooks/twitter/managed-route-key",
+	}; !reflect.DeepEqual(api.webhookURLs, want) {
+		t.Fatalf("shared webhook ensures = %v, want each independently reconciled account to ensure the shared webhook %v", api.webhookURLs, want)
 	}
 	if want := []string{"account-2"}; !reflect.DeepEqual(api.subscriptionAccounts, want) {
 		t.Fatalf("subscription accounts = %v, want unaffected second account %v", api.subscriptionAccounts, want)
@@ -1112,6 +1365,11 @@ func TestXInboxDeliveryProviderMutationPersistenceFailuresConverge(t *testing.T)
 		api := &fakeXInboxDeliveryAPI{
 			webhookID:      "webhook-current",
 			subscriptionID: "subscription-current",
+			activitySubscriptions: []xinbox.ActivitySubscription{{
+				ID: "old-subscription", EventType: "dm.received",
+				Filter: xinbox.ActivityFilter{UserID: account.ExternalAccountID},
+				Tag:    xinbox.DMSubscriptionTag(account.SocialAccountID), WebhookID: "old-webhook",
+			}},
 			deleteSubResults: map[string][]error{
 				"old-subscription": {
 					nil,
@@ -1130,8 +1388,8 @@ func TestXInboxDeliveryProviderMutationPersistenceFailuresConverge(t *testing.T)
 		if err := worker.ReconcileOnce(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if want := []string{"old-subscription", "old-subscription"}; !reflect.DeepEqual(api.deletedSubs, want) {
-			t.Fatalf("delete attempts = %v, want retry after provider already removed subscription %v", api.deletedSubs, want)
+		if want := []string{"old-subscription"}; !reflect.DeepEqual(api.deletedSubs, want) {
+			t.Fatalf("delete attempts = %v, want no retry after provider list proves removal %v", api.deletedSubs, want)
 		}
 		if got := store.accounts[0]; got.ActivityDMSubscriptionID != "subscription-current" || got.ActivityWebhookRouteKey != "managed-route-key" {
 			t.Fatalf("final state = %+v, want current subscription generation", got)
@@ -1168,6 +1426,7 @@ func TestXInboxDeliveryProviderMutationPersistenceFailuresConverge(t *testing.T)
 	t.Run("DM ensure save failure reuses stable subscription", func(t *testing.T) {
 		account := activeManagedXInboxAccount()
 		account.FilteredStreamRuleID = "rule-existing"
+		account.ActivityWebhookRouteKey = ""
 		store := &fakeXInboxDeliveryStore{
 			accounts:   []XInboxDeliveryAccount{account},
 			saveErrors: map[int]error{1: errors.New("save DM subscription failed")},
@@ -1184,8 +1443,8 @@ func TestXInboxDeliveryProviderMutationPersistenceFailuresConverge(t *testing.T)
 		if err := worker.ReconcileOnce(context.Background()); err != nil {
 			t.Fatal(err)
 		}
-		if want := []string{"stable-webhook", "stable-webhook"}; !reflect.DeepEqual(api.subscriptionWebhookIDs, want) {
-			t.Fatalf("subscription webhook IDs = %v, want stable ensure retry %v", api.subscriptionWebhookIDs, want)
+		if want := []string{"stable-webhook"}; !reflect.DeepEqual(api.subscriptionWebhookIDs, want) {
+			t.Fatalf("subscription webhook IDs = %v, want one create followed by stable-tag adoption %v", api.subscriptionWebhookIDs, want)
 		}
 		if got := store.accounts[0]; got.ActivityDMSubscriptionID != "stable-subscription" || got.ActivityWebhookRouteKey != "managed-route-key" {
 			t.Fatalf("final state = %+v, want stable DM subscription and route", got)

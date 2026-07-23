@@ -215,6 +215,11 @@ func (c *Client) ListActivitySubscriptions(
 		if len(response.Data) > remaining {
 			response.Data = response.Data[:remaining]
 		}
+		for _, subscription := range response.Data {
+			if err := validateProviderResourceID(subscription.ID); err != nil {
+				return nil, err
+			}
+		}
 		subscriptions = append(subscriptions, response.Data...)
 		nextToken = response.Meta.NextToken
 		if nextToken == "" {
@@ -262,11 +267,23 @@ func (c *Client) EnsureDMSubscription(
 			break
 		}
 	}
+	return c.CreateDMSubscription(ctx, appBearerToken, accountID, userID, webhookID)
+}
 
+func (c *Client) CreateDMSubscription(
+	ctx context.Context,
+	appBearerToken string,
+	accountID string,
+	userID string,
+	webhookID string,
+) (ActivitySubscription, error) {
+	if err := validateProviderResourceID(webhookID); err != nil {
+		return ActivitySubscription{}, err
+	}
 	request := ActivitySubscription{
 		EventType: "dm.received",
 		Filter:    ActivityFilter{UserID: userID},
-		Tag:       tag,
+		Tag:       DMSubscriptionTag(accountID),
 		WebhookID: webhookID,
 	}
 	var raw json.RawMessage
@@ -303,6 +320,12 @@ func (c *Client) EnsureDMSubscription(
 	}
 	if err := validateProviderResourceID(subscription.ID); err != nil {
 		return ActivitySubscription{}, err
+	}
+	if subscription.EventType != request.EventType ||
+		subscription.Filter.UserID != request.Filter.UserID ||
+		subscription.Tag != request.Tag ||
+		subscription.WebhookID != request.WebhookID {
+		return ActivitySubscription{}, errors.New("X create activity subscription response did not match request")
 	}
 	return subscription, nil
 }
