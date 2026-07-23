@@ -11,7 +11,9 @@ import (
 
 type fakeIngestStore struct {
 	accounts     map[string]InboxAccount
-	external     map[string][]InboxAccount
+	provider     map[string][]InboxAccount
+	providerErr  error
+	providerKeys []string
 	inserted     []InboxItem
 	insertResult InboxItem
 	insertedNew  bool
@@ -26,8 +28,10 @@ func (s *fakeIngestStore) AccountForApp(_ context.Context, appClientID, accountI
 	return account, nil
 }
 
-func (s *fakeIngestStore) AccountsForExternalUser(_ context.Context, appClientID, externalUserID string) ([]InboxAccount, error) {
-	return s.external[appClientID+":"+externalUserID], nil
+func (s *fakeIngestStore) AccountsForProviderUser(_ context.Context, appClientID, providerUserID string) ([]InboxAccount, error) {
+	key := appClientID + ":" + providerUserID
+	s.providerKeys = append(s.providerKeys, key)
+	return s.provider[key], s.providerErr
 }
 
 func (s *fakeIngestStore) InsertInboxItem(_ context.Context, item InboxItem) (InboxItem, bool, error) {
@@ -441,6 +445,130 @@ func TestParseXActivityFixtures(t *testing.T) {
 	})
 }
 
+func TestXIngestLegacyProviderUserRequiresExactlyOneAccountBeforeSideEffects(t *testing.T) {
+	validAccount := func(id, workspaceID string) InboxAccount {
+		return InboxAccount{
+			ID: id, WorkspaceID: workspaceID, ExternalUserID: "database-owner",
+			ExternalAccountID: "provider-owner", AppMode: AppModeUniPostManaged,
+			Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+		}
+	}
+	lookupFailure := errors.New("row conversion failed")
+	for _, test := range []struct {
+		name      string
+		accounts  []InboxAccount
+		lookupErr error
+		wantErr   error
+	}{
+		{name: "zero", wantErr: ErrInboxAccountNotFound},
+		{name: "multiple same workspace", accounts: []InboxAccount{validAccount("account-1", "workspace-1"), validAccount("account-2", "workspace-1")}, wantErr: ErrInboxAccountAmbiguous},
+		{name: "multiple workspaces", accounts: []InboxAccount{validAccount("account-1", "workspace-1"), validAccount("account-2", "workspace-2")}, wantErr: ErrInboxAccountAmbiguous},
+		{name: "row conversion lookup error", lookupErr: lookupFailure, wantErr: lookupFailure},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := &fakeIngestStore{
+				provider:    map[string][]InboxAccount{"route-1:provider-owner": test.accounts},
+				providerErr: test.lookupErr,
+			}
+			admissions := 0
+			notifications := 0
+			service := NewIngestionService(IngestionConfig{
+				Store: store,
+				DMsAvailable: func(context.Context, string) (bool, error) {
+					t.Fatal("feature eligibility must not run before exact-one routing")
+					return true, nil
+				},
+				Admit: func(context.Context, InboundAdmissionRequest) (InboundAdmission, error) {
+					admissions++
+					return InboundAdmission{Accepted: true}, nil
+				},
+				Notify: func(context.Context, string, string, InboxItem) { notifications++ },
+			})
+
+			err := service.IngestActivityEvent(context.Background(), "route-1", ActivityEvent{
+				ExternalUserID: "provider-owner", ExternalID: "dm-1",
+				SenderID: "sender", RecipientID: "provider-owner", CreatedAt: time.Now().UTC(),
+			})
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want errors.Is(%v)", err, test.wantErr)
+			}
+			if admissions != 0 || len(store.inserted) != 0 || notifications != 0 {
+				t.Fatalf("side effects before exact-one routing: admissions=%d inserts=%d notifications=%d", admissions, len(store.inserted), notifications)
+			}
+		})
+	}
+}
+
+func TestXIngestCurrentTagAndLegacyProviderUserUseExactDatabaseRoutes(t *testing.T) {
+	currentAccount := InboxAccount{
+		ID: "current-account", WorkspaceID: "current-workspace", ExternalUserID: "current-db-owner",
+		AppMode: AppModeUniPostManaged, Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+	}
+	legacyAccount := InboxAccount{
+		ID: "legacy-account", WorkspaceID: "legacy-workspace", ExternalUserID: "legacy-db-owner",
+		ExternalAccountID: "provider-owner", AppMode: AppModeUniPostManaged,
+		Scopes: []string{"dm.read", "users.read"}, PlanAllowsInbox: true,
+	}
+	store := &fakeIngestStore{
+		accounts:    map[string]InboxAccount{"route-1:current-account": currentAccount},
+		provider:    map[string][]InboxAccount{"route-1:provider-owner": {legacyAccount}},
+		insertedNew: true,
+	}
+	var admissions []InboundAdmissionRequest
+	var notifications [][2]string
+	service := NewIngestionService(IngestionConfig{
+		Store: store,
+		Admit: func(_ context.Context, req InboundAdmissionRequest) (InboundAdmission, error) {
+			admissions = append(admissions, req)
+			return InboundAdmission{Accepted: true}, nil
+		},
+		Notify: func(_ context.Context, workspaceID, ownerID string, _ InboxItem) {
+			notifications = append(notifications, [2]string{workspaceID, ownerID})
+		},
+	})
+
+	currentBody := []byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"forged-payload-owner"},"tag":"unipost:x:dm:current-account","payload":{"id":"current-dm","dm_conversation_id":"current-thread","sender_id":"sender","recipient_id":"forged-payload-owner","workspace_id":"forged-workspace","owner_id":"forged-owner","created_at":"2026-07-16T12:00:00Z"}}}`)
+	legacyBody := []byte(`{"for_user_id":"provider-owner","workspace_id":"forged-workspace","owner_id":"forged-owner","direct_message_events":[{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"provider-owner"},"sender_id":"sender","message_data":{"text":"hello"}}}]}`)
+	for _, body := range [][]byte{currentBody, legacyBody} {
+		events, err := ParseActivityEvents(body)
+		if err != nil || len(events) != 1 {
+			t.Fatalf("ParseActivityEvents(%s) = %#v, %v", body, events, err)
+		}
+		if err := service.IngestActivityEvent(context.Background(), "route-1", events[0]); err != nil {
+			t.Fatalf("IngestActivityEvent: %v", err)
+		}
+	}
+	if len(store.providerKeys) != 1 || store.providerKeys[0] != "route-1:provider-owner" {
+		t.Fatalf("provider lookups = %#v, want only exact legacy provider id", store.providerKeys)
+	}
+	if len(admissions) != 2 ||
+		admissions[0].WorkspaceID != "current-workspace" || admissions[0].SocialAccountID != "current-account" ||
+		admissions[1].WorkspaceID != "legacy-workspace" || admissions[1].SocialAccountID != "legacy-account" {
+		t.Fatalf("admissions = %#v", admissions)
+	}
+	if len(notifications) != 2 || notifications[0] != [2]string{"current-workspace", "current-db-owner"} || notifications[1] != [2]string{"legacy-workspace", "legacy-db-owner"} {
+		t.Fatalf("notifications = %#v", notifications)
+	}
+	if len(store.inserted) != 2 || store.inserted[0].WorkspaceID != "current-workspace" || store.inserted[1].WorkspaceID != "legacy-workspace" {
+		t.Fatalf("inserted = %#v", store.inserted)
+	}
+}
+
+func TestXChatAndNonReceivedDMEventsNeverProduceActivityEvents(t *testing.T) {
+	for _, eventType := range []string{"chat.received", "chat.sent", "chat.conversation_join", "dm.sent", "dm.read", "typing", "unknown"} {
+		t.Run(eventType, func(t *testing.T) {
+			body := []byte(`{"data":{"event_type":"` + eventType + `","payload":{"id":"current-event"}},"for_user_id":"provider-owner","direct_message_events":[{"type":"message_create","id":"legacy-dm","created_timestamp":"1784203200000","message_create":{"target":{"recipient_id":"provider-owner"},"sender_id":"sender","message_data":{"text":"must be ignored"}}}]}`)
+			events, err := ParseActivityEvents(body)
+			if err != nil {
+				t.Fatalf("ParseActivityEvents: %v", err)
+			}
+			if len(events) != 0 {
+				t.Fatalf("%s produced x_dm candidates: %#v", eventType, events)
+			}
+		})
+	}
+}
+
 type fakeSecretStore struct {
 	values map[string][]string
 }
@@ -593,6 +721,7 @@ func TestXIngestRejectsRecognizedMalformedEvents(t *testing.T) {
 
 	for _, body := range [][]byte{
 		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"tag":"unipost:x:dm:account","payload":{"sender_id":"sender","created_at":"2026-07-16T12:00:00Z"}}}`),
+		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"payload":{"id":"dm","dm_conversation_id":"conversation","sender_id":"sender","recipient_id":"owner","created_at":"2026-07-16T12:00:00Z"}}}`),
 		[]byte(`{"data":{"event_type":"dm.received","tag":"unipost:x:dm:account","payload":{"id":"dm","sender_id":"sender","created_at":"2026-07-16T12:00:00Z"}}}`),
 		[]byte(`{"data":{"event_type":"dm.received","filter":{"user_id":"owner"},"tag":"unipost:x:dm:account","payload":{"id":"dm","sender_id":"sender"}}}`),
 		[]byte(`{"for_user_id":"owner","direct_message_events":[{"type":"message_create","created_timestamp":"1784212800000","message_create":{"target":{"recipient_id":"owner"},"sender_id":"sender"}}]}`),

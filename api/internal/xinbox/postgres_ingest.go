@@ -63,15 +63,15 @@ func (s *PostgresIngestionStore) AccountForApp(
 	)
 }
 
-func (s *PostgresIngestionStore) AccountsForExternalUser(
+func (s *PostgresIngestionStore) AccountsForProviderUser(
 	ctx context.Context,
 	routeKey string,
-	externalUserID string,
+	providerUserID string,
 ) ([]InboxAccount, error) {
-	rows, err := s.queries.FindXInboxAccountsForExternalUserApp(
+	rows, err := s.queries.FindXInboxAccountsForProviderUserApp(
 		ctx,
-		db.FindXInboxAccountsForExternalUserAppParams{
-			ExternalUserID:         nullableText(externalUserID),
+		db.FindXInboxAccountsForProviderUserAppParams{
+			ProviderUserID:         providerUserID,
 			WebhookRouteKey:        routeKey,
 			ManagedWebhookRouteKey: s.managedWebhookRouteKey,
 		},
@@ -79,22 +79,48 @@ func (s *PostgresIngestionStore) AccountsForExternalUser(
 	if err != nil {
 		return nil, err
 	}
+	providerRows := make([]providerUserAccountRow, 0, len(rows))
+	for _, row := range rows {
+		providerRows = append(providerRows, providerUserAccountRow{
+			id: row.ID, workspaceID: row.WorkspaceID, externalUserID: row.ExternalUserID,
+			externalAccountID: row.ExternalAccountID, accountName: row.AccountName,
+			appMode: row.XAppMode, scopes: row.Scope, connectionType: row.ConnectionType,
+			planID: row.PlanID, planAllowsInbox: row.PlanAllowsInbox,
+		})
+	}
+	return inboxAccountsFromProviderRows(providerRows)
+}
+
+type providerUserAccountRow struct {
+	id                string
+	workspaceID       string
+	externalUserID    pgtype.Text
+	externalAccountID string
+	accountName       string
+	appMode           string
+	scopes            []string
+	connectionType    string
+	planID            string
+	planAllowsInbox   bool
+}
+
+func inboxAccountsFromProviderRows(rows []providerUserAccountRow) ([]InboxAccount, error) {
 	accounts := make([]InboxAccount, 0, len(rows))
 	for _, row := range rows {
 		account, err := inboxAccountFromRow(
-			row.ID,
-			row.WorkspaceID,
-			row.ExternalUserID,
-			row.ExternalAccountID,
-			row.AccountName,
-			row.XAppMode,
-			row.Scope,
-			row.ConnectionType,
-			row.PlanID,
-			row.PlanAllowsInbox,
+			row.id,
+			row.workspaceID,
+			row.externalUserID,
+			row.externalAccountID,
+			row.accountName,
+			row.appMode,
+			row.scopes,
+			row.connectionType,
+			row.planID,
+			row.planAllowsInbox,
 		)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		accounts = append(accounts, account)
 	}
