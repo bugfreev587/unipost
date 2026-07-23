@@ -176,7 +176,7 @@ func (h *InboxHandler) completeKnownXInboxOutboundWithTx(
 		ParentExternalID: parentID,
 		AuthorName:       pgtype.Text{String: account.AccountName.String, Valid: account.AccountName.Valid},
 		AuthorID: pgtype.Text{
-			String: firstNonEmptyString(account.ExternalUserID.String, account.ExternalAccountID),
+			String: xProviderAccountID(account),
 			Valid:  true,
 		},
 		Body:         pgtype.Text{String: text, Valid: true},

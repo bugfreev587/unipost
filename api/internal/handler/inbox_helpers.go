@@ -111,6 +111,25 @@ func xInboxReadOutcomeAmbiguous(err error) bool {
 		strings.HasPrefix(message, "x_inbox_read: decode x inbox response")
 }
 
+func xProviderAccountID(account db.SocialAccount) string {
+	return strings.TrimSpace(account.ExternalAccountID)
+}
+
+func xBackfillSafeUpstreamError(err error) *xBackfillUpstreamError {
+	var providerErr *platform.TwitterInboxHTTPError
+	if !errors.As(err, &providerErr) || providerErr == nil || providerErr.StatusCode == 0 {
+		return nil
+	}
+	return &xBackfillUpstreamError{
+		Method:     providerErr.Method,
+		Path:       providerErr.Path,
+		StatusCode: providerErr.StatusCode,
+		Code:       providerErr.Code,
+		Title:      providerErr.Title,
+		Message:    providerErr.Message,
+	}
+}
+
 func validateXInboxReplyTarget(item db.InboxItem) error {
 	if item.IsOwn {
 		return errors.New("cannot reply to an outbound Inbox item")

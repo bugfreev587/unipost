@@ -564,6 +564,7 @@ func (f *fakeXInboxCredits) MarkExposureFinalizePending(
 
 type fakeXInboxBackfillAdapter struct {
 	mentionPageSizes []int
+	mentionUserIDs   []string
 	dmPageSizes      []int
 	mentionTokens    []string
 	mentionPages     []platform.TwitterInboxPage
@@ -576,7 +577,7 @@ type fakeXInboxBackfillAdapter struct {
 func (f *fakeXInboxBackfillAdapter) FetchInboxMentions(
 	_ context.Context,
 	_ string,
-	_ string,
+	userID string,
 	_ time.Time,
 	paginationToken string,
 	maxResults int,
@@ -585,6 +586,7 @@ func (f *fakeXInboxBackfillAdapter) FetchInboxMentions(
 		f.beforeMention()
 	}
 	f.mentionPageSizes = append(f.mentionPageSizes, maxResults)
+	f.mentionUserIDs = append(f.mentionUserIDs, userID)
 	f.mentionTokens = append(f.mentionTokens, paginationToken)
 	if f.mentionErr != nil {
 		return platform.TwitterInboxPage{}, f.mentionErr
@@ -661,33 +663,122 @@ func TestInboxXBackfillDoesNotCallMentionsWhenFewerThanFiveResultsAreAffordable(
 	}
 }
 
-func TestInboxXBackfillDoesNotCallMentionsForOneThroughFourRemainingItems(t *testing.T) {
-	for remaining := 1; remaining < xMentionsMinimumPageSize; remaining++ {
-		t.Run(fmt.Sprintf("remaining_%d", remaining), func(t *testing.T) {
-			handler := &InboxHandler{xCredits: &fakeXInboxCredits{}}
-			adapter := &fakeXInboxBackfillAdapter{}
+func TestInboxXBackfillProviderMinimumUsesNumericAccountIDAndBoundsPersistence(t *testing.T) {
+	for requested := 1; requested < xMentionsMinimumPageSize; requested++ {
+		t.Run(fmt.Sprintf("requested_%d", requested), func(t *testing.T) {
+			credits := &fakeXInboxCredits{}
+			persisted := 0
+			ingestion := xinbox.NewIngestionService(xinbox.IngestionConfig{
+				Store: fakeXInboxIngestionStore{},
+				AtomicProcess: func(
+					_ context.Context,
+					_ xinbox.InboundAdmissionRequest,
+					item xinbox.InboxItem,
+				) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
+					persisted++
+					if !item.IsOwn {
+						t.Fatalf("provider account author %q was not recognized as own", item.AuthorID)
+					}
+					return xinbox.InboundAdmission{Accepted: true}, item, true, nil
+				},
+			})
+			handler := &InboxHandler{xCredits: credits, xIngestion: ingestion}
+			entries := make([]platform.TwitterInboxEntry, xMentionsMinimumPageSize)
+			for index := range entries {
+				entries[index] = platform.TwitterInboxEntry{
+					ExternalID: fmt.Sprintf("tweet-%d", index),
+					ThreadKey:  fmt.Sprintf("conversation-%d", index),
+					AuthorID:   "2039562772455809024",
+					Timestamp:  time.Date(2026, 7, 16, 12, index, 0, 0, time.UTC),
+					Source:     "x_reply",
+				}
+			}
+			adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{{Entries: entries}}}
 			result := &xBackfillAccountResult{}
 			handler.runXBackfillPages(
 				context.Background(),
 				"workspace-1",
 				db.SocialAccount{
 					ID:                "account-1",
-					ExternalAccountID: "user-1",
+					ExternalUserID:    pgtype.Text{String: "sdk-inbox-x", Valid: true},
+					ExternalAccountID: "2039562772455809024",
 					XAppMode:          pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
 					Scope:             []string{"tweet.read", "users.read"},
 				},
 				"token",
 				adapter,
 				"x_reply",
-				xBackfillRequest{LookbackDays: 7, MaxItems: remaining},
+				xBackfillRequest{LookbackDays: 7, MaxItems: requested},
 				time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
-				fmt.Sprintf("run-%d", remaining),
+				fmt.Sprintf("run-%d", requested),
 				result,
 			)
-			if len(adapter.mentionPageSizes) != 0 || !result.StoppedAtBoundary {
-				t.Fatalf("adapter/result = %+v %+v", adapter, result)
+			if !reflect.DeepEqual(adapter.mentionPageSizes, []int{xMentionsMinimumPageSize}) ||
+				!reflect.DeepEqual(adapter.mentionUserIDs, []string{"2039562772455809024"}) {
+				t.Fatalf("provider requests sizes=%v user_ids=%v", adapter.mentionPageSizes, adapter.mentionUserIDs)
+			}
+			if persisted != requested || result.Read != requested || result.Accepted != requested {
+				t.Fatalf("persisted=%d result=%+v, want exactly %d", persisted, result, requested)
+			}
+			wantUnits := int64(xMentionsMinimumPageSize) *
+				(xcredits.OperationWeight("post.read") + xcredits.OperationWeight("user.read"))
+			if credits.exposureFinalizedUnits != wantUnits {
+				t.Fatalf("settled units=%d, want provider exposure %d", credits.exposureFinalizedUnits, wantUnits)
 			}
 		})
+	}
+}
+
+func TestInboxXBackfillSafeUpstreamErrorIsStructured(t *testing.T) {
+	handler := &InboxHandler{xCredits: &fakeXInboxCredits{}}
+	adapter := &fakeXInboxBackfillAdapter{mentionErr: &platform.TwitterInboxHTTPError{
+		Stage:      "x_inbox_read",
+		Method:     http.MethodGet,
+		Path:       "/2/users/2039562772455809024/mentions",
+		StatusCode: http.StatusBadRequest,
+		Code:       "invalid-request",
+		Title:      "Invalid Request",
+		Message:    "One or more parameters to your request was invalid.",
+	}}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(),
+		"workspace-1",
+		db.SocialAccount{
+			ID:                "account-1",
+			ExternalUserID:    pgtype.Text{String: "sdk-inbox-x", Valid: true},
+			ExternalAccountID: "2039562772455809024",
+			XAppMode:          pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+			Scope:             []string{"tweet.read", "users.read"},
+		},
+		"raw-bearer-secret",
+		adapter,
+		"x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC),
+		"run-provider-error",
+		result,
+	)
+	raw, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("decode result: %v", err)
+	}
+	upstream, ok := payload["upstream_error"].(map[string]any)
+	if !ok {
+		t.Fatalf("result=%s, want structured upstream_error", raw)
+	}
+	if upstream["status_code"] != float64(http.StatusBadRequest) ||
+		upstream["code"] != "invalid-request" ||
+		upstream["title"] != "Invalid Request" ||
+		upstream["message"] != "One or more parameters to your request was invalid." {
+		t.Fatalf("upstream_error=%#v", upstream)
+	}
+	if strings.Contains(string(raw), "raw-bearer-secret") {
+		t.Fatalf("result leaked bearer: %s", raw)
 	}
 }
 
@@ -897,7 +988,7 @@ func TestInboxXBackfillDMStillRunsWhenMentionsCannotMeetFiveItemMinimum(t *testi
 		context.Background(), "workspace-1", account, "token", adapter, "x_dm",
 		request, time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-mixed", result,
 	)
-	if len(adapter.mentionPageSizes) != 0 || !reflect.DeepEqual(adapter.dmPageSizes, []int{1}) {
+	if !reflect.DeepEqual(adapter.mentionPageSizes, []int{5}) || !reflect.DeepEqual(adapter.dmPageSizes, []int{1}) {
 		t.Fatalf("mentions=%v dms=%v", adapter.mentionPageSizes, adapter.dmPageSizes)
 	}
 }
