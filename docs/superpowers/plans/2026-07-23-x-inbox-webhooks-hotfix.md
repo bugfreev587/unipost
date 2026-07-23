@@ -139,6 +139,26 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Run the focused test and require PASS.
 - [ ] Commit: git commit -m \"fix: wire X DM feature gating into delivery worker\".
 
+## Task 6A: Repair bounded comment backfill paging and preserve safe upstream evidence
+
+**Files:**
+
+- Modify: api/internal/platform/twitter.go
+- Modify: api/internal/platform/twitter_test.go
+- Modify: api/internal/handler/inbox.go
+- Modify: api/internal/handler/inbox_test.go
+
+- [ ] Add a failing adapter test proving an X mentions HTTP error decodes only the bounded provider `code`, `title`, and safe public `detail`/message fields while retaining method/path/status, stripping query parameters, and never exposing bearer tokens, authorization headers, raw bodies, or unknown fields.
+- [ ] Add a failing handler test proving `max_items=1..4` reserves the provider minimum of five resources, calls X with `max_results=5`, persists/returns no more than the caller-requested item count, and settles exposure from the actual provider entries rather than the requested cap.
+- [ ] Add a failing handler test proving a safe upstream read classification is returned as structured `upstream_error` evidence alongside `stop_reason=upstream_read_failed`, while secrets and raw provider bodies remain absent.
+- [ ] Run the focused red tests: `cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/platform ./internal/handler -run 'TestTwitterInboxReadHTTPError|TestInboxXBackfillProviderMinimum|TestInboxXBackfillSafeUpstreamError' -count=1`; require failures for the missing behavior.
+- [ ] Extend `TwitterInboxHTTPError` with bounded, sanitized method/path/code/title/message metadata and decode only approved JSON fields from non-2xx responses. Keep timeout/retry/outcome-unknown classification unchanged.
+- [ ] Separate caller `remaining` from provider `pageSize`: for replies, request/reserve at least five while truncating persistence and the response counters to `remaining`. Remove the pre-call boundary stop for caller limits below five; retain allowance/daily-cap fail-closed behavior when five provider resources cannot be reserved.
+- [ ] Add a structured, optional upstream error projection to `xBackfillAccountResult` and populate it only from sanitized `TwitterInboxHTTPError` values. Keep internal/unknown errors generic.
+- [ ] Rerun focused tests and all `platform`/`handler` tests; require PASS.
+- [ ] Deploy this observability fix to staging through the owned hotfix PR, then execute at most one user-owned controlled diagnostic read. Record the exact provider status/code/title/message and do not retry on failure or ambiguous spend.
+- [ ] Use the observed provider response to identify and fix any remaining upstream authorization/request/configuration root cause with a new failing test before implementation.
+
 ## Task 7: Local verification and implementation review
 
 - [ ] Re-fetch and verify owned worktree/branch.
