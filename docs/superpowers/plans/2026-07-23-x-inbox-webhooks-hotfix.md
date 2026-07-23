@@ -51,16 +51,16 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - Modify: api/internal/xinbox/subscriptions.go
 - Modify: api/internal/xinbox/subscriptions_test.go
 
-- [ ] Add failing tests proving non-2xx responses expose method, URL path, status, provider error code, and title, but never authorization headers, bearer values, raw body, query string, or provider detail.
+- [ ] Add failing tests proving non-2xx responses expose method, URL path, status, provider error code, and title, but never authorization headers, bearer values, raw body, query string, or untrusted provider detail.
 - [ ] Add failing tests proving webhook/subscription delete treats 404 and 410 as idempotent success while 403 remains an error.
 - [ ] Add ProviderHTTPError with Method, Path, StatusCode, Code, and Title, plus IsProviderHTTPStatus(err, status).
 - [ ] Run the red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/xinbox -run 'TestProviderHTTPError|TestDelete.*Idempotent' -count=1.
-- [ ] Implement bounded JSON error decoding and remove query parameters. Never retain raw provider bodies or detail fields.
+- [ ] Implement bounded JSON error decoding and remove query parameters. Preserve only bounded ASCII title/detail from a trusted `https://api.x.com/2/problems/<slug>` (or legacy `api.twitter.com`) problem type; reject secret markers, URLs, long token-like values, IDs, controls, and all untrusted detail. Never retain raw provider bodies.
 - [ ] Update delete behavior to accept only 404/410 as already absent.
 - [ ] Run all xinbox tests and require PASS.
 - [ ] Commit: git commit -m \"fix: classify X provider HTTP failures safely\".
 
-## Task 3: Persist a dedicated DM 403 latch
+## Task 3: Persist a dedicated DM non-retryable client-error latch
 
 **Files:**
 
@@ -92,7 +92,7 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Prove eligible state calls EnsureWebhook before the worker lists app subscriptions and deterministically converges one dm.received subscription for the exact provider user ID, stable account tag, and selected webhook.
 - [ ] Prove route replacement deletes only the exact recorded account subscription, persists the cleared subscription and route, then ensures the app-level webhook and replacement subscription, and converges idempotently on the next cycle.
 - [ ] Prove the per-account worker does not directly enumerate app-scoped webhooks to identify stale resources and never calls DeleteWebhook. EnsureWebhook may internally list, reuse, revalidate, or create the exact configured URL; stale app-webhook cleanup requires a future generation-aware, leased app-level design.
-- [ ] Prove subscription-create 403 stores the dedicated fingerprint, preserves comments, and suppresses later provider calls while unchanged.
+- [ ] Prove subscription-create 400/401/403 and other non-retryable client failures store the dedicated fingerprint, preserve comments, and suppress later provider calls while unchanged. Keep 408/409/425/429 retryable and do not latch DELETE cleanup failures.
 - [ ] Prove flag-off, canary removal, and deliberate off-to-on clear the latch.
 - [ ] Prove app mode, app identity, non-secret webhook URL, or provider-user changes allow one controlled retry. Bearer/consumer-secret-only replacement requires deliberate off-to-on.
 - [ ] Prove shared stream semantics with two accounts on one app: one stream serves both, disabling one preserves it, disabling the last stops it, DM changes do not churn it, and incomplete discovery preserves existing streams.
@@ -170,6 +170,21 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Use superpowers:requesting-code-review. Resolve behavior changes with a new failing test first.
 - [ ] Repeat the complete required suite after the final review change. Any failure/skip/timeout/cancellation/missing result is a hard stop.
 
+## Task 7A: Close the staging XAA invalid-request evidence gap
+
+- [x] Run one staging DM provisioning canary only for social account `07d50e50-eb43-4ca4-af11-774de4a8fe17`, with comments retained and the strict account canary removed immediately after failure.
+- [x] Record the observed control-plane result without provider body or secrets: `POST /2/activity/subscriptions`, HTTP 400, classification fingerprint `66ea0c5a1af9`.
+- [x] Verify offline that the fingerprint exactly matches the official X problem type `https://api.x.com/2/problems/invalid-request`; do not claim a parameter-level cause because the deployed decoder discarded title/detail.
+- [x] Audit the automatic reconciliation window: three provider POST attempts at `20:50:40`, `20:51:39`, and `20:52:39` UTC before the canary-removal deployment stopped retries. Confirm zero DM Inbox rows and no control-plane Credits charge.
+- [x] Add RED tests proving official X problem code/title/safe detail remain auditable and secret-bearing detail remains omitted.
+- [x] Add RED tests proving subscription-create 400 latches after the first failure, makes no provider call on the next cycle, and leaves the comments rule active.
+- [x] Implement the bounded trusted-problem decoder, structured log fields, and non-retryable client-error latch. Preserve the existing database column for additive compatibility even though its historical name contains `forbidden`.
+- [x] Close independent-review recovery gaps: keep `PUT` webhook revalidation 404/410 recoverable for next-cycle recreation; prove 408/409/425/429 remain retryable; prove DELETE 400/401/403/404/429 never writes the provisioning latch or disables comments; and prove a secret-bearing official problem response cannot reach worker logs or persisted `last_error`.
+- [x] Contain the staging route-key disclosure caused by a browser snapshot of the X Console webhook table: rotate only `X_INBOX_WEBHOOK_ROUTE_SECRET` through a non-output stdin path, keep the DM canary absent, wait for Railway deployment `f68755f4-811b-4d26-94a0-628c946759f5` to succeed on staging SHA `f3151b07089ee5ab9d73bc776ea9e0ca41752d02`, verify health 200, delete the single obsolete staging webhook, and verify the X Console webhook and event-subscription lists are both empty. Never snapshot a webhook table again.
+- [ ] Deploy the observability/latch increment through a new hotfix PR to staging and verify exact SHA before any additional provider request.
+- [ ] After full local regression/race/sqlc/format, independent review, PR exact-SHA checks, staging redeploy, and rotated-route verification all pass, run exactly one newly authorized target-only provisioning diagnostic. Set `X_INBOX_DM_CANARY_SOCIAL_ACCOUNT_IDS` to only `07d50e50-eb43-4ca4-af11-774de4a8fe17`; never include the negative account. Capture only sanitized status/code/title/detail. A non-retryable client error must persist the latch on the first attempt and prevent later provider calls; remove the canary immediately after the bounded observation.
+- [ ] If the diagnostic identifies a request bug, write a failing test, fix it, repeat the complete PR/deploy cycle, and obtain a fresh bounded diagnostic authorization only if another provider request would be required. If it identifies an app/account setting, stop provider calls and report the exact safe evidence and manual action.
+
 ## Task 8: PR to staging and bounded staging canary
 
 - [ ] Re-fetch, verify ownership, and audit exact commits/files.
@@ -182,7 +197,7 @@ No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
 - [ ] Run a synthetic CRC probe against the deployed staging route before provider webhook creation/revalidation. Failure is a hard stop.
 - [ ] Reconfirm X pricing/credits before any billable call and obtain approval for the maximum bounded cost.
 - [ ] Add exactly one user-owned staging account to the canary and execute one bounded reconciliation.
-- [ ] On provider 403, confirm the latch, preserve comments, disable canary/flag, hard stop, and do not retry.
+- [ ] On any non-retryable provider client error, confirm the latch, preserve comments, disable canary/flag, hard stop, and do not retry. Treat 408/409/425/429 as recoverable but do not run an unbounded canary retry.
 - [ ] Require one app-scoped Filtered Stream rule for the intended account set, one valid app-specific webhook, and one exact dm.received subscription.
 - [ ] Ask for one fresh reply/comment and one fresh legacy unencrypted DM; do not backfill.
 - [ ] Verify owner/admin aggregate reads, owning managed-user reads, all other managed users return 404, no cross-account duplicate exists, and no XChat event is stored as x_dm.

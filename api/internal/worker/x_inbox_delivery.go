@@ -651,7 +651,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		} else {
 			fingerprint := dmForbiddenFingerprint(account, app, appWebhookURL)
 			if state.DMSubscriptionForbiddenFingerprint == fingerprint {
-				dmErr = errors.New("DM subscription provisioning is latched after X returned HTTP 403")
+				dmErr = errors.New("DM subscription provisioning is latched after X returned a non-retryable client error")
 			} else {
 				if state.DMSubscriptionForbiddenFingerprint != "" {
 					state.DMSubscriptionForbiddenFingerprint = ""
@@ -662,7 +662,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 				webhook, ensureErr := w.api.EnsureWebhook(ctx, appBearerToken, appWebhookURL)
 				if ensureErr != nil {
 					dmErr = ensureErr
-					if isDMProvisioningForbidden(ensureErr) {
+					if isDMProvisioningNonRetryableClientError(ensureErr) {
 						state.DMSubscriptionForbiddenFingerprint = fingerprint
 						if err := persist(); err != nil {
 							return app, streamDesired(), true, errors.Join(ensureErr, err)
@@ -686,7 +686,7 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 							return app, streamDesired(), true, ensureErr
 						}
 						dmErr = ensureErr
-						if isDMProvisioningForbidden(ensureErr) {
+						if isDMProvisioningNonRetryableClientError(ensureErr) {
 							state.DMSubscriptionForbiddenFingerprint = fingerprint
 							if err := persist(); err != nil {
 								return app, streamDesired(), true, errors.Join(ensureErr, err)
@@ -951,9 +951,17 @@ func dmForbiddenFingerprint(
 	return hex.EncodeToString(hash.Sum(nil))
 }
 
-func isDMProvisioningForbidden(err error) bool {
+func isDMProvisioningNonRetryableClientError(err error) bool {
 	var providerErr *xinbox.ProviderHTTPError
-	if !errors.As(err, &providerErr) || providerErr == nil || providerErr.StatusCode != http.StatusForbidden {
+	if !errors.As(err, &providerErr) || providerErr == nil || providerErr.StatusCode < 400 || providerErr.StatusCode >= 500 {
+		return false
+	}
+	if providerErr.Method == http.MethodPut &&
+		(providerErr.StatusCode == http.StatusNotFound || providerErr.StatusCode == http.StatusGone) {
+		return false
+	}
+	switch providerErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
 		return false
 	}
 	switch providerErr.Method {
@@ -971,9 +979,15 @@ func logXInboxSourceError(
 	err error,
 ) {
 	status := 0
+	providerCode := ""
+	providerTitle := ""
+	providerDetail := ""
 	var providerErr *xinbox.ProviderHTTPError
 	if errors.As(err, &providerErr) && providerErr != nil {
 		status = providerErr.StatusCode
+		providerCode = providerErr.Code
+		providerTitle = providerErr.Title
+		providerDetail = providerErr.Detail
 	}
 	slog.Warn(
 		"X inbox delivery source reconciliation failed",
@@ -984,6 +998,9 @@ func logXInboxSourceError(
 		"source", source,
 		"action", action,
 		"provider_http_status", status,
+		"provider_code", providerCode,
+		"provider_title", providerTitle,
+		"provider_detail", providerDetail,
 		"error", err,
 	)
 }
