@@ -211,6 +211,42 @@ func TestTwitterInboxFetchMentionsUsesOfficialUserMentionsEndpoint(t *testing.T)
 	}
 }
 
+func TestTwitterInboxFetchMentionsPreservesProviderResourceCountBeforeFiltering(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{
+			"data":[
+				{
+					"id":"tweet-valid",
+					"text":"valid",
+					"author_id":"author-1",
+					"created_at":"2026-07-16T10:00:00Z",
+					"conversation_id":"conversation-1"
+				},
+				{
+					"id":"tweet-malformed",
+					"text":"paid but locally invalid",
+					"author_id":"author-2",
+					"created_at":"not-a-timestamp",
+					"conversation_id":"conversation-2"
+				}
+			],
+			"meta":{"next_token":"page-2"}
+		}`)
+	}))
+	defer server.Close()
+
+	adapter := &TwitterAdapter{client: server.Client(), apiBaseURL: server.URL}
+	page, err := adapter.FetchInboxMentions(
+		context.Background(), "user-token", "user-1", time.Time{}, "", 5,
+	)
+	if err != nil {
+		t.Fatalf("FetchInboxMentions: %v", err)
+	}
+	if page.ProviderResourcesRead != 2 || len(page.Entries) != 1 || page.NextToken != "page-2" {
+		t.Fatalf("page = %+v, want provider count 2 with one locally valid entry", page)
+	}
+}
+
 func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.Path != "/2/dm_events" {
@@ -268,7 +304,8 @@ func TestTwitterInboxFetchDMEventsUsesOfficialThirtyDayLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchInboxDMEvents: %v", err)
 	}
-	if page.NextToken != "page-2" || len(page.Entries) != 1 || !page.HorizonReached {
+	if page.ProviderResourcesRead != 2 || page.NextToken != "page-2" ||
+		len(page.Entries) != 1 || !page.HorizonReached {
 		t.Fatalf("page = %+v", page)
 	}
 	got := page.Entries[0]

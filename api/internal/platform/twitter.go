@@ -59,9 +59,10 @@ type TwitterInboxEntry struct {
 }
 
 type TwitterInboxPage struct {
-	Entries        []TwitterInboxEntry
-	NextToken      string
-	HorizonReached bool
+	Entries               []TwitterInboxEntry
+	ProviderResourcesRead int
+	NextToken             string
+	HorizonReached        bool
 }
 
 type TwitterDMSendResult struct {
@@ -184,7 +185,10 @@ func (a *TwitterAdapter) FetchInboxMentions(
 			avatar string
 		}{name: firstNonEmpty(user.Name, user.Username), avatar: user.ProfileImageURL}
 	}
-	page := TwitterInboxPage{NextToken: response.Meta.NextToken}
+	page := TwitterInboxPage{
+		ProviderResourcesRead: len(response.Data),
+		NextToken:             response.Meta.NextToken,
+	}
 	for _, tweet := range response.Data {
 		parentID := ""
 		for _, reference := range tweet.ReferencedTweets {
@@ -281,7 +285,10 @@ func (a *TwitterAdapter) FetchInboxDMEvents(
 			avatar string
 		}{name: firstNonEmpty(user.Name, user.Username), avatar: user.ProfileImageURL}
 	}
-	page := TwitterInboxPage{NextToken: response.Meta.NextToken}
+	page := TwitterInboxPage{
+		ProviderResourcesRead: len(response.Data),
+		NextToken:             response.Meta.NextToken,
+	}
 	for _, event := range response.Data {
 		if event.EventType != "" && !strings.EqualFold(event.EventType, "MessageCreate") {
 			continue

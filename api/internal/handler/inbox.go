@@ -2215,6 +2215,27 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			)
 		}
 		if err != nil {
+			result.UpstreamError = xBackfillSafeUpstreamError(err)
+			if result.UpstreamError != nil {
+				slog.Warn(
+					"X Inbox backfill upstream read failed",
+					"social_account_id", account.ID,
+					"source", source,
+					"method", result.UpstreamError.Method,
+					"path", result.UpstreamError.Path,
+					"status_code", result.UpstreamError.StatusCode,
+					"provider_code", result.UpstreamError.Code,
+					"provider_title", result.UpstreamError.Title,
+					"provider_message", result.UpstreamError.Message,
+				)
+			} else {
+				slog.Warn(
+					"X Inbox backfill upstream read failed",
+					"social_account_id", account.ID,
+					"source", source,
+					"error_class", "unclassified",
+				)
+			}
 			if reservation.ID != "" {
 				if xInboxReadOutcomeAmbiguous(err) {
 					if markErr := h.persistXExposureNeedsReconciliation(
@@ -2239,34 +2260,30 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 				}
 			}
 			result.StopReason = "upstream_read_failed"
-			result.UpstreamError = xBackfillSafeUpstreamError(err)
-			if result.UpstreamError != nil {
-				slog.Warn(
-					"X Inbox backfill upstream read failed",
-					"social_account_id", account.ID,
-					"source", source,
-					"method", result.UpstreamError.Method,
-					"path", result.UpstreamError.Path,
-					"status_code", result.UpstreamError.StatusCode,
-					"provider_code", result.UpstreamError.Code,
-					"provider_title", result.UpstreamError.Title,
-					"provider_message", result.UpstreamError.Message,
-				)
-			} else {
-				slog.Warn(
-					"X Inbox backfill upstream read failed",
-					"social_account_id", account.ID,
-					"source", source,
-					"error_class", "unclassified",
-				)
-			}
 			return
 		}
-		providerEntriesRead := len(page.Entries)
-		if providerEntriesRead > reservation.ReservedResources {
-			providerEntriesRead = reservation.ReservedResources
+		providerResourcesRead := page.ProviderResourcesRead
+		if providerResourcesRead == 0 && len(page.Entries) > 0 {
+			providerResourcesRead = len(page.Entries)
 		}
-		actualUnits := int64(providerEntriesRead) * unitsPerResource
+		if providerResourcesRead > reservation.ReservedResources {
+			result.StoppedAtBoundary = true
+			if reservation.ID != "" {
+				if markErr := h.persistXExposureNeedsReconciliation(
+					ctx,
+					reservation.ID,
+					"provider returned more X Inbox resources than the reserved exposure",
+				); markErr != nil {
+					result.StopReason = "usage_reservation_reconciliation_persist_failed"
+					return
+				}
+				result.StopReason = "usage_reservation_exposure_needs_reconciliation"
+				return
+			}
+			result.StopReason = "upstream_read_exceeded_reservation"
+			return
+		}
+		actualUnits := int64(providerResourcesRead) * unitsPerResource
 		if len(page.Entries) > remaining {
 			page.Entries = page.Entries[:remaining]
 		}
@@ -2321,10 +2338,15 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		if page.HorizonReached {
 			return
 		}
-		nextToken = page.NextToken
-		if nextToken == "" || len(page.Entries) == 0 {
+		newNextToken := strings.TrimSpace(page.NextToken)
+		if newNextToken == "" || providerResourcesRead == 0 {
 			return
 		}
+		if newNextToken == nextToken {
+			result.StopReason = "upstream_pagination_token_repeated"
+			return
+		}
+		nextToken = newNextToken
 	}
 }
 

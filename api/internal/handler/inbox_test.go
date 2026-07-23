@@ -782,6 +782,157 @@ func TestInboxXBackfillSafeUpstreamErrorIsStructured(t *testing.T) {
 	}
 }
 
+func TestInboxXBackfillSettlesProviderResourcesBeforeLocalFiltering(t *testing.T) {
+	credits := &fakeXInboxCredits{}
+	adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{{
+		ProviderResourcesRead: 5,
+		Entries: []platform.TwitterInboxEntry{{
+			ExternalID: "tweet-valid",
+			ThreadKey:  "conversation-1",
+			AuthorID:   "author-1",
+			Timestamp:  time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+			Source:     "x_reply",
+		}},
+	}}}
+	handler := &InboxHandler{xCredits: credits}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "2039562772455809024",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 1},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-provider-count", result,
+	)
+	wantUnits := int64(5) *
+		(xcredits.OperationWeight("post.read") + xcredits.OperationWeight("user.read"))
+	if credits.exposureFinalizedUnits != wantUnits {
+		t.Fatalf("settled units=%d, want provider exposure %d", credits.exposureFinalizedUnits, wantUnits)
+	}
+}
+
+func TestInboxXBackfillContinuesPastLocallyFilteredProviderPage(t *testing.T) {
+	adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{
+		{ProviderResourcesRead: 5, NextToken: "page-2"},
+		{
+			ProviderResourcesRead: 1,
+			Entries: []platform.TwitterInboxEntry{{
+				ExternalID: "tweet-valid",
+				ThreadKey:  "conversation-1",
+				AuthorID:   "author-1",
+				Timestamp:  time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC),
+				Source:     "x_reply",
+			}},
+		},
+	}}
+	handler := &InboxHandler{xCredits: &fakeXInboxCredits{}}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "2039562772455809024",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeWorkspace), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 1},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-filtered-page", result,
+	)
+	if !reflect.DeepEqual(adapter.mentionTokens, []string{"", "page-2"}) {
+		t.Fatalf("pagination tokens=%v, want continuation to page-2", adapter.mentionTokens)
+	}
+	if result.Read != 1 {
+		t.Fatalf("result=%+v, want one valid item from the second page", result)
+	}
+}
+
+func TestInboxXBackfillFailsClosedWhenProviderExceedsReservedResources(t *testing.T) {
+	credits := &fakeXInboxCredits{}
+	adapter := &fakeXInboxBackfillAdapter{mentionPages: []platform.TwitterInboxPage{{
+		ProviderResourcesRead: 6,
+	}}}
+	handler := &InboxHandler{xCredits: credits}
+	result := &xBackfillAccountResult{}
+	handler.runXBackfillPages(
+		context.Background(), "workspace-1",
+		db.SocialAccount{
+			ID: "account-1", ExternalAccountID: "2039562772455809024",
+			XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+			Scope:    []string{"tweet.read", "users.read"},
+		},
+		"token", adapter, "x_reply",
+		xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+		time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-over-reservation", result,
+	)
+	if result.StopReason != "usage_reservation_exposure_needs_reconciliation" ||
+		!result.StoppedAtBoundary || !credits.exposureReconciliation {
+		t.Fatalf("result=%+v credits=%+v, want fail-closed reconciliation", result, credits)
+	}
+	if credits.exposureFinalizeCalls != 0 {
+		t.Fatalf("finalize calls=%d, want reconciliation without clamped settlement", credits.exposureFinalizeCalls)
+	}
+}
+
+func TestInboxXBackfillPreservesUpstreamErrorWhenExposureCleanupFails(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   *platform.TwitterInboxHTTPError
+		credits    *fakeXInboxCredits
+		wantReason string
+	}{
+		{
+			name: "definitive error and release-pending persistence failure",
+			provider: &platform.TwitterInboxHTTPError{
+				Stage: "x_inbox_read", Method: http.MethodGet,
+				Path: "/2/users/2039562772455809024/mentions", StatusCode: http.StatusBadRequest,
+				Code: "invalid-request", Message: "provider rejected the request",
+			},
+			credits: &fakeXInboxCredits{
+				exposureReleaseErr:   errors.New("release failed"),
+				exposureReconcileErr: errXInboxStateTransitionConflict,
+			},
+			wantReason: "usage_reservation_reconciliation_persist_failed",
+		},
+		{
+			name: "ambiguous error and reconciliation persistence failure",
+			provider: &platform.TwitterInboxHTTPError{
+				Stage: "x_inbox_read", Method: http.MethodGet,
+				Path: "/2/users/2039562772455809024/mentions", StatusCode: http.StatusServiceUnavailable,
+				Code: "service-unavailable", Message: "provider availability failure", Retryable: true,
+			},
+			credits:    &fakeXInboxCredits{exposureReconcileErr: errXInboxStateTransitionConflict},
+			wantReason: "usage_reservation_reconciliation_persist_failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := &InboxHandler{xCredits: test.credits}
+			result := &xBackfillAccountResult{}
+			handler.runXBackfillPages(
+				context.Background(), "workspace-1",
+				db.SocialAccount{
+					ID: "account-1", ExternalAccountID: "2039562772455809024",
+					XAppMode: pgtype.Text{String: string(xinbox.AppModeUniPostManaged), Valid: true},
+					Scope:    []string{"tweet.read", "users.read"},
+				},
+				"token", &fakeXInboxBackfillAdapter{mentionErr: test.provider}, "x_reply",
+				xBackfillRequest{LookbackDays: 7, MaxItems: 5},
+				time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC), "run-cleanup-error", result,
+			)
+			if result.StopReason != test.wantReason {
+				t.Fatalf("stop reason=%q, want %q", result.StopReason, test.wantReason)
+			}
+			if result.UpstreamError == nil || result.UpstreamError.StatusCode != test.provider.StatusCode ||
+				result.UpstreamError.Code != test.provider.Code {
+				t.Fatalf("result=%+v, want preserved provider evidence", result)
+			}
+		})
+	}
+}
+
 func TestInboxXBackfillDuplicateExposureNeverCallsX(t *testing.T) {
 	credits := &fakeXInboxCredits{exposure: xcredits.ExposureReservation{
 		ID:                 "existing-reservation",
