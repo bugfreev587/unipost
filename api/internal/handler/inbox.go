@@ -1798,14 +1798,24 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 }
 
 type xBackfillAccountResult struct {
-	AccountID         string   `json:"account_id"`
-	Accepted          int      `json:"accepted"`
-	Suppressed        int      `json:"suppressed"`
-	Duplicates        int      `json:"duplicates"`
-	Read              int      `json:"read"`
-	StoppedAtBoundary bool     `json:"stopped_at_boundary,omitempty"`
-	StopReason        string   `json:"stop_reason,omitempty"`
-	MissingScopes     []string `json:"missing_scopes,omitempty"`
+	AccountID         string                  `json:"account_id"`
+	Accepted          int                     `json:"accepted"`
+	Suppressed        int                     `json:"suppressed"`
+	Duplicates        int                     `json:"duplicates"`
+	Read              int                     `json:"read"`
+	StoppedAtBoundary bool                    `json:"stopped_at_boundary,omitempty"`
+	StopReason        string                  `json:"stop_reason,omitempty"`
+	MissingScopes     []string                `json:"missing_scopes,omitempty"`
+	UpstreamError     *xBackfillUpstreamError `json:"upstream_error,omitempty"`
+}
+
+type xBackfillUpstreamError struct {
+	Method     string `json:"method,omitempty"`
+	Path       string `json:"path,omitempty"`
+	StatusCode int    `json:"status_code"`
+	Code       string `json:"code,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Message    string `json:"message,omitempty"`
 }
 
 func normalizeXBackfillRequest(request xBackfillRequest) xBackfillRequest {
@@ -2100,7 +2110,13 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		result.MissingScopes = missingScopes
 		return
 	}
+	providerScanRemaining := xBackfillProviderScanBudget(source, remaining)
 	for remaining > 0 {
+		if providerScanRemaining < minPageSize {
+			result.StoppedAtBoundary = true
+			result.StopReason = "provider_scan_budget_exhausted"
+			return
+		}
 		if beforePaidRead != nil {
 			if err := beforePaidRead(ctx); err != nil {
 				result.StoppedAtBoundary = true
@@ -2113,9 +2129,10 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			pageSize = 100
 		}
 		if pageSize < minPageSize {
-			result.StoppedAtBoundary = true
-			result.StopReason = "x_inbound_or_monthly_boundary"
-			return
+			pageSize = minPageSize
+		}
+		if pageSize > providerScanRemaining {
+			pageSize = providerScanRemaining
 		}
 		unitsPerResource := xcredits.OperationWeight(operation) + xcredits.OperationWeight("user.read")
 		reservation, err := h.xCredits.ReserveExposure(
@@ -2192,7 +2209,7 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			page, err = adapter.FetchInboxMentions(
 				ctx,
 				accessToken,
-				firstNonEmptyString(account.ExternalUserID.String, account.ExternalAccountID),
+				xProviderAccountID(account),
 				startTime,
 				nextToken,
 				pageSize,
@@ -2207,6 +2224,27 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			)
 		}
 		if err != nil {
+			result.UpstreamError = xBackfillSafeUpstreamError(err)
+			if result.UpstreamError != nil {
+				slog.Warn(
+					"X Inbox backfill upstream read failed",
+					"social_account_id", account.ID,
+					"source", source,
+					"method", result.UpstreamError.Method,
+					"path", result.UpstreamError.Path,
+					"status_code", result.UpstreamError.StatusCode,
+					"provider_code", result.UpstreamError.Code,
+					"provider_title", result.UpstreamError.Title,
+					"provider_message", result.UpstreamError.Message,
+				)
+			} else {
+				slog.Warn(
+					"X Inbox backfill upstream read failed",
+					"social_account_id", account.ID,
+					"source", source,
+					"error_class", "unclassified",
+				)
+			}
 			if reservation.ID != "" {
 				if xInboxReadOutcomeAmbiguous(err) {
 					if markErr := h.persistXExposureNeedsReconciliation(
@@ -2233,6 +2271,29 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			result.StopReason = "upstream_read_failed"
 			return
 		}
+		providerResourcesRead := page.ProviderResourcesRead
+		if providerResourcesRead == 0 && len(page.Entries) > 0 {
+			providerResourcesRead = len(page.Entries)
+		}
+		if providerResourcesRead > reservation.ReservedResources {
+			result.StoppedAtBoundary = true
+			if reservation.ID != "" {
+				if markErr := h.persistXExposureNeedsReconciliation(
+					ctx,
+					reservation.ID,
+					"provider returned more X Inbox resources than the reserved exposure",
+				); markErr != nil {
+					result.StopReason = "usage_reservation_reconciliation_persist_failed"
+					return
+				}
+				result.StopReason = "usage_reservation_exposure_needs_reconciliation"
+				return
+			}
+			result.StopReason = "upstream_read_exceeded_reservation"
+			return
+		}
+		providerScanRemaining -= providerResourcesRead
+		actualUnits := int64(providerResourcesRead) * unitsPerResource
 		if len(page.Entries) > remaining {
 			page.Entries = page.Entries[:remaining]
 		}
@@ -2249,7 +2310,6 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			)
 			if admissionErr != nil {
 				if reservation.ID != "" {
-					actualUnits := int64(len(page.Entries)) * unitsPerResource
 					if settleErr := h.settleXExposure(ctx, reservation.ID, actualUnits); settleErr != nil {
 						result.StopReason = "usage_reservation_settlement_failed"
 						return
@@ -2265,7 +2325,6 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 				result.StoppedAtBoundary = true
 				result.StopReason = ingestion.Admission.PauseReason
 				if reservation.ID != "" {
-					actualUnits := int64(len(page.Entries)) * unitsPerResource
 					if settleErr := h.settleXExposure(ctx, reservation.ID, actualUnits); settleErr != nil {
 						result.StopReason = "usage_reservation_settlement_failed"
 					}
@@ -2281,7 +2340,6 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 			}
 		}
 		if reservation.ID != "" {
-			actualUnits := int64(len(page.Entries)) * unitsPerResource
 			if err := h.settleXExposure(ctx, reservation.ID, actualUnits); err != nil {
 				result.StopReason = "usage_reservation_settlement_failed"
 				return
@@ -2290,10 +2348,15 @@ func (h *InboxHandler) runXBackfillPagesWithLease(
 		if page.HorizonReached {
 			return
 		}
-		nextToken = page.NextToken
-		if nextToken == "" || len(page.Entries) == 0 {
+		newNextToken := strings.TrimSpace(page.NextToken)
+		if newNextToken == "" || providerResourcesRead == 0 {
 			return
 		}
+		if newNextToken == nextToken {
+			result.StopReason = "upstream_pagination_token_repeated"
+			return
+		}
+		nextToken = newNextToken
 	}
 }
 
@@ -2363,8 +2426,7 @@ func (h *InboxHandler) ingestXBackfillEntry(
 			return xinbox.IngestionResult{}, stderrors.New("X direct messages are not available")
 		}
 	}
-	isOwn := entry.AuthorID != "" &&
-		(entry.AuthorID == account.ExternalUserID.String || entry.AuthorID == account.ExternalAccountID)
+	isOwn := entry.AuthorID != "" && entry.AuthorID == xProviderAccountID(account)
 	metadata := map[string]any{
 		"conversation_id": entry.ThreadKey,
 		"permalink": func() string {
