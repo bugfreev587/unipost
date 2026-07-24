@@ -1,0 +1,235 @@
+# X Inbox Webhook Hotfix Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (- [ ]) syntax for tracking.
+
+**Goal:** Restore X Inbox real-time ingestion for replies/comments and legacy unencrypted dm.received events while preserving exact managed-user isolation, existing workspace aggregate access, bounded provider spend, and fail-closed DM rollout behavior.
+
+**Architecture:** Keep comments/replies on the existing app-scoped Filtered Stream and legacy DMs on X Account Activity webhooks. The worker computes the two desired states independently, evaluates x_dms_v1 through the shared backend feature-flag evaluator, gates DM provisioning through a strict account canary, and stores a dedicated persistent 403 latch. Ingestion resolves legacy DM recipients only by exact provider user ID and rejects zero or multiple matches before any write or notification. XChat chat.received is excluded.
+
+**Tech Stack:** Go, PostgreSQL/sqlc, X API v2 Filtered Stream, X Account Activity webhooks, Railway, GitHub Actions.
+
+## Scope and workflow invariants
+
+Expected implementation surfaces:
+
+- api/internal/worker/x_inbox_dm_canary.go and tests
+- api/internal/worker/x_inbox_delivery.go and tests
+- api/internal/xinbox/client.go, subscriptions.go, ingest.go, postgres_ingest.go and tests
+- api/internal/db/queries/inbox.sql and x_inbox.sql, generated sqlc files, and contract tests
+- api/internal/db/migrations/120_x_inbox_dm_forbidden_latch.sql
+- api/cmd/api/main.go and x_inbox_delivery_wiring_test.go
+
+No publishing, analytics, XChat, or generalized Inbox redesign is in scope.
+
+- [ ] Work only in /Users/xiaoboyu/.codex/worktrees/hotfix-x-inbox-webhooks/unipost on hotfix-x-inbox-webhooks.
+- [ ] Before every write, test, commit, push, deployment, merge, or promotion, run git fetch origin --prune and verify the absolute worktree path, branch, and expected status.
+- [ ] Never touch /Users/xiaoboyu/.config/superpowers/worktrees/unipost/hotfix-inbox-comments-idor.
+- [ ] Treat any required failure, skip, timeout, cancellation, missing result, or SHA mismatch as a hard stop.
+- [ ] Never push directly to staging, main, or dev.
+- [ ] Never print, reload, or reuse the production UniPost API key previously pasted into chat. Revoke/rotate it before production acceptance.
+- [ ] Do not run DM backfill in this hotfix. Acceptance uses fresh provider-side events only.
+
+## Task 1: Add a whole-list-fail-closed DM canary parser
+
+**Files:**
+
+- Create: api/internal/worker/x_inbox_dm_canary.go
+- Create: api/internal/worker/x_inbox_dm_canary_test.go
+
+- [ ] Write table-driven failing tests for a missing value, whitespace only, one UUID, trimmed UUIDs, duplicates, an empty member, and one malformed member among valid UUIDs.
+- [ ] Define ParseXInboxDMCanary(raw string) (map[string]struct{}, error). Missing or whitespace-only input returns an empty set and no error. Every non-empty comma-separated member must parse as UUID. Any blank or malformed member rejects the whole list and returns an empty set plus error.
+- [ ] Run the red test: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/worker -run TestParseXInboxDMCanary -count=1. Require failure because the parser is absent.
+- [ ] Implement only trimming, UUID validation, deduplication, and whole-list rejection.
+- [ ] Rerun the focused test and require PASS.
+- [ ] Commit: git commit -m \"fix: validate X DM canary configuration\".
+
+## Task 2: Make provider HTTP failures status-aware and secret-safe
+
+**Files:**
+
+- Modify: api/internal/xinbox/client.go
+- Modify: api/internal/xinbox/subscriptions.go
+- Modify: api/internal/xinbox/subscriptions_test.go
+
+- [ ] Add failing tests proving non-2xx responses expose method, URL path, status, provider error code, and title, but never authorization headers, bearer values, raw body, query string, or untrusted provider detail.
+- [ ] Add failing tests proving webhook/subscription delete treats 404 and 410 as idempotent success while 403 remains an error.
+- [ ] Add ProviderHTTPError with Method, Path, StatusCode, Code, and Title, plus IsProviderHTTPStatus(err, status).
+- [ ] Run the red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/xinbox -run 'TestProviderHTTPError|TestDelete.*Idempotent' -count=1.
+- [ ] Implement bounded JSON error decoding and remove query parameters. Preserve only bounded ASCII title/detail from a trusted `https://api.x.com/2/problems/<slug>` (or legacy `api.twitter.com`) problem type; reject secret markers, URLs, long token-like values, IDs, controls, and all untrusted detail. Never retain raw provider bodies.
+- [ ] Update delete behavior to accept only 404/410 as already absent.
+- [ ] Run all xinbox tests and require PASS.
+- [ ] Commit: git commit -m \"fix: classify X provider HTTP failures safely\".
+
+## Task 3: Persist a dedicated DM non-retryable client-error latch
+
+**Files:**
+
+- Create: api/internal/db/migrations/120_x_inbox_dm_forbidden_latch.sql
+- Create: api/internal/db/x_inbox_dm_latch_contract_test.go
+- Modify: api/internal/db/queries/x_inbox.sql
+- Regenerate: api/internal/db/x_inbox.sql.go and api/internal/db/models.go when changed
+- Modify: api/internal/worker/x_inbox_delivery.go and tests
+
+- [ ] Write a failing contract test requiring a nullable dm_subscription_forbidden_fingerprint TEXT column and requiring state queries to read and write it.
+- [ ] Extend worker store tests so the saved latch survives ListAccounts independently of last_error.
+- [ ] Run the red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/db ./internal/worker -run 'TestXInboxDMLatchContract|Test.*ForbiddenFingerprint' -count=1.
+- [ ] Add the additive nullable migration without altering or deleting delivery rows.
+- [ ] Update sqlc queries and worker account/state models. Update the fake store.
+- [ ] Regenerate with: cd api && go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate.
+- [ ] Rerun focused tests and require PASS.
+- [ ] Commit: git commit -m \"fix: persist X DM forbidden provisioning latch\".
+
+## Task 4: Restore independent comment and legacy-DM reconciliation
+
+**Files:**
+
+- Modify: api/internal/worker/x_inbox_delivery.go
+- Modify: api/internal/worker/x_inbox_delivery_test.go
+
+- [ ] Add failing tests for the full DM conjunction: account active, plan permits Inbox, dm.read present, workspace x_dms_v1 true, account in strict canary, managed app bearer present, consumer secret configured, webhook URL present, and spend safety permitted.
+- [ ] Prove comment and DM desired states are independent. Flag-off, evaluator error, missing DM scope, missing consumer secret, or missing webhook must not disable a valid comment stream.
+- [ ] Prove evaluator errors fail closed for DMs and make no DM creation call.
+- [ ] Prove eligible state calls EnsureWebhook before the worker lists app subscriptions and deterministically converges one dm.received subscription for the exact provider user ID, stable account tag, and selected webhook.
+- [ ] Prove route replacement deletes only the exact recorded account subscription, persists the cleared subscription and route, then ensures the app-level webhook and replacement subscription, and converges idempotently on the next cycle.
+- [ ] Prove the per-account worker does not directly enumerate app-scoped webhooks to identify stale resources and never calls DeleteWebhook. EnsureWebhook may internally list, reuse, revalidate, or create the exact configured URL; stale app-webhook cleanup requires a future generation-aware, leased app-level design.
+- [ ] Prove subscription-create 400/401/403 and other non-retryable client failures store the dedicated fingerprint, preserve comments, and suppress later provider calls while unchanged. Keep 408/409/425/429 retryable and do not latch DELETE cleanup failures.
+- [ ] Prove flag-off, canary removal, and deliberate off-to-on clear the latch.
+- [ ] Prove app mode, app identity, non-secret webhook URL, or provider-user changes allow one controlled retry. Bearer/consumer-secret-only replacement requires deliberate off-to-on.
+- [ ] Prove shared stream semantics with two accounts on one app: one stream serves both, disabling one preserves it, disabling the last stops it, DM changes do not churn it, and incomplete discovery preserves existing streams.
+- [ ] Run focused red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/worker -run 'TestXInboxDelivery|Test.*DM.*Desired|Test.*SharedStream' -count=1.
+- [ ] Add DMsAvailable func(context.Context, string) (bool, error) and DMCanaryAccountIDs map[string]struct{} to XInboxDeliveryConfig.
+- [ ] Replace the hard-coded DM false value with independent eligibility. Require consumer secret and webhook only for DMs; apply spend safety when either source is desired.
+- [ ] Restore EnsureWebhook, then let the worker own the complete subscription lifecycle: ListActivitySubscriptions, deterministic duplicate/stale convergence, durable state clear, and pure CreateDMSubscription/DeleteActivitySubscription calls using the existing app bearer. Do not switch to user OAuth.
+- [ ] Build the fingerprint only from non-secret app mode, app identity, social account, provider user, non-secret webhook URL, and event. Never include bearer or consumer secret values; a webhook URL change allows one controlled retry.
+- [ ] Keep last_error as the latest sanitized human summary only; never parse it for control flow. Preserve source-specific logs/metrics.
+- [ ] Run all worker tests and require PASS.
+- [ ] Commit: git commit -m \"fix: reconcile X comments and legacy DMs independently\".
+
+## Task 5: Enforce exact single-account legacy DM routing and exclude XChat
+
+**Files:**
+
+- Modify: api/internal/db/queries/inbox.sql and generated api/internal/db/inbox.sql.go
+- Modify: api/internal/db/x_inbox_ingest_contract_test.go
+- Modify: api/internal/xinbox/ingest.go, postgres_ingest.go, and their tests
+
+- [ ] Change the SQL contract test first so fallback routing uses only sa.external_account_id = sqlc.arg(provider_user_id)::TEXT.
+- [ ] Keep the query as :many and do not add LIMIT 1; service code must detect ambiguity.
+- [ ] Add failing tests for zero, one, and multiple matches plus row-conversion failure. Zero/multiple/error cases write no Inbox item and emit no notification.
+- [ ] Add failing tests proving dm.received and legacy direct_message_events route exactly, while chat.received is not admitted as x_dm.
+- [ ] Run red tests: cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/db ./internal/xinbox -run 'TestXInboxIngestContract|Test.*ProviderUser|Test.*Ambiguous|Test.*XChat' -count=1.
+- [ ] Rename the store boundary to AccountsForProviderUser and fail the whole lookup on conversion error instead of skipping a row.
+- [ ] Add a sentinel ambiguity error and enforce exactly one candidate before persistence or notification.
+- [ ] Regenerate sqlc, run all xinbox and DB contract tests, and require PASS.
+- [ ] Commit: git commit -m \"fix: isolate legacy X DMs by exact provider user\".
+
+## Task 6: Wire shared feature evaluation and fail-closed canary
+
+**Files:**
+
+- Modify: api/cmd/api/main.go
+- Modify: api/cmd/api/x_inbox_delivery_wiring_test.go
+
+- [ ] Add failing wiring tests proving the worker receives a callback using featureflags.XDMSV1, receives the parsed canary, and contains no scattered feature environment read.
+- [ ] Prove invalid canary config yields an empty DM canary and only a sanitized configuration-class error.
+- [ ] Run red test: cd api && GOCACHE=/tmp/unipost-go-build go test ./cmd/api -run TestXInboxDeliveryWiring -count=1.
+- [ ] Parse the canary environment value once at startup.
+- [ ] Wire featureFlagEvaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1) into DMsAvailable.
+- [ ] Preserve backend authority and existing Super Admin owner fallback; do not copy evaluator policy into the worker.
+- [ ] Run the focused test and require PASS.
+- [ ] Commit: git commit -m \"fix: wire X DM feature gating into delivery worker\".
+
+## Task 6A: Repair bounded comment backfill paging and preserve safe upstream evidence
+
+**Files:**
+
+- Modify: api/internal/platform/twitter.go
+- Modify: api/internal/platform/twitter_test.go
+- Modify: api/internal/handler/inbox.go
+- Modify: api/internal/handler/inbox_test.go
+
+- [ ] Add a failing adapter test proving an X mentions HTTP error decodes only the bounded provider `code`, `title`, and safe public `detail`/message fields while retaining method/path/status, stripping query parameters, and never exposing bearer tokens, authorization headers, raw bodies, or unknown fields.
+- [ ] Add a failing handler test proving `max_items=1..4` reserves the provider minimum of five resources, calls X with `max_results=5`, persists/returns no more than the caller-requested item count, and settles exposure from the actual provider entries rather than the requested cap.
+- [ ] Add a failing handler test proving a safe upstream read classification is returned as structured `upstream_error` evidence alongside `stop_reason=upstream_read_failed`, while secrets and raw provider bodies remain absent.
+- [ ] Run the focused red tests: `cd api && GOCACHE=/tmp/unipost-go-build go test ./internal/platform ./internal/handler -run 'TestTwitterInboxReadHTTPError|TestInboxXBackfillProviderMinimum|TestInboxXBackfillSafeUpstreamError' -count=1`; require failures for the missing behavior.
+- [ ] Extend `TwitterInboxHTTPError` with bounded, sanitized method/path/code/title/message metadata and decode only approved JSON fields from non-2xx responses. Keep timeout/retry/outcome-unknown classification unchanged.
+- [ ] Separate caller `remaining` from provider `pageSize`: for replies, request/reserve at least five while truncating persistence and the response counters to `remaining`. Remove the pre-call boundary stop for caller limits below five; retain allowance/daily-cap fail-closed behavior when five provider resources cannot be reserved.
+- [ ] Add a structured, optional upstream error projection to `xBackfillAccountResult` and populate it only from sanitized `TwitterInboxHTTPError` values. Keep internal/unknown errors generic.
+- [ ] Rerun focused tests and all `platform`/`handler` tests; require PASS.
+- [ ] Deploy this observability fix to staging through the owned hotfix PR, then execute at most one user-owned controlled diagnostic read. Record the exact provider status/code/title/message and do not retry on failure or ambiguous spend.
+- [ ] Use the observed provider response to identify and fix any remaining upstream authorization/request/configuration root cause with a new failing test before implementation.
+
+## Task 7: Local verification and implementation review
+
+- [ ] Re-fetch and verify owned worktree/branch.
+- [ ] Run: cd api && GOCACHE=/tmp/unipost-go-build go test -race ./internal/worker ./internal/xinbox -count=1.
+- [ ] Run: cd api && GOCACHE=/tmp/unipost-go-build go test ./....
+- [ ] Regenerate sqlc, then require git diff --exit-code -- api/internal/db.
+- [ ] Run gofmt on all touched Go files and git diff --check.
+- [ ] Audit with git log --oneline origin/staging..HEAD and git diff --name-status origin/staging...HEAD.
+- [ ] Use superpowers:requesting-code-review. Resolve behavior changes with a new failing test first.
+- [ ] Repeat the complete required suite after the final review change. Any failure/skip/timeout/cancellation/missing result is a hard stop.
+
+## Task 7A: Close the staging XAA invalid-request evidence gap
+
+- [x] Run one staging DM provisioning canary only for social account `07d50e50-eb43-4ca4-af11-774de4a8fe17`, with comments retained and the strict account canary removed immediately after failure.
+- [x] Record the observed control-plane result without provider body or secrets: `POST /2/activity/subscriptions`, HTTP 400, classification fingerprint `66ea0c5a1af9`.
+- [x] Verify offline that the fingerprint exactly matches the official X problem type `https://api.x.com/2/problems/invalid-request`; do not claim a parameter-level cause because the deployed decoder discarded title/detail.
+- [x] Audit the automatic reconciliation window: three provider POST attempts at `20:50:40`, `20:51:39`, and `20:52:39` UTC before the canary-removal deployment stopped retries. Confirm zero DM Inbox rows and no control-plane Credits charge.
+- [x] Add RED tests proving official X problem code/title/safe detail remain auditable and secret-bearing detail remains omitted.
+- [x] Add RED tests proving subscription-create 400 latches after the first failure, makes no provider call on the next cycle, and leaves the comments rule active.
+- [x] Implement the bounded trusted-problem decoder, structured log fields, and non-retryable client-error latch. Preserve the existing database column for additive compatibility even though its historical name contains `forbidden`.
+- [x] Close independent-review recovery gaps: keep `PUT` webhook revalidation 404/410 recoverable for next-cycle recreation; prove 408/409/425/429 remain retryable; prove DELETE 400/401/403/404/429 never writes the provisioning latch or disables comments; and prove a secret-bearing official problem response cannot reach worker logs or persisted `last_error`.
+- [x] Contain the staging route-key disclosure caused by a browser snapshot of the X Console webhook table: rotate only `X_INBOX_WEBHOOK_ROUTE_SECRET` through a non-output stdin path, keep the DM canary absent, wait for Railway deployment `f68755f4-811b-4d26-94a0-628c946759f5` to succeed on staging SHA `f3151b07089ee5ab9d73bc776ea9e0ca41752d02`, verify health 200, delete the single obsolete staging webhook, and verify the X Console webhook and event-subscription lists are both empty. Never snapshot a webhook table again.
+- [ ] Deploy the observability/latch increment through a new hotfix PR to staging and verify exact SHA before any additional provider request.
+- [ ] After full local regression/race/sqlc/format, independent review, PR exact-SHA checks, staging redeploy, and rotated-route verification all pass, run exactly one newly authorized target-only provisioning diagnostic. Set `X_INBOX_DM_CANARY_SOCIAL_ACCOUNT_IDS` to only `07d50e50-eb43-4ca4-af11-774de4a8fe17`; never include the negative account. Capture only sanitized status/code/title/detail. A non-retryable client error must persist the latch on the first attempt and prevent later provider calls; remove the canary immediately after the bounded observation.
+- [ ] If the diagnostic identifies a request bug, write a failing test, fix it, repeat the complete PR/deploy cycle, and obtain a fresh bounded diagnostic authorization only if another provider request would be required. If it identifies an app/account setting, stop provider calls and report the exact safe evidence and manual action.
+
+## Task 8: PR to staging and bounded staging canary
+
+- [ ] Re-fetch, verify ownership, and audit exact commits/files.
+- [ ] Push only hotfix-x-inbox-webhooks and open a PR targeting staging.
+- [ ] Monitor every GitHub/Railway check on the exact head SHA. Merge only after all required checks succeed.
+- [ ] Wait for staging deployment and verify deployed SHA.
+- [ ] Start with an empty DM canary and confirm comments remain healthy.
+- [ ] Verify the acceptance workspace is Super Admin-owned and x_dms_v1 evaluates true through the backend. Otherwise stop before provider mutation.
+- [ ] Verify required credentials and app-specific webhook URL exist without revealing them.
+- [ ] Run a synthetic CRC probe against the deployed staging route before provider webhook creation/revalidation. Failure is a hard stop.
+- [ ] Reconfirm X pricing/credits before any billable call and obtain approval for the maximum bounded cost.
+- [ ] Add exactly one user-owned staging account to the canary and execute one bounded reconciliation.
+- [ ] On any non-retryable provider client error, confirm the latch, preserve comments, disable canary/flag, hard stop, and do not retry. Treat 408/409/425/429 as recoverable but do not run an unbounded canary retry.
+- [ ] Require one app-scoped Filtered Stream rule for the intended account set, one valid app-specific webhook, and one exact dm.received subscription.
+- [ ] Ask for one fresh reply/comment and one fresh legacy unencrypted DM; do not backfill.
+- [ ] Verify owner/admin aggregate reads, owning managed-user reads, all other managed users return 404, no cross-account duplicate exists, and no XChat event is stored as x_dm.
+- [ ] Run publishing and analytics smoke checks.
+
+## Task 9: Promote staging to production and verify
+
+- [ ] Revoke/rotate the production UniPost API key previously pasted into chat before production acceptance. Never display, reload, or reuse it.
+- [ ] Audit staging-only commits/files and open staging to main PR.
+- [ ] Monitor exact-SHA checks; merge only after all succeed. Wait for production deployment and verify its SHA/health.
+- [ ] Configure only missing production secrets without revealing values or rotating unrelated X credentials. Keep DM canary empty initially.
+- [ ] Verify workspace/profile 16202f3f-0c3c-4b92-afae-177f279c692a is Super Admin-owned and evaluator-eligible. Otherwise hard stop.
+- [ ] Run synthetic CRC against production app-specific route before provider mutation.
+- [ ] Enable only social account bc507960-aed6-4ae7-8568-27ad63cf5c58 and provider user 2039562772455809024.
+- [ ] Execute one bounded reconciliation. On failure, timeout, 403, scope ambiguity, or spend ambiguity, disable canary/flag, preserve comments, hard stop, and do not retry.
+- [ ] Verify exactly one production streaming rule for @unipostdev, one valid app-specific webhook, and one dm.received subscription for provider user 2039562772455809024.
+- [ ] Ask for one fresh reply/comment and one fresh legacy unencrypted DM between user-owned accounts. Do not expect old events.
+- [ ] Verify both enter only sdk-inbox-x; owner/admin aggregate reads work; every other managed user gets 404.
+- [ ] Run publishing and analytics smoke checks.
+- [ ] Keep the exposed key revoked and remind the user to update downstream clients with the replacement.
+
+## Task 10: Sync the same hotfix to dev after production
+
+- [ ] Fetch and verify owned branch/worktree.
+- [ ] Merge latest origin/dev into the same owned hotfix branch. On conflicts or unclear attribution, hard stop and ask the user.
+- [ ] Rerun the full backend suite and exact commit/file audit.
+- [ ] Push the owned branch and open a PR targeting dev.
+- [ ] Complete GitHub CI, Railway PR Environment, deployed regression, and Codex browser Preview Acceptance on the exact head SHA.
+- [ ] Merge only after every gate succeeds.
+- [ ] Wait for development deployment, verify SHA, and repeat gating/isolation acceptance using only user-owned accounts.
+- [ ] Report final SHAs, PR/deployment URLs, safely redacted provider resource identifiers, exact tests, and environment acceptance matrix.
+
+## Completion criteria
+
+The hotfix is complete only when comments and legacy DMs reconcile independently; every DM gate fails closed; shared stream and resource replacement remain idempotent; legacy DM routing resolves exactly one account; XChat is excluded; staging, production, and dev verification pass on exact SHAs; managed-user 404 isolation and owner/admin aggregation are proven; publishing/analytics smoke checks pass; and the previously exposed production API key is revoked/rotated.

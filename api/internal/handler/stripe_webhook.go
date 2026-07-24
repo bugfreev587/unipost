@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stripe/stripe-go/v82"
 
@@ -17,7 +19,10 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
+
+var errStripeWebhookNotApplicable = errors.New("stripe webhook is not applicable to this environment")
 
 type StripeWebhookHandler struct {
 	queries            *db.Queries
@@ -181,12 +186,18 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 	switch event.Type {
 	case "checkout.session.completed":
 		if err := h.handleCheckoutCompleted(r, event); err != nil {
+			if errors.Is(err, errStripeWebhookNotApplicable) {
+				break
+			}
 			slog.Error("stripe webhook: checkout completion failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply checkout")
 			return
 		}
 	case "customer.subscription.updated":
 		if err := h.handleSubscriptionUpdated(r, event); err != nil {
+			if errors.Is(err, errStripeWebhookNotApplicable) {
+				break
+			}
 			slog.Error("stripe webhook: subscription update failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply subscription update")
 			return
@@ -218,6 +229,9 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	if workspaceID == "" || planID == "" {
 		slog.Error("stripe webhook: missing metadata", "workspace_id", workspaceID, "plan_id", planID)
 		return fmt.Errorf("checkout session missing workspace_id or plan_id metadata")
+	}
+	if err := h.validateCheckoutTarget(r.Context(), event, session); err != nil {
+		return err
 	}
 
 	var previousSub *db.Subscription
@@ -281,15 +295,75 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	return nil
 }
 
+func (h *StripeWebhookHandler) validateCheckoutTarget(ctx context.Context, event stripe.Event, session stripe.CheckoutSession) error {
+	eventEnvironment := strings.ToLower(strings.TrimSpace(session.Metadata[stripeCheckoutEnvironmentMetadataKey]))
+	localEnvironment := runtimeenv.Current()
+	if eventEnvironment != "" && eventEnvironment != localEnvironment {
+		slog.Info(
+			"stripe webhook: checkout ignored",
+			"event_id", event.ID,
+			"workspace_id", session.Metadata["workspace_id"],
+			"reason", "environment_mismatch",
+			"event_environment", eventEnvironment,
+			"local_environment", localEnvironment,
+		)
+		return errStripeWebhookNotApplicable
+	}
+	if session.Mode != stripe.CheckoutSessionModeSubscription ||
+		session.Status != stripe.CheckoutSessionStatusComplete ||
+		(session.PaymentStatus != stripe.CheckoutSessionPaymentStatusPaid &&
+			session.PaymentStatus != stripe.CheckoutSessionPaymentStatusNoPaymentRequired) {
+		slog.Info(
+			"stripe webhook: checkout ignored",
+			"event_id", event.ID,
+			"workspace_id", session.Metadata["workspace_id"],
+			"reason", "checkout_not_paid",
+			"mode", session.Mode,
+			"status", session.Status,
+			"payment_status", session.PaymentStatus,
+			"local_environment", localEnvironment,
+		)
+		return errStripeWebhookNotApplicable
+	}
+	if _, err := h.queries.GetWorkspace(ctx, session.Metadata["workspace_id"]); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Info(
+				"stripe webhook: checkout ignored",
+				"event_id", event.ID,
+				"workspace_id", session.Metadata["workspace_id"],
+				"reason", "workspace_not_local",
+				"event_environment", eventEnvironment,
+				"local_environment", localEnvironment,
+			)
+			return errStripeWebhookNotApplicable
+		}
+		return fmt.Errorf("load checkout workspace: %w", err)
+	}
+	return nil
+}
+
 func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event stripe.Event) error {
 	var sub stripe.Subscription
 	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
 		slog.Error("stripe webhook: failed to parse subscription", "error", err)
 		return err
 	}
+	if err := h.validateSubscriptionTarget(r.Context(), event, sub); err != nil {
+		return err
+	}
 
 	localSub, err := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && strings.TrimSpace(sub.Metadata[stripeCheckoutEnvironmentMetadataKey]) == "" {
+			slog.Info(
+				"stripe webhook: subscription update ignored",
+				"event_id", event.ID,
+				"subscription_id", sub.ID,
+				"reason", "legacy_subscription_not_local",
+				"local_environment", runtimeenv.Current(),
+			)
+			return errStripeWebhookNotApplicable
+		}
 		slog.Error("stripe webhook: subscription row not found", "subscription_id", sub.ID, "error", err)
 		return err
 	}
@@ -385,6 +459,43 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 
 	if planChanged {
 		h.evaluatePaidQuotaHorizon(r.Context(), localSub.WorkspaceID)
+	}
+	return nil
+}
+
+func (h *StripeWebhookHandler) validateSubscriptionTarget(ctx context.Context, event stripe.Event, sub stripe.Subscription) error {
+	eventEnvironment := strings.ToLower(strings.TrimSpace(sub.Metadata[stripeCheckoutEnvironmentMetadataKey]))
+	localEnvironment := runtimeenv.Current()
+	if eventEnvironment != "" && eventEnvironment != localEnvironment {
+		slog.Info(
+			"stripe webhook: subscription update ignored",
+			"event_id", event.ID,
+			"subscription_id", sub.ID,
+			"workspace_id", sub.Metadata["workspace_id"],
+			"reason", "environment_mismatch",
+			"event_environment", eventEnvironment,
+			"local_environment", localEnvironment,
+		)
+		return errStripeWebhookNotApplicable
+	}
+	workspaceID := strings.TrimSpace(sub.Metadata["workspace_id"])
+	if eventEnvironment == "" || workspaceID == "" {
+		return nil
+	}
+	if _, err := h.queries.GetWorkspace(ctx, workspaceID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			slog.Info(
+				"stripe webhook: subscription update ignored",
+				"event_id", event.ID,
+				"subscription_id", sub.ID,
+				"workspace_id", workspaceID,
+				"reason", "workspace_not_local",
+				"event_environment", eventEnvironment,
+				"local_environment", localEnvironment,
+			)
+			return errStripeWebhookNotApplicable
+		}
+		return fmt.Errorf("load subscription workspace: %w", err)
 	}
 	return nil
 }

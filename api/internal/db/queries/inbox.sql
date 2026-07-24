@@ -589,7 +589,7 @@ WHERE sa.id = sqlc.arg(account_id)
   )
 LIMIT 1;
 
--- name: FindXInboxAccountsForExternalUserApp :many
+-- name: FindXInboxAccountsForProviderUserApp :many
 SELECT
   sa.id,
   p.workspace_id,
@@ -608,10 +608,7 @@ LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 LEFT JOIN platform_credentials pc
   ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
 WHERE sa.platform = 'twitter'
-  AND (
-    sa.external_user_id = sqlc.arg(external_user_id)
-    OR sa.external_account_id = sqlc.arg(external_user_id)::TEXT
-  )
+  AND sa.external_account_id = sqlc.arg(provider_user_id)::TEXT
   AND sa.disconnected_at IS NULL
   AND sa.status = 'active'
   AND (

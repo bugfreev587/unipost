@@ -614,7 +614,7 @@ func (q *Queries) FindXInboxAccountForApp(ctx context.Context, arg FindXInboxAcc
 	return i, err
 }
 
-const findXInboxAccountsForExternalUserApp = `-- name: FindXInboxAccountsForExternalUserApp :many
+const findXInboxAccountsForProviderUserApp = `-- name: FindXInboxAccountsForProviderUserApp :many
 SELECT
   sa.id,
   p.workspace_id,
@@ -633,10 +633,7 @@ LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 LEFT JOIN platform_credentials pc
   ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
 WHERE sa.platform = 'twitter'
-  AND (
-    sa.external_user_id = $1
-    OR sa.external_account_id = $1::TEXT
-  )
+  AND sa.external_account_id = $1::TEXT
   AND sa.disconnected_at IS NULL
   AND sa.status = 'active'
   AND (
@@ -652,13 +649,13 @@ WHERE sa.platform = 'twitter'
 ORDER BY sa.connected_at DESC, sa.id
 `
 
-type FindXInboxAccountsForExternalUserAppParams struct {
-	ExternalUserID         pgtype.Text `json:"external_user_id"`
-	WebhookRouteKey        string      `json:"webhook_route_key"`
-	ManagedWebhookRouteKey string      `json:"managed_webhook_route_key"`
+type FindXInboxAccountsForProviderUserAppParams struct {
+	ProviderUserID         string `json:"provider_user_id"`
+	WebhookRouteKey        string `json:"webhook_route_key"`
+	ManagedWebhookRouteKey string `json:"managed_webhook_route_key"`
 }
 
-type FindXInboxAccountsForExternalUserAppRow struct {
+type FindXInboxAccountsForProviderUserAppRow struct {
 	ID                string      `json:"id"`
 	WorkspaceID       string      `json:"workspace_id"`
 	ExternalUserID    pgtype.Text `json:"external_user_id"`
@@ -671,15 +668,15 @@ type FindXInboxAccountsForExternalUserAppRow struct {
 	PlanAllowsInbox   bool        `json:"plan_allows_inbox"`
 }
 
-func (q *Queries) FindXInboxAccountsForExternalUserApp(ctx context.Context, arg FindXInboxAccountsForExternalUserAppParams) ([]FindXInboxAccountsForExternalUserAppRow, error) {
-	rows, err := q.db.Query(ctx, findXInboxAccountsForExternalUserApp, arg.ExternalUserID, arg.WebhookRouteKey, arg.ManagedWebhookRouteKey)
+func (q *Queries) FindXInboxAccountsForProviderUserApp(ctx context.Context, arg FindXInboxAccountsForProviderUserAppParams) ([]FindXInboxAccountsForProviderUserAppRow, error) {
+	rows, err := q.db.Query(ctx, findXInboxAccountsForProviderUserApp, arg.ProviderUserID, arg.WebhookRouteKey, arg.ManagedWebhookRouteKey)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []FindXInboxAccountsForExternalUserAppRow{}
+	items := []FindXInboxAccountsForProviderUserAppRow{}
 	for rows.Next() {
-		var i FindXInboxAccountsForExternalUserAppRow
+		var i FindXInboxAccountsForProviderUserAppRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.WorkspaceID,

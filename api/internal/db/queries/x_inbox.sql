@@ -8,15 +8,17 @@ INSERT INTO x_inbox_delivery_resources (
   filtered_stream_rule_id,
   activity_dm_subscription_id,
   activity_webhook_route_key,
+  dm_subscription_forbidden_fingerprint,
   delivery_status,
   last_error,
   last_synced_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT (social_account_id) DO UPDATE
 SET filtered_stream_rule_id = EXCLUDED.filtered_stream_rule_id,
     activity_dm_subscription_id = EXCLUDED.activity_dm_subscription_id,
     activity_webhook_route_key = EXCLUDED.activity_webhook_route_key,
+    dm_subscription_forbidden_fingerprint = EXCLUDED.dm_subscription_forbidden_fingerprint,
     delivery_status = EXCLUDED.delivery_status,
     last_error = EXCLUDED.last_error,
     last_synced_at = EXCLUDED.last_synced_at,
@@ -28,9 +30,10 @@ UPDATE x_inbox_delivery_resources
 SET filtered_stream_rule_id = $2,
     activity_dm_subscription_id = $3,
     activity_webhook_route_key = $4,
-    delivery_status = $5,
-    last_error = $6,
-    last_synced_at = $7,
+    dm_subscription_forbidden_fingerprint = $5,
+    delivery_status = $6,
+    last_error = $7,
+    last_synced_at = $8,
     updated_at = NOW()
 WHERE social_account_id = $1
 RETURNING *;
