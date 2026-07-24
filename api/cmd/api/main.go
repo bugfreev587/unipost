@@ -63,6 +63,12 @@ const (
 	processModeMediaWorker        = "media-worker"
 )
 
+func registerManagedUsersRoutes(r chi.Router, managedUsersHandler *handler.ManagedUsersHandler) {
+	r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
+	r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
+	r.Post("/v1/profiles/{profileID}/users/{external_user_id}/dismiss", managedUsersHandler.DismissDisconnected)
+}
+
 func main() {
 	_ = godotenv.Load()
 
@@ -1062,9 +1068,7 @@ func main() {
 		r.Post("/v1/profiles/{profileID}/accounts/{accountID}/pinterest/boards", socialAccountHandler.CreatePinterestBoard)
 		r.With(auth.RequireFacebookSuperAdmin(superAdminChecker)).
 			Get("/v1/profiles/{profileID}/accounts/{accountID}/facebook/page-insights", socialAccountHandler.FacebookPageInsights)
-		r.Get("/v1/profiles/{profileID}/users", managedUsersHandler.List)
-		r.Get("/v1/profiles/{profileID}/users/{external_user_id}", managedUsersHandler.Get)
-		r.Post("/v1/profiles/{profileID}/users/{external_user_id}/dismiss", managedUsersHandler.DismissDisconnected)
+		registerManagedUsersRoutes(r, managedUsersHandler)
 		r.Get("/v1/profiles/{profileID}/oauth/connect/{platform}", oauthHandler.Connect)
 
 		// Media — two-step upload (POST returns presigned URL, client
