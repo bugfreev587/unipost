@@ -440,11 +440,10 @@ func main() {
 	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx); err != nil {
 		slog.Error("failed to backfill X webhook route keys")
 	}
+	xDMsAvailable := xDMAvailability(featureFlagEvaluator)
 	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
-		Store: xIngestionStore,
-		DMsAvailable: func(ctx context.Context, workspaceID string) (bool, error) {
-			return featureFlagEvaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
-		},
+		Store:        xIngestionStore,
+		DMsAvailable: xDMsAvailable,
 		AtomicProcess: func(ctx context.Context, req xinbox.InboundAdmissionRequest, item xinbox.InboxItem) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
 			var insertedItem xinbox.InboxItem
 			var inserted bool
@@ -493,17 +492,24 @@ func main() {
 		Decrypt:         encryptor.Decrypt,
 	})
 	if processMode == processModeAPI {
+		xInboxDMCanaryAccountIDs := parseXInboxDMCanary(
+			os.Getenv("X_INBOX_DM_CANARY_SOCIAL_ACCOUNT_IDS"),
+		)
 		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
-			databaseURL,
-			pool,
-			queries,
-			encryptor,
-			xCreditsService,
-			xinbox.NewClient(xinbox.ClientConfig{}),
-			os.Getenv("TWITTER_BEARER_TOKEN"),
-			strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
-			managedXWebhookRouteKey,
-			os.Getenv("X_INBOX_WEBHOOK_URL"),
+			worker.PostgresXInboxDeliveryConfig{
+				DatabaseURL:                     databaseURL,
+				Pool:                            pool,
+				Queries:                         queries,
+				Encryptor:                       encryptor,
+				Usage:                           xCreditsService,
+				Client:                          xinbox.NewClient(xinbox.ClientConfig{}),
+				ManagedAppBearer:                os.Getenv("TWITTER_BEARER_TOKEN"),
+				ManagedConsumerSecretConfigured: strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
+				ManagedWebhookRouteKey:          managedXWebhookRouteKey,
+				WebhookURL:                      os.Getenv("X_INBOX_WEBHOOK_URL"),
+				DMsAvailable:                    xDMsAvailable,
+				DMCanaryAccountIDs:              xInboxDMCanaryAccountIDs,
+			},
 		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
 		workspaceXAppCapacities, capacityConfigErr := worker.ParseXInboxWorkspaceAppCapacities(
@@ -1352,6 +1358,28 @@ func positiveInt64Env(name string) int64 {
 		return 0
 	}
 	return value
+}
+
+func parseXInboxDMCanary(raw string) map[string]struct{} {
+	canary, err := worker.ParseXInboxDMCanary(raw)
+	if err != nil {
+		slog.Warn("invalid X Inbox DM canary configuration",
+			"error_class", "x_dm_canary_config_invalid")
+		return map[string]struct{}{}
+	}
+	return canary
+}
+
+type workspaceFeatureEvaluator interface {
+	ForWorkspace(context.Context, string, string) (bool, error)
+}
+
+func xDMAvailability(
+	evaluator workspaceFeatureEvaluator,
+) func(context.Context, string) (bool, error) {
+	return func(ctx context.Context, workspaceID string) (bool, error) {
+		return evaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
+	}
 }
 
 func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorkerConfig) int32 {

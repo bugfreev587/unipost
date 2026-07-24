@@ -51,6 +51,12 @@ test("CI makes the dashboard SEO regression blocking", async () => {
 
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
+  for (const branch of ["dev", "staging"]) {
+    assert.ok(
+      workflow.includes(`- ${branch}`),
+      `Preview workflow does not cover ${branch} pull requests`,
+    );
+  }
   for (const event of [
     "opened",
     "synchronize",

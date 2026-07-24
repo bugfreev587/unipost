@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/debugrt"
+	"github.com/xiaoboyu/unipost-api/internal/errortriage"
 )
 
 // TwitterAdapter implements PlatformAdapter and OAuthAdapter for X/Twitter.
@@ -58,9 +59,10 @@ type TwitterInboxEntry struct {
 }
 
 type TwitterInboxPage struct {
-	Entries        []TwitterInboxEntry
-	NextToken      string
-	HorizonReached bool
+	Entries               []TwitterInboxEntry
+	ProviderResourcesRead int
+	NextToken             string
+	HorizonReached        bool
 }
 
 type TwitterDMSendResult struct {
@@ -70,13 +72,30 @@ type TwitterDMSendResult struct {
 
 type TwitterInboxHTTPError struct {
 	Stage          string
+	Method         string
+	Path           string
 	StatusCode     int
+	Code           string
+	Title          string
+	Message        string
 	Retryable      bool
 	OutcomeUnknown bool
 }
 
 func (e *TwitterInboxHTTPError) Error() string {
 	message := fmt.Sprintf("X inbox API returned HTTP %d", e.StatusCode)
+	if e.Method != "" || e.Path != "" {
+		message += fmt.Sprintf(" for %s %s", e.Method, e.Path)
+	}
+	if e.Code != "" {
+		message += fmt.Sprintf(" code=%q", e.Code)
+	}
+	if e.Title != "" {
+		message += fmt.Sprintf(" title=%q", e.Title)
+	}
+	if e.Message != "" {
+		message += fmt.Sprintf(" message=%q", e.Message)
+	}
 	if e.OutcomeUnknown {
 		return e.Stage + ": " + message
 	}
@@ -166,7 +185,10 @@ func (a *TwitterAdapter) FetchInboxMentions(
 			avatar string
 		}{name: firstNonEmpty(user.Name, user.Username), avatar: user.ProfileImageURL}
 	}
-	page := TwitterInboxPage{NextToken: response.Meta.NextToken}
+	page := TwitterInboxPage{
+		ProviderResourcesRead: len(response.Data),
+		NextToken:             response.Meta.NextToken,
+	}
 	for _, tweet := range response.Data {
 		parentID := ""
 		for _, reference := range tweet.ReferencedTweets {
@@ -263,7 +285,10 @@ func (a *TwitterAdapter) FetchInboxDMEvents(
 			avatar string
 		}{name: firstNonEmpty(user.Name, user.Username), avatar: user.ProfileImageURL}
 	}
-	page := TwitterInboxPage{NextToken: response.Meta.NextToken}
+	page := TwitterInboxPage{
+		ProviderResourcesRead: len(response.Data),
+		NextToken:             response.Meta.NextToken,
+	}
 	for _, event := range response.Data {
 		if event.EventType != "" && !strings.EqualFold(event.EventType, "MessageCreate") {
 			continue
@@ -421,19 +446,22 @@ func (a *TwitterAdapter) doTwitterInboxJSON(
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 		serverError := resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode < 600
 		retryable := resp.StatusCode == http.StatusRequestTimeout ||
 			resp.StatusCode == http.StatusTooManyRequests ||
 			serverError
-		return &TwitterInboxHTTPError{
+		providerErr := &TwitterInboxHTTPError{
 			Stage:      stage,
+			Method:     method,
+			Path:       twitterInboxProviderPath(endpoint),
 			StatusCode: resp.StatusCode,
 			Retryable:  retryable,
 			OutcomeUnknown: twitterInboxWriteStage(stage) &&
 				(resp.StatusCode == http.StatusRequestTimeout ||
 					serverError),
 		}
+		decodeTwitterInboxProviderError(resp.Body, providerErr)
+		return providerErr
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, (2<<20)+1))
 	if err == nil && len(raw) > 2<<20 {
@@ -446,6 +474,89 @@ func (a *TwitterAdapter) doTwitterInboxJSON(
 		return fmt.Errorf("%s: decode X inbox response: %w", stage, err)
 	}
 	return nil
+}
+
+func twitterInboxProviderPath(endpoint string) string {
+	parsed, err := url.Parse(endpoint)
+	if err != nil || parsed.Path == "" {
+		return "/"
+	}
+	return parsed.EscapedPath()
+}
+
+func decodeTwitterInboxProviderError(body io.Reader, target *TwitterInboxHTTPError) {
+	if target == nil {
+		return
+	}
+	const maxProviderErrorBytes = 64 << 10
+	var payload struct {
+		Code   json.RawMessage `json:"code"`
+		Title  string          `json:"title"`
+		Detail string          `json:"detail"`
+		Type   string          `json:"type"`
+		Errors []struct {
+			Code    json.RawMessage `json:"code"`
+			Title   string          `json:"title"`
+			Message string          `json:"message"`
+		} `json:"errors"`
+	}
+	limited := &io.LimitedReader{R: body, N: maxProviderErrorBytes + 1}
+	raw, err := io.ReadAll(limited)
+	if err != nil || len(raw) > maxProviderErrorBytes || json.Unmarshal(raw, &payload) != nil {
+		return
+	}
+	target.Code = safeTwitterProviderCode(payload.Code)
+	target.Title = safeTwitterProviderText(payload.Title)
+	target.Message = safeTwitterProviderText(payload.Detail)
+	if len(payload.Errors) > 0 {
+		if target.Code == "" {
+			target.Code = safeTwitterProviderCode(payload.Errors[0].Code)
+		}
+		if target.Title == "" {
+			target.Title = safeTwitterProviderText(payload.Errors[0].Title)
+		}
+		if target.Message == "" {
+			target.Message = safeTwitterProviderText(payload.Errors[0].Message)
+		}
+	}
+	if target.Code == "" {
+		if parsed, parseErr := url.Parse(strings.TrimSpace(payload.Type)); parseErr == nil {
+			target.Code = safeTwitterProviderText(strings.Trim(pathBase(parsed.Path), "/"))
+		}
+	}
+}
+
+func safeTwitterProviderCode(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return safeTwitterProviderText(text)
+	}
+	var number json.Number
+	if json.Unmarshal(raw, &number) == nil {
+		return safeTwitterProviderText(number.String())
+	}
+	return ""
+}
+
+func safeTwitterProviderText(value string) string {
+	value, _ = errortriage.SanitizeForAI(value, 0)
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if len(runes) > 256 {
+		runes = runes[:256]
+	}
+	return string(runes)
+}
+
+func pathBase(value string) string {
+	value = strings.TrimRight(value, "/")
+	if index := strings.LastIndex(value, "/"); index >= 0 {
+		return value[index+1:]
+	}
+	return value
 }
 
 func twitterInboxWriteStage(stage string) bool {

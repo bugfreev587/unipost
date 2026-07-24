@@ -16,8 +16,24 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/featureflags"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
+
+const stripeCheckoutEnvironmentMetadataKey = "unipost_environment"
+
+func stripeCheckoutMetadata(workspaceID, planID, mode string) map[string]string {
+	return map[string]string{
+		"workspace_id":                       workspaceID,
+		"plan_id":                            planID,
+		"mode":                               mode,
+		stripeCheckoutEnvironmentMetadataKey: runtimeenv.Current(),
+	}
+}
+
+func stripeCheckoutSubscriptionData(metadata map[string]string) *stripe.CheckoutSessionSubscriptionDataParams {
+	return &stripe.CheckoutSessionSubscriptionDataParams{Metadata: metadata}
+}
 
 type BillingHandler struct {
 	queries      *db.Queries
@@ -265,23 +281,18 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		appURL = "https://app.unipost.dev"
 	}
 
+	checkoutMetadata := stripeCheckoutMetadata(workspaceID, body.PlanID, mode.Name)
 	checkoutParams := &stripe.CheckoutSessionParams{
 		Customer: stripe.String(customerID),
 		Mode:     stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{Price: stripe.String(priceID), Quantity: stripe.Int64(1)},
 		},
-		SuccessURL: stripe.String(appURL + "/settings/billing?status=success"),
-		CancelURL:  stripe.String(appURL + "/settings/billing?status=canceled"),
+		SuccessURL:       stripe.String(appURL + "/settings/billing?status=success"),
+		CancelURL:        stripe.String(appURL + "/settings/billing?status=canceled"),
+		SubscriptionData: stripeCheckoutSubscriptionData(checkoutMetadata),
 		Params: stripe.Params{
-			Metadata: map[string]string{
-				"workspace_id": workspaceID,
-				"plan_id":      body.PlanID,
-				// Stamp the mode on the session so the webhook handler can
-				// double-check which mode it came from when both signing
-				// secrets are valid (e.g. test events sent during setup).
-				"mode": mode.Name,
-			},
+			Metadata: checkoutMetadata,
 		},
 	}
 
