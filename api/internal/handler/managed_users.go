@@ -15,12 +15,14 @@
 package handler
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -31,6 +33,8 @@ import (
 type ManagedUsersHandler struct {
 	queries *db.Queries
 }
+
+var errManagedUsersProfileInaccessible = errors.New("managed users profile inaccessible")
 
 func NewManagedUsersHandler(queries *db.Queries) *ManagedUsersHandler {
 	return &ManagedUsersHandler{queries: queries}
@@ -53,7 +57,7 @@ func NewManagedUsersHandler(queries *db.Queries) *ManagedUsersHandler {
 // matched real rows (workspace.id != profile.id post-Sprint-1
 // data model), and the dashboard's "Managed Users" page rendered
 // empty even when managed users existed.
-func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
+func (h *ManagedUsersHandler) getProfileID(r *http.Request) (string, error) {
 	ctx := r.Context()
 	urlProfileID := chi.URLParam(r, "profileID")
 	userID := auth.GetUserID(ctx)
@@ -70,39 +74,74 @@ func (h *ManagedUsersHandler) getProfileID(r *http.Request) string {
 					ID:     urlProfileID,
 					UserID: userID,
 				}); err == nil {
-					return urlProfileID
+					return urlProfileID, nil
+				} else if errors.Is(err, pgx.ErrNoRows) {
+					return "", errManagedUsersProfileInaccessible
+				} else {
+					return "", err
 				}
-				return ""
 			}
 			prof, err := h.queries.GetProfile(ctx, urlProfileID)
-			if err != nil || prof.WorkspaceID != workspaceID {
-				return ""
+			if errors.Is(err, pgx.ErrNoRows) || (err == nil && prof.WorkspaceID != workspaceID) {
+				return "", errManagedUsersProfileInaccessible
 			}
-			return urlProfileID
+			if err != nil {
+				return "", err
+			}
+			return urlProfileID, nil
 		}
 		if workspaceID == "" {
-			return ""
+			return "", nil
 		}
 		prof, err := h.queries.GetProfile(ctx, urlProfileID)
-		if err != nil || prof.WorkspaceID != workspaceID {
-			return ""
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && prof.WorkspaceID != workspaceID) {
+			return "", errManagedUsersProfileInaccessible
 		}
-		return urlProfileID
+		if err != nil {
+			return "", err
+		}
+		return urlProfileID, nil
 	}
 
 	if userID != "" {
 		if user, err := h.queries.GetUser(ctx, userID); err == nil && user.DefaultProfileID.Valid {
-			return user.DefaultProfileID.String
+			return user.DefaultProfileID.String, nil
 		}
 	}
 
 	if workspaceID != "" {
 		if profiles, err := h.queries.ListProfilesByWorkspace(ctx, workspaceID); err == nil && len(profiles) > 0 {
-			return profiles[0].ID
+			return profiles[0].ID, nil
 		}
 	}
 
-	return ""
+	return "", nil
+}
+
+func (h *ManagedUsersHandler) requireProfileID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	profileID, err := h.getProfileID(r)
+	if errors.Is(err, errManagedUsersProfileInaccessible) {
+		writeError(w, http.StatusNotFound, "PROFILE_INACCESSIBLE", "Profile is unavailable")
+		return "", false
+	}
+	if err != nil {
+		slog.Error("managed users profile lookup failed", "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve profile context")
+		return "", false
+	}
+	if profileID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+		return "", false
+	}
+	return profileID, true
+}
+
+func writeManagedUserNotFound(w http.ResponseWriter, r *http.Request, legacyMessage string) {
+	if chi.URLParam(r, "profileID") != "" {
+		writeError(w, http.StatusNotFound, "MANAGED_USER_NOT_FOUND", "Managed User not found")
+		return
+	}
+	writeError(w, http.StatusNotFound, "NOT_FOUND", legacyMessage)
 }
 
 // managedUserListEntry is one row in the GET /v1/users response.
@@ -139,9 +178,8 @@ type managedUserDetail struct {
 // has 0–100 managed users and a single LIMIT 100 query is fast enough.
 // We can add cursor support in a follow-up if anyone hits the cap.
 func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	profileID, ok := h.requireProfileID(w, r)
+	if !ok {
 		return
 	}
 
@@ -174,9 +212,9 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 				"bluesky":  int(row.BlueskyCount),
 				"youtube":  int(row.YoutubeCount),
 			},
-			ReconnectCount:   int(row.ReconnectCount),
+			ReconnectCount:    int(row.ReconnectCount),
 			DisconnectedCount: int(row.DisconnectedCount),
-			FirstConnectedAt: row.FirstConnectedAt.Time,
+			FirstConnectedAt:  row.FirstConnectedAt.Time,
 		}
 		if row.LastRefreshedAt.Valid {
 			t := row.LastRefreshedAt.Time
@@ -197,9 +235,8 @@ func (h *ManagedUsersHandler) List(w http.ResponseWriter, r *http.Request) {
 // belonging to that end user. 404 if no managed accounts exist for
 // the id within the profile.
 func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	profileID, ok := h.requireProfileID(w, r)
+	if !ok {
 		return
 	}
 	externalUserID := chi.URLParam(r, "external_user_id")
@@ -217,7 +254,7 @@ func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(accounts) == 0 {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "No managed accounts found for that external_user_id")
+		writeManagedUserNotFound(w, r, "No managed accounts found for that external_user_id")
 		return
 	}
 
@@ -248,9 +285,8 @@ func (h *ManagedUsersHandler) Get(w http.ResponseWriter, r *http.Request) {
 // external_user_id from dashboard connection views without deleting
 // historical publishing or inbox data.
 func (h *ManagedUsersHandler) DismissDisconnected(w http.ResponseWriter, r *http.Request) {
-	profileID := h.getProfileID(r)
-	if profileID == "" {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing profile context")
+	profileID, ok := h.requireProfileID(w, r)
+	if !ok {
 		return
 	}
 	externalUserID := chi.URLParam(r, "external_user_id")
@@ -268,7 +304,7 @@ func (h *ManagedUsersHandler) DismissDisconnected(w http.ResponseWriter, r *http
 		return
 	}
 	if rows == 0 {
-		writeError(w, http.StatusNotFound, "NOT_FOUND", "No disconnected accounts found for that external_user_id")
+		writeManagedUserNotFound(w, r, "No disconnected accounts found for that external_user_id")
 		return
 	}
 
