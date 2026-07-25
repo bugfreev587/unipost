@@ -25,7 +25,7 @@ This change affects Dashboard regression test support, the deployed regression w
 A focused helper will own the complete lifecycle:
 
 1. Validate the configured base URL and Clerk secret-key type so a test key cannot be used against production and a live key cannot be used against development.
-2. Discover the deployed Clerk publishable key from a public page.
+2. Read the environment-matched Clerk publishable key from an explicit public CI variable; do not scrape deployment HTML.
 3. Create a uniquely named passwordless Clerk user through Clerk's Backend API using `skip_password_requirement: true`. No generated password is needed or stored.
 4. Initialize `@clerk/testing/playwright` with the environment's publishable and secret keys. Because the email overload reads `CLERK_SECRET_KEY`, set it only for the helper's lifetime and restore the process environment in `finally`.
 5. Establish a browser session with the supported `clerk.signIn({ page, emailAddress })` overload. In `@clerk/testing` 2.2.10 this overload resolves the user through Clerk's Backend API, creates a 300-second sign-in token, and activates the session with Clerk's `ticket` strategy. The test never submits a password or drives the Google OAuth UI.
