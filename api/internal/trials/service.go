@@ -807,7 +807,7 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 	at := webhookTime(req.OccurredAt, s.now)
 	result := WebhookReconcileResult{Managed: true, Grant: grant}
 	if grant.Status.IsTerminal() {
-		result.DoNotProject = !terminalSubscriptionProjectionCompatible(grant, snapshot, req.PlanID, at)
+		result.DoNotProject = !terminalSubscriptionProjectionCompatible(grant, snapshot, req.PlanID)
 		return result, nil
 	}
 
@@ -1099,17 +1099,17 @@ func validateSubscriptionGrantMatch(grant Grant, snapshot SubscriptionSnapshot, 
 	return nil
 }
 
-func terminalSubscriptionProjectionCompatible(grant Grant, snapshot SubscriptionSnapshot, planID string, occurredAt time.Time) bool {
+func terminalSubscriptionProjectionCompatible(grant Grant, snapshot SubscriptionSnapshot, planID string) bool {
 	switch grant.Status {
 	case StatusCompleted:
 		if snapshot.Status != "active" || planID != grant.PlanID || grant.EndsAt == nil || snapshot.CurrentPeriodStartAt == nil || snapshot.CurrentPeriodStartAt.Before(*grant.EndsAt) {
 			return false
 		}
-		return grant.CompletedAt == nil || !occurredAt.Before(*grant.CompletedAt)
+		return true
 	case StatusCanceled:
 		return false
 	case StatusSuperseded:
-		if snapshot.Status != "active" || planID == "" || planID == grant.PlanID || grant.SupersededAt == nil || snapshot.CurrentPeriodStartAt == nil || snapshot.CurrentPeriodEndAt == nil || snapshot.CurrentPeriodStartAt.Before(*grant.SupersededAt) || !snapshot.CurrentPeriodStartAt.Before(*snapshot.CurrentPeriodEndAt) || occurredAt.Before(*grant.SupersededAt) {
+		if snapshot.Status != "active" || planID == "" || planID == grant.PlanID || grant.SupersededAt == nil || snapshot.CurrentPeriodStartAt == nil || snapshot.CurrentPeriodEndAt == nil || snapshot.CurrentPeriodStartAt.Before(*grant.SupersededAt) || !snapshot.CurrentPeriodStartAt.Before(*snapshot.CurrentPeriodEndAt) {
 			return false
 		}
 		return grant.SupersededByPlanID == "" || planID == grant.SupersededByPlanID

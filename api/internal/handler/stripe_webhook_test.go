@@ -230,6 +230,33 @@ func TestCompletedPaidTrialDelayedPreTrialActiveEventPreservesCurrentPeriod(t *t
 	}
 }
 
+func TestSubscriptionProjectorRejectsDelayedPeriodRegression(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "active"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	trial := &recordingTrialWebhookService{}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging"}
+	period1 := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	period2 := period1.Add(30 * 24 * time.Hour)
+
+	first := postTestSubscriptionWebhookWithPeriod(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, metadata, period1, period2)
+	second := postTestSubscriptionWebhookWithPeriod(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, metadata, period2, period2.Add(30*24*time.Hour))
+	delayed := postTestSubscriptionWebhookWithPeriod(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, metadata, period1, period2)
+	trial.retrieve = trials.SubscriptionSnapshot{StripeMode: "sandbox", ID: "sub_staging", Status: "active", CustomerID: "cus_staging", PriceID: "price_basic", CurrentPeriodStartAt: &period1, CurrentPeriodEndAt: &period2, Metadata: metadata}
+	delayedCheckout := postTestCheckoutWebhook(t, h, secret, metadata, stripe.CheckoutSessionPaymentStatusPaid)
+	if first.Code != http.StatusOK || second.Code != http.StatusOK || delayed.Code != http.StatusOK || delayedCheckout.Code != http.StatusOK {
+		t.Fatalf("statuses=%d/%d/%d/%d bodies=%q/%q/%q/%q", first.Code, second.Code, delayed.Code, delayedCheckout.Code, first.Body.String(), second.Body.String(), delayed.Body.String(), delayedCheckout.Body.String())
+	}
+	if store.upserts != 2 || trial.subscriptionCalls != 2 || trial.ordinaryCalls != 0 || !store.subscription.CurrentPeriodStart.Time.Equal(period2) || !store.subscription.CurrentPeriodEnd.Time.Equal(period2.Add(30*24*time.Hour)) {
+		t.Fatalf("upserts=%d reconcile=%d ordinary=%d period=%s..%s", store.upserts, trial.subscriptionCalls, trial.ordinaryCalls, store.subscription.CurrentPeriodStart.Time, store.subscription.CurrentPeriodEnd.Time)
+	}
+}
+
 func TestCheckoutCompletedRejectsSessionSubscriptionBindingMismatch(t *testing.T) {
 	baseMetadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging"}
 	for _, tc := range []struct {
@@ -942,12 +969,31 @@ func postTestSubscriptionWebhookWithState(
 	metadata map[string]string,
 ) *httptest.ResponseRecorder {
 	t.Helper()
+	return postTestSubscriptionWebhookWithPeriod(t, handler, secret, eventType, status, metadata, time.Unix(1784822617, 0).UTC(), time.Unix(1787501017, 0).UTC(), cancelAtPeriodEnd)
+}
+
+func postTestSubscriptionWebhookWithPeriod(
+	t *testing.T,
+	handler *StripeWebhookHandler,
+	secret string,
+	eventType string,
+	status stripe.SubscriptionStatus,
+	metadata map[string]string,
+	periodStart time.Time,
+	periodEnd time.Time,
+	cancelAtPeriodEnd ...bool,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	cancelAtEnd := false
+	if len(cancelAtPeriodEnd) > 0 {
+		cancelAtEnd = cancelAtPeriodEnd[0]
+	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"id": "evt_subscription_state", "object": "event", "created": int64(1784822630), "type": eventType,
 		"data": map[string]interface{}{"object": map[string]interface{}{
 			"id": "sub_staging", "object": "subscription", "status": status, "customer": "cus_staging",
-			"cancel_at_period_end": cancelAtPeriodEnd, "trial_start": int64(1784822617), "trial_end": int64(1787501017), "metadata": metadata,
-			"items": map[string]interface{}{"data": []map[string]interface{}{{"id": "si_staging", "current_period_start": int64(1784822617), "current_period_end": int64(1787501017), "price": map[string]interface{}{"id": "price_basic"}}}},
+			"cancel_at_period_end": cancelAtEnd, "trial_start": int64(1784822617), "trial_end": int64(1787501017), "metadata": metadata,
+			"items": map[string]interface{}{"data": []map[string]interface{}{{"id": "si_staging", "current_period_start": periodStart.Unix(), "current_period_end": periodEnd.Unix(), "price": map[string]interface{}{"id": "price_basic"}}}},
 		}},
 	})
 	if err != nil {

@@ -292,7 +292,7 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	if err != nil {
 		return err
 	}
-	if !projected.Managed {
+	if !projected.Managed && !projected.Skipped {
 		if _, err := h.trialWebhooks.ReconcileOrdinaryCheckout(r.Context(), workspaceID, planID, stripeEventEffectiveAt(event)); err != nil && !errors.Is(err, trials.ErrGrantNotFound) {
 			return fmt.Errorf("reconcile pending trial after ordinary Checkout: %w", err)
 		}
@@ -409,6 +409,7 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 
 type subscriptionProjectionResult struct {
 	Managed        bool
+	Skipped        bool
 	WorkspaceID    string
 	PreviousPlanID string
 	PlanID         string
@@ -436,6 +437,10 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 	}
 	if err != nil {
 		return subscriptionProjectionResult{}, fmt.Errorf("load local subscription projection: %w", err)
+	}
+	if subscriptionPeriodRegresses(localSub, snapshot) {
+		slog.Info("stripe webhook: stale subscription period ignored", "subscription_id", snapshot.ID, "workspace_id", localSub.WorkspaceID, "snapshot_period_start", snapshot.CurrentPeriodStartAt, "local_period_start", localSub.CurrentPeriodStart.Time)
+		return subscriptionProjectionResult{Skipped: true, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: localSub.PlanID}, nil
 	}
 
 	trialResult := trials.WebhookReconcileResult{}
@@ -483,6 +488,14 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 		return subscriptionProjectionResult{}, fmt.Errorf("persist Stripe subscription projection: %w", err)
 	}
 	return subscriptionProjectionResult{Managed: trialResult.Managed, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: planID}, nil
+}
+
+func subscriptionPeriodRegresses(localSub db.Subscription, snapshot trials.SubscriptionSnapshot) bool {
+	return localSub.StripeSubscriptionID.Valid &&
+		localSub.StripeSubscriptionID.String == snapshot.ID &&
+		localSub.CurrentPeriodStart.Valid &&
+		snapshot.CurrentPeriodStartAt != nil &&
+		snapshot.CurrentPeriodStartAt.Before(localSub.CurrentPeriodStart.Time)
 }
 
 func (h *StripeWebhookHandler) cancelLegacyTrialImmediately(ctx context.Context, event stripe.Event, localSub db.Subscription, subscriptionID string) error {

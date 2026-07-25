@@ -1099,7 +1099,7 @@ func TestReconcileSubscriptionTerminalOutcomeAllowsProjectionRetry(t *testing.T)
 			grant.StripeCustomerID, grant.StripeSubscriptionID, grant.StartedAt, grant.EndsAt = "cus_1", "sub_1", &start, &end
 			h.store.grant = grant
 			metadata := trialMetadata("ws_1", tc.metadataPlanID, "grant_1", KindFreeToPaid, "staging")
-			result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: tc.status, CustomerID: "cus_1", PriceID: "price", TrialStartAt: &start, TrialEndAt: &end, CurrentPeriodStartAt: &end, CurrentPeriodEndAt: &renewalEnd, Metadata: metadata}, PlanID: tc.planID, OccurredAt: end})
+			result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: tc.status, CustomerID: "cus_1", PriceID: "price", TrialStartAt: &start, TrialEndAt: &end, CurrentPeriodStartAt: &end, CurrentPeriodEndAt: &renewalEnd, Metadata: metadata}, PlanID: tc.planID, OccurredAt: end.Add(-time.Hour)})
 			if err != nil {
 				t.Fatal(err)
 			}
