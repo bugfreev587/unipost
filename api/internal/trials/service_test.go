@@ -679,6 +679,21 @@ func TestReconcileOrdinaryCheckoutSupersedesOnlyPendingDifferentPlan(t *testing.
 	}
 }
 
+func TestIsTerminalGrantIsReadOnlyAndWorkspaceScoped(t *testing.T) {
+	h := newServiceHarness(t)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Status: StatusSuperseded}
+	terminal, err := h.service.IsTerminalGrant(t.Context(), "grant_1", "ws_1")
+	if err != nil || !terminal {
+		t.Fatalf("terminal=%v err=%v", terminal, err)
+	}
+	if h.store.markSupersededCalls != 0 || h.store.markCompletedCalls != 0 || h.store.markCanceledCalls != 0 {
+		t.Fatalf("read-only lookup mutated store: superseded=%d completed=%d canceled=%d", h.store.markSupersededCalls, h.store.markCompletedCalls, h.store.markCanceledCalls)
+	}
+	if _, err := h.service.IsTerminalGrant(t.Context(), "grant_1", "ws_other"); !errors.Is(err, ErrGrantNotFound) {
+		t.Fatalf("cross-workspace error=%v, want ErrGrantNotFound", err)
+	}
+}
+
 func TestPrepareCheckoutReopensExpiredExactSessionAndStoresReplacement(t *testing.T) {
 	h := newServiceHarness(t)
 	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", StripeCheckoutSessionID: "cs_expired", CheckoutAttempt: 1}

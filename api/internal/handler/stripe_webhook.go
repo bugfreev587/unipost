@@ -42,6 +42,7 @@ type stripeTrialWebhookService interface {
 	ReconcileCheckoutExpired(context.Context, trials.WebhookCheckoutRequest) (trials.WebhookReconcileResult, error)
 	ReconcileSchedule(context.Context, trials.WebhookScheduleRequest) (trials.WebhookReconcileResult, error)
 	ReconcileOrdinaryCheckout(context.Context, string, string, time.Time) (trials.WebhookReconcileResult, error)
+	IsTerminalGrant(context.Context, string, string) (bool, error)
 }
 
 func (h *StripeWebhookHandler) SetTrialWebhookService(service stripeTrialWebhookService) *StripeWebhookHandler {
@@ -285,12 +286,19 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	if snapshot.ID != subscriptionID || snapshot.StripeMode != mode.Name {
 		return fmt.Errorf("retrieved Checkout subscription does not match Session")
 	}
-	if err := h.validateCheckoutSubscriptionBinding(r.Context(), session, snapshot); err != nil {
+	advancedReplay, err := h.validateCheckoutSubscriptionBinding(r.Context(), session, snapshot)
+	if err != nil {
 		return err
+	}
+	if advancedReplay {
+		return nil
 	}
 	projected, err := h.projectStripeSubscription(r, event, snapshot)
 	if err != nil {
 		return err
+	}
+	if projected.Skipped {
+		return nil
 	}
 	if !projected.Managed && !projected.Skipped {
 		if _, err := h.trialWebhooks.ReconcileOrdinaryCheckout(r.Context(), workspaceID, planID, stripeEventEffectiveAt(event)); err != nil && !errors.Is(err, trials.ErrGrantNotFound) {
@@ -309,31 +317,46 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	return nil
 }
 
-func (h *StripeWebhookHandler) validateCheckoutSubscriptionBinding(ctx context.Context, session stripe.CheckoutSession, snapshot trials.SubscriptionSnapshot) error {
+func (h *StripeWebhookHandler) validateCheckoutSubscriptionBinding(ctx context.Context, session stripe.CheckoutSession, snapshot trials.SubscriptionSnapshot) (bool, error) {
 	customerID := ""
 	if session.Customer != nil {
 		customerID = session.Customer.ID
 	}
 	if customerID == "" || customerID != snapshot.CustomerID {
-		return fmt.Errorf("Checkout Session customer does not match Subscription")
+		return false, fmt.Errorf("Checkout Session customer does not match Subscription")
 	}
 	workspaceID := strings.TrimSpace(session.Metadata["workspace_id"])
 	planID := strings.TrimSpace(session.Metadata["plan_id"])
 	environment := strings.TrimSpace(session.Metadata[stripeCheckoutEnvironmentMetadataKey])
 	if workspaceID == "" || planID == "" || environment == "" || environment != runtimeenv.Current() {
-		return fmt.Errorf("Checkout Session billing metadata is incomplete")
+		return false, fmt.Errorf("Checkout Session billing metadata is incomplete")
 	}
-	if snapshot.Metadata["workspace_id"] != workspaceID || snapshot.Metadata["plan_id"] != planID || snapshot.Metadata[stripeCheckoutEnvironmentMetadataKey] != environment {
-		return fmt.Errorf("Checkout Session metadata does not match Subscription")
+	if snapshot.Metadata["workspace_id"] != workspaceID || snapshot.Metadata[stripeCheckoutEnvironmentMetadataKey] != environment {
+		return false, fmt.Errorf("Checkout Session metadata does not match Subscription")
 	}
 	if snapshot.Metadata["trial_grant_id"] != session.Metadata["trial_grant_id"] || snapshot.Metadata["trial_kind"] != session.Metadata["trial_kind"] {
-		return fmt.Errorf("Checkout Session trial metadata does not match Subscription")
+		return false, fmt.Errorf("Checkout Session trial metadata does not match Subscription")
 	}
 	plan, err := h.queries.GetPlanByStripePriceID(ctx, pgtype.Text{String: snapshot.PriceID, Valid: snapshot.PriceID != ""})
-	if err != nil || plan.ID != planID {
-		return fmt.Errorf("Checkout Session plan does not match Subscription price")
+	if err != nil || snapshot.Metadata["plan_id"] != plan.ID {
+		return false, fmt.Errorf("Checkout Session plan does not match Subscription price")
 	}
-	return nil
+	if plan.ID == planID {
+		return false, nil
+	}
+	grantID := strings.TrimSpace(session.Metadata["trial_grant_id"])
+	if grantID == "" || h.trialWebhooks == nil || snapshot.CurrentPeriodStartAt == nil || snapshot.CurrentPeriodEndAt == nil {
+		return false, fmt.Errorf("Checkout Session plan does not match Subscription price")
+	}
+	localSub, err := h.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
+	if err != nil || !localSub.StripeSubscriptionID.Valid || localSub.StripeSubscriptionID.String != snapshot.ID || !localSub.StripeCustomerID.Valid || localSub.StripeCustomerID.String != snapshot.CustomerID || localSub.PlanID != plan.ID || localSub.Status != snapshot.Status || !localSub.CurrentPeriodStart.Valid || !localSub.CurrentPeriodEnd.Valid || !localSub.CurrentPeriodStart.Time.Equal(snapshot.CurrentPeriodStartAt.UTC()) || !localSub.CurrentPeriodEnd.Time.Equal(snapshot.CurrentPeriodEndAt.UTC()) {
+		return false, fmt.Errorf("Checkout Session plan does not match the current local Subscription")
+	}
+	terminal, err := h.trialWebhooks.IsTerminalGrant(ctx, grantID, workspaceID)
+	if err != nil || !terminal {
+		return false, fmt.Errorf("Checkout Session references a non-terminal trial grant")
+	}
+	return true, nil
 }
 
 func (h *StripeWebhookHandler) validateCheckoutTarget(ctx context.Context, event stripe.Event, session stripe.CheckoutSession) error {

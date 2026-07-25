@@ -292,6 +292,34 @@ func TestCheckoutCompletedRejectsSessionSubscriptionBindingMismatch(t *testing.T
 	}
 }
 
+func TestDelayedCheckoutAfterSameSubscriptionAdvancedPlanIsAcknowledgedNoOp(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.plans["growth"] = db.Plan{ID: "growth", Name: "Growth", PriceCents: 7900, PostLimit: 7500, StripePriceID: pgtype.Text{String: "price_growth", Valid: true}}
+	periodStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	periodEnd := periodStart.Add(30 * 24 * time.Hour)
+	store.subscription.PlanID = "growth"
+	store.subscription.Status = "active"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	store.subscription.CurrentPeriodStart = pgtype.Timestamptz{Time: periodStart, Valid: true}
+	store.subscription.CurrentPeriodEnd = pgtype.Timestamptz{Time: periodEnd, Valid: true}
+	trial := &recordingTrialWebhookService{terminalGrant: true, retrieve: trials.SubscriptionSnapshot{StripeMode: "sandbox", ID: "sub_staging", Status: "active", CustomerID: "cus_staging", PriceID: "price_growth", CurrentPeriodStartAt: &periodStart, CurrentPeriodEndAt: &periodEnd, Metadata: map[string]string{"workspace_id": "ws_staging", "plan_id": "growth", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}}}
+	syncer := &recordingStripeLifecycleSyncer{}
+	quotaEvaluator := &recordingPaidQuotaEvaluator{}
+	h, secret := newTestStripeWebhookHandler(store, syncer)
+	h.SetTrialWebhookService(trial).SetPaidQuotaEvaluator(quotaEvaluator)
+	sessionMetadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}
+
+	response := postTestCheckoutWebhook(t, h, secret, sessionMetadata, stripe.CheckoutSessionPaymentStatusNoPaymentRequired)
+	if response.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	if store.upserts != 0 || trial.subscriptionCalls != 0 || trial.ordinaryCalls != 0 || len(syncer.events) != 0 || len(quotaEvaluator.calls) != 0 {
+		t.Fatalf("upserts=%d reconcile=%d ordinary=%d loops=%d quota=%d", store.upserts, trial.subscriptionCalls, trial.ordinaryCalls, len(syncer.events), len(quotaEvaluator.calls))
+	}
+}
+
 func TestForeignSubscriptionDeletedAcknowledgedWithoutMutation(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")
@@ -1039,6 +1067,8 @@ type recordingTrialWebhookService struct {
 	checkoutCalls       int
 	scheduleCalls       int
 	ordinaryCalls       int
+	terminalGrant       bool
+	terminalGrantErr    error
 }
 
 func (s *recordingTrialWebhookService) RetrieveSubscription(_ context.Context, mode, id string) (trials.SubscriptionSnapshot, error) {
@@ -1065,6 +1095,9 @@ func (s *recordingTrialWebhookService) ReconcileSchedule(_ context.Context, _ tr
 func (s *recordingTrialWebhookService) ReconcileOrdinaryCheckout(_ context.Context, _, _ string, _ time.Time) (trials.WebhookReconcileResult, error) {
 	s.ordinaryCalls++
 	return s.ordinaryResult, s.ordinaryErr
+}
+func (s *recordingTrialWebhookService) IsTerminalGrant(_ context.Context, _, _ string) (bool, error) {
+	return s.terminalGrant, s.terminalGrantErr
 }
 
 func webhookPtrTime(value time.Time) *time.Time { return &value }

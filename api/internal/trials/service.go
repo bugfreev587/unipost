@@ -937,6 +937,20 @@ func (s *Service) ReconcileOrdinaryCheckout(ctx context.Context, workspaceID, pa
 	return WebhookReconcileResult{Managed: true, Grant: updated}, err
 }
 
+func (s *Service) IsTerminalGrant(ctx context.Context, grantID, workspaceID string) (bool, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(grantID) == "" || strings.TrimSpace(workspaceID) == "" {
+		return false, ErrGrantNotFound
+	}
+	grant, err := s.store.GetGrant(ctx, grantID)
+	if err != nil {
+		return false, err
+	}
+	if grant.WorkspaceID != workspaceID {
+		return false, ErrGrantNotFound
+	}
+	return grant.Status.IsTerminal(), nil
+}
+
 func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequest) (WebhookReconcileResult, error) {
 	if s == nil || s.store == nil || strings.TrimSpace(req.Snapshot.ID) == "" {
 		return WebhookReconcileResult{}, ErrWebhookStateConflict
