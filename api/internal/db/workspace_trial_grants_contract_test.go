@@ -1,9 +1,13 @@
 package db
 
 import (
+	"context"
+	"database/sql"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestWorkspaceTrialGrantMigrationContract(t *testing.T) {
@@ -52,6 +56,86 @@ func TestWorkspaceTrialGrantMigrationContract(t *testing.T) {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("workspace trial grants migration missing %q:\n%s", want, string(source))
 		}
+	}
+	if strings.Contains(sql, "references users(id)") {
+		t.Fatal("granted_by_user_id must remain an opaque actor ID so deleting the actor does not delete or block the grant")
+	}
+}
+
+func TestWorkspaceTrialGrantKeepsOpaqueGrantingActorAfterUserDeletion(t *testing.T) {
+	databaseURL := os.Getenv("X_INBOX_TEST_DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("X_INBOX_TEST_DATABASE_URL is not configured")
+	}
+
+	database, err := sql.Open("pgx", databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	bootstrapMigrationBaselineIfEmptyForTest(t, ctx, tx, 120)
+	var hasTrialGrants bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT to_regclass('public.workspace_trial_grants') IS NOT NULL
+	`).Scan(&hasTrialGrants); err != nil {
+		t.Fatal(err)
+	}
+	if !hasTrialGrants {
+		applyMigrationUp(t, ctx, tx, "migrations/121_workspace_trial_grants.sql")
+	}
+
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 10)
+	ownerID := "trial_grant_owner_" + suffix
+	adminID := "trial_grant_admin_" + suffix
+	workspaceID := "trial_grant_workspace_" + suffix
+	planID := "trial_grant_plan_" + suffix
+	grantID := "trial_grant_" + suffix
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users (id, email, name) VALUES
+		  ($1, $2, 'Trial Grant Owner'),
+		  ($3, $4, 'Trial Grant Admin')
+	`, ownerID, ownerID+"@example.com", adminID, adminID+"@example.com"); err != nil {
+		t.Fatalf("insert trial grant users: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workspaces (id, user_id, name) VALUES ($1, $2, 'Trial Grant Test')
+	`, workspaceID, ownerID); err != nil {
+		t.Fatalf("insert trial grant workspace: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO plans (id, name, price_cents, post_limit) VALUES ($1, 'Trial Grant Test', 100, 100)
+	`, planID); err != nil {
+		t.Fatalf("insert trial grant plan: %v", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workspace_trial_grants (
+		  id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id
+		) VALUES ($1, $2, 'free_to_paid', $3, 14, 'pending_activation', $4)
+	`, grantID, workspaceID, planID, adminID); err != nil {
+		t.Fatalf("insert workspace trial grant: %v", err)
+	}
+
+	if _, err := tx.ExecContext(ctx, "DELETE FROM users WHERE id = $1", adminID); err != nil {
+		t.Fatalf("delete granting actor: %v", err)
+	}
+
+	var grantedByUserID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT granted_by_user_id FROM workspace_trial_grants WHERE id = $1
+	`, grantID).Scan(&grantedByUserID); err != nil {
+		t.Fatalf("read retained workspace trial grant: %v", err)
+	}
+	if grantedByUserID != adminID {
+		t.Fatalf("retained granted_by_user_id = %q, want %q", grantedByUserID, adminID)
 	}
 }
 

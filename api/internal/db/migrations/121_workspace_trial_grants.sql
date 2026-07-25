@@ -6,7 +6,7 @@ CREATE TABLE workspace_trial_grants (
   plan_id                    TEXT NOT NULL REFERENCES plans(id),
   duration_days              INTEGER NOT NULL CHECK (duration_days BETWEEN 1 AND 730),
   status                     TEXT NOT NULL CHECK (status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active', 'completed', 'canceled', 'revoked', 'superseded', 'failed')),
-  granted_by_user_id         TEXT NOT NULL REFERENCES users(id),
+  granted_by_user_id         TEXT NOT NULL,
   stripe_mode                TEXT,
   stripe_customer_id         TEXT,
   stripe_subscription_id     TEXT,
