@@ -1,0 +1,121 @@
+-- name: CreateSocialConnection :one
+INSERT INTO social_connections (
+  workspace_id, platform, provider_identity, access_token, refresh_token,
+  token_expires_at, account_name, account_avatar_url, metadata, scope, status,
+  connection_type, external_user_id, external_user_email, last_refreshed_at,
+  x_app_mode, connected_at, disconnected_at
+)
+VALUES (
+  @workspace_id, @platform, @provider_identity, @access_token, @refresh_token,
+  @token_expires_at, @account_name, @account_avatar_url,
+  COALESCE(@metadata::jsonb, '{}'::jsonb), @scope, 'active', @connection_type,
+  @external_user_id, @external_user_email, NOW(), @x_app_mode, NOW(), NULL
+)
+RETURNING id, workspace_id, platform, provider_identity, access_token,
+  refresh_token, token_expires_at, account_name, account_avatar_url, metadata,
+  scope, status, connection_type, external_user_id, external_user_email,
+  last_refreshed_at, x_app_mode, connected_at, disconnected_at, created_at,
+  updated_at;
+
+-- name: GetSocialConnectionForUpdate :one
+SELECT sc.id, sc.workspace_id, sc.platform, sc.provider_identity,
+  sc.access_token, sc.refresh_token, sc.token_expires_at, sc.account_name,
+  sc.account_avatar_url, sc.metadata, sc.scope, sc.status,
+  sc.connection_type, sc.external_user_id, sc.external_user_email,
+  sc.last_refreshed_at, sc.x_app_mode, sc.connected_at, sc.disconnected_at,
+  sc.created_at, sc.updated_at
+FROM social_connections sc
+WHERE sc.id = @id
+  AND sc.workspace_id = @workspace_id
+FOR UPDATE OF sc;
+
+-- name: FindCanonicalSocialConnectionForUpdate :one
+SELECT sc.id, sc.workspace_id, sc.platform, sc.provider_identity,
+  sc.access_token, sc.refresh_token, sc.token_expires_at, sc.account_name,
+  sc.account_avatar_url, sc.metadata, sc.scope, sc.status,
+  sc.connection_type, sc.external_user_id, sc.external_user_email,
+  sc.last_refreshed_at, sc.x_app_mode, sc.connected_at, sc.disconnected_at,
+  sc.created_at, sc.updated_at
+FROM social_connections sc
+WHERE sc.workspace_id = @workspace_id
+  AND sc.platform = @platform
+  AND sc.provider_identity = @provider_identity
+  AND sc.status <> 'migration_conflict'
+FOR UPDATE OF sc;
+
+-- name: RefreshSocialConnection :one
+UPDATE social_connections
+SET access_token = @access_token,
+    refresh_token = @refresh_token,
+    token_expires_at = @token_expires_at,
+    account_name = @account_name,
+    account_avatar_url = @account_avatar_url,
+    metadata = COALESCE(@metadata::jsonb, '{}'::jsonb),
+    scope = @scope,
+    external_user_email = @external_user_email,
+    last_refreshed_at = NOW(),
+    x_app_mode = @x_app_mode,
+    status = 'active',
+    disconnected_at = NULL,
+    updated_at = NOW()
+WHERE id = @id
+  AND workspace_id = @workspace_id
+RETURNING id, workspace_id, platform, provider_identity, access_token,
+  refresh_token, token_expires_at, account_name, account_avatar_url, metadata,
+  scope, status, connection_type, external_user_id, external_user_email,
+  last_refreshed_at, x_app_mode, connected_at, disconnected_at, created_at,
+  updated_at;
+
+-- name: DisconnectSocialConnection :one
+UPDATE social_connections
+SET status = 'disconnected',
+    disconnected_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id
+  AND workspace_id = @workspace_id
+RETURNING id, workspace_id, platform, provider_identity, access_token,
+  refresh_token, token_expires_at, account_name, account_avatar_url, metadata,
+  scope, status, connection_type, external_user_id, external_user_email,
+  last_refreshed_at, x_app_mode, connected_at, disconnected_at, created_at,
+  updated_at;
+
+-- name: CreateOrReactivateSocialAccountBinding :one
+INSERT INTO social_accounts (
+  profile_id, platform, access_token, refresh_token, token_expires_at,
+  external_account_id, account_name, account_avatar_url, metadata, scope,
+  status, connection_type, connect_session_id, external_user_id,
+  external_user_email, last_refreshed_at, x_app_mode, connection_id,
+  binding_version, binding_status
+)
+VALUES (
+  @profile_id, @platform, @legacy_access_token, @legacy_refresh_token,
+  @token_expires_at, @external_account_id, @account_name,
+  @account_avatar_url, COALESCE(@metadata::jsonb, '{}'::jsonb), @scope,
+  'active', @connection_type, @connect_session_id, @external_user_id,
+  @external_user_email, NOW(), @x_app_mode, @connection_id, 1, 'active'
+)
+ON CONFLICT (profile_id, connection_id) WHERE connection_id IS NOT NULL
+DO UPDATE SET
+  access_token = EXCLUDED.access_token,
+  refresh_token = EXCLUDED.refresh_token,
+  token_expires_at = EXCLUDED.token_expires_at,
+  external_account_id = EXCLUDED.external_account_id,
+  account_name = EXCLUDED.account_name,
+  account_avatar_url = EXCLUDED.account_avatar_url,
+  metadata = EXCLUDED.metadata,
+  scope = EXCLUDED.scope,
+  connection_type = EXCLUDED.connection_type,
+  connect_session_id = EXCLUDED.connect_session_id,
+  external_user_id = EXCLUDED.external_user_id,
+  external_user_email = EXCLUDED.external_user_email,
+  last_refreshed_at = NOW(),
+  x_app_mode = EXCLUDED.x_app_mode,
+  binding_status = 'active',
+  binding_version = social_accounts.binding_version + 1,
+  disconnected_at = NULL,
+  status = 'active'
+RETURNING id, profile_id, platform, access_token, refresh_token,
+  token_expires_at, external_account_id, account_name, account_avatar_url,
+  connected_at, disconnected_at, metadata, scope, status, connection_type,
+  connect_session_id, external_user_id, external_user_email, last_refreshed_at,
+  x_app_mode, connection_id, binding_version, binding_status;

@@ -2123,6 +2123,9 @@ func (f *connectSessionTestDB) socialAccountRow(id, platform, externalAccountID,
 		pgtype.Text{},
 		now,
 		f.xAppMode,
+		pgtype.Text{},
+		int64(1),
+		"active",
 	}}
 }
 

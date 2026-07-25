@@ -800,5 +800,9 @@ func socialAccountValues(a db.SocialAccount) []any {
 		a.ExternalUserID,
 		a.ExternalUserEmail,
 		a.LastRefreshedAt,
+		a.XAppMode,
+		a.ConnectionID,
+		a.BindingVersion,
+		a.BindingStatus,
 	}
 }

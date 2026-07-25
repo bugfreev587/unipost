@@ -845,6 +845,49 @@ type SocialAccount struct {
 	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
 	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
 	XAppMode          pgtype.Text        `json:"x_app_mode"`
+	ConnectionID      pgtype.Text        `json:"connection_id"`
+	BindingVersion    int64              `json:"binding_version"`
+	BindingStatus     string             `json:"binding_status"`
+}
+
+type SocialConnection struct {
+	ID                string             `json:"id"`
+	WorkspaceID       string             `json:"workspace_id"`
+	Platform          string             `json:"platform"`
+	ProviderIdentity  pgtype.Text        `json:"provider_identity"`
+	AccessToken       string             `json:"access_token"`
+	RefreshToken      pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt    pgtype.Timestamptz `json:"token_expires_at"`
+	AccountName       pgtype.Text        `json:"account_name"`
+	AccountAvatarUrl  pgtype.Text        `json:"account_avatar_url"`
+	Metadata          []byte             `json:"metadata"`
+	Scope             []string           `json:"scope"`
+	Status            string             `json:"status"`
+	ConnectionType    string             `json:"connection_type"`
+	ExternalUserID    pgtype.Text        `json:"external_user_id"`
+	ExternalUserEmail pgtype.Text        `json:"external_user_email"`
+	LastRefreshedAt   pgtype.Timestamptz `json:"last_refreshed_at"`
+	XAppMode          pgtype.Text        `json:"x_app_mode"`
+	ConnectedAt       pgtype.Timestamptz `json:"connected_at"`
+	DisconnectedAt    pgtype.Timestamptz `json:"disconnected_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SocialConnectionMigrationConflict struct {
+	ID                    string             `json:"id"`
+	WorkspaceID           string             `json:"workspace_id"`
+	Platform              string             `json:"platform"`
+	ProviderIdentity      pgtype.Text        `json:"provider_identity"`
+	Reason                string             `json:"reason"`
+	SourceAccountIds      []string           `json:"source_account_ids"`
+	SourceProfileIds      []string           `json:"source_profile_ids"`
+	SourceExternalUserIds []string           `json:"source_external_user_ids"`
+	SourceConnectionTypes []string           `json:"source_connection_types"`
+	Details               []byte             `json:"details"`
+	DetectedAt            pgtype.Timestamptz `json:"detected_at"`
+	ResolvedAt            pgtype.Timestamptz `json:"resolved_at"`
+	Resolution            []byte             `json:"resolution"`
 }
 
 type SocialPost struct {

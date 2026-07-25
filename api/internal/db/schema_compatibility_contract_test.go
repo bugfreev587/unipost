@@ -13,7 +13,7 @@ func TestExpandableTablesDoNotUseWildcardProjections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	targetTables := `(oauth_states|connect_sessions|social_accounts|platform_credentials)`
+	targetTables := `(oauth_states|connect_sessions|social_accounts|social_connections|platform_credentials)`
 	wildcards := []*regexp.Regexp{
 		regexp.MustCompile(`(?i)\bSELECT\s+(?:DISTINCT\s+)?(?:[a-z_][a-z0-9_]*\.)?\*\s+FROM\s+` + targetTables + `\b`),
 		regexp.MustCompile(`(?is)\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+` + targetTables + `\b[^;]*?\bRETURNING\s+\*`),

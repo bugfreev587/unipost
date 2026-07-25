@@ -2796,6 +2796,9 @@ func inboxTenantIsolationSocialAccountValues(account db.SocialAccount) []any {
 		account.ExternalUserEmail,
 		account.LastRefreshedAt,
 		account.XAppMode,
+		account.ConnectionID,
+		account.BindingVersion,
+		account.BindingStatus,
 	}
 }
 

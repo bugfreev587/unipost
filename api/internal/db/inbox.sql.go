@@ -457,7 +457,8 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
        sa.account_name, sa.account_avatar_url, sa.connected_at,
        sa.disconnected_at, sa.metadata, sa.scope, sa.status,
        sa.connection_type, sa.connect_session_id, sa.external_user_id,
-       sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+       sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode,
+       sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
@@ -511,6 +512,9 @@ func (q *Queries) FindInboxAccountsByWorkspace(ctx context.Context, arg FindInbo
 			&i.ExternalUserEmail,
 			&i.LastRefreshedAt,
 			&i.XAppMode,
+			&i.ConnectionID,
+			&i.BindingVersion,
+			&i.BindingStatus,
 		); err != nil {
 			return nil, err
 		}

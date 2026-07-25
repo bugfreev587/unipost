@@ -4,13 +4,15 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: ListSocialAccountsByProfile :many
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE profile_id = $1
   AND disconnected_at IS NULL
@@ -21,7 +23,8 @@ ORDER BY connected_at DESC;
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE profile_id = $1
   AND disconnected_at IS NULL
@@ -34,7 +37,8 @@ ORDER BY connected_at DESC;
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE profile_id = $1
   AND COALESCE(metadata->>'dismissed_at', '') = ''
@@ -44,7 +48,8 @@ ORDER BY connected_at DESC;
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE id = $1;
 
@@ -52,7 +57,8 @@ WHERE id = $1;
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE id = $1 AND profile_id = $2;
 
@@ -73,7 +79,8 @@ WHERE id = $1 AND profile_id = $2
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: DismissSocialAccount :execrows
 UPDATE social_accounts
@@ -87,7 +94,8 @@ WHERE id = $1
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE disconnected_at IS NULL
   AND status = 'active'
@@ -110,7 +118,8 @@ WHERE id = $1;
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE profile_id = $1
   AND platform = $2
@@ -125,7 +134,7 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
   sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
-  sa.x_app_mode
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = @workspace_id
@@ -150,7 +159,7 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
   sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
-  sa.x_app_mode
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = @workspace_id
@@ -255,7 +264,8 @@ VALUES (
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: RefreshConnectedSocialAccount :one
 UPDATE social_accounts
@@ -279,7 +289,8 @@ WHERE id = @id
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: UpsertManagedSocialAccount :one
 INSERT INTO social_accounts (
@@ -314,13 +325,15 @@ DO UPDATE SET
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: GetManagedBlueskyAccount :one
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE profile_id = $1
   AND platform = 'bluesky'
@@ -346,7 +359,8 @@ WHERE id = $1 AND connection_type = 'managed'
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: ReactivateSocialAccount :one
 -- Reactivate a disconnected account with fresh tokens. Preserves
@@ -368,7 +382,8 @@ WHERE id = $1
 RETURNING id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode;
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status;
 
 -- name: MarkSocialAccountReconnectRequired :execrows
 UPDATE social_accounts
@@ -403,7 +418,8 @@ WHERE id = $1;
 SELECT id, profile_id, platform, access_token, refresh_token, token_expires_at,
   external_account_id, account_name, account_avatar_url, connected_at,
   disconnected_at, metadata, scope, status, connection_type, connect_session_id,
-  external_user_id, external_user_email, last_refreshed_at, x_app_mode
+  external_user_id, external_user_email, last_refreshed_at, x_app_mode,
+  connection_id, binding_version, binding_status
 FROM social_accounts
 WHERE connection_type = 'managed'
   AND status = 'active'
@@ -421,7 +437,8 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.token_expires_at, sa.external_account_id, sa.account_name,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
-  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode,
+  sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
@@ -440,7 +457,8 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.token_expires_at, sa.external_account_id, sa.account_name,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
-  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode,
+  sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
@@ -452,7 +470,8 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.token_expires_at, sa.external_account_id, sa.account_name,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
-  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode,
+  sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE p.workspace_id = $1
@@ -470,10 +489,39 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.token_expires_at, sa.external_account_id, sa.account_name,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
-  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode,
+  sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.id = $1 AND p.workspace_id = $2;
+
+-- name: GetResolvedSocialAccountByIDAndWorkspace :one
+-- During rollout, migrated bindings resolve credentials and managed ownership
+-- from the physical connection. Quarantined legacy rows keep working through
+-- the social_accounts fallback until an operator resolves their evidence.
+SELECT
+  sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status,
+  COALESCE(sc.access_token, sa.access_token) AS resolved_access_token,
+  COALESCE(sc.refresh_token, sa.refresh_token) AS resolved_refresh_token,
+  COALESCE(sc.token_expires_at, sa.token_expires_at) AS resolved_token_expires_at,
+  COALESCE(sc.metadata, sa.metadata) AS resolved_metadata,
+  COALESCE(sc.scope, sa.scope) AS resolved_scope,
+  COALESCE(sc.status, sa.status) AS resolved_status,
+  COALESCE(sc.connection_type, sa.connection_type) AS resolved_connection_type,
+  COALESCE(sc.external_user_id, sa.external_user_id) AS resolved_external_user_id,
+  COALESCE(sc.external_user_email, sa.external_user_email) AS resolved_external_user_email,
+  COALESCE(sc.last_refreshed_at, sa.last_refreshed_at) AS resolved_last_refreshed_at,
+  COALESCE(sc.x_app_mode, sa.x_app_mode) AS resolved_x_app_mode
+FROM social_accounts sa
+JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+WHERE sa.id = @id
+  AND p.workspace_id = @workspace_id;
 
 -- name: FindSocialAccountByExternalID :one
 -- Dedup check: find an existing account (active OR disconnected) with the
@@ -483,7 +531,8 @@ SELECT sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
   sa.token_expires_at, sa.external_account_id, sa.account_name,
   sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
   sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
-  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at, sa.x_app_mode,
+  sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
 WHERE sa.platform = $1
