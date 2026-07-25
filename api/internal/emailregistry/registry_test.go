@@ -76,6 +76,13 @@ func TestTrialEndingTransactionalTemplateIsWiredInMain(t *testing.T) {
 	if !strings.Contains(string(mainSource), `BillingTrialEnding:          os.Getenv("LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID")`) {
 		t.Fatal("main.go does not wire the trial-ending Loops transactional template")
 	}
+	body := string(mainSource)
+	auditAt := strings.Index(body, "emailAuditStore := loops.NewPostgresEmailAuditStore(queries)")
+	apiKeyAt := strings.Index(body, `if key := os.Getenv("LOOPS_API_KEY")`)
+	nilSyncerAt := strings.Index(body, "loopsSyncer = loops.NewSyncer(nil, loopsOptions)")
+	if auditAt < 0 || apiKeyAt < 0 || nilSyncerAt < 0 || auditAt > apiKeyAt || nilSyncerAt > apiKeyAt {
+		t.Fatal("main.go must create an audit-capable trial-ending syncer before checking LOOPS_API_KEY")
+	}
 }
 
 func TestPaidQuotaRegistrySeparatesOptionalWarningsFromRequiredAlerts(t *testing.T) {

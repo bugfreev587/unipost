@@ -132,6 +132,37 @@ func TestStripeTrialWillEndLoopsFailureStillAcknowledgesWebhook(t *testing.T) {
 	}
 }
 
+func TestStripeTrialWillEndMissingLoopsConfigAuditsFailureAndAcknowledgesWebhook(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	endingAt := time.Unix(1787501017, 0).UTC()
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "basic", DurationDays: 30,
+		Status: trials.StatusActive, EndsAt: &endingAt, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging",
+	}}}
+	audit := &recordingTrialEndingAuditStore{}
+	h, secret := newTestStripeWebhookHandler(store, loops.NewSyncer(nil, loops.Options{EmailAuditStore: audit}))
+	h.SetTrialWebhookService(trial)
+	metadata := map[string]string{
+		"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+	}
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.trial_will_end", stripe.SubscriptionStatusTrialing, false, metadata)
+	retry := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.trial_will_end", stripe.SubscriptionStatusTrialing, false, metadata)
+
+	if response.Code != http.StatusOK || retry.Code != http.StatusOK {
+		t.Fatalf("statuses=%d/%d body=%s retry=%s", response.Code, retry.Code, response.Body.String(), retry.Body.String())
+	}
+	if audit.created != 2 || audit.failed != 2 || audit.sent != 0 || audit.failureReason != "missing_transactional_id" {
+		t.Fatalf("audit=%#v", audit)
+	}
+	if audit.attempt.EventKey != "email.billing.trial_ending.v1" || audit.attempt.IdempotencyKey != "billing_trial_ending:grant_1:2026-08-23T16:03:37Z" {
+		t.Fatalf("attempt=%#v", audit.attempt)
+	}
+	if len(audit.attemptCounts) != 1 || audit.attemptCounts[audit.attempt.IdempotencyKey] != 2 {
+		t.Fatalf("logical audit rows/attempts=%#v", audit.attemptCounts)
+	}
+}
+
 func TestStripeShortTrialEmailsImmediatelyAfterActivationButLongTrialWaits(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -861,6 +892,40 @@ type recordingHoldReconciler struct {
 type recordingStripeLifecycleSyncer struct {
 	events []loops.LifecycleEvent
 	err    error
+}
+
+type recordingTrialEndingAuditStore struct {
+	created       int
+	failed        int
+	sent          int
+	attempt       loops.EmailSendAttempt
+	failureReason string
+	attemptCounts map[string]int
+}
+
+func (s *recordingTrialEndingAuditStore) CreateEmailSendAttempt(_ context.Context, attempt loops.EmailSendAttempt) (loops.EmailSendAttemptRecord, error) {
+	s.created++
+	s.attempt = attempt
+	if s.attemptCounts == nil {
+		s.attemptCounts = map[string]int{}
+	}
+	s.attemptCounts[attempt.IdempotencyKey]++
+	return loops.EmailSendAttemptRecord{ID: "attempt_1"}, nil
+}
+
+func (s *recordingTrialEndingAuditStore) CreateSkippedEmailSendAttempt(_ context.Context, _ loops.EmailSendAttempt, _ string) (loops.EmailSendAttemptRecord, error) {
+	return loops.EmailSendAttemptRecord{}, errors.New("unexpected skipped audit")
+}
+
+func (s *recordingTrialEndingAuditStore) MarkEmailSendAttemptSent(_ context.Context, _ string) error {
+	s.sent++
+	return nil
+}
+
+func (s *recordingTrialEndingAuditStore) MarkEmailSendAttemptFailed(_ context.Context, _ string, reason string) error {
+	s.failed++
+	s.failureReason = reason
+	return nil
 }
 
 func (r *recordingStripeLifecycleSyncer) SendLifecycleEvent(_ context.Context, event loops.LifecycleEvent) error {

@@ -318,6 +318,7 @@ func buildLoopsBillingTrialEndingEvent(owner db.User, workspace db.Workspace, gr
 		PlanID:         planID,
 		EventName:      "billing_trial_ending",
 		IdempotencyKey: fmt.Sprintf("billing_trial_ending:%s:%s", grant.ID, trialEnd.Format(time.RFC3339)),
+		SkipContact:    true,
 		Properties: map[string]any{
 			"workspace_name":   workspace.Name,
 			"plan_id":          planID,

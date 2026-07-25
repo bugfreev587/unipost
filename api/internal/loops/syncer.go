@@ -132,7 +132,7 @@ func (s *Syncer) SyncDashboardUser(ctx context.Context, user DashboardUser) erro
 }
 
 func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) error {
-	if s == nil || s.client == nil || !s.client.Enabled() {
+	if s == nil {
 		return nil
 	}
 	if strings.TrimSpace(event.Email) == "" || strings.TrimSpace(event.EventName) == "" {
@@ -155,6 +155,19 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 	}
 
 	props := lifecycleEventProperties(event)
+	trialEnding := strings.TrimSpace(event.EventName) == "billing_trial_ending"
+	transactionalID := s.transactionalIDFor(event.EventName)
+	dataVariables := lifecycleTransactionalDataVariables(event, props)
+	if trialEnding && transactionalID == "" {
+		s.recordFailedTransactionalAudit(ctx, event, transactionalID, dataVariables, "missing_transactional_id")
+		return nil
+	}
+	if s.client == nil || !s.client.Enabled() {
+		if trialEnding {
+			s.recordFailedTransactionalAudit(ctx, event, transactionalID, dataVariables, "provider_unavailable")
+		}
+		return nil
+	}
 	if !event.SkipContact {
 		if err := s.client.UpsertContact(ctx, Contact{
 			Email:      event.Email,
@@ -170,8 +183,7 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 		}
 	}
 
-	if transactionalID := s.transactionalIDFor(event.EventName); transactionalID != "" {
-		dataVariables := lifecycleTransactionalDataVariables(event, props)
+	if transactionalID != "" {
 		audit := lifecycleTransactionalAudit(event)
 		if s.emailPolicy != nil && strings.TrimSpace(audit.EventKey) != "" {
 			decision, err := s.emailPolicy.Prepare(ctx, emailpolicy.Request{
@@ -182,6 +194,9 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 			})
 			if err != nil {
 				slog.Warn("loops: lifecycle transactional email policy failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
+				if trialEnding {
+					s.recordFailedTransactionalAudit(ctx, event, transactionalID, dataVariables, "email_policy_failed")
+				}
 				return nil
 			}
 			dataVariables = decision.DataVariables
@@ -220,6 +235,35 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 		slog.Warn("loops: lifecycle event failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
 	}
 	return nil
+}
+
+func (s *Syncer) recordFailedTransactionalAudit(ctx context.Context, event LifecycleEvent, transactionalID string, dataVariables map[string]any, reason string) {
+	if s == nil || s.emailAuditStore == nil {
+		slog.Warn("loops: failed transactional email cannot be audited", "event", event.EventName, "idempotency_key", event.IdempotencyKey, "reason", reason)
+		return
+	}
+	audit := lifecycleTransactionalAudit(event)
+	record, err := s.emailAuditStore.CreateEmailSendAttempt(ctx, EmailSendAttempt{
+		EventKey:           audit.EventKey,
+		RecipientUserID:    event.UserID,
+		RecipientEmail:     event.Email,
+		WorkspaceID:        audit.WorkspaceID,
+		Provider:           firstNonEmpty(audit.Provider, "loops"),
+		ProviderTemplateID: transactionalID,
+		IdempotencyKey:     event.IdempotencyKey,
+		DeliveryClass:      audit.DeliveryClass,
+		SubjectSnapshot:    audit.Subject,
+		DataVariables:      dataVariables,
+		TriggerSource:      audit.TriggerSource,
+		TriggerReferenceID: audit.TriggerReferenceID,
+	})
+	if err != nil {
+		slog.Warn("loops: failed transactional email audit create failed", "event", event.EventName, "idempotency_key", event.IdempotencyKey, "reason", reason, "error", err)
+		return
+	}
+	if err := s.emailAuditStore.MarkEmailSendAttemptFailed(ctx, record.ID, reason); err != nil {
+		slog.Warn("loops: failed transactional email audit update failed", "event", event.EventName, "idempotency_key", event.IdempotencyKey, "reason", reason, "error", err)
+	}
 }
 
 func (s *Syncer) transactionalIDFor(eventName string) string {

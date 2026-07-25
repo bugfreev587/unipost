@@ -139,6 +139,9 @@ func TestBuildLoopsBillingTrialEndingEvent(t *testing.T) {
 	if event.EventName != "billing_trial_ending" {
 		t.Fatalf("event name = %q", event.EventName)
 	}
+	if !event.SkipContact {
+		t.Fatal("trial-ending transactional must bypass contact upsert")
+	}
 	if event.IdempotencyKey != "billing_trial_ending:grant_123:2026-07-28T12:00:00Z" {
 		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
 	}

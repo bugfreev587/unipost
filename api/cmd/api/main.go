@@ -351,27 +351,29 @@ func main() {
 		emailpolicy.NewPostgresPreferenceReader(queries),
 		os.Getenv("APP_BASE_URL"),
 	)
+	emailAuditStore := loops.NewPostgresEmailAuditStore(queries)
+	loopsOptions := loops.Options{
+		TransactionalIDs: loops.TransactionalIDs{
+			PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
+			BillingTrialEnding:          os.Getenv("LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID"),
+			BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
+			BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
+			BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
+			AccountDisconnected:         os.Getenv("LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID"),
+			AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
+			PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
+		},
+		EmailAuditStore: emailAuditStore,
+		EmailPolicy:     emailPolicyService,
+	}
+	loopsSyncer = loops.NewSyncer(nil, loopsOptions)
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
-		emailAuditStore := loops.NewPostgresEmailAuditStore(queries)
 		auditedLoopsClient = loops.NewAuditedClient(loopsClient, emailAuditStore)
-		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
-			TransactionalIDs: loops.TransactionalIDs{
-				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
-				BillingTrialEnding:          os.Getenv("LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID"),
-				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
-				BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
-				BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
-				AccountDisconnected:         os.Getenv("LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID"),
-				AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
-				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
-			},
-			EmailAuditStore: emailAuditStore,
-			EmailPolicy:     emailPolicyService,
-		})
+		loopsSyncer = loops.NewSyncer(loopsClient, loopsOptions)
 		slog.Info("loops: lifecycle sync configured")
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")

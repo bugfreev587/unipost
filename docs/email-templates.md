@@ -26,7 +26,7 @@ As of 2026-06-26, these paths are wired to Loops transactional templates in code
 
 Welcome and invite sends are best-effort and skipped when the Loops sender or template ID is missing. Notification test email returns a configuration error when the Loops test template is missing, because the user explicitly requested a provider test.
 
-Billing lifecycle events are emitted from Stripe webhook handling through the Loops lifecycle syncer. If a billing transactional template ID is missing, the syncer falls back to the matching Loops event path, so Loops dashboard workflows must be audited before enabling those event listeners. The old backend-rendered Resend paid activation email has been removed; paid activation copy should live in `email.billing.plan_changed.v1`.
+Billing lifecycle events are emitted from Stripe webhook handling through the Loops lifecycle syncer. Most existing billing events fall back to the matching Loops event path if their transactional template ID is missing. Trial-ending reminders are stricter: missing Loops API or template configuration records a failed `email_send_attempts` row and never falls back to a Loops event, preventing an unaudited duplicate workflow. The old backend-rendered Resend paid activation email has been removed; paid activation copy should live in `email.billing.plan_changed.v1`.
 
 `post.failed` and `account.disconnected` email channels are now Loops-owned. The notification dispatcher preserves Slack and Discord delivery for those events, while email-channel notification rows are recorded as `skipped` audit rows instead of being sent through Resend. The legacy `billing.usage_80pct` notification setting is hidden; free-plan quota reminders use `email.quota.free_plan_reminder.v1` and the `free_plan_quota_email_reminders` ledger.
 
@@ -157,7 +157,7 @@ The admin view supports filtering by status, provider, event key, quota period/t
 - Preference policy: essential account/billing notice; not unsubscribe-gated.
 - Required variables: `workspace_name`, `plan_id`, `plan_name`, `trial_end`, `days_remaining`, `post_trial_price`, `billing_url`, `cancel_url`
 - Idempotency policy: `billing_trial_ending:{trial_grant_id}:{trial_end}`
-- Audit policy: one `email_send_attempts` row per grant/end key; retries increment `attempt_count` on that row.
+- Audit policy: one `email_send_attempts` row per grant/end key; retries increment `attempt_count` on that row. Missing API/template configuration and pre-send policy failures mark that row failed while Stripe webhook handling still succeeds.
 - Fallback policy: send immediately after activation for one-, two-, or three-day trials.
 - Retention policy: retain metadata and variable snapshots for 13 months.
 - External Loops workflow audit: audit workflows listening to `billing_trial_ending` before enabling this template so no second workflow sends the same reminder.
