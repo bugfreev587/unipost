@@ -595,7 +595,10 @@ func buildPaidTrialScheduleParams(req CreatePaidTrialScheduleRequest) (*stripe.S
 		return nil, nil, err
 	}
 	metadata := trialMetadata(req.WorkspaceID, req.PlanID, req.TrialGrantID, req.TrialKind, req.Environment)
-	createParams := &stripe.SubscriptionScheduleParams{FromSubscription: stripe.String(req.SubscriptionID)}
+	createParams := &stripe.SubscriptionScheduleParams{
+		FromSubscription: stripe.String(req.SubscriptionID),
+		Metadata:         cloneMetadata(metadata),
+	}
 	createParams.SetIdempotencyKey(trialOperationKey(req.TrialGrantID, "schedule") + ":create")
 
 	current := req.CurrentPhase

@@ -209,6 +209,7 @@ func TestBuildPaidTrialScheduleParamsUsesStableSubOperationKeysAndMetadata(t *te
 	if got := stripe.StringValue(createParams.IdempotencyKey); got != "trial:grant_paid:schedule:create" {
 		t.Fatalf("create IdempotencyKey = %q", got)
 	}
+	assertTrialMetadata(t, createParams.Metadata, req.WorkspaceID, req.PlanID, req.TrialGrantID, req.TrialKind, req.Environment)
 	if got := stripe.StringValue(updateParams.IdempotencyKey); got != "trial:grant_paid:schedule:update" {
 		t.Fatalf("update IdempotencyKey = %q", got)
 	}
@@ -902,6 +903,10 @@ func TestCreatePaidScheduleReturnsCreatedSnapshotWhenUpdateTimesOut(t *testing.T
 	if !reflect.DeepEqual(client.calls, []string{"create_schedule", "update_schedule"}) {
 		t.Fatalf("Stripe calls = %#v", client.calls)
 	}
+	if client.scheduleCreateParams == nil {
+		t.Fatal("initial schedule create params were not captured")
+	}
+	assertTrialMetadata(t, client.scheduleCreateParams.Metadata, "ws_paid", "team", "grant_paid", KindPaidSamePlan, "production")
 }
 
 func TestGatewayRejectsUnavailableModeWithoutFallingBackLive(t *testing.T) {
@@ -1065,6 +1070,7 @@ type fakeStripeTrialClient struct {
 	subscriptionErr      error
 	scheduleCreateResult *stripe.SubscriptionSchedule
 	scheduleCreateErr    error
+	scheduleCreateParams *stripe.SubscriptionScheduleParams
 	scheduleUpdateResult *stripe.SubscriptionSchedule
 	scheduleUpdateErr    error
 	portalResult         *stripe.BillingPortalSession
@@ -1104,8 +1110,9 @@ func (c *fakeStripeTrialClient) updateSubscription(_ string, _ *stripe.Subscript
 	return c.subscriptionResult, c.subscriptionErr
 }
 
-func (c *fakeStripeTrialClient) createSchedule(_ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+func (c *fakeStripeTrialClient) createSchedule(params *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
 	c.calls = append(c.calls, "create_schedule")
+	c.scheduleCreateParams = params
 	return c.scheduleCreateResult, c.scheduleCreateErr
 }
 
