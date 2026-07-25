@@ -51,6 +51,7 @@ test("CI makes the dashboard SEO regression blocking", async () => {
 
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
+  const ciGates = await read("docs/ci-gates.md");
   for (const branch of ["dev", "staging"]) {
     assert.ok(
       workflow.includes(`- ${branch}`),
@@ -110,6 +111,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /if: failure\(\)/);
   assert.doesNotMatch(workflow, /https:\/\/api\.unipost\.dev/);
   assert.doesNotMatch(workflow, /pk_live_/);
+  assert.match(
+    ciGates,
+    /Railway `preview-base` service `preview-api`[\s\S]*`CLERK_SECRET_KEY`[\s\S]*`sk_test_`/,
+    "isolated Railway PR APIs must inherit the Development Clerk verifier secret",
+  );
 
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
   assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
