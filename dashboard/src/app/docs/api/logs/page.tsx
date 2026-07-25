@@ -75,6 +75,22 @@ export default function LogsOverviewPage() {
         </Card>
 
         <Card>
+          <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 10 }}>Hosted Connect outcomes</div>
+          <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)", marginBottom: 12 }}>
+            Every Hosted Connect attempt that UniPost can associate with your workspace produces one result event. Filter with <code>category=oauth</code>, then use the action and status to distinguish the outcome.
+          </div>
+          <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
+            <li><code>account.connect.callback_succeeded</code> — the account was connected.</li>
+            <li><code>account.connect.callback_failed</code> — the attempt failed and includes a safe <code>error_code</code>.</li>
+            <li><code>account.connect.callback_cancelled</code> — the user cancelled provider authorization.</li>
+            <li>Search for the complete <code>metadata.connect_session_id</code> or <code>metadata.external_user_id</code> value with <code>q</code>. These ID fields use exact matching.</li>
+          </ul>
+          <div style={{ fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)", marginTop: 12 }}>
+            Facebook Page failures use <code>facebook_page_not_available</code>, <code>facebook_page_permission_required</code>, or <code>facebook_authorization_failed</code>. These codes and messages are bounded UniPost results, not raw Meta responses.
+          </div>
+        </Card>
+
+        <Card>
           <div style={{ fontSize: 15, fontWeight: 700, color: "var(--docs-text)", marginBottom: 10 }}>Redaction and payloads</div>
           <ul style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 8, fontSize: 14, lineHeight: 1.7, color: "var(--docs-text-soft)" }}>
             <li>The list endpoint never returns raw payloads. The detail endpoint includes redacted <code>request_payload</code> and <code>response_payload</code>.</li>

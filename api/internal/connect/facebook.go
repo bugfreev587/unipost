@@ -86,18 +86,43 @@ func (c *FacebookConnector) ExchangeCode(ctx context.Context, _ SessionView, cod
 	}
 	longToken, err := c.exchangeLongLivedUserToken(ctx, shortToken)
 	if err != nil {
-		return nil, fmt.Errorf("facebook long-lived exchange: %w", err)
+		return nil, err
 	}
 	pages, err := c.fetchPages(ctx, longToken)
 	if err != nil {
 		return nil, err
 	}
+	if len(pages) == 0 {
+		return nil, &FacebookConnectFailure{
+			Code:                 FacebookPageNotAvailable,
+			Stage:                "page_discovery",
+			PageCount:            0,
+			PublishablePageCount: 0,
+		}
+	}
+
+	publishableCount := 0
+	for _, candidate := range pages {
+		if facebookPageHasPublishTask(candidate.Tasks) {
+			publishableCount++
+		}
+	}
 	page, ok := firstPublishableFacebookPage(pages)
 	if !ok {
-		return nil, fmt.Errorf("facebook connect found no Pages with publish permissions")
+		return nil, &FacebookConnectFailure{
+			Code:                 FacebookPagePermissionRequired,
+			Stage:                "page_permission",
+			PageCount:            len(pages),
+			PublishablePageCount: publishableCount,
+		}
 	}
 	if page.AccessToken == "" {
-		return nil, fmt.Errorf("facebook connect selected Page has no access_token")
+		return nil, &FacebookConnectFailure{
+			Code:                 FacebookAuthorizationFailed,
+			Stage:                "page_access_token",
+			PageCount:            len(pages),
+			PublishablePageCount: publishableCount,
+		}
 	}
 	return &TokenSet{
 		AccessToken: page.AccessToken,
@@ -118,26 +143,29 @@ func (c *FacebookConnector) exchangeShortLivedUserToken(ctx context.Context, cod
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.TokenEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
-		return "", err
+		return "", newFacebookFailure("short_token_request")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("facebook token exchange: %w", err)
+		return "", newFacebookFailure("short_token_transport")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", newFacebookFailure("short_token_response_body")
+	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("facebook token exchange %d: %s", resp.StatusCode, string(body))
+		return "", newFacebookProviderFailure("short_token_response", resp.StatusCode, body)
 	}
 
 	var raw struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return "", fmt.Errorf("facebook token exchange decode: %w", err)
+		return "", newFacebookFailure("short_token_decode")
 	}
 	if raw.AccessToken == "" {
-		return "", fmt.Errorf("facebook token exchange returned empty access_token")
+		return "", newFacebookFailure("short_token_empty")
 	}
 	return raw.AccessToken, nil
 }
@@ -151,25 +179,28 @@ func (c *FacebookConnector) exchangeLongLivedUserToken(ctx context.Context, shor
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.TokenEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
-		return "", err
+		return "", newFacebookFailure("long_token_request")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("facebook long-lived exchange: %w", err)
+		return "", newFacebookFailure("long_token_transport")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", newFacebookFailure("long_token_response_body")
+	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("facebook long-lived exchange %d: %s", resp.StatusCode, string(body))
+		return "", newFacebookProviderFailure("long_token_response", resp.StatusCode, body)
 	}
 	var raw struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return "", fmt.Errorf("facebook long-lived exchange decode: %w", err)
+		return "", newFacebookFailure("long_token_decode")
 	}
 	if raw.AccessToken == "" {
-		return "", fmt.Errorf("facebook long-lived exchange returned empty access_token")
+		return "", newFacebookFailure("long_token_empty")
 	}
 	return raw.AccessToken, nil
 }
@@ -190,16 +221,19 @@ func (c *FacebookConnector) fetchPages(ctx context.Context, userAccessToken stri
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.PagesEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, newFacebookFailure("page_discovery_request")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("facebook /me/accounts: %w", err)
+		return nil, newFacebookFailure("page_discovery_transport")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newFacebookFailure("page_discovery_response_body")
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("facebook /me/accounts %d: %s", resp.StatusCode, string(body))
+		return nil, newFacebookProviderFailure("page_discovery_response", resp.StatusCode, body)
 	}
 
 	var raw struct {
@@ -216,7 +250,7 @@ func (c *FacebookConnector) fetchPages(ctx context.Context, userAccessToken stri
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("facebook /me/accounts decode: %w", err)
+		return nil, newFacebookFailure("page_discovery_decode")
 	}
 	out := make([]facebookConnectPage, 0, len(raw.Data))
 	for _, page := range raw.Data {
@@ -257,16 +291,19 @@ func (c *FacebookConnector) FetchProfile(ctx context.Context, accessToken string
 
 	req, err := http.NewRequestWithContext(ctx, "GET", c.ProfileEndpoint+"?"+q.Encode(), nil)
 	if err != nil {
-		return nil, err
+		return nil, newFacebookFailure("profile_request")
 	}
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("facebook /me page: %w", err)
+		return nil, newFacebookFailure("profile_transport")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, newFacebookFailure("profile_response_body")
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("facebook /me page %d: %s", resp.StatusCode, string(body))
+		return nil, newFacebookProviderFailure("profile_response", resp.StatusCode, body)
 	}
 
 	var raw struct {
@@ -279,10 +316,10 @@ func (c *FacebookConnector) FetchProfile(ctx context.Context, accessToken string
 		} `json:"picture"`
 	}
 	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("facebook /me page decode: %w", err)
+		return nil, newFacebookFailure("profile_decode")
 	}
 	if raw.ID == "" {
-		return nil, fmt.Errorf("facebook /me page returned empty id")
+		return nil, newFacebookFailure("profile_empty_id")
 	}
 	return &Profile{
 		ExternalAccountID: raw.ID,

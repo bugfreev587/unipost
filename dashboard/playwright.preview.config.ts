@@ -10,6 +10,7 @@ if (!baseURL) {
 export default defineConfig({
   testDir: "./tests/regression",
   testMatch: [
+    "authenticated-dashboard.spec.ts",
     "preview-environment.spec.ts",
     "seo-preview.spec.ts",
   ],

@@ -51,6 +51,7 @@ test("CI makes the dashboard SEO regression blocking", async () => {
 
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
+  const ciGates = await read("docs/ci-gates.md");
   for (const branch of ["dev", "staging"]) {
     assert.ok(
       workflow.includes(`- ${branch}`),
@@ -74,6 +75,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'hotfix-'\)/);
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /--prebuilt[\s\S]*--archive=tgz/);
+  assert.match(
+    workflow,
+    /Build the Vercel Preview[\s\S]*export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="\$\{\{ vars\.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY \}\}"[\s\S]*vercel@50\.26\.1 build/,
+    "the prebuilt Preview must receive Clerk's public key explicitly because Vercel does not download sensitive values",
+  );
   assert.match(workflow, /github\.run_id/);
   assert.match(workflow, /github\.run_attempt/);
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);
@@ -93,7 +99,12 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(workflow, /VERCEL_SHAREABLE_URL/);
   assert.match(
     workflow,
-    /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+    /DASHBOARD_BASE_URL: https:\/\/\$\{\{ env\.PREVIEW_ALIAS_HOST \}\}/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /Run deployed preview regression[\s\S]*DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+    "authenticated navigation must stay on the build-time Preview app host",
   );
   assert.match(workflow, /vercel-alias-cleanup\.mjs/);
   assert.match(
@@ -105,6 +116,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /if: failure\(\)/);
   assert.doesNotMatch(workflow, /https:\/\/api\.unipost\.dev/);
   assert.doesNotMatch(workflow, /pk_live_/);
+  assert.match(
+    ciGates,
+    /Railway `preview-base` service `preview-api`[\s\S]*`CLERK_SECRET_KEY`[\s\S]*`sk_test_`/,
+    "isolated Railway PR APIs must inherit the Development Clerk verifier secret",
+  );
 
   const previewConfig = await read("dashboard/playwright.preview.config.ts");
   assert.doesNotMatch(previewConfig, /VERCEL_SHAREABLE_URL/);
@@ -157,6 +173,10 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
   const config = await read("dashboard/playwright.regression.config.ts");
-  assert.match(config, /testIgnore:\s*\[[\s\S]*preview-environment\.spec\.ts/);
+  assert.match(
+    config,
+    /testIgnore:\s*\[[\s\S]*preview-environment\.spec\.ts/,
+    "dashboard regression would collect the preview-only spec without its required deployment identity",
+  );
   assert.match(config, /testIgnore:\s*\[[\s\S]*seo-preview\.spec\.ts/);
 });

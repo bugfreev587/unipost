@@ -60,10 +60,11 @@ const (
 	ActionAPIRequestValidationFailed = "api.request.validation_failed"
 	ActionAPIRequestRateLimited      = "api.request.rate_limited"
 
-	ActionAccountConnectSessionCreated = "account.connect.session_created"
-	ActionAccountConnectCallbackOK     = "account.connect.callback_succeeded"
-	ActionAccountConnectCallbackFailed = "account.connect.callback_failed"
-	ActionAccountRefreshTokenFailed    = "account.refresh_token_failed"
+	ActionAccountConnectSessionCreated    = "account.connect.session_created"
+	ActionAccountConnectCallbackOK        = "account.connect.callback_succeeded"
+	ActionAccountConnectCallbackFailed    = "account.connect.callback_failed"
+	ActionAccountConnectCallbackCancelled = "account.connect.callback_cancelled"
+	ActionAccountRefreshTokenFailed       = "account.refresh_token_failed"
 
 	ActionWebhookDeliveryStarted   = "webhook.delivery.started"
 	ActionWebhookDeliverySucceeded = "webhook.delivery.succeeded"
