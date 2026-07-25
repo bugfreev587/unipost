@@ -138,13 +138,14 @@ const countInboxAccountsInScope = `-- name: CountInboxAccountsInScope :one
 SELECT COUNT(*)::INTEGER
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE p.workspace_id = $1
   AND sa.id = ANY($2::TEXT[])
   AND (
     $3::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $4::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $4::TEXT
     )
   )
 `
@@ -173,20 +174,21 @@ SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     $2::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $3::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $3::TEXT
     )
   )
   AND i.is_read = false
   AND i.is_own = false
   AND (NOT $4::BOOLEAN OR i.source <> 'x_dm')
-  AND sa.status = 'active'
-  AND sa.disconnected_at IS NULL
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
 `
 
 type CountUnreadByWorkspaceParams struct {
@@ -321,16 +323,20 @@ func (q *Queries) DeleteXInboxOutboundAfterUsageReversal(ctx context.Context, id
 }
 
 const findAllActiveInstagramAccountsByWebhookUserID = `-- name: FindAllActiveInstagramAccountsByWebhookUserID :many
-SELECT sa.id, sa.external_account_id,
-       CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
-       p.workspace_id, sa.external_user_id
+SELECT DISTINCT ON (COALESCE(sa.connection_id, sa.id))
+       sa.id, sa.external_account_id,
+       CAST(COALESCE(COALESCE(sc.metadata, sa.metadata)->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
+       p.workspace_id, COALESCE(sc.external_user_id, sa.external_user_id) AS external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.platform = 'instagram'
-  AND sa.metadata->>'instagram_webhook_user_id' = $1::TEXT
+  AND COALESCE(sc.metadata, sa.metadata)->>'instagram_webhook_user_id' = $1::TEXT
   AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
-ORDER BY sa.connected_at DESC, sa.id
+  AND sa.binding_status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
+ORDER BY COALESCE(sa.connection_id, sa.id), sa.connected_at DESC, sa.id
 `
 
 type FindAllActiveInstagramAccountsByWebhookUserIDRow struct {
@@ -370,14 +376,19 @@ func (q *Queries) FindAllActiveInstagramAccountsByWebhookUserID(ctx context.Cont
 }
 
 const findAllSocialAccountsByPlatformAndExternalID = `-- name: FindAllSocialAccountsByPlatformAndExternalID :many
-SELECT sa.id, sa.external_account_id, p.workspace_id, sa.external_user_id
+SELECT DISTINCT ON (COALESCE(sa.connection_id, sa.id))
+       sa.id, sa.external_account_id, p.workspace_id,
+       COALESCE(sc.external_user_id, sa.external_user_id) AS external_user_id
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.platform = $1
-  AND sa.external_account_id = $2
+  AND COALESCE(sc.provider_identity, sa.external_account_id) = $2::TEXT
   AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
-ORDER BY sa.connected_at DESC
+  AND sa.binding_status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
+ORDER BY COALESCE(sa.connection_id, sa.id), sa.connected_at DESC, sa.id
 `
 
 type FindAllSocialAccountsByPlatformAndExternalIDParams struct {
@@ -452,7 +463,8 @@ func (q *Queries) FindDMThreadKeyBySender(ctx context.Context, arg FindDMThreadK
 }
 
 const findInboxAccountsByWorkspace = `-- name: FindInboxAccountsByWorkspace :many
-SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
+SELECT DISTINCT ON (COALESCE(sa.connection_id, sa.id))
+       sa.id, sa.profile_id, sa.platform, sa.access_token,
        sa.refresh_token, sa.token_expires_at, sa.external_account_id,
        sa.account_name, sa.account_avatar_url, sa.connected_at,
        sa.disconnected_at, sa.metadata, sa.scope, sa.status,
@@ -461,18 +473,21 @@ SELECT DISTINCT sa.id, sa.profile_id, sa.platform, sa.access_token,
        sa.connection_id, sa.binding_version, sa.binding_status
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE p.workspace_id = $1
   AND (
     $2::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $3::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $3::TEXT
     )
   )
-  AND sa.status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
   AND sa.disconnected_at IS NULL
+  AND sa.binding_status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
   AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
-ORDER BY sa.connected_at DESC, sa.id
+ORDER BY COALESCE(sa.connection_id, sa.id), sa.connected_at DESC, sa.id
 `
 
 type FindInboxAccountsByWorkspaceParams struct {
@@ -550,31 +565,32 @@ const findXInboxAccountForApp = `-- name: FindXInboxAccountForApp :one
 SELECT
   sa.id,
   p.workspace_id,
-  sa.external_user_id,
-  sa.external_account_id,
-  COALESCE(sa.account_name, '') AS account_name,
-  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
-  sa.scope,
-  sa.connection_type,
+  COALESCE(sc.external_user_id, sa.external_user_id) AS external_user_id,
+  COALESCE(sc.provider_identity, sa.external_account_id) AS external_account_id,
+  COALESCE(sc.account_name, sa.account_name, '') AS account_name,
+  COALESCE(sc.x_app_mode, sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  COALESCE(sc.scope, sa.scope) AS scope,
+  COALESCE(sc.connection_type, sa.connection_type) AS connection_type,
   COALESCE(sub.plan_id, 'free') AS plan_id,
   COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
 LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 LEFT JOIN platform_credentials pc
   ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
 WHERE sa.id = $1
   AND sa.platform = 'twitter'
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
   AND (
     (
-      sa.x_app_mode = 'unipost_managed_app'
+      COALESCE(sc.x_app_mode, sa.x_app_mode) = 'unipost_managed_app'
       AND $2::TEXT = $3::TEXT
     )
     OR (
-      sa.x_app_mode = 'workspace_x_app'
+      COALESCE(sc.x_app_mode, sa.x_app_mode) = 'workspace_x_app'
       AND pc.webhook_route_key = $2::TEXT
     )
   )
@@ -619,38 +635,40 @@ func (q *Queries) FindXInboxAccountForApp(ctx context.Context, arg FindXInboxAcc
 }
 
 const findXInboxAccountsForProviderUserApp = `-- name: FindXInboxAccountsForProviderUserApp :many
-SELECT
+SELECT DISTINCT ON (COALESCE(sa.connection_id, sa.id))
   sa.id,
   p.workspace_id,
-  sa.external_user_id,
-  sa.external_account_id,
-  COALESCE(sa.account_name, '') AS account_name,
-  COALESCE(sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
-  sa.scope,
-  sa.connection_type,
+  COALESCE(sc.external_user_id, sa.external_user_id) AS external_user_id,
+  COALESCE(sc.provider_identity, sa.external_account_id) AS external_account_id,
+  COALESCE(sc.account_name, sa.account_name, '') AS account_name,
+  COALESCE(sc.x_app_mode, sa.x_app_mode, 'legacy_unknown') AS x_app_mode,
+  COALESCE(sc.scope, sa.scope) AS scope,
+  COALESCE(sc.connection_type, sa.connection_type) AS connection_type,
   COALESCE(sub.plan_id, 'free') AS plan_id,
   COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
 LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 LEFT JOIN platform_credentials pc
   ON pc.workspace_id = p.workspace_id AND pc.platform = 'twitter'
 WHERE sa.platform = 'twitter'
-  AND sa.external_account_id = $1::TEXT
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
+  AND COALESCE(sc.provider_identity, sa.external_account_id) = $1::TEXT
+  AND sa.binding_status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
   AND (
     (
-      sa.x_app_mode = 'unipost_managed_app'
+      COALESCE(sc.x_app_mode, sa.x_app_mode) = 'unipost_managed_app'
       AND $2::TEXT = $3::TEXT
     )
     OR (
-      sa.x_app_mode = 'workspace_x_app'
+      COALESCE(sc.x_app_mode, sa.x_app_mode) = 'workspace_x_app'
       AND pc.webhook_route_key = $2::TEXT
     )
   )
-ORDER BY sa.connected_at DESC, sa.id
+ORDER BY COALESCE(sa.connection_id, sa.id), sa.connected_at DESC, sa.id
 `
 
 type FindXInboxAccountsForProviderUserAppParams struct {
@@ -707,14 +725,15 @@ const getInboxItem = `-- name: GetInboxItem :one
 SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
   AND (
     $3::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $4::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $4::TEXT
     )
   )
 `
@@ -1009,20 +1028,28 @@ func (q *Queries) GetXInboxReplyByIdempotencyKey(ctx context.Context, arg GetXIn
 }
 
 const listAllInboxAccounts = `-- name: ListAllInboxAccounts :many
-SELECT sa.id, sa.platform, sa.access_token, sa.external_account_id,
-       sa.account_name, p.workspace_id, sa.scope, sa.connection_type,
-       sa.x_app_mode, sa.external_user_id,
-       CAST(COALESCE(sa.metadata->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
+SELECT DISTINCT ON (COALESCE(sa.connection_id, sa.id))
+       sa.id, sa.platform, COALESCE(sc.access_token, sa.access_token) AS access_token,
+       sa.external_account_id,
+       COALESCE(sc.account_name, sa.account_name) AS account_name,
+       p.workspace_id, COALESCE(sc.scope, sa.scope) AS scope,
+       COALESCE(sc.connection_type, sa.connection_type) AS connection_type,
+       COALESCE(sc.x_app_mode, sa.x_app_mode) AS x_app_mode,
+       COALESCE(sc.external_user_id, sa.external_user_id) AS external_user_id,
+       CAST(COALESCE(COALESCE(sc.metadata, sa.metadata)->>'instagram_webhook_user_id', '') AS TEXT) AS instagram_webhook_user_id,
        COALESCE(sub.plan_id, 'free') AS plan_id,
        COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
 LEFT JOIN plans pl ON pl.id = COALESCE(sub.plan_id, 'free')
 WHERE sa.disconnected_at IS NULL
-  AND sa.status = 'active'
+  AND sa.binding_status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
   AND sa.platform IN ('instagram', 'threads', 'facebook', 'twitter')
-ORDER BY sa.connected_at DESC
+ORDER BY COALESCE(sa.connection_id, sa.id), sa.connected_at DESC, sa.id
 `
 
 type ListAllInboxAccountsRow struct {
@@ -1135,17 +1162,18 @@ const listInboxItemsByWorkspace = `-- name: ListInboxItemsByWorkspace :many
 SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     $3::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $4::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $4::TEXT
     )
   )
-  AND sa.status = 'active'
-  AND sa.disconnected_at IS NULL
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
   AND (NOT $5::BOOLEAN OR i.source <> 'x_dm')
   AND ($6::TEXT IS NULL OR i.source = $6::TEXT)
   AND ($7::BOOLEAN IS NULL OR i.is_read = $7::BOOLEAN)
@@ -1363,14 +1391,15 @@ UPDATE inbox_items AS i
 SET is_read = true
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     $2::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $3::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $3::TEXT
     )
   )
   AND i.is_read = false
@@ -1402,6 +1431,7 @@ UPDATE inbox_items AS i
 SET is_read = true
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
@@ -1409,8 +1439,8 @@ WHERE sa.id = i.social_account_id
   AND (
     $3::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $4::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $4::TEXT
     )
   )
 `
@@ -1743,6 +1773,7 @@ SET author_name = NULLIF($1::TEXT, ''),
     author_avatar_url = NULLIF($3::TEXT, '')
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.id = $4
   AND i.workspace_id = $5
@@ -1777,14 +1808,15 @@ SET thread_status = $5,
     assigned_to = NULLIF($6, '')
 FROM social_accounts sa
 JOIN profiles p ON p.id = sa.profile_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
   AND (
     $7::BOOLEAN
     OR (
-      sa.connection_type = 'managed'
-      AND sa.external_user_id = $8::TEXT
+      COALESCE(sc.connection_type, sa.connection_type) = 'managed'
+      AND COALESCE(sc.external_user_id, sa.external_user_id) = $8::TEXT
     )
   )
   AND i.social_account_id = $2

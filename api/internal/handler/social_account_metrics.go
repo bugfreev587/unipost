@@ -58,7 +58,7 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+	resolved, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 		ID:          accountID,
 		WorkspaceID: workspaceID,
 	})
@@ -70,6 +70,7 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load account")
 		return
 	}
+	acc := resolvedSocialAccountFromRow(resolved)
 
 	if acc.Platform == "tiktok" {
 		if status, code, message, reason, blocked := tiktokAnalyticsAccountStateError(&acc); blocked {
@@ -151,12 +152,24 @@ func (h *SocialAccountHandler) AccountMetrics(w http.ResponseWriter, r *http.Req
 						"access_err", encErr, "refresh_err", encRefreshErr)
 				} else {
 					accessToken = newAccess
-					if updateErr := h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
-						ID:             acc.ID,
-						AccessToken:    encAccess,
-						RefreshToken:   accountMetricsRefreshTokenForUpdate(acc.RefreshToken, encRefresh),
-						TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: !expiresAt.IsZero()},
-					}); updateErr != nil {
+					refreshToken := accountMetricsRefreshTokenForUpdate(acc.RefreshToken, encRefresh)
+					var updateErr error
+					if acc.ConnectionID.Valid {
+						updateErr = h.queries.UpdateSocialConnectionTokens(r.Context(), db.UpdateSocialConnectionTokensParams{
+							ID:             acc.ConnectionID.String,
+							AccessToken:    encAccess,
+							RefreshToken:   refreshToken,
+							TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: !expiresAt.IsZero()},
+						})
+					} else {
+						updateErr = h.queries.UpdateSocialAccountTokens(r.Context(), db.UpdateSocialAccountTokensParams{
+							ID:             acc.ID,
+							AccessToken:    encAccess,
+							RefreshToken:   refreshToken,
+							TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: !expiresAt.IsZero()},
+						})
+					}
+					if updateErr != nil {
 						slog.Error("account metrics: update refreshed tokens failed",
 							"account_id", acc.ID, "platform", acc.Platform, "err", updateErr)
 					}

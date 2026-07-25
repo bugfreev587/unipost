@@ -1458,6 +1458,19 @@ func (h *InboxHandler) Sync(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to find accounts")
 		return
 	}
+	resolvedAccounts := make([]db.SocialAccount, 0, len(accounts))
+	for _, binding := range accounts {
+		resolved, resolveErr := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
+			ID:          binding.ID,
+			WorkspaceID: workspaceID,
+		})
+		if resolveErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve account connection")
+			return
+		}
+		resolvedAccounts = append(resolvedAccounts, resolvedSocialAccountFromRow(resolved))
+	}
+	accounts = resolvedAccounts
 	if request.XBackfill != nil {
 		h.syncXBackfill(w, r, workspaceID, accounts, *request.XBackfill)
 		return

@@ -120,6 +120,15 @@ RETURNING id, profile_id, platform, access_token, refresh_token,
   connect_session_id, external_user_id, external_user_email, last_refreshed_at,
   x_app_mode, connection_id, binding_version, binding_status;
 
+-- name: UpdateSocialConnectionTokens :exec
+UPDATE social_connections
+SET access_token = @access_token,
+    refresh_token = @refresh_token,
+    token_expires_at = @token_expires_at,
+    last_refreshed_at = NOW(),
+    updated_at = NOW()
+WHERE id = @id;
+
 -- name: ListBoundProfileIDsForAccount :many
 SELECT DISTINCT target.profile_id
 FROM social_accounts source

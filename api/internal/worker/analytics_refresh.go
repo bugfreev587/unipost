@@ -188,12 +188,23 @@ func (w *AnalyticsRefreshWorker) refreshOne(ctx context.Context, r db.GetDuePost
 				return
 			}
 			accessToken = newAccess
-			if updateErr := w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
-				ID:             r.SocialAccountID,
-				AccessToken:    encAccess,
-				RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
-				TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-			}); updateErr != nil {
+			var updateErr error
+			if r.ConnectionID.Valid {
+				updateErr = w.queries.UpdateSocialConnectionTokens(ctx, db.UpdateSocialConnectionTokensParams{
+					ID:             r.ConnectionID.String,
+					AccessToken:    encAccess,
+					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+				})
+			} else {
+				updateErr = w.queries.UpdateSocialAccountTokens(ctx, db.UpdateSocialAccountTokensParams{
+					ID:             r.SocialAccountID,
+					AccessToken:    encAccess,
+					RefreshToken:   pgtype.Text{String: encRefresh, Valid: true},
+					TokenExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+				})
+			}
+			if updateErr != nil {
 				slog.Error("analytics refresh: update failed",
 					"result_id", r.SocialPostResultID, "platform", r.Platform, "error", updateErr)
 			}

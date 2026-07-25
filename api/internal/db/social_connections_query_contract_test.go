@@ -53,9 +53,10 @@ func TestSocialConnectionQueriesProvideDualReadProjection(t *testing.T) {
 		"sa.connection_id",
 		"sa.binding_version",
 		"sa.binding_status",
-		"coalesce(sc.access_token, sa.access_token) as resolved_access_token",
-		"coalesce(sc.refresh_token, sa.refresh_token) as resolved_refresh_token",
-		"coalesce(sc.external_user_id, sa.external_user_id) as resolved_external_user_id",
+		"case when sc.id is not null then sc.access_token else sa.access_token end",
+		"case when sc.id is not null then coalesce(sc.refresh_token, '') else coalesce(sa.refresh_token, '') end",
+		"case when sc.id is not null then sc.disconnected_at else sa.disconnected_at end",
+		"case when sc.id is not null then coalesce(sc.external_user_id, '') else coalesce(sa.external_user_id, '') end",
 		"left join social_connections sc on sc.id = sa.connection_id",
 	} {
 		if !strings.Contains(queries, want) {

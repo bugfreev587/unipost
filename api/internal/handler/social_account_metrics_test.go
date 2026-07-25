@@ -4,12 +4,28 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
+
+func TestAccountMetricsLoadsResolvedConnectionCredentials(t *testing.T) {
+	source, err := os.ReadFile("social_account_metrics.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(source)
+	if !strings.Contains(body, "GetResolvedSocialAccountByIDAndWorkspace") {
+		t.Fatal("account metrics must resolve connection-owned credentials")
+	}
+	if !strings.Contains(body, "UpdateSocialConnectionTokens") {
+		t.Fatal("account metrics refresh must persist migrated tokens on the connection")
+	}
+}
 
 func TestAccountMetricsPlatformErrorResponseNeedsReconnectSentinel(t *testing.T) {
 	status, code, message, ok := accountMetricsPlatformErrorResponse(

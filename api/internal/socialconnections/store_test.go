@@ -144,7 +144,7 @@ func TestBindExistingResolvesConnectionWithoutAcceptingCallerConnectionID(t *tes
 			ID: "account-a", ProfileID: "profile-a", Platform: "twitter",
 			ExternalAccountID: "provider-a", ConnectionID: pgtype.Text{String: "connection-a", Valid: true},
 			BindingStatus: "active", ResolvedAccessToken: "encrypted-access",
-			ResolvedConnectionType: "managed", ResolvedExternalUserID: pgtype.Text{String: "managed-a", Valid: true},
+			ResolvedConnectionType: "managed", ResolvedExternalUserID: "managed-a",
 		},
 		connection: db.SocialConnection{ID: "connection-a", WorkspaceID: "workspace-a", ConnectionType: "managed",
 			ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},

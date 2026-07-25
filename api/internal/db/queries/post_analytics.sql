@@ -93,25 +93,28 @@ SELECT
   spr.external_id,
   sa.profile_id,
   sa.platform,
-  sa.connection_type,
-  sa.x_app_mode,
-  sa.access_token,
-  sa.refresh_token,
-  sa.token_expires_at
+  COALESCE(sc.connection_type, sa.connection_type) AS connection_type,
+  COALESCE(sc.x_app_mode, sa.x_app_mode) AS x_app_mode,
+  COALESCE(sc.access_token, sa.access_token) AS access_token,
+  COALESCE(sc.refresh_token, sa.refresh_token) AS refresh_token,
+  (CASE WHEN sc.id IS NOT NULL THEN sc.token_expires_at ELSE sa.token_expires_at END)::TIMESTAMPTZ AS token_expires_at,
+  sa.connection_id
 FROM social_post_results spr
 JOIN social_posts sp       ON sp.id = spr.post_id
 JOIN social_accounts sa     ON sa.id = spr.social_account_id
+LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 LEFT JOIN post_analytics pa ON pa.social_post_result_id = spr.id
 WHERE spr.status = 'published'
   AND sp.deleted_at IS NULL
   AND spr.external_id IS NOT NULL
   AND spr.published_at IS NOT NULL
   AND spr.published_at > NOW() - INTERVAL '90 days'
-  AND sa.disconnected_at IS NULL
-  AND sa.status = 'active'
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NULL
+  AND CASE WHEN sc.id IS NOT NULL THEN sc.status ELSE sa.status END = 'active'
   AND (
     pa.fetched_at IS NULL
-    OR (sa.last_refreshed_at IS NOT NULL AND pa.fetched_at < sa.last_refreshed_at)
+    OR (CASE WHEN sc.id IS NOT NULL THEN sc.last_refreshed_at ELSE sa.last_refreshed_at END IS NOT NULL
+        AND pa.fetched_at < CASE WHEN sc.id IS NOT NULL THEN sc.last_refreshed_at ELSE sa.last_refreshed_at END)
     OR (spr.published_at >  NOW() - INTERVAL '24 hours' AND pa.fetched_at < NOW() - INTERVAL '1 hour')
     OR (spr.published_at <= NOW() - INTERVAL '24 hours' AND spr.published_at > NOW() - INTERVAL '7 days' AND pa.fetched_at < NOW() - INTERVAL '6 hours')
     OR (spr.published_at <= NOW() - INTERVAL '7 days'  AND pa.fetched_at < NOW() - INTERVAL '24 hours')
@@ -123,7 +126,7 @@ LIMIT 200;
 SELECT
   sa.platform::TEXT                                                          AS platform,
   COUNT(DISTINCT sp.id)::BIGINT                                              AS posts,
-  COUNT(DISTINCT sa.id)::BIGINT                                              AS accounts,
+  COUNT(DISTINCT COALESCE(sa.connection_id, sa.id))::BIGINT                  AS accounts,
   COALESCE(SUM(pa.impressions), 0)::BIGINT                                   AS impressions,
   COALESCE(SUM(pa.reach), 0)::BIGINT                                         AS reach,
   COALESCE(SUM(pa.likes), 0)::BIGINT                                         AS likes,

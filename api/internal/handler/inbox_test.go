@@ -2612,6 +2612,17 @@ func (f *inboxTenantIsolationDB) QueryRow(_ context.Context, query string, args 
 			return metaWebhookRoutingRow{values: inboxTenantIsolationSocialAccountValues(f.account)}
 		}
 		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: GetResolvedSocialAccountByIDAndWorkspace"):
+		accountID, _ := args[0].(string)
+		for _, account := range f.accounts {
+			if account.ID == accountID {
+				return metaWebhookRoutingRow{values: inboxTenantIsolationResolvedSocialAccountValues(account)}
+			}
+		}
+		if f.account.ID == accountID {
+			return metaWebhookRoutingRow{values: inboxTenantIsolationResolvedSocialAccountValues(f.account)}
+		}
+		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
 	case strings.Contains(query, "-- name: GetSocialAccount :one"):
 		return metaWebhookRoutingRow{err: pgx.ErrNoRows}
 	default:
@@ -2800,6 +2811,27 @@ func inboxTenantIsolationSocialAccountValues(account db.SocialAccount) []any {
 		account.BindingVersion,
 		account.BindingStatus,
 	}
+}
+
+func inboxTenantIsolationResolvedSocialAccountValues(account db.SocialAccount) []any {
+	values := inboxTenantIsolationSocialAccountValues(account)
+	return append(values,
+		account.AccessToken,
+		account.RefreshToken.String,
+		account.TokenExpiresAt,
+		account.AccountName.String,
+		account.AccountAvatarUrl.String,
+		account.ConnectedAt,
+		account.DisconnectedAt,
+		account.Metadata,
+		account.Scope,
+		account.Status,
+		account.ConnectionType,
+		account.ExternalUserID.String,
+		account.ExternalUserEmail.String,
+		account.LastRefreshedAt,
+		account.XAppMode.String,
+	)
 }
 
 type xBackfillConfirmationTx struct {

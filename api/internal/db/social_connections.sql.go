@@ -584,3 +584,30 @@ func (q *Queries) UnbindSocialAccountBinding(ctx context.Context, arg UnbindSoci
 	)
 	return i, err
 }
+
+const updateSocialConnectionTokens = `-- name: UpdateSocialConnectionTokens :exec
+UPDATE social_connections
+SET access_token = $1,
+    refresh_token = $2,
+    token_expires_at = $3,
+    last_refreshed_at = NOW(),
+    updated_at = NOW()
+WHERE id = $4
+`
+
+type UpdateSocialConnectionTokensParams struct {
+	AccessToken    string             `json:"access_token"`
+	RefreshToken   pgtype.Text        `json:"refresh_token"`
+	TokenExpiresAt pgtype.Timestamptz `json:"token_expires_at"`
+	ID             string             `json:"id"`
+}
+
+func (q *Queries) UpdateSocialConnectionTokens(ctx context.Context, arg UpdateSocialConnectionTokensParams) error {
+	_, err := q.db.Exec(ctx, updateSocialConnectionTokens,
+		arg.AccessToken,
+		arg.RefreshToken,
+		arg.TokenExpiresAt,
+		arg.ID,
+	)
+	return err
+}

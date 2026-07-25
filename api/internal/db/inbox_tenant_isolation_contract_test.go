@@ -54,7 +54,7 @@ func inboxTenantIsolationQuery(t *testing.T, source, name string) string {
 	return compactInboxTenantIsolationSQL(inboxTenantIsolationRawQuery(t, source, name))
 }
 
-const inboxManagedScopeOrTerm = "sqlc.arg('workspace_scope')::boolean or ( sa.connection_type = 'managed' and sa.external_user_id = sqlc.arg('external_user_id')::text )"
+const inboxManagedScopeOrTerm = "sqlc.arg('workspace_scope')::boolean or ( coalesce(sc.connection_type, sa.connection_type) = 'managed' and coalesce(sc.external_user_id, sa.external_user_id) = sqlc.arg('external_user_id')::text )"
 const inboxManagedScopePredicate = "and ( " + inboxManagedScopeOrTerm + " )"
 
 func inboxManagedScopePredicateViolation(query, workspaceExpr string) string {
@@ -112,6 +112,52 @@ func TestInboxScopedNotificationOwnerProjectionContract(t *testing.T) {
 			structPattern := regexp.MustCompile(`(?s)type ` + regexp.QuoteMeta(structName) + ` struct \{.*?ExternalUserID\s+pgtype\.Text\s+`)
 			if !structPattern.MatchString(generated) {
 				t.Fatalf("generated %s must expose ExternalUserID as pgtype.Text", structName)
+			}
+		})
+	}
+}
+
+func TestInboxConnectionManagedScopeContract(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	managedScope := "coalesce(sc.connection_type, sa.connection_type) = 'managed' and coalesce(sc.external_user_id, sa.external_user_id) = sqlc.arg('external_user_id')::text"
+
+	for _, name := range []string{
+		"ListInboxItemsByWorkspace",
+		"GetInboxItem",
+		"MarkInboxItemRead",
+		"MarkAllInboxItemsRead",
+		"UpdateInboxThreadState",
+		"CountUnreadByWorkspace",
+		"FindInboxAccountsByWorkspace",
+		"CountInboxAccountsInScope",
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, name)
+			if !strings.Contains(query, "left join social_connections sc on sc.id = sa.connection_id") {
+				t.Fatalf("%s must resolve managed ownership through the physical connection: %s", name, query)
+			}
+			if !strings.Contains(query, managedScope) {
+				t.Fatalf("%s missing connection-level managed scope %q: %s", name, managedScope, query)
+			}
+		})
+	}
+}
+
+func TestInboxConnectionDiscoveryDeduplicatesSiblingBindings(t *testing.T) {
+	source := readInboxTenantIsolationContractFile(t, "queries/inbox.sql")
+	for _, name := range []string{
+		"FindAllActiveInstagramAccountsByWebhookUserID",
+		"FindAllSocialAccountsByPlatformAndExternalID",
+		"ListAllInboxAccounts",
+		"FindInboxAccountsByWorkspace",
+	} {
+		t.Run(name, func(t *testing.T) {
+			query := inboxTenantIsolationQuery(t, source, name)
+			if !strings.Contains(query, "distinct on (coalesce(sa.connection_id, sa.id))") {
+				t.Fatalf("%s must return one routing row per physical connection: %s", name, query)
+			}
+			if !strings.Contains(query, "left join social_connections sc on sc.id = sa.connection_id") {
+				t.Fatalf("%s must resolve shared connection state: %s", name, query)
 			}
 		})
 	}
@@ -265,16 +311,16 @@ func TestInboxTenantIsolationAuthenticatedQueriesDeriveWorkspace(t *testing.T) {
 				if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
 					t.Errorf("%s %s: %s", tt.name, violation, query)
 				}
-				if strings.Contains(query, "coalesce(") {
-					t.Errorf("%s must not infer workspace scope from a nullable or empty managed-user id: %s", tt.name, query)
-				}
 			}
 		})
 	}
 
 	for _, name := range []string{"ListInboxItemsByWorkspace", "CountUnreadByWorkspace"} {
 		query := inboxTenantIsolationQuery(t, source, name)
-		for _, want := range []string{"sa.status = 'active'", "sa.disconnected_at is null"} {
+		for _, want := range []string{
+			"case when sc.id is not null then sc.status else sa.status end = 'active'",
+			"case when sc.id is not null then sc.disconnected_at else sa.disconnected_at end is null",
+		} {
 			if !strings.Contains(query, want) {
 				t.Errorf("%s must retain existing active-account filter %q", name, want)
 			}
@@ -333,21 +379,19 @@ func TestInboxManagedUserAccountEnumeration(t *testing.T) {
 		t.Fatalf("valid account enumeration query rejected: %s: %s", violation, query)
 	}
 	for _, want := range []string{
-		"select distinct sa.id, sa.profile_id, sa.platform, sa.access_token",
+		"select distinct on (coalesce(sa.connection_id, sa.id)) sa.id, sa.profile_id, sa.platform, sa.access_token",
+		"left join social_connections sc on sc.id = sa.connection_id",
 		"p.workspace_id = sqlc.arg('workspace_id')",
-		"sa.status = 'active'",
+		"case when sc.id is not null then sc.status else sa.status end = 'active'",
 		"sa.disconnected_at is null",
+		"sa.binding_status = 'active'",
 		"sa.platform in ('instagram', 'threads', 'facebook', 'twitter')",
-		"order by sa.connected_at desc, sa.id",
+		"order by coalesce(sa.connection_id, sa.id), sa.connected_at desc, sa.id",
 	} {
 		if !strings.Contains(query, want) {
 			t.Errorf("FindInboxAccountsByWorkspace missing %q in %s", want, query)
 		}
 	}
-	if strings.Contains(query, "coalesce(") {
-		t.Fatal("account enumeration must not infer workspace scope from a nullable or empty managed-user id")
-	}
-
 	orTerm := inboxManagedScopeOrTerm
 	mutations := []struct {
 		name  string
@@ -410,7 +454,7 @@ func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
 	if violation := countScopeViolation(query); violation != "" {
 		t.Fatalf("CountInboxAccountsInScope scope placement is unsafe: %s: %s", violation, query)
 	}
-	for _, forbidden := range []string{"sa.status", "sa.disconnected_at", "coalesce("} {
+	for _, forbidden := range []string{"sa.status", "sa.disconnected_at"} {
 		if strings.Contains(query, forbidden) {
 			t.Errorf("CountInboxAccountsInScope must reconcile historical operation ownership without %q: %s", forbidden, query)
 		}
@@ -446,9 +490,10 @@ func TestCountInboxAccountsInScopeQueryContract(t *testing.T) {
 		"select count(*)::integer",
 		"from social_accounts sa",
 		"join profiles p on p.id = sa.profile_id",
+		"left join social_connections sc on sc.id = sa.connection_id",
 		"where p.workspace_id = $1",
 		"and sa.id = any($2::text[])",
-		"and ( $3::boolean or ( sa.connection_type = 'managed' and sa.external_user_id = $4::text ) )",
+		"and ( $3::boolean or ( coalesce(sc.connection_type, sa.connection_type) = 'managed' and coalesce(sc.external_user_id, sa.external_user_id) = $4::text ) )",
 	} {
 		if !strings.Contains(generatedQuery, want) {
 			t.Errorf("generated CountInboxAccountsInScope missing %q in %s", want, generatedQuery)
@@ -520,10 +565,6 @@ func TestInboxManagedUserMutations(t *testing.T) {
 			if violation := inboxManagedScopePredicateViolation(query, tt.workspaceExpr); violation != "" {
 				t.Fatalf("%s: %s", violation, query)
 			}
-			if strings.Contains(query, "coalesce(") {
-				t.Fatalf("mutation must not infer workspace scope from a nullable or empty managed-user id: %s", query)
-			}
-
 			mutations := []struct {
 				name  string
 				query string
@@ -654,14 +695,15 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 		t.Fatal("FindAllActiveInstagramAccountsByWebhookUserID must retain its :many annotation")
 	}
 	for _, want := range []string{
-		"select sa.id, sa.external_account_id",
-		"cast(coalesce(sa.metadata->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id",
+		"select distinct on (coalesce(sa.connection_id, sa.id)) sa.id, sa.external_account_id",
+		"cast(coalesce(coalesce(sc.metadata, sa.metadata)->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id",
 		"p.workspace_id",
 		"sa.platform = 'instagram'",
-		"sa.metadata->>'instagram_webhook_user_id' = @instagram_webhook_user_id::text",
+		"coalesce(sc.metadata, sa.metadata)->>'instagram_webhook_user_id' = @instagram_webhook_user_id::text",
 		"sa.disconnected_at is null",
-		"sa.status = 'active'",
-		"order by sa.connected_at desc, sa.id",
+		"sa.binding_status = 'active'",
+		"case when sc.id is not null then sc.status else sa.status end = 'active'",
+		"order by coalesce(sa.connection_id, sa.id), sa.connected_at desc, sa.id",
 	} {
 		if !strings.Contains(instagram, want) {
 			t.Errorf("Instagram webhook routing query missing %q in %s", want, instagram)
@@ -674,9 +716,10 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 	}
 	for _, want := range []string{
 		"sa.platform = $1",
-		"sa.external_account_id = $2",
+		"coalesce(sc.provider_identity, sa.external_account_id) = sqlc.arg('external_account_id')::text",
 		"sa.disconnected_at is null",
-		"sa.status = 'active'",
+		"sa.binding_status = 'active'",
+		"case when sc.id is not null then sc.status else sa.status end = 'active'",
 	} {
 		if !strings.Contains(exact, want) {
 			t.Errorf("exact platform routing query missing %q in %s", want, exact)
@@ -684,7 +727,7 @@ func TestInboxTenantIsolationWebhookRoutingQueriesAreExact(t *testing.T) {
 	}
 
 	accounts := inboxTenantIsolationQuery(t, source, "ListAllInboxAccounts")
-	if !strings.Contains(accounts, "cast(coalesce(sa.metadata->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id") {
+	if !strings.Contains(accounts, "cast(coalesce(coalesce(sc.metadata, sa.metadata)->>'instagram_webhook_user_id', '') as text) as instagram_webhook_user_id") {
 		t.Fatal("ListAllInboxAccounts must expose instagram_webhook_user_id")
 	}
 }
@@ -696,12 +739,14 @@ func TestInboxTenantIsolationCanPersistInstagramWebhookIdentity(t *testing.T) {
 		t.Fatal("SetInstagramWebhookUserID must retain its :execrows annotation")
 	}
 	for _, want := range []string{
+		"update social_connections sc",
+		"sc.id = binding.connection_id",
 		"update social_accounts",
 		"set metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object('instagram_webhook_user_id', @instagram_webhook_user_id::text)",
-		"where id = @id",
-		"platform = 'instagram'",
-		"status = 'active'",
-		"disconnected_at is null",
+		"where target.id = @id",
+		"target.platform = 'instagram'",
+		"target.status = 'active'",
+		"target.disconnected_at is null",
 	} {
 		if !strings.Contains(query, want) {
 			t.Errorf("SetInstagramWebhookUserID missing %q in %s", want, query)
