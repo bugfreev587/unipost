@@ -84,8 +84,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 119 {
-		t.Fatalf("final Goose version = %d, want 119", version)
+	if version != 121 {
+		t.Fatalf("final Goose version = %d, want 121", version)
 	}
 
 	verifyInboxTenantIsolationAgainstPostgres(t, databaseURL)
