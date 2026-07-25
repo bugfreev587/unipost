@@ -1640,6 +1640,109 @@ export async function dismissPostDeliveryJob(
 
 // Billing (workspace-scoped)
 
+export type TrialKind = "free_to_paid" | "paid_same_plan";
+
+export type TrialStatus =
+  | "provisioning"
+  | "pending_activation"
+  | "checkout_pending"
+  | "scheduled"
+  | "active"
+  | "completed"
+  | "canceled"
+  | "revoked"
+  | "superseded"
+  | "failed";
+
+export type TrialTerminalReason =
+  | "trial_completed"
+  | "renewal_canceled"
+  | "offer_revoked"
+  | "plan_changed"
+  | "trial_unavailable";
+
+interface WorkspaceTrialTimeline {
+  id: string;
+  kind: TrialKind;
+  plan_id: string;
+  duration_days: number;
+  status: TrialStatus;
+  granted_at?: string;
+  scheduled_start_at?: string;
+  started_at?: string;
+  ends_at?: string;
+  activated_at?: string;
+  canceled_at?: string;
+}
+
+/** Current user-safe trial projection returned by GET /v1/billing. */
+export interface WorkspaceTrial extends WorkspaceTrialTimeline {
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  post_trial_price_cents: number;
+  cancel_at_period_end: boolean;
+  changing_plan_forfeits_trial: boolean;
+  terminal_reason?: TrialTerminalReason;
+}
+
+/** User-safe durable row returned by GET /v1/billing/trials. */
+export interface WorkspaceTrialHistoryEntry extends WorkspaceTrialTimeline {
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  superseded_by_plan_id?: string;
+  terminal_reason?: TrialTerminalReason;
+}
+
+/** Trial summary embedded in each GET /v1/admin/billing row. */
+export interface AdminWorkspaceTrial extends WorkspaceTrialTimeline {
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  stripe_subscription_id?: string;
+  stripe_schedule_id?: string;
+  failure_reason?: TrialTerminalReason;
+}
+
+/** Full admin-only response from grant and revoke mutations. */
+export interface AdminTrialGrantMutation extends WorkspaceTrialTimeline {
+  workspace_id: string;
+  granted_by_user_id: string;
+  granted_at: string;
+  stripe_mode?: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
+  stripe_schedule_id?: string;
+  stripe_checkout_session_id?: string;
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  superseded_by_plan_id?: string;
+  failure_code?: string;
+  failure_message?: string;
+}
+
+export interface TrialMutationTrial extends WorkspaceTrialTimeline {
+  changing_plan_forfeits_trial: boolean;
+}
+
+export interface TrialMutationBilling {
+  current_plan: string;
+  target_plan: string;
+  status: TrialStatus | "change_pending";
+  change_pending: boolean;
+  cancel_at_period_end: boolean;
+  period_start_at?: string;
+  period_end_at?: string;
+}
+
+/** Response shared by the trial-aware change-plan and cancel-renewal calls. */
+export interface TrialMutationProjection {
+  trial: TrialMutationTrial;
+  billing: TrialMutationBilling;
+}
+
 export interface BillingInfo {
   plan: string;
   plan_name: string;
@@ -1658,6 +1761,7 @@ export interface BillingInfo {
   resets_at: string;
   cancel_at_period_end: boolean;
   trial_eligible: boolean;
+  trial?: WorkspaceTrial;
 }
 
 export interface Plan {
@@ -1715,6 +1819,31 @@ export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
   return request(`/v1/billing`, token);
+}
+
+export async function getTrialHistory(
+  token: string,
+): Promise<ApiResponse<WorkspaceTrialHistoryEntry[]>> {
+  return request(`/v1/billing/trials`, token);
+}
+
+export async function changeTrialPlan(
+  token: string,
+  planId: string,
+): Promise<ApiResponse<TrialMutationProjection>> {
+  return request(`/v1/billing/change-plan`, token, {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId }),
+  });
+}
+
+export async function cancelTrialRenewal(
+  token: string,
+  trialId: string,
+): Promise<ApiResponse<TrialMutationProjection>> {
+  return request(`/v1/billing/trials/${encodeURIComponent(trialId)}/cancel-renewal`, token, {
+    method: "POST",
+  });
 }
 
 export async function getXCreditsAllowance(
@@ -3055,6 +3184,7 @@ export interface AdminBillingRow {
   posts_used: number;
   post_limit: number;
   updated_at: string;
+  trial?: AdminWorkspaceTrial;
 }
 
 export interface AdminBillingListParams {
@@ -3822,6 +3952,29 @@ export async function listAdminBilling(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/billing${s ? `?${s}` : ""}`, token);
+}
+
+export async function grantAdminTrial(
+  token: string,
+  workspaceId: string,
+  data: { plan_id: string; duration_days: number },
+): Promise<ApiResponse<AdminTrialGrantMutation>> {
+  return request(`/v1/admin/workspaces/${encodeURIComponent(workspaceId)}/trials`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function revokeAdminTrial(
+  token: string,
+  workspaceId: string,
+  trialId: string,
+): Promise<ApiResponse<AdminTrialGrantMutation>> {
+  return request(
+    `/v1/admin/workspaces/${encodeURIComponent(workspaceId)}/trials/${encodeURIComponent(trialId)}/revoke`,
+    token,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 }
 
 // Admin-only: flip a workspace's plan_id without going through Stripe.

@@ -1,0 +1,141 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import test from "node:test";
+import ts from "typescript";
+
+const apiSource = readFileSync(resolve("src/lib/api.ts"), "utf8");
+
+async function loadTrialFormatModule() {
+  const source = readFileSync(resolve("src/lib/trial-format.ts"), "utf8");
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+    },
+  });
+  const dataUrl = `data:text/javascript;base64,${Buffer.from(compiled.outputText).toString("base64")}`;
+  return import(dataUrl);
+}
+
+test("billing API exposes all managed trial contracts", () => {
+  for (const value of [
+    "WorkspaceTrial",
+    "WorkspaceTrialHistoryEntry",
+    "AdminWorkspaceTrial",
+    "TrialMutationProjection",
+    "free_to_paid",
+    "paid_same_plan",
+    "provisioning",
+    "pending_activation",
+    "checkout_pending",
+    "scheduled",
+    "active",
+    "completed",
+    "canceled",
+    "revoked",
+    "superseded",
+    "failed",
+    "getTrialHistory",
+    "grantAdminTrial",
+    "revokeAdminTrial",
+    "cancelTrialRenewal",
+    "changeTrialPlan",
+  ]) {
+    assert.match(apiSource, new RegExp(`\\b${value}\\b`));
+  }
+});
+
+test("trial API functions use the backend routes and exact mutation fields", () => {
+  for (const route of [
+    "/v1/billing/trials",
+    "/v1/admin/workspaces/",
+    "/trials/",
+    "/revoke",
+    "/cancel-renewal",
+    "/v1/billing/change-plan",
+  ]) {
+    assert.ok(apiSource.includes(route), `missing route fragment ${route}`);
+  }
+  for (const field of [
+    "duration_days",
+    "post_trial_price_cents",
+    "changing_plan_forfeits_trial",
+    "terminal_reason",
+    "failure_reason",
+    "target_plan",
+    "change_pending",
+  ]) {
+    assert.match(apiSource, new RegExp(`\\b${field}\\b`));
+  }
+});
+
+test("shared formatter uses UTC dates and stable remaining-day boundaries", async () => {
+  const { formatWorkspaceTrial } = await loadTrialFormatModule();
+  const trial = {
+    id: "trial_1",
+    kind: "paid_same_plan",
+    plan_id: "growth",
+    duration_days: 30,
+    status: "scheduled",
+    granted_at: "2026-07-24T23:30:00-07:00",
+    scheduled_start_at: "2026-08-01T00:00:00Z",
+    ends_at: "2026-08-31T00:00:00Z",
+    post_trial_price_cents: 4900,
+    cancel_at_period_end: false,
+    changing_plan_forfeits_trial: true,
+  };
+  const formatted = formatWorkspaceTrial(
+    trial,
+    { now: "2026-08-29T12:00:00Z" },
+  );
+
+  assert.deepEqual(formatted.badge, { label: "Scheduled", tone: "info" });
+  assert.equal(formatted.headline, "30-day Growth trial scheduled");
+  assert.equal(formatted.remainingDays, null);
+  assert.deepEqual(formatted.timeline, [
+    { label: "Current period ends", value: "Aug 1, 2026" },
+    { label: "Trial starts", value: "Aug 1, 2026" },
+    { label: "Trial ends", value: "Aug 31, 2026" },
+    { label: "Billing resumes", value: "Aug 31, 2026 · $49.00/month" },
+  ]);
+  assert.equal(formatted.terminalReason, null);
+
+  const active = formatWorkspaceTrial(
+    { ...trial, status: "active", started_at: "2026-08-01T00:00:00Z" },
+    { now: "2026-08-29T12:00:00Z" },
+  );
+  assert.equal(active.remainingDays, 2);
+});
+
+test("shared formatter normalizes terminal reasons without leaking internal failures", async () => {
+  const { formatWorkspaceTrial } = await loadTrialFormatModule();
+
+  const revoked = formatWorkspaceTrial({
+    id: "trial_2",
+    kind: "free_to_paid",
+    plan_id: "basic",
+    duration_days: 14,
+    status: "revoked",
+    granted_at: "2026-07-24T00:00:00Z",
+    revoked_at: "2026-07-25T00:00:00Z",
+    terminal_reason: "offer_revoked",
+  });
+  assert.equal(revoked.terminalReason, "Offer revoked");
+  assert.deepEqual(revoked.timeline, [
+    { label: "Granted", value: "Jul 24, 2026" },
+    { label: "Revoked", value: "Jul 25, 2026" },
+  ]);
+
+  const unknown = formatWorkspaceTrial({
+    id: "trial_future",
+    kind: "future_kind",
+    plan_id: "future_plan",
+    duration_days: 10,
+    status: "future_status",
+  });
+  assert.deepEqual(unknown.badge, { label: "Unknown", tone: "neutral" });
+  assert.equal(unknown.headline, "Trial status unavailable");
+  assert.equal(unknown.remainingDays, null);
+  assert.equal(unknown.terminalReason, null);
+});
