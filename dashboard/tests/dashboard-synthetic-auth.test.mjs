@@ -26,6 +26,14 @@ test("authenticated smoke has no credential-based skip", async () => {
   assert.match(authenticatedSource, /cleanupSyntheticUser/);
 });
 
+test("synthetic free users preserve the analytics plan gate", async () => {
+  const authenticatedSource = await source("tests/regression/authenticated-dashboard.spec.ts");
+
+  assert.match(authenticatedSource, /Analytics is a paid plan feature/);
+  assert.doesNotMatch(authenticatedSource, /TikTok Analytics/);
+  assert.doesNotMatch(authenticatedSource, /YouTube Analytics/);
+});
+
 test("public, authenticated, and Preview Playwright suites select auth explicitly", async () => {
   const publicConfig = await source("playwright.regression.config.ts");
   const authenticatedConfig = await source("playwright.authenticated.config.ts");
