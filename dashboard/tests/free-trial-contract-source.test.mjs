@@ -202,3 +202,22 @@ test("Admin Billing exposes safe row-level trial grant controls", () => {
   assert.match(adminBillingSource, /window\.confirm\([\s\S]*Trial starts[\s\S]*Trial ends/);
   assert.match(adminBillingSource, /disabled=\{[\s\S]*(?:busy|hasOpenTrial)/);
 });
+
+test("Admin Billing serializes workspace mutations and fails closed after refresh errors", () => {
+  for (const value of [
+    "WorkspaceMutationState",
+    "workspaceMutations",
+    "setWorkspaceMutation",
+    "refresh_required",
+    "Refresh required",
+    "Refresh Billing before making another change.",
+  ]) {
+    assert.ok(adminBillingSource.includes(value), `missing Admin Billing mutation safety contract: ${value}`);
+  }
+
+  assert.match(adminBillingSource, /<PlanFlipMenu[\s\S]*hasOpenTrial=\{[\s\S]*workspaceMutation=\{/);
+  assert.match(adminBillingSource, /function PlanFlipMenu\([\s\S]*hasOpenTrial[\s\S]*workspaceMutation[\s\S]*const disabled = busy \|\| hasOpenTrial \|\| !!workspaceMutation/);
+  assert.match(adminBillingSource, /function GrantTrialForm\([\s\S]*workspaceMutation[\s\S]*if \(busy \|\| hasOpenTrial \|\| workspaceMutation\)/);
+  assert.match(adminBillingSource, /await onChanged\(\);[\s\S]*setSuccess\(/);
+  assert.match(adminBillingSource, /mutationSucceeded[\s\S]*"refresh_required"/);
+});

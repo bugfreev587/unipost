@@ -42,12 +42,16 @@ const TRIAL_STATUS_LABELS: Record<TrialStatus, string> = {
   superseded: "Superseded",
   failed: "Failed",
 };
+type WorkspaceMutationState = "plan" | "trial" | "refresh_required";
+const REFRESH_REQUIRED_MESSAGE = "The trial was updated, but Billing could not refresh. Refresh Billing before making another change.";
+const PLAN_REFRESH_REQUIRED_MESSAGE = "Plan changed, but Billing could not refresh. Refresh Billing before making another change.";
 
 export default function AdminBillingPage() {
   const { getToken } = useAuth();
   const [rows, setRows] = useState<AdminBillingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [workspaceMutations, setWorkspaceMutations] = useState<Record<string, WorkspaceMutationState>>({});
 
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -55,6 +59,16 @@ export default function AdminBillingPage() {
   const [plan, setPlan] = useState<(typeof PLAN_OPTIONS)[number]>("all");
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(90);
   const limit = 100;
+
+  const setWorkspaceMutation = useCallback((workspaceId: string, state: WorkspaceMutationState | null) => {
+    setWorkspaceMutations((current) => {
+      if (state) return { ...current, [workspaceId]: state };
+      if (!(workspaceId in current)) return current;
+      const next = { ...current };
+      delete next[workspaceId];
+      return next;
+    });
+  }, []);
 
   const loadBilling = useCallback(async () => {
     setLoading(true);
@@ -71,16 +85,25 @@ export default function AdminBillingPage() {
       };
       const res = await listAdminBilling(token, params);
       setRows(res.data);
+      setWorkspaceMutations((current) => Object.fromEntries(
+        Object.entries(current).filter(([, mutation]) => mutation !== "refresh_required"),
+      ));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
+      const loadError = e instanceof Error ? e : new Error("Failed to load");
+      setError(loadError.message);
+      throw loadError;
     } finally {
       setLoading(false);
     }
   }, [days, getToken, plan, search, status]);
 
-  useEffect(() => {
-    loadBilling();
+  const refreshBilling = useCallback(() => {
+    void loadBilling().catch(() => undefined);
   }, [loadBilling]);
+
+  useEffect(() => {
+    refreshBilling();
+  }, [refreshBilling]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), 300);
@@ -94,7 +117,7 @@ export default function AdminBillingPage() {
   const totalMrrCents = useMemo(() => rows.filter((row) => row.status === "active").reduce((sum, row) => sum + row.price_cents, 0), [rows]);
 
   return (
-    <AdminShell title="Billing" loading={loading} onRefresh={loadBilling}>
+    <AdminShell title="Billing" loading={loading} onRefresh={refreshBilling}>
       {error && (
         <div style={{ background: "var(--danger-soft)", border: "1px solid color-mix(in srgb, var(--danger) 22%, transparent)", borderRadius: 8, padding: 12, marginBottom: 16, color: "var(--danger)", fontSize: 13 }}>
           {error}
@@ -168,6 +191,8 @@ export default function AdminBillingPage() {
               rows.map((row) => {
                 const usagePct = usagePercentage(row.posts_used, row.post_limit);
                 const usageClass = usagePct >= 90 ? "ad-uf-r" : usagePct >= 70 ? "ad-uf-a" : "ad-uf-g";
+                const hasOpenTrial = isOpenTrial(row.trial);
+                const workspaceMutation = workspaceMutations[row.workspace_id];
                 return (
                   <tr key={row.workspace_id}>
                     <td>
@@ -185,11 +210,19 @@ export default function AdminBillingPage() {
                       <PlanFlipMenu
                         workspaceId={row.workspace_id}
                         currentPlan={row.plan_id}
+                        hasOpenTrial={hasOpenTrial}
+                        workspaceMutation={workspaceMutation}
+                        setWorkspaceMutation={setWorkspaceMutation}
                         onChanged={loadBilling}
                       />
                     </td>
                     <td className="abt-trial-cell">
-                      <GrantTrialForm row={row} onChanged={loadBilling} />
+                      <GrantTrialForm
+                        row={row}
+                        workspaceMutation={workspaceMutation}
+                        setWorkspaceMutation={setWorkspaceMutation}
+                        onChanged={loadBilling}
+                      />
                     </td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -282,6 +315,10 @@ function trialPlanLabel(planId: string): string {
   return TRIAL_PLAN_OPTIONS.find((plan) => plan.id === planId)?.label ?? planId;
 }
 
+function isOpenTrial(trial?: AdminBillingRow["trial"]): boolean {
+  return !!trial && OPEN_TRIAL_STATUSES.has(trial.status);
+}
+
 function formatTrialDate(value: Date | string): string {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) return "Date unavailable";
@@ -322,9 +359,13 @@ function TrialTimeline({ items }: { items: { label: string; value: string }[] })
 
 function GrantTrialForm({
   row,
+  workspaceMutation,
+  setWorkspaceMutation,
   onChanged,
 }: {
   row: AdminBillingRow;
+  workspaceMutation?: WorkspaceMutationState;
+  setWorkspaceMutation: (workspaceId: string, state: WorkspaceMutationState | null) => void;
   onChanged: () => Promise<void>;
 }) {
   const { getToken } = useAuth();
@@ -335,8 +376,9 @@ function GrantTrialForm({
   const [success, setSuccess] = useState<string | null>(null);
 
   const currentTrial = row.trial;
-  const hasOpenTrial = !!currentTrial && OPEN_TRIAL_STATUSES.has(currentTrial.status);
+  const hasOpenTrial = isOpenTrial(currentTrial);
   const canRevoke = !!currentTrial && REVOCABLE_TRIAL_STATUSES.has(currentTrial.status);
+  const interactionLocked = !!busy || !!workspaceMutation;
   const grantPlanIsEligible = row.plan_id === "free" || TRIAL_PLAN_OPTIONS.some((plan) => plan.id === row.plan_id);
   const selectedPlan = row.plan_id === "free" ? targetPlan : row.plan_id;
   const parsedDays = Number(durationDays);
@@ -344,9 +386,10 @@ function GrantTrialForm({
   const durationError = durationDays.trim() === "" ? "Days are required." : validDays ? null : "Use 1–730 whole days.";
   const proposal = proposedTrialTimeline(row.plan_id, validDays ? parsedDays : 0, row.current_period_end);
   const formattedTrial = currentTrial ? formatWorkspaceTrial(currentTrial) : null;
+  const visibleError = error === REFRESH_REQUIRED_MESSAGE && workspaceMutation !== "refresh_required" ? null : error;
 
   const grant = async () => {
-    if (busy || hasOpenTrial) return;
+    if (busy || hasOpenTrial || workspaceMutation) return;
     setError(null);
     setSuccess(null);
 
@@ -371,6 +414,9 @@ function GrantTrialForm({
     if (!confirmed) return;
 
     setBusy("grant");
+    setWorkspaceMutation(row.workspace_id, "trial");
+    let mutationSucceeded = false;
+    let keepLocked = false;
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -378,32 +424,51 @@ function GrantTrialForm({
         plan_id: selectedPlan,
         duration_days: parsedDays,
       });
-      setSuccess(`${TRIAL_STATUS_LABELS[response.data.status]} trial recorded.`);
+      mutationSucceeded = true;
       await onChanged();
+      setSuccess(`${TRIAL_STATUS_LABELS[response.data.status]} trial recorded.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to grant trial");
+      if (mutationSucceeded) {
+        keepLocked = true;
+        setWorkspaceMutation(row.workspace_id, "refresh_required");
+        setError(REFRESH_REQUIRED_MESSAGE);
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to grant trial");
+      }
     } finally {
       setBusy(null);
+      if (!keepLocked) setWorkspaceMutation(row.workspace_id, null);
     }
   };
 
   const revoke = async () => {
-    if (!currentTrial || !canRevoke || busy) return;
+    if (!currentTrial || !canRevoke || busy || workspaceMutation) return;
     if (!window.confirm(`Revoke the ${trialPlanLabel(currentTrial.plan_id)} trial offer for ${row.workspace_name}? The user will not be able to activate it.`)) return;
 
     setBusy("revoke");
+    setWorkspaceMutation(row.workspace_id, "trial");
     setError(null);
     setSuccess(null);
+    let mutationSucceeded = false;
+    let keepLocked = false;
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       await revokeAdminTrial(token, row.workspace_id, currentTrial.id);
-      setSuccess("Trial offer revoked.");
+      mutationSucceeded = true;
       await onChanged();
+      setSuccess("Trial offer revoked.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to revoke trial");
+      if (mutationSucceeded) {
+        keepLocked = true;
+        setWorkspaceMutation(row.workspace_id, "refresh_required");
+        setError(REFRESH_REQUIRED_MESSAGE);
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to revoke trial");
+      }
     } finally {
       setBusy(null);
+      if (!keepLocked) setWorkspaceMutation(row.workspace_id, null);
     }
   };
 
@@ -436,7 +501,7 @@ function GrantTrialForm({
                   setError(null);
                   setSuccess(null);
                 }}
-                disabled={!!busy || hasOpenTrial}
+                disabled={interactionLocked || hasOpenTrial}
               >
                 {TRIAL_PLAN_OPTIONS.map((plan) => <option key={plan.id} value={plan.id}>{plan.label}</option>)}
               </select>
@@ -468,14 +533,16 @@ function GrantTrialForm({
             }}
             aria-describedby={`${durationError ? `trial-days-error-${row.workspace_id} ` : ""}trial-help-${row.workspace_id}`}
             aria-invalid={!validDays}
-            disabled={!!busy || hasOpenTrial}
+            disabled={interactionLocked || hasOpenTrial}
           />
           {durationError ? <span id={`trial-days-error-${row.workspace_id}`} className="abt-helper abt-error" role="alert">{durationError}</span> : null}
         </div>
       </div>
 
       <div id={`trial-help-${row.workspace_id}`} className="abt-helper">
-        {hasOpenTrial
+        {workspaceMutation === "refresh_required"
+          ? "Refresh required. Refresh Billing to load the confirmed workspace state."
+          : hasOpenTrial
           ? "This workspace already has an open trial."
           : row.plan_id === "free"
             ? "The user must complete checkout before access starts."
@@ -491,18 +558,18 @@ function GrantTrialForm({
           type="button"
           className="abt-button abt-button-primary"
           onClick={() => void grant()}
-          disabled={!!busy || hasOpenTrial || !validDays || !grantPlanIsEligible}
+          disabled={interactionLocked || hasOpenTrial || !validDays || !grantPlanIsEligible}
         >
           {busy === "grant" ? "Granting…" : hasOpenTrial ? "Trial already open" : "Grant Trial"}
         </button>
         {canRevoke ? (
-          <button type="button" className="abt-button abt-button-danger" onClick={() => void revoke()} disabled={!!busy}>
+          <button type="button" className="abt-button abt-button-danger" onClick={() => void revoke()} disabled={interactionLocked}>
             {busy === "revoke" ? "Revoking…" : "Revoke"}
           </button>
         ) : null}
       </div>
 
-      {error ? <div className="abt-message abt-error" role="alert">{error}</div> : null}
+      {visibleError ? <div className="abt-message abt-error" role="alert">{visibleError}</div> : null}
       {success ? <div className="abt-message abt-success" role="status" aria-live="polite">{success}</div> : null}
     </div>
   );
@@ -511,44 +578,71 @@ function GrantTrialForm({
 // PlanFlipMenu is a tiny inline dropdown that lets an admin change a
 // workspace's plan without going through Stripe. Used for QA of the
 // plan-feature gates (Inbox, Analytics, profile cap, daily-cap, X
-// publishing). Disabled while a request is in flight; calls onChanged
-// after success so the parent re-fetches the billing rows.
+// publishing). It is locked during managed trials and all other billing
+// mutations so this bypass cannot race Stripe-backed changes.
 function PlanFlipMenu({
   workspaceId,
   currentPlan,
+  hasOpenTrial,
+  workspaceMutation,
+  setWorkspaceMutation,
   onChanged,
 }: {
   workspaceId: string;
   currentPlan: string;
-  onChanged: () => void;
+  hasOpenTrial: boolean;
+  workspaceMutation?: WorkspaceMutationState;
+  setWorkspaceMutation: (workspaceId: string, state: WorkspaceMutationState | null) => void;
+  onChanged: () => Promise<void>;
 }) {
   const { getToken } = useAuth();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const onPick = async (plan: string) => {
-    if (plan === currentPlan || busy) return;
+    if (plan === currentPlan || busy || hasOpenTrial || workspaceMutation) return;
     if (!confirm(`Change this workspace from "${currentPlan}" to "${plan}"? This bypasses Stripe entirely.`)) return;
     setBusy(true);
+    setWorkspaceMutation(workspaceId, "plan");
     setError(null);
+    let mutationSucceeded = false;
+    let keepLocked = false;
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       await setAdminWorkspacePlan(token, workspaceId, plan);
-      onChanged();
+      mutationSucceeded = true;
+      await onChanged();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to flip plan");
+      if (mutationSucceeded) {
+        keepLocked = true;
+        setWorkspaceMutation(workspaceId, "refresh_required");
+        setError(PLAN_REFRESH_REQUIRED_MESSAGE);
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to flip plan");
+      }
     } finally {
       setBusy(false);
+      if (!keepLocked) setWorkspaceMutation(workspaceId, null);
     }
   };
+
+  const disabled = busy || hasOpenTrial || !!workspaceMutation;
+  const visibleError = error === PLAN_REFRESH_REQUIRED_MESSAGE && workspaceMutation !== "refresh_required" ? null : error;
+  const title = workspaceMutation === "refresh_required"
+    ? "Refresh Billing before changing this plan"
+    : hasOpenTrial
+      ? "Plan flip is disabled while a managed trial is open"
+      : workspaceMutation
+        ? "Another billing change is in progress"
+        : "Flip plan (admin only — bypasses Stripe)";
 
   return (
     <div style={{ marginTop: 6 }}>
       <select
         value={currentPlan}
         onChange={(e) => void onPick(e.target.value)}
-        disabled={busy}
+        disabled={disabled}
         style={{
           fontFamily: "var(--font-mono, ui-monospace)",
           fontSize: 11,
@@ -557,9 +651,9 @@ function PlanFlipMenu({
           border: "1px solid var(--dborder2)",
           borderRadius: 4,
           color: "var(--dmuted)",
-          cursor: busy ? "wait" : "pointer",
+          cursor: disabled ? "not-allowed" : "pointer",
         }}
-        title="Flip plan (admin only — bypasses Stripe)"
+        title={title}
       >
         {PLAN_FLIP_OPTIONS.map((p) => (
           <option key={p} value={p}>
@@ -567,7 +661,7 @@ function PlanFlipMenu({
           </option>
         ))}
       </select>
-      {error && <div style={{ fontSize: 10.5, color: "var(--danger)", marginTop: 2 }}>{error}</div>}
+      {visibleError && <div style={{ fontSize: 10.5, color: "var(--danger)", marginTop: 2 }}>{visibleError}</div>}
     </div>
   );
 }
