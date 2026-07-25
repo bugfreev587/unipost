@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   listAdminEmailNotifications,
@@ -90,8 +90,10 @@ export default function AdminEmailPage() {
   const [limit, setLimit] = useState<(typeof LIMIT_OPTIONS)[number]>(100);
   const [offset, setOffset] = useState(0);
   const [retryingId, setRetryingId] = useState<string | null>(null);
+  const requestGeneration = useRef(0);
 
   const loadNotifications = useCallback(async () => {
+    const generation = ++requestGeneration.current;
     setLoading(true);
     setError(null);
     try {
@@ -108,14 +110,28 @@ export default function AdminEmailPage() {
         offset,
       };
       const res = await listAdminEmailNotifications(token, params);
+      if (generation !== requestGeneration.current) return;
       setRows(res.data);
       setTotal(res.meta?.total ?? res.data.length);
     } catch (e) {
+      if (generation !== requestGeneration.current) return;
       setError(e instanceof Error ? e.message : "Failed to load email notifications");
     } finally {
-      setLoading(false);
+      if (generation === requestGeneration.current) {
+        setLoading(false);
+      }
     }
-  }, [eventKey, getToken, limit, offset, period, provider, search, status, threshold]);
+  }, [
+    eventKey,
+    getToken,
+    limit,
+    offset,
+    period,
+    provider,
+    search,
+    status,
+    threshold,
+  ]);
 
   const retryNotification = useCallback(async (notificationId: string) => {
     setRetryingId(notificationId);
@@ -133,7 +149,10 @@ export default function AdminEmailPage() {
   }, [getToken, loadNotifications]);
 
   useEffect(() => {
-    loadNotifications();
+    void loadNotifications();
+    return () => {
+      requestGeneration.current += 1;
+    };
   }, [loadNotifications]);
 
   useEffect(() => {
@@ -143,10 +162,6 @@ export default function AdminEmailPage() {
     }, 300);
     return () => clearTimeout(timer);
   }, [searchInput]);
-
-  useEffect(() => {
-    setOffset(0);
-  }, [eventKey, limit, period, provider, status, threshold]);
 
   const visibleRange = useMemo(() => {
     if (rows.length === 0) return "0";
@@ -168,17 +183,30 @@ export default function AdminEmailPage() {
           {error}
         </div>
       )}
-
       <div className="ad-section-header">
         <div>
           <div className="ad-section-title">Email sends</div>
           <div className="ad-section-meta">User-facing email attempts, Loops audit rows, and migration skip records</div>
         </div>
         <div className="ae-period-actions">
-          <button type="button" className="ad-btn ad-btn-ghost" onClick={() => setPeriod(currentPeriod())}>
+          <button
+            type="button"
+            className="ad-btn ad-btn-ghost"
+            onClick={() => {
+              setOffset(0);
+              setPeriod(currentPeriod());
+            }}
+          >
             This month
           </button>
-          <button type="button" className="ad-btn ad-btn-ghost" onClick={() => setPeriod("")}>
+          <button
+            type="button"
+            className="ad-btn ad-btn-ghost"
+            onClick={() => {
+              setOffset(0);
+              setPeriod("");
+            }}
+          >
             All periods
           </button>
         </div>
@@ -193,14 +221,27 @@ export default function AdminEmailPage() {
           onChange={setSearchInput}
           style={{ width: 320 }}
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)}>
+        <select
+          value={status}
+          aria-label="Filter by status"
+          onChange={(event) => {
+            setOffset(0);
+            setStatus(event.target.value as typeof status);
+          }}
+        >
           {STATUS_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All statuses" : `Status: ${value}`}
             </option>
           ))}
         </select>
-        <select value={provider} onChange={(e) => setProvider(e.target.value as typeof provider)}>
+        <select
+          value={provider}
+          onChange={(event) => {
+            setOffset(0);
+            setProvider(event.target.value as typeof provider);
+          }}
+        >
           {PROVIDER_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All providers" : `Provider: ${value}`}
@@ -211,10 +252,23 @@ export default function AdminEmailPage() {
           className="ad-search ae-event-key-input"
           placeholder="Event key"
           value={eventKey}
-          onChange={(event) => setEventKey(event.target.value.trim())}
+          onChange={(event) => {
+            setOffset(0);
+            setEventKey(event.target.value.trim());
+          }}
           aria-label="Filter by email event key"
         />
-        <select value={threshold} onChange={(e) => setThreshold(e.target.value === "all" ? "all" : Number(e.target.value) as typeof threshold)}>
+        <select
+          value={threshold}
+          onChange={(event) => {
+            setOffset(0);
+            setThreshold(
+              event.target.value === "all"
+                ? "all"
+                : Number(event.target.value) as typeof threshold,
+            );
+          }}
+        >
           {THRESHOLD_OPTIONS.map((value) => (
             <option key={value} value={value}>
               {value === "all" ? "All quota triggers" : `Quota: ${value}%`}
@@ -225,10 +279,19 @@ export default function AdminEmailPage() {
           className="ad-search ae-period-input"
           placeholder="Period YYYY-MM"
           value={period}
-          onChange={(event) => setPeriod(event.target.value.trim())}
+          onChange={(event) => {
+            setOffset(0);
+            setPeriod(event.target.value.trim());
+          }}
           aria-label="Filter by period"
         />
-        <select value={limit} onChange={(e) => setLimit(Number(e.target.value) as typeof limit)}>
+        <select
+          value={limit}
+          onChange={(event) => {
+            setOffset(0);
+            setLimit(Number(event.target.value) as typeof limit);
+          }}
+        >
           {LIMIT_OPTIONS.map((value) => (
             <option key={value} value={value}>{value} rows</option>
           ))}

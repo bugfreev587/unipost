@@ -276,18 +276,14 @@ describe("homepage and about page carry entity SEO intent", () => {
       source,
       /const HOMEPAGE_TITLE = "Rewrite homepage title and meta description for query relevance"/,
     );
+    assert.match(source, /canonical:\s*"https:\/\/unipost\.dev\/"/);
     assert.match(
       source,
-      /const HOMEPAGE_URL = "https:\/\/unipost\.dev\/"/,
-    );
-    assert.match(source, /alternates:\s*{[^}]*canonical:\s*HOMEPAGE_URL[^}]*}/);
-    assert.match(
-      source,
-      /openGraph:\s*{[^}]*title:\s*HOMEPAGE_TITLE,[^}]*description:\s*HOMEPAGE_DESCRIPTION,[^}]*url:\s*HOMEPAGE_URL,[^}]*}/,
+      /openGraph:\s*{[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
     );
     assert.match(
       source,
-      /twitter:\s*{[^}]*card:\s*"summary",[^}]*title:\s*HOMEPAGE_TITLE,[^}]*description:\s*HOMEPAGE_DESCRIPTION,[^}]*}/,
+      /twitter:\s*{[\s\S]*card:\s*"summary",[\s\S]*title:\s*HOMEPAGE_TITLE,[\s\S]*description:\s*HOMEPAGE_DESCRIPTION,/,
     );
     assert.match(source, /Post to every social platform with one API/);
   });

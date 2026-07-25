@@ -2760,7 +2760,6 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "threshold must be one of: 80, 85, 90, 95, 100, 105, 110, 115, 120")
 		return
 	}
-
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {
 		limit = 100

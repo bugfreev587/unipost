@@ -182,4 +182,5 @@ test.describe("admin email notifications", () => {
     expect(apiSource).toContain('| "admin.email.search"');
     expect(apiSource).toContain("/v1/admin/email-notifications");
   });
+
 });

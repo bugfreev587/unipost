@@ -47,6 +47,25 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "connect-managed-ownership-fixes",
+    date: "2026-07-21",
+    displayDate: "July 21, 2026",
+    title: "Connect managed ownership transaction safety",
+    summary: "Improved transaction boundaries and ownership serialization in managed account connections.",
+    category: "api",
+    impact: "improved",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 82686f7", href: "https://github.com/bugfreev587/unipost/commit/82686f7a5117fcea9f36e9f373d60209b6b55791" },
+    { label: "Commit 3760699", href: "https://github.com/bugfreev587/unipost/commit/37606995da253f8e7f8e0f8d20a5158d3fc48466" },
+    { label: "Commit 4eafee5", href: "https://github.com/bugfreev587/unipost/commit/4eafee57c201df847f0c4aad1b287dc0a92d3dfd" },
+    { label: "Commit 575708d", href: "https://github.com/bugfreev587/unipost/commit/575708d42c7bf24557b0def8c3f3b1e97326192a" },
+    { label: "Commit b99013d", href: "https://github.com/bugfreev587/unipost/commit/b99013db169e5811a78a969f84ad7f0b179872d7" },
+    { label: "Commit b237878", href: "https://github.com/bugfreev587/unipost/commit/b237878313f34c954ed093ef018625064adaaada" },
+  ],
+  },
+  {
     id: "gif-guidance-copy",
     date: "2026-07-17",
     displayDate: "July 17, 2026",
