@@ -4,8 +4,17 @@ import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { listAdminBilling, setAdminWorkspacePlan, type AdminBillingListParams, type AdminBillingRow } from "@/lib/api";
+import {
+  grantAdminTrial,
+  listAdminBilling,
+  revokeAdminTrial,
+  setAdminWorkspacePlan,
+  type AdminBillingListParams,
+  type AdminBillingRow,
+  type TrialStatus,
+} from "@/lib/api";
 import { formatPostUsage, usagePercentage } from "@/lib/billing-format";
+import { formatWorkspaceTrial } from "@/lib/trial-format";
 
 import { AdminShell, StatCard, fmtCents, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
@@ -13,6 +22,26 @@ const STATUS_OPTIONS = ["all", "active", "past_due", "canceled", "trialing"] as 
 const PLAN_OPTIONS = ["all", "free", "api", "basic", "growth", "team", "enterprise"] as const;
 const PLAN_FLIP_OPTIONS = ["free", "api", "basic", "growth", "team", "enterprise"] as const;
 const DAY_OPTIONS = [30, 90, 180] as const;
+const TRIAL_PLAN_OPTIONS = [
+  { id: "api", label: "API" },
+  { id: "basic", label: "Basic" },
+  { id: "growth", label: "Growth" },
+  { id: "team", label: "Team" },
+] as const;
+const OPEN_TRIAL_STATUSES = new Set<TrialStatus>(["provisioning", "pending_activation", "checkout_pending", "scheduled", "active"]);
+const REVOCABLE_TRIAL_STATUSES = new Set<TrialStatus>(["pending_activation", "checkout_pending"]);
+const TRIAL_STATUS_LABELS: Record<TrialStatus, string> = {
+  provisioning: "Provisioning",
+  pending_activation: "Pending activation",
+  checkout_pending: "Checkout pending",
+  scheduled: "Scheduled",
+  active: "Active",
+  completed: "Completed",
+  canceled: "Canceled",
+  revoked: "Revoked",
+  superseded: "Superseded",
+  failed: "Failed",
+};
 
 export default function AdminBillingPage() {
   const { getToken } = useAuth();
@@ -122,6 +151,7 @@ export default function AdminBillingPage() {
               <th>Workspace</th>
               <th>User</th>
               <th>Plan</th>
+              <th>Trial</th>
               <th>Status</th>
               <th>Usage</th>
               <th>Renewal</th>
@@ -131,9 +161,9 @@ export default function AdminBillingPage() {
           </thead>
           <tbody>
             {loading && rows.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
+              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>Loading…</td></tr>
             ) : rows.length === 0 ? (
-              <tr><td colSpan={8} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No billing rows matched the current filters.</td></tr>
+              <tr><td colSpan={9} style={{ padding: 24, color: "var(--dmuted)", textAlign: "center" }}>No billing rows matched the current filters.</td></tr>
             ) : (
               rows.map((row) => {
                 const usagePct = usagePercentage(row.posts_used, row.post_limit);
@@ -157,6 +187,9 @@ export default function AdminBillingPage() {
                         currentPlan={row.plan_id}
                         onChanged={loadBilling}
                       />
+                    </td>
+                    <td className="abt-trial-cell">
+                      <GrantTrialForm row={row} onChanged={loadBilling} />
                     </td>
                     <td>
                       <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
@@ -203,7 +236,275 @@ export default function AdminBillingPage() {
           </tbody>
         </table>
       </div>
+      <style jsx global>{`
+        .abt-trial-cell { min-width: 292px; vertical-align: top; }
+        .abt-form { display: grid; gap: 8px; min-width: 268px; }
+        .abt-fields { display: grid; grid-template-columns: minmax(118px, 1fr) 82px; gap: 8px; align-items: end; }
+        .abt-field { display: grid; gap: 4px; min-width: 0; }
+        .abt-label { color: var(--dmuted); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+        .abt-control { width: 100%; min-height: 30px; border: 1px solid var(--dborder2); border-radius: 6px; background: var(--surface2); color: var(--dtext); font: inherit; font-size: 12px; padding: 5px 8px; outline: none; }
+        .abt-control:focus-visible, .abt-button:focus-visible { border-color: color-mix(in srgb, var(--primary) 42%, transparent); box-shadow: 0 0 0 3px var(--focus-ring); }
+        .abt-readonly { display: flex; align-items: center; font-weight: 600; text-transform: capitalize; }
+        .abt-helper { color: var(--dmuted2); font-size: 10px; line-height: 1.35; }
+        .abt-timeline { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 3px 8px; margin: 0; padding-top: 7px; border-top: 1px solid var(--dborder); }
+        .abt-timeline dt { color: var(--dmuted2); font-size: 10px; }
+        .abt-timeline dd { color: var(--dmuted); font-family: var(--font-geist-mono), monospace; font-size: 10px; margin: 0; min-width: 0; }
+        .abt-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+        .abt-button { min-height: 30px; border: 1px solid var(--dborder2); border-radius: 6px; background: var(--surface2); color: var(--dtext); cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; padding: 5px 10px; transition: transform .18s cubic-bezier(.16, 1, .3, 1), background-color .18s cubic-bezier(.16, 1, .3, 1); }
+        .abt-button:hover:not(:disabled) { background: var(--surface3); }
+        .abt-button:active:not(:disabled) { transform: translateY(1px); }
+        .abt-button:disabled { cursor: not-allowed; opacity: .45; }
+        .abt-button-primary { border-color: transparent; background: var(--daccent); color: var(--primary-foreground); }
+        .abt-button-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--daccent) 88%, var(--dtext)); }
+        .abt-button-danger { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 20%, transparent); color: var(--danger); }
+        .abt-current { display: grid; gap: 7px; }
+        .abt-current-head { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+        .abt-current-title { color: var(--dtext); font-size: 11px; font-weight: 600; }
+        .abt-badge { display: inline-flex; border: 1px solid var(--dborder2); border-radius: 999px; font-family: var(--font-geist-mono), monospace; font-size: 10px; font-weight: 600; padding: 2px 7px; }
+        .abt-tone-neutral { background: var(--surface2); color: var(--dmuted); }
+        .abt-tone-info { background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 22%, transparent); color: var(--info); }
+        .abt-tone-success { background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 20%, transparent); color: var(--success); }
+        .abt-tone-warning { background: color-mix(in srgb, #f59e0b 10%, transparent); border-color: color-mix(in srgb, #f59e0b 24%, transparent); color: #b45309; }
+        .abt-tone-danger { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 20%, transparent); color: var(--danger); }
+        .abt-message { border-left: 2px solid currentColor; font-size: 10.5px; line-height: 1.4; padding-left: 7px; }
+        .abt-error { color: var(--danger); }
+        .abt-success { color: var(--success); }
+        @media (max-width: 860px) {
+          .abt-trial-cell { min-width: 276px; }
+          .abt-form { min-width: 252px; }
+        }
+      `}</style>
     </AdminShell>
+  );
+}
+
+function trialPlanLabel(planId: string): string {
+  return TRIAL_PLAN_OPTIONS.find((plan) => plan.id === planId)?.label ?? planId;
+}
+
+function formatTrialDate(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) return "Date unavailable";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+function proposedTrialTimeline(currentPlan: string, durationDays: number, currentPeriodEnd?: string) {
+  if (currentPlan === "free") {
+    return [
+      { label: "Trial starts", value: "When the user completes checkout" },
+      { label: "Trial ends", value: `${durationDays} day${durationDays === 1 ? "" : "s"} after checkout` },
+      { label: "Billing begins", value: "At trial end unless canceled" },
+    ];
+  }
+
+  const startsAt = currentPeriodEnd ? new Date(currentPeriodEnd) : null;
+  const validStart = startsAt && Number.isFinite(startsAt.getTime()) ? startsAt : null;
+  const endsAt = validStart ? new Date(validStart.getTime() + durationDays * 24 * 60 * 60 * 1000) : null;
+  return [
+    { label: "Trial starts", value: validStart ? formatTrialDate(validStart) : "After the current billing period" },
+    { label: "Trial ends", value: endsAt ? formatTrialDate(endsAt) : `${durationDays} days after it starts` },
+    { label: "Billing resumes", value: `On ${trialPlanLabel(currentPlan)} at trial end` },
+  ];
+}
+
+function TrialTimeline({ items }: { items: { label: string; value: string }[] }) {
+  return (
+    <dl className="abt-timeline">
+      {items.map((item) => (
+        <div key={`${item.label}:${item.value}`} style={{ display: "contents" }}>
+          <dt>{item.label}</dt>
+          <dd>{item.value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function GrantTrialForm({
+  row,
+  onChanged,
+}: {
+  row: AdminBillingRow;
+  onChanged: () => Promise<void>;
+}) {
+  const { getToken } = useAuth();
+  const [targetPlan, setTargetPlan] = useState<(typeof TRIAL_PLAN_OPTIONS)[number]["id"]>("basic");
+  const [durationDays, setDurationDays] = useState("30");
+  const [busy, setBusy] = useState<"grant" | "revoke" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const currentTrial = row.trial;
+  const hasOpenTrial = !!currentTrial && OPEN_TRIAL_STATUSES.has(currentTrial.status);
+  const canRevoke = !!currentTrial && REVOCABLE_TRIAL_STATUSES.has(currentTrial.status);
+  const grantPlanIsEligible = row.plan_id === "free" || TRIAL_PLAN_OPTIONS.some((plan) => plan.id === row.plan_id);
+  const selectedPlan = row.plan_id === "free" ? targetPlan : row.plan_id;
+  const parsedDays = Number(durationDays);
+  const validDays = Number.isInteger(parsedDays) && parsedDays >= 1 && parsedDays <= 730;
+  const durationError = durationDays.trim() === "" ? "Days are required." : validDays ? null : "Use 1–730 whole days.";
+  const proposal = proposedTrialTimeline(row.plan_id, validDays ? parsedDays : 0, row.current_period_end);
+  const formattedTrial = currentTrial ? formatWorkspaceTrial(currentTrial) : null;
+
+  const grant = async () => {
+    if (busy || hasOpenTrial) return;
+    setError(null);
+    setSuccess(null);
+
+    if (!validDays) {
+      setError("Enter a whole number of days from 1 to 730.");
+      return;
+    }
+    if (!TRIAL_PLAN_OPTIONS.some((plan) => plan.id === selectedPlan)) {
+      setError("Trials are available only for API, Basic, Growth, and Team plans.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      [
+        `Grant a ${parsedDays}-day ${trialPlanLabel(selectedPlan)} trial to ${row.workspace_name}?`,
+        "",
+        `Trial starts: ${proposal[0].value}`,
+        `Trial ends: ${proposal[1].value}`,
+        `${proposal[2].label}: ${proposal[2].value}`,
+      ].join("\n"),
+    );
+    if (!confirmed) return;
+
+    setBusy("grant");
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      const response = await grantAdminTrial(token, row.workspace_id, {
+        plan_id: selectedPlan,
+        duration_days: parsedDays,
+      });
+      setSuccess(`${TRIAL_STATUS_LABELS[response.data.status]} trial recorded.`);
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to grant trial");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const revoke = async () => {
+    if (!currentTrial || !canRevoke || busy) return;
+    if (!window.confirm(`Revoke the ${trialPlanLabel(currentTrial.plan_id)} trial offer for ${row.workspace_name}? The user will not be able to activate it.`)) return;
+
+    setBusy("revoke");
+    setError(null);
+    setSuccess(null);
+    try {
+      const token = await getToken();
+      if (!token) throw new Error("Not authenticated");
+      await revokeAdminTrial(token, row.workspace_id, currentTrial.id);
+      setSuccess("Trial offer revoked.");
+      await onChanged();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to revoke trial");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <div className="abt-form" aria-busy={!!busy}>
+      {currentTrial && formattedTrial ? (
+        <div className="abt-current">
+          <div className="abt-current-head">
+            <span className={`abt-badge abt-tone-${formattedTrial.badge.tone}`}>
+              {TRIAL_STATUS_LABELS[currentTrial.status]}
+            </span>
+            <span className="abt-current-title">{formattedTrial.headline}</span>
+          </div>
+          {formattedTrial.timeline.length > 0 ? <TrialTimeline items={formattedTrial.timeline} /> : null}
+          {formattedTrial.terminalReason ? <div className="abt-helper">{formattedTrial.terminalReason}</div> : null}
+        </div>
+      ) : null}
+
+      <div className="abt-fields">
+        <div className="abt-field">
+          {row.plan_id === "free" ? (
+            <>
+              <label className="abt-label" htmlFor={`trial-plan-${row.workspace_id}`}>Trial plan</label>
+              <select
+                id={`trial-plan-${row.workspace_id}`}
+                className="abt-control"
+                value={targetPlan}
+                onChange={(event) => {
+                  setTargetPlan(event.target.value as typeof targetPlan);
+                  setError(null);
+                  setSuccess(null);
+                }}
+                disabled={!!busy || hasOpenTrial}
+              >
+                {TRIAL_PLAN_OPTIONS.map((plan) => <option key={plan.id} value={plan.id}>{plan.label}</option>)}
+              </select>
+            </>
+          ) : (
+            <>
+              <span id={`trial-plan-label-${row.workspace_id}`} className="abt-label">Trial plan</span>
+              <div className="abt-control abt-readonly" aria-labelledby={`trial-plan-label-${row.workspace_id}`}>
+                {trialPlanLabel(row.plan_id)}
+              </div>
+            </>
+          )}
+        </div>
+        <div className="abt-field">
+          <label className="abt-label" htmlFor={`trial-days-${row.workspace_id}`}>Days</label>
+          <input
+            id={`trial-days-${row.workspace_id}`}
+            className="abt-control"
+            type="number"
+            min={1}
+            max={730}
+            step={1}
+            inputMode="numeric"
+            value={durationDays}
+            onChange={(event) => {
+              setDurationDays(event.target.value);
+              setError(null);
+              setSuccess(null);
+            }}
+            aria-describedby={`${durationError ? `trial-days-error-${row.workspace_id} ` : ""}trial-help-${row.workspace_id}`}
+            aria-invalid={!validDays}
+            disabled={!!busy || hasOpenTrial}
+          />
+          {durationError ? <span id={`trial-days-error-${row.workspace_id}`} className="abt-helper abt-error" role="alert">{durationError}</span> : null}
+        </div>
+      </div>
+
+      <div id={`trial-help-${row.workspace_id}`} className="abt-helper">
+        {hasOpenTrial
+          ? "This workspace already has an open trial."
+          : row.plan_id === "free"
+            ? "The user must complete checkout before access starts."
+            : grantPlanIsEligible
+              ? "The current paid plan is fixed for this trial."
+              : "This plan is not eligible for an admin trial."}
+      </div>
+
+      {!hasOpenTrial && validDays && grantPlanIsEligible ? <TrialTimeline items={proposal} /> : null}
+
+      <div className="abt-actions">
+        <button
+          type="button"
+          className="abt-button abt-button-primary"
+          onClick={() => void grant()}
+          disabled={!!busy || hasOpenTrial || !validDays || !grantPlanIsEligible}
+        >
+          {busy === "grant" ? "Granting…" : hasOpenTrial ? "Trial already open" : "Grant Trial"}
+        </button>
+        {canRevoke ? (
+          <button type="button" className="abt-button abt-button-danger" onClick={() => void revoke()} disabled={!!busy}>
+            {busy === "revoke" ? "Revoking…" : "Revoke"}
+          </button>
+        ) : null}
+      </div>
+
+      {error ? <div className="abt-message abt-error" role="alert">{error}</div> : null}
+      {success ? <div className="abt-message abt-success" role="status" aria-live="polite">{success}</div> : null}
+    </div>
   );
 }
 

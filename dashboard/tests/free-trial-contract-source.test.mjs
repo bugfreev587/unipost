@@ -5,6 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 
 const apiSource = readFileSync(resolve("src/lib/api.ts"), "utf8");
+const adminBillingSource = readFileSync(resolve("src/app/admin/billing/page.tsx"), "utf8");
 
 async function loadTrialFormatModule() {
   const source = readFileSync(resolve("src/lib/trial-format.ts"), "utf8");
@@ -168,4 +169,36 @@ test("shared formatter normalizes terminal reasons without leaking internal fail
   assert.equal(unknown.headline, "Trial status unavailable");
   assert.equal(unknown.remainingDays, null);
   assert.equal(unknown.terminalReason, null);
+});
+
+test("Admin Billing exposes safe row-level trial grant controls", () => {
+  for (const value of [
+    "GrantTrialForm",
+    "grantAdminTrial",
+    "revokeAdminTrial",
+    "Grant Trial",
+    "API",
+    "Basic",
+    "Growth",
+    "Team",
+    "Pending activation",
+    "Checkout pending",
+    "Scheduled",
+    "Active",
+    "Failed",
+    "Revoke",
+    "Granting…",
+    "Revoking…",
+    "Use 1–730 whole days.",
+    "role=\"alert\"",
+  ]) {
+    assert.ok(adminBillingSource.includes(value), `missing Admin Billing trial UI contract: ${value}`);
+  }
+
+  assert.match(adminBillingSource, /type="number"[\s\S]*min=\{1\}[\s\S]*max=\{730\}[\s\S]*step=\{1\}/);
+  assert.match(adminBillingSource, /row\.plan_id === "free"[\s\S]*<select/);
+  assert.match(adminBillingSource, /formatWorkspaceTrial\(/);
+  assert.match(adminBillingSource, /pending_activation[\s\S]*checkout_pending/);
+  assert.match(adminBillingSource, /window\.confirm\([\s\S]*Trial starts[\s\S]*Trial ends/);
+  assert.match(adminBillingSource, /disabled=\{[\s\S]*(?:busy|hasOpenTrial)/);
 });
