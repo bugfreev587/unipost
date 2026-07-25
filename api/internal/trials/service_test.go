@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/stripe/stripe-go/v82"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
@@ -190,6 +191,20 @@ func TestGrantPaidIndeterminateCreateWithoutSnapshotStaysProvisioning(t *testing
 	}
 	if h.store.provisioningSchedule.StripeScheduleID != "" || strings.Contains(h.store.provisioningSchedule.FailureMessage, "deadline") {
 		t.Fatalf("reconciliation=%#v", h.store.provisioningSchedule)
+	}
+}
+
+func TestGrantPaidStripeIdempotencyErrorStaysProvisioning(t *testing.T) {
+	h := newPaidServiceHarness(t)
+	h.stripe.schedule = ScheduleSnapshot{}
+	h.stripe.createScheduleErr = classifyScheduleCreateError(&stripe.Error{HTTPStatusCode: 400, Type: stripe.ErrorTypeIdempotency})
+
+	_, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_1"})
+	if err == nil {
+		t.Fatal("error=nil")
+	}
+	if h.store.grant.Status != StatusProvisioning || h.store.failed != nil || h.store.provisioningSchedule == nil {
+		t.Fatalf("grant=%#v failed=%#v reconciliation=%#v", h.store.grant, h.store.failed, h.store.provisioningSchedule)
 	}
 }
 

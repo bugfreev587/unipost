@@ -42,7 +42,7 @@ func (e *ScheduleMutationError) Unwrap() error {
 func classifyScheduleCreateError(err error) *ScheduleMutationError {
 	outcome := MutationIndeterminate
 	var stripeErr *stripe.Error
-	if errors.As(err, &stripeErr) && stripeErr.HTTPStatusCode >= http.StatusBadRequest && stripeErr.HTTPStatusCode < http.StatusInternalServerError && stripeErr.HTTPStatusCode != http.StatusTooManyRequests {
+	if errors.As(err, &stripeErr) && stripeErr.Type != stripe.ErrorTypeIdempotency && stripeErr.HTTPStatusCode >= http.StatusBadRequest && stripeErr.HTTPStatusCode < http.StatusInternalServerError && stripeErr.HTTPStatusCode != http.StatusTooManyRequests {
 		outcome = MutationRejected
 	}
 	return &ScheduleMutationError{Outcome: outcome, Err: err}

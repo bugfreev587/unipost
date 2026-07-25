@@ -919,6 +919,7 @@ func TestCreatePaidScheduleClassifiesEmptySnapshotErrors(t *testing.T) {
 		{name: "transport", err: errors.New("connection reset"), want: MutationIndeterminate},
 		{name: "Stripe 500", err: &stripe.Error{HTTPStatusCode: 500, Type: stripe.ErrorTypeAPI}, want: MutationIndeterminate},
 		{name: "Stripe 429", err: &stripe.Error{HTTPStatusCode: 429, Type: stripe.ErrorTypeAPI}, want: MutationIndeterminate},
+		{name: "Stripe 400 idempotency", err: &stripe.Error{HTTPStatusCode: 400, Type: stripe.ErrorTypeIdempotency}, want: MutationIndeterminate},
 		{name: "Stripe 400", err: &stripe.Error{HTTPStatusCode: 400, Type: stripe.ErrorTypeInvalidRequest}, want: MutationRejected},
 	} {
 		t.Run(test.name, func(t *testing.T) {
