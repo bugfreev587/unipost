@@ -1,11 +1,40 @@
 package handler
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 )
+
+func TestCheckoutMetadataIncludesRuntimeEnvironment(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, " staging ")
+
+	got := stripeCheckoutMetadata("ws_staging", "basic", "sandbox")
+
+	want := map[string]string{
+		"workspace_id":        "ws_staging",
+		"plan_id":             "basic",
+		"mode":                "sandbox",
+		"unipost_environment": "staging",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("metadata = %#v, want %#v", got, want)
+	}
+}
+
+func TestCheckoutSubscriptionDataReusesRoutingMetadata(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	metadata := stripeCheckoutMetadata("ws_staging", "basic", "sandbox")
+
+	data := stripeCheckoutSubscriptionData(metadata)
+
+	if !reflect.DeepEqual(data.Metadata, metadata) {
+		t.Fatalf("subscription metadata = %#v, want %#v", data.Metadata, metadata)
+	}
+}
 
 func TestUsageResponseFromMonthlySnapshot(t *testing.T) {
 	snapshot := quota.MonthlySnapshot{

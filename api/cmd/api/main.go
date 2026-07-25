@@ -690,7 +690,7 @@ func main() {
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
-	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore)
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)

@@ -16,6 +16,7 @@ import {
   type BillingInfo,
 } from "@/lib/api";
 import { useLogsWebSocket } from "@/lib/use-logs-ws";
+import { integrationLogMatchesSearch } from "@/lib/log-search";
 import {
   Check,
   Copy,
@@ -569,19 +570,7 @@ export default function LogsPage() {
     if (requestFilter && log.request_id !== requestFilter) return false;
     if (postFilter && log.post_id !== postFilter) return false;
     if (errorCodeFilter && log.error_code !== errorCodeFilter) return false;
-    if (query.trim()) {
-      const haystack = [
-        log.message,
-        log.action,
-        log.request_id,
-        log.post_id,
-        log.error_code,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase();
-      if (!haystack.includes(query.trim().toLowerCase())) return false;
-    }
+    if (!integrationLogMatchesSearch(log, query)) return false;
     return true;
   };
 

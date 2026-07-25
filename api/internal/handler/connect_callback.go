@@ -31,6 +31,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -45,7 +46,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
-	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -70,7 +71,7 @@ type ConnectCallbackHandler struct {
 	registry                   *connect.Registry
 	callbackBaseURL            string
 	limiter                    *ipLimiter // shared in-memory limiter for callback brute-force protection
-	ilog                       *integrationlogs.Logger
+	ilog                       hostedConnectOutcomeWriter
 	superAdminChecker          *auth.SuperAdminChecker
 	quota                      *quota.Checker
 	instagramWebhookSubscriber instagramWebhookSubscriber
@@ -98,7 +99,7 @@ func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncrypt
 	}
 }
 
-func (h *ConnectCallbackHandler) SetIntegrationLogger(logger *integrationlogs.Logger) *ConnectCallbackHandler {
+func (h *ConnectCallbackHandler) SetIntegrationLogger(logger hostedConnectOutcomeWriter) *ConnectCallbackHandler {
 	h.ilog = logger
 	return h
 }
@@ -307,29 +308,6 @@ func (h *ConnectCallbackHandler) resolveConnectorUsingLegacyPolicy(ctx context.C
 	return connectorResolution{connector: connector, xAppMode: mode, ok: ok}, nil
 }
 
-func (h *ConnectCallbackHandler) logOAuthEvent(ctx context.Context, workspaceID string, event integrationlogs.Event) {
-	if h == nil || h.ilog == nil {
-		return
-	}
-	if workspaceID == "" {
-		slog.Warn("connect callback log skipped: missing workspace",
-			"action", event.Action,
-			"profile_id", event.ProfileID,
-			"platform", event.Platform,
-			"error_code", event.ErrorCode,
-		)
-		return
-	}
-	event.WorkspaceID = workspaceID
-	if event.Category == "" {
-		event.Category = integrationlogs.CategoryOAuth
-	}
-	if event.Source == "" {
-		event.Source = integrationlogs.SourceOAuth
-	}
-	h.ilog.Write(ctx, event)
-}
-
 // Authorize handles GET /v1/public/connect/sessions/{id}/authorize.
 //
 // The hosted dashboard page calls this when the user clicks
@@ -416,6 +394,57 @@ func (h *ConnectCallbackHandler) Authorize(w http.ResponseWriter, r *http.Reques
 	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
+var connectErrorCodePattern = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,64}$`)
+
+func boundedConnectErrorCode(raw, fallback string) string {
+	raw = strings.TrimSpace(raw)
+	if !connectErrorCodePattern.MatchString(raw) {
+		return fallback
+	}
+	return strings.ToLower(raw)
+}
+
+func classifyFacebookConnectFailure(err error) (string, string, map[string]any) {
+	code := string(connect.FacebookAuthorizationFailed)
+	message := "Hosted Connect failed during authorization."
+	metadata := map[string]any{}
+
+	var failure *connect.FacebookConnectFailure
+	if !errors.As(err, &failure) {
+		return code, message, metadata
+	}
+	actionablePageFailure := false
+	switch failure.Code {
+	case connect.FacebookPageNotAvailable:
+		actionablePageFailure = true
+		code = string(connect.FacebookPageNotAvailable)
+		message = "Hosted Connect failed: no manageable Facebook Page was found."
+		metadata["page_count"] = failure.PageCount
+		metadata["publishable_page_count"] = failure.PublishablePageCount
+	case connect.FacebookPagePermissionRequired:
+		actionablePageFailure = true
+		code = string(connect.FacebookPagePermissionRequired)
+		message = "Hosted Connect failed: Facebook Page publishing permission is required."
+		metadata["page_count"] = failure.PageCount
+		metadata["publishable_page_count"] = failure.PublishablePageCount
+	case connect.FacebookAuthorizationFailed:
+		// Keep the safe default.
+	}
+	if !actionablePageFailure && failure.Stage != "" {
+		metadata["facebook_stage"] = failure.Stage
+	}
+	if !actionablePageFailure && failure.RemoteStatusCode != 0 {
+		metadata["remote_status_code"] = failure.RemoteStatusCode
+	}
+	if !actionablePageFailure && failure.MetaCode != 0 {
+		metadata["meta_error_code"] = failure.MetaCode
+	}
+	if !actionablePageFailure && failure.MetaSubcode != 0 {
+		metadata["meta_error_subcode"] = failure.MetaSubcode
+	}
+	return code, message, metadata
+}
+
 // Callback handles GET /v1/connect/callback/{platform}?code=...&state=...
 //
 // The platform redirects the user here after they accept (or deny).
@@ -445,49 +474,47 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	// etc. Distinguish access_denied (truly cancelled) from real
 	// errors so the customer's app sees the right connect_status.
 	if errParam != "" {
-		status := "error"
-		if errParam == "access_denied" {
-			status = "cancelled"
-		}
-		// Best-effort: find the session via state so we can flip
-		// it to the right terminal state and redirect to return_url.
 		if state != "" {
 			if sess, err := h.queries.GetConnectSessionByOAuthState(r.Context(), state); err == nil {
-				workspaceID := h.workspaceIDForProfile(r.Context(), sess.ProfileID)
-				logStatus := integrationlogs.StatusError
-				if status == "cancelled" {
-					logStatus = integrationlogs.StatusWarning
+				managedProfile, profileErr := h.queries.GetProfile(r.Context(), sess.ProfileID)
+				if profileErr != nil || strings.TrimSpace(managedProfile.WorkspaceID) == "" {
+					slog.Error("connect.callback: workspace resolution failed", "platform", sess.Platform, "error_class", "workspace_resolution_failed")
+					renderConnectError(w, http.StatusInternalServerError, "Failed to verify workspace.")
+					return
 				}
-				h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-					Level:     integrationlogs.LevelWarn,
-					Status:    logStatus,
-					Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-					Message:   "OAuth callback returned an error.",
-					ProfileID: sess.ProfileID,
-					Platform:  sess.Platform,
-					ErrorCode: strings.TrimSpace(errParam),
-					Metadata: map[string]any{
-						"connect_session_id": sess.ID,
-						"external_user_id":   sess.ExternalUserID,
-						"callback_status":    status,
-						"reason":             firstNonEmptyString(errDesc, errParam),
-					},
+				outcome := newHostedConnectOutcome(r.Context(), h.ilog, hostedConnectAttempt{
+					WorkspaceID:    managedProfile.WorkspaceID,
+					ProfileID:      sess.ProfileID,
+					Platform:       sess.Platform,
+					SessionID:      sess.ID,
+					ExternalUserID: sess.ExternalUserID,
+					RequestID:      appmw.GetRequestID(r.Context()),
 				})
-				if status == "cancelled" {
+				w = wrapHostedConnectResponse(w, outcome)
+				if errParam == "access_denied" {
+					outcome.Cancel("access_denied")
 					_, _ = h.queries.MarkConnectSessionCancelled(r.Context(), sess.ID)
+					publicReason := "access_denied"
+					if sess.Platform != "facebook" && strings.TrimSpace(errDesc) != "" {
+						publicReason = errDesc
+					}
+					h.redirectWithStatus(w, r, sess.ReturnUrl.String, "cancelled", publicReason, false)
+					return
 				}
-				// For non-access_denied errors we leave the session
-				// in 'pending' so the user can retry with the same
-				// link if the issue is fixable (e.g. transient).
-				reason := errDesc
-				if reason == "" {
-					reason = errParam
+				reason := boundedConnectErrorCode(errParam, "authorization_failed")
+				if sess.Platform == "facebook" {
+					reason = string(connect.FacebookAuthorizationFailed)
 				}
-				h.redirectWithStatus(w, r, sess.ReturnUrl.String, status, reason, false)
+				outcome.Fail(reason, "Hosted Connect failed during authorization.", nil)
+				publicReason := reason
+				if sess.Platform != "facebook" && strings.TrimSpace(errDesc) != "" {
+					publicReason = errDesc
+				}
+				h.redirectWithStatus(w, r, sess.ReturnUrl.String, "error", publicReason, false)
 				return
 			}
 		}
-		renderConnectError(w, http.StatusOK, "Connection failed: "+errParam)
+		renderConnectError(w, http.StatusOK, "Connection failed.")
 		return
 	}
 
@@ -504,19 +531,6 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		renderConnectError(w, http.StatusBadRequest, "Invalid state.")
 		return
 	}
-	if session.Platform != platformName {
-		renderConnectError(w, http.StatusBadRequest, "Platform mismatch.")
-		return
-	}
-	if session.Status != "pending" {
-		renderConnectError(w, http.StatusConflict, "This Connect link has already been used.")
-		return
-	}
-	if session.ExpiresAt.Time.Before(time.Now()) {
-		_ = h.queries.ExpireConnectSession(r.Context(), session.ID)
-		renderConnectError(w, http.StatusGone, "This Connect link has expired.")
-		return
-	}
 	managedProfile, err := h.queries.GetProfile(r.Context(), session.ProfileID)
 	if err != nil || strings.TrimSpace(managedProfile.WorkspaceID) == "" {
 		slog.Error("connect.callback: workspace resolution failed", "platform", platformName, "error_class", "workspace_resolution_failed")
@@ -524,13 +538,40 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		return
 	}
 	workspaceID := managedProfile.WorkspaceID
+	outcome := newHostedConnectOutcome(r.Context(), h.ilog, hostedConnectAttempt{
+		WorkspaceID:    workspaceID,
+		ProfileID:      session.ProfileID,
+		Platform:       session.Platform,
+		SessionID:      session.ID,
+		ExternalUserID: session.ExternalUserID,
+		RequestID:      appmw.GetRequestID(r.Context()),
+	})
+	w = wrapHostedConnectResponse(w, outcome)
+	if session.Platform != platformName {
+		outcome.Fail("platform_mismatch", "Hosted Connect failed during authorization.", nil)
+		renderConnectError(w, http.StatusBadRequest, "Platform mismatch.")
+		return
+	}
+	if session.Status != "pending" {
+		outcome.Fail("connect_session_not_pending", "Hosted Connect failed because the Session is no longer pending.", nil)
+		renderConnectError(w, http.StatusConflict, "This Connect link has already been used.")
+		return
+	}
+	if session.ExpiresAt.Time.Before(time.Now()) {
+		_ = h.queries.ExpireConnectSession(r.Context(), session.ID)
+		outcome.Fail("connect_session_expired", "Hosted Connect failed because the Session expired.", nil)
+		renderConnectError(w, http.StatusGone, "This Connect link has expired.")
+		return
+	}
 	resolved, err := h.resolveConnectorForStoredMode(r.Context(), workspaceID, platformName, session.AllowQuickstartCreds, session.XAppMode)
 	if err != nil {
-		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "err", err)
+		slog.Error("connect.callback: resolve connector failed", "platform", platformName, "workspace_id", workspaceID, "error_class", "connector_resolution_failed")
+		outcome.Fail("connector_resolution_failed", "Hosted Connect failed during authorization.", nil)
 		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "connector_resolution_failed", false)
 		return
 	}
 	if !resolved.ok {
+		outcome.Fail("connector_resolution_failed", "Hosted Connect failed during authorization.", nil)
 		renderConnectError(w, http.StatusBadRequest, "Platform not supported.")
 		return
 	}
@@ -544,52 +585,40 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 
 	tokens, err := resolved.connector.ExchangeCode(r.Context(), view, code)
 	if err != nil {
-		slog.Error("connect.callback: token exchange failed", "platform", platformName, "err", err)
-		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-			Level:     integrationlogs.LevelError,
-			Status:    integrationlogs.StatusError,
-			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-			Message:   "OAuth token exchange failed.",
-			ProfileID: session.ProfileID,
-			Platform:  platformName,
-			ErrorCode: "token_exchange_failed",
-			Metadata: map[string]any{
-				"connect_session_id": session.ID,
-				"external_user_id":   session.ExternalUserID,
-			},
-			ResponsePayload: map[string]any{"error": err.Error()},
-		})
-		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "token_exchange_failed", false)
+		slog.Error("connect.callback: token exchange failed", "platform", platformName, "error_class", "token_exchange_failed")
+		reason := "token_exchange_failed"
+		message := "Hosted Connect failed during authorization."
+		var metadata map[string]any
+		if platformName == "facebook" {
+			reason, message, metadata = classifyFacebookConnectFailure(err)
+		}
+		outcome.Fail(reason, message, metadata)
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", reason, false)
 		return
 	}
 	profile, err := resolved.connector.FetchProfile(r.Context(), tokens.AccessToken)
 	if err != nil {
-		slog.Error("connect.callback: profile fetch failed", "platform", platformName, "err", err)
-		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-			Level:     integrationlogs.LevelError,
-			Status:    integrationlogs.StatusError,
-			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-			Message:   "OAuth profile fetch failed.",
-			ProfileID: session.ProfileID,
-			Platform:  platformName,
-			ErrorCode: "profile_fetch_failed",
-			Metadata: map[string]any{
-				"connect_session_id": session.ID,
-				"external_user_id":   session.ExternalUserID,
-			},
-			ResponsePayload: map[string]any{"error": err.Error()},
-		})
-		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", "profile_fetch_failed", false)
+		slog.Error("connect.callback: profile fetch failed", "platform", platformName, "error_class", "profile_fetch_failed")
+		reason := "profile_fetch_failed"
+		message := "Hosted Connect failed during authorization."
+		var metadata map[string]any
+		if platformName == "facebook" {
+			reason, message, metadata = classifyFacebookConnectFailure(err)
+		}
+		outcome.Fail(reason, message, metadata)
+		h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", reason, false)
 		return
 	}
 	providerIdentity, hasProviderIdentity := verifiedOAuthProviderIdentity(platformName, profile)
 	if !hasProviderIdentity {
 		slog.Error("connect.callback: verified provider identity missing", "platform", platformName, "workspace_id", workspaceID)
+		outcome.Fail("provider_identity_missing", "Hosted Connect failed during authorization.", nil)
 		renderConnectError(w, http.StatusBadGateway, "Provider account identity is missing.")
 		return
 	}
 	if workspaceID == "" || h.ownershipStore == nil {
 		slog.Error("connect.callback: ownership store unavailable", "platform", platformName, "workspace_id", workspaceID)
+		outcome.Fail("account_ownership_failed", "Hosted Connect failed while verifying account ownership.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to verify account ownership.")
 		return
 	}
@@ -603,11 +632,13 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	ownershipDecision, ownershipErr := h.ownershipStore.Check(r.Context(), ownershipKey)
 	if ownershipErr != nil {
 		slog.Error("connect.callback: ownership check failed", "platform", platformName, "workspace_id", workspaceID, "error_class", "ownership_check_failed")
+		outcome.Fail("account_ownership_failed", "Hosted Connect failed while verifying account ownership.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to verify account ownership.")
 		return
 	}
 	if ownershipDecision.Kind == connectownership.Conflict {
 		logManagedOwnershipConflict(workspaceID, platformName, ownershipDecision, nil)
+		outcome.Fail("account_ownership_conflict", "Hosted Connect failed while verifying account ownership.", nil)
 		renderConnectError(w, http.StatusConflict, "This social account is already connected and cannot be reassigned.")
 		return
 	}
@@ -617,24 +648,29 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		hidePoweredBy = planAllowsHidePoweredBy(sub.PlanID) && managedProfile.BrandingHidePoweredBy
 	}
 	if blocked, msg, limitErr := h.freePlanManagedConnectBlocked(r.Context(), workspaceID, session.ExternalUserID, platformName, ownershipDecision.Kind == connectownership.Create); limitErr != nil {
-		slog.Error("connect.callback: managed connect limit check failed", "workspace_id", workspaceID, "profile_id", session.ProfileID, "platform", platformName, "err", limitErr)
+		slog.Error("connect.callback: managed connect limit check failed", "workspace_id", workspaceID, "profile_id", session.ProfileID, "platform", platformName, "error_class", "managed_account_limit_check_failed")
+		outcome.Fail("managed_account_limit_check_failed", "Hosted Connect failed while checking workspace limits.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to check plan limits.")
 		return
 	} else if blocked {
+		outcome.Fail("managed_account_limit_reached", "Hosted Connect failed because the workspace account limit was reached.", nil)
 		renderConnectError(w, http.StatusPaymentRequired, msg)
 		return
 	}
 	if blocked, shareErr := freePlanManagedSharingBlocked(r.Context(), h.queries, h.superAdminChecker, workspaceID, platformName, providerIdentity); shareErr != nil {
 		slog.Error("connect.callback: managed sharing check failed", "workspace_id", workspaceID, "platform", platformName, "error_class", "managed_sharing_lookup_failed")
+		outcome.Fail("account_availability_check_failed", "Hosted Connect failed because the account is unavailable to this workspace.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to verify account availability.")
 		return
 	} else if blocked {
+		outcome.Fail("account_unavailable", "Hosted Connect failed because the account is unavailable to this workspace.", nil)
 		renderConnectError(w, http.StatusConflict, accountNotAvailableOnFreePlanMessage)
 		return
 	}
 
 	encAccess, err := h.encryptor.Encrypt(tokens.AccessToken)
 	if err != nil {
+		outcome.Fail("credential_encryption_failed", "Hosted Connect failed while securing credentials.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Internal error encrypting token.")
 		return
 	}
@@ -642,6 +678,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	if tokens.RefreshToken != "" {
 		encRefresh, err = h.encryptor.Encrypt(tokens.RefreshToken)
 		if err != nil {
+			outcome.Fail("credential_encryption_failed", "Hosted Connect failed while securing credentials.", nil)
 			renderConnectError(w, http.StatusInternalServerError, "Internal error encrypting token.")
 			return
 		}
@@ -706,29 +743,18 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		if errors.Is(err, connectownership.ErrOwnershipConflict) {
 			logManagedOwnershipConflict(workspaceID, platformName, ownershipDecision, err)
+			outcome.Fail("account_ownership_conflict", "Hosted Connect failed while verifying account ownership.", nil)
 			renderConnectError(w, http.StatusConflict, "This social account is already connected and cannot be reassigned.")
 			return
 		}
 		if errors.Is(err, connectownership.ErrInvalidOwnershipRequest) {
 			slog.Error("connect.callback: invalid ownership save request", "platform", platformName, "workspace_id", workspaceID, "error_class", "invalid_ownership_request")
+			outcome.Fail("account_save_failed", "Hosted Connect failed while saving the account.", nil)
 			renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
 			return
 		}
-		slog.Error("connect.callback: save failed", "platform", platformName, "err", err)
-		h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-			Level:     integrationlogs.LevelError,
-			Status:    integrationlogs.StatusError,
-			Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-			Message:   "Failed to persist connected account.",
-			ProfileID: session.ProfileID,
-			Platform:  platformName,
-			ErrorCode: "account_save_failed",
-			Metadata: map[string]any{
-				"connect_session_id": session.ID,
-				"external_user_id":   session.ExternalUserID,
-			},
-			ResponsePayload: map[string]any{"error": err.Error()},
-		})
+		slog.Error("connect.callback: save failed", "platform", platformName, "error_class", "account_save_failed")
+		outcome.Fail("account_save_failed", "Hosted Connect failed while saving the account.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to save account.")
 		return
 	}
@@ -744,29 +770,13 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 				failureMessage = "Instagram webhook subscription failed and reconnect containment could not be confirmed."
 				slog.Error("connect.callback: instagram webhook subscription containment failed",
 					"account_id", saved.ID,
-					"external_account_id", profile.ExternalAccountID,
 					"rows_affected", reconnectRows,
 					"transition_error", reconnectErr != nil)
 			}
 			slog.Error("connect.callback: instagram webhook subscription failed",
 				"account_id", saved.ID,
-				"external_account_id", profile.ExternalAccountID,
 				"containment_confirmed", containmentConfirmed)
-			h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-				Level:     integrationlogs.LevelError,
-				Status:    integrationlogs.StatusError,
-				Action:    integrationlogs.ActionAccountConnectCallbackFailed,
-				Message:   failureMessage,
-				ProfileID: session.ProfileID,
-				Platform:  platformName,
-				ErrorCode: failureReason,
-				Metadata: map[string]any{
-					"connect_session_id": session.ID,
-					"external_user_id":   session.ExternalUserID,
-					"social_account_id":  saved.ID,
-				},
-				ResponsePayload: map[string]any{"error": "instagram webhook subscription failed"},
-			})
+			outcome.Fail(failureReason, failureMessage, map[string]any{"social_account_id": saved.ID})
 			h.redirectWithStatus(w, r, session.ReturnUrl.String, "error", failureReason, hidePoweredBy)
 			return
 		}
@@ -778,10 +788,12 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 	if completionErr := claimConnectSessionCompletion(r.Context(), h.queries, session.ID, saved.ID); completionErr != nil {
 		if errors.Is(completionErr, pgx.ErrNoRows) {
 			slog.Warn("connect.callback: completion claim lost", "workspace_id", workspaceID, "platform", platformName, "error_class", "completion_claim_lost")
+			outcome.Fail("connect_session_not_pending", "Hosted Connect failed because the Session is no longer pending.", nil)
 			renderConnectError(w, http.StatusConflict, "This Connect link has already been used.")
 			return
 		}
 		slog.Error("connect.callback: completion claim failed", "workspace_id", workspaceID, "platform", platformName, "error_class", "completion_claim_failed")
+		outcome.Fail("session_completion_failed", "Hosted Connect failed while completing the session.", nil)
 		renderConnectError(w, http.StatusInternalServerError, "Failed to complete connection.")
 		return
 	}
@@ -801,22 +813,7 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		"external_user_id", session.ExternalUserID,
 		"account_id", saved.ID,
 	)
-	h.logOAuthEvent(r.Context(), workspaceID, integrationlogs.Event{
-		Level:           integrationlogs.LevelInfo,
-		Status:          integrationlogs.StatusSuccess,
-		Action:          integrationlogs.ActionAccountConnectCallbackOK,
-		Message:         "OAuth callback completed and account connected.",
-		ProfileID:       session.ProfileID,
-		SocialAccountID: saved.ID,
-		Platform:        platformName,
-		Metadata: map[string]any{
-			"connect_session_id": session.ID,
-			"external_user_id":   session.ExternalUserID,
-			"account_name":       profile.Username,
-			"connection_type":    "managed",
-		},
-	})
-
+	outcome.Success(saved.ID, profile.Username)
 	h.redirectWithStatus(w, r, session.ReturnUrl.String, "success", "", hidePoweredBy)
 }
 
@@ -831,7 +828,11 @@ func (h *ConnectCallbackHandler) redirectWithStatus(w http.ResponseWriter, r *ht
 		case "cancelled":
 			renderConnectError(w, http.StatusOK, "Connection cancelled.", hidePoweredBy)
 		default:
-			renderConnectError(w, http.StatusBadRequest, "Connection failed: "+reason, hidePoweredBy)
+			if presentation, ok := presentationForConnectReason(reason); ok {
+				renderConnectErrorPresentation(w, http.StatusBadRequest, presentation, hidePoweredBy)
+			} else {
+				renderConnectError(w, http.StatusBadRequest, "Connection failed: "+reason, hidePoweredBy)
+			}
 		}
 		return
 	}
@@ -866,11 +867,35 @@ func firstNonEmptyString(values ...string) string {
 
 // Server-rendered HTML for the no-return_url cases.
 
+const (
+	facebookPageNotAvailableMessage       = "We couldn’t find a Facebook Page this account can manage or has allowed UniPost to access. Make sure this Facebook account manages a Page and that UniPost is allowed to access it, or ask a Page admin to grant you access. Then open the original connection link and try again."
+	facebookPagePermissionRequiredMessage = "Your Facebook account can access a Page, but it doesn’t have permission to publish content. Ask a Page admin to grant you Facebook content-management access, then open the original connection link and try again."
+	facebookAuthorizationFailedMessage    = "Facebook authorization couldn’t be completed. Please try again later or contact the developer who sent you the link."
+)
+
+type connectErrorPresentation struct {
+	Title string
+	Body  string
+}
+
+func presentationForConnectReason(reason string) (connectErrorPresentation, bool) {
+	switch reason {
+	case string(connect.FacebookPageNotAvailable):
+		return connectErrorPresentation{Title: "Facebook Page unavailable", Body: facebookPageNotAvailableMessage}, true
+	case string(connect.FacebookPagePermissionRequired):
+		return connectErrorPresentation{Title: "Facebook Page permission required", Body: facebookPagePermissionRequiredMessage}, true
+	case string(connect.FacebookAuthorizationFailed):
+		return connectErrorPresentation{Title: "Connection failed", Body: facebookAuthorizationFailedMessage}, true
+	default:
+		return connectErrorPresentation{}, false
+	}
+}
+
 const connectErrorTplSrc = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect · UniPost</title>
+<title>{{.Title}} · UniPost</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;max-width:480px;margin:48px auto;padding:0 24px;color:#111;line-height:1.5}
 h1{font-size:22px;margin-bottom:8px}
@@ -878,7 +903,7 @@ h1{font-size:22px;margin-bottom:8px}
 .small{font-size:13px;color:#666;margin-top:24px}
 </style>
 </head><body>
-<h1>Connect</h1>
+<h1>{{.Title}}</h1>
 <div class="err">{{.Message}}</div>
 <p>If you reached this page by mistake, contact the developer who sent you the link.</p>
 {{if .ShowPoweredBy}}<p class="small">Powered by UniPost</p>{{end}}
@@ -908,13 +933,18 @@ var (
 )
 
 func renderConnectError(w http.ResponseWriter, status int, msg string, hidePoweredBy ...bool) {
+	hideBranding := len(hidePoweredBy) > 0 && hidePoweredBy[0]
+	renderConnectErrorPresentation(w, status, connectErrorPresentation{Title: "Connect", Body: msg}, hideBranding)
+}
+
+func renderConnectErrorPresentation(w http.ResponseWriter, status int, presentation connectErrorPresentation, hidePoweredBy bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	showPoweredBy := true
-	if len(hidePoweredBy) > 0 && hidePoweredBy[0] {
-		showPoweredBy = false
-	}
-	if err := connectErrorTpl.Execute(w, map[string]any{"Message": msg, "ShowPoweredBy": showPoweredBy}); err != nil {
+	if err := connectErrorTpl.Execute(w, map[string]any{
+		"Title":         presentation.Title,
+		"Message":       presentation.Body,
+		"ShowPoweredBy": !hidePoweredBy,
+	}); err != nil {
 		fmt.Fprintf(w, "render error: %v", err)
 	}
 }
