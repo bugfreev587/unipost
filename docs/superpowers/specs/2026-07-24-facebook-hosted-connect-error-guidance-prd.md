@@ -1,6 +1,6 @@
 # Facebook Hosted Connect Error Guidance and Outcome Logging PRD
 
-**Status:** Approved design; written PRD ready for user review
+**Status:** Approved design; external review findings resolved; written PRD ready for user review
 
 **Date:** 2026-07-24
 
@@ -20,7 +20,7 @@ This behavior is misleading: the user is told that authorization failed even tho
 
 This hotfix introduces Facebook-only, typed Page discovery failures and stable public error codes. It distinguishes an empty Page list from a non-empty Page list with no publishable Page, renders approved user guidance on both Hosted Connect response paths, keeps retryable sessions pending, and prevents raw connector errors from reaching the browser.
 
-The hotfix also establishes a platform-wide Hosted Connect outcome logging invariant. For every OAuth callback or Bluesky form submission that can be attributed to a valid Connect Session and Workspace, UniPost synchronously persists exactly one user-visible success, failure, or cancellation result before responding. Users can find these results in Workspace Logs by account-connection category, platform, status, request ID, Connect Session ID, or external user ID.
+The hotfix also establishes a platform-wide Hosted Connect outcome logging invariant. For every OAuth callback or Bluesky form submission that can be attributed to a valid Connect Session and Workspace, UniPost makes exactly one synchronous attempt to persist a user-visible success, failure, or cancellation result before responding. Under normal log-database availability that attempt produces exactly one result row; explicit fail-open behavior applies when the insert fails. Users can find persisted results in Workspace Logs by account-connection category, platform, status, request ID, Connect Session ID, or external user ID.
 
 The Facebook error experience remains deliberately scoped to Facebook. The outcome-log completeness rule applies to every Hosted Connect platform, including the non-OAuth Bluesky form, because a partial platform history would be inconsistent for users.
 
@@ -86,6 +86,19 @@ The callback already emits:
 
 However, connector resolution, ownership, plan, encryption, session completion, and other attributable failures can return without a Workspace integration log. Existing callback logging also uses the general asynchronous log queue, which can drop events when full. The result is not a dependable user-facing connection history.
 
+### 3.5 Raw Meta response bodies enter existing error channels
+
+The current Facebook connector embeds `string(body)` in errors for four non-200 provider responses:
+
+- short-lived token exchange;
+- long-lived token exchange;
+- `/me/accounts` Page discovery; and
+- `/me` Page profile fetch.
+
+The callback then logs the error through structured service logging and, on exchange/profile failures, serializes `err.Error()` into `integration_logs.response_payload.error`. Redaction by JSON key cannot make an arbitrary provider error string safe. The current implementation can therefore persist or emit the complete Meta response body even when the public redirect reason is generic.
+
+Removing this existing leak is a mandatory part of the hotfix, not an incidental benefit of the new outcome recorder. The connector must stop constructing errors from raw response bodies, and Hosted Connect outcome events must stop serializing unbounded `err.Error()` values into user-visible payloads.
+
 ## 4. Goals
 
 1. Tell a Facebook Hosted Connect user whether UniPost found no accessible Page or found Pages without publishing permission.
@@ -94,7 +107,7 @@ However, connector resolution, ownership, plan, encryption, session completion, 
 4. Prevent internal error strings and provider response bodies from reaching public pages or redirect URLs.
 5. Preserve the current successful Facebook Page selection behavior.
 6. Keep retryable Facebook Page discovery and authorization failures in `pending` state.
-7. Ensure every attributable Hosted Connect OAuth callback or Bluesky form submission synchronously persists exactly one user-visible outcome log.
+7. Ensure every attributable Hosted Connect OAuth callback or Bluesky form submission makes exactly one synchronous result-log insert attempt and, under normal log-database availability, persists exactly one user-visible outcome row.
 8. Make a specific connection attempt findable in Workspace Logs using its Connect Session ID or external user ID.
 9. Preserve Workspace isolation and existing log retention rules.
 10. Release through staging and production with negative and positive Facebook acceptance coverage.
@@ -119,11 +132,11 @@ However, connector resolution, ownership, plan, encryption, session completion, 
 
 | Provider result | Public reason | Page title | User message |
 | --- | --- | --- | --- |
-| `/me/accounts` returns an empty list | `facebook_page_not_available` | `Facebook Page unavailable` | `We couldn’t find a Facebook Page this account can manage. Create a Facebook Page or ask a Page admin to grant you access, then open the original connection link and try again.` |
+| `/me/accounts` returns an empty list | `facebook_page_not_available` | `Facebook Page unavailable` | `We couldn’t find a Facebook Page this account can manage or has allowed UniPost to access. Make sure this Facebook account manages a Page and that UniPost is allowed to access it, or ask a Page admin to grant you access. Then open the original connection link and try again.` |
 | One or more Pages are returned, but none has `CREATE_CONTENT`, `MANAGE`, or `MODERATE` | `facebook_page_permission_required` | `Facebook Page permission required` | `Your Facebook account can access a Page, but it doesn’t have permission to publish content. Ask a Page admin to grant you Facebook content-management access, then open the original connection link and try again.` |
 | Any other Facebook token, network, response-decode, Page endpoint, or profile-stage authorization failure covered by this presentation | `facebook_authorization_failed` | `Connection failed` | `Facebook authorization couldn’t be completed. Please try again later or contact the developer who sent you the link.` |
 
-The empty-list message intentionally covers both likely causes. An empty `/me/accounts` response does not prove that the person owns no Facebook Page; it can also mean the Facebook user has no accessible Page or did not grant effective Page access.
+The empty-list message intentionally covers the observable cause without claiming which Meta configuration produced it. An empty `/me/accounts` response does not prove that the person owns no Facebook Page; it can also mean the Facebook user has no Page role or did not grant UniPost effective access to any Page. The hotfix does not claim that one specific permission checkbox was declined because the empty list alone cannot prove that.
 
 ### 6.2 Response-path parity
 
@@ -167,6 +180,8 @@ For Page discovery failures, the public reason and Developer Logs `error_code` a
 
 The callback must never place `err.Error()`, a Meta response body, or another unbounded connector string in a redirect URL or HTML response.
 
+Existing `ResponsePayload: {"error": err.Error()}` writes on Hosted Connect exchange, profile, and persistence failures must be removed from result events or replaced with fixed, bounded fields. A new public reason allowlist is not sufficient while an equivalent raw value remains in Workspace Logs or service logs.
+
 ### 7.3 Safe Page diagnostics
 
 Actionable Page errors may add only these counts to the user-visible result log:
@@ -176,17 +191,17 @@ Actionable Page errors may add only these counts to the user-visible result log:
 
 Page IDs, Page names, Page access tokens, the long-lived user token, and the complete `/me/accounts` response are excluded.
 
-For other Facebook provider errors, safe diagnostics may include a remote HTTP status and parsed numeric Meta error code/subcode. Raw response bodies and authorization material are excluded.
+For other Facebook provider errors, the connector must parse a bounded safe provider-error type. Safe diagnostics may include the operation/stage, remote HTTP status, and parsed numeric Meta error code/subcode. Its `Error()` output must not contain the raw body or any token. Raw response bodies and authorization material are excluded from the returned error, structured service logs, integration-log payloads, and fallback telemetry.
 
 ## 8. Unified Hosted Connect outcome logging
 
 ### 8.1 Invariant
 
-For every Hosted Connect OAuth callback or Bluesky form submission that can be attributed to a valid Connect Session and Workspace:
+Under normal integration-log database availability, every Hosted Connect OAuth callback or Bluesky form submission that can be attributed to a valid Connect Session and Workspace must make one synchronous result-log write:
 
-> Persist exactly one user-visible result event for that connection attempt before returning HTML or redirecting the browser.
+> Attempt exactly one synchronous result-event insert for that connection attempt before returning HTML or redirecting the browser; when the insert succeeds, exactly one user-visible result row exists.
 
-The result event is per attempt, not per Session. A retry using the same still-pending Session produces another result event with the same `connect_session_id` and a different `request_id`. The existing `account.connect.callback_*` action names are retained for compatibility and also apply to the Bluesky form even though that platform has no OAuth callback.
+The result event is per attempt, not per Session. A retry using the same still-pending Session produces another result event with the same `connect_session_id` and a different `request_id`. A database write failure follows the explicit fail-open behavior in §8.6 and is not described as a persisted result. The existing `account.connect.callback_*` action names are retained for compatibility and also apply to the Bluesky form even though that platform has no OAuth callback.
 
 The existing `account.connect.session_created` event is a lifecycle event and is not counted as a callback result.
 
@@ -264,7 +279,9 @@ If the result-log insert fails:
 - a structured service error and metric identify `hosted_connect_outcome_log_write_failed` with safe Workspace, platform, action, and request identifiers;
 - no token, OAuth code, raw provider response, or API key appears in the fallback service log.
 
-This provides an application-level persistence guarantee under normal database availability. A transactional outbox is explicitly deferred.
+This provides an application-level persistence guarantee under normal database availability, not an absolute delivery guarantee during database failure. A transactional outbox is explicitly deferred.
+
+Success, failure, and cancellation all use the synchronous path. Keeping success asynchronous would preserve the existing queue-full loss mode and would violate the approved requirement that users can reliably find both successful and failed Hosted Connect attempts. Callback latency from the bounded insert must be measured and included in staging regression review.
 
 ### 8.7 Attribution exceptions
 
@@ -295,14 +312,16 @@ Users can locate outcome events using:
 
 ### 9.2 Connect Session and external user search
 
-The existing `q` search contract is extended to match the safe metadata fields:
+The existing `q` search contract is extended to exactly match the safe ID metadata fields when the complete ID is supplied:
 
 - `metadata.connect_session_id`
 - `metadata.external_user_id`
 
-This requires no schema migration. The list query reads these JSON object fields in addition to its existing message, action, request ID, post ID, and error-code search targets.
+This requires no schema migration. The list query compares these two JSON object fields using exact equality while retaining its existing free-text behavior for message, action, request ID, post ID, and error code. Substring `ILIKE` matching is not added for either metadata ID.
 
 The Dashboard Workspace Logs search and live-tail client filter must use the same searchable fields so a result does not disappear when live mode is active.
+
+The initial exact metadata predicates remain unindexed and are acceptable only within the existing Workspace, time-range, and retention bounds at current volume. Query latency must be observed in staging. Expression indexes or dedicated columns are a future scaling option and are not added by this hotfix.
 
 ### 9.3 Documentation
 
@@ -317,7 +336,7 @@ Developer Logs documentation must include:
 ## 10. Security and privacy invariants
 
 1. OAuth code, access token, refresh token, Page token, API key, client secret, and authorization headers never enter public reasons, user-visible metadata, payloads, service fallback logs, tests, or artifacts.
-2. Raw Meta response bodies never enter Hosted Connect result logs.
+2. Raw Meta response bodies never enter connector error strings, Hosted Connect result logs, or structured service logs. All four current Facebook `string(body)` error constructions are removed or replaced by bounded parsed provider errors.
 3. Facebook redirect reasons come from a fixed allowlist; browser-controlled Facebook `error_description` is not reflected verbatim. Other platforms keep their current public presentation in this release, while their Workspace result logs still use bounded messages and safe error codes.
 4. A Connect Session ID may be logged only after server-side Session resolution and Workspace attribution. OAuth state is never logged.
 5. Third-party user email is not included in result events.
@@ -350,7 +369,8 @@ Developer Logs documentation must include:
 - A list with unavailable Pages followed by one publishable Page still selects the first publishable Page.
 - Each accepted task (`CREATE_CONTENT`, `MANAGE`, `MODERATE`) is covered.
 - A publishable Page without an access token is classified as an unexpected Facebook authorization/provider failure, not a permission error.
-- Non-200 and invalid JSON responses do not leak raw bodies or credentials into the public classification.
+- Each of the four existing non-200 paths proves that raw bodies, tokens, and provider messages do not appear in the returned error, service-log fields, result-log payload, public reason, redirect, or HTML.
+- Invalid JSON responses do not leak raw bodies or credentials into the public classification.
 
 ### 12.2 OAuth callback handler tests
 
@@ -361,17 +381,18 @@ Developer Logs documentation must include:
 - Page and authorization failures leave the Session pending.
 - Cancellation marks the Session cancelled.
 - Success marks the Session completed.
-- Every attributable success, failure, and cancellation path synchronously records exactly one result event.
+- Every attributable success, failure, and cancellation path makes exactly one synchronous result-event insert attempt.
 - Multiple internal failure checks in one attempt cannot emit duplicate result events.
 - Result-log insertion occurs before response/redirect completion.
 - A result-log write failure does not change the established business outcome and emits sanitized service telemetry.
+- A forced result-log write failure produces no false assertion that a user-visible result row was persisted.
 - Non-attributable callbacks do not write to a guessed Workspace.
 - Every registered OAuth Hosted Connect platform is covered by a table-driven success/failure outcome-log contract test.
 - Other Hosted Connect platforms retain their callback presentation behavior while gaining complete outcome logging.
 
 ### 12.3 Bluesky Hosted Connect tests
 
-- Every attributable Bluesky form success and failure records exactly one synchronous result event through the shared recorder.
+- Every attributable Bluesky form success and failure makes exactly one synchronous result-event insert attempt through the shared recorder.
 - Invalid credentials, ownership conflicts, plan failures, encryption failures, save failures, completion-claim failures, and success receive safe stable classifications.
 - The submitted handle may be represented only through an approved safe account identifier; the app password is absent from every event, fallback service log, response payload, and test diagnostic.
 - Form submissions that cannot resolve a Session or Workspace do not write to a guessed Workspace.
@@ -381,7 +402,7 @@ Developer Logs documentation must include:
 
 - The synchronous write path persists normalized and redacted events.
 - Workspace scope remains mandatory for list and detail queries.
-- `q` matches `connect_session_id` and `external_user_id` inside metadata only within the authenticated Workspace.
+- `q` exactly matches complete `connect_session_id` and `external_user_id` values inside metadata only within the authenticated Workspace; partial ID fragments do not match these metadata fields.
 - List responses continue to omit request and response payloads.
 - Detail responses contain only redacted payloads.
 - WebSocket/SSE delivery carries the persisted result event.
@@ -496,8 +517,8 @@ After production deployment:
 | Internal provider details leak through fallback paths | Fixed public allowlist, bounded log fields, negative leakage assertions |
 | Central result recorder creates duplicate logs | Single in-process finalizer and exactly-one tests across return paths |
 | Synchronous log writes add callback latency | One bounded insert only after attribution; record duration and alert on failures |
+| Exact metadata lookup has no expression index | Keep equality predicates inside Workspace/time/retention bounds, measure staging latency, and defer indexing until volume justifies it |
 | Log database failure occurs after a successful connection | Do not reverse business success; emit sanitized service telemetry and metric |
-| Metadata search becomes expensive | Limit search to two known JSON keys under existing Workspace and retention predicates; observe query latency |
 | All-platform logging work causes presentation changes | Separate platform-neutral outcome recording from Facebook-only public presentation |
 | Existing external consumers depend on `token_exchange_failed` for Facebook | Document the replacement public reasons and preserve safe internal diagnostic stages |
 
@@ -525,7 +546,7 @@ The hotfix is complete only when:
 - all approved Facebook messages and public reason codes are implemented;
 - Page availability and Page permission failures are distinct and retryable;
 - internal errors are absent from public responses;
-- every attributable Hosted Connect OAuth callback and Bluesky form submission produces exactly one synchronous Workspace result log;
+- every attributable Hosted Connect OAuth callback and Bluesky form submission makes exactly one synchronous result-log insert attempt; under normal log-database availability exactly one Workspace result row is persisted, while forced write failure follows the documented fail-open telemetry path;
 - users can find attempts by Connect Session ID and external user ID;
 - automated tests and local CI-equivalent checks pass;
 - staging negative and positive Facebook acceptance passes on the exact deployed SHA;
