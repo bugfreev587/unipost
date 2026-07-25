@@ -43,9 +43,9 @@ func TestCanTransitionAllowsEveryDocumentedTransition(t *testing.T) {
 	allowed := map[Status][]Status{
 		StatusProvisioning:      {StatusScheduled, StatusFailed},
 		StatusPendingActivation: {StatusCheckoutPending, StatusRevoked, StatusSuperseded},
-		StatusCheckoutPending:   {StatusPendingActivation, StatusActive, StatusRevoked, StatusSuperseded, StatusFailed},
-		StatusScheduled:         {StatusActive, StatusCanceled, StatusSuperseded, StatusFailed},
-		StatusActive:            {StatusCompleted, StatusCanceled, StatusSuperseded, StatusFailed},
+		StatusCheckoutPending:   {StatusPendingActivation, StatusActive, StatusRevoked, StatusSuperseded},
+		StatusScheduled:         {StatusActive, StatusCanceled, StatusSuperseded},
+		StatusActive:            {StatusCompleted, StatusCanceled, StatusSuperseded},
 	}
 
 	for from, destinations := range allowed {
@@ -84,15 +84,12 @@ func TestTransitionMatrixCoversEveryStatusPair(t *testing.T) {
 		{StatusCheckoutPending, StatusActive}:            {},
 		{StatusCheckoutPending, StatusRevoked}:           {},
 		{StatusCheckoutPending, StatusSuperseded}:        {},
-		{StatusCheckoutPending, StatusFailed}:            {},
 		{StatusScheduled, StatusActive}:                  {},
 		{StatusScheduled, StatusCanceled}:                {},
 		{StatusScheduled, StatusSuperseded}:              {},
-		{StatusScheduled, StatusFailed}:                  {},
 		{StatusActive, StatusCompleted}:                  {},
 		{StatusActive, StatusCanceled}:                   {},
 		{StatusActive, StatusSuperseded}:                 {},
-		{StatusActive, StatusFailed}:                     {},
 	}
 
 	for _, from := range statuses {
@@ -215,18 +212,13 @@ func TestStatusClassification(t *testing.T) {
 
 func TestTrialProjectionIsUserSafeAndIncludesSuppliedBillingFlags(t *testing.T) {
 	grant := populatedGrant(StatusActive)
-	price := int64(2900)
-
-	projection := NewTrialProjection(grant, ProjectionOptions{
-		PostTrialPriceCents: &price,
-		CancelAtPeriodEnd:   true,
-	})
+	projection := NewTrialProjection(grant, 2900, true)
 
 	if projection.ID != grant.ID || projection.Kind != KindFreeToPaid || projection.PlanID != grant.PlanID || projection.DurationDays != grant.DurationDays || projection.Status != StatusActive {
 		t.Fatalf("identity projection = %#v", projection)
 	}
-	if projection.PostTrialPriceCents == nil || *projection.PostTrialPriceCents != price {
-		t.Fatalf("post-trial price = %#v", projection.PostTrialPriceCents)
+	if projection.PostTrialPriceCents != 2900 {
+		t.Fatalf("post-trial price = %d", projection.PostTrialPriceCents)
 	}
 	if !projection.CancelAtPeriodEnd || !projection.ChangingPlanForfeitsTrial {
 		t.Fatalf("billing flags = cancel:%t forfeits:%t", projection.CancelAtPeriodEnd, projection.ChangingPlanForfeitsTrial)
@@ -235,6 +227,39 @@ func TestTrialProjectionIsUserSafeAndIncludesSuppliedBillingFlags(t *testing.T) 
 		t.Fatalf("user-facing dates missing: %#v", projection)
 	}
 	assertProjectionRedactsInternalFields(t, projection)
+}
+
+func TestTrialProjectionRequiresPriceAndKeepsExactJSONContract(t *testing.T) {
+	grant := db.WorkspaceTrialGrant{
+		ID:           "trial_zero",
+		Kind:         string(KindFreeToPaid),
+		PlanID:       "api",
+		DurationDays: 1,
+		Status:       string(StatusPendingActivation),
+		GrantedAt: pgtype.Timestamptz{
+			Time:  time.Date(2026, 7, 24, 14, 30, 0, 0, time.FixedZone("UTC+2", 2*60*60)),
+			Valid: true,
+		},
+	}
+
+	encoded, err := json.Marshal(NewTrialProjection(grant, 0, false))
+	if err != nil {
+		t.Fatalf("marshal projection: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal projection: %v", err)
+	}
+	assertExactJSONKeys(t, payload,
+		"id", "kind", "plan_id", "duration_days", "status", "granted_at",
+		"post_trial_price_cents", "cancel_at_period_end", "changing_plan_forfeits_trial",
+	)
+	if got, ok := payload["post_trial_price_cents"].(float64); !ok || got != 0 {
+		t.Fatalf("post_trial_price_cents = %#v, want numeric zero", payload["post_trial_price_cents"])
+	}
+	if got := payload["granted_at"]; got != "2026-07-24T12:30:00Z" {
+		t.Fatalf("granted_at = %#v, want UTC timestamp", got)
+	}
 }
 
 func TestHistoryProjectionIsUserSafeAndNormalizesTerminalReasons(t *testing.T) {
@@ -255,32 +280,65 @@ func TestHistoryProjectionIsUserSafeAndNormalizesTerminalReasons(t *testing.T) {
 			grant := populatedGrant(test.status)
 			grant.FailureCode = pgtype.Text{String: "secret_" + string(test.status), Valid: true}
 			grant.FailureMessage = pgtype.Text{String: "internal detail " + string(test.status), Valid: true}
-			price := int64(4900)
-			projection := NewHistoryProjection(grant, ProjectionOptions{PostTrialPriceCents: &price})
+			projection := NewHistoryProjection(grant)
 
 			if projection.TerminalReason != test.want {
 				t.Fatalf("terminal reason = %q, want %q", projection.TerminalReason, test.want)
-			}
-			if projection.PostTrialPriceCents == nil || *projection.PostTrialPriceCents != price {
-				t.Fatalf("post-trial price = %#v", projection.PostTrialPriceCents)
 			}
 			assertProjectionRedactsInternalFields(t, projection)
 		})
 	}
 }
 
-func TestNewServiceReturnsServiceSkeleton(t *testing.T) {
-	store := &fakeStore{}
-	stripe := &fakeStripeGateway{}
-	service := NewService(store, stripe)
-	if service == nil {
-		t.Fatal("NewService returned nil")
+func TestHistoryProjectionHasExactJSONContract(t *testing.T) {
+	projection := NewHistoryProjection(populatedGrant(StatusSuperseded))
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatalf("marshal history projection: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal history projection: %v", err)
+	}
+	assertExactJSONKeys(t, payload,
+		"id", "kind", "plan_id", "duration_days", "status",
+		"granted_at", "scheduled_start_at", "started_at", "ends_at", "activated_at",
+		"canceled_at", "revoked_at", "superseded_at", "completed_at",
+		"superseded_by_plan_id", "terminal_reason",
+	)
+	if got := payload["superseded_by_plan_id"]; got != "team" {
+		t.Fatalf("superseded_by_plan_id = %#v, want team", got)
 	}
 }
 
-type fakeStore struct{}
+func TestHistoryProjectionOmitsInvalidNullableValuesAndConvertsDatesToUTC(t *testing.T) {
+	grant := db.WorkspaceTrialGrant{
+		ID:           "trial_nullable",
+		Kind:         string(KindPaidSamePlan),
+		PlanID:       "basic",
+		DurationDays: 30,
+		Status:       string(StatusCompleted),
+		StartedAt: pgtype.Timestamptz{
+			Time:  time.Date(2026, 8, 2, 4, 0, 0, 0, time.FixedZone("UTC-7", -7*60*60)),
+			Valid: true,
+		},
+	}
 
-type fakeStripeGateway struct{}
+	encoded, err := json.Marshal(NewHistoryProjection(grant))
+	if err != nil {
+		t.Fatalf("marshal history projection: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal history projection: %v", err)
+	}
+	assertExactJSONKeys(t, payload,
+		"id", "kind", "plan_id", "duration_days", "status", "started_at", "terminal_reason",
+	)
+	if got := payload["started_at"]; got != "2026-08-02T11:00:00Z" {
+		t.Fatalf("started_at = %#v, want UTC timestamp", got)
+	}
+}
 
 func populatedGrant(status Status) db.WorkspaceTrialGrant {
 	stamp := func(day int) pgtype.Timestamptz {
@@ -343,6 +401,24 @@ func assertProjectionRedactsInternalFields(t *testing.T, value any) {
 	} {
 		if strings.Contains(jsonText, forbidden) {
 			t.Errorf("projection leaked %q: %s", forbidden, jsonText)
+		}
+	}
+}
+
+func assertExactJSONKeys(t *testing.T, payload map[string]any, expected ...string) {
+	t.Helper()
+	want := make(map[string]struct{}, len(expected))
+	for _, key := range expected {
+		want[key] = struct{}{}
+	}
+	for key := range payload {
+		if _, ok := want[key]; !ok {
+			t.Errorf("unexpected JSON key %q", key)
+		}
+	}
+	for key := range want {
+		if _, ok := payload[key]; !ok {
+			t.Errorf("missing JSON key %q", key)
 		}
 	}
 }

@@ -65,19 +65,16 @@ var allowedTransitions = map[Status]map[Status]struct{}{
 		StatusActive:            {},
 		StatusRevoked:           {},
 		StatusSuperseded:        {},
-		StatusFailed:            {},
 	},
 	StatusScheduled: {
 		StatusActive:     {},
 		StatusCanceled:   {},
 		StatusSuperseded: {},
-		StatusFailed:     {},
 	},
 	StatusActive: {
 		StatusCompleted:  {},
 		StatusCanceled:   {},
 		StatusSuperseded: {},
-		StatusFailed:     {},
 	},
 }
 
@@ -149,11 +146,6 @@ const (
 	TerminalReasonUnavailable     TerminalReason = "trial_unavailable"
 )
 
-type ProjectionOptions struct {
-	PostTrialPriceCents *int64
-	CancelAtPeriodEnd   bool
-}
-
 type TrialProjection struct {
 	ID                        string         `json:"id"`
 	Kind                      Kind           `json:"kind"`
@@ -169,15 +161,32 @@ type TrialProjection struct {
 	RevokedAt                 *time.Time     `json:"revoked_at,omitempty"`
 	SupersededAt              *time.Time     `json:"superseded_at,omitempty"`
 	CompletedAt               *time.Time     `json:"completed_at,omitempty"`
-	PostTrialPriceCents       *int64         `json:"post_trial_price_cents,omitempty"`
+	PostTrialPriceCents       int64          `json:"post_trial_price_cents"`
 	CancelAtPeriodEnd         bool           `json:"cancel_at_period_end"`
 	ChangingPlanForfeitsTrial bool           `json:"changing_plan_forfeits_trial"`
 	TerminalReason            TerminalReason `json:"terminal_reason,omitempty"`
 }
 
-type HistoryProjection TrialProjection
+type HistoryProjection struct {
+	ID                 string         `json:"id"`
+	Kind               Kind           `json:"kind"`
+	PlanID             string         `json:"plan_id"`
+	DurationDays       int32          `json:"duration_days"`
+	Status             Status         `json:"status"`
+	GrantedAt          *time.Time     `json:"granted_at,omitempty"`
+	ScheduledStartAt   *time.Time     `json:"scheduled_start_at,omitempty"`
+	StartedAt          *time.Time     `json:"started_at,omitempty"`
+	EndsAt             *time.Time     `json:"ends_at,omitempty"`
+	ActivatedAt        *time.Time     `json:"activated_at,omitempty"`
+	CanceledAt         *time.Time     `json:"canceled_at,omitempty"`
+	RevokedAt          *time.Time     `json:"revoked_at,omitempty"`
+	SupersededAt       *time.Time     `json:"superseded_at,omitempty"`
+	CompletedAt        *time.Time     `json:"completed_at,omitempty"`
+	SupersededByPlanID *string        `json:"superseded_by_plan_id,omitempty"`
+	TerminalReason     TerminalReason `json:"terminal_reason,omitempty"`
+}
 
-func NewTrialProjection(grant db.WorkspaceTrialGrant, options ProjectionOptions) TrialProjection {
+func NewTrialProjection(grant db.WorkspaceTrialGrant, postTrialPriceCents int64, cancelAtPeriodEnd bool) TrialProjection {
 	status := Status(grant.Status)
 	return TrialProjection{
 		ID:                        grant.ID,
@@ -194,15 +203,33 @@ func NewTrialProjection(grant db.WorkspaceTrialGrant, options ProjectionOptions)
 		RevokedAt:                 projectionTime(grant.RevokedAt),
 		SupersededAt:              projectionTime(grant.SupersededAt),
 		CompletedAt:               projectionTime(grant.CompletedAt),
-		PostTrialPriceCents:       options.PostTrialPriceCents,
-		CancelAtPeriodEnd:         options.CancelAtPeriodEnd,
+		PostTrialPriceCents:       postTrialPriceCents,
+		CancelAtPeriodEnd:         cancelAtPeriodEnd,
 		ChangingPlanForfeitsTrial: status == StatusScheduled || status == StatusActive,
 		TerminalReason:            NormalizeTerminalReason(status),
 	}
 }
 
-func NewHistoryProjection(grant db.WorkspaceTrialGrant, options ProjectionOptions) HistoryProjection {
-	return HistoryProjection(NewTrialProjection(grant, options))
+func NewHistoryProjection(grant db.WorkspaceTrialGrant) HistoryProjection {
+	status := Status(grant.Status)
+	return HistoryProjection{
+		ID:                 grant.ID,
+		Kind:               Kind(grant.Kind),
+		PlanID:             grant.PlanID,
+		DurationDays:       grant.DurationDays,
+		Status:             status,
+		GrantedAt:          projectionTime(grant.GrantedAt),
+		ScheduledStartAt:   projectionTime(grant.ScheduledStartAt),
+		StartedAt:          projectionTime(grant.StartedAt),
+		EndsAt:             projectionTime(grant.EndsAt),
+		ActivatedAt:        projectionTime(grant.ActivatedAt),
+		CanceledAt:         projectionTime(grant.CanceledAt),
+		RevokedAt:          projectionTime(grant.RevokedAt),
+		SupersededAt:       projectionTime(grant.SupersededAt),
+		CompletedAt:        projectionTime(grant.CompletedAt),
+		SupersededByPlanID: projectionText(grant.SupersededByPlanID),
+		TerminalReason:     NormalizeTerminalReason(status),
+	}
 }
 
 func NormalizeTerminalReason(status Status) TerminalReason {
@@ -227,5 +254,13 @@ func projectionTime(value pgtype.Timestamptz) *time.Time {
 		return nil
 	}
 	result := value.Time.UTC()
+	return &result
+}
+
+func projectionText(value pgtype.Text) *string {
+	if !value.Valid {
+		return nil
+	}
+	result := value.String
 	return &result
 }
