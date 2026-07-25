@@ -819,7 +819,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Load the social account and decrypt the token.
-	account, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+	resolvedAccount, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 		ID:          item.SocialAccountID,
 		WorkspaceID: workspaceID,
 	})
@@ -827,6 +827,7 @@ func (h *InboxHandler) Reply(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load social account")
 		return
 	}
+	account := resolvedAccount.AsSocialAccount()
 	accessToken, err := h.encryptor.Decrypt(account.AccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to decrypt token")

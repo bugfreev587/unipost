@@ -152,8 +152,13 @@ func applyMigrationUp(
 	if !strings.Contains(upSQL, "-- +goose Up") {
 		t.Fatalf("migration %s is missing its Goose Up marker", path)
 	}
+	// Production correctly uses CONCURRENTLY outside a transaction. Disposable
+	// migration fixtures run every predecessor inside one rollback-only
+	// transaction, so remove only the concurrency modifier while preserving the
+	// index definitions and predicates under test.
 	if strings.Contains(upSQL, "-- +goose NO TRANSACTION") {
-		t.Fatalf("migration %s cannot be applied by the transactional fixture helper", path)
+		upSQL = strings.ReplaceAll(upSQL, " CONCURRENTLY", "")
+		upSQL = strings.Replace(upSQL, "-- +goose NO TRANSACTION", "", 1)
 	}
 	upSQL = strings.Replace(upSQL, "-- +goose Up", "", 1)
 	if _, err := database.ExecContext(ctx, upSQL); err != nil {

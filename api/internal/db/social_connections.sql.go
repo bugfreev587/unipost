@@ -404,6 +404,53 @@ func (q *Queries) GetSocialConnectionForUpdate(ctx context.Context, arg GetSocia
 	return i, err
 }
 
+const listBoundAccountIDsForAccount = `-- name: ListBoundAccountIDsForAccount :many
+SELECT DISTINCT target.id
+FROM social_accounts source
+JOIN profiles source_profile ON source_profile.id = source.profile_id
+JOIN social_accounts target
+  ON target.connection_id = source.connection_id
+ AND target.binding_status = 'active'
+JOIN profiles target_profile ON target_profile.id = target.profile_id
+LEFT JOIN social_connections sc ON sc.id = source.connection_id
+WHERE source.id = $1
+  AND source_profile.workspace_id = $2
+  AND target_profile.workspace_id = $2
+  AND (
+    $3::TEXT IS NULL
+    OR COALESCE(sc.external_user_id, target.external_user_id) = $3::TEXT
+  )
+ORDER BY target.id
+`
+
+type ListBoundAccountIDsForAccountParams struct {
+	AccountID      string      `json:"account_id"`
+	WorkspaceID    string      `json:"workspace_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+}
+
+// Exact caller-safe sibling grouping for Dashboard selection. Public binding
+// IDs are returned; the physical connection ID remains server-internal.
+func (q *Queries) ListBoundAccountIDsForAccount(ctx context.Context, arg ListBoundAccountIDsForAccountParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBoundAccountIDsForAccount, arg.AccountID, arg.WorkspaceID, arg.ExternalUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBoundProfileIDsForAccount = `-- name: ListBoundProfileIDsForAccount :many
 SELECT DISTINCT target.profile_id
 FROM social_accounts source
@@ -442,6 +489,75 @@ func (q *Queries) ListBoundProfileIDsForAccount(ctx context.Context, arg ListBou
 			return nil, err
 		}
 		items = append(items, profile_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reactivateSiblingSocialAccountBindings = `-- name: ReactivateSiblingSocialAccountBindings :many
+UPDATE social_accounts
+SET status = 'active',
+    disconnected_at = NULL,
+    binding_version = binding_version + 1,
+    last_refreshed_at = NOW()
+WHERE connection_id = $1
+  AND profile_id <> $2
+  AND binding_status = 'active'
+  AND (status <> 'active' OR disconnected_at IS NOT NULL)
+RETURNING id, profile_id, platform, access_token, refresh_token,
+  token_expires_at, external_account_id, account_name, account_avatar_url,
+  connected_at, disconnected_at, metadata, scope, status, connection_type,
+  connect_session_id, external_user_id, external_user_email, last_refreshed_at,
+  x_app_mode, connection_id, binding_version, binding_status
+`
+
+type ReactivateSiblingSocialAccountBindingsParams struct {
+	ConnectionID    pgtype.Text `json:"connection_id"`
+	TargetProfileID string      `json:"target_profile_id"`
+}
+
+// A verified reconnect restores every still-bound Profile projection for the
+// physical connection. The requested Profile is handled by the idempotent
+// create/reactivate query below so its public binding ID remains stable.
+func (q *Queries) ReactivateSiblingSocialAccountBindings(ctx context.Context, arg ReactivateSiblingSocialAccountBindingsParams) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, reactivateSiblingSocialAccountBindings, arg.ConnectionID, arg.TargetProfileID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+			&i.XAppMode,
+			&i.ConnectionID,
+			&i.BindingVersion,
+			&i.BindingStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -3,19 +3,24 @@ INSERT INTO inbox_items (
   social_account_id, workspace_id, source, external_id,
   parent_external_id, author_name, author_id, author_avatar_url,
   body, is_own, received_at, metadata, thread_key, thread_status,
-  assigned_to, linked_post_id
+  assigned_to, linked_post_id, connection_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-ON CONFLICT (social_account_id, external_id) DO NOTHING
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+  (SELECT connection_id FROM social_accounts WHERE id = $1)
+)
+ON CONFLICT DO NOTHING
 RETURNING *;
 
 -- name: ListInboxItemsByWorkspace :many
 SELECT i.* FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
-LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
     OR (
@@ -36,10 +41,12 @@ LIMIT $2;
 SELECT i.* FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
-LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
 WHERE i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
     OR (
@@ -49,9 +56,18 @@ WHERE i.id = $1
   );
 
 -- name: GetInboxItemByExternalID :one
-SELECT * FROM inbox_items
-WHERE social_account_id = $1
-  AND external_id = $2
+SELECT i.*
+FROM inbox_items i
+JOIN social_accounts requested ON requested.id = sqlc.arg('social_account_id')
+WHERE i.external_id = sqlc.arg('external_id')
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
+  AND (
+    i.social_account_id = requested.id
+    OR (
+      requested.connection_id IS NOT NULL
+      AND i.connection_id = requested.connection_id
+    )
+  )
 LIMIT 1;
 
 -- name: GetXInboxReplyByIdempotencyKey :one
@@ -62,6 +78,7 @@ WHERE workspace_id = @workspace_id
   AND is_own = TRUE
   AND metadata->>'reply_to_inbox_item_id' = @reply_to_inbox_item_id::TEXT
   AND metadata->>'idempotency_key' = @idempotency_key::TEXT
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = inbox_items.id)
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -105,7 +122,12 @@ SELECT
 FROM x_inbox_outbound_requests o
 JOIN inbox_items target
   ON target.id = o.inbox_item_id
-WHERE o.social_account_id = @social_account_id
+JOIN social_accounts webhook_account
+  ON webhook_account.id = @social_account_id
+JOIN social_accounts outbound_account
+  ON outbound_account.id = o.social_account_id
+WHERE COALESCE(outbound_account.connection_id, outbound_account.id)
+    = COALESCE(webhook_account.connection_id, webhook_account.id)
   AND o.status IN ('sending', 'outcome_unknown', 'needs_reconciliation')
   AND o.body_hash = @body_hash
   AND o.send_started_at IS NOT NULL
@@ -288,6 +310,8 @@ WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
     OR (
@@ -307,7 +331,9 @@ LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.id = @id
   AND i.workspace_id = @workspace_id
-  AND p.workspace_id = @workspace_id;
+  AND p.workspace_id = @workspace_id
+  AND COALESCE(sc.workspace_id, p.workspace_id) = @workspace_id
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id);
 
 -- name: MergeInboxItemAuthorMetadataByExternalID :execrows
 WITH incoming AS (
@@ -340,6 +366,7 @@ SET
 FROM incoming
 WHERE i.social_account_id = @social_account_id
   AND i.external_id = @external_id
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     (
       incoming.author_name IS NOT NULL
@@ -365,6 +392,8 @@ LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = @workspace_id
   AND p.workspace_id = @workspace_id
+  AND COALESCE(sc.workspace_id, p.workspace_id) = @workspace_id
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
     OR (
@@ -385,6 +414,8 @@ LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
     OR (
@@ -408,9 +439,11 @@ SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
-LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     sqlc.arg('workspace_scope')::BOOLEAN
     OR (
@@ -428,6 +461,7 @@ WHERE i.workspace_id = $1
 SELECT * FROM inbox_items
 WHERE social_account_id = $1
   AND parent_external_id = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = inbox_items.id)
 ORDER BY received_at ASC;
 
 -- name: FindLinkedPostIDForInboxParent :one
@@ -440,24 +474,35 @@ LIMIT 1;
 -- name: CleanupStaleInboxItems :execrows
 -- Cron cleanup: delete inbox items for accounts that have been
 -- disconnected for more than 7 days.
-DELETE FROM inbox_items
-WHERE social_account_id IN (
-  SELECT id FROM social_accounts
-  WHERE disconnected_at IS NOT NULL
-    AND disconnected_at < NOW() - INTERVAL '7 days'
+DELETE FROM inbox_items i
+WHERE EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
+  WHERE sa.id = i.social_account_id
+    AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NOT NULL
+    AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END < NOW() - INTERVAL '7 days'
 );
 
 -- name: FindDMThreadKeyBySender :one
 -- Find the thread_key and parent_external_id for an existing DM
 -- conversation with a given sender, so webhook-delivered messages
 -- can join the same thread as sync-fetched ones.
-SELECT thread_key, parent_external_id, author_name
-FROM inbox_items
-WHERE social_account_id = $1
-  AND source = 'ig_dm'
-  AND author_id = $2
-  AND thread_key != ''
-ORDER BY received_at DESC
+SELECT i.thread_key, i.parent_external_id, i.author_name
+FROM inbox_items i
+JOIN social_accounts requested ON requested.id = sqlc.arg('social_account_id')
+WHERE i.source = 'ig_dm'
+  AND i.author_id = sqlc.arg('author_id')
+  AND i.thread_key != ''
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
+  AND (
+    i.social_account_id = requested.id
+    OR (
+      requested.connection_id IS NOT NULL
+      AND i.connection_id = requested.connection_id
+    )
+  )
+ORDER BY i.received_at DESC
 LIMIT 1;
 
 -- name: GetInboxMediaCache :one

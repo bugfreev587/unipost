@@ -770,6 +770,7 @@ export interface SocialAccount {
   scope?: string[];
   shared_connection?: boolean;
   bound_profile_ids?: string[];
+  sibling_account_ids?: string[];
 }
 
 export async function listSocialAccounts(

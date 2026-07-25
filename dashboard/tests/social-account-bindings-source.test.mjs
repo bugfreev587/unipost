@@ -14,6 +14,7 @@ test("dashboard API exposes public binding metadata and binding mutations", asyn
 
   assert.match(api, /shared_connection\?: boolean/);
   assert.match(api, /bound_profile_ids\?: string\[\]/);
+  assert.match(api, /sibling_account_ids\?: string\[\]/);
   assert.match(api, /export async function bindSocialAccount/);
   assert.match(api, /`\/v1\/accounts\/\$\{accountId\}\/bindings`/);
   assert.match(api, /body: JSON\.stringify\(\{ profile_id: profileId \}\)/);
@@ -43,12 +44,15 @@ test("profile binding controls distinguish binding removal from physical disconn
 test("composer prevents selecting sibling bindings for one physical account", async () => {
   const grid = await source("src/components/posts/create-post/account-card-grid.tsx");
   const form = await source("src/components/posts/create-post/use-create-post-form.ts");
+  const labels = await source("src/components/posts/create-post/account-labels.ts");
 
   assert.match(grid, /getAccountIdentityKey/);
   assert.match(grid, /selectedSiblingId/);
   assert.match(grid, /Already selected from another Profile/);
   assert.match(grid, /disabled=\{!!selectedSiblingId\}/);
   assert.match(form, /selectedIdentityKeys/);
+  assert.match(labels, /account\.sibling_account_ids/);
+  assert.match(labels, /::siblings::/);
   assert.match(form, /if \(selectedIdentityKeys\.has\(getAccountIdentityKey\(account\)\)\) return prev/);
   assert.match(form, /if \(duplicateAccountIds\.size > 0\) return false/);
   assert.match(form, /const accountIds = selectedAccounts\.map/);

@@ -353,6 +353,7 @@ type InboxItem struct {
 	ThreadStatus     string             `json:"thread_status"`
 	AssignedTo       pgtype.Text        `json:"assigned_to"`
 	LinkedPostID     pgtype.Text        `json:"linked_post_id"`
+	ConnectionID     pgtype.Text        `json:"connection_id"`
 }
 
 type InboxItemQuarantine struct {
@@ -366,6 +367,12 @@ type InboxItemQuarantine struct {
 	AccountExternalID   string             `json:"account_external_id"`
 	OriginalRow         []byte             `json:"original_row"`
 	QuarantinedAt       pgtype.Timestamptz `json:"quarantined_at"`
+}
+
+type InboxItemSupersession struct {
+	InboxItemID          string             `json:"inbox_item_id"`
+	CanonicalInboxItemID string             `json:"canonical_inbox_item_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
 type InboxMediaCache struct {
@@ -635,6 +642,27 @@ type PendingConnection struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 }
 
+type PhysicalDailyPublishOperation struct {
+	WorkspaceID       string             `json:"workspace_id"`
+	OperationKey      string             `json:"operation_key"`
+	PhysicalAccountID string             `json:"physical_account_id"`
+	Platform          string             `json:"platform"`
+	UtcDate           pgtype.Date        `json:"utc_date"`
+	Status            string             `json:"status"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PhysicalDailyPublishReservation struct {
+	WorkspaceID       string             `json:"workspace_id"`
+	PhysicalAccountID string             `json:"physical_account_id"`
+	Platform          string             `json:"platform"`
+	UtcDate           pgtype.Date        `json:"utc_date"`
+	ReservedCount     int32              `json:"reserved_count"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Plan struct {
 	ID             string             `json:"id"`
 	Name           string             `json:"name"`
@@ -876,6 +904,19 @@ type SocialConnection struct {
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SocialConnectionMigrationAudit struct {
+	ID                      string             `json:"id"`
+	WorkspaceID             string             `json:"workspace_id"`
+	Platform                string             `json:"platform"`
+	ProviderIdentity        string             `json:"provider_identity"`
+	ConnectionID            pgtype.Text        `json:"connection_id"`
+	Outcome                 string             `json:"outcome"`
+	SelectedSourceAccountID string             `json:"selected_source_account_id"`
+	SourceAccountIds        []string           `json:"source_account_ids"`
+	AuthorityEvidence       []byte             `json:"authority_evidence"`
+	RecordedAt              pgtype.Timestamptz `json:"recorded_at"`
+}
+
 type SocialConnectionMigrationConflict struct {
 	ID                    string             `json:"id"`
 	WorkspaceID           string             `json:"workspace_id"`
@@ -913,31 +954,33 @@ type SocialPost struct {
 }
 
 type SocialPostResult struct {
-	ID                    string             `json:"id"`
-	PostID                string             `json:"post_id"`
-	SocialAccountID       string             `json:"social_account_id"`
-	Status                string             `json:"status"`
-	ExternalID            pgtype.Text        `json:"external_id"`
-	ErrorMessage          pgtype.Text        `json:"error_message"`
-	PublishedAt           pgtype.Timestamptz `json:"published_at"`
-	Caption               string             `json:"caption"`
-	Url                   pgtype.Text        `json:"url"`
-	DebugCurl             pgtype.Text        `json:"debug_curl"`
-	FbMediaType           pgtype.Text        `json:"fb_media_type"`
-	RemotelyDeletedAt     pgtype.Timestamptz `json:"remotely_deleted_at"`
-	ErrorCode             pgtype.Text        `json:"error_code"`
-	FailureStage          pgtype.Text        `json:"failure_stage"`
-	PlatformErrorCode     pgtype.Text        `json:"platform_error_code"`
-	IsRetriable           pgtype.Bool        `json:"is_retriable"`
-	NextAction            pgtype.Text        `json:"next_action"`
-	ErrorSource           pgtype.Text        `json:"error_source"`
-	ErrorTemporality      pgtype.Text        `json:"error_temporality"`
-	ProviderError         []byte             `json:"provider_error"`
-	PublishToken          pgtype.Text        `json:"publish_token"`
-	XCreditsCounted       int64              `json:"x_credits_counted"`
-	XCreditOperation      pgtype.Text        `json:"x_credit_operation"`
-	XCreditCatalogVersion pgtype.Text        `json:"x_credit_catalog_version"`
-	XCreditBillingMode    pgtype.Text        `json:"x_credit_billing_mode"`
+	ID                             string             `json:"id"`
+	PostID                         string             `json:"post_id"`
+	SocialAccountID                string             `json:"social_account_id"`
+	Status                         string             `json:"status"`
+	ExternalID                     pgtype.Text        `json:"external_id"`
+	ErrorMessage                   pgtype.Text        `json:"error_message"`
+	PublishedAt                    pgtype.Timestamptz `json:"published_at"`
+	Caption                        string             `json:"caption"`
+	Url                            pgtype.Text        `json:"url"`
+	DebugCurl                      pgtype.Text        `json:"debug_curl"`
+	FbMediaType                    pgtype.Text        `json:"fb_media_type"`
+	RemotelyDeletedAt              pgtype.Timestamptz `json:"remotely_deleted_at"`
+	ErrorCode                      pgtype.Text        `json:"error_code"`
+	FailureStage                   pgtype.Text        `json:"failure_stage"`
+	PlatformErrorCode              pgtype.Text        `json:"platform_error_code"`
+	IsRetriable                    pgtype.Bool        `json:"is_retriable"`
+	NextAction                     pgtype.Text        `json:"next_action"`
+	ErrorSource                    pgtype.Text        `json:"error_source"`
+	ErrorTemporality               pgtype.Text        `json:"error_temporality"`
+	ProviderError                  []byte             `json:"provider_error"`
+	PublishToken                   pgtype.Text        `json:"publish_token"`
+	XCreditsCounted                int64              `json:"x_credits_counted"`
+	XCreditOperation               pgtype.Text        `json:"x_credit_operation"`
+	XCreditCatalogVersion          pgtype.Text        `json:"x_credit_catalog_version"`
+	XCreditBillingMode             pgtype.Text        `json:"x_credit_billing_mode"`
+	DailyReservationOperationKey   pgtype.Text        `json:"daily_reservation_operation_key"`
+	DailyReservationReleasePending bool               `json:"daily_reservation_release_pending"`
 }
 
 type Subscription struct {

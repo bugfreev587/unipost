@@ -157,9 +157,54 @@ func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
 		"sa.binding_status = 'active'",
 		"binding_version_mismatch",
 		"ValidateDeliveryBindingSnapshot",
+		"earlier.kind IN ('dispatch', 'retry')",
+		"CASE WHEN earlier.kind = 'retry' THEN COALESCE(earlier.next_run_at, earlier.created_at) ELSE earlier.created_at END",
 	} {
 		if !strings.Contains(sql, want) {
 			t.Fatalf("physical connection claim contract missing %q", want)
+		}
+	}
+	if count := strings.Count(sql, "earlier.kind IN ('dispatch', 'retry')"); count != 2 {
+		t.Fatalf("dispatch and retry claims must both arbitrate across job kinds; found %d shared predicates", count)
+	}
+}
+
+func TestDailyPublishReservationUsesPhysicalConnectionAtomically(t *testing.T) {
+	source, err := os.ReadFile("queries/social_post_results.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := string(source)
+	for _, want := range []string{
+		"-- name: ReservePhysicalDailyPublish :one",
+		"reserve_physical_daily_publish(",
+		"@operation_key",
+		"-- name: ReleasePhysicalDailyPublish :one",
+		"-- name: FinalizePhysicalDailyPublish :one",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("atomic physical daily reservation missing %q", want)
+		}
+	}
+	migration, err := os.ReadFile("migrations/124_physical_daily_publish_reservations.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrationSQL := string(migration)
+	for _, want := range []string{
+		"PRIMARY KEY (workspace_id, physical_account_id, platform, utc_date)",
+		"PRIMARY KEY (workspace_id, operation_key, utc_date)",
+		"COALESCE(sa.connection_id, sa.id)",
+		"COUNT(*)::INTEGER",
+		"physical_daily_publish_reservations.reserved_count + 1",
+		"physical_daily_publish_reservations.reserved_count < requested_daily_cap",
+		"social_post_results_capture_legacy_daily_publish",
+		"daily_reservation_release_pending BOOLEAN NOT NULL DEFAULT FALSE",
+		"social_post_results_reconcile_daily_release",
+		"release_physical_daily_publish(target_workspace_id, NEW.daily_reservation_operation_key)",
+	} {
+		if !strings.Contains(migrationSQL, want) {
+			t.Fatalf("daily reservation migration missing %q", want)
 		}
 	}
 }

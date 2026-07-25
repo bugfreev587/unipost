@@ -2143,7 +2143,8 @@ func (r scanRow) Scan(dest ...any) error {
 	}
 	for _, trailing := range dest[len(r.values):] {
 		target := reflect.ValueOf(trailing)
-		if target.Kind() != reflect.Ptr || target.IsNil() || target.Elem().Type() != reflect.TypeOf(pgtype.Text{}) {
+		if target.Kind() != reflect.Ptr || target.IsNil() ||
+			(target.Elem().Type() != reflect.TypeOf(pgtype.Text{}) && target.Elem().Kind() != reflect.Bool) {
 			return fmt.Errorf("unexpected trailing scan destination %T", trailing)
 		}
 	}

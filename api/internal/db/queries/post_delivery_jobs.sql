@@ -234,11 +234,15 @@ ranked AS (
       SELECT 1
       FROM post_delivery_jobs earlier
       WHERE COALESCE(earlier.connection_id, earlier.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
-        AND earlier.kind = 'dispatch'
+        AND earlier.kind IN ('dispatch', 'retry')
         AND earlier.state = 'pending'
+        AND (earlier.kind = 'dispatch' OR earlier.next_run_at IS NULL OR earlier.next_run_at <= NOW())
         AND (
-          earlier.created_at < j.created_at
-          OR (earlier.created_at = j.created_at AND earlier.id < j.id)
+          CASE WHEN earlier.kind = 'retry' THEN COALESCE(earlier.next_run_at, earlier.created_at) ELSE earlier.created_at END < j.created_at
+          OR (
+            CASE WHEN earlier.kind = 'retry' THEN COALESCE(earlier.next_run_at, earlier.created_at) ELSE earlier.created_at END = j.created_at
+            AND earlier.id < j.id
+          )
         )
     )
     AND EXISTS (
@@ -376,13 +380,13 @@ ranked AS (
       SELECT 1
       FROM post_delivery_jobs earlier
       WHERE COALESCE(earlier.connection_id, earlier.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
-        AND earlier.kind = 'retry'
+        AND earlier.kind IN ('dispatch', 'retry')
         AND earlier.state = 'pending'
-        AND (earlier.next_run_at IS NULL OR earlier.next_run_at <= NOW())
+        AND (earlier.kind = 'dispatch' OR earlier.next_run_at IS NULL OR earlier.next_run_at <= NOW())
         AND (
-          COALESCE(earlier.next_run_at, earlier.created_at) < COALESCE(j.next_run_at, j.created_at)
+          CASE WHEN earlier.kind = 'retry' THEN COALESCE(earlier.next_run_at, earlier.created_at) ELSE earlier.created_at END < COALESCE(j.next_run_at, j.created_at)
           OR (
-            COALESCE(earlier.next_run_at, earlier.created_at) = COALESCE(j.next_run_at, j.created_at)
+            CASE WHEN earlier.kind = 'retry' THEN COALESCE(earlier.next_run_at, earlier.created_at) ELSE earlier.created_at END = COALESCE(j.next_run_at, j.created_at)
             AND earlier.id < j.id
           )
         )

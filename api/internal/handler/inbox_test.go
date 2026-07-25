@@ -2171,6 +2171,12 @@ func TestInboxManagedScopeReplyCompletedIdempotentReloadPreservesExactScope(t *t
 			if recorder.Code != http.StatusOK {
 				t.Fatalf("status=%d, want 200; body=%s calls=%#v", recorder.Code, recorder.Body.String(), store.calls)
 			}
+			if !store.called("-- name: GetResolvedSocialAccountByIDAndWorkspace") {
+				t.Fatal("Reply did not resolve physical connection credentials")
+			}
+			if store.called("-- name: GetSocialAccountByIDAndWorkspace") {
+				t.Fatal("Reply loaded stale binding-local credentials")
+			}
 			calls := store.callsFor("-- name: GetInboxItem")
 			if len(calls) != 2 {
 				t.Fatalf("GetInboxItem calls=%d, want initial+reload; calls=%#v", len(calls), store.calls)
@@ -2753,6 +2759,7 @@ func inboxTenantIsolationItemValues(item db.InboxItem) []any {
 		item.ThreadStatus,
 		item.AssignedTo,
 		item.LinkedPostID,
+		item.ConnectionID,
 	}
 }
 

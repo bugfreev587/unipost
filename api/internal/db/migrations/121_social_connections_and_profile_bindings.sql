@@ -63,7 +63,10 @@ CREATE TABLE social_connection_migration_conflicts (
     'missing_managed_owner',
     'owner_on_byo_connection',
     'duplicate_profile_binding',
-    'incompatible_app_mode'
+    'incompatible_app_mode',
+    'incompatible_credential_state',
+    'incompatible_scope',
+    'incompatible_routing_metadata'
   )),
   source_account_ids        TEXT[] NOT NULL,
   source_profile_ids        TEXT[] NOT NULL,
@@ -79,11 +82,37 @@ CREATE INDEX social_connection_migration_conflicts_open_idx
   ON social_connection_migration_conflicts (workspace_id, platform, detected_at)
   WHERE resolved_at IS NULL;
 
+-- Successful promotions also retain an immutable, non-secret audit record.
+-- Credential values are represented by SHA-256 digests so operators can prove
+-- which duplicate values agreed without copying usable provider credentials.
+CREATE TABLE social_connection_migration_audit (
+  id                          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::TEXT,
+  workspace_id                TEXT NOT NULL,
+  platform                    TEXT NOT NULL,
+  provider_identity           TEXT NOT NULL,
+  connection_id               TEXT,
+  outcome                     TEXT NOT NULL CHECK (outcome IN ('promoted')),
+  selected_source_account_id  TEXT NOT NULL,
+  source_account_ids          TEXT[] NOT NULL,
+  authority_evidence          JSONB NOT NULL,
+  recorded_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX social_connection_migration_audit_identity_idx
+  ON social_connection_migration_audit (workspace_id, platform, provider_identity);
+
 ALTER TABLE social_accounts
   ADD COLUMN connection_id TEXT REFERENCES social_connections(id),
   ADD COLUMN binding_version BIGINT NOT NULL DEFAULT 1,
   ADD COLUMN binding_status TEXT NOT NULL DEFAULT 'active'
     CHECK (binding_status IN ('active', 'unbound'));
+
+-- Goose applies this migration transactionally. This lock is stronger than the
+-- per-identity advisory lock used by connect flows: it permits reads but blocks
+-- every legacy writer until classification, promotion, audit, and attachment
+-- finish in the same transaction. No row can appear between inventory and
+-- authority cutover without being classified.
+LOCK TABLE social_accounts IN SHARE ROW EXCLUSIVE MODE;
 
 -- Missing canonical identities are recorded per source row. Instagram must use
 -- its professional/webhook user ID; its application-domain external_account_id
@@ -145,6 +174,18 @@ WITH source AS (
     sa.connection_type,
     sa.external_user_id,
     COALESCE(sa.x_app_mode, '') AS x_app_mode,
+    sa.access_token,
+    COALESCE(sa.refresh_token, '') AS refresh_token,
+    sa.token_expires_at,
+    TO_JSONB(ARRAY(
+      SELECT DISTINCT item
+      FROM UNNEST(COALESCE(sa.scope, ARRAY[]::TEXT[])) AS item
+      ORDER BY item
+    )) AS authority_scope,
+    COALESCE(sa.metadata, '{}'::JSONB)
+      - 'dismissed_at'
+      - 'disconnect_notified_at'
+      - 'reconnect_required_at' AS authority_metadata,
     CASE
       WHEN sa.platform = 'instagram'
         THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
@@ -171,6 +212,11 @@ WITH source AS (
       WHERE connection_type = 'byo' AND external_user_id IS NOT NULL
     ) AS byo_owner_count,
     COUNT(DISTINCT x_app_mode) AS app_mode_count,
+    COUNT(DISTINCT access_token) AS access_token_count,
+    COUNT(DISTINCT refresh_token) AS refresh_token_count,
+    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) AS token_expiry_count,
+    COUNT(DISTINCT authority_scope) AS scope_count,
+    COUNT(DISTINCT authority_metadata) AS routing_metadata_count,
     BOOL_OR(connection_type = 'managed') AS has_managed,
     BOOL_OR(connection_type = 'byo') AS has_byo,
     ARRAY_AGG(account_id ORDER BY account_id) AS account_ids,
@@ -178,7 +224,20 @@ WITH source AS (
     ARRAY_AGG(DISTINCT external_user_id) FILTER (
       WHERE external_user_id IS NOT NULL
     ) AS external_user_ids,
-    ARRAY_AGG(DISTINCT connection_type ORDER BY connection_type) AS connection_types
+    ARRAY_AGG(DISTINCT connection_type ORDER BY connection_type) AS connection_types,
+    JSONB_AGG(
+      JSONB_BUILD_OBJECT(
+        'account_id', account_id,
+        'access_token_sha256', ENCODE(SHA256(CONVERT_TO(access_token, 'UTF8')), 'hex'),
+        'refresh_token_sha256', ENCODE(SHA256(CONVERT_TO(refresh_token, 'UTF8')), 'hex'),
+        'token_expires_at', token_expires_at,
+        'scope', authority_scope,
+        'routing_metadata_sha256', ENCODE(
+          SHA256(CONVERT_TO(authority_metadata::TEXT, 'UTF8')),
+          'hex'
+        )
+      ) ORDER BY account_id
+    ) AS authority_evidence
   FROM source
   WHERE provider_identity IS NOT NULL
   GROUP BY workspace_id, platform, provider_identity
@@ -198,6 +257,12 @@ WITH source AS (
         THEN 'duplicate_profile_binding'
       WHEN app_mode_count > 1
         THEN 'incompatible_app_mode'
+      WHEN access_token_count > 1 OR refresh_token_count > 1 OR token_expiry_count > 1
+        THEN 'incompatible_credential_state'
+      WHEN scope_count > 1
+        THEN 'incompatible_scope'
+      WHEN routing_metadata_count > 1
+        THEN 'incompatible_routing_metadata'
     END AS reason
   FROM grouped
 )
@@ -225,7 +290,14 @@ SELECT
     'account_count', account_count,
     'profile_count', profile_count,
     'managed_owner_count', managed_owner_count,
-    'app_mode_count', app_mode_count
+    'app_mode_count', app_mode_count,
+    'access_token_count', access_token_count,
+    'refresh_token_count', refresh_token_count,
+    'token_expiry_count', token_expiry_count,
+    'scope_count', scope_count,
+    'routing_metadata_count', routing_metadata_count,
+    'authority_evidence', authority_evidence,
+    'promotion_blocked', TRUE
   )
 FROM unsafe
 WHERE reason IS NOT NULL;
@@ -263,6 +335,20 @@ WITH source AS (
       WHERE connection_type = 'byo' AND external_user_id IS NOT NULL
     ) AS byo_owner_count,
     COUNT(DISTINCT COALESCE(x_app_mode, '')) AS app_mode_count,
+    COUNT(DISTINCT access_token) AS access_token_count,
+    COUNT(DISTINCT COALESCE(refresh_token, '')) AS refresh_token_count,
+    COUNT(DISTINCT COALESCE(token_expires_at::TEXT, '')) AS token_expiry_count,
+    COUNT(DISTINCT TO_JSONB(ARRAY(
+      SELECT DISTINCT item
+      FROM UNNEST(COALESCE(scope, ARRAY[]::TEXT[])) AS item
+      ORDER BY item
+    ))) AS scope_count,
+    COUNT(DISTINCT (
+      COALESCE(metadata, '{}'::JSONB)
+        - 'dismissed_at'
+        - 'disconnect_notified_at'
+        - 'reconnect_required_at'
+    )) AS routing_metadata_count,
     BOOL_OR(connection_type = 'managed') AS has_managed,
     BOOL_OR(connection_type = 'byo') AS has_byo
   FROM source
@@ -277,6 +363,11 @@ WITH source AS (
     AND (NOT has_byo OR byo_owner_count = 0)
     AND account_count = profile_count
     AND app_mode_count <= 1
+    AND access_token_count <= 1
+    AND refresh_token_count <= 1
+    AND token_expiry_count <= 1
+    AND scope_count <= 1
+    AND routing_metadata_count <= 1
 ), ranked AS (
   SELECT
     source.*,
@@ -340,6 +431,85 @@ SELECT
 FROM ranked
 WHERE credential_rank = 1;
 
+-- Record the exact winning public binding and non-secret evidence for every
+-- promoted group before attaching bindings to the new authority.
+WITH source AS (
+  SELECT
+    sa.*,
+    p.workspace_id,
+    CASE
+      WHEN sa.platform = 'instagram'
+        THEN NULLIF(BTRIM(sa.metadata->>'instagram_webhook_user_id'), '')
+      WHEN sa.platform <> 'instagram'
+        THEN NULLIF(BTRIM(sa.external_account_id), '')
+    END AS provider_identity,
+    TO_JSONB(ARRAY(
+      SELECT DISTINCT item
+      FROM UNNEST(COALESCE(sa.scope, ARRAY[]::TEXT[])) AS item
+      ORDER BY item
+    )) AS authority_scope,
+    COALESCE(sa.metadata, '{}'::JSONB)
+      - 'dismissed_at'
+      - 'disconnect_notified_at'
+      - 'reconnect_required_at' AS authority_metadata
+  FROM social_accounts sa
+  JOIN profiles p ON p.id = sa.profile_id
+), ranked AS (
+  SELECT
+    source.*,
+    sc.id AS promoted_connection_id,
+    ROW_NUMBER() OVER (
+      PARTITION BY source.workspace_id, source.platform, source.provider_identity
+      ORDER BY
+        (source.status = 'active' AND source.disconnected_at IS NULL) DESC,
+        source.last_refreshed_at DESC NULLS LAST,
+        source.connected_at DESC,
+        source.id
+    ) AS credential_rank
+  FROM source
+  JOIN social_connections sc
+    ON sc.workspace_id = source.workspace_id
+   AND sc.platform = source.platform
+   AND sc.provider_identity = source.provider_identity
+   AND sc.status <> 'migration_conflict'
+)
+INSERT INTO social_connection_migration_audit (
+  workspace_id,
+  platform,
+  provider_identity,
+  connection_id,
+  outcome,
+  selected_source_account_id,
+  source_account_ids,
+  authority_evidence
+)
+SELECT
+  workspace_id,
+  platform,
+  provider_identity,
+  promoted_connection_id,
+  'promoted',
+  MAX(id) FILTER (WHERE credential_rank = 1),
+  ARRAY_AGG(id ORDER BY id),
+  JSONB_BUILD_OBJECT(
+    'authority_rows', JSONB_AGG(
+      JSONB_BUILD_OBJECT(
+        'account_id', id,
+        'access_token_sha256', ENCODE(SHA256(CONVERT_TO(access_token, 'UTF8')), 'hex'),
+        'refresh_token_sha256', ENCODE(SHA256(CONVERT_TO(COALESCE(refresh_token, ''), 'UTF8')), 'hex'),
+        'token_expires_at', token_expires_at,
+        'scope', authority_scope,
+        'routing_metadata_sha256', ENCODE(
+          SHA256(CONVERT_TO(authority_metadata::TEXT, 'UTF8')),
+          'hex'
+        ),
+        'selected', credential_rank = 1
+      ) ORDER BY id
+    )
+  )
+FROM ranked
+GROUP BY workspace_id, platform, provider_identity, promoted_connection_id;
+
 -- Only safe groups have a matching connection row, so conflict rows retain a
 -- null connection_id and continue to use the old credential/owner columns.
 UPDATE social_accounts sa
@@ -363,6 +533,128 @@ CREATE INDEX social_accounts_connection_status_idx
   ON social_accounts (connection_id, binding_status)
   WHERE connection_id IS NOT NULL;
 
+-- Install the rolling-deploy write gate before this transaction releases its
+-- social_accounts lock. Old application versions may still issue legacy
+-- binding-local credential updates, but classified bindings must never diverge
+-- from the connection authority. Projection status may be disconnected only
+-- when the Profile binding itself is explicitly unbound.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION enforce_social_connection_authority_write_gate()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  authority social_connections%ROWTYPE;
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.connection_id IS NULL THEN
+    RAISE EXCEPTION 'new social account bindings require an authoritative social connection'
+      USING ERRCODE = '23514';
+  END IF;
+
+  -- Quarantined historical rows deliberately remain on the legacy path.
+  IF NEW.connection_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND OLD.connection_id IS DISTINCT FROM NEW.connection_id THEN
+    RAISE EXCEPTION 'classified social account bindings cannot change their social connection'
+      USING ERRCODE = '23514';
+  END IF;
+
+  SELECT * INTO STRICT authority
+  FROM social_connections
+  WHERE id = NEW.connection_id;
+
+  IF TG_OP = 'INSERT' AND (
+       NEW.platform IS DISTINCT FROM authority.platform
+       OR NEW.access_token IS DISTINCT FROM authority.access_token
+       OR NEW.refresh_token IS DISTINCT FROM authority.refresh_token
+       OR NEW.token_expires_at IS DISTINCT FROM authority.token_expires_at
+       OR NEW.account_name IS DISTINCT FROM authority.account_name
+       OR NEW.account_avatar_url IS DISTINCT FROM authority.account_avatar_url
+       OR (
+         COALESCE(NEW.metadata, '{}'::JSONB)
+           - 'dismissed_at'
+           - 'disconnect_notified_at'
+           - 'reconnect_required_at'
+         IS DISTINCT FROM
+         authority.metadata
+           - 'dismissed_at'
+           - 'disconnect_notified_at'
+           - 'reconnect_required_at'
+       )
+       OR COALESCE(NEW.scope, ARRAY[]::TEXT[]) IS DISTINCT FROM authority.scope
+       OR NEW.connection_type IS DISTINCT FROM authority.connection_type
+       OR NEW.external_user_id IS DISTINCT FROM authority.external_user_id
+       OR NEW.external_user_email IS DISTINCT FROM authority.external_user_email
+       OR NEW.x_app_mode IS DISTINCT FROM authority.x_app_mode
+       OR NEW.status IS DISTINCT FROM authority.status
+       OR NEW.disconnected_at IS DISTINCT FROM authority.disconnected_at
+     ) THEN
+    RAISE EXCEPTION 'social account binding authority must match its social connection'
+      USING ERRCODE = '23514';
+  END IF;
+
+  IF TG_OP = 'UPDATE' AND (
+       (NEW.platform IS DISTINCT FROM OLD.platform
+        AND NEW.platform IS DISTINCT FROM authority.platform)
+       OR (NEW.access_token IS DISTINCT FROM OLD.access_token
+        AND NEW.access_token IS DISTINCT FROM authority.access_token)
+       OR (NEW.refresh_token IS DISTINCT FROM OLD.refresh_token
+        AND NEW.refresh_token IS DISTINCT FROM authority.refresh_token)
+       OR (NEW.token_expires_at IS DISTINCT FROM OLD.token_expires_at
+        AND NEW.token_expires_at IS DISTINCT FROM authority.token_expires_at)
+       OR (NEW.account_name IS DISTINCT FROM OLD.account_name
+        AND NEW.account_name IS DISTINCT FROM authority.account_name)
+       OR (NEW.account_avatar_url IS DISTINCT FROM OLD.account_avatar_url
+        AND NEW.account_avatar_url IS DISTINCT FROM authority.account_avatar_url)
+       OR (
+         NEW.metadata IS DISTINCT FROM OLD.metadata
+         AND COALESCE(NEW.metadata, '{}'::JSONB)
+           - 'dismissed_at'
+           - 'disconnect_notified_at'
+           - 'reconnect_required_at'
+         IS DISTINCT FROM
+         authority.metadata
+           - 'dismissed_at'
+           - 'disconnect_notified_at'
+           - 'reconnect_required_at'
+       )
+       OR (NEW.scope IS DISTINCT FROM OLD.scope
+        AND COALESCE(NEW.scope, ARRAY[]::TEXT[]) IS DISTINCT FROM authority.scope)
+       OR (NEW.connection_type IS DISTINCT FROM OLD.connection_type
+        AND NEW.connection_type IS DISTINCT FROM authority.connection_type)
+       OR (NEW.external_user_id IS DISTINCT FROM OLD.external_user_id
+        AND NEW.external_user_id IS DISTINCT FROM authority.external_user_id)
+       OR (NEW.external_user_email IS DISTINCT FROM OLD.external_user_email
+        AND NEW.external_user_email IS DISTINCT FROM authority.external_user_email)
+       OR (NEW.x_app_mode IS DISTINCT FROM OLD.x_app_mode
+        AND NEW.x_app_mode IS DISTINCT FROM authority.x_app_mode)
+       OR (
+         COALESCE(NEW.binding_status, 'active') <> 'unbound'
+         AND NEW.status IS DISTINCT FROM OLD.status
+         AND NEW.status IS DISTINCT FROM authority.status
+       )
+       OR (
+         COALESCE(NEW.binding_status, 'active') <> 'unbound'
+         AND NEW.disconnected_at IS DISTINCT FROM OLD.disconnected_at
+         AND NEW.disconnected_at IS DISTINCT FROM authority.disconnected_at
+       )
+     ) THEN
+    RAISE EXCEPTION 'social account binding authority update conflicts with its social connection'
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER social_accounts_connection_authority_write_gate
+BEFORE INSERT OR UPDATE ON social_accounts
+FOR EACH ROW
+EXECUTE FUNCTION enforce_social_connection_authority_write_gate();
+
 -- +goose Down
 
 -- +goose StatementBegin
@@ -377,6 +669,10 @@ $$;
 
 DROP INDEX IF EXISTS social_accounts_connection_status_idx;
 DROP INDEX IF EXISTS social_accounts_profile_connection_unique_idx;
+DROP TRIGGER IF EXISTS social_accounts_connection_authority_write_gate ON social_accounts;
+DROP FUNCTION IF EXISTS enforce_social_connection_authority_write_gate();
+DROP INDEX IF EXISTS social_connection_migration_audit_identity_idx;
+DROP TABLE IF EXISTS social_connection_migration_audit;
 
 ALTER TABLE social_accounts
   DROP COLUMN IF EXISTS binding_status,

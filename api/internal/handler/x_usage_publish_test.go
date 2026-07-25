@@ -261,7 +261,7 @@ func TestPublishGateOrdersDailyCapBeforeXUsage(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(source)
-	daily := strings.Index(text, "dailyTracker.Allow(acc.ID, acc.Platform)")
+	daily := strings.Index(text, "dailyTracker.Allow(physicalAccountKey(acc), acc.Platform, dailyOperationKey)")
 	usage := strings.Index(text, "h.reserveManagedXUsage(")
 	if daily < 0 || usage < 0 {
 		t.Fatalf("daily gate index=%d usage index=%d", daily, usage)

@@ -135,14 +135,14 @@ func findPostInputIndexForResult(post db.SocialPost, result db.SocialPostResult)
 func (h *SocialPostHandler) loadDBAccountsByIDs(ctx context.Context, workspaceID string, ids []string) map[string]db.SocialAccount {
 	out := make(map[string]db.SocialAccount, len(ids))
 	for _, id := range ids {
-		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(ctx, db.GetSocialAccountByIDAndWorkspaceParams{
+		resolved, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(ctx, db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 			ID:          id,
 			WorkspaceID: workspaceID,
 		})
 		if err != nil {
 			continue
 		}
-		out[id] = acc
+		out[id] = resolved.AsSocialAccount()
 	}
 	return out
 }
@@ -715,8 +715,9 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		dbAccounts,
 		accountMap,
 		h.buildPerAccountTracker(ctx, post.WorkspaceID, pp.AccountID),
-		quota.NewPerPlatformDailyTracker(ctx, h.queries, dailyTargetsFor([]platform.PlatformPostInput{pp}, accountMap)),
+		quota.NewPerPlatformDailyTracker(ctx, h.queries, post.WorkspaceID, dailyTargetsFor([]platform.PlatformPostInput{pp}, dbAccounts, accountMap)),
 		h.disallowedPlatformsForDispatch(ctx, post.WorkspaceID, []platform.PlatformPostInput{pp}, accountMap),
+		res.ID,
 	)
 	if oc.err != nil {
 		return h.handleJobDispatchFailure(ctx, post, res, job, oc)
@@ -920,6 +921,11 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			String: oc.xCreditBillingMode,
 			Valid:  oc.xCreditBillingMode != "",
 		},
+		DailyReservationOperationKey: pgtype.Text{
+			String: oc.dailyReservationOperationKey,
+			Valid:  oc.dailyReservationOperationKey != "",
+		},
+		DailyReservationReleasePending: oc.dailyReservationReleasePending,
 	}); err != nil {
 		return err
 	}

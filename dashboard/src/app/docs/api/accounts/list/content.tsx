@@ -80,6 +80,11 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     description: "Profile IDs currently bound to the same physical connection and visible to the caller.",
   },
   {
+    name: "data[].sibling_account_ids",
+    type: "string[]",
+    description: "Public account IDs for the same physical connection, filtered to the caller's visible scope. Use this for exact sibling grouping without a connection ID.",
+  },
+  {
     name: "meta.total",
     type: "number",
     description: "Total number of returned accounts.",
@@ -203,6 +208,7 @@ const RESPONSE_SNIPPETS = [
       "connection_type": "byo",
       "shared_connection": true,
       "bound_profile_ids": ["pr_development", "pr_production"],
+      "sibling_account_ids": ["sa_twitter_dev", "sa_twitter_prod"],
       "connected_at": "2026-04-02T10:00:00Z",
       "external_user_id": null
     }

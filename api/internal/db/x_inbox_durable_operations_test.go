@@ -75,6 +75,10 @@ func TestXInboxWebhookHealingLocksCandidateAndCanRecoverManualState(t *testing.T
 	for _, want := range []string{
 		"ListXInboxOutboundWebhookCandidates",
 		"FOR UPDATE OF o",
+		"JOIN social_accounts webhook_account",
+		"JOIN social_accounts outbound_account",
+		"COALESCE(outbound_account.connection_id, outbound_account.id)",
+		"COALESCE(webhook_account.connection_id, webhook_account.id)",
 		"RecordXInboxOutboundRemoteSuccessFromWebhook",
 		"'needs_reconciliation'",
 		"o.body_hash = @body_hash",
@@ -85,6 +89,9 @@ func TestXInboxWebhookHealingLocksCandidateAndCanRecoverManualState(t *testing.T
 		if !strings.Contains(text, want) {
 			t.Fatalf("webhook healing query missing %q", want)
 		}
+	}
+	if strings.Contains(text, "WHERE o.social_account_id = @social_account_id") {
+		t.Fatal("webhook healing remains scoped to one public binding instead of the physical connection")
 	}
 	if strings.Contains(text, "NOW() - INTERVAL '2 hours'") ||
 		strings.Contains(text, "LIMIT 10") {

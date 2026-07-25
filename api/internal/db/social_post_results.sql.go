@@ -84,31 +84,53 @@ func (q *Queries) CountPublishedTodayByAccount(ctx context.Context, socialAccoun
 	return count, err
 }
 
+const countPublishedTodayByPhysicalAccount = `-- name: CountPublishedTodayByPhysicalAccount :one
+SELECT COUNT(*)::INTEGER AS count
+FROM social_post_results result
+JOIN social_accounts sa ON sa.id = result.social_account_id
+WHERE COALESCE(sa.connection_id, sa.id) = $1::TEXT
+  AND result.published_at IS NOT NULL
+  AND result.published_at >= date_trunc('day', NOW() AT TIME ZONE 'UTC')
+  AND result.published_at <  date_trunc('day', NOW() AT TIME ZONE 'UTC') + INTERVAL '1 day'
+`
+
+// Shared Profile bindings consume one provider-account safety budget. Legacy
+// rows without a connection retain the prior binding-scoped behavior.
+func (q *Queries) CountPublishedTodayByPhysicalAccount(ctx context.Context, physicalAccountID string) (int32, error) {
+	row := q.db.QueryRow(ctx, countPublishedTodayByPhysicalAccount, physicalAccountID)
+	var count int32
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSocialPostResult = `-- name: CreateSocialPostResult :one
 INSERT INTO social_post_results (
   post_id, social_account_id, caption, status, external_id, error_message,
   published_at, url, debug_curl, fb_media_type,
-  x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+  x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode,
+  daily_reservation_operation_key, daily_reservation_release_pending
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode, daily_reservation_operation_key, daily_reservation_release_pending
 `
 
 type CreateSocialPostResultParams struct {
-	PostID                string             `json:"post_id"`
-	SocialAccountID       string             `json:"social_account_id"`
-	Caption               string             `json:"caption"`
-	Status                string             `json:"status"`
-	ExternalID            pgtype.Text        `json:"external_id"`
-	ErrorMessage          pgtype.Text        `json:"error_message"`
-	PublishedAt           pgtype.Timestamptz `json:"published_at"`
-	Url                   pgtype.Text        `json:"url"`
-	DebugCurl             pgtype.Text        `json:"debug_curl"`
-	FbMediaType           pgtype.Text        `json:"fb_media_type"`
-	XCreditsCounted       int64              `json:"x_credits_counted"`
-	XCreditOperation      pgtype.Text        `json:"x_credit_operation"`
-	XCreditCatalogVersion pgtype.Text        `json:"x_credit_catalog_version"`
-	XCreditBillingMode    pgtype.Text        `json:"x_credit_billing_mode"`
+	PostID                         string             `json:"post_id"`
+	SocialAccountID                string             `json:"social_account_id"`
+	Caption                        string             `json:"caption"`
+	Status                         string             `json:"status"`
+	ExternalID                     pgtype.Text        `json:"external_id"`
+	ErrorMessage                   pgtype.Text        `json:"error_message"`
+	PublishedAt                    pgtype.Timestamptz `json:"published_at"`
+	Url                            pgtype.Text        `json:"url"`
+	DebugCurl                      pgtype.Text        `json:"debug_curl"`
+	FbMediaType                    pgtype.Text        `json:"fb_media_type"`
+	XCreditsCounted                int64              `json:"x_credits_counted"`
+	XCreditOperation               pgtype.Text        `json:"x_credit_operation"`
+	XCreditCatalogVersion          pgtype.Text        `json:"x_credit_catalog_version"`
+	XCreditBillingMode             pgtype.Text        `json:"x_credit_billing_mode"`
+	DailyReservationOperationKey   pgtype.Text        `json:"daily_reservation_operation_key"`
+	DailyReservationReleasePending bool               `json:"daily_reservation_release_pending"`
 }
 
 func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPostResultParams) (SocialPostResult, error) {
@@ -127,6 +149,8 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		arg.XCreditOperation,
 		arg.XCreditCatalogVersion,
 		arg.XCreditBillingMode,
+		arg.DailyReservationOperationKey,
+		arg.DailyReservationReleasePending,
 	)
 	var i SocialPostResult
 	err := row.Scan(
@@ -155,6 +179,8 @@ func (q *Queries) CreateSocialPostResult(ctx context.Context, arg CreateSocialPo
 		&i.XCreditOperation,
 		&i.XCreditCatalogVersion,
 		&i.XCreditBillingMode,
+		&i.DailyReservationOperationKey,
+		&i.DailyReservationReleasePending,
 	)
 	return i, err
 }
@@ -168,8 +194,24 @@ func (q *Queries) DeleteSocialPostResultsByPost(ctx context.Context, postID stri
 	return err
 }
 
+const finalizePhysicalDailyPublish = `-- name: FinalizePhysicalDailyPublish :one
+SELECT finalize_physical_daily_publish($1, $2) AS finalized
+`
+
+type FinalizePhysicalDailyPublishParams struct {
+	WorkspaceID  string `json:"workspace_id"`
+	OperationKey string `json:"operation_key"`
+}
+
+func (q *Queries) FinalizePhysicalDailyPublish(ctx context.Context, arg FinalizePhysicalDailyPublishParams) (bool, error) {
+	row := q.db.QueryRow(ctx, finalizePhysicalDailyPublish, arg.WorkspaceID, arg.OperationKey)
+	var finalized bool
+	err := row.Scan(&finalized)
+	return finalized, err
+}
+
 const getSocialPostResultByIDAndPost = `-- name: GetSocialPostResultByIDAndPost :one
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode FROM social_post_results WHERE id = $1 AND post_id = $2
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode, daily_reservation_operation_key, daily_reservation_release_pending FROM social_post_results WHERE id = $1 AND post_id = $2
 `
 
 type GetSocialPostResultByIDAndPostParams struct {
@@ -206,6 +248,8 @@ func (q *Queries) GetSocialPostResultByIDAndPost(ctx context.Context, arg GetSoc
 		&i.XCreditOperation,
 		&i.XCreditCatalogVersion,
 		&i.XCreditBillingMode,
+		&i.DailyReservationOperationKey,
+		&i.DailyReservationReleasePending,
 	)
 	return i, err
 }
@@ -334,7 +378,7 @@ func (q *Queries) ListPublishedExternalIDsForInboxSync(ctx context.Context, arg 
 }
 
 const listRecentResultsByAccount = `-- name: ListRecentResultsByAccount :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode, daily_reservation_operation_key, daily_reservation_release_pending FROM social_post_results
 WHERE social_account_id = $1
 ORDER BY published_at DESC NULLS LAST
 LIMIT $2
@@ -386,6 +430,8 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 			&i.XCreditOperation,
 			&i.XCreditCatalogVersion,
 			&i.XCreditBillingMode,
+			&i.DailyReservationOperationKey,
+			&i.DailyReservationReleasePending,
 		); err != nil {
 			return nil, err
 		}
@@ -398,7 +444,7 @@ func (q *Queries) ListRecentResultsByAccount(ctx context.Context, arg ListRecent
 }
 
 const listSocialPostResultsByPost = `-- name: ListSocialPostResultsByPost :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode FROM social_post_results WHERE post_id = $1
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode, daily_reservation_operation_key, daily_reservation_release_pending FROM social_post_results WHERE post_id = $1
 `
 
 func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string) ([]SocialPostResult, error) {
@@ -436,6 +482,8 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 			&i.XCreditOperation,
 			&i.XCreditCatalogVersion,
 			&i.XCreditBillingMode,
+			&i.DailyReservationOperationKey,
+			&i.DailyReservationReleasePending,
 		); err != nil {
 			return nil, err
 		}
@@ -448,7 +496,7 @@ func (q *Queries) ListSocialPostResultsByPost(ctx context.Context, postID string
 }
 
 const listSocialPostResultsByPostIDs = `-- name: ListSocialPostResultsByPostIDs :many
-SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode FROM social_post_results
+SELECT id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode, daily_reservation_operation_key, daily_reservation_release_pending FROM social_post_results
 WHERE post_id = ANY($1::text[])
 `
 
@@ -487,6 +535,8 @@ func (q *Queries) ListSocialPostResultsByPostIDs(ctx context.Context, dollar_1 [
 			&i.XCreditOperation,
 			&i.XCreditCatalogVersion,
 			&i.XCreditBillingMode,
+			&i.DailyReservationOperationKey,
+			&i.DailyReservationReleasePending,
 		); err != nil {
 			return nil, err
 		}
@@ -519,6 +569,69 @@ type MarkSocialPostResultRemotelyDeletedParams struct {
 // loop already has; no-op if we somehow see the same delete twice.
 func (q *Queries) MarkSocialPostResultRemotelyDeleted(ctx context.Context, arg MarkSocialPostResultRemotelyDeletedParams) error {
 	_, err := q.db.Exec(ctx, markSocialPostResultRemotelyDeleted, arg.SocialAccountID, arg.ExternalID, arg.ErrorMessage)
+	return err
+}
+
+const releasePhysicalDailyPublish = `-- name: ReleasePhysicalDailyPublish :one
+SELECT release_physical_daily_publish($1, $2) AS released
+`
+
+type ReleasePhysicalDailyPublishParams struct {
+	WorkspaceID  string `json:"workspace_id"`
+	OperationKey string `json:"operation_key"`
+}
+
+func (q *Queries) ReleasePhysicalDailyPublish(ctx context.Context, arg ReleasePhysicalDailyPublishParams) (bool, error) {
+	row := q.db.QueryRow(ctx, releasePhysicalDailyPublish, arg.WorkspaceID, arg.OperationKey)
+	var released bool
+	err := row.Scan(&released)
+	return released, err
+}
+
+const reservePhysicalDailyPublish = `-- name: ReservePhysicalDailyPublish :one
+SELECT reserve_physical_daily_publish(
+  $1,
+  $2,
+  $3,
+  $4,
+  $5
+)
+`
+
+type ReservePhysicalDailyPublishParams struct {
+	WorkspaceID       string `json:"workspace_id"`
+	PhysicalAccountID string `json:"physical_account_id"`
+	Platform          string `json:"platform"`
+	OperationKey      string `json:"operation_key"`
+	DailyCap          int32  `json:"daily_cap"`
+}
+
+func (q *Queries) ReservePhysicalDailyPublish(ctx context.Context, arg ReservePhysicalDailyPublishParams) (int32, error) {
+	row := q.db.QueryRow(ctx, reservePhysicalDailyPublish,
+		arg.WorkspaceID,
+		arg.PhysicalAccountID,
+		arg.Platform,
+		arg.OperationKey,
+		arg.DailyCap,
+	)
+	var reserve_physical_daily_publish int32
+	err := row.Scan(&reserve_physical_daily_publish)
+	return reserve_physical_daily_publish, err
+}
+
+const setSocialPostResultDailyReservationOperation = `-- name: SetSocialPostResultDailyReservationOperation :exec
+UPDATE social_post_results
+SET daily_reservation_operation_key = $1
+WHERE id = $2
+`
+
+type SetSocialPostResultDailyReservationOperationParams struct {
+	OperationKey pgtype.Text `json:"operation_key"`
+	ID           string      `json:"id"`
+}
+
+func (q *Queries) SetSocialPostResultDailyReservationOperation(ctx context.Context, arg SetSocialPostResultDailyReservationOperationParams) error {
+	_, err := q.db.Exec(ctx, setSocialPostResultDailyReservationOperation, arg.OperationKey, arg.ID)
 	return err
 }
 
@@ -560,23 +673,27 @@ SET
   next_action = NULL,
   error_source = NULL,
   error_temporality = NULL,
-  provider_error = NULL
+  provider_error = NULL,
+  daily_reservation_operation_key = COALESCE($12, daily_reservation_operation_key),
+  daily_reservation_release_pending = $13
 WHERE id = $1
-RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode, daily_reservation_operation_key, daily_reservation_release_pending
 `
 
 type UpdateSocialPostResultAfterRetryParams struct {
-	ID                    string             `json:"id"`
-	Status                string             `json:"status"`
-	ExternalID            pgtype.Text        `json:"external_id"`
-	ErrorMessage          pgtype.Text        `json:"error_message"`
-	PublishedAt           pgtype.Timestamptz `json:"published_at"`
-	Url                   pgtype.Text        `json:"url"`
-	DebugCurl             pgtype.Text        `json:"debug_curl"`
-	XCreditsCounted       int64              `json:"x_credits_counted"`
-	XCreditOperation      pgtype.Text        `json:"x_credit_operation"`
-	XCreditCatalogVersion pgtype.Text        `json:"x_credit_catalog_version"`
-	XCreditBillingMode    pgtype.Text        `json:"x_credit_billing_mode"`
+	ID                             string             `json:"id"`
+	Status                         string             `json:"status"`
+	ExternalID                     pgtype.Text        `json:"external_id"`
+	ErrorMessage                   pgtype.Text        `json:"error_message"`
+	PublishedAt                    pgtype.Timestamptz `json:"published_at"`
+	Url                            pgtype.Text        `json:"url"`
+	DebugCurl                      pgtype.Text        `json:"debug_curl"`
+	XCreditsCounted                int64              `json:"x_credits_counted"`
+	XCreditOperation               pgtype.Text        `json:"x_credit_operation"`
+	XCreditCatalogVersion          pgtype.Text        `json:"x_credit_catalog_version"`
+	XCreditBillingMode             pgtype.Text        `json:"x_credit_billing_mode"`
+	DailyReservationOperationKey   pgtype.Text        `json:"daily_reservation_operation_key"`
+	DailyReservationReleasePending bool               `json:"daily_reservation_release_pending"`
 }
 
 // Overwrites the diagnostic columns on a failed result row after a
@@ -597,6 +714,8 @@ func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg Upda
 		arg.XCreditOperation,
 		arg.XCreditCatalogVersion,
 		arg.XCreditBillingMode,
+		arg.DailyReservationOperationKey,
+		arg.DailyReservationReleasePending,
 	)
 	var i SocialPostResult
 	err := row.Scan(
@@ -625,6 +744,8 @@ func (q *Queries) UpdateSocialPostResultAfterRetry(ctx context.Context, arg Upda
 		&i.XCreditOperation,
 		&i.XCreditCatalogVersion,
 		&i.XCreditBillingMode,
+		&i.DailyReservationOperationKey,
+		&i.DailyReservationReleasePending,
 	)
 	return i, err
 }

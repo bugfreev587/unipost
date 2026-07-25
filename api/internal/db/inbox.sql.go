@@ -97,11 +97,14 @@ func (q *Queries) ClaimXInboxOutboundRequest(ctx context.Context, arg ClaimXInbo
 }
 
 const cleanupStaleInboxItems = `-- name: CleanupStaleInboxItems :execrows
-DELETE FROM inbox_items
-WHERE social_account_id IN (
-  SELECT id FROM social_accounts
-  WHERE disconnected_at IS NOT NULL
-    AND disconnected_at < NOW() - INTERVAL '7 days'
+DELETE FROM inbox_items i
+WHERE EXISTS (
+  SELECT 1
+  FROM social_accounts sa
+  LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
+  WHERE sa.id = i.social_account_id
+    AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END IS NOT NULL
+    AND CASE WHEN sc.id IS NOT NULL THEN sc.disconnected_at ELSE sa.disconnected_at END < NOW() - INTERVAL '7 days'
 )
 `
 
@@ -174,9 +177,11 @@ SELECT COUNT(*)::INTEGER AS count
 FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
-LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     $2::BOOLEAN
     OR (
@@ -431,13 +436,21 @@ func (q *Queries) FindAllSocialAccountsByPlatformAndExternalID(ctx context.Conte
 }
 
 const findDMThreadKeyBySender = `-- name: FindDMThreadKeyBySender :one
-SELECT thread_key, parent_external_id, author_name
-FROM inbox_items
-WHERE social_account_id = $1
-  AND source = 'ig_dm'
-  AND author_id = $2
-  AND thread_key != ''
-ORDER BY received_at DESC
+SELECT i.thread_key, i.parent_external_id, i.author_name
+FROM inbox_items i
+JOIN social_accounts requested ON requested.id = $1
+WHERE i.source = 'ig_dm'
+  AND i.author_id = $2
+  AND i.thread_key != ''
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
+  AND (
+    i.social_account_id = requested.id
+    OR (
+      requested.connection_id IS NOT NULL
+      AND i.connection_id = requested.connection_id
+    )
+  )
+ORDER BY i.received_at DESC
 LIMIT 1
 `
 
@@ -722,13 +735,15 @@ func (q *Queries) FindXInboxAccountsForProviderUserApp(ctx context.Context, arg 
 }
 
 const getInboxItem = `-- name: GetInboxItem :one
-SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
+SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id, i.connection_id FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
-LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
 WHERE i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     $3::BOOLEAN
     OR (
@@ -773,14 +788,24 @@ func (q *Queries) GetInboxItem(ctx context.Context, arg GetInboxItemParams) (Inb
 		&i.ThreadStatus,
 		&i.AssignedTo,
 		&i.LinkedPostID,
+		&i.ConnectionID,
 	)
 	return i, err
 }
 
 const getInboxItemByExternalID = `-- name: GetInboxItemByExternalID :one
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
-WHERE social_account_id = $1
-  AND external_id = $2
+SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id, i.connection_id
+FROM inbox_items i
+JOIN social_accounts requested ON requested.id = $1
+WHERE i.external_id = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
+  AND (
+    i.social_account_id = requested.id
+    OR (
+      requested.connection_id IS NOT NULL
+      AND i.connection_id = requested.connection_id
+    )
+  )
 LIMIT 1
 `
 
@@ -812,6 +837,7 @@ func (q *Queries) GetInboxItemByExternalID(ctx context.Context, arg GetInboxItem
 		&i.ThreadStatus,
 		&i.AssignedTo,
 		&i.LinkedPostID,
+		&i.ConnectionID,
 	)
 	return i, err
 }
@@ -975,13 +1001,14 @@ func (q *Queries) GetXInboxOutboundRequestByIDForUpdate(ctx context.Context, id 
 }
 
 const getXInboxReplyByIdempotencyKey = `-- name: GetXInboxReplyByIdempotencyKey :one
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id, connection_id FROM inbox_items
 WHERE workspace_id = $1
   AND social_account_id = $2
   AND source = $3
   AND is_own = TRUE
   AND metadata->>'reply_to_inbox_item_id' = $4::TEXT
   AND metadata->>'idempotency_key' = $5::TEXT
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = inbox_items.id)
 ORDER BY created_at DESC
 LIMIT 1
 `
@@ -1023,6 +1050,7 @@ func (q *Queries) GetXInboxReplyByIdempotencyKey(ctx context.Context, arg GetXIn
 		&i.ThreadStatus,
 		&i.AssignedTo,
 		&i.LinkedPostID,
+		&i.ConnectionID,
 	)
 	return i, err
 }
@@ -1107,9 +1135,10 @@ func (q *Queries) ListAllInboxAccounts(ctx context.Context) ([]ListAllInboxAccou
 }
 
 const listInboxItemsByParent = `-- name: ListInboxItemsByParent :many
-SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id FROM inbox_items
+SELECT id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id, connection_id FROM inbox_items
 WHERE social_account_id = $1
   AND parent_external_id = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = inbox_items.id)
 ORDER BY received_at ASC
 `
 
@@ -1147,6 +1176,7 @@ func (q *Queries) ListInboxItemsByParent(ctx context.Context, arg ListInboxItems
 			&i.ThreadStatus,
 			&i.AssignedTo,
 			&i.LinkedPostID,
+			&i.ConnectionID,
 		); err != nil {
 			return nil, err
 		}
@@ -1159,12 +1189,14 @@ func (q *Queries) ListInboxItemsByParent(ctx context.Context, arg ListInboxItems
 }
 
 const listInboxItemsByWorkspace = `-- name: ListInboxItemsByWorkspace :many
-SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id FROM inbox_items i
+SELECT i.id, i.social_account_id, i.workspace_id, i.source, i.external_id, i.parent_external_id, i.author_name, i.author_id, i.author_avatar_url, i.body, i.is_read, i.is_own, i.received_at, i.created_at, i.metadata, i.thread_key, i.thread_status, i.assigned_to, i.linked_post_id, i.connection_id FROM inbox_items i
 JOIN social_accounts sa ON sa.id = i.social_account_id
 JOIN profiles p ON p.id = sa.profile_id
-LEFT JOIN social_connections sc ON sc.id = sa.connection_id
+LEFT JOIN social_connections sc ON sc.id = COALESCE(i.connection_id, sa.connection_id)
 WHERE i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     $3::BOOLEAN
     OR (
@@ -1231,6 +1263,7 @@ func (q *Queries) ListInboxItemsByWorkspace(ctx context.Context, arg ListInboxIt
 			&i.ThreadStatus,
 			&i.AssignedTo,
 			&i.LinkedPostID,
+			&i.ConnectionID,
 		); err != nil {
 			return nil, err
 		}
@@ -1314,7 +1347,12 @@ SELECT
 FROM x_inbox_outbound_requests o
 JOIN inbox_items target
   ON target.id = o.inbox_item_id
-WHERE o.social_account_id = $1
+JOIN social_accounts webhook_account
+  ON webhook_account.id = $1
+JOIN social_accounts outbound_account
+  ON outbound_account.id = o.social_account_id
+WHERE COALESCE(outbound_account.connection_id, outbound_account.id)
+    = COALESCE(webhook_account.connection_id, webhook_account.id)
   AND o.status IN ('sending', 'outcome_unknown', 'needs_reconciliation')
   AND o.body_hash = $2
   AND o.send_started_at IS NOT NULL
@@ -1395,6 +1433,8 @@ LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     $2::BOOLEAN
     OR (
@@ -1436,6 +1476,8 @@ WHERE sa.id = i.social_account_id
   AND i.id = $1
   AND i.workspace_id = $2
   AND p.workspace_id = $2
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     $3::BOOLEAN
     OR (
@@ -1617,6 +1659,7 @@ SET
 FROM incoming
 WHERE i.social_account_id = $1
   AND i.external_id = $2
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     (
       incoming.author_name IS NOT NULL
@@ -1778,6 +1821,8 @@ WHERE sa.id = i.social_account_id
   AND i.id = $4
   AND i.workspace_id = $5
   AND p.workspace_id = $5
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $5
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
 `
 
 type UpdateInboxItemAuthorMetadataParams struct {
@@ -1812,6 +1857,8 @@ LEFT JOIN social_connections sc ON sc.id = sa.connection_id
 WHERE sa.id = i.social_account_id
   AND i.workspace_id = $1
   AND p.workspace_id = $1
+  AND COALESCE(sc.workspace_id, p.workspace_id) = $1
+  AND NOT EXISTS (SELECT 1 FROM inbox_item_supersessions hidden WHERE hidden.inbox_item_id = i.id)
   AND (
     $7::BOOLEAN
     OR (
@@ -1857,11 +1904,14 @@ INSERT INTO inbox_items (
   social_account_id, workspace_id, source, external_id,
   parent_external_id, author_name, author_id, author_avatar_url,
   body, is_own, received_at, metadata, thread_key, thread_status,
-  assigned_to, linked_post_id
+  assigned_to, linked_post_id, connection_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-ON CONFLICT (social_account_id, external_id) DO NOTHING
-RETURNING id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id
+VALUES (
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
+  (SELECT connection_id FROM social_accounts WHERE id = $1)
+)
+ON CONFLICT DO NOTHING
+RETURNING id, social_account_id, workspace_id, source, external_id, parent_external_id, author_name, author_id, author_avatar_url, body, is_read, is_own, received_at, created_at, metadata, thread_key, thread_status, assigned_to, linked_post_id, connection_id
 `
 
 type UpsertInboxItemParams struct {
@@ -1923,6 +1973,7 @@ func (q *Queries) UpsertInboxItem(ctx context.Context, arg UpsertInboxItemParams
 		&i.ThreadStatus,
 		&i.AssignedTo,
 		&i.LinkedPostID,
+		&i.ConnectionID,
 	)
 	return i, err
 }

@@ -29,7 +29,7 @@ func TestSocialAccountBindingCreatesTargetProfileBindingWithoutExposingConnectio
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/account-a/bindings", strings.NewReader(`{
 		"profile_id":"profile-b",
-		"external_user_id":"managed-a"
+		"external_user_id":"caller-forged-owner"
 	}`))
 	ctx := auth.SetWorkspaceID(req.Context(), "workspace-a")
 	route := chi.NewRouteContext()
@@ -44,8 +44,8 @@ func TestSocialAccountBindingCreatesTargetProfileBindingWithoutExposingConnectio
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	if store.workspaceID != "workspace-a" || store.sourceAccountID != "account-a" ||
-		store.targetProfileID != "profile-b" || store.selectedExternalUserID != "managed-a" {
-		t.Fatalf("BindExisting args = workspace=%q source=%q target=%q user=%q", store.workspaceID, store.sourceAccountID, store.targetProfileID, store.selectedExternalUserID)
+		store.targetProfileID != "profile-b" {
+		t.Fatalf("BindExisting args = workspace=%q source=%q target=%q", store.workspaceID, store.sourceAccountID, store.targetProfileID)
 	}
 	var envelope struct {
 		Data struct {
@@ -66,6 +66,26 @@ func TestSocialAccountBindingCreatesTargetProfileBindingWithoutExposingConnectio
 	}
 	if envelope.Data.LeakedConnection != "" || strings.Contains(recorder.Body.String(), "connection-secret") {
 		t.Fatalf("response leaked connection ID: %s", recorder.Body.String())
+	}
+}
+
+func TestSocialAccountBindingDisconnectedConnectionRequiresReconnect(t *testing.T) {
+	store := &fakeSocialConnectionStore{err: socialconnections.ErrReconnectRequired}
+	handler := NewSocialAccountHandler(db.New(&bindingHandlerDB{}), nil, nil, nil).SetConnectionStore(store)
+	req := httptest.NewRequest(http.MethodPost, "/v1/accounts/account-a/bindings", strings.NewReader(`{"profile_id":"profile-b"}`))
+	ctx := auth.SetWorkspaceID(req.Context(), "workspace-a")
+	route := chi.NewRouteContext()
+	route.URLParams.Add("id", "account-a")
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
+	recorder := httptest.NewRecorder()
+
+	handler.Bind(recorder, req)
+
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "ACCOUNT_RECONNECT_REQUIRED") {
+		t.Fatalf("response missing reconnect code: %s", recorder.Body.String())
 	}
 }
 
@@ -113,9 +133,10 @@ func TestSocialAccountListReturnsScopedBindingMetadataWithoutConnectionID(t *tes
 	}
 	var envelope struct {
 		Data []struct {
-			SharedConnection bool     `json:"shared_connection"`
-			BoundProfileIDs  []string `json:"bound_profile_ids"`
-			LeakedConnection string   `json:"connection_id"`
+			SharedConnection  bool     `json:"shared_connection"`
+			BoundProfileIDs   []string `json:"bound_profile_ids"`
+			SiblingAccountIDs []string `json:"sibling_account_ids"`
+			LeakedConnection  string   `json:"connection_id"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil {
@@ -126,6 +147,9 @@ func TestSocialAccountListReturnsScopedBindingMetadataWithoutConnectionID(t *tes
 	}
 	if got := envelope.Data[0].BoundProfileIDs; len(got) != 2 || got[0] != "profile-a" || got[1] != "profile-b" {
 		t.Fatalf("bound_profile_ids = %v", got)
+	}
+	if got := envelope.Data[0].SiblingAccountIDs; len(got) != 2 || got[0] != "account-a" || got[1] != "account-b" {
+		t.Fatalf("sibling_account_ids = %v", got)
 	}
 	if envelope.Data[0].LeakedConnection != "" || strings.Contains(recorder.Body.String(), "connection-secret") {
 		t.Fatalf("list response leaked connection ID: %s", recorder.Body.String())
@@ -139,24 +163,22 @@ type fakeSocialConnectionStore struct {
 	bound db.SocialAccount
 	err   error
 
-	workspaceID            string
-	sourceAccountID        string
-	targetProfileID        string
-	selectedExternalUserID string
-	unbindWorkspaceID      string
-	unbindAccountID        string
-	disconnectCalls        int
+	workspaceID       string
+	sourceAccountID   string
+	targetProfileID   string
+	unbindWorkspaceID string
+	unbindAccountID   string
+	disconnectCalls   int
 }
 
 func (*fakeSocialConnectionStore) SaveVerified(context.Context, socialconnections.SaveMode, socialconnections.CredentialInput) (db.SocialAccount, error) {
 	return db.SocialAccount{}, nil
 }
 
-func (f *fakeSocialConnectionStore) BindExisting(_ context.Context, workspaceID, sourceAccountID, targetProfileID, selectedExternalUserID string) (db.SocialAccount, error) {
+func (f *fakeSocialConnectionStore) BindExisting(_ context.Context, workspaceID, sourceAccountID, targetProfileID string) (db.SocialAccount, error) {
 	f.workspaceID = workspaceID
 	f.sourceAccountID = sourceAccountID
 	f.targetProfileID = targetProfileID
-	f.selectedExternalUserID = selectedExternalUserID
 	return f.bound, f.err
 }
 
@@ -203,6 +225,8 @@ func (f *bindingListDB) Query(_ context.Context, query string, _ ...interface{})
 		return &scheduledQuotaRows{values: [][]any{socialAccountValues(f.account)}}, nil
 	case strings.Contains(query, "-- name: ListBoundProfileIDsForAccount"):
 		return &scheduledQuotaRows{values: [][]any{{"profile-a"}, {"profile-b"}}}, nil
+	case strings.Contains(query, "-- name: ListBoundAccountIDsForAccount"):
+		return &scheduledQuotaRows{values: [][]any{{"account-a"}, {"account-b"}}}, nil
 	default:
 		return nil, errors.New("unexpected Query call")
 	}

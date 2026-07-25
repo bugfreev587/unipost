@@ -85,6 +85,10 @@ func TestSaveVerifiedReusesDisconnectedConnectionAndCreatesSiblingBinding(t *tes
 	if got := queries.bindParams.ConnectionID.String; got != "stable-connection" {
 		t.Fatalf("binding connection = %q, want stable-connection", got)
 	}
+	if queries.reactivateSiblingCalls != 1 || queries.reactivateSiblingParams.ConnectionID.String != "stable-connection" ||
+		queries.reactivateSiblingParams.TargetProfileID != "profile-b" {
+		t.Fatalf("sibling reactivation calls=%d params=%+v", queries.reactivateSiblingCalls, queries.reactivateSiblingParams)
+	}
 }
 
 func TestSaveVerifiedRejectsConnectionOwnershipConflicts(t *testing.T) {
@@ -147,12 +151,12 @@ func TestBindExistingResolvesConnectionWithoutAcceptingCallerConnectionID(t *tes
 			ResolvedConnectionType: "managed", ResolvedExternalUserID: "managed-a",
 		},
 		connection: db.SocialConnection{ID: "connection-a", WorkspaceID: "workspace-a", ConnectionType: "managed",
-			ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},
+			ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}, Status: "active"},
 		bound: db.SocialAccount{ID: "account-b", ProfileID: "profile-b"},
 	}
 	store, _ := newFakePostgresStore(queries)
 
-	account, err := store.BindExisting(context.Background(), "workspace-a", "account-a", "profile-b", "managed-a")
+	account, err := store.BindExisting(context.Background(), "workspace-a", "account-a", "profile-b")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,12 +165,33 @@ func TestBindExistingResolvesConnectionWithoutAcceptingCallerConnectionID(t *tes
 	}
 }
 
+func TestBindExistingRequiresActivePhysicalConnection(t *testing.T) {
+	queries := &fakeConnectionQueries{
+		source: db.GetResolvedSocialAccountByIDAndWorkspaceRow{
+			ID: "account-a", BindingStatus: "active",
+			ConnectionID: pgtype.Text{String: "connection-a", Valid: true},
+		},
+		connection: db.SocialConnection{
+			ID: "connection-a", WorkspaceID: "workspace-a", Status: "disconnected",
+			DisconnectedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}
+	store, tx := newFakePostgresStore(queries)
+	_, err := store.BindExisting(context.Background(), "workspace-a", "account-a", "profile-b")
+	if !errors.Is(err, ErrReconnectRequired) {
+		t.Fatalf("BindExisting() error = %v, want ErrReconnectRequired", err)
+	}
+	if queries.bindCalls != 0 || tx.commitCalls != 0 {
+		t.Fatalf("disconnected bind mutated state: binds=%d commits=%d", queries.bindCalls, tx.commitCalls)
+	}
+}
+
 func TestBindExistingRejectsLegacyNullConnection(t *testing.T) {
 	queries := &fakeConnectionQueries{
 		source: db.GetResolvedSocialAccountByIDAndWorkspaceRow{ID: "legacy-account", BindingStatus: "active"},
 	}
 	store, tx := newFakePostgresStore(queries)
-	_, err := store.BindExisting(context.Background(), "workspace-a", "legacy-account", "profile-b", "")
+	_, err := store.BindExisting(context.Background(), "workspace-a", "legacy-account", "profile-b")
 	if !errors.Is(err, ErrLegacyBinding) {
 		t.Fatalf("BindExisting() error = %v, want ErrLegacyBinding", err)
 	}
@@ -257,11 +282,13 @@ type fakeConnectionQueries struct {
 	bindCalls                 int
 	disconnectConnectionCalls int
 	disconnectBindingsCalls   int
+	reactivateSiblingCalls    int
 
-	refreshParams       db.RefreshSocialConnectionParams
-	bindParams          db.CreateOrReactivateSocialAccountBindingParams
-	getConnectionParams db.GetSocialConnectionForUpdateParams
-	unbindParams        db.UnbindSocialAccountBindingParams
+	refreshParams           db.RefreshSocialConnectionParams
+	bindParams              db.CreateOrReactivateSocialAccountBindingParams
+	getConnectionParams     db.GetSocialConnectionForUpdateParams
+	unbindParams            db.UnbindSocialAccountBindingParams
+	reactivateSiblingParams db.ReactivateSiblingSocialAccountBindingsParams
 }
 
 func (f *fakeConnectionQueries) FindCanonicalSocialConnectionForUpdate(context.Context, db.FindCanonicalSocialConnectionForUpdateParams) (db.SocialConnection, error) {
@@ -281,6 +308,12 @@ func (f *fakeConnectionQueries) RefreshSocialConnection(_ context.Context, param
 	f.refreshCalls++
 	f.refreshParams = params
 	return f.refreshed, nil
+}
+
+func (f *fakeConnectionQueries) ReactivateSiblingSocialAccountBindings(_ context.Context, params db.ReactivateSiblingSocialAccountBindingsParams) ([]db.SocialAccount, error) {
+	f.reactivateSiblingCalls++
+	f.reactivateSiblingParams = params
+	return nil, nil
 }
 
 func (f *fakeConnectionQueries) CreateOrReactivateSocialAccountBinding(_ context.Context, params db.CreateOrReactivateSocialAccountBindingParams) (db.SocialAccount, error) {

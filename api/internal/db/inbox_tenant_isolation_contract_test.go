@@ -133,7 +133,11 @@ func TestInboxConnectionManagedScopeContract(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			query := inboxTenantIsolationQuery(t, source, name)
-			if !strings.Contains(query, "left join social_connections sc on sc.id = sa.connection_id") {
+			connectionJoin := "left join social_connections sc on sc.id = sa.connection_id"
+			if name == "ListInboxItemsByWorkspace" || name == "GetInboxItem" || name == "CountUnreadByWorkspace" {
+				connectionJoin = "left join social_connections sc on sc.id = coalesce(i.connection_id, sa.connection_id)"
+			}
+			if !strings.Contains(query, connectionJoin) {
 				t.Fatalf("%s must resolve managed ownership through the physical connection: %s", name, query)
 			}
 			if !strings.Contains(query, managedScope) {
@@ -160,6 +164,31 @@ func TestInboxConnectionDiscoveryDeduplicatesSiblingBindings(t *testing.T) {
 				t.Fatalf("%s must resolve shared connection state: %s", name, query)
 			}
 		})
+	}
+}
+
+func TestInboxPhysicalConnectionDeduplicationContract(t *testing.T) {
+	migration := compactInboxTenantIsolationSQL(readInboxTenantIsolationContractFile(t, "migrations/123_inbox_connection_deduplication.sql"))
+	for _, want := range []string{
+		"add column connection_id text",
+		"partition by sa.connection_id, i.source, i.external_id",
+		"inbox_items_connection_source_external_unique_idx",
+		"where connection_id is not null",
+	} {
+		if !strings.Contains(migration, want) {
+			t.Fatalf("inbox connection dedupe migration missing %q: %s", want, migration)
+		}
+	}
+
+	queries := inboxTenantIsolationQuery(t, readInboxTenantIsolationContractFile(t, "queries/inbox.sql"), "UpsertInboxItem")
+	for _, want := range []string{
+		"connection_id",
+		"select connection_id from social_accounts where id = $1",
+		"on conflict do nothing",
+	} {
+		if !strings.Contains(queries, want) {
+			t.Fatalf("inbox upsert missing physical dedupe behavior %q: %s", want, queries)
+		}
 	}
 }
 

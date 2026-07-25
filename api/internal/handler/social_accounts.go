@@ -70,6 +70,7 @@ type socialAccountResponse struct {
 	Scope             []string  `json:"scope,omitempty"`
 	SharedConnection  bool      `json:"shared_connection,omitempty"`
 	BoundProfileIDs   []string  `json:"bound_profile_ids,omitempty"`
+	SiblingAccountIDs []string  `json:"sibling_account_ids,omitempty"`
 }
 
 func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAccountResponse {
@@ -128,8 +129,7 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 		accountID = strings.TrimSpace(chi.URLParam(r, "accountID"))
 	}
 	var body struct {
-		ProfileID      string `json:"profile_id"`
-		ExternalUserID string `json:"external_user_id"`
+		ProfileID string `json:"profile_id"`
 	}
 	if r.Body != nil {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -156,7 +156,7 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 	}
 
 	account, err := h.connections.BindExisting(
-		r.Context(), workspaceID, accountID, targetProfileID, strings.TrimSpace(body.ExternalUserID),
+		r.Context(), workspaceID, accountID, targetProfileID,
 	)
 	if err != nil {
 		switch {
@@ -165,7 +165,8 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account or Profile not found")
 		case errors.Is(err, socialconnections.ErrOwnershipConflict):
 			writeError(w, http.StatusConflict, "ACCOUNT_OWNERSHIP_CONFLICT", "This social account cannot be bound for the selected user")
-		case errors.Is(err, socialconnections.ErrLegacyBinding):
+		case errors.Is(err, socialconnections.ErrLegacyBinding),
+			errors.Is(err, socialconnections.ErrReconnectRequired):
 			writeError(w, http.StatusConflict, "ACCOUNT_RECONNECT_REQUIRED", "Reconnect this account before sharing it with another Profile")
 		default:
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to bind account")
@@ -173,14 +174,25 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	managedOwner := ""
+	if account.ConnectionType == "managed" && account.ExternalUserID.Valid {
+		managedOwner = strings.TrimSpace(account.ExternalUserID.String)
+	}
 	boundProfileIDs, listErr := h.queries.ListBoundProfileIDsForAccount(r.Context(), db.ListBoundProfileIDsForAccountParams{
 		AccountID: account.ID, WorkspaceID: workspaceID,
-		ExternalUserID: pgtype.Text{String: strings.TrimSpace(body.ExternalUserID), Valid: strings.TrimSpace(body.ExternalUserID) != ""},
+		ExternalUserID: pgtype.Text{String: managedOwner, Valid: managedOwner != ""},
 	})
 	response := toSocialAccountResponse(account)
 	response.SharedConnection = true
 	if listErr == nil {
 		response.BoundProfileIDs = boundProfileIDs
+	}
+	siblingAccountIDs, siblingErr := h.queries.ListBoundAccountIDsForAccount(r.Context(), db.ListBoundAccountIDsForAccountParams{
+		AccountID: account.ID, WorkspaceID: workspaceID,
+		ExternalUserID: pgtype.Text{String: managedOwner, Valid: managedOwner != ""},
+	})
+	if siblingErr == nil {
+		response.SiblingAccountIDs = siblingAccountIDs
 	}
 	writeCreated(w, response)
 }
@@ -473,6 +485,15 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		result[i].BoundProfileIDs = boundProfileIDs
 		result[i].SharedConnection = len(boundProfileIDs) > 1
+		siblingAccountIDs, siblingErr := h.queries.ListBoundAccountIDsForAccount(r.Context(), db.ListBoundAccountIDsForAccountParams{
+			AccountID: a.ID, WorkspaceID: profile.WorkspaceID,
+			ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
+		})
+		if siblingErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list sibling account bindings")
+			return
+		}
+		result[i].SiblingAccountIDs = siblingAccountIDs
 	}
 
 	writeSuccessWithListMeta(w, result, len(result), len(result))
@@ -493,7 +514,7 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	accountLoaded := false
 	if workspaceID != "" {
 		// API key path: verify the account belongs to this workspace
-		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
+		resolved, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
 			ID:          accountID,
 			WorkspaceID: workspaceID,
 		})
@@ -501,24 +522,28 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
 			return
 		}
+		acc := resolved.AsSocialAccount()
 		profileID = acc.ProfileID
 		accountForDisconnect = acc
 		accountLoaded = true
 	} else {
 		profileID = h.getProfileID(r)
-		acc, err := h.queries.GetSocialAccountByIDAndProfile(r.Context(), db.GetSocialAccountByIDAndProfileParams{
-			ID:        accountID,
-			ProfileID: profileID,
-		})
+		profile, err := h.queries.GetProfile(r.Context(), profileID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
 			return
 		}
+		workspaceID = profile.WorkspaceID
+		resolved, err := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
+			ID: accountID, WorkspaceID: workspaceID,
+		})
+		if err != nil || resolved.ProfileID != profileID {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
+			return
+		}
+		acc := resolved.AsSocialAccount()
 		accountForDisconnect = acc
 		accountLoaded = true
-		if profile, profileErr := h.queries.GetProfile(r.Context(), profileID); profileErr == nil {
-			workspaceID = profile.WorkspaceID
-		}
 	}
 
 	if accountLoaded {
