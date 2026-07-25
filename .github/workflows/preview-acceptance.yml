@@ -184,7 +184,7 @@ jobs:
         working-directory: dashboard
         env:
           DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.deployment_url }}
-          DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY }}
+          DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
           EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
           EXPECTED_PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}

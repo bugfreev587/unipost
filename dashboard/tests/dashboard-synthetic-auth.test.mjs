@@ -43,14 +43,14 @@ test("GitHub workflows provide environment-matched Clerk secrets", async () => {
   assert.doesNotMatch(deployedWorkflow, /DASHBOARD_TEST_(?:EMAIL|PASSWORD)/);
   assert.match(deployedWorkflow, /DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY/);
   assert.match(deployedWorkflow, /test:regression:dashboard:authenticated/);
-  assert.match(previewWorkflow, /DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY/);
+  assert.match(previewWorkflow, /CLERK_DEVELOPMENT_SECRET_KEY/);
   assert.match(previewWorkflow, /DASHBOARD_TEST_CLERK_SECRET_KEY/);
   assert.match(previewWorkflow, /EXPECTED_PREVIEW_API_URL/);
 });
 
 test("CI documentation describes passwordless synthetic Dashboard auth", async () => {
   const documentation = await source("../docs/ci-gates.md");
-  assert.match(documentation, /DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY/);
+  assert.match(documentation, /CLERK_DEVELOPMENT_SECRET_KEY/);
   assert.match(documentation, /DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY/);
   assert.match(documentation, /ticket/i);
   assert.match(documentation, /DELETE \/v1\/me/);
