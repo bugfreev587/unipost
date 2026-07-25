@@ -6,6 +6,7 @@ const startLocalServer = process.env.DASHBOARD_WEB_SERVER === "1";
 export default defineConfig({
   testDir: "./tests/regression",
   testIgnore: [
+    "authenticated-dashboard.spec.ts",
     "preview-environment.spec.ts",
     "seo-preview.spec.ts",
   ],

@@ -28,13 +28,25 @@ type MeHandler struct {
 	superAdminChecker *auth.SuperAdminChecker
 	quotaChecker      *quota.Checker
 	loopsSyncer       loopsLifecycleSyncer
+	deleteClerkUser   func(context.Context, string) error
 	featureFlags      interface {
 		WorkspaceFlags(context.Context, string) (map[string]bool, error)
 	}
 }
 
 func NewMeHandler(queries *db.Queries, adminChecker *auth.AdminChecker, superAdminChecker *auth.SuperAdminChecker) *MeHandler {
-	return &MeHandler{queries: queries, adminChecker: adminChecker, superAdminChecker: superAdminChecker}
+	return &MeHandler{
+		queries:           queries,
+		adminChecker:      adminChecker,
+		superAdminChecker: superAdminChecker,
+		deleteClerkUser:   deleteClerkUser,
+	}
+}
+
+func deleteClerkUser(ctx context.Context, userID string) error {
+	clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
+	_, err := clerkuser.Delete(ctx, userID)
+	return err
 }
 
 func (h *MeHandler) SetQuotaChecker(quotaChecker *quota.Checker) *MeHandler {
@@ -530,10 +542,11 @@ func (h *MeHandler) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 // (CLERK_SECRET_KEY), which bypasses the "reauthentication required"
 // check that Clerk enforces on client-side user.delete() calls.
 //
-// Clerk fires a user.deleted webhook after deletion, which our
-// webhooks handler converts into a DeleteUser DB call. That cascades
-// through workspaces/profiles/social_accounts/api_keys/posts via
-// ON DELETE CASCADE foreign keys (migration 025).
+// After Clerk deletion succeeds, the local user is deleted synchronously.
+// That cascades through workspaces/profiles/social_accounts/api_keys/posts
+// via ON DELETE CASCADE foreign keys (migration 025). Clerk's later
+// user.deleted webhook repeats the same idempotent DeleteUser call as a
+// delivery fallback.
 func (h *MeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	userID := auth.GetUserID(r.Context())
 	if userID == "" {
@@ -543,10 +556,14 @@ func (h *MeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 	accountCanceledEvent, notifyLoops := h.prepareLoopsAccountCanceled(r.Context(), userID, time.Now())
 
-	clerk.SetKey(os.Getenv("CLERK_SECRET_KEY"))
-	if _, err := clerkuser.Delete(r.Context(), userID); err != nil {
+	if err := h.deleteClerkUser(r.Context(), userID); err != nil {
 		slog.Error("delete account: clerk delete failed", "user_id", userID, "err", err)
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete account: "+err.Error())
+		return
+	}
+	if err := h.queries.DeleteUser(r.Context(), userID); err != nil {
+		slog.Error("delete account: local cleanup failed", "user_id", userID, "err", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to delete local account data: "+err.Error())
 		return
 	}
 
@@ -554,6 +571,6 @@ func (h *MeHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		h.sendLoopsAccountCanceled(r.Context(), accountCanceledEvent)
 	}
 
-	slog.Info("delete account: clerk user deleted", "user_id", userID)
+	slog.Info("delete account: clerk and local user deleted", "user_id", userID)
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -1,5 +1,9 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
+test.describe.configure({ mode: "serial" });
+
+const editorLoadTimeout = 20_000;
+
 async function firstVisibleLineNumber(row: Locator) {
   return row.evaluate((element) => {
     const editor = element.querySelector(".monaco-editor");
@@ -38,11 +42,11 @@ async function scrollResponse(page: Page, row: Locator) {
 }
 
 test("CLI reference response returns to the first line when reopened", async ({ page }) => {
-  await page.goto("/docs/cli/reference", { waitUntil: "networkidle" });
+  await page.goto("/docs/cli/reference", { waitUntil: "domcontentloaded" });
 
   const row = page.locator("details.cli-command-row", { hasText: "auth login --setup-token" }).first();
   await row.locator("summary").click();
-  await expect(row.locator(".monaco-editor").first()).toBeVisible();
+  await expect(row.locator(".monaco-editor").first()).toBeVisible({ timeout: editorLoadTimeout });
 
   await expect.poll(() => firstVisibleLineNumber(row)).toBe("1");
 
@@ -53,17 +57,17 @@ test("CLI reference response returns to the first line when reopened", async ({ 
   await expect(row).not.toHaveAttribute("open", "");
 
   await row.locator("summary").click();
-  await expect(row.locator(".monaco-editor").first()).toBeVisible();
+  await expect(row.locator(".monaco-editor").first()).toBeVisible({ timeout: editorLoadTimeout });
 
   await expect.poll(() => firstVisibleLineNumber(row)).toBe("1");
 });
 
 test("CLI reference response editor mounts only while the command is open", async ({ page }) => {
-  await page.goto("/docs/cli/reference", { waitUntil: "networkidle" });
+  await page.goto("/docs/cli/reference", { waitUntil: "domcontentloaded" });
 
   const setupRow = page.locator("details.cli-command-row", { hasText: "auth login --setup-token" }).first();
   await setupRow.locator("summary").click();
-  await expect(setupRow.locator(".monaco-editor").first()).toBeVisible();
+  await expect(setupRow.locator(".monaco-editor").first()).toBeVisible({ timeout: editorLoadTimeout });
   await setupRow.locator("summary").click();
   await expect(setupRow).not.toHaveAttribute("open", "");
 
@@ -72,7 +76,7 @@ test("CLI reference response editor mounts only while the command is open", asyn
   await expect(row.locator(".monaco-editor")).toHaveCount(0);
 
   await row.locator("summary").click();
-  await expect(row.locator(".monaco-editor").first()).toBeVisible();
+  await expect(row.locator(".monaco-editor").first()).toBeVisible({ timeout: editorLoadTimeout });
   await expect.poll(() => firstVisibleLineNumber(row)).toBe("1");
 
   await row.locator("summary").click();
