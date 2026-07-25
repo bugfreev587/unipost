@@ -2,11 +2,14 @@ package trials
 
 import (
 	"context"
+	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stripe/stripe-go/v82"
+	"github.com/xiaoboyu/unipost-api/internal/billing"
 )
 
 func TestBuildTrialCheckoutParams(t *testing.T) {
@@ -62,6 +65,112 @@ func TestBuildTrialCheckoutParamsRejectsDurationOutsideStripeBounds(t *testing.T
 		if err == nil {
 			t.Fatalf("buildTrialCheckoutParams(DurationDays=%d) error = nil", days)
 		}
+	}
+}
+
+func TestBuildTrialCheckoutParamsFailsClosedOnInvalidRequest(t *testing.T) {
+	valid := CreateTrialCheckoutRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "growth", TrialGrantID: "grant_123",
+		TrialKind: KindFreeToPaid, Environment: "production", CustomerID: "cus_123",
+		PriceID: "price_123", DurationDays: 30,
+		SuccessURL: "https://app.example/success", CancelURL: "https://app.example/cancel",
+	}
+	tests := []struct {
+		name   string
+		mutate func(*CreateTrialCheckoutRequest)
+	}{
+		{name: "mode", mutate: func(req *CreateTrialCheckoutRequest) { req.StripeMode = "other" }},
+		{name: "workspace", mutate: func(req *CreateTrialCheckoutRequest) { req.WorkspaceID = "" }},
+		{name: "plan", mutate: func(req *CreateTrialCheckoutRequest) { req.PlanID = "enterprise" }},
+		{name: "grant", mutate: func(req *CreateTrialCheckoutRequest) { req.TrialGrantID = "" }},
+		{name: "kind", mutate: func(req *CreateTrialCheckoutRequest) { req.TrialKind = KindPaidSamePlan }},
+		{name: "environment", mutate: func(req *CreateTrialCheckoutRequest) { req.Environment = "" }},
+		{name: "customer", mutate: func(req *CreateTrialCheckoutRequest) { req.CustomerID = "" }},
+		{name: "price", mutate: func(req *CreateTrialCheckoutRequest) { req.PriceID = "" }},
+		{name: "success relative", mutate: func(req *CreateTrialCheckoutRequest) { req.SuccessURL = "/success" }},
+		{name: "success insecure", mutate: func(req *CreateTrialCheckoutRequest) { req.SuccessURL = "http://app.example/success" }},
+		{name: "cancel malformed", mutate: func(req *CreateTrialCheckoutRequest) { req.CancelURL = "://bad" }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			test.mutate(&req)
+			if _, err := buildTrialCheckoutParams(req); err == nil {
+				t.Fatalf("buildTrialCheckoutParams(%s) error = nil; request=%#v", test.name, req)
+			}
+		})
+	}
+
+	for _, localURL := range []string{"http://localhost:3000/success", "http://localhost/cancel"} {
+		req := valid
+		req.SuccessURL = localURL
+		if _, err := buildTrialCheckoutParams(req); err != nil {
+			t.Fatalf("localhost URL %q rejected: %v", localURL, err)
+		}
+	}
+}
+
+func TestBuildExpireCheckoutParamsUsesStableRetryKey(t *testing.T) {
+	req := ExpireCheckoutRequest{
+		StripeMode:        "sandbox",
+		TrialGrantID:      "grant_123",
+		CheckoutSessionID: "cs_123",
+	}
+
+	first, err := buildExpireCheckoutParams(req)
+	if err != nil {
+		t.Fatalf("first buildExpireCheckoutParams() error = %v", err)
+	}
+	second, err := buildExpireCheckoutParams(req)
+	if err != nil {
+		t.Fatalf("retry buildExpireCheckoutParams() error = %v", err)
+	}
+	const want = "trial:grant_123:expire_checkout"
+	if got := stripe.StringValue(first.IdempotencyKey); got != want {
+		t.Fatalf("first IdempotencyKey = %q, want %q", got, want)
+	}
+	if got := stripe.StringValue(second.IdempotencyKey); got != want {
+		t.Fatalf("retry IdempotencyKey = %q, want %q", got, want)
+	}
+}
+
+func TestBuildExpireCheckoutParamsRejectsIncompleteIdentity(t *testing.T) {
+	valid := ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123"}
+	for _, mutate := range []func(*ExpireCheckoutRequest){
+		func(req *ExpireCheckoutRequest) { req.StripeMode = "" },
+		func(req *ExpireCheckoutRequest) { req.TrialGrantID = "" },
+		func(req *ExpireCheckoutRequest) { req.CheckoutSessionID = "" },
+		func(req *ExpireCheckoutRequest) { req.CheckoutSessionID = "   " },
+	} {
+		req := valid
+		mutate(&req)
+		if _, err := buildExpireCheckoutParams(req); err == nil {
+			t.Fatalf("buildExpireCheckoutParams(%#v) error = nil", req)
+		}
+	}
+}
+
+func TestExpireCheckoutTimeoutRetryReusesSameIdempotencyKey(t *testing.T) {
+	client := &fakeStripeTrialClient{
+		checkoutResult: &stripe.CheckoutSession{ID: "cs_123", Status: stripe.CheckoutSessionStatusExpired},
+		expireErrors:   []error{context.DeadlineExceeded, nil},
+	}
+	gateway := newFakeStripeGateway(client)
+	req := ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123"}
+
+	if _, err := gateway.ExpireCheckout(t.Context(), req); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first ExpireCheckout() error = %v, want deadline exceeded", err)
+	}
+	if _, err := gateway.ExpireCheckout(t.Context(), req); err != nil {
+		t.Fatalf("retry ExpireCheckout() error = %v", err)
+	}
+	if len(client.expireParams) != 2 {
+		t.Fatalf("expire params count = %d, want 2", len(client.expireParams))
+	}
+	first := stripe.StringValue(client.expireParams[0].IdempotencyKey)
+	second := stripe.StringValue(client.expireParams[1].IdempotencyKey)
+	if first != "trial:grant_123:expire_checkout" || second != first {
+		t.Fatalf("retry idempotency keys = %q, %q", first, second)
 	}
 }
 
@@ -134,6 +243,74 @@ func TestBuildPaidTrialScheduleParamsUsesStableSubOperationKeysAndMetadata(t *te
 	}
 }
 
+func TestBuildPaidTrialScheduleParamsRejectsInvalidDataBeforeCreate(t *testing.T) {
+	valid := validPaidScheduleRequest()
+	nonUTC := time.FixedZone("UTC+1", 60*60)
+
+	tests := []struct {
+		name   string
+		mutate func(*CreatePaidTrialScheduleRequest)
+	}{
+		{name: "unknown mode", mutate: func(req *CreatePaidTrialScheduleRequest) { req.StripeMode = "other" }},
+		{name: "workspace", mutate: func(req *CreatePaidTrialScheduleRequest) { req.WorkspaceID = "" }},
+		{name: "plan", mutate: func(req *CreatePaidTrialScheduleRequest) { req.PlanID = "enterprise" }},
+		{name: "grant", mutate: func(req *CreatePaidTrialScheduleRequest) { req.TrialGrantID = "" }},
+		{name: "kind", mutate: func(req *CreatePaidTrialScheduleRequest) { req.TrialKind = Kind("other") }},
+		{name: "environment", mutate: func(req *CreatePaidTrialScheduleRequest) { req.Environment = "" }},
+		{name: "subscription", mutate: func(req *CreatePaidTrialScheduleRequest) { req.SubscriptionID = "" }},
+		{name: "price", mutate: func(req *CreatePaidTrialScheduleRequest) { req.PriceID = "" }},
+		{name: "duration low", mutate: func(req *CreatePaidTrialScheduleRequest) { req.DurationDays = 0 }},
+		{name: "duration high", mutate: func(req *CreatePaidTrialScheduleRequest) { req.DurationDays = 731 }},
+		{name: "current price", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.PriceID = "" }},
+		{name: "current start", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.StartAt = time.Time{} }},
+		{name: "current start non UTC", mutate: func(req *CreatePaidTrialScheduleRequest) {
+			req.CurrentPhase.StartAt = req.CurrentPhase.StartAt.In(nonUTC)
+		}},
+		{name: "current end before start", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.EndAt = req.CurrentPhase.StartAt }},
+		{name: "current end not trial start", mutate: func(req *CreatePaidTrialScheduleRequest) {
+			req.CurrentPhase.EndAt = req.CurrentPhase.EndAt.Add(time.Second)
+		}},
+		{name: "trial start non UTC", mutate: func(req *CreatePaidTrialScheduleRequest) { req.TrialStartAt = req.TrialStartAt.In(nonUTC) }},
+		{name: "trial end non UTC", mutate: func(req *CreatePaidTrialScheduleRequest) { req.TrialEndAt = req.TrialEndAt.In(nonUTC) }},
+		{name: "trial end duration mismatch", mutate: func(req *CreatePaidTrialScheduleRequest) { req.TrialEndAt = req.TrialEndAt.Add(24 * time.Hour) }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			req.CurrentPhase.Metadata = cloneMetadata(valid.CurrentPhase.Metadata)
+			test.mutate(&req)
+			if _, _, err := buildPaidTrialScheduleParams(req); err == nil {
+				t.Fatalf("buildPaidTrialScheduleParams(%s) error = nil; request=%#v", test.name, req)
+			}
+		})
+	}
+}
+
+func validPaidScheduleRequest() CreatePaidTrialScheduleRequest {
+	currentStart := time.Unix(1_800_000_000, 0).UTC()
+	trialStart := currentStart.AddDate(0, 0, 15)
+	return CreatePaidTrialScheduleRequest{
+		StripeMode:     "live",
+		WorkspaceID:    "ws_paid",
+		PlanID:         "team",
+		TrialGrantID:   "grant_paid",
+		TrialKind:      KindPaidSamePlan,
+		Environment:    "production",
+		SubscriptionID: "sub_paid",
+		PriceID:        "price_team",
+		DurationDays:   45,
+		CurrentPhase: SchedulePhase{
+			PriceID:  "price_team",
+			StartAt:  currentStart,
+			EndAt:    trialStart,
+			Metadata: map[string]string{"retained": "yes"},
+		},
+		TrialStartAt: trialStart,
+		TrialEndAt:   trialStart.AddDate(0, 0, 45),
+	}
+}
+
 func TestBuildChangeFreeTrialPlanParamsReplacesExistingItemAndEndsTrialNow(t *testing.T) {
 	req := ChangeFreeTrialPlanRequest{
 		StripeMode:         "live",
@@ -172,6 +349,87 @@ func TestBuildChangeFreeTrialPlanParamsReplacesExistingItemAndEndsTrialNow(t *te
 		t.Fatalf("IdempotencyKey = %q", got)
 	}
 	assertTrialMetadata(t, params.Metadata, req.WorkspaceID, req.PlanID, req.TrialGrantID, req.TrialKind, req.Environment)
+}
+
+func TestMutationBuildersFailClosedOnInvalidIdentity(t *testing.T) {
+	freeChange := ChangeFreeTrialPlanRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "basic", TrialGrantID: "grant_123",
+		TrialKind: KindFreeToPaid, Environment: "production", SubscriptionID: "sub_123",
+		SubscriptionItemID: "si_123", PriceID: "price_123",
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ChangeFreeTrialPlanRequest)
+	}{
+		{name: "mode", mutate: func(req *ChangeFreeTrialPlanRequest) { req.StripeMode = "other" }},
+		{name: "workspace", mutate: func(req *ChangeFreeTrialPlanRequest) { req.WorkspaceID = "" }},
+		{name: "plan", mutate: func(req *ChangeFreeTrialPlanRequest) { req.PlanID = "enterprise" }},
+		{name: "grant", mutate: func(req *ChangeFreeTrialPlanRequest) { req.TrialGrantID = "" }},
+		{name: "kind", mutate: func(req *ChangeFreeTrialPlanRequest) { req.TrialKind = KindPaidSamePlan }},
+		{name: "environment", mutate: func(req *ChangeFreeTrialPlanRequest) { req.Environment = "" }},
+		{name: "subscription", mutate: func(req *ChangeFreeTrialPlanRequest) { req.SubscriptionID = "" }},
+		{name: "item", mutate: func(req *ChangeFreeTrialPlanRequest) { req.SubscriptionItemID = "" }},
+		{name: "price", mutate: func(req *ChangeFreeTrialPlanRequest) { req.PriceID = "" }},
+	} {
+		t.Run("free change "+test.name, func(t *testing.T) {
+			req := freeChange
+			test.mutate(&req)
+			if _, err := buildChangeFreeTrialPlanParams(req); err == nil {
+				t.Fatalf("invalid free plan change accepted: %#v", req)
+			}
+		})
+	}
+
+	paidChange := ChangeScheduledTrialPlanRequest{
+		StripeMode: "sandbox", WorkspaceID: "ws_123", PlanID: "team", TrialGrantID: "grant_123",
+		TrialKind: KindPaidSamePlan, Environment: "development", ScheduleID: "sub_sched_123", PriceID: "price_123",
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*ChangeScheduledTrialPlanRequest)
+	}{
+		{name: "mode", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.StripeMode = "other" }},
+		{name: "workspace", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.WorkspaceID = "" }},
+		{name: "plan", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.PlanID = "enterprise" }},
+		{name: "grant", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.TrialGrantID = "" }},
+		{name: "kind", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.TrialKind = KindFreeToPaid }},
+		{name: "environment", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.Environment = "" }},
+		{name: "schedule", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.ScheduleID = "" }},
+		{name: "price", mutate: func(req *ChangeScheduledTrialPlanRequest) { req.PriceID = "" }},
+	} {
+		t.Run("scheduled change "+test.name, func(t *testing.T) {
+			req := paidChange
+			test.mutate(&req)
+			if _, err := buildChangeScheduledTrialPlanParams(req); err == nil {
+				t.Fatalf("invalid scheduled plan change accepted: %#v", req)
+			}
+		})
+	}
+
+	freeCancel := CancelFreeTrialRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "api", TrialGrantID: "grant_123",
+		TrialKind: KindFreeToPaid, Environment: "production", SubscriptionID: "sub_123",
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*CancelFreeTrialRequest)
+	}{
+		{name: "mode", mutate: func(req *CancelFreeTrialRequest) { req.StripeMode = "other" }},
+		{name: "workspace", mutate: func(req *CancelFreeTrialRequest) { req.WorkspaceID = "" }},
+		{name: "plan", mutate: func(req *CancelFreeTrialRequest) { req.PlanID = "free" }},
+		{name: "grant", mutate: func(req *CancelFreeTrialRequest) { req.TrialGrantID = "" }},
+		{name: "kind", mutate: func(req *CancelFreeTrialRequest) { req.TrialKind = KindPaidSamePlan }},
+		{name: "environment", mutate: func(req *CancelFreeTrialRequest) { req.Environment = "" }},
+		{name: "subscription", mutate: func(req *CancelFreeTrialRequest) { req.SubscriptionID = "" }},
+	} {
+		t.Run("free cancel "+test.name, func(t *testing.T) {
+			req := freeCancel
+			test.mutate(&req)
+			if _, err := buildCancelFreeTrialParams(req); err == nil {
+				t.Fatalf("invalid free cancellation accepted: %#v", req)
+			}
+		})
+	}
 }
 
 func TestBuildChangeScheduledTrialPlanParamsIsOneScheduleUpdateWithNoRelease(t *testing.T) {
@@ -296,6 +554,48 @@ func TestBuildCancelParams(t *testing.T) {
 	}
 }
 
+func TestBuildCancelPaidScheduleParamsRejectsInvalidRetainedPhases(t *testing.T) {
+	valid := validPaidCancelRequest()
+	nonUTC := time.FixedZone("UTC+1", 60*60)
+	tests := []struct {
+		name   string
+		mutate func(*CancelPaidScheduleRequest)
+	}{
+		{name: "mode", mutate: func(req *CancelPaidScheduleRequest) { req.StripeMode = "other" }},
+		{name: "workspace", mutate: func(req *CancelPaidScheduleRequest) { req.WorkspaceID = "" }},
+		{name: "plan", mutate: func(req *CancelPaidScheduleRequest) { req.PlanID = "free" }},
+		{name: "grant", mutate: func(req *CancelPaidScheduleRequest) { req.TrialGrantID = "" }},
+		{name: "kind", mutate: func(req *CancelPaidScheduleRequest) { req.TrialKind = KindFreeToPaid }},
+		{name: "environment", mutate: func(req *CancelPaidScheduleRequest) { req.Environment = "" }},
+		{name: "schedule", mutate: func(req *CancelPaidScheduleRequest) { req.ScheduleID = "" }},
+		{name: "no phases", mutate: func(req *CancelPaidScheduleRequest) { req.RetainedPhases = nil }},
+		{name: "price", mutate: func(req *CancelPaidScheduleRequest) { req.RetainedPhases[0].PriceID = "" }},
+		{name: "start", mutate: func(req *CancelPaidScheduleRequest) { req.RetainedPhases[0].StartAt = time.Time{} }},
+		{name: "non UTC", mutate: func(req *CancelPaidScheduleRequest) {
+			req.RetainedPhases[0].StartAt = req.RetainedPhases[0].StartAt.In(nonUTC)
+		}},
+		{name: "end before start", mutate: func(req *CancelPaidScheduleRequest) { req.RetainedPhases[0].EndAt = req.RetainedPhases[0].StartAt }},
+		{name: "gap", mutate: func(req *CancelPaidScheduleRequest) {
+			req.RetainedPhases[1].StartAt = req.RetainedPhases[1].StartAt.Add(time.Second)
+		}},
+		{name: "trial end outside phase", mutate: func(req *CancelPaidScheduleRequest) {
+			req.RetainedPhases[1].TrialEndAt = req.RetainedPhases[1].EndAt.Add(time.Second)
+		}},
+		{name: "anchor", mutate: func(req *CancelPaidScheduleRequest) { req.RetainedPhases[0].BillingCycleAnchor = "other" }},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			req.RetainedPhases = append([]SchedulePhase(nil), valid.RetainedPhases...)
+			test.mutate(&req)
+			if _, err := buildCancelPaidScheduleParams(req); err == nil {
+				t.Fatalf("invalid retained phases accepted: %#v", req)
+			}
+		})
+	}
+}
+
 func TestMutatingParamBuildersRejectEmptyGrantID(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0).UTC()
 	checks := []struct {
@@ -365,7 +665,9 @@ func TestBuildPortalParamsOnlyUsesRequiredTrialConfiguration(t *testing.T) {
 		t.Fatalf("ReturnURL = %q", got)
 	}
 
-	withoutTrialConfig, err := buildPortalParams(CreatePortalRequest{CustomerID: "cus_123"}, "bpc_trial")
+	withoutTrialConfig, err := buildPortalParams(CreatePortalRequest{
+		StripeMode: "live", CustomerID: "cus_123", ReturnURL: "https://app.example/billing",
+	}, "bpc_trial")
 	if err != nil {
 		t.Fatalf("non-trial buildPortalParams() error = %v", err)
 	}
@@ -375,6 +677,216 @@ func TestBuildPortalParamsOnlyUsesRequiredTrialConfiguration(t *testing.T) {
 
 	if _, err := buildPortalParams(req, ""); err == nil {
 		t.Fatal("required trial-safe configuration missing: error = nil")
+	}
+	if _, err := buildPortalParams(req, "   "); err == nil {
+		t.Fatal("whitespace-only trial-safe configuration: error = nil")
+	}
+}
+
+func TestBuildPortalParamsFailsClosedOnInvalidRequest(t *testing.T) {
+	valid := CreatePortalRequest{StripeMode: "live", CustomerID: "cus_123", ReturnURL: "https://app.example/billing"}
+	for _, test := range []struct {
+		name   string
+		mutate func(*CreatePortalRequest)
+	}{
+		{name: "mode", mutate: func(req *CreatePortalRequest) { req.StripeMode = "other" }},
+		{name: "customer", mutate: func(req *CreatePortalRequest) { req.CustomerID = "" }},
+		{name: "return relative", mutate: func(req *CreatePortalRequest) { req.ReturnURL = "/billing" }},
+		{name: "return insecure", mutate: func(req *CreatePortalRequest) { req.ReturnURL = "http://app.example/billing" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			test.mutate(&req)
+			if _, err := buildPortalParams(req, ""); err == nil {
+				t.Fatalf("invalid portal request accepted: %#v", req)
+			}
+		})
+	}
+}
+
+func TestGatewayRejectsInvalidRequestsBeforeAnyStripeCall(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*stripeGateway) error
+	}{
+		{name: "create paid schedule", call: func(g *stripeGateway) error {
+			req := validPaidScheduleRequest()
+			req.DurationDays = 0
+			_, err := g.CreatePaidTrialSchedule(t.Context(), req)
+			return err
+		}},
+		{name: "create checkout", call: func(g *stripeGateway) error {
+			req := validCheckoutRequest()
+			req.PriceID = ""
+			_, err := g.CreateTrialCheckout(t.Context(), req)
+			return err
+		}},
+		{name: "retrieve checkout", call: func(g *stripeGateway) error {
+			_, err := g.RetrieveCheckout(t.Context(), "live", "")
+			return err
+		}},
+		{name: "expire checkout", call: func(g *stripeGateway) error {
+			_, err := g.ExpireCheckout(t.Context(), ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123"})
+			return err
+		}},
+		{name: "retrieve subscription", call: func(g *stripeGateway) error {
+			_, err := g.RetrieveSubscription(t.Context(), "live", "")
+			return err
+		}},
+		{name: "change free plan", call: func(g *stripeGateway) error {
+			req := validFreeChangeRequest()
+			req.SubscriptionItemID = ""
+			_, err := g.ChangeFreeTrialPlanNow(t.Context(), req)
+			return err
+		}},
+		{name: "change scheduled plan", call: func(g *stripeGateway) error {
+			req := validScheduledChangeRequest()
+			req.PriceID = ""
+			_, err := g.ChangeScheduledTrialPlanNow(t.Context(), req)
+			return err
+		}},
+		{name: "cancel free", call: func(g *stripeGateway) error {
+			req := validFreeCancelRequest()
+			req.SubscriptionID = ""
+			_, err := g.CancelFreeTrialAtEnd(t.Context(), req)
+			return err
+		}},
+		{name: "cancel paid", call: func(g *stripeGateway) error {
+			req := validPaidCancelRequest()
+			req.RetainedPhases[1].StartAt = req.RetainedPhases[1].StartAt.Add(time.Second)
+			_, err := g.CancelPaidScheduleAtTrialEnd(t.Context(), req)
+			return err
+		}},
+		{name: "portal", call: func(g *stripeGateway) error {
+			_, err := g.CreatePortal(t.Context(), CreatePortalRequest{StripeMode: "live", CustomerID: "cus_123", ReturnURL: "/billing"})
+			return err
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeStripeTrialClient{}
+			gateway := newFakeStripeGateway(client)
+			if err := test.call(gateway); err == nil {
+				t.Fatal("invalid request error = nil")
+			}
+			if len(client.calls) != 0 {
+				t.Fatalf("Stripe calls = %#v, want none", client.calls)
+			}
+		})
+	}
+}
+
+func TestGatewayRejectsEmptyOrMismatchedStripeResponses(t *testing.T) {
+	tests := []struct {
+		name string
+		call func(*stripeGateway, *fakeStripeTrialClient) error
+	}{
+		{name: "create checkout without ID", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.checkoutResult = &stripe.CheckoutSession{URL: "https://checkout.example/session"}
+			_, err := g.CreateTrialCheckout(t.Context(), validCheckoutRequest())
+			return err
+		}},
+		{name: "create checkout nil", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.checkoutResult = nil
+			_, err := g.CreateTrialCheckout(t.Context(), validCheckoutRequest())
+			return err
+		}},
+		{name: "create checkout without URL", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.checkoutResult = &stripe.CheckoutSession{ID: "cs_123"}
+			_, err := g.CreateTrialCheckout(t.Context(), validCheckoutRequest())
+			return err
+		}},
+		{name: "retrieve checkout mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.checkoutResult = &stripe.CheckoutSession{ID: "cs_other"}
+			_, err := g.RetrieveCheckout(t.Context(), "live", "cs_123")
+			return err
+		}},
+		{name: "expire checkout mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.checkoutResult = &stripe.CheckoutSession{ID: "cs_other"}
+			_, err := g.ExpireCheckout(t.Context(), ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123"})
+			return err
+		}},
+		{name: "retrieve subscription mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.subscriptionResult = &stripe.Subscription{ID: "sub_other"}
+			_, err := g.RetrieveSubscription(t.Context(), "live", "sub_123")
+			return err
+		}},
+		{name: "retrieve subscription nil", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.subscriptionResult = nil
+			_, err := g.RetrieveSubscription(t.Context(), "live", "sub_123")
+			return err
+		}},
+		{name: "change free subscription mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.subscriptionResult = &stripe.Subscription{ID: "sub_other"}
+			_, err := g.ChangeFreeTrialPlanNow(t.Context(), validFreeChangeRequest())
+			return err
+		}},
+		{name: "change schedule mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.scheduleUpdateResult = &stripe.SubscriptionSchedule{ID: "sub_sched_other"}
+			_, err := g.ChangeScheduledTrialPlanNow(t.Context(), validScheduledChangeRequest())
+			return err
+		}},
+		{name: "cancel free subscription mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.subscriptionResult = &stripe.Subscription{ID: "sub_other"}
+			_, err := g.CancelFreeTrialAtEnd(t.Context(), validFreeCancelRequest())
+			return err
+		}},
+		{name: "cancel paid schedule mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.scheduleUpdateResult = &stripe.SubscriptionSchedule{ID: "sub_sched_other"}
+			_, err := g.CancelPaidScheduleAtTrialEnd(t.Context(), validPaidCancelRequest())
+			return err
+		}},
+		{name: "create schedule without ID", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.scheduleCreateResult = &stripe.SubscriptionSchedule{}
+			_, err := g.CreatePaidTrialSchedule(t.Context(), validPaidScheduleRequest())
+			return err
+		}},
+		{name: "configured schedule mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.scheduleCreateResult = &stripe.SubscriptionSchedule{ID: "sub_sched_created"}
+			client.scheduleUpdateResult = &stripe.SubscriptionSchedule{ID: "sub_sched_other"}
+			_, err := g.CreatePaidTrialSchedule(t.Context(), validPaidScheduleRequest())
+			return err
+		}},
+		{name: "portal without URL", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.portalResult = &stripe.BillingPortalSession{}
+			_, err := g.CreatePortal(t.Context(), CreatePortalRequest{StripeMode: "live", CustomerID: "cus_123", ReturnURL: "https://app.example/billing"})
+			return err
+		}},
+		{name: "portal whitespace URL", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.portalResult = &stripe.BillingPortalSession{URL: "   "}
+			_, err := g.CreatePortal(t.Context(), CreatePortalRequest{StripeMode: "live", CustomerID: "cus_123", ReturnURL: "https://app.example/billing"})
+			return err
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeStripeTrialClient{}
+			gateway := newFakeStripeGateway(client)
+			if err := test.call(gateway, client); err == nil {
+				t.Fatal("invalid Stripe response error = nil")
+			}
+		})
+	}
+}
+
+func TestCreatePaidScheduleReturnsCreatedSnapshotWhenUpdateTimesOut(t *testing.T) {
+	client := &fakeStripeTrialClient{
+		scheduleCreateResult: &stripe.SubscriptionSchedule{ID: "sub_sched_created", Status: stripe.SubscriptionScheduleStatusActive},
+		scheduleUpdateErr:    errors.New("request timed out"),
+	}
+	gateway := newFakeStripeGateway(client)
+
+	snapshot, err := gateway.CreatePaidTrialSchedule(t.Context(), validPaidScheduleRequest())
+	if err == nil || !strings.Contains(err.Error(), "sub_sched_created") {
+		t.Fatalf("CreatePaidTrialSchedule() error = %v, want created schedule ID", err)
+	}
+	if snapshot.ID != "sub_sched_created" {
+		t.Fatalf("partial snapshot ID = %q, want sub_sched_created", snapshot.ID)
+	}
+	if !reflect.DeepEqual(client.calls, []string{"create_schedule", "update_schedule"}) {
+		t.Fatalf("Stripe calls = %#v", client.calls)
 	}
 }
 
@@ -471,7 +983,129 @@ type recordingSchedulePlanChanger struct {
 	releaseCalls int
 }
 
-func (c *recordingSchedulePlanChanger) Update(_ string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+func validCheckoutRequest() CreateTrialCheckoutRequest {
+	return CreateTrialCheckoutRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "growth", TrialGrantID: "grant_123",
+		TrialKind: KindFreeToPaid, Environment: "production", CustomerID: "cus_123",
+		PriceID: "price_123", DurationDays: 30,
+		SuccessURL: "https://app.example/success", CancelURL: "https://app.example/cancel",
+	}
+}
+
+func validFreeChangeRequest() ChangeFreeTrialPlanRequest {
+	return ChangeFreeTrialPlanRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "basic", TrialGrantID: "grant_123",
+		TrialKind: KindFreeToPaid, Environment: "production", SubscriptionID: "sub_123",
+		SubscriptionItemID: "si_123", PriceID: "price_123",
+	}
+}
+
+func validScheduledChangeRequest() ChangeScheduledTrialPlanRequest {
+	return ChangeScheduledTrialPlanRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "team", TrialGrantID: "grant_123",
+		TrialKind: KindPaidSamePlan, Environment: "production", ScheduleID: "sub_sched_123", PriceID: "price_123",
+	}
+}
+
+func validFreeCancelRequest() CancelFreeTrialRequest {
+	return CancelFreeTrialRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "api", TrialGrantID: "grant_123",
+		TrialKind: KindFreeToPaid, Environment: "production", SubscriptionID: "sub_123",
+	}
+}
+
+func validPaidCancelRequest() CancelPaidScheduleRequest {
+	start := time.Unix(1_800_000_000, 0).UTC()
+	trialStart := start.AddDate(0, 0, 15)
+	trialEnd := trialStart.AddDate(0, 0, 30)
+	return CancelPaidScheduleRequest{
+		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "growth", TrialGrantID: "grant_123",
+		TrialKind: KindPaidSamePlan, Environment: "production", ScheduleID: "sub_sched_123",
+		RetainedPhases: []SchedulePhase{
+			{PriceID: "price_123", StartAt: start, EndAt: trialStart},
+			{PriceID: "price_123", StartAt: trialStart, EndAt: trialEnd, TrialEndAt: trialEnd},
+		},
+	}
+}
+
+func newFakeStripeGateway(client *fakeStripeTrialClient) *stripeGateway {
+	manager := &billing.Manager{
+		Live:    &billing.Mode{Name: "live"},
+		Sandbox: &billing.Mode{Name: "sandbox"},
+	}
+	return &stripeGateway{
+		manager: manager,
+		clientForMode: func(*billing.Mode) stripeTrialClient {
+			return client
+		},
+	}
+}
+
+type fakeStripeTrialClient struct {
+	calls                []string
+	checkoutResult       *stripe.CheckoutSession
+	checkoutErr          error
+	expireErrors         []error
+	expireParams         []*stripe.CheckoutSessionExpireParams
+	subscriptionResult   *stripe.Subscription
+	subscriptionErr      error
+	scheduleCreateResult *stripe.SubscriptionSchedule
+	scheduleCreateErr    error
+	scheduleUpdateResult *stripe.SubscriptionSchedule
+	scheduleUpdateErr    error
+	portalResult         *stripe.BillingPortalSession
+	portalErr            error
+}
+
+func (c *fakeStripeTrialClient) createCheckout(params *stripe.CheckoutSessionParams) (*stripe.CheckoutSession, error) {
+	c.calls = append(c.calls, "create_checkout")
+	return c.checkoutResult, c.checkoutErr
+}
+
+func (c *fakeStripeTrialClient) retrieveCheckout(_ string, _ *stripe.CheckoutSessionParams) (*stripe.CheckoutSession, error) {
+	c.calls = append(c.calls, "retrieve_checkout")
+	return c.checkoutResult, c.checkoutErr
+}
+
+func (c *fakeStripeTrialClient) expireCheckout(_ string, params *stripe.CheckoutSessionExpireParams) (*stripe.CheckoutSession, error) {
+	c.calls = append(c.calls, "expire_checkout")
+	c.expireParams = append(c.expireParams, params)
+	if len(c.expireErrors) > 0 {
+		err := c.expireErrors[0]
+		c.expireErrors = c.expireErrors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
+	return c.checkoutResult, c.checkoutErr
+}
+
+func (c *fakeStripeTrialClient) retrieveSubscription(_ string, _ *stripe.SubscriptionParams) (*stripe.Subscription, error) {
+	c.calls = append(c.calls, "retrieve_subscription")
+	return c.subscriptionResult, c.subscriptionErr
+}
+
+func (c *fakeStripeTrialClient) updateSubscription(_ string, _ *stripe.SubscriptionParams) (*stripe.Subscription, error) {
+	c.calls = append(c.calls, "update_subscription")
+	return c.subscriptionResult, c.subscriptionErr
+}
+
+func (c *fakeStripeTrialClient) createSchedule(_ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+	c.calls = append(c.calls, "create_schedule")
+	return c.scheduleCreateResult, c.scheduleCreateErr
+}
+
+func (c *fakeStripeTrialClient) updateSchedule(_ string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+	c.calls = append(c.calls, "update_schedule")
+	return c.scheduleUpdateResult, c.scheduleUpdateErr
+}
+
+func (c *fakeStripeTrialClient) createPortal(_ *stripe.BillingPortalSessionParams) (*stripe.BillingPortalSession, error) {
+	c.calls = append(c.calls, "create_portal")
+	return c.portalResult, c.portalErr
+}
+
+func (c *recordingSchedulePlanChanger) updateSchedule(_ string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
 	c.updateCalls++
 	return &stripe.SubscriptionSchedule{ID: "sub_sched_123"}, nil
 }
