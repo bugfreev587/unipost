@@ -17,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
 )
 
@@ -35,6 +36,27 @@ func stripeCheckoutSubscriptionData(metadata map[string]string) *stripe.Checkout
 	return &stripe.CheckoutSessionSubscriptionDataParams{Metadata: metadata}
 }
 
+func stripeCustomerParams(workspaceID, userID, workspaceName, email, mode string) *stripe.CustomerParams {
+	params := &stripe.CustomerParams{
+		Email: stripe.String(email),
+		Name:  stripe.String(workspaceName),
+		Params: stripe.Params{Metadata: map[string]string{
+			"workspace_id": workspaceID,
+			"user_id":      userID,
+			"mode":         mode,
+		}},
+	}
+	params.SetIdempotencyKey("billing:" + mode + ":workspace:" + workspaceID + ":customer")
+	return params
+}
+
+func stripeCheckoutURL(session *stripe.CheckoutSession) (string, error) {
+	if session == nil || session.ID == "" || session.URL == "" {
+		return "", errors.New("Stripe returned an incomplete Checkout Session")
+	}
+	return session.URL, nil
+}
+
 type BillingHandler struct {
 	queries      *db.Queries
 	quota        *quota.Checker
@@ -44,6 +66,11 @@ type BillingHandler struct {
 	featureFlags interface {
 		ForWorkspace(context.Context, string, string) (bool, error)
 	}
+	trialCheckout billingTrialCheckoutService
+}
+
+type billingTrialCheckoutService interface {
+	PrepareCheckout(context.Context, trials.CheckoutRequest) (trials.CheckoutResult, error)
 }
 
 type xCreditsSnapshotService interface {
@@ -70,6 +97,11 @@ func (h *BillingHandler) SetFeatureFlags(flags interface {
 	ForWorkspace(context.Context, string, string) (bool, error)
 }) *BillingHandler {
 	h.featureFlags = flags
+	return h
+}
+
+func (h *BillingHandler) SetTrialService(service billingTrialCheckoutService) *BillingHandler {
+	h.trialCheckout = service
 	return h
 }
 
@@ -246,6 +278,20 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid plan")
 		return
 	}
+	appURL := os.Getenv("NEXT_PUBLIC_APP_URL")
+	if appURL == "" {
+		appURL = "https://app.unipost.dev"
+	}
+	trialReq := trials.CheckoutRequest{
+		WorkspaceID: workspaceID, PlanID: body.PlanID, StripeMode: mode.Name,
+		PriceID:    priceID,
+		SuccessURL: appURL + "/settings/billing?status=success",
+		CancelURL:  appURL + "/settings/billing?status=canceled",
+	}
+	handled, trialNeedsCustomer := h.tryTrialCheckout(w, r, trialReq)
+	if handled {
+		return
+	}
 
 	// Get or create Stripe customer in the chosen mode. NB: customer IDs
 	// from live and sandbox don't overlap, so even if a workspace changes
@@ -257,28 +303,30 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		customerID = sub.StripeCustomerID.String
 	} else {
 		user, _ := h.queries.GetUser(r.Context(), userID)
-		params := &stripe.CustomerParams{
-			Email: stripe.String(user.Email),
-			Name:  stripe.String(workspace.Name),
-			Params: stripe.Params{
-				Metadata: map[string]string{
-					"workspace_id": workspaceID,
-					"user_id":      userID,
-					"mode":         mode.Name,
-				},
-			},
-		}
+		params := stripeCustomerParams(workspaceID, userID, workspace.Name, user.Email, mode.Name)
 		c, err := mode.Client.Customers.New(params)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create customer")
 			return
 		}
+		if c == nil || c.ID == "" {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create customer")
+			return
+		}
 		customerID = c.ID
 	}
-
-	appURL := os.Getenv("NEXT_PUBLIC_APP_URL")
-	if appURL == "" {
-		appURL = "https://app.unipost.dev"
+	if trialNeedsCustomer {
+		trialReq.CustomerID = customerID
+		handled, needsCustomer := h.tryTrialCheckout(w, r, trialReq)
+		if handled {
+			return
+		}
+		if needsCustomer {
+			writeError(w, http.StatusConflict, "CHECKOUT_IN_PROGRESS", "Trial checkout is already being processed")
+			return
+		}
+		// The offer may have been revoked between the initial probe and
+		// customer creation. In that case this becomes an ordinary Checkout.
 	}
 
 	checkoutMetadata := stripeCheckoutMetadata(workspaceID, body.PlanID, mode.Name)
@@ -288,8 +336,8 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		LineItems: []*stripe.CheckoutSessionLineItemParams{
 			{Price: stripe.String(priceID), Quantity: stripe.Int64(1)},
 		},
-		SuccessURL:       stripe.String(appURL + "/settings/billing?status=success"),
-		CancelURL:        stripe.String(appURL + "/settings/billing?status=canceled"),
+		SuccessURL:       stripe.String(trialReq.SuccessURL),
+		CancelURL:        stripe.String(trialReq.CancelURL),
 		SubscriptionData: stripeCheckoutSubscriptionData(checkoutMetadata),
 		Params: stripe.Params{
 			Metadata: checkoutMetadata,
@@ -301,8 +349,35 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create checkout session")
 		return
 	}
+	checkoutURL, err := stripeCheckoutURL(s)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create checkout session")
+		return
+	}
+	writeSuccess(w, map[string]string{"checkout_url": checkoutURL})
+}
 
-	writeSuccess(w, map[string]string{"checkout_url": s.URL})
+func (h *BillingHandler) tryTrialCheckout(w http.ResponseWriter, r *http.Request, req trials.CheckoutRequest) (bool, bool) {
+	if h == nil || h.trialCheckout == nil {
+		return false, false
+	}
+	checkout, err := h.trialCheckout.PrepareCheckout(r.Context(), req)
+	if errors.Is(err, trials.ErrTrialCheckoutNotApplicable) {
+		return false, false
+	}
+	if errors.Is(err, trials.ErrCheckoutCustomerRequired) {
+		return false, true
+	}
+	if errors.Is(err, trials.ErrCheckoutCompletionPending) || errors.Is(err, trials.ErrCheckoutStateConflict) {
+		writeError(w, http.StatusConflict, "CHECKOUT_IN_PROGRESS", "Trial checkout is already being processed")
+		return true, false
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to prepare trial checkout")
+		return true, false
+	}
+	writeSuccess(w, map[string]string{"checkout_url": checkout.URL})
+	return true, false
 }
 
 // CreatePortal handles POST /v1/billing/portal

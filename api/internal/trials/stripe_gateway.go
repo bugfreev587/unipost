@@ -25,6 +25,25 @@ type ScheduleMutationError struct {
 	Err     error
 }
 
+type CheckoutMutationError struct {
+	Outcome MutationOutcome
+	Err     error
+}
+
+func (e *CheckoutMutationError) Error() string {
+	if e == nil || e.Err == nil {
+		return "Stripe Checkout mutation failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *CheckoutMutationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 func (e *ScheduleMutationError) Error() string {
 	if e == nil || e.Err == nil {
 		return "Stripe schedule mutation failed"
@@ -46,6 +65,15 @@ func classifyScheduleCreateError(err error) *ScheduleMutationError {
 		outcome = MutationRejected
 	}
 	return &ScheduleMutationError{Outcome: outcome, Err: err}
+}
+
+func classifyCheckoutCreateError(err error) *CheckoutMutationError {
+	outcome := MutationIndeterminate
+	var stripeErr *stripe.Error
+	if errors.As(err, &stripeErr) && stripeErr.Type != stripe.ErrorTypeIdempotency && stripeErr.HTTPStatusCode >= http.StatusBadRequest && stripeErr.HTTPStatusCode < http.StatusInternalServerError && stripeErr.HTTPStatusCode != http.StatusTooManyRequests {
+		outcome = MutationRejected
+	}
+	return &CheckoutMutationError{Outcome: outcome, Err: err}
 }
 
 const (
@@ -89,17 +117,18 @@ type CreatePaidTrialScheduleRequest struct {
 }
 
 type CreateTrialCheckoutRequest struct {
-	StripeMode   string
-	WorkspaceID  string
-	PlanID       string
-	TrialGrantID string
-	TrialKind    Kind
-	Environment  string
-	CustomerID   string
-	PriceID      string
-	DurationDays int32
-	SuccessURL   string
-	CancelURL    string
+	StripeMode      string
+	WorkspaceID     string
+	PlanID          string
+	TrialGrantID    string
+	TrialKind       Kind
+	Environment     string
+	CustomerID      string
+	PriceID         string
+	DurationDays    int32
+	CheckoutAttempt int32
+	SuccessURL      string
+	CancelURL       string
 }
 
 type ExpireCheckoutRequest struct {
@@ -348,23 +377,23 @@ func (g *stripeGateway) ConfigurePaidTrialSchedule(ctx context.Context, schedule
 func (g *stripeGateway) CreateTrialCheckout(ctx context.Context, req CreateTrialCheckoutRequest) (CheckoutSnapshot, error) {
 	params, err := buildTrialCheckoutParams(req)
 	if err != nil {
-		return CheckoutSnapshot{}, err
+		return CheckoutSnapshot{}, &CheckoutMutationError{Outcome: MutationRejected, Err: err}
 	}
 	mode, err := g.mode(req.StripeMode)
 	if err != nil {
-		return CheckoutSnapshot{}, err
+		return CheckoutSnapshot{}, &CheckoutMutationError{Outcome: MutationRejected, Err: err}
 	}
 	client, err := g.client(mode)
 	if err != nil {
-		return CheckoutSnapshot{}, err
+		return CheckoutSnapshot{}, &CheckoutMutationError{Outcome: MutationRejected, Err: err}
 	}
 	params.Context = ctx
 	session, err := client.createCheckout(params)
 	if err != nil {
-		return CheckoutSnapshot{}, fmt.Errorf("create Stripe trial checkout: %w", err)
+		return CheckoutSnapshot{}, fmt.Errorf("create Stripe trial checkout: %w", classifyCheckoutCreateError(err))
 	}
 	if err := validateCheckoutResponse(session, "", true); err != nil {
-		return CheckoutSnapshot{}, fmt.Errorf("create Stripe trial checkout: %w", err)
+		return CheckoutSnapshot{}, fmt.Errorf("create Stripe trial checkout: %w", &CheckoutMutationError{Outcome: MutationIndeterminate, Err: err})
 	}
 	return checkoutSnapshot(req.StripeMode, session), nil
 }
@@ -613,6 +642,9 @@ func buildTrialCheckoutParams(req CreateTrialCheckoutRequest) (*stripe.CheckoutS
 	if req.DurationDays < 1 || req.DurationDays > 730 {
 		return nil, fmt.Errorf("trial checkout duration must be between 1 and 730 days")
 	}
+	if req.CheckoutAttempt < 1 {
+		return nil, fmt.Errorf("trial checkout attempt must be positive")
+	}
 	if err := validateReturnURL("checkout success", req.SuccessURL); err != nil {
 		return nil, err
 	}
@@ -636,7 +668,7 @@ func buildTrialCheckoutParams(req CreateTrialCheckoutRequest) (*stripe.CheckoutS
 		},
 	}
 	params.Customer = stripe.String(req.CustomerID)
-	params.SetIdempotencyKey(trialOperationKey(req.TrialGrantID, "checkout"))
+	params.SetIdempotencyKey(fmt.Sprintf("%s:%d", trialOperationKey(req.TrialGrantID, "checkout"), req.CheckoutAttempt))
 	return params, nil
 }
 

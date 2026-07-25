@@ -14,17 +14,18 @@ import (
 
 func TestBuildTrialCheckoutParams(t *testing.T) {
 	req := CreateTrialCheckoutRequest{
-		StripeMode:   "sandbox",
-		WorkspaceID:  "ws_123",
-		PlanID:       "growth",
-		TrialGrantID: "grant_123",
-		TrialKind:    KindFreeToPaid,
-		Environment:  "development",
-		CustomerID:   "cus_123",
-		PriceID:      "price_growth",
-		DurationDays: 45,
-		SuccessURL:   "https://app.example/success",
-		CancelURL:    "https://app.example/cancel",
+		StripeMode:      "sandbox",
+		WorkspaceID:     "ws_123",
+		PlanID:          "growth",
+		TrialGrantID:    "grant_123",
+		TrialKind:       KindFreeToPaid,
+		Environment:     "development",
+		CustomerID:      "cus_123",
+		PriceID:         "price_growth",
+		DurationDays:    45,
+		CheckoutAttempt: 1,
+		SuccessURL:      "https://app.example/success",
+		CancelURL:       "https://app.example/cancel",
 	}
 
 	params, err := buildTrialCheckoutParams(req)
@@ -54,7 +55,7 @@ func TestBuildTrialCheckoutParams(t *testing.T) {
 	}
 	assertTrialMetadata(t, params.Metadata, req.WorkspaceID, req.PlanID, req.TrialGrantID, req.TrialKind, req.Environment)
 	assertTrialMetadata(t, params.SubscriptionData.Metadata, req.WorkspaceID, req.PlanID, req.TrialGrantID, req.TrialKind, req.Environment)
-	if got := stripe.StringValue(params.IdempotencyKey); got != "trial:grant_123:checkout" {
+	if got := stripe.StringValue(params.IdempotencyKey); got != "trial:grant_123:checkout:1" {
 		t.Fatalf("IdempotencyKey = %q", got)
 	}
 }
@@ -73,7 +74,8 @@ func TestBuildTrialCheckoutParamsFailsClosedOnInvalidRequest(t *testing.T) {
 		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "growth", TrialGrantID: "grant_123",
 		TrialKind: KindFreeToPaid, Environment: "production", CustomerID: "cus_123",
 		PriceID: "price_123", DurationDays: 30,
-		SuccessURL: "https://app.example/success", CancelURL: "https://app.example/cancel",
+		CheckoutAttempt: 1,
+		SuccessURL:      "https://app.example/success", CancelURL: "https://app.example/cancel",
 	}
 	tests := []struct {
 		name   string
@@ -87,6 +89,7 @@ func TestBuildTrialCheckoutParamsFailsClosedOnInvalidRequest(t *testing.T) {
 		{name: "environment", mutate: func(req *CreateTrialCheckoutRequest) { req.Environment = "" }},
 		{name: "customer", mutate: func(req *CreateTrialCheckoutRequest) { req.CustomerID = "" }},
 		{name: "price", mutate: func(req *CreateTrialCheckoutRequest) { req.PriceID = "" }},
+		{name: "attempt", mutate: func(req *CreateTrialCheckoutRequest) { req.CheckoutAttempt = 0 }},
 		{name: "success relative", mutate: func(req *CreateTrialCheckoutRequest) { req.SuccessURL = "/success" }},
 		{name: "success insecure", mutate: func(req *CreateTrialCheckoutRequest) { req.SuccessURL = "http://app.example/success" }},
 		{name: "cancel malformed", mutate: func(req *CreateTrialCheckoutRequest) { req.CancelURL = "://bad" }},
@@ -107,6 +110,32 @@ func TestBuildTrialCheckoutParamsFailsClosedOnInvalidRequest(t *testing.T) {
 		if _, err := buildTrialCheckoutParams(req); err != nil {
 			t.Fatalf("localhost URL %q rejected: %v", localURL, err)
 		}
+	}
+}
+
+func TestBuildTrialCheckoutParamsUsesAttemptGenerationForReplacement(t *testing.T) {
+	firstReq := validCheckoutRequest()
+	firstReq.CheckoutAttempt = 1
+	first, err := buildTrialCheckoutParams(firstReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	retry, err := buildTrialCheckoutParams(firstReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacementReq := firstReq
+	replacementReq.CheckoutAttempt = 2
+	replacement, err := buildTrialCheckoutParams(replacementReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstKey := stripe.StringValue(first.IdempotencyKey)
+	if retryKey := stripe.StringValue(retry.IdempotencyKey); retryKey != firstKey {
+		t.Fatalf("retry key=%q, want %q", retryKey, firstKey)
+	}
+	if replacementKey := stripe.StringValue(replacement.IdempotencyKey); replacementKey == firstKey || replacementKey != "trial:grant_123:checkout:2" {
+		t.Fatalf("replacement key=%q, first=%q", replacementKey, firstKey)
 	}
 }
 
@@ -933,6 +962,39 @@ func TestCreatePaidScheduleClassifiesEmptySnapshotErrors(t *testing.T) {
 	}
 }
 
+func TestCreateTrialCheckoutClassifiesMutationOutcome(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want MutationOutcome
+	}{
+		{name: "deadline", err: context.DeadlineExceeded, want: MutationIndeterminate},
+		{name: "transport", err: errors.New("connection reset"), want: MutationIndeterminate},
+		{name: "Stripe 500", err: &stripe.Error{HTTPStatusCode: 500, Type: stripe.ErrorTypeAPI}, want: MutationIndeterminate},
+		{name: "Stripe 429", err: &stripe.Error{HTTPStatusCode: 429, Type: stripe.ErrorTypeAPI}, want: MutationIndeterminate},
+		{name: "Stripe idempotency", err: &stripe.Error{HTTPStatusCode: 400, Type: stripe.ErrorTypeIdempotency}, want: MutationIndeterminate},
+		{name: "Stripe rejection", err: &stripe.Error{HTTPStatusCode: 400, Type: stripe.ErrorTypeInvalidRequest}, want: MutationRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeStripeTrialClient{checkoutErr: test.err}
+			_, err := newFakeStripeGateway(client).CreateTrialCheckout(t.Context(), validCheckoutRequest())
+			var mutationErr *CheckoutMutationError
+			if !errors.As(err, &mutationErr) || mutationErr.Outcome != test.want {
+				t.Fatalf("error=%#v, want outcome %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestCreateTrialCheckoutInvalidResponseIsIndeterminate(t *testing.T) {
+	client := &fakeStripeTrialClient{checkoutResult: &stripe.CheckoutSession{ID: "cs_created"}}
+	_, err := newFakeStripeGateway(client).CreateTrialCheckout(t.Context(), validCheckoutRequest())
+	var mutationErr *CheckoutMutationError
+	if !errors.As(err, &mutationErr) || mutationErr.Outcome != MutationIndeterminate {
+		t.Fatalf("error=%#v, want indeterminate", err)
+	}
+}
+
 func TestConfigurePaidTrialScheduleUpdatesExistingWithoutCreate(t *testing.T) {
 	client := &fakeStripeTrialClient{scheduleUpdateResult: &stripe.SubscriptionSchedule{ID: "sched_existing"}}
 	gateway := newFakeStripeGateway(client)
@@ -1070,7 +1132,8 @@ func validCheckoutRequest() CreateTrialCheckoutRequest {
 		StripeMode: "live", WorkspaceID: "ws_123", PlanID: "growth", TrialGrantID: "grant_123",
 		TrialKind: KindFreeToPaid, Environment: "production", CustomerID: "cus_123",
 		PriceID: "price_123", DurationDays: 30,
-		SuccessURL: "https://app.example/success", CancelURL: "https://app.example/cancel",
+		CheckoutAttempt: 1,
+		SuccessURL:      "https://app.example/success", CancelURL: "https://app.example/cancel",
 	}
 }
 

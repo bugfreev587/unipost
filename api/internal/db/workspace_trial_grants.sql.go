@@ -14,22 +14,31 @@ import (
 const claimWorkspaceTrialGrantCheckout = `-- name: ClaimWorkspaceTrialGrantCheckout :one
 UPDATE workspace_trial_grants
 SET status = 'checkout_pending',
+    stripe_customer_id = $1,
+    checkout_attempt = checkout_attempt + 1,
     updated_at = NOW()
-WHERE id = $1
-  AND workspace_id = $2
-  AND plan_id = $3
+WHERE id = $2
+  AND workspace_id = $3
+  AND plan_id = $4
+  AND $1::TEXT <> ''
   AND status = 'pending_activation'
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type ClaimWorkspaceTrialGrantCheckoutParams struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	PlanID      string `json:"plan_id"`
+	StripeCustomerID pgtype.Text `json:"stripe_customer_id"`
+	ID               string      `json:"id"`
+	WorkspaceID      string      `json:"workspace_id"`
+	PlanID           string      `json:"plan_id"`
 }
 
 func (q *Queries) ClaimWorkspaceTrialGrantCheckout(ctx context.Context, arg ClaimWorkspaceTrialGrantCheckoutParams) (WorkspaceTrialGrant, error) {
-	row := q.db.QueryRow(ctx, claimWorkspaceTrialGrantCheckout, arg.ID, arg.WorkspaceID, arg.PlanID)
+	row := q.db.QueryRow(ctx, claimWorkspaceTrialGrantCheckout,
+		arg.StripeCustomerID,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.PlanID,
+	)
 	var i WorkspaceTrialGrant
 	err := row.Scan(
 		&i.ID,
@@ -44,6 +53,7 @@ func (q *Queries) ClaimWorkspaceTrialGrantCheckout(ctx context.Context, arg Clai
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -86,7 +96,7 @@ INSERT INTO workspace_trial_grants (
   $9,
   $10
 )
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type CreateWorkspaceTrialGrantParams struct {
@@ -129,6 +139,7 @@ func (q *Queries) CreateWorkspaceTrialGrant(ctx context.Context, arg CreateWorks
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -148,7 +159,7 @@ func (q *Queries) CreateWorkspaceTrialGrant(ctx context.Context, arg CreateWorks
 }
 
 const getOpenWorkspaceTrialGrant = `-- name: GetOpenWorkspaceTrialGrant :one
-SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 FROM workspace_trial_grants
 WHERE workspace_id = $1
   AND status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')
@@ -170,6 +181,7 @@ func (q *Queries) GetOpenWorkspaceTrialGrant(ctx context.Context, workspaceID st
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -189,7 +201,7 @@ func (q *Queries) GetOpenWorkspaceTrialGrant(ctx context.Context, workspaceID st
 }
 
 const getWorkspaceTrialGrant = `-- name: GetWorkspaceTrialGrant :one
-SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 FROM workspace_trial_grants
 WHERE id = $1
 `
@@ -210,6 +222,7 @@ func (q *Queries) GetWorkspaceTrialGrant(ctx context.Context, id string) (Worksp
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -229,7 +242,7 @@ func (q *Queries) GetWorkspaceTrialGrant(ctx context.Context, id string) (Worksp
 }
 
 const getWorkspaceTrialGrantByCheckoutSession = `-- name: GetWorkspaceTrialGrantByCheckoutSession :one
-SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 FROM workspace_trial_grants
 WHERE stripe_checkout_session_id = $1
 `
@@ -250,6 +263,7 @@ func (q *Queries) GetWorkspaceTrialGrantByCheckoutSession(ctx context.Context, s
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -269,7 +283,7 @@ func (q *Queries) GetWorkspaceTrialGrantByCheckoutSession(ctx context.Context, s
 }
 
 const getWorkspaceTrialGrantBySchedule = `-- name: GetWorkspaceTrialGrantBySchedule :one
-SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 FROM workspace_trial_grants
 WHERE stripe_schedule_id = $1
 ORDER BY granted_at DESC
@@ -292,6 +306,7 @@ func (q *Queries) GetWorkspaceTrialGrantBySchedule(ctx context.Context, stripeSc
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -311,7 +326,7 @@ func (q *Queries) GetWorkspaceTrialGrantBySchedule(ctx context.Context, stripeSc
 }
 
 const getWorkspaceTrialGrantBySubscription = `-- name: GetWorkspaceTrialGrantBySubscription :one
-SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 FROM workspace_trial_grants
 WHERE stripe_subscription_id = $1
 ORDER BY granted_at DESC
@@ -334,6 +349,7 @@ func (q *Queries) GetWorkspaceTrialGrantBySubscription(ctx context.Context, stri
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -353,7 +369,7 @@ func (q *Queries) GetWorkspaceTrialGrantBySubscription(ctx context.Context, stri
 }
 
 const listWorkspaceTrialGrantHistory = `-- name: ListWorkspaceTrialGrantHistory :many
-SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+SELECT id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 FROM workspace_trial_grants
 WHERE workspace_id = $1
 ORDER BY granted_at DESC, id DESC
@@ -381,6 +397,7 @@ func (q *Queries) ListWorkspaceTrialGrantHistory(ctx context.Context, workspaceI
 			&i.StripeSubscriptionID,
 			&i.StripeScheduleID,
 			&i.StripeCheckoutSessionID,
+			&i.CheckoutAttempt,
 			&i.GrantedAt,
 			&i.ScheduledStartAt,
 			&i.StartedAt,
@@ -419,7 +436,7 @@ SET status = 'active',
     updated_at = NOW()
 WHERE id = $6
   AND status = $7
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantActiveParams struct {
@@ -456,6 +473,7 @@ func (q *Queries) MarkWorkspaceTrialGrantActive(ctx context.Context, arg MarkWor
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -481,7 +499,7 @@ SET status = 'canceled',
     updated_at = NOW()
 WHERE id = $2
   AND status = $3
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantCanceledParams struct {
@@ -506,6 +524,7 @@ func (q *Queries) MarkWorkspaceTrialGrantCanceled(ctx context.Context, arg MarkW
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -531,7 +550,7 @@ SET status = 'completed',
     updated_at = NOW()
 WHERE id = $2
   AND status = $3
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantCompletedParams struct {
@@ -556,6 +575,7 @@ func (q *Queries) MarkWorkspaceTrialGrantCompleted(ctx context.Context, arg Mark
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -582,7 +602,7 @@ SET status = 'failed',
     updated_at = NOW()
 WHERE id = $3
   AND status = $4
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantFailedParams struct {
@@ -613,6 +633,7 @@ func (q *Queries) MarkWorkspaceTrialGrantFailed(ctx context.Context, arg MarkWor
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -638,7 +659,7 @@ SET status = 'revoked',
     updated_at = NOW()
 WHERE id = $2
   AND status = $3
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantRevokedParams struct {
@@ -663,6 +684,7 @@ func (q *Queries) MarkWorkspaceTrialGrantRevoked(ctx context.Context, arg MarkWo
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -694,7 +716,7 @@ SET status = 'scheduled',
     updated_at = NOW()
 WHERE id = $6
   AND status = $7
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantScheduledParams struct {
@@ -731,6 +753,7 @@ func (q *Queries) MarkWorkspaceTrialGrantScheduled(ctx context.Context, arg Mark
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -757,7 +780,7 @@ SET status = 'superseded',
     updated_at = NOW()
 WHERE id = $3
   AND status = $4
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type MarkWorkspaceTrialGrantSupersededParams struct {
@@ -788,6 +811,7 @@ func (q *Queries) MarkWorkspaceTrialGrantSuperseded(ctx context.Context, arg Mar
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -813,7 +837,7 @@ SET stripe_checkout_session_id = $1,
 WHERE id = $2
   AND status = 'checkout_pending'
   AND stripe_checkout_session_id IS NULL
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type RecordWorkspaceTrialGrantCheckoutSessionParams struct {
@@ -837,6 +861,7 @@ func (q *Queries) RecordWorkspaceTrialGrantCheckoutSession(ctx context.Context, 
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -864,7 +889,7 @@ SET stripe_schedule_id = COALESCE($1, stripe_schedule_id),
 WHERE id = $4
   AND status = 'provisioning'
   AND ($1 IS NULL OR stripe_schedule_id IS NULL OR stripe_schedule_id = $1)
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type RecordWorkspaceTrialGrantProvisioningScheduleParams struct {
@@ -895,6 +920,7 @@ func (q *Queries) RecordWorkspaceTrialGrantProvisioningSchedule(ctx context.Cont
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -922,7 +948,7 @@ WHERE id = $1
   AND status = 'checkout_pending'
   AND stripe_checkout_session_id = $2
   AND updated_at < $3
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type ReleaseExpiredWorkspaceTrialGrantCheckoutParams struct {
@@ -947,6 +973,52 @@ func (q *Queries) ReleaseExpiredWorkspaceTrialGrantCheckout(ctx context.Context,
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
+		&i.GrantedAt,
+		&i.ScheduledStartAt,
+		&i.StartedAt,
+		&i.EndsAt,
+		&i.ActivatedAt,
+		&i.CanceledAt,
+		&i.RevokedAt,
+		&i.SupersededAt,
+		&i.CompletedAt,
+		&i.SupersededByPlanID,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const reopenUnrecordedWorkspaceTrialGrantCheckout = `-- name: ReopenUnrecordedWorkspaceTrialGrantCheckout :one
+UPDATE workspace_trial_grants
+SET status = 'pending_activation',
+    updated_at = NOW()
+WHERE id = $1
+  AND status = 'checkout_pending'
+  AND stripe_checkout_session_id IS NULL
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+`
+
+func (q *Queries) ReopenUnrecordedWorkspaceTrialGrantCheckout(ctx context.Context, id string) (WorkspaceTrialGrant, error) {
+	row := q.db.QueryRow(ctx, reopenUnrecordedWorkspaceTrialGrantCheckout, id)
+	var i WorkspaceTrialGrant
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.PlanID,
+		&i.DurationDays,
+		&i.Status,
+		&i.GrantedByUserID,
+		&i.StripeMode,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.StripeScheduleID,
+		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,
@@ -971,7 +1043,7 @@ SET status = $1,
     updated_at = NOW()
 WHERE id = $2
   AND status = $3
-RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type TransitionWorkspaceTrialGrantStatusParams struct {
@@ -996,6 +1068,7 @@ func (q *Queries) TransitionWorkspaceTrialGrantStatus(ctx context.Context, arg T
 		&i.StripeSubscriptionID,
 		&i.StripeScheduleID,
 		&i.StripeCheckoutSessionID,
+		&i.CheckoutAttempt,
 		&i.GrantedAt,
 		&i.ScheduledStartAt,
 		&i.StartedAt,

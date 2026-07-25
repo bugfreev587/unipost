@@ -103,6 +103,33 @@ func (s *PostgresStore) MarkRevoked(ctx context.Context, id string, expected Sta
 	return mapGrant(row, mapTransitionError(err))
 }
 
+func (s *PostgresStore) ClaimCheckout(ctx context.Context, id, workspaceID, planID, customerID string) (Grant, error) {
+	row, err := s.queries.ClaimWorkspaceTrialGrantCheckout(ctx, db.ClaimWorkspaceTrialGrantCheckoutParams{
+		ID: id, WorkspaceID: workspaceID, PlanID: planID, StripeCustomerID: text(customerID),
+	})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) RecordCheckoutSession(ctx context.Context, id, sessionID string) (Grant, error) {
+	row, err := s.queries.RecordWorkspaceTrialGrantCheckoutSession(ctx, db.RecordWorkspaceTrialGrantCheckoutSessionParams{
+		ID: id, StripeCheckoutSessionID: text(sessionID),
+	})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) ReleaseCheckout(ctx context.Context, id, sessionID string, expiredBefore time.Time) (Grant, error) {
+	row, err := s.queries.ReleaseExpiredWorkspaceTrialGrantCheckout(ctx, db.ReleaseExpiredWorkspaceTrialGrantCheckoutParams{
+		ID: id, StripeCheckoutSessionID: text(sessionID),
+		ExpiredBefore: pgtype.Timestamptz{Time: expiredBefore, Valid: true},
+	})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) ReopenUnrecordedCheckout(ctx context.Context, id string) (Grant, error) {
+	row, err := s.queries.ReopenUnrecordedWorkspaceTrialGrantCheckout(ctx, id)
+	return mapGrant(row, mapTransitionError(err))
+}
+
 type ManagerModeResolver struct {
 	manager *billing.Manager
 }
@@ -132,6 +159,7 @@ func mapGrant(row db.WorkspaceTrialGrant, err error) (Grant, error) {
 		StripeMode: row.StripeMode.String, StripeCustomerID: row.StripeCustomerID.String,
 		StripeSubscriptionID: row.StripeSubscriptionID.String, StripeScheduleID: row.StripeScheduleID.String,
 		StripeCheckoutSessionID: row.StripeCheckoutSessionID.String, GrantedAt: row.GrantedAt.Time.UTC(),
+		CheckoutAttempt:  row.CheckoutAttempt,
 		ScheduledStartAt: optionalTime(row.ScheduledStartAt), StartedAt: optionalTime(row.StartedAt),
 		EndsAt: optionalTime(row.EndsAt), ActivatedAt: optionalTime(row.ActivatedAt),
 		CanceledAt: optionalTime(row.CanceledAt), RevokedAt: optionalTime(row.RevokedAt),

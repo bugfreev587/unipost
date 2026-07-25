@@ -1080,6 +1080,7 @@ type WorkspaceTrialGrant struct {
 	StripeSubscriptionID    pgtype.Text        `json:"stripe_subscription_id"`
 	StripeScheduleID        pgtype.Text        `json:"stripe_schedule_id"`
 	StripeCheckoutSessionID pgtype.Text        `json:"stripe_checkout_session_id"`
+	CheckoutAttempt         int32              `json:"checkout_attempt"`
 	GrantedAt               pgtype.Timestamptz `json:"granted_at"`
 	ScheduledStartAt        pgtype.Timestamptz `json:"scheduled_start_at"`
 	StartedAt               pgtype.Timestamptz `json:"started_at"`

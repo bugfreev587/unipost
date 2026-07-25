@@ -57,16 +57,28 @@ LIMIT 1;
 -- name: ClaimWorkspaceTrialGrantCheckout :one
 UPDATE workspace_trial_grants
 SET status = 'checkout_pending',
+    stripe_customer_id = sqlc.arg(stripe_customer_id),
+    checkout_attempt = checkout_attempt + 1,
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
   AND workspace_id = sqlc.arg(workspace_id)
   AND plan_id = sqlc.arg(plan_id)
+  AND sqlc.arg(stripe_customer_id)::TEXT <> ''
   AND status = 'pending_activation'
 RETURNING *;
 
 -- name: RecordWorkspaceTrialGrantCheckoutSession :one
 UPDATE workspace_trial_grants
 SET stripe_checkout_session_id = sqlc.arg(stripe_checkout_session_id),
+    updated_at = NOW()
+WHERE id = sqlc.arg(id)
+  AND status = 'checkout_pending'
+  AND stripe_checkout_session_id IS NULL
+RETURNING *;
+
+-- name: ReopenUnrecordedWorkspaceTrialGrantCheckout :one
+UPDATE workspace_trial_grants
+SET status = 'pending_activation',
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
   AND status = 'checkout_pending'

@@ -12,6 +12,7 @@ CREATE TABLE workspace_trial_grants (
   stripe_subscription_id     TEXT,
   stripe_schedule_id         TEXT,
   stripe_checkout_session_id TEXT,
+  checkout_attempt           INTEGER NOT NULL DEFAULT 0 CHECK (checkout_attempt >= 0),
   granted_at                 TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   scheduled_start_at         TIMESTAMPTZ,
   started_at                 TIMESTAMPTZ,

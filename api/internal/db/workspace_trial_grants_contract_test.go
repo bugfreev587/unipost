@@ -31,6 +31,7 @@ func TestWorkspaceTrialGrantMigrationContract(t *testing.T) {
 		"stripe_subscription_id text",
 		"stripe_schedule_id text",
 		"stripe_checkout_session_id text",
+		"checkout_attempt integer not null default 0 check (checkout_attempt >= 0)",
 		"granted_at timestamptz not null",
 		"scheduled_start_at timestamptz",
 		"started_at timestamptz",
@@ -155,9 +156,12 @@ func TestWorkspaceTrialGrantCheckoutQueriesUseExactCorrelation(t *testing.T) {
 			name:      "checkout claim matches workspace and plan",
 			queryName: "-- name: claimworkspacetrialgrantcheckout :one",
 			want: []string{
+				"checkout_attempt = checkout_attempt + 1",
+				"stripe_customer_id = sqlc.arg(stripe_customer_id)",
 				"where id = sqlc.arg(id)",
 				"and workspace_id = sqlc.arg(workspace_id)",
 				"and plan_id = sqlc.arg(plan_id)",
+				"and sqlc.arg(stripe_customer_id)::text <> ''",
 				"and status = 'pending_activation'",
 			},
 		},
@@ -168,6 +172,15 @@ func TestWorkspaceTrialGrantCheckoutQueriesUseExactCorrelation(t *testing.T) {
 				"where id = sqlc.arg(id)",
 				"and status = 'checkout_pending'",
 				"and stripe_checkout_session_id = sqlc.arg(stripe_checkout_session_id)",
+			},
+		},
+		{
+			name:      "rejected checkout reopens only an unrecorded claim",
+			queryName: "-- name: reopenunrecordedworkspacetrialgrantcheckout :one",
+			want: []string{
+				"where id = sqlc.arg(id)",
+				"and status = 'checkout_pending'",
+				"and stripe_checkout_session_id is null",
 			},
 		},
 	}

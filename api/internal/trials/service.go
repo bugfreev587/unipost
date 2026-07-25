@@ -9,16 +9,20 @@ import (
 )
 
 var (
-	ErrWorkspaceNotFound         = errors.New("workspace not found")
-	ErrGrantNotFound             = errors.New("trial grant not found")
-	ErrOpenGrantExists           = errors.New("workspace already has an open trial grant")
-	ErrPaidPlanMismatch          = errors.New("paid trial plan must match the current plan")
-	ErrIneligibleSubscription    = errors.New("subscription is not eligible for a trial grant")
-	ErrRevokeConflict            = errors.New("trial grant can no longer be revoked")
-	ErrConcurrentTransition      = errors.New("trial grant changed concurrently")
-	ErrBillingModeUnavailable    = errors.New("Stripe billing mode is unavailable")
-	ErrUnrelatedSchedule         = errors.New("subscription already has an unrelated Stripe schedule")
-	ErrCheckoutExpiryUnconfirmed = errors.New("Checkout Session expiry could not be confirmed")
+	ErrWorkspaceNotFound          = errors.New("workspace not found")
+	ErrGrantNotFound              = errors.New("trial grant not found")
+	ErrOpenGrantExists            = errors.New("workspace already has an open trial grant")
+	ErrPaidPlanMismatch           = errors.New("paid trial plan must match the current plan")
+	ErrIneligibleSubscription     = errors.New("subscription is not eligible for a trial grant")
+	ErrRevokeConflict             = errors.New("trial grant can no longer be revoked")
+	ErrConcurrentTransition       = errors.New("trial grant changed concurrently")
+	ErrBillingModeUnavailable     = errors.New("Stripe billing mode is unavailable")
+	ErrUnrelatedSchedule          = errors.New("subscription already has an unrelated Stripe schedule")
+	ErrCheckoutExpiryUnconfirmed  = errors.New("Checkout Session expiry could not be confirmed")
+	ErrTrialCheckoutNotApplicable = errors.New("no matching trial grant applies to checkout")
+	ErrCheckoutCompletionPending  = errors.New("Checkout completion is awaiting webhook projection")
+	ErrCheckoutStateConflict      = errors.New("trial checkout state changed concurrently")
+	ErrCheckoutCustomerRequired   = errors.New("Stripe customer is required to start trial checkout")
 )
 
 type OpenGrantConflictError struct {
@@ -57,6 +61,7 @@ type Grant struct {
 	StripeSubscriptionID    string     `json:"stripe_subscription_id,omitempty"`
 	StripeScheduleID        string     `json:"stripe_schedule_id,omitempty"`
 	StripeCheckoutSessionID string     `json:"stripe_checkout_session_id,omitempty"`
+	CheckoutAttempt         int32      `json:"-"`
 	GrantedAt               time.Time  `json:"granted_at"`
 	ScheduledStartAt        *time.Time `json:"scheduled_start_at,omitempty"`
 	StartedAt               *time.Time `json:"started_at,omitempty"`
@@ -104,6 +109,10 @@ type GrantStore interface {
 	MarkFailed(context.Context, FailureUpdate) (Grant, error)
 	RecordProvisioningSchedule(context.Context, ProvisioningScheduleUpdate) (Grant, error)
 	MarkRevoked(context.Context, string, Status, time.Time) (Grant, error)
+	ClaimCheckout(context.Context, string, string, string, string) (Grant, error)
+	RecordCheckoutSession(context.Context, string, string) (Grant, error)
+	ReleaseCheckout(context.Context, string, string, time.Time) (Grant, error)
+	ReopenUnrecordedCheckout(context.Context, string) (Grant, error)
 }
 
 type CreateGrantInput struct {
@@ -156,6 +165,25 @@ type RevokeRequest struct {
 	ActorUserID string
 }
 
+type CheckoutRequest struct {
+	WorkspaceID string
+	PlanID      string
+	StripeMode  string
+	CustomerID  string
+	PriceID     string
+	SuccessURL  string
+	CancelURL   string
+}
+
+type CheckoutResult struct {
+	SessionID    string            `json:"checkout_session_id"`
+	URL          string            `json:"checkout_url"`
+	TrialGrantID string            `json:"trial_grant_id,omitempty"`
+	TrialDays    int32             `json:"trial_days,omitempty"`
+	Metadata     map[string]string `json:"-"`
+	Resumed      bool              `json:"-"`
+}
+
 type Service struct {
 	store       GrantStore
 	stripe      StripeGateway
@@ -169,6 +197,201 @@ func NewService(store GrantStore, stripe StripeGateway, modes ModeResolver, envi
 		now = time.Now
 	}
 	return &Service{store: store, stripe: stripe, modes: modes, environment: strings.TrimSpace(environment), now: now}
+}
+
+func (s *Service) PrepareCheckout(ctx context.Context, req CheckoutRequest) (CheckoutResult, error) {
+	if err := validateCheckoutRequest(req); err != nil {
+		return CheckoutResult{}, err
+	}
+	if s == nil || s.store == nil || s.stripe == nil || s.modes == nil || s.environment == "" {
+		return CheckoutResult{}, ErrBillingModeUnavailable
+	}
+	grant, err := s.store.GetOpenGrant(ctx, req.WorkspaceID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return CheckoutResult{}, ErrTrialCheckoutNotApplicable
+	}
+	if err != nil {
+		return CheckoutResult{}, fmt.Errorf("load trial grant for Checkout: %w", err)
+	}
+	if grant.Kind != KindFreeToPaid || grant.PlanID != req.PlanID {
+		return CheckoutResult{}, ErrTrialCheckoutNotApplicable
+	}
+	if grant.Status == StatusScheduled || grant.Status == StatusActive {
+		return CheckoutResult{}, ErrCheckoutCompletionPending
+	}
+	if grant.Status != StatusPendingActivation && grant.Status != StatusCheckoutPending {
+		return CheckoutResult{}, ErrTrialCheckoutNotApplicable
+	}
+	if grant.StripeMode == "" || grant.StripeMode != req.StripeMode {
+		return CheckoutResult{}, ErrBillingModeUnavailable
+	}
+	billingState, err := s.store.GetBilling(ctx, req.WorkspaceID)
+	if err != nil || billingState.OwnerUserID == "" {
+		return CheckoutResult{}, ErrWorkspaceNotFound
+	}
+	mode, err := s.modes.Resolve(ctx, billingState.OwnerUserID, req.PlanID)
+	if err != nil || mode.Name != grant.StripeMode || mode.Name != req.StripeMode || mode.PriceID != req.PriceID {
+		return CheckoutResult{}, ErrBillingModeUnavailable
+	}
+	return s.prepareCheckoutGrant(ctx, grant, req, true)
+}
+
+func validateCheckoutRequest(req CheckoutRequest) error {
+	if strings.TrimSpace(req.WorkspaceID) == "" || strings.TrimSpace(req.PlanID) == "" {
+		return fmt.Errorf("workspace and plan are required")
+	}
+	if strings.TrimSpace(req.StripeMode) == "" || strings.TrimSpace(req.PriceID) == "" {
+		return fmt.Errorf("Stripe mode and price are required")
+	}
+	if err := ValidateGrantInput(req.PlanID, 1); err != nil {
+		return err
+	}
+	for label, value := range map[string]string{"success": req.SuccessURL, "cancel": req.CancelURL} {
+		if !strings.HasPrefix(strings.TrimSpace(value), "https://") {
+			return fmt.Errorf("%s URL must use HTTPS", label)
+		}
+	}
+	return nil
+}
+
+func (s *Service) prepareCheckoutGrant(ctx context.Context, grant Grant, req CheckoutRequest, allowExpiredReplacement bool) (CheckoutResult, error) {
+	switch grant.Status {
+	case StatusPendingActivation:
+		customerID := strings.TrimSpace(grant.StripeCustomerID)
+		if customerID == "" {
+			customerID = strings.TrimSpace(req.CustomerID)
+		}
+		if customerID == "" {
+			return CheckoutResult{}, ErrCheckoutCustomerRequired
+		}
+		claimed, err := s.store.ClaimCheckout(ctx, grant.ID, req.WorkspaceID, req.PlanID, customerID)
+		if err == nil {
+			return s.createAndRecordTrialCheckout(ctx, claimed, req)
+		}
+		if !errors.Is(err, ErrConcurrentTransition) {
+			return CheckoutResult{}, fmt.Errorf("claim trial grant for Checkout: %w", err)
+		}
+		current, loadErr := s.store.GetOpenGrant(ctx, req.WorkspaceID)
+		if loadErr != nil || current.ID != grant.ID || current.PlanID != req.PlanID || current.Kind != KindFreeToPaid {
+			return CheckoutResult{}, ErrTrialCheckoutNotApplicable
+		}
+		return s.prepareCheckoutGrant(ctx, current, req, allowExpiredReplacement)
+
+	case StatusCheckoutPending:
+		if grant.StripeCheckoutSessionID == "" {
+			// A prior request may have reached Stripe without receiving the
+			// response. Repeating the same grant-scoped idempotent operation is
+			// the only safe way to recover its Session identity.
+			return s.createAndRecordTrialCheckout(ctx, grant, req)
+		}
+		checkout, err := s.stripe.RetrieveCheckout(ctx, grant.StripeMode, grant.StripeCheckoutSessionID)
+		if err != nil {
+			return CheckoutResult{}, fmt.Errorf("retrieve trial Checkout Session: %w", err)
+		}
+		if checkout.ID != grant.StripeCheckoutSessionID || checkout.StripeMode != grant.StripeMode {
+			return CheckoutResult{}, ErrCheckoutStateConflict
+		}
+		if !checkoutMetadataMatches(checkout.Metadata, grant, s.environment) {
+			return CheckoutResult{}, ErrCheckoutStateConflict
+		}
+		switch checkout.Status {
+		case "open":
+			if checkout.URL == "" {
+				return CheckoutResult{}, ErrCheckoutStateConflict
+			}
+			return checkoutResult(grant, checkout, s.environment, true), nil
+		case "complete":
+			return CheckoutResult{}, ErrCheckoutCompletionPending
+		case "expired":
+			if !allowExpiredReplacement {
+				return CheckoutResult{}, ErrCheckoutStateConflict
+			}
+			reopened, err := s.store.ReleaseCheckout(ctx, grant.ID, checkout.ID, s.now().UTC().Add(time.Second))
+			if err != nil {
+				return s.checkoutTransitionRace(ctx, grant, req, err)
+			}
+			return s.prepareCheckoutGrant(ctx, reopened, req, false)
+		default:
+			return CheckoutResult{}, ErrCheckoutStateConflict
+		}
+	default:
+		return CheckoutResult{}, ErrTrialCheckoutNotApplicable
+	}
+}
+
+func (s *Service) createAndRecordTrialCheckout(ctx context.Context, grant Grant, req CheckoutRequest) (CheckoutResult, error) {
+	if strings.TrimSpace(grant.StripeCustomerID) == "" {
+		return CheckoutResult{}, ErrCheckoutStateConflict
+	}
+	checkout, err := s.stripe.CreateTrialCheckout(ctx, CreateTrialCheckoutRequest{
+		StripeMode: grant.StripeMode, WorkspaceID: grant.WorkspaceID, PlanID: grant.PlanID,
+		TrialGrantID: grant.ID, TrialKind: grant.Kind, Environment: s.environment,
+		CustomerID: grant.StripeCustomerID, PriceID: req.PriceID, DurationDays: grant.DurationDays,
+		CheckoutAttempt: grant.CheckoutAttempt,
+		SuccessURL:      req.SuccessURL, CancelURL: req.CancelURL,
+	})
+	if err != nil {
+		var mutationErr *CheckoutMutationError
+		if errors.As(err, &mutationErr) && mutationErr.Outcome == MutationRejected {
+			if _, reopenErr := s.store.ReopenUnrecordedCheckout(ctx, grant.ID); reopenErr != nil && !errors.Is(reopenErr, ErrConcurrentTransition) {
+				return CheckoutResult{}, fmt.Errorf("create trial Checkout: %v; reopen claim: %w", err, reopenErr)
+			}
+		}
+		return CheckoutResult{}, fmt.Errorf("create trial Checkout: %w", err)
+	}
+	if checkout.ID == "" || checkout.Status != "open" || checkout.URL == "" || checkout.StripeMode != grant.StripeMode || !checkoutMetadataMatches(checkout.Metadata, grant, s.environment) {
+		return CheckoutResult{}, ErrCheckoutStateConflict
+	}
+	_, err = s.store.RecordCheckoutSession(ctx, grant.ID, checkout.ID)
+	if err == nil {
+		return checkoutResult(grant, checkout, s.environment, false), nil
+	}
+	if !errors.Is(err, ErrConcurrentTransition) {
+		return CheckoutResult{}, fmt.Errorf("record trial Checkout Session: %w", err)
+	}
+	current, loadErr := s.store.GetGrant(ctx, grant.ID)
+	if loadErr == nil && current.Status == StatusCheckoutPending && current.StripeCheckoutSessionID == checkout.ID {
+		return checkoutResult(current, checkout, s.environment, true), nil
+	}
+	if loadErr == nil && current.StripeCheckoutSessionID == checkout.ID && current.Status != StatusCheckoutPending {
+		return CheckoutResult{}, ErrCheckoutCompletionPending
+	}
+	return CheckoutResult{}, ErrCheckoutStateConflict
+}
+
+func (s *Service) checkoutTransitionRace(ctx context.Context, grant Grant, req CheckoutRequest, transitionErr error) (CheckoutResult, error) {
+	if !errors.Is(transitionErr, ErrConcurrentTransition) {
+		return CheckoutResult{}, fmt.Errorf("release expired trial Checkout: %w", transitionErr)
+	}
+	current, err := s.store.GetGrant(ctx, grant.ID)
+	if err == nil && current.Status == StatusPendingActivation && current.StripeCheckoutSessionID == "" && current.PlanID == req.PlanID {
+		return s.prepareCheckoutGrant(ctx, current, req, false)
+	}
+	if err == nil && current.Status == StatusCheckoutPending && current.PlanID == req.PlanID {
+		return CheckoutResult{}, ErrCheckoutStateConflict
+	}
+	if err == nil && current.Status != StatusPendingActivation {
+		return CheckoutResult{}, ErrCheckoutCompletionPending
+	}
+	return CheckoutResult{}, ErrCheckoutStateConflict
+}
+
+func checkoutMetadataMatches(metadata map[string]string, grant Grant, environment string) bool {
+	want := trialMetadata(grant.WorkspaceID, grant.PlanID, grant.ID, grant.Kind, environment)
+	for key, value := range want {
+		if metadata[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func checkoutResult(grant Grant, checkout CheckoutSnapshot, environment string, resumed bool) CheckoutResult {
+	return CheckoutResult{
+		SessionID: checkout.ID, URL: checkout.URL, TrialGrantID: grant.ID,
+		TrialDays: grant.DurationDays, Metadata: trialMetadata(grant.WorkspaceID, grant.PlanID, grant.ID, grant.Kind, environment),
+		Resumed: resumed,
+	}
 }
 
 func (s *Service) Grant(ctx context.Context, req GrantRequest) (Grant, error) {
