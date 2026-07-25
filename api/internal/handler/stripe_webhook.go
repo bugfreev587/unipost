@@ -228,6 +228,9 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 		}
 	case "customer.subscription.deleted":
 		if err := h.handleSubscriptionDeleted(r, event, mode); err != nil {
+			if errors.Is(err, errStripeWebhookNotApplicable) {
+				break
+			}
 			slog.Error("stripe webhook: subscription cancellation failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply subscription cancellation")
 			return
@@ -282,6 +285,9 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	if snapshot.ID != subscriptionID || snapshot.StripeMode != mode.Name {
 		return fmt.Errorf("retrieved Checkout subscription does not match Session")
 	}
+	if err := h.validateCheckoutSubscriptionBinding(r.Context(), session, snapshot); err != nil {
+		return err
+	}
 	projected, err := h.projectStripeSubscription(r, event, snapshot)
 	if err != nil {
 		return err
@@ -300,6 +306,33 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 		fmt.Sprintf("plan_changed:stripe.checkout.completed:%s:%s:%s", session.ID, normalizePlanID(projected.PreviousPlanID), normalizePlanID(planID)),
 	)
 	h.evaluatePaidQuotaHorizon(r.Context(), workspaceID)
+	return nil
+}
+
+func (h *StripeWebhookHandler) validateCheckoutSubscriptionBinding(ctx context.Context, session stripe.CheckoutSession, snapshot trials.SubscriptionSnapshot) error {
+	customerID := ""
+	if session.Customer != nil {
+		customerID = session.Customer.ID
+	}
+	if customerID == "" || customerID != snapshot.CustomerID {
+		return fmt.Errorf("Checkout Session customer does not match Subscription")
+	}
+	workspaceID := strings.TrimSpace(session.Metadata["workspace_id"])
+	planID := strings.TrimSpace(session.Metadata["plan_id"])
+	environment := strings.TrimSpace(session.Metadata[stripeCheckoutEnvironmentMetadataKey])
+	if workspaceID == "" || planID == "" || environment == "" || environment != runtimeenv.Current() {
+		return fmt.Errorf("Checkout Session billing metadata is incomplete")
+	}
+	if snapshot.Metadata["workspace_id"] != workspaceID || snapshot.Metadata["plan_id"] != planID || snapshot.Metadata[stripeCheckoutEnvironmentMetadataKey] != environment {
+		return fmt.Errorf("Checkout Session metadata does not match Subscription")
+	}
+	if snapshot.Metadata["trial_grant_id"] != session.Metadata["trial_grant_id"] || snapshot.Metadata["trial_kind"] != session.Metadata["trial_kind"] {
+		return fmt.Errorf("Checkout Session trial metadata does not match Subscription")
+	}
+	plan, err := h.queries.GetPlanByStripePriceID(ctx, pgtype.Text{String: snapshot.PriceID, Valid: snapshot.PriceID != ""})
+	if err != nil || plan.ID != planID {
+		return fmt.Errorf("Checkout Session plan does not match Subscription price")
+	}
 	return nil
 }
 
@@ -413,6 +446,9 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 		}
 		if err != nil {
 			return subscriptionProjectionResult{}, fmt.Errorf("reconcile managed trial subscription: %w", err)
+		}
+		if trialResult.DoNotProject {
+			return subscriptionProjectionResult{Managed: true, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: localSub.PlanID}, nil
 		}
 	}
 

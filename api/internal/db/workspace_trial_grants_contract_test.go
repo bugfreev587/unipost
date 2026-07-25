@@ -257,3 +257,14 @@ func TestWorkspaceTrialGrantRenewalCancellationKeepsGrantActive(t *testing.T) {
 		t.Fatalf("renewal cancellation must not make the grant terminal: %s", section)
 	}
 }
+
+func TestWorkspaceTrialGrantTerminalCancellationPreservesRenewalIntentTime(t *testing.T) {
+	source, err := os.ReadFile("queries/workspace_trial_grants.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(strings.Join(strings.Fields(string(source)), " "))
+	if !strings.Contains(body, "set status = 'canceled', canceled_at = coalesce(canceled_at, sqlc.arg(canceled_at))") {
+		t.Fatalf("terminal cancellation must preserve an earlier renewal intent time: %s", body)
+	}
+}

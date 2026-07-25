@@ -495,7 +495,7 @@ func (q *Queries) MarkWorkspaceTrialGrantActive(ctx context.Context, arg MarkWor
 const markWorkspaceTrialGrantCanceled = `-- name: MarkWorkspaceTrialGrantCanceled :one
 UPDATE workspace_trial_grants
 SET status = 'canceled',
-    canceled_at = $1,
+    canceled_at = COALESCE(canceled_at, $1),
     updated_at = NOW()
 WHERE id = $2
   AND status = $3

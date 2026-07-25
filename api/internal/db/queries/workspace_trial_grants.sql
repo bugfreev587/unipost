@@ -156,7 +156,7 @@ RETURNING *;
 -- name: MarkWorkspaceTrialGrantCanceled :one
 UPDATE workspace_trial_grants
 SET status = 'canceled',
-    canceled_at = sqlc.arg(canceled_at),
+    canceled_at = COALESCE(canceled_at, sqlc.arg(canceled_at)),
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
   AND status = sqlc.arg(expected_status)

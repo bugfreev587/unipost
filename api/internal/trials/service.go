@@ -194,6 +194,7 @@ type WebhookScheduleRequest struct {
 type WebhookReconcileResult struct {
 	Managed         bool
 	RenewalCanceled bool
+	DoNotProject    bool
 	Grant           Grant
 }
 
@@ -805,6 +806,7 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 	}
 	result := WebhookReconcileResult{Managed: true, Grant: grant}
 	if grant.Status.IsTerminal() {
+		result.DoNotProject = true
 		return result, nil
 	}
 	at := webhookTime(req.OccurredAt, s.now)
@@ -946,7 +948,7 @@ func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequ
 	if err != nil || !managed {
 		return WebhookReconcileResult{Managed: managed, Grant: grant}, err
 	}
-	if err := validateScheduleGrantMatch(grant, req.Snapshot, s.environment); err != nil {
+	if err := validateScheduleGrantMatch(grant, req.Snapshot, s.environment, req.EventType); err != nil {
 		return WebhookReconcileResult{}, err
 	}
 	if grant.Status.IsTerminal() {
@@ -968,27 +970,7 @@ func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequ
 			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
 		}
 	case "subscription_schedule.completed":
-		if grant.Status == StatusScheduled {
-			if !hasPhase {
-				return WebhookReconcileResult{}, ErrWebhookStateConflict
-			}
-			activated, updateErr := s.store.MarkActive(ctx, ActiveUpdate{ID: grant.ID, ExpectedStatus: StatusScheduled, StripeCustomerID: req.Snapshot.CustomerID, StripeSubscriptionID: req.Snapshot.SubscriptionID, StartedAt: phase.StartAt.UTC(), EndsAt: phase.EndAt.UTC(), ActivatedAt: phase.StartAt.UTC()})
-			if updateErr != nil && !errors.Is(updateErr, ErrConcurrentTransition) {
-				return WebhookReconcileResult{}, updateErr
-			}
-			if updateErr == nil {
-				grant = activated
-			} else if current, loadErr := s.store.GetGrant(ctx, grant.ID); loadErr == nil {
-				grant = current
-			}
-		}
-		if grant.Status == StatusActive {
-			updated, updateErr := s.store.MarkCompleted(ctx, grant.ID, StatusActive, at)
-			if errors.Is(updateErr, ErrConcurrentTransition) {
-				return s.reloadWebhookGrant(ctx, grant.ID)
-			}
-			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
-		}
+		return s.completeScheduleGrant(ctx, grant, req.Snapshot, phase, hasPhase, at)
 	case "subscription_schedule.canceled", "subscription_schedule.aborted":
 		if grant.Status == StatusScheduled || grant.Status == StatusActive {
 			updated, updateErr := s.store.MarkCanceled(ctx, grant.ID, grant.Status, at)
@@ -999,6 +981,9 @@ func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequ
 		}
 	case "subscription_schedule.released":
 		if grant.Status == StatusScheduled || grant.Status == StatusActive {
+			if req.Snapshot.EndBehavior == "release" && grant.EndsAt != nil && !at.Before(*grant.EndsAt) {
+				return s.completeScheduleGrant(ctx, grant, req.Snapshot, phase, hasPhase, at)
+			}
 			nextPlan := strings.TrimSpace(req.Snapshot.Metadata[metadataPlanID])
 			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, nextPlan, at)
 			if errors.Is(updateErr, ErrConcurrentTransition) {
@@ -1008,6 +993,44 @@ func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequ
 		}
 	}
 	return WebhookReconcileResult{Managed: true, Grant: grant}, nil
+}
+
+func (s *Service) completeScheduleGrant(ctx context.Context, grant Grant, snapshot ScheduleSnapshot, phase SchedulePhase, hasPhase bool, at time.Time) (WebhookReconcileResult, error) {
+	if grant.Status == StatusScheduled {
+		start, end := time.Time{}, time.Time{}
+		if hasPhase {
+			start, end = phase.StartAt.UTC(), phase.EndAt.UTC()
+		} else if grant.ScheduledStartAt != nil && grant.EndsAt != nil {
+			start, end = grant.ScheduledStartAt.UTC(), grant.EndsAt.UTC()
+		}
+		if start.IsZero() || !start.Before(end) {
+			return WebhookReconcileResult{}, ErrWebhookStateConflict
+		}
+		subscriptionID := snapshot.SubscriptionID
+		if subscriptionID == "" {
+			subscriptionID = snapshot.ReleasedSubscriptionID
+		}
+		if subscriptionID == "" {
+			subscriptionID = grant.StripeSubscriptionID
+		}
+		activated, updateErr := s.store.MarkActive(ctx, ActiveUpdate{ID: grant.ID, ExpectedStatus: StatusScheduled, StripeCustomerID: snapshot.CustomerID, StripeSubscriptionID: subscriptionID, StartedAt: start, EndsAt: end, ActivatedAt: start})
+		if updateErr != nil && !errors.Is(updateErr, ErrConcurrentTransition) {
+			return WebhookReconcileResult{}, updateErr
+		}
+		if updateErr == nil {
+			grant = activated
+		} else if current, loadErr := s.store.GetGrant(ctx, grant.ID); loadErr == nil {
+			grant = current
+		}
+	}
+	if grant.Status == StatusActive {
+		updated, updateErr := s.store.MarkCompleted(ctx, grant.ID, StatusActive, at)
+		if errors.Is(updateErr, ErrConcurrentTransition) {
+			return s.reloadWebhookGrant(ctx, grant.ID)
+		}
+		return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+	}
+	return WebhookReconcileResult{Managed: true, Grant: grant, DoNotProject: grant.Status.IsTerminal()}, nil
 }
 
 func (s *Service) validateWebhookEnvironment(metadata map[string]string) error {
@@ -1074,7 +1097,7 @@ func validateSubscriptionGrantMatch(grant Grant, snapshot SubscriptionSnapshot, 
 	return nil
 }
 
-func validateScheduleGrantMatch(grant Grant, snapshot ScheduleSnapshot, environment string) error {
+func validateScheduleGrantMatch(grant Grant, snapshot ScheduleSnapshot, environment, eventType string) error {
 	if snapshot.StripeMode == "" || snapshot.StripeMode != grant.StripeMode || snapshot.ID == "" || grant.Kind != KindPaidSamePlan {
 		return ErrWebhookStateConflict
 	}
@@ -1087,8 +1110,13 @@ func validateScheduleGrantMatch(grant Grant, snapshot ScheduleSnapshot, environm
 	if grant.StripeSubscriptionID != "" && snapshot.SubscriptionID != "" && snapshot.SubscriptionID != grant.StripeSubscriptionID {
 		return ErrWebhookStateConflict
 	}
-	if len(snapshot.Metadata) > 0 && !webhookMetadataMatches(snapshot.Metadata, grant, environment) {
-		return ErrWebhookStateConflict
+	if len(snapshot.Metadata) > 0 {
+		if snapshot.Metadata[metadataWorkspaceID] != grant.WorkspaceID || snapshot.Metadata[metadataTrialGrant] != grant.ID || snapshot.Metadata[metadataTrialKind] != string(grant.Kind) || snapshot.Metadata[metadataEnvironment] != environment {
+			return ErrWebhookStateConflict
+		}
+		if eventType != "subscription_schedule.released" && snapshot.Metadata[metadataPlanID] != grant.PlanID {
+			return ErrWebhookStateConflict
+		}
 	}
 	return nil
 }

@@ -1004,6 +1004,22 @@ func TestReconcileManagedTrialCancellationRecordsIntentWithoutTerminalTransition
 	}
 }
 
+func TestTerminalCancellationPreservesEarlierRenewalIntentTime(t *testing.T) {
+	h := newServiceHarness(t)
+	start := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	intent := start.Add(time.Hour)
+	terminal := end.Add(time.Minute)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", Status: StatusActive, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StartedAt: &start, EndsAt: &end, CanceledAt: &intent}
+	result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "canceled", CustomerID: "cus_1", PriceID: "price_growth", TrialStartAt: &start, TrialEndAt: &end, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindFreeToPaid, "staging")}, PlanID: "growth", OccurredAt: terminal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Grant.Status != StatusCanceled || result.Grant.CanceledAt == nil || !result.Grant.CanceledAt.Equal(intent) {
+		t.Fatalf("grant = %#v, want original intent %s", result.Grant, intent)
+	}
+}
+
 func TestReconcileCheckoutExpiredReleasesOnlyExactPendingAttempt(t *testing.T) {
 	h := newServiceHarness(t)
 	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", Status: StatusCheckoutPending, StripeMode: "live", StripeCheckoutSessionID: "cs_exact"}
@@ -1043,6 +1059,56 @@ func TestReconcileScheduleLifecycleIsGuardedAndMonotonic(t *testing.T) {
 		t.Fatalf("active=%d completed=%d, want 1/1", h.store.markActiveCalls, h.store.markCompletedCalls)
 	}
 }
+
+func TestReconcileSubscriptionTerminalGrantDoesNotProjectDelayedTrialingEvent(t *testing.T) {
+	for _, status := range []Status{StatusCompleted, StatusCanceled, StatusSuperseded} {
+		t.Run(string(status), func(t *testing.T) {
+			h := newServiceHarness(t)
+			start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+			end := start.Add(30 * 24 * time.Hour)
+			h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", Status: status, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StartedAt: &start, EndsAt: &end}
+			result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "trialing", CustomerID: "cus_1", PriceID: "price_growth", TrialStartAt: &start, TrialEndAt: &end, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindFreeToPaid, "staging")}, PlanID: "growth", OccurredAt: start})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Managed || !result.DoNotProject || result.Grant.Status != status {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestReconcileReleasedScheduleAfterTrialEndCompletesOutOfOrder(t *testing.T) {
+	h := newServiceHarness(t)
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "growth", Status: StatusScheduled, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StripeScheduleID: "sched_1", ScheduledStartAt: &start, EndsAt: &end}
+	snapshot := ScheduleSnapshot{StripeMode: "live", ID: "sched_1", Status: "released", EndBehavior: "release", CustomerID: "cus_1", ReleasedSubscriptionID: "sub_1", ReleasedAt: &end, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindPaidSamePlan, "staging"), Phases: []SchedulePhase{{PriceID: "price_growth", StartAt: start, EndAt: end, TrialEndAt: end, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindPaidSamePlan, "staging")}}}
+	result, err := h.service.ReconcileSchedule(t.Context(), WebhookScheduleRequest{EventType: "subscription_schedule.released", Snapshot: snapshot, OccurredAt: end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Grant.Status != StatusCompleted || h.store.markActiveCalls != 1 || h.store.markCompletedCalls != 1 || h.store.markSupersededCalls != 0 {
+		t.Fatalf("result=%#v active=%d completed=%d superseded=%d", result, h.store.markActiveCalls, h.store.markCompletedCalls, h.store.markSupersededCalls)
+	}
+}
+
+func TestReconcileEarlyReleasedScheduleIsSuperseded(t *testing.T) {
+	h := newServiceHarness(t)
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "growth", Status: StatusScheduled, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StripeScheduleID: "sched_1", ScheduledStartAt: &start, EndsAt: &end}
+	snapshot := ScheduleSnapshot{StripeMode: "live", ID: "sched_1", Status: "released", EndBehavior: "release", CustomerID: "cus_1", ReleasedSubscriptionID: "sub_1", ReleasedAt: webhookPtr(start.Add(time.Hour)), Metadata: trialMetadata("ws_1", "growth", "grant_1", KindPaidSamePlan, "staging")}
+	result, err := h.service.ReconcileSchedule(t.Context(), WebhookScheduleRequest{EventType: "subscription_schedule.released", Snapshot: snapshot, OccurredAt: start.Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Grant.Status != StatusSuperseded || h.store.markSupersededCalls != 1 {
+		t.Fatalf("result=%#v superseded=%d", result, h.store.markSupersededCalls)
+	}
+}
+
+func webhookPtr(value time.Time) *time.Time { return &value }
 
 func validServiceCheckoutRequest() CheckoutRequest {
 	return CheckoutRequest{
@@ -1285,7 +1351,10 @@ func (s *fakeGrantStore) MarkCanceled(_ context.Context, id string, expected Sta
 		return Grant{}, ErrConcurrentTransition
 	}
 	s.markCanceledCalls++
-	s.grant.Status, s.grant.CanceledAt = StatusCanceled, &at
+	s.grant.Status = StatusCanceled
+	if s.grant.CanceledAt == nil {
+		s.grant.CanceledAt = &at
+	}
 	return s.grant, nil
 }
 func (s *fakeGrantStore) MarkCompleted(_ context.Context, id string, expected Status, at time.Time) (Grant, error) {
