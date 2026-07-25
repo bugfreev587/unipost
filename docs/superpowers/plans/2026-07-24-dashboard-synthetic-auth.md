@@ -249,7 +249,7 @@ Assert:
 assert.doesNotMatch(deployedWorkflow, /DASHBOARD_TEST_(EMAIL|PASSWORD)/);
 assert.match(deployedWorkflow, /DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY/);
 assert.match(deployedWorkflow, /test:regression:dashboard:authenticated/);
-assert.match(previewWorkflow, /DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY/);
+assert.match(previewWorkflow, /CLERK_DEVELOPMENT_SECRET_KEY/);
 assert.match(previewWorkflow, /DASHBOARD_TEST_CLERK_SECRET_KEY/);
 ```
 
@@ -274,7 +274,7 @@ DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.DASHBOARD_TEST_CLERK_PRODUCTION_SEC
 and run the public and authenticated scripts as separate required steps. In Preview Acceptance, pass:
 
 ```yaml
-DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY }}
+DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
 EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
 ```
 
@@ -284,7 +284,7 @@ to the Preview Playwright step. Never print either secret.
 
 Replace the email/password secret list with:
 
-- `DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY` (`sk_test_`)
+- `CLERK_DEVELOPMENT_SECRET_KEY` (`sk_test_`, existing shared Development credential)
 - `DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY` (`sk_live_`)
 
 Document passwordless disposable users, ticket sign-in, explicit bootstrap, synchronous `/v1/me` cleanup, and the separation between public/local and authenticated deployed suites.
@@ -316,27 +316,26 @@ git commit -m "ci: run dashboard smoke with Clerk tickets"
 gh secret list
 ```
 
-Expected: determine whether the two new secret names already exist; GitHub never returns values.
+Expected: confirm the existing Development secret and determine whether the new Production secret already exists; GitHub never returns values.
 
-- [ ] **Step 2: Retrieve the Development and Production Clerk secret keys through the authorized Chrome session**
+- [ ] **Step 2: Retrieve the Production Clerk secret key through the authorized Chrome session**
 
-Use the signed-in Clerk Dashboard UI for the UniPost application. Select Development before copying the `sk_test_` key and Production before copying the `sk_live_` key. Keep values out of terminal output, commentary, screenshots, and artifacts.
+Use the signed-in Clerk Dashboard UI for the UniPost application. Select Production before copying the `sk_live_` key. Reuse the repository's existing `CLERK_DEVELOPMENT_SECRET_KEY` for Development and Preview. Keep values out of terminal output, commentary, screenshots, and artifacts.
 
-- [ ] **Step 3: Store both GitHub Actions secrets securely**
+- [ ] **Step 3: Store the Production GitHub Actions secret securely**
 
-Pipe each value directly to `gh secret set` without command-line interpolation or echoed output:
+Paste the value directly into the GitHub Actions secret form without command-line interpolation or echoed output:
 
 ```bash
-gh secret set DASHBOARD_TEST_CLERK_DEVELOPMENT_SECRET_KEY
-gh secret set DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY
+# Enter DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY in GitHub repository settings.
 ```
 
-Expected: both commands report the secret name was set; values remain unreadable.
+Expected: GitHub reports the Production secret was added; values remain unreadable.
 
 - [ ] **Step 4: Verify only secret presence**
 
 ```bash
-gh secret list | rg 'DASHBOARD_TEST_CLERK_(DEVELOPMENT|PRODUCTION)_SECRET_KEY'
+gh secret list | rg 'CLERK_DEVELOPMENT_SECRET_KEY|DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY'
 ```
 
 Expected: both names are listed with update timestamps.

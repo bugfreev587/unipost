@@ -233,6 +233,44 @@ test("browser sign-in uses Clerk's email overload and restores the secret enviro
   assert.equal(process.env.CLERK_SECRET_KEY, originalSecret);
 });
 
+test("browser sign-in establishes the Vercel Preview bypass cookie before navigation", async () => {
+  const config = loadSyntheticAuthConfig({
+    DASHBOARD_BASE_URL: "https://unipost-pr-42.vercel.app",
+    DASHBOARD_TEST_CLERK_SECRET_KEY: "sk_test_valid",
+    EXPECTED_PREVIEW_API_URL: "https://preview-api.up.railway.app",
+    VERCEL_AUTOMATION_BYPASS_SECRET: "preview-bypass",
+  });
+  const requests = [];
+  const page = {
+    request: {
+      async get(url, options) {
+        requests.push({ url, options });
+        return { ok: () => true, status: () => 200 };
+      },
+    },
+    async goto() {},
+  };
+
+  await signInSyntheticUser(page, config, {
+    id: "user_synthetic_1",
+    email: "codex-dashboard-regression@example.com",
+  }, {
+    loadPublishableKey: async () => "pk_test_example",
+    clerkSetup: async () => {},
+    signIn: async () => {},
+  });
+
+  assert.deepEqual(requests, [{
+    url: "https://unipost-pr-42.vercel.app/pricing",
+    options: {
+      headers: {
+        "x-vercel-protection-bypass": "preview-bypass",
+        "x-vercel-set-bypass-cookie": "true",
+      },
+    },
+  }]);
+});
+
 test("bootstrap uses the active Clerk token before resolving a profile", async () => {
   const config = loadSyntheticAuthConfig({
     DASHBOARD_BASE_URL: "https://dev-app.unipost.dev",

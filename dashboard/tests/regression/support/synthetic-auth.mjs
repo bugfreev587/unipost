@@ -121,6 +121,7 @@ export async function signInSyntheticUser(page, config, identity, dependencies =
   const clerkSetup = dependencies.clerkSetup ?? clerkModule.clerkSetup;
   const signIn = dependencies.signIn ?? clerkModule.clerk.signIn;
   const loadPublishableKey = dependencies.loadPublishableKey ?? loadClerkPublishableKey;
+  await establishPreviewBypassCookie(page, config);
   const publishableKey = await loadPublishableKey(config);
 
   await withClerkSecret(config.clerkSecretKey, async () => {
@@ -132,6 +133,19 @@ export async function signInSyntheticUser(page, config, identity, dependencies =
     await page.goto(`${config.baseURL}/pricing`, { waitUntil: "domcontentloaded" });
     await signIn({ page, emailAddress: identity.email });
   });
+}
+
+async function establishPreviewBypassCookie(page, config) {
+  if (!config.vercelBypassSecret) return;
+  const response = await page.request.get(`${config.baseURL}/pricing`, {
+    headers: {
+      "x-vercel-protection-bypass": config.vercelBypassSecret,
+      "x-vercel-set-bypass-cookie": "true",
+    },
+  });
+  if (!response.ok()) {
+    throw new Error(`Could not establish Vercel Preview access (${response.status()})`);
+  }
 }
 
 export async function withClerkSecret(secretKey, operation) {
