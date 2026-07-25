@@ -169,6 +169,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
 
   const proxy = await read("dashboard/src/proxy.ts");
   assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
+  assert.match(
+    proxy,
+    /isVercelPreviewHost\(hostname\)[\s\S]*pathname === "\/"[\s\S]*url\.pathname = "\/marketing"/,
+    "a combined Vercel Preview host must serve the public homepage instead of Clerk-protecting the app root",
+  );
 });
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {
