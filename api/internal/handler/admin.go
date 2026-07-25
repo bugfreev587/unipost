@@ -1043,21 +1043,23 @@ type adminBillingRow struct {
 }
 
 type adminBillingTrialSummary struct {
-	ID               string                `json:"id"`
-	Kind             trials.Kind           `json:"kind"`
-	PlanID           string                `json:"plan_id"`
-	DurationDays     int32                 `json:"duration_days"`
-	Status           trials.Status         `json:"status"`
-	GrantedAt        *time.Time            `json:"granted_at,omitempty"`
-	ScheduledStartAt *time.Time            `json:"scheduled_start_at,omitempty"`
-	StartedAt        *time.Time            `json:"started_at,omitempty"`
-	EndsAt           *time.Time            `json:"ends_at,omitempty"`
-	ActivatedAt      *time.Time            `json:"activated_at,omitempty"`
-	CanceledAt       *time.Time            `json:"canceled_at,omitempty"`
-	RevokedAt        *time.Time            `json:"revoked_at,omitempty"`
-	SupersededAt     *time.Time            `json:"superseded_at,omitempty"`
-	CompletedAt      *time.Time            `json:"completed_at,omitempty"`
-	FailureReason    trials.TerminalReason `json:"failure_reason,omitempty"`
+	ID                   string                `json:"id"`
+	Kind                 trials.Kind           `json:"kind"`
+	PlanID               string                `json:"plan_id"`
+	DurationDays         int32                 `json:"duration_days"`
+	Status               trials.Status         `json:"status"`
+	GrantedAt            *time.Time            `json:"granted_at,omitempty"`
+	ScheduledStartAt     *time.Time            `json:"scheduled_start_at,omitempty"`
+	StartedAt            *time.Time            `json:"started_at,omitempty"`
+	EndsAt               *time.Time            `json:"ends_at,omitempty"`
+	ActivatedAt          *time.Time            `json:"activated_at,omitempty"`
+	CanceledAt           *time.Time            `json:"canceled_at,omitempty"`
+	RevokedAt            *time.Time            `json:"revoked_at,omitempty"`
+	SupersededAt         *time.Time            `json:"superseded_at,omitempty"`
+	CompletedAt          *time.Time            `json:"completed_at,omitempty"`
+	StripeSubscriptionID *string               `json:"stripe_subscription_id,omitempty"`
+	StripeScheduleID     *string               `json:"stripe_schedule_id,omitempty"`
+	FailureReason        trials.TerminalReason `json:"failure_reason,omitempty"`
 }
 
 type adminBillingQuery struct {
@@ -2161,7 +2163,9 @@ SELECT
   trial.canceled_at,
   trial.revoked_at,
   trial.superseded_at,
-  trial.completed_at
+  trial.completed_at,
+  trial.stripe_subscription_id,
+  trial.stripe_schedule_id
 FROM subscriptions s
 JOIN workspaces w ON w.id = s.workspace_id
 JOIN users u ON u.id = w.user_id
@@ -2171,6 +2175,8 @@ LEFT JOIN LATERAL (
   SELECT tg.id, tg.kind, tg.plan_id, tg.duration_days, tg.status,
          tg.granted_at, tg.scheduled_start_at, tg.started_at, tg.ends_at,
          tg.activated_at, tg.canceled_at, tg.revoked_at, tg.superseded_at, tg.completed_at,
+         NULLIF(tg.stripe_subscription_id, '') AS stripe_subscription_id,
+         NULLIF(tg.stripe_schedule_id, '') AS stripe_schedule_id,
          tg.updated_at
   FROM workspace_trial_grants tg
   WHERE tg.workspace_id = w.id
@@ -2179,7 +2185,10 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) trial ON TRUE
 WHERE u.id != ALL($1)
-  AND GREATEST(s.updated_at, COALESCE(trial.updated_at, s.updated_at)) >= NOW() - ($2::INT * INTERVAL '1 day')
+  AND (
+    trial.status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')
+    OR GREATEST(s.updated_at, COALESCE(trial.updated_at, s.updated_at)) >= NOW() - ($2::INT * INTERVAL '1 day')
+  )
   AND ($3::TEXT = '' OR s.status = $3)
   AND ($4::TEXT = '' OR s.plan_id = $4)
   AND (
@@ -2213,7 +2222,7 @@ func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery)
 		var item adminBillingRow
 		var stripeCustomerID, stripeSubscriptionID *string
 		var currentPeriodEnd *time.Time
-		var trialID, trialKind, trialPlanID, trialStatus *string
+		var trialID, trialKind, trialPlanID, trialStatus, trialSubscriptionID, trialScheduleID *string
 		var trialDurationDays *int32
 		var trialGrantedAt, trialScheduledStartAt, trialStartedAt, trialEndsAt, trialActivatedAt, trialCanceledAt, trialRevokedAt, trialSupersededAt, trialCompletedAt *time.Time
 		if err := rows.Scan(
@@ -2247,6 +2256,8 @@ func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery)
 			&trialRevokedAt,
 			&trialSupersededAt,
 			&trialCompletedAt,
+			&trialSubscriptionID,
+			&trialScheduleID,
 		); err != nil {
 			return nil, err
 		}
@@ -2260,6 +2271,7 @@ func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery)
 				GrantedAt: trialGrantedAt, ScheduledStartAt: trialScheduledStartAt, StartedAt: trialStartedAt,
 				EndsAt: trialEndsAt, ActivatedAt: trialActivatedAt, CanceledAt: trialCanceledAt, RevokedAt: trialRevokedAt,
 				SupersededAt: trialSupersededAt, CompletedAt: trialCompletedAt,
+				StripeSubscriptionID: trialSubscriptionID, StripeScheduleID: trialScheduleID,
 			}
 			if status == trials.StatusFailed {
 				item.Trial.FailureReason = trials.TerminalReasonUnavailable

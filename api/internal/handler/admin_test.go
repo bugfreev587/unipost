@@ -50,22 +50,24 @@ func TestAdminGrantTrialReturnsCreatedAndPassesAuthenticatedActor(t *testing.T) 
 func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) {
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(30 * 24 * time.Hour)
+	subscriptionID := "sub_trial"
+	scheduleID := "sched_trial"
 	row := adminBillingRow{Trial: &adminBillingTrialSummary{
 		ID: "grant_1", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 30,
 		Status: trials.StatusFailed, ScheduledStartAt: &start, EndsAt: &end,
-		FailureReason: trials.TerminalReasonUnavailable,
+		FailureReason: trials.TerminalReasonUnavailable, StripeSubscriptionID: &subscriptionID, StripeScheduleID: &scheduleID,
 	}}
 	encoded, err := json.Marshal(row)
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(encoded)
-	for _, want := range []string{`"trial"`, `"id":"grant_1"`, `"failure_reason":"trial_unavailable"`} {
+	for _, want := range []string{`"trial"`, `"id":"grant_1"`, `"failure_reason":"trial_unavailable"`, `"stripe_subscription_id":"sub_trial"`, `"stripe_schedule_id":"sched_trial"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("summary missing %q: %s", want, body)
 		}
 	}
-	for _, forbidden := range []string{"granted_by_user_id", "stripe_customer_id", "stripe_subscription_id", "stripe_schedule_id", "failure_code", "failure_message"} {
+	for _, forbidden := range []string{"granted_by_user_id", "stripe_customer_id", "failure_code", "failure_message"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("summary leaked %q: %s", forbidden, body)
 		}
@@ -77,8 +79,34 @@ func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) 
 	if strings.Contains(normalized, "status in ('active', 'trialing')") {
 		t.Fatal("admin billing query must not count trialing subscriptions as revenue")
 	}
-	if !strings.Contains(normalized, "greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at))") {
-		t.Fatal("a newly granted trial must keep an otherwise-old billing row visible")
+	if !strings.Contains(normalized, "trial.status in ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')\n    or greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at))") {
+		t.Fatal("old open grants must remain visible while terminal grants use the freshness cutoff")
+	}
+}
+
+func TestAdminBillingTrialSummaryOmitsMissingStripeIDs(t *testing.T) {
+	encoded, err := json.Marshal(adminBillingRow{Trial: &adminBillingTrialSummary{ID: "grant_1", Kind: trials.KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: trials.StatusPendingActivation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(encoded)
+	for _, omitted := range []string{"stripe_subscription_id", "stripe_schedule_id"} {
+		if strings.Contains(body, omitted) {
+			t.Fatalf("nil optional field %q was emitted: %s", omitted, body)
+		}
+	}
+}
+
+func TestAdminBillingTrialDaysCutoffKeepsOldOpenAndFiltersOldTerminal(t *testing.T) {
+	normalized := strings.ToLower(adminBillingSQL)
+	const openClause = "trial.status in ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')"
+	if !strings.Contains(normalized, "and (\n    "+openClause+"\n    or greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at)) >= now() - ($2::int * interval '1 day')\n  )") {
+		t.Fatalf("visibility predicate does not let an old open grant bypass only the days cutoff: %s", adminBillingSQL)
+	}
+	for _, terminal := range []string{"completed", "canceled", "revoked", "superseded", "failed"} {
+		if strings.Contains(openClause, "'"+terminal+"'") {
+			t.Fatalf("terminal status %q bypasses the days cutoff", terminal)
+		}
 	}
 }
 
