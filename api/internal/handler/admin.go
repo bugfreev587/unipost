@@ -21,7 +21,13 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
+
+type adminTrialService interface {
+	Grant(context.Context, trials.GrantRequest) (trials.Grant, error)
+	Revoke(context.Context, trials.RevokeRequest) (trials.Grant, error)
+}
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
 // Auth + ADMIN_USERS gating live in auth.AdminMiddleware. We talk to
@@ -33,6 +39,12 @@ type AdminHandler struct {
 	queries   *db.Queries // for audit-log writes
 	holds     paidquota.HoldReconciler
 	evaluator paidQuotaEvaluationService
+	trials    adminTrialService
+}
+
+func (h *AdminHandler) SetTrialService(service adminTrialService) *AdminHandler {
+	h.trials = service
+	return h
 }
 
 func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
@@ -3140,6 +3152,97 @@ func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AdminHandler) GrantTrial(w http.ResponseWriter, r *http.Request) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceID"))
+	if workspaceID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "workspace_id is required")
+		return
+	}
+	var body struct {
+		PlanID       string `json:"plan_id"`
+		DurationDays int32  `json:"duration_days"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid trial grant request")
+		return
+	}
+	if h.trials == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "trial service is unavailable")
+		return
+	}
+
+	grant, err := h.trials.Grant(r.Context(), trials.GrantRequest{
+		WorkspaceID: workspaceID, PlanID: strings.TrimSpace(body.PlanID),
+		DurationDays: body.DurationDays, ActorUserID: auth.GetUserID(r.Context()),
+	})
+	if err != nil {
+		writeAdminTrialError(w, err)
+		return
+	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID: workspaceID, ActorUserID: auth.GetUserID(r.Context()),
+		Action: audit.ActionTrialGranted, ResourceType: "workspace_trial_grant", ResourceID: grant.ID,
+		Category: audit.CategoryBilling, IPAddress: r.RemoteAddr, UserAgent: r.UserAgent(),
+		After: grant, Metadata: trialAuditMetadata(grant),
+	})
+	writeCreated(w, grant)
+}
+
+func (h *AdminHandler) RevokeTrial(w http.ResponseWriter, r *http.Request) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceID"))
+	trialID := strings.TrimSpace(chi.URLParam(r, "trialID"))
+	if workspaceID == "" || trialID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "workspace_id and trial_id are required")
+		return
+	}
+	if h.trials == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "trial service is unavailable")
+		return
+	}
+	grant, err := h.trials.Revoke(r.Context(), trials.RevokeRequest{
+		WorkspaceID: workspaceID, GrantID: trialID, ActorUserID: auth.GetUserID(r.Context()),
+	})
+	if err != nil {
+		writeAdminTrialError(w, err)
+		return
+	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID: workspaceID, ActorUserID: auth.GetUserID(r.Context()),
+		Action: audit.ActionTrialRevoked, ResourceType: "workspace_trial_grant", ResourceID: grant.ID,
+		Category: audit.CategoryBilling, IPAddress: r.RemoteAddr, UserAgent: r.UserAgent(),
+		Before: map[string]any{"status": grant.PreviousStatus}, After: grant,
+		Metadata: trialAuditMetadata(grant),
+	})
+	writeSuccess(w, grant)
+}
+
+func writeAdminTrialError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, trials.ErrInvalidPlan):
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "plan_id must be one of: api, basic, growth, team")
+	case errors.Is(err, trials.ErrInvalidDuration):
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "duration_days must be between 1 and 730")
+	case errors.Is(err, trials.ErrWorkspaceNotFound), errors.Is(err, trials.ErrGrantNotFound):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "workspace or trial grant not found")
+	case errors.Is(err, trials.ErrOpenGrantExists), errors.Is(err, trials.ErrPaidPlanMismatch),
+		errors.Is(err, trials.ErrIneligibleSubscription), errors.Is(err, trials.ErrRevokeConflict):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "trial operation failed")
+	}
+}
+
+func trialAuditMetadata(grant trials.Grant) map[string]any {
+	return map[string]any{
+		"kind": grant.Kind, "plan_id": grant.PlanID, "duration_days": grant.DurationDays,
+		"stripe_mode": grant.StripeMode, "stripe_customer_id": grant.StripeCustomerID,
+		"stripe_subscription_id": grant.StripeSubscriptionID, "stripe_schedule_id": grant.StripeScheduleID,
+		"stripe_checkout_session_id": grant.StripeCheckoutSessionID,
+	}
 }
 
 func (h *AdminHandler) ListBilling(w http.ResponseWriter, r *http.Request) {

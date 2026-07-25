@@ -1,10 +1,162 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/xiaoboyu/unipost-api/internal/audit"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
+
+func TestAdminGrantTrialReturnsCreatedAndPassesAuthenticatedActor(t *testing.T) {
+	service := &fakeAdminTrialService{grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_1", Kind: trials.KindFreeToPaid,
+		PlanID: "growth", DurationDays: 30, Status: trials.StatusPendingActivation,
+		GrantedAt: time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
+	}}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+
+	h.GrantTrial(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if service.grantReq.ActorUserID != "admin_1" || service.grantReq.WorkspaceID != "ws_1" {
+		t.Fatalf("request = %#v", service.grantReq)
+	}
+	var response struct {
+		Data trials.Grant `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.ID != "grant_1" || response.Data.Status != trials.StatusPendingActivation {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+}
+
+func TestAdminGrantTrialStatusMapping(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "invalid plan", err: trials.ErrInvalidPlan, want: http.StatusUnprocessableEntity},
+		{name: "invalid duration", err: trials.ErrInvalidDuration, want: http.StatusUnprocessableEntity},
+		{name: "workspace missing", err: trials.ErrWorkspaceNotFound, want: http.StatusNotFound},
+		{name: "open grant", err: trials.ErrOpenGrantExists, want: http.StatusConflict},
+		{name: "paid mismatch", err: trials.ErrPaidPlanMismatch, want: http.StatusConflict},
+		{name: "ineligible", err: trials.ErrIneligibleSubscription, want: http.StatusConflict},
+		{name: "internal", err: errors.New("database unavailable"), want: http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeAdminTrialService{grantErr: test.err}
+			h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+			req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+			rec := httptest.NewRecorder()
+			h.GrantTrial(rec, req)
+			if rec.Code != test.want {
+				t.Fatalf("status=%d body=%s, want %d", rec.Code, rec.Body.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestAdminGrantTrialRejectsMalformedBodyBeforeService(t *testing.T) {
+	service := &fakeAdminTrialService{}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30.5}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+	h.GrantTrial(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity || service.grantCalls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", rec.Code, service.grantCalls, rec.Body.String())
+	}
+}
+
+func TestAdminRevokeTrialReturnsConflictWhenCheckoutCompletionWins(t *testing.T) {
+	service := &fakeAdminTrialService{revokeErr: trials.ErrRevokeConflict}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials/grant_1/revoke", `{}`, map[string]string{"workspaceID": "ws_1", "trialID": "grant_1"})
+	rec := httptest.NewRecorder()
+	h.RevokeTrial(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if service.revokeReq.ActorUserID != "admin_1" || service.revokeReq.GrantID != "grant_1" {
+		t.Fatalf("request=%#v", service.revokeReq)
+	}
+}
+
+func TestAdminTrialRoutesAndAuditActionsAreWired(t *testing.T) {
+	source, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)`,
+		`r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)`,
+	} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("main route missing %q", want)
+		}
+	}
+	if audit.ActionTrialGranted != "TRIAL.GRANTED" || audit.ActionTrialRevoked != "TRIAL.REVOKED" {
+		t.Fatalf("audit actions = %q, %q", audit.ActionTrialGranted, audit.ActionTrialRevoked)
+	}
+	adminSource, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"audit.ActionTrialGranted", "audit.ActionTrialRevoked"} {
+		if !strings.Contains(string(adminSource), want) {
+			t.Errorf("admin audit missing %q", want)
+		}
+	}
+}
+
+type fakeAdminTrialService struct {
+	grant      trials.Grant
+	grantErr   error
+	revokeErr  error
+	grantReq   trials.GrantRequest
+	revokeReq  trials.RevokeRequest
+	grantCalls int
+}
+
+func (s *fakeAdminTrialService) Grant(_ context.Context, req trials.GrantRequest) (trials.Grant, error) {
+	s.grantCalls++
+	s.grantReq = req
+	return s.grant, s.grantErr
+}
+func (s *fakeAdminTrialService) Revoke(_ context.Context, req trials.RevokeRequest) (trials.Grant, error) {
+	s.revokeReq = req
+	if s.grant.ID == "" {
+		s.grant = trials.Grant{ID: req.GrantID, WorkspaceID: req.WorkspaceID, Status: trials.StatusRevoked}
+	}
+	return s.grant, s.revokeErr
+}
+
+func adminTrialRequest(t *testing.T, method, target, body string, params map[string]string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "admin_1"))
+	routeContext := chi.NewRouteContext()
+	for key, value := range params {
+		routeContext.URLParams.Add(key, value)
+	}
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+}
 
 func TestAdminPostPlatformsSQLIncludesStoredTargetPlatforms(t *testing.T) {
 	sql := adminPostPlatformsSQL("sp")

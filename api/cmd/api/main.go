@@ -51,6 +51,7 @@ import (
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -734,7 +735,15 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
+	trialService := trials.NewService(
+		trials.NewPostgresStore(queries),
+		trials.NewStripeGateway(stripeMgr),
+		trials.NewManagerModeResolver(stripeMgr),
+		runtimeenv.Current(),
+		time.Now,
+	)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries).
+		SetTrialService(trialService).
 		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService)
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
@@ -951,6 +960,8 @@ func main() {
 		// gates end-to-end. Already protected by the admin middleware
 		// guarding this group.
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
+		r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)
+		r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)
 		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
 		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
 		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
