@@ -191,9 +191,10 @@ func TestTerminalGrantProjectionRetryConvergesAfterLocalWriteFailure(t *testing.
 	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
 	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
 	store.updateErrors = []error{errors.New("database unavailable"), nil}
+	trialEnd := time.Unix(1784822617, 0).UTC()
 	trial := &recordingTrialWebhookService{subscriptionResults: []trials.WebhookReconcileResult{
-		{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusCompleted}},
-		{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusCompleted}},
+		{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusCompleted, EndsAt: &trialEnd, CompletedAt: &trialEnd}},
+		{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusCompleted, EndsAt: &trialEnd, CompletedAt: &trialEnd}},
 	}}
 	h, secret := newTestStripeWebhookHandler(store, nil)
 	h.SetTrialWebhookService(trial)
@@ -206,6 +207,26 @@ func TestTerminalGrantProjectionRetryConvergesAfterLocalWriteFailure(t *testing.
 	}
 	if store.subscription.Status != "active" || store.subscription.PlanID != "basic" || store.upserts != 1 || trial.subscriptionCalls != 2 {
 		t.Fatalf("subscription=%#v upserts=%d reconcile=%d", store.subscription, store.upserts, trial.subscriptionCalls)
+	}
+}
+
+func TestCompletedPaidTrialDelayedPreTrialActiveEventPreservesCurrentPeriod(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "active"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	currentStart := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	currentEnd := currentStart.Add(30 * 24 * time.Hour)
+	store.subscription.CurrentPeriodStart = pgtype.Timestamptz{Time: currentStart, Valid: true}
+	store.subscription.CurrentPeriodEnd = pgtype.Timestamptz{Time: currentEnd, Valid: true}
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, DoNotProject: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindPaidSamePlan, PlanID: "basic", Status: trials.StatusCompleted}}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, false, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "paid_same_plan", "unipost_environment": "staging"})
+	if response.Code != http.StatusOK || store.upserts != 0 || !store.subscription.CurrentPeriodStart.Time.Equal(currentStart) || !store.subscription.CurrentPeriodEnd.Time.Equal(currentEnd) {
+		t.Fatalf("status=%d upserts=%d period=%s..%s body=%s", response.Code, store.upserts, store.subscription.CurrentPeriodStart.Time, store.subscription.CurrentPeriodEnd.Time, response.Body.String())
 	}
 }
 

@@ -804,12 +804,12 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 	if err := validateSubscriptionGrantMatch(grant, snapshot, req.PlanID, s.environment); err != nil {
 		return WebhookReconcileResult{}, err
 	}
+	at := webhookTime(req.OccurredAt, s.now)
 	result := WebhookReconcileResult{Managed: true, Grant: grant}
 	if grant.Status.IsTerminal() {
-		result.DoNotProject = !terminalSubscriptionProjectionCompatible(grant, snapshot, req.PlanID)
+		result.DoNotProject = !terminalSubscriptionProjectionCompatible(grant, snapshot, req.PlanID, at)
 		return result, nil
 	}
-	at := webhookTime(req.OccurredAt, s.now)
 
 	if req.PlanID != grant.PlanID {
 		if grant.Status == StatusScheduled || grant.Status == StatusActive {
@@ -1099,14 +1099,17 @@ func validateSubscriptionGrantMatch(grant Grant, snapshot SubscriptionSnapshot, 
 	return nil
 }
 
-func terminalSubscriptionProjectionCompatible(grant Grant, snapshot SubscriptionSnapshot, planID string) bool {
+func terminalSubscriptionProjectionCompatible(grant Grant, snapshot SubscriptionSnapshot, planID string, occurredAt time.Time) bool {
 	switch grant.Status {
 	case StatusCompleted:
-		return snapshot.Status == "active" && planID == grant.PlanID
+		if snapshot.Status != "active" || planID != grant.PlanID || grant.EndsAt == nil || snapshot.CurrentPeriodStartAt == nil || snapshot.CurrentPeriodStartAt.Before(*grant.EndsAt) {
+			return false
+		}
+		return grant.CompletedAt == nil || !occurredAt.Before(*grant.CompletedAt)
 	case StatusCanceled:
-		return (snapshot.Status == "canceled" || snapshot.Status == "unpaid" || snapshot.Status == "incomplete_expired") && planID == grant.PlanID
+		return false
 	case StatusSuperseded:
-		if snapshot.Status != "active" || planID == "" || planID == grant.PlanID {
+		if snapshot.Status != "active" || planID == "" || planID == grant.PlanID || grant.SupersededAt == nil || snapshot.CurrentPeriodStartAt == nil || snapshot.CurrentPeriodEndAt == nil || snapshot.CurrentPeriodStartAt.Before(*grant.SupersededAt) || !snapshot.CurrentPeriodStartAt.Before(*snapshot.CurrentPeriodEndAt) || occurredAt.Before(*grant.SupersededAt) {
 			return false
 		}
 		return grant.SupersededByPlanID == "" || planID == grant.SupersededByPlanID
