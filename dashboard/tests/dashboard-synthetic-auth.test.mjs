@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { test } from "node:test";
 
 import {
@@ -11,6 +13,28 @@ import {
   runWithCleanup,
   signInSyntheticUser,
 } from "./regression/support/synthetic-auth.mjs";
+
+test("authenticated smoke has no credential-based skip", async () => {
+  const dashboardSource = await source("tests/regression/dashboard.spec.ts");
+  assert.equal(dashboardSource.includes("DASHBOARD_TEST_EMAIL"), false);
+  assert.equal(dashboardSource.includes("DASHBOARD_TEST_PASSWORD"), false);
+  assert.equal(dashboardSource.includes("test.skip"), false);
+
+  const authenticatedSource = await source("tests/regression/authenticated-dashboard.spec.ts");
+  assert.match(authenticatedSource, /runWithCleanup/);
+  assert.match(authenticatedSource, /bootstrapSyntheticUser/);
+  assert.match(authenticatedSource, /cleanupSyntheticUser/);
+});
+
+test("public, authenticated, and Preview Playwright suites select auth explicitly", async () => {
+  const publicConfig = await source("playwright.regression.config.ts");
+  const authenticatedConfig = await source("playwright.authenticated.config.ts");
+  const previewConfig = await source("playwright.preview.config.ts");
+
+  assert.match(publicConfig, /authenticated-dashboard\.spec\.ts/);
+  assert.match(authenticatedConfig, /authenticated-dashboard\.spec\.ts/);
+  assert.match(previewConfig, /authenticated-dashboard\.spec\.ts/);
+});
 
 test("production requires a live Clerk secret", () => {
   assert.throws(
@@ -278,4 +302,8 @@ function jsonResponse(payload, status) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+function source(filePath) {
+  return readFile(path.join(process.cwd(), filePath), "utf8");
 }
