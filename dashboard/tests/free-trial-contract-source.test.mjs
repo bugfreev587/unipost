@@ -6,6 +6,8 @@ import ts from "typescript";
 
 const apiSource = readFileSync(resolve("src/lib/api.ts"), "utf8");
 const adminBillingSource = readFileSync(resolve("src/app/admin/billing/page.tsx"), "utf8");
+const pricingSource = readFileSync(resolve("src/app/pricing/pricing-page-client.tsx"), "utf8");
+const settingsBillingSource = readFileSync(resolve("src/app/(dashboard)/settings/billing/page.tsx"), "utf8");
 
 async function loadTrialFormatModule() {
   const source = readFileSync(resolve("src/lib/trial-format.ts"), "utf8");
@@ -302,4 +304,54 @@ test("Admin Billing ignores stale loads and scopes refresh-required unlocks", as
     { workspace_2: "refresh_required" },
     "a matching mutation refresh may unlock only its workspace",
   );
+});
+
+test("Pricing decorates only the granted tier and preserves trial-aware plan actions", () => {
+  for (const value of [
+    "WorkspaceTrial",
+    "formatWorkspaceTrial",
+    "Start ${trial.duration_days}-day free trial",
+    "Continue checkout",
+    "Changing plans ends your trial immediately",
+    "changeTrialPlan",
+    "createCheckout",
+    "Trial action failed",
+  ]) {
+    assert.ok(pricingSource.includes(value), `missing Pricing trial contract: ${value}`);
+  }
+
+  assert.match(pricingSource, /const isTrialTier = trial\?\.plan_id === t\.id/);
+  assert.match(pricingSource, /trial\.status === "pending_activation"[\s\S]*createCheckout\(token, planId\)/);
+  assert.match(pricingSource, /trial\.status === "checkout_pending"[\s\S]*createCheckout\(token, planId\)/);
+  assert.ok(
+    readFileSync(resolve("src/lib/trial-format.ts"), "utf8").includes("Activation in progress"),
+    "shared formatter must expose the checkout-pending status label",
+  );
+  assert.match(pricingSource, /hasForfeitableTrial[\s\S]*window\.confirm[\s\S]*changeTrialPlan/);
+  assert.doesNotMatch(pricingSource, /Paid plans do not include a separate time-limited trial/);
+});
+
+test("Settings Billing renders the managed trial timeline, controls, and durable history", () => {
+  for (const value of [
+    "getTrialHistory",
+    "formatWorkspaceTrial",
+    "Managed trial",
+    "Cancel renewal",
+    "Changing plans ends your trial immediately",
+    "changeTrialPlan",
+    "cancelTrialRenewal",
+    "Trial History",
+    "Loading trial history",
+    "Trial history could not be loaded",
+    "No trial history yet",
+    "terminalReason",
+  ]) {
+    assert.ok(settingsBillingSource.includes(value), `missing Settings Billing trial contract: ${value}`);
+  }
+
+  assert.match(settingsBillingSource, /Promise\.allSettled\(\[[\s\S]*getBilling\(token\)[\s\S]*getTrialHistory\(token\)/);
+  assert.match(settingsBillingSource, /\[\.\.\.historyResult\.value\.data\]\.sort/);
+  assert.match(settingsBillingSource, /hasForfeitableTrial[\s\S]*window\.confirm[\s\S]*changeTrialPlan/);
+  assert.match(settingsBillingSource, /cancelTrialRenewal\(token,\s*billing\.trial\.id\)/);
+  assert.match(settingsBillingSource, /className="trial-history-list"/);
 });
