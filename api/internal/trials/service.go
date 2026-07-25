@@ -168,8 +168,17 @@ func (s *Service) ListTrialHistory(ctx context.Context, workspaceID string) ([]H
 		return nil, err
 	}
 	out := make([]HistoryProjection, 0, len(grants))
+	prices := make(map[string]int64)
 	for _, grant := range grants {
-		out = append(out, NewHistoryProjectionFromGrant(grant))
+		price, ok := prices[grant.PlanID]
+		if !ok {
+			price, err = s.store.GetPlanPrice(ctx, grant.PlanID)
+			if err != nil {
+				return nil, err
+			}
+			prices[grant.PlanID] = price
+		}
+		out = append(out, NewHistoryProjectionFromGrant(grant, price))
 	}
 	return out, nil
 }
@@ -1411,15 +1420,15 @@ func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequ
 	}
 	at := webhookTime(req.OccurredAt, s.now)
 	phase, hasPhase := managedTrialPhase(req.Snapshot, grant.ID)
-	metadataPlanID := strings.TrimSpace(req.Snapshot.Metadata[metadataPlanID])
+	snapshotPlanID := strings.TrimSpace(req.Snapshot.Metadata[metadataPlanID])
 
 	switch req.EventType {
 	case "subscription_schedule.created", "subscription_schedule.updated":
-		if req.EventType == "subscription_schedule.updated" && metadataPlanID != "" && metadataPlanID != grant.PlanID {
-			if err := ValidateGrantInput(metadataPlanID, 1); err != nil || req.Snapshot.EndBehavior != "release" || len(req.Snapshot.Phases) != 1 || req.Snapshot.Phases[0].PriceID == "" || !webhookMetadataMatches(req.Snapshot.Phases[0].Metadata, Grant{ID: grant.ID, WorkspaceID: grant.WorkspaceID, Kind: grant.Kind, PlanID: metadataPlanID}, s.environment) {
+		if req.EventType == "subscription_schedule.updated" && snapshotPlanID != "" && snapshotPlanID != grant.PlanID {
+			if err := ValidateGrantInput(snapshotPlanID, 1); err != nil || req.Snapshot.EndBehavior != "release" || len(req.Snapshot.Phases) != 1 || req.Snapshot.Phases[0].PriceID == "" || !webhookMetadataMatches(req.Snapshot.Phases[0].Metadata, Grant{ID: grant.ID, WorkspaceID: grant.WorkspaceID, Kind: grant.Kind, PlanID: snapshotPlanID}, s.environment) {
 				return WebhookReconcileResult{}, ErrWebhookStateConflict
 			}
-			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, metadataPlanID, at)
+			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, snapshotPlanID, at)
 			if errors.Is(updateErr, ErrConcurrentTransition) {
 				return s.reloadWebhookGrant(ctx, grant.ID)
 			}
@@ -1460,8 +1469,7 @@ func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequ
 			if req.Snapshot.EndBehavior == "release" && grant.EndsAt != nil && !at.Before(*grant.EndsAt) {
 				return s.completeScheduleGrant(ctx, grant, req.Snapshot, phase, hasPhase, at)
 			}
-			nextPlan := strings.TrimSpace(req.Snapshot.Metadata[metadataPlanID])
-			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, nextPlan, at)
+			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, snapshotPlanID, at)
 			if errors.Is(updateErr, ErrConcurrentTransition) {
 				return s.reloadWebhookGrant(ctx, grant.ID)
 			}

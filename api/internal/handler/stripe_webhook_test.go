@@ -358,6 +358,37 @@ func TestLegacyTrialCancelAtPeriodEndStillDowngradesImmediately(t *testing.T) {
 	}
 }
 
+func TestManagedTrialMetadataWithoutReconcilerFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		eventType         string
+		status            stripe.SubscriptionStatus
+		cancelAtPeriodEnd bool
+	}{
+		{name: "cancel renewal update", eventType: "customer.subscription.updated", status: stripe.SubscriptionStatusTrialing, cancelAtPeriodEnd: true},
+		{name: "subscription deletion", eventType: "customer.subscription.deleted", status: stripe.SubscriptionStatusCanceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(runtimeenv.EnvVar, "staging")
+			store := newStripeWebhookStore("ws_staging")
+			store.subscription.PlanID = "basic"
+			store.subscription.Status = "trialing"
+			store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+			store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+			h, secret := newTestStripeWebhookHandler(store, nil)
+			h.SetTrialWebhookService(nil)
+
+			response := postTestSubscriptionWebhookWithState(t, h, secret, tc.eventType, tc.status, tc.cancelAtPeriodEnd, map[string]string{
+				"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+			})
+
+			if response.Code != http.StatusInternalServerError || store.cancelCalls != 0 || store.subscription.PlanID != "basic" {
+				t.Fatalf("status=%d cancel_calls=%d subscription=%#v body=%s", response.Code, store.cancelCalls, store.subscription, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestTrialingPaymentSucceededDoesNotPromoteSubscriptionToActive(t *testing.T) {
 	store := newStripeWebhookStore("ws_staging")
 	store.subscription.Status = "trialing"
@@ -578,6 +609,72 @@ func TestForeignSubscriptionDeletedAcknowledgedWithoutMutation(t *testing.T) {
 	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.deleted", stripe.SubscriptionStatusCanceled, false, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "dev"})
 	if response.Code != http.StatusOK || store.upserts != 0 || store.cancelCalls != 0 {
 		t.Fatalf("status=%d upserts=%d cancel=%d body=%s", response.Code, store.upserts, store.cancelCalls, response.Body.String())
+	}
+}
+
+func TestSubscriptionDeletedWithUnmappedPriceStillDowngrades(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "canceled"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	basic := store.plans["basic"]
+	basic.StripePriceID = pgtype.Text{}
+	store.plans["basic"] = basic
+	h, secret := newTestStripeWebhookHandler(store, nil)
+
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.deleted", stripe.SubscriptionStatusCanceled, false, map[string]string{
+		"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging",
+	})
+
+	if response.Code != http.StatusOK || store.cancelCalls != 1 || store.subscription.PlanID != "free" {
+		t.Fatalf("status=%d cancel=%d subscription=%#v body=%s", response.Code, store.cancelCalls, store.subscription, response.Body.String())
+	}
+}
+
+func TestManagedSubscriptionDeletedAppliesSingleFreePlanMutation(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.plans["growth"] = db.Plan{ID: "growth", Name: "Growth", PriceCents: 7900, PostLimit: 7500, StripePriceID: pgtype.Text{String: "price_growth", Valid: true}}
+	store.subscription.PlanID = "growth"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "basic", Status: trials.StatusCanceled,
+	}}}
+	reconciler := &recordingHoldReconciler{}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial).SetHoldReconciler(reconciler)
+
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.deleted", stripe.SubscriptionStatusCanceled, false, map[string]string{
+		"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+	})
+
+	if response.Code != http.StatusOK || reconciler.calls != 1 || reconciler.planID != "free" {
+		t.Fatalf("status=%d reconciler=%#v body=%s", response.Code, reconciler, response.Body.String())
+	}
+}
+
+func TestSubscriptionDeletedReconciliationFailureDoesNotSendCancellationEmail(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	trial := &recordingTrialWebhookService{subscriptionErr: errors.New("trial ledger unavailable")}
+	syncer := &recordingStripeLifecycleSyncer{}
+	h, secret := newTestStripeWebhookHandler(store, syncer)
+	h.SetTrialWebhookService(trial)
+
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.deleted", stripe.SubscriptionStatusCanceled, false, map[string]string{
+		"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+	})
+
+	if response.Code != http.StatusInternalServerError || store.cancelCalls != 0 || len(syncer.events) != 0 {
+		t.Fatalf("status=%d cancel=%d events=%#v body=%s", response.Code, store.cancelCalls, syncer.events, response.Body.String())
 	}
 }
 

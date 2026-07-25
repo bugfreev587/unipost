@@ -518,6 +518,9 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 	}
 
 	if snapshot.Status == string(stripe.SubscriptionStatusTrialing) && snapshot.CancelAtPeriodEnd && !trialResult.Managed {
+		if strings.TrimSpace(snapshot.Metadata["trial_grant_id"]) != "" {
+			return subscriptionProjectionResult{}, fmt.Errorf("managed trial subscription was not reconciled")
+		}
 		if err := h.cancelLegacyTrialImmediately(r.Context(), event, localSub, snapshot.ID); err != nil {
 			return subscriptionProjectionResult{}, err
 		}
@@ -630,12 +633,10 @@ func (h *StripeWebhookHandler) handleSubscriptionDeleted(r *http.Request, event 
 		return fmt.Errorf("verified Stripe mode is unavailable")
 	}
 	localSub, localSubErr := h.queries.GetSubscriptionByStripeSubscription(r.Context(), pgtype.Text{String: sub.ID, Valid: true})
-	if localSubErr == nil {
-		h.syncLoopsBillingSubscriptionCanceled(r.Context(), localSub, sub)
-	} else {
+	if localSubErr != nil {
 		slog.Warn("stripe webhook: subscription row not found for cancellation email", "subscription_id", sub.ID, "error", localSubErr)
 	}
-	if _, err := h.projectStripeSubscription(r, event, subscriptionWebhookSnapshot(mode.Name, &sub)); err != nil && !errors.Is(err, errStripeWebhookNotApplicable) {
+	if err := h.reconcileDeletedSubscription(r, event, mode.Name, sub, localSub); err != nil && !errors.Is(err, errStripeWebhookNotApplicable) {
 		return err
 	}
 	if localSubErr == nil {
@@ -663,10 +664,40 @@ func (h *StripeWebhookHandler) handleSubscriptionDeleted(r *http.Request, event 
 		return err
 	}
 	if localSubErr == nil {
+		h.syncLoopsBillingSubscriptionCanceled(r.Context(), localSub, sub)
 		h.evaluatePaidQuotaHorizon(r.Context(), localSub.WorkspaceID)
 	}
 
 	slog.Info("stripe webhook: subscription canceled", "subscription_id", sub.ID)
+	return nil
+}
+
+func (h *StripeWebhookHandler) reconcileDeletedSubscription(r *http.Request, event stripe.Event, stripeMode string, sub stripe.Subscription, localSub db.Subscription) error {
+	snapshot := subscriptionWebhookSnapshot(stripeMode, &sub)
+	if h == nil || h.trialWebhooks == nil {
+		if strings.TrimSpace(snapshot.Metadata["trial_grant_id"]) != "" {
+			return fmt.Errorf("managed trial subscription deletion cannot be reconciled")
+		}
+		return nil
+	}
+	planID := strings.TrimSpace(snapshot.Metadata["plan_id"])
+	if planID == "" {
+		planID = localSub.PlanID
+	}
+	result, err := h.trialWebhooks.ReconcileSubscription(r.Context(), trials.WebhookSubscriptionRequest{
+		Snapshot:   snapshot,
+		PlanID:     planID,
+		OccurredAt: stripeEventEffectiveAt(event),
+	})
+	if errors.Is(err, trials.ErrWebhookNotApplicable) {
+		return errStripeWebhookNotApplicable
+	}
+	if err != nil {
+		return fmt.Errorf("reconcile deleted managed trial subscription: %w", err)
+	}
+	if strings.TrimSpace(snapshot.Metadata["trial_grant_id"]) != "" && !result.Managed {
+		return fmt.Errorf("managed trial subscription deletion was not reconciled")
+	}
 	return nil
 }
 
