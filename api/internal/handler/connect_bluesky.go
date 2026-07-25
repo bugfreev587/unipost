@@ -48,6 +48,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -62,7 +63,13 @@ type ConnectBlueskyHandler struct {
 	limiter        *ipLimiter
 	quota          *quota.Checker
 	ownershipStore managedAccountOwnershipStore
+	ilog           hostedConnectOutcomeWriter
 	connectAccount func(context.Context, map[string]string) (*platform.ConnectResult, error)
+}
+
+func (h *ConnectBlueskyHandler) SetIntegrationLogger(logger hostedConnectOutcomeWriter) *ConnectBlueskyHandler {
+	h.ilog = logger
+	return h
 }
 
 func NewConnectBlueskyHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, ownershipStore managedAccountOwnershipStore) *ConnectBlueskyHandler {
@@ -106,25 +113,12 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		renderBlueskyResult(w, blueskyTplData{Error: "Invalid form submission."})
-		return
-	}
-
+	parseErr := r.ParseForm()
 	sessionID := chi.URLParam(r, "id")
 	state := r.URL.Query().Get("state")
-	handle := strings.TrimSpace(r.FormValue("handle"))
-	appPassword := r.FormValue("app_password") // never trim — Bluesky tokens may not have leading/trailing spaces but we don't normalise
-
-	if sessionID == "" || state == "" || handle == "" || appPassword == "" {
+	if sessionID == "" || state == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		renderBlueskyResult(w, blueskyTplData{
-			Handle:    handle,
-			SessionID: sessionID,
-			State:     state,
-			Error:     "Both handle and app password are required.",
-		})
+		renderBlueskyResult(w, blueskyTplData{Error: "This Connect link is invalid or has expired."})
 		return
 	}
 
@@ -137,20 +131,58 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		renderBlueskyResult(w, blueskyTplData{Error: "This Connect link is invalid or has expired."})
 		return
 	}
+	profile, profileErr := h.queries.GetProfile(r.Context(), session.ProfileID)
+	if profileErr != nil || strings.TrimSpace(profile.WorkspaceID) == "" {
+		slog.Error("connect.bluesky: workspace resolution failed", "platform", "bluesky", "error_class", "workspace_resolution_failed")
+		w.WriteHeader(http.StatusInternalServerError)
+		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account ownership."})
+		return
+	}
+	outcome := newHostedConnectOutcome(r.Context(), h.ilog, hostedConnectAttempt{
+		WorkspaceID:    profile.WorkspaceID,
+		ProfileID:      session.ProfileID,
+		Platform:       session.Platform,
+		SessionID:      session.ID,
+		ExternalUserID: session.ExternalUserID,
+		RequestID:      appmw.GetRequestID(r.Context()),
+	})
+	w = wrapHostedConnectResponse(w, outcome)
+	if parseErr != nil {
+		outcome.Fail("invalid_form_submission", "Hosted Connect failed because the form submission was invalid.", nil)
+		w.WriteHeader(http.StatusBadRequest)
+		renderBlueskyResult(w, blueskyTplData{Error: "Invalid form submission."})
+		return
+	}
+	handle := strings.TrimSpace(r.FormValue("handle"))
+	appPassword := r.FormValue("app_password") // never trim — Bluesky tokens may not have leading/trailing spaces but we don't normalise
 	if session.Platform != "bluesky" {
+		outcome.Fail("platform_mismatch", "Hosted Connect failed during authorization.", nil)
 		w.WriteHeader(http.StatusBadRequest)
 		renderBlueskyResult(w, blueskyTplData{Error: "This Connect link is for a different platform."})
 		return
 	}
 	if session.Status != "pending" {
+		outcome.Fail("connect_session_not_pending", "Hosted Connect failed because the Session is no longer pending.", nil)
 		w.WriteHeader(http.StatusConflict)
 		renderBlueskyResult(w, blueskyTplData{Error: "This Connect link has already been used or has expired."})
 		return
 	}
 	if session.ExpiresAt.Time.Before(time.Now()) {
 		_ = h.queries.ExpireConnectSession(r.Context(), session.ID)
+		outcome.Fail("connect_session_expired", "Hosted Connect failed because the Session expired.", nil)
 		w.WriteHeader(http.StatusGone)
 		renderBlueskyResult(w, blueskyTplData{Error: "This Connect link has expired."})
+		return
+	}
+	if handle == "" || appPassword == "" {
+		outcome.Fail("bluesky_credentials_required", "Hosted Connect failed because Bluesky credentials are required.", nil)
+		w.WriteHeader(http.StatusBadRequest)
+		renderBlueskyResult(w, blueskyTplData{
+			Handle:    handle,
+			SessionID: sessionID,
+			State:     state,
+			Error:     "Both handle and app password are required.",
+		})
 		return
 	}
 
@@ -163,6 +195,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	// chain ever breaks the user has to reconnect; we accept that
 	// for Sprint 3 because the chain typically lasts months.
 	if h.connectAccount == nil {
+		outcome.Fail("bluesky_connector_unavailable", "Hosted Connect failed during authorization.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Bluesky connection is unavailable."})
 		return
@@ -176,6 +209,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		// "user not found" vs "wrong password" which we don't want
 		// to expose. Generic message keeps the brute-force surface
 		// flat.
+		outcome.Fail("bluesky_credentials_rejected", "Hosted Connect failed during authorization.", nil)
 		w.WriteHeader(http.StatusUnauthorized)
 		renderBlueskyResult(w, blueskyTplData{
 			Handle:    handle,
@@ -188,13 +222,14 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	providerIdentity := strings.TrimSpace(connectResult.ExternalAccountID)
 	if providerIdentity == "" {
 		slog.Error("connect.bluesky: verified provider identity missing", "platform", "bluesky")
+		outcome.Fail("provider_identity_missing", "Hosted Connect failed during authorization.", nil)
 		w.WriteHeader(http.StatusBadGateway)
 		renderBlueskyResult(w, blueskyTplData{Error: "Provider account identity is missing."})
 		return
 	}
-	profile, profileErr := h.queries.GetProfile(r.Context(), session.ProfileID)
-	if profileErr != nil || profile.WorkspaceID == "" || h.ownershipStore == nil {
+	if h.ownershipStore == nil {
 		slog.Error("connect.bluesky: ownership store unavailable", "platform", "bluesky", "error_class", "ownership_store_unavailable")
+		outcome.Fail("account_ownership_failed", "Hosted Connect failed while verifying account ownership.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account ownership."})
 		return
@@ -209,32 +244,38 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	ownershipDecision, ownershipErr := h.ownershipStore.Check(r.Context(), ownershipKey)
 	if ownershipErr != nil {
 		slog.Error("connect.bluesky: ownership check failed", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "ownership_check_failed")
+		outcome.Fail("account_ownership_failed", "Hosted Connect failed while verifying account ownership.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account ownership."})
 		return
 	}
 	if ownershipDecision.Kind == connectownership.Conflict {
 		logManagedOwnershipConflict(profile.WorkspaceID, "bluesky", ownershipDecision, nil)
+		outcome.Fail("account_ownership_conflict", "Hosted Connect failed while verifying account ownership.", nil)
 		w.WriteHeader(http.StatusConflict)
 		renderBlueskyResult(w, blueskyTplData{Error: "This social account is already connected and cannot be reassigned."})
 		return
 	}
 	if blocked, message, limitErr := freePlanManagedConnectBlocked(r.Context(), h.queries, h.quota, profile.WorkspaceID, session.ExternalUserID, "bluesky", ownershipDecision.Kind == connectownership.Create); limitErr != nil {
 		slog.Error("connect.bluesky: managed connect limit check failed", "workspace_id", profile.WorkspaceID, "profile_id", session.ProfileID, "platform", "bluesky")
+		outcome.Fail("managed_account_limit_check_failed", "Hosted Connect failed while checking workspace limits.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Failed to check plan limits."})
 		return
 	} else if blocked {
+		outcome.Fail("managed_account_limit_reached", "Hosted Connect failed because the account is unavailable to this workspace.", nil)
 		w.WriteHeader(http.StatusPaymentRequired)
 		renderBlueskyResult(w, blueskyTplData{Error: message})
 		return
 	}
 	if blocked, sharingErr := freePlanManagedSharingBlocked(r.Context(), h.queries, nil, profile.WorkspaceID, "bluesky", providerIdentity); sharingErr != nil {
 		slog.Error("connect.bluesky: managed sharing check failed", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "managed_sharing_lookup_failed")
+		outcome.Fail("account_availability_check_failed", "Hosted Connect failed because the account is unavailable to this workspace.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Failed to verify account availability."})
 		return
 	} else if blocked {
+		outcome.Fail("account_unavailable", "Hosted Connect failed because the account is unavailable to this workspace.", nil)
 		w.WriteHeader(http.StatusConflict)
 		renderBlueskyResult(w, blueskyTplData{Error: accountNotAvailableOnFreePlanMessage})
 		return
@@ -242,12 +283,14 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 
 	encAccess, err := h.encryptor.Encrypt(connectResult.AccessToken)
 	if err != nil {
+		outcome.Fail("credential_encryption_failed", "Hosted Connect failed while securing credentials.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Internal error encrypting credentials."})
 		return
 	}
 	encRefresh, err := h.encryptor.Encrypt(connectResult.RefreshToken)
 	if err != nil {
+		outcome.Fail("credential_encryption_failed", "Hosted Connect failed while securing credentials.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Internal error encrypting credentials."})
 		return
@@ -303,6 +346,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	if err != nil {
 		if errors.Is(err, connectownership.ErrOwnershipConflict) {
 			logManagedOwnershipConflict(profile.WorkspaceID, "bluesky", ownershipDecision, err)
+			outcome.Fail("account_ownership_conflict", "Hosted Connect failed while verifying account ownership.", nil)
 			w.WriteHeader(http.StatusConflict)
 			renderBlueskyResult(w, blueskyTplData{Error: "This social account is already connected and cannot be reassigned."})
 			return
@@ -310,6 +354,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		if errors.Is(err, connectownership.ErrInvalidOwnershipRequest) {
 			slog.Error("connect.bluesky: invalid ownership save request", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "invalid_ownership_request")
 		}
+		outcome.Fail("account_save_failed", "Hosted Connect failed while saving the account.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Internal error saving account."})
 		return
@@ -321,11 +366,13 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 	if completionErr := claimConnectSessionCompletion(r.Context(), h.queries, session.ID, savedID); completionErr != nil {
 		if errors.Is(completionErr, pgx.ErrNoRows) {
 			slog.Warn("connect.bluesky: completion claim lost", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "completion_claim_lost")
+			outcome.Fail("connect_session_not_pending", "Hosted Connect failed because the Session is no longer pending.", nil)
 			w.WriteHeader(http.StatusConflict)
 			renderBlueskyResult(w, blueskyTplData{Error: "This Connect link has already been used."})
 			return
 		}
 		slog.Error("connect.bluesky: completion claim failed", "workspace_id", profile.WorkspaceID, "platform", "bluesky", "error_class", "completion_claim_failed")
+		outcome.Fail("session_completion_failed", "Hosted Connect failed while completing the session.", nil)
 		w.WriteHeader(http.StatusInternalServerError)
 		renderBlueskyResult(w, blueskyTplData{Error: "Failed to complete connection."})
 		return
@@ -341,6 +388,7 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		"external_user_id":  session.ExternalUserID,
 		"connection_type":   "managed",
 	})
+	outcome.Success(savedID, connectResult.AccountName)
 
 	// Redirect to return_url with success marker.
 	returnURL := ""
