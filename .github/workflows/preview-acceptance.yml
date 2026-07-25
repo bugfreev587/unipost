@@ -185,7 +185,7 @@ jobs:
       - name: Run deployed preview regression
         working-directory: dashboard
         env:
-          DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.deployment_url }}
+          DASHBOARD_BASE_URL: https://${{ env.PREVIEW_ALIAS_HOST }}
           DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
           DASHBOARD_TEST_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
           EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}

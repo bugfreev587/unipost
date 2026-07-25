@@ -99,7 +99,12 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.doesNotMatch(workflow, /VERCEL_SHAREABLE_URL/);
   assert.match(
     workflow,
-    /DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+    /DASHBOARD_BASE_URL: https:\/\/\$\{\{ env\.PREVIEW_ALIAS_HOST \}\}/,
+  );
+  assert.doesNotMatch(
+    workflow,
+    /Run deployed preview regression[\s\S]*DASHBOARD_BASE_URL: \$\{\{ steps\.vercel\.outputs\.deployment_url \}\}/,
+    "authenticated navigation must stay on the build-time Preview app host",
   );
   assert.match(workflow, /vercel-alias-cleanup\.mjs/);
   assert.match(
