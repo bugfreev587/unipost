@@ -24,6 +24,7 @@ const (
 // trial plan changes from reaching Stripe's schedule Release endpoint.
 type StripeGateway interface {
 	CreatePaidTrialSchedule(context.Context, CreatePaidTrialScheduleRequest) (ScheduleSnapshot, error)
+	ConfigurePaidTrialSchedule(context.Context, string, CreatePaidTrialScheduleRequest) (ScheduleSnapshot, error)
 	CreateTrialCheckout(context.Context, CreateTrialCheckoutRequest) (CheckoutSnapshot, error)
 	RetrieveCheckout(context.Context, string, string) (CheckoutSnapshot, error)
 	ExpireCheckout(context.Context, ExpireCheckoutRequest) (CheckoutSnapshot, error)
@@ -276,6 +277,33 @@ func (g *stripeGateway) CreatePaidTrialSchedule(ctx context.Context, req CreateP
 	}
 	if err := validateScheduleResponse(configured, created.ID); err != nil {
 		return scheduleSnapshot(req.StripeMode, created), fmt.Errorf("configure created Stripe trial schedule %s: %w", created.ID, err)
+	}
+	return scheduleSnapshot(req.StripeMode, configured), nil
+}
+
+func (g *stripeGateway) ConfigurePaidTrialSchedule(ctx context.Context, scheduleID string, req CreatePaidTrialScheduleRequest) (ScheduleSnapshot, error) {
+	if err := requireID("subscription schedule", scheduleID); err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	_, updateParams, err := buildPaidTrialScheduleParams(req)
+	if err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	mode, err := g.mode(req.StripeMode)
+	if err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	client, err := g.client(mode)
+	if err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	updateParams.Context = ctx
+	configured, err := client.updateSchedule(scheduleID, updateParams)
+	if err != nil {
+		return ScheduleSnapshot{StripeMode: req.StripeMode, ID: scheduleID}, fmt.Errorf("configure existing Stripe trial schedule %s: %w", scheduleID, err)
+	}
+	if err := validateScheduleResponse(configured, scheduleID); err != nil {
+		return ScheduleSnapshot{StripeMode: req.StripeMode, ID: scheduleID}, fmt.Errorf("configure existing Stripe trial schedule %s: %w", scheduleID, err)
 	}
 	return scheduleSnapshot(req.StripeMode, configured), nil
 }

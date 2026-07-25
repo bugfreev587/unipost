@@ -909,6 +909,45 @@ func TestCreatePaidScheduleReturnsCreatedSnapshotWhenUpdateTimesOut(t *testing.T
 	assertTrialMetadata(t, client.scheduleCreateParams.Metadata, "ws_paid", "team", "grant_paid", KindPaidSamePlan, "production")
 }
 
+func TestConfigurePaidTrialScheduleUpdatesExistingWithoutCreate(t *testing.T) {
+	client := &fakeStripeTrialClient{scheduleUpdateResult: &stripe.SubscriptionSchedule{ID: "sched_existing"}}
+	gateway := newFakeStripeGateway(client)
+
+	got, err := gateway.ConfigurePaidTrialSchedule(t.Context(), "sched_existing", validPaidScheduleRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "sched_existing" || !reflect.DeepEqual(client.calls, []string{"update_schedule"}) {
+		t.Fatalf("snapshot=%#v calls=%#v", got, client.calls)
+	}
+	if client.scheduleUpdateID != "sched_existing" {
+		t.Fatalf("updated schedule=%q", client.scheduleUpdateID)
+	}
+}
+
+func TestConfigurePaidTrialScheduleRejectsInvalidIdentityWithoutCreating(t *testing.T) {
+	for _, test := range []struct{ name, scheduleID, responseID string }{
+		{name: "empty requested ID", scheduleID: "", responseID: ""},
+		{name: "mismatched response ID", scheduleID: "sched_existing", responseID: "sched_other"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeStripeTrialClient{}
+			if test.responseID != "" {
+				client.scheduleUpdateResult = &stripe.SubscriptionSchedule{ID: test.responseID}
+			}
+			gateway := newFakeStripeGateway(client)
+			if _, err := gateway.ConfigurePaidTrialSchedule(t.Context(), test.scheduleID, validPaidScheduleRequest()); err == nil {
+				t.Fatal("error=nil")
+			}
+			for _, call := range client.calls {
+				if call == "create_schedule" {
+					t.Fatalf("unexpected create: %#v", client.calls)
+				}
+			}
+		})
+	}
+}
+
 func TestGatewayRejectsUnavailableModeWithoutFallingBackLive(t *testing.T) {
 	gateway := NewStripeGateway(nil)
 	if _, err := gateway.RetrieveCheckout(t.Context(), "sandbox", "cs_123"); err == nil {
@@ -1073,6 +1112,7 @@ type fakeStripeTrialClient struct {
 	scheduleCreateParams *stripe.SubscriptionScheduleParams
 	scheduleUpdateResult *stripe.SubscriptionSchedule
 	scheduleUpdateErr    error
+	scheduleUpdateID     string
 	portalResult         *stripe.BillingPortalSession
 	portalErr            error
 }
@@ -1116,8 +1156,9 @@ func (c *fakeStripeTrialClient) createSchedule(params *stripe.SubscriptionSchedu
 	return c.scheduleCreateResult, c.scheduleCreateErr
 }
 
-func (c *fakeStripeTrialClient) updateSchedule(_ string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+func (c *fakeStripeTrialClient) updateSchedule(id string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
 	c.calls = append(c.calls, "update_schedule")
+	c.scheduleUpdateID = id
 	return c.scheduleUpdateResult, c.scheduleUpdateErr
 }
 

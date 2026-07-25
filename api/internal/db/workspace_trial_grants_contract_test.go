@@ -190,3 +190,22 @@ func TestWorkspaceTrialGrantCheckoutQueriesUseExactCorrelation(t *testing.T) {
 		})
 	}
 }
+
+func TestWorkspaceTrialGrantPersistsPartialScheduleWhileProvisioning(t *testing.T) {
+	source, err := os.ReadFile("queries/workspace_trial_grants.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(strings.Join(strings.Fields(string(source)), " "))
+	for _, want := range []string{
+		"-- name: recordworkspacetrialgrantprovisioningschedule :one",
+		"set stripe_schedule_id = sqlc.arg(stripe_schedule_id)",
+		"failure_code = sqlc.arg(failure_code)",
+		"and status = 'provisioning'",
+		"and (stripe_schedule_id is null or stripe_schedule_id = sqlc.arg(stripe_schedule_id))",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("partial schedule query missing %q", want)
+		}
+	}
+}

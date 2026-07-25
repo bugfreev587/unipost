@@ -855,6 +855,64 @@ func (q *Queries) RecordWorkspaceTrialGrantCheckoutSession(ctx context.Context, 
 	return i, err
 }
 
+const recordWorkspaceTrialGrantProvisioningSchedule = `-- name: RecordWorkspaceTrialGrantProvisioningSchedule :one
+UPDATE workspace_trial_grants
+SET stripe_schedule_id = $1,
+    failure_code = $2,
+    failure_message = $3,
+    updated_at = NOW()
+WHERE id = $4
+  AND status = 'provisioning'
+  AND (stripe_schedule_id IS NULL OR stripe_schedule_id = $1)
+RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
+`
+
+type RecordWorkspaceTrialGrantProvisioningScheduleParams struct {
+	StripeScheduleID pgtype.Text `json:"stripe_schedule_id"`
+	FailureCode      pgtype.Text `json:"failure_code"`
+	FailureMessage   pgtype.Text `json:"failure_message"`
+	ID               string      `json:"id"`
+}
+
+func (q *Queries) RecordWorkspaceTrialGrantProvisioningSchedule(ctx context.Context, arg RecordWorkspaceTrialGrantProvisioningScheduleParams) (WorkspaceTrialGrant, error) {
+	row := q.db.QueryRow(ctx, recordWorkspaceTrialGrantProvisioningSchedule,
+		arg.StripeScheduleID,
+		arg.FailureCode,
+		arg.FailureMessage,
+		arg.ID,
+	)
+	var i WorkspaceTrialGrant
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.PlanID,
+		&i.DurationDays,
+		&i.Status,
+		&i.GrantedByUserID,
+		&i.StripeMode,
+		&i.StripeCustomerID,
+		&i.StripeSubscriptionID,
+		&i.StripeScheduleID,
+		&i.StripeCheckoutSessionID,
+		&i.GrantedAt,
+		&i.ScheduledStartAt,
+		&i.StartedAt,
+		&i.EndsAt,
+		&i.ActivatedAt,
+		&i.CanceledAt,
+		&i.RevokedAt,
+		&i.SupersededAt,
+		&i.CompletedAt,
+		&i.SupersededByPlanID,
+		&i.FailureCode,
+		&i.FailureMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const releaseExpiredWorkspaceTrialGrantCheckout = `-- name: ReleaseExpiredWorkspaceTrialGrantCheckout :one
 UPDATE workspace_trial_grants
 SET status = 'pending_activation',

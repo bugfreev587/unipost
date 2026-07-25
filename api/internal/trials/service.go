@@ -17,7 +17,31 @@ var (
 	ErrRevokeConflict         = errors.New("trial grant can no longer be revoked")
 	ErrConcurrentTransition   = errors.New("trial grant changed concurrently")
 	ErrBillingModeUnavailable = errors.New("Stripe billing mode is unavailable")
+	ErrUnrelatedSchedule      = errors.New("subscription already has an unrelated Stripe schedule")
 )
+
+type OpenGrantConflictError struct {
+	Current Grant
+}
+
+func (e *OpenGrantConflictError) Error() string { return ErrOpenGrantExists.Error() }
+func (e *OpenGrantConflictError) Unwrap() error { return ErrOpenGrantExists }
+
+type ConflictSummary struct {
+	ID               string     `json:"id"`
+	Kind             Kind       `json:"kind"`
+	PlanID           string     `json:"plan_id"`
+	DurationDays     int32      `json:"duration_days"`
+	Status           Status     `json:"status"`
+	GrantedAt        time.Time  `json:"granted_at"`
+	ScheduledStartAt *time.Time `json:"scheduled_start_at,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	EndsAt           *time.Time `json:"ends_at,omitempty"`
+}
+
+func NewConflictSummary(grant Grant) ConflictSummary {
+	return ConflictSummary{ID: grant.ID, Kind: grant.Kind, PlanID: grant.PlanID, DurationDays: grant.DurationDays, Status: grant.Status, GrantedAt: grant.GrantedAt, ScheduledStartAt: grant.ScheduledStartAt, StartedAt: grant.StartedAt, EndsAt: grant.EndsAt}
+}
 
 type Grant struct {
 	ID                      string     `json:"id"`
@@ -77,6 +101,7 @@ type GrantStore interface {
 	CreateGrant(context.Context, CreateGrantInput) (Grant, error)
 	MarkScheduled(context.Context, ScheduledUpdate) (Grant, error)
 	MarkFailed(context.Context, FailureUpdate) (Grant, error)
+	RecordProvisioningSchedule(context.Context, ProvisioningScheduleUpdate) (Grant, error)
 	MarkRevoked(context.Context, string, Status, time.Time) (Grant, error)
 }
 
@@ -108,6 +133,13 @@ type FailureUpdate struct {
 	ExpectedStatus Status
 	Code           string
 	Message        string
+}
+
+type ProvisioningScheduleUpdate struct {
+	ID               string
+	StripeScheduleID string
+	FailureCode      string
+	FailureMessage   string
 }
 
 type GrantRequest struct {
@@ -149,8 +181,12 @@ func (s *Service) Grant(ctx context.Context, req GrantRequest) (Grant, error) {
 		return Grant{}, ErrBillingModeUnavailable
 	}
 
-	if _, err := s.store.GetOpenGrant(ctx, req.WorkspaceID); err == nil {
-		return Grant{}, ErrOpenGrantExists
+	var retry *Grant
+	if current, err := s.store.GetOpenGrant(ctx, req.WorkspaceID); err == nil {
+		if current.Status != StatusProvisioning || current.Kind != KindPaidSamePlan || current.WorkspaceID != req.WorkspaceID || current.PlanID != req.PlanID || current.DurationDays != req.DurationDays {
+			return Grant{}, &OpenGrantConflictError{Current: current}
+		}
+		retry = &current
 	} else if !errors.Is(err, ErrGrantNotFound) {
 		return Grant{}, fmt.Errorf("load open trial grant: %w", err)
 	}
@@ -165,15 +201,19 @@ func (s *Service) Grant(ctx context.Context, req GrantRequest) (Grant, error) {
 
 	now := s.now().UTC()
 	if billingState.Subscription.PlanID == "" || billingState.Subscription.PlanID == "free" {
+		if retry != nil {
+			return Grant{}, &OpenGrantConflictError{Current: *retry}
+		}
 		mode, err := s.modes.Resolve(ctx, billingState.OwnerUserID, req.PlanID)
 		if err != nil || mode.Name == "" || mode.PriceID == "" {
 			return Grant{}, fmt.Errorf("%w: %v", ErrBillingModeUnavailable, err)
 		}
-		return s.store.CreateGrant(ctx, CreateGrantInput{
+		grant, err := s.store.CreateGrant(ctx, CreateGrantInput{
 			WorkspaceID: req.WorkspaceID, Kind: KindFreeToPaid, PlanID: req.PlanID,
 			DurationDays: req.DurationDays, Status: StatusPendingActivation,
 			ActorUserID: req.ActorUserID, StripeMode: mode.Name, GrantedAt: now,
 		})
+		return s.withCreateConflict(ctx, req.WorkspaceID, grant, err)
 	}
 
 	if req.PlanID != billingState.Subscription.PlanID {
@@ -187,6 +227,9 @@ func (s *Service) Grant(ctx context.Context, req GrantRequest) (Grant, error) {
 	if err != nil || mode.Name == "" || mode.PriceID == "" {
 		return Grant{}, fmt.Errorf("%w: %v", ErrBillingModeUnavailable, err)
 	}
+	if retry != nil && (retry.StripeMode != mode.Name || retry.StripeSubscriptionID != billingState.Subscription.StripeSubscriptionID) {
+		return Grant{}, &OpenGrantConflictError{Current: *retry}
+	}
 	remote, err := s.stripe.RetrieveSubscription(ctx, mode.Name, billingState.Subscription.StripeSubscriptionID)
 	if err != nil {
 		return Grant{}, fmt.Errorf("retrieve Stripe subscription: %w", err)
@@ -194,32 +237,67 @@ func (s *Service) Grant(ctx context.Context, req GrantRequest) (Grant, error) {
 	if !eligiblePaidSubscription(remote, billingState.Subscription, mode.PriceID) {
 		return Grant{}, ErrIneligibleSubscription
 	}
+	expectedScheduleID := ""
+	if retry != nil {
+		expectedScheduleID = retry.StripeScheduleID
+	}
+	if remote.ScheduleID != expectedScheduleID {
+		return Grant{}, ErrUnrelatedSchedule
+	}
 
-	grant, err := s.store.CreateGrant(ctx, CreateGrantInput{
-		WorkspaceID: req.WorkspaceID, Kind: KindPaidSamePlan, PlanID: req.PlanID,
-		DurationDays: req.DurationDays, Status: StatusProvisioning, ActorUserID: req.ActorUserID,
-		StripeMode: mode.Name, StripeCustomerID: remote.CustomerID,
-		StripeSubscriptionID: remote.ID, GrantedAt: now,
-	})
-	if err != nil {
-		return Grant{}, fmt.Errorf("create provisioning trial grant: %w", err)
+	var grant Grant
+	if retry != nil {
+		grant = *retry
+	} else {
+		grant, err = s.store.CreateGrant(ctx, CreateGrantInput{
+			WorkspaceID: req.WorkspaceID, Kind: KindPaidSamePlan, PlanID: req.PlanID,
+			DurationDays: req.DurationDays, Status: StatusProvisioning, ActorUserID: req.ActorUserID,
+			StripeMode: mode.Name, StripeCustomerID: remote.CustomerID,
+			StripeSubscriptionID: remote.ID, GrantedAt: now,
+		})
+		if err != nil {
+			if errors.Is(err, ErrOpenGrantExists) {
+				if current, loadErr := s.store.GetOpenGrant(ctx, req.WorkspaceID); loadErr == nil {
+					return Grant{}, &OpenGrantConflictError{Current: current}
+				}
+			}
+			return Grant{}, fmt.Errorf("create provisioning trial grant: %w", err)
+		}
 	}
 
 	periodStart := remote.CurrentPeriodStartAt.UTC()
 	periodEnd := remote.CurrentPeriodEndAt.UTC()
 	trialEnd := periodEnd.AddDate(0, 0, int(req.DurationDays))
-	schedule, stripeErr := s.stripe.CreatePaidTrialSchedule(ctx, CreatePaidTrialScheduleRequest{
+	scheduleReq := CreatePaidTrialScheduleRequest{
 		StripeMode: mode.Name, WorkspaceID: req.WorkspaceID, PlanID: req.PlanID,
 		TrialGrantID: grant.ID, TrialKind: KindPaidSamePlan, Environment: s.environment,
 		SubscriptionID: remote.ID, PriceID: mode.PriceID, DurationDays: req.DurationDays,
 		CurrentPhase: SchedulePhase{PriceID: mode.PriceID, StartAt: periodStart, EndAt: periodEnd},
 		TrialStartAt: periodEnd, TrialEndAt: trialEnd,
-	})
+	}
+	var schedule ScheduleSnapshot
+	var stripeErr error
+	if grant.StripeScheduleID != "" {
+		schedule, stripeErr = s.stripe.ConfigurePaidTrialSchedule(ctx, grant.StripeScheduleID, scheduleReq)
+	} else {
+		schedule, stripeErr = s.stripe.CreatePaidTrialSchedule(ctx, scheduleReq)
+	}
 	if stripeErr != nil {
 		// A non-empty schedule means Stripe attached a Schedule but its
 		// configuration was not confirmed. Keep the grant open so no second
 		// grant can be issued while metadata/webhook reconciliation catches up.
 		if schedule.ID != "" {
+			if grant.StripeScheduleID != "" && grant.StripeScheduleID != schedule.ID {
+				return Grant{}, ErrUnrelatedSchedule
+			}
+			_, recordErr := s.store.RecordProvisioningSchedule(ctx, ProvisioningScheduleUpdate{
+				ID: grant.ID, StripeScheduleID: schedule.ID,
+				FailureCode:    "stripe_schedule_reconciliation_required",
+				FailureMessage: "Stripe schedule exists but trial configuration requires reconciliation",
+			})
+			if recordErr != nil {
+				return Grant{}, fmt.Errorf("schedule Stripe trial requires reconciliation for %s: %v; persist schedule: %w", schedule.ID, stripeErr, recordErr)
+			}
 			return Grant{}, fmt.Errorf("schedule Stripe trial requires reconciliation for %s: %w", schedule.ID, stripeErr)
 		}
 		_, markErr := s.store.MarkFailed(ctx, FailureUpdate{
@@ -243,11 +321,22 @@ func (s *Service) Grant(ctx context.Context, req GrantRequest) (Grant, error) {
 	return scheduled, nil
 }
 
+func (s *Service) withCreateConflict(ctx context.Context, workspaceID string, grant Grant, err error) (Grant, error) {
+	if err == nil {
+		return grant, nil
+	}
+	if errors.Is(err, ErrOpenGrantExists) {
+		if current, loadErr := s.store.GetOpenGrant(ctx, workspaceID); loadErr == nil {
+			return Grant{}, &OpenGrantConflictError{Current: current}
+		}
+	}
+	return Grant{}, err
+}
+
 func eligiblePaidSubscription(remote SubscriptionSnapshot, local SubscriptionRecord, priceID string) bool {
 	return remote.ID == local.StripeSubscriptionID &&
 		remote.Status == "active" &&
 		remote.PriceID == priceID &&
-		remote.ScheduleID == "" &&
 		!remote.CancelAtPeriodEnd && remote.CancelAt == nil &&
 		remote.CurrentPeriodStartAt != nil && remote.CurrentPeriodEndAt != nil &&
 		remote.CurrentPeriodStartAt.Before(*remote.CurrentPeriodEndAt) &&
@@ -281,7 +370,22 @@ func (s *Service) Revoke(ctx context.Context, req RevokeRequest) (Grant, error) 
 		if err != nil || expired.ID != grant.StripeCheckoutSessionID || expired.Status != "expired" {
 			return Grant{}, ErrRevokeConflict
 		}
-		return s.revokeCAS(ctx, grant, now)
+		revoked, err := s.store.MarkRevoked(ctx, grant.ID, StatusCheckoutPending, now)
+		if err == nil {
+			revoked.PreviousStatus = StatusCheckoutPending
+			return revoked, nil
+		}
+		if !errors.Is(err, ErrConcurrentTransition) {
+			return Grant{}, fmt.Errorf("revoke trial grant: %w", err)
+		}
+		current, loadErr := s.store.GetGrant(ctx, grant.ID)
+		if loadErr != nil {
+			return Grant{}, fmt.Errorf("reload trial grant after Checkout expiry: %w", loadErr)
+		}
+		if current.WorkspaceID != req.WorkspaceID || current.Status != StatusPendingActivation || current.StripeCheckoutSessionID != "" {
+			return Grant{}, ErrRevokeConflict
+		}
+		return s.revokeCAS(ctx, current, now)
 	default:
 		return Grant{}, ErrRevokeConflict
 	}

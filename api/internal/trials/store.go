@@ -86,6 +86,16 @@ func (s *PostgresStore) MarkFailed(ctx context.Context, update FailureUpdate) (G
 	return mapGrant(row, mapTransitionError(err))
 }
 
+func (s *PostgresStore) RecordProvisioningSchedule(ctx context.Context, update ProvisioningScheduleUpdate) (Grant, error) {
+	row, err := s.queries.RecordWorkspaceTrialGrantProvisioningSchedule(ctx, db.RecordWorkspaceTrialGrantProvisioningScheduleParams{
+		StripeScheduleID: text(update.StripeScheduleID),
+		FailureCode:      text(update.FailureCode),
+		FailureMessage:   text(update.FailureMessage),
+		ID:               update.ID,
+	})
+	return mapGrant(row, mapTransitionError(err))
+}
+
 func (s *PostgresStore) MarkRevoked(ctx context.Context, id string, expected Status, at time.Time) (Grant, error) {
 	row, err := s.queries.MarkWorkspaceTrialGrantRevoked(ctx, db.MarkWorkspaceTrialGrantRevokedParams{
 		RevokedAt: pgtype.Timestamptz{Time: at, Valid: true}, ID: id, ExpectedStatus: string(expected),
@@ -147,7 +157,7 @@ func mapTransitionError(err error) error {
 
 func mapCreateError(err error) error {
 	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workspace_trial_grants_one_open_per_workspace" {
+	if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "workspace_trial_grants_open_workspace_idx" {
 		return ErrOpenGrantExists
 	}
 	return err

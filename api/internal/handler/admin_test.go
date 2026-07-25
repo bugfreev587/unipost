@@ -73,6 +73,46 @@ func TestAdminGrantTrialStatusMapping(t *testing.T) {
 	}
 }
 
+func TestAdminGrantTrialOpenConflictIncludesSafeCurrentTrialSummary(t *testing.T) {
+	current := trials.Grant{ID: "grant_existing", WorkspaceID: "ws_1", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 30, Status: trials.StatusScheduled, ActorUserID: "admin_secret", StripeSubscriptionID: "sub_secret", FailureMessage: "secret failure"}
+	service := &fakeAdminTrialService{grantErr: &trials.OpenGrantConflictError{Current: current}}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+	h.GrantTrial(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Error struct {
+			Code    string                     `json:"code"`
+			Details map[string]json.RawMessage `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != "TRIAL_GRANT_CONFLICT" || response.Error.Details["current_trial"] == nil {
+		t.Fatalf("response=%s", rec.Body.String())
+	}
+	for _, forbidden := range []string{"admin_secret", "sub_secret", "secret failure", "granted_by_user_id", "stripe_subscription_id", "failure_message"} {
+		if strings.Contains(rec.Body.String(), forbidden) {
+			t.Fatalf("conflict leaked %q: %s", forbidden, rec.Body.String())
+		}
+	}
+}
+
+func TestAdminGrantTrialUnrelatedScheduleHasSpecificConflict(t *testing.T) {
+	service := &fakeAdminTrialService{grantErr: trials.ErrUnrelatedSchedule}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"basic","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+	h.GrantTrial(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"code":"TRIAL_SCHEDULE_CONFLICT"`) || !strings.Contains(rec.Body.String(), "Subscription already has an unrelated Stripe schedule") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAdminGrantTrialRejectsMalformedBodyBeforeService(t *testing.T) {
 	service := &fakeAdminTrialService{}
 	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)

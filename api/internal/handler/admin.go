@@ -3221,6 +3221,7 @@ func (h *AdminHandler) RevokeTrial(w http.ResponseWriter, r *http.Request) {
 }
 
 func writeAdminTrialError(w http.ResponseWriter, err error) {
+	var openConflict *trials.OpenGrantConflictError
 	switch {
 	case errors.Is(err, trials.ErrInvalidPlan):
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "plan_id must be one of: api, basic, growth, team")
@@ -3228,6 +3229,10 @@ func writeAdminTrialError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "duration_days must be between 1 and 730")
 	case errors.Is(err, trials.ErrWorkspaceNotFound), errors.Is(err, trials.ErrGrantNotFound):
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "workspace or trial grant not found")
+	case errors.As(err, &openConflict):
+		writeErrorWithDetails(w, http.StatusConflict, "TRIAL_GRANT_CONFLICT", "Workspace already has an open trial grant", ErrorDetails{Details: map[string]any{"current_trial": trials.NewConflictSummary(openConflict.Current)}})
+	case errors.Is(err, trials.ErrUnrelatedSchedule):
+		writeError(w, http.StatusConflict, "TRIAL_SCHEDULE_CONFLICT", "Subscription already has an unrelated Stripe schedule")
 	case errors.Is(err, trials.ErrOpenGrantExists), errors.Is(err, trials.ErrPaidPlanMismatch),
 		errors.Is(err, trials.ErrIneligibleSubscription), errors.Is(err, trials.ErrRevokeConflict):
 		writeError(w, http.StatusConflict, "CONFLICT", err.Error())

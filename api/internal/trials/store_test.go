@@ -10,7 +10,7 @@ import (
 func TestMapCreateErrorMapsOpenGrantUniqueConstraintToConflict(t *testing.T) {
 	err := mapCreateError(&pgconn.PgError{
 		Code:           "23505",
-		ConstraintName: "workspace_trial_grants_one_open_per_workspace",
+		ConstraintName: "workspace_trial_grants_open_workspace_idx",
 	})
 	if !errors.Is(err, ErrOpenGrantExists) {
 		t.Fatalf("error = %v, want ErrOpenGrantExists", err)
