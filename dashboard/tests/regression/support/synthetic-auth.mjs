@@ -84,7 +84,7 @@ export async function loadClerkPublishableKey(config, fetchImpl = fetch) {
 
 export async function createSyntheticClerkUser(config, fetchImpl = fetch, runtime = {}) {
   const now = runtime.now?.() ?? new Date();
-  const uuid = (runtime.randomUUID?.() ?? randomUUID()).replaceAll("-", "");
+  const uuid = (runtime.randomUUID?.() ?? randomUUID()).replaceAll("-", "").slice(0, 16);
   const timestamp = now.toISOString().replace(/[^0-9]/g, "");
   const email = `${SYNTHETIC_PREFIX}${timestamp}-${uuid}@example.com`;
   const user = await clerkRequest(config, "/users", {
