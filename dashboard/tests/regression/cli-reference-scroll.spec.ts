@@ -38,7 +38,7 @@ async function scrollResponse(page: Page, row: Locator) {
 }
 
 test("CLI reference response returns to the first line when reopened", async ({ page }) => {
-  await page.goto("/docs/cli/reference", { waitUntil: "networkidle" });
+  await page.goto("/docs/cli/reference", { waitUntil: "domcontentloaded" });
 
   const row = page.locator("details.cli-command-row", { hasText: "auth login --setup-token" }).first();
   await row.locator("summary").click();
@@ -59,7 +59,7 @@ test("CLI reference response returns to the first line when reopened", async ({ 
 });
 
 test("CLI reference response editor mounts only while the command is open", async ({ page }) => {
-  await page.goto("/docs/cli/reference", { waitUntil: "networkidle" });
+  await page.goto("/docs/cli/reference", { waitUntil: "domcontentloaded" });
 
   const setupRow = page.locator("details.cli-command-row", { hasText: "auth login --setup-token" }).first();
   await setupRow.locator("summary").click();
