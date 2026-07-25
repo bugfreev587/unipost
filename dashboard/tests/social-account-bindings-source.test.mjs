@@ -50,6 +50,11 @@ test("composer prevents selecting sibling bindings for one physical account", as
   assert.match(grid, /disabled=\{!!selectedSiblingId\}/);
   assert.match(form, /selectedIdentityKeys/);
   assert.match(form, /if \(selectedIdentityKeys\.has\(getAccountIdentityKey\(account\)\)\) return prev/);
+  assert.match(form, /if \(duplicateAccountIds\.size > 0\) return false/);
+  assert.match(form, /const accountIds = selectedAccounts\.map/);
+  assert.doesNotMatch(form, /const accountIds = uniqueSelectedAccounts\.map/);
+  assert.match(grid, /Remove one before publishing/);
+  assert.doesNotMatch(grid, /only one post per platform account will be sent/);
   assert.doesNotMatch(form, /only publish once/);
 });
 

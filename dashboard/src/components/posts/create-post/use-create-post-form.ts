@@ -802,6 +802,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const canSubmit = useMemo(() => {
     if (submitting) return false;
     if (selectedAccountIds.size === 0) return false;
+    if (duplicateAccountIds.size > 0) return false;
     if (hasOverLimit) return false;
     if (!allMediaUploaded) return false; // wait for uploads to finish
     const hasContent = mainContent.trim() || Object.entries(overrides).some(([accountId, o]) => o.caption?.trim() || hasPlatformOnlyContent(accountId));
@@ -812,12 +813,16 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (tiktokBlocker) return false;
     if (pinterestBlocker) return false;
     return true;
-  }, [submitting, selectedAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, totalMediaCount, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker, pinterestBlocker]);
+  }, [submitting, selectedAccountIds, duplicateAccountIds, hasOverLimit, allMediaUploaded, mainContent, overrides, totalMediaCount, publishMode, scheduledAt, queueId, hasPlatformOnlyContent, tiktokBlocker, pinterestBlocker]);
 
   // Not wrapped in useCallback — always reads latest state to avoid
   // stale closure issues with mediaItems and preserved edit media.
   function buildPayload(): CreateSocialPostPayload {
-    const accountIds = uniqueSelectedAccounts.map((a) => a.id);
+    // Preserve every selected public account ID. Normal UI selection prevents
+    // sibling bindings from coexisting, while restored legacy drafts may still
+    // contain them. Never silently choose a winner: canSubmit blocks that state,
+    // and the API remains able to atomically reject a programmatic submission.
+    const accountIds = selectedAccounts.map((a) => a.id);
     // Any sign of per-account content forces the per-platform
     // payload branch: caption override, a YouTube title-only post,
     // a Facebook link-only post, etc. Without this, platform_options
@@ -841,7 +846,7 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     if (hasOverrides || mediaIds || mediaUrls) {
       payload.platform_posts = accountIds.flatMap((id) => {
         const o = overrides[id];
-        const account = uniqueSelectedAccounts.find((candidate) => candidate.id === id);
+        const account = selectedAccounts.find((candidate) => candidate.id === id);
         const entry: NonNullable<CreateSocialPostPayload["platform_posts"]>[number] = {
           account_id: id,
           caption: o?.caption?.trim() || mainContent.trim(),

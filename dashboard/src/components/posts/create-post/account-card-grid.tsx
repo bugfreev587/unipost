@@ -206,7 +206,7 @@ export function PostToGrid({
       </div>
       {duplicateIds && duplicateIds.size > 0 && (
         <div className="mt-2 text-[10px] font-mono" style={{ color: "var(--warning)" }}>
-          Duplicate accounts detected — only one post per platform account will be sent.
+          This physical account is selected through more than one Profile. Remove one before publishing.
         </div>
       )}
     </div>
