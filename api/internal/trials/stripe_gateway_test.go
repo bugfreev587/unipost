@@ -144,6 +144,7 @@ func TestBuildExpireCheckoutParamsUsesStableRetryKey(t *testing.T) {
 		StripeMode:        "sandbox",
 		TrialGrantID:      "grant_123",
 		CheckoutSessionID: "cs_123",
+		CheckoutAttempt:   2,
 	}
 
 	first, err := buildExpireCheckoutParams(req)
@@ -154,7 +155,7 @@ func TestBuildExpireCheckoutParamsUsesStableRetryKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry buildExpireCheckoutParams() error = %v", err)
 	}
-	const want = "trial:grant_123:expire_checkout"
+	const want = "trial:grant_123:expire_checkout:2"
 	if got := stripe.StringValue(first.IdempotencyKey); got != want {
 		t.Fatalf("first IdempotencyKey = %q, want %q", got, want)
 	}
@@ -164,12 +165,13 @@ func TestBuildExpireCheckoutParamsUsesStableRetryKey(t *testing.T) {
 }
 
 func TestBuildExpireCheckoutParamsRejectsIncompleteIdentity(t *testing.T) {
-	valid := ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123"}
+	valid := ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123", CheckoutAttempt: 1}
 	for _, mutate := range []func(*ExpireCheckoutRequest){
 		func(req *ExpireCheckoutRequest) { req.StripeMode = "" },
 		func(req *ExpireCheckoutRequest) { req.TrialGrantID = "" },
 		func(req *ExpireCheckoutRequest) { req.CheckoutSessionID = "" },
 		func(req *ExpireCheckoutRequest) { req.CheckoutSessionID = "   " },
+		func(req *ExpireCheckoutRequest) { req.CheckoutAttempt = 0 },
 	} {
 		req := valid
 		mutate(&req)
@@ -185,7 +187,7 @@ func TestExpireCheckoutTimeoutRetryReusesSameIdempotencyKey(t *testing.T) {
 		expireErrors:   []error{context.DeadlineExceeded, nil},
 	}
 	gateway := newFakeStripeGateway(client)
-	req := ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123"}
+	req := ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123", CheckoutAttempt: 4}
 
 	if _, err := gateway.ExpireCheckout(t.Context(), req); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("first ExpireCheckout() error = %v, want deadline exceeded", err)
@@ -198,7 +200,7 @@ func TestExpireCheckoutTimeoutRetryReusesSameIdempotencyKey(t *testing.T) {
 	}
 	first := stripe.StringValue(client.expireParams[0].IdempotencyKey)
 	second := stripe.StringValue(client.expireParams[1].IdempotencyKey)
-	if first != "trial:grant_123:expire_checkout" || second != first {
+	if first != "trial:grant_123:expire_checkout:4" || second != first {
 		t.Fatalf("retry idempotency keys = %q, %q", first, second)
 	}
 }
@@ -848,7 +850,7 @@ func TestGatewayRejectsEmptyOrMismatchedStripeResponses(t *testing.T) {
 		}},
 		{name: "expire checkout mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
 			client.checkoutResult = &stripe.CheckoutSession{ID: "cs_other"}
-			_, err := g.ExpireCheckout(t.Context(), ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123"})
+			_, err := g.ExpireCheckout(t.Context(), ExpireCheckoutRequest{StripeMode: "live", TrialGrantID: "grant_123", CheckoutSessionID: "cs_123", CheckoutAttempt: 1})
 			return err
 		}},
 		{name: "retrieve subscription mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {

@@ -132,6 +132,54 @@ func (s *PostgresStore) ReopenUnrecordedCheckout(ctx context.Context, id string,
 	return mapGrant(row, mapTransitionError(err))
 }
 
+func (s *PostgresStore) GetGrantByCheckoutSession(ctx context.Context, sessionID string) (Grant, error) {
+	row, err := s.queries.GetWorkspaceTrialGrantByCheckoutSession(ctx, text(sessionID))
+	return mapGrant(row, mapLookupError(err))
+}
+
+func (s *PostgresStore) GetGrantBySubscription(ctx context.Context, subscriptionID string) (Grant, error) {
+	row, err := s.queries.GetWorkspaceTrialGrantBySubscription(ctx, text(subscriptionID))
+	return mapGrant(row, mapLookupError(err))
+}
+
+func (s *PostgresStore) GetGrantBySchedule(ctx context.Context, scheduleID string) (Grant, error) {
+	row, err := s.queries.GetWorkspaceTrialGrantBySchedule(ctx, text(scheduleID))
+	return mapGrant(row, mapLookupError(err))
+}
+
+func (s *PostgresStore) MarkActive(ctx context.Context, update ActiveUpdate) (Grant, error) {
+	row, err := s.queries.MarkWorkspaceTrialGrantActive(ctx, db.MarkWorkspaceTrialGrantActiveParams{
+		StripeCustomerID: text(update.StripeCustomerID), StripeSubscriptionID: text(update.StripeSubscriptionID),
+		StartedAt:   pgtype.Timestamptz{Time: update.StartedAt, Valid: true},
+		EndsAt:      pgtype.Timestamptz{Time: update.EndsAt, Valid: true},
+		ActivatedAt: pgtype.Timestamptz{Time: update.ActivatedAt, Valid: true},
+		ID:          update.ID, ExpectedStatus: string(update.ExpectedStatus),
+	})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) RecordRenewalCancellation(ctx context.Context, id string, at time.Time) (Grant, error) {
+	row, err := s.queries.RecordWorkspaceTrialGrantRenewalCancellation(ctx, db.RecordWorkspaceTrialGrantRenewalCancellationParams{
+		CanceledAt: pgtype.Timestamptz{Time: at, Valid: true}, ID: id,
+	})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) MarkCanceled(ctx context.Context, id string, expected Status, at time.Time) (Grant, error) {
+	row, err := s.queries.MarkWorkspaceTrialGrantCanceled(ctx, db.MarkWorkspaceTrialGrantCanceledParams{CanceledAt: pgtype.Timestamptz{Time: at, Valid: true}, ID: id, ExpectedStatus: string(expected)})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) MarkCompleted(ctx context.Context, id string, expected Status, at time.Time) (Grant, error) {
+	row, err := s.queries.MarkWorkspaceTrialGrantCompleted(ctx, db.MarkWorkspaceTrialGrantCompletedParams{CompletedAt: pgtype.Timestamptz{Time: at, Valid: true}, ID: id, ExpectedStatus: string(expected)})
+	return mapGrant(row, mapTransitionError(err))
+}
+
+func (s *PostgresStore) MarkSuperseded(ctx context.Context, id string, expected Status, planID string, at time.Time) (Grant, error) {
+	row, err := s.queries.MarkWorkspaceTrialGrantSuperseded(ctx, db.MarkWorkspaceTrialGrantSupersededParams{SupersededAt: pgtype.Timestamptz{Time: at, Valid: true}, SupersededByPlanID: text(planID), ID: id, ExpectedStatus: string(expected)})
+	return mapGrant(row, mapTransitionError(err))
+}
+
 type ManagerModeResolver struct {
 	manager *billing.Manager
 }

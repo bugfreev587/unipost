@@ -233,3 +233,27 @@ func TestWorkspaceTrialGrantPersistsPartialScheduleWhileProvisioning(t *testing.
 		}
 	}
 }
+
+func TestWorkspaceTrialGrantRenewalCancellationKeepsGrantActive(t *testing.T) {
+	source, err := os.ReadFile("queries/workspace_trial_grants.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := strings.ToLower(strings.Join(strings.Fields(string(source)), " "))
+	start := strings.Index(body, "-- name: recordworkspacetrialgrantrenewalcancellation :one")
+	if start < 0 {
+		t.Fatal("missing renewal cancellation query")
+	}
+	section := body[start:]
+	if next := strings.Index(section[len("-- name: recordworkspacetrialgrantrenewalcancellation :one"):], "-- name:"); next >= 0 {
+		section = section[:len("-- name: recordworkspacetrialgrantrenewalcancellation :one")+next]
+	}
+	for _, want := range []string{"set canceled_at = sqlc.arg(canceled_at)", "and status = 'active'", "returning *"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("renewal cancellation query missing %q: %s", want, section)
+		}
+	}
+	if strings.Contains(section, "set status") {
+		t.Fatalf("renewal cancellation must not make the grant terminal: %s", section)
+	}
+}

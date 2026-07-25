@@ -25,7 +25,163 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
+
+func TestStripeTrialCheckoutProjectsRetrievedSubscriptionAsTrialing(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.plans["growth"] = db.Plan{ID: "growth", Name: "Growth", PriceCents: 7900, PostLimit: 7500, StripePriceID: pgtype.Text{String: "price_growth", Valid: true}, AllowAnalytics: true}
+	trial := &recordingTrialWebhookService{retrieve: trials.SubscriptionSnapshot{
+		StripeMode: "sandbox", ID: "sub_staging", Status: "trialing", CustomerID: "cus_staging", PriceID: "price_growth",
+		TrialStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), TrialEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()),
+		CurrentPeriodStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), CurrentPeriodEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()),
+		Metadata: map[string]string{"workspace_id": "ws_staging", "plan_id": "growth", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"},
+	}, subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "growth", Status: trials.StatusActive}}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "growth", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}
+
+	response := postTestCheckoutWebhook(t, h, secret, metadata, stripe.CheckoutSessionPaymentStatusNoPaymentRequired)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if trial.retrieveMode != "sandbox" || trial.retrieveID != "sub_staging" || trial.subscriptionCalls != 1 {
+		t.Fatalf("retrieve=%s/%s reconcile_calls=%d", trial.retrieveMode, trial.retrieveID, trial.subscriptionCalls)
+	}
+	if got := store.subscription; got.PlanID != "growth" || got.Status != "trialing" || !got.CurrentPeriodStart.Valid || !got.CurrentPeriodEnd.Valid || got.CancelAtPeriodEnd.Bool {
+		t.Fatalf("subscription = %#v", got)
+	}
+}
+
+func TestStripeTrialCheckoutRetrievalFailureReturns500ForRetry(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	trial := &recordingTrialWebhookService{retrieveErr: errors.New("stripe unavailable")}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	response := postTestCheckoutWebhook(t, h, secret, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "unipost_environment": "staging"}, stripe.CheckoutSessionPaymentStatusNoPaymentRequired)
+	if response.Code != http.StatusInternalServerError || store.upserts != 0 {
+		t.Fatalf("status=%d upserts=%d body=%s", response.Code, store.upserts, response.Body.String())
+	}
+}
+
+func TestStripeSubscriptionCreatedProjectsThroughSharedProjectorBeforeCheckout(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusActive}}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.created", stripe.SubscriptionStatusTrialing, false, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"})
+	if response.Code != http.StatusOK || trial.subscriptionCalls != 1 || store.subscription.Status != "trialing" {
+		t.Fatalf("status=%d calls=%d subscription=%#v body=%s", response.Code, trial.subscriptionCalls, store.subscription, response.Body.String())
+	}
+}
+
+func TestManagedTrialCancelAtPeriodEndRetainsPlanAndAccess(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, RenewalCanceled: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusActive, CanceledAt: webhookPtrTime(time.Now().UTC())}}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusTrialing, true, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"})
+	if response.Code != http.StatusOK || store.subscription.PlanID != "basic" || store.subscription.Status != "trialing" || store.cancelCalls != 0 {
+		t.Fatalf("status=%d subscription=%#v cancel_calls=%d body=%s", response.Code, store.subscription, store.cancelCalls, response.Body.String())
+	}
+}
+
+func TestLegacyTrialCancelAtPeriodEndStillDowngradesImmediately(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusTrialing, true, nil)
+	if response.Code != http.StatusOK || store.subscription.PlanID != "free" || store.cancelCalls != 1 {
+		t.Fatalf("status=%d subscription=%#v cancel_calls=%d body=%s", response.Code, store.subscription, store.cancelCalls, response.Body.String())
+	}
+}
+
+func TestTrialingPaymentSucceededDoesNotPromoteSubscriptionToActive(t *testing.T) {
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.Status = "trialing"
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	h := &StripeWebhookHandler{queries: db.New(store)}
+	h.handlePaymentSucceeded(httptest.NewRequest(http.MethodPost, "/", nil), stripe.Event{ID: "evt_invoice", Data: &stripe.EventData{Raw: json.RawMessage(`{"id":"in_1","parent":{"subscription_details":{"subscription":"sub_staging"}}}`)}})
+	if store.subscription.Status != "trialing" || store.statusUpdates != 0 {
+		t.Fatalf("subscription=%#v status_updates=%d", store.subscription, store.statusUpdates)
+	}
+}
+
+func TestTrialingSubscriptionIsExcludedFromAdminMRR(t *testing.T) {
+	normalized := strings.ToLower(strings.Join(strings.Fields(adminStatsQuery), " "))
+	if !strings.Contains(normalized, "where s.status = 'active'") {
+		t.Fatalf("admin MRR must remain active-only: %s", normalized)
+	}
+	if strings.Contains(normalized, "s.status in ('active', 'trialing')") {
+		t.Fatalf("admin MRR must not count trialing subscriptions: %s", normalized)
+	}
+}
+
+func TestOrdinaryCheckoutSupersedesPendingOfferOnlyAfterProjection(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	trial := &recordingTrialWebhookService{retrieve: trials.SubscriptionSnapshot{StripeMode: "sandbox", ID: "sub_staging", Status: "active", CustomerID: "cus_staging", PriceID: "price_basic", CurrentPeriodStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), CurrentPeriodEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC())}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	response := postTestCheckoutWebhook(t, h, secret, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging"}, stripe.CheckoutSessionPaymentStatusPaid)
+	if response.Code != http.StatusOK || trial.ordinaryCalls != 1 || store.subscription.PlanID != "basic" {
+		t.Fatalf("status=%d ordinary=%d subscription=%#v body=%s", response.Code, trial.ordinaryCalls, store.subscription, response.Body.String())
+	}
+
+	store.plans["basic"] = db.Plan{ID: "basic", Name: "Basic", PriceCents: 1900, PostLimit: 2500}
+	trial.ordinaryCalls = 0
+	response = postTestCheckoutWebhook(t, h, secret, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging"}, stripe.CheckoutSessionPaymentStatusPaid)
+	if response.Code != http.StatusInternalServerError || trial.ordinaryCalls != 0 {
+		t.Fatalf("failed projection status=%d ordinary=%d body=%s", response.Code, trial.ordinaryCalls, response.Body.String())
+	}
+}
+
+func TestCheckoutCompletedAfterGrantAlreadyActiveConverges(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	trial := &recordingTrialWebhookService{retrieve: trials.SubscriptionSnapshot{StripeMode: "sandbox", ID: "sub_staging", Status: "trialing", CustomerID: "cus_staging", PriceID: "price_basic", TrialStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), TrialEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()), CurrentPeriodStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), CurrentPeriodEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()), Metadata: map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}}, subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusActive}}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}
+	for i := 0; i < 2; i++ {
+		response := postTestCheckoutWebhook(t, h, secret, metadata, stripe.CheckoutSessionPaymentStatusNoPaymentRequired)
+		if response.Code != http.StatusOK {
+			t.Fatalf("attempt %d status=%d body=%s", i+1, response.Code, response.Body.String())
+		}
+	}
+	if trial.subscriptionCalls != 2 || store.subscription.Status != "trialing" {
+		t.Fatalf("reconcile_calls=%d subscription=%#v", trial.subscriptionCalls, store.subscription)
+	}
+}
+
+func TestCheckoutExpiredAndScheduleEventsDispatchWithForeignEnvironmentGuard(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	trial := &recordingTrialWebhookService{}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+
+	response := postTestStripeObjectWebhook(t, h, secret, "checkout.session.expired", map[string]interface{}{"id": "cs_1", "object": "checkout.session", "metadata": map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}})
+	if response.Code != http.StatusOK || trial.checkoutCalls != 1 {
+		t.Fatalf("checkout expiry status=%d calls=%d body=%s", response.Code, trial.checkoutCalls, response.Body.String())
+	}
+	trial.scheduleErr = trials.ErrWebhookNotApplicable
+	response = postTestStripeObjectWebhook(t, h, secret, "subscription_schedule.updated", map[string]interface{}{"id": "sched_1", "object": "subscription_schedule", "status": "active", "metadata": map[string]string{"unipost_environment": "dev"}})
+	if response.Code != http.StatusOK || trial.scheduleCalls != 1 {
+		t.Fatalf("foreign schedule status=%d calls=%d body=%s", response.Code, trial.scheduleCalls, response.Body.String())
+	}
+}
 
 func TestStripeCheckoutReplayIsIdempotent(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
@@ -178,7 +334,7 @@ func TestStripeSubscriptionUpdateIgnoresLegacyForeignSubscription(t *testing.T) 
 	}
 }
 
-func TestStripeSubscriptionUpdateRetriesLocalMissingSubscription(t *testing.T) {
+func TestStripeSubscriptionUpdateRecoversByWorkspaceMetadata(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")
 	store.stripeSubscriptionErr = pgx.ErrNoRows
@@ -191,11 +347,14 @@ func TestStripeSubscriptionUpdateRetriesLocalMissingSubscription(t *testing.T) {
 
 	response := postTestSubscriptionUpdatedWebhook(t, h, secret, metadata)
 
-	if response.Code != http.StatusInternalServerError {
-		t.Fatalf("status = %d, want 500; body = %q", response.Code, response.Body.String())
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %q", response.Code, response.Body.String())
 	}
 	if store.workspaceQueries != 1 || store.stripeSubscriptionQueries != 1 {
-		t.Fatalf("local missing subscription lookups = workspace:%d subscription:%d, want 1/1", store.workspaceQueries, store.stripeSubscriptionQueries)
+		t.Fatalf("recovery lookups = workspace:%d subscription:%d, want 1/1", store.workspaceQueries, store.stripeSubscriptionQueries)
+	}
+	if store.subscription.Status != "active" || store.upserts != 1 {
+		t.Fatalf("recovered subscription=%#v upserts=%d", store.subscription, store.upserts)
 	}
 }
 
@@ -333,6 +492,8 @@ type stripeWebhookStore struct {
 	stripeSubscriptionQueries int
 	plans                     map[string]db.Plan
 	upserts                   int
+	cancelCalls               int
+	statusUpdates             int
 }
 
 func newStripeWebhookStore(workspaceID string) *stripeWebhookStore {
@@ -355,13 +516,37 @@ func newStripeWebhookStore(workspaceID string) *stripeWebhookStore {
 		},
 		plans: map[string]db.Plan{
 			"free":  {ID: "free", Name: "Free", PriceCents: 0, PostLimit: 100, AllowInbox: false},
-			"basic": {ID: "basic", Name: "Basic", PriceCents: 1900, PostLimit: 2500, AllowInbox: true},
+			"basic": {ID: "basic", Name: "Basic", PriceCents: 1900, PostLimit: 2500, StripePriceID: pgtype.Text{String: "price_basic", Valid: true}, AllowInbox: true},
 		},
 	}
 }
 
-func (s *stripeWebhookStore) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+func (s *stripeWebhookStore) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "UPDATE subscriptions\nSET stripe_customer_id"):
+		s.subscription.WorkspaceID, _ = args[0].(string)
+		s.subscription.StripeCustomerID, _ = args[1].(pgtype.Text)
+		s.subscription.StripeSubscriptionID, _ = args[2].(pgtype.Text)
+		s.subscription.PlanID, _ = args[3].(string)
+		s.subscription.Status, _ = args[4].(string)
+		s.subscription.CurrentPeriodStart, _ = args[5].(pgtype.Timestamptz)
+		s.subscription.CurrentPeriodEnd, _ = args[6].(pgtype.Timestamptz)
+		s.subscription.CancelAtPeriodEnd, _ = args[7].(pgtype.Bool)
+		s.upserts++
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "SET plan_id = 'free'"):
+		s.cancelCalls++
+		s.subscription.PlanID, s.subscription.Status = "free", "active"
+		s.subscription.StripeSubscriptionID = pgtype.Text{}
+		s.subscription.CancelAtPeriodEnd = pgtype.Bool{Bool: false, Valid: true}
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "UPDATE subscriptions SET status = $2"):
+		s.statusUpdates++
+		s.subscription.Status, _ = args[1].(string)
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	default:
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected Exec: %s", query)
+	}
 }
 
 func (s *stripeWebhookStore) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
@@ -405,6 +590,16 @@ func (s *stripeWebhookStore) QueryRow(_ context.Context, query string, args ...i
 				return pgx.ErrNoRows
 			}
 			return scanStripePlan(dest, plan)
+		})
+	case strings.Contains(query, "FROM plans WHERE stripe_price_id = $1"):
+		price, _ := args[0].(pgtype.Text)
+		return stripeTestRow(func(dest ...interface{}) error {
+			for _, plan := range s.plans {
+				if plan.StripePriceID.Valid && plan.StripePriceID.String == price.String {
+					return scanStripePlan(dest, plan)
+				}
+			}
+			return pgx.ErrNoRows
 		})
 	case strings.Contains(query, "INSERT INTO subscriptions"):
 		s.upserts++
@@ -512,6 +707,10 @@ func newTestStripeWebhookHandler(store *stripeWebhookStore, syncer loopsLifecycl
 		},
 	}
 	handler := NewStripeWebhookHandler(db.New(store), manager, events.NoopBus{}, "https://staging-app.unipost.dev")
+	handler.SetTrialWebhookService(&recordingTrialWebhookService{retrieve: trials.SubscriptionSnapshot{
+		StripeMode: "sandbox", ID: "sub_staging", Status: "active", CustomerID: "cus_staging", PriceID: "price_basic",
+		CurrentPeriodStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), CurrentPeriodEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()),
+	}})
 	if syncer != nil {
 		handler.SetLoopsSyncer(syncer)
 	}
@@ -609,6 +808,91 @@ func postTestSubscriptionUpdatedWebhook(
 
 	return response
 }
+
+func postTestSubscriptionWebhookWithState(
+	t *testing.T,
+	handler *StripeWebhookHandler,
+	secret string,
+	eventType string,
+	status stripe.SubscriptionStatus,
+	cancelAtPeriodEnd bool,
+	metadata map[string]string,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := json.Marshal(map[string]interface{}{
+		"id": "evt_subscription_state", "object": "event", "created": int64(1784822630), "type": eventType,
+		"data": map[string]interface{}{"object": map[string]interface{}{
+			"id": "sub_staging", "object": "subscription", "status": status, "customer": "cus_staging",
+			"cancel_at_period_end": cancelAtPeriodEnd, "trial_start": int64(1784822617), "trial_end": int64(1787501017), "metadata": metadata,
+			"items": map[string]interface{}{"data": []map[string]interface{}{{"id": "si_staging", "current_period_start": int64(1784822617), "current_period_end": int64(1787501017), "price": map[string]interface{}{"id": "price_basic"}}}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: payload, Secret: secret})
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/stripe", bytes.NewReader(payload))
+	request.Header.Set("Stripe-Signature", signed.Header)
+	response := httptest.NewRecorder()
+	handler.HandleStripe(response, request)
+	return response
+}
+
+func postTestStripeObjectWebhook(t *testing.T, handler *StripeWebhookHandler, secret, eventType string, object map[string]interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	payload, err := json.Marshal(map[string]interface{}{"id": "evt_object", "object": "event", "created": int64(1784822630), "type": eventType, "data": map[string]interface{}{"object": object}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signed := webhook.GenerateTestSignedPayload(&webhook.UnsignedPayload{Payload: payload, Secret: secret})
+	request := httptest.NewRequest(http.MethodPost, "/webhooks/stripe", bytes.NewReader(payload))
+	request.Header.Set("Stripe-Signature", signed.Header)
+	response := httptest.NewRecorder()
+	handler.HandleStripe(response, request)
+	return response
+}
+
+type recordingTrialWebhookService struct {
+	retrieve           trials.SubscriptionSnapshot
+	retrieveErr        error
+	retrieveMode       string
+	retrieveID         string
+	subscriptionResult trials.WebhookReconcileResult
+	subscriptionErr    error
+	subscriptionCalls  int
+	checkoutResult     trials.WebhookReconcileResult
+	checkoutErr        error
+	scheduleResult     trials.WebhookReconcileResult
+	scheduleErr        error
+	ordinaryResult     trials.WebhookReconcileResult
+	ordinaryErr        error
+	checkoutCalls      int
+	scheduleCalls      int
+	ordinaryCalls      int
+}
+
+func (s *recordingTrialWebhookService) RetrieveSubscription(_ context.Context, mode, id string) (trials.SubscriptionSnapshot, error) {
+	s.retrieveMode, s.retrieveID = mode, id
+	return s.retrieve, s.retrieveErr
+}
+func (s *recordingTrialWebhookService) ReconcileSubscription(_ context.Context, _ trials.WebhookSubscriptionRequest) (trials.WebhookReconcileResult, error) {
+	s.subscriptionCalls++
+	return s.subscriptionResult, s.subscriptionErr
+}
+func (s *recordingTrialWebhookService) ReconcileCheckoutExpired(_ context.Context, _ trials.WebhookCheckoutRequest) (trials.WebhookReconcileResult, error) {
+	s.checkoutCalls++
+	return s.checkoutResult, s.checkoutErr
+}
+func (s *recordingTrialWebhookService) ReconcileSchedule(_ context.Context, _ trials.WebhookScheduleRequest) (trials.WebhookReconcileResult, error) {
+	s.scheduleCalls++
+	return s.scheduleResult, s.scheduleErr
+}
+func (s *recordingTrialWebhookService) ReconcileOrdinaryCheckout(_ context.Context, _, _ string, _ time.Time) (trials.WebhookReconcileResult, error) {
+	s.ordinaryCalls++
+	return s.ordinaryResult, s.ordinaryErr
+}
+
+func webhookPtrTime(value time.Time) *time.Time { return &value }
 
 func (r *recordingHoldReconciler) ReconcileWorkspace(_ context.Context, workspaceID, reason string, effectiveAt time.Time) error {
 	r.calls++

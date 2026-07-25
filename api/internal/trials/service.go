@@ -23,6 +23,8 @@ var (
 	ErrCheckoutCompletionPending  = errors.New("Checkout completion is awaiting webhook projection")
 	ErrCheckoutStateConflict      = errors.New("trial checkout state changed concurrently")
 	ErrCheckoutCustomerRequired   = errors.New("Stripe customer is required to start trial checkout")
+	ErrWebhookNotApplicable       = errors.New("trial webhook is not applicable to this environment")
+	ErrWebhookStateConflict       = errors.New("trial webhook does not match the recorded grant")
 )
 
 type OpenGrantConflictError struct {
@@ -113,6 +115,14 @@ type GrantStore interface {
 	RecordCheckoutSession(context.Context, string, string, int32) (Grant, error)
 	ReleaseCheckout(context.Context, string, string, time.Time) (Grant, error)
 	ReopenUnrecordedCheckout(context.Context, string, int32) (Grant, error)
+	GetGrantByCheckoutSession(context.Context, string) (Grant, error)
+	GetGrantBySubscription(context.Context, string) (Grant, error)
+	GetGrantBySchedule(context.Context, string) (Grant, error)
+	MarkActive(context.Context, ActiveUpdate) (Grant, error)
+	RecordRenewalCancellation(context.Context, string, time.Time) (Grant, error)
+	MarkCanceled(context.Context, string, Status, time.Time) (Grant, error)
+	MarkCompleted(context.Context, string, Status, time.Time) (Grant, error)
+	MarkSuperseded(context.Context, string, Status, string, time.Time) (Grant, error)
 }
 
 type CreateGrantInput struct {
@@ -150,6 +160,41 @@ type ProvisioningScheduleUpdate struct {
 	StripeScheduleID string
 	FailureCode      string
 	FailureMessage   string
+}
+
+type ActiveUpdate struct {
+	ID                   string
+	ExpectedStatus       Status
+	StripeCustomerID     string
+	StripeSubscriptionID string
+	StartedAt            time.Time
+	EndsAt               time.Time
+	ActivatedAt          time.Time
+}
+
+type WebhookSubscriptionRequest struct {
+	Snapshot   SubscriptionSnapshot
+	PlanID     string
+	OccurredAt time.Time
+}
+
+type WebhookCheckoutRequest struct {
+	StripeMode string
+	SessionID  string
+	Metadata   map[string]string
+	OccurredAt time.Time
+}
+
+type WebhookScheduleRequest struct {
+	EventType  string
+	Snapshot   ScheduleSnapshot
+	OccurredAt time.Time
+}
+
+type WebhookReconcileResult struct {
+	Managed         bool
+	RenewalCanceled bool
+	Grant           Grant
 }
 
 type GrantRequest struct {
@@ -213,7 +258,13 @@ func (s *Service) PrepareCheckout(ctx context.Context, req CheckoutRequest) (Che
 	if err != nil {
 		return CheckoutResult{}, fmt.Errorf("load trial grant for Checkout: %w", err)
 	}
-	if grant.Kind != KindFreeToPaid || grant.PlanID != req.PlanID {
+	if grant.Kind != KindFreeToPaid {
+		return CheckoutResult{}, ErrTrialCheckoutNotApplicable
+	}
+	if grant.PlanID != req.PlanID {
+		if grant.Status == StatusCheckoutPending {
+			return CheckoutResult{}, s.abandonCheckoutForOrdinaryPlan(ctx, grant, req)
+		}
 		return CheckoutResult{}, ErrTrialCheckoutNotApplicable
 	}
 	if grant.Status == StatusScheduled || grant.Status == StatusActive {
@@ -234,6 +285,81 @@ func (s *Service) PrepareCheckout(ctx context.Context, req CheckoutRequest) (Che
 		return CheckoutResult{}, ErrBillingModeUnavailable
 	}
 	return s.prepareCheckoutGrant(ctx, grant, req, true)
+}
+
+func (s *Service) abandonCheckoutForOrdinaryPlan(ctx context.Context, grant Grant, req CheckoutRequest) error {
+	if grant.StripeMode == "" || grant.StripeMode != req.StripeMode || grant.StripeCheckoutSessionID == "" || grant.CheckoutAttempt < 1 {
+		return ErrCheckoutStateConflict
+	}
+	checkout, err := s.stripe.RetrieveCheckout(ctx, grant.StripeMode, grant.StripeCheckoutSessionID)
+	if err != nil {
+		return fmt.Errorf("%w: retrieve trial Checkout before plan change: %v", ErrCheckoutExpiryUnconfirmed, err)
+	}
+	if err := validateCheckoutForAbandonment(checkout, grant, s.environment); err != nil {
+		return err
+	}
+	switch checkout.Status {
+	case "complete":
+		return ErrCheckoutCompletionPending
+	case "expired":
+		return s.releaseCheckoutForOrdinaryPlan(ctx, grant, checkout.ID)
+	case "open":
+		expired, expireErr := s.stripe.ExpireCheckout(ctx, ExpireCheckoutRequest{StripeMode: grant.StripeMode, TrialGrantID: grant.ID, CheckoutSessionID: checkout.ID, CheckoutAttempt: grant.CheckoutAttempt})
+		if expireErr == nil {
+			if err := validateCheckoutForAbandonment(expired, grant, s.environment); err != nil || expired.Status != "expired" {
+				if err != nil {
+					return err
+				}
+				return ErrCheckoutExpiryUnconfirmed
+			}
+			return s.releaseCheckoutForOrdinaryPlan(ctx, grant, expired.ID)
+		}
+		confirmed, retrieveErr := s.stripe.RetrieveCheckout(ctx, grant.StripeMode, grant.StripeCheckoutSessionID)
+		if retrieveErr != nil {
+			return fmt.Errorf("%w: expire error: %v; retrieve error: %v", ErrCheckoutExpiryUnconfirmed, expireErr, retrieveErr)
+		}
+		if err := validateCheckoutForAbandonment(confirmed, grant, s.environment); err != nil {
+			return err
+		}
+		switch confirmed.Status {
+		case "expired":
+			return s.releaseCheckoutForOrdinaryPlan(ctx, grant, confirmed.ID)
+		case "complete":
+			return ErrCheckoutCompletionPending
+		default:
+			return fmt.Errorf("%w: Checkout remains %s", ErrCheckoutExpiryUnconfirmed, confirmed.Status)
+		}
+	default:
+		return ErrCheckoutStateConflict
+	}
+}
+
+func validateCheckoutForAbandonment(checkout CheckoutSnapshot, grant Grant, environment string) error {
+	if checkout.ID != grant.StripeCheckoutSessionID || checkout.StripeMode != grant.StripeMode || !checkoutCustomerMatches(checkout, grant) || !checkoutMetadataMatches(checkout.Metadata, grant, environment) {
+		return ErrCheckoutStateConflict
+	}
+	return nil
+}
+
+func (s *Service) releaseCheckoutForOrdinaryPlan(ctx context.Context, grant Grant, sessionID string) error {
+	_, err := s.store.ReleaseCheckout(ctx, grant.ID, sessionID, s.now().UTC().Add(time.Second))
+	if err == nil {
+		return ErrTrialCheckoutNotApplicable
+	}
+	if !errors.Is(err, ErrConcurrentTransition) {
+		return fmt.Errorf("release expired trial Checkout before plan change: %w", err)
+	}
+	current, loadErr := s.store.GetGrant(ctx, grant.ID)
+	if loadErr != nil {
+		return ErrCheckoutStateConflict
+	}
+	if current.Status == StatusPendingActivation && current.StripeCheckoutSessionID == "" {
+		return ErrTrialCheckoutNotApplicable
+	}
+	if current.Status == StatusActive || current.Status.IsTerminal() {
+		return ErrCheckoutCompletionPending
+	}
+	return ErrCheckoutStateConflict
 }
 
 func validateCheckoutRequest(req CheckoutRequest) error {
@@ -604,7 +730,7 @@ func (s *Service) Revoke(ctx context.Context, req RevokeRequest) (Grant, error) 
 		}
 		expired, expireErr := s.stripe.ExpireCheckout(ctx, ExpireCheckoutRequest{
 			StripeMode: grant.StripeMode, TrialGrantID: grant.ID,
-			CheckoutSessionID: grant.StripeCheckoutSessionID,
+			CheckoutSessionID: grant.StripeCheckoutSessionID, CheckoutAttempt: grant.CheckoutAttempt,
 		})
 		if expireErr != nil || expired.ID != grant.StripeCheckoutSessionID || expired.Status != "expired" {
 			confirmed, retrieveErr := s.stripe.RetrieveCheckout(ctx, grant.StripeMode, grant.StripeCheckoutSessionID)
@@ -648,6 +774,347 @@ func (s *Service) Revoke(ctx context.Context, req RevokeRequest) (Grant, error) 
 	default:
 		return Grant{}, ErrRevokeConflict
 	}
+}
+
+// RetrieveSubscription returns Stripe's authoritative Subscription projection
+// in the mode whose webhook signature was verified by the caller.
+func (s *Service) RetrieveSubscription(ctx context.Context, stripeMode, subscriptionID string) (SubscriptionSnapshot, error) {
+	if s == nil || s.stripe == nil || strings.TrimSpace(stripeMode) == "" || strings.TrimSpace(subscriptionID) == "" {
+		return SubscriptionSnapshot{}, ErrWebhookStateConflict
+	}
+	return s.stripe.RetrieveSubscription(ctx, stripeMode, subscriptionID)
+}
+
+// ReconcileSubscription applies only monotonic grant transitions. Subscription
+// persistence remains the webhook handler's responsibility so legacy billing
+// and quota reconciliation continue to share one projector.
+func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscriptionRequest) (WebhookReconcileResult, error) {
+	if s == nil || s.store == nil {
+		return WebhookReconcileResult{}, ErrWebhookStateConflict
+	}
+	snapshot := req.Snapshot
+	if err := s.validateWebhookEnvironment(snapshot.Metadata); err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	grant, managed, err := s.lookupWebhookGrant(ctx, snapshot.Metadata, snapshot.ID, "")
+	if err != nil || !managed {
+		return WebhookReconcileResult{Managed: managed, Grant: grant}, err
+	}
+	if err := validateSubscriptionGrantMatch(grant, snapshot, req.PlanID, s.environment); err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	result := WebhookReconcileResult{Managed: true, Grant: grant}
+	if grant.Status.IsTerminal() {
+		return result, nil
+	}
+	at := webhookTime(req.OccurredAt, s.now)
+
+	if req.PlanID != grant.PlanID {
+		if grant.Status == StatusScheduled || grant.Status == StatusActive {
+			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, req.PlanID, at)
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+		return WebhookReconcileResult{}, ErrWebhookStateConflict
+	}
+
+	switch snapshot.Status {
+	case "trialing":
+		if snapshot.TrialStartAt == nil || snapshot.TrialEndAt == nil || !snapshot.TrialStartAt.Before(*snapshot.TrialEndAt) {
+			return WebhookReconcileResult{}, ErrWebhookStateConflict
+		}
+		if grant.Status == StatusCheckoutPending || grant.Status == StatusScheduled {
+			updated, updateErr := s.store.MarkActive(ctx, ActiveUpdate{
+				ID: grant.ID, ExpectedStatus: grant.Status,
+				StripeCustomerID: snapshot.CustomerID, StripeSubscriptionID: snapshot.ID,
+				StartedAt: snapshot.TrialStartAt.UTC(), EndsAt: snapshot.TrialEndAt.UTC(), ActivatedAt: at,
+			})
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			if updateErr != nil {
+				return WebhookReconcileResult{}, updateErr
+			}
+			grant = updated
+			result.Grant = updated
+		}
+		if grant.Status != StatusActive {
+			return result, nil
+		}
+		if grant.StartedAt == nil || grant.EndsAt == nil || !grant.StartedAt.Equal(snapshot.TrialStartAt.UTC()) || !grant.EndsAt.Equal(snapshot.TrialEndAt.UTC()) {
+			return WebhookReconcileResult{}, ErrWebhookStateConflict
+		}
+		if snapshot.CancelAtPeriodEnd {
+			result.RenewalCanceled = true
+			if grant.CanceledAt == nil {
+				updated, updateErr := s.store.RecordRenewalCancellation(ctx, grant.ID, at)
+				if errors.Is(updateErr, ErrConcurrentTransition) {
+					return s.reloadWebhookGrant(ctx, grant.ID)
+				}
+				if updateErr != nil {
+					return WebhookReconcileResult{}, updateErr
+				}
+				result.Grant = updated
+			}
+		}
+		return result, nil
+
+	case "active":
+		if grant.Status == StatusActive && grant.EndsAt != nil && !at.Before(*grant.EndsAt) {
+			updated, updateErr := s.store.MarkCompleted(ctx, grant.ID, StatusActive, at)
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+	case "canceled", "unpaid", "incomplete_expired":
+		if grant.Status == StatusScheduled || grant.Status == StatusActive {
+			updated, updateErr := s.store.MarkCanceled(ctx, grant.ID, grant.Status, at)
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+	}
+	return result, nil
+}
+
+func (s *Service) ReconcileCheckoutExpired(ctx context.Context, req WebhookCheckoutRequest) (WebhookReconcileResult, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(req.SessionID) == "" {
+		return WebhookReconcileResult{}, ErrWebhookStateConflict
+	}
+	if err := s.validateWebhookEnvironment(req.Metadata); err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	grant, managed, err := s.lookupWebhookGrant(ctx, req.Metadata, "", req.SessionID)
+	if err != nil || !managed {
+		return WebhookReconcileResult{Managed: managed, Grant: grant}, err
+	}
+	if req.StripeMode != grant.StripeMode || req.SessionID != grant.StripeCheckoutSessionID || !webhookMetadataMatches(req.Metadata, grant, s.environment) {
+		return WebhookReconcileResult{}, ErrWebhookStateConflict
+	}
+	if grant.Status != StatusCheckoutPending {
+		return WebhookReconcileResult{Managed: true, Grant: grant}, nil
+	}
+	released, err := s.store.ReleaseCheckout(ctx, grant.ID, req.SessionID, webhookTime(req.OccurredAt, s.now).Add(time.Second))
+	if errors.Is(err, ErrConcurrentTransition) {
+		return s.reloadWebhookGrant(ctx, grant.ID)
+	}
+	return WebhookReconcileResult{Managed: true, Grant: released}, err
+}
+
+// ReconcileOrdinaryCheckout consumes a pending offer only after the ordinary
+// paid Subscription was authoritatively projected. It never closes an active
+// managed Checkout attempt; that must be expired and released first.
+func (s *Service) ReconcileOrdinaryCheckout(ctx context.Context, workspaceID, paidPlanID string, occurredAt time.Time) (WebhookReconcileResult, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(workspaceID) == "" || strings.TrimSpace(paidPlanID) == "" {
+		return WebhookReconcileResult{}, ErrGrantNotFound
+	}
+	grant, err := s.store.GetOpenGrant(ctx, workspaceID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return WebhookReconcileResult{}, ErrGrantNotFound
+	}
+	if err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	if grant.Kind != KindFreeToPaid || grant.PlanID == paidPlanID {
+		return WebhookReconcileResult{Managed: true, Grant: grant}, nil
+	}
+	if grant.Status == StatusCheckoutPending {
+		return WebhookReconcileResult{}, ErrCheckoutCompletionPending
+	}
+	if grant.Status != StatusPendingActivation {
+		return WebhookReconcileResult{Managed: true, Grant: grant}, nil
+	}
+	updated, err := s.store.MarkSuperseded(ctx, grant.ID, StatusPendingActivation, paidPlanID, webhookTime(occurredAt, s.now))
+	if errors.Is(err, ErrConcurrentTransition) {
+		return s.reloadWebhookGrant(ctx, grant.ID)
+	}
+	return WebhookReconcileResult{Managed: true, Grant: updated}, err
+}
+
+func (s *Service) ReconcileSchedule(ctx context.Context, req WebhookScheduleRequest) (WebhookReconcileResult, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(req.Snapshot.ID) == "" {
+		return WebhookReconcileResult{}, ErrWebhookStateConflict
+	}
+	if err := s.validateWebhookEnvironment(req.Snapshot.Metadata); err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	grant, managed, err := s.lookupWebhookScheduleGrant(ctx, req.Snapshot)
+	if err != nil || !managed {
+		return WebhookReconcileResult{Managed: managed, Grant: grant}, err
+	}
+	if err := validateScheduleGrantMatch(grant, req.Snapshot, s.environment); err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	if grant.Status.IsTerminal() {
+		return WebhookReconcileResult{Managed: true, Grant: grant}, nil
+	}
+	at := webhookTime(req.OccurredAt, s.now)
+	phase, hasPhase := managedTrialPhase(req.Snapshot, grant.ID)
+
+	switch req.EventType {
+	case "subscription_schedule.created", "subscription_schedule.updated":
+		if grant.Status == StatusProvisioning {
+			if !hasPhase || !phase.StartAt.Before(phase.EndAt) || !phase.TrialEndAt.Equal(phase.EndAt) {
+				return WebhookReconcileResult{}, ErrWebhookStateConflict
+			}
+			updated, updateErr := s.store.MarkScheduled(ctx, ScheduledUpdate{ID: grant.ID, ExpectedStatus: StatusProvisioning, StripeCustomerID: req.Snapshot.CustomerID, StripeSubscriptionID: req.Snapshot.SubscriptionID, StripeScheduleID: req.Snapshot.ID, ScheduledStartAt: phase.StartAt.UTC(), EndsAt: phase.EndAt.UTC()})
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+	case "subscription_schedule.completed":
+		if grant.Status == StatusScheduled {
+			if !hasPhase {
+				return WebhookReconcileResult{}, ErrWebhookStateConflict
+			}
+			activated, updateErr := s.store.MarkActive(ctx, ActiveUpdate{ID: grant.ID, ExpectedStatus: StatusScheduled, StripeCustomerID: req.Snapshot.CustomerID, StripeSubscriptionID: req.Snapshot.SubscriptionID, StartedAt: phase.StartAt.UTC(), EndsAt: phase.EndAt.UTC(), ActivatedAt: phase.StartAt.UTC()})
+			if updateErr != nil && !errors.Is(updateErr, ErrConcurrentTransition) {
+				return WebhookReconcileResult{}, updateErr
+			}
+			if updateErr == nil {
+				grant = activated
+			} else if current, loadErr := s.store.GetGrant(ctx, grant.ID); loadErr == nil {
+				grant = current
+			}
+		}
+		if grant.Status == StatusActive {
+			updated, updateErr := s.store.MarkCompleted(ctx, grant.ID, StatusActive, at)
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+	case "subscription_schedule.canceled", "subscription_schedule.aborted":
+		if grant.Status == StatusScheduled || grant.Status == StatusActive {
+			updated, updateErr := s.store.MarkCanceled(ctx, grant.ID, grant.Status, at)
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+	case "subscription_schedule.released":
+		if grant.Status == StatusScheduled || grant.Status == StatusActive {
+			nextPlan := strings.TrimSpace(req.Snapshot.Metadata[metadataPlanID])
+			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, nextPlan, at)
+			if errors.Is(updateErr, ErrConcurrentTransition) {
+				return s.reloadWebhookGrant(ctx, grant.ID)
+			}
+			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
+		}
+	}
+	return WebhookReconcileResult{Managed: true, Grant: grant}, nil
+}
+
+func (s *Service) validateWebhookEnvironment(metadata map[string]string) error {
+	eventEnvironment := strings.TrimSpace(metadata[metadataEnvironment])
+	if eventEnvironment != "" && eventEnvironment != s.environment {
+		return ErrWebhookNotApplicable
+	}
+	return nil
+}
+
+func (s *Service) lookupWebhookGrant(ctx context.Context, metadata map[string]string, subscriptionID, checkoutSessionID string) (Grant, bool, error) {
+	if id := strings.TrimSpace(metadata[metadataTrialGrant]); id != "" {
+		grant, err := s.store.GetGrant(ctx, id)
+		if err != nil {
+			return Grant{}, true, err
+		}
+		return grant, true, nil
+	}
+	var grant Grant
+	var err error
+	if subscriptionID != "" {
+		grant, err = s.store.GetGrantBySubscription(ctx, subscriptionID)
+	} else if checkoutSessionID != "" {
+		grant, err = s.store.GetGrantByCheckoutSession(ctx, checkoutSessionID)
+	} else {
+		return Grant{}, false, nil
+	}
+	if errors.Is(err, ErrGrantNotFound) {
+		return Grant{}, false, nil
+	}
+	return grant, err == nil, err
+}
+
+func (s *Service) lookupWebhookScheduleGrant(ctx context.Context, snapshot ScheduleSnapshot) (Grant, bool, error) {
+	if id := strings.TrimSpace(snapshot.Metadata[metadataTrialGrant]); id != "" {
+		grant, err := s.store.GetGrant(ctx, id)
+		return grant, true, err
+	}
+	grant, err := s.store.GetGrantBySchedule(ctx, snapshot.ID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return Grant{}, false, nil
+	}
+	return grant, err == nil, err
+}
+
+func (s *Service) reloadWebhookGrant(ctx context.Context, id string) (WebhookReconcileResult, error) {
+	grant, err := s.store.GetGrant(ctx, id)
+	return WebhookReconcileResult{Managed: err == nil, Grant: grant}, err
+}
+
+func validateSubscriptionGrantMatch(grant Grant, snapshot SubscriptionSnapshot, planID, environment string) error {
+	if snapshot.StripeMode == "" || snapshot.StripeMode != grant.StripeMode || snapshot.ID == "" || snapshot.CustomerID == "" || planID == "" {
+		return ErrWebhookStateConflict
+	}
+	if grant.StripeCustomerID != "" && snapshot.CustomerID != grant.StripeCustomerID {
+		return ErrWebhookStateConflict
+	}
+	if grant.StripeSubscriptionID != "" && snapshot.ID != grant.StripeSubscriptionID {
+		return ErrWebhookStateConflict
+	}
+	if len(snapshot.Metadata) > 0 && !webhookMetadataMatches(snapshot.Metadata, grant, environment) {
+		return ErrWebhookStateConflict
+	}
+	return nil
+}
+
+func validateScheduleGrantMatch(grant Grant, snapshot ScheduleSnapshot, environment string) error {
+	if snapshot.StripeMode == "" || snapshot.StripeMode != grant.StripeMode || snapshot.ID == "" || grant.Kind != KindPaidSamePlan {
+		return ErrWebhookStateConflict
+	}
+	if grant.StripeScheduleID != "" && snapshot.ID != grant.StripeScheduleID {
+		return ErrWebhookStateConflict
+	}
+	if grant.StripeCustomerID != "" && snapshot.CustomerID != grant.StripeCustomerID {
+		return ErrWebhookStateConflict
+	}
+	if grant.StripeSubscriptionID != "" && snapshot.SubscriptionID != "" && snapshot.SubscriptionID != grant.StripeSubscriptionID {
+		return ErrWebhookStateConflict
+	}
+	if len(snapshot.Metadata) > 0 && !webhookMetadataMatches(snapshot.Metadata, grant, environment) {
+		return ErrWebhookStateConflict
+	}
+	return nil
+}
+
+func webhookMetadataMatches(metadata map[string]string, grant Grant, environment string) bool {
+	return metadata[metadataWorkspaceID] == grant.WorkspaceID &&
+		metadata[metadataPlanID] == grant.PlanID &&
+		metadata[metadataTrialGrant] == grant.ID &&
+		metadata[metadataTrialKind] == string(grant.Kind) &&
+		metadata[metadataEnvironment] == environment
+}
+
+func managedTrialPhase(snapshot ScheduleSnapshot, grantID string) (SchedulePhase, bool) {
+	for _, phase := range snapshot.Phases {
+		if phase.Metadata[metadataTrialGrant] == grantID {
+			return phase, true
+		}
+	}
+	return SchedulePhase{}, false
+}
+
+func webhookTime(at time.Time, now func() time.Time) time.Time {
+	if !at.IsZero() {
+		return at.UTC()
+	}
+	return now().UTC()
 }
 
 func (s *Service) revokeCAS(ctx context.Context, grant Grant, now time.Time) (Grant, error) {

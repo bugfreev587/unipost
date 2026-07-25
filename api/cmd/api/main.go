@@ -742,6 +742,7 @@ func main() {
 		runtimeenv.Current(),
 		time.Now,
 	)
+	stripeWebhookHandler.SetTrialWebhookService(trialService)
 	billingHandler.SetTrialService(trialService)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries).
 		SetTrialService(trialService).

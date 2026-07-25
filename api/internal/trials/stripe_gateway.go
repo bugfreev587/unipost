@@ -135,6 +135,7 @@ type ExpireCheckoutRequest struct {
 	StripeMode        string
 	TrialGrantID      string
 	CheckoutSessionID string
+	CheckoutAttempt   int32
 }
 
 type ChangeFreeTrialPlanRequest struct {
@@ -682,8 +683,11 @@ func buildExpireCheckoutParams(req ExpireCheckoutRequest) (*stripe.CheckoutSessi
 	if err := requireID("checkout session", req.CheckoutSessionID); err != nil {
 		return nil, err
 	}
+	if req.CheckoutAttempt < 1 {
+		return nil, fmt.Errorf("checkout attempt is required")
+	}
 	params := &stripe.CheckoutSessionExpireParams{}
-	params.SetIdempotencyKey(trialOperationKey(req.TrialGrantID, "expire_checkout"))
+	params.SetIdempotencyKey(fmt.Sprintf("%s:%d", trialOperationKey(req.TrialGrantID, "expire_checkout"), req.CheckoutAttempt))
 	return params, nil
 }
 

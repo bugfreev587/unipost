@@ -162,6 +162,14 @@ WHERE id = sqlc.arg(id)
   AND status = sqlc.arg(expected_status)
 RETURNING *;
 
+-- name: RecordWorkspaceTrialGrantRenewalCancellation :one
+UPDATE workspace_trial_grants
+SET canceled_at = sqlc.arg(canceled_at),
+    updated_at = NOW()
+WHERE id = sqlc.arg(id)
+  AND status = 'active'
+RETURNING *;
+
 -- name: MarkWorkspaceTrialGrantRevoked :one
 UPDATE workspace_trial_grants
 SET status = 'revoked',
