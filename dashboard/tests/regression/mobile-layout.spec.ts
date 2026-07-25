@@ -9,7 +9,10 @@ import { expect, test } from "@playwright/test";
 // so no distinct landing host exists there and the landing assertion is
 // skipped. Pricing is public on every host, so it stays baseURL-relative.
 const appBaseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
-const landingBaseURL = appBaseURL.replace("://app.", "://");
+const landingBaseURL = appBaseURL
+  .replace("://staging-app.", "://staging.")
+  .replace("://dev-app.", "://dev.")
+  .replace("://app.", "://");
 const landingHostTestable =
   landingBaseURL !== appBaseURL && !/localhost|127\.0\.0\.1/.test(appBaseURL);
 

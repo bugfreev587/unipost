@@ -221,6 +221,8 @@ WHERE workspace_id = $1::text
     OR request_id ILIKE '%' || $13 || '%'
     OR post_id ILIKE '%' || $13 || '%'
     OR error_code ILIKE '%' || $13 || '%'
+    OR metadata->>'connect_session_id' = $13::TEXT
+    OR metadata->>'external_user_id' = $13::TEXT
   )
   AND ts >= $14::timestamptz
   AND ts <= $15::timestamptz

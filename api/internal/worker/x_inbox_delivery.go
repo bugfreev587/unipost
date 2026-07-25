@@ -7,9 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,89 +36,8 @@ type XInboxDeliveryAPI interface {
 	EnsureFilteredStreamRule(context.Context, string, string, string) (xinbox.StreamRule, error)
 	DeleteFilteredStreamRule(context.Context, string, string) error
 	EnsureWebhook(context.Context, string, string) (xinbox.Webhook, error)
-	ListActivitySubscriptions(context.Context, string) ([]xinbox.ActivitySubscription, error)
-	CreateDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
+	EnsureDMSubscription(context.Context, string, string, string, string) (xinbox.ActivitySubscription, error)
 	DeleteActivitySubscription(context.Context, string, string) error
-}
-
-type activitySubscriptionCatalogKey struct {
-	appMode  xinbox.AppMode
-	identity string
-}
-
-type activitySubscriptionCatalogEntry struct {
-	subscriptions []xinbox.ActivitySubscription
-	err           error
-}
-
-type activitySubscriptionCatalog struct {
-	api     XInboxDeliveryAPI
-	entries map[activitySubscriptionCatalogKey]*activitySubscriptionCatalogEntry
-}
-
-func newActivitySubscriptionCatalog(api XInboxDeliveryAPI) *activitySubscriptionCatalog {
-	return &activitySubscriptionCatalog{
-		api:     api,
-		entries: make(map[activitySubscriptionCatalogKey]*activitySubscriptionCatalogEntry),
-	}
-}
-
-func (c *activitySubscriptionCatalog) list(
-	ctx context.Context,
-	key activitySubscriptionCatalogKey,
-	appBearerToken string,
-) ([]xinbox.ActivitySubscription, error) {
-	if entry, ok := c.entries[key]; ok {
-		return entry.subscriptions, entry.err
-	}
-	subscriptions, err := c.api.ListActivitySubscriptions(ctx, appBearerToken)
-	entry := &activitySubscriptionCatalogEntry{
-		subscriptions: append([]xinbox.ActivitySubscription(nil), subscriptions...),
-		err:           err,
-	}
-	c.entries[key] = entry
-	return entry.subscriptions, entry.err
-}
-
-func (c *activitySubscriptionCatalog) delete(
-	ctx context.Context,
-	key activitySubscriptionCatalogKey,
-	appBearerToken string,
-	subscriptionID string,
-) error {
-	if err := c.api.DeleteActivitySubscription(ctx, appBearerToken, subscriptionID); err != nil {
-		return err
-	}
-	entry := c.entries[key]
-	if entry == nil || entry.err != nil {
-		return nil
-	}
-	for index := range entry.subscriptions {
-		if entry.subscriptions[index].ID == subscriptionID {
-			entry.subscriptions = append(entry.subscriptions[:index], entry.subscriptions[index+1:]...)
-			break
-		}
-	}
-	return nil
-}
-
-func (c *activitySubscriptionCatalog) create(
-	ctx context.Context,
-	key activitySubscriptionCatalogKey,
-	appBearerToken string,
-	accountID string,
-	userID string,
-	webhookID string,
-) (xinbox.ActivitySubscription, error) {
-	subscription, err := c.api.CreateDMSubscription(ctx, appBearerToken, accountID, userID, webhookID)
-	if err != nil {
-		return xinbox.ActivitySubscription{}, err
-	}
-	entry := c.entries[key]
-	if entry != nil && entry.err == nil {
-		entry.subscriptions = append(entry.subscriptions, subscription)
-	}
-	return subscription, nil
 }
 
 type XInboxUsageReader interface {
@@ -149,32 +65,30 @@ type XInboxDeliveryStore interface {
 }
 
 type XInboxDeliveryAccount struct {
-	SocialAccountID                    string
-	WorkspaceID                        string
-	WebhookRouteKey                    string
-	Handle                             string
-	ExternalAccountID                  string
-	AppMode                            xinbox.AppMode
-	AppBearerTokenEncrypted            string
-	ConsumerSecretConfigured           bool
-	Scopes                             []string
-	AccountActive                      bool
-	PlanAllowsInbox                    bool
-	FilteredStreamRuleID               string
-	ActivityDMSubscriptionID           string
-	ActivityWebhookRouteKey            string
-	DMSubscriptionForbiddenFingerprint string
+	SocialAccountID          string
+	WorkspaceID              string
+	WebhookRouteKey          string
+	Handle                   string
+	ExternalAccountID        string
+	AppMode                  xinbox.AppMode
+	AppBearerTokenEncrypted  string
+	ConsumerSecretConfigured bool
+	Scopes                   []string
+	AccountActive            bool
+	PlanAllowsInbox          bool
+	FilteredStreamRuleID     string
+	ActivityDMSubscriptionID string
+	ActivityWebhookRouteKey  string
 }
 
 type XInboxDeliveryState struct {
-	SocialAccountID                    string
-	FilteredStreamRuleID               string
-	ActivityDMSubscriptionID           string
-	ActivityWebhookRouteKey            string
-	DMSubscriptionForbiddenFingerprint string
-	DeliveryStatus                     string
-	LastError                          string
-	LastSyncedAt                       time.Time
+	SocialAccountID          string
+	FilteredStreamRuleID     string
+	ActivityDMSubscriptionID string
+	ActivityWebhookRouteKey  string
+	DeliveryStatus           string
+	LastError                string
+	LastSyncedAt             time.Time
 }
 
 type XInboxCleanupIntent struct {
@@ -212,8 +126,6 @@ type XInboxDeliveryConfig struct {
 	ManagedAppBearer                string
 	ManagedConsumerSecretConfigured bool
 	WebhookURL                      string
-	DMsAvailable                    func(context.Context, string) (bool, error)
-	DMCanaryAccountIDs              map[string]struct{}
 	Now                             func() time.Time
 	EventHandler                    func(context.Context, string, xinbox.StreamEvent) error
 	CleanupOwner                    string
@@ -229,8 +141,6 @@ type XInboxDeliveryWorker struct {
 	managedAppBearer                string
 	managedConsumerSecretConfigured bool
 	webhookURL                      string
-	dmsAvailable                    func(context.Context, string) (bool, error)
-	dmCanaryAccountIDs              map[string]struct{}
 	now                             func() time.Time
 	eventHandler                    func(context.Context, string, xinbox.StreamEvent) error
 	cleanupOwner                    string
@@ -256,10 +166,6 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 	if cleanupOwner == "" {
 		cleanupOwner = "x-inbox-cleanup-" + uuid.NewString()
 	}
-	dmCanaryAccountIDs := make(map[string]struct{}, len(config.DMCanaryAccountIDs))
-	for accountID := range config.DMCanaryAccountIDs {
-		dmCanaryAccountIDs[accountID] = struct{}{}
-	}
 	return &XInboxDeliveryWorker{
 		store:                           config.Store,
 		api:                             config.API,
@@ -270,8 +176,6 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 		managedAppBearer:                strings.TrimSpace(config.ManagedAppBearer),
 		managedConsumerSecretConfigured: config.ManagedConsumerSecretConfigured,
 		webhookURL:                      strings.TrimSpace(config.WebhookURL),
-		dmsAvailable:                    config.DMsAvailable,
-		dmCanaryAccountIDs:              dmCanaryAccountIDs,
 		now:                             now,
 		eventHandler:                    config.EventHandler,
 		cleanupOwner:                    cleanupOwner,
@@ -279,58 +183,34 @@ func NewXInboxDeliveryWorker(config XInboxDeliveryConfig) *XInboxDeliveryWorker 
 	}
 }
 
-type PostgresXInboxDeliveryConfig struct {
-	DatabaseURL                     string
-	Pool                            *pgxpool.Pool
-	Queries                         *db.Queries
-	Encryptor                       *crypto.AESEncryptor
-	Usage                           XInboxUsageReader
-	Client                          *xinbox.Client
-	ManagedAppBearer                string
-	ManagedConsumerSecretConfigured bool
-	ManagedWebhookRouteKey          string
-	WebhookURL                      string
-	DMsAvailable                    func(context.Context, string) (bool, error)
-	DMCanaryAccountIDs              map[string]struct{}
-}
-
-func NewPostgresXInboxDeliveryWorker(config PostgresXInboxDeliveryConfig) *XInboxDeliveryWorker {
+func NewPostgresXInboxDeliveryWorker(
+	databaseURL string,
+	pool *pgxpool.Pool,
+	queries *db.Queries,
+	encryptor *crypto.AESEncryptor,
+	usage XInboxUsageReader,
+	client *xinbox.Client,
+	managedAppBearer string,
+	managedConsumerSecretConfigured bool,
+	managedWebhookRouteKey string,
+	webhookURL string,
+) *XInboxDeliveryWorker {
 	store := &postgresXInboxDeliveryStore{
-		pool:                   config.Pool,
-		queries:                config.Queries,
-		managedWebhookRouteKey: strings.TrimSpace(config.ManagedWebhookRouteKey),
+		pool:                   pool,
+		queries:                queries,
+		managedWebhookRouteKey: strings.TrimSpace(managedWebhookRouteKey),
 	}
-	return NewXInboxDeliveryWorker(xInboxDeliveryConfigFromPostgres(
-		config,
-		store,
-		config.Client,
-		config.Encryptor,
-		NewPostgresStreamLockManager(config.DatabaseURL),
-		xinbox.NewStreamSupervisor(config.Client, xinbox.StreamSupervisorConfig{}),
-	))
-}
-
-func xInboxDeliveryConfigFromPostgres(
-	config PostgresXInboxDeliveryConfig,
-	store XInboxDeliveryStore,
-	api XInboxDeliveryAPI,
-	cipher XInboxCipher,
-	leader XInboxLeaderElector,
-	stream XInboxStreamRunner,
-) XInboxDeliveryConfig {
-	return XInboxDeliveryConfig{
+	return NewXInboxDeliveryWorker(XInboxDeliveryConfig{
 		Store:                           store,
-		API:                             api,
-		Cipher:                          cipher,
-		Usage:                           config.Usage,
-		Leader:                          leader,
-		Stream:                          stream,
-		ManagedAppBearer:                config.ManagedAppBearer,
-		ManagedConsumerSecretConfigured: config.ManagedConsumerSecretConfigured,
-		WebhookURL:                      config.WebhookURL,
-		DMsAvailable:                    config.DMsAvailable,
-		DMCanaryAccountIDs:              config.DMCanaryAccountIDs,
-	}
+		API:                             client,
+		Cipher:                          encryptor,
+		Usage:                           usage,
+		Leader:                          NewPostgresStreamLockManager(databaseURL),
+		Stream:                          xinbox.NewStreamSupervisor(client, xinbox.StreamSupervisorConfig{}),
+		ManagedAppBearer:                managedAppBearer,
+		ManagedConsumerSecretConfigured: managedConsumerSecretConfigured,
+		WebhookURL:                      webhookURL,
+	})
 }
 
 func (w *XInboxDeliveryWorker) SetEventHandler(
@@ -365,10 +245,10 @@ func (w *XInboxDeliveryWorker) Start(ctx context.Context) {
 }
 
 func (w *XInboxDeliveryWorker) reconcileAndStartStreams(ctx context.Context) {
-	apps, authoritative, complete, desiredErr := w.reconcileDesiredCycle(ctx)
-	if !authoritative {
-		w.syncDesiredStreams(ctx, nil)
-	} else if complete {
+	apps, complete, desiredErr := w.reconcileDesiredCycle(ctx)
+	if !complete {
+		apps = nil
+	} else {
 		if w.eventHandler == nil {
 			apps = nil
 		}
@@ -381,38 +261,34 @@ func (w *XInboxDeliveryWorker) reconcileAndStartStreams(ctx context.Context) {
 }
 
 func (w *XInboxDeliveryWorker) ReconcileOnce(ctx context.Context) error {
-	_, _, _, desiredErr := w.reconcileDesiredCycle(ctx)
+	_, _, desiredErr := w.reconcileDesiredCycle(ctx)
 	return errors.Join(desiredErr, w.processCleanupBudget(ctx))
 }
 
 func (w *XInboxDeliveryWorker) reconcile(ctx context.Context) ([]XInboxAppStream, error) {
-	apps, _, _, desiredErr := w.reconcileDesiredCycle(ctx)
+	apps, _, desiredErr := w.reconcileDesiredCycle(ctx)
 	return apps, errors.Join(desiredErr, w.processCleanupBudget(ctx))
 }
 
 func (w *XInboxDeliveryWorker) reconcileDesiredCycle(
 	ctx context.Context,
-) (apps []XInboxAppStream, authoritative bool, complete bool, resultErr error) {
+) (apps []XInboxAppStream, complete bool, resultErr error) {
 	if w.leader != nil {
 		lease, acquired, err := w.leader.TryAcquire(ctx, "x-inbox-reconcile", nil)
 		if err != nil {
-			return nil, false, false, fmt.Errorf("acquire X inbox reconciliation lock: %w", err)
+			return nil, false, fmt.Errorf("acquire X inbox reconciliation lock: %w", err)
 		}
 		if !acquired {
-			return nil, false, false, nil
+			return nil, false, nil
 		}
-		authoritative = true
 		defer func() {
 			releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			if err := lease.Release(releaseCtx); err != nil {
 				resultErr = errors.Join(resultErr, fmt.Errorf("release X inbox reconciliation lock: %w", err))
-				authoritative = false
 				complete = false
 			}
 		}()
-	} else {
-		authoritative = true
 	}
 	apps, complete, resultErr = w.reconcileDesiredUnlocked(ctx)
 	return
@@ -430,10 +306,9 @@ func (w *XInboxDeliveryWorker) reconcileDesiredUnlocked(
 		return nil, false, errors.Join(joined, fmt.Errorf("list X inbox delivery accounts: %w", err))
 	}
 	appsByIdentity := make(map[string]XInboxAppStream)
-	subscriptionCatalog := newActivitySubscriptionCatalog(w.api)
 	desiredComplete := true
 	for _, account := range accounts {
-		app, streamDesired, desiredKnown, err := w.reconcileAccount(ctx, account, subscriptionCatalog)
+		app, streamDesired, desiredKnown, err := w.reconcileAccount(ctx, account)
 		if !desiredKnown {
 			desiredComplete = false
 		}
@@ -493,28 +368,26 @@ func (w *XInboxDeliveryWorker) processCleanupBudget(ctx context.Context) error {
 func (w *XInboxDeliveryWorker) reconcileAccount(
 	ctx context.Context,
 	account XInboxDeliveryAccount,
-	subscriptionCatalog *activitySubscriptionCatalog,
 ) (XInboxAppStream, bool, bool, error) {
 	now := w.now().UTC()
 	state := XInboxDeliveryState{
-		SocialAccountID:                    account.SocialAccountID,
-		FilteredStreamRuleID:               account.FilteredStreamRuleID,
-		ActivityDMSubscriptionID:           account.ActivityDMSubscriptionID,
-		ActivityWebhookRouteKey:            account.ActivityWebhookRouteKey,
-		DMSubscriptionForbiddenFingerprint: account.DMSubscriptionForbiddenFingerprint,
-		DeliveryStatus:                     xinbox.DeliveryStatusPending,
-		LastSyncedAt:                       now,
+		SocialAccountID:          account.SocialAccountID,
+		FilteredStreamRuleID:     account.FilteredStreamRuleID,
+		ActivityDMSubscriptionID: account.ActivityDMSubscriptionID,
+		ActivityWebhookRouteKey:  account.ActivityWebhookRouteKey,
+		DeliveryStatus:           xinbox.DeliveryStatusPending,
+		LastSyncedAt:             now,
 	}
-	targetStatus := xinbox.DeliveryStatusPending
-	if !account.PlanAllowsInbox {
-		targetStatus = xinbox.DeliveryStatusPausedPlan
+	if state.ActivityDMSubscriptionID == "" {
+		state.ActivityWebhookRouteKey = ""
 	}
-	commentsEligible := account.AccountActive && account.PlanAllowsInbox &&
-		hasXInboxScopes(account.Scopes, "tweet.read", "tweet.write", "users.read")
-	dmScopeEligible := account.AccountActive && account.PlanAllowsInbox &&
-		hasXInboxScopes(account.Scopes, "dm.read", "dm.write", "users.read")
 
-	_, dmCanaryEligible := w.dmCanaryAccountIDs[account.SocialAccountID]
+	targetStatus := xinbox.DeliveryStatusPending
+	commentsDesired := account.AccountActive && account.PlanAllowsInbox && hasXInboxScopes(account.Scopes, "tweet.read", "tweet.write", "users.read")
+	// OAuth 2.0 private Activity subscriptions currently fail at X with 403.
+	// Keep comments on Filtered Stream, clean up any legacy DM subscription,
+	// and do not provision a replacement until the integration is production-ready.
+	dmsDesired := false
 	appBearerToken, webhookRouteKey, consumerSecretConfigured, appTokenErr := w.resolveAccountAppToken(account)
 	app := XInboxAppStream{
 		Identity:                 safeAppIdentity(webhookRouteKey),
@@ -522,47 +395,25 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		BearerToken:              appBearerToken,
 		ConsumerSecretConfigured: consumerSecretConfigured,
 	}
-	subscriptionCatalogKey := activitySubscriptionCatalogKey{
-		appMode:  account.AppMode,
-		identity: app.Identity,
+	credentialErr := deliveryCredentialError(account.AppMode, app.ConsumerSecretConfigured)
+	if credentialErr != nil {
+		targetStatus = xinbox.DeliveryStatusError
+		commentsDesired = false
+		dmsDesired = false
 	}
-	appModeSupported := account.AppMode == xinbox.AppModeUniPostManaged || account.AppMode == xinbox.AppModeWorkspace
-	dmsAvailable := false
-	dmAvailabilityKnown := false
-	var dmEvaluatorErr error
-	dmEvaluationNeeded := dmScopeEligible && dmCanaryEligible && appModeSupported && appTokenErr == nil
-	var dmConfigErr error
-	if dmEvaluationNeeded {
-		dmConfigErr = errors.Join(
-			dmCredentialError(account.AppMode, app.ConsumerSecretConfigured),
-			requiredDMConfigurationError(w.webhookURL, account.ExternalAccountID),
-		)
+	if !account.PlanAllowsInbox {
+		targetStatus = xinbox.DeliveryStatusPausedPlan
+		commentsDesired = false
+		dmsDesired = false
 	}
-	if dmEvaluationNeeded && dmConfigErr == nil {
-		if w.dmsAvailable == nil {
-			dmEvaluatorErr = errors.New("DM availability evaluator is not configured")
-		} else {
-			dmsAvailable, dmEvaluatorErr = w.dmsAvailable(ctx, account.WorkspaceID)
-			dmAvailabilityKnown = dmEvaluatorErr == nil
-		}
+	if account.AppMode == xinbox.AppModeLegacyUnknown {
+		commentsDesired = false
+		dmsDesired = false
 	}
-	if (dmAvailabilityKnown && !dmsAvailable) || !dmCanaryEligible {
-		state.DMSubscriptionForbiddenFingerprint = ""
-	}
-	commentsDesired := commentsEligible && appModeSupported && appTokenErr == nil
-	dmsDesired := dmEvaluationNeeded && dmConfigErr == nil && dmsAvailable && dmEvaluatorErr == nil
-
-	if appModeSupported && (commentsDesired || dmsDesired) {
-		if w.usage == nil {
-			cause := errors.New("spend safety source: usage reader is not configured")
-			logXInboxSourceError(account, "shared", "evaluate_spend", cause)
-			return app, commentsEligible && state.FilteredStreamRuleID != "", false, w.saveAccountError(ctx, state, cause)
-		}
+	if account.AppMode == xinbox.AppModeUniPostManaged && commentsDesired && w.usage != nil {
 		snapshot, err := w.usage.Snapshot(ctx, account.WorkspaceID, now)
 		if err != nil {
-			cause := fmt.Errorf("spend safety source: %w", err)
-			logXInboxSourceError(account, "shared", "evaluate_spend", cause)
-			return app, commentsEligible && state.FilteredStreamRuleID != "", false, w.saveAccountError(ctx, state, cause)
+			return XInboxAppStream{}, false, false, w.saveAccountError(ctx, state, err)
 		}
 		if snapshot.PausePaidSources {
 			commentsDesired = false
@@ -575,126 +426,47 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 		}
 	}
 
-	if appTokenErr != nil && (state.FilteredStreamRuleID != "" || state.ActivityDMSubscriptionID != "" || commentsEligible || dmScopeEligible) {
-		cause := fmt.Errorf("shared app authentication source: %w", appTokenErr)
-		logXInboxSourceError(account, "shared", "resolve_app_bearer", cause)
-		return app, false, true, w.saveAccountError(ctx, state, cause)
+	if appTokenErr != nil && (state.FilteredStreamRuleID != "" || state.ActivityDMSubscriptionID != "" || commentsDesired || dmsDesired) {
+		return XInboxAppStream{}, false, true, w.saveAccountError(ctx, state, errors.Join(credentialErr, appTokenErr))
 	}
 	streamDesired := func() bool {
 		return commentsDesired && state.FilteredStreamRuleID != ""
 	}
-	var commentsErr error
-	var dmErr error
-	var dmCleanupErr error
-	persist := func() error {
-		state.LastSyncedAt = w.now().UTC()
-		return w.store.SaveState(ctx, state)
+	fail := func(cause error) (XInboxAppStream, bool, bool, error) {
+		return app, streamDesired(), true, w.saveAccountError(ctx, state, cause)
 	}
-
 	if !commentsDesired && state.FilteredStreamRuleID != "" {
 		if err := w.api.DeleteFilteredStreamRule(ctx, appBearerToken, state.FilteredStreamRuleID); err != nil {
-			commentsErr = err
-		} else {
-			state.FilteredStreamRuleID = ""
-			state.DeliveryStatus = targetStatus
-			if err := persist(); err != nil {
-				return app, streamDesired(), true, err
-			}
+			return fail(err)
+		}
+		state.FilteredStreamRuleID = ""
+		state.DeliveryStatus = targetStatus
+		if err := w.store.SaveState(ctx, state); err != nil {
+			return app, streamDesired(), true, err
+		}
+	}
+	if !dmsDesired && state.ActivityDMSubscriptionID != "" {
+		if err := w.api.DeleteActivitySubscription(ctx, appBearerToken, state.ActivityDMSubscriptionID); err != nil {
+			return fail(err)
+		}
+		state.ActivityDMSubscriptionID = ""
+		state.ActivityWebhookRouteKey = ""
+		state.DeliveryStatus = targetStatus
+		if err := w.store.SaveState(ctx, state); err != nil {
+			return app, streamDesired(), true, err
 		}
 	}
 	if commentsDesired && state.FilteredStreamRuleID == "" {
 		if account.Handle == "" {
-			commentsErr = errors.New("connected X account has no handle")
-		} else {
-			rule, err := w.api.EnsureFilteredStreamRule(ctx, appBearerToken, account.SocialAccountID, account.Handle)
-			if err != nil {
-				commentsErr = err
-			} else {
-				state.FilteredStreamRuleID = rule.ID
-				if err := persist(); err != nil {
-					return app, false, false, err
-				}
-			}
+			return fail(errors.New("connected X account has no handle"))
 		}
-	}
-
-	if !dmsDesired {
-		if appModeSupported && appTokenErr == nil {
-			cleanupErr := w.cleanupDMSubscriptions(
-				ctx,
-				subscriptionCatalog,
-				subscriptionCatalogKey,
-				appBearerToken,
-				account.SocialAccountID,
-				&state,
-				persist,
-			)
-			if cleanupErr != nil {
-				var persistenceErr *dmSubscriptionPersistenceError
-				if errors.As(cleanupErr, &persistenceErr) {
-					return app, streamDesired(), true, cleanupErr
-				}
-				dmCleanupErr = cleanupErr
-			} else {
-				state.DeliveryStatus = targetStatus
-			}
-		}
-		if dmEvaluationNeeded && dmConfigErr == nil && dmEvaluatorErr != nil {
-			dmErr = fmt.Errorf("evaluate workspace DM availability: %w", dmEvaluatorErr)
-		} else if dmConfigErr != nil {
-			dmErr = dmConfigErr
-		}
-	} else {
-		appWebhookURL, err := xinbox.AppWebhookURL(w.webhookURL, webhookRouteKey)
+		rule, err := w.api.EnsureFilteredStreamRule(ctx, appBearerToken, account.SocialAccountID, account.Handle)
 		if err != nil {
-			dmErr = err
-		} else {
-			fingerprint := dmForbiddenFingerprint(account, app, appWebhookURL)
-			if state.DMSubscriptionForbiddenFingerprint == fingerprint {
-				dmErr = errors.New("DM subscription provisioning is latched after X returned a non-retryable client error")
-			} else {
-				if state.DMSubscriptionForbiddenFingerprint != "" {
-					state.DMSubscriptionForbiddenFingerprint = ""
-					if err := persist(); err != nil {
-						return app, streamDesired(), true, err
-					}
-				}
-				webhook, ensureErr := w.api.EnsureWebhook(ctx, appBearerToken, appWebhookURL)
-				if ensureErr != nil {
-					dmErr = ensureErr
-					if isDMProvisioningNonRetryableClientError(ensureErr) {
-						state.DMSubscriptionForbiddenFingerprint = fingerprint
-						if err := persist(); err != nil {
-							return app, streamDesired(), true, errors.Join(ensureErr, err)
-						}
-					}
-				} else {
-					ensureErr = w.reconcileDMSubscription(
-						ctx,
-						subscriptionCatalog,
-						subscriptionCatalogKey,
-						appBearerToken,
-						account,
-						webhook.ID,
-						webhookRouteKey,
-						&state,
-						persist,
-					)
-					if ensureErr != nil {
-						var persistenceErr *dmSubscriptionPersistenceError
-						if errors.As(ensureErr, &persistenceErr) {
-							return app, streamDesired(), true, ensureErr
-						}
-						dmErr = ensureErr
-						if isDMProvisioningNonRetryableClientError(ensureErr) {
-							state.DMSubscriptionForbiddenFingerprint = fingerprint
-							if err := persist(); err != nil {
-								return app, streamDesired(), true, errors.Join(ensureErr, err)
-							}
-						}
-					}
-				}
-			}
+			return fail(err)
+		}
+		state.FilteredStreamRuleID = rule.ID
+		if err := w.store.SaveState(ctx, state); err != nil {
+			return app, streamDesired(), true, err
 		}
 	}
 	if commentsDesired || dmsDesired {
@@ -702,212 +474,17 @@ func (w *XInboxDeliveryWorker) reconcileAccount(
 	} else {
 		state.DeliveryStatus = targetStatus
 	}
-	var joined error
-	lastError := ""
-	if commentsErr != nil {
-		logXInboxSourceError(account, "comments", "reconcile", commentsErr)
-		sourceErr := fmt.Errorf("comments source: %w", commentsErr)
-		joined = errors.Join(joined, sourceErr)
-		lastError = sourceErr.Error()
+	if credentialErr != nil {
+		return app, false, true, w.saveAccountError(ctx, state, errors.Join(credentialErr, appTokenErr))
 	}
-	if dmErr != nil {
-		logXInboxSourceError(account, "dm", "reconcile", dmErr)
-		sourceErr := fmt.Errorf("dm source: %w", dmErr)
-		joined = errors.Join(joined, sourceErr)
-		lastError = sourceErr.Error()
-	}
-	if dmCleanupErr != nil {
-		logXInboxSourceError(account, "dm", "cleanup", dmCleanupErr)
-		sourceErr := fmt.Errorf("dm cleanup source: %w", dmCleanupErr)
-		joined = errors.Join(joined, sourceErr)
-		lastError = sourceErr.Error()
-	}
-	if joined != nil {
-		state.DeliveryStatus = xinbox.DeliveryStatusError
-		state.LastError = lastError
-	} else {
-		state.LastError = ""
-	}
-	if err := persist(); err != nil {
+	state.LastError = ""
+	if err := w.store.SaveState(ctx, state); err != nil {
 		return app, streamDesired(), true, err
 	}
-	return app, streamDesired(), true, joined
+	return app, streamDesired(), true, nil
 }
 
-type dmSubscriptionPersistenceError struct {
-	cause error
-}
-
-func (e *dmSubscriptionPersistenceError) Error() string {
-	return e.cause.Error()
-}
-
-func (e *dmSubscriptionPersistenceError) Unwrap() error {
-	return e.cause
-}
-
-func persistDMSubscriptionState(persist func() error) error {
-	if err := persist(); err != nil {
-		return &dmSubscriptionPersistenceError{cause: err}
-	}
-	return nil
-}
-
-func (w *XInboxDeliveryWorker) cleanupDMSubscriptions(
-	ctx context.Context,
-	subscriptionCatalog *activitySubscriptionCatalog,
-	subscriptionCatalogKey activitySubscriptionCatalogKey,
-	appBearerToken string,
-	socialAccountID string,
-	state *XInboxDeliveryState,
-	persist func() error,
-) error {
-	subscriptions, err := subscriptionCatalog.list(ctx, subscriptionCatalogKey, appBearerToken)
-	if err != nil {
-		return err
-	}
-	tag := xinbox.DMSubscriptionTag(socialAccountID)
-	matching := make([]xinbox.ActivitySubscription, 0)
-	for _, subscription := range subscriptions {
-		if subscription.Tag == tag {
-			matching = append(matching, subscription)
-		}
-	}
-	sort.Slice(matching, func(i, j int) bool {
-		left, leftErr := strconv.ParseUint(matching[i].ID, 10, 64)
-		right, rightErr := strconv.ParseUint(matching[j].ID, 10, 64)
-		if leftErr == nil && rightErr == nil {
-			return left < right
-		}
-		return matching[i].ID < matching[j].ID
-	})
-
-	for _, subscription := range matching {
-		if err := subscriptionCatalog.delete(ctx, subscriptionCatalogKey, appBearerToken, subscription.ID); err != nil {
-			return err
-		}
-		if state.ActivityDMSubscriptionID == subscription.ID {
-			state.ActivityDMSubscriptionID = ""
-			state.ActivityWebhookRouteKey = ""
-			if err := persistDMSubscriptionState(persist); err != nil {
-				return err
-			}
-		}
-	}
-	if state.ActivityDMSubscriptionID != "" || state.ActivityWebhookRouteKey != "" {
-		state.ActivityDMSubscriptionID = ""
-		state.ActivityWebhookRouteKey = ""
-		if err := persistDMSubscriptionState(persist); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (w *XInboxDeliveryWorker) reconcileDMSubscription(
-	ctx context.Context,
-	subscriptionCatalog *activitySubscriptionCatalog,
-	subscriptionCatalogKey activitySubscriptionCatalogKey,
-	appBearerToken string,
-	account XInboxDeliveryAccount,
-	webhookID string,
-	webhookRouteKey string,
-	state *XInboxDeliveryState,
-	persist func() error,
-) error {
-	subscriptions, err := subscriptionCatalog.list(ctx, subscriptionCatalogKey, appBearerToken)
-	if err != nil {
-		return err
-	}
-	tag := xinbox.DMSubscriptionTag(account.SocialAccountID)
-	matching := make([]xinbox.ActivitySubscription, 0)
-	recordedFound := false
-	for _, subscription := range subscriptions {
-		if subscription.ID == state.ActivityDMSubscriptionID {
-			recordedFound = true
-		}
-		if subscription.Tag == tag {
-			matching = append(matching, subscription)
-		}
-	}
-	sort.Slice(matching, func(i, j int) bool {
-		left, leftErr := strconv.ParseUint(matching[i].ID, 10, 64)
-		right, rightErr := strconv.ParseUint(matching[j].ID, 10, 64)
-		if leftErr == nil && rightErr == nil {
-			return left < right
-		}
-		return matching[i].ID < matching[j].ID
-	})
-
-	var keeper *xinbox.ActivitySubscription
-	for i := range matching {
-		subscription := &matching[i]
-		if keeper == nil && subscription.EventType == "dm.received" &&
-			subscription.Filter.UserID == account.ExternalAccountID &&
-			subscription.WebhookID == webhookID {
-			keeper = subscription
-		}
-	}
-	for _, subscription := range matching {
-		if keeper != nil && subscription.ID == keeper.ID {
-			continue
-		}
-		if err := subscriptionCatalog.delete(ctx, subscriptionCatalogKey, appBearerToken, subscription.ID); err != nil {
-			return err
-		}
-		if state.ActivityDMSubscriptionID == subscription.ID {
-			state.ActivityDMSubscriptionID = ""
-			state.ActivityWebhookRouteKey = ""
-			if err := persistDMSubscriptionState(persist); err != nil {
-				return err
-			}
-		}
-	}
-
-	if state.ActivityDMSubscriptionID != "" &&
-		(!recordedFound || keeper == nil || state.ActivityDMSubscriptionID != keeper.ID) {
-		state.ActivityDMSubscriptionID = ""
-		state.ActivityWebhookRouteKey = ""
-		if err := persistDMSubscriptionState(persist); err != nil {
-			return err
-		}
-	}
-	if keeper != nil {
-		if state.ActivityDMSubscriptionID != keeper.ID || state.ActivityWebhookRouteKey != webhookRouteKey {
-			state.ActivityDMSubscriptionID = keeper.ID
-			state.ActivityWebhookRouteKey = webhookRouteKey
-			state.DMSubscriptionForbiddenFingerprint = ""
-			if err := persistDMSubscriptionState(persist); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-	if state.ActivityWebhookRouteKey != "" {
-		state.ActivityWebhookRouteKey = ""
-		if err := persistDMSubscriptionState(persist); err != nil {
-			return err
-		}
-	}
-
-	created, err := subscriptionCatalog.create(
-		ctx,
-		subscriptionCatalogKey,
-		appBearerToken,
-		account.SocialAccountID,
-		account.ExternalAccountID,
-		webhookID,
-	)
-	if err != nil {
-		return err
-	}
-	state.ActivityDMSubscriptionID = created.ID
-	state.ActivityWebhookRouteKey = webhookRouteKey
-	state.DMSubscriptionForbiddenFingerprint = ""
-	return persistDMSubscriptionState(persist)
-}
-
-func dmCredentialError(appMode xinbox.AppMode, consumerSecretConfigured bool) error {
+func deliveryCredentialError(appMode xinbox.AppMode, consumerSecretConfigured bool) error {
 	switch appMode {
 	case xinbox.AppModeUniPostManaged:
 		if !consumerSecretConfigured {
@@ -919,90 +496,6 @@ func dmCredentialError(appMode xinbox.AppMode, consumerSecretConfigured bool) er
 		}
 	}
 	return nil
-}
-
-func requiredDMConfigurationError(webhookURL, externalAccountID string) error {
-	var joined error
-	if strings.TrimSpace(webhookURL) == "" {
-		joined = errors.Join(joined, errors.New("X_INBOX_WEBHOOK_URL is not configured"))
-	}
-	if strings.TrimSpace(externalAccountID) == "" {
-		joined = errors.Join(joined, errors.New("connected X account has no provider user ID"))
-	}
-	return joined
-}
-
-func dmForbiddenFingerprint(
-	account XInboxDeliveryAccount,
-	app XInboxAppStream,
-	appWebhookURL string,
-) string {
-	hash := sha256.New()
-	for _, value := range []string{
-		string(account.AppMode),
-		app.Identity,
-		account.SocialAccountID,
-		account.ExternalAccountID,
-		appWebhookURL,
-		"dm.received",
-	} {
-		_, _ = fmt.Fprintf(hash, "%d:%s|", len(value), value)
-	}
-	return hex.EncodeToString(hash.Sum(nil))
-}
-
-func isDMProvisioningNonRetryableClientError(err error) bool {
-	var providerErr *xinbox.ProviderHTTPError
-	if !errors.As(err, &providerErr) || providerErr == nil || providerErr.StatusCode < 400 || providerErr.StatusCode >= 500 {
-		return false
-	}
-	if providerErr.Method == http.MethodPut &&
-		(providerErr.StatusCode == http.StatusNotFound || providerErr.StatusCode == http.StatusGone) {
-		return false
-	}
-	switch providerErr.StatusCode {
-	case http.StatusRequestTimeout, http.StatusConflict, http.StatusTooEarly, http.StatusTooManyRequests:
-		return false
-	}
-	switch providerErr.Method {
-	case http.MethodGet, http.MethodPut, http.MethodPost:
-		return true
-	default:
-		return false
-	}
-}
-
-func logXInboxSourceError(
-	account XInboxDeliveryAccount,
-	source string,
-	action string,
-	err error,
-) {
-	status := 0
-	providerCode := ""
-	providerTitle := ""
-	providerDetail := ""
-	var providerErr *xinbox.ProviderHTTPError
-	if errors.As(err, &providerErr) && providerErr != nil {
-		status = providerErr.StatusCode
-		providerCode = providerErr.Code
-		providerTitle = providerErr.Title
-		providerDetail = providerErr.Detail
-	}
-	slog.Warn(
-		"X inbox delivery source reconciliation failed",
-		"app_mode", account.AppMode,
-		"app_identity", safeAppIdentity(account.WebhookRouteKey),
-		"social_account_id", account.SocialAccountID,
-		"workspace_id", account.WorkspaceID,
-		"source", source,
-		"action", action,
-		"provider_http_status", status,
-		"provider_code", providerCode,
-		"provider_title", providerTitle,
-		"provider_detail", providerDetail,
-		"error", err,
-	)
 }
 
 func (w *XInboxDeliveryWorker) saveAccountError(
@@ -1172,14 +665,11 @@ func (w *XInboxDeliveryWorker) syncDesiredStreams(ctx context.Context, apps []XI
 
 	for _, active := range stopped {
 		active.cancel()
-	}
-	stopTimer := time.NewTimer(5 * time.Second)
-	defer stopTimer.Stop()
-	for _, active := range stopped {
 		select {
 		case <-active.done:
-		case <-stopTimer.C:
+		case <-ctx.Done():
 			return
+		case <-time.After(5 * time.Second):
 		}
 	}
 
@@ -1314,8 +804,7 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			COALESCE(pl.allow_inbox, FALSE) AS plan_allows_inbox,
 			COALESCE(r.filtered_stream_rule_id, ''),
 			COALESCE(r.activity_dm_subscription_id, ''),
-			COALESCE(r.activity_webhook_route_key, ''),
-			COALESCE(r.dm_subscription_forbidden_fingerprint, '')
+			COALESCE(r.activity_webhook_route_key, '')
 		FROM social_accounts sa
 		JOIN profiles p ON p.id = sa.profile_id
 		LEFT JOIN subscriptions sub ON sub.workspace_id = p.workspace_id
@@ -1354,7 +843,6 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 			&account.FilteredStreamRuleID,
 			&account.ActivityDMSubscriptionID,
 			&account.ActivityWebhookRouteKey,
-			&account.DMSubscriptionForbiddenFingerprint,
 		); err != nil {
 			return nil, err
 		}
@@ -1366,14 +854,13 @@ func (s *postgresXInboxDeliveryStore) ListAccounts(ctx context.Context) ([]XInbo
 
 func (s *postgresXInboxDeliveryStore) SaveState(ctx context.Context, state XInboxDeliveryState) error {
 	_, err := s.queries.UpsertXInboxDeliveryResource(ctx, db.UpsertXInboxDeliveryResourceParams{
-		SocialAccountID:                    state.SocialAccountID,
-		FilteredStreamRuleID:               nullableText(state.FilteredStreamRuleID),
-		ActivityDmSubscriptionID:           nullableText(state.ActivityDMSubscriptionID),
-		ActivityWebhookRouteKey:            nullableText(state.ActivityWebhookRouteKey),
-		DmSubscriptionForbiddenFingerprint: nullableText(state.DMSubscriptionForbiddenFingerprint),
-		DeliveryStatus:                     state.DeliveryStatus,
-		LastError:                          nullableText(state.LastError),
-		LastSyncedAt:                       pgtype.Timestamptz{Time: state.LastSyncedAt, Valid: !state.LastSyncedAt.IsZero()},
+		SocialAccountID:          state.SocialAccountID,
+		FilteredStreamRuleID:     nullableText(state.FilteredStreamRuleID),
+		ActivityDmSubscriptionID: nullableText(state.ActivityDMSubscriptionID),
+		ActivityWebhookRouteKey:  nullableText(state.ActivityWebhookRouteKey),
+		DeliveryStatus:           state.DeliveryStatus,
+		LastError:                nullableText(state.LastError),
+		LastSyncedAt:             pgtype.Timestamptz{Time: state.LastSyncedAt, Valid: !state.LastSyncedAt.IsZero()},
 	})
 	return err
 }

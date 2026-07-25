@@ -224,6 +224,22 @@ func TestLogsList_ForwardsDecodedCursor(t *testing.T) {
 	}
 }
 
+func TestLogsList_ForwardsHostedConnectIdentityQuery(t *testing.T) {
+	store := &fakeLogsStore{}
+	h := NewLogsHandler(store)
+	r := newLogsRequest("/v1/logs?q=cs_exact", "ws_authed")
+	w := httptest.NewRecorder()
+
+	h.List(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if store.listParams.Query != "cs_exact" {
+		t.Fatalf("query = %q, want cs_exact", store.listParams.Query)
+	}
+}
+
 func TestLogsList_InvalidCursorReturns422(t *testing.T) {
 	h := NewLogsHandler(&fakeLogsStore{})
 	r := newLogsRequest("/v1/logs?cursor=not-a-valid-cursor!!!", "ws_authed")
