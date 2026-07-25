@@ -51,6 +51,7 @@ import (
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/storage"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 	"github.com/xiaoboyu/unipost-api/internal/worker"
 	"github.com/xiaoboyu/unipost-api/internal/ws"
 	"github.com/xiaoboyu/unipost-api/internal/xcredits"
@@ -350,26 +351,29 @@ func main() {
 		emailpolicy.NewPostgresPreferenceReader(queries),
 		os.Getenv("APP_BASE_URL"),
 	)
+	emailAuditStore := loops.NewPostgresEmailAuditStore(queries)
+	loopsOptions := loops.Options{
+		TransactionalIDs: loops.TransactionalIDs{
+			PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
+			BillingTrialEnding:          os.Getenv("LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID"),
+			BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
+			BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
+			BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
+			AccountDisconnected:         os.Getenv("LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID"),
+			AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
+			PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
+		},
+		EmailAuditStore: emailAuditStore,
+		EmailPolicy:     emailPolicyService,
+	}
+	loopsSyncer = loops.NewSyncer(nil, loopsOptions)
 	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
 		})
-		emailAuditStore := loops.NewPostgresEmailAuditStore(queries)
 		auditedLoopsClient = loops.NewAuditedClient(loopsClient, emailAuditStore)
-		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
-			TransactionalIDs: loops.TransactionalIDs{
-				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
-				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
-				BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
-				BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),
-				AccountDisconnected:         os.Getenv("LOOPS_ACCOUNT_DISCONNECTED_TRANSACTIONAL_ID"),
-				AccountCanceled:             os.Getenv("LOOPS_ACCOUNT_CANCELED_TRANSACTIONAL_ID"),
-				PostFailed:                  os.Getenv("LOOPS_POST_FAILED_TRANSACTIONAL_ID"),
-			},
-			EmailAuditStore: emailAuditStore,
-			EmailPolicy:     emailPolicyService,
-		})
+		loopsSyncer = loops.NewSyncer(loopsClient, loopsOptions)
 		slog.Info("loops: lifecycle sync configured")
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
@@ -728,7 +732,17 @@ func main() {
 	// the ENCRYPTION_KEY value as the HMAC secret with an audience
 	// claim for domain separation (B2). No new env var.
 	previewHandler := handler.NewPreviewHandler(queries, storageClient, []byte(encryptionKey), os.Getenv("NEXT_PUBLIC_APP_URL"))
+	trialService := trials.NewService(
+		trials.NewPostgresStore(queries),
+		trials.NewStripeGateway(stripeMgr),
+		trials.NewManagerModeResolver(stripeMgr),
+		runtimeenv.Current(),
+		time.Now,
+	)
+	stripeWebhookHandler.SetTrialWebhookService(trialService)
+	billingHandler.SetTrialService(trialService)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries).
+		SetTrialService(trialService).
 		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService)
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
@@ -944,6 +958,8 @@ func main() {
 		// gates end-to-end. Already protected by the admin middleware
 		// guarding this group.
 		r.Post("/v1/admin/workspaces/{workspaceID}/plan", adminHandler.SetPlan)
+		r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)
+		r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)
 		r.Get("/v1/admin/post-failures", adminHandler.ListPostFailures)
 		r.Get("/v1/admin/error-triage/runs", errorTriageHandler.ListRuns)
 		r.Post("/v1/admin/error-triage/runs", errorTriageHandler.CreateRun)
@@ -1159,9 +1175,12 @@ func main() {
 		// Billing. Read is workspace-wide (any role); checkout / portal
 		// are owner-only because they touch the payment method.
 		r.Get("/v1/billing", billingHandler.GetBilling)
+		r.Get("/v1/billing/trials", billingHandler.ListTrialHistory)
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/change-plan", billingHandler.ChangePlan)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/trials/{trialID}/cancel-renewal", billingHandler.CancelTrialRenewal)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
 

@@ -174,7 +174,7 @@ func lifecycleDeliveryClass(eventName string) string {
 
 func lifecycleTriggerSource(eventName string) string {
 	switch strings.TrimSpace(eventName) {
-	case "plan_changed", "billing_payment_failed", "billing_payment_recovered", "billing_subscription_canceled":
+	case "plan_changed", "billing_trial_ending", "billing_payment_failed", "billing_payment_recovered", "billing_subscription_canceled":
 		return "stripe_webhook"
 	case "account_disconnected", "post_failed":
 		return "worker"

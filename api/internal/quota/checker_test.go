@@ -117,6 +117,16 @@ func TestPlanAllowsAuditLogIsTeamOnlyAndFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTrialingPaidPlanUnlocksPlanGate(t *testing.T) {
+	checker := NewChecker(db.New(&fakeQuotaDB{planID: "growth", subscriptionStatus: "trialing", allowAnalytics: true}))
+	if got := checker.PlanIDFor(t.Context(), "ws_123"); got != "growth" {
+		t.Fatalf("PlanIDFor() = %q, want growth", got)
+	}
+	if !checker.PlanAllowsAnalytics(t.Context(), "ws_123") {
+		t.Fatal("trialing Growth subscription must unlock plan-based Analytics")
+	}
+}
+
 func TestCheckerMonthlySnapshotForPeriodIncludesScheduledAndHeldUnits(t *testing.T) {
 	checker := NewChecker(db.New(&fakeQuotaDB{
 		planID:         "basic",
@@ -204,12 +214,14 @@ func TestFreePlanHardBlockGateProjectsBulkAccumulation(t *testing.T) {
 }
 
 type fakeQuotaDB struct {
-	planID          string
-	subscriptionErr error
-	limit           int32
-	usage           int32
-	scheduledUnits  int32
-	quotaHoldUnits  int32
+	planID             string
+	subscriptionErr    error
+	limit              int32
+	usage              int32
+	scheduledUnits     int32
+	quotaHoldUnits     int32
+	subscriptionStatus string
+	allowAnalytics     bool
 }
 
 func (f *fakeQuotaDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -226,12 +238,16 @@ func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) 
 		if f.subscriptionErr != nil {
 			return fakeQuotaRow{err: f.subscriptionErr}
 		}
+		status := f.subscriptionStatus
+		if status == "" {
+			status = "active"
+		}
 		return fakeQuotaRow{values: []any{
 			"sub_123",
 			f.planID,
 			pgtype.Text{},
 			pgtype.Text{},
-			"active",
+			status,
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
 			pgtype.Bool{},
@@ -251,7 +267,7 @@ func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) 
 			false,
 			false,
 			false,
-			false,
+			f.allowAnalytics,
 			pgtype.Int4{},
 			pgtype.Int4{},
 		}}

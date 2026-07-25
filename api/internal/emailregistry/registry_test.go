@@ -14,6 +14,7 @@ func TestRegistryContainsRequiredEmailEvents(t *testing.T) {
 		"email.user.welcome.v1":                   "LOOPS_USER_WELCOME_TRANSACTIONAL_ID",
 		"email.workspace.member_invited.v1":       "LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID",
 		"email.billing.plan_changed.v1":           "LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID",
+		"email.billing.trial_ending.v1":           "LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID",
 		"email.billing.payment_failed.v1":         "LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID",
 		"email.billing.payment_recovered.v1":      "LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID",
 		"email.billing.subscription_canceled.v1":  "LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID",
@@ -35,6 +36,52 @@ func TestRegistryContainsRequiredEmailEvents(t *testing.T) {
 		if event.TemplateEnv != env {
 			t.Fatalf("%s TemplateEnv = %q, want %q", key, event.TemplateEnv, env)
 		}
+	}
+}
+
+func TestTrialEndingRegistryIsEssentialCriticalAndNotUnsubscribeGated(t *testing.T) {
+	event, ok := byKey(t, Registry())["email.billing.trial_ending.v1"]
+	if !ok {
+		t.Fatal("registry missing email.billing.trial_ending.v1")
+	}
+	if event.TemplateEnv != "LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID" {
+		t.Fatalf("TemplateEnv = %q", event.TemplateEnv)
+	}
+	if event.LoopsEventName != "billing_trial_ending" {
+		t.Fatalf("LoopsEventName = %q", event.LoopsEventName)
+	}
+	if event.DeliveryClass != CriticalTransactional || event.PreferenceCategory != EssentialAccountBilling {
+		t.Fatalf("delivery policy = %#v", event)
+	}
+	if event.CanUnsubscribe || event.PreferenceGated || event.FooterPolicy != FooterRequiredNotice {
+		t.Fatalf("preference policy = %#v", event)
+	}
+	wantVariables := []string{"workspace_name", "plan_id", "plan_name", "trial_end", "days_remaining", "post_trial_price", "billing_url", "cancel_url"}
+	gotVariables := map[string]bool{}
+	for _, variable := range event.RequiredVariables {
+		gotVariables[variable] = true
+	}
+	for _, variable := range wantVariables {
+		if !gotVariables[variable] {
+			t.Fatalf("required variables missing %q", variable)
+		}
+	}
+}
+
+func TestTrialEndingTransactionalTemplateIsWiredInMain(t *testing.T) {
+	mainSource, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if !strings.Contains(string(mainSource), `BillingTrialEnding:          os.Getenv("LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID")`) {
+		t.Fatal("main.go does not wire the trial-ending Loops transactional template")
+	}
+	body := string(mainSource)
+	auditAt := strings.Index(body, "emailAuditStore := loops.NewPostgresEmailAuditStore(queries)")
+	apiKeyAt := strings.Index(body, `if key := os.Getenv("LOOPS_API_KEY")`)
+	nilSyncerAt := strings.Index(body, "loopsSyncer = loops.NewSyncer(nil, loopsOptions)")
+	if auditAt < 0 || apiKeyAt < 0 || nilSyncerAt < 0 || auditAt > apiKeyAt || nilSyncerAt > apiKeyAt {
+		t.Fatal("main.go must create an audit-capable trial-ending syncer before checking LOOPS_API_KEY")
 	}
 }
 
@@ -148,6 +195,11 @@ func TestLookupByLoopsEventNameUsesRegistryDeliveryClass(t *testing.T) {
 	if event.DeliveryClass != CriticalTransactional {
 		t.Fatalf("delivery class = %q, want critical_transactional", event.DeliveryClass)
 	}
+
+	event, ok = LookupByLoopsEventName("billing_trial_ending")
+	if !ok || event.Key != "email.billing.trial_ending.v1" || event.DeliveryClass != CriticalTransactional {
+		t.Fatalf("trial ending lookup = %#v, found=%v", event, ok)
+	}
 }
 
 func TestEmailPreferenceCategoriesExposeUserControls(t *testing.T) {
@@ -180,6 +232,7 @@ func TestRegistryCoversTemplateLinkVariables(t *testing.T) {
 		"email.user.welcome.v1":                   {"app_url", "connect_url", "discord_url"},
 		"email.workspace.member_invited.v1":       {"accept_url"},
 		"email.billing.payment_failed.v1":         {"billing_url"},
+		"email.billing.trial_ending.v1":           {"billing_url", "cancel_url"},
 		"email.billing.payment_recovered.v1":      {"billing_url"},
 		"email.billing.subscription_canceled.v1":  {"billing_url"},
 		"email.quota.free_plan_reminder.v1":       {"pricing_url", "billing_url"},

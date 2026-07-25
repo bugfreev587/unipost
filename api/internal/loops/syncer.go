@@ -56,6 +56,7 @@ type EmailPolicy interface {
 
 type TransactionalIDs struct {
 	PlanChanged                 string
+	BillingTrialEnding          string
 	BillingPaymentFailed        string
 	BillingPaymentRecovered     string
 	BillingSubscriptionCanceled string
@@ -131,7 +132,7 @@ func (s *Syncer) SyncDashboardUser(ctx context.Context, user DashboardUser) erro
 }
 
 func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) error {
-	if s == nil || s.client == nil || !s.client.Enabled() {
+	if s == nil {
 		return nil
 	}
 	if strings.TrimSpace(event.Email) == "" || strings.TrimSpace(event.EventName) == "" {
@@ -154,6 +155,19 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 	}
 
 	props := lifecycleEventProperties(event)
+	trialEnding := strings.TrimSpace(event.EventName) == "billing_trial_ending"
+	transactionalID := s.transactionalIDFor(event.EventName)
+	dataVariables := lifecycleTransactionalDataVariables(event, props)
+	if trialEnding && transactionalID == "" {
+		s.recordFailedTransactionalAudit(ctx, event, transactionalID, dataVariables, "missing_transactional_id")
+		return nil
+	}
+	if s.client == nil || !s.client.Enabled() {
+		if trialEnding {
+			s.recordFailedTransactionalAudit(ctx, event, transactionalID, dataVariables, "provider_unavailable")
+		}
+		return nil
+	}
 	if !event.SkipContact {
 		if err := s.client.UpsertContact(ctx, Contact{
 			Email:      event.Email,
@@ -169,8 +183,7 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 		}
 	}
 
-	if transactionalID := s.transactionalIDFor(event.EventName); transactionalID != "" {
-		dataVariables := lifecycleTransactionalDataVariables(event, props)
+	if transactionalID != "" {
 		audit := lifecycleTransactionalAudit(event)
 		if s.emailPolicy != nil && strings.TrimSpace(audit.EventKey) != "" {
 			decision, err := s.emailPolicy.Prepare(ctx, emailpolicy.Request{
@@ -181,6 +194,9 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 			})
 			if err != nil {
 				slog.Warn("loops: lifecycle transactional email policy failed", "user_id", event.UserID, "email", event.Email, "event", event.EventName, "error", err)
+				if trialEnding {
+					s.recordFailedTransactionalAudit(ctx, event, transactionalID, dataVariables, "email_policy_failed")
+				}
 				return nil
 			}
 			dataVariables = decision.DataVariables
@@ -221,6 +237,35 @@ func (s *Syncer) SendLifecycleEvent(ctx context.Context, event LifecycleEvent) e
 	return nil
 }
 
+func (s *Syncer) recordFailedTransactionalAudit(ctx context.Context, event LifecycleEvent, transactionalID string, dataVariables map[string]any, reason string) {
+	if s == nil || s.emailAuditStore == nil {
+		slog.Warn("loops: failed transactional email cannot be audited", "event", event.EventName, "idempotency_key", event.IdempotencyKey, "reason", reason)
+		return
+	}
+	audit := lifecycleTransactionalAudit(event)
+	record, err := s.emailAuditStore.CreateEmailSendAttempt(ctx, EmailSendAttempt{
+		EventKey:           audit.EventKey,
+		RecipientUserID:    event.UserID,
+		RecipientEmail:     event.Email,
+		WorkspaceID:        audit.WorkspaceID,
+		Provider:           firstNonEmpty(audit.Provider, "loops"),
+		ProviderTemplateID: transactionalID,
+		IdempotencyKey:     event.IdempotencyKey,
+		DeliveryClass:      audit.DeliveryClass,
+		SubjectSnapshot:    audit.Subject,
+		DataVariables:      dataVariables,
+		TriggerSource:      audit.TriggerSource,
+		TriggerReferenceID: audit.TriggerReferenceID,
+	})
+	if err != nil {
+		slog.Warn("loops: failed transactional email audit create failed", "event", event.EventName, "idempotency_key", event.IdempotencyKey, "reason", reason, "error", err)
+		return
+	}
+	if err := s.emailAuditStore.MarkEmailSendAttemptFailed(ctx, record.ID, reason); err != nil {
+		slog.Warn("loops: failed transactional email audit update failed", "event", event.EventName, "idempotency_key", event.IdempotencyKey, "reason", reason, "error", err)
+	}
+}
+
 func (s *Syncer) transactionalIDFor(eventName string) string {
 	if s == nil {
 		return ""
@@ -228,6 +273,8 @@ func (s *Syncer) transactionalIDFor(eventName string) string {
 	switch strings.TrimSpace(eventName) {
 	case "plan_changed":
 		return strings.TrimSpace(s.transactionalIDs.PlanChanged)
+	case "billing_trial_ending":
+		return strings.TrimSpace(s.transactionalIDs.BillingTrialEnding)
 	case "billing_payment_failed":
 		return strings.TrimSpace(s.transactionalIDs.BillingPaymentFailed)
 	case "billing_payment_recovered":
@@ -308,6 +355,15 @@ func lifecycleTransactionalDataVariables(event LifecycleEvent, props map[string]
 		addTransactionalValue(vars, "new_plan_id", props["new_plan_id"])
 		addTransactionalValue(vars, "change_type", props["change_type"])
 		addTransactionalValue(vars, "billing_url", props["billing_url"])
+	case "billing_trial_ending":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "plan_id", props["plan_id"])
+		addTransactionalValue(vars, "plan_name", props["plan_name"])
+		addTransactionalValue(vars, "trial_end", props["trial_end"])
+		addTransactionalValue(vars, "days_remaining", props["days_remaining"])
+		addTransactionalValue(vars, "post_trial_price", props["post_trial_price"])
+		addTransactionalValue(vars, "billing_url", props["billing_url"])
+		addTransactionalValue(vars, "cancel_url", props["cancel_url"])
 	case "billing_payment_failed":
 		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
 		addTransactionalValue(vars, "plan_id", props["plan_id"])

@@ -38,6 +38,10 @@ function isDashboardHost(hostname: string) {
   );
 }
 
+function isVercelPreviewHost(hostname: string) {
+  return hostname.endsWith(".vercel.app");
+}
+
 function isPublicPagePath(pathname: string) {
   return (
     pathname === "/__unipost-preview.json" ||
@@ -92,6 +96,14 @@ export default function proxy(request: NextRequest, event: NextFetchEvent) {
 
   if (isPublicPage || isPublicDocsApi) {
     return withCountryCookie(NextResponse.next(), request);
+  }
+
+  // An isolated Preview uses one hostname for both public and authenticated
+  // acceptance. Keep its root public while leaving Dashboard routes protected.
+  if (isVercelPreviewHost(hostname) && pathname === "/") {
+    const url = request.nextUrl.clone();
+    url.pathname = "/marketing";
+    return withCountryCookie(NextResponse.rewrite(url), request);
   }
 
   if (!isDashboard) {

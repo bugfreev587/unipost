@@ -50,10 +50,11 @@ type UserLookupFunc func(ctx context.Context, userID string) (email string, err 
 // reference, fetch it lazily from the Stripe API rather than carrying
 // dead env vars.
 type Mode struct {
-	Name          string // "live" or "sandbox" — used in logs only
-	Client        *client.API
-	WebhookSecret string
-	priceIDs      map[string]string // plan ID → Stripe price ID
+	Name                       string // "live" or "sandbox" — used in logs only
+	Client                     *client.API
+	WebhookSecret              string
+	priceIDs                   map[string]string // plan ID → Stripe price ID
+	trialPortalConfigurationID string
 }
 
 // PriceID returns the Stripe price ID for the given plan in this mode.
@@ -64,6 +65,15 @@ func (m *Mode) PriceID(planID string) string {
 		return ""
 	}
 	return m.priceIDs[planID]
+}
+
+// TrialPortalConfigurationID returns the Stripe Billing Portal
+// configuration that is safe to expose while a workspace has a trial.
+func (m *Mode) TrialPortalConfigurationID() string {
+	if m == nil {
+		return ""
+	}
+	return m.trialPortalConfigurationID
 }
 
 // Manager owns one Live mode and an optional Sandbox mode plus the
@@ -128,7 +138,13 @@ func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 		return nil, fmt.Errorf("billing: STRIPE_SECRET_KEY is required")
 	}
 
-	live := newMode("live", liveKey, os.Getenv("STRIPE_WEBHOOK_SECRET"), readPriceIDs(""))
+	live := newMode(
+		"live",
+		liveKey,
+		os.Getenv("STRIPE_WEBHOOK_SECRET"),
+		readPriceIDs(""),
+		os.Getenv("STRIPE_BILLING_PORTAL_TRIAL_CONFIGURATION_ID"),
+	)
 
 	// Set the global stripe.Key as a fallback so any code path that still
 	// calls package-level stripe-go functions (e.g. legacy customer
@@ -151,7 +167,13 @@ func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 	}
 
 	if sandboxKey := os.Getenv("STRIPE_SANDBOX_SECRET_KEY"); sandboxKey != "" {
-		mgr.Sandbox = newMode("sandbox", sandboxKey, os.Getenv("STRIPE_SANDBOX_WEBHOOK_SECRET"), readPriceIDs("SANDBOX_"))
+		mgr.Sandbox = newMode(
+			"sandbox",
+			sandboxKey,
+			os.Getenv("STRIPE_SANDBOX_WEBHOOK_SECRET"),
+			readPriceIDs("SANDBOX_"),
+			os.Getenv("STRIPE_SANDBOX_BILLING_PORTAL_TRIAL_CONFIGURATION_ID"),
+		)
 	}
 
 	slog.Info("billing manager configured",
@@ -162,14 +184,15 @@ func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 	return mgr, nil
 }
 
-func newMode(name, key, webhookSecret string, priceIDs map[string]string) *Mode {
+func newMode(name, key, webhookSecret string, priceIDs map[string]string, trialPortalConfigurationID string) *Mode {
 	c := &client.API{}
 	c.Init(key, nil)
 	return &Mode{
-		Name:          name,
-		Client:        c,
-		WebhookSecret: webhookSecret,
-		priceIDs:      priceIDs,
+		Name:                       name,
+		Client:                     c,
+		WebhookSecret:              webhookSecret,
+		priceIDs:                   priceIDs,
+		trialPortalConfigurationID: trialPortalConfigurationID,
 	}
 }
 
@@ -300,6 +323,22 @@ func (m *Manager) For(ctx context.Context, userID string) *Mode {
 		return m.Sandbox
 	}
 	return m.Live
+}
+
+// ByName returns the exact configured Stripe mode. It deliberately does not
+// fall back to live because persisted Stripe object IDs are mode-specific.
+func (m *Manager) ByName(name string) *Mode {
+	if m == nil {
+		return nil
+	}
+	switch name {
+	case "live":
+		return m.Live
+	case "sandbox":
+		return m.Sandbox
+	default:
+		return nil
+	}
 }
 
 // VerifyWebhook validates an incoming Stripe webhook against both

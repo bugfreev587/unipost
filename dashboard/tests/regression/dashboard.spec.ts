@@ -84,6 +84,15 @@ test.describe("public dashboard surfaces", () => {
     await expect(page.getByText(/Thread Splitter|Caption Generator/i)).toHaveCount(0);
   });
 
+  test("pricing explains admin-granted paid-plan trials without replacing the permanent Free plan", async ({ page }) => {
+    await page.goto("/pricing", { waitUntil: "domcontentloaded" });
+
+    await expect(page.getByText("Is there a free trial?")).toBeVisible();
+    await expect(page.getByText(/If your workspace receives a time-limited paid-plan trial offer/)).toBeVisible();
+    await expect(page.getByText(/billing starts after the trial unless you cancel renewal/)).toBeVisible();
+    await expect(page.getByText(/Paid plans do not include a separate time-limited trial/)).toHaveCount(0);
+  });
+
   test("API Metrics docs stay wired into the API docs shell", async () => {
     const docsShellSource = await readFile(path.join(process.cwd(), "src/app/docs/_components/docs-shell.tsx"), "utf8");
     const apiMetricsPageSource = await readFile(path.join(process.cwd(), "src/app/docs/api/api-metrics/page.tsx"), "utf8");
