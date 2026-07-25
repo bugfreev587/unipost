@@ -122,3 +122,44 @@ func TestPostDeliveryJobLeaseOwnershipQueryContract(t *testing.T) {
 		}
 	}
 }
+
+func TestPostDeliveryJobConnectionSnapshotMigrationContract(t *testing.T) {
+	source, err := os.ReadFile("migrations/122_delivery_job_connection_snapshot.sql")
+	if err != nil {
+		t.Fatalf("read connection snapshot migration: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"ADD COLUMN connection_id TEXT",
+		"ADD COLUMN binding_version BIGINT",
+		"SET connection_id = sa.connection_id",
+		"binding_version = sa.binding_version",
+		"COALESCE(connection_id, social_account_id)",
+		"DROP COLUMN IF EXISTS binding_version",
+		"DROP COLUMN IF EXISTS connection_id",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("connection snapshot migration missing %q:\n%s", want, sql)
+		}
+	}
+}
+
+func TestPostDeliveryJobPhysicalConnectionClaimContract(t *testing.T) {
+	source, err := os.ReadFile("post_delivery_jobs.sql.go")
+	if err != nil {
+		t.Fatalf("read generated post delivery jobs: %v", err)
+	}
+	sql := string(source)
+	for _, want := range []string{
+		"COALESCE(active.connection_id, active.social_account_id) = COALESCE(j.connection_id, j.social_account_id)",
+		"sa.connection_id = j.connection_id",
+		"sa.binding_version = j.binding_version",
+		"sa.binding_status = 'active'",
+		"binding_version_mismatch",
+		"ValidateDeliveryBindingSnapshot",
+	} {
+		if !strings.Contains(sql, want) {
+			t.Fatalf("physical connection claim contract missing %q", want)
+		}
+	}
+}

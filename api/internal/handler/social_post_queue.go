@@ -28,8 +28,9 @@ const (
 )
 
 var (
-	deliveryAccessTokenParamPattern = regexp.MustCompile(`(?i)(access_token=)[^&\s"'<>]+`)
-	deliveryBearerTokenPattern      = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)[^\s"'<>]+`)
+	deliveryAccessTokenParamPattern   = regexp.MustCompile(`(?i)(access_token=)[^&\s"'<>]+`)
+	deliveryBearerTokenPattern        = regexp.MustCompile(`(?i)(authorization:\s*bearer\s+)[^\s"'<>]+`)
+	errDeliveryBindingVersionMismatch = errors.New("the selected social account binding changed after this delivery was queued")
 )
 
 type postQueueSummary struct {
@@ -146,6 +147,13 @@ func (h *SocialPostHandler) loadDBAccountsByIDs(ctx context.Context, workspaceID
 	return out
 }
 
+func deliveryBindingSnapshot(acc db.SocialAccount) (pgtype.Text, pgtype.Int8) {
+	if !acc.ConnectionID.Valid || strings.TrimSpace(acc.ConnectionID.String) == "" {
+		return pgtype.Text{}, pgtype.Int8{}
+	}
+	return acc.ConnectionID, pgtype.Int8{Int64: acc.BindingVersion, Valid: true}
+}
+
 func summarizeAccountValidation(dbAcc db.SocialAccount, ok bool, fallback platform.ValidateAccount) (platformName string, err error) {
 	if ok {
 		platformName = dbAcc.Platform
@@ -232,11 +240,14 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 			continue
 		}
 
+		connectionID, bindingVersion := deliveryBindingSnapshot(acc)
 		job, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
 			PostID:             post.ID,
 			SocialPostResultID: res.ID,
 			WorkspaceID:        post.WorkspaceID,
 			SocialAccountID:    pp.AccountID,
+			ConnectionID:       connectionID,
+			BindingVersion:     bindingVersion,
 			Platform:           acc.Platform,
 			PostInputIndex:     int32(idx),
 			Kind:               "dispatch",
@@ -639,6 +650,17 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		return nil
 	}
 
+	bindingValid, err := h.queries.ValidateDeliveryBindingSnapshot(ctx, db.ValidateDeliveryBindingSnapshotParams{
+		ID:          job.ID,
+		WorkspaceID: job.WorkspaceID,
+	})
+	if err != nil {
+		return err
+	}
+	if !bindingValid {
+		return h.finalizeJobLoadFailure(ctx, job, res, post, errDeliveryBindingVersionMismatch)
+	}
+
 	pp, err := platformPostInputAtIndex(post, int(job.PostInputIndex))
 	if err != nil {
 		return h.finalizeJobLoadFailure(ctx, job, res, post, err)
@@ -791,6 +813,10 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 
 func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.PostDeliveryJob, res db.SocialPostResult, post db.SocialPost, dispatchErr error) error {
 	msg := sanitizeDeliveryErrorText(dispatchErr.Error())
+	errorCode := "validation_error"
+	if errors.Is(dispatchErr, errDeliveryBindingVersionMismatch) {
+		errorCode = "binding_version_mismatch"
+	}
 	_, _ = h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
 		ID:           res.ID,
 		Status:       "failed",
@@ -804,7 +830,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		job,
 		"dead",
 		pgtype.Text{String: "dispatch_prepare", Valid: true},
-		pgtype.Text{String: "validation_error", Valid: true},
+		pgtype.Text{String: errorCode, Valid: true},
 		pgtype.Text{},
 		pgtype.Text{String: msg, Valid: true},
 		pgtype.Timestamptz{},
@@ -812,6 +838,10 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 	failure := postfailures.BuildParams(
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
 	)
+	failure.ErrorCode = errorCode
+	if errorCode == "binding_version_mismatch" {
+		failure.IsRetriable = false
+	}
 	h.recordPostFailure(ctx, failure)
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
@@ -822,7 +852,7 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 		PostID:          post.ID,
 		SocialAccountID: res.SocialAccountID,
 		Platform:        job.Platform,
-		ErrorCode:       "validation_error",
+		ErrorCode:       errorCode,
 		Metadata: map[string]any{
 			"job_id":    job.ID,
 			"result_id": res.ID,
@@ -913,6 +943,8 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 				SocialPostResultID: res.ID,
 				WorkspaceID:        post.WorkspaceID,
 				SocialAccountID:    res.SocialAccountID,
+				ConnectionID:       job.ConnectionID,
+				BindingVersion:     job.BindingVersion,
 				Platform:           job.Platform,
 				PostInputIndex:     job.PostInputIndex,
 				Kind:               "retry",
@@ -1116,6 +1148,8 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 			SocialPostResultID: result.ID,
 			WorkspaceID:        post.WorkspaceID,
 			SocialAccountID:    result.SocialAccountID,
+			ConnectionID:       job.ConnectionID,
+			BindingVersion:     job.BindingVersion,
 			Platform:           job.Platform,
 			PostInputIndex:     job.PostInputIndex,
 			Kind:               "retry",
@@ -1238,6 +1272,8 @@ func (h *SocialPostHandler) RequeueDeliveryJob(ctx context.Context, workspaceID,
 		SocialPostResultID: result.ID,
 		WorkspaceID:        post.WorkspaceID,
 		SocialAccountID:    result.SocialAccountID,
+		ConnectionID:       job.ConnectionID,
+		BindingVersion:     job.BindingVersion,
 		Platform:           job.Platform,
 		PostInputIndex:     job.PostInputIndex,
 		Kind:               "retry",
@@ -1278,6 +1314,8 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 	}
 	postInputIndex := int32(findPostInputIndexForResult(post, result))
 	platformName := ""
+	var connectionID pgtype.Text
+	var bindingVersion pgtype.Int8
 	for _, job := range jobs {
 		if job.State == "pending" || job.State == "running" || job.State == "retrying" {
 			return db.PostDeliveryJob{}, h.queueConflictError()
@@ -1286,6 +1324,10 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 		if job.Platform != "" {
 			platformName = job.Platform
 		}
+		if !connectionID.Valid && job.ConnectionID.Valid {
+			connectionID = job.ConnectionID
+			bindingVersion = job.BindingVersion
+		}
 	}
 	if postInputIndex < 0 {
 		return db.PostDeliveryJob{}, fmt.Errorf("unable to resolve original post input for retry")
@@ -1293,6 +1335,9 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 	if platformName == "" {
 		if acc, accErr := h.queries.GetSocialAccount(ctx, result.SocialAccountID); accErr == nil {
 			platformName = acc.Platform
+			if len(jobs) == 0 {
+				connectionID, bindingVersion = deliveryBindingSnapshot(acc)
+			}
 		}
 	}
 	return h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
@@ -1300,6 +1345,8 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 		SocialPostResultID: result.ID,
 		WorkspaceID:        post.WorkspaceID,
 		SocialAccountID:    result.SocialAccountID,
+		ConnectionID:       connectionID,
+		BindingVersion:     bindingVersion,
 		Platform:           platformName,
 		PostInputIndex:     postInputIndex,
 		Kind:               "retry",

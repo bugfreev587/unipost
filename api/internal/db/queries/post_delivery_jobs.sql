@@ -4,6 +4,8 @@ INSERT INTO post_delivery_jobs (
   social_post_result_id,
   workspace_id,
   social_account_id,
+  connection_id,
+  binding_version,
   platform,
   post_input_index,
   kind,
@@ -18,13 +20,41 @@ INSERT INTO post_delivery_jobs (
   last_attempt_at,
   finished_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
 )
 RETURNING *;
 
 -- name: GetPostDeliveryJobByIDAndWorkspace :one
 SELECT * FROM post_delivery_jobs
 WHERE id = $1 AND workspace_id = $2;
+
+-- name: ValidateDeliveryBindingSnapshot :one
+-- Final guard immediately before provider I/O. A migrated job is valid only
+-- while its selected public binding is active and still points at the exact
+-- connection/version captured at admission. Legacy jobs remain valid only
+-- while both the job and binding are still unmigrated, preventing a NULL
+-- snapshot from silently following a later rebind.
+SELECT EXISTS (
+  SELECT 1
+  FROM post_delivery_jobs j
+  JOIN social_accounts sa ON sa.id = j.social_account_id
+  WHERE j.id = sqlc.arg('id')
+    AND j.workspace_id = sqlc.arg('workspace_id')
+    AND j.state IN ('running', 'retrying')
+    AND sa.disconnected_at IS NULL
+    AND sa.binding_status = 'active'
+    AND (
+      (
+        j.connection_id IS NULL
+        AND j.binding_version IS NULL
+        AND sa.connection_id IS NULL
+      )
+      OR (
+        sa.connection_id = j.connection_id
+        AND sa.binding_version = j.binding_version
+      )
+    )
+) AS valid;
 
 -- name: ListPostDeliveryJobsByPost :many
 SELECT * FROM post_delivery_jobs
@@ -141,7 +171,42 @@ WHERE workspace_id = $1
 -- workspace's in-flight count = active_cnt + rn, so we admit only
 -- when (active_cnt + rn) <= cap. With ws_cap=0 the predicate is
 -- always satisfied and behavior matches the pre-Phase-2 query.
-WITH active_per_ws AS (
+WITH invalid_jobs AS (
+  UPDATE post_delivery_jobs j
+  SET state = 'dead',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      last_error = 'The selected social account binding changed after this delivery was queued.',
+      finished_at = NOW(),
+      updated_at = NOW()
+  WHERE j.kind = 'dispatch'
+    AND j.state = 'pending'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
+        )
+    )
+  RETURNING j.social_post_result_id
+),
+invalid_results AS (
+  UPDATE social_post_results r
+  SET status = 'failed',
+      error_message = 'The selected social account binding changed after this delivery was queued.',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      is_retriable = FALSE,
+      next_action = 'fix_request'
+  FROM invalid_jobs i
+  WHERE r.id = i.social_post_result_id
+  RETURNING r.id
+),
+active_per_ws AS (
   SELECT workspace_id, COUNT(*)::int AS cnt
   FROM post_delivery_jobs
   WHERE state IN ('running', 'retrying')
@@ -162,18 +227,29 @@ ranked AS (
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs active
-      WHERE active.social_account_id = j.social_account_id
+      WHERE COALESCE(active.connection_id, active.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND active.state IN ('running', 'retrying')
     )
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs earlier
-      WHERE earlier.social_account_id = j.social_account_id
+      WHERE COALESCE(earlier.connection_id, earlier.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND earlier.kind = 'dispatch'
         AND earlier.state = 'pending'
         AND (
           earlier.created_at < j.created_at
           OR (earlier.created_at = j.created_at AND earlier.id < j.id)
+        )
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
         )
     )
 ),
@@ -185,7 +261,7 @@ eligible AS (
   LIMIT sqlc.arg('batch_limit')::int
 ),
 locked_jobs AS (
-  SELECT j.id, j.social_account_id
+  SELECT j.id, j.social_account_id, j.connection_id, j.binding_version
   FROM post_delivery_jobs j
   JOIN eligible e ON e.id = j.id
   WHERE j.kind = 'dispatch'
@@ -197,12 +273,18 @@ locked_accounts AS (
   SELECT sa.id
   FROM social_accounts sa
   WHERE EXISTS (
-    SELECT 1
-    FROM locked_jobs
-    WHERE locked_jobs.social_account_id = sa.id
-  )
+      SELECT 1
+      FROM locked_jobs
+      WHERE locked_jobs.social_account_id = sa.id
+        AND (
+          (locked_jobs.connection_id IS NULL AND locked_jobs.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = locked_jobs.connection_id AND sa.binding_version = locked_jobs.binding_version)
+        )
+    )
+    AND sa.disconnected_at IS NULL
+    AND sa.binding_status = 'active'
   ORDER BY sa.id
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF sa SKIP LOCKED
 ),
 claimable AS (
   SELECT locked_jobs.id
@@ -226,7 +308,43 @@ RETURNING j.*;
 -- name: ClaimPostRetryJobs :many
 -- $1 = batch limit (max jobs to claim in one tick)
 -- $2 = per-workspace concurrent cap (see ClaimPostDispatchJobs notes)
-WITH active_per_ws AS (
+WITH invalid_jobs AS (
+  UPDATE post_delivery_jobs j
+  SET state = 'dead',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      last_error = 'The selected social account binding changed after this delivery was queued.',
+      finished_at = NOW(),
+      updated_at = NOW()
+  WHERE j.kind = 'retry'
+    AND j.state = 'pending'
+    AND (j.next_run_at IS NULL OR j.next_run_at <= NOW())
+    AND NOT EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
+        )
+    )
+  RETURNING j.social_post_result_id
+),
+invalid_results AS (
+  UPDATE social_post_results r
+  SET status = 'failed',
+      error_message = 'The selected social account binding changed after this delivery was queued.',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      is_retriable = FALSE,
+      next_action = 'fix_request'
+  FROM invalid_jobs i
+  WHERE r.id = i.social_post_result_id
+  RETURNING r.id
+),
+active_per_ws AS (
   SELECT workspace_id, COUNT(*)::int AS cnt
   FROM post_delivery_jobs
   WHERE state IN ('running', 'retrying')
@@ -251,13 +369,13 @@ ranked AS (
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs active
-      WHERE active.social_account_id = j.social_account_id
+      WHERE COALESCE(active.connection_id, active.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND active.state IN ('running', 'retrying')
     )
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs earlier
-      WHERE earlier.social_account_id = j.social_account_id
+      WHERE COALESCE(earlier.connection_id, earlier.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND earlier.kind = 'retry'
         AND earlier.state = 'pending'
         AND (earlier.next_run_at IS NULL OR earlier.next_run_at <= NOW())
@@ -269,6 +387,17 @@ ranked AS (
           )
         )
     )
+    AND EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
+        )
+    )
 ),
 eligible AS (
   SELECT id, social_account_id, sort_key, rn FROM ranked
@@ -278,7 +407,7 @@ eligible AS (
   LIMIT sqlc.arg('batch_limit')::int
 ),
 locked_jobs AS (
-  SELECT j.id, j.social_account_id
+  SELECT j.id, j.social_account_id, j.connection_id, j.binding_version
   FROM post_delivery_jobs j
   JOIN eligible e ON e.id = j.id
   WHERE j.kind = 'retry'
@@ -291,12 +420,18 @@ locked_accounts AS (
   SELECT sa.id
   FROM social_accounts sa
   WHERE EXISTS (
-    SELECT 1
-    FROM locked_jobs
-    WHERE locked_jobs.social_account_id = sa.id
-  )
+      SELECT 1
+      FROM locked_jobs
+      WHERE locked_jobs.social_account_id = sa.id
+        AND (
+          (locked_jobs.connection_id IS NULL AND locked_jobs.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = locked_jobs.connection_id AND sa.binding_version = locked_jobs.binding_version)
+        )
+    )
+    AND sa.disconnected_at IS NULL
+    AND sa.binding_status = 'active'
   ORDER BY sa.id
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF sa SKIP LOCKED
 ),
 claimable AS (
   SELECT locked_jobs.id

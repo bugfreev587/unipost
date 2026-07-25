@@ -35,7 +35,7 @@ SET state = 'cancelled',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
 `
 
 func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDeliveryJob, error) {
@@ -67,12 +67,49 @@ func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDel
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
 
 const claimPostDispatchJobs = `-- name: ClaimPostDispatchJobs :many
-WITH active_per_ws AS (
+WITH invalid_jobs AS (
+  UPDATE post_delivery_jobs j
+  SET state = 'dead',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      last_error = 'The selected social account binding changed after this delivery was queued.',
+      finished_at = NOW(),
+      updated_at = NOW()
+  WHERE j.kind = 'dispatch'
+    AND j.state = 'pending'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
+        )
+    )
+  RETURNING j.social_post_result_id
+),
+invalid_results AS (
+  UPDATE social_post_results r
+  SET status = 'failed',
+      error_message = 'The selected social account binding changed after this delivery was queued.',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      is_retriable = FALSE,
+      next_action = 'fix_request'
+  FROM invalid_jobs i
+  WHERE r.id = i.social_post_result_id
+  RETURNING r.id
+),
+active_per_ws AS (
   SELECT workspace_id, COUNT(*)::int AS cnt
   FROM post_delivery_jobs
   WHERE state IN ('running', 'retrying')
@@ -93,18 +130,29 @@ ranked AS (
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs active
-      WHERE active.social_account_id = j.social_account_id
+      WHERE COALESCE(active.connection_id, active.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND active.state IN ('running', 'retrying')
     )
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs earlier
-      WHERE earlier.social_account_id = j.social_account_id
+      WHERE COALESCE(earlier.connection_id, earlier.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND earlier.kind = 'dispatch'
         AND earlier.state = 'pending'
         AND (
           earlier.created_at < j.created_at
           OR (earlier.created_at = j.created_at AND earlier.id < j.id)
+        )
+    )
+    AND EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
         )
     )
 ),
@@ -116,7 +164,7 @@ eligible AS (
   LIMIT $4::int
 ),
 locked_jobs AS (
-  SELECT j.id, j.social_account_id
+  SELECT j.id, j.social_account_id, j.connection_id, j.binding_version
   FROM post_delivery_jobs j
   JOIN eligible e ON e.id = j.id
   WHERE j.kind = 'dispatch'
@@ -128,12 +176,18 @@ locked_accounts AS (
   SELECT sa.id
   FROM social_accounts sa
   WHERE EXISTS (
-    SELECT 1
-    FROM locked_jobs
-    WHERE locked_jobs.social_account_id = sa.id
-  )
+      SELECT 1
+      FROM locked_jobs
+      WHERE locked_jobs.social_account_id = sa.id
+        AND (
+          (locked_jobs.connection_id IS NULL AND locked_jobs.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = locked_jobs.connection_id AND sa.binding_version = locked_jobs.binding_version)
+        )
+    )
+    AND sa.disconnected_at IS NULL
+    AND sa.binding_status = 'active'
   ORDER BY sa.id
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF sa SKIP LOCKED
 ),
 claimable AS (
   SELECT locked_jobs.id
@@ -152,7 +206,7 @@ SET state = 'running',
     updated_at = NOW()
 FROM claimable
 WHERE j.id = claimable.id
-RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at
+RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at, j.connection_id, j.binding_version
 `
 
 type ClaimPostDispatchJobsParams struct {
@@ -214,6 +268,8 @@ func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, arg ClaimPostDispat
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -226,7 +282,43 @@ func (q *Queries) ClaimPostDispatchJobs(ctx context.Context, arg ClaimPostDispat
 }
 
 const claimPostRetryJobs = `-- name: ClaimPostRetryJobs :many
-WITH active_per_ws AS (
+WITH invalid_jobs AS (
+  UPDATE post_delivery_jobs j
+  SET state = 'dead',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      last_error = 'The selected social account binding changed after this delivery was queued.',
+      finished_at = NOW(),
+      updated_at = NOW()
+  WHERE j.kind = 'retry'
+    AND j.state = 'pending'
+    AND (j.next_run_at IS NULL OR j.next_run_at <= NOW())
+    AND NOT EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
+        )
+    )
+  RETURNING j.social_post_result_id
+),
+invalid_results AS (
+  UPDATE social_post_results r
+  SET status = 'failed',
+      error_message = 'The selected social account binding changed after this delivery was queued.',
+      failure_stage = 'dispatch_prepare',
+      error_code = 'binding_version_mismatch',
+      is_retriable = FALSE,
+      next_action = 'fix_request'
+  FROM invalid_jobs i
+  WHERE r.id = i.social_post_result_id
+  RETURNING r.id
+),
+active_per_ws AS (
   SELECT workspace_id, COUNT(*)::int AS cnt
   FROM post_delivery_jobs
   WHERE state IN ('running', 'retrying')
@@ -251,13 +343,13 @@ ranked AS (
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs active
-      WHERE active.social_account_id = j.social_account_id
+      WHERE COALESCE(active.connection_id, active.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND active.state IN ('running', 'retrying')
     )
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs earlier
-      WHERE earlier.social_account_id = j.social_account_id
+      WHERE COALESCE(earlier.connection_id, earlier.social_account_id) = COALESCE(j.connection_id, j.social_account_id)
         AND earlier.kind = 'retry'
         AND earlier.state = 'pending'
         AND (earlier.next_run_at IS NULL OR earlier.next_run_at <= NOW())
@@ -269,6 +361,17 @@ ranked AS (
           )
         )
     )
+    AND EXISTS (
+      SELECT 1
+      FROM social_accounts sa
+      WHERE sa.id = j.social_account_id
+        AND sa.disconnected_at IS NULL
+        AND sa.binding_status = 'active'
+        AND (
+          (j.connection_id IS NULL AND j.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = j.connection_id AND sa.binding_version = j.binding_version)
+        )
+    )
 ),
 eligible AS (
   SELECT id, social_account_id, sort_key, rn FROM ranked
@@ -278,7 +381,7 @@ eligible AS (
   LIMIT $4::int
 ),
 locked_jobs AS (
-  SELECT j.id, j.social_account_id
+  SELECT j.id, j.social_account_id, j.connection_id, j.binding_version
   FROM post_delivery_jobs j
   JOIN eligible e ON e.id = j.id
   WHERE j.kind = 'retry'
@@ -291,12 +394,18 @@ locked_accounts AS (
   SELECT sa.id
   FROM social_accounts sa
   WHERE EXISTS (
-    SELECT 1
-    FROM locked_jobs
-    WHERE locked_jobs.social_account_id = sa.id
-  )
+      SELECT 1
+      FROM locked_jobs
+      WHERE locked_jobs.social_account_id = sa.id
+        AND (
+          (locked_jobs.connection_id IS NULL AND locked_jobs.binding_version IS NULL AND sa.connection_id IS NULL)
+          OR (sa.connection_id = locked_jobs.connection_id AND sa.binding_version = locked_jobs.binding_version)
+        )
+    )
+    AND sa.disconnected_at IS NULL
+    AND sa.binding_status = 'active'
   ORDER BY sa.id
-  FOR UPDATE SKIP LOCKED
+  FOR UPDATE OF sa SKIP LOCKED
 ),
 claimable AS (
   SELECT locked_jobs.id
@@ -315,7 +424,7 @@ SET state = 'retrying',
     updated_at = NOW()
 FROM claimable
 WHERE j.id = claimable.id
-RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at
+RETURNING j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at, j.connection_id, j.binding_version
 `
 
 type ClaimPostRetryJobsParams struct {
@@ -367,6 +476,8 @@ func (q *Queries) ClaimPostRetryJobs(ctx context.Context, arg ClaimPostRetryJobs
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -402,6 +513,8 @@ INSERT INTO post_delivery_jobs (
   social_post_result_id,
   workspace_id,
   social_account_id,
+  connection_id,
+  binding_version,
   platform,
   post_input_index,
   kind,
@@ -416,9 +529,9 @@ INSERT INTO post_delivery_jobs (
   last_attempt_at,
   finished_at
 ) VALUES (
-  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+  $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
 )
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
 `
 
 type CreatePostDeliveryJobParams struct {
@@ -426,6 +539,8 @@ type CreatePostDeliveryJobParams struct {
 	SocialPostResultID string             `json:"social_post_result_id"`
 	WorkspaceID        string             `json:"workspace_id"`
 	SocialAccountID    string             `json:"social_account_id"`
+	ConnectionID       pgtype.Text        `json:"connection_id"`
+	BindingVersion     pgtype.Int8        `json:"binding_version"`
 	Platform           string             `json:"platform"`
 	PostInputIndex     int32              `json:"post_input_index"`
 	Kind               string             `json:"kind"`
@@ -447,6 +562,8 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 		arg.SocialPostResultID,
 		arg.WorkspaceID,
 		arg.SocialAccountID,
+		arg.ConnectionID,
+		arg.BindingVersion,
 		arg.Platform,
 		arg.PostInputIndex,
 		arg.Kind,
@@ -488,6 +605,8 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
@@ -510,7 +629,7 @@ SET dismissed_at = COALESCE(dismissed_at, NOW()),
 WHERE id = $1
   AND workspace_id = $2
   AND state IN ('dead', 'failed', 'cancelled')
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
 `
 
 type DismissPostDeliveryJobParams struct {
@@ -551,12 +670,14 @@ func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDel
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
 
 const getPostDeliveryJobByIDAndWorkspace = `-- name: GetPostDeliveryJobByIDAndWorkspace :one
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version FROM post_delivery_jobs
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -594,6 +715,8 @@ func (q *Queries) GetPostDeliveryJobByIDAndWorkspace(ctx context.Context, arg Ge
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
@@ -644,7 +767,7 @@ func (q *Queries) GetPostDeliveryJobsSummaryByWorkspace(ctx context.Context, wor
 }
 
 const listPostDeliveryJobsByPost = `-- name: ListPostDeliveryJobsByPost :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version FROM post_delivery_jobs
 WHERE post_id = $1
 ORDER BY created_at DESC
 `
@@ -684,6 +807,8 @@ func (q *Queries) ListPostDeliveryJobsByPost(ctx context.Context, postID string)
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -696,7 +821,7 @@ func (q *Queries) ListPostDeliveryJobsByPost(ctx context.Context, postID string)
 }
 
 const listPostDeliveryJobsByPostIDs = `-- name: ListPostDeliveryJobsByPostIDs :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version FROM post_delivery_jobs
 WHERE post_id = ANY($1::text[])
 ORDER BY created_at DESC
 `
@@ -736,6 +861,8 @@ func (q *Queries) ListPostDeliveryJobsByPostIDs(ctx context.Context, dollar_1 []
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -748,7 +875,7 @@ func (q *Queries) ListPostDeliveryJobsByPostIDs(ctx context.Context, dollar_1 []
 }
 
 const listPostDeliveryJobsByResult = `-- name: ListPostDeliveryJobsByResult :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version FROM post_delivery_jobs
 WHERE social_post_result_id = $1
 ORDER BY created_at DESC
 `
@@ -788,6 +915,8 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -800,7 +929,7 @@ func (q *Queries) ListPostDeliveryJobsByResult(ctx context.Context, socialPostRe
 }
 
 const listPostDeliveryJobsByWorkspace = `-- name: ListPostDeliveryJobsByWorkspace :many
-SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at FROM post_delivery_jobs j
+SELECT j.id, j.post_id, j.social_post_result_id, j.workspace_id, j.social_account_id, j.platform, j.post_input_index, j.kind, j.state, j.attempts, j.max_attempts, j.failure_stage, j.error_code, j.platform_error_code, j.last_error, j.next_run_at, j.last_attempt_at, j.created_at, j.updated_at, j.finished_at, j.dismissed_at, j.lease_expires_at, j.lease_owner, j.first_claimed_at, j.platform_started_at, j.connection_id, j.binding_version FROM post_delivery_jobs j
 LEFT JOIN social_post_results r ON r.id = j.social_post_result_id
 WHERE j.workspace_id = $1
   AND (
@@ -876,6 +1005,8 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -888,7 +1019,7 @@ func (q *Queries) ListPostDeliveryJobsByWorkspace(ctx context.Context, arg ListP
 }
 
 const listStaleActivePostDeliveryJobs = `-- name: ListStaleActivePostDeliveryJobs :many
-SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at FROM post_delivery_jobs
+SELECT id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version FROM post_delivery_jobs
 WHERE state IN ('running', 'retrying')
   AND (
     lease_expires_at <= NOW()
@@ -940,6 +1071,8 @@ func (q *Queries) ListStaleActivePostDeliveryJobs(ctx context.Context, staleBefo
 			&i.LeaseOwner,
 			&i.FirstClaimedAt,
 			&i.PlatformStartedAt,
+			&i.ConnectionID,
+			&i.BindingVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -968,7 +1101,7 @@ WHERE id = $7
   AND state IN ('running', 'retrying')
   AND lease_owner IS NOT DISTINCT FROM $8
   AND last_attempt_at IS NOT DISTINCT FROM $9::timestamptz
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
 `
 
 type MarkPostDeliveryJobFailedParams struct {
@@ -1022,6 +1155,8 @@ func (q *Queries) MarkPostDeliveryJobFailed(ctx context.Context, arg MarkPostDel
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
@@ -1034,7 +1169,7 @@ WHERE id = $1
   AND state IN ('running', 'retrying')
   AND lease_owner IS NOT DISTINCT FROM $2
   AND last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
 `
 
 type MarkPostDeliveryJobPlatformStartedParams struct {
@@ -1072,6 +1207,8 @@ func (q *Queries) MarkPostDeliveryJobPlatformStarted(ctx context.Context, arg Ma
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
@@ -1090,7 +1227,7 @@ WHERE id = $2
   AND state IN ('running', 'retrying')
   AND lease_owner IS NOT DISTINCT FROM $3
   AND last_attempt_at IS NOT DISTINCT FROM $4::timestamptz
-RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at, connection_id, binding_version
 `
 
 type MarkPostDeliveryJobSucceededParams struct {
@@ -1134,6 +1271,8 @@ func (q *Queries) MarkPostDeliveryJobSucceeded(ctx context.Context, arg MarkPost
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ConnectionID,
+		&i.BindingVersion,
 	)
 	return i, err
 }
@@ -1165,4 +1304,45 @@ func (q *Queries) RenewPostDeliveryJobLease(ctx context.Context, arg RenewPostDe
 		arg.LastAttemptAt,
 	)
 	return err
+}
+
+const validateDeliveryBindingSnapshot = `-- name: ValidateDeliveryBindingSnapshot :one
+SELECT EXISTS (
+  SELECT 1
+  FROM post_delivery_jobs j
+  JOIN social_accounts sa ON sa.id = j.social_account_id
+  WHERE j.id = $1
+    AND j.workspace_id = $2
+    AND j.state IN ('running', 'retrying')
+    AND sa.disconnected_at IS NULL
+    AND sa.binding_status = 'active'
+    AND (
+      (
+        j.connection_id IS NULL
+        AND j.binding_version IS NULL
+        AND sa.connection_id IS NULL
+      )
+      OR (
+        sa.connection_id = j.connection_id
+        AND sa.binding_version = j.binding_version
+      )
+    )
+) AS valid
+`
+
+type ValidateDeliveryBindingSnapshotParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+// Final guard immediately before provider I/O. A migrated job is valid only
+// while its selected public binding is active and still points at the exact
+// connection/version captured at admission. Legacy jobs remain valid only
+// while both the job and binding are still unmigrated, preventing a NULL
+// snapshot from silently following a later rebind.
+func (q *Queries) ValidateDeliveryBindingSnapshot(ctx context.Context, arg ValidateDeliveryBindingSnapshotParams) (bool, error) {
+	row := q.db.QueryRow(ctx, validateDeliveryBindingSnapshot, arg.ID, arg.WorkspaceID)
+	var valid bool
+	err := row.Scan(&valid)
+	return valid, err
 }

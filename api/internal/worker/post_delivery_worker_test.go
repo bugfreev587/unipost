@@ -140,6 +140,8 @@ func scanPostDeliveryJob(dest []interface{}, job db.PostDeliveryJob) error {
 		job.LeaseOwner,
 		job.FirstClaimedAt,
 		job.PlatformStartedAt,
+		job.ConnectionID,
+		job.BindingVersion,
 	}
 	if len(dest) != len(values) {
 		return errors.New("unexpected post_delivery_jobs scan shape")

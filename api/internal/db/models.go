@@ -708,6 +708,8 @@ type PostDeliveryJob struct {
 	LeaseOwner         pgtype.Text        `json:"lease_owner"`
 	FirstClaimedAt     pgtype.Timestamptz `json:"first_claimed_at"`
 	PlatformStartedAt  pgtype.Timestamptz `json:"platform_started_at"`
+	ConnectionID       pgtype.Text        `json:"connection_id"`
+	BindingVersion     pgtype.Int8        `json:"binding_version"`
 }
 
 type PostFailure struct {

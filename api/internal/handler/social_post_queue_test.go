@@ -269,10 +269,12 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 	resultGuard := strings.Index(fn, `if res.Status == "published"`)
 	platformInput := strings.Index(fn, "platformPostInputAtIndex")
 	markStarted := strings.Index(fn, "MarkPostDeliveryJobPlatformStarted")
+	bindingSnapshot := strings.Index(fn, "ValidateDeliveryBindingSnapshot")
 	dispatch := strings.Index(fn, "h.publishOneContext(")
 	for name, idx := range map[string]int{
 		"result duplicate guard":     resultGuard,
 		"platform input preparation": platformInput,
+		"binding snapshot guard":     bindingSnapshot,
 		"platform started marker":    markStarted,
 		"publishOneContext dispatch": dispatch,
 	} {
@@ -285,6 +287,9 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 	}
 	if markStarted < platformInput {
 		t.Fatal("platform_started_at must not be written before platform input preparation")
+	}
+	if bindingSnapshot > markStarted || bindingSnapshot > dispatch {
+		t.Fatal("binding snapshot must be validated before platform_started_at and provider dispatch")
 	}
 	if markStarted > dispatch {
 		t.Fatal("platform_started_at must be written before publishOneContext dispatch")
@@ -601,6 +606,8 @@ func postDeliveryJobValues(job db.PostDeliveryJob) []any {
 		job.LeaseOwner,
 		job.FirstClaimedAt,
 		job.PlatformStartedAt,
+		job.ConnectionID,
+		job.BindingVersion,
 	}
 }
 
@@ -715,6 +722,90 @@ func TestProcessPostDeliveryJobProceedsWhenStillActive(t *testing.T) {
 	}
 	if !dbtx.reachedPublishPath {
 		t.Fatal("guard blocked an active job from publishing")
+	}
+}
+
+type bindingMismatchDeliveryDB struct {
+	job                 db.PostDeliveryJob
+	post                db.SocialPost
+	result              db.SocialPostResult
+	markedErrorCode     string
+	reachedProviderPath bool
+}
+
+func (f *bindingMismatchDeliveryDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails") {
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	}
+	f.reachedProviderPath = true
+	return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
+}
+
+func (f *bindingMismatchDeliveryDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	if strings.Contains(query, "-- name: ListSocialPostResultsByPost") || strings.Contains(query, "-- name: ListPostDeliveryJobsByPost") {
+		return &queueRows{}, nil
+	}
+	f.reachedProviderPath = true
+	return nil, errors.New("unexpected Query: " + query)
+}
+
+func (f *bindingMismatchDeliveryDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
+		return postDeliveryJobScanRow(f.job)
+	case strings.Contains(query, "-- name: GetSocialPostByID"):
+		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
+		return socialPostResultScanRow(f.result)
+	case strings.Contains(query, "-- name: ValidateDeliveryBindingSnapshot"):
+		return scanRow{values: []any{false}}
+	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
+		failed := f.result
+		failed.Status = "failed"
+		return socialPostResultScanRow(failed)
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
+		f.markedErrorCode = args[2].(pgtype.Text).String
+		failed := f.job
+		failed.State = "dead"
+		failed.ErrorCode = args[2].(pgtype.Text)
+		return postDeliveryJobScanRow(failed)
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		return scanRow{err: errors.New("post failure persistence intentionally omitted")}
+	default:
+		f.reachedProviderPath = true
+		return scanRow{err: errors.New("advanced toward provider dispatch: " + query)}
+	}
+}
+
+func TestProcessPostDeliveryJobBindingVersionMismatchFailsBeforeProviderDispatch(t *testing.T) {
+	job := baseDeliveryJob()
+	job.ConnectionID = pgtype.Text{String: "conn_1", Valid: true}
+	job.BindingVersion = pgtype.Int8{Int64: 1, Valid: true}
+	fake := &bindingMismatchDeliveryDB{
+		job: job,
+		post: db.SocialPost{
+			ID:          job.PostID,
+			WorkspaceID: job.WorkspaceID,
+			Status:      "publishing",
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+		result: db.SocialPostResult{
+			ID:              job.SocialPostResultID,
+			PostID:          job.PostID,
+			SocialAccountID: job.SocialAccountID,
+			Status:          "processing",
+		},
+	}
+	h := &SocialPostHandler{queries: db.New(fake)}
+
+	if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
+		t.Fatalf("ProcessPostDeliveryJob returned error: %v", err)
+	}
+	if fake.markedErrorCode != "binding_version_mismatch" {
+		t.Fatalf("job error code = %q, want binding_version_mismatch", fake.markedErrorCode)
+	}
+	if fake.reachedProviderPath {
+		t.Fatal("binding mismatch reached provider dispatch")
 	}
 }
 
