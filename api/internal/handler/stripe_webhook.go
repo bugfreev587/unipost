@@ -488,7 +488,10 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 	}
 
 	planID := plan.ID
-	if h.shouldKeepCurrentPlanForDowngradeSnapshot(r.Context(), localSub, plan, snapshot.CurrentPeriodStartAt) {
+	confirmedTrialPlanChange := trialResult.Managed &&
+		trialResult.Grant.Status == trials.StatusSuperseded &&
+		strings.TrimSpace(trialResult.Grant.SupersededByPlanID) == plan.ID
+	if !confirmedTrialPlanChange && h.shouldKeepCurrentPlanForDowngradeSnapshot(r.Context(), localSub, plan, snapshot.CurrentPeriodStartAt) {
 		planID = localSub.PlanID
 	}
 	cancelAtPeriodEnd := snapshot.CancelAtPeriodEnd

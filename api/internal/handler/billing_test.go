@@ -277,7 +277,9 @@ func (s *fakeBillingTrialCheckoutService) CreateTrialSafePortal(_ context.Contex
 }
 
 func TestChangePlanHandlerDispatchesWorkspaceTargetPlan(t *testing.T) {
-	service := &fakeBillingTrialCheckoutService{changeResult: trials.Grant{ID: "grant_1", Status: trials.StatusActive, ActorUserID: "admin_secret"}}
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	service := &fakeBillingTrialCheckoutService{changeResult: trials.Grant{ID: "grant_1", Kind: trials.KindFreeToPaid, PlanID: "basic", DurationDays: 30, Status: trials.StatusActive, StartedAt: &start, EndsAt: &end, ActorUserID: "admin_secret", StripeSubscriptionID: "sub_secret", FailureMessage: "internal secret"}}
 	h := (&BillingHandler{}).SetTrialService(service)
 	req := httptest.NewRequest(http.MethodPost, "/v1/billing/change-plan", bytes.NewBufferString(`{"plan_id":"growth"}`))
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
@@ -291,10 +293,22 @@ func TestChangePlanHandlerDispatchesWorkspaceTargetPlan(t *testing.T) {
 	if strings.Contains(recorder.Body.String(), "admin_secret") || strings.Contains(recorder.Body.String(), "granted_by") {
 		t.Fatalf("user mutation response leaked administrator identity: %s", recorder.Body.String())
 	}
+	for _, forbidden := range []string{"sub_secret", "internal secret", "stripe_subscription", "failure_message"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("user mutation response leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+	for _, want := range []string{`"trial"`, `"billing"`, `"current_plan":"basic"`, `"target_plan":"growth"`, `"status":"change_pending"`, `"change_pending":true`, `"cancel_at_period_end":false`, `"ends_at":"2026-07-31T00:00:00Z"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("change-plan response missing %s: %s", want, recorder.Body.String())
+		}
+	}
 }
 
 func TestCancelTrialRenewalHandlerDispatchesExactGrant(t *testing.T) {
-	service := &fakeBillingTrialCheckoutService{cancelResult: trials.Grant{ID: "grant_1", Status: trials.StatusActive}}
+	canceled := time.Date(2026, 7, 10, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC)
+	service := &fakeBillingTrialCheckoutService{cancelResult: trials.Grant{ID: "grant_1", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 30, Status: trials.StatusActive, EndsAt: &end, CanceledAt: &canceled, ActorUserID: "admin_secret", StripeScheduleID: "sched_secret", FailureCode: "internal_code"}}
 	h := (&BillingHandler{}).SetTrialService(service)
 	req := httptest.NewRequest(http.MethodPost, "/v1/billing/trials/grant_1/cancel-renewal", nil)
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
@@ -307,6 +321,16 @@ func TestCancelTrialRenewalHandlerDispatchesExactGrant(t *testing.T) {
 
 	if recorder.Code != http.StatusOK || service.cancelCalls != 1 || service.cancelReq != (trials.CancelRequest{WorkspaceID: "ws_1", GrantID: "grant_1"}) {
 		t.Fatalf("status=%d calls=%d request=%#v body=%s", recorder.Code, service.cancelCalls, service.cancelReq, recorder.Body.String())
+	}
+	for _, forbidden := range []string{"admin_secret", "sched_secret", "internal_code", "granted_by", "stripe_schedule", "failure_code"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("cancel response leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+	for _, want := range []string{`"trial"`, `"billing"`, `"current_plan":"basic"`, `"target_plan":"basic"`, `"status":"active"`, `"change_pending":false`, `"cancel_at_period_end":true`, `"canceled_at":"2026-07-10T00:00:00Z"`} {
+		if !strings.Contains(recorder.Body.String(), want) {
+			t.Fatalf("cancel response missing %s: %s", want, recorder.Body.String())
+		}
 	}
 }
 

@@ -462,7 +462,7 @@ func (h *BillingHandler) ChangePlan(w http.ResponseWriter, r *http.Request) {
 		writeTrialMutationError(w, err)
 		return
 	}
-	writeSuccess(w, trialMutationResponse(grant))
+	writeSuccess(w, trialMutationResponse(grant, body.PlanID, true, false))
 }
 
 // CancelTrialRenewal handles POST /v1/billing/trials/{trialID}/cancel-renewal.
@@ -486,16 +486,70 @@ func (h *BillingHandler) CancelTrialRenewal(w http.ResponseWriter, r *http.Reque
 		writeTrialMutationError(w, err)
 		return
 	}
-	writeSuccess(w, trialMutationResponse(grant))
+	writeSuccess(w, trialMutationResponse(grant, grant.PlanID, false, true))
 }
 
-func trialMutationResponse(grant trials.Grant) map[string]any {
-	return map[string]any{
-		"trial_id":    grant.ID,
-		"status":      grant.Status,
-		"plan_id":     grant.PlanID,
-		"canceled_at": grant.CanceledAt,
+type trialMutationTrialProjection struct {
+	ID                        string        `json:"id"`
+	Kind                      trials.Kind   `json:"kind"`
+	PlanID                    string        `json:"plan_id"`
+	DurationDays              int32         `json:"duration_days"`
+	Status                    trials.Status `json:"status"`
+	GrantedAt                 *time.Time    `json:"granted_at,omitempty"`
+	ScheduledStartAt          *time.Time    `json:"scheduled_start_at,omitempty"`
+	StartedAt                 *time.Time    `json:"started_at,omitempty"`
+	EndsAt                    *time.Time    `json:"ends_at,omitempty"`
+	ActivatedAt               *time.Time    `json:"activated_at,omitempty"`
+	CanceledAt                *time.Time    `json:"canceled_at,omitempty"`
+	ChangingPlanForfeitsTrial bool          `json:"changing_plan_forfeits_trial"`
+}
+
+type trialMutationBillingProjection struct {
+	CurrentPlan       string     `json:"current_plan"`
+	TargetPlan        string     `json:"target_plan"`
+	Status            string     `json:"status"`
+	ChangePending     bool       `json:"change_pending"`
+	CancelAtPeriodEnd bool       `json:"cancel_at_period_end"`
+	PeriodStartAt     *time.Time `json:"period_start_at,omitempty"`
+	PeriodEndAt       *time.Time `json:"period_end_at,omitempty"`
+}
+
+type trialMutationProjection struct {
+	Trial   trialMutationTrialProjection   `json:"trial"`
+	Billing trialMutationBillingProjection `json:"billing"`
+}
+
+func trialMutationResponse(grant trials.Grant, targetPlan string, changePending, cancelAtPeriodEnd bool) trialMutationProjection {
+	periodStart := grant.StartedAt
+	if grant.Status == trials.StatusScheduled {
+		periodStart = grant.ScheduledStartAt
 	}
+	return trialMutationProjection{
+		Trial: trialMutationTrialProjection{
+			ID: grant.ID, Kind: grant.Kind, PlanID: grant.PlanID, DurationDays: grant.DurationDays, Status: grant.Status,
+			GrantedAt: nonZeroTrialTime(grant.GrantedAt), ScheduledStartAt: grant.ScheduledStartAt, StartedAt: grant.StartedAt,
+			EndsAt: grant.EndsAt, ActivatedAt: grant.ActivatedAt, CanceledAt: grant.CanceledAt,
+			ChangingPlanForfeitsTrial: grant.Status == trials.StatusScheduled || grant.Status == trials.StatusActive,
+		},
+		Billing: trialMutationBillingProjection{
+			CurrentPlan: grant.PlanID, TargetPlan: targetPlan, ChangePending: changePending, CancelAtPeriodEnd: cancelAtPeriodEnd,
+			Status: func() string {
+				if changePending {
+					return "change_pending"
+				}
+				return string(grant.Status)
+			}(),
+			PeriodStartAt: periodStart, PeriodEndAt: grant.EndsAt,
+		},
+	}
+}
+
+func nonZeroTrialTime(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	value = value.UTC()
+	return &value
 }
 
 func writeTrialMutationError(w http.ResponseWriter, err error) {

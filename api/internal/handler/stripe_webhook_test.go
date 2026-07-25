@@ -118,6 +118,59 @@ func TestManagedTrialDelayedCancelFalseDoesNotClearRecordedIntent(t *testing.T) 
 	}
 }
 
+func TestManagedTrialConfirmedPlanChangeBypassesScheduledDowngradeGuard(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		kind   trials.Kind
+		before trials.Status
+	}{
+		{name: "free active", kind: trials.KindFreeToPaid, before: trials.StatusActive},
+		{name: "paid scheduled", kind: trials.KindPaidSamePlan, before: trials.StatusScheduled},
+		{name: "paid active", kind: trials.KindPaidSamePlan, before: trials.StatusActive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(runtimeenv.EnvVar, "staging")
+			store := newStripeWebhookStore("ws_staging")
+			store.plans["growth"] = db.Plan{ID: "growth", Name: "Growth", PriceCents: 7900, PostLimit: 7500, StripePriceID: pgtype.Text{String: "price_growth", Valid: true}}
+			store.subscription.PlanID = "growth"
+			store.subscription.Status = "trialing"
+			store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+			store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+			store.subscription.CurrentPeriodEnd = pgtype.Timestamptz{Time: time.Unix(1789000000, 0).UTC(), Valid: true}
+			trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+				ID: "grant_1", WorkspaceID: "ws_staging", Kind: tc.kind, PlanID: "growth", Status: trials.StatusSuperseded, SupersededByPlanID: "basic",
+			}}}
+			h, secret := newTestStripeWebhookHandler(store, nil)
+			h.SetTrialWebhookService(trial)
+			metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": string(tc.kind), "unipost_environment": "staging"}
+
+			response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, false, metadata)
+
+			if response.Code != http.StatusOK || store.subscription.PlanID != "basic" || store.upserts != 1 {
+				t.Fatalf("before=%s status=%d subscription=%#v upserts=%d body=%s", tc.before, response.Code, store.subscription, store.upserts, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestManagedTrialSupersessionDoesNotBypassDowngradeGuardForDifferentTarget(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.plans["growth"] = db.Plan{ID: "growth", Name: "Growth", PriceCents: 7900, PostLimit: 7500, StripePriceID: pgtype.Text{String: "price_growth", Valid: true}}
+	store.subscription.PlanID = "growth"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	store.subscription.CurrentPeriodEnd = pgtype.Timestamptz{Time: time.Unix(1789000000, 0).UTC(), Valid: true}
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "growth", Status: trials.StatusSuperseded, SupersededByPlanID: "api"}}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, false, map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"})
+	if response.Code != http.StatusOK || store.subscription.PlanID != "growth" {
+		t.Fatalf("status=%d subscription=%#v body=%s", response.Code, store.subscription, response.Body.String())
+	}
+}
+
 func TestLegacyTrialCancelAtPeriodEndStillDowngradesImmediately(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")
