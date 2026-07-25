@@ -11,7 +11,7 @@ import {
 
 const config = loadSyntheticAuthConfig();
 
-test("core dashboard routes load with a passwordless Clerk ticket", async ({ page }) => {
+test("core dashboard routes load and preserve plan-gated navigation with a passwordless Clerk ticket", async ({ page }) => {
   let identity: Awaited<ReturnType<typeof createSyntheticClerkUser>> | undefined;
   let authState: Awaited<ReturnType<typeof bootstrapSyntheticUser>> | undefined;
 
@@ -32,11 +32,8 @@ test("core dashboard routes load with a passwordless Clerk ticket", async ({ pag
       await expectDashboardRoute(page, `/projects/${profileID}/analytics`);
       await expectDashboardRoute(page, `/projects/${profileID}/settings`);
 
-      await page.goto(`/projects/${profileID}/analytics/platforms/tiktok`, { waitUntil: "domcontentloaded" });
-      await expect(page.getByText("TikTok Analytics").first()).toBeVisible();
-
-      await page.goto(`/projects/${profileID}/analytics/platforms/youtube`, { waitUntil: "domcontentloaded" });
-      await expect(page.getByText("YouTube Analytics").first()).toBeVisible();
+      await expectPlanGatedAnalyticsRoute(page, `/projects/${profileID}/analytics/platforms/tiktok`);
+      await expectPlanGatedAnalyticsRoute(page, `/projects/${profileID}/analytics/platforms/youtube`);
     },
   );
 });
@@ -54,4 +51,10 @@ async function expectDashboardRoute(page: Page, path: string) {
   } finally {
     page.off("response", recordFailure);
   }
+}
+
+async function expectPlanGatedAnalyticsRoute(page: Page, path: string) {
+  await expectDashboardRoute(page, path);
+  await expect(page).toHaveURL(new RegExp(`${path.replaceAll("/", "\\/")}$`));
+  await expect(page.getByText("Analytics is a paid plan feature", { exact: true })).toBeVisible();
 }
