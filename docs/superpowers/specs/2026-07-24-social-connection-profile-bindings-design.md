@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-24
 **Status:** Revised after code-mapped review; ready for written re-review
-**Target branch:** `dev-social-account-profile-isolation`
+**Target branch:** `codex/social-account-profile-bindings` from `origin/staging`
 
 ## 1. Summary
 
