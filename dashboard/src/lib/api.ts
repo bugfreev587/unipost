@@ -1692,6 +1692,8 @@ export interface WorkspaceTrialHistoryEntry extends WorkspaceTrialTimeline {
   superseded_at?: string;
   completed_at?: string;
   superseded_by_plan_id?: string;
+  post_trial_price_cents: number;
+  cancel_at_period_end: boolean;
   terminal_reason?: TrialTerminalReason;
 }
 
@@ -1702,6 +1704,8 @@ export interface AdminWorkspaceTrial extends WorkspaceTrialTimeline {
   completed_at?: string;
   stripe_subscription_id?: string;
   stripe_schedule_id?: string;
+  post_trial_price_cents: number;
+  cancel_at_period_end: boolean;
   failure_reason?: TrialTerminalReason;
 }
 

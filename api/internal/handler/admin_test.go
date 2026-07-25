@@ -138,7 +138,7 @@ func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) 
 		t.Fatal(err)
 	}
 	body := string(encoded)
-	for _, want := range []string{`"trial"`, `"id":"grant_1"`, `"failure_reason":"trial_unavailable"`, `"stripe_subscription_id":"sub_trial"`, `"stripe_schedule_id":"sched_trial"`} {
+	for _, want := range []string{`"trial"`, `"id":"grant_1"`, `"post_trial_price_cents":0`, `"cancel_at_period_end":false`, `"failure_reason":"trial_unavailable"`, `"stripe_subscription_id":"sub_trial"`, `"stripe_schedule_id":"sched_trial"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("summary missing %q: %s", want, body)
 		}
@@ -154,6 +154,9 @@ func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) 
 	}
 	if strings.Contains(normalized, "status in ('active', 'trialing')") {
 		t.Fatal("admin billing query must not count trialing subscriptions as revenue")
+	}
+	if !strings.Contains(normalized, "trial_plan.price_cents") || !strings.Contains(normalized, "trial.canceled_at is not null") {
+		t.Fatal("admin billing trial projection must include target price and durable renewal-cancellation intent")
 	}
 	if !strings.Contains(normalized, "trial.status in ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')\n    or greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at))") {
 		t.Fatal("old open grants must remain visible while terminal grants use the freshness cutoff")

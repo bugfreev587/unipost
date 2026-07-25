@@ -72,6 +72,15 @@ test("billing API exposes all managed trial contracts", () => {
   }
 });
 
+test("admin and history trial contracts include renewal timeline billing fields", () => {
+  for (const name of ["WorkspaceTrialHistoryEntry", "AdminWorkspaceTrial"]) {
+    const match = apiSource.match(new RegExp(`export interface ${name}[^\\{]*\\{([\\s\\S]*?)\\n\\}`));
+    assert.ok(match, `missing ${name} interface`);
+    assert.match(match[1], /post_trial_price_cents:\s*number;/, `${name} must expose post-trial price`);
+    assert.match(match[1], /cancel_at_period_end:\s*boolean;/, `${name} must expose renewal cancellation`);
+  }
+});
+
 test("trial API functions use the backend routes and exact mutation fields", () => {
   for (const route of [
     "/v1/billing/trials",
@@ -132,6 +141,16 @@ test("shared formatter supports explicit UTC dates and stable remaining-day boun
     { now: "2026-08-29T12:00:00Z", timeZone: "UTC" },
   );
   assert.equal(active.remainingDays, 2);
+
+  const renewalCanceled = formatWorkspaceTrial(
+    { ...trial, status: "active", started_at: "2026-08-01T00:00:00Z", cancel_at_period_end: true },
+    { now: "2026-08-29T12:00:00Z", timeZone: "UTC" },
+  );
+  assert.deepEqual(renewalCanceled.timeline, [
+    { label: "Trial started", value: "Aug 1, 2026" },
+    { label: "Trial ends", value: "Aug 31, 2026" },
+    { label: "Access ends", value: "Aug 31, 2026" },
+  ]);
 });
 
 test("shared formatter defaults to the viewer timezone", async () => {

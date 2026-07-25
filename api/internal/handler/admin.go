@@ -1079,6 +1079,8 @@ type adminBillingTrialSummary struct {
 	CompletedAt          *time.Time            `json:"completed_at,omitempty"`
 	StripeSubscriptionID *string               `json:"stripe_subscription_id,omitempty"`
 	StripeScheduleID     *string               `json:"stripe_schedule_id,omitempty"`
+	PostTrialPriceCents  int64                 `json:"post_trial_price_cents"`
+	CancelAtPeriodEnd    bool                  `json:"cancel_at_period_end"`
 	FailureReason        trials.TerminalReason `json:"failure_reason,omitempty"`
 }
 
@@ -2140,7 +2142,9 @@ SELECT
   trial.superseded_at,
   trial.completed_at,
   trial.stripe_subscription_id,
-  trial.stripe_schedule_id
+  trial.stripe_schedule_id,
+  COALESCE(trial_plan.price_cents, 0)::BIGINT AS trial_post_trial_price_cents,
+  (COALESCE(s.cancel_at_period_end, false) OR trial.canceled_at IS NOT NULL) AS trial_cancel_at_period_end
 FROM subscriptions s
 JOIN workspaces w ON w.id = s.workspace_id
 JOIN users u ON u.id = w.user_id
@@ -2159,6 +2163,7 @@ LEFT JOIN LATERAL (
            tg.granted_at DESC, tg.id DESC
   LIMIT 1
 ) trial ON TRUE
+LEFT JOIN plans trial_plan ON trial_plan.id = trial.plan_id
 WHERE u.id != ALL($1)
   AND (
     trial.status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')
@@ -2199,6 +2204,8 @@ func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery)
 		var currentPeriodEnd *time.Time
 		var trialID, trialKind, trialPlanID, trialStatus, trialSubscriptionID, trialScheduleID *string
 		var trialDurationDays *int32
+		var trialPostTrialPriceCents int64
+		var trialCancelAtPeriodEnd bool
 		var trialGrantedAt, trialScheduledStartAt, trialStartedAt, trialEndsAt, trialActivatedAt, trialCanceledAt, trialRevokedAt, trialSupersededAt, trialCompletedAt *time.Time
 		if err := rows.Scan(
 			&item.WorkspaceID,
@@ -2233,6 +2240,8 @@ func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery)
 			&trialCompletedAt,
 			&trialSubscriptionID,
 			&trialScheduleID,
+			&trialPostTrialPriceCents,
+			&trialCancelAtPeriodEnd,
 		); err != nil {
 			return nil, err
 		}
@@ -2247,6 +2256,7 @@ func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery)
 				EndsAt: trialEndsAt, ActivatedAt: trialActivatedAt, CanceledAt: trialCanceledAt, RevokedAt: trialRevokedAt,
 				SupersededAt: trialSupersededAt, CompletedAt: trialCompletedAt,
 				StripeSubscriptionID: trialSubscriptionID, StripeScheduleID: trialScheduleID,
+				PostTrialPriceCents: trialPostTrialPriceCents, CancelAtPeriodEnd: trialCancelAtPeriodEnd,
 			}
 			if status == trials.StatusFailed {
 				item.Trial.FailureReason = trials.TerminalReasonUnavailable

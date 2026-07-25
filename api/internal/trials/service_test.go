@@ -1328,7 +1328,7 @@ func TestReconcileEarlyReleasedScheduleIsSuperseded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Grant.Status != StatusSuperseded || h.store.markSupersededCalls != 1 {
+	if result.Grant.Status != StatusSuperseded || result.Grant.SupersededByPlanID != "growth" || h.store.markSupersededCalls != 1 {
 		t.Fatalf("result=%#v superseded=%d", result, h.store.markSupersededCalls)
 	}
 }
@@ -1412,6 +1412,7 @@ type fakeGrantStore struct {
 	historyErr                     error
 	planPrice                      int64
 	planPriceErr                   error
+	planPrices                     map[string]int64
 }
 
 func (s *fakeGrantStore) GetBilling(context.Context, string) (BillingSnapshot, error) {
@@ -1432,7 +1433,10 @@ func (s *fakeGrantStore) GetGrant(_ context.Context, id string) (Grant, error) {
 func (s *fakeGrantStore) ListGrantHistory(context.Context, string) ([]Grant, error) {
 	return s.history, s.historyErr
 }
-func (s *fakeGrantStore) GetPlanPrice(context.Context, string) (int64, error) {
+func (s *fakeGrantStore) GetPlanPrice(_ context.Context, planID string) (int64, error) {
+	if price, ok := s.planPrices[planID]; ok {
+		return price, nil
+	}
 	return s.planPrice, s.planPriceErr
 }
 func (s *fakeGrantStore) CreateGrant(_ context.Context, input CreateGrantInput) (Grant, error) {
@@ -2277,20 +2281,28 @@ func TestListTrialHistoryPreservesStoreNewestFirstAndRedactsInternals(t *testing
 	h := newServiceHarness(t)
 	newest := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
 	h.store.history = []Grant{
-		{ID: "newest", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusFailed, GrantedAt: newest, ActorUserID: "admin_secret", FailureCode: "stripe_secret", FailureMessage: "internal secret"},
+		{ID: "newest", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusActive, GrantedAt: newest, CanceledAt: &newest, ActorUserID: "admin_secret", FailureCode: "stripe_secret", FailureMessage: "internal secret"},
 		{ID: "older", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "basic", DurationDays: 60, Status: StatusCompleted, GrantedAt: newest.Add(-24 * time.Hour)},
 	}
+	h.store.planPrices = map[string]int64{"growth": 7900, "basic": 1900}
 
 	history, err := h.service.ListTrialHistory(t.Context(), "ws_1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(history) != 2 || history[0].ID != "newest" || history[1].ID != "older" || history[0].TerminalReason != TerminalReasonUnavailable {
+	if len(history) != 2 || history[0].ID != "newest" || history[1].ID != "older" || history[0].TerminalReason != TerminalReasonNone {
 		t.Fatalf("history=%#v", history)
 	}
 	encoded, err := json.Marshal(history)
 	if err != nil {
 		t.Fatal(err)
+	}
+	var payload []map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload[0]["post_trial_price_cents"] != float64(7900) || payload[0]["cancel_at_period_end"] != true || payload[1]["post_trial_price_cents"] != float64(1900) || payload[1]["cancel_at_period_end"] != false {
+		t.Fatalf("history billing fields=%#v", payload)
 	}
 	for _, forbidden := range []string{"admin_secret", "stripe_secret", "internal secret", "granted_by_user_id", "failure_code", "failure_message"} {
 		if strings.Contains(string(encoded), forbidden) {
@@ -2374,7 +2386,7 @@ func TestHistoryProjectionHasExactJSONContract(t *testing.T) {
 		"id", "kind", "plan_id", "duration_days", "status",
 		"granted_at", "scheduled_start_at", "started_at", "ends_at", "activated_at",
 		"canceled_at", "revoked_at", "superseded_at", "completed_at",
-		"superseded_by_plan_id", "terminal_reason",
+		"superseded_by_plan_id", "post_trial_price_cents", "cancel_at_period_end", "terminal_reason",
 	)
 	if got := payload["superseded_by_plan_id"]; got != "team" {
 		t.Fatalf("superseded_by_plan_id = %#v, want team", got)
@@ -2403,7 +2415,8 @@ func TestHistoryProjectionOmitsInvalidNullableValuesAndConvertsDatesToUTC(t *tes
 		t.Fatalf("unmarshal history projection: %v", err)
 	}
 	assertExactJSONKeys(t, payload,
-		"id", "kind", "plan_id", "duration_days", "status", "started_at", "terminal_reason",
+		"id", "kind", "plan_id", "duration_days", "status", "started_at",
+		"post_trial_price_cents", "cancel_at_period_end", "terminal_reason",
 	)
 	if got := payload["started_at"]; got != "2026-08-02T11:00:00Z" {
 		t.Fatalf("started_at = %#v, want UTC timestamp", got)
