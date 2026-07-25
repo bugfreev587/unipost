@@ -862,6 +862,21 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// — those are still recorded as failed results below to preserve
 	// legacy soft-failure semantics.
 	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed.Posts, accountMap); ok {
+		h.logPublishingEvent(r.Context(), integrationlogs.Event{
+			WorkspaceID: workspaceID,
+			Level:       integrationlogs.LevelWarn,
+			Status:      integrationlogs.StatusError,
+			Action:      integrationlogs.ActionPostValidateFailed,
+			Message:     "Post creation selected one physical connection through multiple bindings.",
+			ErrorCode:   platform.CodeDuplicateSocialConnection,
+			ResponsePayload: map[string]any{
+				"errors": conflict.Issues,
+			},
+		})
+		writeDuplicateSocialConnectionError(w, conflict)
+		return
+	}
 	// Drafts (Sprint 2): persist with status='draft', skip the
 	// publish loop entirely, but still SURFACE validation results in
 	// the response so the user can see what's wrong before publishing.
@@ -2398,23 +2413,24 @@ func (h *SocialPostHandler) disallowedPlatformsForDispatch(ctx context.Context, 
 // record them as per-account failures and let the rest succeed —
 // preserves legacy partial-success semantics.
 var fatalErrorCodes = map[string]bool{
-	platform.CodeExceedsMaxLength:       true,
-	platform.CodeBelowMinLength:         true,
-	platform.CodeMissingRequired:        true,
-	platform.CodeMaxImagesExceeded:      true,
-	platform.CodeMaxVideosExceeded:      true,
-	platform.CodeMixedMediaUnsupported:  true,
-	platform.CodeUnsupportedInReplyTo:   true,
-	platform.CodeScheduledTooSoon:       true,
-	platform.CodeScheduledTooFar:        true,
-	platform.CodeUnknownPlatform:        true,
-	platform.CodeEmptyPosts:             true,
-	platform.CodeTooManyPosts:           true,
-	platform.CodeUnsupportedFormat:      true,
-	platform.CodeFileTooLarge:           true,
-	platform.CodeDimensionsOutOfRange:   true,
-	platform.CodeAspectRatioUnsupported: true,
-	platform.CodeDurationOutOfRange:     true,
+	platform.CodeDuplicateSocialConnection: true,
+	platform.CodeExceedsMaxLength:          true,
+	platform.CodeBelowMinLength:            true,
+	platform.CodeMissingRequired:           true,
+	platform.CodeMaxImagesExceeded:         true,
+	platform.CodeMaxVideosExceeded:         true,
+	platform.CodeMixedMediaUnsupported:     true,
+	platform.CodeUnsupportedInReplyTo:      true,
+	platform.CodeScheduledTooSoon:          true,
+	platform.CodeScheduledTooFar:           true,
+	platform.CodeUnknownPlatform:           true,
+	platform.CodeEmptyPosts:                true,
+	platform.CodeTooManyPosts:              true,
+	platform.CodeUnsupportedFormat:         true,
+	platform.CodeFileTooLarge:              true,
+	platform.CodeDimensionsOutOfRange:      true,
+	platform.CodeAspectRatioUnsupported:    true,
+	platform.CodeDurationOutOfRange:        true,
 	// Sprint 2 thread codes — fatal because the post can't be
 	// dispatched in a meaningful way without the structure being
 	// intelligible.

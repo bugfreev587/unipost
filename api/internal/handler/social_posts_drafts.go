@@ -203,6 +203,11 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// fresh immediate publish. We don't want to dispatch a draft
 	// whose content was edited into something invalid after creation.
 	vr := h.runPublishValidation(r, workspaceID, posts, nil, accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(posts, accountMap); ok {
+		_ = h.rollbackClaimedPost(r, claimed)
+		writeDuplicateSocialConnectionError(w, conflict)
+		return
+	}
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
 		_ = h.rollbackClaimedPost(r, claimed)
 		writeValidationErrors(w, fatal)
@@ -725,6 +730,10 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed.Posts, accountMap); ok {
+		writeDuplicateSocialConnectionError(w, conflict)
+		return
+	}
 
 	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
 	if err != nil {

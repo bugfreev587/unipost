@@ -60,8 +60,11 @@ type bulkResultEntry struct {
 }
 
 type bulkErrorEnvelope struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code           string           `json:"code"`
+	NormalizedCode string           `json:"normalized_code,omitempty"`
+	Message        string           `json:"message"`
+	Issues         []platform.Issue `json:"issues,omitempty"`
+	Details        map[string]any   `json:"details,omitempty"`
 }
 
 // CreateBulk handles POST /v1/social-posts/bulk.
@@ -171,6 +174,18 @@ func (h *SocialPostHandler) processBulkOne(
 
 	// Validate.
 	vr := h.runPublishValidation(r, workspaceID, parsed.Posts, parsed.ScheduledAt, accountMap)
+	if conflict, ok := firstDuplicateSocialConnectionConflict(parsed.Posts, accountMap); ok {
+		return bulkResultEntry{
+			Status: http.StatusUnprocessableEntity,
+			Error: &bulkErrorEnvelope{
+				Code:           "DUPLICATE_SOCIAL_CONNECTION",
+				NormalizedCode: "duplicate_social_connection",
+				Message:        duplicateSocialConnectionMessage,
+				Issues:         conflict.Issues,
+				Details:        conflict.PublicDetails(),
+			},
+		}, 0
+	}
 	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
 		// Surface the first fatal error in the message; the full
 		// list isn't carried in the bulk response shape (callers
