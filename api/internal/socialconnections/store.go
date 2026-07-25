@@ -17,13 +17,12 @@ import (
 )
 
 var (
-	ErrAlreadyConnected        = errors.New("social account is already connected")
-	ErrOwnershipConflict       = errors.New("social connection ownership conflict")
-	ErrInvalidCredentialInput  = errors.New("invalid social connection input")
-	ErrProfileNotInWorkspace   = errors.New("profile is not in workspace")
-	ErrLegacyBinding           = errors.New("legacy social account has no shareable connection")
-	ErrBindingNotFound         = errors.New("social account binding not found")
-	ErrLifecycleNotImplemented = errors.New("social connection lifecycle is not implemented")
+	ErrAlreadyConnected       = errors.New("social account is already connected")
+	ErrOwnershipConflict      = errors.New("social connection ownership conflict")
+	ErrInvalidCredentialInput = errors.New("invalid social connection input")
+	ErrProfileNotInWorkspace  = errors.New("profile is not in workspace")
+	ErrLegacyBinding          = errors.New("legacy social account has no shareable connection")
+	ErrBindingNotFound        = errors.New("social account binding not found")
 )
 
 type Ownership struct {
@@ -74,6 +73,9 @@ type connectionQueries interface {
 	GetResolvedSocialAccountByIDAndWorkspace(context.Context, db.GetResolvedSocialAccountByIDAndWorkspaceParams) (db.GetResolvedSocialAccountByIDAndWorkspaceRow, error)
 	GetSocialConnectionForUpdate(context.Context, db.GetSocialConnectionForUpdateParams) (db.SocialConnection, error)
 	GetProfile(context.Context, string) (db.Profile, error)
+	UnbindSocialAccountBinding(context.Context, db.UnbindSocialAccountBindingParams) (db.SocialAccount, error)
+	DisconnectSocialConnection(context.Context, db.DisconnectSocialConnectionParams) (db.SocialConnection, error)
+	DisconnectAllSocialAccountBindings(context.Context, pgtype.Text) ([]db.SocialAccount, error)
 }
 
 type connectionTx interface {
@@ -247,12 +249,98 @@ func (s *PostgresStore) BindExisting(
 	return account, nil
 }
 
-func (*PostgresStore) Unbind(context.Context, string, string) error {
-	return ErrLifecycleNotImplemented
+func (s *PostgresStore) Unbind(ctx context.Context, workspaceID, accountID string) error {
+	workspaceID = strings.TrimSpace(workspaceID)
+	accountID = strings.TrimSpace(accountID)
+	if workspaceID == "" || accountID == "" {
+		return ErrInvalidCredentialInput
+	}
+	tx, err := s.beginTx(ctx)
+	if err != nil {
+		return fmt.Errorf("begin social account unbind: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := s.queriesFor(tx)
+	source, connectionID, err := lockBindingConnection(ctx, queries, workspaceID, accountID)
+	if err != nil {
+		return err
+	}
+	if source.BindingStatus != "active" {
+		return ErrBindingNotFound
+	}
+	if _, err := queries.UnbindSocialAccountBinding(ctx, db.UnbindSocialAccountBindingParams{
+		ID: accountID, WorkspaceID: workspaceID, ConnectionID: textValue(connectionID),
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return ErrBindingNotFound
+	} else if err != nil {
+		return fmt.Errorf("unbind social account: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit social account unbind: %w", err)
+	}
+	return nil
 }
 
-func (*PostgresStore) Disconnect(context.Context, string, string) ([]db.SocialAccount, error) {
-	return nil, ErrLifecycleNotImplemented
+func (s *PostgresStore) Disconnect(ctx context.Context, workspaceID, accountID string) ([]db.SocialAccount, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	accountID = strings.TrimSpace(accountID)
+	if workspaceID == "" || accountID == "" {
+		return nil, ErrInvalidCredentialInput
+	}
+	tx, err := s.beginTx(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin social connection disconnect: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := s.queriesFor(tx)
+	_, connectionID, err := lockBindingConnection(ctx, queries, workspaceID, accountID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := queries.DisconnectSocialConnection(ctx, db.DisconnectSocialConnectionParams{
+		ID: connectionID, WorkspaceID: workspaceID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrBindingNotFound
+	} else if err != nil {
+		return nil, fmt.Errorf("disconnect social connection: %w", err)
+	}
+	affected, err := queries.DisconnectAllSocialAccountBindings(ctx, textValue(connectionID))
+	if err != nil {
+		return nil, fmt.Errorf("disconnect social account bindings: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit social connection disconnect: %w", err)
+	}
+	return affected, nil
+}
+
+func lockBindingConnection(
+	ctx context.Context,
+	queries connectionQueries,
+	workspaceID string,
+	accountID string,
+) (db.GetResolvedSocialAccountByIDAndWorkspaceRow, string, error) {
+	source, err := queries.GetResolvedSocialAccountByIDAndWorkspace(ctx, db.GetResolvedSocialAccountByIDAndWorkspaceParams{
+		ID: accountID, WorkspaceID: workspaceID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.GetResolvedSocialAccountByIDAndWorkspaceRow{}, "", ErrBindingNotFound
+	}
+	if err != nil {
+		return db.GetResolvedSocialAccountByIDAndWorkspaceRow{}, "", fmt.Errorf("resolve social account binding: %w", err)
+	}
+	if !source.ConnectionID.Valid || strings.TrimSpace(source.ConnectionID.String) == "" {
+		return db.GetResolvedSocialAccountByIDAndWorkspaceRow{}, "", ErrLegacyBinding
+	}
+	connectionID := strings.TrimSpace(source.ConnectionID.String)
+	if _, err := queries.GetSocialConnectionForUpdate(ctx, db.GetSocialConnectionForUpdateParams{
+		ID: connectionID, WorkspaceID: workspaceID,
+	}); errors.Is(err, pgx.ErrNoRows) {
+		return db.GetResolvedSocialAccountByIDAndWorkspaceRow{}, "", ErrBindingNotFound
+	} else if err != nil {
+		return db.GetResolvedSocialAccountByIDAndWorkspaceRow{}, "", fmt.Errorf("lock social connection: %w", err)
+	}
+	return source, connectionID, nil
 }
 
 func normalizeCredentialInput(mode SaveMode, input CredentialInput) (CredentialInput, error) {

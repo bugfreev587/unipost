@@ -185,6 +185,45 @@ func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
 	writeCreated(w, response)
 }
 
+// Unbind disables only the selected Profile binding. The physical provider
+// connection and sibling Profile bindings remain active.
+func (h *SocialAccountHandler) Unbind(w http.ResponseWriter, r *http.Request) {
+	if h.connections == nil {
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Account binding is not available")
+		return
+	}
+	accountID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if accountID == "" {
+		accountID = strings.TrimSpace(chi.URLParam(r, "accountID"))
+	}
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		profileID := h.getProfileID(r)
+		profile, err := h.queries.GetProfile(r.Context(), profileID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		workspaceID = profile.WorkspaceID
+	}
+	if accountID == "" || workspaceID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "account_id is required")
+		return
+	}
+	if err := h.connections.Unbind(r.Context(), workspaceID, accountID); err != nil {
+		switch {
+		case errors.Is(err, socialconnections.ErrBindingNotFound):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account binding not found")
+		case errors.Is(err, socialconnections.ErrLegacyBinding):
+			writeError(w, http.StatusConflict, "ACCOUNT_RECONNECT_REQUIRED", "Reconnect this account before changing Profile bindings")
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to unbind account")
+		}
+		return
+	}
+	writeSuccess(w, map[string]bool{"unbound": true})
+}
+
 // Connect handles POST /v1/social-accounts/connect (API key auth)
 // and POST /v1/profiles/{profileID}/social-accounts/connect (Clerk auth)
 func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
@@ -423,9 +462,10 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 	// Resolve the profile_id for the account — API key path verifies via
 	// workspace, dashboard path verifies via profile URL param.
 	var profileID string
+	workspaceID := auth.GetWorkspaceID(r.Context())
 	var accountForDisconnect db.SocialAccount
 	accountLoaded := false
-	if workspaceID := auth.GetWorkspaceID(r.Context()); workspaceID != "" {
+	if workspaceID != "" {
 		// API key path: verify the account belongs to this workspace
 		acc, err := h.queries.GetSocialAccountByIDAndWorkspace(r.Context(), db.GetSocialAccountByIDAndWorkspaceParams{
 			ID:          accountID,
@@ -450,10 +490,40 @@ func (h *SocialAccountHandler) Disconnect(w http.ResponseWriter, r *http.Request
 		}
 		accountForDisconnect = acc
 		accountLoaded = true
+		if profile, profileErr := h.queries.GetProfile(r.Context(), profileID); profileErr == nil {
+			workspaceID = profile.WorkspaceID
+		}
 	}
 
 	if accountLoaded {
 		h.revokeYouTubeConsent(r.Context(), accountForDisconnect)
+	}
+
+	if h.connections != nil && workspaceID != "" {
+		affected, disconnectErr := h.connections.Disconnect(r.Context(), workspaceID, accountID)
+		if disconnectErr == nil {
+			accountIDs := make([]string, 0, len(affected))
+			profileIDs := make([]string, 0, len(affected))
+			for _, account := range affected {
+				accountIDs = append(accountIDs, account.ID)
+				profileIDs = append(profileIDs, account.ProfileID)
+			}
+			h.bus.Publish(r.Context(), workspaceID, events.EventAccountDisconnected, map[string]any{
+				"social_account_id": accountID, "affected_social_account_ids": accountIDs,
+				"affected_profile_ids": profileIDs, "disconnected_at": time.Now().UTC().Format(time.RFC3339),
+				"reason": "user_initiated", "physical_connection": true,
+			})
+			writeSuccess(w, map[string]any{"disconnected": true, "affected_account_ids": accountIDs})
+			return
+		}
+		if !errors.Is(disconnectErr, socialconnections.ErrLegacyBinding) {
+			if errors.Is(disconnectErr, socialconnections.ErrBindingNotFound) {
+				writeError(w, http.StatusNotFound, "NOT_FOUND", "Account not found")
+			} else {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to disconnect account")
+			}
+			return
+		}
 	}
 
 	disconnected, err := h.queries.DisconnectSocialAccount(r.Context(), db.DisconnectSocialAccountParams{

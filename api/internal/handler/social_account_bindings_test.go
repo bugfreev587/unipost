@@ -68,6 +68,30 @@ func TestSocialAccountBindingCreatesTargetProfileBindingWithoutExposingConnectio
 	}
 }
 
+func TestSocialAccountUnbindLeavesPhysicalConnectionActive(t *testing.T) {
+	store := &fakeSocialConnectionStore{}
+	handler := NewSocialAccountHandler(db.New(&bindingHandlerDB{}), nil, nil, nil).SetConnectionStore(store)
+	req := httptest.NewRequest(http.MethodDelete, "/v1/accounts/account-a/binding", nil)
+	ctx := auth.SetWorkspaceID(req.Context(), "workspace-a")
+	route := chi.NewRouteContext()
+	route.URLParams.Add("id", "account-a")
+	ctx = context.WithValue(ctx, chi.RouteCtxKey, route)
+	req = req.WithContext(ctx)
+	recorder := httptest.NewRecorder()
+
+	handler.Unbind(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if store.unbindWorkspaceID != "workspace-a" || store.unbindAccountID != "account-a" {
+		t.Fatalf("Unbind args = workspace=%q account=%q", store.unbindWorkspaceID, store.unbindAccountID)
+	}
+	if store.disconnectCalls != 0 {
+		t.Fatalf("unbind called physical disconnect %d times", store.disconnectCalls)
+	}
+}
+
 type fakeSocialConnectionStore struct {
 	bound db.SocialAccount
 	err   error
@@ -76,6 +100,9 @@ type fakeSocialConnectionStore struct {
 	sourceAccountID        string
 	targetProfileID        string
 	selectedExternalUserID string
+	unbindWorkspaceID      string
+	unbindAccountID        string
+	disconnectCalls        int
 }
 
 func (*fakeSocialConnectionStore) SaveVerified(context.Context, socialconnections.SaveMode, socialconnections.CredentialInput) (db.SocialAccount, error) {
@@ -90,9 +117,14 @@ func (f *fakeSocialConnectionStore) BindExisting(_ context.Context, workspaceID,
 	return f.bound, f.err
 }
 
-func (*fakeSocialConnectionStore) Unbind(context.Context, string, string) error { return nil }
+func (f *fakeSocialConnectionStore) Unbind(_ context.Context, workspaceID, accountID string) error {
+	f.unbindWorkspaceID = workspaceID
+	f.unbindAccountID = accountID
+	return f.err
+}
 
-func (*fakeSocialConnectionStore) Disconnect(context.Context, string, string) ([]db.SocialAccount, error) {
+func (f *fakeSocialConnectionStore) Disconnect(context.Context, string, string) ([]db.SocialAccount, error) {
+	f.disconnectCalls++
 	return nil, nil
 }
 

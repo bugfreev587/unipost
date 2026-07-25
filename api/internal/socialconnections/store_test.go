@@ -175,6 +175,53 @@ func TestBindExistingRejectsLegacyNullConnection(t *testing.T) {
 	}
 }
 
+func TestUnbindDisablesOnlySelectedBinding(t *testing.T) {
+	queries := &fakeConnectionQueries{
+		source: db.GetResolvedSocialAccountByIDAndWorkspaceRow{
+			ID: "account-a", BindingStatus: "active",
+			ConnectionID: pgtype.Text{String: "connection-a", Valid: true},
+		},
+		connection: db.SocialConnection{ID: "connection-a", WorkspaceID: "workspace-a", Status: "active"},
+		unbound:    db.SocialAccount{ID: "account-a", BindingStatus: "unbound", BindingVersion: 2},
+	}
+	store, tx := newFakePostgresStore(queries)
+	if err := store.Unbind(context.Background(), "workspace-a", "account-a"); err != nil {
+		t.Fatal(err)
+	}
+	if queries.unbindParams.ID != "account-a" || queries.unbindParams.ConnectionID.String != "connection-a" {
+		t.Fatalf("unbind params = %+v", queries.unbindParams)
+	}
+	if queries.disconnectConnectionCalls != 0 || tx.commitCalls != 1 {
+		t.Fatalf("unbind disconnected connection=%d commits=%d", queries.disconnectConnectionCalls, tx.commitCalls)
+	}
+}
+
+func TestDisconnectMarksConnectionAndAllBindingsUnavailable(t *testing.T) {
+	queries := &fakeConnectionQueries{
+		source: db.GetResolvedSocialAccountByIDAndWorkspaceRow{
+			ID: "account-a", BindingStatus: "active",
+			ConnectionID: pgtype.Text{String: "connection-a", Valid: true},
+		},
+		connection:             db.SocialConnection{ID: "connection-a", WorkspaceID: "workspace-a", Status: "active"},
+		disconnectedConnection: db.SocialConnection{ID: "connection-a", WorkspaceID: "workspace-a", Status: "disconnected"},
+		affected: []db.SocialAccount{
+			{ID: "account-a", ProfileID: "profile-a", Status: "disconnected", BindingVersion: 2},
+			{ID: "account-b", ProfileID: "profile-b", Status: "disconnected", BindingVersion: 4},
+		},
+	}
+	store, tx := newFakePostgresStore(queries)
+	affected, err := store.Disconnect(context.Background(), "workspace-a", "account-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(affected) != 2 || queries.disconnectConnectionCalls != 1 || queries.disconnectBindingsCalls != 1 {
+		t.Fatalf("affected=%v connection calls=%d binding calls=%d", affected, queries.disconnectConnectionCalls, queries.disconnectBindingsCalls)
+	}
+	if tx.commitCalls != 1 {
+		t.Fatalf("commit calls = %d, want 1", tx.commitCalls)
+	}
+}
+
 func byoCredentialInput() CredentialInput {
 	return CredentialInput{
 		WorkspaceID: "workspace-a", ProfileID: "profile-a", Platform: "twitter",
@@ -192,23 +239,29 @@ func managedCredentialInput() CredentialInput {
 }
 
 type fakeConnectionQueries struct {
-	canonical     db.SocialConnection
-	canonicalErr  error
-	created       db.SocialConnection
-	refreshed     db.SocialConnection
-	bound         db.SocialAccount
-	source        db.GetResolvedSocialAccountByIDAndWorkspaceRow
-	connection    db.SocialConnection
-	profile       db.Profile
-	legacyMatches []db.SocialAccount
+	canonical              db.SocialConnection
+	canonicalErr           error
+	created                db.SocialConnection
+	refreshed              db.SocialConnection
+	bound                  db.SocialAccount
+	source                 db.GetResolvedSocialAccountByIDAndWorkspaceRow
+	connection             db.SocialConnection
+	profile                db.Profile
+	legacyMatches          []db.SocialAccount
+	unbound                db.SocialAccount
+	disconnectedConnection db.SocialConnection
+	affected               []db.SocialAccount
 
-	createCalls  int
-	refreshCalls int
-	bindCalls    int
+	createCalls               int
+	refreshCalls              int
+	bindCalls                 int
+	disconnectConnectionCalls int
+	disconnectBindingsCalls   int
 
 	refreshParams       db.RefreshSocialConnectionParams
 	bindParams          db.CreateOrReactivateSocialAccountBindingParams
 	getConnectionParams db.GetSocialConnectionForUpdateParams
+	unbindParams        db.UnbindSocialAccountBindingParams
 }
 
 func (f *fakeConnectionQueries) FindCanonicalSocialConnectionForUpdate(context.Context, db.FindCanonicalSocialConnectionForUpdateParams) (db.SocialConnection, error) {
@@ -247,6 +300,21 @@ func (f *fakeConnectionQueries) GetSocialConnectionForUpdate(_ context.Context, 
 
 func (f *fakeConnectionQueries) GetProfile(context.Context, string) (db.Profile, error) {
 	return f.profile, nil
+}
+
+func (f *fakeConnectionQueries) UnbindSocialAccountBinding(_ context.Context, params db.UnbindSocialAccountBindingParams) (db.SocialAccount, error) {
+	f.unbindParams = params
+	return f.unbound, nil
+}
+
+func (f *fakeConnectionQueries) DisconnectSocialConnection(context.Context, db.DisconnectSocialConnectionParams) (db.SocialConnection, error) {
+	f.disconnectConnectionCalls++
+	return f.disconnectedConnection, nil
+}
+
+func (f *fakeConnectionQueries) DisconnectAllSocialAccountBindings(context.Context, pgtype.Text) ([]db.SocialAccount, error) {
+	f.disconnectBindingsCalls++
+	return f.affected, nil
 }
 
 type fakeConnectionTx struct {

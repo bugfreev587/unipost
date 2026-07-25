@@ -137,3 +137,35 @@ WHERE source.id = @account_id
     OR COALESCE(sc.external_user_id, target.external_user_id) = sqlc.narg('external_user_id')::TEXT
   )
 ORDER BY target.profile_id;
+
+-- name: UnbindSocialAccountBinding :one
+UPDATE social_accounts sa
+SET binding_status = 'unbound',
+    binding_version = binding_version + 1,
+    status = 'disconnected',
+    disconnected_at = NOW()
+FROM profiles p
+WHERE sa.id = @id
+  AND sa.profile_id = p.id
+  AND p.workspace_id = @workspace_id
+  AND sa.connection_id = @connection_id
+  AND sa.binding_status = 'active'
+RETURNING sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status;
+
+-- name: DisconnectAllSocialAccountBindings :many
+UPDATE social_accounts
+SET status = 'disconnected',
+    disconnected_at = NOW(),
+    binding_version = binding_version + 1
+WHERE connection_id = @connection_id
+  AND (status <> 'disconnected' OR disconnected_at IS NULL)
+RETURNING id, profile_id, platform, access_token, refresh_token,
+  token_expires_at, external_account_id, account_name, account_avatar_url,
+  connected_at, disconnected_at, metadata, scope, status, connection_type,
+  connect_session_id, external_user_id, external_user_email, last_refreshed_at,
+  x_app_mode, connection_id, binding_version, binding_status;

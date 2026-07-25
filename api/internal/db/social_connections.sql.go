@@ -201,6 +201,64 @@ func (q *Queries) CreateSocialConnection(ctx context.Context, arg CreateSocialCo
 	return i, err
 }
 
+const disconnectAllSocialAccountBindings = `-- name: DisconnectAllSocialAccountBindings :many
+UPDATE social_accounts
+SET status = 'disconnected',
+    disconnected_at = NOW(),
+    binding_version = binding_version + 1
+WHERE connection_id = $1
+  AND (status <> 'disconnected' OR disconnected_at IS NULL)
+RETURNING id, profile_id, platform, access_token, refresh_token,
+  token_expires_at, external_account_id, account_name, account_avatar_url,
+  connected_at, disconnected_at, metadata, scope, status, connection_type,
+  connect_session_id, external_user_id, external_user_email, last_refreshed_at,
+  x_app_mode, connection_id, binding_version, binding_status
+`
+
+func (q *Queries) DisconnectAllSocialAccountBindings(ctx context.Context, connectionID pgtype.Text) ([]SocialAccount, error) {
+	rows, err := q.db.Query(ctx, disconnectAllSocialAccountBindings, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SocialAccount{}
+	for rows.Next() {
+		var i SocialAccount
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProfileID,
+			&i.Platform,
+			&i.AccessToken,
+			&i.RefreshToken,
+			&i.TokenExpiresAt,
+			&i.ExternalAccountID,
+			&i.AccountName,
+			&i.AccountAvatarUrl,
+			&i.ConnectedAt,
+			&i.DisconnectedAt,
+			&i.Metadata,
+			&i.Scope,
+			&i.Status,
+			&i.ConnectionType,
+			&i.ConnectSessionID,
+			&i.ExternalUserID,
+			&i.ExternalUserEmail,
+			&i.LastRefreshedAt,
+			&i.XAppMode,
+			&i.ConnectionID,
+			&i.BindingVersion,
+			&i.BindingStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const disconnectSocialConnection = `-- name: DisconnectSocialConnection :one
 UPDATE social_connections
 SET status = 'disconnected',
@@ -466,6 +524,63 @@ func (q *Queries) RefreshSocialConnection(ctx context.Context, arg RefreshSocial
 		&i.DisconnectedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const unbindSocialAccountBinding = `-- name: UnbindSocialAccountBinding :one
+UPDATE social_accounts sa
+SET binding_status = 'unbound',
+    binding_version = binding_version + 1,
+    status = 'disconnected',
+    disconnected_at = NOW()
+FROM profiles p
+WHERE sa.id = $1
+  AND sa.profile_id = p.id
+  AND p.workspace_id = $2
+  AND sa.connection_id = $3
+  AND sa.binding_status = 'active'
+RETURNING sa.id, sa.profile_id, sa.platform, sa.access_token, sa.refresh_token,
+  sa.token_expires_at, sa.external_account_id, sa.account_name,
+  sa.account_avatar_url, sa.connected_at, sa.disconnected_at, sa.metadata,
+  sa.scope, sa.status, sa.connection_type, sa.connect_session_id,
+  sa.external_user_id, sa.external_user_email, sa.last_refreshed_at,
+  sa.x_app_mode, sa.connection_id, sa.binding_version, sa.binding_status
+`
+
+type UnbindSocialAccountBindingParams struct {
+	ID           string      `json:"id"`
+	WorkspaceID  string      `json:"workspace_id"`
+	ConnectionID pgtype.Text `json:"connection_id"`
+}
+
+func (q *Queries) UnbindSocialAccountBinding(ctx context.Context, arg UnbindSocialAccountBindingParams) (SocialAccount, error) {
+	row := q.db.QueryRow(ctx, unbindSocialAccountBinding, arg.ID, arg.WorkspaceID, arg.ConnectionID)
+	var i SocialAccount
+	err := row.Scan(
+		&i.ID,
+		&i.ProfileID,
+		&i.Platform,
+		&i.AccessToken,
+		&i.RefreshToken,
+		&i.TokenExpiresAt,
+		&i.ExternalAccountID,
+		&i.AccountName,
+		&i.AccountAvatarUrl,
+		&i.ConnectedAt,
+		&i.DisconnectedAt,
+		&i.Metadata,
+		&i.Scope,
+		&i.Status,
+		&i.ConnectionType,
+		&i.ConnectSessionID,
+		&i.ExternalUserID,
+		&i.ExternalUserEmail,
+		&i.LastRefreshedAt,
+		&i.XAppMode,
+		&i.ConnectionID,
+		&i.BindingVersion,
+		&i.BindingStatus,
 	)
 	return i, err
 }
