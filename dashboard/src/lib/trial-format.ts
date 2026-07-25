@@ -114,7 +114,7 @@ function formatDate(value: string | undefined, options: TrialFormatOptions): str
     month: "short",
     day: "numeric",
     year: "numeric",
-    timeZone: options.timeZone ?? "UTC",
+    ...(options.timeZone ? { timeZone: options.timeZone } : {}),
   }).format(date);
 }
 
@@ -237,8 +237,8 @@ function remainingDays(trial: TrialFormatInput, options: TrialFormatOptions): nu
 
 /**
  * Produces the single user-facing trial vocabulary shared by Pricing,
- * Settings Billing, Admin Billing, and Trial History. Dates default to UTC so
- * server rendering and browser hydration cannot disagree at day boundaries.
+ * Settings Billing, Admin Billing, and Trial History. Dates use the viewer's
+ * local timezone unless a caller explicitly supplies one.
  */
 export function formatWorkspaceTrial(
   source: TrialFormatSource | TrialFormatInput,

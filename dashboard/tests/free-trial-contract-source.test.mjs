@@ -70,7 +70,7 @@ test("trial API functions use the backend routes and exact mutation fields", () 
   }
 });
 
-test("shared formatter uses UTC dates and stable remaining-day boundaries", async () => {
+test("shared formatter supports explicit UTC dates and stable remaining-day boundaries", async () => {
   const { formatWorkspaceTrial } = await loadTrialFormatModule();
   const trial = {
     id: "trial_1",
@@ -87,7 +87,7 @@ test("shared formatter uses UTC dates and stable remaining-day boundaries", asyn
   };
   const formatted = formatWorkspaceTrial(
     trial,
-    { now: "2026-08-29T12:00:00Z" },
+    { now: "2026-08-29T12:00:00Z", timeZone: "UTC" },
   );
 
   assert.deepEqual(formatted.badge, { label: "Scheduled", tone: "info" });
@@ -103,24 +103,54 @@ test("shared formatter uses UTC dates and stable remaining-day boundaries", asyn
 
   const active = formatWorkspaceTrial(
     { ...trial, status: "active", started_at: "2026-08-01T00:00:00Z" },
-    { now: "2026-08-29T12:00:00Z" },
+    { now: "2026-08-29T12:00:00Z", timeZone: "UTC" },
   );
   assert.equal(active.remainingDays, 2);
+});
+
+test("shared formatter defaults to the viewer timezone", async () => {
+  const { formatWorkspaceTrial } = await loadTrialFormatModule();
+  const previousTimeZone = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  try {
+    const trial = {
+      id: "trial_local",
+      kind: "free_to_paid",
+      plan_id: "api",
+      duration_days: 7,
+      status: "pending_activation",
+      granted_at: "2026-07-25T01:00:00Z",
+    };
+    assert.deepEqual(formatWorkspaceTrial(trial).timeline, [
+      { label: "Granted", value: "Jul 24, 2026" },
+      { label: "Activation", value: "Complete checkout to start" },
+    ]);
+    assert.deepEqual(formatWorkspaceTrial(trial, { timeZone: "UTC" }).timeline, [
+      { label: "Granted", value: "Jul 25, 2026" },
+      { label: "Activation", value: "Complete checkout to start" },
+    ]);
+  } finally {
+    if (previousTimeZone === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTimeZone;
+  }
 });
 
 test("shared formatter normalizes terminal reasons without leaking internal failures", async () => {
   const { formatWorkspaceTrial } = await loadTrialFormatModule();
 
-  const revoked = formatWorkspaceTrial({
-    id: "trial_2",
-    kind: "free_to_paid",
-    plan_id: "basic",
-    duration_days: 14,
-    status: "revoked",
-    granted_at: "2026-07-24T00:00:00Z",
-    revoked_at: "2026-07-25T00:00:00Z",
-    terminal_reason: "offer_revoked",
-  });
+  const revoked = formatWorkspaceTrial(
+    {
+      id: "trial_2",
+      kind: "free_to_paid",
+      plan_id: "basic",
+      duration_days: 14,
+      status: "revoked",
+      granted_at: "2026-07-24T00:00:00Z",
+      revoked_at: "2026-07-25T00:00:00Z",
+      terminal_reason: "offer_revoked",
+    },
+    { timeZone: "UTC" },
+  );
   assert.equal(revoked.terminalReason, "Offer revoked");
   assert.deepEqual(revoked.timeline, [
     { label: "Granted", value: "Jul 24, 2026" },
