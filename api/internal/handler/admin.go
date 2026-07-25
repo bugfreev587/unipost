@@ -2170,7 +2170,8 @@ LEFT JOIN usage usg ON usg.workspace_id = w.id AND usg.period = to_char(NOW(), '
 LEFT JOIN LATERAL (
   SELECT tg.id, tg.kind, tg.plan_id, tg.duration_days, tg.status,
          tg.granted_at, tg.scheduled_start_at, tg.started_at, tg.ends_at,
-         tg.activated_at, tg.canceled_at, tg.revoked_at, tg.superseded_at, tg.completed_at
+         tg.activated_at, tg.canceled_at, tg.revoked_at, tg.superseded_at, tg.completed_at,
+         tg.updated_at
   FROM workspace_trial_grants tg
   WHERE tg.workspace_id = w.id
   ORDER BY CASE WHEN tg.status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active') THEN 0 ELSE 1 END,
@@ -2178,7 +2179,7 @@ LEFT JOIN LATERAL (
   LIMIT 1
 ) trial ON TRUE
 WHERE u.id != ALL($1)
-  AND s.updated_at >= NOW() - ($2::INT * INTERVAL '1 day')
+  AND GREATEST(s.updated_at, COALESCE(trial.updated_at, s.updated_at)) >= NOW() - ($2::INT * INTERVAL '1 day')
   AND ($3::TEXT = '' OR s.status = $3)
   AND ($4::TEXT = '' OR s.plan_id = $4)
   AND (
@@ -2187,7 +2188,7 @@ WHERE u.id != ALL($1)
     OR w.name ILIKE '%' || $5 || '%'
     OR s.plan_id ILIKE '%' || $5 || '%'
   )
-ORDER BY pl.price_cents DESC, s.updated_at DESC
+ORDER BY pl.price_cents DESC, GREATEST(s.updated_at, COALESCE(trial.updated_at, s.updated_at)) DESC
 LIMIT $6
 `
 

@@ -77,6 +77,9 @@ func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) 
 	if strings.Contains(normalized, "status in ('active', 'trialing')") {
 		t.Fatal("admin billing query must not count trialing subscriptions as revenue")
 	}
+	if !strings.Contains(normalized, "greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at))") {
+		t.Fatal("a newly granted trial must keep an otherwise-old billing row visible")
+	}
 }
 
 func TestAdminGrantTrialStatusMapping(t *testing.T) {
