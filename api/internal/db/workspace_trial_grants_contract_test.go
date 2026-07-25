@@ -54,3 +54,55 @@ func TestWorkspaceTrialGrantMigrationContract(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceTrialGrantCheckoutQueriesUseExactCorrelation(t *testing.T) {
+	source, err := os.ReadFile("queries/workspace_trial_grants.sql")
+	if err != nil {
+		t.Fatalf("read workspace trial grant queries: %v", err)
+	}
+
+	queries := strings.ToLower(strings.Join(strings.Fields(string(source)), " "))
+	tests := []struct {
+		name      string
+		queryName string
+		want      []string
+	}{
+		{
+			name:      "checkout claim matches workspace and plan",
+			queryName: "-- name: claimworkspacetrialgrantcheckout :one",
+			want: []string{
+				"where id = sqlc.arg(id)",
+				"and workspace_id = sqlc.arg(workspace_id)",
+				"and plan_id = sqlc.arg(plan_id)",
+				"and status = 'pending_activation'",
+			},
+		},
+		{
+			name:      "expired checkout release matches session",
+			queryName: "-- name: releaseexpiredworkspacetrialgrantcheckout :one",
+			want: []string{
+				"where id = sqlc.arg(id)",
+				"and status = 'checkout_pending'",
+				"and stripe_checkout_session_id = sqlc.arg(stripe_checkout_session_id)",
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			start := strings.Index(queries, test.queryName)
+			if start < 0 {
+				t.Fatalf("missing query %q", test.queryName)
+			}
+			section := queries[start:]
+			if next := strings.Index(section[len(test.queryName):], "-- name:"); next >= 0 {
+				section = section[:len(test.queryName)+next]
+			}
+			for _, want := range test.want {
+				if !strings.Contains(section, want) {
+					t.Errorf("query %q missing %q: %s", test.queryName, want, section)
+				}
+			}
+		})
+	}
+}

@@ -16,12 +16,20 @@ UPDATE workspace_trial_grants
 SET status = 'checkout_pending',
     updated_at = NOW()
 WHERE id = $1
+  AND workspace_id = $2
+  AND plan_id = $3
   AND status = 'pending_activation'
 RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
-func (q *Queries) ClaimWorkspaceTrialGrantCheckout(ctx context.Context, id string) (WorkspaceTrialGrant, error) {
-	row := q.db.QueryRow(ctx, claimWorkspaceTrialGrantCheckout, id)
+type ClaimWorkspaceTrialGrantCheckoutParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+	PlanID      string `json:"plan_id"`
+}
+
+func (q *Queries) ClaimWorkspaceTrialGrantCheckout(ctx context.Context, arg ClaimWorkspaceTrialGrantCheckoutParams) (WorkspaceTrialGrant, error) {
+	row := q.db.QueryRow(ctx, claimWorkspaceTrialGrantCheckout, arg.ID, arg.WorkspaceID, arg.PlanID)
 	var i WorkspaceTrialGrant
 	err := row.Scan(
 		&i.ID,
@@ -854,17 +862,19 @@ SET status = 'pending_activation',
     updated_at = NOW()
 WHERE id = $1
   AND status = 'checkout_pending'
-  AND updated_at < $2
+  AND stripe_checkout_session_id = $2
+  AND updated_at < $3
 RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type ReleaseExpiredWorkspaceTrialGrantCheckoutParams struct {
-	ID            string             `json:"id"`
-	ExpiredBefore pgtype.Timestamptz `json:"expired_before"`
+	ID                      string             `json:"id"`
+	StripeCheckoutSessionID pgtype.Text        `json:"stripe_checkout_session_id"`
+	ExpiredBefore           pgtype.Timestamptz `json:"expired_before"`
 }
 
 func (q *Queries) ReleaseExpiredWorkspaceTrialGrantCheckout(ctx context.Context, arg ReleaseExpiredWorkspaceTrialGrantCheckoutParams) (WorkspaceTrialGrant, error) {
-	row := q.db.QueryRow(ctx, releaseExpiredWorkspaceTrialGrantCheckout, arg.ID, arg.ExpiredBefore)
+	row := q.db.QueryRow(ctx, releaseExpiredWorkspaceTrialGrantCheckout, arg.ID, arg.StripeCheckoutSessionID, arg.ExpiredBefore)
 	var i WorkspaceTrialGrant
 	err := row.Scan(
 		&i.ID,

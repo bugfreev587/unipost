@@ -59,6 +59,8 @@ UPDATE workspace_trial_grants
 SET status = 'checkout_pending',
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
+  AND workspace_id = sqlc.arg(workspace_id)
+  AND plan_id = sqlc.arg(plan_id)
   AND status = 'pending_activation'
 RETURNING *;
 
@@ -78,6 +80,7 @@ SET status = 'pending_activation',
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
   AND status = 'checkout_pending'
+  AND stripe_checkout_session_id = sqlc.arg(stripe_checkout_session_id)
   AND updated_at < sqlc.arg(expired_before)
 RETURNING *;
 
