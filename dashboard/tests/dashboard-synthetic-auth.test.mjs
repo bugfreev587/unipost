@@ -42,8 +42,10 @@ test("GitHub workflows provide environment-matched Clerk secrets", async () => {
 
   assert.doesNotMatch(deployedWorkflow, /DASHBOARD_TEST_(?:EMAIL|PASSWORD)/);
   assert.match(deployedWorkflow, /DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY/);
+  assert.match(deployedWorkflow, /NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY/);
   assert.match(deployedWorkflow, /test:regression:dashboard:authenticated/);
   assert.match(previewWorkflow, /CLERK_DEVELOPMENT_SECRET_KEY/);
+  assert.match(previewWorkflow, /NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY/);
   assert.match(previewWorkflow, /DASHBOARD_TEST_CLERK_SECRET_KEY/);
   assert.match(previewWorkflow, /EXPECTED_PREVIEW_API_URL/);
 });
@@ -197,6 +199,7 @@ test("browser sign-in uses Clerk's email overload and restores the secret enviro
   const config = loadSyntheticAuthConfig({
     DASHBOARD_BASE_URL: "https://dev-app.unipost.dev",
     DASHBOARD_TEST_CLERK_SECRET_KEY: "sk_test_valid",
+    DASHBOARD_TEST_CLERK_PUBLISHABLE_KEY: "pk_test_example",
   });
   const page = {
     async goto(url, options) {
@@ -212,7 +215,9 @@ test("browser sign-in uses Clerk's email overload and restores the secret enviro
       id: "user_synthetic_1",
       email: "codex-dashboard-regression@example.com",
     }, {
-      loadPublishableKey: async () => "pk_test_example",
+      loadPublishableKey: async () => {
+        throw new Error("publishable-key discovery must not run when the key is configured");
+      },
       clerkSetup: async (options) => calls.push({ setup: options, activeSecret: process.env.CLERK_SECRET_KEY }),
       signIn: async (options) => calls.push({ signIn: options, activeSecret: process.env.CLERK_SECRET_KEY }),
     });

@@ -108,7 +108,7 @@ assert.equal(requestBody.skip_password_requirement, true);
 assert.equal(Object.hasOwn(requestBody, "password"), false);
 ```
 
-Also test Development/Preview `sk_test_` acceptance, production `sk_live_` acceptance, publishable-key discovery, exact tracked-user deletion, and redacted Clerk API errors.
+Also test Development/Preview `sk_test_` acceptance, production `sk_live_` acceptance, explicit environment-matched publishable keys, exact tracked-user deletion, and redacted Clerk API errors.
 
 - [ ] **Step 2: Run the Node tests and verify RED**
 

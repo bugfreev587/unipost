@@ -54,7 +54,7 @@ Before any agent creates a pull request, it should run the same local CI equival
 
 `.github/workflows/regression-monitor.yml` and `.github/workflows/dashboard-regression.yml` are deployed-environment monitors. They are useful for catching broken production or dev deployments, but they should not be the only PR gate because they depend on external accounts, live secrets, and third-party services.
 
-Authenticated Dashboard regression does not automate Google OAuth and does not store a user password. It creates a reserved passwordless Clerk user, uses Clerk Testing's email overload to mint a short-lived ticket session, explicitly calls `/v1/me/bootstrap`, exercises the real Dashboard routes, and calls authenticated `DELETE /v1/me` in teardown. That endpoint synchronously deletes both the Clerk user and the UniPost user row, whose foreign keys cascade through the disposable workspace and profile; the later Clerk webhook is only an idempotent fallback. Preview uses the Development Clerk instance, while the scheduled production monitor uses the Production Clerk instance.
+Authenticated Dashboard regression does not automate Google OAuth and does not store a user password. It creates a reserved passwordless Clerk user, uses Clerk Testing's email overload to mint a short-lived ticket session, explicitly calls `/v1/me/bootstrap`, exercises the real Dashboard routes, and calls authenticated `DELETE /v1/me` in teardown. That endpoint synchronously deletes both the Clerk user and the UniPost user row, whose foreign keys cascade through the disposable workspace and profile; the later Clerk webhook is only an idempotent fallback. Preview uses the Development Clerk instance and the public `NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY` repository variable, while the scheduled production monitor uses the Production Clerk instance and public `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` variable. The test receives these public keys explicitly instead of scraping deployment HTML.
 
 Configure these GitHub repository secrets and variables for deployed regression:
 
@@ -65,6 +65,8 @@ Configure these GitHub repository secrets and variables for deployed regression:
 - `DASHBOARD_BASE_URL`
 - `CLERK_DEVELOPMENT_SECRET_KEY` (`sk_test_`, used by Preview and development/staging authentication)
 - `DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY` (`sk_live_`, used by the production scheduled monitor)
+
+The corresponding public repository variables are `NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY` (`pk_test_`) and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` (`pk_live_`).
 
 ## Branch protection
 

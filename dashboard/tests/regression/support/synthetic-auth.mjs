@@ -25,6 +25,7 @@ const STABLE_ENVIRONMENTS = new Map([
 export function loadSyntheticAuthConfig(env = process.env) {
   const baseURL = stripTrailingSlash(required(env, "DASHBOARD_BASE_URL"));
   const clerkSecretKey = required(env, "DASHBOARD_TEST_CLERK_SECRET_KEY");
+  const clerkPublishableKey = env.DASHBOARD_TEST_CLERK_PUBLISHABLE_KEY?.trim() || "";
   let parsedBaseURL;
   try {
     parsedBaseURL = new URL(baseURL);
@@ -40,8 +41,12 @@ export function loadSyntheticAuthConfig(env = process.env) {
 
   const environment = stable?.name ?? "preview";
   const clerkSecretPrefix = stable?.clerkSecretPrefix ?? "sk_test_";
+  const clerkPublishablePrefix = clerkSecretPrefix.replace("sk_", "pk_");
   if (!clerkSecretKey.startsWith(clerkSecretPrefix)) {
     throw new Error(`${environment} Dashboard regression requires a ${clerkSecretPrefix} Clerk secret`);
+  }
+  if (clerkPublishableKey && !clerkPublishableKey.startsWith(clerkPublishablePrefix)) {
+    throw new Error(`${environment} Dashboard regression requires a ${clerkPublishablePrefix} Clerk publishable key`);
   }
 
   const apiURL = stable?.apiURL ?? stripTrailingSlash(required(env, "EXPECTED_PREVIEW_API_URL"));
@@ -62,6 +67,7 @@ export function loadSyntheticAuthConfig(env = process.env) {
     baseURL,
     apiURL,
     clerkSecretKey,
+    clerkPublishableKey,
     vercelBypassSecret: env.VERCEL_AUTOMATION_BYPASS_SECRET?.trim() || "",
   };
 }
@@ -122,7 +128,7 @@ export async function signInSyntheticUser(page, config, identity, dependencies =
   const signIn = dependencies.signIn ?? clerkModule.clerk.signIn;
   const loadPublishableKey = dependencies.loadPublishableKey ?? loadClerkPublishableKey;
   await establishPreviewBypassCookie(page, config);
-  const publishableKey = await loadPublishableKey(config);
+  const publishableKey = config.clerkPublishableKey || await loadPublishableKey(config);
 
   await withClerkSecret(config.clerkSecretKey, async () => {
     await clerkSetup({
