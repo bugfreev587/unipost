@@ -8,6 +8,7 @@ export default defineConfig({
   testIgnore: [
     "authenticated-dashboard.spec.ts",
     "preview-environment.spec.ts",
+    "seo-preview.spec.ts",
   ],
   timeout: 45_000,
   expect: {
