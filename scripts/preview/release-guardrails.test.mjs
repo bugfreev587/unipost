@@ -148,7 +148,7 @@ test("ordinary dashboard regression excludes deployed preview-only acceptance", 
   const config = await read("dashboard/playwright.regression.config.ts");
   assert.match(
     config,
-    /testIgnore:\s*["']preview-environment\.spec\.ts["']/,
+    /testIgnore:\s*\[[\s\S]*preview-environment\.spec\.ts/,
     "dashboard regression would collect the preview-only spec without its required deployment identity",
   );
 });
