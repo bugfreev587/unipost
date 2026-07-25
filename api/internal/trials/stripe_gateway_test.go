@@ -741,6 +741,24 @@ func TestBuildPortalParamsFailsClosedOnInvalidRequest(t *testing.T) {
 	}
 }
 
+func TestRetrieveScheduleUsesExactModeAndReturnsNormalizedSnapshot(t *testing.T) {
+	client := &fakeStripeTrialClient{scheduleRetrieveResult: &stripe.SubscriptionSchedule{
+		ID: "sub_sched_123", Status: stripe.SubscriptionScheduleStatusActive, EndBehavior: stripe.SubscriptionScheduleEndBehaviorRelease,
+		Customer: &stripe.Customer{ID: "cus_123"}, Subscription: &stripe.Subscription{ID: "sub_123"},
+	}}
+	gateway := newFakeStripeGateway(client)
+	got, err := gateway.RetrieveSchedule(t.Context(), "sandbox", "sub_sched_123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StripeMode != "sandbox" || got.ID != "sub_sched_123" || got.CustomerID != "cus_123" || got.SubscriptionID != "sub_123" || got.Status != "active" || got.EndBehavior != "release" {
+		t.Fatalf("snapshot=%#v", got)
+	}
+	if !reflect.DeepEqual(client.calls, []string{"retrieve_schedule"}) {
+		t.Fatalf("calls=%#v", client.calls)
+	}
+}
+
 func TestGatewayRejectsInvalidRequestsBeforeAnyStripeCall(t *testing.T) {
 	tests := []struct {
 		name string
@@ -780,6 +798,10 @@ func TestGatewayRejectsInvalidRequestsBeforeAnyStripeCall(t *testing.T) {
 		}},
 		{name: "retrieve subscription", call: func(g *stripeGateway) error {
 			_, err := g.RetrieveSubscription(t.Context(), "live", "")
+			return err
+		}},
+		{name: "retrieve schedule", call: func(g *stripeGateway) error {
+			_, err := g.RetrieveSchedule(t.Context(), "live", "")
 			return err
 		}},
 		{name: "change free plan", call: func(g *stripeGateway) error {
@@ -864,6 +886,11 @@ func TestGatewayRejectsEmptyOrMismatchedStripeResponses(t *testing.T) {
 		{name: "retrieve subscription nil", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
 			client.subscriptionResult = nil
 			_, err := g.RetrieveSubscription(t.Context(), "live", "sub_123")
+			return err
+		}},
+		{name: "retrieve schedule mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
+			client.scheduleRetrieveResult = &stripe.SubscriptionSchedule{ID: "sub_sched_other"}
+			_, err := g.RetrieveSchedule(t.Context(), "live", "sub_sched_123")
 			return err
 		}},
 		{name: "change free subscription mismatch", call: func(g *stripeGateway, client *fakeStripeTrialClient) error {
@@ -1192,21 +1219,23 @@ func newFakeStripeGateway(client *fakeStripeTrialClient) *stripeGateway {
 }
 
 type fakeStripeTrialClient struct {
-	calls                []string
-	checkoutResult       *stripe.CheckoutSession
-	checkoutErr          error
-	expireErrors         []error
-	expireParams         []*stripe.CheckoutSessionExpireParams
-	subscriptionResult   *stripe.Subscription
-	subscriptionErr      error
-	scheduleCreateResult *stripe.SubscriptionSchedule
-	scheduleCreateErr    error
-	scheduleCreateParams *stripe.SubscriptionScheduleParams
-	scheduleUpdateResult *stripe.SubscriptionSchedule
-	scheduleUpdateErr    error
-	scheduleUpdateID     string
-	portalResult         *stripe.BillingPortalSession
-	portalErr            error
+	calls                  []string
+	checkoutResult         *stripe.CheckoutSession
+	checkoutErr            error
+	expireErrors           []error
+	expireParams           []*stripe.CheckoutSessionExpireParams
+	subscriptionResult     *stripe.Subscription
+	subscriptionErr        error
+	scheduleCreateResult   *stripe.SubscriptionSchedule
+	scheduleCreateErr      error
+	scheduleCreateParams   *stripe.SubscriptionScheduleParams
+	scheduleRetrieveResult *stripe.SubscriptionSchedule
+	scheduleRetrieveErr    error
+	scheduleUpdateResult   *stripe.SubscriptionSchedule
+	scheduleUpdateErr      error
+	scheduleUpdateID       string
+	portalResult           *stripe.BillingPortalSession
+	portalErr              error
 }
 
 func (c *fakeStripeTrialClient) createCheckout(params *stripe.CheckoutSessionParams) (*stripe.CheckoutSession, error) {
@@ -1246,6 +1275,11 @@ func (c *fakeStripeTrialClient) createSchedule(params *stripe.SubscriptionSchedu
 	c.calls = append(c.calls, "create_schedule")
 	c.scheduleCreateParams = params
 	return c.scheduleCreateResult, c.scheduleCreateErr
+}
+
+func (c *fakeStripeTrialClient) retrieveSchedule(_ string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+	c.calls = append(c.calls, "retrieve_schedule")
+	return c.scheduleRetrieveResult, c.scheduleRetrieveErr
 }
 
 func (c *fakeStripeTrialClient) updateSchedule(id string, _ *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {

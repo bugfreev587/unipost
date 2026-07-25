@@ -94,6 +94,7 @@ type StripeGateway interface {
 	RetrieveCheckout(context.Context, string, string) (CheckoutSnapshot, error)
 	ExpireCheckout(context.Context, ExpireCheckoutRequest) (CheckoutSnapshot, error)
 	RetrieveSubscription(context.Context, string, string) (SubscriptionSnapshot, error)
+	RetrieveSchedule(context.Context, string, string) (ScheduleSnapshot, error)
 	ChangeFreeTrialPlanNow(context.Context, ChangeFreeTrialPlanRequest) (SubscriptionSnapshot, error)
 	ChangeScheduledTrialPlanNow(context.Context, ChangeScheduledTrialPlanRequest) (ScheduleSnapshot, error)
 	CancelFreeTrialAtEnd(context.Context, CancelFreeTrialRequest) (SubscriptionSnapshot, error)
@@ -260,6 +261,7 @@ type stripeTrialClient interface {
 	retrieveSubscription(string, *stripe.SubscriptionParams) (*stripe.Subscription, error)
 	updateSubscription(string, *stripe.SubscriptionParams) (*stripe.Subscription, error)
 	createSchedule(*stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error)
+	retrieveSchedule(string, *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error)
 	updateSchedule(string, *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error)
 	createPortal(*stripe.BillingPortalSessionParams) (*stripe.BillingPortalSession, error)
 }
@@ -290,6 +292,10 @@ func (c *billingStripeTrialClient) updateSubscription(id string, params *stripe.
 
 func (c *billingStripeTrialClient) createSchedule(params *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
 	return c.mode.Client.SubscriptionSchedules.New(params)
+}
+
+func (c *billingStripeTrialClient) retrieveSchedule(id string, params *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
+	return c.mode.Client.SubscriptionSchedules.Get(id, params)
 }
 
 func (c *billingStripeTrialClient) updateSchedule(id string, params *stripe.SubscriptionScheduleParams) (*stripe.SubscriptionSchedule, error) {
@@ -469,6 +475,30 @@ func (g *stripeGateway) RetrieveSubscription(ctx context.Context, modeName, subs
 		return SubscriptionSnapshot{}, fmt.Errorf("retrieve Stripe subscription %s: %w", subscriptionID, err)
 	}
 	return subscriptionSnapshot(modeName, subscription), nil
+}
+
+func (g *stripeGateway) RetrieveSchedule(ctx context.Context, modeName, scheduleID string) (ScheduleSnapshot, error) {
+	if err := validateLookup("subscription schedule", modeName, scheduleID); err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	mode, err := g.mode(modeName)
+	if err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	client, err := g.client(mode)
+	if err != nil {
+		return ScheduleSnapshot{}, err
+	}
+	params := &stripe.SubscriptionScheduleParams{}
+	params.Context = ctx
+	schedule, err := client.retrieveSchedule(scheduleID, params)
+	if err != nil {
+		return ScheduleSnapshot{}, fmt.Errorf("retrieve Stripe subscription schedule %s: %w", scheduleID, err)
+	}
+	if err := validateScheduleResponse(schedule, scheduleID); err != nil {
+		return ScheduleSnapshot{}, fmt.Errorf("retrieve Stripe subscription schedule %s: %w", scheduleID, err)
+	}
+	return scheduleSnapshot(modeName, schedule), nil
 }
 
 func (g *stripeGateway) ChangeFreeTrialPlanNow(ctx context.Context, req ChangeFreeTrialPlanRequest) (SubscriptionSnapshot, error) {

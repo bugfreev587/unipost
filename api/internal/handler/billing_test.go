@@ -182,6 +182,7 @@ func TestTrialCheckoutHandlerFallsThroughOnlyWhenGrantDoesNotApply(t *testing.T)
 		{name: "matching pending grant", err: trials.ErrCheckoutCustomerRequired, wantHandle: false, wantCustomer: true},
 		{name: "completed awaiting webhook", err: trials.ErrCheckoutCompletionPending, wantHandle: true, wantStatus: http.StatusConflict},
 		{name: "concurrent state", err: trials.ErrCheckoutStateConflict, wantHandle: true, wantStatus: http.StatusConflict},
+		{name: "managed trial requires plan change", err: trials.ErrTrialPlanChangeRequired, wantHandle: true, wantStatus: http.StatusConflict},
 		{name: "Stripe unavailable", err: context.DeadlineExceeded, wantHandle: true, wantStatus: http.StatusInternalServerError},
 	} {
 		t.Run(test.name, func(t *testing.T) {

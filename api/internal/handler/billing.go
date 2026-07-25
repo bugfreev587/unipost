@@ -426,6 +426,10 @@ func (h *BillingHandler) tryTrialCheckout(w http.ResponseWriter, r *http.Request
 	if errors.Is(err, trials.ErrCheckoutCustomerRequired) {
 		return false, true
 	}
+	if errors.Is(err, trials.ErrTrialPlanChangeRequired) {
+		writeError(w, http.StatusConflict, "TRIAL_PLAN_CHANGE_REQUIRED", "Use the billing plan-change action while a managed trial is scheduled or active")
+		return true, false
+	}
 	if errors.Is(err, trials.ErrCheckoutCompletionPending) || errors.Is(err, trials.ErrCheckoutStateConflict) {
 		writeError(w, http.StatusConflict, "CHECKOUT_IN_PROGRESS", "Trial checkout is already being processed")
 		return true, false

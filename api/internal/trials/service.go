@@ -26,6 +26,7 @@ var (
 	ErrWebhookNotApplicable       = errors.New("trial webhook is not applicable to this environment")
 	ErrWebhookStateConflict       = errors.New("trial webhook does not match the recorded grant")
 	ErrTrialMutationNotApplicable = errors.New("trial mutation is not applicable")
+	ErrTrialPlanChangeRequired    = errors.New("managed trial requires the plan-change endpoint")
 )
 
 type OpenGrantConflictError struct {
@@ -313,9 +314,25 @@ func (s *Service) ChangePlan(ctx context.Context, req ChangePlanRequest) (Grant,
 		return grant, nil
 
 	case KindPaidSamePlan:
-		if grant.StripeScheduleID == "" {
+		if grant.StripeScheduleID == "" || grant.StripeSubscriptionID == "" {
 			return Grant{}, ErrTrialMutationNotApplicable
 		}
+		currentMode, resolveErr := s.modes.Resolve(ctx, billingState.OwnerUserID, grant.PlanID)
+		if resolveErr != nil || currentMode.Name != grant.StripeMode || currentMode.PriceID == "" {
+			return Grant{}, ErrBillingModeUnavailable
+		}
+		remoteSub, retrieveErr := s.stripe.RetrieveSubscription(ctx, grant.StripeMode, grant.StripeSubscriptionID)
+		if retrieveErr != nil {
+			return Grant{}, fmt.Errorf("retrieve managed paid-trial subscription: %w", retrieveErr)
+		}
+		remoteSchedule, retrieveErr := s.stripe.RetrieveSchedule(ctx, grant.StripeMode, grant.StripeScheduleID)
+		if retrieveErr != nil {
+			return Grant{}, fmt.Errorf("retrieve managed paid-trial schedule: %w", retrieveErr)
+		}
+		if err := validatePaidPlanChangePreflight(grant, remoteSub, remoteSchedule, currentMode.PriceID, s.environment); err != nil {
+			return Grant{}, err
+		}
+		mutationStartedAt := s.now().UTC()
 		updated, mutationErr := s.stripe.ChangeScheduledTrialPlanNow(ctx, ChangeScheduledTrialPlanRequest{
 			StripeMode: grant.StripeMode, WorkspaceID: grant.WorkspaceID, PlanID: req.TargetPlanID,
 			TrialGrantID: grant.ID, TrialKind: grant.Kind, Environment: s.environment,
@@ -324,8 +341,8 @@ func (s *Service) ChangePlan(ctx context.Context, req ChangePlanRequest) (Grant,
 		if mutationErr != nil {
 			return Grant{}, fmt.Errorf("change managed paid-trial plan: %w", mutationErr)
 		}
-		if updated.ID != grant.StripeScheduleID || (updated.SubscriptionID != "" && updated.SubscriptionID != grant.StripeSubscriptionID) || updated.EndBehavior != "release" {
-			return Grant{}, fmt.Errorf("change managed paid-trial plan: Stripe returned an inconsistent schedule")
+		if err := validatePaidPlanChangeResponse(grant, updated, req.TargetPlanID, mode.PriceID, s.environment, mutationStartedAt); err != nil {
+			return Grant{}, fmt.Errorf("change managed paid-trial plan: Stripe returned an inconsistent schedule: %w", err)
 		}
 		return grant, nil
 	default:
@@ -523,6 +540,80 @@ func retainedCancellationPhases(grant Grant, remote SubscriptionSnapshot, priceI
 	}
 }
 
+func validatePaidPlanChangePreflight(grant Grant, subscription SubscriptionSnapshot, schedule ScheduleSnapshot, currentPriceID, environment string) error {
+	if grant.Kind != KindPaidSamePlan || (grant.Status != StatusScheduled && grant.Status != StatusActive) || grant.ScheduledStartAt == nil || grant.EndsAt == nil || !grant.ScheduledStartAt.Before(*grant.EndsAt) {
+		return ErrTrialMutationNotApplicable
+	}
+	if subscription.StripeMode != grant.StripeMode || subscription.ID != grant.StripeSubscriptionID || subscription.CustomerID != grant.StripeCustomerID || subscription.ScheduleID != grant.StripeScheduleID || subscription.PriceID != currentPriceID {
+		return ErrTrialMutationNotApplicable
+	}
+	if schedule.StripeMode != grant.StripeMode || schedule.ID != grant.StripeScheduleID || schedule.CustomerID != grant.StripeCustomerID || schedule.SubscriptionID != grant.StripeSubscriptionID || schedule.Status != "active" || (schedule.EndBehavior != "release" && schedule.EndBehavior != "cancel") || schedule.CanceledAt != nil || schedule.ReleasedAt != nil || schedule.ReleasedSubscriptionID != "" || !webhookMetadataMatches(schedule.Metadata, grant, environment) {
+		return ErrTrialMutationNotApplicable
+	}
+	trialPhase, found := exactManagedTrialPhase(schedule, grant, currentPriceID, environment)
+	if !found {
+		return ErrTrialMutationNotApplicable
+	}
+	resumedPaidPhases := 0
+	for _, phase := range schedule.Phases {
+		if phase.PriceID == currentPriceID && phase.StartAt.Equal(grant.EndsAt.UTC()) && phase.TrialEndAt.IsZero() && webhookMetadataMatches(phase.Metadata, grant, environment) {
+			resumedPaidPhases++
+		}
+	}
+	if (schedule.EndBehavior == "release" && resumedPaidPhases != 1) || (schedule.EndBehavior == "cancel" && resumedPaidPhases != 0) {
+		return ErrTrialMutationNotApplicable
+	}
+
+	switch grant.Status {
+	case StatusScheduled:
+		if subscription.Status != "active" || subscription.CurrentPeriodStartAt == nil || subscription.CurrentPeriodEndAt == nil || !subscription.CurrentPeriodEndAt.UTC().Equal(grant.ScheduledStartAt.UTC()) || schedule.CurrentPhaseStartAt == nil || schedule.CurrentPhaseEndAt == nil || !schedule.CurrentPhaseStartAt.UTC().Equal(subscription.CurrentPeriodStartAt.UTC()) || !schedule.CurrentPhaseEndAt.UTC().Equal(grant.ScheduledStartAt.UTC()) {
+			return ErrTrialMutationNotApplicable
+		}
+		currentPhaseFound := false
+		for _, phase := range schedule.Phases {
+			if phase.PriceID == currentPriceID && phase.StartAt.Equal(subscription.CurrentPeriodStartAt.UTC()) && phase.EndAt.Equal(grant.ScheduledStartAt.UTC()) && phase.TrialEndAt.IsZero() && webhookMetadataMatches(phase.Metadata, grant, environment) {
+				currentPhaseFound = true
+				break
+			}
+		}
+		if !currentPhaseFound {
+			return ErrTrialMutationNotApplicable
+		}
+	case StatusActive:
+		if grant.StartedAt == nil || subscription.Status != "trialing" || subscription.TrialStartAt == nil || subscription.TrialEndAt == nil || subscription.CurrentPeriodStartAt == nil || subscription.CurrentPeriodEndAt == nil || !subscription.TrialStartAt.UTC().Equal(grant.StartedAt.UTC()) || !subscription.TrialEndAt.UTC().Equal(grant.EndsAt.UTC()) || !subscription.CurrentPeriodStartAt.UTC().Equal(grant.StartedAt.UTC()) || !subscription.CurrentPeriodEndAt.UTC().Equal(grant.EndsAt.UTC()) || schedule.CurrentPhaseStartAt == nil || schedule.CurrentPhaseEndAt == nil || !schedule.CurrentPhaseStartAt.UTC().Equal(grant.StartedAt.UTC()) || !schedule.CurrentPhaseEndAt.UTC().Equal(grant.EndsAt.UTC()) || !trialPhase.StartAt.Equal(grant.StartedAt.UTC()) {
+			return ErrTrialMutationNotApplicable
+		}
+	}
+	return nil
+}
+
+func exactManagedTrialPhase(schedule ScheduleSnapshot, grant Grant, priceID, environment string) (SchedulePhase, bool) {
+	var matched SchedulePhase
+	matches := 0
+	for _, phase := range schedule.Phases {
+		if phase.PriceID == priceID && phase.StartAt.Equal(grant.ScheduledStartAt.UTC()) && phase.EndAt.Equal(grant.EndsAt.UTC()) && phase.TrialEndAt.Equal(grant.EndsAt.UTC()) && webhookMetadataMatches(phase.Metadata, grant, environment) {
+			matched = phase
+			matches++
+		}
+	}
+	return matched, matches == 1
+}
+
+func validatePaidPlanChangeResponse(grant Grant, schedule ScheduleSnapshot, targetPlanID, targetPriceID, environment string, mutationStartedAt time.Time) error {
+	if schedule.StripeMode != grant.StripeMode || schedule.ID != grant.StripeScheduleID || schedule.CustomerID != grant.StripeCustomerID || schedule.SubscriptionID != grant.StripeSubscriptionID || schedule.Status != "active" || schedule.EndBehavior != "release" || schedule.CanceledAt != nil || schedule.ReleasedAt != nil || schedule.ReleasedSubscriptionID != "" || len(schedule.Phases) != 1 {
+		return ErrTrialMutationNotApplicable
+	}
+	targetGrant := Grant{ID: grant.ID, WorkspaceID: grant.WorkspaceID, Kind: grant.Kind, PlanID: targetPlanID}
+	if !webhookMetadataMatches(schedule.Metadata, targetGrant, environment) {
+		return ErrTrialMutationNotApplicable
+	}
+	phase := schedule.Phases[0]
+	if phase.PriceID != targetPriceID || phase.StartAt.IsZero() || phase.StartAt.Before(mutationStartedAt.Add(-5*time.Minute)) || phase.StartAt.After(mutationStartedAt.Add(5*time.Minute)) || !phase.TrialEndAt.IsZero() || phase.BillingCycleAnchor != "phase_start" || !webhookMetadataMatches(phase.Metadata, targetGrant, environment) {
+		return ErrTrialMutationNotApplicable
+	}
+	return nil
+}
+
 func (s *Service) PrepareCheckout(ctx context.Context, req CheckoutRequest) (CheckoutResult, error) {
 	if err := validateCheckoutRequest(req); err != nil {
 		return CheckoutResult{}, err
@@ -536,6 +627,9 @@ func (s *Service) PrepareCheckout(ctx context.Context, req CheckoutRequest) (Che
 	}
 	if err != nil {
 		return CheckoutResult{}, fmt.Errorf("load trial grant for Checkout: %w", err)
+	}
+	if grant.Status == StatusProvisioning || grant.Status == StatusScheduled || grant.Status == StatusActive {
+		return CheckoutResult{}, ErrTrialPlanChangeRequired
 	}
 	if grant.Kind != KindFreeToPaid {
 		return CheckoutResult{}, ErrTrialCheckoutNotApplicable

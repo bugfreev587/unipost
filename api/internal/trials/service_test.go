@@ -736,11 +736,40 @@ func TestPrepareCheckoutMatchingActiveGrantDoesNotFallThroughToOrdinaryCheckout(
 	h.store.grant = *h.store.open
 
 	_, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
-	if !errors.Is(err, ErrCheckoutCompletionPending) {
-		t.Fatalf("error=%v, want ErrCheckoutCompletionPending", err)
+	if !errors.Is(err, ErrTrialPlanChangeRequired) {
+		t.Fatalf("error=%v, want ErrTrialPlanChangeRequired", err)
 	}
 	if h.stripe.createCheckoutCalls != 0 {
 		t.Fatalf("Stripe create calls=%d", h.stripe.createCheckoutCalls)
+	}
+}
+
+func TestPrepareCheckoutManagedMutationRiskStatesRequireChangePlan(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		kind   Kind
+		status Status
+	}{
+		{name: "paid provisioning", kind: KindPaidSamePlan, status: StatusProvisioning},
+		{name: "paid scheduled", kind: KindPaidSamePlan, status: StatusScheduled},
+		{name: "paid active", kind: KindPaidSamePlan, status: StatusActive},
+		{name: "free scheduled mismatched", kind: KindFreeToPaid, status: StatusScheduled},
+		{name: "free active mismatched", kind: KindFreeToPaid, status: StatusActive},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t)
+			h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: tc.kind, PlanID: "growth", Status: tc.status, StripeMode: "live"}
+			h.store.grant = *h.store.open
+			req := validServiceCheckoutRequest()
+			req.PlanID, req.PriceID = "basic", "price_basic"
+			_, err := h.service.PrepareCheckout(t.Context(), req)
+			if !errors.Is(err, ErrTrialPlanChangeRequired) {
+				t.Fatalf("error=%v, want ErrTrialPlanChangeRequired", err)
+			}
+			if h.stripe.createCheckoutCalls != 0 || h.stripe.expireCalls != 0 || h.store.claimCalls != 0 {
+				t.Fatalf("unsafe mutation: create=%d expire=%d claim=%d", h.stripe.createCheckoutCalls, h.stripe.expireCalls, h.store.claimCalls)
+			}
+		})
 	}
 }
 
@@ -1624,11 +1653,14 @@ type fakeServiceStripe struct {
 	checkoutAttempts                                                                        []int32
 	changeFreeResult                                                                        SubscriptionSnapshot
 	changeScheduleResult                                                                    ScheduleSnapshot
+	retrievedSchedule                                                                       ScheduleSnapshot
+	retrieveScheduleErr                                                                     error
 	cancelFreeResult                                                                        SubscriptionSnapshot
 	cancelScheduleResult                                                                    ScheduleSnapshot
 	portalURL                                                                               string
 	changeFreeErr, changeScheduleErr, cancelFreeErr, cancelScheduleErr, portalErr           error
 	changeFreeCalls, changeScheduleCalls, cancelFreeCalls, cancelScheduleCalls, portalCalls int
+	retrieveScheduleCalls                                                                   int
 	lastChangeFree                                                                          ChangeFreeTrialPlanRequest
 	lastChangeSchedule                                                                      ChangeScheduledTrialPlanRequest
 	lastCancelFree                                                                          CancelFreeTrialRequest
@@ -1685,6 +1717,10 @@ func (s *fakeServiceStripe) RetrieveSubscription(context.Context, string, string
 	s.retrieveSubscriptionCalls++
 	return s.subscription, nil
 }
+func (s *fakeServiceStripe) RetrieveSchedule(context.Context, string, string) (ScheduleSnapshot, error) {
+	s.retrieveScheduleCalls++
+	return s.retrievedSchedule, s.retrieveScheduleErr
+}
 func (s *fakeServiceStripe) ChangeFreeTrialPlanNow(_ context.Context, req ChangeFreeTrialPlanRequest) (SubscriptionSnapshot, error) {
 	s.changeFreeCalls++
 	s.lastChangeFree = req
@@ -1739,26 +1775,144 @@ func TestChangePlanFreeTrialUsesOneSubscriptionUpdateAndWaitsForWebhook(t *testi
 }
 
 func TestChangePlanPaidTrialUsesOneScheduleUpdateAndNeverMarksBeforeWebhook(t *testing.T) {
+	for _, status := range []Status{StatusScheduled, StatusActive} {
+		t.Run(string(status), func(t *testing.T) {
+			h := newPaidPlanChangeHarness(t, status)
+			got, err := h.service.ChangePlan(t.Context(), ChangePlanRequest{WorkspaceID: "ws_1", TargetPlanID: "growth"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if h.stripe.retrieveSubscriptionCalls != 1 || h.stripe.retrieveScheduleCalls != 1 || h.stripe.changeScheduleCalls != 1 || h.stripe.changeFreeCalls != 0 {
+				t.Fatalf("retrieve sub/schedule=%d/%d change schedule/free=%d/%d", h.stripe.retrieveSubscriptionCalls, h.stripe.retrieveScheduleCalls, h.stripe.changeScheduleCalls, h.stripe.changeFreeCalls)
+			}
+			if h.stripe.lastChangeSchedule.ScheduleID != "sched_1" || h.stripe.lastChangeSchedule.PriceID != "price_growth" {
+				t.Fatalf("request=%#v", h.stripe.lastChangeSchedule)
+			}
+			if got.Status != status || h.store.markSupersededCalls != 0 {
+				t.Fatalf("grant=%#v superseded calls=%d", got, h.store.markSupersededCalls)
+			}
+		})
+	}
+}
+
+func TestChangePlanPaidTrialStillWorksAfterRenewalWasCanceled(t *testing.T) {
+	h := newPaidPlanChangeHarness(t, StatusActive)
+	canceledAt := time.Date(2026, 7, 24, 10, 0, 0, 0, time.UTC)
+	h.store.grant.CanceledAt = &canceledAt
+	h.store.open = &h.store.grant
+	h.stripe.retrievedSchedule.EndBehavior = "cancel"
+	h.stripe.retrievedSchedule.Phases = h.stripe.retrievedSchedule.Phases[1:2]
+	if _, err := h.service.ChangePlan(t.Context(), ChangePlanRequest{WorkspaceID: "ws_1", TargetPlanID: "growth"}); err != nil {
+		t.Fatal(err)
+	}
+	if h.stripe.changeScheduleCalls != 1 {
+		t.Fatalf("schedule mutations=%d", h.stripe.changeScheduleCalls)
+	}
+}
+
+func TestChangePlanPaidTrialFailsClosedBeforeMutationOnRemoteDrift(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*serviceHarness)
+	}{
+		{name: "subscription id", mutate: func(h *serviceHarness) { h.stripe.subscription.ID = "sub_other" }},
+		{name: "subscription customer", mutate: func(h *serviceHarness) { h.stripe.subscription.CustomerID = "cus_other" }},
+		{name: "subscription schedule", mutate: func(h *serviceHarness) { h.stripe.subscription.ScheduleID = "sched_other" }},
+		{name: "subscription price", mutate: func(h *serviceHarness) { h.stripe.subscription.PriceID = "price_other" }},
+		{name: "schedule id", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.ID = "sched_other" }},
+		{name: "schedule mode", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.StripeMode = "sandbox" }},
+		{name: "schedule customer", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.CustomerID = "cus_other" }},
+		{name: "schedule subscription", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.SubscriptionID = "sub_other" }},
+		{name: "schedule released", mutate: func(h *serviceHarness) {
+			h.stripe.retrievedSchedule.Status = "released"
+			h.stripe.retrievedSchedule.ReleasedSubscriptionID = "sub_1"
+		}},
+		{name: "schedule canceled", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.Status = "canceled" }},
+		{name: "schedule metadata", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.Metadata[metadataEnvironment] = "production" }},
+		{name: "trial phase missing", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.Phases[1].TrialEndAt = time.Time{} }},
+		{name: "resumed phase missing", mutate: func(h *serviceHarness) { h.stripe.retrievedSchedule.Phases = h.stripe.retrievedSchedule.Phases[:2] }},
+		{name: "current phase metadata", mutate: func(h *serviceHarness) {
+			h.stripe.retrievedSchedule.Phases[0].Metadata[metadataTrialGrant] = "grant_other"
+		}},
+		{name: "current phase boundary", mutate: func(h *serviceHarness) {
+			h.stripe.retrievedSchedule.CurrentPhaseEndAt = webhookPtr(h.stripe.retrievedSchedule.CurrentPhaseEndAt.Add(time.Hour))
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPaidPlanChangeHarness(t, StatusScheduled)
+			tc.mutate(h)
+			_, err := h.service.ChangePlan(t.Context(), ChangePlanRequest{WorkspaceID: "ws_1", TargetPlanID: "growth"})
+			if !errors.Is(err, ErrTrialMutationNotApplicable) {
+				t.Fatalf("error=%v, want ErrTrialMutationNotApplicable", err)
+			}
+			if h.stripe.changeScheduleCalls != 0 {
+				t.Fatalf("schedule mutations=%d, want zero", h.stripe.changeScheduleCalls)
+			}
+		})
+	}
+}
+
+func TestChangePlanPaidTrialRejectsInconsistentMutationResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*ScheduleSnapshot)
+	}{
+		{name: "mode", mutate: func(s *ScheduleSnapshot) { s.StripeMode = "sandbox" }},
+		{name: "customer", mutate: func(s *ScheduleSnapshot) { s.CustomerID = "cus_other" }},
+		{name: "subscription", mutate: func(s *ScheduleSnapshot) { s.SubscriptionID = "sub_other" }},
+		{name: "end behavior", mutate: func(s *ScheduleSnapshot) { s.EndBehavior = "cancel" }},
+		{name: "multiple phases", mutate: func(s *ScheduleSnapshot) { s.Phases = append(s.Phases, s.Phases[0]) }},
+		{name: "target price", mutate: func(s *ScheduleSnapshot) { s.Phases[0].PriceID = "price_other" }},
+		{name: "trial retained", mutate: func(s *ScheduleSnapshot) { s.Phases[0].TrialEndAt = s.Phases[0].StartAt.Add(time.Hour) }},
+		{name: "anchor", mutate: func(s *ScheduleSnapshot) { s.Phases[0].BillingCycleAnchor = "automatic" }},
+		{name: "phase metadata", mutate: func(s *ScheduleSnapshot) { s.Phases[0].Metadata[metadataPlanID] = "team" }},
+		{name: "schedule metadata", mutate: func(s *ScheduleSnapshot) { s.Metadata[metadataEnvironment] = "production" }},
+		{name: "start", mutate: func(s *ScheduleSnapshot) { s.Phases[0].StartAt = s.Phases[0].StartAt.Add(-time.Hour) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPaidPlanChangeHarness(t, StatusActive)
+			tc.mutate(&h.stripe.changeScheduleResult)
+			_, err := h.service.ChangePlan(t.Context(), ChangePlanRequest{WorkspaceID: "ws_1", TargetPlanID: "growth"})
+			if !errors.Is(err, ErrTrialMutationNotApplicable) {
+				t.Fatalf("error=%v, want inconsistent response", err)
+			}
+			if h.stripe.changeScheduleCalls != 1 {
+				t.Fatalf("schedule mutations=%d, want one", h.stripe.changeScheduleCalls)
+			}
+		})
+	}
+}
+
+func newPaidPlanChangeHarness(t *testing.T, status Status) *serviceHarness {
+	t.Helper()
 	h := newServiceHarness(t)
-	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, Status: StatusScheduled, PlanID: "basic", StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StripeScheduleID: "sched_1"}
+	now := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	paidStart := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	trialStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	trialEnd := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	metadata := trialMetadata("ws_1", "basic", "grant_1", KindPaidSamePlan, "staging")
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, Status: status, PlanID: "basic", StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StripeScheduleID: "sched_1", ScheduledStartAt: &trialStart, EndsAt: &trialEnd}
 	h.store.open = &h.store.grant
 	h.store.billing = BillingSnapshot{WorkspaceID: "ws_1", OwnerUserID: "owner_1", Subscription: SubscriptionRecord{PlanID: "basic", Status: "active", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1"}}
 	h.modes.mode = BillingMode{Name: "live", PriceID: "price_growth"}
-	h.stripe.changeScheduleResult = ScheduleSnapshot{StripeMode: "live", ID: "sched_1", SubscriptionID: "sub_1", CustomerID: "cus_1", EndBehavior: "release"}
-
-	got, err := h.service.ChangePlan(t.Context(), ChangePlanRequest{WorkspaceID: "ws_1", TargetPlanID: "growth"})
-	if err != nil {
-		t.Fatal(err)
+	h.modes.prices = map[string]string{"basic": "price_basic", "growth": "price_growth"}
+	h.stripe.subscription = SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "active", CustomerID: "cus_1", ScheduleID: "sched_1", PriceID: "price_basic", CurrentPeriodStartAt: &paidStart, CurrentPeriodEndAt: &trialStart, Metadata: cloneMetadata(metadata)}
+	h.stripe.retrievedSchedule = ScheduleSnapshot{StripeMode: "live", ID: "sched_1", Status: "active", EndBehavior: "release", CustomerID: "cus_1", SubscriptionID: "sub_1", CurrentPhaseStartAt: &paidStart, CurrentPhaseEndAt: &trialStart, Metadata: cloneMetadata(metadata), Phases: []SchedulePhase{
+		{PriceID: "price_basic", StartAt: paidStart, EndAt: trialStart, Metadata: cloneMetadata(metadata)},
+		{PriceID: "price_basic", StartAt: trialStart, EndAt: trialEnd, TrialEndAt: trialEnd, Metadata: cloneMetadata(metadata)},
+		{PriceID: "price_basic", StartAt: trialEnd, EndAt: trialEnd.AddDate(0, 1, 0), Metadata: cloneMetadata(metadata)},
+	}}
+	if status == StatusActive {
+		h.store.grant.StartedAt = &trialStart
+		h.store.open = &h.store.grant
+		h.stripe.subscription.Status = "trialing"
+		h.stripe.subscription.TrialStartAt, h.stripe.subscription.TrialEndAt = &trialStart, &trialEnd
+		h.stripe.subscription.CurrentPeriodStartAt, h.stripe.subscription.CurrentPeriodEndAt = &trialStart, &trialEnd
+		h.stripe.retrievedSchedule.CurrentPhaseStartAt, h.stripe.retrievedSchedule.CurrentPhaseEndAt = &trialStart, &trialEnd
 	}
-	if h.stripe.changeScheduleCalls != 1 || h.stripe.changeFreeCalls != 0 {
-		t.Fatalf("schedule=%d free=%d", h.stripe.changeScheduleCalls, h.stripe.changeFreeCalls)
-	}
-	if h.stripe.lastChangeSchedule.ScheduleID != "sched_1" || h.stripe.lastChangeSchedule.PriceID != "price_growth" {
-		t.Fatalf("request=%#v", h.stripe.lastChangeSchedule)
-	}
-	if got.Status != StatusScheduled || h.store.markSupersededCalls != 0 {
-		t.Fatalf("grant=%#v superseded calls=%d", got, h.store.markSupersededCalls)
-	}
+	targetMetadata := trialMetadata("ws_1", "growth", "grant_1", KindPaidSamePlan, "staging")
+	h.stripe.changeScheduleResult = ScheduleSnapshot{StripeMode: "live", ID: "sched_1", Status: "active", SubscriptionID: "sub_1", CustomerID: "cus_1", EndBehavior: "release", Metadata: cloneMetadata(targetMetadata), Phases: []SchedulePhase{{PriceID: "price_growth", StartAt: now, BillingCycleAnchor: "phase_start", Metadata: cloneMetadata(targetMetadata)}}}
+	return h
 }
 
 func TestCancelRenewalDispatchesByKindAndKeepsGrantOpen(t *testing.T) {
