@@ -61,6 +61,77 @@ func TestCanTransitionAllowsEveryDocumentedTransition(t *testing.T) {
 	}
 }
 
+func TestTransitionMatrixCoversEveryStatusPair(t *testing.T) {
+	statuses := []Status{
+		StatusProvisioning,
+		StatusPendingActivation,
+		StatusCheckoutPending,
+		StatusScheduled,
+		StatusActive,
+		StatusCompleted,
+		StatusCanceled,
+		StatusRevoked,
+		StatusSuperseded,
+		StatusFailed,
+	}
+	approvedEdges := map[[2]Status]struct{}{
+		{StatusProvisioning, StatusScheduled}:            {},
+		{StatusProvisioning, StatusFailed}:               {},
+		{StatusPendingActivation, StatusCheckoutPending}: {},
+		{StatusPendingActivation, StatusRevoked}:         {},
+		{StatusPendingActivation, StatusSuperseded}:      {},
+		{StatusCheckoutPending, StatusPendingActivation}: {},
+		{StatusCheckoutPending, StatusActive}:            {},
+		{StatusCheckoutPending, StatusRevoked}:           {},
+		{StatusCheckoutPending, StatusSuperseded}:        {},
+		{StatusCheckoutPending, StatusFailed}:            {},
+		{StatusScheduled, StatusActive}:                  {},
+		{StatusScheduled, StatusCanceled}:                {},
+		{StatusScheduled, StatusSuperseded}:              {},
+		{StatusScheduled, StatusFailed}:                  {},
+		{StatusActive, StatusCompleted}:                  {},
+		{StatusActive, StatusCanceled}:                   {},
+		{StatusActive, StatusSuperseded}:                 {},
+		{StatusActive, StatusFailed}:                     {},
+	}
+
+	for _, from := range statuses {
+		for _, to := range statuses {
+			t.Run(string(from)+"_to_"+string(to), func(t *testing.T) {
+				result, err := ValidateTransition(from, to)
+				canTransition := CanTransition(from, to)
+
+				if from == to {
+					if result != TransitionIdempotent || err != nil {
+						t.Fatalf("ValidateTransition(%q, %q) = (%q, %v), want (%q, nil)", from, to, result, err, TransitionIdempotent)
+					}
+					if canTransition {
+						t.Fatalf("CanTransition(%q, %q) = true, want false for idempotent projection", from, to)
+					}
+					return
+				}
+
+				if _, approved := approvedEdges[[2]Status{from, to}]; approved {
+					if result != TransitionApplied || err != nil {
+						t.Fatalf("ValidateTransition(%q, %q) = (%q, %v), want (%q, nil)", from, to, result, err, TransitionApplied)
+					}
+					if !canTransition {
+						t.Fatalf("CanTransition(%q, %q) = false, want true", from, to)
+					}
+					return
+				}
+
+				if result != TransitionInvalid || !errors.Is(err, ErrInvalidTransition) {
+					t.Fatalf("ValidateTransition(%q, %q) = (%q, %v), want (%q, ErrInvalidTransition)", from, to, result, err, TransitionInvalid)
+				}
+				if canTransition {
+					t.Fatalf("CanTransition(%q, %q) = true, want false", from, to)
+				}
+			})
+		}
+	}
+}
+
 func TestCanTransitionRejectsTerminalAndBackwardTransitions(t *testing.T) {
 	allStatuses := []Status{
 		StatusProvisioning,
