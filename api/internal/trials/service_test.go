@@ -526,7 +526,7 @@ func TestPrepareCheckoutClaimsMatchingPendingGrant(t *testing.T) {
 
 func TestPrepareCheckoutMatchingPendingGrantRequiresCustomerBeforeClaim(t *testing.T) {
 	h := newServiceHarness(t)
-	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusPendingActivation, StripeMode: "live"}
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusPendingActivation, StripeMode: "live", StripeCustomerID: "cus_stale"}
 	h.store.grant = *h.store.open
 	req := validServiceCheckoutRequest()
 	req.CustomerID = ""
@@ -537,6 +537,46 @@ func TestPrepareCheckoutMatchingPendingGrantRequiresCustomerBeforeClaim(t *testi
 	}
 	if h.store.claimCalls != 0 || h.stripe.createCheckoutCalls != 0 {
 		t.Fatalf("claim=%d Stripe=%d", h.store.claimCalls, h.stripe.createCheckoutCalls)
+	}
+	if h.store.grant.StripeCustomerID != "cus_stale" {
+		t.Fatalf("stale customer changed during preflight: %q", h.store.grant.StripeCustomerID)
+	}
+}
+
+func TestPrepareCheckoutValidatedCustomerOverwritesCustomerRetainedAfterConfirmedRejection(t *testing.T) {
+	h := newServiceHarness(t)
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusPendingActivation, StripeMode: "live"}
+	h.store.grant = *h.store.open
+	h.stripe.createCheckoutErr = &CheckoutMutationError{Outcome: MutationRejected, Err: errors.New("customer was rejected")}
+	first := validServiceCheckoutRequest()
+	first.CustomerID = "cus_stale"
+	if _, err := h.service.PrepareCheckout(t.Context(), first); err == nil {
+		t.Fatal("confirmed rejection error=nil")
+	}
+	if h.store.grant.Status != StatusPendingActivation || h.store.grant.StripeCustomerID != "cus_stale" {
+		t.Fatalf("grant after rejection=%#v", h.store.grant)
+	}
+
+	preflight := validServiceCheckoutRequest()
+	preflight.CustomerID = ""
+	if _, err := h.service.PrepareCheckout(t.Context(), preflight); !errors.Is(err, ErrCheckoutCustomerRequired) {
+		t.Fatalf("preflight error=%v", err)
+	}
+	if h.store.claimCalls != 1 {
+		t.Fatalf("preflight claimed stale customer; calls=%d", h.store.claimCalls)
+	}
+
+	h.stripe.createCheckoutErr = nil
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1"}
+	validated := validServiceCheckoutRequest()
+	validated.CustomerID = "cus_validated"
+
+	_, err := h.service.PrepareCheckout(t.Context(), validated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.store.grant.StripeCustomerID != "cus_validated" || h.stripe.lastCheckout.CustomerID != "cus_validated" {
+		t.Fatalf("grant customer=%q Checkout customer=%q", h.store.grant.StripeCustomerID, h.stripe.lastCheckout.CustomerID)
 	}
 }
 
@@ -581,9 +621,7 @@ func TestPrepareCheckoutReopensExpiredExactSessionAndStoresReplacement(t *testin
 	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_expired", Status: "expired"}
 	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_replacement", Status: "open", URL: "https://checkout.stripe.test/cs_replacement"}
 
-	req := validServiceCheckoutRequest()
-	req.CustomerID = ""
-	got, err := h.service.PrepareCheckout(t.Context(), req)
+	got, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -720,14 +758,20 @@ func TestPrepareCheckoutExpiredReleaseRaceReclaimsWebhookReopenedGrant(t *testin
 		h.store.open = &h.store.grant
 	}
 
-	req := validServiceCheckoutRequest()
-	req.CustomerID = ""
-	got, err := h.service.PrepareCheckout(t.Context(), req)
+	preflight := validServiceCheckoutRequest()
+	preflight.CustomerID = ""
+	if _, err := h.service.PrepareCheckout(t.Context(), preflight); !errors.Is(err, ErrCheckoutCustomerRequired) {
+		t.Fatalf("preflight error=%v", err)
+	}
+	if h.store.claimCalls != 0 || h.store.grant.CheckoutAttempt != 1 {
+		t.Fatalf("preflight claim=%d attempt=%d", h.store.claimCalls, h.store.grant.CheckoutAttempt)
+	}
+	got, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
 	if err != nil || got.SessionID != "cs_replacement" {
 		t.Fatalf("checkout=%#v error=%v", got, err)
 	}
 	if h.store.claimCalls != 1 || h.stripe.lastCheckout.CheckoutAttempt != 2 {
-		t.Fatalf("claim=%d attempt=%d", h.store.claimCalls, h.stripe.lastCheckout.CheckoutAttempt)
+		t.Fatalf("validated claim=%d attempt=%d", h.store.claimCalls, h.stripe.lastCheckout.CheckoutAttempt)
 	}
 }
 

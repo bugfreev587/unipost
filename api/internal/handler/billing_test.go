@@ -63,6 +63,75 @@ func TestStripeCheckoutURLFailsClosedOnEmptyResponse(t *testing.T) {
 	}
 }
 
+func TestResolveTrialStripeCustomerValidatesCandidateBeforeReuse(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		candidate      *stripe.Customer
+		retrieveErr    error
+		wantID         string
+		wantCreateCall int
+		wantErr        bool
+	}{
+		{name: "matching workspace", candidate: &stripe.Customer{ID: "cus_existing", Metadata: map[string]string{"workspace_id": "ws_1"}}, wantID: "cus_existing"},
+		{name: "legacy empty metadata", candidate: &stripe.Customer{ID: "cus_existing"}, wantID: "cus_existing"},
+		{name: "resource missing", retrieveErr: &stripe.Error{Code: stripe.ErrorCodeResourceMissing, HTTPStatusCode: http.StatusNotFound}, wantID: "cus_new", wantCreateCall: 1},
+		{name: "deleted", candidate: &stripe.Customer{ID: "cus_existing", Deleted: true}, wantID: "cus_new", wantCreateCall: 1},
+		{name: "workspace mismatch", candidate: &stripe.Customer{ID: "cus_existing", Metadata: map[string]string{"workspace_id": "ws_other"}}, wantID: "cus_new", wantCreateCall: 1},
+		{name: "returned ID mismatch", candidate: &stripe.Customer{ID: "cus_other", Metadata: map[string]string{"workspace_id": "ws_1"}}, wantID: "cus_new", wantCreateCall: 1},
+		{name: "transient lookup", retrieveErr: context.DeadlineExceeded, wantErr: true},
+		{name: "Stripe 500 lookup", retrieveErr: &stripe.Error{HTTPStatusCode: http.StatusInternalServerError, Type: stripe.ErrorTypeAPI}, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeStripeCustomerService{
+				retrieveResult: test.candidate, retrieveErr: test.retrieveErr,
+				createResult: &stripe.Customer{ID: "cus_new"},
+			}
+			got, err := resolveTrialStripeCustomer(t.Context(), client, "cus_existing", "ws_1", "owner_1", "Workspace", "owner@example.com", "live")
+			if test.wantErr {
+				if err == nil || client.createCalls != 0 {
+					t.Fatalf("id=%q error=%v createCalls=%d", got, err, client.createCalls)
+				}
+				return
+			}
+			if err != nil || got != test.wantID || client.createCalls != test.wantCreateCall {
+				t.Fatalf("id=%q error=%v createCalls=%d", got, err, client.createCalls)
+			}
+		})
+	}
+}
+
+func TestResolveTrialStripeCustomerCreatesStableCustomerWhenCandidateAbsent(t *testing.T) {
+	client := &fakeStripeCustomerService{createResult: &stripe.Customer{ID: "cus_new"}}
+	got, err := resolveTrialStripeCustomer(t.Context(), client, "", "ws_1", "owner_1", "Workspace", "owner@example.com", "sandbox")
+	if err != nil || got != "cus_new" || client.retrieveCalls != 0 || client.createCalls != 1 {
+		t.Fatalf("id=%q error=%v retrieve=%d create=%d", got, err, client.retrieveCalls, client.createCalls)
+	}
+	if key := stripe.StringValue(client.createParams.IdempotencyKey); key != "billing:sandbox:workspace:ws_1:customer" {
+		t.Fatalf("create idempotency key=%q", key)
+	}
+}
+
+type fakeStripeCustomerService struct {
+	retrieveResult *stripe.Customer
+	retrieveErr    error
+	createResult   *stripe.Customer
+	createErr      error
+	retrieveCalls  int
+	createCalls    int
+	createParams   *stripe.CustomerParams
+}
+
+func (s *fakeStripeCustomerService) Get(_ string, _ *stripe.CustomerParams) (*stripe.Customer, error) {
+	s.retrieveCalls++
+	return s.retrieveResult, s.retrieveErr
+}
+
+func (s *fakeStripeCustomerService) New(params *stripe.CustomerParams) (*stripe.Customer, error) {
+	s.createCalls++
+	s.createParams = params
+	return s.createResult, s.createErr
+}
+
 func TestTrialCheckoutHandlerPassesValidatedRoutingAndReturnsCheckoutURL(t *testing.T) {
 	service := &fakeBillingTrialCheckoutService{result: trials.CheckoutResult{
 		SessionID: "cs_trial", URL: "https://checkout.stripe.test/cs_trial", TrialGrantID: "grant_1", TrialDays: 30,

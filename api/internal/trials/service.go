@@ -257,10 +257,7 @@ func validateCheckoutRequest(req CheckoutRequest) error {
 func (s *Service) prepareCheckoutGrant(ctx context.Context, grant Grant, req CheckoutRequest, allowExpiredReplacement bool) (CheckoutResult, error) {
 	switch grant.Status {
 	case StatusPendingActivation:
-		customerID := strings.TrimSpace(grant.StripeCustomerID)
-		if customerID == "" {
-			customerID = strings.TrimSpace(req.CustomerID)
-		}
+		customerID := strings.TrimSpace(req.CustomerID)
 		if customerID == "" {
 			return CheckoutResult{}, ErrCheckoutCustomerRequired
 		}

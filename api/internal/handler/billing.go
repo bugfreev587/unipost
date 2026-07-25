@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"time"
@@ -55,6 +56,49 @@ func stripeCheckoutURL(session *stripe.CheckoutSession) (string, error) {
 		return "", errors.New("Stripe returned an incomplete Checkout Session")
 	}
 	return session.URL, nil
+}
+
+type stripeCustomerService interface {
+	Get(string, *stripe.CustomerParams) (*stripe.Customer, error)
+	New(*stripe.CustomerParams) (*stripe.Customer, error)
+}
+
+func resolveTrialStripeCustomer(ctx context.Context, customers stripeCustomerService, candidateID, workspaceID, userID, workspaceName, email, mode string) (string, error) {
+	if customers == nil {
+		return "", errors.New("Stripe customer service is unavailable")
+	}
+	if candidateID != "" {
+		params := &stripe.CustomerParams{}
+		params.Context = ctx
+		customer, err := customers.Get(candidateID, params)
+		if err == nil {
+			workspaceMetadata := ""
+			if customer != nil {
+				workspaceMetadata = customer.Metadata["workspace_id"]
+			}
+			if customer != nil && customer.ID == candidateID && !customer.Deleted && (workspaceMetadata == "" || workspaceMetadata == workspaceID) {
+				return customer.ID, nil
+			}
+		} else if !isStripeResourceMissing(err) {
+			return "", fmt.Errorf("validate Stripe customer %s: %w", candidateID, err)
+		}
+	}
+
+	params := stripeCustomerParams(workspaceID, userID, workspaceName, email, mode)
+	params.Context = ctx
+	customer, err := customers.New(params)
+	if err != nil {
+		return "", fmt.Errorf("create Stripe customer: %w", err)
+	}
+	if customer == nil || customer.ID == "" || customer.Deleted {
+		return "", errors.New("Stripe returned an invalid customer")
+	}
+	return customer.ID, nil
+}
+
+func isStripeResourceMissing(err error) bool {
+	var stripeErr *stripe.Error
+	return errors.As(err, &stripeErr) && stripeErr.Code == stripe.ErrorCodeResourceMissing
 }
 
 type BillingHandler struct {
@@ -299,7 +343,17 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	// customer ID will be invalid in the new mode and we'll mint a new one.
 	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	customerID := ""
-	if sub.StripeCustomerID.String != "" {
+	if trialNeedsCustomer {
+		user, _ := h.queries.GetUser(r.Context(), userID)
+		customerID, err = resolveTrialStripeCustomer(
+			r.Context(), mode.Client.Customers, sub.StripeCustomerID.String,
+			workspaceID, userID, workspace.Name, user.Email, mode.Name,
+		)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to validate customer for trial checkout")
+			return
+		}
+	} else if sub.StripeCustomerID.String != "" {
 		customerID = sub.StripeCustomerID.String
 	} else {
 		user, _ := h.queries.GetUser(r.Context(), userID)
