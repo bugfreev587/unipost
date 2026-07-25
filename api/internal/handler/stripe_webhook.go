@@ -227,6 +227,15 @@ func (h *StripeWebhookHandler) HandleStripe(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply subscription update")
 			return
 		}
+	case "customer.subscription.trial_will_end":
+		if err := h.handleSubscriptionTrialWillEnd(r, event, mode); err != nil {
+			if errors.Is(err, errStripeWebhookNotApplicable) {
+				break
+			}
+			slog.Error("stripe webhook: trial ending reconciliation failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to apply trial ending event")
+			return
+		}
 	case "customer.subscription.deleted":
 		if err := h.handleSubscriptionDeleted(r, event, mode); err != nil {
 			if errors.Is(err, errStripeWebhookNotApplicable) {
@@ -299,6 +308,9 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	}
 	if projected.Skipped {
 		return nil
+	}
+	if snapshot.Status == string(stripe.SubscriptionStatusTrialing) {
+		h.maybeSyncShortTrialEnding(r.Context(), projected.TrialGrant, stripeEventEffectiveAt(event))
 	}
 	if !projected.Managed && !projected.Skipped {
 		if _, err := h.trialWebhooks.ReconcileOrdinaryCheckout(r.Context(), workspaceID, planID, stripeEventEffectiveAt(event)); err != nil && !errors.Is(err, trials.ErrGrantNotFound) {
@@ -423,6 +435,9 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 	if err != nil {
 		return err
 	}
+	if snapshot.Status == string(stripe.SubscriptionStatusTrialing) {
+		h.maybeSyncShortTrialEnding(r.Context(), projected.TrialGrant, stripeEventEffectiveAt(event))
+	}
 	if projected.PreviousPlanID != projected.PlanID {
 		h.syncLoopsPlanChanged(r.Context(), projected.WorkspaceID, projected.PreviousPlanID, projected.PlanID, fmt.Sprintf("plan_changed:stripe.subscription:%s:%s:%s:%d", snapshot.ID, normalizePlanID(projected.PreviousPlanID), normalizePlanID(projected.PlanID), snapshotTimeUnix(snapshot.CurrentPeriodStartAt)))
 		h.evaluatePaidQuotaHorizon(r.Context(), projected.WorkspaceID)
@@ -430,9 +445,31 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 	return nil
 }
 
+func (h *StripeWebhookHandler) handleSubscriptionTrialWillEnd(r *http.Request, event stripe.Event, mode *billing.Mode) error {
+	var sub stripe.Subscription
+	if err := json.Unmarshal(event.Data.Raw, &sub); err != nil {
+		return err
+	}
+	if err := h.validateSubscriptionTarget(r.Context(), event, sub); err != nil {
+		return err
+	}
+	if mode == nil || mode.Name == "" {
+		return fmt.Errorf("verified Stripe mode is unavailable")
+	}
+	projected, err := h.projectStripeSubscription(r, event, subscriptionWebhookSnapshot(mode.Name, &sub))
+	if err != nil {
+		return err
+	}
+	if projected.Managed {
+		h.syncLoopsBillingTrialEnding(r.Context(), projected.TrialGrant, stripeEventEffectiveAt(event))
+	}
+	return nil
+}
+
 type subscriptionProjectionResult struct {
 	Managed        bool
 	Skipped        bool
+	TrialGrant     trials.Grant
 	WorkspaceID    string
 	PreviousPlanID string
 	PlanID         string
@@ -476,7 +513,7 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 			return subscriptionProjectionResult{}, fmt.Errorf("reconcile managed trial subscription: %w", err)
 		}
 		if trialResult.DoNotProject {
-			return subscriptionProjectionResult{Managed: true, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: localSub.PlanID}, nil
+			return subscriptionProjectionResult{Managed: true, TrialGrant: trialResult.Grant, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: localSub.PlanID}, nil
 		}
 	}
 
@@ -517,7 +554,7 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 	}); err != nil {
 		return subscriptionProjectionResult{}, fmt.Errorf("persist Stripe subscription projection: %w", err)
 	}
-	return subscriptionProjectionResult{Managed: trialResult.Managed, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: planID}, nil
+	return subscriptionProjectionResult{Managed: trialResult.Managed, TrialGrant: trialResult.Grant, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: planID}, nil
 }
 
 func subscriptionPeriodRegresses(localSub db.Subscription, snapshot trials.SubscriptionSnapshot) bool {
@@ -715,9 +752,12 @@ func (h *StripeWebhookHandler) handleSubscriptionSchedule(r *http.Request, event
 		return fmt.Errorf("trial webhook reconciliation is unavailable")
 	}
 	snapshot := scheduleWebhookSnapshot(mode.Name, &schedule)
-	_, err := h.trialWebhooks.ReconcileSchedule(r.Context(), trials.WebhookScheduleRequest{EventType: string(event.Type), Snapshot: snapshot, OccurredAt: stripeEventEffectiveAt(event)})
+	result, err := h.trialWebhooks.ReconcileSchedule(r.Context(), trials.WebhookScheduleRequest{EventType: string(event.Type), Snapshot: snapshot, OccurredAt: stripeEventEffectiveAt(event)})
 	if errors.Is(err, trials.ErrWebhookNotApplicable) {
 		return errStripeWebhookNotApplicable
+	}
+	if err == nil {
+		h.maybeSyncShortTrialEnding(r.Context(), result.Grant, stripeEventEffectiveAt(event))
 	}
 	return err
 }

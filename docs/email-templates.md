@@ -16,6 +16,7 @@ As of 2026-06-26, these paths are wired to Loops transactional templates in code
 - `email.workspace.member_invited.v1` via `LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID`.
 - `email.notification.test.v1` via `LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID`.
 - `email.billing.plan_changed.v1` via `LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID`.
+- `email.billing.trial_ending.v1` via `LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID`.
 - `email.billing.payment_failed.v1` via `LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID`.
 - `email.billing.payment_recovered.v1` via `LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID`.
 - `email.billing.subscription_canceled.v1` via `LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID`.
@@ -144,6 +145,22 @@ The admin view supports filtering by status, provider, event key, quota period/t
 - Fallback policy: none by default.
 - Retention policy: retain metadata and variable snapshots for 13 months.
 - External Loops workflow audit: no overlapping cancellation workflow should send for the same subscription cancellation.
+
+### email.billing.trial_ending.v1
+
+- Template env: `LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID`
+- Provider: Loops
+- Delivery class: `critical_transactional`
+- Owner area: Billing
+- Trigger: Stripe `customer.subscription.trial_will_end` for an active managed grant. A one-, two-, or three-day managed trial uses the same sender immediately after activation.
+- Recipient policy: workspace owner.
+- Preference policy: essential account/billing notice; not unsubscribe-gated.
+- Required variables: `workspace_name`, `plan_id`, `plan_name`, `trial_end`, `days_remaining`, `post_trial_price`, `billing_url`, `cancel_url`
+- Idempotency policy: `billing_trial_ending:{trial_grant_id}:{trial_end}`
+- Audit policy: one `email_send_attempts` row per grant/end key; retries increment `attempt_count` on that row.
+- Fallback policy: send immediately after activation for one-, two-, or three-day trials.
+- Retention policy: retain metadata and variable snapshots for 13 months.
+- External Loops workflow audit: audit workflows listening to `billing_trial_ending` before enabling this template so no second workflow sends the same reminder.
 
 ### email.quota.free_plan_reminder.v1
 

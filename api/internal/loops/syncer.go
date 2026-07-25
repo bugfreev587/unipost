@@ -56,6 +56,7 @@ type EmailPolicy interface {
 
 type TransactionalIDs struct {
 	PlanChanged                 string
+	BillingTrialEnding          string
 	BillingPaymentFailed        string
 	BillingPaymentRecovered     string
 	BillingSubscriptionCanceled string
@@ -228,6 +229,8 @@ func (s *Syncer) transactionalIDFor(eventName string) string {
 	switch strings.TrimSpace(eventName) {
 	case "plan_changed":
 		return strings.TrimSpace(s.transactionalIDs.PlanChanged)
+	case "billing_trial_ending":
+		return strings.TrimSpace(s.transactionalIDs.BillingTrialEnding)
 	case "billing_payment_failed":
 		return strings.TrimSpace(s.transactionalIDs.BillingPaymentFailed)
 	case "billing_payment_recovered":
@@ -308,6 +311,15 @@ func lifecycleTransactionalDataVariables(event LifecycleEvent, props map[string]
 		addTransactionalValue(vars, "new_plan_id", props["new_plan_id"])
 		addTransactionalValue(vars, "change_type", props["change_type"])
 		addTransactionalValue(vars, "billing_url", props["billing_url"])
+	case "billing_trial_ending":
+		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
+		addTransactionalValue(vars, "plan_id", props["plan_id"])
+		addTransactionalValue(vars, "plan_name", props["plan_name"])
+		addTransactionalValue(vars, "trial_end", props["trial_end"])
+		addTransactionalValue(vars, "days_remaining", props["days_remaining"])
+		addTransactionalValue(vars, "post_trial_price", props["post_trial_price"])
+		addTransactionalValue(vars, "billing_url", props["billing_url"])
+		addTransactionalValue(vars, "cancel_url", props["cancel_url"])
 	case "billing_payment_failed":
 		addTransactionalValue(vars, "workspace_name", props["workspace_name"])
 		addTransactionalValue(vars, "plan_id", props["plan_id"])

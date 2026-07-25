@@ -79,6 +79,149 @@ func TestStripeSubscriptionCreatedProjectsThroughSharedProjectorBeforeCheckout(t
 	}
 }
 
+func TestStripeTrialWillEndSendsManagedTrialEndingEmailForBothKinds(t *testing.T) {
+	for _, kind := range []trials.Kind{trials.KindFreeToPaid, trials.KindPaidSamePlan} {
+		t.Run(string(kind), func(t *testing.T) {
+			t.Setenv(runtimeenv.EnvVar, "staging")
+			store := newStripeWebhookStore("ws_staging")
+			endingAt := time.Unix(1787501017, 0).UTC()
+			trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+				ID: "grant_1", WorkspaceID: "ws_staging", Kind: kind, PlanID: "basic", DurationDays: 30,
+				Status: trials.StatusActive, EndsAt: &endingAt, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging",
+			}}}
+			syncer := &recordingStripeLifecycleSyncer{}
+			h, secret := newTestStripeWebhookHandler(store, syncer)
+			h.SetTrialWebhookService(trial)
+			metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": string(kind), "unipost_environment": "staging"}
+
+			first := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.trial_will_end", stripe.SubscriptionStatusTrialing, false, metadata)
+			second := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.trial_will_end", stripe.SubscriptionStatusTrialing, false, metadata)
+
+			if first.Code != http.StatusOK || second.Code != http.StatusOK {
+				t.Fatalf("statuses=%d/%d first=%s second=%s", first.Code, second.Code, first.Body.String(), second.Body.String())
+			}
+			endingEvents := lifecycleEventsNamed(syncer.events, "billing_trial_ending")
+			if len(endingEvents) != 2 {
+				t.Fatalf("trial ending events=%d, want duplicate delivery attempts with one stable provider key", len(endingEvents))
+			}
+			for _, event := range endingEvents {
+				if event.IdempotencyKey != "billing_trial_ending:grant_1:2026-08-23T16:03:37Z" {
+					t.Fatalf("event=%#v", event)
+				}
+			}
+		})
+	}
+}
+
+func TestStripeTrialWillEndLoopsFailureStillAcknowledgesWebhook(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	endingAt := time.Unix(1787501017, 0).UTC()
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "basic", DurationDays: 30,
+		Status: trials.StatusActive, EndsAt: &endingAt, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging",
+	}}}
+	syncer := &recordingStripeLifecycleSyncer{err: errors.New("Loops unavailable")}
+	h, secret := newTestStripeWebhookHandler(store, syncer)
+	h.SetTrialWebhookService(trial)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.trial_will_end", stripe.SubscriptionStatusTrialing, false, map[string]string{
+		"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+	})
+	if response.Code != http.StatusOK || len(lifecycleEventsNamed(syncer.events, "billing_trial_ending")) != 1 {
+		t.Fatalf("status=%d events=%d body=%s", response.Code, len(syncer.events), response.Body.String())
+	}
+}
+
+func TestStripeShortTrialEmailsImmediatelyAfterActivationButLongTrialWaits(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		days int32
+		want int
+	}{{name: "three days", days: 3, want: 1}, {name: "thirty days", days: 30, want: 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(runtimeenv.EnvVar, "staging")
+			store := newStripeWebhookStore("ws_staging")
+			endingAt := time.Unix(1784822630, 0).UTC().Add(time.Duration(tc.days) * 24 * time.Hour)
+			trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+				ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "basic", DurationDays: tc.days,
+				Status: trials.StatusActive, EndsAt: &endingAt, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging",
+			}}}
+			syncer := &recordingStripeLifecycleSyncer{}
+			h, secret := newTestStripeWebhookHandler(store, syncer)
+			h.SetTrialWebhookService(trial)
+			response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.created", stripe.SubscriptionStatusTrialing, false, map[string]string{
+				"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+			})
+			endingEvents := lifecycleEventsNamed(syncer.events, "billing_trial_ending")
+			if response.Code != http.StatusOK || len(endingEvents) != tc.want {
+				t.Fatalf("status=%d trial_ending_events=%d all_events=%d want=%d body=%s", response.Code, len(endingEvents), len(syncer.events), tc.want, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestStripeShortTrialEmailRequiresTrialingSubscription(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	endingAt := time.Unix(1784822630, 0).UTC().Add(72 * time.Hour)
+	trial := &recordingTrialWebhookService{subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "basic", DurationDays: 3,
+		Status: trials.StatusActive, EndsAt: &endingAt, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging",
+	}}}
+	syncer := &recordingStripeLifecycleSyncer{}
+	h, secret := newTestStripeWebhookHandler(store, syncer)
+	h.SetTrialWebhookService(trial)
+	response := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, false, map[string]string{
+		"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging",
+	})
+	if response.Code != http.StatusOK || len(lifecycleEventsNamed(syncer.events, "billing_trial_ending")) != 0 {
+		t.Fatalf("status=%d events=%#v body=%s", response.Code, syncer.events, response.Body.String())
+	}
+}
+
+func TestStripeShortTrialCheckoutActivationUsesSameEndingEmail(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	start := time.Unix(1784822617, 0).UTC()
+	end := start.Add(48 * time.Hour)
+	grant := trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindFreeToPaid, PlanID: "basic", DurationDays: 2, Status: trials.StatusActive, EndsAt: &end, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging"}
+	trial := &recordingTrialWebhookService{
+		retrieve: trials.SubscriptionSnapshot{
+			StripeMode: "sandbox", ID: "sub_staging", Status: "trialing", CustomerID: "cus_staging", PriceID: "price_basic",
+			TrialStartAt: &start, TrialEndAt: &end, CurrentPeriodStartAt: &start, CurrentPeriodEndAt: &end,
+			Metadata: map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"},
+		},
+		subscriptionResult: trials.WebhookReconcileResult{Managed: true, Grant: grant},
+	}
+	syncer := &recordingStripeLifecycleSyncer{}
+	h, secret := newTestStripeWebhookHandler(store, syncer)
+	h.SetTrialWebhookService(trial)
+	response := postTestCheckoutWebhook(t, h, secret, trial.retrieve.Metadata, stripe.CheckoutSessionPaymentStatusNoPaymentRequired)
+	if response.Code != http.StatusOK || len(lifecycleEventsNamed(syncer.events, "billing_trial_ending")) != 1 {
+		t.Fatalf("status=%d events=%#v body=%s", response.Code, syncer.events, response.Body.String())
+	}
+}
+
+func TestStripeShortPaidTrialScheduleReconciliationUsesSameEndingEmail(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	end := time.Unix(1784822630, 0).UTC().Add(72 * time.Hour)
+	trial := &recordingTrialWebhookService{scheduleResult: trials.WebhookReconcileResult{Managed: true, Grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_staging", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 3,
+		Status: trials.StatusActive, EndsAt: &end, StripeMode: "sandbox", StripeSubscriptionID: "sub_staging", StripeScheduleID: "sched_1",
+	}}}
+	syncer := &recordingStripeLifecycleSyncer{}
+	h, secret := newTestStripeWebhookHandler(store, syncer)
+	h.SetTrialWebhookService(trial)
+	response := postTestStripeObjectWebhook(t, h, secret, "subscription_schedule.updated", map[string]interface{}{
+		"id": "sched_1", "object": "subscription_schedule", "status": "active", "customer": "cus_staging", "subscription": "sub_staging",
+		"metadata": map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "paid_same_plan", "unipost_environment": "staging"},
+	})
+	if response.Code != http.StatusOK || len(lifecycleEventsNamed(syncer.events, "billing_trial_ending")) != 1 {
+		t.Fatalf("status=%d events=%#v body=%s", response.Code, syncer.events, response.Body.String())
+	}
+}
+
 func TestManagedTrialCancelAtPeriodEndRetainsPlanAndAccess(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")
@@ -717,11 +860,22 @@ type recordingHoldReconciler struct {
 
 type recordingStripeLifecycleSyncer struct {
 	events []loops.LifecycleEvent
+	err    error
 }
 
 func (r *recordingStripeLifecycleSyncer) SendLifecycleEvent(_ context.Context, event loops.LifecycleEvent) error {
 	r.events = append(r.events, event)
-	return nil
+	return r.err
+}
+
+func lifecycleEventsNamed(events []loops.LifecycleEvent, name string) []loops.LifecycleEvent {
+	var matching []loops.LifecycleEvent
+	for _, event := range events {
+		if event.EventName == name {
+			matching = append(matching, event)
+		}
+	}
+	return matching
 }
 
 type stripeWebhookStore struct {

@@ -361,6 +361,7 @@ func main() {
 		loopsSyncer = loops.NewSyncer(loopsClient, loops.Options{
 			TransactionalIDs: loops.TransactionalIDs{
 				PlanChanged:                 os.Getenv("LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID"),
+				BillingTrialEnding:          os.Getenv("LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID"),
 				BillingPaymentFailed:        os.Getenv("LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID"),
 				BillingPaymentRecovered:     os.Getenv("LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID"),
 				BillingSubscriptionCanceled: os.Getenv("LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID"),

@@ -257,6 +257,57 @@ func TestSyncerSendsBillingPaymentFailedTransactionalEmailWhenTemplateConfigured
 	assertProperty(t, client.lastTransactional.DataVariables, "next_payment_attempt", "2026-07-01T12:00:00Z")
 }
 
+func TestSyncerSendsBillingTrialEndingTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	audit := &fakeEmailAuditStore{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			BillingTrialEnding: "tmpl_trial_ending",
+		},
+		EmailAuditStore: audit,
+	})
+
+	properties := map[string]any{
+		"workspace_name":   "Alex Workspace",
+		"plan_id":          "growth",
+		"plan_name":        "Growth",
+		"trial_end":        "2026-07-28T12:00:00Z",
+		"days_remaining":   int64(3),
+		"post_trial_price": "$79.00/month",
+		"billing_url":      "https://app.unipost.dev/settings/billing",
+		"cancel_url":       "https://app.unipost.dev/settings/billing",
+	}
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID: "user_123", Email: "alex@example.com", WorkspaceID: "ws_123", WorkspaceName: "Alex Workspace",
+		PlanID: "growth", EventName: "billing_trial_ending", IdempotencyKey: "billing_trial_ending:grant_123:2026-07-28T12:00:00Z", Properties: properties,
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.events != 0 || client.transactionals != 1 {
+		t.Fatalf("events=%d transactionals=%d", client.events, client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_trial_ending" {
+		t.Fatalf("transactional ID = %q", client.lastTransactional.TransactionalID)
+	}
+	if client.lastTransactional.IdempotencyKey != "billing_trial_ending:grant_123:2026-07-28T12:00:00Z" {
+		t.Fatalf("idempotency key = %q", client.lastTransactional.IdempotencyKey)
+	}
+	for key, want := range properties {
+		if key == "days_remaining" {
+			want = float64(3)
+		}
+		assertProperty(t, client.lastTransactional.DataVariables, key, want)
+	}
+	if audit.created != 1 || audit.markedSent != 1 || audit.markedFailed != 0 {
+		t.Fatalf("audit=%#v", audit)
+	}
+	if audit.lastAttempt.EventKey != "email.billing.trial_ending.v1" || audit.lastAttempt.DeliveryClass != "critical_transactional" || audit.lastAttempt.TriggerSource != "stripe_webhook" {
+		t.Fatalf("audit attempt=%#v", audit.lastAttempt)
+	}
+}
+
 func TestSyncerSendsBillingPaymentRecoveredTransactionalEmailWhenTemplateConfigured(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	syncer := NewSyncer(client, Options{
