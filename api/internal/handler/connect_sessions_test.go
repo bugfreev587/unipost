@@ -52,6 +52,79 @@ func TestValidateReturnURL(t *testing.T) {
 	}
 }
 
+func TestConnectRedirectFacebookPresentationDirectHTML(t *testing.T) {
+	tests := []struct {
+		reason string
+		title  string
+		body   string
+	}{
+		{
+			reason: "facebook_page_not_available",
+			title:  "Facebook Page unavailable",
+			body:   "We couldn’t find a Facebook Page this account can manage or has allowed UniPost to access.",
+		},
+		{
+			reason: "facebook_page_permission_required",
+			title:  "Facebook Page permission required",
+			body:   "Your Facebook account can access a Page, but it doesn’t have permission to publish content.",
+		},
+		{
+			reason: "facebook_authorization_failed",
+			title:  "Connection failed",
+			body:   "Facebook authorization couldn’t be completed.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/facebook", nil)
+			(&ConnectCallbackHandler{}).redirectWithStatus(w, r, "", "error", tt.reason, false)
+
+			body := w.Body.String()
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+			}
+			for _, want := range []string{tt.title, tt.body} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("body missing %q: %s", want, body)
+				}
+			}
+			for _, forbidden := range []string{tt.reason, "token_exchange_failed"} {
+				if strings.Contains(body, forbidden) {
+					t.Fatalf("body exposed reason %q: %s", forbidden, body)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectRedirectFacebookPresentationReturnURL(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/facebook", nil)
+	(&ConnectCallbackHandler{}).redirectWithStatus(
+		w,
+		r,
+		"https://app.example.com/connect?source=test",
+		"error",
+		"facebook_page_not_available",
+		false,
+	)
+
+	location := w.Header().Get("Location")
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusFound)
+	}
+	if !strings.Contains(location, "reason=facebook_page_not_available") {
+		t.Fatalf("redirect missing stable reason: %s", location)
+	}
+	for _, forbidden := range []string{"raw-provider-secret", "token_exchange_failed"} {
+		if strings.Contains(location, forbidden) {
+			t.Fatalf("redirect exposed %q: %s", forbidden, location)
+		}
+	}
+}
+
 // TestRandomBase64URL — produces unique, URL-safe, padding-free strings
 // of approximately the right length for the given byte count.
 func TestRandomBase64URL(t *testing.T) {

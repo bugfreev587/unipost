@@ -831,7 +831,11 @@ func (h *ConnectCallbackHandler) redirectWithStatus(w http.ResponseWriter, r *ht
 		case "cancelled":
 			renderConnectError(w, http.StatusOK, "Connection cancelled.", hidePoweredBy)
 		default:
-			renderConnectError(w, http.StatusBadRequest, "Connection failed: "+reason, hidePoweredBy)
+			if presentation, ok := presentationForConnectReason(reason); ok {
+				renderConnectErrorPresentation(w, http.StatusBadRequest, presentation, hidePoweredBy)
+			} else {
+				renderConnectError(w, http.StatusBadRequest, "Connection failed: "+reason, hidePoweredBy)
+			}
 		}
 		return
 	}
@@ -866,11 +870,35 @@ func firstNonEmptyString(values ...string) string {
 
 // Server-rendered HTML for the no-return_url cases.
 
+const (
+	facebookPageNotAvailableMessage       = "We couldn’t find a Facebook Page this account can manage or has allowed UniPost to access. Make sure this Facebook account manages a Page and that UniPost is allowed to access it, or ask a Page admin to grant you access. Then open the original connection link and try again."
+	facebookPagePermissionRequiredMessage = "Your Facebook account can access a Page, but it doesn’t have permission to publish content. Ask a Page admin to grant you Facebook content-management access, then open the original connection link and try again."
+	facebookAuthorizationFailedMessage    = "Facebook authorization couldn’t be completed. Please try again later or contact the developer who sent you the link."
+)
+
+type connectErrorPresentation struct {
+	Title string
+	Body  string
+}
+
+func presentationForConnectReason(reason string) (connectErrorPresentation, bool) {
+	switch reason {
+	case string(connect.FacebookPageNotAvailable):
+		return connectErrorPresentation{Title: "Facebook Page unavailable", Body: facebookPageNotAvailableMessage}, true
+	case string(connect.FacebookPagePermissionRequired):
+		return connectErrorPresentation{Title: "Facebook Page permission required", Body: facebookPagePermissionRequiredMessage}, true
+	case string(connect.FacebookAuthorizationFailed):
+		return connectErrorPresentation{Title: "Connection failed", Body: facebookAuthorizationFailedMessage}, true
+	default:
+		return connectErrorPresentation{}, false
+	}
+}
+
 const connectErrorTplSrc = `<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Connect · UniPost</title>
+<title>{{.Title}} · UniPost</title>
 <style>
 body{font-family:system-ui,-apple-system,sans-serif;max-width:480px;margin:48px auto;padding:0 24px;color:#111;line-height:1.5}
 h1{font-size:22px;margin-bottom:8px}
@@ -878,7 +906,7 @@ h1{font-size:22px;margin-bottom:8px}
 .small{font-size:13px;color:#666;margin-top:24px}
 </style>
 </head><body>
-<h1>Connect</h1>
+<h1>{{.Title}}</h1>
 <div class="err">{{.Message}}</div>
 <p>If you reached this page by mistake, contact the developer who sent you the link.</p>
 {{if .ShowPoweredBy}}<p class="small">Powered by UniPost</p>{{end}}
@@ -908,13 +936,18 @@ var (
 )
 
 func renderConnectError(w http.ResponseWriter, status int, msg string, hidePoweredBy ...bool) {
+	hideBranding := len(hidePoweredBy) > 0 && hidePoweredBy[0]
+	renderConnectErrorPresentation(w, status, connectErrorPresentation{Title: "Connect", Body: msg}, hideBranding)
+}
+
+func renderConnectErrorPresentation(w http.ResponseWriter, status int, presentation connectErrorPresentation, hidePoweredBy bool) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
-	showPoweredBy := true
-	if len(hidePoweredBy) > 0 && hidePoweredBy[0] {
-		showPoweredBy = false
-	}
-	if err := connectErrorTpl.Execute(w, map[string]any{"Message": msg, "ShowPoweredBy": showPoweredBy}); err != nil {
+	if err := connectErrorTpl.Execute(w, map[string]any{
+		"Title":         presentation.Title,
+		"Message":       presentation.Body,
+		"ShowPoweredBy": !hidePoweredBy,
+	}); err != nil {
 		fmt.Fprintf(w, "render error: %v", err)
 	}
 }
