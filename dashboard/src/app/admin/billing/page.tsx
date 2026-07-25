@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   grantAdminTrial,
@@ -43,8 +43,46 @@ const TRIAL_STATUS_LABELS: Record<TrialStatus, string> = {
   failed: "Failed",
 };
 type WorkspaceMutationState = "plan" | "trial" | "refresh_required";
+type BillingLoadOptions = {
+  clearRefreshRequiredFor?: string;
+  clearAllRefreshRequired?: boolean;
+  mutationEpoch?: number;
+};
 const REFRESH_REQUIRED_MESSAGE = "The trial was updated, but Billing could not refresh. Refresh Billing before making another change.";
 const PLAN_REFRESH_REQUIRED_MESSAGE = "Plan changed, but Billing could not refresh. Refresh Billing before making another change.";
+const SUPERSEDED_LOAD_MESSAGE = "Billing request superseded by a newer refresh.";
+
+function isCurrentAdminBillingLoad(
+  requestSequence: number,
+  latestRequestSequence: number,
+  requestMutationEpoch: number,
+  currentMutationEpoch: number,
+): boolean {
+  return requestSequence === latestRequestSequence && requestMutationEpoch === currentMutationEpoch;
+}
+
+function reconcileRefreshRequiredLocks(
+  current: Record<string, WorkspaceMutationState>,
+  options: BillingLoadOptions,
+  workspaceMutationEpochs: Record<string, number>,
+): Record<string, WorkspaceMutationState> {
+  if (options.clearAllRefreshRequired) {
+    return Object.fromEntries(Object.entries(current).filter(([, mutation]) => mutation !== "refresh_required"));
+  }
+
+  const workspaceId = options.clearRefreshRequiredFor;
+  if (
+    !workspaceId
+    || options.mutationEpoch === undefined
+    || workspaceMutationEpochs[workspaceId] !== options.mutationEpoch
+    || current[workspaceId] !== "refresh_required"
+  ) {
+    return current;
+  }
+  const next = { ...current };
+  delete next[workspaceId];
+  return next;
+}
 
 export default function AdminBillingPage() {
   const { getToken } = useAuth();
@@ -52,6 +90,9 @@ export default function AdminBillingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [workspaceMutations, setWorkspaceMutations] = useState<Record<string, WorkspaceMutationState>>({});
+  const loadRequestSequence = useRef(0);
+  const billingMutationEpoch = useRef(0);
+  const workspaceMutationEpochs = useRef<Record<string, number>>({});
 
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
@@ -60,7 +101,11 @@ export default function AdminBillingPage() {
   const [days, setDays] = useState<(typeof DAY_OPTIONS)[number]>(90);
   const limit = 100;
 
-  const setWorkspaceMutation = useCallback((workspaceId: string, state: WorkspaceMutationState | null) => {
+  const setWorkspaceMutation = useCallback((workspaceId: string, state: WorkspaceMutationState | null): number => {
+    if (state === "plan" || state === "trial") {
+      billingMutationEpoch.current += 1;
+      workspaceMutationEpochs.current[workspaceId] = (workspaceMutationEpochs.current[workspaceId] ?? 0) + 1;
+    }
     setWorkspaceMutations((current) => {
       if (state) return { ...current, [workspaceId]: state };
       if (!(workspaceId in current)) return current;
@@ -68,9 +113,12 @@ export default function AdminBillingPage() {
       delete next[workspaceId];
       return next;
     });
+    return workspaceMutationEpochs.current[workspaceId] ?? 0;
   }, []);
 
-  const loadBilling = useCallback(async () => {
+  const loadBilling = useCallback(async (options: BillingLoadOptions = {}) => {
+    const requestSequence = ++loadRequestSequence.current;
+    const requestMutationEpoch = billingMutationEpoch.current;
     setLoading(true);
     setError(null);
     try {
@@ -84,26 +132,39 @@ export default function AdminBillingPage() {
         limit,
       };
       const res = await listAdminBilling(token, params);
+      if (!isCurrentAdminBillingLoad(
+        requestSequence,
+        loadRequestSequence.current,
+        requestMutationEpoch,
+        billingMutationEpoch.current,
+      )) {
+        throw new Error(SUPERSEDED_LOAD_MESSAGE);
+      }
       setRows(res.data);
-      setWorkspaceMutations((current) => Object.fromEntries(
-        Object.entries(current).filter(([, mutation]) => mutation !== "refresh_required"),
-      ));
+      setWorkspaceMutations((current) => reconcileRefreshRequiredLocks(current, options, workspaceMutationEpochs.current));
     } catch (e) {
       const loadError = e instanceof Error ? e : new Error("Failed to load");
-      setError(loadError.message);
+      if (isCurrentAdminBillingLoad(
+        requestSequence,
+        loadRequestSequence.current,
+        requestMutationEpoch,
+        billingMutationEpoch.current,
+      )) {
+        setError(loadError.message);
+      }
       throw loadError;
     } finally {
-      setLoading(false);
+      if (requestSequence === loadRequestSequence.current) setLoading(false);
     }
   }, [days, getToken, plan, search, status]);
 
   const refreshBilling = useCallback(() => {
-    void loadBilling().catch(() => undefined);
+    void loadBilling({ clearAllRefreshRequired: true }).catch(() => undefined);
   }, [loadBilling]);
 
   useEffect(() => {
-    refreshBilling();
-  }, [refreshBilling]);
+    void loadBilling().catch(() => undefined);
+  }, [loadBilling]);
 
   useEffect(() => {
     const timer = setTimeout(() => setSearch(searchInput), 300);
@@ -213,7 +274,7 @@ export default function AdminBillingPage() {
                         hasOpenTrial={hasOpenTrial}
                         workspaceMutation={workspaceMutation}
                         setWorkspaceMutation={setWorkspaceMutation}
-                        onChanged={loadBilling}
+                        onChanged={(mutationEpoch) => loadBilling({ clearRefreshRequiredFor: row.workspace_id, mutationEpoch })}
                       />
                     </td>
                     <td className="abt-trial-cell">
@@ -221,7 +282,7 @@ export default function AdminBillingPage() {
                         row={row}
                         workspaceMutation={workspaceMutation}
                         setWorkspaceMutation={setWorkspaceMutation}
-                        onChanged={loadBilling}
+                        onChanged={(mutationEpoch) => loadBilling({ clearRefreshRequiredFor: row.workspace_id, mutationEpoch })}
                       />
                     </td>
                     <td>
@@ -365,8 +426,8 @@ function GrantTrialForm({
 }: {
   row: AdminBillingRow;
   workspaceMutation?: WorkspaceMutationState;
-  setWorkspaceMutation: (workspaceId: string, state: WorkspaceMutationState | null) => void;
-  onChanged: () => Promise<void>;
+  setWorkspaceMutation: (workspaceId: string, state: WorkspaceMutationState | null) => number;
+  onChanged: (mutationEpoch: number) => Promise<void>;
 }) {
   const { getToken } = useAuth();
   const [targetPlan, setTargetPlan] = useState<(typeof TRIAL_PLAN_OPTIONS)[number]["id"]>("basic");
@@ -414,7 +475,7 @@ function GrantTrialForm({
     if (!confirmed) return;
 
     setBusy("grant");
-    setWorkspaceMutation(row.workspace_id, "trial");
+    const mutationEpoch = setWorkspaceMutation(row.workspace_id, "trial");
     let mutationSucceeded = false;
     let keepLocked = false;
     try {
@@ -425,7 +486,7 @@ function GrantTrialForm({
         duration_days: parsedDays,
       });
       mutationSucceeded = true;
-      await onChanged();
+      await onChanged(mutationEpoch);
       setSuccess(`${TRIAL_STATUS_LABELS[response.data.status]} trial recorded.`);
     } catch (e) {
       if (mutationSucceeded) {
@@ -446,7 +507,7 @@ function GrantTrialForm({
     if (!window.confirm(`Revoke the ${trialPlanLabel(currentTrial.plan_id)} trial offer for ${row.workspace_name}? The user will not be able to activate it.`)) return;
 
     setBusy("revoke");
-    setWorkspaceMutation(row.workspace_id, "trial");
+    const mutationEpoch = setWorkspaceMutation(row.workspace_id, "trial");
     setError(null);
     setSuccess(null);
     let mutationSucceeded = false;
@@ -456,7 +517,7 @@ function GrantTrialForm({
       if (!token) throw new Error("Not authenticated");
       await revokeAdminTrial(token, row.workspace_id, currentTrial.id);
       mutationSucceeded = true;
-      await onChanged();
+      await onChanged(mutationEpoch);
       setSuccess("Trial offer revoked.");
     } catch (e) {
       if (mutationSucceeded) {
@@ -592,8 +653,8 @@ function PlanFlipMenu({
   currentPlan: string;
   hasOpenTrial: boolean;
   workspaceMutation?: WorkspaceMutationState;
-  setWorkspaceMutation: (workspaceId: string, state: WorkspaceMutationState | null) => void;
-  onChanged: () => Promise<void>;
+  setWorkspaceMutation: (workspaceId: string, state: WorkspaceMutationState | null) => number;
+  onChanged: (mutationEpoch: number) => Promise<void>;
 }) {
   const { getToken } = useAuth();
   const [busy, setBusy] = useState(false);
@@ -603,7 +664,7 @@ function PlanFlipMenu({
     if (plan === currentPlan || busy || hasOpenTrial || workspaceMutation) return;
     if (!confirm(`Change this workspace from "${currentPlan}" to "${plan}"? This bypasses Stripe entirely.`)) return;
     setBusy(true);
-    setWorkspaceMutation(workspaceId, "plan");
+    const mutationEpoch = setWorkspaceMutation(workspaceId, "plan");
     setError(null);
     let mutationSucceeded = false;
     let keepLocked = false;
@@ -612,7 +673,7 @@ function PlanFlipMenu({
       if (!token) throw new Error("Not authenticated");
       await setAdminWorkspacePlan(token, workspaceId, plan);
       mutationSucceeded = true;
-      await onChanged();
+      await onChanged(mutationEpoch);
     } catch (e) {
       if (mutationSucceeded) {
         keepLocked = true;

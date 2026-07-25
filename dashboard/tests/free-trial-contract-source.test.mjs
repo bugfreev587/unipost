@@ -19,6 +19,29 @@ async function loadTrialFormatModule() {
   return import(dataUrl);
 }
 
+async function loadAdminBillingFenceModule() {
+  const sourceFile = ts.createSourceFile(
+    "admin-billing-page.tsx",
+    adminBillingSource,
+    ts.ScriptTarget.ES2022,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const names = new Set(["isCurrentAdminBillingLoad", "reconcileRefreshRequiredLocks"]);
+  const declarations = sourceFile.statements
+    .filter((node) => ts.isFunctionDeclaration(node) && node.name && names.has(node.name.text))
+    .map((node) => node.getText(sourceFile));
+  assert.equal(declarations.length, names.size, "expected executable Admin Billing fence helpers");
+  const compiled = ts.transpileModule(
+    `${declarations.join("\n")}\nexport { isCurrentAdminBillingLoad, reconcileRefreshRequiredLocks };`,
+    {
+    compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
+    },
+  );
+  const dataUrl = `data:text/javascript;base64,${Buffer.from(compiled.outputText).toString("base64")}`;
+  return import(dataUrl);
+}
+
 test("billing API exposes all managed trial contracts", () => {
   for (const value of [
     "WorkspaceTrial",
@@ -218,6 +241,65 @@ test("Admin Billing serializes workspace mutations and fails closed after refres
   assert.match(adminBillingSource, /<PlanFlipMenu[\s\S]*hasOpenTrial=\{[\s\S]*workspaceMutation=\{/);
   assert.match(adminBillingSource, /function PlanFlipMenu\([\s\S]*hasOpenTrial[\s\S]*workspaceMutation[\s\S]*const disabled = busy \|\| hasOpenTrial \|\| !!workspaceMutation/);
   assert.match(adminBillingSource, /function GrantTrialForm\([\s\S]*workspaceMutation[\s\S]*if \(busy \|\| hasOpenTrial \|\| workspaceMutation\)/);
-  assert.match(adminBillingSource, /await onChanged\(\);[\s\S]*setSuccess\(/);
+  assert.match(adminBillingSource, /await onChanged\([^)]*\);[\s\S]*setSuccess\(/);
   assert.match(adminBillingSource, /mutationSucceeded[\s\S]*"refresh_required"/);
+});
+
+test("Admin Billing ignores stale loads and scopes refresh-required unlocks", async () => {
+  for (const value of [
+    "loadRequestSequence",
+    "requestSequence",
+    "Billing request superseded by a newer refresh.",
+    "clearRefreshRequiredFor",
+    "clearAllRefreshRequired",
+  ]) {
+    assert.ok(adminBillingSource.includes(value), `missing Admin Billing stale-load fence: ${value}`);
+  }
+
+  assert.match(adminBillingSource, /if \(!isCurrentAdminBillingLoad\([\s\S]*throw new Error\(SUPERSEDED_LOAD_MESSAGE\);[\s\S]*setRows\(/);
+  assert.match(adminBillingSource, /isCurrentAdminBillingLoad\([\s\S]*setError\(/);
+  assert.match(adminBillingSource, /requestSequence === loadRequestSequence\.current[\s\S]*setLoading\(false\)/);
+  assert.match(adminBillingSource, /onChanged=\{\(mutationEpoch\) => loadBilling\(\{ clearRefreshRequiredFor: row\.workspace_id, mutationEpoch \}\)\}/);
+  assert.match(adminBillingSource, /loadBilling\(\{ clearAllRefreshRequired: true \}\)/);
+
+  const { isCurrentAdminBillingLoad, reconcileRefreshRequiredLocks } = await loadAdminBillingFenceModule();
+  const requestA = { sequence: 1, mutationEpoch: 0 };
+  const latestRequestSequence = 2; // mutation refresh B started and then failed
+  const currentMutationEpoch = 1;
+  let rows = ["before mutation"];
+  let locks = { workspace_1: "refresh_required" };
+
+  const requestACanApply = isCurrentAdminBillingLoad(
+    requestA.sequence,
+    latestRequestSequence,
+    requestA.mutationEpoch,
+    currentMutationEpoch,
+  );
+  if (requestACanApply) {
+    rows = ["stale request A"];
+    locks = reconcileRefreshRequiredLocks(locks, { clearAllRefreshRequired: true }, { workspace_1: 1 });
+  }
+  assert.equal(requestACanApply, false);
+  assert.deepEqual(rows, ["before mutation"]);
+  assert.deepEqual(locks, { workspace_1: "refresh_required" });
+
+  const twoLocks = { workspace_1: "refresh_required", workspace_2: "refresh_required" };
+  assert.deepEqual(
+    reconcileRefreshRequiredLocks(
+      twoLocks,
+      { clearRefreshRequiredFor: "workspace_1", mutationEpoch: 2 },
+      { workspace_1: 3 },
+    ),
+    twoLocks,
+    "an older mutation epoch must not unlock a newer workspace mutation",
+  );
+  assert.deepEqual(
+    reconcileRefreshRequiredLocks(
+      twoLocks,
+      { clearRefreshRequiredFor: "workspace_1", mutationEpoch: 3 },
+      { workspace_1: 3 },
+    ),
+    { workspace_2: "refresh_required" },
+    "a matching mutation refresh may unlock only its workspace",
+  );
 });
