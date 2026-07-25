@@ -128,6 +128,7 @@ test("synthetic Clerk users are passwordless and carry a reserved identity", asy
   assert.equal(request.body.skip_legal_checks, true);
   assert.equal(Object.hasOwn(request.body, "password"), false);
   assert.match(request.body.email_address[0], /^codex-dashboard-regression-/);
+  assert.ok(request.body.email_address[0].split("@")[0].length <= 64);
   assert.equal(request.body.public_metadata.test_identity, "dashboard-regression");
   assert.deepEqual(identity, {
     id: "user_synthetic_1",
