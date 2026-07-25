@@ -76,7 +76,7 @@ func TestDecideOwnership(t *testing.T) {
 			want:           Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: 1},
 		},
 		{
-			name: "same managed user in a different profile conflicts",
+			name: "same managed user in a different profile reuses connection",
 			matches: []db.SocialAccount{{
 				ID:             "account-a",
 				ProfileID:      "profile-other",
@@ -84,7 +84,17 @@ func TestDecideOwnership(t *testing.T) {
 			}},
 			profileID:      "profile-a",
 			externalUserID: "managed-a",
-			want:           Decision{Kind: Conflict, ConflictClass: ConflictProfileMismatch, MatchCount: 1},
+			want:           Decision{Kind: Reconnect, AccountID: "account-a"},
+		},
+		{
+			name: "sibling bindings for one connection remain one ownership match",
+			matches: []db.SocialAccount{
+				{ID: "account-a", ProfileID: "profile-a", ConnectionID: pgtype.Text{String: "connection-a", Valid: true}, ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},
+				{ID: "account-b", ProfileID: "profile-b", ConnectionID: pgtype.Text{String: "connection-a", Valid: true}, ExternalUserID: pgtype.Text{String: "managed-a", Valid: true}},
+			},
+			profileID:      "profile-c",
+			externalUserID: "managed-a",
+			want:           Decision{Kind: Reconnect, AccountID: "account-a"},
 		},
 		{
 			name: "multiple active matches conflict even when one is an exact reconnect",

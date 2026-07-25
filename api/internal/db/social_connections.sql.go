@@ -346,6 +346,51 @@ func (q *Queries) GetSocialConnectionForUpdate(ctx context.Context, arg GetSocia
 	return i, err
 }
 
+const listBoundProfileIDsForAccount = `-- name: ListBoundProfileIDsForAccount :many
+SELECT DISTINCT target.profile_id
+FROM social_accounts source
+JOIN profiles source_profile ON source_profile.id = source.profile_id
+JOIN social_accounts target
+  ON target.connection_id = source.connection_id
+ AND target.binding_status = 'active'
+JOIN profiles target_profile ON target_profile.id = target.profile_id
+LEFT JOIN social_connections sc ON sc.id = source.connection_id
+WHERE source.id = $1
+  AND source_profile.workspace_id = $2
+  AND target_profile.workspace_id = $2
+  AND (
+    $3::TEXT IS NULL
+    OR COALESCE(sc.external_user_id, target.external_user_id) = $3::TEXT
+  )
+ORDER BY target.profile_id
+`
+
+type ListBoundProfileIDsForAccountParams struct {
+	AccountID      string      `json:"account_id"`
+	WorkspaceID    string      `json:"workspace_id"`
+	ExternalUserID pgtype.Text `json:"external_user_id"`
+}
+
+func (q *Queries) ListBoundProfileIDsForAccount(ctx context.Context, arg ListBoundProfileIDsForAccountParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, listBoundProfileIDsForAccount, arg.AccountID, arg.WorkspaceID, arg.ExternalUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var profile_id string
+		if err := rows.Scan(&profile_id); err != nil {
+			return nil, err
+		}
+		items = append(items, profile_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const refreshSocialConnection = `-- name: RefreshSocialConnection :one
 UPDATE social_connections
 SET access_token = $1,

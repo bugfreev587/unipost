@@ -67,6 +67,7 @@ type Store interface {
 
 type connectionQueries interface {
 	FindCanonicalSocialConnectionForUpdate(context.Context, db.FindCanonicalSocialConnectionForUpdateParams) (db.SocialConnection, error)
+	ListActiveAccountsByWorkspaceProviderIdentity(context.Context, db.ListActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error)
 	CreateSocialConnection(context.Context, db.CreateSocialConnectionParams) (db.SocialConnection, error)
 	RefreshSocialConnection(context.Context, db.RefreshSocialConnectionParams) (db.SocialConnection, error)
 	CreateOrReactivateSocialAccountBinding(context.Context, db.CreateOrReactivateSocialAccountBindingParams) (db.SocialAccount, error)
@@ -122,6 +123,20 @@ func (s *PostgresStore) SaveVerified(ctx context.Context, mode SaveMode, input C
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
+		legacyMatches, lookupErr := queries.ListActiveAccountsByWorkspaceProviderIdentity(ctx, db.ListActiveAccountsByWorkspaceProviderIdentityParams{
+			WorkspaceID: input.WorkspaceID, Platform: input.Platform, ProviderIdentity: input.ProviderIdentity,
+		})
+		if lookupErr != nil {
+			return db.SocialAccount{}, fmt.Errorf("check legacy social account identity: %w", lookupErr)
+		}
+		for _, match := range legacyMatches {
+			if !match.ConnectionID.Valid || strings.TrimSpace(match.ConnectionID.String) == "" {
+				return db.SocialAccount{}, ErrLegacyBinding
+			}
+		}
+		if len(legacyMatches) != 0 {
+			return db.SocialAccount{}, ErrOwnershipConflict
+		}
 		connection, err = queries.CreateSocialConnection(ctx, createConnectionParams(input))
 		if err != nil {
 			return db.SocialAccount{}, fmt.Errorf("create social connection: %w", err)

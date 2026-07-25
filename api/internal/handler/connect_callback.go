@@ -47,6 +47,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/instagramwebhooks"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/socialconnections"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -75,6 +76,12 @@ type ConnectCallbackHandler struct {
 	quota                      *quota.Checker
 	instagramWebhookSubscriber instagramWebhookSubscriber
 	ownershipStore             managedAccountOwnershipStore
+	connections                socialconnections.Store
+}
+
+func (h *ConnectCallbackHandler) SetConnectionStore(store socialconnections.Store) *ConnectCallbackHandler {
+	h.connections = store
+	return h
 }
 
 func NewConnectCallbackHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, registry *connect.Registry, callbackBaseURL string, superAdminChecker *auth.SuperAdminChecker, ownershipStore managedAccountOwnershipStore) *ConnectCallbackHandler {
@@ -694,17 +701,28 @@ func (h *ConnectCallbackHandler) Callback(w http.ResponseWriter, r *http.Request
 		ExternalUserEmail: session.ExternalUserEmail,
 		XAppMode:          resolved.xAppMode,
 	}
-	saved, err := h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
-		WorkspaceID:      workspaceID,
-		ProfileID:        session.ProfileID,
-		Platform:         platformName,
-		ProviderIdentity: providerIdentity,
-		ExternalUserID:   session.ExternalUserID,
-		Refresh:          refreshParams,
-		Upsert:           upsertParams,
-	})
+	var saved db.SocialAccount
+	if h.connections != nil {
+		saved, err = h.connections.SaveVerified(r.Context(), socialconnections.SaveManagedReuse, socialconnections.CredentialInput{
+			WorkspaceID: workspaceID, ProfileID: session.ProfileID, Platform: platformName,
+			ProviderIdentity: providerIdentity, ExternalAccountID: profile.ExternalAccountID,
+			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: tokens.ExpiresAt,
+			AccountName: accountName.String, AvatarURL: profile.AvatarURL, Metadata: metadata,
+			Scopes: tokens.Scopes, XAppMode: resolved.xAppMode.String, ConnectSessionID: session.ID,
+			Ownership: socialconnections.Ownership{
+				ConnectionType: "managed", ExternalUserID: session.ExternalUserID,
+				ExternalUserEmail: session.ExternalUserEmail.String,
+			},
+		})
+	} else {
+		saved, err = h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
+			WorkspaceID: workspaceID, ProfileID: session.ProfileID, Platform: platformName,
+			ProviderIdentity: providerIdentity, ExternalUserID: session.ExternalUserID,
+			Refresh: refreshParams, Upsert: upsertParams,
+		})
+	}
 	if err != nil {
-		if errors.Is(err, connectownership.ErrOwnershipConflict) {
+		if errors.Is(err, connectownership.ErrOwnershipConflict) || errors.Is(err, socialconnections.ErrOwnershipConflict) {
 			logManagedOwnershipConflict(workspaceID, platformName, ownershipDecision, err)
 			renderConnectError(w, http.StatusConflict, "This social account is already connected and cannot be reassigned.")
 			return

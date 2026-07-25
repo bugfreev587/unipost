@@ -119,3 +119,21 @@ RETURNING id, profile_id, platform, access_token, refresh_token,
   connected_at, disconnected_at, metadata, scope, status, connection_type,
   connect_session_id, external_user_id, external_user_email, last_refreshed_at,
   x_app_mode, connection_id, binding_version, binding_status;
+
+-- name: ListBoundProfileIDsForAccount :many
+SELECT DISTINCT target.profile_id
+FROM social_accounts source
+JOIN profiles source_profile ON source_profile.id = source.profile_id
+JOIN social_accounts target
+  ON target.connection_id = source.connection_id
+ AND target.binding_status = 'active'
+JOIN profiles target_profile ON target_profile.id = target.profile_id
+LEFT JOIN social_connections sc ON sc.id = source.connection_id
+WHERE source.id = @account_id
+  AND source_profile.workspace_id = @workspace_id
+  AND target_profile.workspace_id = @workspace_id
+  AND (
+    sqlc.narg('external_user_id')::TEXT IS NULL
+    OR COALESCE(sc.external_user_id, target.external_user_id) = sqlc.narg('external_user_id')::TEXT
+  )
+ORDER BY target.profile_id;

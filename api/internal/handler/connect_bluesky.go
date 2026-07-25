@@ -50,6 +50,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/socialconnections"
 )
 
 // ConnectBlueskyHandler owns the public Bluesky form endpoint. It
@@ -62,7 +63,13 @@ type ConnectBlueskyHandler struct {
 	limiter        *ipLimiter
 	quota          *quota.Checker
 	ownershipStore managedAccountOwnershipStore
+	connections    socialconnections.Store
 	connectAccount func(context.Context, map[string]string) (*platform.ConnectResult, error)
+}
+
+func (h *ConnectBlueskyHandler) SetConnectionStore(store socialconnections.Store) *ConnectBlueskyHandler {
+	h.connections = store
+	return h
 }
 
 func NewConnectBlueskyHandler(queries *db.Queries, encryptor *crypto.AESEncryptor, bus events.EventBus, ownershipStore managedAccountOwnershipStore) *ConnectBlueskyHandler {
@@ -291,17 +298,28 @@ func (h *ConnectBlueskyHandler) SubmitForm(w http.ResponseWriter, r *http.Reques
 		ExternalUserID:    externalUserID,
 		ExternalUserEmail: session.ExternalUserEmail,
 	}
-	saved, err := h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
-		WorkspaceID:      profile.WorkspaceID,
-		ProfileID:        session.ProfileID,
-		Platform:         "bluesky",
-		ProviderIdentity: providerIdentity,
-		ExternalUserID:   session.ExternalUserID,
-		Refresh:          refreshParams,
-		Create:           createParams,
-	})
+	var saved db.SocialAccount
+	if h.connections != nil {
+		saved, err = h.connections.SaveVerified(r.Context(), socialconnections.SaveManagedReuse, socialconnections.CredentialInput{
+			WorkspaceID: profile.WorkspaceID, ProfileID: session.ProfileID, Platform: "bluesky",
+			ProviderIdentity: providerIdentity, ExternalAccountID: providerIdentity,
+			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: connectResult.TokenExpiresAt,
+			AccountName: connectResult.AccountName, AvatarURL: connectResult.AvatarURL,
+			Metadata: metadataJSON, Scopes: connectResult.Scopes, ConnectSessionID: session.ID,
+			Ownership: socialconnections.Ownership{
+				ConnectionType: "managed", ExternalUserID: session.ExternalUserID,
+				ExternalUserEmail: session.ExternalUserEmail.String,
+			},
+		})
+	} else {
+		saved, err = h.ownershipStore.Save(r.Context(), connectownership.SaveRequest{
+			WorkspaceID: profile.WorkspaceID, ProfileID: session.ProfileID, Platform: "bluesky",
+			ProviderIdentity: providerIdentity, ExternalUserID: session.ExternalUserID,
+			Refresh: refreshParams, Create: createParams,
+		})
+	}
 	if err != nil {
-		if errors.Is(err, connectownership.ErrOwnershipConflict) {
+		if errors.Is(err, connectownership.ErrOwnershipConflict) || errors.Is(err, socialconnections.ErrOwnershipConflict) {
 			logManagedOwnershipConflict(profile.WorkspaceID, "bluesky", ownershipDecision, err)
 			w.WriteHeader(http.StatusConflict)
 			renderBlueskyResult(w, blueskyTplData{Error: "This social account is already connected and cannot be reassigned."})

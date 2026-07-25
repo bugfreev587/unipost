@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/socialconnections"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
 
@@ -27,10 +29,16 @@ type SocialAccountHandler struct {
 	superAdminChecker *auth.SuperAdminChecker
 	httpClient        *http.Client
 	xTokenRefresher   xinbox.TokenRefresher
+	connections       socialconnections.Store
 }
 
 func (h *SocialAccountHandler) SetXTokenRefresher(refresher xinbox.TokenRefresher) *SocialAccountHandler {
 	h.xTokenRefresher = refresher
+	return h
+}
+
+func (h *SocialAccountHandler) SetConnectionStore(store socialconnections.Store) *SocialAccountHandler {
+	h.connections = store
 	return h
 }
 
@@ -60,6 +68,8 @@ type socialAccountResponse struct {
 	ExternalUserID    *string   `json:"external_user_id,omitempty"`
 	ExternalUserEmail *string   `json:"external_user_email,omitempty"`
 	Scope             []string  `json:"scope,omitempty"`
+	SharedConnection  bool      `json:"shared_connection,omitempty"`
+	BoundProfileIDs   []string  `json:"bound_profile_ids,omitempty"`
 }
 
 func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAccountResponse {
@@ -103,6 +113,76 @@ func toSocialAccountResponse(a db.SocialAccount, profileName ...string) socialAc
 		ExternalUserEmail: extUserEmail,
 		Scope:             a.Scope,
 	}
+}
+
+// Bind creates or reactivates a stable Profile binding for an existing
+// physical connection. Clients identify the source by public account_id; the
+// internal connection_id is never accepted or returned.
+func (h *SocialAccountHandler) Bind(w http.ResponseWriter, r *http.Request) {
+	if h.connections == nil {
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Account binding is not available")
+		return
+	}
+	accountID := strings.TrimSpace(chi.URLParam(r, "id"))
+	if accountID == "" {
+		accountID = strings.TrimSpace(chi.URLParam(r, "accountID"))
+	}
+	var body struct {
+		ProfileID      string `json:"profile_id"`
+		ExternalUserID string `json:"external_user_id"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid request body")
+			return
+		}
+	}
+	targetProfileID := strings.TrimSpace(chi.URLParam(r, "profileID"))
+	if targetProfileID == "" {
+		targetProfileID = strings.TrimSpace(body.ProfileID)
+	}
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" && targetProfileID != "" {
+		profile, err := h.queries.GetProfile(r.Context(), targetProfileID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Profile not found")
+			return
+		}
+		workspaceID = profile.WorkspaceID
+	}
+	if accountID == "" || targetProfileID == "" || workspaceID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "account_id and profile_id are required")
+		return
+	}
+
+	account, err := h.connections.BindExisting(
+		r.Context(), workspaceID, accountID, targetProfileID, strings.TrimSpace(body.ExternalUserID),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, socialconnections.ErrBindingNotFound),
+			errors.Is(err, socialconnections.ErrProfileNotInWorkspace):
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Account or Profile not found")
+		case errors.Is(err, socialconnections.ErrOwnershipConflict):
+			writeError(w, http.StatusConflict, "ACCOUNT_OWNERSHIP_CONFLICT", "This social account cannot be bound for the selected user")
+		case errors.Is(err, socialconnections.ErrLegacyBinding):
+			writeError(w, http.StatusConflict, "ACCOUNT_RECONNECT_REQUIRED", "Reconnect this account before sharing it with another Profile")
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to bind account")
+		}
+		return
+	}
+
+	boundProfileIDs, listErr := h.queries.ListBoundProfileIDsForAccount(r.Context(), db.ListBoundProfileIDsForAccountParams{
+		AccountID: account.ID, WorkspaceID: workspaceID,
+		ExternalUserID: pgtype.Text{String: strings.TrimSpace(body.ExternalUserID), Valid: strings.TrimSpace(body.ExternalUserID) != ""},
+	})
+	response := toSocialAccountResponse(account)
+	response.SharedConnection = true
+	if listErr == nil {
+		response.BoundProfileIDs = boundProfileIDs
+	}
+	writeCreated(w, response)
 }
 
 // Connect handles POST /v1/social-accounts/connect (API key auth)
@@ -161,7 +241,7 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Dedup: check if this platform account is already connected in the workspace
-	if result.ExternalAccountID != "" {
+	if h.connections == nil && result.ExternalAccountID != "" {
 		existing, err := h.queries.FindSocialAccountByExternalID(r.Context(), db.FindSocialAccountByExternalIDParams{
 			Platform:          body.Platform,
 			ExternalAccountID: result.ExternalAccountID,
@@ -196,20 +276,42 @@ func (h *SocialAccountHandler) Connect(w http.ResponseWriter, r *http.Request) {
 		xAppMode = pgtype.Text{String: string(mode), Valid: true}
 	}
 
-	account, err := h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
-		ProfileID:         profileID,
-		Platform:          body.Platform,
-		AccessToken:       encAccess,
-		RefreshToken:      pgtype.Text{String: encRefresh, Valid: true},
-		TokenExpiresAt:    pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: true},
-		ExternalAccountID: result.ExternalAccountID,
-		AccountName:       pgtype.Text{String: result.AccountName, Valid: result.AccountName != ""},
-		AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
-		Metadata:          metadataJSON,
-		Scope:             result.Scopes,
-		XAppMode:          xAppMode,
-	})
+	var account db.SocialAccount
+	if h.connections != nil {
+		providerIdentity, identityErr := socialconnections.ProviderIdentity(body.Platform, result.ExternalAccountID, result.Metadata)
+		if identityErr != nil {
+			writeError(w, http.StatusBadGateway, "PROVIDER_IDENTITY_MISSING", "Provider account identity is missing")
+			return
+		}
+		account, err = h.connections.SaveVerified(r.Context(), socialconnections.SaveDirectCreate, socialconnections.CredentialInput{
+			WorkspaceID: profile.WorkspaceID, ProfileID: profileID, Platform: body.Platform,
+			ProviderIdentity: providerIdentity, ExternalAccountID: result.ExternalAccountID,
+			AccessToken: encAccess, RefreshToken: encRefresh, TokenExpiresAt: result.TokenExpiresAt,
+			AccountName: result.AccountName, AvatarURL: result.AvatarURL, Metadata: metadataJSON,
+			Scopes: result.Scopes, XAppMode: xAppMode.String,
+			Ownership: socialconnections.Ownership{ConnectionType: "byo"},
+		})
+	} else {
+		account, err = h.queries.CreateSocialAccount(r.Context(), db.CreateSocialAccountParams{
+			ProfileID:         profileID,
+			Platform:          body.Platform,
+			AccessToken:       encAccess,
+			RefreshToken:      pgtype.Text{String: encRefresh, Valid: true},
+			TokenExpiresAt:    pgtype.Timestamptz{Time: result.TokenExpiresAt, Valid: true},
+			ExternalAccountID: result.ExternalAccountID,
+			AccountName:       pgtype.Text{String: result.AccountName, Valid: result.AccountName != ""},
+			AccountAvatarUrl:  pgtype.Text{String: result.AvatarURL, Valid: result.AvatarURL != ""},
+			Metadata:          metadataJSON,
+			Scope:             result.Scopes,
+			XAppMode:          xAppMode,
+		})
+	}
 	if err != nil {
+		if errors.Is(err, socialconnections.ErrAlreadyConnected) {
+			writeError(w, http.StatusConflict, "ACCOUNT_ALREADY_CONNECTED",
+				"This "+body.Platform+" account is already connected in your workspace. Use the Profile binding operation to share it with another Profile.")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save account")
 		return
 	}

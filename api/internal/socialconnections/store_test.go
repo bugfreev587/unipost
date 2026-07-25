@@ -40,6 +40,25 @@ func TestSaveVerifiedCreatesConnectionAndBinding(t *testing.T) {
 	}
 }
 
+func TestSaveVerifiedFailsClosedWhenLegacyIdentityHasNoConnection(t *testing.T) {
+	queries := &fakeConnectionQueries{
+		canonicalErr: pgx.ErrNoRows,
+		profile:      db.Profile{ID: "profile-a", WorkspaceID: "workspace-a"},
+		legacyMatches: []db.SocialAccount{{
+			ID: "quarantined-account", ProfileID: "profile-a", Platform: "twitter",
+			ExternalAccountID: "provider-a",
+		}},
+	}
+	store, tx := newFakePostgresStore(queries)
+	_, err := store.SaveVerified(context.Background(), SaveOAuthReuse, byoCredentialInput())
+	if !errors.Is(err, ErrLegacyBinding) {
+		t.Fatalf("SaveVerified() error = %v, want ErrLegacyBinding", err)
+	}
+	if queries.createCalls != 0 || queries.bindCalls != 0 || tx.commitCalls != 0 {
+		t.Fatalf("quarantined identity mutated state: create=%d bind=%d commits=%d", queries.createCalls, queries.bindCalls, tx.commitCalls)
+	}
+}
+
 func TestSaveVerifiedReusesDisconnectedConnectionAndCreatesSiblingBinding(t *testing.T) {
 	queries := &fakeConnectionQueries{
 		profile: db.Profile{ID: "profile-b", WorkspaceID: "workspace-a"},
@@ -173,14 +192,15 @@ func managedCredentialInput() CredentialInput {
 }
 
 type fakeConnectionQueries struct {
-	canonical    db.SocialConnection
-	canonicalErr error
-	created      db.SocialConnection
-	refreshed    db.SocialConnection
-	bound        db.SocialAccount
-	source       db.GetResolvedSocialAccountByIDAndWorkspaceRow
-	connection   db.SocialConnection
-	profile      db.Profile
+	canonical     db.SocialConnection
+	canonicalErr  error
+	created       db.SocialConnection
+	refreshed     db.SocialConnection
+	bound         db.SocialAccount
+	source        db.GetResolvedSocialAccountByIDAndWorkspaceRow
+	connection    db.SocialConnection
+	profile       db.Profile
+	legacyMatches []db.SocialAccount
 
 	createCalls  int
 	refreshCalls int
@@ -193,6 +213,10 @@ type fakeConnectionQueries struct {
 
 func (f *fakeConnectionQueries) FindCanonicalSocialConnectionForUpdate(context.Context, db.FindCanonicalSocialConnectionForUpdateParams) (db.SocialConnection, error) {
 	return f.canonical, f.canonicalErr
+}
+
+func (f *fakeConnectionQueries) ListActiveAccountsByWorkspaceProviderIdentity(context.Context, db.ListActiveAccountsByWorkspaceProviderIdentityParams) ([]db.SocialAccount, error) {
+	return f.legacyMatches, nil
 }
 
 func (f *fakeConnectionQueries) CreateSocialConnection(context.Context, db.CreateSocialConnectionParams) (db.SocialConnection, error) {

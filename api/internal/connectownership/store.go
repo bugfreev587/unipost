@@ -301,19 +301,29 @@ func decide(matches []db.SocialAccount, profileID, externalUserID string) Decisi
 	if len(matches) == 0 {
 		return Decision{Kind: Create}
 	}
-	if len(matches) != 1 {
-		return Decision{Kind: Conflict, ConflictClass: ConflictAmbiguousMatches, MatchCount: len(matches)}
-	}
 
 	match := matches[0]
-	if match.ProfileID != profileID {
-		return Decision{Kind: Conflict, ConflictClass: ConflictProfileMismatch, MatchCount: 1}
+	if len(matches) > 1 {
+		connectionID := match.ConnectionID
+		if !connectionID.Valid || connectionID.String == "" {
+			return Decision{Kind: Conflict, ConflictClass: ConflictAmbiguousMatches, MatchCount: len(matches)}
+		}
+		for _, candidate := range matches {
+			if !candidate.ConnectionID.Valid || candidate.ConnectionID.String != connectionID.String ||
+				candidate.ExternalUserID != match.ExternalUserID {
+				return Decision{Kind: Conflict, ConflictClass: ConflictAmbiguousMatches, MatchCount: len(matches)}
+			}
+			if candidate.ProfileID == profileID {
+				match = candidate
+			}
+		}
 	}
+
 	if !match.ExternalUserID.Valid || match.ExternalUserID.String == "" {
-		return Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: 1}
+		return Decision{Kind: Conflict, ConflictClass: ConflictOwnerBYO, MatchCount: len(matches)}
 	}
 	if match.ExternalUserID.String != externalUserID {
-		return Decision{Kind: Conflict, ConflictClass: ConflictManagedUserMismatch, MatchCount: 1}
+		return Decision{Kind: Conflict, ConflictClass: ConflictManagedUserMismatch, MatchCount: len(matches)}
 	}
 
 	return Decision{Kind: Reconnect, AccountID: match.ID}
