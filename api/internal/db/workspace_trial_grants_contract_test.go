@@ -166,6 +166,16 @@ func TestWorkspaceTrialGrantCheckoutQueriesUseExactCorrelation(t *testing.T) {
 			},
 		},
 		{
+			name:      "checkout session record is fenced by attempt",
+			queryName: "-- name: recordworkspacetrialgrantcheckoutsession :one",
+			want: []string{
+				"where id = sqlc.arg(id)",
+				"and status = 'checkout_pending'",
+				"and stripe_checkout_session_id is null",
+				"and checkout_attempt = sqlc.arg(expected_checkout_attempt)",
+			},
+		},
+		{
 			name:      "expired checkout release matches session",
 			queryName: "-- name: releaseexpiredworkspacetrialgrantcheckout :one",
 			want: []string{
@@ -181,6 +191,7 @@ func TestWorkspaceTrialGrantCheckoutQueriesUseExactCorrelation(t *testing.T) {
 				"where id = sqlc.arg(id)",
 				"and status = 'checkout_pending'",
 				"and stripe_checkout_session_id is null",
+				"and checkout_attempt = sqlc.arg(expected_checkout_attempt)",
 			},
 		},
 	}

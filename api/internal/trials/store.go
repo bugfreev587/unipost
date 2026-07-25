@@ -110,9 +110,9 @@ func (s *PostgresStore) ClaimCheckout(ctx context.Context, id, workspaceID, plan
 	return mapGrant(row, mapTransitionError(err))
 }
 
-func (s *PostgresStore) RecordCheckoutSession(ctx context.Context, id, sessionID string) (Grant, error) {
+func (s *PostgresStore) RecordCheckoutSession(ctx context.Context, id, sessionID string, expectedAttempt int32) (Grant, error) {
 	row, err := s.queries.RecordWorkspaceTrialGrantCheckoutSession(ctx, db.RecordWorkspaceTrialGrantCheckoutSessionParams{
-		ID: id, StripeCheckoutSessionID: text(sessionID),
+		ID: id, StripeCheckoutSessionID: text(sessionID), ExpectedCheckoutAttempt: expectedAttempt,
 	})
 	return mapGrant(row, mapTransitionError(err))
 }
@@ -125,8 +125,10 @@ func (s *PostgresStore) ReleaseCheckout(ctx context.Context, id, sessionID strin
 	return mapGrant(row, mapTransitionError(err))
 }
 
-func (s *PostgresStore) ReopenUnrecordedCheckout(ctx context.Context, id string) (Grant, error) {
-	row, err := s.queries.ReopenUnrecordedWorkspaceTrialGrantCheckout(ctx, id)
+func (s *PostgresStore) ReopenUnrecordedCheckout(ctx context.Context, id string, expectedAttempt int32) (Grant, error) {
+	row, err := s.queries.ReopenUnrecordedWorkspaceTrialGrantCheckout(ctx, db.ReopenUnrecordedWorkspaceTrialGrantCheckoutParams{
+		ID: id, ExpectedCheckoutAttempt: expectedAttempt,
+	})
 	return mapGrant(row, mapTransitionError(err))
 }
 

@@ -74,6 +74,7 @@ SET stripe_checkout_session_id = sqlc.arg(stripe_checkout_session_id),
 WHERE id = sqlc.arg(id)
   AND status = 'checkout_pending'
   AND stripe_checkout_session_id IS NULL
+  AND checkout_attempt = sqlc.arg(expected_checkout_attempt)
 RETURNING *;
 
 -- name: ReopenUnrecordedWorkspaceTrialGrantCheckout :one
@@ -83,6 +84,7 @@ SET status = 'pending_activation',
 WHERE id = sqlc.arg(id)
   AND status = 'checkout_pending'
   AND stripe_checkout_session_id IS NULL
+  AND checkout_attempt = sqlc.arg(expected_checkout_attempt)
 RETURNING *;
 
 -- name: ReleaseExpiredWorkspaceTrialGrantCheckout :one

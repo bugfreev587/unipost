@@ -110,9 +110,9 @@ type GrantStore interface {
 	RecordProvisioningSchedule(context.Context, ProvisioningScheduleUpdate) (Grant, error)
 	MarkRevoked(context.Context, string, Status, time.Time) (Grant, error)
 	ClaimCheckout(context.Context, string, string, string, string) (Grant, error)
-	RecordCheckoutSession(context.Context, string, string) (Grant, error)
+	RecordCheckoutSession(context.Context, string, string, int32) (Grant, error)
 	ReleaseCheckout(context.Context, string, string, time.Time) (Grant, error)
-	ReopenUnrecordedCheckout(context.Context, string) (Grant, error)
+	ReopenUnrecordedCheckout(context.Context, string, int32) (Grant, error)
 }
 
 type CreateGrantInput struct {
@@ -285,7 +285,7 @@ func (s *Service) prepareCheckoutGrant(ctx context.Context, grant Grant, req Che
 		if err != nil {
 			return CheckoutResult{}, fmt.Errorf("retrieve trial Checkout Session: %w", err)
 		}
-		if checkout.ID != grant.StripeCheckoutSessionID || checkout.StripeMode != grant.StripeMode {
+		if checkout.ID != grant.StripeCheckoutSessionID || checkout.StripeMode != grant.StripeMode || !checkoutCustomerMatches(checkout, grant) {
 			return CheckoutResult{}, ErrCheckoutStateConflict
 		}
 		if !checkoutMetadataMatches(checkout.Metadata, grant, s.environment) {
@@ -330,16 +330,16 @@ func (s *Service) createAndRecordTrialCheckout(ctx context.Context, grant Grant,
 	if err != nil {
 		var mutationErr *CheckoutMutationError
 		if errors.As(err, &mutationErr) && mutationErr.Outcome == MutationRejected {
-			if _, reopenErr := s.store.ReopenUnrecordedCheckout(ctx, grant.ID); reopenErr != nil && !errors.Is(reopenErr, ErrConcurrentTransition) {
+			if _, reopenErr := s.store.ReopenUnrecordedCheckout(ctx, grant.ID, grant.CheckoutAttempt); reopenErr != nil && !errors.Is(reopenErr, ErrConcurrentTransition) {
 				return CheckoutResult{}, fmt.Errorf("create trial Checkout: %v; reopen claim: %w", err, reopenErr)
 			}
 		}
 		return CheckoutResult{}, fmt.Errorf("create trial Checkout: %w", err)
 	}
-	if checkout.ID == "" || checkout.Status != "open" || checkout.URL == "" || checkout.StripeMode != grant.StripeMode || !checkoutMetadataMatches(checkout.Metadata, grant, s.environment) {
+	if checkout.ID == "" || checkout.Status != "open" || checkout.URL == "" || checkout.StripeMode != grant.StripeMode || !checkoutCustomerMatches(checkout, grant) || !checkoutMetadataMatches(checkout.Metadata, grant, s.environment) {
 		return CheckoutResult{}, ErrCheckoutStateConflict
 	}
-	_, err = s.store.RecordCheckoutSession(ctx, grant.ID, checkout.ID)
+	_, err = s.store.RecordCheckoutSession(ctx, grant.ID, checkout.ID, grant.CheckoutAttempt)
 	if err == nil {
 		return checkoutResult(grant, checkout, s.environment, false), nil
 	}
@@ -347,10 +347,10 @@ func (s *Service) createAndRecordTrialCheckout(ctx context.Context, grant Grant,
 		return CheckoutResult{}, fmt.Errorf("record trial Checkout Session: %w", err)
 	}
 	current, loadErr := s.store.GetGrant(ctx, grant.ID)
-	if loadErr == nil && current.Status == StatusCheckoutPending && current.StripeCheckoutSessionID == checkout.ID {
+	if loadErr == nil && current.Status == StatusCheckoutPending && current.CheckoutAttempt == grant.CheckoutAttempt && current.StripeCheckoutSessionID == checkout.ID {
 		return checkoutResult(current, checkout, s.environment, true), nil
 	}
-	if loadErr == nil && current.StripeCheckoutSessionID == checkout.ID && current.Status != StatusCheckoutPending {
+	if loadErr == nil && current.CheckoutAttempt == grant.CheckoutAttempt && current.StripeCheckoutSessionID == checkout.ID && current.Status != StatusCheckoutPending {
 		return CheckoutResult{}, ErrCheckoutCompletionPending
 	}
 	return CheckoutResult{}, ErrCheckoutStateConflict
@@ -381,6 +381,10 @@ func checkoutMetadataMatches(metadata map[string]string, grant Grant, environmen
 		}
 	}
 	return true
+}
+
+func checkoutCustomerMatches(checkout CheckoutSnapshot, grant Grant) bool {
+	return strings.TrimSpace(checkout.CustomerID) != "" && checkout.CustomerID == grant.StripeCustomerID
 }
 
 func checkoutResult(grant Grant, checkout CheckoutSnapshot, environment string, resumed bool) CheckoutResult {

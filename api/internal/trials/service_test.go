@@ -498,7 +498,7 @@ func TestPrepareCheckoutClaimsMatchingPendingGrant(t *testing.T) {
 	h := newServiceHarness(t)
 	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusPendingActivation, StripeMode: "live"}
 	h.store.grant = *h.store.open
-	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1"}
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1", CustomerID: "cus_1"}
 
 	got, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
 	if err != nil {
@@ -567,7 +567,7 @@ func TestPrepareCheckoutValidatedCustomerOverwritesCustomerRetainedAfterConfirme
 	}
 
 	h.stripe.createCheckoutErr = nil
-	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1"}
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1", CustomerID: "cus_validated"}
 	validated := validServiceCheckoutRequest()
 	validated.CustomerID = "cus_validated"
 
@@ -582,9 +582,9 @@ func TestPrepareCheckoutValidatedCustomerOverwritesCustomerRetainedAfterConfirme
 
 func TestPrepareCheckoutResumesRecordedOpenSession(t *testing.T) {
 	h := newServiceHarness(t)
-	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCheckoutSessionID: "cs_1"}
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", StripeCheckoutSessionID: "cs_1"}
 	h.store.grant = *h.store.open
-	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1"}
+	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1", CustomerID: "cus_1"}
 
 	req := validServiceCheckoutRequest()
 	req.CustomerID = ""
@@ -618,8 +618,8 @@ func TestPrepareCheckoutReopensExpiredExactSessionAndStoresReplacement(t *testin
 	h := newServiceHarness(t)
 	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", StripeCheckoutSessionID: "cs_expired", CheckoutAttempt: 1}
 	h.store.grant = *h.store.open
-	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_expired", Status: "expired"}
-	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_replacement", Status: "open", URL: "https://checkout.stripe.test/cs_replacement"}
+	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_expired", Status: "expired", CustomerID: "cus_1"}
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_replacement", Status: "open", URL: "https://checkout.stripe.test/cs_replacement", CustomerID: "cus_1"}
 
 	got, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
 	if err != nil {
@@ -638,9 +638,9 @@ func TestPrepareCheckoutReopensExpiredExactSessionAndStoresReplacement(t *testin
 
 func TestPrepareCheckoutCompletedSessionDefersToWebhookWithoutDuplicate(t *testing.T) {
 	h := newServiceHarness(t)
-	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCheckoutSessionID: "cs_complete"}
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", StripeCheckoutSessionID: "cs_complete"}
 	h.store.grant = *h.store.open
-	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_complete", Status: "complete"}
+	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_complete", Status: "complete", CustomerID: "cus_1"}
 
 	_, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
 	if !errors.Is(err, ErrCheckoutCompletionPending) {
@@ -680,7 +680,7 @@ func TestPrepareCheckoutIndeterminateCreateKeepsClaimAndIdempotentRetryRecovers(
 	}
 
 	h.stripe.createCheckoutErr = nil
-	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_recovered", Status: "open", URL: "https://checkout.stripe.test/cs_recovered"}
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_recovered", Status: "open", URL: "https://checkout.stripe.test/cs_recovered", CustomerID: "cus_1"}
 	retryReq := validServiceCheckoutRequest()
 	retryReq.CustomerID = ""
 	got, err := h.service.PrepareCheckout(t.Context(), retryReq)
@@ -714,7 +714,7 @@ func TestPrepareCheckoutConcurrentRecordConvergesOnExactSameSession(t *testing.T
 	h := newServiceHarness(t)
 	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", CheckoutAttempt: 1}
 	h.store.grant = *h.store.open
-	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_shared", Status: "open", URL: "https://checkout.stripe.test/cs_shared"}
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_shared", Status: "open", URL: "https://checkout.stripe.test/cs_shared", CustomerID: "cus_1"}
 	h.store.recordErr = ErrConcurrentTransition
 	h.store.afterRecord = func() { h.store.grant.StripeCheckoutSessionID = "cs_shared" }
 
@@ -724,6 +724,78 @@ func TestPrepareCheckoutConcurrentRecordConvergesOnExactSameSession(t *testing.T
 	}
 	if h.stripe.createCheckoutCalls != 1 || h.store.recordCalls != 1 {
 		t.Fatalf("create=%d record=%d", h.stripe.createCheckoutCalls, h.store.recordCalls)
+	}
+}
+
+func TestPrepareCheckoutDelayedPriorAttemptCannotRecordIntoNewAttempt(t *testing.T) {
+	h := newServiceHarness(t)
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", CheckoutAttempt: 1}
+	h.store.grant = *h.store.open
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_attempt_1", Status: "open", URL: "https://checkout.stripe.test/cs_attempt_1", CustomerID: "cus_1"}
+	h.store.beforeRecord = func() { h.store.grant.CheckoutAttempt = 2 }
+
+	_, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
+	if !errors.Is(err, ErrCheckoutStateConflict) {
+		t.Fatalf("error=%v, want ErrCheckoutStateConflict", err)
+	}
+	if h.store.grant.CheckoutAttempt != 2 || h.store.grant.StripeCheckoutSessionID != "" {
+		t.Fatalf("new attempt was polluted: %#v", h.store.grant)
+	}
+}
+
+func TestPrepareCheckoutDelayedPriorAttemptRejectionCannotReopenNewAttempt(t *testing.T) {
+	h := newServiceHarness(t)
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", CheckoutAttempt: 1}
+	h.store.grant = *h.store.open
+	h.stripe.createCheckoutErr = &CheckoutMutationError{Outcome: MutationRejected, Err: errors.New("attempt one rejected")}
+	h.store.beforeReopen = func() { h.store.grant.CheckoutAttempt = 2 }
+
+	_, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
+	if err == nil {
+		t.Fatal("error=nil")
+	}
+	if h.store.grant.CheckoutAttempt != 2 || h.store.grant.Status != StatusCheckoutPending {
+		t.Fatalf("new attempt was reopened: %#v", h.store.grant)
+	}
+}
+
+func TestPrepareCheckoutRejectsCreatedSessionWithoutExactCustomerBinding(t *testing.T) {
+	for _, customerID := range []string{"", "cus_other"} {
+		t.Run("customer_"+customerID, func(t *testing.T) {
+			h := newServiceHarness(t)
+			h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusPendingActivation, StripeMode: "live"}
+			h.store.grant = *h.store.open
+			h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: "open", URL: "https://checkout.stripe.test/cs_1", CustomerID: customerID}
+
+			_, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
+			if !errors.Is(err, ErrCheckoutStateConflict) {
+				t.Fatalf("error=%v, want ErrCheckoutStateConflict", err)
+			}
+			if h.store.recordCalls != 0 || h.store.releaseCalls != 0 {
+				t.Fatalf("record=%d release=%d", h.store.recordCalls, h.store.releaseCalls)
+			}
+		})
+	}
+}
+
+func TestPrepareCheckoutRejectsRetrievedSessionWithoutExactCustomerBinding(t *testing.T) {
+	for _, status := range []string{"open", "expired", "complete"} {
+		for _, customerID := range []string{"", "cus_other"} {
+			t.Run(status+"_customer_"+customerID, func(t *testing.T) {
+				h := newServiceHarness(t)
+				h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", StripeCheckoutSessionID: "cs_1", CheckoutAttempt: 1}
+				h.store.grant = *h.store.open
+				h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_1", Status: status, URL: "https://checkout.stripe.test/cs_1", CustomerID: customerID}
+
+				_, err := h.service.PrepareCheckout(t.Context(), validServiceCheckoutRequest())
+				if !errors.Is(err, ErrCheckoutStateConflict) {
+					t.Fatalf("error=%v, want ErrCheckoutStateConflict", err)
+				}
+				if h.store.recordCalls != 0 || h.store.releaseCalls != 0 {
+					t.Fatalf("record=%d release=%d", h.store.recordCalls, h.store.releaseCalls)
+				}
+			})
+		}
 	}
 }
 
@@ -749,8 +821,8 @@ func TestPrepareCheckoutExpiredReleaseRaceReclaimsWebhookReopenedGrant(t *testin
 	h := newServiceHarness(t)
 	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusCheckoutPending, StripeMode: "live", StripeCustomerID: "cus_1", StripeCheckoutSessionID: "cs_expired", CheckoutAttempt: 1}
 	h.store.grant = *h.store.open
-	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_expired", Status: "expired"}
-	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_replacement", Status: "open", URL: "https://checkout.stripe.test/cs_replacement"}
+	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "live", ID: "cs_expired", Status: "expired", CustomerID: "cus_1"}
+	h.stripe.checkout = CheckoutSnapshot{StripeMode: "live", ID: "cs_replacement", Status: "open", URL: "https://checkout.stripe.test/cs_replacement", CustomerID: "cus_1"}
 	h.store.releaseErr = ErrConcurrentTransition
 	h.store.afterRelease = func() {
 		h.store.grant.Status = StatusPendingActivation
@@ -835,6 +907,8 @@ type fakeGrantStore struct {
 	lastReleasedSessionID       string
 	recordErr                   error
 	afterRecord                 func()
+	beforeRecord                func()
+	beforeReopen                func()
 	releaseErr                  error
 	afterRelease                func()
 }
@@ -920,15 +994,18 @@ func (s *fakeGrantStore) ClaimCheckout(_ context.Context, id, workspaceID, planI
 	s.open = &s.grant
 	return s.grant, nil
 }
-func (s *fakeGrantStore) RecordCheckoutSession(_ context.Context, id, sessionID string) (Grant, error) {
+func (s *fakeGrantStore) RecordCheckoutSession(_ context.Context, id, sessionID string, expectedAttempt int32) (Grant, error) {
 	s.recordCalls++
+	if s.beforeRecord != nil {
+		s.beforeRecord()
+	}
 	if s.recordErr != nil {
 		if s.afterRecord != nil {
 			s.afterRecord()
 		}
 		return Grant{}, s.recordErr
 	}
-	if s.grant.ID != id || s.grant.Status != StatusCheckoutPending || s.grant.StripeCheckoutSessionID != "" {
+	if s.grant.ID != id || s.grant.Status != StatusCheckoutPending || s.grant.StripeCheckoutSessionID != "" || s.grant.CheckoutAttempt != expectedAttempt {
 		return Grant{}, ErrConcurrentTransition
 	}
 	s.grant.StripeCheckoutSessionID = sessionID
@@ -952,9 +1029,12 @@ func (s *fakeGrantStore) ReleaseCheckout(_ context.Context, id, sessionID string
 	s.open = &s.grant
 	return s.grant, nil
 }
-func (s *fakeGrantStore) ReopenUnrecordedCheckout(_ context.Context, id string) (Grant, error) {
+func (s *fakeGrantStore) ReopenUnrecordedCheckout(_ context.Context, id string, expectedAttempt int32) (Grant, error) {
 	s.reopenCalls++
-	if s.grant.ID != id || s.grant.Status != StatusCheckoutPending || s.grant.StripeCheckoutSessionID != "" {
+	if s.beforeReopen != nil {
+		s.beforeReopen()
+	}
+	if s.grant.ID != id || s.grant.Status != StatusCheckoutPending || s.grant.StripeCheckoutSessionID != "" || s.grant.CheckoutAttempt != expectedAttempt {
 		return Grant{}, ErrConcurrentTransition
 	}
 	s.grant.Status = StatusPendingActivation

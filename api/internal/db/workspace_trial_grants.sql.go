@@ -837,16 +837,18 @@ SET stripe_checkout_session_id = $1,
 WHERE id = $2
   AND status = 'checkout_pending'
   AND stripe_checkout_session_id IS NULL
+  AND checkout_attempt = $3
 RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
 type RecordWorkspaceTrialGrantCheckoutSessionParams struct {
 	StripeCheckoutSessionID pgtype.Text `json:"stripe_checkout_session_id"`
 	ID                      string      `json:"id"`
+	ExpectedCheckoutAttempt int32       `json:"expected_checkout_attempt"`
 }
 
 func (q *Queries) RecordWorkspaceTrialGrantCheckoutSession(ctx context.Context, arg RecordWorkspaceTrialGrantCheckoutSessionParams) (WorkspaceTrialGrant, error) {
-	row := q.db.QueryRow(ctx, recordWorkspaceTrialGrantCheckoutSession, arg.StripeCheckoutSessionID, arg.ID)
+	row := q.db.QueryRow(ctx, recordWorkspaceTrialGrantCheckoutSession, arg.StripeCheckoutSessionID, arg.ID, arg.ExpectedCheckoutAttempt)
 	var i WorkspaceTrialGrant
 	err := row.Scan(
 		&i.ID,
@@ -999,11 +1001,17 @@ SET status = 'pending_activation',
 WHERE id = $1
   AND status = 'checkout_pending'
   AND stripe_checkout_session_id IS NULL
+  AND checkout_attempt = $2
 RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
-func (q *Queries) ReopenUnrecordedWorkspaceTrialGrantCheckout(ctx context.Context, id string) (WorkspaceTrialGrant, error) {
-	row := q.db.QueryRow(ctx, reopenUnrecordedWorkspaceTrialGrantCheckout, id)
+type ReopenUnrecordedWorkspaceTrialGrantCheckoutParams struct {
+	ID                      string `json:"id"`
+	ExpectedCheckoutAttempt int32  `json:"expected_checkout_attempt"`
+}
+
+func (q *Queries) ReopenUnrecordedWorkspaceTrialGrantCheckout(ctx context.Context, arg ReopenUnrecordedWorkspaceTrialGrantCheckoutParams) (WorkspaceTrialGrant, error) {
+	row := q.db.QueryRow(ctx, reopenUnrecordedWorkspaceTrialGrantCheckout, arg.ID, arg.ExpectedCheckoutAttempt)
 	var i WorkspaceTrialGrant
 	err := row.Scan(
 		&i.ID,
