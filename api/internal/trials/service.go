@@ -806,7 +806,7 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 	}
 	result := WebhookReconcileResult{Managed: true, Grant: grant}
 	if grant.Status.IsTerminal() {
-		result.DoNotProject = true
+		result.DoNotProject = !terminalSubscriptionProjectionCompatible(grant, snapshot, req.PlanID)
 		return result, nil
 	}
 	at := webhookTime(req.OccurredAt, s.now)
@@ -1091,10 +1091,28 @@ func validateSubscriptionGrantMatch(grant Grant, snapshot SubscriptionSnapshot, 
 	if grant.StripeSubscriptionID != "" && snapshot.ID != grant.StripeSubscriptionID {
 		return ErrWebhookStateConflict
 	}
-	if len(snapshot.Metadata) > 0 && !webhookMetadataMatches(snapshot.Metadata, grant, environment) {
-		return ErrWebhookStateConflict
+	if len(snapshot.Metadata) > 0 {
+		if snapshot.Metadata[metadataWorkspaceID] != grant.WorkspaceID || snapshot.Metadata[metadataTrialGrant] != grant.ID || snapshot.Metadata[metadataTrialKind] != string(grant.Kind) || snapshot.Metadata[metadataEnvironment] != environment || snapshot.Metadata[metadataPlanID] != planID {
+			return ErrWebhookStateConflict
+		}
 	}
 	return nil
+}
+
+func terminalSubscriptionProjectionCompatible(grant Grant, snapshot SubscriptionSnapshot, planID string) bool {
+	switch grant.Status {
+	case StatusCompleted:
+		return snapshot.Status == "active" && planID == grant.PlanID
+	case StatusCanceled:
+		return (snapshot.Status == "canceled" || snapshot.Status == "unpaid" || snapshot.Status == "incomplete_expired") && planID == grant.PlanID
+	case StatusSuperseded:
+		if snapshot.Status != "active" || planID == "" || planID == grant.PlanID {
+			return false
+		}
+		return grant.SupersededByPlanID == "" || planID == grant.SupersededByPlanID
+	default:
+		return false
+	}
 }
 
 func validateScheduleGrantMatch(grant Grant, snapshot ScheduleSnapshot, environment, eventType string) error {

@@ -183,6 +183,32 @@ func TestDelayedTrialingWebhookForTerminalGrantDoesNotRestoreSubscription(t *tes
 	}
 }
 
+func TestTerminalGrantProjectionRetryConvergesAfterLocalWriteFailure(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	store.updateErrors = []error{errors.New("database unavailable"), nil}
+	trial := &recordingTrialWebhookService{subscriptionResults: []trials.WebhookReconcileResult{
+		{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusCompleted}},
+		{Managed: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusCompleted}},
+	}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}
+
+	first := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, false, metadata)
+	second := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusActive, false, metadata)
+	if first.Code != http.StatusInternalServerError || second.Code != http.StatusOK {
+		t.Fatalf("statuses=%d/%d bodies=%q/%q", first.Code, second.Code, first.Body.String(), second.Body.String())
+	}
+	if store.subscription.Status != "active" || store.subscription.PlanID != "basic" || store.upserts != 1 || trial.subscriptionCalls != 2 {
+		t.Fatalf("subscription=%#v upserts=%d reconcile=%d", store.subscription, store.upserts, trial.subscriptionCalls)
+	}
+}
+
 func TestCheckoutCompletedRejectsSessionSubscriptionBindingMismatch(t *testing.T) {
 	baseMetadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "unipost_environment": "staging"}
 	for _, tc := range []struct {
@@ -557,6 +583,7 @@ type stripeWebhookStore struct {
 	upserts                   int
 	cancelCalls               int
 	statusUpdates             int
+	updateErrors              []error
 }
 
 func newStripeWebhookStore(workspaceID string) *stripeWebhookStore {
@@ -587,6 +614,13 @@ func newStripeWebhookStore(workspaceID string) *stripeWebhookStore {
 func (s *stripeWebhookStore) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
 	case strings.Contains(query, "UPDATE subscriptions\nSET stripe_customer_id"):
+		if len(s.updateErrors) > 0 {
+			err := s.updateErrors[0]
+			s.updateErrors = s.updateErrors[1:]
+			if err != nil {
+				return pgconn.CommandTag{}, err
+			}
+		}
 		s.subscription.WorkspaceID, _ = args[0].(string)
 		s.subscription.StripeCustomerID, _ = args[1].(pgtype.Text)
 		s.subscription.StripeSubscriptionID, _ = args[2].(pgtype.Text)
@@ -921,22 +955,23 @@ func postTestStripeObjectWebhook(t *testing.T, handler *StripeWebhookHandler, se
 }
 
 type recordingTrialWebhookService struct {
-	retrieve           trials.SubscriptionSnapshot
-	retrieveErr        error
-	retrieveMode       string
-	retrieveID         string
-	subscriptionResult trials.WebhookReconcileResult
-	subscriptionErr    error
-	subscriptionCalls  int
-	checkoutResult     trials.WebhookReconcileResult
-	checkoutErr        error
-	scheduleResult     trials.WebhookReconcileResult
-	scheduleErr        error
-	ordinaryResult     trials.WebhookReconcileResult
-	ordinaryErr        error
-	checkoutCalls      int
-	scheduleCalls      int
-	ordinaryCalls      int
+	retrieve            trials.SubscriptionSnapshot
+	retrieveErr         error
+	retrieveMode        string
+	retrieveID          string
+	subscriptionResult  trials.WebhookReconcileResult
+	subscriptionResults []trials.WebhookReconcileResult
+	subscriptionErr     error
+	subscriptionCalls   int
+	checkoutResult      trials.WebhookReconcileResult
+	checkoutErr         error
+	scheduleResult      trials.WebhookReconcileResult
+	scheduleErr         error
+	ordinaryResult      trials.WebhookReconcileResult
+	ordinaryErr         error
+	checkoutCalls       int
+	scheduleCalls       int
+	ordinaryCalls       int
 }
 
 func (s *recordingTrialWebhookService) RetrieveSubscription(_ context.Context, mode, id string) (trials.SubscriptionSnapshot, error) {
@@ -945,6 +980,11 @@ func (s *recordingTrialWebhookService) RetrieveSubscription(_ context.Context, m
 }
 func (s *recordingTrialWebhookService) ReconcileSubscription(_ context.Context, _ trials.WebhookSubscriptionRequest) (trials.WebhookReconcileResult, error) {
 	s.subscriptionCalls++
+	if len(s.subscriptionResults) > 0 {
+		result := s.subscriptionResults[0]
+		s.subscriptionResults = s.subscriptionResults[1:]
+		return result, s.subscriptionErr
+	}
 	return s.subscriptionResult, s.subscriptionErr
 }
 func (s *recordingTrialWebhookService) ReconcileCheckoutExpired(_ context.Context, _ trials.WebhookCheckoutRequest) (trials.WebhookReconcileResult, error) {

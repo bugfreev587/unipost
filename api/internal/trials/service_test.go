@@ -1078,6 +1078,38 @@ func TestReconcileSubscriptionTerminalGrantDoesNotProjectDelayedTrialingEvent(t 
 	}
 }
 
+func TestReconcileSubscriptionTerminalOutcomeAllowsProjectionRetry(t *testing.T) {
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	for _, tc := range []struct {
+		name           string
+		grant          Grant
+		status         string
+		planID         string
+		metadataPlanID string
+	}{
+		{name: "completed active renewal", grant: Grant{Status: StatusCompleted, PlanID: "growth"}, status: "active", planID: "growth", metadataPlanID: "growth"},
+		{name: "canceled terminal subscription", grant: Grant{Status: StatusCanceled, PlanID: "growth"}, status: "canceled", planID: "growth", metadataPlanID: "growth"},
+		{name: "superseded paid plan", grant: Grant{Status: StatusSuperseded, PlanID: "growth", SupersededByPlanID: "team"}, status: "active", planID: "team", metadataPlanID: "team"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t)
+			grant := tc.grant
+			grant.ID, grant.WorkspaceID, grant.Kind, grant.StripeMode = "grant_1", "ws_1", KindFreeToPaid, "live"
+			grant.StripeCustomerID, grant.StripeSubscriptionID, grant.StartedAt, grant.EndsAt = "cus_1", "sub_1", &start, &end
+			h.store.grant = grant
+			metadata := trialMetadata("ws_1", tc.metadataPlanID, "grant_1", KindFreeToPaid, "staging")
+			result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: tc.status, CustomerID: "cus_1", PriceID: "price", TrialStartAt: &start, TrialEndAt: &end, Metadata: metadata}, PlanID: tc.planID, OccurredAt: end})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Managed || result.DoNotProject {
+				t.Fatalf("result = %#v, want projectable retry", result)
+			}
+		})
+	}
+}
+
 func TestReconcileReleasedScheduleAfterTrialEndCompletesOutOfOrder(t *testing.T) {
 	h := newServiceHarness(t)
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
