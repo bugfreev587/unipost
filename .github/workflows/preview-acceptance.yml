@@ -125,6 +125,9 @@ jobs:
           cp dashboard/public/__unipost-preview.json artifacts/preview/frontend.json
 
       - name: Build the Vercel Preview
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           echo "vercel-build" > artifacts/preview/current-stage
@@ -134,7 +137,7 @@ jobs:
           export NEXT_PUBLIC_LANDING_URL="https://${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_APP_HOST="${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_UNIPOST_ENV="development"
-          export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}"
+          test -n "$CLERK_SECRET_KEY"
           test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
           npx --yes vercel@50.26.1 build \
             --token="$VERCEL_TOKEN" \
@@ -145,12 +148,19 @@ jobs:
       - name: Deploy and alias the Vercel Preview
         id: vercel
         shell: bash
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           echo "vercel-deploy" > artifacts/preview/current-stage
+          test -n "$CLERK_SECRET_KEY"
+          test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
           deployment_url="$(
             npx --yes vercel@50.26.1 deploy \
               --prebuilt \
+              --env "CLERK_SECRET_KEY=$CLERK_SECRET_KEY" \
+              --env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" \
               --archive=tgz \
               --yes \
               --token="$VERCEL_TOKEN" \
