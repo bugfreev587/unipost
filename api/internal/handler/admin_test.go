@@ -2,9 +2,124 @@ package handler
 
 import (
 	"os"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
+
+func adminSourceSection(t *testing.T, source, start, end string) string {
+	t.Helper()
+	startIndex := strings.Index(source, start)
+	if startIndex < 0 {
+		t.Fatalf("source missing section start %q", start)
+	}
+	endIndex := strings.Index(source[startIndex+len(start):], end)
+	if endIndex < 0 {
+		t.Fatalf("source missing section end %q", end)
+	}
+	return source[startIndex : startIndex+len(start)+endIndex]
+}
+
+func TestAdminEmailNotificationsExcludeRecipientAndAttemptedDateFilters(t *testing.T) {
+	queryType := reflect.TypeOf(adminEmailNotificationsQuery{})
+	for _, field := range []string{"Email", "StartAt", "EndAt"} {
+		if _, ok := queryType.FieldByName(field); ok {
+			t.Errorf("admin email query still exposes %s", field)
+		}
+	}
+
+	for _, unwanted := range []string{
+		"LOWER(BTRIM(email)) = LOWER(BTRIM($7))",
+		"attempted_at >= $8",
+		"attempted_at < $9",
+	} {
+		if strings.Contains(adminEmailNotificationsWhereSQL, unwanted) {
+			t.Errorf("admin email SQL still contains %q", unwanted)
+		}
+	}
+
+	sourceBytes, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	source := string(sourceBytes)
+	handler := adminSourceSection(
+		t,
+		source,
+		"func (h *AdminHandler) ListEmailNotifications",
+		"func (h *AdminHandler) RetryPaidQuotaEmailNotification",
+	)
+	for _, unwanted := range []string{
+		`q.Get("email")`,
+		`q.Get("start_at")`,
+		`q.Get("end_at")`,
+		"parseAdminEmailNotificationRange",
+		"ListEmailNotificationFilterOptions",
+	} {
+		if strings.Contains(handler, unwanted) {
+			t.Errorf("Admin Email handler still contains %q", unwanted)
+		}
+	}
+	for _, exactName := range []string{
+		"func adminEmailNotificationFilterOptionsSQL",
+		"func parseAdminEmailNotificationRange",
+		"func (h *AdminHandler) queryEmailNotificationFilterOptions",
+		"func (h *AdminHandler) ListEmailNotificationFilterOptions",
+	} {
+		if strings.Contains(source, exactName) {
+			t.Errorf("Admin Email-specific helper still exists: %s", exactName)
+		}
+	}
+
+	routerBytes, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	if strings.Contains(string(routerBytes), `r.Get("/v1/admin/email-notifications/filter-options"`) {
+		t.Fatal("Admin Email filter-options route is still registered")
+	}
+}
+
+func TestAdminPostsRetainAbsoluteTimeFilters(t *testing.T) {
+	parsed := parseAdminTimeParam("2026-07-01T07:00:00Z")
+	if parsed == nil || parsed.UTC().Format(time.RFC3339) != "2026-07-01T07:00:00Z" {
+		t.Fatalf("parseAdminTimeParam returned %v", parsed)
+	}
+
+	sourceBytes, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatalf("read admin.go: %v", err)
+	}
+	source := string(sourceBytes)
+	listPosts := adminSourceSection(
+		t,
+		source,
+		"func (h *AdminHandler) ListPosts(",
+		"func (h *AdminHandler) ListPostsAggregates(",
+	)
+	listAggregates := adminSourceSection(
+		t,
+		source,
+		"func (h *AdminHandler) ListPostsAggregates(",
+		"func normalizeAdminPostResultStatus(",
+	)
+	for name, section := range map[string]string{
+		"ListPosts":           listPosts,
+		"ListPostsAggregates": listAggregates,
+	} {
+		for _, want := range []string{
+			`parseAdminTimeParam(q.Get("start_at"))`,
+			`parseAdminTimeParam(q.Get("end_at"))`,
+			"StartAt:",
+			"EndAt:",
+		} {
+			if !strings.Contains(section, want) {
+				t.Errorf("%s lost %q", name, want)
+			}
+		}
+	}
+}
 
 func TestAdminPostPlatformsSQLIncludesStoredTargetPlatforms(t *testing.T) {
 	sql := adminPostPlatformsSQL("sp")
@@ -416,54 +531,6 @@ func TestAdminEmailNotificationsSQLIncludesQuotaReminderFields(t *testing.T) {
 	}
 }
 
-func TestAdminEmailNotificationsSQLFiltersRecipientAndAttemptedRange(t *testing.T) {
-	sql := adminEmailNotificationsWhereSQL
-
-	for _, want := range []string{
-		"LOWER(BTRIM(email)) = LOWER(BTRIM($7))",
-		"attempted_at >= $8",
-		"attempted_at < $9",
-	} {
-		if !strings.Contains(sql, want) {
-			t.Fatalf("admin email notifications filter missing %q:\n%s", want, sql)
-		}
-	}
-}
-
-func TestParseAdminEmailNotificationRange(t *testing.T) {
-	start, end, err := parseAdminEmailNotificationRange(
-		"2026-07-01T07:00:00Z",
-		"2026-07-03T07:00:00Z",
-	)
-	if err != nil || start == nil || end == nil {
-		t.Fatalf("valid range = %v/%v/%v", start, end, err)
-	}
-
-	start, end, err = parseAdminEmailNotificationRange("", "2026-07-03T07:00:00Z")
-	if err != nil || start != nil || end == nil {
-		t.Fatalf("end-only range = %v/%v/%v", start, end, err)
-	}
-
-	if _, _, err := parseAdminEmailNotificationRange("bad", ""); err == nil {
-		t.Fatal("malformed start_at should fail")
-	}
-	if _, _, err := parseAdminEmailNotificationRange("", "bad"); err == nil {
-		t.Fatal("malformed end_at should fail")
-	}
-	if _, _, err := parseAdminEmailNotificationRange(
-		"2026-07-03T07:00:00Z",
-		"2026-07-03T07:00:00Z",
-	); err == nil {
-		t.Fatal("zero-length range should fail")
-	}
-	if _, _, err := parseAdminEmailNotificationRange(
-		"2026-07-04T07:00:00Z",
-		"2026-07-03T07:00:00Z",
-	); err == nil {
-		t.Fatal("reversed range should fail")
-	}
-}
-
 func TestAdminEmailNotificationsResponseExposesPreferencePolicy(t *testing.T) {
 	source, err := os.ReadFile("admin.go")
 	if err != nil {
@@ -488,21 +555,6 @@ func TestAdminEmailNotificationsResponseExposesPreferencePolicy(t *testing.T) {
 	}
 }
 
-func TestAdminEmailNotificationFilterOptionsUseCompleteDistinctRecipientSet(t *testing.T) {
-	sql := adminEmailNotificationFilterOptionsSQL()
-
-	for _, want := range []string{
-		"email_notifications AS",
-		"SELECT DISTINCT ON (LOWER(BTRIM(email))) BTRIM(email) AS email",
-		"WHERE BTRIM(email) <> ''",
-		"ORDER BY LOWER(email), email",
-	} {
-		if !strings.Contains(sql, want) {
-			t.Fatalf("admin email filter options SQL missing %q:\n%s", want, sql)
-		}
-	}
-}
-
 func TestNormalizeAdminEmailNotificationStatusAllowsSkipped(t *testing.T) {
 	got, ok := normalizeAdminEmailNotificationStatus("skipped")
 	if !ok || got != "skipped" {
@@ -519,7 +571,6 @@ func TestAdminEmailNotificationsRouteIsRegistered(t *testing.T) {
 		t.Fatalf("admin email notifications route is not registered")
 	}
 	for _, route := range []string{
-		`r.Get("/v1/admin/email-notifications/filter-options", adminHandler.ListEmailNotificationFilterOptions)`,
 		`r.Post("/v1/admin/email-notifications/{id}/retry", adminHandler.RetryPaidQuotaEmailNotification)`,
 		`r.Get("/v1/admin/paid-quota-follow-ups", adminHandler.ListPaidQuotaFollowUps)`,
 		`r.Patch("/v1/admin/paid-quota-follow-ups/{id}", adminHandler.UpdatePaidQuotaFollowUp)`,

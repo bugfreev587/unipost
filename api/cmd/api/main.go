@@ -440,10 +440,11 @@ func main() {
 	if err := xIngestionStore.BackfillWebhookRouteKeys(workerCtx); err != nil {
 		slog.Error("failed to backfill X webhook route keys")
 	}
-	xDMsAvailable := xDMAvailability(featureFlagEvaluator)
 	xIngestionService := xinbox.NewIngestionService(xinbox.IngestionConfig{
-		Store:        xIngestionStore,
-		DMsAvailable: xDMsAvailable,
+		Store: xIngestionStore,
+		DMsAvailable: func(ctx context.Context, workspaceID string) (bool, error) {
+			return featureFlagEvaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
+		},
 		AtomicProcess: func(ctx context.Context, req xinbox.InboundAdmissionRequest, item xinbox.InboxItem) (xinbox.InboundAdmission, xinbox.InboxItem, bool, error) {
 			var insertedItem xinbox.InboxItem
 			var inserted bool
@@ -492,24 +493,17 @@ func main() {
 		Decrypt:         encryptor.Decrypt,
 	})
 	if processMode == processModeAPI {
-		xInboxDMCanaryAccountIDs := parseXInboxDMCanary(
-			os.Getenv("X_INBOX_DM_CANARY_SOCIAL_ACCOUNT_IDS"),
-		)
 		xInboxDeliveryWorker := worker.NewPostgresXInboxDeliveryWorker(
-			worker.PostgresXInboxDeliveryConfig{
-				DatabaseURL:                     databaseURL,
-				Pool:                            pool,
-				Queries:                         queries,
-				Encryptor:                       encryptor,
-				Usage:                           xCreditsService,
-				Client:                          xinbox.NewClient(xinbox.ClientConfig{}),
-				ManagedAppBearer:                os.Getenv("TWITTER_BEARER_TOKEN"),
-				ManagedConsumerSecretConfigured: strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
-				ManagedWebhookRouteKey:          managedXWebhookRouteKey,
-				WebhookURL:                      os.Getenv("X_INBOX_WEBHOOK_URL"),
-				DMsAvailable:                    xDMsAvailable,
-				DMCanaryAccountIDs:              xInboxDMCanaryAccountIDs,
-			},
+			databaseURL,
+			pool,
+			queries,
+			encryptor,
+			xCreditsService,
+			xinbox.NewClient(xinbox.ClientConfig{}),
+			os.Getenv("TWITTER_BEARER_TOKEN"),
+			strings.TrimSpace(os.Getenv("TWITTER_CONSUMER_SECRET")) != "",
+			managedXWebhookRouteKey,
+			os.Getenv("X_INBOX_WEBHOOK_URL"),
 		).SetEventHandler(xIngestionService.IngestStreamEvent)
 		go xInboxDeliveryWorker.Start(workerCtx)
 		workspaceXAppCapacities, capacityConfigErr := worker.ParseXInboxWorkspaceAppCapacities(
@@ -696,7 +690,7 @@ func main() {
 	// Sprint 3 PR5: Bluesky Connect form handler. No API key — the
 	// session id + oauth_state act as the bearer. Server-renders an
 	// HTML form so the app password never touches dashboard JS.
-	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore)
+	connectBlueskyHandler := handler.NewConnectBlueskyHandler(queries, encryptor, eventBus, connectOwnershipStore).SetIntegrationLogger(integrationLogger)
 	// Sprint 4 PR5: Managed Users view (one row per end user across
 	// all their connected social accounts).
 	managedUsersHandler := handler.NewManagedUsersHandler(queries)
@@ -911,7 +905,6 @@ func main() {
 		r.Get("/v1/admin/posts", adminHandler.ListPosts)
 		r.Get("/v1/admin/posts/aggregates", adminHandler.ListPostsAggregates)
 		r.Get("/v1/admin/email-notifications", adminHandler.ListEmailNotifications)
-		r.Get("/v1/admin/email-notifications/filter-options", adminHandler.ListEmailNotificationFilterOptions)
 		r.Post("/v1/admin/email-notifications/{id}/retry", adminHandler.RetryPaidQuotaEmailNotification)
 		r.Get("/v1/admin/paid-quota-follow-ups", adminHandler.ListPaidQuotaFollowUps)
 		r.Patch("/v1/admin/paid-quota-follow-ups/{id}", adminHandler.UpdatePaidQuotaFollowUp)
@@ -1358,28 +1351,6 @@ func positiveInt64Env(name string) int64 {
 		return 0
 	}
 	return value
-}
-
-func parseXInboxDMCanary(raw string) map[string]struct{} {
-	canary, err := worker.ParseXInboxDMCanary(raw)
-	if err != nil {
-		slog.Warn("invalid X Inbox DM canary configuration",
-			"error_class", "x_dm_canary_config_invalid")
-		return map[string]struct{}{}
-	}
-	return canary
-}
-
-type workspaceFeatureEvaluator interface {
-	ForWorkspace(context.Context, string, string) (bool, error)
-}
-
-func xDMAvailability(
-	evaluator workspaceFeatureEvaluator,
-) func(context.Context, string) (bool, error) {
-	return func(ctx context.Context, workspaceID string) (bool, error) {
-		return evaluator.ForWorkspace(ctx, workspaceID, featureflags.XDMSV1)
-	}
 }
 
 func dbPoolMaxConnsForMode(mode string, deliveryConfig worker.PostDeliveryWorkerConfig) int32 {

@@ -20,7 +20,7 @@
 // bearer for the public session lookup endpoint.
 
 import Link from "next/link";
-import { humanizeConnectError } from "@/lib/connect-errors";
+import { getConnectErrorPresentation } from "@/lib/connect-errors";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://api.unipost.dev";
 
@@ -114,10 +114,11 @@ export default async function ConnectPage({ params, searchParams }: PageProps) {
     return <ErrorPage title="Connection cancelled" body="You can close this window." />;
   }
   if (connect_status === "error") {
+    const presentation = getConnectErrorPresentation(reason, platform);
     return (
       <ErrorPage
-        title="Connection failed"
-        body={humanizeConnectError(reason || "unknown error")}
+        title={presentation.title}
+        body={presentation.body}
       />
     );
   }

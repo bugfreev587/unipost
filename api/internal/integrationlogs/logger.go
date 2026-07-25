@@ -2,6 +2,7 @@ package integrationlogs
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -10,23 +11,27 @@ import (
 )
 
 const (
-	defaultQueueSize   = 2048
-	defaultWriteTimout = 5 * time.Second
+	defaultQueueSize    = 2048
+	defaultWriteTimeout = 5 * time.Second
 )
+
+type integrationLogStore interface {
+	InsertIntegrationLog(context.Context, db.InsertIntegrationLogParams) (db.IntegrationLog, error)
+}
 
 type queuedEvent struct {
 	event Event
 }
 
 type Logger struct {
-	queries    *db.Queries
+	queries    integrationLogStore
 	afterWrite func(context.Context, db.IntegrationLog)
 	queue      chan queuedEvent
 	dropped    atomic.Uint64
 	failures   atomic.Uint64
 }
 
-func NewLogger(queries *db.Queries, afterWrite func(context.Context, db.IntegrationLog)) *Logger {
+func NewLogger(queries integrationLogStore, afterWrite func(context.Context, db.IntegrationLog)) *Logger {
 	return &Logger{
 		queries:    queries,
 		afterWrite: afterWrite,
@@ -66,11 +71,10 @@ func (l *Logger) drainQueue() int {
 }
 
 func (l *Logger) writeNow(e Event) {
-	opCtx, cancel := context.WithTimeout(context.Background(), defaultWriteTimout)
+	opCtx, cancel := context.WithTimeout(context.Background(), defaultWriteTimeout)
 	defer cancel()
 
-	params := Normalize(e)
-	row, err := l.queries.InsertIntegrationLog(opCtx, params)
+	err := l.insert(opCtx, e)
 	if err != nil {
 		l.failures.Add(1)
 		slog.Warn("integration_log_write_failed",
@@ -81,11 +85,32 @@ func (l *Logger) writeNow(e Event) {
 			"error", err,
 			"total_failures", l.failures.Load(),
 		)
-		return
+	}
+}
+
+func (l *Logger) insert(ctx context.Context, e Event) error {
+	row, err := l.queries.InsertIntegrationLog(ctx, Normalize(e))
+	if err != nil {
+		return err
 	}
 	if l.afterWrite != nil {
-		l.afterWrite(opCtx, row)
+		l.afterWrite(ctx, row)
 	}
+	return nil
+}
+
+func (l *Logger) WriteSync(ctx context.Context, e Event) error {
+	if l == nil || l.queries == nil || e.WorkspaceID == "" || e.Action == "" {
+		return errors.New("integration logger unavailable")
+	}
+
+	opCtx, cancel := context.WithTimeout(ctx, defaultWriteTimeout)
+	defer cancel()
+	if err := l.insert(opCtx, e); err != nil {
+		l.failures.Add(1)
+		return err
+	}
+	return nil
 }
 
 func (l *Logger) Write(ctx context.Context, e Event) {
