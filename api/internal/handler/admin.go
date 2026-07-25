@@ -27,6 +27,7 @@ import (
 type adminTrialService interface {
 	Grant(context.Context, trials.GrantRequest) (trials.Grant, error)
 	Revoke(context.Context, trials.RevokeRequest) (trials.Grant, error)
+	ListTrialHistory(context.Context, string) ([]trials.HistoryProjection, error)
 }
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
@@ -45,6 +46,25 @@ type AdminHandler struct {
 func (h *AdminHandler) SetTrialService(service adminTrialService) *AdminHandler {
 	h.trials = service
 	return h
+}
+
+func (h *AdminHandler) hasOpenTrial(ctx context.Context, workspaceID string) (bool, error) {
+	if h.trials == nil {
+		return false, errors.New("trial service is unavailable")
+	}
+	history, err := h.trials.ListTrialHistory(ctx, workspaceID)
+	if err != nil {
+		return false, err
+	}
+	for _, grant := range history {
+		if grant.Status.IsOpen() {
+			return true, nil
+		}
+		if !grant.Status.IsTerminal() {
+			return false, fmt.Errorf("unknown trial status %q", grant.Status)
+		}
+	}
+	return false, nil
 }
 
 func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
@@ -3186,6 +3206,21 @@ func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
 	if !allowed[body.PlanID] {
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 			"plan_id must be one of: free, api, basic, growth, team, enterprise")
+		return
+	}
+
+	// This endpoint bypasses Stripe, so it must never race ahead of a managed
+	// trial. Read the trial ledger before any workspace/subscription mutation
+	// and fail closed if the ledger cannot be read.
+	hasOpenTrial, err := h.hasOpenTrial(r.Context(), workspaceID)
+	if err != nil {
+		slog.Error("admin plan flip trial preflight failed", "workspace_id", workspaceID, "error", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace trial state")
+		return
+	}
+	if hasOpenTrial {
+		writeError(w, http.StatusConflict, "TRIAL_PLAN_CHANGE_CONFLICT",
+			"Workspace plan cannot be changed while a trial is open")
 		return
 	}
 

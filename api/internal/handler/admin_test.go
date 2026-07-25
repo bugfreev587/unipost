@@ -47,6 +47,81 @@ func TestAdminGrantTrialReturnsCreatedAndPassesAuthenticatedActor(t *testing.T) 
 	}
 }
 
+func TestAdminSetPlanRejectsEveryOpenTrialBeforeSubscriptionMutation(t *testing.T) {
+	for _, status := range []trials.Status{
+		trials.StatusProvisioning,
+		trials.StatusPendingActivation,
+		trials.StatusCheckoutPending,
+		trials.StatusScheduled,
+		trials.StatusActive,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			service := &fakeAdminTrialService{history: []trials.HistoryProjection{{
+				ID: "grant_1", PlanID: "growth", Status: status,
+			}}}
+			h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+			req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/plan", `{"plan_id":"team"}`, map[string]string{"workspaceID": "ws_1"})
+			rec := httptest.NewRecorder()
+
+			h.SetPlan(rec, req)
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var response ErrorResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Error.Code != "TRIAL_PLAN_CHANGE_CONFLICT" {
+				t.Fatalf("error=%#v", response.Error)
+			}
+			if strings.Contains(rec.Body.String(), "grant_1") {
+				t.Fatalf("conflict response leaked trial details: %s", rec.Body.String())
+			}
+			if service.historyCalls != 1 {
+				t.Fatalf("history calls=%d, want 1", service.historyCalls)
+			}
+		})
+	}
+}
+
+func TestAdminSetPlanFailsClosedWhenTrialReadFails(t *testing.T) {
+	service := &fakeAdminTrialService{historyErr: errors.New("database unavailable")}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/plan", `{"plan_id":"team"}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+
+	h.SetPlan(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != "INTERNAL_ERROR" || strings.Contains(rec.Body.String(), "database unavailable") {
+		t.Fatalf("unsafe error response=%s", rec.Body.String())
+	}
+}
+
+func TestAdminPlanFlipGuardAllowsNoGrantAndTerminalHistory(t *testing.T) {
+	for _, history := range [][]trials.HistoryProjection{
+		nil,
+		{{ID: "completed", Status: trials.StatusCompleted}},
+		{{ID: "failed", Status: trials.StatusFailed}, {ID: "revoked", Status: trials.StatusRevoked}},
+	} {
+		service := &fakeAdminTrialService{history: history}
+		h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+
+		blocked, err := h.hasOpenTrial(t.Context(), "ws_1")
+
+		if err != nil || blocked {
+			t.Fatalf("hasOpenTrial()=(%t,%v), want (false,nil), history=%#v", blocked, err, history)
+		}
+	}
+}
+
 func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) {
 	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 	end := start.Add(30 * 24 * time.Hour)
@@ -241,12 +316,15 @@ func TestAdminTrialRoutesAndAuditActionsAreWired(t *testing.T) {
 }
 
 type fakeAdminTrialService struct {
-	grant      trials.Grant
-	grantErr   error
-	revokeErr  error
-	grantReq   trials.GrantRequest
-	revokeReq  trials.RevokeRequest
-	grantCalls int
+	grant        trials.Grant
+	grantErr     error
+	revokeErr    error
+	history      []trials.HistoryProjection
+	historyErr   error
+	grantReq     trials.GrantRequest
+	revokeReq    trials.RevokeRequest
+	grantCalls   int
+	historyCalls int
 }
 
 func (s *fakeAdminTrialService) Grant(_ context.Context, req trials.GrantRequest) (trials.Grant, error) {
@@ -260,6 +338,10 @@ func (s *fakeAdminTrialService) Revoke(_ context.Context, req trials.RevokeReque
 		s.grant = trials.Grant{ID: req.GrantID, WorkspaceID: req.WorkspaceID, Status: trials.StatusRevoked}
 	}
 	return s.grant, s.revokeErr
+}
+func (s *fakeAdminTrialService) ListTrialHistory(_ context.Context, _ string) ([]trials.HistoryProjection, error) {
+	s.historyCalls++
+	return s.history, s.historyErr
 }
 
 func adminTrialRequest(t *testing.T, method, target, body string, params map[string]string) *http.Request {
