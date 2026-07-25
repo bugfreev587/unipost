@@ -833,6 +833,12 @@ func validatePaidTrialScheduleRequest(req CreatePaidTrialScheduleRequest) error 
 	if err := validateSchedulePhase("current", req.CurrentPhase, true); err != nil {
 		return err
 	}
+	if req.CurrentPhase.PriceID != req.PriceID {
+		return fmt.Errorf("current phase price must match paid trial price")
+	}
+	if !req.CurrentPhase.TrialEndAt.IsZero() {
+		return fmt.Errorf("current paid phase must not already be trialing")
+	}
 	if !req.CurrentPhase.EndAt.Equal(req.TrialStartAt) {
 		return fmt.Errorf("current phase end must equal trial start")
 	}

@@ -262,6 +262,8 @@ func TestBuildPaidTrialScheduleParamsRejectsInvalidDataBeforeCreate(t *testing.T
 		{name: "duration low", mutate: func(req *CreatePaidTrialScheduleRequest) { req.DurationDays = 0 }},
 		{name: "duration high", mutate: func(req *CreatePaidTrialScheduleRequest) { req.DurationDays = 731 }},
 		{name: "current price", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.PriceID = "" }},
+		{name: "current price mismatch", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.PriceID = "price_other" }},
+		{name: "current already trialing", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.TrialEndAt = req.CurrentPhase.EndAt }},
 		{name: "current start", mutate: func(req *CreatePaidTrialScheduleRequest) { req.CurrentPhase.StartAt = time.Time{} }},
 		{name: "current start non UTC", mutate: func(req *CreatePaidTrialScheduleRequest) {
 			req.CurrentPhase.StartAt = req.CurrentPhase.StartAt.In(nonUTC)
@@ -712,6 +714,18 @@ func TestGatewayRejectsInvalidRequestsBeforeAnyStripeCall(t *testing.T) {
 		{name: "create paid schedule", call: func(g *stripeGateway) error {
 			req := validPaidScheduleRequest()
 			req.DurationDays = 0
+			_, err := g.CreatePaidTrialSchedule(t.Context(), req)
+			return err
+		}},
+		{name: "create paid schedule price mismatch", call: func(g *stripeGateway) error {
+			req := validPaidScheduleRequest()
+			req.CurrentPhase.PriceID = "price_other"
+			_, err := g.CreatePaidTrialSchedule(t.Context(), req)
+			return err
+		}},
+		{name: "create paid schedule current trial", call: func(g *stripeGateway) error {
+			req := validPaidScheduleRequest()
+			req.CurrentPhase.TrialEndAt = req.CurrentPhase.EndAt
 			_, err := g.CreatePaidTrialSchedule(t.Context(), req)
 			return err
 		}},
