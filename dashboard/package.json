@@ -15,6 +15,7 @@
     "test:admin-email-filters": "node --test tests/admin-email-filters.test.mjs",
     "acceptance:team-plan": "node scripts/team-plan-acceptance.mjs",
     "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts",
+    "test:regression:dashboard:authenticated": "playwright test --config=playwright.authenticated.config.ts",
     "test:regression:preview": "playwright test --config=playwright.preview.config.ts"
   },
   "dependencies": {
