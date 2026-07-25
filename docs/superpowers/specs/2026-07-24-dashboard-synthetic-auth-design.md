@@ -16,7 +16,7 @@ Alternatives considered:
 
 ## Scope
 
-This change affects only Dashboard regression test support, the deployed regression workflow, and CI documentation. It does not change the UniPost product authentication configuration, customer accounts, production feature behavior, or feature flags.
+This change affects Dashboard regression test support, the deployed regression workflow, CI documentation, and the existing account-deletion handler used for deterministic synthetic cleanup. It does not change the UniPost product authentication configuration, customer sign-in behavior, or feature flags. The account-deletion adjustment makes the existing deletion contract synchronous instead of depending solely on an asynchronous Clerk webhook.
 
 ## Components
 
@@ -26,16 +26,16 @@ A focused helper will own the complete lifecycle:
 
 1. Validate the configured base URL and Clerk secret-key type so a test key cannot be used against production and a live key cannot be used against development.
 2. Discover the deployed Clerk publishable key from a public page.
-3. Create a uniquely named Clerk user with a generated email and random strong password through Clerk's Backend API.
-4. Initialize `@clerk/testing/playwright` with the environment's publishable and secret keys.
-5. Establish a browser session with `clerk.signIn({ page, emailAddress })`, bypassing the disabled password UI without bypassing Clerk authentication.
+3. Create a uniquely named passwordless Clerk user through Clerk's Backend API using `skip_password_requirement: true`. No generated password is needed or stored.
+4. Initialize `@clerk/testing/playwright` with the environment's publishable and secret keys. Because the email overload reads `CLERK_SECRET_KEY`, set it only for the helper's lifetime and restore the process environment in `finally`.
+5. Establish a browser session with the supported `clerk.signIn({ page, emailAddress })` overload. In `@clerk/testing` 2.2.10 this overload resolves the user through Clerk's Backend API, creates a 300-second sign-in token, and activates the session with Clerk's `ticket` strategy. The test never submits a password or drives the Google OAuth UI.
 6. Return the disposable user identity to the caller for cleanup.
 
 The helper will expose small functions for configuration validation, user creation, browser sign-in, and cleanup so their contracts can be tested without making live requests.
 
 ### Authenticated regression
 
-The authenticated smoke test will require `DASHBOARD_TEST_CLERK_SECRET_KEY` instead of email and password. It will create the synthetic identity in setup, sign in through Clerk's testing helper, wait for UniPost bootstrap to produce the default workspace/profile, run the existing route assertions, and delete the Clerk user in teardown.
+The authenticated smoke test will require `DASHBOARD_TEST_CLERK_SECRET_KEY` instead of email and password. It will create the synthetic identity in setup, sign in through Clerk's ticket-based testing helper, read the active browser session token, call `GET /v1/me/bootstrap` explicitly, resolve the default profile, run the existing route assertions, and delete the account in teardown. Profile discovery may retry only after the explicit bootstrap call and only within a bounded timeout.
 
 The suite must not silently skip when the Clerk key is absent. Missing required authentication configuration will fail the authenticated smoke with a direct setup error.
 
@@ -48,11 +48,19 @@ The GitHub secret must contain the Clerk secret key matching `DASHBOARD_BASE_URL
 - `https://dev-app.unipost.dev` and `https://staging-app.unipost.dev` require `sk_test_`.
 - `https://app.unipost.dev` requires `sk_live_`.
 
+The scheduled workflow currently defaults to `https://app.unipost.dev`, so it deliberately creates a reserved synthetic identity in the production Clerk instance and production database. The identity is never confused with a customer account because its email and name use the `codex-dashboard-regression-` prefix, and the run is successful only when its Clerk and UniPost records are deleted. Development, staging, and Preview runs use the matching Development Clerk instance and their own API/database environment.
+
+### Deterministic UniPost cleanup
+
+The existing authenticated `DELETE /v1/me` endpoint will keep deleting the current Clerk user, then synchronously call the existing `DeleteUser` database query before returning `204`. The database deletion cascades through the user's workspace, profiles, subscriptions, accounts, keys, and posts through the existing foreign keys. The later `user.deleted` webhook remains a safe idempotent fallback, but the test no longer depends on that webhook being configured or delivered.
+
+This is required for isolated Railway Preview environments, where `CLERK_WEBHOOK_SECRET` is intentionally absent. It also strengthens normal account deletion: a successful `204` now confirms that both Clerk and UniPost deletion completed.
+
 ## Cleanup and Failure Handling
 
-Cleanup runs in `finally` semantics after success, assertion failure, navigation failure, or partial setup. A created Clerk user is always deleted. A cleanup failure fails the run and reports the Clerk user ID without printing the secret key or generated password.
+Cleanup runs in `finally` semantics after success, assertion failure, navigation failure, or partial setup. When a browser session and UniPost user exist, teardown calls authenticated `DELETE /v1/me`; a `204` confirms synchronous Clerk and UniPost cleanup. If setup failed before UniPost bootstrap, teardown calls Clerk's Backend API directly for the exact tracked user. If authenticated deletion fails after bootstrap, the direct Clerk delete remains an idempotent fallback, but the run stays failed and reports the tracked user ID because local cleanup was not confirmed. No failed cleanup may be reported as successful.
 
-If both the acceptance and cleanup fail, the result preserves both errors. Generated credentials remain in memory only and are never logged, committed, stored as artifacts, or written to the browser report.
+If both the acceptance and cleanup fail, the result preserves both errors. Secret keys and sign-in tickets remain in memory only and are never logged, committed, stored as artifacts, or written to the browser report.
 
 If Clerk user creation succeeds but UniPost bootstrap has not completed yet, the test will retry only the profile discovery within a bounded timeout. It will not reuse a customer profile or select an arbitrary existing user.
 
@@ -61,9 +69,11 @@ If Clerk user creation succeeds but UniPost bootstrap has not completed yet, the
 The implementation will add source-level/unit coverage that proves:
 
 - missing or environment-mismatched Clerk configuration fails clearly;
-- generated identities use a reserved synthetic prefix and random password;
+- generated identities use a reserved synthetic prefix and explicitly omit a password;
 - the Backend API request creates and deletes only the tracked synthetic user;
-- Clerk browser sign-in receives the generated email and no password;
+- Clerk browser sign-in uses the supported email overload, which creates a short-lived sign-in ticket and receives no password;
+- the test explicitly bootstraps UniPost before resolving a profile;
+- `DELETE /v1/me` synchronously deletes the local user record after Clerk deletion, while repeat webhook deletion remains harmless;
 - cleanup runs after an acceptance failure and cleanup failures are surfaced;
 - the workflow no longer references `DASHBOARD_TEST_EMAIL` or `DASHBOARD_TEST_PASSWORD`;
 - the authenticated Playwright suite no longer contains a credential-based skip.
@@ -74,6 +84,7 @@ Local verification will include the focused unit tests, Dashboard build, and the
 
 - No Dashboard regression path depends on a Google account password or Google UI automation.
 - The authenticated smoke is a required test and cannot report skipped because credentials are absent.
-- Each run uses only its own disposable Clerk user and removes it after the run.
-- Secrets and generated passwords never appear in logs or artifacts.
+- Each run uses only its own disposable Clerk user and a short-lived ticket, then synchronously removes its Clerk and UniPost records.
+- Preview cleanup does not depend on Clerk webhook delivery.
+- Secrets and sign-in tickets never appear in logs or artifacts.
 - The existing authenticated route coverage still verifies real Clerk session behavior against the deployed Dashboard and API.
