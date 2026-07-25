@@ -1019,6 +1019,88 @@ func TestReconcileManagedTrialCancellationRecordsIntentWithoutTerminalTransition
 	}
 }
 
+func TestReconcileManagedTrialPreservesRecordedCancellationOnDelayedFalse(t *testing.T) {
+	h := newServiceHarness(t)
+	start := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	intent := start.Add(time.Hour)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", Status: StatusActive, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StartedAt: &start, EndsAt: &end, CanceledAt: &intent}
+	result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "trialing", CustomerID: "cus_1", PriceID: "price_growth", TrialStartAt: &start, TrialEndAt: &end, CurrentPeriodStartAt: &start, CurrentPeriodEndAt: &end, CancelAtPeriodEnd: false, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindFreeToPaid, "staging")}, PlanID: "growth", OccurredAt: start.Add(2 * time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Managed || !result.PreserveCancelAtPeriodEnd || result.DoNotProject {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestReconcileSubscriptionCASConflictRecomputesTerminalProjectionDecision(t *testing.T) {
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	for _, tc := range []struct {
+		name      string
+		snapshot  SubscriptionSnapshot
+		planID    string
+		configure func(*fakeGrantStore)
+	}{
+		{
+			name:     "concurrent canceled rejects stale trialing",
+			snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "trialing", CustomerID: "cus_1", PriceID: "price_growth", TrialStartAt: &start, TrialEndAt: &end, CurrentPeriodStartAt: &start, CurrentPeriodEndAt: &end, CancelAtPeriodEnd: true, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindFreeToPaid, "staging")},
+			planID:   "growth",
+			configure: func(store *fakeGrantStore) {
+				store.recordRenewalCancellationErr = ErrConcurrentTransition
+				store.afterRecordRenewalCancellation = func() { store.grant.Status = StatusCanceled }
+			},
+		},
+		{
+			name:     "concurrent superseded rejects old active period",
+			snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "active", CustomerID: "cus_1", PriceID: "price_growth", CurrentPeriodStartAt: &start, CurrentPeriodEndAt: &end, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindFreeToPaid, "staging")},
+			planID:   "growth",
+			configure: func(store *fakeGrantStore) {
+				store.markCompletedErr = ErrConcurrentTransition
+				store.afterMarkCompleted = func() {
+					store.grant.Status = StatusSuperseded
+					store.grant.SupersededByPlanID = "team"
+					store.grant.SupersededAt = &end
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newServiceHarness(t)
+			h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", Status: StatusActive, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StartedAt: &start, EndsAt: &end}
+			tc.configure(h.store)
+			result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: tc.snapshot, PlanID: tc.planID, OccurredAt: end})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !result.Managed || !result.DoNotProject || !result.Grant.Status.IsTerminal() {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+}
+
+func TestReconcileSubscriptionCASConflictAllowsCompatibleCompletedReplay(t *testing.T) {
+	h := newServiceHarness(t)
+	start := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	renewalEnd := end.Add(30 * 24 * time.Hour)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", Status: StatusActive, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StartedAt: &start, EndsAt: &end}
+	h.store.markCompletedErr = ErrConcurrentTransition
+	h.store.afterMarkCompleted = func() {
+		h.store.grant.Status = StatusCompleted
+		h.store.grant.CompletedAt = &end
+	}
+	result, err := h.service.ReconcileSubscription(t.Context(), WebhookSubscriptionRequest{Snapshot: SubscriptionSnapshot{StripeMode: "live", ID: "sub_1", Status: "active", CustomerID: "cus_1", PriceID: "price_growth", CurrentPeriodStartAt: &end, CurrentPeriodEndAt: &renewalEnd, Metadata: trialMetadata("ws_1", "growth", "grant_1", KindFreeToPaid, "staging")}, PlanID: "growth", OccurredAt: end})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Managed || result.DoNotProject || result.Grant.Status != StatusCompleted {
+		t.Fatalf("result = %#v, compatible replay must remain projectable", result)
+	}
+}
+
 func TestTerminalCancellationPreservesEarlierRenewalIntentTime(t *testing.T) {
 	h := newServiceHarness(t)
 	start := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
@@ -1259,6 +1341,10 @@ type fakeGrantStore struct {
 	markCompletedCalls             int
 	markSupersededCalls            int
 	recordRenewalCancellationCalls int
+	recordRenewalCancellationErr   error
+	afterRecordRenewalCancellation func()
+	markCompletedErr               error
+	afterMarkCompleted             func()
 }
 
 func (s *fakeGrantStore) GetBilling(context.Context, string) (BillingSnapshot, error) {
@@ -1423,6 +1509,12 @@ func (s *fakeGrantStore) RecordRenewalCancellation(_ context.Context, id string,
 		return Grant{}, ErrConcurrentTransition
 	}
 	s.recordRenewalCancellationCalls++
+	if s.recordRenewalCancellationErr != nil {
+		if s.afterRecordRenewalCancellation != nil {
+			s.afterRecordRenewalCancellation()
+		}
+		return Grant{}, s.recordRenewalCancellationErr
+	}
 	s.grant.CanceledAt = &at
 	return s.grant, nil
 }
@@ -1442,6 +1534,12 @@ func (s *fakeGrantStore) MarkCompleted(_ context.Context, id string, expected St
 		return Grant{}, ErrConcurrentTransition
 	}
 	s.markCompletedCalls++
+	if s.markCompletedErr != nil {
+		if s.afterMarkCompleted != nil {
+			s.afterMarkCompleted()
+		}
+		return Grant{}, s.markCompletedErr
+	}
 	s.grant.Status, s.grant.CompletedAt = StatusCompleted, &at
 	return s.grant, nil
 }

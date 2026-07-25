@@ -491,11 +491,15 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 	if h.shouldKeepCurrentPlanForDowngradeSnapshot(r.Context(), localSub, plan, snapshot.CurrentPeriodStartAt) {
 		planID = localSub.PlanID
 	}
+	cancelAtPeriodEnd := snapshot.CancelAtPeriodEnd
+	if trialResult.PreserveCancelAtPeriodEnd {
+		cancelAtPeriodEnd = true
+	}
 	update := db.UpdateSubscriptionStripeParams{
 		WorkspaceID: localSub.WorkspaceID, StripeCustomerID: pgtype.Text{String: snapshot.CustomerID, Valid: true},
 		StripeSubscriptionID: pgtype.Text{String: snapshot.ID, Valid: true}, PlanID: planID, Status: snapshot.Status,
 		CurrentPeriodStart: webhookTimestamptz(snapshot.CurrentPeriodStartAt), CurrentPeriodEnd: webhookTimestamptz(snapshot.CurrentPeriodEndAt),
-		CancelAtPeriodEnd: pgtype.Bool{Bool: snapshot.CancelAtPeriodEnd, Valid: true},
+		CancelAtPeriodEnd: pgtype.Bool{Bool: cancelAtPeriodEnd, Valid: true},
 	}
 	currentPlan, err := h.queries.GetPlan(r.Context(), localSub.PlanID)
 	if err != nil {

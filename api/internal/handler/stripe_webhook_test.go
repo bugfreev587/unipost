@@ -94,6 +94,30 @@ func TestManagedTrialCancelAtPeriodEndRetainsPlanAndAccess(t *testing.T) {
 	}
 }
 
+func TestManagedTrialDelayedCancelFalseDoesNotClearRecordedIntent(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.Status = "trialing"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_staging", Valid: true}
+	trial := &recordingTrialWebhookService{subscriptionResults: []trials.WebhookReconcileResult{
+		{Managed: true, RenewalCanceled: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusActive}},
+		{Managed: true, PreserveCancelAtPeriodEnd: true, Grant: trials.Grant{ID: "grant_1", WorkspaceID: "ws_staging", PlanID: "basic", Status: trials.StatusActive}},
+	}}
+	h, secret := newTestStripeWebhookHandler(store, nil)
+	h.SetTrialWebhookService(trial)
+	metadata := map[string]string{"workspace_id": "ws_staging", "plan_id": "basic", "trial_grant_id": "grant_1", "trial_kind": "free_to_paid", "unipost_environment": "staging"}
+	first := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusTrialing, true, metadata)
+	delayed := postTestSubscriptionWebhookWithState(t, h, secret, "customer.subscription.updated", stripe.SubscriptionStatusTrialing, false, metadata)
+	if first.Code != http.StatusOK || delayed.Code != http.StatusOK {
+		t.Fatalf("statuses=%d/%d bodies=%q/%q", first.Code, delayed.Code, first.Body.String(), delayed.Body.String())
+	}
+	if !store.subscription.CancelAtPeriodEnd.Valid || !store.subscription.CancelAtPeriodEnd.Bool || store.upserts != 2 {
+		t.Fatalf("subscription=%#v upserts=%d", store.subscription, store.upserts)
+	}
+}
+
 func TestLegacyTrialCancelAtPeriodEndStillDowngradesImmediately(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")

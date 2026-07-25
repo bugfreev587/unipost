@@ -192,10 +192,11 @@ type WebhookScheduleRequest struct {
 }
 
 type WebhookReconcileResult struct {
-	Managed         bool
-	RenewalCanceled bool
-	DoNotProject    bool
-	Grant           Grant
+	Managed                   bool
+	RenewalCanceled           bool
+	PreserveCancelAtPeriodEnd bool
+	DoNotProject              bool
+	Grant                     Grant
 }
 
 type GrantRequest struct {
@@ -815,7 +816,7 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 		if grant.Status == StatusScheduled || grant.Status == StatusActive {
 			updated, updateErr := s.store.MarkSuperseded(ctx, grant.ID, grant.Status, req.PlanID, at)
 			if errors.Is(updateErr, ErrConcurrentTransition) {
-				return s.reloadWebhookGrant(ctx, grant.ID)
+				return s.reloadSubscriptionDecision(ctx, grant.ID, req)
 			}
 			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
 		}
@@ -834,7 +835,7 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 				StartedAt: snapshot.TrialStartAt.UTC(), EndsAt: snapshot.TrialEndAt.UTC(), ActivatedAt: at,
 			})
 			if errors.Is(updateErr, ErrConcurrentTransition) {
-				return s.reloadWebhookGrant(ctx, grant.ID)
+				return s.reloadSubscriptionDecision(ctx, grant.ID, req)
 			}
 			if updateErr != nil {
 				return WebhookReconcileResult{}, updateErr
@@ -848,12 +849,16 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 		if grant.StartedAt == nil || grant.EndsAt == nil || !grant.StartedAt.Equal(snapshot.TrialStartAt.UTC()) || !grant.EndsAt.Equal(snapshot.TrialEndAt.UTC()) {
 			return WebhookReconcileResult{}, ErrWebhookStateConflict
 		}
+		if grant.CanceledAt != nil {
+			result.RenewalCanceled = true
+			result.PreserveCancelAtPeriodEnd = true
+		}
 		if snapshot.CancelAtPeriodEnd {
 			result.RenewalCanceled = true
 			if grant.CanceledAt == nil {
 				updated, updateErr := s.store.RecordRenewalCancellation(ctx, grant.ID, at)
 				if errors.Is(updateErr, ErrConcurrentTransition) {
-					return s.reloadWebhookGrant(ctx, grant.ID)
+					return s.reloadSubscriptionDecision(ctx, grant.ID, req)
 				}
 				if updateErr != nil {
 					return WebhookReconcileResult{}, updateErr
@@ -867,7 +872,7 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 		if grant.Status == StatusActive && grant.EndsAt != nil && !at.Before(*grant.EndsAt) {
 			updated, updateErr := s.store.MarkCompleted(ctx, grant.ID, StatusActive, at)
 			if errors.Is(updateErr, ErrConcurrentTransition) {
-				return s.reloadWebhookGrant(ctx, grant.ID)
+				return s.reloadSubscriptionDecision(ctx, grant.ID, req)
 			}
 			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
 		}
@@ -875,12 +880,30 @@ func (s *Service) ReconcileSubscription(ctx context.Context, req WebhookSubscrip
 		if grant.Status == StatusScheduled || grant.Status == StatusActive {
 			updated, updateErr := s.store.MarkCanceled(ctx, grant.ID, grant.Status, at)
 			if errors.Is(updateErr, ErrConcurrentTransition) {
-				return s.reloadWebhookGrant(ctx, grant.ID)
+				return s.reloadSubscriptionDecision(ctx, grant.ID, req)
 			}
 			return WebhookReconcileResult{Managed: true, Grant: updated}, updateErr
 		}
 	}
 	return result, nil
+}
+
+func (s *Service) reloadSubscriptionDecision(ctx context.Context, grantID string, req WebhookSubscriptionRequest) (WebhookReconcileResult, error) {
+	grant, err := s.store.GetGrant(ctx, grantID)
+	if err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	if err := validateSubscriptionGrantMatch(grant, req.Snapshot, req.PlanID, s.environment); err != nil {
+		return WebhookReconcileResult{}, err
+	}
+	if !grant.Status.IsTerminal() {
+		return WebhookReconcileResult{}, ErrConcurrentTransition
+	}
+	return WebhookReconcileResult{
+		Managed:      true,
+		DoNotProject: !terminalSubscriptionProjectionCompatible(grant, req.Snapshot, req.PlanID),
+		Grant:        grant,
+	}, nil
 }
 
 func (s *Service) ReconcileCheckoutExpired(ctx context.Context, req WebhookCheckoutRequest) (WebhookReconcileResult, error) {
