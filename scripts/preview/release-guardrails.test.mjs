@@ -74,6 +74,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'hotfix-'\)/);
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /--prebuilt[\s\S]*--archive=tgz/);
+  assert.match(
+    workflow,
+    /Build the Vercel Preview[\s\S]*export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="\$\{\{ vars\.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY \}\}"[\s\S]*vercel@50\.26\.1 build/,
+    "the prebuilt Preview must receive Clerk's public key explicitly because Vercel does not download sensitive values",
+  );
   assert.match(workflow, /github\.run_id/);
   assert.match(workflow, /github\.run_attempt/);
   assert.match(workflow, /RAILWAY_API_TOKEN:.*secrets\.RAILWAY_API_TOKEN/);

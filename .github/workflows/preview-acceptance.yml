@@ -134,6 +134,8 @@ jobs:
           export NEXT_PUBLIC_LANDING_URL="https://${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_APP_HOST="${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_UNIPOST_ENV="development"
+          export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}"
+          test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
           npx --yes vercel@50.26.1 build \
             --token="$VERCEL_TOKEN" \
             --scope="$VERCEL_TEAM_SLUG" \
