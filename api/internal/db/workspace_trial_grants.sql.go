@@ -857,13 +857,13 @@ func (q *Queries) RecordWorkspaceTrialGrantCheckoutSession(ctx context.Context, 
 
 const recordWorkspaceTrialGrantProvisioningSchedule = `-- name: RecordWorkspaceTrialGrantProvisioningSchedule :one
 UPDATE workspace_trial_grants
-SET stripe_schedule_id = $1,
+SET stripe_schedule_id = COALESCE($1, stripe_schedule_id),
     failure_code = $2,
     failure_message = $3,
     updated_at = NOW()
 WHERE id = $4
   AND status = 'provisioning'
-  AND (stripe_schedule_id IS NULL OR stripe_schedule_id = $1)
+  AND ($1 IS NULL OR stripe_schedule_id IS NULL OR stripe_schedule_id = $1)
 RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 

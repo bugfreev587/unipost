@@ -162,7 +162,7 @@ func TestGrantRejectsExistingOpenGrantAndInvalidInputWithoutStripe(t *testing.T)
 func TestGrantPaidStripeFailureMarksProvisioningFailed(t *testing.T) {
 	h := newPaidServiceHarness(t)
 	h.stripe.schedule = ScheduleSnapshot{}
-	h.stripe.createScheduleErr = errors.New("Stripe unavailable: cardholder secret")
+	h.stripe.createScheduleErr = &ScheduleMutationError{Outcome: MutationRejected, Err: errors.New("Stripe rejected invalid phases")}
 
 	_, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_1"})
 	if err == nil {
@@ -173,6 +173,42 @@ func TestGrantPaidStripeFailureMarksProvisioningFailed(t *testing.T) {
 	}
 	if strings.Contains(h.store.failed.Message, "cardholder secret") {
 		t.Fatalf("failure message leaked Stripe detail: %q", h.store.failed.Message)
+	}
+}
+
+func TestGrantPaidIndeterminateCreateWithoutSnapshotStaysProvisioning(t *testing.T) {
+	h := newPaidServiceHarness(t)
+	h.stripe.schedule = ScheduleSnapshot{}
+	h.stripe.createScheduleErr = &ScheduleMutationError{Outcome: MutationIndeterminate, Err: context.DeadlineExceeded}
+
+	_, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_1"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v", err)
+	}
+	if h.store.grant.Status != StatusProvisioning || h.store.failed != nil || h.store.provisioningSchedule == nil {
+		t.Fatalf("grant=%#v failed=%#v reconciliation=%#v", h.store.grant, h.store.failed, h.store.provisioningSchedule)
+	}
+	if h.store.provisioningSchedule.StripeScheduleID != "" || strings.Contains(h.store.provisioningSchedule.FailureMessage, "deadline") {
+		t.Fatalf("reconciliation=%#v", h.store.provisioningSchedule)
+	}
+}
+
+func TestGrantPaidRetryWithUnknownAttachedScheduleReusesSameGrantCreate(t *testing.T) {
+	h := newPaidServiceHarness(t)
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "basic", DurationDays: 30, Status: StatusProvisioning, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1"}
+	h.store.grant = *h.store.open
+	h.stripe.subscription.ScheduleID = "sched_unknown"
+	h.stripe.schedule = ScheduleSnapshot{StripeMode: "live", ID: "sched_recovered", CustomerID: "cus_1", SubscriptionID: "sub_1"}
+
+	got, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_retry"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusScheduled || h.stripe.createScheduleCalls != 1 || h.stripe.configureScheduleCalls != 0 {
+		t.Fatalf("grant=%#v create=%d configure=%d", got, h.stripe.createScheduleCalls, h.stripe.configureScheduleCalls)
+	}
+	if h.stripe.lastSchedule.TrialGrantID != "grant_1" {
+		t.Fatalf("retry grant ID=%q", h.stripe.lastSchedule.TrialGrantID)
 	}
 }
 
@@ -238,6 +274,26 @@ func TestGrantPaidExactRetryFailureRepersistsSafeReconciliationState(t *testing.
 	}
 }
 
+func TestGrantPaidExactRetryIndeterminateWithoutSnapshotPreservesStoredSchedule(t *testing.T) {
+	h := newPaidServiceHarness(t)
+	h.store.open = &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "basic", DurationDays: 30, Status: StatusProvisioning, StripeMode: "live", StripeCustomerID: "cus_1", StripeSubscriptionID: "sub_1", StripeScheduleID: "sched_partial"}
+	h.store.grant = *h.store.open
+	h.stripe.subscription.ScheduleID = "sched_partial"
+	h.stripe.schedule = ScheduleSnapshot{}
+	h.stripe.createScheduleErr = &ScheduleMutationError{Outcome: MutationIndeterminate, Err: context.DeadlineExceeded}
+
+	_, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_retry"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v", err)
+	}
+	if h.store.grant.Status != StatusProvisioning || h.store.grant.StripeScheduleID != "sched_partial" {
+		t.Fatalf("grant=%#v", h.store.grant)
+	}
+	if h.store.provisioningSchedule == nil || h.store.provisioningSchedule.StripeScheduleID != "" {
+		t.Fatalf("update=%#v", h.store.provisioningSchedule)
+	}
+}
+
 func TestGrantPaidProvisioningRetryRejectsMismatchAndUnrelatedSchedule(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -263,6 +319,30 @@ func TestGrantPaidProvisioningRetryRejectsMismatchAndUnrelatedSchedule(t *testin
 				t.Fatalf("unsafe mutation: create=%d configure=%d", h.stripe.createScheduleCalls, h.stripe.configureScheduleCalls)
 			}
 		})
+	}
+}
+
+func TestGrantPaidMarkScheduledCASConvergesWhenWebhookAlreadyProjectedSameSchedule(t *testing.T) {
+	h := newPaidServiceHarness(t)
+	h.store.markScheduledErr = ErrConcurrentTransition
+	h.store.afterMarkScheduled = func() { h.store.grant.Status = StatusScheduled; h.store.grant.StripeScheduleID = "sched_1" }
+
+	got, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_1"})
+	if err != nil || got.Status != StatusScheduled || got.StripeScheduleID != "sched_1" {
+		t.Fatalf("grant=%#v error=%v", got, err)
+	}
+}
+
+func TestGrantPaidMarkScheduledCASFailureRetainsProvisioningSchedule(t *testing.T) {
+	h := newPaidServiceHarness(t)
+	h.store.markScheduledErr = ErrConcurrentTransition
+
+	_, err := h.service.Grant(t.Context(), GrantRequest{WorkspaceID: "ws_1", PlanID: "basic", DurationDays: 30, ActorUserID: "admin_1"})
+	if err == nil {
+		t.Fatal("error=nil")
+	}
+	if h.store.grant.Status != StatusProvisioning || h.store.provisioningSchedule == nil || h.store.provisioningSchedule.StripeScheduleID != "sched_1" {
+		t.Fatalf("grant=%#v reconciliation=%#v", h.store.grant, h.store.provisioningSchedule)
 	}
 }
 
@@ -300,6 +380,7 @@ func TestRevokeCheckoutCompletionWinsRace(t *testing.T) {
 	h := newServiceHarness(t)
 	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Status: StatusCheckoutPending, StripeMode: "sandbox", StripeCheckoutSessionID: "cs_1"}
 	h.stripe.expireErr = errors.New("checkout session is complete")
+	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "sandbox", ID: "cs_1", Status: "complete"}
 
 	_, err := h.service.Revoke(t.Context(), RevokeRequest{WorkspaceID: "ws_1", GrantID: "grant_1", ActorUserID: "admin_1"})
 	if !errors.Is(err, ErrRevokeConflict) {
@@ -307,6 +388,53 @@ func TestRevokeCheckoutCompletionWinsRace(t *testing.T) {
 	}
 	if h.store.grant.Status != StatusCheckoutPending || h.store.revokeCalls != 0 {
 		t.Fatalf("grant=%#v revoke calls=%d", h.store.grant, h.store.revokeCalls)
+	}
+}
+
+func TestRevokeExpireErrorRetrievesExactSessionAndRecoversExpired(t *testing.T) {
+	h := newServiceHarness(t)
+	h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Status: StatusCheckoutPending, StripeMode: "sandbox", StripeCheckoutSessionID: "cs_1"}
+	h.stripe.expireErr = context.DeadlineExceeded
+	h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "sandbox", ID: "cs_1", Status: "expired"}
+
+	got, err := h.service.Revoke(t.Context(), RevokeRequest{WorkspaceID: "ws_1", GrantID: "grant_1", ActorUserID: "admin_1"})
+	if err != nil || got.Status != StatusRevoked {
+		t.Fatalf("grant=%#v error=%v", got, err)
+	}
+	if h.stripe.retrieveCheckoutCalls != 1 || h.stripe.lastRetrieveCheckoutID != "cs_1" {
+		t.Fatalf("retrieve calls=%d id=%q", h.stripe.retrieveCheckoutCalls, h.stripe.lastRetrieveCheckoutID)
+	}
+}
+
+func TestRevokeExpireAmbiguityClassifiesRetrievedSession(t *testing.T) {
+	for _, test := range []struct {
+		name, status string
+		retrieveErr  error
+		wantConflict bool
+	}{
+		{name: "complete", status: "complete", wantConflict: true},
+		{name: "open", status: "open"},
+		{name: "unknown", status: "unknown"},
+		{name: "retrieve unavailable", retrieveErr: errors.New("network unavailable")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newServiceHarness(t)
+			h.store.grant = Grant{ID: "grant_1", WorkspaceID: "ws_1", Status: StatusCheckoutPending, StripeMode: "sandbox", StripeCheckoutSessionID: "cs_1"}
+			h.stripe.expireErr = context.DeadlineExceeded
+			h.stripe.retrievedCheckout = CheckoutSnapshot{StripeMode: "sandbox", ID: "cs_1", Status: test.status}
+			h.stripe.retrieveCheckoutErr = test.retrieveErr
+			_, err := h.service.Revoke(t.Context(), RevokeRequest{WorkspaceID: "ws_1", GrantID: "grant_1", ActorUserID: "admin_1"})
+			if test.wantConflict {
+				if !errors.Is(err, ErrRevokeConflict) {
+					t.Fatalf("error=%v, want conflict", err)
+				}
+			} else if err == nil || errors.Is(err, ErrRevokeConflict) {
+				t.Fatalf("error=%v, want retryable/internal", err)
+			}
+			if h.store.revokeCalls != 0 {
+				t.Fatalf("revoke calls=%d", h.store.revokeCalls)
+			}
+		})
 	}
 }
 
@@ -393,6 +521,8 @@ type fakeGrantStore struct {
 	statusAtScheduleCall        Status
 	expireSucceededBeforeRevoke bool
 	provisioningSchedule        *ProvisioningScheduleUpdate
+	markScheduledErr            error
+	afterMarkScheduled          func()
 }
 
 func (s *fakeGrantStore) GetBilling(context.Context, string) (BillingSnapshot, error) {
@@ -417,6 +547,12 @@ func (s *fakeGrantStore) CreateGrant(_ context.Context, input CreateGrantInput) 
 	return s.created, nil
 }
 func (s *fakeGrantStore) MarkScheduled(_ context.Context, update ScheduledUpdate) (Grant, error) {
+	if s.markScheduledErr != nil {
+		if s.afterMarkScheduled != nil {
+			s.afterMarkScheduled()
+		}
+		return Grant{}, s.markScheduledErr
+	}
 	s.grant.Status, s.grant.StripeScheduleID = StatusScheduled, update.StripeScheduleID
 	s.grant.ScheduledStartAt, s.grant.EndsAt = &update.ScheduledStartAt, &update.EndsAt
 	return s.grant, nil
@@ -428,7 +564,9 @@ func (s *fakeGrantStore) MarkFailed(_ context.Context, update FailureUpdate) (Gr
 }
 func (s *fakeGrantStore) RecordProvisioningSchedule(_ context.Context, update ProvisioningScheduleUpdate) (Grant, error) {
 	s.provisioningSchedule = &update
-	s.grant.StripeScheduleID = update.StripeScheduleID
+	if update.StripeScheduleID != "" {
+		s.grant.StripeScheduleID = update.StripeScheduleID
+	}
 	s.grant.FailureCode = update.FailureCode
 	s.grant.FailureMessage = update.FailureMessage
 	return s.grant, nil
@@ -479,6 +617,10 @@ type fakeServiceStripe struct {
 	lastSchedule                                                                        CreatePaidTrialScheduleRequest
 	lastExpire                                                                          ExpireCheckoutRequest
 	lastConfiguredScheduleID                                                            string
+	retrievedCheckout                                                                   CheckoutSnapshot
+	retrieveCheckoutErr                                                                 error
+	retrieveCheckoutCalls                                                               int
+	lastRetrieveCheckoutID                                                              string
 }
 
 func (s *fakeServiceStripe) totalCalls() int {
@@ -500,8 +642,13 @@ func (s *fakeServiceStripe) ConfigurePaidTrialSchedule(_ context.Context, schedu
 func (s *fakeServiceStripe) CreateTrialCheckout(context.Context, CreateTrialCheckoutRequest) (CheckoutSnapshot, error) {
 	return CheckoutSnapshot{}, fmt.Errorf("unexpected CreateTrialCheckout")
 }
-func (s *fakeServiceStripe) RetrieveCheckout(context.Context, string, string) (CheckoutSnapshot, error) {
-	return CheckoutSnapshot{}, fmt.Errorf("unexpected RetrieveCheckout")
+func (s *fakeServiceStripe) RetrieveCheckout(_ context.Context, _ string, id string) (CheckoutSnapshot, error) {
+	s.retrieveCheckoutCalls++
+	s.lastRetrieveCheckoutID = id
+	if s.retrieveCheckoutErr == nil && s.retrievedCheckout.Status == "expired" {
+		s.store.expireSucceededBeforeRevoke = true
+	}
+	return s.retrievedCheckout, s.retrieveCheckoutErr
 }
 func (s *fakeServiceStripe) ExpireCheckout(_ context.Context, req ExpireCheckoutRequest) (CheckoutSnapshot, error) {
 	s.expireCalls++

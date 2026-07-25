@@ -2,7 +2,9 @@ package trials
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -10,6 +12,41 @@ import (
 	"github.com/stripe/stripe-go/v82"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 )
+
+type MutationOutcome string
+
+const (
+	MutationRejected      MutationOutcome = "rejected"
+	MutationIndeterminate MutationOutcome = "indeterminate"
+)
+
+type ScheduleMutationError struct {
+	Outcome MutationOutcome
+	Err     error
+}
+
+func (e *ScheduleMutationError) Error() string {
+	if e == nil || e.Err == nil {
+		return "Stripe schedule mutation failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *ScheduleMutationError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func classifyScheduleCreateError(err error) *ScheduleMutationError {
+	outcome := MutationIndeterminate
+	var stripeErr *stripe.Error
+	if errors.As(err, &stripeErr) && stripeErr.HTTPStatusCode >= http.StatusBadRequest && stripeErr.HTTPStatusCode < http.StatusInternalServerError && stripeErr.HTTPStatusCode != http.StatusTooManyRequests {
+		outcome = MutationRejected
+	}
+	return &ScheduleMutationError{Outcome: outcome, Err: err}
+}
 
 const (
 	metadataWorkspaceID = "workspace_id"
@@ -260,10 +297,10 @@ func (g *stripeGateway) CreatePaidTrialSchedule(ctx context.Context, req CreateP
 	createParams.Context = ctx
 	created, err := client.createSchedule(createParams)
 	if err != nil {
-		return ScheduleSnapshot{}, fmt.Errorf("create Stripe trial schedule: %w", err)
+		return ScheduleSnapshot{}, fmt.Errorf("create Stripe trial schedule: %w", classifyScheduleCreateError(err))
 	}
 	if err := validateScheduleResponse(created, ""); err != nil {
-		return ScheduleSnapshot{}, fmt.Errorf("create Stripe trial schedule: %w", err)
+		return ScheduleSnapshot{}, fmt.Errorf("create Stripe trial schedule: %w", &ScheduleMutationError{Outcome: MutationIndeterminate, Err: err})
 	}
 
 	// Stripe forbids phases when creating from_subscription, so this operation
@@ -273,10 +310,10 @@ func (g *stripeGateway) CreatePaidTrialSchedule(ctx context.Context, req CreateP
 	updateParams.Context = ctx
 	configured, err := client.updateSchedule(created.ID, updateParams)
 	if err != nil {
-		return scheduleSnapshot(req.StripeMode, created), fmt.Errorf("configure created Stripe trial schedule %s: %w", created.ID, err)
+		return scheduleSnapshot(req.StripeMode, created), fmt.Errorf("configure created Stripe trial schedule %s: %w", created.ID, &ScheduleMutationError{Outcome: MutationIndeterminate, Err: err})
 	}
 	if err := validateScheduleResponse(configured, created.ID); err != nil {
-		return scheduleSnapshot(req.StripeMode, created), fmt.Errorf("configure created Stripe trial schedule %s: %w", created.ID, err)
+		return scheduleSnapshot(req.StripeMode, created), fmt.Errorf("configure created Stripe trial schedule %s: %w", created.ID, &ScheduleMutationError{Outcome: MutationIndeterminate, Err: err})
 	}
 	return scheduleSnapshot(req.StripeMode, configured), nil
 }
@@ -300,10 +337,10 @@ func (g *stripeGateway) ConfigurePaidTrialSchedule(ctx context.Context, schedule
 	updateParams.Context = ctx
 	configured, err := client.updateSchedule(scheduleID, updateParams)
 	if err != nil {
-		return ScheduleSnapshot{StripeMode: req.StripeMode, ID: scheduleID}, fmt.Errorf("configure existing Stripe trial schedule %s: %w", scheduleID, err)
+		return ScheduleSnapshot{StripeMode: req.StripeMode, ID: scheduleID}, fmt.Errorf("configure existing Stripe trial schedule %s: %w", scheduleID, &ScheduleMutationError{Outcome: MutationIndeterminate, Err: err})
 	}
 	if err := validateScheduleResponse(configured, scheduleID); err != nil {
-		return ScheduleSnapshot{StripeMode: req.StripeMode, ID: scheduleID}, fmt.Errorf("configure existing Stripe trial schedule %s: %w", scheduleID, err)
+		return ScheduleSnapshot{StripeMode: req.StripeMode, ID: scheduleID}, fmt.Errorf("configure existing Stripe trial schedule %s: %w", scheduleID, &ScheduleMutationError{Outcome: MutationIndeterminate, Err: err})
 	}
 	return scheduleSnapshot(req.StripeMode, configured), nil
 }

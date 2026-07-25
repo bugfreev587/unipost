@@ -909,6 +909,29 @@ func TestCreatePaidScheduleReturnsCreatedSnapshotWhenUpdateTimesOut(t *testing.T
 	assertTrialMetadata(t, client.scheduleCreateParams.Metadata, "ws_paid", "team", "grant_paid", KindPaidSamePlan, "production")
 }
 
+func TestCreatePaidScheduleClassifiesEmptySnapshotErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want MutationOutcome
+	}{
+		{name: "deadline", err: context.DeadlineExceeded, want: MutationIndeterminate},
+		{name: "transport", err: errors.New("connection reset"), want: MutationIndeterminate},
+		{name: "Stripe 500", err: &stripe.Error{HTTPStatusCode: 500, Type: stripe.ErrorTypeAPI}, want: MutationIndeterminate},
+		{name: "Stripe 429", err: &stripe.Error{HTTPStatusCode: 429, Type: stripe.ErrorTypeAPI}, want: MutationIndeterminate},
+		{name: "Stripe 400", err: &stripe.Error{HTTPStatusCode: 400, Type: stripe.ErrorTypeInvalidRequest}, want: MutationRejected},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			client := &fakeStripeTrialClient{scheduleCreateErr: test.err}
+			_, err := newFakeStripeGateway(client).CreatePaidTrialSchedule(t.Context(), validPaidScheduleRequest())
+			var mutationErr *ScheduleMutationError
+			if !errors.As(err, &mutationErr) || mutationErr.Outcome != test.want {
+				t.Fatalf("error=%#v, want outcome %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestConfigurePaidTrialScheduleUpdatesExistingWithoutCreate(t *testing.T) {
 	client := &fakeStripeTrialClient{scheduleUpdateResult: &stripe.SubscriptionSchedule{ID: "sched_existing"}}
 	gateway := newFakeStripeGateway(client)

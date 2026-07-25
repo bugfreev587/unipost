@@ -115,13 +115,13 @@ RETURNING *;
 
 -- name: RecordWorkspaceTrialGrantProvisioningSchedule :one
 UPDATE workspace_trial_grants
-SET stripe_schedule_id = sqlc.arg(stripe_schedule_id),
+SET stripe_schedule_id = COALESCE(sqlc.narg(stripe_schedule_id), stripe_schedule_id),
     failure_code = sqlc.arg(failure_code),
     failure_message = sqlc.arg(failure_message),
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
   AND status = 'provisioning'
-  AND (stripe_schedule_id IS NULL OR stripe_schedule_id = sqlc.arg(stripe_schedule_id))
+  AND (sqlc.narg(stripe_schedule_id) IS NULL OR stripe_schedule_id IS NULL OR stripe_schedule_id = sqlc.narg(stripe_schedule_id))
 RETURNING *;
 
 -- name: MarkWorkspaceTrialGrantActive :one

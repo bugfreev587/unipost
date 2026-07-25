@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -135,6 +136,17 @@ func TestAdminRevokeTrialReturnsConflictWhenCheckoutCompletionWins(t *testing.T)
 	}
 	if service.revokeReq.ActorUserID != "admin_1" || service.revokeReq.GrantID != "grant_1" {
 		t.Fatalf("request=%#v", service.revokeReq)
+	}
+}
+
+func TestAdminRevokeTrialAmbiguousStripeFailureReturnsInternal(t *testing.T) {
+	service := &fakeAdminTrialService{revokeErr: fmt.Errorf("expire Checkout outcome unknown: %w", context.DeadlineExceeded)}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials/grant_1/revoke", `{}`, map[string]string{"workspaceID": "ws_1", "trialID": "grant_1"})
+	rec := httptest.NewRecorder()
+	h.RevokeTrial(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
