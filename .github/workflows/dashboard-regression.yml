@@ -11,9 +11,7 @@ jobs:
     timeout-minutes: 20
     env:
       DASHBOARD_BASE_URL: ${{ vars.DASHBOARD_BASE_URL || 'https://app.unipost.dev' }}
-      DASHBOARD_TEST_EMAIL: ${{ secrets.DASHBOARD_TEST_EMAIL }}
-      DASHBOARD_TEST_PASSWORD: ${{ secrets.DASHBOARD_TEST_PASSWORD }}
-      DASHBOARD_TEST_PROFILE_ID: ${{ vars.DASHBOARD_TEST_PROFILE_ID }}
+      DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.DASHBOARD_TEST_CLERK_PRODUCTION_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -31,16 +29,22 @@ jobs:
         working-directory: dashboard
         run: npx playwright install --with-deps chromium
 
-      - name: Run dashboard regression
+      - name: Run public dashboard regression
         working-directory: dashboard
         run: npm run test:regression:dashboard
+
+      - name: Run authenticated dashboard regression
+        working-directory: dashboard
+        run: npm run test:regression:dashboard:authenticated
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: dashboard-regression-playwright-report
-          path: dashboard/playwright-report
+          path: |
+            dashboard/playwright-report
+            dashboard/playwright-report-authenticated
           if-no-files-found: ignore
 
       - name: Upload Playwright test results
