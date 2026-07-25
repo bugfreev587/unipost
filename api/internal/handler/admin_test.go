@@ -47,6 +47,38 @@ func TestAdminGrantTrialReturnsCreatedAndPassesAuthenticatedActor(t *testing.T) 
 	}
 }
 
+func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	row := adminBillingRow{Trial: &adminBillingTrialSummary{
+		ID: "grant_1", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 30,
+		Status: trials.StatusFailed, ScheduledStartAt: &start, EndsAt: &end,
+		FailureReason: trials.TerminalReasonUnavailable,
+	}}
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(encoded)
+	for _, want := range []string{`"trial"`, `"id":"grant_1"`, `"failure_reason":"trial_unavailable"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("summary missing %q: %s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"granted_by_user_id", "stripe_customer_id", "stripe_subscription_id", "stripe_schedule_id", "failure_code", "failure_message"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("summary leaked %q: %s", forbidden, body)
+		}
+	}
+	normalized := strings.ToLower(adminBillingSQL)
+	if strings.Count(normalized, "lateral") != 1 || !strings.Contains(normalized, "workspace_trial_grants") || !strings.Contains(normalized, "limit 1") {
+		t.Fatalf("admin billing query must select trial in one lateral join: %s", adminBillingSQL)
+	}
+	if strings.Contains(normalized, "status in ('active', 'trialing')") {
+		t.Fatal("admin billing query must not count trialing subscriptions as revenue")
+	}
+}
+
 func TestAdminGrantTrialStatusMapping(t *testing.T) {
 	for _, test := range []struct {
 		name string

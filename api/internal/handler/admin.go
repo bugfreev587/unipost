@@ -1023,22 +1023,41 @@ type adminPostsEvent struct {
 }
 
 type adminBillingRow struct {
-	WorkspaceID          string     `json:"workspace_id"`
-	WorkspaceName        string     `json:"workspace_name"`
-	UserID               string     `json:"user_id"`
-	UserEmail            string     `json:"user_email"`
-	PlanID               string     `json:"plan_id"`
-	PlanName             string     `json:"plan_name"`
-	PriceCents           int64      `json:"price_cents"`
-	Status               string     `json:"status"`
-	StripeCustomerID     *string    `json:"stripe_customer_id,omitempty"`
-	StripeSubscriptionID *string    `json:"stripe_subscription_id,omitempty"`
-	CurrentPeriodEnd     *time.Time `json:"current_period_end,omitempty"`
-	CancelAtPeriodEnd    bool       `json:"cancel_at_period_end"`
-	TrialUsed            bool       `json:"trial_used"`
-	PostsUsed            int64      `json:"posts_used"`
-	PostLimit            int64      `json:"post_limit"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	WorkspaceID          string                    `json:"workspace_id"`
+	WorkspaceName        string                    `json:"workspace_name"`
+	UserID               string                    `json:"user_id"`
+	UserEmail            string                    `json:"user_email"`
+	PlanID               string                    `json:"plan_id"`
+	PlanName             string                    `json:"plan_name"`
+	PriceCents           int64                     `json:"price_cents"`
+	Status               string                    `json:"status"`
+	StripeCustomerID     *string                   `json:"stripe_customer_id,omitempty"`
+	StripeSubscriptionID *string                   `json:"stripe_subscription_id,omitempty"`
+	CurrentPeriodEnd     *time.Time                `json:"current_period_end,omitempty"`
+	CancelAtPeriodEnd    bool                      `json:"cancel_at_period_end"`
+	TrialUsed            bool                      `json:"trial_used"`
+	PostsUsed            int64                     `json:"posts_used"`
+	PostLimit            int64                     `json:"post_limit"`
+	UpdatedAt            time.Time                 `json:"updated_at"`
+	Trial                *adminBillingTrialSummary `json:"trial,omitempty"`
+}
+
+type adminBillingTrialSummary struct {
+	ID               string                `json:"id"`
+	Kind             trials.Kind           `json:"kind"`
+	PlanID           string                `json:"plan_id"`
+	DurationDays     int32                 `json:"duration_days"`
+	Status           trials.Status         `json:"status"`
+	GrantedAt        *time.Time            `json:"granted_at,omitempty"`
+	ScheduledStartAt *time.Time            `json:"scheduled_start_at,omitempty"`
+	StartedAt        *time.Time            `json:"started_at,omitempty"`
+	EndsAt           *time.Time            `json:"ends_at,omitempty"`
+	ActivatedAt      *time.Time            `json:"activated_at,omitempty"`
+	CanceledAt       *time.Time            `json:"canceled_at,omitempty"`
+	RevokedAt        *time.Time            `json:"revoked_at,omitempty"`
+	SupersededAt     *time.Time            `json:"superseded_at,omitempty"`
+	CompletedAt      *time.Time            `json:"completed_at,omitempty"`
+	FailureReason    trials.TerminalReason `json:"failure_reason,omitempty"`
 }
 
 type adminBillingQuery struct {
@@ -2111,17 +2130,7 @@ ORDER BY sp.created_at ASC`, args...)
 	return out, nil
 }
 
-func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery) ([]adminBillingRow, error) {
-	days := opts.Days
-	if days <= 0 || days > 365 {
-		days = 90
-	}
-	limit := opts.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-
-	rows, err := h.pool.Query(ctx, `
+const adminBillingSQL = `
 SELECT
   w.id AS workspace_id,
   w.name AS workspace_name,
@@ -2138,12 +2147,36 @@ SELECT
   s.trial_used,
   COALESCE(usg.post_count, 0)::BIGINT AS posts_used,
   COALESCE(pl.post_limit, 0)::BIGINT AS post_limit,
-  s.updated_at
+  s.updated_at,
+  trial.id,
+  trial.kind,
+  trial.plan_id,
+  trial.duration_days,
+  trial.status,
+  trial.granted_at,
+  trial.scheduled_start_at,
+  trial.started_at,
+  trial.ends_at,
+  trial.activated_at,
+  trial.canceled_at,
+  trial.revoked_at,
+  trial.superseded_at,
+  trial.completed_at
 FROM subscriptions s
 JOIN workspaces w ON w.id = s.workspace_id
 JOIN users u ON u.id = w.user_id
 JOIN plans pl ON pl.id = s.plan_id
 LEFT JOIN usage usg ON usg.workspace_id = w.id AND usg.period = to_char(NOW(), 'YYYY-MM')
+LEFT JOIN LATERAL (
+  SELECT tg.id, tg.kind, tg.plan_id, tg.duration_days, tg.status,
+         tg.granted_at, tg.scheduled_start_at, tg.started_at, tg.ends_at,
+         tg.activated_at, tg.canceled_at, tg.revoked_at, tg.superseded_at, tg.completed_at
+  FROM workspace_trial_grants tg
+  WHERE tg.workspace_id = w.id
+  ORDER BY CASE WHEN tg.status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active') THEN 0 ELSE 1 END,
+           tg.granted_at DESC, tg.id DESC
+  LIMIT 1
+) trial ON TRUE
 WHERE u.id != ALL($1)
   AND s.updated_at >= NOW() - ($2::INT * INTERVAL '1 day')
   AND ($3::TEXT = '' OR s.status = $3)
@@ -2156,7 +2189,19 @@ WHERE u.id != ALL($1)
   )
 ORDER BY pl.price_cents DESC, s.updated_at DESC
 LIMIT $6
-`, opts.Excluded, days, opts.Status, opts.PlanID, opts.Search, limit)
+`
+
+func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery) ([]adminBillingRow, error) {
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 90
+	}
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	rows, err := h.pool.Query(ctx, adminBillingSQL, opts.Excluded, days, opts.Status, opts.PlanID, opts.Search, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2167,6 +2212,9 @@ LIMIT $6
 		var item adminBillingRow
 		var stripeCustomerID, stripeSubscriptionID *string
 		var currentPeriodEnd *time.Time
+		var trialID, trialKind, trialPlanID, trialStatus *string
+		var trialDurationDays *int32
+		var trialGrantedAt, trialScheduledStartAt, trialStartedAt, trialEndsAt, trialActivatedAt, trialCanceledAt, trialRevokedAt, trialSupersededAt, trialCompletedAt *time.Time
 		if err := rows.Scan(
 			&item.WorkspaceID,
 			&item.WorkspaceName,
@@ -2184,12 +2232,38 @@ LIMIT $6
 			&item.PostsUsed,
 			&item.PostLimit,
 			&item.UpdatedAt,
+			&trialID,
+			&trialKind,
+			&trialPlanID,
+			&trialDurationDays,
+			&trialStatus,
+			&trialGrantedAt,
+			&trialScheduledStartAt,
+			&trialStartedAt,
+			&trialEndsAt,
+			&trialActivatedAt,
+			&trialCanceledAt,
+			&trialRevokedAt,
+			&trialSupersededAt,
+			&trialCompletedAt,
 		); err != nil {
 			return nil, err
 		}
 		item.StripeCustomerID = stripeCustomerID
 		item.StripeSubscriptionID = stripeSubscriptionID
 		item.CurrentPeriodEnd = currentPeriodEnd
+		if trialID != nil && trialKind != nil && trialPlanID != nil && trialDurationDays != nil && trialStatus != nil {
+			status := trials.Status(*trialStatus)
+			item.Trial = &adminBillingTrialSummary{
+				ID: *trialID, Kind: trials.Kind(*trialKind), PlanID: *trialPlanID, DurationDays: *trialDurationDays, Status: status,
+				GrantedAt: trialGrantedAt, ScheduledStartAt: trialScheduledStartAt, StartedAt: trialStartedAt,
+				EndsAt: trialEndsAt, ActivatedAt: trialActivatedAt, CanceledAt: trialCanceledAt, RevokedAt: trialRevokedAt,
+				SupersededAt: trialSupersededAt, CompletedAt: trialCompletedAt,
+			}
+			if status == trials.StatusFailed {
+				item.Trial.FailureReason = trials.TerminalReasonUnavailable
+			}
+		}
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {

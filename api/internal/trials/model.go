@@ -210,6 +210,19 @@ func NewTrialProjection(grant db.WorkspaceTrialGrant, postTrialPriceCents int64,
 	}
 }
 
+func NewTrialProjectionFromGrant(grant Grant, postTrialPriceCents int64, cancelAtPeriodEnd bool) TrialProjection {
+	return TrialProjection{
+		ID: grant.ID, Kind: grant.Kind, PlanID: grant.PlanID, DurationDays: grant.DurationDays, Status: grant.Status,
+		GrantedAt: timePointer(grant.GrantedAt), ScheduledStartAt: utcTimePointer(grant.ScheduledStartAt),
+		StartedAt: utcTimePointer(grant.StartedAt), EndsAt: utcTimePointer(grant.EndsAt), ActivatedAt: utcTimePointer(grant.ActivatedAt),
+		CanceledAt: utcTimePointer(grant.CanceledAt), RevokedAt: utcTimePointer(grant.RevokedAt),
+		SupersededAt: utcTimePointer(grant.SupersededAt), CompletedAt: utcTimePointer(grant.CompletedAt),
+		PostTrialPriceCents: postTrialPriceCents, CancelAtPeriodEnd: cancelAtPeriodEnd,
+		ChangingPlanForfeitsTrial: grant.Status == StatusScheduled || grant.Status == StatusActive,
+		TerminalReason:            NormalizeTerminalReason(grant.Status),
+	}
+}
+
 func NewHistoryProjection(grant db.WorkspaceTrialGrant) HistoryProjection {
 	status := Status(grant.Status)
 	return HistoryProjection{
@@ -230,6 +243,38 @@ func NewHistoryProjection(grant db.WorkspaceTrialGrant) HistoryProjection {
 		SupersededByPlanID: projectionText(grant.SupersededByPlanID),
 		TerminalReason:     NormalizeTerminalReason(status),
 	}
+}
+
+func NewHistoryProjectionFromGrant(grant Grant) HistoryProjection {
+	var supersededByPlanID *string
+	if grant.SupersededByPlanID != "" {
+		value := grant.SupersededByPlanID
+		supersededByPlanID = &value
+	}
+	return HistoryProjection{
+		ID: grant.ID, Kind: grant.Kind, PlanID: grant.PlanID, DurationDays: grant.DurationDays, Status: grant.Status,
+		GrantedAt: timePointer(grant.GrantedAt), ScheduledStartAt: utcTimePointer(grant.ScheduledStartAt),
+		StartedAt: utcTimePointer(grant.StartedAt), EndsAt: utcTimePointer(grant.EndsAt), ActivatedAt: utcTimePointer(grant.ActivatedAt),
+		CanceledAt: utcTimePointer(grant.CanceledAt), RevokedAt: utcTimePointer(grant.RevokedAt),
+		SupersededAt: utcTimePointer(grant.SupersededAt), CompletedAt: utcTimePointer(grant.CompletedAt),
+		SupersededByPlanID: supersededByPlanID, TerminalReason: NormalizeTerminalReason(grant.Status),
+	}
+}
+
+func timePointer(value time.Time) *time.Time {
+	if value.IsZero() {
+		return nil
+	}
+	result := value.UTC()
+	return &result
+}
+
+func utcTimePointer(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	result := value.UTC()
+	return &result
 }
 
 func NormalizeTerminalReason(status Status) TerminalReason {

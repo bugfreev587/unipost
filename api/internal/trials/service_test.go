@@ -1408,6 +1408,10 @@ type fakeGrantStore struct {
 	afterRecordRenewalCancellation func()
 	markCompletedErr               error
 	afterMarkCompleted             func()
+	history                        []Grant
+	historyErr                     error
+	planPrice                      int64
+	planPriceErr                   error
 }
 
 func (s *fakeGrantStore) GetBilling(context.Context, string) (BillingSnapshot, error) {
@@ -1424,6 +1428,12 @@ func (s *fakeGrantStore) GetGrant(_ context.Context, id string) (Grant, error) {
 		return Grant{}, ErrGrantNotFound
 	}
 	return s.grant, nil
+}
+func (s *fakeGrantStore) ListGrantHistory(context.Context, string) ([]Grant, error) {
+	return s.history, s.historyErr
+}
+func (s *fakeGrantStore) GetPlanPrice(context.Context, string) (int64, error) {
+	return s.planPrice, s.planPriceErr
 }
 func (s *fakeGrantStore) CreateGrant(_ context.Context, input CreateGrantInput) (Grant, error) {
 	s.createCalls++
@@ -2212,6 +2222,81 @@ func TestTrialProjectionIsUserSafeAndIncludesSuppliedBillingFlags(t *testing.T) 
 		t.Fatalf("user-facing dates missing: %#v", projection)
 	}
 	assertProjectionRedactsInternalFields(t, projection)
+}
+
+func TestCurrentTrialProjectionLoadsTargetPriceAndCancellationIntent(t *testing.T) {
+	h := newServiceHarness(t)
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	h.store.open = &Grant{
+		ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "growth", DurationDays: 30,
+		Status: StatusActive, GrantedAt: start.Add(-24 * time.Hour), StartedAt: &start, EndsAt: &end, CanceledAt: &start,
+		ActorUserID: "admin_secret", StripeSubscriptionID: "sub_secret", FailureMessage: "internal secret",
+	}
+	h.store.planPrice = 4900
+	h.store.billing = BillingSnapshot{WorkspaceID: "ws_1", Subscription: SubscriptionRecord{PlanID: "growth", Status: "trialing"}}
+
+	projection, err := h.service.CurrentTrialProjection(t.Context(), "ws_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projection == nil || projection.PostTrialPriceCents != 4900 || !projection.CancelAtPeriodEnd || !projection.ChangingPlanForfeitsTrial {
+		t.Fatalf("projection=%#v", projection)
+	}
+	encoded, err := json.Marshal(projection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"admin_secret", "sub_secret", "internal secret", "granted_by_user_id", "failure_message", "stripe_subscription_id"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("projection leaked %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestCurrentTrialProjectionHidesProvisioningAndMissingGrant(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		open *Grant
+	}{
+		{name: "missing"},
+		{name: "provisioning", open: &Grant{ID: "grant_1", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "basic", DurationDays: 30, Status: StatusProvisioning}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h := newServiceHarness(t)
+			h.store.open = test.open
+			projection, err := h.service.CurrentTrialProjection(t.Context(), "ws_1")
+			if err != nil || projection != nil {
+				t.Fatalf("projection=%#v error=%v", projection, err)
+			}
+		})
+	}
+}
+
+func TestListTrialHistoryPreservesStoreNewestFirstAndRedactsInternals(t *testing.T) {
+	h := newServiceHarness(t)
+	newest := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	h.store.history = []Grant{
+		{ID: "newest", WorkspaceID: "ws_1", Kind: KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: StatusFailed, GrantedAt: newest, ActorUserID: "admin_secret", FailureCode: "stripe_secret", FailureMessage: "internal secret"},
+		{ID: "older", WorkspaceID: "ws_1", Kind: KindPaidSamePlan, PlanID: "basic", DurationDays: 60, Status: StatusCompleted, GrantedAt: newest.Add(-24 * time.Hour)},
+	}
+
+	history, err := h.service.ListTrialHistory(t.Context(), "ws_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 || history[0].ID != "newest" || history[1].ID != "older" || history[0].TerminalReason != TerminalReasonUnavailable {
+		t.Fatalf("history=%#v", history)
+	}
+	encoded, err := json.Marshal(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"admin_secret", "stripe_secret", "internal secret", "granted_by_user_id", "failure_code", "failure_message"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("history leaked %q: %s", forbidden, encoded)
+		}
+	}
 }
 
 func TestTrialProjectionRequiresPriceAndKeepsExactJSONContract(t *testing.T) {

@@ -68,6 +68,79 @@ func TestStripeCheckoutURLFailsClosedOnEmptyResponse(t *testing.T) {
 	}
 }
 
+func TestGetBillingTrialIncludesSafeProjectionForEveryVisibleState(t *testing.T) {
+	for _, status := range []trials.Status{
+		trials.StatusPendingActivation,
+		trials.StatusCheckoutPending,
+		trials.StatusScheduled,
+		trials.StatusActive,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+			end := start.Add(30 * 24 * time.Hour)
+			projection := &trials.TrialProjection{
+				ID: "grant_1", Kind: trials.KindFreeToPaid, PlanID: "growth", DurationDays: 30,
+				Status: status, ScheduledStartAt: &start, StartedAt: &start, EndsAt: &end,
+				PostTrialPriceCents: 4900, CancelAtPeriodEnd: true,
+				ChangingPlanForfeitsTrial: status == trials.StatusScheduled || status == trials.StatusActive,
+			}
+			service := &fakeBillingTrialCheckoutService{currentProjection: projection}
+			h := (&BillingHandler{}).SetTrialService(service)
+
+			got, err := h.getCurrentTrialProjection(t.Context(), "ws_1")
+			if err != nil || !reflect.DeepEqual(got, projection) {
+				t.Fatalf("projection=%#v error=%v", got, err)
+			}
+			encoded, err := json.Marshal(billingResponse{Trial: got})
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(encoded)
+			for _, want := range []string{`"trial"`, `"post_trial_price_cents":4900`, `"cancel_at_period_end":true`, `"changing_plan_forfeits_trial"`} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("response missing %q: %s", want, body)
+				}
+			}
+		})
+	}
+}
+
+func TestListTrialHistoryReturnsNewestFirstAndRedactsInternals(t *testing.T) {
+	newest := time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC)
+	older := newest.Add(-24 * time.Hour)
+	service := &fakeBillingTrialCheckoutService{history: []trials.HistoryProjection{
+		{ID: "newest", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 60, Status: trials.StatusCompleted, GrantedAt: &newest, TerminalReason: trials.TerminalReasonCompleted},
+		{ID: "older", Kind: trials.KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: trials.StatusFailed, GrantedAt: &older, TerminalReason: trials.TerminalReasonUnavailable},
+	}}
+	h := (&BillingHandler{}).SetTrialService(service)
+	req := httptest.NewRequest(http.MethodGet, "/v1/billing/trials", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	recorder := httptest.NewRecorder()
+
+	h.ListTrialHistory(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Data []trials.HistoryProjection `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 2 || response.Data[0].ID != "newest" || response.Data[1].ID != "older" {
+		t.Fatalf("history=%#v", response.Data)
+	}
+	if service.historyWorkspaceID != "ws_1" {
+		t.Fatalf("workspace=%q", service.historyWorkspaceID)
+	}
+	for _, forbidden := range []string{"granted_by_user_id", "failure_code", "failure_message", "stripe_customer_id", "stripe_subscription_id", "admin_secret", "internal secret"} {
+		if strings.Contains(recorder.Body.String(), forbidden) {
+			t.Fatalf("history leaked %q: %s", forbidden, recorder.Body.String())
+		}
+	}
+}
+
 func TestResolveTrialStripeCustomerValidatesCandidateBeforeReuse(t *testing.T) {
 	for _, test := range []struct {
 		name           string
@@ -228,24 +301,29 @@ func TestTrialCheckoutHandlerPendingActivationUsesOneProbeAndOnePostCustomerCall
 }
 
 type fakeBillingTrialCheckoutService struct {
-	result        trials.CheckoutResult
-	err           error
-	errs          []error
-	req           trials.CheckoutRequest
-	calls         int
-	changeResult  trials.Grant
-	changeErr     error
-	changeReq     trials.ChangePlanRequest
-	changeCalls   int
-	cancelResult  trials.Grant
-	cancelErr     error
-	cancelReq     trials.CancelRequest
-	cancelCalls   int
-	portalURL     string
-	portalHandled bool
-	portalErr     error
-	portalReq     trials.PortalRequest
-	portalCalls   int
+	result             trials.CheckoutResult
+	err                error
+	errs               []error
+	req                trials.CheckoutRequest
+	calls              int
+	changeResult       trials.Grant
+	changeErr          error
+	changeReq          trials.ChangePlanRequest
+	changeCalls        int
+	cancelResult       trials.Grant
+	cancelErr          error
+	cancelReq          trials.CancelRequest
+	cancelCalls        int
+	portalURL          string
+	portalHandled      bool
+	portalErr          error
+	portalReq          trials.PortalRequest
+	portalCalls        int
+	currentProjection  *trials.TrialProjection
+	currentErr         error
+	history            []trials.HistoryProjection
+	historyErr         error
+	historyWorkspaceID string
 }
 
 func (s *fakeBillingTrialCheckoutService) PrepareCheckout(_ context.Context, req trials.CheckoutRequest) (trials.CheckoutResult, error) {
@@ -275,6 +353,15 @@ func (s *fakeBillingTrialCheckoutService) CreateTrialSafePortal(_ context.Contex
 	s.portalCalls++
 	s.portalReq = req
 	return s.portalURL, s.portalHandled, s.portalErr
+}
+
+func (s *fakeBillingTrialCheckoutService) CurrentTrialProjection(context.Context, string) (*trials.TrialProjection, error) {
+	return s.currentProjection, s.currentErr
+}
+
+func (s *fakeBillingTrialCheckoutService) ListTrialHistory(_ context.Context, workspaceID string) ([]trials.HistoryProjection, error) {
+	s.historyWorkspaceID = workspaceID
+	return s.history, s.historyErr
 }
 
 func TestChangePlanHandlerDispatchesWorkspaceTargetPlan(t *testing.T) {

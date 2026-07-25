@@ -108,6 +108,8 @@ type GrantStore interface {
 	GetBilling(context.Context, string) (BillingSnapshot, error)
 	GetOpenGrant(context.Context, string) (Grant, error)
 	GetGrant(context.Context, string) (Grant, error)
+	ListGrantHistory(context.Context, string) ([]Grant, error)
+	GetPlanPrice(context.Context, string) (int64, error)
 	CreateGrant(context.Context, CreateGrantInput) (Grant, error)
 	MarkScheduled(context.Context, ScheduledUpdate) (Grant, error)
 	MarkFailed(context.Context, FailureUpdate) (Grant, error)
@@ -125,6 +127,51 @@ type GrantStore interface {
 	MarkCanceled(context.Context, string, Status, time.Time) (Grant, error)
 	MarkCompleted(context.Context, string, Status, time.Time) (Grant, error)
 	MarkSuperseded(context.Context, string, Status, string, time.Time) (Grant, error)
+}
+
+// CurrentTrialProjection returns the compact, user-safe view shared by
+// Pricing and Settings -> Billing. Provisioning is deliberately omitted: it
+// is an admin-only intermediate state and is not yet an offer users can act on.
+func (s *Service) CurrentTrialProjection(ctx context.Context, workspaceID string) (*TrialProjection, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(workspaceID) == "" {
+		return nil, ErrGrantNotFound
+	}
+	grant, err := s.store.GetOpenGrant(ctx, workspaceID)
+	if errors.Is(err, ErrGrantNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if grant.Status == StatusProvisioning {
+		return nil, nil
+	}
+	price, err := s.store.GetPlanPrice(ctx, grant.PlanID)
+	if err != nil {
+		return nil, err
+	}
+	billing, err := s.store.GetBilling(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	projection := NewTrialProjectionFromGrant(grant, price, billing.Subscription.CancelAtPeriodEnd || grant.CanceledAt != nil)
+	return &projection, nil
+}
+
+// ListTrialHistory returns an already redacted, newest-first workspace history.
+func (s *Service) ListTrialHistory(ctx context.Context, workspaceID string) ([]HistoryProjection, error) {
+	if s == nil || s.store == nil || strings.TrimSpace(workspaceID) == "" {
+		return nil, ErrGrantNotFound
+	}
+	grants, err := s.store.ListGrantHistory(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]HistoryProjection, 0, len(grants))
+	for _, grant := range grants {
+		out = append(out, NewHistoryProjectionFromGrant(grant))
+	}
+	return out, nil
 }
 
 type CreateGrantInput struct {

@@ -1182,6 +1182,7 @@ func main() {
 		// Billing. Read is workspace-wide (any role); checkout / portal
 		// are owner-only because they touch the payment method.
 		r.Get("/v1/billing", billingHandler.GetBilling)
+		r.Get("/v1/billing/trials", billingHandler.ListTrialHistory)
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)

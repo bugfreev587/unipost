@@ -112,6 +112,7 @@ type BillingHandler struct {
 		ForWorkspace(context.Context, string, string) (bool, error)
 	}
 	trialCheckout billingTrialCheckoutService
+	trialRead     billingTrialReadService
 }
 
 type billingTrialCheckoutService interface {
@@ -119,6 +120,11 @@ type billingTrialCheckoutService interface {
 	ChangePlan(context.Context, trials.ChangePlanRequest) (trials.Grant, error)
 	CancelRenewal(context.Context, trials.CancelRequest) (trials.Grant, error)
 	CreateTrialSafePortal(context.Context, trials.PortalRequest) (string, bool, error)
+}
+
+type billingTrialReadService interface {
+	CurrentTrialProjection(context.Context, string) (*trials.TrialProjection, error)
+	ListTrialHistory(context.Context, string) ([]trials.HistoryProjection, error)
 }
 
 type xCreditsSnapshotService interface {
@@ -150,6 +156,9 @@ func (h *BillingHandler) SetFeatureFlags(flags interface {
 
 func (h *BillingHandler) SetTrialService(service billingTrialCheckoutService) *BillingHandler {
 	h.trialCheckout = service
+	if reader, ok := service.(billingTrialReadService); ok {
+		h.trialRead = reader
+	}
 	return h
 }
 
@@ -170,23 +179,24 @@ func (h *BillingHandler) requireXCreditsAvailable(w http.ResponseWriter, r *http
 }
 
 type billingResponse struct {
-	Plan                string    `json:"plan"`
-	PlanName            string    `json:"plan_name"`
-	Status              string    `json:"status"`
-	Usage               int       `json:"usage"`
-	CompletedUsage      int       `json:"completed_usage"`
-	ScheduledUsage      int       `json:"scheduled_usage"`
-	QuotaHoldUsage      int       `json:"quota_hold_usage"`
-	EffectiveUsage      int       `json:"effective_usage"`
-	Limit               int       `json:"limit"`
-	Percentage          float64   `json:"percentage"`
-	EffectivePercentage float64   `json:"effective_percentage"`
-	Period              string    `json:"period"`
-	Warning             string    `json:"warning,omitempty"`
-	SchedulingAllowed   bool      `json:"scheduling_allowed"`
-	ResetsAt            time.Time `json:"resets_at"`
-	CancelAtEnd         bool      `json:"cancel_at_period_end"`
-	TrialEligible       bool      `json:"trial_eligible"`
+	Plan                string                  `json:"plan"`
+	PlanName            string                  `json:"plan_name"`
+	Status              string                  `json:"status"`
+	Usage               int                     `json:"usage"`
+	CompletedUsage      int                     `json:"completed_usage"`
+	ScheduledUsage      int                     `json:"scheduled_usage"`
+	QuotaHoldUsage      int                     `json:"quota_hold_usage"`
+	EffectiveUsage      int                     `json:"effective_usage"`
+	Limit               int                     `json:"limit"`
+	Percentage          float64                 `json:"percentage"`
+	EffectivePercentage float64                 `json:"effective_percentage"`
+	Period              string                  `json:"period"`
+	Warning             string                  `json:"warning,omitempty"`
+	SchedulingAllowed   bool                    `json:"scheduling_allowed"`
+	ResetsAt            time.Time               `json:"resets_at"`
+	CancelAtEnd         bool                    `json:"cancel_at_period_end"`
+	TrialEligible       bool                    `json:"trial_eligible"`
+	Trial               *trials.TrialProjection `json:"trial,omitempty"`
 }
 
 type usageResponse struct {
@@ -259,6 +269,11 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	usage := usageResponseFromSnapshot(snapshot)
+	trial, err := h.getCurrentTrialProjection(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load trial billing")
+		return
+	}
 
 	writeSuccess(w, billingResponse{
 		Plan:                sub.PlanID,
@@ -278,7 +293,37 @@ func (h *BillingHandler) GetBilling(w http.ResponseWriter, r *http.Request) {
 		ResetsAt:            usage.ResetsAt,
 		CancelAtEnd:         sub.CancelAtPeriodEnd.Bool,
 		TrialEligible:       false,
+		Trial:               trial,
 	})
+}
+
+func (h *BillingHandler) getCurrentTrialProjection(ctx context.Context, workspaceID string) (*trials.TrialProjection, error) {
+	if h == nil || h.trialRead == nil {
+		return nil, nil
+	}
+	return h.trialRead.CurrentTrialProjection(ctx, workspaceID)
+}
+
+// ListTrialHistory handles GET /v1/billing/trials for every workspace role.
+func (h *BillingHandler) ListTrialHistory(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if h == nil || h.trialRead == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Trial history is unavailable")
+		return
+	}
+	history, err := h.trialRead.ListTrialHistory(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load trial history")
+		return
+	}
+	if history == nil {
+		history = []trials.HistoryProjection{}
+	}
+	writeSuccess(w, history)
 }
 
 // CreateCheckout handles POST /v1/billing/checkout

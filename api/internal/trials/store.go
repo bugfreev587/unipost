@@ -56,6 +56,30 @@ func (s *PostgresStore) GetGrant(ctx context.Context, id string) (Grant, error) 
 	return mapGrant(row, mapLookupError(err))
 }
 
+func (s *PostgresStore) ListGrantHistory(ctx context.Context, workspaceID string) ([]Grant, error) {
+	rows, err := s.queries.ListWorkspaceTrialGrantHistory(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Grant, 0, len(rows))
+	for _, row := range rows {
+		grant, err := mapGrant(row, nil)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, grant)
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) GetPlanPrice(ctx context.Context, planID string) (int64, error) {
+	plan, err := s.queries.GetPlan(ctx, planID)
+	if err != nil {
+		return 0, err
+	}
+	return int64(plan.PriceCents), nil
+}
+
 func (s *PostgresStore) CreateGrant(ctx context.Context, input CreateGrantInput) (Grant, error) {
 	row, err := s.queries.CreateWorkspaceTrialGrant(ctx, db.CreateWorkspaceTrialGrantParams{
 		WorkspaceID: input.WorkspaceID, Kind: string(input.Kind), PlanID: input.PlanID,
