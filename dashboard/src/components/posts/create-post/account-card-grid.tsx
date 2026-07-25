@@ -4,7 +4,7 @@ import { X } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
 import { PLATFORM_LABELS, PLATFORM_BRAND_COLORS } from "./use-create-post-form";
 import type { SocialAccount } from "@/lib/api";
-import { getAccountDisplayName } from "./account-labels";
+import { getAccountDisplayName, getAccountIdentityKey } from "./account-labels";
 
 // --- Connected Accounts section (clickable cards to select/deselect) ---
 
@@ -45,6 +45,11 @@ export function ConnectedAccountsGrid({
     );
   }
 
+  const selectedByIdentity = new Map<string, string>();
+  for (const account of accounts) {
+    if (selectedIds.has(account.id)) selectedByIdentity.set(getAccountIdentityKey(account), account.id);
+  }
+
   return (
     <div>
       {onToggleAll && (
@@ -63,14 +68,19 @@ export function ConnectedAccountsGrid({
         </div>
       )}
       <div className="grid grid-cols-2 gap-2">
-        {accounts.map((account) => (
-          <AccountCardSmall
-            key={account.id}
-            account={account}
-            selected={selectedIds.has(account.id)}
-            onToggle={onToggle}
-          />
-        ))}
+        {accounts.map((account) => {
+          const selectedAccountId = selectedByIdentity.get(getAccountIdentityKey(account));
+          const selectedSiblingId = selectedAccountId && selectedAccountId !== account.id ? selectedAccountId : null;
+          return (
+            <AccountCardSmall
+              key={account.id}
+              account={account}
+              selected={selectedIds.has(account.id)}
+              selectedSiblingId={selectedSiblingId}
+              onToggle={onToggle}
+            />
+          );
+        })}
       </div>
       {profileName && (
         <div className="mt-3 text-[11px] font-mono" style={{ color: "var(--dmuted2)" }}>
@@ -85,10 +95,12 @@ export function ConnectedAccountsGrid({
 function AccountCardSmall({
   account,
   selected,
+  selectedSiblingId,
   onToggle,
 }: {
   account: SocialAccount;
   selected: boolean;
+  selectedSiblingId: string | null;
   onToggle: (id: string) => void;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
@@ -101,8 +113,10 @@ function AccountCardSmall({
     <button
       type="button"
       onClick={() => onToggle(account.id)}
-      aria-label={`${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
-      className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]"
+      disabled={!!selectedSiblingId}
+      aria-label={selectedSiblingId ? `Already selected from another Profile: ${label} ${accountLabel}` : `${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
+      title={selectedSiblingId ? "Already selected from another Profile" : undefined}
+      className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] disabled:cursor-not-allowed disabled:opacity-50"
       style={
         selected
           ? {

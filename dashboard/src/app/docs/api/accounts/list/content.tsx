@@ -70,6 +70,16 @@ const RESPONSE_200_FIELDS: ApiFieldItem[] = [
     description: "Your Connect user ID, if present.",
   },
   {
+    name: "data[].shared_connection",
+    type: "boolean",
+    description: "True when this physical provider connection is active in more than one visible Profile.",
+  },
+  {
+    name: "data[].bound_profile_ids",
+    type: "string[]",
+    description: "Profile IDs currently bound to the same physical connection and visible to the caller.",
+  },
+  {
     name: "meta.total",
     type: "number",
     description: "Total number of returned accounts.",
@@ -191,6 +201,8 @@ const RESPONSE_SNIPPETS = [
       "account_avatar_url": "https://...",
       "status": "active",
       "connection_type": "byo",
+      "shared_connection": true,
+      "bound_profile_ids": ["pr_development", "pr_production"],
       "connected_at": "2026-04-02T10:00:00Z",
       "external_user_id": null
     }

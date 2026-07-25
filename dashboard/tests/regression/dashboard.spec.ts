@@ -29,6 +29,7 @@ const publicRoutes = [
   { path: "/docs/api/analytics/youtube/trend", marker: /Get YouTube analytics trend|GET\s+\/v1\/accounts\/:account_id\/youtube\/analytics\/trend/i },
   { path: "/docs/api/analytics/youtube/videos", marker: /Get YouTube analytics top videos|GET\s+\/v1\/accounts\/:account_id\/youtube\/analytics\/videos/i },
   { path: "/docs/api/analytics/refresh", marker: /Request analytics refresh|POST\s+\/v1\/analytics\/refresh/i },
+  { path: "/docs/api/accounts/bind", marker: /Bind account to Profile|POST\s+\/v1\/accounts\/:account_id\/bindings/i },
   { path: "/docs/api/api-metrics", marker: /API Metrics|GET\s+\/v1\/api-metrics\/overall/i },
   { path: "/docs/api/api-metrics/overall", marker: /Overall|GET\s+\/v1\/api-metrics\/overall/i },
   { path: "/docs/api/api-metrics/summary", marker: /Summary|GET\s+\/v1\/api-metrics\/summary/i },
@@ -118,6 +119,21 @@ test.describe("workspace-scoped developer routes", () => {
       expect(source).not.toContain("getProfile(");
     });
   }
+});
+
+test.describe("social account Profile bindings", () => {
+  test("keeps public binding IDs and rejects duplicate physical targets atomically", async () => {
+    const apiSource = await readFile(path.join(process.cwd(), "src/lib/api.ts"), "utf8");
+    const bindingsSource = await readFile(path.join(process.cwd(), "src/components/accounts/profile-bindings.tsx"), "utf8");
+    const createPostDocs = await readFile(path.join(process.cwd(), "src/app/docs/api/posts/create/content.tsx"), "utf8");
+
+    expect(apiSource).toContain("bound_profile_ids?: string[]");
+    expect(apiSource).toContain("/v1/accounts/${accountId}/bindings");
+    expect(bindingsSource).toContain("Remove from this Profile");
+    expect(bindingsSource).not.toContain("connection_id");
+    expect(createPostDocs).toContain("DUPLICATE_SOCIAL_CONNECTION");
+    expect(createPostDocs).toContain('"account_ids": ["sa_twitter_development", "sa_twitter_staging"]');
+  });
 });
 
 test.describe("platform credentials layout", () => {

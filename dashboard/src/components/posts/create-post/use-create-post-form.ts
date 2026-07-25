@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import type { CreateSocialPostPayload, EditablePlatformPost, SocialAccount, SocialPost } from "@/lib/api";
 import { PLATFORM_LIMITS, countCharacters, getCountStatus } from "@/components/tools/platform-limits";
 import { getAccountIdentityKey } from "./account-labels";
@@ -445,7 +445,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   const [existingMediaItems, setExistingMediaItems] = useState<ExistingMediaItem[]>([]);
   // Ref for latest mediaItems — used by buildPayload to avoid stale closures
   const mediaItemsRef = useRef<MediaItem[]>([]);
-  mediaItemsRef.current = mediaItems;
+  useEffect(() => {
+    mediaItemsRef.current = mediaItems;
+  }, [mediaItems]);
   // Cache: fingerprint → mediaId (persists across add/remove in same session)
   const [uploadCache, setUploadCache] = useState<Map<string, string>>(new Map());
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set());
@@ -468,11 +470,11 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return activeAccounts.filter((a) => selectedAccountIds.has(a.id));
   }, [activeAccounts, selectedAccountIds]);
 
-  // Detect duplicate platform accounts by stable platform account id when
+  // Defensive duplicate detection by stable platform account id when
   // available. Some Threads rows have a generic account_name ("threads"),
   // so using the display label would collapse two real accounts.
-  // When the same underlying account is connected via BYO + managed,
-  // or selected from two profiles, we should only publish once.
+  // Selection normally prevents siblings from entering this set. Keeping the
+  // detector protects restored drafts and other programmatic preselection.
   const { duplicateAccountIds, uniqueSelectedAccounts } = useMemo(() => {
     const seen = new Map<string, string>();
     const dupes = new Set<string>();
@@ -491,25 +493,53 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
     return { duplicateAccountIds: dupes, uniqueSelectedAccounts: unique };
   }, [selectedAccounts]);
 
+  const selectedIdentityKeys = useMemo(
+    () => new Set(selectedAccounts.map((account) => getAccountIdentityKey(account))),
+    [selectedAccounts],
+  );
+
   const toggleAccount = useCallback((id: string) => {
+    const account = activeAccounts.find((candidate) => candidate.id === id);
     setSelectedAccountIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+        return next;
+      }
+      if (!account) return prev;
+      if (selectedIdentityKeys.has(getAccountIdentityKey(account))) return prev;
+      next.add(id);
       return next;
     });
-  }, []);
+  }, [activeAccounts, selectedIdentityKeys]);
 
   const toggleAll = useCallback(() => {
     setSelectedAccountIds((prev) => {
-      if (prev.size === activeAccounts.length) return new Set();
-      return new Set(activeAccounts.map((a) => a.id));
+      const uniqueAccountIds: string[] = [];
+      const seen = new Set<string>();
+      for (const account of activeAccounts) {
+        const identity = getAccountIdentityKey(account);
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        uniqueAccountIds.push(account.id);
+      }
+      if (prev.size === uniqueAccountIds.length && uniqueAccountIds.every((id) => prev.has(id))) return new Set();
+      return new Set(uniqueAccountIds);
     });
   }, [activeAccounts]);
 
   const replaceSelectedAccounts = useCallback((ids: string[]) => {
-    setSelectedAccountIds(new Set(ids));
-  }, []);
+    const requested = new Set(ids);
+    const seen = new Set<string>();
+    const uniqueIds = activeAccounts.flatMap((account) => {
+      if (!requested.has(account.id)) return [];
+      const identity = getAccountIdentityKey(account);
+      if (seen.has(identity)) return [];
+      seen.add(identity);
+      return [account.id];
+    });
+    setSelectedAccountIds(new Set(uniqueIds));
+  }, [activeAccounts]);
 
   const toggleBlockCollapse = useCallback((accountId: string) => {
     setCollapsedBlocks((prev) => {
@@ -637,7 +667,9 @@ export function useCreatePostForm(accounts: SocialAccount[]) {
   // Returns true if the file was already uploaded (cache hit → no upload needed).
   // Uses a ref for uploadCache to avoid stale closure issues.
   const uploadCacheRef = useRef(uploadCache);
-  uploadCacheRef.current = uploadCache;
+  useEffect(() => {
+    uploadCacheRef.current = uploadCache;
+  }, [uploadCache]);
 
   const addMediaItem = useCallback((file: File): { cached: boolean; fingerprint: string; mediaId: string | null } => {
     const fp = fileFingerprint(file);

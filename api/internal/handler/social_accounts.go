@@ -434,19 +434,45 @@ func (h *SocialAccountHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Build profile name map for denormalized response
-	profileNames := make(map[string]string)
+	// Build Profile context for the denormalized response and for the
+	// workspace-scoped binding projection. connection_id remains internal.
+	profilesByID := make(map[string]db.Profile)
 	for _, a := range accounts {
-		if _, ok := profileNames[a.ProfileID]; !ok {
+		if _, ok := profilesByID[a.ProfileID]; !ok {
 			if p, pErr := h.queries.GetProfile(r.Context(), a.ProfileID); pErr == nil {
-				profileNames[p.ID] = p.Name
+				profilesByID[p.ID] = p
 			}
 		}
 	}
 
 	result := make([]socialAccountResponse, len(accounts))
 	for i, a := range accounts {
-		result[i] = toSocialAccountResponse(a, profileNames[a.ProfileID])
+		profile := profilesByID[a.ProfileID]
+		responseAccount := a
+		if a.ConnectionID.Valid && strings.TrimSpace(a.ConnectionID.String) != "" && profile.WorkspaceID != "" {
+			resolved, resolveErr := h.queries.GetResolvedSocialAccountByIDAndWorkspace(r.Context(), db.GetResolvedSocialAccountByIDAndWorkspaceParams{
+				ID: a.ID, WorkspaceID: profile.WorkspaceID,
+			})
+			if resolveErr != nil {
+				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve account connection")
+				return
+			}
+			responseAccount = resolved.AsSocialAccount()
+		}
+		result[i] = toSocialAccountResponse(responseAccount, profile.Name)
+		if !a.ConnectionID.Valid || strings.TrimSpace(a.ConnectionID.String) == "" || profile.WorkspaceID == "" {
+			continue
+		}
+		boundProfileIDs, listErr := h.queries.ListBoundProfileIDsForAccount(r.Context(), db.ListBoundProfileIDsForAccountParams{
+			AccountID: a.ID, WorkspaceID: profile.WorkspaceID,
+			ExternalUserID: pgtype.Text{String: extUserID, Valid: extUserID != ""},
+		})
+		if listErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to list account bindings")
+			return
+		}
+		result[i].BoundProfileIDs = boundProfileIDs
+		result[i].SharedConnection = len(boundProfileIDs) > 1
 	}
 
 	writeSuccessWithListMeta(w, result, len(result), len(result))

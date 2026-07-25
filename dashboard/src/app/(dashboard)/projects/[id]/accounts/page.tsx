@@ -9,13 +9,14 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
-  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
+  listSocialAccounts, connectSocialAccount, disconnectSocialAccount, bindSocialAccount, unbindSocialAccount, getOAuthConnectURL, listProfiles, getActivation, getMe,
   getAccountCapabilities,
   type SocialAccount, type Profile, type XInboxCapabilities,
 } from "@/lib/api";
 import { evaluateXInboxEligibility } from "@/lib/x-inbox-eligibility";
 import { isFacebookEnabledForMe } from "@/components/dashboard/shell";
 import { FacebookPagePicker } from "@/components/accounts/facebook-page-picker";
+import { ProfileBindings } from "@/components/accounts/profile-bindings";
 import { useWorkspaceId } from "@/lib/use-workspace-id";
 import { Plus, ExternalLink, CheckCircle2, XCircle } from "lucide-react";
 import { AccountDestinationIcon } from "@/components/account-destination-icon";
@@ -85,6 +86,7 @@ export default function AccountsPage() {
   // the first connect fast and low-friction. Toggleable via "Show all".
   const [firstTimeMode, setFirstTimeMode] = useState(searchParams.get("first") === "1");
   const [disconnectTarget, setDisconnectTarget] = useState<string | null>(null);
+  const [unbindTarget, setUnbindTarget] = useState<string | null>(null);
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [handle, setHandle] = useState("");
   const [appPassword, setAppPassword] = useState("");
@@ -282,6 +284,37 @@ export default function AccountsPage() {
     }
     finally { setDisconnectTarget(null); }
   }
+
+  async function handleBind(accountId: string, targetProfileId: string) {
+    setAccountsError(null);
+    const token = await getToken();
+    if (!token) throw new Error("Authentication required");
+    await bindSocialAccount(token, accountId, targetProfileId);
+    await loadAccounts();
+  }
+
+  async function handleUnbind(accountId: string) {
+    try {
+      setAccountsError(null);
+      const token = await getToken();
+      if (!token) return;
+      await unbindSocialAccount(token, accountId);
+      await loadAccounts();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to remove account from Profile";
+      setAccountsError({ message, topic: "account-unbind-failure" });
+    } finally {
+      setUnbindTarget(null);
+    }
+  }
+
+  const disconnectAccount = accounts.find((account) => account.id === disconnectTarget);
+  const affectedProfileNames = (disconnectAccount?.bound_profile_ids?.length
+    ? disconnectAccount.bound_profile_ids
+    : disconnectAccount
+      ? [disconnectAccount.profile_id]
+      : [])
+    .map((boundProfileId) => profiles.find((profile) => profile.id === boundProfileId)?.name || boundProfileId);
 
   return (
     <>
@@ -598,20 +631,28 @@ export default function AccountsPage() {
                     )}
                   </td>
                   <td style={{ textAlign: "right" }}>
-                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
-                      {a.platform === "twitter" && xEligibility?.reconnectRequired ? (
-                        <button
-                          className="dbtn dbtn-primary"
-                          style={{ padding: "4px 10px", fontSize: 12 }}
-                          onClick={() => handleOAuthConnect("twitter", a.profile_id)}
-                          disabled={connecting}
-                        >
-                          Reconnect X
+                    <div style={{ display: "grid", justifyItems: "end", gap: 8 }}>
+                      <ProfileBindings
+                        account={a}
+                        profiles={profiles}
+                        onBind={(targetProfileId) => handleBind(a.id, targetProfileId)}
+                        onRequestUnbind={() => setUnbindTarget(a.id)}
+                      />
+                      <div style={{ display: "flex", justifyContent: "flex-end", gap: 6 }}>
+                        {a.platform === "twitter" && xEligibility?.reconnectRequired ? (
+                          <button
+                            className="dbtn dbtn-primary"
+                            style={{ padding: "4px 10px", fontSize: 12 }}
+                            onClick={() => handleOAuthConnect("twitter", a.profile_id)}
+                            disabled={connecting}
+                          >
+                            Reconnect X
+                          </button>
+                        ) : null}
+                        <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
+                          Disconnect physical account
                         </button>
-                      ) : null}
-                      <button className="dbtn dbtn-danger" style={{ padding: "4px 10px", fontSize: 12 }} onClick={() => setDisconnectTarget(a.id)}>
-                        Disconnect
-                      </button>
+                      </div>
                     </div>
                   </td>
                 </tr>
@@ -623,12 +664,22 @@ export default function AccountsPage() {
 
       <ConfirmModal
         open={!!disconnectTarget}
-        title="Disconnect Account"
-        message="Are you sure you want to disconnect this social account? You can reconnect it later."
-        confirmLabel="Disconnect"
+        title="Disconnect physical account"
+        message={`This disconnects the physical social account from ${affectedProfileNames.length || 1} Profile${affectedProfileNames.length === 1 ? "" : "s"}${affectedProfileNames.length ? `: ${affectedProfileNames.join(", ")}` : ""}. Publishing, Inbox sync, and metrics will stop for every binding.`}
+        confirmLabel="Disconnect all bindings"
         variant="danger"
         onConfirm={() => disconnectTarget && handleDisconnect(disconnectTarget)}
         onCancel={() => setDisconnectTarget(null)}
+      />
+
+      <ConfirmModal
+        open={!!unbindTarget}
+        title="Remove from this Profile"
+        message="This removes only this Profile binding. The physical social connection and any other Profile bindings stay active."
+        confirmLabel="Remove binding"
+        variant="danger"
+        onConfirm={() => unbindTarget && handleUnbind(unbindTarget)}
+        onCancel={() => setUnbindTarget(null)}
       />
 
       {pendingFacebookId && workspaceId && (

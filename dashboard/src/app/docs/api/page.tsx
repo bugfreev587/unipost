@@ -35,8 +35,9 @@ const ENDPOINT_GROUPS: EndpointGroup[] = [
     endpoints: [
       { label: "List accounts", method: "GET", path: "/v1/accounts", href: "/docs/api/accounts/list", description: "List connected social accounts." },
       { label: "Connect account", method: "POST", path: "/v1/accounts/connect", href: "/docs/api/accounts/connect", description: "Create an OAuth connection request." },
+      { label: "Bind account to Profile", method: "POST", path: "/v1/accounts/{id}/bindings", href: "/docs/api/accounts/bind", description: "Reuse one physical connection in another Profile." },
       { label: "OAuth connect", method: "POST", path: "/v1/oauth/connect", href: "/docs/api/accounts/oauth-connect", description: "Start an OAuth flow from API clients." },
-      { label: "Disconnect account", method: "DELETE", path: "/v1/accounts/{id}", href: "/docs/api/accounts/disconnect", description: "Disconnect a social account." },
+      { label: "Disconnect account", method: "DELETE", path: "/v1/accounts/{id}", href: "/docs/api/accounts/disconnect", description: "Disconnect a physical account and all Profile bindings." },
       { label: "Account capabilities", method: "GET", path: "/v1/accounts/{id}/capabilities", href: "/docs/api/accounts/capabilities", description: "Inspect publish and media support." },
       { label: "Account health", method: "GET", path: "/v1/accounts/{id}/health", href: "/docs/api/accounts/health", description: "Read connection health and reconnect state." },
       { label: "Account metrics", method: "GET", path: "/v1/accounts/{id}/metrics", href: "/docs/api/accounts/metrics", description: "Read platform account metrics." },
