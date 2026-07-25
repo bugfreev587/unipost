@@ -9,6 +9,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stripe/stripe-go/v82"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
@@ -115,6 +116,9 @@ type BillingHandler struct {
 
 type billingTrialCheckoutService interface {
 	PrepareCheckout(context.Context, trials.CheckoutRequest) (trials.CheckoutResult, error)
+	ChangePlan(context.Context, trials.ChangePlanRequest) (trials.Grant, error)
+	CancelRenewal(context.Context, trials.CancelRequest) (trials.Grant, error)
+	CreateTrialSafePortal(context.Context, trials.PortalRequest) (string, bool, error)
 }
 
 type xCreditsSnapshotService interface {
@@ -434,6 +438,95 @@ func (h *BillingHandler) tryTrialCheckout(w http.ResponseWriter, r *http.Request
 	return true, false
 }
 
+// ChangePlan handles POST /v1/billing/change-plan. The route is owner-only;
+// the service dispatches to Subscription or Schedule according to grant kind.
+func (h *BillingHandler) ChangePlan(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if h == nil || h.trialCheckout == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Trial billing is not configured")
+		return
+	}
+	var body struct {
+		PlanID string `json:"plan_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PlanID == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "plan_id is required")
+		return
+	}
+	grant, err := h.trialCheckout.ChangePlan(r.Context(), trials.ChangePlanRequest{WorkspaceID: workspaceID, TargetPlanID: body.PlanID})
+	if err != nil {
+		writeTrialMutationError(w, err)
+		return
+	}
+	writeSuccess(w, trialMutationResponse(grant))
+}
+
+// CancelTrialRenewal handles POST /v1/billing/trials/{trialID}/cancel-renewal.
+func (h *BillingHandler) CancelTrialRenewal(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	grantID := chi.URLParam(r, "trialID")
+	if grantID == "" {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "trialID is required")
+		return
+	}
+	if h == nil || h.trialCheckout == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Trial billing is not configured")
+		return
+	}
+	grant, err := h.trialCheckout.CancelRenewal(r.Context(), trials.CancelRequest{WorkspaceID: workspaceID, GrantID: grantID})
+	if err != nil {
+		writeTrialMutationError(w, err)
+		return
+	}
+	writeSuccess(w, trialMutationResponse(grant))
+}
+
+func trialMutationResponse(grant trials.Grant) map[string]any {
+	return map[string]any{
+		"trial_id":    grant.ID,
+		"status":      grant.Status,
+		"plan_id":     grant.PlanID,
+		"canceled_at": grant.CanceledAt,
+	}
+}
+
+func writeTrialMutationError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, trials.ErrGrantNotFound):
+		writeError(w, http.StatusNotFound, "TRIAL_NOT_FOUND", "Trial grant not found")
+	case errors.Is(err, trials.ErrInvalidPlan), errors.Is(err, trials.ErrInvalidDuration):
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid trial billing request")
+	case errors.Is(err, trials.ErrTrialMutationNotApplicable), errors.Is(err, trials.ErrBillingModeUnavailable), errors.Is(err, trials.ErrConcurrentTransition):
+		writeError(w, http.StatusConflict, "TRIAL_CONFLICT", "Trial billing state changed; refresh and try again")
+	default:
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to update trial billing")
+	}
+}
+
+func (h *BillingHandler) tryTrialSafePortal(w http.ResponseWriter, r *http.Request, req trials.PortalRequest) bool {
+	if h == nil || h.trialCheckout == nil {
+		return false
+	}
+	url, handled, err := h.trialCheckout.CreateTrialSafePortal(r.Context(), req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create trial-safe portal session")
+		return true
+	}
+	if !handled {
+		return false
+	}
+	writeSuccess(w, map[string]string{"portal_url": url})
+	return true
+}
+
 // CreatePortal handles POST /v1/billing/portal
 func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
@@ -459,10 +552,14 @@ func (h *BillingHandler) CreatePortal(w http.ResponseWriter, r *http.Request) {
 	if appURL == "" {
 		appURL = "https://app.unipost.dev"
 	}
+	returnURL := appURL + "/settings/billing"
+	if h.tryTrialSafePortal(w, r, trials.PortalRequest{WorkspaceID: workspaceID, StripeMode: mode.Name, CustomerID: sub.StripeCustomerID.String, ReturnURL: returnURL}) {
+		return
+	}
 
 	params := &stripe.BillingPortalSessionParams{
 		Customer:  stripe.String(sub.StripeCustomerID.String),
-		ReturnURL: stripe.String(appURL + "/settings/billing"),
+		ReturnURL: stripe.String(returnURL),
 	}
 
 	s, err := mode.Client.BillingPortalSessions.New(params)

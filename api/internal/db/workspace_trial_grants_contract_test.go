@@ -248,7 +248,7 @@ func TestWorkspaceTrialGrantRenewalCancellationKeepsGrantActive(t *testing.T) {
 	if next := strings.Index(section[len("-- name: recordworkspacetrialgrantrenewalcancellation :one"):], "-- name:"); next >= 0 {
 		section = section[:len("-- name: recordworkspacetrialgrantrenewalcancellation :one")+next]
 	}
-	for _, want := range []string{"set canceled_at = sqlc.arg(canceled_at)", "and status = 'active'", "returning *"} {
+	for _, want := range []string{"set canceled_at = coalesce(canceled_at, sqlc.arg(canceled_at))", "and status in ('scheduled', 'active')", "returning *"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("renewal cancellation query missing %q: %s", want, section)
 		}

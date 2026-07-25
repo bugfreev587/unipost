@@ -1182,6 +1182,8 @@ func main() {
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/change-plan", billingHandler.ChangePlan)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/trials/{trialID}/cancel-renewal", billingHandler.CancelTrialRenewal)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
 		r.Get("/v1/usage", billingHandler.GetUsage)
 

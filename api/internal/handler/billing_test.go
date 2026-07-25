@@ -1,15 +1,20 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stripe/stripe-go/v82"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
@@ -222,11 +227,24 @@ func TestTrialCheckoutHandlerPendingActivationUsesOneProbeAndOnePostCustomerCall
 }
 
 type fakeBillingTrialCheckoutService struct {
-	result trials.CheckoutResult
-	err    error
-	errs   []error
-	req    trials.CheckoutRequest
-	calls  int
+	result        trials.CheckoutResult
+	err           error
+	errs          []error
+	req           trials.CheckoutRequest
+	calls         int
+	changeResult  trials.Grant
+	changeErr     error
+	changeReq     trials.ChangePlanRequest
+	changeCalls   int
+	cancelResult  trials.Grant
+	cancelErr     error
+	cancelReq     trials.CancelRequest
+	cancelCalls   int
+	portalURL     string
+	portalHandled bool
+	portalErr     error
+	portalReq     trials.PortalRequest
+	portalCalls   int
 }
 
 func (s *fakeBillingTrialCheckoutService) PrepareCheckout(_ context.Context, req trials.CheckoutRequest) (trials.CheckoutResult, error) {
@@ -238,6 +256,98 @@ func (s *fakeBillingTrialCheckoutService) PrepareCheckout(_ context.Context, req
 		return s.result, err
 	}
 	return s.result, s.err
+}
+
+func (s *fakeBillingTrialCheckoutService) ChangePlan(_ context.Context, req trials.ChangePlanRequest) (trials.Grant, error) {
+	s.changeCalls++
+	s.changeReq = req
+	return s.changeResult, s.changeErr
+}
+
+func (s *fakeBillingTrialCheckoutService) CancelRenewal(_ context.Context, req trials.CancelRequest) (trials.Grant, error) {
+	s.cancelCalls++
+	s.cancelReq = req
+	return s.cancelResult, s.cancelErr
+}
+
+func (s *fakeBillingTrialCheckoutService) CreateTrialSafePortal(_ context.Context, req trials.PortalRequest) (string, bool, error) {
+	s.portalCalls++
+	s.portalReq = req
+	return s.portalURL, s.portalHandled, s.portalErr
+}
+
+func TestChangePlanHandlerDispatchesWorkspaceTargetPlan(t *testing.T) {
+	service := &fakeBillingTrialCheckoutService{changeResult: trials.Grant{ID: "grant_1", Status: trials.StatusActive, ActorUserID: "admin_secret"}}
+	h := (&BillingHandler{}).SetTrialService(service)
+	req := httptest.NewRequest(http.MethodPost, "/v1/billing/change-plan", bytes.NewBufferString(`{"plan_id":"growth"}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	recorder := httptest.NewRecorder()
+
+	h.ChangePlan(recorder, req)
+
+	if recorder.Code != http.StatusOK || service.changeCalls != 1 || service.changeReq.WorkspaceID != "ws_1" || service.changeReq.TargetPlanID != "growth" {
+		t.Fatalf("status=%d calls=%d request=%#v body=%s", recorder.Code, service.changeCalls, service.changeReq, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "admin_secret") || strings.Contains(recorder.Body.String(), "granted_by") {
+		t.Fatalf("user mutation response leaked administrator identity: %s", recorder.Body.String())
+	}
+}
+
+func TestCancelTrialRenewalHandlerDispatchesExactGrant(t *testing.T) {
+	service := &fakeBillingTrialCheckoutService{cancelResult: trials.Grant{ID: "grant_1", Status: trials.StatusActive}}
+	h := (&BillingHandler{}).SetTrialService(service)
+	req := httptest.NewRequest(http.MethodPost, "/v1/billing/trials/grant_1/cancel-renewal", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	routeContext := chi.NewRouteContext()
+	routeContext.URLParams.Add("trialID", "grant_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+	recorder := httptest.NewRecorder()
+
+	h.CancelTrialRenewal(recorder, req)
+
+	if recorder.Code != http.StatusOK || service.cancelCalls != 1 || service.cancelReq != (trials.CancelRequest{WorkspaceID: "ws_1", GrantID: "grant_1"}) {
+		t.Fatalf("status=%d calls=%d request=%#v body=%s", recorder.Code, service.cancelCalls, service.cancelReq, recorder.Body.String())
+	}
+}
+
+func TestTrialMutationHandlersFailClosedOnConflictAndMutationError(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "not applicable", err: trials.ErrTrialMutationNotApplicable, want: http.StatusConflict},
+		{name: "not found", err: trials.ErrGrantNotFound, want: http.StatusNotFound},
+		{name: "Stripe unknown", err: context.DeadlineExceeded, want: http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeBillingTrialCheckoutService{cancelErr: test.err}
+			h := (&BillingHandler{}).SetTrialService(service)
+			req := httptest.NewRequest(http.MethodPost, "/v1/billing/trials/grant_1/cancel-renewal", nil)
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			routeContext := chi.NewRouteContext()
+			routeContext.URLParams.Add("trialID", "grant_1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+			recorder := httptest.NewRecorder()
+			h.CancelTrialRenewal(recorder, req)
+			if recorder.Code != test.want {
+				t.Fatalf("status=%d want=%d body=%s", recorder.Code, test.want, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestTryTrialSafePortalReturnsHandledErrorWithoutDefaultFallback(t *testing.T) {
+	for _, serviceHandled := range []bool{false, true} {
+		service := &fakeBillingTrialCheckoutService{portalHandled: serviceHandled, portalErr: errors.New("missing trial-safe configuration")}
+		h := (&BillingHandler{}).SetTrialService(service)
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/v1/billing/portal", nil)
+		handled := h.tryTrialSafePortal(recorder, req, trials.PortalRequest{WorkspaceID: "ws_1", StripeMode: "live", CustomerID: "cus_1", ReturnURL: "https://app.example/settings/billing"})
+		if !handled || recorder.Code != http.StatusInternalServerError || service.portalCalls != 1 {
+			t.Fatalf("service handled=%v handled=%v status=%d calls=%d", serviceHandled, handled, recorder.Code, service.portalCalls)
+		}
+	}
 }
 
 func TestUsageResponseFromMonthlySnapshot(t *testing.T) {

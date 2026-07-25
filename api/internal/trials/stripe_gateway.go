@@ -751,6 +751,7 @@ func buildChangeFreeTrialPlanParams(req ChangeFreeTrialPlanRequest) (*stripe.Sub
 		}},
 		TrialEndNow:           stripe.Bool(true),
 		BillingCycleAnchorNow: stripe.Bool(true),
+		CancelAtPeriodEnd:     stripe.Bool(false),
 		ProrationBehavior:     stripe.String("none"),
 		PaymentBehavior:       stripe.String("error_if_incomplete"),
 		Metadata:              trialMetadata(req.WorkspaceID, req.PlanID, req.TrialGrantID, req.TrialKind, req.Environment),

@@ -373,6 +373,9 @@ func TestBuildChangeFreeTrialPlanParamsReplacesExistingItemAndEndsTrialNow(t *te
 	if !stripe.BoolValue(params.TrialEndNow) || !stripe.BoolValue(params.BillingCycleAnchorNow) {
 		t.Fatalf("trial/billing anchors not set to now: %#v", params)
 	}
+	if params.CancelAtPeriodEnd == nil || stripe.BoolValue(params.CancelAtPeriodEnd) {
+		t.Fatalf("plan change must clear an earlier renewal cancellation: %#v", params.CancelAtPeriodEnd)
+	}
 	if got := stripe.StringValue(params.ProrationBehavior); got != "none" {
 		t.Fatalf("ProrationBehavior = %q", got)
 	}

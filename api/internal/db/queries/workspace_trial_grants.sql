@@ -164,10 +164,10 @@ RETURNING *;
 
 -- name: RecordWorkspaceTrialGrantRenewalCancellation :one
 UPDATE workspace_trial_grants
-SET canceled_at = sqlc.arg(canceled_at),
+SET canceled_at = COALESCE(canceled_at, sqlc.arg(canceled_at)),
     updated_at = NOW()
 WHERE id = sqlc.arg(id)
-  AND status = 'active'
+  AND status IN ('scheduled', 'active')
 RETURNING *;
 
 -- name: MarkWorkspaceTrialGrantRevoked :one

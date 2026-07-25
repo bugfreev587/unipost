@@ -943,10 +943,10 @@ func (q *Queries) RecordWorkspaceTrialGrantProvisioningSchedule(ctx context.Cont
 
 const recordWorkspaceTrialGrantRenewalCancellation = `-- name: RecordWorkspaceTrialGrantRenewalCancellation :one
 UPDATE workspace_trial_grants
-SET canceled_at = $1,
+SET canceled_at = COALESCE(canceled_at, $1),
     updated_at = NOW()
 WHERE id = $2
-  AND status = 'active'
+  AND status IN ('scheduled', 'active')
 RETURNING id, workspace_id, kind, plan_id, duration_days, status, granted_by_user_id, stripe_mode, stripe_customer_id, stripe_subscription_id, stripe_schedule_id, stripe_checkout_session_id, checkout_attempt, granted_at, scheduled_start_at, started_at, ends_at, activated_at, canceled_at, revoked_at, superseded_at, completed_at, superseded_by_plan_id, failure_code, failure_message, created_at, updated_at
 `
 
