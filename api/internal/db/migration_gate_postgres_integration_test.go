@@ -372,3 +372,22 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 		t.Fatal("replacement runner reused orphan backup")
 	}
 }
+
+func TestRequireCurrentSchemaRejects124AndAccepts125(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	seedMigration124State(t, database)
+
+	err := RequireCurrentSchema(context.Background(), databaseURL)
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 125") {
+		t.Fatalf("schema guard error = %v", err)
+	}
+
+	config := testMigrationGateConfig()
+	client := successfulGateClient(config, []AffectedMigration{{Version: 125, Rows: 1}})
+	if err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, client); err != nil {
+		t.Fatal(err)
+	}
+	if err := RequireCurrentSchema(context.Background(), databaseURL); err != nil {
+		t.Fatalf("schema guard rejected current schema: %v", err)
+	}
+}

@@ -117,6 +117,16 @@ func TestEmbeddedMigrationVersionsAreUnique(t *testing.T) {
 	}
 }
 
+func TestLatestEmbeddedMigrationVersion(t *testing.T) {
+	version, err := latestEmbeddedMigrationVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 125 {
+		t.Fatalf("latest embedded migration version = %d, want 125", version)
+	}
+}
+
 func TestTeamPlanUnlimitedPostsMigrationExists(t *testing.T) {
 	body, err := fs.ReadFile(migrations, "migrations/088_team_unlimited_posts.sql")
 	if err != nil {
