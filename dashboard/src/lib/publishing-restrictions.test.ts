@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
   describePublishingRestrictionRetry,
+  findPublishingRestrictionResult,
   filterAllowedAccountIds,
   isPlanPlatformPublishingRestrictedError,
   isPlatformRestricted,
@@ -50,6 +51,15 @@ test("recognizes both API and normalized publishing restriction codes", () => {
   assert.equal(isPlanPlatformPublishingRestrictedError({ code: "plan_platform_publishing_restricted" }), true);
   assert.equal(isPlanPlatformPublishingRestrictedError({ rawCode: "PLAN_PLATFORM_PUBLISHING_RESTRICTED" }), true);
   assert.equal(isPlanPlatformPublishingRestrictedError({ code: "quota_exceeded" }), false);
+});
+
+test("finds a policy-failed TikTok result in a mixed create response", () => {
+  const result = findPublishingRestrictionResult([
+    { platform: "instagram", status: "processing" },
+    { platform: "tiktok", status: "failed", error_code: "plan_platform_publishing_restricted" },
+  ]);
+  assert.equal(result?.platform, "tiktok");
+  assert.equal(findPublishingRestrictionResult([{ platform: "tiktok", status: "processing" }]), undefined);
 });
 
 test("describes blocked, ready, and expired manual Retry states", () => {

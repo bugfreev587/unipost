@@ -67,6 +67,21 @@ func TestApplyPublishingRestrictionRetryEligibility(t *testing.T) {
 	}
 }
 
+func TestPublishingRestrictionProjectionPreservesActiveRetryJob(t *testing.T) {
+	result := failedResult(false)
+	next := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
+	policy := deriveRetryPolicy(result, []db.PostDeliveryJob{{
+		ID: "retry_1", SocialPostResultID: result.ID, Kind: "retry", State: "pending",
+		NextRunAt: pgtype.Timestamptz{Time: next, Valid: true},
+	}})
+
+	applyPublishingRestrictionRetryEligibility(policy, false, true)
+
+	if policy.RetryState != "scheduled" || !policy.WillRetry || policy.ManualRetryAllowed {
+		t.Fatalf("active job projection was overwritten: %+v", policy)
+	}
+}
+
 func TestDeriveRetryPolicyExhaustedKeepsRetriableClassification(t *testing.T) {
 	now := time.Date(2026, 6, 23, 22, 5, 0, 0, time.UTC)
 	result := failedResult(true)

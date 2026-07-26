@@ -239,7 +239,7 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 				postfailures.FirstNonEmpty(platformName, accountMap[pp.AccountID].Platform), "dispatch_prepare",
 				validationErr.Error(), validationErr.Error())
 			if policyDecision.Restricted {
-				failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName)
+				failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, policyDecision.CycleID)
 			}
 			h.recordPostFailure(ctx, failure)
 			if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
@@ -279,9 +279,9 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	}
 	post.Status = newStatus
 	post.PublishedAt = pgtype.Timestamptz{}
-	h.syncPostMediaRetention(ctx, post, newStatus)
+	h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	if !policyFailureAt.IsZero() {
-		h.syncPostMediaRetentionForPublishingRestrictionAt(ctx, post, policyFailureAt)
+		h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, newStatus, policyFailureAt)
 	}
 	if newStatus == "failed" && len(failureSummaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
@@ -401,31 +401,42 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 			Disconnected: socialAccountDisconnectedForPublish(acc, ok),
 		}
 	}
-	quotaUnits := countPublishQuotaUnits(parsed, accountMap)
-	if status, blocked := h.checkFreePlanPostQuota(ctx, post.WorkspaceID, quotaUnits); blocked {
+	blockedTargets, policyErr := h.evaluatePublishingRestrictions(ctx, post.WorkspaceID, parsed, accountMap)
+	if policyErr != nil {
+		return policyErr
+	}
+	allowedTargets := allowedPublishingTargets(parsed, blockedTargets)
+	quotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
+	if status, blocked := h.checkFreePlanPostQuota(ctx, post.WorkspaceID, quotaUnits); quotaUnits > 0 && blocked {
 		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{
 			Blocked:        true,
 			RequestedUnits: quotaUnits,
 		})
-		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, status, quotaUnits)
+		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits)
 	}
 	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
 	return err
 }
 
-func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post db.SocialPost, parsed []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount, status quota.QuotaStatus, requestedUnits int) error {
-	msg := freePlanQuotaExceededMessage(status, requestedUnits)
+func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post db.SocialPost, parsed []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount, blockedTargets map[string]publishingrestrictions.Decision, status quota.QuotaStatus, requestedUnits int) error {
+	quotaMessage := freePlanQuotaExceededMessage(status, requestedUnits)
 	summaries := make([]string, 0, len(parsed))
+	policyFailed := false
 
 	for _, pp := range parsed {
 		platformName := accountMap[pp.AccountID].Platform
+		message := quotaMessage
+		if decision, restricted := blockedTargets[pp.AccountID]; restricted && decision.Restricted {
+			message = publishingrestrictions.UserMessage
+			policyFailed = true
+		}
 		res, err := h.queries.CreateSocialPostResult(ctx, db.CreateSocialPostResultParams{
 			PostID:          post.ID,
 			SocialAccountID: pp.AccountID,
 			Caption:         pp.Caption,
 			Status:          "failed",
 			ExternalID:      pgtype.Text{},
-			ErrorMessage:    pgtype.Text{String: msg, Valid: true},
+			ErrorMessage:    pgtype.Text{String: message, Valid: true},
 			PublishedAt:     pgtype.Timestamptz{},
 			Url:             pgtype.Text{},
 			DebugCurl:       pgtype.Text{},
@@ -434,17 +445,15 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 		if err != nil {
 			return err
 		}
-		summaries = append(summaries, fmt.Sprintf("[%s] %s", pp.AccountID, msg))
-		h.recordPostFailure(ctx, postfailures.BuildParams(
-			post.ID,
-			res.ID,
-			post.WorkspaceID,
-			pp.AccountID,
-			platformName,
-			"quota",
-			msg,
-			msg,
-		))
+		summaries = append(summaries, fmt.Sprintf("[%s] %s", pp.AccountID, message))
+		failure := postfailures.BuildParams(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, "quota", message, message)
+		if decision, restricted := blockedTargets[pp.AccountID]; restricted && decision.Restricted {
+			failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, decision.CycleID)
+		}
+		h.recordPostFailure(ctx, failure)
+		if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+			return err
+		}
 	}
 
 	if err := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
@@ -457,6 +466,9 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 	post.Status = "failed"
 	post.PublishedAt = pgtype.Timestamptz{}
 	h.syncPostMediaRetention(ctx, post, post.Status)
+	if policyFailed {
+		h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, post.Status, time.Now())
+	}
 	if len(summaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
@@ -851,7 +863,7 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	if err != nil {
 		return err
 	}
-	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform)
+	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
 	if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
 		return err
 	}
@@ -885,7 +897,11 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	}))
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
-	h.syncPostMediaRetentionForPublishingRestrictionAt(ctx, post, time.Now())
+	retentionPost := post
+	if refreshedPost, refreshErr := h.queries.GetSocialPostByID(ctx, post.ID); refreshErr == nil {
+		retentionPost = refreshedPost
+	}
+	h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, retentionPost, retentionPost.Status, time.Now())
 	return nil
 }
 
@@ -1310,47 +1326,7 @@ func (h *SocialPostHandler) RequeueDeliveryJob(ctx context.Context, workspaceID,
 	if err != nil {
 		return db.PostDeliveryJob{}, err
 	}
-	activeJobs, err := h.queries.ListPostDeliveryJobsByResult(ctx, job.SocialPostResultID)
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	for _, candidate := range activeJobs {
-		if candidate.ID != job.ID && (candidate.State == "pending" || candidate.State == "running" || candidate.State == "retrying") {
-			return db.PostDeliveryJob{}, h.queueConflictError()
-		}
-	}
-	post, err := h.queries.GetSocialPostByID(ctx, job.PostID)
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	result, err := h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
-		ID:     job.SocialPostResultID,
-		PostID: job.PostID,
-	})
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	if result.Status != "failed" {
-		return db.PostDeliveryJob{}, fmt.Errorf("only failed deliveries can be retried")
-	}
-	job, err = h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
-		PostID:             post.ID,
-		SocialPostResultID: result.ID,
-		WorkspaceID:        post.WorkspaceID,
-		SocialAccountID:    result.SocialAccountID,
-		Platform:           job.Platform,
-		PostInputIndex:     job.PostInputIndex,
-		Kind:               "retry",
-		State:              "pending",
-		Attempts:           0,
-		MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
-		NextRunAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
-	})
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	h.syncPostMediaRetention(ctx, post, "publishing")
-	return job, nil
+	return h.EnqueueRetryForResult(ctx, workspaceID, job.PostID, job.SocialPostResultID)
 }
 
 func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspaceID, postID, resultID string) (db.PostDeliveryJob, error) {
@@ -1370,6 +1346,13 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 	}
 	if result.Status != "failed" {
 		return db.PostDeliveryJob{}, fmt.Errorf("only failed deliveries can be retried")
+	}
+	decision, policyErr := h.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
+	if policyErr != nil {
+		return db.PostDeliveryJob{}, &retryPolicyUnavailableError{err: policyErr}
+	}
+	if decision.Restricted {
+		return db.PostDeliveryJob{}, &retryPublishingRestrictionError{decision: decision}
 	}
 
 	jobs, err := h.queries.ListPostDeliveryJobsByResult(ctx, result.ID)
@@ -1411,6 +1394,25 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 		MediaIds:           mediaIDs,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
+		decision, policyErr = h.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
+		if policyErr != nil {
+			return db.PostDeliveryJob{}, &retryPolicyUnavailableError{err: policyErr}
+		}
+		if decision.Restricted {
+			return db.PostDeliveryJob{}, &retryPublishingRestrictionError{decision: decision}
+		}
+		current, currentErr := h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: result.ID, PostID: post.ID})
+		if currentErr == nil && current.Status != "failed" {
+			return db.PostDeliveryJob{}, fmt.Errorf("only failed deliveries can be retried")
+		}
+		currentJobs, jobsErr := h.queries.ListPostDeliveryJobsByResult(ctx, result.ID)
+		if jobsErr == nil {
+			for _, currentJob := range currentJobs {
+				if isActiveDeliveryJobState(currentJob.State) {
+					return db.PostDeliveryJob{}, h.queueConflictError()
+				}
+			}
+		}
 		return db.PostDeliveryJob{}, errRetryMediaReuploadRequired
 	}
 	return job, err
@@ -1727,8 +1729,22 @@ func (h *SocialPostHandler) RetryDeliveryJob(w http.ResponseWriter, r *http.Requ
 	}
 	job, err := h.RequeueDeliveryJob(r.Context(), workspaceID, jobID)
 	if err != nil {
+		var restrictionErr *retryPublishingRestrictionError
+		if errors.As(err, &restrictionErr) {
+			writePublishingRestrictionError(w, restrictionErr.decision)
+			return
+		}
+		var policyUnavailable *retryPolicyUnavailableError
+		if errors.As(err, &policyUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
 		if isQueueConflict(err) {
 			writeError(w, http.StatusConflict, "QUEUE_JOB_ACTIVE", err.Error())
+			return
+		}
+		if errors.Is(err, errRetryMediaReuploadRequired) {
+			writeError(w, http.StatusConflict, "MEDIA_REUPLOAD_REQUIRED", "The retained media is no longer available. Upload the media again before retrying.")
 			return
 		}
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())

@@ -63,7 +63,11 @@ SET
   next_action = $6,
   error_source = $7,
   error_temporality = $8,
-  provider_error = $9
+  provider_error = $9,
+  publish_token = CASE
+    WHEN $2 = 'plan_platform_publishing_restricted' THEN NULL
+    ELSE publish_token
+  END
 WHERE id = $1;
 
 -- name: DeleteSocialPostResultsByPost :exec

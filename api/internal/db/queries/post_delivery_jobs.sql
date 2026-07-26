@@ -27,12 +27,49 @@ RETURNING *;
 -- insert are one statement. Cleanup can therefore win before this statement
 -- (and make all_media_available false), or Retry can win and invalidate the
 -- cleanup snapshot; it cannot delete an object between activation and enqueue.
-WITH locked_media AS MATERIALIZED (
+WITH locked_policy AS MATERIALIZED (
+  SELECT restriction.enabled, restriction.restricted_plan_ids
+  FROM social_accounts account
+  JOIN platform_publishing_restrictions restriction
+    ON restriction.platform = account.platform
+  WHERE account.id = sqlc.arg(social_account_id)
+  FOR SHARE OF restriction
+), locked_result AS MATERIALIZED (
+  SELECT result.id, result.status
+  FROM social_post_results result
+  WHERE result.id = sqlc.arg(social_post_result_id)
+    AND result.post_id = sqlc.arg(post_id)
+    AND result.social_account_id = sqlc.arg(social_account_id)
+  FOR UPDATE
+), policy_admission AS MATERIALIZED (
+  SELECT result.id
+  FROM locked_result result
+  WHERE result.status = 'failed'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM post_delivery_jobs active_job
+      WHERE active_job.social_post_result_id = result.id
+        AND active_job.state IN ('pending', 'running', 'retrying')
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM locked_policy restriction
+      WHERE restriction.enabled = TRUE
+        AND COALESCE((
+          SELECT subscription.plan_id
+          FROM subscriptions subscription
+          WHERE subscription.workspace_id = sqlc.arg(workspace_id)
+          ORDER BY subscription.updated_at DESC
+          LIMIT 1
+        ), 'free') = ANY(restriction.restricted_plan_ids)
+    )
+), locked_media AS MATERIALIZED (
   UPDATE media
   SET usage_version = usage_version + 1
   WHERE workspace_id = sqlc.arg(workspace_id)
     AND id = ANY(sqlc.arg(media_ids)::text[])
     AND status = 'uploaded'
+    AND EXISTS (SELECT 1 FROM policy_admission)
   RETURNING id
 ), all_media_available AS MATERIALIZED (
   SELECT COUNT(DISTINCT id)::int = CARDINALITY(sqlc.arg(media_ids)::text[]) AS available
@@ -79,6 +116,7 @@ SELECT
   sqlc.arg(next_run_at), NULL, NULL
 FROM all_media_available
 WHERE all_media_available.available
+  AND EXISTS (SELECT 1 FROM policy_admission)
   AND (
     CARDINALITY(sqlc.arg(media_ids)::text[]) = 0
     OR (SELECT COUNT(*) FROM activated_usage) = CARDINALITY(sqlc.arg(media_ids)::text[])

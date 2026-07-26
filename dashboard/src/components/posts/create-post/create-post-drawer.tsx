@@ -58,6 +58,7 @@ import { cn } from "@/lib/utils";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import {
   PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
+  findPublishingRestrictionResult,
   filterAllowedAccountIds,
   isPlanPlatformPublishingRestrictedError,
   isPlatformRestricted,
@@ -2315,6 +2316,33 @@ export function CreatePostDrawer({
       if (!token) return;
       const response = await createSocialPost(token, payload);
       await onCreated(response.data.id);
+      const restrictedResult = findPublishingRestrictionResult(response.data.results);
+      if (restrictedResult) {
+        const allowedResults = response.data.results?.filter(
+          (result) => result.id !== restrictedResult.id && result.status !== "failed",
+        ) ?? [];
+        setSubmitError({
+          title: "Publishing restricted",
+          message: PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
+          mailto: buildSupportMailto({
+            subject: "TikTok publishing restricted in dashboard",
+            intro: "TikTok publishing was restricted while other selected platforms continued.",
+            details: [`Workspace ID: ${workspaceId}`, `Post ID: ${response.data.id}`],
+          }),
+          contactHref: buildContactPageHref({
+            topic: "publishing-restriction",
+            source: "create-post-drawer",
+            workspace: workspaceId,
+            profile: profileName,
+          }),
+        });
+        if (allowedResults.length > 0) {
+          setSubmitSuccess({
+            message: "Post created. Your other selected platforms are processing normally.",
+          });
+        }
+        return;
+      }
       // TikTok processes video/photo uploads asynchronously — the
       // Content Posting API audit requires us to tell the user the post
       // is in-flight, not silently assume "published". Hold the drawer

@@ -17,22 +17,25 @@ const (
 var ErrVersionConflict = errors.New("publishing restriction version conflict")
 
 type Restriction struct {
-	ID                 string             `json:"id"`
-	Platform           string             `json:"platform"`
-	Enabled            bool               `json:"enabled"`
-	RestrictedPlanIDs  []string           `json:"restricted_plan_ids"`
-	ReasonCode         string             `json:"reason_code"`
-	UserMessage        string             `json:"user_message"`
-	CycleID            string             `json:"cycle_id,omitempty"`
-	Version            int64              `json:"version"`
-	EnabledAt          *time.Time         `json:"enabled_at,omitempty"`
-	DisabledAt         *time.Time         `json:"disabled_at,omitempty"`
-	UpdatedByUserID    string             `json:"updated_by_user_id,omitempty"`
-	CreatedAt          time.Time          `json:"created_at"`
-	UpdatedAt          time.Time          `json:"updated_at"`
-	AffectedWorkspaces int                `json:"affected_workspace_count,omitempty"`
-	AffectedAccounts   int                `json:"affected_account_count,omitempty"`
-	RecentEvents       []RestrictionEvent `json:"recent_events,omitempty"`
+	ID                           string             `json:"id"`
+	Platform                     string             `json:"platform"`
+	Enabled                      bool               `json:"enabled"`
+	RestrictedPlanIDs            []string           `json:"restricted_plan_ids"`
+	ReasonCode                   string             `json:"reason_code"`
+	UserMessage                  string             `json:"user_message"`
+	CycleID                      string             `json:"cycle_id,omitempty"`
+	Version                      int64              `json:"version"`
+	EnabledAt                    *time.Time         `json:"enabled_at,omitempty"`
+	DisabledAt                   *time.Time         `json:"disabled_at,omitempty"`
+	UpdatedByUserID              string             `json:"updated_by_user_id,omitempty"`
+	CreatedAt                    time.Time          `json:"created_at"`
+	UpdatedAt                    time.Time          `json:"updated_at"`
+	AffectedWorkspaces           int                `json:"affected_workspace_count,omitempty"`
+	AffectedAccounts             int                `json:"affected_account_count,omitempty"`
+	RetainedObjectCount          int64              `json:"retained_object_count,omitempty"`
+	RetainedBytes                int64              `json:"retained_bytes,omitempty"`
+	Projected60DayStorageCostUSD float64            `json:"projected_60_day_storage_cost_usd,omitempty"`
+	RecentEvents                 []RestrictionEvent `json:"recent_events,omitempty"`
 }
 
 type RestrictionEvent struct {

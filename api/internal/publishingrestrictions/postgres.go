@@ -64,6 +64,21 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 			SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
 			FROM subscriptions
 			ORDER BY workspace_id, updated_at DESC
+		), retained_objects AS (
+			SELECT DISTINCT failure.restriction_cycle_id AS cycle_id, usage.media_id, media.size_bytes
+			FROM post_failures failure
+			JOIN media_post_usages usage
+			  ON usage.post_id=failure.post_id
+			 AND usage.retention_reason='publishing_restriction'
+			 AND usage.cleanup_after_at > NOW()
+			JOIN media ON media.id=usage.media_id
+			WHERE failure.restriction_cycle_id IS NOT NULL
+		), retention_metrics AS (
+			SELECT cycle_id,
+			       COUNT(*)::BIGINT AS retained_object_count,
+			       COALESCE(SUM(size_bytes),0)::BIGINT AS retained_bytes
+			FROM retained_objects
+			GROUP BY cycle_id
 		)
 		SELECT `+aliasedRestrictionColumns+`,
 		       COUNT(DISTINCT sa.workspace_id) FILTER (
@@ -71,13 +86,17 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 		       )::INTEGER AS affected_workspaces,
 		       COUNT(sa.id) FILTER (
 		         WHERE COALESCE(cp.plan_id, 'free') = ANY(r.restricted_plan_ids)
-		       )::INTEGER AS affected_accounts
+		       )::INTEGER AS affected_accounts,
+		       COALESCE(MAX(retention_metrics.retained_object_count),0)::BIGINT AS retained_object_count,
+		       COALESCE(MAX(retention_metrics.retained_bytes),0)::BIGINT AS retained_bytes,
+		       ROUND((COALESCE(MAX(retention_metrics.retained_bytes),0)::NUMERIC / 1000000000) * 0.015 * 2, 6)::DOUBLE PRECISION AS projected_60_day_storage_cost_usd
 		FROM platform_publishing_restrictions r
 		LEFT JOIN social_accounts sa
 		  ON sa.platform = r.platform
 		 AND sa.status = 'active'
 		 AND sa.disconnected_at IS NULL
 		LEFT JOIN current_plans cp ON cp.workspace_id = sa.workspace_id
+		LEFT JOIN retention_metrics ON retention_metrics.cycle_id = r.cycle_id
 		GROUP BY r.id
 		ORDER BY r.platform
 	`)
@@ -94,6 +113,7 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 			&cycleID, &restriction.Version, &restriction.EnabledAt, &restriction.DisabledAt,
 			&actorID, &restriction.CreatedAt, &restriction.UpdatedAt,
 			&restriction.AffectedWorkspaces, &restriction.AffectedAccounts,
+			&restriction.RetainedObjectCount, &restriction.RetainedBytes, &restriction.Projected60DayStorageCostUSD,
 		)
 		if err != nil {
 			return nil, err
@@ -266,18 +286,16 @@ func (s *PostgresStore) PreviewCampaignRecipients(ctx context.Context, restricti
 	return previewCampaignRecipients(ctx, s.pool, restriction, campaignType)
 }
 
-func previewCampaignRecipients(ctx context.Context, q campaignQuerier, restriction Restriction, campaignType CampaignType) ([]RecipientSnapshot, error) {
-	var query string
-	args := []any{restriction.Platform, restriction.CycleID}
+func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (string, []any, error) {
 	if campaignType == RestrictionNotice {
-		query = `
+		return `
 			WITH current_plans AS (
 				SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
 				FROM subscriptions ORDER BY workspace_id, updated_at DESC
-			), eligible AS (
+			), eligible_owners AS (
 				SELECT u.id AS user_id, u.email, LOWER(TRIM(u.email)) AS normalized_email,
 				       COALESCE(NULLIF(SPLIT_PART(TRIM(COALESCE(u.name, '')), ' ', 1), ''), 'there') AS first_name,
-				       ARRAY_AGG(DISTINCT wm.workspace_id ORDER BY wm.workspace_id) AS workspace_ids
+				       wm.workspace_id
 				FROM users u
 				JOIN workspace_members wm ON wm.user_id = u.id AND wm.role = 'owner' AND wm.status = 'active'
 				LEFT JOIN current_plans cp ON cp.workspace_id = wm.workspace_id
@@ -288,37 +306,56 @@ func previewCampaignRecipients(ctx context.Context, q campaignQuerier, restricti
 					WHERE sa.workspace_id = wm.workspace_id AND sa.platform = $1
 					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
 				  )
-				GROUP BY u.id, u.email, u.name
 			)
-			SELECT DISTINCT ON (normalized_email) user_id, email, normalized_email, first_name, workspace_ids
-			FROM eligible ORDER BY normalized_email, user_id`
+			SELECT (ARRAY_AGG(user_id ORDER BY user_id))[1] AS user_id,
+			       (ARRAY_AGG(email ORDER BY user_id))[1] AS email,
+			       normalized_email,
+			       (ARRAY_AGG(first_name ORDER BY user_id))[1] AS first_name,
+			       ARRAY_AGG(DISTINCT workspace_id ORDER BY workspace_id) AS workspace_ids
+			FROM eligible_owners
+			GROUP BY normalized_email
+			ORDER BY normalized_email`, []any{restriction.Platform}, nil
 	} else if campaignType == RecoveryNotice {
-		query = `
+		return `
 			WITH current_plans AS (
 				SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
 				FROM subscriptions ORDER BY workspace_id, updated_at DESC
-			), eligible AS (
+			), prior_sent AS (
 				SELECT prior.canonical_user_id AS user_id, prior.recipient_email AS email,
 				       prior.normalized_email, COALESCE(NULLIF(prior.first_name_snapshot, ''), 'there') AS first_name,
-				       ARRAY_AGG(DISTINCT wm.workspace_id ORDER BY wm.workspace_id) AS workspace_ids
+				       UNNEST(prior.represented_workspace_ids) AS workspace_id
 				FROM platform_publishing_restriction_email_recipients prior
 				JOIN platform_publishing_restriction_email_campaigns sent_campaign
 				  ON sent_campaign.id = prior.campaign_id AND sent_campaign.cycle_id = $2
 				 AND sent_campaign.campaign_type = 'restriction_notice'
-				JOIN workspace_members wm ON wm.user_id = prior.canonical_user_id AND wm.role = 'owner' AND wm.status = 'active'
-				LEFT JOIN current_plans cp ON cp.workspace_id = wm.workspace_id
-				WHERE prior.status = 'sent' AND COALESCE(cp.plan_id, 'free') = 'free'
+				WHERE prior.status = 'sent'
+			), eligible AS (
+				SELECT prior.*
+				FROM prior_sent prior
+				LEFT JOIN current_plans cp ON cp.workspace_id = prior.workspace_id
+				WHERE COALESCE(cp.plan_id, 'free') = 'free'
 				  AND EXISTS (
 					SELECT 1 FROM social_accounts sa
-					WHERE sa.workspace_id = wm.workspace_id AND sa.platform = $1
+					WHERE sa.workspace_id = prior.workspace_id AND sa.platform = $1
 					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
 				  )
-				GROUP BY prior.canonical_user_id, prior.recipient_email, prior.normalized_email, prior.first_name_snapshot
 			)
-			SELECT DISTINCT ON (normalized_email) user_id, email, normalized_email, first_name, workspace_ids
-			FROM eligible ORDER BY normalized_email, user_id`
-	} else {
-		return nil, ErrCampaignPrecondition
+			SELECT (ARRAY_AGG(user_id ORDER BY user_id))[1] AS user_id,
+			       (ARRAY_AGG(email ORDER BY user_id))[1] AS email,
+			       normalized_email,
+			       (ARRAY_AGG(first_name ORDER BY user_id))[1] AS first_name,
+			       ARRAY_AGG(DISTINCT workspace_id ORDER BY workspace_id) AS workspace_ids
+			FROM eligible
+			GROUP BY normalized_email
+			ORDER BY normalized_email`, []any{restriction.Platform, restriction.CycleID}, nil
+	}
+	return "", nil, ErrCampaignPrecondition
+}
+
+func previewCampaignRecipients(ctx context.Context, q campaignQuerier, restriction Restriction, campaignType CampaignType) ([]RecipientSnapshot, error) {
+	query, args, err := campaignAudienceQuery(restriction, campaignType)
+	if err != nil {
+		return nil, err
 	}
 	rows, err := q.Query(ctx, query, args...)
 	if err != nil {

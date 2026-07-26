@@ -805,6 +805,7 @@ type PostFailure struct {
 	ErrorSource        pgtype.Text        `json:"error_source"`
 	ErrorTemporality   pgtype.Text        `json:"error_temporality"`
 	ProviderError      []byte             `json:"provider_error"`
+	RestrictionCycleID pgtype.Text        `json:"restriction_cycle_id"`
 }
 
 type Profile struct {

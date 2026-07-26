@@ -902,13 +902,15 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writePublishingRestrictionError(w, decision)
 		return
 	}
+	allowedTargets := allowedPublishingTargets(parsed.Posts, blockedTargets)
+	allowedQuotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
 
 	// Enqueue admission applies to BOTH scheduled and immediate paths
 	// — work is being accepted either way. Queue depth only applies
 	// to immediate, since scheduled posts do not create delivery
 	// jobs until the scheduler fires (depth is re-checked there in
 	// Phase 3).
-	deliveryJobUnits := len(parsed.Posts)
+	deliveryJobUnits := len(allowedTargets)
 	if parsed.ScheduledAt != nil {
 		if h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
 			return
@@ -917,7 +919,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		quotaPeriod := quota.PeriodForTime(*parsed.ScheduledAt)
-		if h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap), quotaPeriod) {
+		if h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, allowedQuotaUnits, quotaPeriod) {
 			return
 		}
 		if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
@@ -926,11 +928,11 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}) {
 			return
 		}
-		h.createScheduledPost(w, r, workspaceID, parsed, countPublishQuotaUnits(parsed.Posts, accountMap))
+		h.createScheduledPost(w, r, workspaceID, parsed, allowedQuotaUnits)
 		return
 	}
 
-	if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, countPublishQuotaUnits(parsed.Posts, accountMap)) {
+	if h.rejectFreePlanPostQuotaExceeded(w, r, workspaceID, allowedQuotaUnits) {
 		return
 	}
 	if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{

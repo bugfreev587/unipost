@@ -46,7 +46,7 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 		)
 		SELECT claimed.id, claimed.campaign_id, campaign.cycle_id, campaign.campaign_type,
 		       restriction.platform, claimed.canonical_user_id, claimed.recipient_email,
-		       COALESCE(claimed.first_name_snapshot, ''), claimed.represented_workspace_ids,
+		       claimed.normalized_email, COALESCE(claimed.first_name_snapshot, ''), claimed.represented_workspace_ids,
 		       claimed.idempotency_key, campaign.subject_snapshot, campaign.body_snapshot
 		FROM claimed
 		JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=claimed.campaign_id
@@ -62,7 +62,7 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 		var item PublishingRestrictionEmailWork
 		if err := rows.Scan(
 			&item.RecipientID, &item.CampaignID, &item.CycleID, &item.CampaignType,
-			&item.Platform, &item.CanonicalUserID, &item.RecipientEmail, &item.FirstName,
+			&item.Platform, &item.CanonicalUserID, &item.RecipientEmail, &item.NormalizedEmail, &item.FirstName,
 			&item.RepresentedWorkspaceIDs, &item.IdempotencyKey, &item.SubjectSnapshot, &item.BodySnapshot,
 		); err != nil {
 			return nil, err
@@ -85,31 +85,43 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 	return work, nil
 }
 
+const publishingRestrictionRecipientEligibilitySQL = `
+	WITH current_plans AS (
+		SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
+		FROM subscriptions ORDER BY workspace_id, updated_at DESC
+	), represented AS (
+		SELECT UNNEST($5::text[]) AS workspace_id
+	)
+	SELECT EXISTS (
+		SELECT 1
+		FROM platform_publishing_restrictions restriction
+		WHERE restriction.platform=$1 AND restriction.cycle_id=$2 AND restriction.enabled=$3
+	) AND EXISTS (
+		SELECT 1
+		FROM represented
+		LEFT JOIN current_plans plan ON plan.workspace_id=represented.workspace_id
+		WHERE COALESCE(plan.plan_id,'free')='free'
+		  AND EXISTS (
+			SELECT 1
+			FROM users owner_user
+			JOIN workspace_members owner_member
+			  ON owner_member.user_id=owner_user.id
+			 AND owner_member.workspace_id=represented.workspace_id
+			 AND owner_member.role='owner' AND owner_member.status='active'
+			WHERE LOWER(TRIM(owner_user.email))=$4
+		  )
+		  AND EXISTS (
+			SELECT 1 FROM social_accounts account
+			WHERE account.workspace_id=represented.workspace_id AND account.platform=$1
+			  AND account.status='active' AND account.disconnected_at IS NULL
+		  )
+	)`
+
 func (s *PostgresPublishingRestrictionEmailStore) PublishingRestrictionEmailRecipientEligible(ctx context.Context, work PublishingRestrictionEmailWork) (bool, error) {
 	wantEnabled := work.CampaignType == publishingrestrictions.RestrictionNotice
 	var eligible bool
-	err := s.pool.QueryRow(ctx, `
-		WITH current_plans AS (
-			SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
-			FROM subscriptions ORDER BY workspace_id, updated_at DESC
-		)
-		SELECT EXISTS (
-			SELECT 1
-			FROM platform_publishing_restrictions restriction
-			WHERE restriction.platform=$1 AND restriction.cycle_id=$2 AND restriction.enabled=$3
-		) AND EXISTS (
-			SELECT 1 FROM workspace_members member
-			LEFT JOIN current_plans plan ON plan.workspace_id=member.workspace_id
-			WHERE member.user_id=$4 AND member.workspace_id=ANY($5::text[])
-			  AND member.role='owner' AND member.status='active'
-			  AND COALESCE(plan.plan_id,'free')='free'
-			  AND EXISTS (
-				SELECT 1 FROM social_accounts account
-				WHERE account.workspace_id=member.workspace_id AND account.platform=$1
-				  AND account.status='active' AND account.disconnected_at IS NULL
-			  )
-		)
-	`, work.Platform, work.CycleID, wantEnabled, work.CanonicalUserID, work.RepresentedWorkspaceIDs).Scan(&eligible)
+	err := s.pool.QueryRow(ctx, publishingRestrictionRecipientEligibilitySQL,
+		work.Platform, work.CycleID, wantEnabled, work.NormalizedEmail, work.RepresentedWorkspaceIDs).Scan(&eligible)
 	return eligible, err
 }
 

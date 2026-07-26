@@ -21,6 +21,12 @@ type PublishingRestrictionError = {
   rawCode?: string;
 };
 
+type PublishingRestrictionResult = {
+	platform?: string;
+	status?: string;
+	error_code?: string;
+};
+
 type PublishingRestrictionRetryInput = {
   retry_policy?: {
     manual_retry_allowed: boolean;
@@ -44,6 +50,16 @@ export function isPlanPlatformPublishingRestrictedError(
   return [error?.code, error?.rawCode]
     .map(normalizedCode)
     .includes(PLAN_PLATFORM_PUBLISHING_RESTRICTED_CODE);
+}
+
+export function findPublishingRestrictionResult<T extends PublishingRestrictionResult>(
+	results: T[] | undefined,
+): T | undefined {
+	return results?.find(
+		(result) =>
+			result.status === "failed" &&
+			normalizedCode(result.error_code) === PLAN_PLATFORM_PUBLISHING_RESTRICTED_CODE,
+	);
 }
 
 export function isPlatformRestricted(

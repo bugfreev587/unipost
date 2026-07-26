@@ -107,6 +107,10 @@ func applyPublishingRestrictionRetryEligibility(policy *retryPolicyResponse, res
 	if policy == nil {
 		return
 	}
+	if policy.RetryState == "scheduled" || policy.RetryState == "running" {
+		policy.ManualRetryAllowed = false
+		return
+	}
 	policy.IsRetriable = false
 	policy.WillRetry = false
 	policy.NextRunAt = nil

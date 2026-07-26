@@ -11,6 +11,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/mediaretention"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
 var errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
@@ -48,10 +49,41 @@ func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.
 }
 
 func (h *SocialPostHandler) syncPostMediaRetentionForPublishingRestrictionAt(ctx context.Context, post db.SocialPost, failedAt time.Time) {
+	h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, post.Status, failedAt)
+}
+
+func (h *SocialPostHandler) syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx context.Context, post db.SocialPost, postStatus string, failedAt time.Time) {
 	if failedAt.IsZero() {
 		failedAt = time.Now()
 	}
-	h.syncPostMediaRetentionAt(ctx, post, "failed", "publishing_restriction", failedAt.UTC().Add(60*24*time.Hour))
+	h.syncPostMediaRetentionAt(ctx, post, postStatus, "publishing_restriction", failedAt.UTC().Add(60*24*time.Hour))
+}
+
+func (h *SocialPostHandler) syncPostMediaRetentionAfterResultTransition(
+	ctx context.Context,
+	post db.SocialPost,
+	postStatus string,
+	results []db.SocialPostResult,
+) {
+	hasPolicyFailure := false
+	for _, result := range results {
+		if result.Status == "failed" && result.ErrorCode.Valid && result.ErrorCode.String == publishingrestrictions.NormalizedCode {
+			hasPolicyFailure = true
+			break
+		}
+	}
+	if !hasPolicyFailure {
+		h.syncPostMediaRetention(ctx, post, postStatus)
+		return
+	}
+	retainedUntil, err := h.queries.GetPostPublishingRestrictionMediaRetention(ctx, post.ID)
+	if err == nil && retainedUntil.Valid {
+		h.syncPostMediaRetentionAt(ctx, post, postStatus, "publishing_restriction", retainedUntil.Time)
+		return
+	}
+	// Defensive repair for a policy-failed result whose ledger row is missing:
+	// retain from the transition time rather than shortening to plan retention.
+	h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, postStatus, time.Now())
 }
 
 func (h *SocialPostHandler) syncPostMediaRetentionAt(

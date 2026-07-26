@@ -191,6 +191,34 @@ func TestSyncPostMediaRetentionForPublishingRestrictionUsesFailureTimePlusSixtyD
 	}
 }
 
+func TestResultTransitionPreservesParentWidePublishingRestrictionDeadline(t *testing.T) {
+	post := mediaRetentionPost(t, "partial")
+	wantDeadline := time.Date(2026, 9, 24, 18, 30, 0, 0, time.UTC)
+	dbtx := &mediaRetentionTestDB{
+		planID:            "free",
+		retentionDeadline: pgtype.Timestamptz{Time: wantDeadline, Valid: true},
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx), quota: quota.NewChecker(db.New(dbtx))}
+	results := []db.SocialPostResult{
+		{Status: "published"},
+		{Status: "failed", ErrorCode: pgtype.Text{String: "plan_platform_publishing_restricted", Valid: true}},
+	}
+
+	handler.syncPostMediaRetentionAfterResultTransition(context.Background(), post, "partial", results)
+
+	if len(dbtx.upserts) != 2 {
+		t.Fatalf("upserts=%d, want 2", len(dbtx.upserts))
+	}
+	for _, upsert := range dbtx.upserts {
+		if upsert.PostStatus != "partial" || upsert.RetentionReason != "publishing_restriction" {
+			t.Fatalf("usage=%+v, want partial policy retention", upsert)
+		}
+		if !upsert.CleanupAfterAt.Valid || !upsert.CleanupAfterAt.Time.Equal(wantDeadline) {
+			t.Fatalf("cleanup_after_at=%v, want preserved %v", upsert.CleanupAfterAt, wantDeadline)
+		}
+	}
+}
+
 func TestSyncPostMediaRetentionMarksNonTerminalUsageActive(t *testing.T) {
 	post := mediaRetentionPost(t, "publishing")
 	dbtx := &mediaRetentionTestDB{}
@@ -217,6 +245,12 @@ func TestRetryJobCreationAtomicallyReactivatesMediaUsage(t *testing.T) {
 	}
 	query := text[start:]
 	for _, fragment := range []string{
+		"FOR SHARE OF restriction",
+		"FOR UPDATE",
+		"result.status = 'failed'",
+		"state IN ('pending', 'running', 'retrying')",
+		"platform_publishing_restrictions",
+		"restricted_plan_ids",
 		"SET usage_version = usage_version + 1",
 		"INSERT INTO media_post_usages",
 		"ON CONFLICT (media_id, post_id) DO UPDATE",
@@ -252,9 +286,10 @@ func mediaRetentionPost(t *testing.T, status string) db.SocialPost {
 }
 
 type mediaRetentionTestDB struct {
-	cancelPost db.SocialPost
-	planID     string
-	upserts    []db.UpsertMediaPostUsageParams
+	cancelPost        db.SocialPost
+	planID            string
+	retentionDeadline pgtype.Timestamptz
+	upserts           []db.UpsertMediaPostUsageParams
 }
 
 func (f *mediaRetentionTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
@@ -278,6 +313,8 @@ func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, args ..
 		return subscriptionScanRow(f.planID)
 	case strings.Contains(query, "-- name: CancelSocialPost"):
 		return scheduledIdempotencySocialPostRow(f.cancelPost)
+	case strings.Contains(query, "-- name: GetPostPublishingRestrictionMediaRetention"):
+		return scheduledIdempotencyRow{values: []any{f.retentionDeadline}}
 	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
 		f.upserts = append(f.upserts, db.UpsertMediaPostUsageParams{
 			MediaID:         args[0].(string),

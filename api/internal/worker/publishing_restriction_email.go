@@ -19,6 +19,7 @@ type PublishingRestrictionEmailWork struct {
 	Platform                string
 	CanonicalUserID         string
 	RecipientEmail          string
+	NormalizedEmail         string
 	FirstName               string
 	RepresentedWorkspaceIDs []string
 	IdempotencyKey          string

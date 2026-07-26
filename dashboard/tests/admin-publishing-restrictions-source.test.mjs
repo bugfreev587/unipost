@@ -50,6 +50,12 @@ test("generic Super Admin center renders operational state and all accessible st
   assert.match(page, /No publishing restrictions configured/);
 });
 
+test("Admin center exposes cycle media retention cost metrics", () => {
+  for (const label of ["Retained objects", "Retained bytes", "Projected 60-day storage"]) {
+    assert.match(page, new RegExp(label));
+  }
+});
+
 test("enable and disable confirmations state side effects and use optimistic versioning", () => {
   assert.match(page, /already in-flight calls are not canceled/i);
   assert.match(page, /No customer email is sent/);

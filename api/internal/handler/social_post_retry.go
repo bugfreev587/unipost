@@ -29,6 +29,19 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
+type retryPublishingRestrictionError struct {
+	decision publishingrestrictions.Decision
+}
+
+type retryPolicyUnavailableError struct{ err error }
+
+func (e *retryPolicyUnavailableError) Error() string { return e.err.Error() }
+func (e *retryPolicyUnavailableError) Unwrap() error { return e.err }
+
+func (e *retryPublishingRestrictionError) Error() string {
+	return publishingrestrictions.UserMessage
+}
+
 // RetryResult handles
 //
 //	POST /v1/posts/{id}/results/{resultID}/retry
@@ -107,6 +120,16 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 	}
 	job, err := h.EnqueueRetryForResult(r.Context(), workspaceID, post.ID, existing.ID)
 	if err != nil {
+		var restrictionErr *retryPublishingRestrictionError
+		if errors.As(err, &restrictionErr) {
+			writePublishingRestrictionError(w, restrictionErr.decision)
+			return
+		}
+		var policyUnavailable *retryPolicyUnavailableError
+		if errors.As(err, &policyUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
 		if isQueueConflict(err) {
 			writeError(w, http.StatusConflict, "QUEUE_JOB_ACTIVE", err.Error())
 			return
@@ -187,6 +210,7 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 		newStatus = "partial"
 	}
 	if newStatus == post.Status {
+		h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 		return
 	}
 	var newPublishedAt pgtype.Timestamptz
@@ -207,7 +231,7 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 	})
 	post.Status = newStatus
 	post.PublishedAt = newPublishedAt
-	h.syncPostMediaRetention(ctx, post, newStatus)
+	h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	// If we just flipped off of "failed", clear the metadata error
 	// summary so the posts list doesn't keep showing stale copy.
 	if newStatus != "failed" {

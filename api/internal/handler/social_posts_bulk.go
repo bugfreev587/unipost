@@ -30,6 +30,7 @@ import (
 	"net/http"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
@@ -184,7 +185,24 @@ func (h *SocialPostHandler) processBulkOne(
 		}, 0
 	}
 
-	quotaUnits := countPublishQuotaUnits(parsed.Posts, accountMap)
+	blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
+	if policyErr != nil {
+		return bulkResultEntry{
+			Status: http.StatusServiceUnavailable,
+			Error:  &bulkErrorEnvelope{Code: "POLICY_UNAVAILABLE", Message: "Publishing policy is temporarily unavailable"},
+		}, 0
+	}
+	if _, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
+		return bulkResultEntry{
+			Status: http.StatusPaymentRequired,
+			Error: &bulkErrorEnvelope{
+				Code:    publishingrestrictions.APICode,
+				Message: publishingrestrictions.UserMessage,
+			},
+		}, 0
+	}
+
+	quotaUnits := countPublishQuotaUnits(allowedPublishingTargets(parsed.Posts, blockedTargets), accountMap)
 	if quotaGate.Blocked(acceptedQuotaUnits + quotaUnits) {
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 			Blocked:        true,

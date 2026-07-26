@@ -493,12 +493,49 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 }
 
 const createRetryPostDeliveryJobWithMediaActivation = `-- name: CreateRetryPostDeliveryJobWithMediaActivation :one
-WITH locked_media AS MATERIALIZED (
+WITH locked_policy AS MATERIALIZED (
+  SELECT restriction.enabled, restriction.restricted_plan_ids
+  FROM social_accounts account
+  JOIN platform_publishing_restrictions restriction
+    ON restriction.platform = account.platform
+  WHERE account.id = $4
+  FOR SHARE OF restriction
+), locked_result AS MATERIALIZED (
+  SELECT result.id, result.status
+  FROM social_post_results result
+  WHERE result.id = $2
+    AND result.post_id = $1
+    AND result.social_account_id = $4
+  FOR UPDATE
+), policy_admission AS MATERIALIZED (
+  SELECT result.id
+  FROM locked_result result
+  WHERE result.status = 'failed'
+    AND NOT EXISTS (
+      SELECT 1
+      FROM post_delivery_jobs active_job
+      WHERE active_job.social_post_result_id = result.id
+        AND active_job.state IN ('pending', 'running', 'retrying')
+    )
+    AND NOT EXISTS (
+      SELECT 1
+      FROM locked_policy restriction
+      WHERE restriction.enabled = TRUE
+        AND COALESCE((
+          SELECT subscription.plan_id
+          FROM subscriptions subscription
+          WHERE subscription.workspace_id = $3
+          ORDER BY subscription.updated_at DESC
+          LIMIT 1
+        ), 'free') = ANY(restriction.restricted_plan_ids)
+    )
+), locked_media AS MATERIALIZED (
   UPDATE media
   SET usage_version = usage_version + 1
   WHERE workspace_id = $3
     AND id = ANY($9::text[])
     AND status = 'uploaded'
+    AND EXISTS (SELECT 1 FROM policy_admission)
   RETURNING id
 ), all_media_available AS MATERIALIZED (
   SELECT COUNT(DISTINCT id)::int = CARDINALITY($9::text[]) AS available
@@ -545,6 +582,7 @@ SELECT
   $8, NULL, NULL
 FROM all_media_available
 WHERE all_media_available.available
+  AND EXISTS (SELECT 1 FROM policy_admission)
   AND (
     CARDINALITY($9::text[]) = 0
     OR (SELECT COUNT(*) FROM activated_usage) = CARDINALITY($9::text[])

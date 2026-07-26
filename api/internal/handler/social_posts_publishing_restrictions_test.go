@@ -38,6 +38,21 @@ func TestRetryResultRechecksRestrictionBeforeEnqueue(t *testing.T) {
 	}
 }
 
+func TestBothRetryHandlersMapPolicyReadFailuresToRetryableServiceUnavailable(t *testing.T) {
+	for _, file := range []string{"social_post_retry.go", "social_post_queue.go"} {
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(source)
+		if !strings.Contains(text, "retryPolicyUnavailableError") ||
+			!strings.Contains(text, "http.StatusServiceUnavailable") ||
+			!strings.Contains(text, `"POLICY_UNAVAILABLE"`) {
+			t.Fatalf("%s must map policy read failures to 503 POLICY_UNAVAILABLE", file)
+		}
+	}
+}
+
 func (f *fakePostRestrictionEvaluator) Evaluate(_ context.Context, _ string, platformName string) (publishingrestrictions.Decision, error) {
 	f.calls = append(f.calls, platformName)
 	if f.err != nil {
@@ -96,6 +111,51 @@ func TestFullyRestrictedDecisionHandlesMultipleInputsForOneAccount(t *testing.T)
 	}
 }
 
+func TestAllowedPublishingTargetsExcludeRestrictedAccounts(t *testing.T) {
+	posts := []platform.PlatformPostInput{
+		{AccountID: "tk_1"},
+		{AccountID: "ig_1"},
+		{AccountID: "tk_1", ThreadPosition: 2},
+	}
+	allowed := allowedPublishingTargets(posts, map[string]publishingrestrictions.Decision{
+		"tk_1": {Restricted: true},
+	})
+	if len(allowed) != 1 || allowed[0].AccountID != "ig_1" {
+		t.Fatalf("allowed=%+v", allowed)
+	}
+}
+
+func TestBulkAndScheduledQuotaPartitionPolicyBeforeQuota(t *testing.T) {
+	bulkSource, err := os.ReadFile("social_posts_bulk.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bulk := string(bulkSource)
+	bulkStart := strings.Index(bulk, "func (h *SocialPostHandler) processBulkOne")
+	if bulkStart < 0 {
+		t.Fatal("processBulkOne missing")
+	}
+	bulkFn := bulk[bulkStart:]
+	if policy, quota := strings.Index(bulkFn, "evaluatePublishingRestrictions"), strings.Index(bulkFn, "quotaGate.Blocked"); policy < 0 || quota < 0 || policy > quota {
+		t.Fatalf("bulk policy must precede quota: policy=%d quota=%d", policy, quota)
+	}
+
+	queueSource, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := string(queueSource)
+	start := strings.Index(queue, "func (h *SocialPostHandler) EnqueueScheduledPost")
+	end := strings.Index(queue[start:], "func (h *SocialPostHandler) failScheduledPostForQuota")
+	if start < 0 || end < 0 {
+		t.Fatal("scheduled enqueue boundaries missing")
+	}
+	fn := queue[start : start+end]
+	if policy, quota := strings.Index(fn, "evaluatePublishingRestrictions"), strings.Index(fn, "checkFreePlanPostQuota"); policy < 0 || quota < 0 || policy > quota {
+		t.Fatalf("scheduled policy must precede quota: policy=%d quota=%d", policy, quota)
+	}
+}
+
 func TestWritePublishingRestrictionErrorExactContract(t *testing.T) {
 	rec := httptest.NewRecorder()
 	writePublishingRestrictionError(rec, publishingrestrictions.Decision{Restricted: true, Platform: "tiktok", PlanID: "free", CycleID: "internal_cycle"})
@@ -116,5 +176,23 @@ func TestWritePublishingRestrictionErrorExactContract(t *testing.T) {
 	}
 	if strings.Contains(body, "internal_cycle") || strings.Contains(body, "cycle_id") {
 		t.Fatalf("cycle leaked: %s", body)
+	}
+}
+
+func TestPublishingRestrictionFailurePersistsOnlySafeInternalCorrelation(t *testing.T) {
+	failure := publishingRestrictionFailure("post_1", "result_1", "ws_1", "sa_1", "tiktok", "cycle_1")
+	if failure.ProviderError != nil {
+		t.Fatalf("provider_error=%s, want SQL NULL because no provider was called", failure.ProviderError)
+	}
+	if failure.RestrictionCycleID.String != "cycle_1" || !failure.RestrictionCycleID.Valid {
+		t.Fatalf("restriction cycle=%+v", failure.RestrictionCycleID)
+	}
+
+	source, err := os.ReadFile("../db/queries/social_post_results.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(source), "publish_token = CASE") || !strings.Contains(string(source), "plan_platform_publishing_restricted") {
+		t.Fatalf("policy failure update must clear stale publish tokens:\n%s", source)
 	}
 }

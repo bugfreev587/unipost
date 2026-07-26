@@ -68,6 +68,20 @@ func fullyRestrictedDecision(
 	return first, true
 }
 
+func allowedPublishingTargets(
+	posts []platform.PlatformPostInput,
+	blocked map[string]publishingrestrictions.Decision,
+) []platform.PlatformPostInput {
+	allowed := make([]platform.PlatformPostInput, 0, len(posts))
+	for _, post := range posts {
+		if decision, restricted := blocked[post.AccountID]; restricted && decision.Restricted {
+			continue
+		}
+		allowed = append(allowed, post)
+	}
+	return allowed
+}
+
 func writePublishingRestrictionError(w http.ResponseWriter, decision publishingrestrictions.Decision) {
 	isRetriable := false
 	platformName := strings.TrimSpace(decision.Platform)
@@ -87,7 +101,7 @@ func writePublishingRestrictionError(w http.ResponseWriter, decision publishingr
 	})
 }
 
-func publishingRestrictionFailure(postID, resultID, workspaceID, accountID, platformName string) db.CreatePostFailureParams {
+func publishingRestrictionFailure(postID, resultID, workspaceID, accountID, platformName string, cycleID ...string) db.CreatePostFailureParams {
 	failure := postfailures.BuildParams(
 		postID, resultID, workspaceID, accountID, platformName,
 		publishingrestrictions.FailureStage, publishingrestrictions.UserMessage, publishingrestrictions.UserMessage,
@@ -98,7 +112,10 @@ func publishingRestrictionFailure(postID, resultID, workspaceID, accountID, plat
 	failure.PlatformErrorCode = pgtype.Text{}
 	failure.ErrorSource = postfailures.ToText("unipost")
 	failure.ErrorTemporality = postfailures.ToText("temporary")
-	failure.ProviderError = []byte(`{}`)
+	failure.ProviderError = nil
+	if len(cycleID) > 0 && strings.TrimSpace(cycleID[0]) != "" {
+		failure.RestrictionCycleID = pgtype.Text{String: strings.TrimSpace(cycleID[0]), Valid: true}
+	}
 	return failure
 }
 

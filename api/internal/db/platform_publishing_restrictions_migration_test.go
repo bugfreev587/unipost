@@ -35,3 +35,16 @@ func TestPlatformPublishingRestrictionsMigrationContract(t *testing.T) {
 		t.Error("TikTok restriction seed must be disabled for Free")
 	}
 }
+
+func TestPublishingRestrictionCycleCorrelationUsesFollowUpMigration(t *testing.T) {
+	body, err := os.ReadFile("migrations/123_post_failures_restriction_cycle.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(body)
+	for _, fragment := range []string{"ADD COLUMN restriction_cycle_id", "post_failures_restriction_cycle_idx"} {
+		if !strings.Contains(sql, fragment) {
+			t.Errorf("follow-up migration missing %q", fragment)
+		}
+	}
+}
