@@ -90,7 +90,7 @@ Scheduled or active managed trials do not enter the ordinary paid Portal flow. T
 
 ## Portal Configuration and Environment Isolation
 
-Live and sandbox currently have only their default Portal configurations; subscription updates are disabled and proration is `none`. The plan-change flow therefore uses dedicated configuration IDs carried by `billing.Mode`: `STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` for live and `STRIPE_SANDBOX_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` for sandbox. The configuration contains only the API, Basic, Growth, and Team product/price pairs for that Stripe mode and uses the billing rules above.
+Live and sandbox currently have only their default Portal configurations; subscription updates are disabled and proration is `none`. The plan-change flow therefore uses dedicated configuration IDs carried by `billing.Mode`: `STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` for live and `STRIPE_SANDBOX_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` for sandbox. The configuration contains only the API, Basic, Growth, and Team product/price pairs for that Stripe mode and uses the billing rules above. Configuration provisioning derives those entries from the same mode-specific price IDs loaded by `billing.Mode`; release verification retrieves the configuration and requires an exact price-set match before the environment variable is accepted.
 
 Staging implementation provisions only the sandbox configuration and stores only its ID in the staging environment. No live Stripe configuration is created or changed during staging work. Production configuration is a separate release action that requires production authorization. If the selected mode lacks a plan-change configuration ID, the endpoint fails closed and does not create Checkout.
 
@@ -98,7 +98,9 @@ The duplicate Basic subscription created during staging acceptance is one-time s
 
 The only current production paid workspace upgraded from Basic to Team through the legacy Checkout flow. The user has already canceled its old subscription and manually adjusted the prorated customer balance. The user confirmed there are no other paid workspaces, so a production database or Stripe-wide duplicate-subscription audit is explicitly out of scope.
 
-Before a later production release, create the dedicated live plan-change Portal configuration, set `STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` only in the production environment, verify its live product/price allowlist and billing rules, and then deploy the already-tested mode-generic code. None of those live Stripe or production environment actions are authorized by this staging task.
+Production ordering is a hard release gate: before PR #265 may merge into `main`, create the dedicated live plan-change Portal configuration, verify its live product/price allowlist and billing rules against `billing.Mode`, and set `STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` in the production environment. If any step is missing or mismatched, PR #265 must remain open because paid production upgrades would fail closed. None of those live Stripe or production environment actions are authorized by this staging task; they require explicit production-release authorization.
+
+Pending-downgrade display in UniPost is intentionally deferred. Stripe's hosted confirmation shows the scheduled change, while Settings Billing continues to show the current effective plan until Stripe applies the downgrade and emits the authoritative webhook. Adding a separate local pending-downgrade projection is a follow-up UX feature, not part of this billing-correctness fix.
 
 ## Failure Handling and Idempotency
 
