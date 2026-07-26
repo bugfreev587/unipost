@@ -85,6 +85,73 @@ func TestStripeSandboxCheckoutResolvesModePriceAndProjectsPlan(t *testing.T) {
 	}
 }
 
+func TestStripeSandboxCheckoutRebindsExistingSameCustomerSubscription(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_previous", Valid: true}
+	store.stripeSubscriptionErr = pgx.ErrNoRows
+	store.plans["growth"] = db.Plan{
+		ID: "growth", Name: "Growth", PriceCents: 7900, PostLimit: 7500,
+		StripePriceID: pgtype.Text{String: "price_live_growth", Valid: true}, AllowAnalytics: true,
+	}
+	trial := &recordingTrialWebhookService{
+		retrieve: trials.SubscriptionSnapshot{
+			StripeMode: "sandbox", ID: "sub_staging", Status: "active", CustomerID: "cus_staging", PriceID: "price_sandbox_growth",
+			CurrentPeriodStartAt: webhookPtrTime(time.Unix(1784822617, 0).UTC()), CurrentPeriodEndAt: webhookPtrTime(time.Unix(1787501017, 0).UTC()),
+			Metadata: map[string]string{"workspace_id": "ws_staging", "plan_id": "growth", "unipost_environment": "staging"},
+		},
+		ordinaryResult: trials.WebhookReconcileResult{Managed: false},
+	}
+	h, _ := newTestStripeWebhookHandler(store, nil)
+	manager := newModeAwareStripeTestManager(t)
+	h.stripe = manager
+	h.SetTrialWebhookService(trial)
+
+	response := postTestCheckoutWebhook(t, h, manager.Sandbox.WebhookSecret, trial.retrieve.Metadata, stripe.CheckoutSessionPaymentStatusPaid)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if got := store.subscription.PlanID; got != "growth" {
+		t.Fatalf("subscription plan = %q, want growth", got)
+	}
+	if got := store.subscription.StripeSubscriptionID.String; got != "sub_staging" {
+		t.Fatalf("Stripe subscription ID = %q, want sub_staging", got)
+	}
+}
+
+func TestStripeSandboxSubscriptionUpdateRejectsReplacementSubscription(t *testing.T) {
+	t.Setenv(runtimeenv.EnvVar, "staging")
+	store := newStripeWebhookStore("ws_staging")
+	store.subscription.PlanID = "basic"
+	store.subscription.StripeCustomerID = pgtype.Text{String: "cus_staging", Valid: true}
+	store.subscription.StripeSubscriptionID = pgtype.Text{String: "sub_previous", Valid: true}
+	store.stripeSubscriptionErr = pgx.ErrNoRows
+	store.plans["basic"] = db.Plan{
+		ID: "basic", Name: "Basic", PriceCents: 1900, PostLimit: 2500,
+		StripePriceID: pgtype.Text{String: "price_live_basic", Valid: true}, AllowInbox: true,
+	}
+	h, _ := newTestStripeWebhookHandler(store, nil)
+	manager := newModeAwareStripeTestManager(t)
+	h.stripe = manager
+	metadata := map[string]string{
+		"workspace_id":        "ws_staging",
+		"plan_id":             "basic",
+		"unipost_environment": "staging",
+	}
+
+	response := postTestSubscriptionUpdatedWebhook(t, h, manager.Sandbox.WebhookSecret, metadata)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body=%s", response.Code, response.Body.String())
+	}
+	if store.upserts != 0 || store.subscription.StripeSubscriptionID.String != "sub_previous" {
+		t.Fatalf("replacement update mutated subscription: %#v upserts=%d", store.subscription, store.upserts)
+	}
+}
+
 func TestStripeSandboxSubscriptionUpdateResolvesModePriceAndProjectsPlan(t *testing.T) {
 	t.Setenv(runtimeenv.EnvVar, "staging")
 	store := newStripeWebhookStore("ws_staging")

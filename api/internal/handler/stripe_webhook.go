@@ -302,7 +302,7 @@ func (h *StripeWebhookHandler) handleCheckoutCompleted(r *http.Request, event st
 	if advancedReplay {
 		return nil
 	}
-	projected, err := h.projectStripeSubscription(r, event, snapshot)
+	projected, err := h.projectStripeSubscription(r, event, snapshot, subscriptionProjectionOptions{allowCheckoutSubscriptionReplacement: true})
 	if err != nil {
 		return err
 	}
@@ -431,7 +431,7 @@ func (h *StripeWebhookHandler) handleSubscriptionUpdated(r *http.Request, event 
 		return fmt.Errorf("verified Stripe mode is unavailable")
 	}
 	snapshot := subscriptionWebhookSnapshot(mode.Name, &sub)
-	projected, err := h.projectStripeSubscription(r, event, snapshot)
+	projected, err := h.projectStripeSubscription(r, event, snapshot, subscriptionProjectionOptions{})
 	if err != nil {
 		return err
 	}
@@ -456,7 +456,7 @@ func (h *StripeWebhookHandler) handleSubscriptionTrialWillEnd(r *http.Request, e
 	if mode == nil || mode.Name == "" {
 		return fmt.Errorf("verified Stripe mode is unavailable")
 	}
-	projected, err := h.projectStripeSubscription(r, event, subscriptionWebhookSnapshot(mode.Name, &sub))
+	projected, err := h.projectStripeSubscription(r, event, subscriptionWebhookSnapshot(mode.Name, &sub), subscriptionProjectionOptions{})
 	if err != nil {
 		return err
 	}
@@ -475,7 +475,11 @@ type subscriptionProjectionResult struct {
 	PlanID         string
 }
 
-func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event stripe.Event, snapshot trials.SubscriptionSnapshot) (subscriptionProjectionResult, error) {
+type subscriptionProjectionOptions struct {
+	allowCheckoutSubscriptionReplacement bool
+}
+
+func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event stripe.Event, snapshot trials.SubscriptionSnapshot, options subscriptionProjectionOptions) (subscriptionProjectionResult, error) {
 	if snapshot.ID == "" || snapshot.CustomerID == "" || snapshot.PriceID == "" {
 		return subscriptionProjectionResult{}, fmt.Errorf("Stripe subscription projection is incomplete")
 	}
@@ -491,7 +495,9 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 			return subscriptionProjectionResult{}, errStripeWebhookNotApplicable
 		}
 		localSub, err = h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
-		if err == nil && ((localSub.StripeCustomerID.Valid && localSub.StripeCustomerID.String != snapshot.CustomerID) || (localSub.StripeSubscriptionID.Valid && localSub.StripeSubscriptionID.String != snapshot.ID)) {
+		customerConflicts := localSub.StripeCustomerID.Valid && localSub.StripeCustomerID.String != snapshot.CustomerID
+		subscriptionConflicts := localSub.StripeSubscriptionID.Valid && localSub.StripeSubscriptionID.String != snapshot.ID
+		if err == nil && (customerConflicts || (subscriptionConflicts && !options.allowCheckoutSubscriptionReplacement)) {
 			return subscriptionProjectionResult{}, fmt.Errorf("Stripe subscription metadata conflicts with the workspace billing identity")
 		}
 	}
