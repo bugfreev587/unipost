@@ -62,16 +62,17 @@ type SocialPostHandler struct {
 	// April 2026 rate-limit PRD. Always non-nil — main.go injects
 	// either RedisLimiter or NoopLimiter — so call sites do not
 	// need a nil guard.
-	limiter            ratelimit.Limiter
-	ilog               *integrationlogs.Logger
-	loopsSyncer        loopsLifecycleSyncer
-	quotaEmail         quotaEmailService
-	xUsage             xUsageService
-	xTokenRefresher    xinbox.TokenRefresher
-	paidSchedule       paidquota.Coordinator
-	holdReconciler     paidquota.HoldReconciler
-	paidQuotaEvaluator paidQuotaEvaluationService
-	appBaseURL         string
+	limiter                ratelimit.Limiter
+	ilog                   *integrationlogs.Logger
+	loopsSyncer            loopsLifecycleSyncer
+	quotaEmail             quotaEmailService
+	xUsage                 xUsageService
+	xTokenRefresher        xinbox.TokenRefresher
+	paidSchedule           paidquota.Coordinator
+	holdReconciler         paidquota.HoldReconciler
+	paidQuotaEvaluator     paidQuotaEvaluationService
+	publishingRestrictions publishingRestrictionEvaluator
+	appBaseURL             string
 }
 
 type quotaEmailService interface {
@@ -888,6 +889,16 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		writeValidationErrors(w, fatal)
+		return
+	}
+
+	blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
+	if policyErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+		return
+	}
+	if decision, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
+		writePublishingRestrictionError(w, decision)
 		return
 	}
 

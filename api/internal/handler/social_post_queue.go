@@ -18,6 +18,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
@@ -178,6 +179,17 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	for idx, pp := range parsed {
 		acc, ok := dbAccounts[pp.AccountID]
 		platformName, validationErr := summarizeAccountValidation(acc, ok, accountMap[pp.AccountID])
+		var policyDecision publishingrestrictions.Decision
+		if validationErr == nil && h.publishingRestrictions != nil {
+			var policyErr error
+			policyDecision, policyErr = h.publishingRestrictions.Evaluate(ctx, post.WorkspaceID, platformName)
+			if policyErr != nil {
+				return nil, nil, policyErr
+			}
+			if policyDecision.Restricted {
+				validationErr = errors.New(publishingrestrictions.UserMessage)
+			}
+		}
 
 		resultStatus := "pending"
 		var errMsg pgtype.Text
@@ -219,16 +231,16 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 		results = append(results, res)
 
 		if validationErr != nil {
-			h.recordPostFailure(ctx, postfailures.BuildParams(
-				post.ID,
-				res.ID,
-				post.WorkspaceID,
-				pp.AccountID,
-				postfailures.FirstNonEmpty(platformName, accountMap[pp.AccountID].Platform),
-				"dispatch_prepare",
-				validationErr.Error(),
-				validationErr.Error(),
-			))
+			failure := postfailures.BuildParams(post.ID, res.ID, post.WorkspaceID, pp.AccountID,
+				postfailures.FirstNonEmpty(platformName, accountMap[pp.AccountID].Platform), "dispatch_prepare",
+				validationErr.Error(), validationErr.Error())
+			if policyDecision.Restricted {
+				failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName)
+			}
+			h.recordPostFailure(ctx, failure)
+			if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+				return nil, nil, err
+			}
 			continue
 		}
 

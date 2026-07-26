@@ -208,6 +208,21 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		writeValidationErrors(w, fatal)
 		return
 	}
+
+	blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
+	if policyErr != nil {
+		_ = h.rollbackClaimedPost(r, claimed)
+		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+		return
+	}
+	if decision, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
+		if err := h.rollbackClaimedPost(r, claimed); err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore draft after publishing policy check")
+			return
+		}
+		writePublishingRestrictionError(w, decision)
+		return
+	}
 	quotaUnits := countPublishQuotaUnits(posts, accountMap)
 	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, quotaUnits); blocked {
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
