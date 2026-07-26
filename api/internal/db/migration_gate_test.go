@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -337,5 +338,24 @@ func TestPendingIrreversibleMigrationsUsesCurrentVersion(t *testing.T) {
 		if got := pendingIrreversibleMigrationVersions(test.current); !reflect.DeepEqual(got, test.want) {
 			t.Fatalf("current %d: got %v, want %v", test.current, got, test.want)
 		}
+	}
+}
+
+func TestCIRequiresMigrationGatePostgresIntegration(t *testing.T) {
+	body, err := os.ReadFile("../../../.github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflow := string(body)
+	for _, testName := range []string{
+		"TestMigrationGatePostgres",
+		"TestRequireCurrentSchema",
+	} {
+		if !strings.Contains(workflow, testName) {
+			t.Fatalf("required PostgreSQL CI job does not run %s", testName)
+		}
+	}
+	if !strings.Contains(workflow, "PUBLISHING_RESTRICTION_TEST_DATABASE_URL") {
+		t.Fatal("required PostgreSQL CI job must provide the isolated database URL")
 	}
 }
