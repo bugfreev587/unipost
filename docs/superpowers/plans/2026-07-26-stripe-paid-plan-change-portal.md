@@ -383,10 +383,10 @@ From `dashboard/`:
 ```bash
 node --test tests/free-trial-contract-source.test.mjs
 npm run build
-npm run test:regression:dashboard
+DASHBOARD_BASE_URL=http://app.localtest.me:3000 DASHBOARD_WEB_SERVER=1 npm run test:regression:dashboard
 ```
 
-Expected: all pass. Any failed, timed-out, canceled, skipped, or missing test result is a hard stop.
+`app.localtest.me` and `localtest.me` both resolve to loopback while preserving distinct app/landing Host headers, so the landing-host mobile test runs instead of being skipped. Expected: all 60 pass. Any failed, timed-out, canceled, skipped, or missing test result is a hard stop.
 
 **Step 3: Run formatting and inspect the promotion content**
 
