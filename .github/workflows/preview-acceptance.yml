@@ -30,7 +30,8 @@ jobs:
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (startsWith(github.event.pull_request.head.ref, 'dev-') ||
-      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+      startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/staging-'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -266,7 +267,8 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (startsWith(github.event.pull_request.head.ref, 'dev-') ||
-      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+      startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/staging-'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
