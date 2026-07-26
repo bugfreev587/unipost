@@ -15,6 +15,9 @@ type fakeStore struct {
 	restrictionErr error
 	transition     TransitionResult
 	transitionErr  error
+	recipients     []RecipientSnapshot
+	campaign       Campaign
+	createCalls    int
 }
 
 func (s *fakeStore) ListRestrictions(context.Context) ([]Restriction, error) {
@@ -35,6 +38,21 @@ func (s *fakeStore) WorkspacePlanID(context.Context, string) (string, error) {
 
 func (s *fakeStore) SetEnabled(context.Context, TransitionRequest) (TransitionResult, error) {
 	return s.transition, s.transitionErr
+}
+
+func (s *fakeStore) PreviewCampaignRecipients(context.Context, Restriction, CampaignType) ([]RecipientSnapshot, error) {
+	return s.recipients, nil
+}
+
+func (s *fakeStore) CreateCampaign(context.Context, Restriction, CampaignType, CampaignCopy, int, string) (Campaign, error) {
+	s.createCalls++
+	return s.campaign, nil
+}
+
+func (s *fakeStore) ListCampaigns(context.Context, string) ([]Campaign, error) { return nil, nil }
+
+func (s *fakeStore) RetryFailedCampaign(context.Context, string, string) (Campaign, error) {
+	return s.campaign, nil
 }
 
 func TestEvaluateRestrictsOnlyFreeTikTok(t *testing.T) {
@@ -137,5 +155,54 @@ func TestListAdminReturnsAffectedCountsFromStore(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].AffectedWorkspaces != 26 || got[0].AffectedAccounts != 35 {
 		t.Fatalf("admin=%+v", got)
+	}
+}
+
+func TestCampaignCopyIsFixedAndExact(t *testing.T) {
+	restriction := CampaignCopyFor(RestrictionNotice)
+	if restriction.Subject != "Temporary TikTok publishing restriction for Free plans" {
+		t.Fatalf("subject=%q", restriction.Subject)
+	}
+	wantRestrictionBody := "Hi {{first_name}},\n\nWe’re sorry for the disruption.\n\nTikTok applies a daily capacity limit to publishing through UniPost. Because our current capacity has been reached, TikTok publishing is temporarily unavailable for Free-plan users.\n\nYour connected TikTok accounts, saved posts, and other publishing platforms are not affected. Paid plans will continue to have access to TikTok publishing while this restriction is active.\n\nWe have asked TikTok to increase our publishing capacity and will let you know as soon as TikTok publishing becomes available again on the Free plan.\n\nThank you for your patience and understanding.\n\nThe UniPost Team"
+	if restriction.Body != wantRestrictionBody {
+		t.Fatalf("restriction body changed:\n%s", restriction.Body)
+	}
+
+	recovery := CampaignCopyFor(RecoveryNotice)
+	if recovery.Subject != "TikTok publishing is available again on the Free plan" {
+		t.Fatalf("subject=%q", recovery.Subject)
+	}
+	wantRecoveryBody := "Hi {{first_name}},\n\nTikTok publishing is now available again on the UniPost Free plan.\n\nYou can create and publish new TikTok posts from your connected accounts. Posts that previously failed because of the temporary capacity restriction will not publish automatically; please review and publish them again when you’re ready.\n\nThank you for your patience while we worked to increase publishing capacity.\n\nThe UniPost Team"
+	if recovery.Body != wantRecoveryBody {
+		t.Fatalf("recovery body changed:\n%s", recovery.Body)
+	}
+}
+
+func TestCampaignPreviewAndConfirmationUseSignedShortLivedToken(t *testing.T) {
+	store := &fakeStore{
+		restriction: Restriction{ID: "restriction_1", Platform: "tiktok", Enabled: true, CycleID: "cycle_1", Version: 8},
+		recipients:  []RecipientSnapshot{{CanonicalUserID: "user_1", NormalizedEmail: "owner@example.com"}},
+		campaign:    Campaign{ID: "campaign_1", CycleID: "cycle_1", CampaignType: RestrictionNotice},
+	}
+	service := NewService(store).SetCampaignPreviewSecret("test-preview-secret")
+	preview, err := service.PreviewCampaign(context.Background(), "tiktok", RestrictionNotice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preview.RecipientCount != 1 || preview.PreviewToken == "" || preview.CycleID != "cycle_1" {
+		t.Fatalf("preview=%+v", preview)
+	}
+	if store.createCalls != 0 {
+		t.Fatal("preview must not persist a campaign")
+	}
+	created, err := service.ConfirmCampaign(context.Background(), ConfirmCampaignRequest{
+		Platform: "tiktok", CampaignType: RestrictionNotice, PreviewToken: preview.PreviewToken,
+		Confirmation: "SEND", ActorUserID: "admin_1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != "campaign_1" || store.createCalls != 1 {
+		t.Fatalf("created=%+v calls=%d", created, store.createCalls)
 	}
 }

@@ -84,7 +84,6 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := make([]Restriction, 0)
 	for rows.Next() {
 		var restriction Restriction
@@ -107,7 +106,39 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 		}
 		result = append(result, restriction)
 	}
-	return result, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for i := range result {
+		eventRows, err := s.pool.Query(ctx, `
+			SELECT id, event_type, actor_user_id, expected_version, resulting_version, created_at
+			FROM platform_publishing_restriction_events
+			WHERE restriction_id=$1 ORDER BY created_at DESC LIMIT 10
+		`, result[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		for eventRows.Next() {
+			var event RestrictionEvent
+			var actor *string
+			if err := eventRows.Scan(&event.ID, &event.EventType, &actor, &event.ExpectedVersion, &event.ResultingVersion, &event.CreatedAt); err != nil {
+				eventRows.Close()
+				return nil, err
+			}
+			if actor != nil {
+				event.ActorUserID = *actor
+			}
+			result[i].RecentEvents = append(result[i].RecentEvents, event)
+		}
+		if err := eventRows.Err(); err != nil {
+			eventRows.Close()
+			return nil, err
+		}
+		eventRows.Close()
+	}
+	return result, nil
 }
 
 func (s *PostgresStore) WorkspacePlanID(ctx context.Context, workspaceID string) (string, error) {
@@ -197,4 +228,237 @@ func (s *PostgresStore) SetEnabled(ctx context.Context, request TransitionReques
 		return TransitionResult{}, err
 	}
 	return TransitionResult{Restriction: updated, Changed: true}, nil
+}
+
+type campaignQuerier interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+func scanCampaign(row pgx.Row) (Campaign, error) {
+	var campaign Campaign
+	var createdBy, confirmedBy *string
+	err := row.Scan(
+		&campaign.ID, &campaign.RestrictionID, &campaign.CycleID, &campaign.CampaignType,
+		&campaign.Status, &campaign.SubjectSnapshot, &campaign.BodySnapshot,
+		&campaign.RestrictionVersion, &campaign.PreviewedCount, &campaign.SnapshottedCount,
+		&campaign.PendingCount, &campaign.SentCount, &campaign.FailedCount, &campaign.SkippedCount,
+		&createdBy, &confirmedBy, &campaign.SnapshottedAt, &campaign.StartedAt,
+		&campaign.CompletedAt, &campaign.CreatedAt, &campaign.UpdatedAt,
+	)
+	if createdBy != nil {
+		campaign.CreatedByUserID = *createdBy
+	}
+	if confirmedBy != nil {
+		campaign.ConfirmedByUserID = *confirmedBy
+	}
+	return campaign, err
+}
+
+const campaignColumns = `id, restriction_id, cycle_id, campaign_type, status, subject_snapshot, body_snapshot,
+restriction_version, previewed_count, snapshotted_count, pending_count, sent_count, failed_count, skipped_count,
+created_by_user_id, confirmed_by_user_id, snapshotted_at, started_at, completed_at, created_at, updated_at`
+const aliasedCampaignColumns = `c.id, c.restriction_id, c.cycle_id, c.campaign_type, c.status, c.subject_snapshot, c.body_snapshot,
+c.restriction_version, c.previewed_count, c.snapshotted_count, c.pending_count, c.sent_count, c.failed_count, c.skipped_count,
+c.created_by_user_id, c.confirmed_by_user_id, c.snapshotted_at, c.started_at, c.completed_at, c.created_at, c.updated_at`
+
+func (s *PostgresStore) PreviewCampaignRecipients(ctx context.Context, restriction Restriction, campaignType CampaignType) ([]RecipientSnapshot, error) {
+	return previewCampaignRecipients(ctx, s.pool, restriction, campaignType)
+}
+
+func previewCampaignRecipients(ctx context.Context, q campaignQuerier, restriction Restriction, campaignType CampaignType) ([]RecipientSnapshot, error) {
+	var query string
+	args := []any{restriction.Platform, restriction.CycleID}
+	if campaignType == RestrictionNotice {
+		query = `
+			WITH current_plans AS (
+				SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
+				FROM subscriptions ORDER BY workspace_id, updated_at DESC
+			), eligible AS (
+				SELECT u.id AS user_id, u.email, LOWER(TRIM(u.email)) AS normalized_email,
+				       COALESCE(NULLIF(SPLIT_PART(TRIM(COALESCE(u.name, '')), ' ', 1), ''), 'there') AS first_name,
+				       ARRAY_AGG(DISTINCT wm.workspace_id ORDER BY wm.workspace_id) AS workspace_ids
+				FROM users u
+				JOIN workspace_members wm ON wm.user_id = u.id AND wm.role = 'owner' AND wm.status = 'active'
+				LEFT JOIN current_plans cp ON cp.workspace_id = wm.workspace_id
+				WHERE COALESCE(cp.plan_id, 'free') = 'free'
+				  AND TRIM(u.email) <> ''
+				  AND EXISTS (
+					SELECT 1 FROM social_accounts sa
+					WHERE sa.workspace_id = wm.workspace_id AND sa.platform = $1
+					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
+				  )
+				GROUP BY u.id, u.email, u.name
+			)
+			SELECT DISTINCT ON (normalized_email) user_id, email, normalized_email, first_name, workspace_ids
+			FROM eligible ORDER BY normalized_email, user_id`
+	} else if campaignType == RecoveryNotice {
+		query = `
+			WITH current_plans AS (
+				SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
+				FROM subscriptions ORDER BY workspace_id, updated_at DESC
+			), eligible AS (
+				SELECT prior.canonical_user_id AS user_id, prior.recipient_email AS email,
+				       prior.normalized_email, COALESCE(NULLIF(prior.first_name_snapshot, ''), 'there') AS first_name,
+				       ARRAY_AGG(DISTINCT wm.workspace_id ORDER BY wm.workspace_id) AS workspace_ids
+				FROM platform_publishing_restriction_email_recipients prior
+				JOIN platform_publishing_restriction_email_campaigns sent_campaign
+				  ON sent_campaign.id = prior.campaign_id AND sent_campaign.cycle_id = $2
+				 AND sent_campaign.campaign_type = 'restriction_notice'
+				JOIN workspace_members wm ON wm.user_id = prior.canonical_user_id AND wm.role = 'owner' AND wm.status = 'active'
+				LEFT JOIN current_plans cp ON cp.workspace_id = wm.workspace_id
+				WHERE prior.status = 'sent' AND COALESCE(cp.plan_id, 'free') = 'free'
+				  AND EXISTS (
+					SELECT 1 FROM social_accounts sa
+					WHERE sa.workspace_id = wm.workspace_id AND sa.platform = $1
+					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
+				  )
+				GROUP BY prior.canonical_user_id, prior.recipient_email, prior.normalized_email, prior.first_name_snapshot
+			)
+			SELECT DISTINCT ON (normalized_email) user_id, email, normalized_email, first_name, workspace_ids
+			FROM eligible ORDER BY normalized_email, user_id`
+	} else {
+		return nil, ErrCampaignPrecondition
+	}
+	rows, err := q.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]RecipientSnapshot, 0)
+	for rows.Next() {
+		var recipient RecipientSnapshot
+		if err := rows.Scan(&recipient.CanonicalUserID, &recipient.RecipientEmail, &recipient.NormalizedEmail, &recipient.FirstName, &recipient.RepresentedWorkspaceIDs); err != nil {
+			return nil, err
+		}
+		result = append(result, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if campaignType == RecoveryNotice && len(result) == 0 {
+		return nil, ErrCampaignPrecondition
+	}
+	return result, nil
+}
+
+func (s *PostgresStore) CreateCampaign(ctx context.Context, expected Restriction, campaignType CampaignType, copy CampaignCopy, previewedCount int, actorUserID string) (Campaign, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Campaign{}, err
+	}
+	defer tx.Rollback(ctx)
+	current, err := scanRestriction(tx.QueryRow(ctx, `SELECT `+restrictionColumns+` FROM platform_publishing_restrictions WHERE platform = $1 FOR UPDATE`, expected.Platform))
+	if err != nil {
+		return Campaign{}, err
+	}
+	if current.CycleID != expected.CycleID || current.Version != expected.Version ||
+		(campaignType == RestrictionNotice && !current.Enabled) || (campaignType == RecoveryNotice && current.Enabled) {
+		return Campaign{}, ErrCampaignPrecondition
+	}
+	recipients, err := previewCampaignRecipients(ctx, tx, current, campaignType)
+	if err != nil {
+		return Campaign{}, err
+	}
+	campaign, err := scanCampaign(tx.QueryRow(ctx, `
+		INSERT INTO platform_publishing_restriction_email_campaigns (
+			restriction_id, cycle_id, campaign_type, status, subject_snapshot, body_snapshot,
+			restriction_version, previewed_count, snapshotted_count, pending_count,
+			created_by_user_id, confirmed_by_user_id, completed_at
+		) VALUES ($1,$2,$3,CASE WHEN $8::int=0 THEN 'completed' ELSE 'queued' END,$4,$5,$6,$7,$8,$8,NULLIF($9,''),NULLIF($9,''),CASE WHEN $8::int=0 THEN NOW() ELSE NULL END)
+		ON CONFLICT (cycle_id, campaign_type) DO NOTHING
+		RETURNING `+campaignColumns,
+		current.ID, current.CycleID, campaignType, copy.Subject, copy.Body,
+		current.Version, previewedCount, len(recipients), actorUserID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		campaign, err = scanCampaign(tx.QueryRow(ctx, `SELECT `+campaignColumns+` FROM platform_publishing_restriction_email_campaigns WHERE cycle_id=$1 AND campaign_type=$2`, current.CycleID, campaignType))
+		if err != nil {
+			return Campaign{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Campaign{}, err
+		}
+		return campaign, nil
+	}
+	if err != nil {
+		return Campaign{}, err
+	}
+	for _, recipient := range recipients {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO platform_publishing_restriction_email_recipients (
+				campaign_id, canonical_user_id, recipient_email, normalized_email,
+				first_name_snapshot, represented_workspace_ids, idempotency_key
+			) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7)
+		`, campaign.ID, recipient.CanonicalUserID, recipient.RecipientEmail, recipient.NormalizedEmail,
+			recipient.FirstName, recipient.RepresentedWorkspaceIDs,
+			current.CycleID+":"+string(campaignType)+":"+recipient.CanonicalUserID)
+		if err != nil {
+			return Campaign{}, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Campaign{}, err
+	}
+	return campaign, nil
+}
+
+func (s *PostgresStore) ListCampaigns(ctx context.Context, platform string) ([]Campaign, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT `+aliasedCampaignColumns+`
+		FROM platform_publishing_restriction_email_campaigns c
+		JOIN platform_publishing_restrictions r ON r.id = c.restriction_id
+		WHERE r.platform = $1 ORDER BY c.created_at DESC
+	`, platform)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]Campaign, 0)
+	for rows.Next() {
+		campaign, err := scanCampaign(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, campaign)
+	}
+	return result, rows.Err()
+}
+
+func (s *PostgresStore) RetryFailedCampaign(ctx context.Context, platform, campaignID string) (Campaign, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return Campaign{}, err
+	}
+	defer tx.Rollback(ctx)
+	command, err := tx.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients recipient
+		SET status='pending', next_attempt_at=NOW(), claimed_at=NULL, last_error=NULL, updated_at=NOW()
+		FROM platform_publishing_restriction_email_campaigns campaign
+		JOIN platform_publishing_restrictions restriction ON restriction.id=campaign.restriction_id
+		WHERE recipient.campaign_id=campaign.id AND campaign.id=$1 AND restriction.platform=$2
+		  AND recipient.status='failed'
+	`, campaignID, platform)
+	if err != nil {
+		return Campaign{}, err
+	}
+	if command.RowsAffected() == 0 {
+		return Campaign{}, ErrCampaignPrecondition
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_campaigns
+		SET status='queued', pending_count=(SELECT COUNT(*) FROM platform_publishing_restriction_email_recipients WHERE campaign_id=$1 AND status='pending'),
+		    failed_count=0, completed_at=NULL, updated_at=NOW()
+		WHERE id=$1
+	`, campaignID)
+	if err != nil {
+		return Campaign{}, err
+	}
+	campaign, err := scanCampaign(tx.QueryRow(ctx, `SELECT `+campaignColumns+` FROM platform_publishing_restriction_email_campaigns WHERE id=$1`, campaignID))
+	if err != nil {
+		return Campaign{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Campaign{}, err
+	}
+	return campaign, nil
 }

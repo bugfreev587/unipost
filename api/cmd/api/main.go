@@ -210,7 +210,8 @@ func main() {
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
-	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore)
+	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore).
+		SetCampaignPreviewSecret(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
 	publishingRestrictionHandler := handler.NewPublishingRestrictionsHandler(publishingRestrictionService)
 	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
@@ -381,6 +382,15 @@ func main() {
 		slog.Info("loops: lifecycle sync configured")
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
+	}
+	publishingRestrictionEmailWorker := worker.NewPublishingRestrictionEmailWorker(
+		worker.NewPostgresPublishingRestrictionEmailStore(pool),
+		auditedLoopsClient,
+		os.Getenv("LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID"),
+		os.Getenv("LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID"),
+	)
+	if processMode == processModeAPI {
+		go publishingRestrictionEmailWorker.Start(workerCtx)
 	}
 	var freePlanQuotaEmailService *quotaemail.Service
 	if loopsClient != nil && os.Getenv("LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID") != "" {
@@ -959,6 +969,14 @@ func main() {
 			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
 			Patch("/v1/admin/publishing-restrictions/{platform}", publishingRestrictionHandler.AdminSet)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Post("/v1/admin/publishing-restrictions/{platform}/email-campaigns/preview", publishingRestrictionHandler.AdminPreviewCampaign)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Post("/v1/admin/publishing-restrictions/{platform}/email-campaigns", publishingRestrictionHandler.AdminCreateCampaign)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Get("/v1/admin/publishing-restrictions/{platform}/email-campaigns", publishingRestrictionHandler.AdminListCampaigns)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Post("/v1/admin/publishing-restrictions/{platform}/email-campaigns/{campaignID}/retry-failed", publishingRestrictionHandler.AdminRetryFailedCampaign)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
 			Get("/v1/admin/changelog-candidates/{id}", changelogAutomationHandler.GetAdminCandidate)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
