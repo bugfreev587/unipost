@@ -67,3 +67,39 @@ func TestPublishingRestrictionSendGateMigrationRepairsActiveRetentionCompatibili
 		}
 	}
 }
+
+func TestPublishingRestrictionFailedRecipientCorrectionMigrationContract(t *testing.T) {
+	historical, err := os.ReadFile("migrations/124_publishing_restriction_email_send_gate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalParts := strings.Split(string(historical), "-- +goose Down")
+	if len(historicalParts) != 2 {
+		t.Fatalf("migration 124 must have one Down section, got %d parts", len(historicalParts))
+	}
+	if !strings.Contains(strings.ToLower(historicalParts[1]), "retention_reason backfill is irreversible") {
+		t.Fatal("migration 124 Down must explicitly document that its retention_reason backfill is irreversible")
+	}
+
+	correction, err := os.ReadFile("migrations/125_publishing_restriction_failed_recipient_retryability.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(correction), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatalf("migration 125 must have one Down section, got %d parts", len(parts))
+	}
+	up := strings.ToLower(parts[0])
+	for _, fragment := range []string{
+		"update platform_publishing_restriction_email_recipients",
+		"set retryable = false",
+		"where status = 'failed'",
+	} {
+		if !strings.Contains(up, fragment) {
+			t.Fatalf("migration 125 Up missing %q", fragment)
+		}
+	}
+	if !strings.Contains(strings.ToLower(parts[1]), "retryability correction is irreversible") {
+		t.Fatal("migration 125 Down must refuse to reactivate failed recipients and document irreversibility")
+	}
+}

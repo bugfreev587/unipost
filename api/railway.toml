@@ -2,6 +2,7 @@
 buildCommand = "go build -o bin/api ./cmd/api"
 
 [deploy]
+preDeployCommand = ["./bin/api migrate"]
 startCommand = "./bin/api"
 healthcheckPath = "/health"
 restartPolicyType = "ON_FAILURE"

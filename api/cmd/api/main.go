@@ -48,6 +48,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
+	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
@@ -81,6 +82,19 @@ func main() {
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
+	if handled, commandErr := handleMigrationCommand(
+		context.Background(),
+		os.Args,
+		os.Getenv,
+		func(token string) railwaybackup.Client { return railwaybackup.New(token) },
+		db.RunMigrationsWithBackupGate,
+	); handled {
+		if commandErr != nil {
+			slog.Error("migration command failed", "error", commandErr)
+			os.Exit(1)
+		}
+		return
+	}
 	processMode, err := normalizeProcessMode(os.Getenv("UNIPOST_PROCESS"))
 	if err != nil {
 		slog.Error("invalid process mode", "error", err)
@@ -198,9 +212,10 @@ func main() {
 	}
 	slog.Info("connected to database")
 
-	// Run database migrations
-	if err := db.RunMigrations(databaseURL); err != nil {
-		slog.Error("failed to run migrations", "error", err)
+	// Railway applies migrations in the pre-deploy container. Runtime
+	// processes only verify that they are not starting against stale schema.
+	if err := db.RequireCurrentSchema(ctx, databaseURL); err != nil {
+		slog.Error("database schema is not current", "error", err)
 		os.Exit(1)
 	}
 

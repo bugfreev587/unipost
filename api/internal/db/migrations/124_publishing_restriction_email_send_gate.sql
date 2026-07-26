@@ -14,6 +14,10 @@ WHERE cleanup_after_at IS NULL
 
 -- +goose Down
 
+-- The retention_reason backfill is irreversible: the previous plan_status
+-- value cannot be distinguished from legitimate plan_status rows after Up.
+-- Down removes only the columns introduced by this migration and deliberately
+-- leaves the corrected retention_reason data intact.
 ALTER TABLE platform_publishing_restriction_email_recipients
   DROP COLUMN IF EXISTS attempt_generation,
   DROP COLUMN IF EXISTS retryable;
