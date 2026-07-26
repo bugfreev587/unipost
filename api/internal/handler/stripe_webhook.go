@@ -349,7 +349,7 @@ func (h *StripeWebhookHandler) validateCheckoutSubscriptionBinding(ctx context.C
 	if snapshot.Metadata["trial_grant_id"] != session.Metadata["trial_grant_id"] || snapshot.Metadata["trial_kind"] != session.Metadata["trial_kind"] {
 		return false, fmt.Errorf("Checkout Session trial metadata does not match Subscription")
 	}
-	plan, err := h.queries.GetPlanByStripePriceID(ctx, pgtype.Text{String: snapshot.PriceID, Valid: snapshot.PriceID != ""})
+	plan, err := h.resolveStripePlan(ctx, snapshot.StripeMode, snapshot.PriceID)
 	if err != nil || snapshot.Metadata["plan_id"] != plan.ID {
 		return false, fmt.Errorf("Checkout Session plan does not match Subscription price")
 	}
@@ -479,7 +479,7 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 	if snapshot.ID == "" || snapshot.CustomerID == "" || snapshot.PriceID == "" {
 		return subscriptionProjectionResult{}, fmt.Errorf("Stripe subscription projection is incomplete")
 	}
-	plan, err := h.queries.GetPlanByStripePriceID(r.Context(), pgtype.Text{String: snapshot.PriceID, Valid: true})
+	plan, err := h.resolveStripePlan(r.Context(), snapshot.StripeMode, snapshot.PriceID)
 	if err != nil {
 		return subscriptionProjectionResult{}, fmt.Errorf("resolve Stripe subscription price: %w", err)
 	}
@@ -558,6 +558,27 @@ func (h *StripeWebhookHandler) projectStripeSubscription(r *http.Request, event 
 		return subscriptionProjectionResult{}, fmt.Errorf("persist Stripe subscription projection: %w", err)
 	}
 	return subscriptionProjectionResult{Managed: trialResult.Managed, TrialGrant: trialResult.Grant, WorkspaceID: localSub.WorkspaceID, PreviousPlanID: localSub.PlanID, PlanID: planID}, nil
+}
+
+func (h *StripeWebhookHandler) resolveStripePlan(ctx context.Context, modeName, priceID string) (db.Plan, error) {
+	priceID = strings.TrimSpace(priceID)
+	mode := h.stripe.ByName(strings.TrimSpace(modeName))
+	if mode == nil {
+		return db.Plan{}, fmt.Errorf("Stripe mode %q is unavailable", modeName)
+	}
+	if planID := mode.PlanID(priceID); planID != "" {
+		plan, err := h.queries.GetPlan(ctx, planID)
+		if err != nil {
+			return db.Plan{}, fmt.Errorf("load mode-mapped plan %q: %w", planID, err)
+		}
+		return plan, nil
+	}
+
+	plan, err := h.queries.GetPlanByStripePriceID(ctx, pgtype.Text{String: priceID, Valid: priceID != ""})
+	if err != nil {
+		return db.Plan{}, fmt.Errorf("resolve legacy Stripe price: %w", err)
+	}
+	return plan, nil
 }
 
 func subscriptionPeriodRegresses(localSub db.Subscription, snapshot trials.SubscriptionSnapshot) bool {
@@ -916,22 +937,6 @@ func stripeCustomerID(customer *stripe.Customer) pgtype.Text {
 		return pgtype.Text{}
 	}
 	return pgtype.Text{String: customer.ID, Valid: true}
-}
-
-func (h *StripeWebhookHandler) resolvePlanIDFromStripeSubscription(r *http.Request, sub *stripe.Subscription) (string, bool) {
-	if sub == nil || sub.Items == nil || len(sub.Items.Data) == 0 || sub.Items.Data[0] == nil || sub.Items.Data[0].Price == nil {
-		return "", false
-	}
-	priceID := sub.Items.Data[0].Price.ID
-	if priceID == "" {
-		return "", false
-	}
-	plan, err := h.queries.GetPlanByStripePriceID(r.Context(), pgtype.Text{String: priceID, Valid: true})
-	if err != nil {
-		slog.Warn("stripe webhook: unknown stripe price id on subscription update", "subscription_id", sub.ID, "price_id", priceID, "error", err)
-		return "", false
-	}
-	return plan.ID, true
 }
 
 func (h *StripeWebhookHandler) shouldKeepCurrentPlanForDowngrade(r *http.Request, current db.Subscription, nextPlanID string, sub *stripe.Subscription) bool {

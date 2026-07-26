@@ -15,6 +15,7 @@ import {
 } from "@/lib/api";
 import { formatPostUsage, usagePercentage } from "@/lib/billing-format";
 import { formatWorkspaceTrial } from "@/lib/trial-format";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 import { AdminShell, StatCard, fmtCents, fmtNumber, fmtRelative } from "../_components/admin-ui";
 
@@ -48,6 +49,18 @@ type BillingLoadOptions = {
   clearAllRefreshRequired?: boolean;
   mutationEpoch?: number;
 };
+type TrialConfirmation =
+  | {
+      kind: "grant";
+      planId: string;
+      durationDays: number;
+      timeline: Array<{ label: string; value: string }>;
+    }
+  | {
+      kind: "revoke";
+      grantId: string;
+      planId: string;
+    };
 const REFRESH_REQUIRED_MESSAGE = "The trial was updated, but Billing could not refresh. Refresh Billing before making another change.";
 const PLAN_REFRESH_REQUIRED_MESSAGE = "Plan changed, but Billing could not refresh. Refresh Billing before making another change.";
 const SUPERSEDED_LOAD_MESSAGE = "Billing request superseded by a newer refresh.";
@@ -435,6 +448,7 @@ function GrantTrialForm({
   const [busy, setBusy] = useState<"grant" | "revoke" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<TrialConfirmation | null>(null);
 
   const currentTrial = row.trial;
   const hasOpenTrial = isOpenTrial(currentTrial);
@@ -449,7 +463,7 @@ function GrantTrialForm({
   const formattedTrial = currentTrial ? formatWorkspaceTrial(currentTrial) : null;
   const visibleError = error === REFRESH_REQUIRED_MESSAGE && workspaceMutation !== "refresh_required" ? null : error;
 
-  const grant = async () => {
+  const requestGrant = () => {
     if (busy || hasOpenTrial || workspaceMutation) return;
     setError(null);
     setSuccess(null);
@@ -463,17 +477,16 @@ function GrantTrialForm({
       return;
     }
 
-    const confirmed = window.confirm(
-      [
-        `Grant a ${parsedDays}-day ${trialPlanLabel(selectedPlan)} trial to ${row.workspace_name}?`,
-        "",
-        `Trial starts: ${proposal[0].value}`,
-        `Trial ends: ${proposal[1].value}`,
-        `${proposal[2].label}: ${proposal[2].value}`,
-      ].join("\n"),
-    );
-    if (!confirmed) return;
+    setConfirmation({
+      kind: "grant",
+      planId: selectedPlan,
+      durationDays: parsedDays,
+      timeline: proposal,
+    });
+  };
 
+  const grant = async (request: Extract<TrialConfirmation, { kind: "grant" }>) => {
+    if (busy || hasOpenTrial || workspaceMutation) return;
     setBusy("grant");
     const mutationEpoch = setWorkspaceMutation(row.workspace_id, "trial");
     let mutationSucceeded = false;
@@ -482,8 +495,8 @@ function GrantTrialForm({
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
       const response = await grantAdminTrial(token, row.workspace_id, {
-        plan_id: selectedPlan,
-        duration_days: parsedDays,
+        plan_id: request.planId,
+        duration_days: request.durationDays,
       });
       mutationSucceeded = true;
       await onChanged(mutationEpoch);
@@ -502,10 +515,19 @@ function GrantTrialForm({
     }
   };
 
-  const revoke = async () => {
+  const requestRevoke = () => {
     if (!currentTrial || !canRevoke || busy || workspaceMutation) return;
-    if (!window.confirm(`Revoke the ${trialPlanLabel(currentTrial.plan_id)} trial offer for ${row.workspace_name}? The user will not be able to activate it.`)) return;
+    setError(null);
+    setSuccess(null);
+    setConfirmation({
+      kind: "revoke",
+      grantId: currentTrial.id,
+      planId: currentTrial.plan_id,
+    });
+  };
 
+  const revoke = async (request: Extract<TrialConfirmation, { kind: "revoke" }>) => {
+    if (busy || workspaceMutation) return;
     setBusy("revoke");
     const mutationEpoch = setWorkspaceMutation(row.workspace_id, "trial");
     setError(null);
@@ -515,7 +537,7 @@ function GrantTrialForm({
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
-      await revokeAdminTrial(token, row.workspace_id, currentTrial.id);
+      await revokeAdminTrial(token, row.workspace_id, request.grantId);
       mutationSucceeded = true;
       await onChanged(mutationEpoch);
       setSuccess("Trial offer revoked.");
@@ -618,13 +640,13 @@ function GrantTrialForm({
         <button
           type="button"
           className="abt-button abt-button-primary"
-          onClick={() => void grant()}
+          onClick={requestGrant}
           disabled={interactionLocked || hasOpenTrial || !validDays || !grantPlanIsEligible}
         >
           {busy === "grant" ? "Granting…" : hasOpenTrial ? "Trial already open" : "Grant Trial"}
         </button>
         {canRevoke ? (
-          <button type="button" className="abt-button abt-button-danger" onClick={() => void revoke()} disabled={interactionLocked}>
+          <button type="button" className="abt-button abt-button-danger" onClick={requestRevoke} disabled={interactionLocked}>
             {busy === "revoke" ? "Revoking…" : "Revoke"}
           </button>
         ) : null}
@@ -632,6 +654,50 @@ function GrantTrialForm({
 
       {visibleError ? <div className="abt-message abt-error" role="alert">{visibleError}</div> : null}
       {success ? <div className="abt-message abt-success" role="status" aria-live="polite">{success}</div> : null}
+
+      {confirmation?.kind === "grant" ? (
+        <ConfirmModal
+          open
+          title="Grant trial"
+          message={(
+            <div style={{ display: "grid", gap: 12 }}>
+              <div>
+                Grant a {confirmation.durationDays}-day {trialPlanLabel(confirmation.planId)} trial to {row.workspace_name}?
+              </div>
+              <TrialTimeline items={confirmation.timeline} />
+            </div>
+          )}
+          confirmLabel="Grant Trial"
+          confirmDisabled={interactionLocked}
+          onConfirm={() => {
+            const request = confirmation;
+            setConfirmation(null);
+            void grant(request);
+          }}
+          onCancel={() => setConfirmation(null)}
+        />
+      ) : null}
+
+      {confirmation?.kind === "revoke" ? (
+        <ConfirmModal
+          open
+          title="Revoke trial offer"
+          message={(
+            <div>
+              Revoke the {trialPlanLabel(confirmation.planId)} trial offer for {row.workspace_name}? The user will no longer be able to activate it.
+            </div>
+          )}
+          confirmLabel="Revoke"
+          variant="danger"
+          confirmDisabled={interactionLocked}
+          onConfirm={() => {
+            const request = confirmation;
+            setConfirmation(null);
+            void revoke(request);
+          }}
+          onCancel={() => setConfirmation(null)}
+        />
+      ) : null}
     </div>
   );
 }
