@@ -1,8 +1,8 @@
-# Staging Trial Dialog and Sandbox Upgrade Fix Design
+# Trial Dialog and Stripe Plan Change Fix Design
 
 ## Goal
 
-Replace the Admin Billing trial grant and revoke browser confirmations with UniPost's existing confirmation modal, restore mode-aware Stripe webhook projection, and make paid plan changes update the existing Stripe subscription with correct proration instead of creating a second subscription.
+Replace the Admin Billing trial grant and revoke browser confirmations with UniPost's existing confirmation modal, restore mode-aware Stripe webhook projection, and make paid plan changes in both Stripe sandbox and live update the existing subscription with correct proration instead of creating a second subscription.
 
 ## Scope
 
@@ -16,7 +16,7 @@ This change covers only:
 - Dedicated, environment-specific plan-change Portal configurations.
 - Local, CI, staging deployment, regression, and staging sandbox plan-change verification.
 
-Pricing and user Settings Billing trial confirmations remain unchanged. Production is not merged; PR #265 remains the user-reviewed staging-to-main promotion PR.
+Pricing and user Settings Billing trial confirmations remain unchanged. The implementation is shared by sandbox and live modes, but external configuration and deployment remain environment-gated. Production is not changed during staging work; PR #265 remains the user-reviewed staging-to-main promotion PR.
 
 ## Confirmed Root Cause
 
@@ -95,6 +95,10 @@ Live and sandbox currently have only their default Portal configurations; subscr
 Staging implementation provisions only the sandbox configuration and stores only its ID in the staging environment. No live Stripe configuration is created or changed during staging work. Production configuration is a separate release action that requires production authorization. If the selected mode lacks a plan-change configuration ID, the endpoint fails closed and does not create Checkout.
 
 The duplicate Basic subscription created during staging acceptance is one-time sandbox data cleanup. After the new flow is deployed, the old Basic subscription is canceled with proration and the verified Growth subscription remains active. This cleanup is not part of the runtime production architecture.
+
+The only current production paid workspace upgraded from Basic to Team through the legacy Checkout flow. The user has already canceled its old subscription and manually adjusted the prorated customer balance. The user confirmed there are no other paid workspaces, so a production database or Stripe-wide duplicate-subscription audit is explicitly out of scope.
+
+Before a later production release, create the dedicated live plan-change Portal configuration, set `STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` only in the production environment, verify its live product/price allowlist and billing rules, and then deploy the already-tested mode-generic code. None of those live Stripe or production environment actions are authorized by this staging task.
 
 ## Failure Handling and Idempotency
 
