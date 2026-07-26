@@ -1,6 +1,6 @@
 # TikTok Free-Plan Publishing Restrictions PRD
 
-**Status:** Confirmed design; self-reviewed; awaiting user approval for implementation planning
+**Status:** Confirmed design; self-reviewed after external-review disposition; awaiting user approval for implementation planning
 **Date:** 2026-07-26
 **Canonical source of truth:** This document supersedes all duplicated design notes for this feature.
 **Owner areas:** Publishing, Admin, Dashboard, Media Retention, Lifecycle Email
@@ -11,25 +11,33 @@
 
 UniPost must add a generic, database-backed Admin Publishing Restrictions center. Its first policy temporarily blocks TikTok publishing for Free workspaces while TikTok's app-level active-creator capacity is constrained. Paid plans and other platforms remain available.
 
-The restriction is an operational publishing policy, not an Unleash feature flag. The backend is authoritative when publish work is admitted and again immediately before a platform call. A blocked Free/TikTok target never reaches TikTok and never receives an automatic retry. Mixed-platform posts continue for every unrestricted target and fail only the TikTok result.
+The restriction is an operational publishing policy with richer state than UniPost's existing database-backed boolean feature flags. The backend is authoritative when publish work is admitted and again immediately before a platform call. A blocked Free/TikTok target never reaches TikTok and never receives an automatic retry. Mixed-platform posts continue for every unrestricted target and fail only the TikTok result.
 
 The same policy failure is visible in the Composer, Posts List, and Calendar. Policy-failed media remains in R2 for 60 days through UniPost's existing `media_post_usages` business-retention ledger. After the restriction is disabled or the workspace becomes Paid, the customer may personally retry only the failed TikTok result through the existing Retry endpoint and UI, provided the media still exists. Admin never bulk-retries and disabling the restriction never replays old posts.
 
-Restriction and recovery emails are separate manual Admin campaigns. A toggle, migration, deployment, or recovery transition never sends email. Each campaign requires preview, recipient count, and a second irreversible confirmation, then proceeds through a durable, idempotent worker with failed-recipient retry.
+Restriction and recovery emails are separate manual Admin campaigns and a separately deliverable implementation milestone within this PRD. A toggle, migration, deployment, or recovery transition never sends email. Each campaign requires preview, recipient count, and a second irreversible confirmation, then proceeds through a durable, idempotent worker with failed-recipient retry. The implementation must reuse UniPost's existing audited transactional-email infrastructure and must not grow into a general marketing-campaign system.
 
 ## 2. Investigation context and capacity rationale
 
 ### 2.1 TikTok capacity model
 
-TikTok's Direct Post guidelines impose a 24-hour active-creator cap on each API client. The cap is assigned from the usage estimates in that client's audit application. TikTok separately applies a per-creator posting cap, typically around 15 posts per creator per day; that separate per-creator cap is not the policy addressed by this PRD. See [TikTok Direct Post API developer guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines).
+TikTok's Direct Post guidelines impose a 24-hour active-creator cap on each API client. TikTok separately applies a per-creator posting cap, typically around 15 posts per creator per day; that separate per-creator cap is not the policy addressed by this PRD. See [TikTok Direct Post API developer guidelines](https://developers.tiktok.com/doc/content-sharing-guidelines).
 
-The completed UniPost investigation confirmed that UniPost's currently allocated app-level capacity is **100 distinct active TikTok creators in a rolling 24-hour window**. In this PRD, “100 rolling active users” means that UniPost-specific active-creator allocation. It is not presented as a universal TikTok limit for every API client.
+The completed UniPost investigation confirmed this against production shared-client traffic: repeated `reached_active_user_cap` failures occurred with exactly **100 distinct successful TikTok creators in the preceding rolling 24 hours**. At the target failure, those occupied slots comprised 94 Team accounts and 6 Free accounts. Connected-account demand at investigation time was:
+
+- Team: 135 accounts across 2 workspaces;
+- Free: 35 accounts across 26 workspaces;
+- Basic: 4 accounts across 3 workspaces.
+
+In this PRD, “100 rolling active users” means UniPost's observed/current app-level allocation. It is not a universal TikTok limit for every API client. The evidence establishes that the capacity was real, production-facing, shared, and binding; the PRD makes no unverified claim about UniPost's TikTok audit or sandbox status.
 
 ### 2.2 Why restrict Free publishing
 
 The capacity is shared across UniPost workspaces. Each distinct TikTok creator that publishes through the UniPost API client can consume one of the rolling active-creator slots. When capacity is exhausted, additional TikTok publishing cannot be admitted reliably even though connected accounts, media, saved posts, and other platforms remain healthy.
 
-UniPost has asked TikTok to increase the allocation. Until TikTok grants more capacity, the operational policy preserves the limited publishing capacity for paying customers by temporarily blocking TikTok publishing on Free. This policy does not guarantee that a Paid publish can bypass TikTok's provider-side limits; it prevents Free traffic from consuming the scarce app-level allocation while all normal provider safeguards remain in force.
+UniPost has asked TikTok to increase the allocation. Until TikTok grants more capacity, the operational policy prioritizes the limited publishing capacity for paying customers by temporarily blocking TikTok publishing on Free. Based on the observed target-failure mix, this could free the 6 slots occupied by Free creators. It cannot guarantee all paid publishing because Team plus Basic connected demand alone (139 accounts at investigation time) can exceed the observed 100-creator allocation. A TikTok capacity increase therefore remains necessary in parallel; the restriction is a prioritization control, not a complete capacity fix or a promise that Paid publishing always succeeds.
+
+**Review disposition:** the production failure evidence resolves the review's concern that the capacity premise might be hypothetical. The reviewer was correct that restricting Free cannot guarantee enough capacity for all Paid demand, and that limitation is now explicit.
 
 ### 2.3 Investigation conclusions carried into the design
 
@@ -70,7 +78,7 @@ UniPost has asked TikTok to increase the allocation. Until TikTok grants more ca
 
 ### 4.2 Non-goals
 
-- No Unleash feature flag and no frontend connection to Unleash.
+- Do not represent the restriction as another boolean row in the existing `feature_flags` table; its plan, reason, cycle, operational, and communication state requires a dedicated domain while reusing existing Admin patterns.
 - No initial restriction for Paid plans or non-TikTok platforms.
 - No TikTok account disconnect, credential mutation, saved-post deletion, or draft deletion.
 - No Cloudflare R2 Object Lifecycle policy for this retention rule.
@@ -78,6 +86,7 @@ UniPost has asked TikTok to increase the allocation. Until TikTok grants more ca
 - No automatic post replay when the restriction is disabled or a workspace upgrades.
 - No Admin bulk Retry, Admin impersonated Retry, or recovery campaign that enqueues posts.
 - No change to the separate TikTok per-creator posting cap.
+- No general-purpose marketing-campaign framework, arbitrary campaign builder, audience segmentation product, campaign scheduling suite, A/B testing, or cross-channel messaging system.
 - No production release, deployment, or external email send implied by implementation.
 
 ## 5. Product policy
@@ -107,7 +116,15 @@ Handlers and workers consume a decision containing restricted state, platform, p
 
 There is no cross-request in-memory cache in the first version. Request-local reuse is allowed, but every independent delivery-worker attempt performs a fresh database-backed evaluation so operator changes do not depend on cache expiry.
 
-### 5.3 Policy-read failure
+### 5.3 Relationship to the existing feature-flag system
+
+Verified `origin/staging` at `c9b3727d8e527e3cd88738d9608b8c010e195c0e` uses PostgreSQL `feature_flags` and append-only `feature_flag_changes`; mutations lock the flag row, record the actor and before/after boolean transition in one transaction, and Admin access uses the existing `SuperAdminChecker`. The current feature-flag schema and API do **not** have an explicit version column or `expected_version` conflict contract.
+
+Publishing restrictions require restricted-plan arrays, reason/message state, activation cycles, timestamps, affected-workspace/account metrics, and correlation to the two confirmed email types. Extending a boolean flag row with all of that would make the feature-flag domain less coherent. Use a dedicated restriction schema, but reuse the established PostgreSQL transaction/row-lock approach, append-only change-audit approach, `SuperAdminChecker`, Admin handler conventions, and Admin UI confirmation patterns. Add the explicit restriction `version`/`expected_version` contract because this operational control needs visible optimistic concurrency; do not imply that this field already exists on `feature_flags`.
+
+**Review disposition:** the stale provider comparison is removed. The design now compares against the DB-backed system that actually exists and identifies both what is reused and why the richer policy state remains separate.
+
+### 5.4 Policy-read failure
 
 If policy state cannot be read, TikTok must not be called:
 
@@ -135,6 +152,8 @@ This differs from a successful restricted decision, which is deterministic and r
 
 > TikTok publishing is temporarily unavailable on the Free plan due to platform capacity limits. We’re working with TikTok to increase capacity. Upgrade your plan or try again after the restriction is lifted.
 
+HTTP 402 is intentional because the fully blocked request is plan-dependent and offers upgrade as one valid next action; the stable error code and message, rather than the status phrase alone, communicate that this is a temporary capacity policy rather than a billing failure.
+
 ### 6.2 Fully blocked response
 
 If every publish target is restricted, create no parent post, result, delivery job, quota usage, or media-retention transition. Return this contract:
@@ -151,15 +170,14 @@ If every publish target is restricted, create no parent post, result, delivery j
     "error_temporality": "temporary",
     "details": {
       "platform": "tiktok",
-      "plan_id": "free",
-      "restriction_cycle_id": "019f9d45-bb0c-71a0-9562-aa54e97456f8"
+      "plan_id": "free"
     }
   },
   "request_id": "req_8f3c1c2e"
 }
 ```
 
-`is_retriable=false` prevents automatic retries. A persisted failed result later exposes conditional manual eligibility through its dynamic `retry_policy`.
+`is_retriable=false` prevents automatic retries. A persisted failed result later exposes conditional manual eligibility through its dynamic `retry_policy`. The cycle ID is not customer-facing; keep it only in internal logs, `post_failures` safe metadata, restriction audit events, and campaign correlation.
 
 ### 6.3 Persisted policy failure
 
@@ -187,12 +205,14 @@ Saving a draft remains allowed because it does not admit publish work. Publishin
 
 Add `GET /v1/publishing-restrictions`. It returns active restrictions applicable to the current workspace plan, including platform, plan, reason, exact message, and next action. The Dashboard uses it for preemptive disabling. It is advisory only; server admission and worker checks remain authoritative if the projection is stale or bypassed.
 
+Posts List and Calendar both use the shared `CreatePostDrawer`, whose existing data effects are keyed to the drawer's `open` state. Fetch the projection whenever the drawer mounts/opens and again on window focus while it remains open. A successful focus refresh immediately updates disabled selections and Retry guidance. Submit always remains authoritative: a stale or failed projection fetch cannot permit a TikTok call, and the structured API error is rendered inline.
+
 ### 7.3 New immediate publish
 
 After structural validation and server-side account resolution, partition targets into allowed and restricted sets.
 
 - All restricted: return the exact HTTP 402 and persist nothing.
-- Mixed: create the parent; create failed results immediately for restricted TikTok targets; create normal pending results/jobs only for allowed targets; return all result states.
+- Mixed: create the parent; create failed results immediately for restricted TikTok targets; create normal pending results/jobs only for allowed targets; return all result states with `202 Accepted`, matching the existing immediate-create contract for admitted queued work.
 - None restricted: keep the current queue path.
 
 Policy failures do not consume publish quota. Existing successful-publish quota accounting remains unchanged.
@@ -200,7 +220,7 @@ Policy failures do not consume publish quota. Existing successful-publish quota 
 ### 7.4 New scheduled publish
 
 - TikTok-only Free schedule while active: HTTP 402 and no stored post.
-- Mixed schedule: keep allowed destinations schedulable and retain the original per-target metadata needed for due-time results.
+- Mixed schedule: keep allowed destinations schedulable and retain the original per-target metadata needed for due-time results; return `201 Created`, matching the existing scheduled-create contract.
 - At due time, the scheduler evaluates every target. A restricted TikTok target receives a failed result and no delivery job; allowed targets receive normal jobs.
 - If the restriction is disabled or the workspace becomes Paid before due time, TikTok is allowed.
 
@@ -230,7 +250,7 @@ If restricted, the worker marks the policy result/job terminal and returns witho
 
 Reuse without replacement:
 
-`POST /v1/posts/{postId}/results/{resultId}/retry`
+`POST /v1/posts/{id}/results/{resultID}/retry`
 
 Reuse the existing result-level Retry UI in Posts and Calendar. Retry remains a customer action. Admin never retries a result for the customer.
 
@@ -289,6 +309,8 @@ At the actual policy-failure time, update every `media_post_usages` row for the 
 
 This overrides normal Free failed/partial retention. Another policy failure restarts the complete 60-day window. Result details expose the effective deadline as `media_retained_until`.
 
+Current Free failed/partial retention is 48 hours, so 60 days is approximately a 30× extension of object lifetime for affected media and has a corresponding R2 storage-cost impact. Track retained object count, bytes, and projected cost by restriction cycle. The longer parent-wide deadline on a mixed/partial post intentionally overrides the successful non-TikTok result's shorter normal retention: retaining longer is safe, preserves one coherent parent media set for result-level Retry, and shared-media cleanup still waits for every usage.
+
 ### 9.3 Retry and terminal transitions
 
 - Retry enqueue atomically sets `retention_reason=active_post` and clears the cleanup deadline.
@@ -298,7 +320,7 @@ This overrides normal Free failed/partial retention. Another policy failure rest
 
 ### 9.4 Cleanup race and shared media
 
-The cleanup worker may claim an object only when every post/processing usage is due and no null/future deadline remains. Retry enqueue updates the parent media `usage_version` while clearing the deadline. Cleanup claim compares that version and locks the media row.
+The cleanup worker may claim an object only when every post/processing usage is due and no null/future deadline remains. Retry enqueue increments the existing `media.usage_version` while clearing the post-usage deadline. Cleanup claim compares that media-row version and locks the `media` row. Do not add a second `usage_version` to `media_post_usages`.
 
 Therefore:
 
@@ -472,17 +494,23 @@ Each recipient work item stores:
 
 Unique campaign/user and campaign/normalized-email constraints enforce dedupe. If multiple user rows normalize to one email, choose a deterministic canonical recipient and retain all represented workspaces for evidence.
 
-### 12.5 `media_post_usages`
+### 12.5 `media_post_usages` and existing `media.usage_version`
 
-Add non-null `retention_reason`. Backfill existing rows to `plan_status` without changing existing deadlines. Policy and retry transitions follow Section 9.
+Add non-null `retention_reason` only to `media_post_usages`. Backfill existing rows to `plan_status` without changing existing deadlines. Policy and retry transitions follow Section 9. Reuse and increment the existing `media.usage_version` for cleanup/retry concurrency; no version column is added to `media_post_usages`.
 
 ## 13. Manual email campaigns
 
-### 13.1 Strict separation
+### 13.1 Independent delivery milestone and strict separation
+
+Email remains confirmed product scope, but implementation planning must split it into an independently deliverable **Communications milestone** after the core Policy Enforcement/Admin/Frontend/Media milestone. This separation reduces coupling and lets the core be validated without enabling or sending email; it is not a deferral or removal of the approved email requirements, and the PRD is not complete until both milestones meet their acceptance criteria.
 
 Email is a separate Admin action. Toggle transactions, migrations, deployments, and policy recovery create no campaign or recipient work.
 
-Register two service-notice events in `api/internal/emailregistry` and email template documentation. Use the existing audited Loops transactional client, stable provider idempotency keys, and shared `email_send_attempts`. Missing provider/template configuration becomes a durable failure; do not use an untracked fallback.
+Register only the two fixed service-notice events in `api/internal/emailregistry` and email template documentation. Send through the existing `loops.AuditedClient`, using stable provider idempotency keys and the existing `email_send_attempts` unique provider/key audit trail for every attempt. Correlate attempts to campaign/recipient work through stable trigger references. Missing provider/template configuration becomes a durable failure; do not use an untracked fallback.
+
+The existing audited client and attempt ledger satisfy per-send provider idempotency/audit, but they do not snapshot a confirmed audience, represent the irreversible second confirmation, aggregate durable campaign progress, enforce one campaign per cycle/type, or select only failed recipients for Admin retry. New campaign and recipient persistence is permitted only for those confirmed orchestration guarantees. Do not duplicate provider-attempt audit payloads or build general campaign capabilities.
+
+**Review disposition:** the recommendation to remove or replace approved emails with an ad hoc one-off send conflicts with the confirmed product decision. The delivery split is accepted; a general batch-marketing subsystem is explicitly rejected, and existing audited email infrastructure is mandatory.
 
 ### 13.2 APIs and two confirmations
 
@@ -516,6 +544,8 @@ Recovery notice is available only when:
 - no recovery campaign exists for the cycle.
 
 Candidates are only successfully notified users from that cycle who are still Free with active TikTok at send time. Upgraded/disconnected recipients are skipped. Re-enabling invalidates an unconfirmed recovery preview; recovery cannot be confirmed while restricted again.
+
+This intentionally leaves a coverage gap: a user who becomes an eligible Free/TikTok owner after the restriction audience was snapshotted did not receive the restriction notice and therefore does not receive recovery email. They learn that publishing is restored through the refreshed Composer projection. Support and Admin campaign reporting must not describe recovery as reaching every currently eligible Free/TikTok owner.
 
 ### 13.5 Durable progress, retry, and idempotency
 
@@ -578,7 +608,7 @@ Body:
 
 - Existing one-active-job-per-result unique index remains authoritative.
 - Retry job creation and media activation commit atomically.
-- Media `usage_version` plus row locking prevents stale cleanup snapshots from deleting newly active media.
+- Existing `media.usage_version` plus row locking prevents stale cleanup snapshots from deleting newly active media; `media_post_usages` receives no duplicate version field.
 
 ### 14.3 Campaign concurrency
 
@@ -618,7 +648,9 @@ Record:
 ### 15.2 API, immediate, scheduled, and mixed
 
 - Fully blocked immediate and scheduled requests return the exact 402 envelope and persist nothing.
-- Mixed immediate creates only the TikTok policy failure and queues allowed results.
+- The public error details omit cycle ID while internal logs/failures/audit retain it.
+- Mixed immediate returns 202, creates only the TikTok policy failure, and queues allowed results.
+- Mixed scheduled create returns 201 and retains allowed target metadata for due-time dispatch.
 - Draft save works; draft publish is gated.
 - Paid TikTok follows normal dispatch.
 - Existing due Free/TikTok schedule fails deterministically.
@@ -642,7 +674,8 @@ Record:
 ### 15.4 Media
 
 - Policy failure sets exactly failure time plus 60 days and reason.
-- Policy retention overrides normal Free failed/partial retention.
+- Policy retention overrides the current 48-hour Free failed/partial retention, with metrics for the approximately 30× lifetime/storage-cost increase.
+- Mixed/partial parent media intentionally receives the longer policy deadline.
 - Result exposes `media_retained_until`.
 - Retry job/media activation is atomic.
 - Success recalculates normal current-plan retention from success time.
@@ -663,10 +696,13 @@ Record:
 - Progress survives restart.
 - Retry-failed touches failed recipients only.
 - Exact subjects, bodies, and first-name fallback are covered.
+- Every attempted send uses `AuditedClient`/`email_send_attempts`; new campaign data is limited to snapshot, confirmation, progress, cycle dedupe, and failed-recipient retry.
+- Recovery tests assert the intentional exclusion of eligible users who were not successfully sent the cycle's restriction notice.
 
 ### 15.6 Frontend
 
 - Both composers load policy, show exact persistent notice, and disable only Free TikTok.
+- Shared Composer projection refreshes on mount/open and window focus; authoritative submit handling covers stale/failed projections.
 - Toggle All/preselection excludes restricted TikTok.
 - Stale fully blocked submit shows inline exact error.
 - Mixed result shows only TikTok as `Publishing restricted`.
@@ -686,6 +722,13 @@ Record:
 A failed, skipped, canceled, timed-out, missing, or wrong-SHA required result is a hard stop.
 
 ## 16. Rollout and operational defaults
+
+Implementation and review use two independently deliverable milestones:
+
+1. **Core milestone:** policy schema/evaluator, Admin restriction control, admission/scheduler/worker/Retry enforcement, customer UI, and media retention.
+2. **Communications milestone:** the two fixed manual campaigns, exact copy, audience snapshot/recheck, second confirmation, durable progress, failed-recipient retry, and audited/idempotent sends.
+
+Both milestones remain disabled and side-effect-free at deployment. Operational rollout then proceeds as follows:
 
 1. Ship additive schema/code with TikTok row disabled.
 2. Deployment sends no email and changes no TikTok publishing behavior.
