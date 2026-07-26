@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -13,8 +14,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/stripe/stripe-go/v82"
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/billing"
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
@@ -390,6 +394,188 @@ func TestChangePlanHandlerDispatchesWorkspaceTargetPlan(t *testing.T) {
 		if !strings.Contains(recorder.Body.String(), want) {
 			t.Fatalf("change-plan response missing %s: %s", want, recorder.Body.String())
 		}
+	}
+}
+
+type fakeBillingQueries struct {
+	workspace       db.Workspace
+	workspaceErr    error
+	subscription    db.Subscription
+	subscriptionErr error
+	user            db.User
+	userErr         error
+	plans           map[string]db.Plan
+	planErr         error
+}
+
+func (q *fakeBillingQueries) GetWorkspace(context.Context, string) (db.Workspace, error) {
+	return q.workspace, q.workspaceErr
+}
+
+func (q *fakeBillingQueries) GetSubscriptionByWorkspace(context.Context, string) (db.Subscription, error) {
+	return q.subscription, q.subscriptionErr
+}
+
+func (q *fakeBillingQueries) GetUser(context.Context, string) (db.User, error) {
+	return q.user, q.userErr
+}
+
+func (q *fakeBillingQueries) GetPlan(_ context.Context, planID string) (db.Plan, error) {
+	if q.planErr != nil {
+		return db.Plan{}, q.planErr
+	}
+	plan, ok := q.plans[planID]
+	if !ok {
+		return db.Plan{}, errors.New("plan not found")
+	}
+	return plan, nil
+}
+
+func (q *fakeBillingQueries) ListPlans(context.Context) ([]db.Plan, error) {
+	plans := make([]db.Plan, 0, len(q.plans))
+	for _, plan := range q.plans {
+		plans = append(plans, plan)
+	}
+	return plans, nil
+}
+
+type fakeBillingPlanChangeService struct {
+	result billing.PlanChangeResult
+	err    error
+	req    billing.PlanChangeRequest
+	calls  int
+}
+
+func (s *fakeBillingPlanChangeService) CreateSession(_ context.Context, req billing.PlanChangeRequest) (billing.PlanChangeResult, error) {
+	s.calls++
+	s.req = req
+	return s.result, s.err
+}
+
+func planChangeHandlerFixture(planID string) (*BillingHandler, *fakeBillingQueries, *fakeBillingPlanChangeService) {
+	queries := &fakeBillingQueries{
+		workspace: db.Workspace{ID: "ws_1", UserID: "owner_1", Name: "Workspace One"},
+		subscription: db.Subscription{
+			WorkspaceID: "ws_1", PlanID: planID, Status: "active",
+			StripeCustomerID:     pgtype.Text{String: "cus_sandbox_1", Valid: true},
+			StripeSubscriptionID: pgtype.Text{String: "sub_sandbox_1", Valid: true},
+		},
+		user:  db.User{ID: "owner_1", Email: "owner@example.com"},
+		plans: map[string]db.Plan{"free": {ID: "free"}, "basic": {ID: "basic"}, "growth": {ID: "growth"}, "team": {ID: "team"}},
+	}
+	mode := &billing.Mode{Name: "live"}
+	manager := &billing.Manager{Live: mode}
+	service := &fakeBillingPlanChangeService{result: billing.PlanChangeResult{URL: "https://billing.stripe.test/session/bps_1"}}
+	handler := NewBillingHandler(queries, nil, manager).SetPlanChangeService(service)
+	return handler, queries, service
+}
+
+func planChangeHandlerRequest(body string) *http.Request {
+	req := httptest.NewRequest(http.MethodPost, "/v1/billing/plan-change-session", bytes.NewBufferString(body))
+	ctx := auth.SetWorkspaceID(req.Context(), "ws_1")
+	ctx = context.WithValue(ctx, auth.UserIDKey, "owner_1")
+	return req.WithContext(ctx)
+}
+
+func TestCreatePlanChangeSessionUsesOnlyServerDerivedStripeBinding(t *testing.T) {
+	t.Setenv("NEXT_PUBLIC_APP_URL", "https://staging-app.unipost.dev")
+	h, _, service := planChangeHandlerFixture("basic")
+	recorder := httptest.NewRecorder()
+
+	h.CreatePlanChangeSession(recorder, planChangeHandlerRequest(`{"plan_id":"growth","customer_id":"cus_attacker","subscription_id":"sub_attacker"}`))
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	want := billing.PlanChangeRequest{
+		StripeMode: "live", WorkspaceID: "ws_1", CustomerID: "cus_sandbox_1", SubscriptionID: "sub_sandbox_1",
+		CurrentPlanID: "basic", TargetPlanID: "growth", ReturnURL: "https://staging-app.unipost.dev/settings/billing",
+	}
+	if service.calls != 1 || !reflect.DeepEqual(service.req, want) {
+		t.Fatalf("calls=%d request=%#v want=%#v", service.calls, service.req, want)
+	}
+	if !strings.Contains(recorder.Body.String(), `"url":"https://billing.stripe.test/session/bps_1"`) {
+		t.Fatalf("response=%s", recorder.Body.String())
+	}
+}
+
+func TestCreatePlanChangeSessionDispatchesOnlyOrdinaryPaidBilling(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		planID     string
+		body       string
+		projection *trials.TrialProjection
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "missing workspace", planID: "basic", body: `{"plan_id":"growth"}`, wantStatus: http.StatusUnauthorized, wantCode: "UNAUTHORIZED"},
+		{name: "invalid body", planID: "basic", body: `{}`, wantStatus: http.StatusUnprocessableEntity, wantCode: "VALIDATION_ERROR"},
+		{name: "free uses checkout", planID: "free", body: `{"plan_id":"growth"}`, wantStatus: http.StatusConflict, wantCode: "CHECKOUT_REQUIRED"},
+		{name: "scheduled trial uses change plan", planID: "basic", body: `{"plan_id":"growth"}`, projection: &trials.TrialProjection{Status: trials.StatusScheduled}, wantStatus: http.StatusConflict, wantCode: "TRIAL_PLAN_CHANGE_REQUIRED"},
+		{name: "active trial uses change plan", planID: "basic", body: `{"plan_id":"growth"}`, projection: &trials.TrialProjection{Status: trials.StatusActive}, wantStatus: http.StatusConflict, wantCode: "TRIAL_PLAN_CHANGE_REQUIRED"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h, _, service := planChangeHandlerFixture(test.planID)
+			if test.projection != nil {
+				h.SetTrialService(&fakeBillingTrialCheckoutService{currentProjection: test.projection})
+			}
+			req := planChangeHandlerRequest(test.body)
+			if test.name == "missing workspace" {
+				req = httptest.NewRequest(http.MethodPost, "/v1/billing/plan-change-session", bytes.NewBufferString(test.body))
+			}
+			recorder := httptest.NewRecorder()
+
+			h.CreatePlanChangeSession(recorder, req)
+
+			if recorder.Code != test.wantStatus || !strings.Contains(recorder.Body.String(), test.wantCode) {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if service.calls != 0 {
+				t.Fatalf("service calls=%d, want 0", service.calls)
+			}
+		})
+	}
+}
+
+func TestCreatePlanChangeSessionMapsServiceFailuresWithoutLeakingProviderDetails(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "configuration", err: billing.ErrPlanChangeConfigurationUnavailable, wantStatus: http.StatusServiceUnavailable, wantCode: "BILLING_PLAN_CHANGE_UNAVAILABLE"},
+		{name: "binding", err: billing.ErrPlanChangeBindingConflict, wantStatus: http.StatusConflict, wantCode: "BILLING_PLAN_CHANGE_CONFLICT"},
+		{name: "upstream", err: fmt.Errorf("%w: stripe secret", billing.ErrPlanChangeUpstream), wantStatus: http.StatusBadGateway, wantCode: "BILLING_PLAN_CHANGE_UNAVAILABLE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			h, _, service := planChangeHandlerFixture("basic")
+			service.err = test.err
+			recorder := httptest.NewRecorder()
+
+			h.CreatePlanChangeSession(recorder, planChangeHandlerRequest(`{"plan_id":"growth"}`))
+
+			if recorder.Code != test.wantStatus || !strings.Contains(recorder.Body.String(), test.wantCode) || strings.Contains(recorder.Body.String(), "stripe secret") {
+				t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateCheckoutRejectsPaidWorkspaceBeforeStripeMutation(t *testing.T) {
+	h, _, service := planChangeHandlerFixture("basic")
+	req := httptest.NewRequest(http.MethodPost, "/v1/billing/checkout", bytes.NewBufferString(`{"plan_id":"growth"}`))
+	ctx := auth.SetWorkspaceID(req.Context(), "ws_1")
+	ctx = context.WithValue(ctx, auth.UserIDKey, "owner_1")
+	recorder := httptest.NewRecorder()
+
+	h.CreateCheckout(recorder, req.WithContext(ctx))
+
+	if recorder.Code != http.StatusConflict || !strings.Contains(recorder.Body.String(), "PAID_PLAN_CHANGE_REQUIRED") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if service.calls != 0 {
+		t.Fatalf("plan change service calls=%d, want 0", service.calls)
 	}
 }
 

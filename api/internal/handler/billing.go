@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -103,7 +104,7 @@ func isStripeResourceMissing(err error) bool {
 }
 
 type BillingHandler struct {
-	queries      *db.Queries
+	queries      billingQueries
 	quota        *quota.Checker
 	stripe       *billing.Manager
 	xCredits     xCreditsSnapshotService
@@ -113,6 +114,19 @@ type BillingHandler struct {
 	}
 	trialCheckout billingTrialCheckoutService
 	trialRead     billingTrialReadService
+	planChanges   billingPlanChangeService
+}
+
+type billingQueries interface {
+	GetWorkspace(context.Context, string) (db.Workspace, error)
+	GetSubscriptionByWorkspace(context.Context, string) (db.Subscription, error)
+	GetUser(context.Context, string) (db.User, error)
+	GetPlan(context.Context, string) (db.Plan, error)
+	ListPlans(context.Context) ([]db.Plan, error)
+}
+
+type billingPlanChangeService interface {
+	CreateSession(context.Context, billing.PlanChangeRequest) (billing.PlanChangeResult, error)
 }
 
 type billingTrialCheckoutService interface {
@@ -135,7 +149,7 @@ type xCreditsInboundCapService interface {
 	UpdateInboundCap(context.Context, xcredits.UpdateInboundCapRequest) (xcredits.InboundCapSetting, error)
 }
 
-func NewBillingHandler(queries *db.Queries, quotaChecker *quota.Checker, stripeMgr *billing.Manager) *BillingHandler {
+func NewBillingHandler(queries billingQueries, quotaChecker *quota.Checker, stripeMgr *billing.Manager) *BillingHandler {
 	return &BillingHandler{queries: queries, quota: quotaChecker, stripe: stripeMgr}
 }
 
@@ -159,6 +173,11 @@ func (h *BillingHandler) SetTrialService(service billingTrialCheckoutService) *B
 	if reader, ok := service.(billingTrialReadService); ok {
 		h.trialRead = reader
 	}
+	return h
+}
+
+func (h *BillingHandler) SetPlanChangeService(service billingPlanChangeService) *BillingHandler {
+	h.planChanges = service
 	return h
 }
 
@@ -348,11 +367,35 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Pick the Stripe mode (live or sandbox) based on whether the workspace
-	// owner is a superadmin. The price ID for the requested plan must
-	// exist *in that mode* — if a sandbox user requests a plan whose
-	// sandbox price ID isn't configured we reject with a clear message
-	// instead of falling back to live and accidentally charging real money.
+	// Verify the plan exists in our DB (used for display name + post limit
+	// elsewhere). We don't read plan.StripePriceID anymore — that's mode-
+	// specific now and lives in the billing.Manager price map.
+	if _, err := h.queries.GetPlan(r.Context(), body.PlanID); err != nil {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid plan")
+		return
+	}
+	sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load billing subscription")
+		return
+	}
+	if sub.PlanID != "free" {
+		trial, trialErr := h.getCurrentTrialProjection(r.Context(), workspaceID)
+		if trialErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load trial billing state")
+			return
+		}
+		if trial != nil && (trial.Status == trials.StatusScheduled || trial.Status == trials.StatusActive) {
+			writeError(w, http.StatusConflict, "TRIAL_PLAN_CHANGE_REQUIRED", "Use the billing plan-change action while a managed trial is scheduled or active")
+			return
+		}
+		writeError(w, http.StatusConflict, "PAID_PLAN_CHANGE_REQUIRED", "Use the paid plan-change action for an existing subscription")
+		return
+	}
+
+	// Pick the Stripe mode (live or sandbox) only after proving this is a
+	// Free-to-paid activation. Existing paid subscriptions must never fall
+	// back into Subscription Checkout.
 	mode := h.stripe.For(r.Context(), userID)
 	if mode == nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Stripe is not configured")
@@ -361,14 +404,6 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	priceID := mode.PriceID(body.PlanID)
 	if priceID == "" {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid plan or plan not configured for this mode")
-		return
-	}
-
-	// Verify the plan exists in our DB (used for display name + post limit
-	// elsewhere). We don't read plan.StripePriceID anymore — that's mode-
-	// specific now and lives in the billing.Manager price map.
-	if _, err := h.queries.GetPlan(r.Context(), body.PlanID); err != nil {
-		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Invalid plan")
 		return
 	}
 	appURL := os.Getenv("NEXT_PUBLIC_APP_URL")
@@ -390,7 +425,6 @@ func (h *BillingHandler) CreateCheckout(w http.ResponseWriter, r *http.Request) 
 	// from live and sandbox don't overlap, so even if a workspace changes
 	// modes (user added/removed from SUPER_ADMINS), the previous mode's
 	// customer ID will be invalid in the new mode and we'll mint a new one.
-	sub, _ := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
 	customerID := ""
 	if trialNeedsCustomer {
 		user, _ := h.queries.GetUser(r.Context(), userID)
@@ -485,6 +519,95 @@ func (h *BillingHandler) tryTrialCheckout(w http.ResponseWriter, r *http.Request
 	}
 	writeSuccess(w, map[string]string{"checkout_url": checkout.URL})
 	return true, false
+}
+
+// CreatePlanChangeSession handles POST /v1/billing/plan-change-session for
+// ordinary paid subscriptions. Managed trials continue to use ChangePlan.
+func (h *BillingHandler) CreatePlanChangeSession(w http.ResponseWriter, r *http.Request) {
+	workspaceID := auth.GetWorkspaceID(r.Context())
+	if workspaceID == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if h == nil || h.planChanges == nil {
+		writeError(w, http.StatusServiceUnavailable, "BILLING_PLAN_CHANGE_UNAVAILABLE", "Paid plan changes are unavailable")
+		return
+	}
+
+	var body struct {
+		PlanID string `json:"plan_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.PlanID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "plan_id is required")
+		return
+	}
+	body.PlanID = strings.TrimSpace(body.PlanID)
+	if body.PlanID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "plan_id is required")
+		return
+	}
+	if _, err := h.queries.GetPlan(r.Context(), body.PlanID); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid plan")
+		return
+	}
+
+	sub, err := h.queries.GetSubscriptionByWorkspace(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load billing subscription")
+		return
+	}
+	if sub.PlanID == "free" {
+		writeError(w, http.StatusConflict, "CHECKOUT_REQUIRED", "Use Checkout to start a paid subscription")
+		return
+	}
+	trial, err := h.getCurrentTrialProjection(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load trial billing state")
+		return
+	}
+	if trial != nil && (trial.Status == trials.StatusScheduled || trial.Status == trials.StatusActive) {
+		writeError(w, http.StatusConflict, "TRIAL_PLAN_CHANGE_REQUIRED", "Use the billing plan-change action while a managed trial is scheduled or active")
+		return
+	}
+	if !sub.StripeCustomerID.Valid || strings.TrimSpace(sub.StripeCustomerID.String) == "" || !sub.StripeSubscriptionID.Valid || strings.TrimSpace(sub.StripeSubscriptionID.String) == "" {
+		writeError(w, http.StatusConflict, "BILLING_PLAN_CHANGE_CONFLICT", "Billing subscription is incomplete; refresh and try again")
+		return
+	}
+	mode := h.stripe.For(r.Context(), auth.GetUserID(r.Context()))
+	if mode == nil {
+		writeError(w, http.StatusServiceUnavailable, "BILLING_PLAN_CHANGE_UNAVAILABLE", "Paid plan changes are unavailable")
+		return
+	}
+
+	appURL := os.Getenv("NEXT_PUBLIC_APP_URL")
+	if appURL == "" {
+		appURL = "https://app.unipost.dev"
+	}
+	result, err := h.planChanges.CreateSession(r.Context(), billing.PlanChangeRequest{
+		StripeMode: mode.Name, WorkspaceID: workspaceID,
+		CustomerID: strings.TrimSpace(sub.StripeCustomerID.String), SubscriptionID: strings.TrimSpace(sub.StripeSubscriptionID.String),
+		CurrentPlanID: sub.PlanID, TargetPlanID: body.PlanID, ReturnURL: strings.TrimRight(appURL, "/") + "/settings/billing",
+	})
+	if err != nil {
+		writePlanChangeError(w, err)
+		return
+	}
+	writeSuccess(w, map[string]string{"url": result.URL})
+}
+
+func writePlanChangeError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, billing.ErrInvalidPlanChangeRequest):
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid paid plan change request")
+	case errors.Is(err, billing.ErrPlanChangeBindingConflict):
+		writeError(w, http.StatusConflict, "BILLING_PLAN_CHANGE_CONFLICT", "Billing subscription changed; refresh and try again")
+	case errors.Is(err, billing.ErrPlanChangeUpstream):
+		writeError(w, http.StatusBadGateway, "BILLING_PLAN_CHANGE_UNAVAILABLE", "Stripe could not start the paid plan change")
+	case errors.Is(err, billing.ErrPlanChangeConfigurationUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "BILLING_PLAN_CHANGE_UNAVAILABLE", "Paid plan changes are unavailable")
+	default:
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to start paid plan change")
+	}
 }
 
 // ChangePlan handles POST /v1/billing/change-plan. The route is owner-only;

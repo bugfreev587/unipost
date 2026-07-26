@@ -659,7 +659,8 @@ func main() {
 	platformCredHandler := handler.NewPlatformCredentialHandler(queries, encryptor, quotaChecker)
 	billingHandler := handler.NewBillingHandler(queries, quotaChecker, stripeMgr).
 		SetXCreditsService(xCreditsService).
-		SetFeatureFlags(featureFlagEvaluator)
+		SetFeatureFlags(featureFlagEvaluator).
+		SetPlanChangeService(billing.NewPlanChangeService(stripeMgr, runtimeenv.Current()))
 	stripeWebhookHandler := handler.NewStripeWebhookHandler(queries, stripeMgr, eventBus, os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetHoldReconciler(paidQuotaHoldReconciler).
@@ -1179,6 +1180,7 @@ func main() {
 		r.Get("/v1/billing/x-credits", billingHandler.GetXCredits)
 		r.With(auth.RequireRole(auth.RoleAdmin)).Patch("/v1/billing/x-credits/inbound-cap", billingHandler.UpdateXInboundCap)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/checkout", billingHandler.CreateCheckout)
+		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/plan-change-session", billingHandler.CreatePlanChangeSession)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/change-plan", billingHandler.ChangePlan)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/trials/{trialID}/cancel-renewal", billingHandler.CancelTrialRenewal)
 		r.With(auth.RequireRole(auth.RoleOwner)).Post("/v1/billing/portal", billingHandler.CreatePortal)
