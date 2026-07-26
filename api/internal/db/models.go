@@ -1067,6 +1067,36 @@ type WorkspaceMember struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type WorkspaceTrialGrant struct {
+	ID                      string             `json:"id"`
+	WorkspaceID             string             `json:"workspace_id"`
+	Kind                    string             `json:"kind"`
+	PlanID                  string             `json:"plan_id"`
+	DurationDays            int32              `json:"duration_days"`
+	Status                  string             `json:"status"`
+	GrantedByUserID         string             `json:"granted_by_user_id"`
+	StripeMode              pgtype.Text        `json:"stripe_mode"`
+	StripeCustomerID        pgtype.Text        `json:"stripe_customer_id"`
+	StripeSubscriptionID    pgtype.Text        `json:"stripe_subscription_id"`
+	StripeScheduleID        pgtype.Text        `json:"stripe_schedule_id"`
+	StripeCheckoutSessionID pgtype.Text        `json:"stripe_checkout_session_id"`
+	CheckoutAttempt         int32              `json:"checkout_attempt"`
+	GrantedAt               pgtype.Timestamptz `json:"granted_at"`
+	ScheduledStartAt        pgtype.Timestamptz `json:"scheduled_start_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	EndsAt                  pgtype.Timestamptz `json:"ends_at"`
+	ActivatedAt             pgtype.Timestamptz `json:"activated_at"`
+	CanceledAt              pgtype.Timestamptz `json:"canceled_at"`
+	RevokedAt               pgtype.Timestamptz `json:"revoked_at"`
+	SupersededAt            pgtype.Timestamptz `json:"superseded_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	SupersededByPlanID      pgtype.Text        `json:"superseded_by_plan_id"`
+	FailureCode             pgtype.Text        `json:"failure_code"`
+	FailureMessage          pgtype.Text        `json:"failure_message"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
 type XInboundCapNotification struct {
 	ID             string             `json:"id"`
 	WorkspaceID    string             `json:"workspace_id"`
