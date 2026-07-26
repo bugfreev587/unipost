@@ -47,6 +47,24 @@ export const impactLabels: Record<ChangelogImpact, string> = {
 
 export const changelogReleases: ChangelogRelease[] = [
   {
+    id: "managed-trials-billing",
+    date: "2026-07-25",
+    displayDate: "July 25, 2026",
+    title: "Managed trials now visible in billing surfaces",
+    summary: "Managed trials are now displayed in admin billing interfaces with trial-specific controls and billing projections.",
+    category: "dashboard",
+    impact: "new",
+    isBreaking: false,
+    links: [],
+    sourceLinks: [
+    { label: "Commit 6317b88", href: "https://github.com/bugfreev587/unipost/commit/6317b8851a383f98b427a0618d9b9fa96812b37b" },
+    { label: "Commit 15c5760", href: "https://github.com/bugfreev587/unipost/commit/15c576055d20548bc3ec798c34308215ddea0c38" },
+    { label: "Commit 278ba07", href: "https://github.com/bugfreev587/unipost/commit/278ba071a1a4171a5631ff8d4840bb61cfd36879" },
+    { label: "Commit 241caf7", href: "https://github.com/bugfreev587/unipost/commit/241caf72c3c09accc8121c9077da62518a5d589b" },
+    { label: "Commit d5af224", href: "https://github.com/bugfreev587/unipost/commit/d5af224681367032e3a42436013cfb68e01b8138" },
+  ],
+  },
+  {
     id: "connect-managed-ownership-fixes",
     date: "2026-07-21",
     displayDate: "July 21, 2026",
