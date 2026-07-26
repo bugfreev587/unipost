@@ -27,6 +27,8 @@ RETURNING *;
 -- insert are one statement. Cleanup can therefore win before this statement
 -- (and make all_media_available false), or Retry can win and invalidate the
 -- cleanup snapshot; it cannot delete an object between activation and enqueue.
+-- Normalize dynamic database plan IDs at this SQL race barrier. Public policy
+-- codes and customer copy remain centralized in internal/publishingrestrictions.
 WITH locked_policy AS MATERIALIZED (
   SELECT restriction.enabled, restriction.restricted_plan_ids
   FROM social_accounts account
@@ -55,13 +57,16 @@ WITH locked_policy AS MATERIALIZED (
       SELECT 1
       FROM locked_policy restriction
       WHERE restriction.enabled = TRUE
-        AND COALESCE((
+        AND LOWER(BTRIM(COALESCE((
           SELECT subscription.plan_id
           FROM subscriptions subscription
           WHERE subscription.workspace_id = sqlc.arg(workspace_id)
           ORDER BY subscription.updated_at DESC
           LIMIT 1
-        ), 'free') = ANY(restriction.restricted_plan_ids)
+        ), 'free'))) = ANY(
+          SELECT LOWER(BTRIM(plan_id))
+          FROM UNNEST(restriction.restricted_plan_ids) AS plan_id
+        )
     )
 ), locked_media AS MATERIALIZED (
   UPDATE media

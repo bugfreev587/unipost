@@ -275,6 +275,13 @@ type tiktokChunkedUploadTransport struct {
 	uploadLengths []int64
 }
 
+type tiktokResumeTransport struct {
+	sourceReads int
+	initCalls   int
+	uploadCalls int
+	statusCalls int
+}
+
 type tiktokChunkedUploadSource struct {
 	Source          string `json:"source"`
 	VideoSize       int64  `json:"video_size"`
@@ -329,6 +336,56 @@ func (t *tiktokChunkedUploadTransport) RoundTrip(req *http.Request) (*http.Respo
 		return tiktokHTTPResponse(http.StatusOK, `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7350123456789012345"]},"error":{"code":"ok"}}`, req), nil
 	default:
 		return tiktokHTTPResponse(http.StatusNotFound, `{}`, req), nil
+	}
+}
+
+func (t *tiktokResumeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch {
+	case req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/status/fetch/"):
+		t.statusCalls++
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"publish_id":"publish_123"`) {
+			return tiktokHTTPResponse(http.StatusBadRequest, `{"error":{"code":"wrong_publish_id"}}`, req), nil
+		}
+		return tiktokHTTPResponse(http.StatusOK, `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7350123456789012345"]},"error":{"code":"ok"}}`, req), nil
+	case req.Method == http.MethodGet:
+		t.sourceReads++
+	case strings.Contains(req.URL.Path, "/video/init/"):
+		t.initCalls++
+	case req.Method == http.MethodPut:
+		t.uploadCalls++
+	}
+	return tiktokHTTPResponse(http.StatusInternalServerError, `{"error":{"code":"duplicate_upload"}}`, req), nil
+}
+
+func TestTikTokResumeFromPersistedPublishTokenOnlyChecksStatus(t *testing.T) {
+	withTikTokPublishPollConfig(t, 1, 0)
+	transport := &tiktokResumeTransport{}
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: transport}
+
+	result, err := adapter.Post(
+		context.Background(),
+		"tiktok-token",
+		"caption",
+		[]MediaItem{{URL: "https://video.example/already-uploaded.mp4", Kind: MediaKindVideo}},
+		map[string]any{
+			"privacy_level":       "SELF_ONLY",
+			"upload_mode":         "file_upload",
+			OptResumePublishToken: "publish_123",
+		},
+	)
+	if err != nil {
+		t.Fatalf("resume Post: %v", err)
+	}
+	if result == nil || result.ExternalID != "publish_123" {
+		t.Fatalf("result = %#v, want existing publish_123", result)
+	}
+	if transport.statusCalls != 1 || transport.sourceReads != 0 || transport.initCalls != 0 || transport.uploadCalls != 0 {
+		t.Fatalf(
+			"resume calls status=%d source=%d init=%d upload=%d; want status only",
+			transport.statusCalls, transport.sourceReads, transport.initCalls, transport.uploadCalls,
+		)
 	}
 }
 

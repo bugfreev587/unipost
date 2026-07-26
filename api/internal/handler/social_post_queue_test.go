@@ -858,6 +858,22 @@ func TestAttachPublishTokenResumeOmitsResumeWhenNoPriorToken(t *testing.T) {
 	}
 }
 
+func TestPersistedPublishTokenBypassesNewPublishingRestriction(t *testing.T) {
+	started := db.SocialPostResult{
+		ID:           "res_started",
+		Status:       "processing",
+		PublishToken: pgtype.Text{String: "publish_123", Valid: true},
+	}
+	if shouldEvaluateDeliveryPublishingRestriction(started) {
+		t.Fatal("already-started delivery must resume from its persisted token instead of being finalized as restricted")
+	}
+
+	notStarted := db.SocialPostResult{ID: "res_new", Status: "pending"}
+	if !shouldEvaluateDeliveryPublishingRestriction(notStarted) {
+		t.Fatal("delivery without a persisted platform token must still recheck the publishing restriction")
+	}
+}
+
 // stalePublishedResultDB drives recoverStaleDeliveryJob for a result that a
 // prior attempt already published.
 type stalePublishedResultDB struct {

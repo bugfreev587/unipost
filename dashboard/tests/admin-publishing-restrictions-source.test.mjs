@@ -51,8 +51,19 @@ test("generic Super Admin center renders operational state and all accessible st
 });
 
 test("Admin center exposes cycle media retention cost metrics", () => {
-  for (const label of ["Retained objects", "Retained bytes", "Projected 60-day storage"]) {
+  for (const label of [
+    "Current-cycle retained objects",
+    "Current-cycle retained bytes",
+    "Current-cycle projected 60-day storage",
+  ]) {
     assert.match(page, new RegExp(label));
+  }
+  for (const field of [
+    "current_cycle_retained_object_count",
+    "current_cycle_retained_bytes",
+    "current_cycle_projected_60_day_storage_cost_usd",
+  ]) {
+    assert.match(page, new RegExp(field));
   }
 });
 

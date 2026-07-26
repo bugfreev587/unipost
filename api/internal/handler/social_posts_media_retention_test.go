@@ -251,6 +251,8 @@ func TestRetryJobCreationAtomicallyReactivatesMediaUsage(t *testing.T) {
 		"state IN ('pending', 'running', 'retrying')",
 		"platform_publishing_restrictions",
 		"restricted_plan_ids",
+		"LOWER(BTRIM(COALESCE((",
+		"SELECT LOWER(BTRIM(plan_id))",
 		"SET usage_version = usage_version + 1",
 		"INSERT INTO media_post_usages",
 		"ON CONFLICT (media_id, post_id) DO UPDATE",
@@ -260,6 +262,15 @@ func TestRetryJobCreationAtomicallyReactivatesMediaUsage(t *testing.T) {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("atomic retry/media query missing %q", fragment)
 		}
+	}
+}
+
+func TestMediaUsageUpsertCleanupWinnerIsExpectedNoop(t *testing.T) {
+	if shouldLogMediaPostUsageUpsertError(pgx.ErrNoRows) {
+		t.Fatal("cleanup-wins/non-uploaded media must not produce error noise")
+	}
+	if !shouldLogMediaPostUsageUpsertError(errors.New("database unavailable")) {
+		t.Fatal("unexpected database failures must still be logged")
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -165,6 +166,45 @@ func summarizeAccountValidation(dbAcc db.SocialAccount, ok bool, fallback platfo
 	return platformName, fmt.Errorf("account not found")
 }
 
+type queuedDeliveryEvaluation struct {
+	account        db.SocialAccount
+	platformName   string
+	validationErr  error
+	policyDecision publishingrestrictions.Decision
+}
+
+func (h *SocialPostHandler) evaluateQueuedDeliveryTargets(
+	ctx context.Context,
+	workspaceID string,
+	parsed []platform.PlatformPostInput,
+	dbAccounts map[string]db.SocialAccount,
+	accountMap map[string]platform.ValidateAccount,
+) ([]queuedDeliveryEvaluation, error) {
+	evaluations := make([]queuedDeliveryEvaluation, 0, len(parsed))
+	for _, pp := range parsed {
+		account, ok := dbAccounts[pp.AccountID]
+		platformName, validationErr := summarizeAccountValidation(account, ok, accountMap[pp.AccountID])
+		var decision publishingrestrictions.Decision
+		if validationErr == nil && h.publishingRestrictions != nil {
+			var err error
+			decision, err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
+			if err != nil {
+				return nil, err
+			}
+			if decision.Restricted {
+				validationErr = errors.New(publishingrestrictions.UserMessage)
+			}
+		}
+		evaluations = append(evaluations, queuedDeliveryEvaluation{
+			account:        account,
+			platformName:   platformName,
+			validationErr:  validationErr,
+			policyDecision: decision,
+		})
+	}
+	return evaluations, nil
+}
+
 func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	ctx context.Context,
 	post db.SocialPost,
@@ -172,27 +212,25 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	accountMap map[string]platform.ValidateAccount,
 ) ([]db.SocialPostResult, []db.PostDeliveryJob, error) {
 	dbAccounts := h.loadDBAccountsByIDs(ctx, post.WorkspaceID, uniqueAccountIDs(parsed))
+	evaluations, err := h.evaluateQueuedDeliveryTargets(ctx, post.WorkspaceID, parsed, dbAccounts, accountMap)
+	if err != nil {
+		// Policy reads are completed before the first result/job write so a
+		// mid-list database failure cannot leave partial immediate state.
+		return nil, nil, err
+	}
 	results := make([]db.SocialPostResult, 0, len(parsed))
 	jobs := make([]db.PostDeliveryJob, 0, len(parsed))
 	failureSummaries := make([]string, 0)
 	var policyFailureAt time.Time
 
 	for idx, pp := range parsed {
-		acc, ok := dbAccounts[pp.AccountID]
-		platformName, validationErr := summarizeAccountValidation(acc, ok, accountMap[pp.AccountID])
-		var policyDecision publishingrestrictions.Decision
-		if validationErr == nil && h.publishingRestrictions != nil {
-			var policyErr error
-			policyDecision, policyErr = h.publishingRestrictions.Evaluate(ctx, post.WorkspaceID, platformName)
-			if policyErr != nil {
-				return nil, nil, policyErr
-			}
-			if policyDecision.Restricted {
-				validationErr = errors.New(publishingrestrictions.UserMessage)
-				if policyFailureAt.IsZero() {
-					policyFailureAt = time.Now()
-				}
-			}
+		evaluation := evaluations[idx]
+		acc := evaluation.account
+		platformName := evaluation.platformName
+		validationErr := evaluation.validationErr
+		policyDecision := evaluation.policyDecision
+		if policyDecision.Restricted && policyFailureAt.IsZero() {
+			policyFailureAt = time.Now()
 		}
 
 		resultStatus := "pending"
@@ -619,6 +657,10 @@ func (h *SocialPostHandler) attachPublishTokenResume(ctx context.Context, pp *pl
 	}
 }
 
+func shouldEvaluateDeliveryPublishingRestriction(res db.SocialPostResult) bool {
+	return !res.PublishToken.Valid || strings.TrimSpace(res.PublishToken.String) == ""
+}
+
 func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.PostDeliveryJob) error {
 	// Pre-publish guard against double-publish. A claimed job can sit in the
 	// worker's serial processing queue for minutes; meanwhile the stale
@@ -684,12 +726,14 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		}
 	}
 
-	policyDecision, err := h.evaluateDeliveryPublishingRestriction(ctx, post.WorkspaceID, job.Platform, accountMap[pp.AccountID])
-	if err != nil {
-		return err
-	}
-	if policyDecision.Restricted {
-		return h.finalizeRestrictedDeliveryJob(ctx, job, res, post, policyDecision)
+	if shouldEvaluateDeliveryPublishingRestriction(res) {
+		policyDecision, err := h.evaluateDeliveryPublishingRestriction(ctx, post.WorkspaceID, job.Platform, accountMap[pp.AccountID])
+		if err != nil {
+			return err
+		}
+		if policyDecision.Restricted {
+			return h.finalizeRestrictedDeliveryJob(ctx, job, res, post, policyDecision)
+		}
 	}
 
 	// Idempotent-publish wiring (IG/TikTok). Let the adapter resume from a
@@ -1349,6 +1393,10 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 	}
 	decision, policyErr := h.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
 	if policyErr != nil {
+		var accountUnavailable *retrySocialAccountUnavailableError
+		if errors.As(policyErr, &accountUnavailable) {
+			return db.PostDeliveryJob{}, accountUnavailable
+		}
 		return db.PostDeliveryJob{}, &retryPolicyUnavailableError{err: policyErr}
 	}
 	if decision.Restricted {
@@ -1396,6 +1444,10 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 	if errors.Is(err, pgx.ErrNoRows) {
 		decision, policyErr = h.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
 		if policyErr != nil {
+			var accountUnavailable *retrySocialAccountUnavailableError
+			if errors.As(policyErr, &accountUnavailable) {
+				return db.PostDeliveryJob{}, accountUnavailable
+			}
 			return db.PostDeliveryJob{}, &retryPolicyUnavailableError{err: policyErr}
 		}
 		if decision.Restricted {
@@ -1475,7 +1527,16 @@ func (h *SocialPostHandler) queueConflictError() error {
 }
 
 func isQueueConflict(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "active queue job")
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), "active queue job") {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "post_delivery_jobs_one_active_per_result_idx"
 }
 
 type postDeliveryJobResponse struct {
@@ -1737,6 +1798,11 @@ func (h *SocialPostHandler) RetryDeliveryJob(w http.ResponseWriter, r *http.Requ
 		var policyUnavailable *retryPolicyUnavailableError
 		if errors.As(err, &policyUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
+		var accountUnavailable *retrySocialAccountUnavailableError
+		if errors.As(err, &accountUnavailable) {
+			writeRetrySocialAccountUnavailable(w)
 			return
 		}
 		if isQueueConflict(err) {

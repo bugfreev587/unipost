@@ -1702,6 +1702,7 @@ export function CreatePostDrawer({
   const [aiIncludeCTA, setAIIncludeCTA] = useState(true);
   const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapabilitiesEnvelope["platforms"] | null>(null);
   const [publishingRestrictions, setPublishingRestrictions] = useState<WorkspacePublishingRestriction[]>([]);
+  const [restrictionsLoaded, setRestrictionsLoaded] = useState(false);
   // Per-account runtime blockers reported by platform-specific panels
   // (e.g., TikTok creator_info failed, video too long for the creator).
   // These aren't derivable from form state, so we collect them here and
@@ -1785,6 +1786,7 @@ export function CreatePostDrawer({
       appliedPrefillRef.current = false;
       return;
     }
+    if (!restrictionsLoaded) return;
     if (appliedPrefillRef.current) return;
     if (initialCaption) {
       form.setMainContent(initialCaption);
@@ -1800,7 +1802,7 @@ export function CreatePostDrawer({
     }
     appliedPrefillRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialCaption, preselectAllAccounts, preselectedAccountIds, profileAccounts, publishingRestrictions]);
+  }, [open, restrictionsLoaded, initialCaption, preselectAllAccounts, preselectedAccountIds, profileAccounts, publishingRestrictions]);
 
   const refreshPublishingRestrictions = useCallback(async () => {
     try {
@@ -1810,11 +1812,19 @@ export function CreatePostDrawer({
       setPublishingRestrictions(response.data.restrictions || []);
     } catch (error) {
       console.error("Failed to refresh publishing restrictions:", error);
+    } finally {
+      // A failed advisory projection must not block the drawer forever. The
+      // submit path remains authoritative and renders the structured error.
+      setRestrictionsLoaded(true);
     }
   }, [getToken]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setRestrictionsLoaded(false);
+      return;
+    }
+    setRestrictionsLoaded(false);
     void refreshPublishingRestrictions();
     const handleFocus = () => void refreshPublishingRestrictions();
     window.addEventListener("focus", handleFocus);
@@ -1824,12 +1834,12 @@ export function CreatePostDrawer({
   const selectedAccountIdsForRestriction = form.selectedAccountIds;
   const replaceSelectedAccountsForRestriction = form.replaceSelectedAccounts;
   useEffect(() => {
-    if (!open || publishingRestrictions.length === 0) return;
+    if (!open || !restrictionsLoaded || publishingRestrictions.length === 0) return;
     const allowed = filterAllowedAccountIds(allLoadedAccounts, selectedAccountIdsForRestriction, publishingRestrictions);
     if (allowed.length !== selectedAccountIdsForRestriction.size) {
       replaceSelectedAccountsForRestriction(allowed);
     }
-  }, [open, publishingRestrictions, allLoadedAccounts, selectedAccountIdsForRestriction, replaceSelectedAccountsForRestriction]);
+  }, [open, restrictionsLoaded, publishingRestrictions, allLoadedAccounts, selectedAccountIdsForRestriction, replaceSelectedAccountsForRestriction]);
 
   // Reset form when drawer closes
   useEffect(() => {

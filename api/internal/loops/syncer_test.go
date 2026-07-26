@@ -983,11 +983,15 @@ type fakeEmailAuditStore struct {
 	lastAttempt   EmailSendAttempt
 	failedReason  string
 	skippedReason string
+	createErr     error
 }
 
 func (f *fakeEmailAuditStore) CreateEmailSendAttempt(_ context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error) {
 	f.created++
 	f.lastAttempt = attempt
+	if f.createErr != nil {
+		return EmailSendAttemptRecord{}, f.createErr
+	}
 	return EmailSendAttemptRecord{ID: "audit_123"}, nil
 }
 

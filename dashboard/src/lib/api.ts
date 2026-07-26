@@ -1845,9 +1845,9 @@ export interface AdminPublishingRestriction {
   updated_by_user_id?: string;
   affected_workspace_count?: number;
   affected_account_count?: number;
-  retained_object_count?: number;
-  retained_bytes?: number;
-  projected_60_day_storage_cost_usd?: number;
+  current_cycle_retained_object_count?: number;
+  current_cycle_retained_bytes?: number;
+  current_cycle_projected_60_day_storage_cost_usd?: number;
   recent_events?: AdminPublishingRestrictionEvent[];
 }
 

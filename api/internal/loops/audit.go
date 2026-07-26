@@ -18,6 +18,10 @@ type EmailAudit struct {
 	TriggerSource      string
 	TriggerReferenceID string
 	Subject            string
+	// AttemptIdempotencyKey identifies one local network attempt in the
+	// audit ledger. It is intentionally separate from TransactionalEmail's
+	// stable provider idempotency key.
+	AttemptIdempotencyKey string
 }
 
 type EmailSendAttempt struct {
@@ -81,27 +85,55 @@ func (c *AuditedClient) SendTransactional(ctx context.Context, email Transaction
 		return c.client.SendTransactional(ctx, email)
 	}
 
-	record, recordOK := c.createAttempt(ctx, email)
-	err := c.client.SendTransactional(ctx, email)
-	if !recordOK {
-		return err
+	_, err := c.SendTransactionalWithAttempt(ctx, email, nil)
+	return err
+}
+
+// SendTransactionalWithAttempt is the strict campaign send path. It creates
+// a durable audit row, lets the caller link that row to its atomic local send
+// claim, and only then permits the provider request. A failure in either
+// local gate prevents the network call.
+func (c *AuditedClient) SendTransactionalWithAttempt(
+	ctx context.Context,
+	email TransactionalEmail,
+	beforeSend func(context.Context, string) error,
+) (EmailSendAttemptRecord, error) {
+	if c == nil || c.client == nil || c.store == nil || strings.TrimSpace(email.Audit.EventKey) == "" {
+		return EmailSendAttemptRecord{}, errors.New("loops: strict audited client is not configured")
 	}
+	record, err := c.createAttempt(ctx, email)
+	if err != nil {
+		return EmailSendAttemptRecord{}, err
+	}
+	if beforeSend != nil {
+		if linkErr := beforeSend(ctx, record.ID); linkErr != nil {
+			if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, linkErr.Error()); auditErr != nil {
+				slog.Warn("loops: email audit linkage failure update failed", "attempt_id", record.ID, "error", auditErr)
+			}
+			return record, linkErr
+		}
+	}
+	err = c.client.SendTransactional(ctx, email)
 	if err != nil {
 		if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, err.Error()); auditErr != nil {
 			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
 		}
-		return err
+		return record, err
 	}
 	if auditErr := c.store.MarkEmailSendAttemptSent(ctx, record.ID); auditErr != nil {
 		slog.Warn("loops: email audit sent update failed", "attempt_id", record.ID, "error", auditErr)
 	}
-	return nil
+	return record, nil
 }
 
-func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEmail) (EmailSendAttemptRecord, bool) {
+func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEmail) (EmailSendAttemptRecord, error) {
 	provider := strings.TrimSpace(email.Audit.Provider)
 	if provider == "" {
 		provider = "loops"
+	}
+	auditIdempotencyKey := strings.TrimSpace(email.Audit.AttemptIdempotencyKey)
+	if auditIdempotencyKey == "" {
+		auditIdempotencyKey = email.IdempotencyKey
 	}
 	record, err := c.store.CreateEmailSendAttempt(ctx, EmailSendAttempt{
 		EventKey:           email.Audit.EventKey,
@@ -110,7 +142,7 @@ func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEm
 		WorkspaceID:        email.Audit.WorkspaceID,
 		Provider:           provider,
 		ProviderTemplateID: email.TransactionalID,
-		IdempotencyKey:     email.IdempotencyKey,
+		IdempotencyKey:     auditIdempotencyKey,
 		DeliveryClass:      email.Audit.DeliveryClass,
 		SubjectSnapshot:    email.Audit.Subject,
 		DataVariables:      email.DataVariables,
@@ -119,9 +151,9 @@ func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEm
 	})
 	if err != nil {
 		slog.Warn("loops: email audit create failed", "event_key", email.Audit.EventKey, "email", email.Email, "error", err)
-		return EmailSendAttemptRecord{}, false
+		return EmailSendAttemptRecord{}, err
 	}
-	return record, true
+	return record, nil
 }
 
 func lifecycleTransactionalAudit(event LifecycleEvent) EmailAudit {

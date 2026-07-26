@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -25,11 +26,14 @@ type PublishingRestrictionEmailWork struct {
 	IdempotencyKey          string
 	SubjectSnapshot         string
 	BodySnapshot            string
+	AttemptCount            int
+	AttemptGeneration       int
 }
 
 type PublishingRestrictionEmailStore interface {
 	ClaimPublishingRestrictionEmailRecipients(context.Context, int) ([]PublishingRestrictionEmailWork, error)
 	PublishingRestrictionEmailRecipientEligible(context.Context, PublishingRestrictionEmailWork) (bool, error)
+	LinkPublishingRestrictionEmailAttempt(context.Context, string, string, int, int) error
 	MarkPublishingRestrictionEmailRecipientSent(context.Context, string) error
 	MarkPublishingRestrictionEmailRecipientFailed(context.Context, string, string) error
 	MarkPublishingRestrictionEmailRecipientSkipped(context.Context, string, string) error
@@ -37,7 +41,11 @@ type PublishingRestrictionEmailStore interface {
 }
 
 type transactionalEmailSender interface {
-	SendTransactional(context.Context, loops.TransactionalEmail) error
+	SendTransactionalWithAttempt(
+		context.Context,
+		loops.TransactionalEmail,
+		func(context.Context, string) error,
+	) (loops.EmailSendAttemptRecord, error)
 }
 
 type PublishingRestrictionEmailWorker struct {
@@ -116,21 +124,35 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 		if len(recipient.RepresentedWorkspaceIDs) > 0 {
 			workspaceID = recipient.RepresentedWorkspaceIDs[0]
 		}
-		err := w.sender.SendTransactional(ctx, loops.TransactionalEmail{
+		renderedBody := renderPublishingRestrictionEmailBody(recipient.BodySnapshot, firstName)
+		_, err := w.sender.SendTransactionalWithAttempt(ctx, loops.TransactionalEmail{
 			TransactionalID: templateID,
 			Email:           recipient.RecipientEmail,
 			UserID:          recipient.CanonicalUserID,
 			IdempotencyKey:  recipient.IdempotencyKey,
 			DataVariables: map[string]any{
-				"first_name": firstName,
-				"subject":    recipient.SubjectSnapshot,
-				"body":       recipient.BodySnapshot,
+				"subject": recipient.SubjectSnapshot,
+				"body":    renderedBody,
 			},
 			Audit: loops.EmailAudit{
 				EventKey: eventKey, WorkspaceID: workspaceID, Provider: "loops",
 				DeliveryClass: "service_alert", TriggerSource: "admin_confirmed_campaign",
 				TriggerReferenceID: recipient.RecipientID, Subject: recipient.SubjectSnapshot,
+				AttemptIdempotencyKey: fmt.Sprintf(
+					"%s:g%d:a%d",
+					recipient.IdempotencyKey,
+					recipient.AttemptGeneration,
+					recipient.AttemptCount,
+				),
 			},
+		}, func(ctx context.Context, attemptID string) error {
+			return w.store.LinkPublishingRestrictionEmailAttempt(
+				ctx,
+				recipient.RecipientID,
+				attemptID,
+				recipient.AttemptCount,
+				recipient.AttemptGeneration,
+			)
 		})
 		if err != nil {
 			_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, err.Error())
@@ -140,4 +162,8 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 		_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
 	}
 	return nil
+}
+
+func renderPublishingRestrictionEmailBody(body, firstName string) string {
+	return strings.ReplaceAll(body, "{{first_name}}", firstName)
 }

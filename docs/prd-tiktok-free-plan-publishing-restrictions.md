@@ -593,7 +593,7 @@ Body:
 >
 > The UniPost Team
 
-`first_name` is snapshotted from current user data; if absent, render `there`. Subject and body snapshots are immutable after confirmation.
+`first_name` is snapshotted from current user data; if absent, render `there`. Subject and body snapshots are immutable after confirmation. Before the network call, the backend resolves `{{first_name}}` into that immutable body; the Loops templates render only the supplied `subject` and `body` variables and do not perform nested placeholder evaluation.
 
 ## 14. Audit, concurrency, security, and observability
 
@@ -614,8 +614,9 @@ Body:
 
 - Unique cycle/type prevents duplicate campaigns.
 - User/email uniqueness prevents duplicate snapshots.
-- Row claims/leases prevent parallel workers from sending one recipient concurrently.
-- Stable provider idempotency prevents duplicate accepted sends after uncertain failures.
+- A local atomic claim plus pre-send `email_send_attempts` linkage prevents parallel workers from sending one recipient concurrently; every actual network attempt has a distinct audit row.
+- The provider idempotency key remains stable per cycle/type/user as a second layer, but local safety does not depend on Loops honoring that header.
+- An expired `sending` lease has an unknown outcome and becomes terminal without automatic resend. Explicit provider failures retry at most three times in one attempt generation; the separate Admin Retry Failed action starts a fresh, independently bounded generation.
 
 ### 14.4 Security and privacy
 
@@ -631,7 +632,8 @@ Record:
 - admission, scheduler, worker, and manual-Retry policy blocks;
 - policy evaluator errors;
 - platform, plan, cycle/version, post/result/job IDs, and failure stage;
-- campaign sent, failed, skipped, and retry counts.
+- campaign sent, failed, skipped, and retry counts;
+- current-cycle retained object/byte/projected 60-day cost metrics (the Admin label and API field names explicitly say current cycle).
 
 ## 15. Testing requirements
 
@@ -696,7 +698,9 @@ Record:
 - Progress survives restart.
 - Retry-failed touches failed recipients only.
 - Exact subjects, bodies, and first-name fallback are covered.
-- Every attempted send uses `AuditedClient`/`email_send_attempts`; new campaign data is limited to snapshot, confirmation, progress, cycle dedupe, and failed-recipient retry.
+- Every attempted send uses `AuditedClient`/`email_send_attempts`, with the audit row linked before the network call; stale unknown outcomes are never automatically resent and explicit failures have a finite retry cap.
+- Loops contract tests prove the backend supplies final rendered `subject`/`body` values and no nested `{{first_name}}`.
+- New campaign data is limited to snapshot, confirmation, progress, cycle dedupe, bounded failed-recipient retry, and audit linkage.
 - Recovery tests assert the intentional exclusion of eligible users who were not successfully sent the cycle's restriction notice.
 
 ### 15.6 Frontend
@@ -732,11 +736,13 @@ Both milestones remain disabled and side-effect-free at deployment. Operational 
 
 1. Ship additive schema/code with TikTok row disabled.
 2. Deployment sends no email and changes no TikTok publishing behavior.
-3. Verify disabled Admin state, affected counts, empty customer projection, and unchanged publishing.
-4. A user explicitly enables the restriction after reading confirmation.
-5. A user separately previews and irreversibly confirms each email campaign.
-6. Disabling restores eligibility for new posts and customer Retry but never replays old results.
-7. Production release, deployment, or promotion occurs only when separately requested and after repository branch/CI/Preview/deployment/browser gates.
+3. Configure and verify the three campaign environment prerequisites (`PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET`, `LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID`, and `LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID`) and the two Loops transactional templates. Missing values produce startup warnings and keep the corresponding manual action unavailable; they never enable or send anything.
+4. Verify both Loops templates render the supplied `subject` and already personalized `body` variables exactly.
+5. Verify disabled Admin state, affected counts, empty customer projection, and unchanged publishing.
+6. A user explicitly enables the restriction after reading confirmation.
+7. A user separately previews and irreversibly confirms each email campaign.
+8. Disabling restores eligibility for new posts and customer Retry but never replays old results.
+9. Production release, deployment, or promotion occurs only when separately requested and after repository branch/CI/Preview/deployment/browser gates.
 
 ## 17. Acceptance criteria
 

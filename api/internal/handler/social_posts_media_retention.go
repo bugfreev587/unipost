@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
@@ -15,6 +16,12 @@ import (
 )
 
 var errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
+
+func shouldLogMediaPostUsageUpsertError(err error) bool {
+	// Cleanup may legitimately win the usage-version/status race. In that
+	// case the query returns no row and the object remains safely unavailable.
+	return err != nil && !errors.Is(err, pgx.ErrNoRows)
+}
 
 func mediaIDsForRetention(post db.SocialPost) []string {
 	ids, _ := decodeMediaIDsForRetention(post)
@@ -148,7 +155,7 @@ func (h *SocialPostHandler) syncPostMediaRetentionAt(
 			PostStatus:      postStatus,
 			CleanupAfterAt:  cleanupAfter,
 			RetentionReason: retentionReason,
-		}); err != nil {
+		}); shouldLogMediaPostUsageUpsertError(err) {
 			slog.Warn("media retention: usage upsert failed",
 				"post_id", post.ID,
 				"media_id", mediaID,

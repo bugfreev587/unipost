@@ -48,3 +48,22 @@ func TestPublishingRestrictionCycleCorrelationUsesFollowUpMigration(t *testing.T
 		}
 	}
 }
+
+func TestPublishingRestrictionSendGateMigrationRepairsActiveRetentionCompatibility(t *testing.T) {
+	body, err := os.ReadFile("migrations/124_publishing_restriction_email_send_gate.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(body)
+	for _, fragment := range []string{
+		"ADD COLUMN retryable",
+		"ADD COLUMN attempt_generation",
+		"SET retention_reason = 'active_post'",
+		"WHERE cleanup_after_at IS NULL",
+		"AND retention_reason = 'plan_status'",
+	} {
+		if !strings.Contains(sql, fragment) {
+			t.Errorf("compatibility migration missing %q", fragment)
+		}
+	}
+}

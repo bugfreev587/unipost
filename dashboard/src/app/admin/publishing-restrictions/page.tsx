@@ -337,9 +337,9 @@ export default function AdminPublishingRestrictionsPage() {
                 <div><dt>Restricted plans</dt><dd>{restriction.restricted_plan_ids.join(", ") || "None"}</dd></div>
                 <div><dt>Affected workspaces</dt><dd>{(restriction.affected_workspace_count ?? 0).toLocaleString()}</dd></div>
                 <div><dt>Active accounts</dt><dd>{(restriction.affected_account_count ?? 0).toLocaleString()}</dd></div>
-				<div><dt>Retained objects</dt><dd>{(restriction.retained_object_count ?? 0).toLocaleString()}</dd></div>
-				<div><dt>Retained bytes</dt><dd>{(restriction.retained_bytes ?? 0).toLocaleString()}</dd></div>
-				<div><dt>Projected 60-day storage</dt><dd>${(restriction.projected_60_day_storage_cost_usd ?? 0).toFixed(4)}</dd></div>
+                <div><dt>Current-cycle retained objects</dt><dd>{(restriction.current_cycle_retained_object_count ?? 0).toLocaleString()}</dd></div>
+                <div><dt>Current-cycle retained bytes</dt><dd>{(restriction.current_cycle_retained_bytes ?? 0).toLocaleString()}</dd></div>
+                <div><dt>Current-cycle projected 60-day storage</dt><dd>${(restriction.current_cycle_projected_60_day_storage_cost_usd ?? 0).toFixed(4)}</dd></div>
                 <div><dt>Version</dt><dd>{restriction.version}</dd></div>
                 <div><dt>Cycle</dt><dd>{restriction.cycle_id || "No activation yet"}</dd></div>
                 <div><dt>Latest actor</dt><dd>{restriction.updated_by_user_id || "System"}</dd></div>

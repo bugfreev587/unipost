@@ -14,9 +14,9 @@ func TestAdminRestrictionQueryIncludesCycleRetentionMetrics(t *testing.T) {
 	text := string(source)
 	for _, want := range []string{
 		"failure.restriction_cycle_id",
-		"retained_object_count",
-		"retained_bytes",
-		"projected_60_day_storage_cost_usd",
+		"current_cycle_retained_object_count",
+		"current_cycle_retained_bytes",
+		"current_cycle_projected_60_day_storage_cost_usd",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("admin retention metrics missing %q", want)

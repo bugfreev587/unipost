@@ -75,8 +75,8 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 			WHERE failure.restriction_cycle_id IS NOT NULL
 		), retention_metrics AS (
 			SELECT cycle_id,
-			       COUNT(*)::BIGINT AS retained_object_count,
-			       COALESCE(SUM(size_bytes),0)::BIGINT AS retained_bytes
+			       COUNT(*)::BIGINT AS current_cycle_retained_object_count,
+			       COALESCE(SUM(size_bytes),0)::BIGINT AS current_cycle_retained_bytes
 			FROM retained_objects
 			GROUP BY cycle_id
 		)
@@ -87,9 +87,9 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 		       COUNT(sa.id) FILTER (
 		         WHERE COALESCE(cp.plan_id, 'free') = ANY(r.restricted_plan_ids)
 		       )::INTEGER AS affected_accounts,
-		       COALESCE(MAX(retention_metrics.retained_object_count),0)::BIGINT AS retained_object_count,
-		       COALESCE(MAX(retention_metrics.retained_bytes),0)::BIGINT AS retained_bytes,
-		       ROUND((COALESCE(MAX(retention_metrics.retained_bytes),0)::NUMERIC / 1000000000) * 0.015 * 2, 6)::DOUBLE PRECISION AS projected_60_day_storage_cost_usd
+		       COALESCE(MAX(retention_metrics.current_cycle_retained_object_count),0)::BIGINT AS current_cycle_retained_object_count,
+		       COALESCE(MAX(retention_metrics.current_cycle_retained_bytes),0)::BIGINT AS current_cycle_retained_bytes,
+		       ROUND((COALESCE(MAX(retention_metrics.current_cycle_retained_bytes),0)::NUMERIC / 1000000000) * 0.015 * 2, 6)::DOUBLE PRECISION AS current_cycle_projected_60_day_storage_cost_usd
 		FROM platform_publishing_restrictions r
 		LEFT JOIN social_accounts sa
 		  ON sa.platform = r.platform
@@ -113,7 +113,8 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 			&cycleID, &restriction.Version, &restriction.EnabledAt, &restriction.DisabledAt,
 			&actorID, &restriction.CreatedAt, &restriction.UpdatedAt,
 			&restriction.AffectedWorkspaces, &restriction.AffectedAccounts,
-			&restriction.RetainedObjectCount, &restriction.RetainedBytes, &restriction.Projected60DayStorageCostUSD,
+			&restriction.CurrentCycleRetainedObjectCount, &restriction.CurrentCycleRetainedBytes,
+			&restriction.CurrentCycleProjected60DayStorageCostUSD,
 		)
 		if err != nil {
 			return nil, err
@@ -469,7 +470,15 @@ func (s *PostgresStore) RetryFailedCampaign(ctx context.Context, platform, campa
 	defer tx.Rollback(ctx)
 	command, err := tx.Exec(ctx, `
 		UPDATE platform_publishing_restriction_email_recipients recipient
-		SET status='pending', next_attempt_at=NOW(), claimed_at=NULL, last_error=NULL, updated_at=NOW()
+		SET status='pending',
+		    attempt_count=0,
+		    attempt_generation=attempt_generation+1,
+		    retryable=TRUE,
+		    next_attempt_at=NOW(),
+		    claimed_at=NULL,
+		    last_error=NULL,
+		    email_send_attempt_id=NULL,
+		    updated_at=NOW()
 		FROM platform_publishing_restriction_email_campaigns campaign
 		JOIN platform_publishing_restrictions restriction ON restriction.id=campaign.restriction_id
 		WHERE recipient.campaign_id=campaign.id AND campaign.id=$1 AND restriction.platform=$2

@@ -35,8 +35,14 @@ type retryPublishingRestrictionError struct {
 
 type retryPolicyUnavailableError struct{ err error }
 
+type retrySocialAccountUnavailableError struct{ accountID string }
+
 func (e *retryPolicyUnavailableError) Error() string { return e.err.Error() }
 func (e *retryPolicyUnavailableError) Unwrap() error { return e.err }
+
+func (e *retrySocialAccountUnavailableError) Error() string {
+	return "the connected account for this result is no longer available"
+}
 
 func (e *retryPublishingRestrictionError) Error() string {
 	return publishingrestrictions.UserMessage
@@ -111,6 +117,11 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 	}
 	decision, policyErr := h.evaluateRetryPublishingRestriction(r.Context(), workspaceID, existing)
 	if policyErr != nil {
+		var accountUnavailable *retrySocialAccountUnavailableError
+		if errors.As(policyErr, &accountUnavailable) {
+			writeRetrySocialAccountUnavailable(w)
+			return
+		}
 		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
 		return
 	}
@@ -128,6 +139,11 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 		var policyUnavailable *retryPolicyUnavailableError
 		if errors.As(err, &policyUnavailable) {
 			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
+		var accountUnavailable *retrySocialAccountUnavailableError
+		if errors.As(err, &accountUnavailable) {
+			writeRetrySocialAccountUnavailable(w)
 			return
 		}
 		if isQueueConflict(err) {
@@ -159,14 +175,29 @@ func (h *SocialPostHandler) evaluateRetryPublishingRestriction(
 	workspaceID string,
 	result db.SocialPostResult,
 ) (publishingrestrictions.Decision, error) {
-	if h == nil || h.publishingRestrictions == nil {
+	if h == nil {
 		return publishingrestrictions.Decision{}, nil
 	}
 	account, err := h.queries.GetSocialAccount(ctx, result.SocialAccountID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return publishingrestrictions.Decision{}, &retrySocialAccountUnavailableError{accountID: result.SocialAccountID}
+		}
 		return publishingrestrictions.Decision{}, err
 	}
+	if h.publishingRestrictions == nil {
+		return publishingrestrictions.Decision{}, nil
+	}
 	return h.publishingRestrictions.Evaluate(ctx, workspaceID, account.Platform)
+}
+
+func writeRetrySocialAccountUnavailable(w http.ResponseWriter) {
+	writeError(
+		w,
+		http.StatusConflict,
+		"SOCIAL_ACCOUNT_NOT_AVAILABLE",
+		"The connected account for this result is no longer available. Reconnect or select an account before publishing again.",
+	)
 }
 
 // refreshParentPostStatus walks the full set of results for a post

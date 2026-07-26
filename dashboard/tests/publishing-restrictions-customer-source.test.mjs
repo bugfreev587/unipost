@@ -18,6 +18,9 @@ test("shared Composer refreshes restrictions on open and focus", () => {
   assert.match(drawer, /getPublishingRestrictions/);
   assert.match(drawer, /window\.addEventListener\("focus"/);
   assert.match(drawer, /window\.removeEventListener\("focus"/);
+  assert.match(drawer, /const \[restrictionsLoaded, setRestrictionsLoaded\] = useState\(false\)/);
+  assert.match(drawer, /if \(!restrictionsLoaded\) return/);
+  assert.match(drawer, /finally\s*\{[\s\S]*setRestrictionsLoaded\(true\)/);
   assert.match(drawer, /filterAllowedAccountIds/);
   assert.match(drawer, /PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE/);
   assert.match(drawer, /isPlanPlatformPublishingRestrictedError/);
@@ -30,6 +33,10 @@ test("Composer disables restricted accounts with an accessible persistent notice
   assert.match(grid, /disabled=\{disabled\}/);
   assert.match(grid, /aria-describedby/);
   assert.match(grid, /restrictionNoticeId/);
+
+  const unusedLargeCard = read("src/components/posts/create-post/account-card.tsx");
+  assert.doesNotMatch(unusedLargeCard, /describedBy/);
+  assert.doesNotMatch(unusedLargeCard, /disabled\?:/);
 });
 
 test("shared Posts and Calendar result cards show restriction deadline and Retry states", () => {

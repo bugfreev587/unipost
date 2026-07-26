@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
@@ -16,6 +18,7 @@ import (
 type fakePostRestrictionEvaluator struct {
 	decisions map[string]publishingrestrictions.Decision
 	err       error
+	errOnCall int
 	calls     []string
 }
 
@@ -53,9 +56,32 @@ func TestBothRetryHandlersMapPolicyReadFailuresToRetryableServiceUnavailable(t *
 	}
 }
 
+func TestRetryQueueConflictRecognizesConcurrentActiveJobUniqueViolation(t *testing.T) {
+	activeRetry := &pgconn.PgError{
+		Code:           "23505",
+		ConstraintName: "post_delivery_jobs_one_active_per_result_idx",
+	}
+	if !isQueueConflict(activeRetry) {
+		t.Fatal("concurrent active retry must map to QUEUE_JOB_ACTIVE")
+	}
+	if isQueueConflict(&pgconn.PgError{Code: "23505", ConstraintName: "unrelated_unique_idx"}) {
+		t.Fatal("unrelated unique violations must not map to QUEUE_JOB_ACTIVE")
+	}
+}
+
+func TestMissingRetryAccountUsesStableActionError(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeRetrySocialAccountUnavailable(rec)
+	if rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), `"code":"SOCIAL_ACCOUNT_NOT_AVAILABLE"`) ||
+		strings.Contains(rec.Body.String(), "POLICY_UNAVAILABLE") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func (f *fakePostRestrictionEvaluator) Evaluate(_ context.Context, _ string, platformName string) (publishingrestrictions.Decision, error) {
 	f.calls = append(f.calls, platformName)
-	if f.err != nil {
+	if f.err != nil && (f.errOnCall == 0 || len(f.calls) == f.errOnCall) {
 		return publishingrestrictions.Decision{}, f.err
 	}
 	return f.decisions[platformName], nil
@@ -88,6 +114,53 @@ func TestEvaluatePublishingRestrictionsPropagatesReadFailure(t *testing.T) {
 	_, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", []platform.PlatformPostInput{{AccountID: "tk_1"}}, map[string]platform.ValidateAccount{"tk_1": {Platform: "tiktok"}})
 	if err == nil {
 		t.Fatal("expected policy read error")
+	}
+}
+
+func TestQueuedPolicyPreflightPrecedesEveryResultAndJobWrite(t *testing.T) {
+	source, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) enqueueParsedPostDeliveries")
+	end := strings.Index(text[start:], "func (h *SocialPostHandler) queueImmediatePost")
+	if start < 0 || end < 0 {
+		t.Fatal("enqueueParsedPostDeliveries boundaries not found")
+	}
+	fn := text[start : start+end]
+	preflight := strings.Index(fn, "evaluateQueuedDeliveryTargets")
+	firstResultWrite := strings.Index(fn, "CreateSocialPostResult")
+	firstJobWrite := strings.Index(fn, "CreatePostDeliveryJob")
+	if preflight < 0 || firstResultWrite < 0 || firstJobWrite < 0 ||
+		preflight > firstResultWrite || preflight > firstJobWrite {
+		t.Fatalf("all target policies must be read before persistence: preflight=%d result=%d job=%d", preflight, firstResultWrite, firstJobWrite)
+	}
+	if strings.Count(fn, "publishingRestrictions.Evaluate") != 0 {
+		t.Fatal("persistence loop must not perform policy reads")
+	}
+}
+
+func TestQueuedPolicyPreflightAbortsWhenLaterTargetReadFails(t *testing.T) {
+	evaluator := &fakePostRestrictionEvaluator{err: errors.New("policy database unavailable"), errOnCall: 2}
+	h := &SocialPostHandler{publishingRestrictions: evaluator}
+	parsed := []platform.PlatformPostInput{{AccountID: "tk_1"}, {AccountID: "ig_1"}}
+	accounts := map[string]db.SocialAccount{
+		"tk_1": {ID: "tk_1", Platform: "tiktok", Status: "active"},
+		"ig_1": {ID: "ig_1", Platform: "instagram", Status: "active"},
+	}
+	evaluations, err := h.evaluateQueuedDeliveryTargets(
+		context.Background(),
+		"ws_1",
+		parsed,
+		accounts,
+		map[string]platform.ValidateAccount{},
+	)
+	if err == nil || evaluations != nil {
+		t.Fatalf("later policy read must abort the whole preflight: evaluations=%+v err=%v", evaluations, err)
+	}
+	if strings.Join(evaluator.calls, ",") != "tiktok,instagram" {
+		t.Fatalf("policy calls=%v", evaluator.calls)
 	}
 }
 

@@ -210,6 +210,7 @@ func main() {
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
+	warnMissingPublishingRestrictionCampaignConfig()
 	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore).
 		SetCampaignPreviewSecret(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
 	publishingRestrictionHandler := handler.NewPublishingRestrictionsHandler(publishingRestrictionService)
@@ -1328,6 +1329,19 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func warnMissingPublishingRestrictionCampaignConfig() {
+	for _, key := range []string{
+		"PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET",
+		"LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID",
+		"LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID",
+	} {
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			slog.Warn("publishing restriction campaign action unavailable: required configuration is missing",
+				"missing_env", key)
+		}
+	}
 }
 
 func corsAllowedOrigins() []string {
