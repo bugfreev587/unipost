@@ -268,11 +268,13 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 
 	resultGuard := strings.Index(fn, `if res.Status == "published"`)
 	platformInput := strings.Index(fn, "platformPostInputAtIndex")
+	policyRecheck := strings.Index(fn, "evaluateDeliveryPublishingRestriction")
 	markStarted := strings.Index(fn, "MarkPostDeliveryJobPlatformStarted")
 	dispatch := strings.Index(fn, "h.publishOneContext(")
 	for name, idx := range map[string]int{
 		"result duplicate guard":     resultGuard,
 		"platform input preparation": platformInput,
+		"publishing policy recheck":  policyRecheck,
 		"platform started marker":    markStarted,
 		"publishOneContext dispatch": dispatch,
 	} {
@@ -285,6 +287,9 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 	}
 	if markStarted < platformInput {
 		t.Fatal("platform_started_at must not be written before platform input preparation")
+	}
+	if policyRecheck < platformInput || policyRecheck > markStarted {
+		t.Fatal("publishing policy must be rechecked after input preparation and before platform_started_at")
 	}
 	if markStarted > dispatch {
 		t.Fatal("platform_started_at must be written before publishOneContext dispatch")

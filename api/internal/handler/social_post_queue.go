@@ -665,6 +665,14 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		}
 	}
 
+	policyDecision, err := h.evaluateDeliveryPublishingRestriction(ctx, post.WorkspaceID, job.Platform, accountMap[pp.AccountID])
+	if err != nil {
+		return err
+	}
+	if policyDecision.Restricted {
+		return h.finalizeRestrictedDeliveryJob(ctx, job, res, post, policyDecision)
+	}
+
 	// Idempotent-publish wiring (IG/TikTok). Let the adapter resume from a
 	// token a prior attempt persisted, and persist the token this attempt
 	// obtains, so a crash between "media uploaded" and "external_id recorded"
@@ -798,6 +806,78 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 			"status":    updated.Status,
 		},
 	}))
+	return nil
+}
+
+func (h *SocialPostHandler) evaluateDeliveryPublishingRestriction(
+	ctx context.Context,
+	workspaceID string,
+	jobPlatform string,
+	account platform.ValidateAccount,
+) (publishingrestrictions.Decision, error) {
+	if h == nil || h.publishingRestrictions == nil {
+		return publishingrestrictions.Decision{}, nil
+	}
+	platformName := strings.ToLower(strings.TrimSpace(account.Platform))
+	if platformName == "" {
+		platformName = strings.ToLower(strings.TrimSpace(jobPlatform))
+	}
+	return h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
+}
+
+func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
+	ctx context.Context,
+	job db.PostDeliveryJob,
+	res db.SocialPostResult,
+	post db.SocialPost,
+	decision publishingrestrictions.Decision,
+) error {
+	_, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+		ID:           res.ID,
+		Status:       "failed",
+		ExternalID:   pgtype.Text{},
+		ErrorMessage: pgtype.Text{String: publishingrestrictions.UserMessage, Valid: true},
+		PublishedAt:  pgtype.Timestamptz{},
+		Url:          pgtype.Text{},
+		DebugCurl:    pgtype.Text{},
+	})
+	if err != nil {
+		return err
+	}
+	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform)
+	if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+		return err
+	}
+	if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+		job,
+		"dead",
+		pgtype.Text{String: publishingrestrictions.FailureStage, Valid: true},
+		pgtype.Text{String: publishingrestrictions.NormalizedCode, Valid: true},
+		pgtype.Text{},
+		pgtype.Text{String: publishingrestrictions.UserMessage, Valid: true},
+		pgtype.Timestamptz{},
+	)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	h.recordPostFailure(ctx, failure)
+	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
+		WorkspaceID:     post.WorkspaceID,
+		Level:           integrationlogs.LevelWarn,
+		Status:          integrationlogs.StatusError,
+		Action:          integrationlogs.ActionPostPublishPlatformFailed,
+		Message:         "Platform delivery blocked by publishing restriction.",
+		PostID:          post.ID,
+		SocialAccountID: res.SocialAccountID,
+		Platform:        decision.Platform,
+		ErrorCode:       publishingrestrictions.NormalizedCode,
+		Metadata: map[string]any{
+			"job_id":               job.ID,
+			"result_id":            res.ID,
+			"restriction_cycle_id": decision.CycleID,
+		},
+	}))
+	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
+	h.refreshParentPostStatusContext(ctx, post, allResults)
 	return nil
 }
 
