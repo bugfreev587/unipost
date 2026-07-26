@@ -45,6 +45,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
@@ -208,6 +209,9 @@ func main() {
 	featureFlagStore := featureflags.NewPostgresStore(pool)
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
+	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
+	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore)
+	publishingRestrictionHandler := handler.NewPublishingRestrictionsHandler(publishingRestrictionService)
 	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
@@ -950,6 +954,10 @@ func main() {
 			Get("/v1/admin/feature-flags", featureFlagsHandler.ListAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Feature flags are restricted to super admins")).
 			Patch("/v1/admin/feature-flags/{key}", featureFlagsHandler.UpdateAdmin)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Patch("/v1/admin/publishing-restrictions/{platform}", publishingRestrictionHandler.AdminSet)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
 			Get("/v1/admin/changelog-candidates/{id}", changelogAutomationHandler.GetAdminCandidate)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
@@ -1115,6 +1123,7 @@ func main() {
 			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
 
 		// Posts.
+		r.Get("/v1/publishing-restrictions", publishingRestrictionHandler.WorkspaceProjection)
 		r.Get("/v1/posts", socialPostHandler.List)
 		r.Get("/v1/posts/summaries", socialPostHandler.ListSummaries)
 		r.Post("/v1/posts", socialPostHandler.Create)
