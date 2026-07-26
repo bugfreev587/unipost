@@ -2,7 +2,7 @@
 
 ## Goal
 
-Replace the Admin Billing trial grant and revoke browser confirmations with UniPost's existing confirmation modal, and restore Stripe sandbox plan upgrades so a successful staging Checkout is projected onto the workspace subscription without leaving the replaced paid subscription active.
+Replace the Admin Billing trial grant and revoke browser confirmations with UniPost's existing confirmation modal, restore mode-aware Stripe webhook projection, and make paid plan changes update the existing Stripe subscription with correct proration instead of creating a second subscription.
 
 ## Scope
 
@@ -11,9 +11,10 @@ This change covers only:
 - Admin Billing `Grant Trial` confirmation.
 - Admin Billing `Revoke` confirmation.
 - Stripe webhook plan resolution for live and sandbox subscription prices.
-- Paid-plan Checkout handoff from the replaced subscription to the newly paid subscription.
-- Prorated Stripe customer-balance credit for unused time on the replaced subscription.
-- Local, CI, staging deployment, regression, and staging sandbox Checkout verification.
+- Free-to-paid Checkout for initial subscription activation.
+- Paid-to-paid plan changes through a Stripe Customer Portal `subscription_update_confirm` flow.
+- Dedicated, environment-specific plan-change Portal configurations.
+- Local, CI, staging deployment, regression, and staging sandbox plan-change verification.
 
 Pricing and user Settings Billing trial confirmations remain unchanged. Production is not merged; PR #265 remains the user-reviewed staging-to-main promotion PR.
 
@@ -27,9 +28,9 @@ The fix must preserve the stronger subscription-price validation introduced by t
 
 There is a third direct `GetPlanByStripePriceID` call in the legacy helper `resolvePlanIDFromStripeSubscription`. Current staging has no caller for this helper: `handleSubscriptionUpdated` builds a mode-tagged snapshot and calls the shared projector directly. The helper became dead code during the managed-trial projector rewrite. It will be removed so a future caller cannot accidentally reintroduce live-only sandbox reconciliation.
 
-Staging acceptance exposed a second billing defect after the mode-aware resolver was deployed. Stripe Checkout in `subscription` mode always creates a new subscription. A paid Basic workspace therefore received a new Growth subscription while the original Basic subscription remained active. Updating the local row to Growth fixed entitlements but did not complete the Stripe billing handoff and could charge both subscriptions on future renewals.
+Staging acceptance exposed a second billing defect after the mode-aware resolver was deployed. Stripe Checkout in `subscription` mode always creates a new subscription. A paid Basic workspace therefore received a new Growth subscription while the original Basic subscription remained active. Updating the local row to Growth fixed entitlements but left two renewable subscriptions and produced no proration credit.
 
-The paid Checkout path must explicitly identify and retire the subscription it replaces. This is not applicable to Free-to-paid activation because Free workspaces have no paid Stripe subscription to replace.
+The duplicate-subscription state is avoidable. Stripe Customer Portal's `subscription_update_confirm` flow updates one existing subscription, previews the upcoming invoice and proration, and handles payment failures and 3D Secure in Stripe-hosted UI. Ordinary paid plan changes must use that flow. Subscription Checkout remains only for Free workspaces that need their first paid subscription and payment method.
 
 ## Admin Confirmation Dialogs
 
@@ -62,30 +63,38 @@ The method trims the requested price ID, scans the mode's configured plan-to-pri
 4. If no configured mode mapping matches, fall back to `GetPlanByStripePriceID` for legacy live events and historical prices.
 5. Return a hard error if neither source resolves the price.
 
-Checkout subscription binding and the shared subscription projector will use this resolver. This keeps Checkout metadata as a cross-check instead of making it the billing authority. Both ordinary sandbox upgrades and managed-trial sandbox subscriptions use the same projection path.
+Checkout subscription binding and the shared subscription projector will use this resolver. This keeps Checkout metadata as a cross-check instead of making it the billing authority. Free-to-paid Checkout, paid Portal plan changes, and managed-trial subscriptions all reach the same mode-aware subscription projector.
 
 `customer.subscription.updated` already enters the shared projector through `subscriptionWebhookSnapshot(mode.Name, &sub)`, so its sandbox behavior is covered by the same mode-aware resolver. The unused `resolvePlanIDFromStripeSubscription` helper is deleted instead of being expanded with a new mode parameter.
 
-## Paid Checkout Subscription Handoff
+## Paid Plan Change Portal Flow
 
-When an ordinary Checkout is created for a workspace whose local billing row points to an existing paid Stripe subscription, the Checkout Session and its future Subscription metadata include the exact subscription ID and plan being replaced. Free-to-paid Checkout omits these fields. The metadata is a claim to verify, not authority to cancel an arbitrary Stripe object.
+The billing API separates initial purchase from plan change:
 
-On `checkout.session.completed`, after retrieving the new subscription and completing the existing environment, workspace, customer, price, plan, and Checkout metadata checks, the handler:
+- `POST /v1/billing/checkout` accepts only a Free workspace with no active paid Stripe subscription. It creates the first paid subscription through Checkout.
+- `POST /v1/billing/plan-change-session` accepts an owner-authenticated target plan and returns `{ "url": "..." }` for a Stripe Customer Portal Session using `flow_data.type=subscription_update_confirm`.
+- A paid workspace can never fall back from a missing or rejected Portal configuration to Subscription Checkout.
 
-1. Loads the workspace's current local subscription.
-2. Accepts the replacement claim only when the claimed old ID is the local Stripe subscription on the first delivery, or when the local row already points to the verified new subscription on a retry.
-3. Retrieves the claimed old subscription from the same verified Stripe mode.
-4. Requires the old subscription customer to equal the new subscription customer. Its workspace and environment metadata must match when present; legacy empty metadata is accepted only because the exact old subscription ID and customer were already bound in the local billing row.
-5. Projects the verified new subscription onto the workspace before retiring the old subscription. This prevents a concurrently delivered deletion event from downgrading the workspace after the replacement is known.
-6. Immediately cancels the old subscription with Stripe proration and final invoicing enabled so its unused paid time becomes customer-balance credit under Stripe's invoice rules.
-7. Returns HTTP 500 if retrieval or cancellation is indeterminate. Stripe retry resumes the same handoff without creating another Checkout or subscription.
-8. Continues trial supersession, plan-change notifications, and quota reconciliation only through their existing idempotent paths. The validated replaced-plan metadata preserves the original plan-change source on a retry after the local row already points to the new plan.
+Before creating the Portal Session, the API loads the local billing row and retrieves its subscription in the Stripe mode selected for the authenticated workspace owner. It requires one subscription item, matching customer, matching workspace and environment metadata when present, a configured current price, and a configured target price. The Portal flow specifies the exact subscription ID, item ID, and target price. Browser input supplies only the target internal plan ID and never a Stripe object ID.
 
-The cancellation operation is idempotent at the application boundary. A retry that finds the old subscription already canceled treats retirement as complete. It never cancels the verified new subscription, a subscription owned by another customer or workspace, or an ID supplied only by browser input.
+The Portal configuration applies these billing rules:
 
-`customer.subscription.deleted` for the replaced subscription may arrive after the local row points to the new subscription. The deletion handler acknowledges that event as a stale superseded-subscription deletion only when the event is for the same verified environment, workspace, and customer and the local row contains a different non-empty Stripe subscription ID. It must not project the old paid plan, cancel the new subscription, or downgrade the workspace to Free. Deletion of the current local subscription keeps the existing cancellation behavior.
+- Increasing the recurring amount is an immediate upgrade with `proration_behavior=always_invoice`. Stripe applies unused value from the current plan against the new plan's prorated charge on the same plan-change invoice.
+- Decreasing the recurring amount is scheduled for the current period end using the `decreasing_item_amount` condition. The current plan and entitlements remain authoritative until Stripe applies the scheduled change.
+- Price is the only allowed customer-selected update. Quantity and promotion-code changes are disabled.
+- The flow redirects to Settings Billing only after Stripe completes the hosted confirmation. Canceling the flow makes no billing change.
 
-Scheduled or active managed trials do not enter ordinary Checkout. The existing `TRIAL_PLAN_CHANGE_REQUIRED` response routes those users to `/v1/billing/change-plan`, which mutates the current Subscription or Subscription Schedule directly, forfeits the trial, and starts the selected plan's billing immediately. That path remains unchanged and its existing regression coverage must stay green.
+Stripe emits `customer.subscription.updated` for an applied upgrade and for a downgrade when it becomes effective. The existing shared projector remains the only local plan authority; the Portal-return redirect does not optimistically update entitlements. Payment failure or 3D Secure is handled in the Stripe-hosted flow and does not create a second subscription.
+
+Scheduled or active managed trials do not enter the ordinary paid Portal flow. The existing `TRIAL_PLAN_CHANGE_REQUIRED` response routes those users to `/v1/billing/change-plan`, which mutates the current Subscription or Subscription Schedule directly, forfeits the trial, and starts the selected plan's billing immediately. That path remains unchanged and its existing regression coverage must stay green.
+
+## Portal Configuration and Environment Isolation
+
+Live and sandbox currently have only their default Portal configurations; subscription updates are disabled and proration is `none`. The plan-change flow therefore uses dedicated configuration IDs carried by `billing.Mode`: `STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` for live and `STRIPE_SANDBOX_PLAN_CHANGE_PORTAL_CONFIGURATION_ID` for sandbox. The configuration contains only the API, Basic, Growth, and Team product/price pairs for that Stripe mode and uses the billing rules above.
+
+Staging implementation provisions only the sandbox configuration and stores only its ID in the staging environment. No live Stripe configuration is created or changed during staging work. Production configuration is a separate release action that requires production authorization. If the selected mode lacks a plan-change configuration ID, the endpoint fails closed and does not create Checkout.
+
+The duplicate Basic subscription created during staging acceptance is one-time sandbox data cleanup. After the new flow is deployed, the old Basic subscription is canceled with proration and the verified Growth subscription remains active. This cleanup is not part of the runtime production architecture.
 
 ## Failure Handling and Idempotency
 
@@ -93,9 +102,10 @@ Scheduled or active managed trials do not enter ordinary Checkout. The existing 
 - A configured sandbox price cannot be mistaken for the corresponding live price because the verified webhook mode selects the reverse map.
 - Existing environment, workspace, customer, subscription, metadata, period monotonicity, and trial-grant guards remain unchanged.
 - Replayed Checkout and subscription events remain idempotent through the existing projection and lifecycle-event keys.
-- A failed old-subscription cancellation returns HTTP 500 after the new subscription projection; replay retries retirement and cannot create another subscription.
-- A delayed deletion event for the replaced subscription is an acknowledged no-op after the new subscription is locally authoritative.
-- Free-to-paid Checkout never enters subscription replacement or proration logic.
+- Paid workspaces cannot enter Subscription Checkout, including two concurrent paid Checkout attempts.
+- Missing configuration, foreign ownership, multiple subscription items, unknown prices, Stripe retrieval failure, and Portal Session creation failure all fail closed before any plan mutation.
+- Portal completion is projected only from the verified `customer.subscription.updated` webhook; redirect timing cannot grant entitlements.
+- A duplicate or delayed subscription webhook cannot regress the current billing period or duplicate the plan-change lifecycle event.
 - Modal cancellation creates no network request or mutation lock.
 - If the confirmed mutation fails, the existing inline error and refresh-required behavior remains unchanged.
 
@@ -110,14 +120,15 @@ Backend tests cover:
 - `customer.subscription.updated` in sandbox resolves the same price and projects the plan.
 - Unknown mode-specific prices still fail closed.
 - Existing live and managed-trial webhook tests remain green.
-- A paid Basic-to-Growth Checkout projects Growth and requests immediate prorated cancellation of the exact old Basic subscription.
-- Cancellation uses final invoicing plus proration so unused Basic time is credited through Stripe.
-- Cancellation failure returns HTTP 500; replay completes the same handoff without a second plan mutation or duplicate cancellation side effect.
-- A previously canceled old subscription is accepted as an idempotent successful retirement.
-- A delayed `customer.subscription.deleted` event for the old Basic subscription does not downgrade the current Growth subscription.
-- A deletion event for the current Growth subscription still follows the normal cancellation-to-Free path.
-- A foreign customer, workspace, environment, or unbound replacement ID fails closed without cancellation.
-- Free-to-paid Checkout performs zero replacement cancellation calls.
+- Free-to-paid creates Subscription Checkout and does not require a plan-change Portal configuration.
+- Paid Basic-to-Growth creates a `subscription_update_confirm` Portal Session for the exact existing subscription item and sandbox Growth price.
+- Paid plan-change Session creation performs zero Checkout Session calls.
+- Paid Checkout is rejected before Stripe mutation, so concurrent attempts cannot create parallel subscriptions.
+- Missing Portal configuration, multiple items, foreign customer, workspace, or environment, and unknown current or target prices fail closed.
+- Portal Session parameters use redirect-after-completion and never accept Stripe IDs from the request body.
+- Sandbox `customer.subscription.updated` projects the upgraded Growth price without changing the subscription ID.
+- Replayed and out-of-order subscription events preserve period monotonicity and lifecycle idempotency.
+- Existing managed-trial `/change-plan` tests remain green.
 
 Dashboard contract tests cover:
 
@@ -125,6 +136,9 @@ Dashboard contract tests cover:
 - The `GrantTrialForm` implementation no longer calls `window.confirm` or bare `confirm` for grant or revoke.
 - Grant uses the default modal treatment and Revoke uses the danger treatment.
 - Confirmation text retains plan, duration, timing, and activation consequences.
+- Settings Billing sends Free workspaces to Checkout, ordinary paid workspaces to `/v1/billing/plan-change-session`, and scheduled or active managed trials to the existing `/v1/billing/change-plan` action.
+- Pricing-page redirects reach the same Settings Billing dispatcher rather than calling a second billing implementation.
+- Portal success and cancellation return to Settings Billing without optimistic plan mutation.
 
 The source assertion is scoped between `GrantTrialForm` and `PlanFlipMenu`. The separate Admin plan-flip QA control intentionally retains its existing browser confirmation because it was explicitly excluded from this change.
 
@@ -138,10 +152,11 @@ After merge, all staging Railway and Vercel deployments must succeed for the exa
 
 - Grant Trial opens the UniPost modal and Cancel produces no mutation.
 - Revoke opens the UniPost danger modal and Cancel produces no mutation.
-- The existing staging admin account completes a Basic-to-Growth Stripe sandbox Checkout.
-- Returning to Settings Billing shows Growth after webhook reconciliation.
-- Stripe shows the new Growth subscription as active and the replaced Basic subscription as canceled; no second active paid subscription remains.
-- The prorated unused Basic amount is represented by Stripe's final invoice/customer-balance credit.
+- The one-time duplicate Basic sandbox subscription is canceled with proration, leaving the verified current subscription as the only active paid subscription.
+- The existing staging admin account completes an immediate paid upgrade through Stripe's hosted update-confirmation flow. Basic-to-Growth is preferred; if the verified current plan is already Growth, Growth-to-Team is used.
+- The hosted page displays the prorated invoice impact and completes without creating a second subscription.
+- Returning to Settings Billing shows the webhook-projected target plan and the same Stripe subscription ID.
+- Stripe shows exactly one active paid subscription for the customer.
 - Dashboard staging regression passes.
 - PR #265 points to the new validated staging head and remains open for user review.
 
