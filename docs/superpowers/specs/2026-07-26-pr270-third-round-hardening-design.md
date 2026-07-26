@@ -10,6 +10,8 @@ This work remains on the conversation-owned branch and worktree. It does not mer
 
 The exact PR 270 head passed its existing local and remote checks, but the independent full-diff review found one Critical migration race and six Important correctness or coverage gaps. Therefore the existing green checks do not authorize a staging merge. The branch remains blocked until the new behavior is implemented, verified on a replacement SHA, independently reviewed, and accepted by every required remote check.
 
+Migration 125 is the corrective data migration that changes every existing publishing-restriction email recipient with `status='failed'` to `retryable=FALSE`, preventing migration 124's `DEFAULT TRUE` from reactivating historical failures.
+
 ## Options considered
 
 ### Option A: unify the migration lock and fix all findings in the stacked hardening branch
@@ -30,18 +32,18 @@ Stop old API and worker instances before backup and migration. This can avoid th
 
 ### 1. Share Goose's migration lock across old and new binaries
 
-The current backup gate takes a UniPost-specific advisory lock, while legacy startup binaries call `RunMigrations`, which takes Goose's different session lock. Those two leaders do not exclude one another. An old API or worker restart can therefore acquire Goose's lock and apply migration 124 or 125 while the new pre-deploy command is still creating its backup.
+The current backup gate takes a UniPost-specific advisory lock, while historical startup binaries call `RunMigrations`, which takes Goose's different session lock. Those two leaders do not exclude one another. The current PR 270 binary no longer migrates at runtime and calls only `RequireCurrentSchema`; the practical race is a previous staging binary that still contains startup migration code and remains alive or restarts during the promotion's pre-deploy window. That historical binary can acquire Goose's lock and apply migration 124 or 125 while the new pre-deploy command is still creating its backup.
 
 `RunMigrationsWithBackupGate` will instead reserve a dedicated SQL connection and acquire the same `lock.NewPostgresSessionLocker()` lock used by legacy `RunMigrations`. It acquires that lock before reading the Goose version or counting affected rows and holds it through backup verification and migration completion.
 
-The migration implementation will be split into a small internal runner that accepts an existing `*sql.DB` and a flag or option controlling whether it acquires its own session lock:
+The migration implementation will be split into a small internal runner that accepts an existing `*sql.DB` and a flag or option controlling whether it acquires its own session lock. The gate uses Goose's `SessionLocker` API rather than hard-coding the current default lock ID, so a dependency change cannot silently make the two entry points diverge:
 
 - legacy `RunMigrations` opens the database and calls the runner with Goose locking enabled;
 - the backup gate acquires the Goose lock explicitly, then calls the runner with nested locking disabled;
-- concurrent new gated runners block on the same lock, recompute preflight after the leader finishes, and do not create duplicate backups;
-- concurrent old binaries block on the same lock and cannot migrate before the new leader verifies its backup.
+- concurrent new gated runners retry the same non-blocking Goose lock acquisition; after the leader releases it, the follower recomputes preflight and does not create a duplicate backup;
+- historical binaries retry the same Goose lock acquisition, or fail closed if their lock retry window expires, and cannot migrate before the new leader verifies its backup.
 
-The former UniPost-specific lock is removed rather than retained in a second lock order. This avoids deadlock between old and new entry points and gives one documented migration-serialization primitive.
+The former UniPost-specific lock is removed rather than retained in a second lock order. This avoids deadlock between old and new entry points and gives one documented migration-serialization primitive. Backup creation and every evidence-verification step remain inside the fixed connection's Goose lock; the lock is never released between preflight, backup, and migration.
 
 The gate remains fail closed. A lock acquisition, preflight, Railway identity, backup creation, evidence verification, backup lock, or migration failure returns nonzero and does not authorize deployment.
 
@@ -92,6 +94,8 @@ On an ambiguous outcome the audit attempt remains failed with wording that the p
 
 The email store interface receives an explicit terminal-failure operation rather than inferring terminality from an error string. A test transport will observe the outgoing request and then return an error, simulating provider acceptance followed by a lost response. The worker test will prove one network attempt and no retryable recipient state.
 
+Administrator `retry-failed` remains an explicit manual action after reviewing the ambiguous recipient. It increments the local attempt generation for audit-row uniqueness but must reuse the stable provider idempotency key `cycle:type:canonical-user`; that key never includes attempt generation or attempt count. A regression test will prove the provider key is unchanged across manual retry while the audit-attempt key changes. The operator-facing error and campaign runbook will state that the provider outcome is unknown and that an administrator must verify delivery before retrying. Provider idempotency is not the sole automatic duplicate control—automatic retry is disabled—but it remains the final safeguard if an administrator deliberately requeues an ambiguous recipient.
+
 ### 5. Gate campaign APIs and workers on complete delivery readiness
 
 Campaign preview and confirmation currently know only about the preview secret, while the worker may lack the audited sender or transactional templates. That lets an administrator confirm a campaign that cannot be delivered.
@@ -106,9 +110,9 @@ Campaign delivery will use one immutable readiness value wired from the same sta
 
 The campaign service will expose a stable `ErrCampaignNotConfigured`. Preview, confirmation, and failed-recipient retry check readiness before reading or mutating campaign state. The HTTP handler maps the error to `503 NOT_CONFIGURED` with no provider or credential detail.
 
-The email worker checks the same readiness before claiming recipients. An unready worker returns a configuration error and claims zero rows. This is deliberately all-or-nothing: the administrator cannot confirm one campaign type while the shared worker is incapable of safely processing the complete campaign queue.
+The email worker checks the same readiness before claiming recipients. An unready `ProcessBatch` returns a stable configuration error and claims zero rows. Because readiness configuration is immutable for a process lifetime, `Start` detects the same condition once, logs one warning, and exits instead of logging an error every five seconds. This is deliberately all-or-nothing: the administrator cannot confirm one campaign type while the shared worker is incapable of safely processing the complete campaign queue.
 
-Unit tests cover preview, confirmation, retry, handler mapping, and worker zero-claim behavior. No test sends real email.
+Unit tests cover preview, confirmation, retry, handler mapping, worker zero-claim behavior, and the single-log/start-exit behavior. No test sends real email.
 
 ### 6. Exclude restricted draft targets from quota units
 
@@ -142,6 +146,7 @@ Focused verification includes:
 - one-snapshot admission/persistence behavior for immediate, bulk, draft, and scheduled execution surfaces touched by the signature change;
 - stale-lease restricted finalization behavior;
 - ambiguous email outcome and definitive-failure retry behavior;
+- stable provider idempotency and distinct audit-attempt identity across an administrator's retry of an ambiguous recipient;
 - campaign readiness service, handler, and worker behavior;
 - mixed draft quota behavior;
 - dedicated frontend publishing-restriction contracts.
@@ -155,6 +160,8 @@ Completion verification includes, with zero required skips:
 - existing related Dashboard contract suites;
 - `npm run build` from `dashboard/`;
 - `npm run test:regression:dashboard` with all required tests executed.
+
+The implementation also adds a focused publishing-restriction email campaign runbook. It explains that an ambiguous provider outcome is terminal for automatic delivery, identifies the manual-review fields, requires delivery verification before `retry-failed`, documents the stable provider idempotency key, and warns that this duplicate-prevention tradeoff intentionally creates more failed recipients requiring operator review.
 
 After local success, an independent read-only code reviewer will review the complete replacement diff, not only the newest commit. Any Critical or Important finding blocks push or integration until resolved. After a permitted push, every triggered GitHub, Railway Preview, Vercel Preview, and deployed-regression check must reach success on the exact head SHA. Failure, error, timeout, cancellation, skip, no result, or a result for another SHA is a hard stop.
 
@@ -175,6 +182,6 @@ No PR 270 merge or staging promotion is allowed until this design is implemented
 - Running, restoring, deleting, unlocking, or remounting a Railway backup.
 - Connecting tests to shared dev, staging, or production databases.
 - Adding testcontainers.
-- Relying on provider idempotency as the only duplicate-email control.
+- Relying on provider idempotency as the only automatic duplicate-email control; an explicit manual retry after an ambiguous outcome still reuses the stable provider key as defense in depth.
 - Removing the delivery worker's final policy check before provider dispatch.
 - Enabling the TikTok restriction, sending real email, or merging PR 270.
