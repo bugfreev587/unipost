@@ -1,0 +1,247 @@
+//go:build integration
+
+package db
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+const publishingRestrictionIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
+
+func openPublishingRestrictionIntegrationPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	databaseURL := strings.TrimSpace(os.Getenv(publishingRestrictionIntegrationDatabaseEnv))
+	if databaseURL == "" {
+		t.Fatalf("%s is required and must point to an isolated PostgreSQL test service", publishingRestrictionIntegrationDatabaseEnv)
+	}
+
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("connect PostgreSQL integration service: %v", err)
+	}
+	schema := fmt.Sprintf("pr270_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		admin.Close()
+		t.Fatalf("create isolated PostgreSQL schema: %v", err)
+	}
+
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		admin.Close()
+		t.Fatalf("parse PostgreSQL integration URL: %v", err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, config)
+	if err != nil {
+		admin.Close()
+		t.Fatalf("connect isolated PostgreSQL schema: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Close()
+		if _, err := admin.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE"); err != nil {
+			t.Errorf("drop isolated PostgreSQL schema: %v", err)
+		}
+		admin.Close()
+	})
+	return pool
+}
+
+func applyMigrationUpForIntegration(t *testing.T, pool *pgxpool.Pool, filename string) {
+	t.Helper()
+	raw, err := os.ReadFile("migrations/" + filename)
+	if err != nil {
+		t.Fatalf("read migration %s: %v", filename, err)
+	}
+	parts := strings.Split(string(raw), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatalf("migration %s must have exactly one Down section", filename)
+	}
+	up := strings.Replace(parts[0], "-- +goose Up", "", 1)
+	if _, err := pool.Exec(context.Background(), up); err != nil {
+		t.Fatalf("apply migration %s Up: %v", filename, err)
+	}
+}
+
+func TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE users (id TEXT PRIMARY KEY);
+		CREATE TABLE email_send_attempts (id TEXT PRIMARY KEY);
+		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
+		INSERT INTO users (id) VALUES ('user_failed');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationUpForIntegration(t, pool, "122_platform_publishing_restrictions.sql")
+
+	_, err = pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restriction_email_campaigns (
+			id, restriction_id, cycle_id, campaign_type, subject_snapshot,
+			body_snapshot, restriction_version
+		)
+		SELECT 'campaign_failed', id, 'cycle_failed', 'restriction_notice',
+		       'subject', 'body', version
+		FROM platform_publishing_restrictions
+		WHERE platform = 'tiktok';
+
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email,
+			normalized_email, status, next_attempt_at, idempotency_key
+		) VALUES (
+			'recipient_failed', 'campaign_failed', 'user_failed',
+			'failed@example.com', 'failed@example.com', 'failed',
+			NOW() - INTERVAL '1 hour', 'cycle_failed:restriction_notice:user_failed'
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	applyMigrationUpForIntegration(t, pool, "124_publishing_restriction_email_send_gate.sql")
+	var retryableAfter124 bool
+	if err := pool.QueryRow(ctx, `SELECT retryable FROM platform_publishing_restriction_email_recipients WHERE id='recipient_failed'`).Scan(&retryableAfter124); err != nil {
+		t.Fatal(err)
+	}
+	if !retryableAfter124 {
+		t.Fatal("fixture must reproduce migration 124 marking an existing failed recipient retryable")
+	}
+
+	applyMigrationUpForIntegration(t, pool, "125_publishing_restriction_failed_recipient_retryability.sql")
+	var retryableAfter125 bool
+	if err := pool.QueryRow(ctx, `SELECT retryable FROM platform_publishing_restriction_email_recipients WHERE id='recipient_failed'`).Scan(&retryableAfter125); err != nil {
+		t.Fatal(err)
+	}
+	if retryableAfter125 {
+		t.Fatal("migration 125 must terminalize every existing failed recipient")
+	}
+
+	var candidateCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM platform_publishing_restriction_email_recipients recipient
+		JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
+		WHERE campaign.status IN ('queued','running')
+		  AND recipient.status='failed'
+		  AND recipient.retryable=TRUE
+		  AND recipient.attempt_count < 3
+		  AND recipient.next_attempt_at <= NOW()
+	`).Scan(&candidateCount); err != nil {
+		t.Fatal(err)
+	}
+	if candidateCount != 0 {
+		t.Fatalf("failed recipient candidates after migration 125 = %d, want 0", candidateCount)
+	}
+}
+
+func setupEmailAuditIntegrationSchema(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		CREATE TABLE users (id TEXT PRIMARY KEY);
+		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationUpForIntegration(t, pool, "092_email_send_attempts.sql")
+}
+
+func integrationEmailAttempt(key, eventKey, email, subject string, variables []byte) CreateEmailSendAttemptAuditParams {
+	return CreateEmailSendAttemptAuditParams{
+		EventKey:              eventKey,
+		RecipientUserID:       "",
+		RecipientEmail:        email,
+		WorkspaceID:           "",
+		Provider:              "loops",
+		ProviderTemplateID:    "template_1",
+		IdempotencyKey:        key,
+		DeliveryClass:         "service_alert",
+		SubjectSnapshot:       subject,
+		DataVariablesSnapshot: variables,
+		TriggerSource:         "worker",
+		TriggerReferenceID:    "reference_1",
+	}
+}
+
+func TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	setupEmailAuditIntegrationSchema(t, pool)
+	ctx := context.Background()
+	queries := New(pool)
+
+	created, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+		"provider-key-sent", "event.original", "original@example.com", "Original subject", []byte(`{"body":"original"}`),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.MarkEmailSendAttemptAuditSent(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var before EmailSendAttempt
+	if err := pool.QueryRow(ctx, `SELECT id, event_key, recipient_user_id, recipient_email, workspace_id, provider, provider_template_id, idempotency_key, delivery_class, status, subject_snapshot, data_variables_snapshot, trigger_source, trigger_reference_id, attempt_count, last_error, attempted_at, sent_at, created_at, updated_at FROM email_send_attempts WHERE id=$1`, created.ID).Scan(
+		&before.ID, &before.EventKey, &before.RecipientUserID, &before.RecipientEmail, &before.WorkspaceID,
+		&before.Provider, &before.ProviderTemplateID, &before.IdempotencyKey, &before.DeliveryClass,
+		&before.Status, &before.SubjectSnapshot, &before.DataVariablesSnapshot, &before.TriggerSource,
+		&before.TriggerReferenceID, &before.AttemptCount, &before.LastError, &before.AttemptedAt,
+		&before.SentAt, &before.CreatedAt, &before.UpdatedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+		"provider-key-sent", "event.replayed", "changed@example.com", "Changed subject", []byte(`{"body":"changed"}`),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayed, before) {
+		t.Fatalf("sent audit changed on provider-key replay:\n before=%+v\n replay=%+v", before, replayed)
+	}
+}
+
+func TestCreateEmailSendAttemptAuditStillRetriesFailedRecord(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	setupEmailAuditIntegrationSchema(t, pool)
+	ctx := context.Background()
+	queries := New(pool)
+
+	created, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+		"provider-key-failed", "event.original", "failed@example.com", "Original subject", []byte(`{"body":"original"}`),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.MarkEmailSendAttemptAuditFailed(ctx, MarkEmailSendAttemptAuditFailedParams{
+		ID:        created.ID,
+		LastError: pgtype.Text{String: "temporary failure", Valid: true},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+		"provider-key-failed", "event.replayed", "retry@example.com", "Retry subject", []byte(`{"body":"retry"}`),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.ID != created.ID || replayed.Status != "pending" || replayed.AttemptCount != 2 {
+		t.Fatalf("failed audit retry = %+v, want same id, pending, attempt_count=2", replayed)
+	}
+	if replayed.LastError.Valid || replayed.SentAt.Valid {
+		t.Fatalf("failed audit retry retained terminal fields: last_error=%+v sent_at=%+v", replayed.LastError, replayed.SentAt)
+	}
+}

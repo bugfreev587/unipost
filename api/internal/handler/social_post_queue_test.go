@@ -16,9 +16,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
+	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
 func TestRetryDeliveryJobNowMarksDeprecated(t *testing.T) {
@@ -871,6 +873,206 @@ func TestPersistedPublishTokenBypassesNewPublishingRestriction(t *testing.T) {
 	notStarted := db.SocialPostResult{ID: "res_new", Status: "pending"}
 	if !shouldEvaluateDeliveryPublishingRestriction(notStarted) {
 		t.Fatal("delivery without a persisted platform token must still recheck the publishing restriction")
+	}
+}
+
+type persistedTokenRestrictionSpy struct{ calls int }
+
+func (s *persistedTokenRestrictionSpy) Evaluate(context.Context, string, string) (publishingrestrictions.Decision, error) {
+	s.calls++
+	return publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   "tiktok",
+		CycleID:    "cycle_restricted",
+	}, nil
+}
+
+type persistedTokenTikTokAdapterSpy struct {
+	resumeToken string
+	resumeCalls int
+	initCalls   int
+	uploadCalls int
+}
+
+func (s *persistedTokenTikTokAdapterSpy) Platform() string { return "tiktok" }
+
+func (s *persistedTokenTikTokAdapterSpy) Connect(context.Context, map[string]string) (*platform.ConnectResult, error) {
+	return nil, errors.New("unexpected TikTok connect")
+}
+
+func (s *persistedTokenTikTokAdapterSpy) Post(_ context.Context, _ string, _ string, _ []platform.MediaItem, opts map[string]any) (*platform.PostResult, error) {
+	resume, _ := opts[platform.OptResumePublishToken].(string)
+	if resume == "" {
+		s.initCalls++
+		s.uploadCalls++
+		return nil, errors.New("TikTok publish restarted without persisted token")
+	}
+	s.resumeToken = resume
+	s.resumeCalls++
+	return &platform.PostResult{ExternalID: resume, Status: "processing"}, nil
+}
+
+func (s *persistedTokenTikTokAdapterSpy) DeletePost(context.Context, string, string) error {
+	return errors.New("unexpected TikTok delete")
+}
+
+func (s *persistedTokenTikTokAdapterSpy) RefreshToken(context.Context, string) (string, string, time.Time, error) {
+	return "", "", time.Time{}, errors.New("unexpected TikTok refresh")
+}
+
+type persistedTokenDeliveryDB struct {
+	job                    db.PostDeliveryJob
+	post                   db.SocialPost
+	result                 db.SocialPostResult
+	account                db.SocialAccount
+	restrictedFinalization bool
+}
+
+func (f *persistedTokenDeliveryDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails") ||
+		strings.Contains(query, "-- name: CreatePostFailure") {
+		f.restrictedFinalization = true
+	}
+	return pgconn.CommandTag{}, errors.New("optional write not implemented: " + query)
+}
+
+func (f *persistedTokenDeliveryDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	switch {
+	case strings.Contains(query, "-- name: ListSocialPostResultsByPost"):
+		return &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}, nil
+	case strings.Contains(query, "-- name: ListPostDeliveryJobsByPost"):
+		return &queueRows{}, nil
+	default:
+		return nil, errors.New("optional query not implemented: " + query)
+	}
+}
+
+func (f *persistedTokenDeliveryDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
+		return postDeliveryJobScanRow(f.job)
+	case strings.Contains(query, "-- name: GetSocialPostByID"):
+		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
+		return socialPostResultScanRow(f.result)
+	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		return scanRow{values: []any{
+			f.account.ID, f.account.ProfileID, f.account.Platform, f.account.AccessToken,
+			f.account.RefreshToken, f.account.TokenExpiresAt, f.account.ExternalAccountID,
+			f.account.AccountName, f.account.AccountAvatarUrl, f.account.ConnectedAt,
+			f.account.DisconnectedAt, f.account.Metadata, f.account.Scope, f.account.Status,
+			f.account.ConnectionType, f.account.ConnectSessionID, f.account.ExternalUserID,
+			f.account.ExternalUserEmail, f.account.LastRefreshedAt, f.account.XAppMode,
+		}}
+	case strings.Contains(query, "-- name: GetWorkspace"):
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: CountPublishedTodayByAccount"):
+		return scanRow{values: []any{int32(0)}}
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobPlatformStarted"):
+		started := f.job
+		started.PlatformStartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		return postDeliveryJobScanRow(started)
+	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
+		if strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails") {
+			f.restrictedFinalization = true
+			return scanRow{err: errors.New("restricted finalization must not run")}
+		}
+		updated := f.result
+		updated.Status = args[1].(string)
+		updated.ExternalID = args[2].(pgtype.Text)
+		updated.PublishToken = f.result.PublishToken
+		f.result = updated
+		return socialPostResultScanRow(updated)
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
+		f.restrictedFinalization = true
+		return scanRow{err: errors.New("restricted job finalization must not run")}
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobSucceeded"):
+		succeeded := f.job
+		succeeded.State = "succeeded"
+		return postDeliveryJobScanRow(succeeded)
+	default:
+		return scanRow{err: errors.New("optional QueryRow not implemented: " + query)}
+	}
+}
+
+func TestProcessPostDeliveryJobResumesPersistedTikTokTokenAcrossNewRestriction(t *testing.T) {
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encryptedToken, err := encryptor.Encrypt("tiktok-access-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "acct_tiktok",
+		Caption:   "resume this upload",
+		MediaURLs: []string{"https://media.example.com/video.mp4"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	job := baseDeliveryJob()
+	job.SocialAccountID = "acct_tiktok"
+	job.Platform = "tiktok"
+	dbtx := &persistedTokenDeliveryDB{
+		job: job,
+		post: db.SocialPost{
+			ID:          job.PostID,
+			Caption:     pgtype.Text{String: "resume this upload", Valid: true},
+			Status:      "publishing",
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			Metadata:    metadata,
+			WorkspaceID: job.WorkspaceID,
+		},
+		result: db.SocialPostResult{
+			ID:              job.SocialPostResultID,
+			PostID:          job.PostID,
+			SocialAccountID: job.SocialAccountID,
+			Status:          "processing",
+			Caption:         "resume this upload",
+			PublishToken:    pgtype.Text{String: "publish_token_123", Valid: true},
+		},
+		account: db.SocialAccount{
+			ID:                job.SocialAccountID,
+			ProfileID:         "profile_1",
+			Platform:          "tiktok",
+			AccessToken:       encryptedToken,
+			ExternalAccountID: "tiktok_user_1",
+			Status:            "active",
+			ConnectedAt:       pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+	}
+	restrictions := &persistedTokenRestrictionSpy{}
+	adapter := &persistedTokenTikTokAdapterSpy{}
+	previous, previousErr := platform.Get("tiktok")
+	platform.Register(adapter)
+	defer func() {
+		if previousErr == nil {
+			platform.Register(previous)
+		} else {
+			platform.Register(platform.NewTikTokAdapter())
+		}
+	}()
+
+	h := NewSocialPostHandler(db.New(dbtx), encryptor, nil, nil, nil, nil, nil).
+		SetPublishingRestrictions(restrictions)
+	if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
+		t.Fatalf("ProcessPostDeliveryJob: %v", err)
+	}
+
+	if restrictions.calls != 0 {
+		t.Fatalf("publishing restriction evaluations = %d, want 0 after a persisted publish token", restrictions.calls)
+	}
+	if adapter.resumeCalls != 1 || adapter.resumeToken != "publish_token_123" {
+		t.Fatalf("TikTok resume calls=%d token=%q, want one resume with persisted token", adapter.resumeCalls, adapter.resumeToken)
+	}
+	if adapter.initCalls != 0 || adapter.uploadCalls != 0 {
+		t.Fatalf("TikTok init/upload calls = %d/%d, want 0/0 on resume", adapter.initCalls, adapter.uploadCalls)
+	}
+	if dbtx.restrictedFinalization {
+		t.Fatal("persisted-token resume must not be finalized as publishing-restricted")
 	}
 }
 
