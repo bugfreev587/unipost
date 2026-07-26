@@ -2003,6 +2003,16 @@ export async function createCheckout(
   });
 }
 
+export async function createPlanChangeSession(
+  token: string,
+  planId: string,
+): Promise<ApiResponse<{ url: string }>> {
+  return request(`/v1/billing/plan-change-session`, token, {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId }),
+  });
+}
+
 export async function createPortal(
   token: string,
 ): Promise<ApiResponse<{ portal_url: string }>> {
