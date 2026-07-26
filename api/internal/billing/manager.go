@@ -50,11 +50,12 @@ type UserLookupFunc func(ctx context.Context, userID string) (email string, err 
 // reference, fetch it lazily from the Stripe API rather than carrying
 // dead env vars.
 type Mode struct {
-	Name                       string // "live" or "sandbox" — used in logs only
-	Client                     *client.API
-	WebhookSecret              string
-	priceIDs                   map[string]string // plan ID → Stripe price ID
-	trialPortalConfigurationID string
+	Name                            string // "live" or "sandbox" — used in logs only
+	Client                          *client.API
+	WebhookSecret                   string
+	priceIDs                        map[string]string // plan ID → Stripe price ID
+	trialPortalConfigurationID      string
+	planChangePortalConfigurationID string
 }
 
 // PriceID returns the Stripe price ID for the given plan in this mode.
@@ -90,6 +91,15 @@ func (m *Mode) TrialPortalConfigurationID() string {
 		return ""
 	}
 	return m.trialPortalConfigurationID
+}
+
+// PlanChangePortalConfigurationID returns the Stripe Billing Portal
+// configuration used for paid plan changes in this mode.
+func (m *Mode) PlanChangePortalConfigurationID() string {
+	if m == nil {
+		return ""
+	}
+	return m.planChangePortalConfigurationID
 }
 
 // Manager owns one Live mode and an optional Sandbox mode plus the
@@ -160,6 +170,7 @@ func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 		os.Getenv("STRIPE_WEBHOOK_SECRET"),
 		readPriceIDs(""),
 		os.Getenv("STRIPE_BILLING_PORTAL_TRIAL_CONFIGURATION_ID"),
+		os.Getenv("STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID"),
 	)
 
 	// Set the global stripe.Key as a fallback so any code path that still
@@ -189,6 +200,7 @@ func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 			os.Getenv("STRIPE_SANDBOX_WEBHOOK_SECRET"),
 			readPriceIDs("SANDBOX_"),
 			os.Getenv("STRIPE_SANDBOX_BILLING_PORTAL_TRIAL_CONFIGURATION_ID"),
+			os.Getenv("STRIPE_SANDBOX_PLAN_CHANGE_PORTAL_CONFIGURATION_ID"),
 		)
 	}
 
@@ -200,15 +212,16 @@ func NewManager(userLookup UserLookupFunc) (*Manager, error) {
 	return mgr, nil
 }
 
-func newMode(name, key, webhookSecret string, priceIDs map[string]string, trialPortalConfigurationID string) *Mode {
+func newMode(name, key, webhookSecret string, priceIDs map[string]string, trialPortalConfigurationID, planChangePortalConfigurationID string) *Mode {
 	c := &client.API{}
 	c.Init(key, nil)
 	return &Mode{
-		Name:                       name,
-		Client:                     c,
-		WebhookSecret:              webhookSecret,
-		priceIDs:                   priceIDs,
-		trialPortalConfigurationID: trialPortalConfigurationID,
+		Name:                            name,
+		Client:                          c,
+		WebhookSecret:                   webhookSecret,
+		priceIDs:                        priceIDs,
+		trialPortalConfigurationID:      trialPortalConfigurationID,
+		planChangePortalConfigurationID: planChangePortalConfigurationID,
 	}
 }
 

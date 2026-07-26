@@ -21,6 +21,25 @@ func TestNewManagerLoadsModeSpecificTrialPortalConfigurations(t *testing.T) {
 	}
 }
 
+func TestNewManagerLoadsModeSpecificPlanChangePortalConfigurations(t *testing.T) {
+	t.Setenv("STRIPE_SECRET_KEY", "sk_live_test")
+	t.Setenv("STRIPE_PLAN_CHANGE_PORTAL_CONFIGURATION_ID", "bpc_live_plan_change")
+	t.Setenv("STRIPE_SANDBOX_SECRET_KEY", "sk_test_sandbox")
+	t.Setenv("STRIPE_SANDBOX_PLAN_CHANGE_PORTAL_CONFIGURATION_ID", "bpc_sandbox_plan_change")
+
+	manager, err := NewManager(nil)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	if got := manager.Live.PlanChangePortalConfigurationID(); got != "bpc_live_plan_change" {
+		t.Fatalf("live PlanChangePortalConfigurationID() = %q, want %q", got, "bpc_live_plan_change")
+	}
+	if got := manager.Sandbox.PlanChangePortalConfigurationID(); got != "bpc_sandbox_plan_change" {
+		t.Fatalf("sandbox PlanChangePortalConfigurationID() = %q, want %q", got, "bpc_sandbox_plan_change")
+	}
+}
+
 func TestManagerByNameOnlyReturnsConfiguredExactMode(t *testing.T) {
 	live := &Mode{Name: "live"}
 	sandbox := &Mode{Name: "sandbox"}
@@ -55,6 +74,13 @@ func TestNilModeTrialPortalConfigurationIDIsEmpty(t *testing.T) {
 	var mode *Mode
 	if got := mode.TrialPortalConfigurationID(); got != "" {
 		t.Fatalf("nil mode TrialPortalConfigurationID() = %q, want empty", got)
+	}
+}
+
+func TestNilModePlanChangePortalConfigurationIDIsEmpty(t *testing.T) {
+	var mode *Mode
+	if got := mode.PlanChangePortalConfigurationID(); got != "" {
+		t.Fatalf("nil mode PlanChangePortalConfigurationID() = %q, want empty", got)
 	}
 }
 

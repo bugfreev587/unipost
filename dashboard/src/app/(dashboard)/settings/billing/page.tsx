@@ -11,6 +11,7 @@ import {
   getXCreditsAllowance,
   updateXInboundDailyCap,
   createCheckout,
+  createPlanChangeSession,
   createPortal,
   cancelTrialRenewal,
   changeTrialPlan,
@@ -203,10 +204,15 @@ function BillingSettingsContent() {
         await loadBilling();
         return;
       }
-      const res = await createCheckout(token, planId);
-      window.location.href = res.data.checkout_url;
+      if (billing?.plan === "free") {
+        const res = await createCheckout(token, planId);
+        window.location.href = res.data.checkout_url;
+        return;
+      }
+      const res = await createPlanChangeSession(token, planId);
+      window.location.href = res.data.url;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start billing checkout";
+      const message = err instanceof Error ? err.message : "Failed to start plan change";
       console.error("Failed:", err);
       setBillingError({ message, topic: "billing-upgrade-failure" });
       setUpgrading(null);

@@ -386,3 +386,21 @@ test("Settings Billing renders the managed trial timeline, controls, and durable
   assert.match(settingsBillingSource, /cancelTrialRenewal\(token,\s*billing\.trial\.id\)/);
   assert.match(settingsBillingSource, /className="trial-history-list"/);
 });
+
+test("Settings Billing dispatches free, paid, and managed-trial plan changes to exclusive flows", () => {
+  assert.match(
+    apiSource,
+    /export async function createPlanChangeSession\([\s\S]*?\): Promise<ApiResponse<\{ url: string \}>>[\s\S]*?\/v1\/billing\/plan-change-session[\s\S]*?JSON\.stringify\(\{ plan_id: planId \}\)/,
+  );
+  assert.ok(settingsBillingSource.includes("createPlanChangeSession"));
+  assert.match(
+    settingsBillingSource,
+    /hasForfeitableTrial[\s\S]*?changeTrialPlan\(token, planId\)[\s\S]*?if \(billing\?\.plan === "free"\)[\s\S]*?createCheckout\(token, planId\)[\s\S]*?checkout_url[\s\S]*?createPlanChangeSession\(token, planId\)[\s\S]*?res\.data\.url/,
+  );
+  assert.match(pricingSource, /settings\/billing\?upgrade=\$\{encodeURIComponent\(planId\)\}/);
+  assert.doesNotMatch(
+    settingsBillingSource,
+    /createPlanChangeSession\(token, planId\)[\s\S]{0,300}setBilling\(/,
+    "Portal redirect must wait for webhook-backed billing reload instead of mutating the plan optimistically",
+  );
+});
