@@ -11,9 +11,11 @@ interface AccountCardProps {
   account: SocialAccount;
   selected: boolean;
   onToggle: (id: string) => void;
+  disabled?: boolean;
+  describedBy?: string;
 }
 
-export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
+export function AccountCard({ account, selected, onToggle, disabled = false, describedBy }: AccountCardProps) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "#888";
   const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
   const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
@@ -25,9 +27,11 @@ export function AccountCard({ account, selected, onToggle }: AccountCardProps) {
     <button
       type="button"
       onClick={() => onToggle(account.id)}
+      disabled={disabled}
+      aria-describedby={disabled ? describedBy : undefined}
       className={cn(
         "relative rounded-lg p-3 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]",
-        "border",
+        "border disabled:cursor-not-allowed disabled:opacity-55",
         selected
           ? "shadow-[0_0_0_1px_color-mix(in_srgb,var(--primary)_70%,transparent),0_0_24px_-4px_color-mix(in_srgb,var(--primary)_18%,transparent)]"
           : "hover:shadow-[0_0_0_1px_color-mix(in_srgb,var(--border-strong)_90%,transparent)]"

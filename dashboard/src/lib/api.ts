@@ -1353,6 +1353,7 @@ export interface SocialPostResult {
   error_temporality?: ErrorTemporality;
   provider_error?: ProviderError;
   retry_policy?: RetryPolicy;
+  media_retained_until?: string;
   published_at?: string;
   // Serialized curl dump of every failing HTTP request the adapter
   // made during this dispatch. Populated only when status === "failed".
@@ -1819,6 +1820,96 @@ export interface AdminFeatureFlag {
   updated_at: string;
 }
 
+export interface AdminPublishingRestrictionEvent {
+  id: string;
+  event_type: "enabled" | "disabled";
+  actor_user_id?: string;
+  expected_version: number;
+  resulting_version: number;
+  created_at: string;
+}
+
+export interface AdminPublishingRestriction {
+  id: string;
+  platform: string;
+  enabled: boolean;
+  restricted_plan_ids: string[];
+  reason_code: string;
+  user_message: string;
+  cycle_id?: string;
+  version: number;
+  enabled_at?: string;
+  disabled_at?: string;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id?: string;
+  affected_workspace_count?: number;
+  affected_account_count?: number;
+  recent_events?: AdminPublishingRestrictionEvent[];
+}
+
+export interface AdminPublishingRestrictionTransition {
+  restriction: AdminPublishingRestriction;
+  changed: boolean;
+}
+
+export type PublishingRestrictionCampaignType =
+  | "restriction_notice"
+  | "recovery_notice";
+
+export type PublishingRestrictionCampaignStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_failures"
+  | "failed";
+
+export interface AdminPublishingRestrictionCampaignPreview {
+  platform: string;
+  cycle_id: string;
+  campaign_type: PublishingRestrictionCampaignType;
+  restriction_version: number;
+  recipient_count: number;
+  subject: string;
+  body: string;
+  preview_token: string;
+  expires_at: string;
+}
+
+export interface AdminPublishingRestrictionCampaign {
+  id: string;
+  cycle_id: string;
+  campaign_type: PublishingRestrictionCampaignType;
+  status: PublishingRestrictionCampaignStatus;
+  subject_snapshot: string;
+  body_snapshot: string;
+  restriction_version: number;
+  previewed_count: number;
+  snapshotted_count: number;
+  pending_count: number;
+  sent_count: number;
+  failed_count: number;
+  skipped_count: number;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface WorkspacePublishingRestriction {
+  restricted: boolean;
+  platform: string;
+  plan_id: string;
+  reason_code?: string;
+  code?: string;
+  message?: string;
+  next_action?: string;
+}
+
+export interface WorkspacePublishingRestrictions {
+  restrictions: WorkspacePublishingRestriction[];
+}
+
 export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
@@ -1881,6 +1972,12 @@ export async function getWorkspaceFeatureFlags(
   return request("/v1/me/features", token);
 }
 
+export async function getPublishingRestrictions(
+  token: string,
+): Promise<ApiResponse<WorkspacePublishingRestrictions>> {
+  return request("/v1/publishing-restrictions", token);
+}
+
 export async function getPublicFeatureFlags(): Promise<ApiResponse<PublicFeatureFlags>> {
   return requestPublic("/v1/public/features");
 }
@@ -1899,6 +1996,66 @@ export async function updateAdminFeatureFlag(
   return request(`/v1/admin/feature-flags/${encodeURIComponent(key)}`, token, {
     method: "PATCH",
     body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function listAdminPublishingRestrictions(
+  token: string,
+): Promise<ApiResponse<AdminPublishingRestriction[]>> {
+  return request("/v1/admin/publishing-restrictions", token);
+}
+
+export async function updateAdminPublishingRestriction(
+  token: string,
+  platform: string,
+  body: { enabled: boolean; expected_version: number },
+): Promise<ApiResponse<AdminPublishingRestrictionTransition>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function previewAdminPublishingRestrictionCampaign(
+  token: string,
+  platform: string,
+  body: { campaign_type: PublishingRestrictionCampaignType },
+): Promise<ApiResponse<AdminPublishingRestrictionCampaignPreview>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns/preview`, token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function createAdminPublishingRestrictionCampaign(
+  token: string,
+  platform: string,
+  body: {
+    campaign_type: PublishingRestrictionCampaignType;
+    preview_token: string;
+    confirmation: "SEND";
+  },
+): Promise<ApiResponse<AdminPublishingRestrictionCampaign>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns`, token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listAdminPublishingRestrictionCampaigns(
+  token: string,
+  platform: string,
+): Promise<ApiResponse<AdminPublishingRestrictionCampaign[]>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns`, token);
+}
+
+export async function retryFailedAdminPublishingRestrictionCampaign(
+  token: string,
+  platform: string,
+  campaignId: string,
+): Promise<ApiResponse<AdminPublishingRestrictionCampaign>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns/${encodeURIComponent(campaignId)}/retry-failed`, token, {
+    method: "POST",
   });
 }
 

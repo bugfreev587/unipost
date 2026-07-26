@@ -37,6 +37,7 @@ const NEXT_ACTION_LABELS: Record<string, string> = {
   retry_later: "Retry later",
   review_quota: "Review quota",
   contact_support: "Contact support",
+  upgrade_or_wait_then_retry: "Upgrade your plan or wait, then retry",
 };
 
 function platformName(platform?: string): string {
@@ -58,6 +59,8 @@ function platformName(platform?: string): string {
 function titleForErrorCode(errorCode: string | undefined, platform?: string): string {
   const name = platformName(platform);
   switch (errorCode) {
+    case "plan_platform_publishing_restricted":
+      return "Publishing restricted";
     case "validation_error":
       return "Request needs changes";
     case "platform_request_invalid":
@@ -176,6 +179,12 @@ function retryStatusLabel(result: PostResultFailureInput): string | undefined {
     if (policy.next_run_at) return `UniPost will retry automatically at ${new Date(policy.next_run_at).toLocaleString()}.`;
     return "UniPost will retry automatically.";
   }
+  if (
+    result.error_code === "plan_platform_publishing_restricted" &&
+    policy.reason === "publishing_restriction_active"
+  ) {
+    return "Publishing restriction active";
+  }
   switch (policy.retry_state) {
     case "exhausted":
       return "Automatic retries are exhausted.";
@@ -191,6 +200,9 @@ function retryStatusLabel(result: PostResultFailureInput): string | undefined {
 }
 
 function structuredMessage(result: PostResultFailureInput): string | undefined {
+  if (result.error_code === "plan_platform_publishing_restricted") {
+    return result.error_message;
+  }
   const name = platformName(result.platform);
   const source = result.error_source;
   const temporality = result.error_temporality;
