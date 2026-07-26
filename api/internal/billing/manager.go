@@ -67,6 +67,22 @@ func (m *Mode) PriceID(planID string) string {
 	return m.priceIDs[planID]
 }
 
+// PlanID returns the plan configured for a Stripe price in this mode.
+// Webhooks use this reverse lookup so sandbox prices never depend on the
+// legacy live-only price cache stored in the plans table.
+func (m *Mode) PlanID(priceID string) string {
+	priceID = strings.TrimSpace(priceID)
+	if m == nil || priceID == "" {
+		return ""
+	}
+	for planID, configuredPriceID := range m.priceIDs {
+		if strings.TrimSpace(configuredPriceID) == priceID {
+			return planID
+		}
+	}
+	return ""
+}
+
 // TrialPortalConfigurationID returns the Stripe Billing Portal
 // configuration that is safe to expose while a workspace has a trial.
 func (m *Mode) TrialPortalConfigurationID() string {

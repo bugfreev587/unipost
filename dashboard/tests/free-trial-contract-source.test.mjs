@@ -243,8 +243,20 @@ test("Admin Billing exposes safe row-level trial grant controls", () => {
   assert.match(adminBillingSource, /row\.plan_id === "free"[\s\S]*<select/);
   assert.match(adminBillingSource, /formatWorkspaceTrial\(/);
   assert.match(adminBillingSource, /pending_activation[\s\S]*checkout_pending/);
-  assert.match(adminBillingSource, /window\.confirm\([\s\S]*Trial starts[\s\S]*Trial ends/);
   assert.match(adminBillingSource, /disabled=\{[\s\S]*(?:busy|hasOpenTrial)/);
+});
+
+test("Admin Billing uses UniPost confirmation modals for trial mutations", () => {
+  const start = adminBillingSource.indexOf("function GrantTrialForm(");
+  const end = adminBillingSource.indexOf("function PlanFlipMenu(");
+  assert.ok(start >= 0 && end > start, "expected GrantTrialForm source boundary");
+  const grantTrialFormSource = adminBillingSource.slice(start, end);
+
+  assert.match(adminBillingSource, /import \{ ConfirmModal \} from "@\/components\/confirm-modal"/);
+  assert.doesNotMatch(grantTrialFormSource, /(?:window\.)?confirm\s*\(/);
+  assert.match(grantTrialFormSource, /title="Grant trial"[\s\S]*confirmLabel="Grant Trial"/);
+  assert.match(grantTrialFormSource, /title="Revoke trial offer"[\s\S]*confirmLabel="Revoke"[\s\S]*variant="danger"/);
+  assert.match(grantTrialFormSource, /onCancel=\{\(\) => setConfirmation\(null\)\}/);
 });
 
 test("Admin Billing serializes workspace mutations and fails closed after refresh errors", () => {

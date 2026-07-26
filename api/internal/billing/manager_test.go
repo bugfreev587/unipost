@@ -57,3 +57,22 @@ func TestNilModeTrialPortalConfigurationIDIsEmpty(t *testing.T) {
 		t.Fatalf("nil mode TrialPortalConfigurationID() = %q, want empty", got)
 	}
 }
+
+func TestModePlanIDResolvesConfiguredPrice(t *testing.T) {
+	mode := &Mode{priceIDs: map[string]string{
+		"basic":  "price_test_basic",
+		"growth": "price_test_growth",
+	}}
+
+	if got := mode.PlanID(" price_test_growth "); got != "growth" {
+		t.Fatalf("PlanID(price_test_growth) = %q, want %q", got, "growth")
+	}
+	if got := mode.PlanID("price_live_growth"); got != "" {
+		t.Fatalf("PlanID(price_live_growth) = %q, want empty", got)
+	}
+
+	var nilMode *Mode
+	if got := nilMode.PlanID("price_test_growth"); got != "" {
+		t.Fatalf("nil Mode.PlanID(price_test_growth) = %q, want empty", got)
+	}
+}
