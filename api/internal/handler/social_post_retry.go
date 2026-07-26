@@ -15,6 +15,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -25,6 +26,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
 // RetryResult handles
@@ -94,10 +96,23 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 			fmt.Sprintf("Only failed results can be retried (current status: %s)", existing.Status))
 		return
 	}
+	decision, policyErr := h.evaluateRetryPublishingRestriction(r.Context(), workspaceID, existing)
+	if policyErr != nil {
+		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+		return
+	}
+	if decision.Restricted {
+		writePublishingRestrictionError(w, decision)
+		return
+	}
 	job, err := h.EnqueueRetryForResult(r.Context(), workspaceID, post.ID, existing.ID)
 	if err != nil {
 		if isQueueConflict(err) {
 			writeError(w, http.StatusConflict, "QUEUE_JOB_ACTIVE", err.Error())
+			return
+		}
+		if errors.Is(err, errRetryMediaReuploadRequired) {
+			writeError(w, http.StatusConflict, "MEDIA_REUPLOAD_REQUIRED", "The retained media is no longer available. Upload the media again before retrying.")
 			return
 		}
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -114,6 +129,21 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 	}
 	applyRetryPolicyToResponse(&rr, existing, []db.PostDeliveryJob{job})
 	writeSuccess(w, rr)
+}
+
+func (h *SocialPostHandler) evaluateRetryPublishingRestriction(
+	ctx context.Context,
+	workspaceID string,
+	result db.SocialPostResult,
+) (publishingrestrictions.Decision, error) {
+	if h == nil || h.publishingRestrictions == nil {
+		return publishingrestrictions.Decision{}, nil
+	}
+	account, err := h.queries.GetSocialAccount(ctx, result.SocialAccountID)
+	if err != nil {
+		return publishingrestrictions.Decision{}, err
+	}
+	return h.publishingRestrictions.Evaluate(ctx, workspaceID, account.Platform)
 }
 
 // refreshParentPostStatus walks the full set of results for a post

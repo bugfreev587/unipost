@@ -168,6 +168,42 @@ func TestSyncPostMediaRetentionTransitionReplacesActiveDeadline(t *testing.T) {
 	}
 }
 
+func TestSyncPostMediaRetentionForPublishingRestrictionUsesFailureTimePlusSixtyDays(t *testing.T) {
+	post := mediaRetentionPost(t, "failed")
+	dbtx := &mediaRetentionTestDB{planID: "free"}
+	handler := &SocialPostHandler{queries: db.New(dbtx), quota: quota.NewChecker(db.New(dbtx))}
+	failedAt := time.Date(2026, 7, 26, 18, 30, 0, 0, time.UTC)
+
+	handler.syncPostMediaRetentionForPublishingRestrictionAt(context.Background(), post, failedAt)
+
+	if len(dbtx.upserts) != 2 {
+		t.Fatalf("upserts=%d, want 2", len(dbtx.upserts))
+	}
+	for _, upsert := range dbtx.upserts {
+		if upsert.RetentionReason != "publishing_restriction" {
+			t.Fatalf("retention_reason=%q", upsert.RetentionReason)
+		}
+		want := failedAt.Add(60 * 24 * time.Hour)
+		if !upsert.CleanupAfterAt.Valid || !upsert.CleanupAfterAt.Time.Equal(want) {
+			t.Fatalf("cleanup_after_at=%v, want %v", upsert.CleanupAfterAt, want)
+		}
+	}
+}
+
+func TestSyncPostMediaRetentionMarksNonTerminalUsageActive(t *testing.T) {
+	post := mediaRetentionPost(t, "publishing")
+	dbtx := &mediaRetentionTestDB{}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	handler.syncPostMediaRetention(context.Background(), post, "publishing")
+
+	for _, upsert := range dbtx.upserts {
+		if upsert.RetentionReason != "active_post" || upsert.CleanupAfterAt.Valid {
+			t.Fatalf("active usage=%+v", upsert)
+		}
+	}
+}
+
 func mediaRetentionPost(t *testing.T, status string) db.SocialPost {
 	t.Helper()
 
@@ -219,11 +255,12 @@ func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, args ..
 		return scheduledIdempotencySocialPostRow(f.cancelPost)
 	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
 		f.upserts = append(f.upserts, db.UpsertMediaPostUsageParams{
-			MediaID:        args[0].(string),
-			WorkspaceID:    args[1].(string),
-			PostStatus:     args[2].(string),
-			CleanupAfterAt: args[3].(pgtype.Timestamptz),
-			PostID:         args[4].(string),
+			MediaID:         args[0].(string),
+			WorkspaceID:     args[1].(string),
+			PostStatus:      args[2].(string),
+			CleanupAfterAt:  args[3].(pgtype.Timestamptz),
+			RetentionReason: args[4].(string),
+			PostID:          args[5].(string),
 		})
 		return scheduledIdempotencyRow{values: []any{true}}
 	default:

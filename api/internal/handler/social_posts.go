@@ -390,6 +390,7 @@ type postResultResponse struct {
 	ErrorTemporality   *string                     `json:"error_temporality,omitempty"`
 	ProviderError      *postfailures.ProviderError `json:"provider_error,omitempty"`
 	RetryPolicy        *retryPolicyResponse        `json:"retry_policy,omitempty"`
+	MediaRetainedUntil *string                     `json:"media_retained_until,omitempty"`
 	PublishedAt        *string                     `json:"published_at,omitempty"`
 	PublishStatus      map[string]any              `json:"publish_status,omitempty"`
 	XCreditsCounted    int64                       `json:"x_credits_counted"`
@@ -2556,6 +2557,7 @@ func (h *SocialPostHandler) replayedPostResponse(r *http.Request, post db.Social
 			rr.Submitted = sub
 		}
 		applyRetryPolicyToResponse(&rr, res, jobs)
+		h.applyPublishingRestrictionRetryProjection(r.Context(), post.WorkspaceID, post, &rr, res, jobs)
 		resp.Results = append(resp.Results, rr)
 	}
 	applyQueueSummary(&resp, jobs)
@@ -2708,6 +2710,7 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 
 		applyRetryPolicyToResponse(&rr, res, jobs)
+		h.applyPublishingRestrictionRetryProjection(r.Context(), workspaceID, post, &rr, res, jobs)
 		responseResults = append(responseResults, rr)
 	}
 
@@ -2840,6 +2843,7 @@ func (h *SocialPostHandler) List(w http.ResponseWriter, r *http.Request) {
 				rr.Submitted = sub
 			}
 			applyRetryPolicyToResponse(&rr, res, jobsByPost[p.ID])
+			h.applyPublishingRestrictionRetryProjection(r.Context(), workspaceID, p, &rr, res, jobsByPost[p.ID])
 			responseResults = append(responseResults, rr)
 		}
 

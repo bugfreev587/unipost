@@ -465,14 +465,15 @@ type MediaCleanupRun struct {
 }
 
 type MediaPostUsage struct {
-	ID             string             `json:"id"`
-	WorkspaceID    string             `json:"workspace_id"`
-	MediaID        string             `json:"media_id"`
-	PostID         string             `json:"post_id"`
-	PostStatus     string             `json:"post_status"`
-	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	MediaID         string             `json:"media_id"`
+	PostID          string             `json:"post_id"`
+	PostStatus      string             `json:"post_status"`
+	CleanupAfterAt  pgtype.Timestamptz `json:"cleanup_after_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	RetentionReason string             `json:"retention_reason"`
 }
 
 type MediaProcessingJob struct {
@@ -660,6 +661,83 @@ type PlatformCredential struct {
 	AppBearerToken  pgtype.Text        `json:"app_bearer_token"`
 	ConsumerSecret  pgtype.Text        `json:"consumer_secret"`
 	WebhookRouteKey pgtype.Text        `json:"webhook_route_key"`
+}
+
+type PlatformPublishingRestriction struct {
+	ID                string             `json:"id"`
+	Platform          string             `json:"platform"`
+	Enabled           bool               `json:"enabled"`
+	RestrictedPlanIds []string           `json:"restricted_plan_ids"`
+	ReasonCode        string             `json:"reason_code"`
+	UserMessage       string             `json:"user_message"`
+	CycleID           pgtype.Text        `json:"cycle_id"`
+	Version           int64              `json:"version"`
+	EnabledAt         pgtype.Timestamptz `json:"enabled_at"`
+	DisabledAt        pgtype.Timestamptz `json:"disabled_at"`
+	UpdatedByUserID   pgtype.Text        `json:"updated_by_user_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformPublishingRestrictionEmailCampaign struct {
+	ID                 string             `json:"id"`
+	RestrictionID      string             `json:"restriction_id"`
+	CycleID            string             `json:"cycle_id"`
+	CampaignType       string             `json:"campaign_type"`
+	Status             string             `json:"status"`
+	SubjectSnapshot    string             `json:"subject_snapshot"`
+	BodySnapshot       string             `json:"body_snapshot"`
+	RestrictionVersion int64              `json:"restriction_version"`
+	PreviewedCount     int32              `json:"previewed_count"`
+	SnapshottedCount   int32              `json:"snapshotted_count"`
+	PendingCount       int32              `json:"pending_count"`
+	SentCount          int32              `json:"sent_count"`
+	FailedCount        int32              `json:"failed_count"`
+	SkippedCount       int32              `json:"skipped_count"`
+	CreatedByUserID    pgtype.Text        `json:"created_by_user_id"`
+	ConfirmedByUserID  pgtype.Text        `json:"confirmed_by_user_id"`
+	SnapshottedAt      pgtype.Timestamptz `json:"snapshotted_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformPublishingRestrictionEmailRecipient struct {
+	ID                      string             `json:"id"`
+	CampaignID              string             `json:"campaign_id"`
+	CanonicalUserID         string             `json:"canonical_user_id"`
+	RecipientEmail          string             `json:"recipient_email"`
+	NormalizedEmail         string             `json:"normalized_email"`
+	FirstNameSnapshot       pgtype.Text        `json:"first_name_snapshot"`
+	RepresentedWorkspaceIds []string           `json:"represented_workspace_ids"`
+	Status                  string             `json:"status"`
+	AttemptCount            int32              `json:"attempt_count"`
+	NextAttemptAt           pgtype.Timestamptz `json:"next_attempt_at"`
+	ClaimedAt               pgtype.Timestamptz `json:"claimed_at"`
+	LastError               pgtype.Text        `json:"last_error"`
+	IdempotencyKey          string             `json:"idempotency_key"`
+	EmailSendAttemptID      pgtype.Text        `json:"email_send_attempt_id"`
+	SentAt                  pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformPublishingRestrictionEvent struct {
+	ID               string             `json:"id"`
+	RestrictionID    string             `json:"restriction_id"`
+	Platform         string             `json:"platform"`
+	CycleID          string             `json:"cycle_id"`
+	EventType        string             `json:"event_type"`
+	ActorUserID      pgtype.Text        `json:"actor_user_id"`
+	ExpectedVersion  int64              `json:"expected_version"`
+	ResultingVersion int64              `json:"resulting_version"`
+	BeforeState      []byte             `json:"before_state"`
+	AfterState       []byte             `json:"after_state"`
+	RequestID        pgtype.Text        `json:"request_id"`
+	ActorIp          pgtype.Text        `json:"actor_ip"`
+	ActorUserAgent   pgtype.Text        `json:"actor_user_agent"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type PostAnalytic struct {

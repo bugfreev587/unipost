@@ -7,6 +7,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
 func TestDeriveRetryPolicyScheduledRetryJob(t *testing.T) {
@@ -40,6 +41,29 @@ func TestDeriveRetryPolicyScheduledRetryJob(t *testing.T) {
 	}
 	if policy.ManualRetryAllowed {
 		t.Fatal("manual retry should be false while an active job exists")
+	}
+}
+
+func TestApplyPublishingRestrictionRetryEligibility(t *testing.T) {
+	result := failedResult(false)
+	result.ErrorCode = pgtype.Text{String: publishingrestrictions.NormalizedCode, Valid: true}
+
+	blocked := deriveRetryPolicy(result, nil)
+	applyPublishingRestrictionRetryEligibility(blocked, true, true)
+	if blocked.ManualRetryAllowed || blocked.RetryState != "blocked" || blocked.Reason != "publishing_restriction_active" {
+		t.Fatalf("blocked policy=%+v", blocked)
+	}
+
+	available := deriveRetryPolicy(result, nil)
+	applyPublishingRestrictionRetryEligibility(available, false, true)
+	if !available.ManualRetryAllowed || available.WillRetry || available.RetryState != "manual_only" {
+		t.Fatalf("available policy=%+v", available)
+	}
+
+	expired := deriveRetryPolicy(result, nil)
+	applyPublishingRestrictionRetryEligibility(expired, false, false)
+	if expired.ManualRetryAllowed || expired.Reason != "media_reupload_required" {
+		t.Fatalf("expired policy=%+v", expired)
 	}
 }
 

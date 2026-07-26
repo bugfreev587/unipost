@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -99,4 +100,50 @@ func publishingRestrictionFailure(postID, resultID, workspaceID, accountID, plat
 	failure.ErrorTemporality = postfailures.ToText("temporary")
 	failure.ProviderError = []byte(`{}`)
 	return failure
+}
+
+func (h *SocialPostHandler) applyPublishingRestrictionRetryProjection(
+	ctx context.Context,
+	workspaceID string,
+	post db.SocialPost,
+	response *postResultResponse,
+	result db.SocialPostResult,
+	jobs []db.PostDeliveryJob,
+) {
+	if response == nil || !result.ErrorCode.Valid || result.ErrorCode.String != publishingrestrictions.NormalizedCode {
+		return
+	}
+	if response.RetryPolicy == nil {
+		response.RetryPolicy = deriveRetryPolicy(result, jobs)
+	}
+	restrictionActive := true
+	if h != nil && h.publishingRestrictions != nil {
+		decision, err := h.publishingRestrictions.Evaluate(ctx, workspaceID, response.Platform)
+		if err == nil {
+			restrictionActive = decision.Restricted
+		}
+	}
+	mediaAvailable := h.postMediaAvailableForRetry(ctx, post)
+	applyPublishingRestrictionRetryEligibility(response.RetryPolicy, restrictionActive, mediaAvailable)
+	if retainedUntil, err := h.queries.GetPostPublishingRestrictionMediaRetention(ctx, post.ID); err == nil && retainedUntil.Valid {
+		value := retainedUntil.Time.UTC().Format(time.RFC3339)
+		response.MediaRetainedUntil = &value
+	}
+}
+
+func (h *SocialPostHandler) postMediaAvailableForRetry(ctx context.Context, post db.SocialPost) bool {
+	ids, ok := decodeMediaIDsForRetention(post)
+	if !ok {
+		return false
+	}
+	for _, mediaID := range ids {
+		media, err := h.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
+			ID:          mediaID,
+			WorkspaceID: post.WorkspaceID,
+		})
+		if err != nil || media.Status != "uploaded" {
+			return false
+		}
+	}
+	return true
 }

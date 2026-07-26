@@ -175,6 +175,7 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	results := make([]db.SocialPostResult, 0, len(parsed))
 	jobs := make([]db.PostDeliveryJob, 0, len(parsed))
 	failureSummaries := make([]string, 0)
+	var policyFailureAt time.Time
 
 	for idx, pp := range parsed {
 		acc, ok := dbAccounts[pp.AccountID]
@@ -188,6 +189,9 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 			}
 			if policyDecision.Restricted {
 				validationErr = errors.New(publishingrestrictions.UserMessage)
+				if policyFailureAt.IsZero() {
+					policyFailureAt = time.Now()
+				}
 			}
 		}
 
@@ -276,6 +280,9 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	post.Status = newStatus
 	post.PublishedAt = pgtype.Timestamptz{}
 	h.syncPostMediaRetention(ctx, post, newStatus)
+	if !policyFailureAt.IsZero() {
+		h.syncPostMediaRetentionForPublishingRestrictionAt(ctx, post, policyFailureAt)
+	}
 	if newStatus == "failed" && len(failureSummaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
@@ -878,6 +885,7 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	}))
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
+	h.syncPostMediaRetentionForPublishingRestrictionAt(ctx, post, time.Now())
 	return nil
 }
 
@@ -1386,6 +1394,9 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 		if acc, accErr := h.queries.GetSocialAccount(ctx, result.SocialAccountID); accErr == nil {
 			platformName = acc.Platform
 		}
+	}
+	if err := h.activatePostMediaForRetry(ctx, post); err != nil {
+		return db.PostDeliveryJob{}, err
 	}
 	return h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
 		PostID:             post.ID,

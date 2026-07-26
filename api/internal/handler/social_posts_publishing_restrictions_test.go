@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,6 +17,25 @@ type fakePostRestrictionEvaluator struct {
 	decisions map[string]publishingrestrictions.Decision
 	err       error
 	calls     []string
+}
+
+func TestRetryResultRechecksRestrictionBeforeEnqueue(t *testing.T) {
+	source, err := os.ReadFile("social_post_retry.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) RetryResult")
+	end := strings.Index(text[start:], "func (h *SocialPostHandler) refreshParentPostStatus")
+	if start < 0 || end < 0 {
+		t.Fatal("RetryResult boundaries not found")
+	}
+	fn := text[start : start+end]
+	policy := strings.Index(fn, "evaluateRetryPublishingRestriction")
+	enqueue := strings.Index(fn, "EnqueueRetryForResult")
+	if policy < 0 || enqueue < 0 || policy > enqueue {
+		t.Fatalf("policy recheck must precede retry enqueue: policy=%d enqueue=%d", policy, enqueue)
+	}
 }
 
 func (f *fakePostRestrictionEvaluator) Evaluate(_ context.Context, _ string, platformName string) (publishingrestrictions.Decision, error) {

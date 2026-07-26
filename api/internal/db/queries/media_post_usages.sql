@@ -10,6 +10,7 @@ WITH locked_media AS MATERIALIZED (
   UPDATE media_post_usages usage
   SET post_status = sqlc.arg(post_status),
       cleanup_after_at = sqlc.narg(cleanup_after_at),
+	  retention_reason = sqlc.arg(retention_reason),
       updated_at = NOW()
   FROM locked_media
   WHERE usage.media_id = locked_media.id
@@ -17,19 +18,21 @@ WITH locked_media AS MATERIALIZED (
   RETURNING usage.id
 ), inserted_usage AS (
   INSERT INTO media_post_usages (
-    workspace_id, media_id, post_id, post_status, cleanup_after_at
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
   )
   SELECT
     sqlc.arg(workspace_id),
     sqlc.arg(media_id),
     sqlc.arg(post_id),
     sqlc.arg(post_status),
-    sqlc.narg(cleanup_after_at)
+    sqlc.narg(cleanup_after_at),
+    sqlc.arg(retention_reason)
   FROM locked_media
   WHERE NOT EXISTS (SELECT 1 FROM updated_usage)
   ON CONFLICT (media_id, post_id) DO UPDATE
   SET post_status = EXCLUDED.post_status,
       cleanup_after_at = EXCLUDED.cleanup_after_at,
+	  retention_reason = EXCLUDED.retention_reason,
       updated_at = NOW()
   RETURNING id
 )
@@ -53,6 +56,12 @@ FROM social_posts
 WHERE workspace_id = $1
   AND status = 'scheduled'
   AND deleted_at IS NULL;
+
+-- name: GetPostPublishingRestrictionMediaRetention :one
+SELECT MAX(cleanup_after_at)::timestamptz
+FROM media_post_usages
+WHERE post_id = $1
+  AND retention_reason = 'publishing_restriction';
 
 -- name: ClaimMediaDueForRetentionCleanup :many
 WITH snapshot_candidates AS MATERIALIZED (

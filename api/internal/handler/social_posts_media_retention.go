@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -11,6 +12,8 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/mediaretention"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
+
+var errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
 
 func mediaIDsForRetention(post db.SocialPost) []string {
 	ids, _ := decodeMediaIDsForRetention(post)
@@ -41,6 +44,23 @@ func decodeMediaIDsForRetention(post db.SocialPost) ([]string, bool) {
 }
 
 func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.SocialPost, postStatus string) {
+	h.syncPostMediaRetentionAt(ctx, post, postStatus, "", time.Time{})
+}
+
+func (h *SocialPostHandler) syncPostMediaRetentionForPublishingRestrictionAt(ctx context.Context, post db.SocialPost, failedAt time.Time) {
+	if failedAt.IsZero() {
+		failedAt = time.Now()
+	}
+	h.syncPostMediaRetentionAt(ctx, post, "failed", "publishing_restriction", failedAt.UTC().Add(60*24*time.Hour))
+}
+
+func (h *SocialPostHandler) syncPostMediaRetentionAt(
+	ctx context.Context,
+	post db.SocialPost,
+	postStatus string,
+	retentionReason string,
+	cleanupOverride time.Time,
+) {
 	if h == nil || h.queries == nil {
 		return
 	}
@@ -76,17 +96,26 @@ func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.
 	}
 
 	var cleanupAfter pgtype.Timestamptz
-	if retention, ok := mediaretention.RetentionForPlanStatus(planID, postStatus); ok {
+	if !cleanupOverride.IsZero() {
+		cleanupAfter = pgtype.Timestamptz{Time: cleanupOverride.UTC(), Valid: true}
+	} else if retention, ok := mediaretention.RetentionForPlanStatus(planID, postStatus); ok {
 		cleanupAfter = pgtype.Timestamptz{Time: time.Now().Add(retention), Valid: true}
+	}
+	if retentionReason == "" {
+		retentionReason = "plan_status"
+		if !cleanupAfter.Valid {
+			retentionReason = "active_post"
+		}
 	}
 
 	for _, mediaID := range ids {
 		if _, err := h.queries.UpsertMediaPostUsage(ctx, db.UpsertMediaPostUsageParams{
-			WorkspaceID:    post.WorkspaceID,
-			MediaID:        mediaID,
-			PostID:         post.ID,
-			PostStatus:     postStatus,
-			CleanupAfterAt: cleanupAfter,
+			WorkspaceID:     post.WorkspaceID,
+			MediaID:         mediaID,
+			PostID:          post.ID,
+			PostStatus:      postStatus,
+			CleanupAfterAt:  cleanupAfter,
+			RetentionReason: retentionReason,
 		}); err != nil {
 			slog.Warn("media retention: usage upsert failed",
 				"post_id", post.ID,
@@ -95,4 +124,34 @@ func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.
 				"error", err)
 		}
 	}
+}
+
+func (h *SocialPostHandler) activatePostMediaForRetry(ctx context.Context, post db.SocialPost) error {
+	ids, ok := decodeMediaIDsForRetention(post)
+	if !ok {
+		return errRetryMediaReuploadRequired
+	}
+	for _, mediaID := range ids {
+		media, err := h.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
+			ID:          mediaID,
+			WorkspaceID: post.WorkspaceID,
+		})
+		if err != nil || media.Status != "uploaded" {
+			return errRetryMediaReuploadRequired
+		}
+	}
+	for _, mediaID := range ids {
+		applied, err := h.queries.UpsertMediaPostUsage(ctx, db.UpsertMediaPostUsageParams{
+			MediaID:         mediaID,
+			WorkspaceID:     post.WorkspaceID,
+			PostStatus:      "publishing",
+			CleanupAfterAt:  pgtype.Timestamptz{},
+			RetentionReason: "active_post",
+			PostID:          post.ID,
+		})
+		if err != nil || !applied {
+			return errRetryMediaReuploadRequired
+		}
+	}
+	return nil
 }

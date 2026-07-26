@@ -162,6 +162,20 @@ func (q *Queries) DeleteMediaPostUsagesForPostExcept(ctx context.Context, arg De
 	return err
 }
 
+const getPostPublishingRestrictionMediaRetention = `-- name: GetPostPublishingRestrictionMediaRetention :one
+SELECT MAX(cleanup_after_at)::timestamptz
+FROM media_post_usages
+WHERE post_id = $1
+  AND retention_reason = 'publishing_restriction'
+`
+
+func (q *Queries) GetPostPublishingRestrictionMediaRetention(ctx context.Context, postID string) (pgtype.Timestamptz, error) {
+	row := q.db.QueryRow(ctx, getPostPublishingRestrictionMediaRetention, postID)
+	var column_1 pgtype.Timestamptz
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const upsertMediaPostUsage = `-- name: UpsertMediaPostUsage :one
 WITH locked_media AS MATERIALIZED (
   UPDATE media parent
@@ -174,26 +188,29 @@ WITH locked_media AS MATERIALIZED (
   UPDATE media_post_usages usage
   SET post_status = $3,
       cleanup_after_at = $4,
+	  retention_reason = $5,
       updated_at = NOW()
   FROM locked_media
   WHERE usage.media_id = locked_media.id
-    AND usage.post_id = $5
+    AND usage.post_id = $6
   RETURNING usage.id
 ), inserted_usage AS (
   INSERT INTO media_post_usages (
-    workspace_id, media_id, post_id, post_status, cleanup_after_at
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
   )
   SELECT
     $2,
     $1,
-    $5,
+    $6,
     $3,
-    $4
+    $4,
+    $5
   FROM locked_media
   WHERE NOT EXISTS (SELECT 1 FROM updated_usage)
   ON CONFLICT (media_id, post_id) DO UPDATE
   SET post_status = EXCLUDED.post_status,
       cleanup_after_at = EXCLUDED.cleanup_after_at,
+	  retention_reason = EXCLUDED.retention_reason,
       updated_at = NOW()
   RETURNING id
 )
@@ -204,11 +221,12 @@ LIMIT 1
 `
 
 type UpsertMediaPostUsageParams struct {
-	MediaID        string             `json:"media_id"`
-	WorkspaceID    string             `json:"workspace_id"`
-	PostStatus     string             `json:"post_status"`
-	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
-	PostID         string             `json:"post_id"`
+	MediaID         string             `json:"media_id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	PostStatus      string             `json:"post_status"`
+	CleanupAfterAt  pgtype.Timestamptz `json:"cleanup_after_at"`
+	RetentionReason string             `json:"retention_reason"`
+	PostID          string             `json:"post_id"`
 }
 
 func (q *Queries) UpsertMediaPostUsage(ctx context.Context, arg UpsertMediaPostUsageParams) (bool, error) {
@@ -217,6 +235,7 @@ func (q *Queries) UpsertMediaPostUsage(ctx context.Context, arg UpsertMediaPostU
 		arg.WorkspaceID,
 		arg.PostStatus,
 		arg.CleanupAfterAt,
+		arg.RetentionReason,
 		arg.PostID,
 	)
 	var applied bool
