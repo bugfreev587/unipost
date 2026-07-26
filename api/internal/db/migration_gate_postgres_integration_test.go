@@ -391,3 +391,24 @@ func TestRequireCurrentSchemaRejects124AndAccepts125(t *testing.T) {
 		t.Fatalf("schema guard rejected current schema: %v", err)
 	}
 }
+
+func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	_, err := database.ExecContext(context.Background(), `
+		CREATE TABLE goose_db_version (
+			id SERIAL PRIMARY KEY,
+			version_id BIGINT NOT NULL,
+			is_applied BOOLEAN NOT NULL,
+			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (126, TRUE);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = RequireCurrentSchema(context.Background(), databaseURL)
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 125") || !strings.Contains(err.Error(), "rollback is unsafe") {
+		t.Fatalf("schema-ahead guard error = %v", err)
+	}
+}

@@ -17,13 +17,22 @@ import (
 )
 
 type irreversibleMigration struct {
-	Version     int64
-	Description string
+	Version       int64
+	Description   string
+	CountAffected func(context.Context, migrationQueryer, int64) (int64, error)
 }
 
 var irreversibleMigrations = []irreversibleMigration{
-	{Version: 124, Description: "overwrites existing media_post_usages retention_reason values"},
-	{Version: 125, Description: "overwrites existing failed email recipient retryable values"},
+	{
+		Version:       124,
+		Description:   "overwrites existing media_post_usages retention_reason values",
+		CountAffected: countMigration124AffectedRows,
+	},
+	{
+		Version:       125,
+		Description:   "overwrites existing failed email recipient retryable values",
+		CountAffected: countMigration125AffectedRows,
+	},
 }
 
 const migrationGateAdvisoryLockKey int64 = 0x554E49504F53544
@@ -122,23 +131,19 @@ func countAffectedIrreversibleMigrations(
 	queryer migrationQueryer,
 	currentVersion int64,
 ) ([]AffectedMigration, error) {
-	pending := pendingIrreversibleMigrationVersions(currentVersion)
-	affected := make([]AffectedMigration, 0, len(pending))
-	for _, version := range pending {
-		var rows int64
-		var err error
-		switch version {
-		case 124:
-			rows, err = countMigration124AffectedRows(ctx, queryer, currentVersion)
-		case 125:
-			rows, err = countMigration125AffectedRows(ctx, queryer)
-		default:
-			err = fmt.Errorf("irreversible migration %d has no affected-row classifier", version)
+	affected := make([]AffectedMigration, 0, len(irreversibleMigrations))
+	for _, migration := range irreversibleMigrations {
+		if migration.Version <= currentVersion {
+			continue
 		}
+		if migration.CountAffected == nil {
+			return nil, fmt.Errorf("irreversible migration %d has no affected-row classifier", migration.Version)
+		}
+		rows, err := migration.CountAffected(ctx, queryer, currentVersion)
 		if err != nil {
-			return nil, fmt.Errorf("count rows affected by irreversible migration %d: %w", version, err)
+			return nil, fmt.Errorf("count rows affected by irreversible migration %d: %w", migration.Version, err)
 		}
-		affected = append(affected, AffectedMigration{Version: version, Rows: rows})
+		affected = append(affected, AffectedMigration{Version: migration.Version, Rows: rows})
 	}
 	return affected, nil
 }
@@ -159,7 +164,7 @@ func countMigration124AffectedRows(ctx context.Context, queryer migrationQueryer
 	return rows, nil
 }
 
-func countMigration125AffectedRows(ctx context.Context, queryer migrationQueryer) (int64, error) {
+func countMigration125AffectedRows(ctx context.Context, queryer migrationQueryer, _ int64) (int64, error) {
 	exists, err := migrationTableExists(ctx, queryer, "platform_publishing_restriction_email_recipients")
 	if err != nil || !exists {
 		return 0, err
@@ -199,7 +204,7 @@ func runAfterBackupGate(
 	client railwaybackup.Client,
 	affected []AffectedMigration,
 	runMigrations func(context.Context) error,
-) error {
+) (err error) {
 	needsBackup := false
 	for _, migration := range affected {
 		if migration.Rows > 0 {
@@ -210,6 +215,16 @@ func runAfterBackupGate(
 	if !needsBackup {
 		return runMigrations(ctx)
 	}
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf(
+				"Railway backup gate blocked environment %q with affected migrations [%s]: %w",
+				config.EnvironmentID,
+				formatAffectedMigrations(affected),
+				err,
+			)
+		}
+	}()
 	if client == nil {
 		return fmt.Errorf("Railway backup is required but the backup client is missing")
 	}
@@ -286,6 +301,14 @@ func runAfterBackupGate(
 		}
 	}
 	return runMigrations(ctx)
+}
+
+func formatAffectedMigrations(affected []AffectedMigration) string {
+	items := make([]string, 0, len(affected))
+	for _, migration := range affected {
+		items = append(items, fmt.Sprintf("version=%d rows=%d", migration.Version, migration.Rows))
+	}
+	return strings.Join(items, ", ")
 }
 
 func validateMigrationGateConfig(config MigrationGateConfig) error {

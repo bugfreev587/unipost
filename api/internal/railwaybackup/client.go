@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 )
 
 const publicGraphQLEndpoint = "https://backboard.railway.com/graphql/v2"
@@ -155,7 +156,12 @@ type responseEnvelope[T any] struct {
 	} `json:"errors"`
 }
 
-func execute[T any](ctx context.Context, client *GraphQLClient, query string, variables map[string]any, data *T) error {
+func execute[T any](ctx context.Context, client *GraphQLClient, query string, variables map[string]any, data *T) (err error) {
+	defer func() {
+		if err != nil && client.token != "" {
+			err = fmt.Errorf("%s", strings.ReplaceAll(err.Error(), client.token, "[REDACTED]"))
+		}
+	}()
 	payload, err := json.Marshal(requestEnvelope{Query: query, Variables: variables})
 	if err != nil {
 		return fmt.Errorf("encode request: %w", err)

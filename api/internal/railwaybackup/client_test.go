@@ -140,7 +140,7 @@ func TestClientRejectsGraphQLErrorsWithoutLeakingToken(t *testing.T) {
 	const token = "top-secret-project-token"
 	server := newGraphQLServer(t, func(_ *http.Request, _ graphQLRequest) (int, any) {
 		return http.StatusOK, map[string]any{
-			"errors": []any{map[string]any{"message": "Not Authorized"}},
+			"errors": []any{map[string]any{"message": "Not Authorized: " + token}},
 		}
 	})
 	defer server.Close()

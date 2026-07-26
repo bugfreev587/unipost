@@ -2,9 +2,14 @@ package db
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -177,6 +182,30 @@ func TestMigrationGateRejectsWorkflowIDAsBackupID(t *testing.T) {
 	}
 }
 
+func TestMigrationGateFailureIncludesEnvironmentAndAffectedRows(t *testing.T) {
+	config := testMigrationGateConfig()
+	client := &recordingBackupClient{identityErr: errors.New("identity unavailable")}
+	affected := []AffectedMigration{{Version: 124, Rows: 7}, {Version: 125, Rows: 3}}
+	err := runAfterBackupGate(
+		context.Background(), config, client, affected,
+		func(context.Context) error { t.Fatal("migration runner must not be called"); return nil },
+	)
+	if err == nil {
+		t.Fatal("gate error is nil")
+	}
+	message := err.Error()
+	for _, want := range []string{
+		"environment-1",
+		"version=124 rows=7",
+		"version=125 rows=3",
+		"identity unavailable",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("gate error %q missing %q", message, want)
+		}
+	}
+}
+
 func TestMigrationGateRejectsInvalidBackupEvidence(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -321,6 +350,90 @@ func TestIrreversibleMigrationRegistryCoversHistoricalDataUpdates(t *testing.T) 
 	}
 	if !strings.Contains(strings.ToLower(irreversibleMigrations[1].Description), "retryable") {
 		t.Fatalf("migration 125 description = %q", irreversibleMigrations[1].Description)
+	}
+	for _, migration := range irreversibleMigrations {
+		if migration.CountAffected == nil {
+			t.Fatalf("irreversible migration %d has no affected-row classifier", migration.Version)
+		}
+	}
+}
+
+func TestIrreversibleMigrationSafetyManifestMatchesRegistry(t *testing.T) {
+	type manifestEntry struct {
+		Version     int64  `json:"version"`
+		Description string `json:"description"`
+	}
+	type safetyManifest struct {
+		BaselineVersion            int64           `json:"baseline_version"`
+		IrreversibleDataMigrations []manifestEntry `json:"irreversible_data_migrations"`
+	}
+
+	body, err := os.ReadFile("migrations/irreversible_data_migrations.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest safetyManifest
+	if err := json.Unmarshal(body, &manifest); err != nil {
+		t.Fatalf("decode irreversible migration manifest: %v", err)
+	}
+	if manifest.BaselineVersion != 125 {
+		t.Fatalf("manifest baseline = %d, want 125", manifest.BaselineVersion)
+	}
+
+	registry := make(map[int64]irreversibleMigration, len(irreversibleMigrations))
+	for _, migration := range irreversibleMigrations {
+		registry[migration.Version] = migration
+	}
+	marked := make(map[int64]manifestEntry, len(manifest.IrreversibleDataMigrations))
+	for _, entry := range manifest.IrreversibleDataMigrations {
+		marked[entry.Version] = entry
+		migration, ok := registry[entry.Version]
+		if !ok {
+			t.Fatalf("manifest marks migration %d irreversible but runtime registry is missing it", entry.Version)
+		}
+		if migration.CountAffected == nil {
+			t.Fatalf("manifest migration %d has no runtime classifier", entry.Version)
+		}
+	}
+	for version := range registry {
+		if _, ok := marked[version]; !ok {
+			t.Fatalf("runtime registry migration %d is missing from irreversible manifest", version)
+		}
+	}
+
+	err = fs.WalkDir(migrations, "migrations", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".sql" {
+			return nil
+		}
+		prefix, _, ok := strings.Cut(filepath.Base(path), "_")
+		if !ok {
+			return nil
+		}
+		version, parseErr := strconv.ParseInt(prefix, 10, 64)
+		if parseErr != nil || version <= manifest.BaselineVersion {
+			return parseErr
+		}
+		migrationBody, readErr := fs.ReadFile(migrations, path)
+		if readErr != nil {
+			return readErr
+		}
+		text := strings.ToLower(string(migrationBody))
+		irreversible := strings.Contains(text, "-- unipost:safety irreversible")
+		reversible := strings.Contains(text, "-- unipost:safety reversible")
+		if irreversible == reversible {
+			return fmt.Errorf("migration %d must declare exactly one unipost:safety marker", version)
+		}
+		_, isMarked := marked[version]
+		if irreversible != isMarked {
+			return fmt.Errorf("migration %d safety marker disagrees with irreversible manifest", version)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -33,8 +33,11 @@ func RequireCurrentSchema(ctx context.Context, databaseURL string) error {
 	if err != nil {
 		return fmt.Errorf("read required database schema: %w", err)
 	}
-	if currentVersion != requiredVersion {
-		return fmt.Errorf("database schema current version %d does not match required version %d", currentVersion, requiredVersion)
+	if currentVersion < requiredVersion {
+		return fmt.Errorf("database schema current version %d is behind required version %d; run pre-deploy migrations", currentVersion, requiredVersion)
+	}
+	if currentVersion > requiredVersion {
+		return fmt.Errorf("database schema current version %d is newer than binary required version %d; rollback is unsafe", currentVersion, requiredVersion)
 	}
 	return nil
 }
