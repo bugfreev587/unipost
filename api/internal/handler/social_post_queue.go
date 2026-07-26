@@ -1395,22 +1395,25 @@ func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspace
 			platformName = acc.Platform
 		}
 	}
-	if err := h.activatePostMediaForRetry(ctx, post); err != nil {
-		return db.PostDeliveryJob{}, err
+	mediaIDs, mediaOK := decodeMediaIDsForRetention(post)
+	if !mediaOK {
+		return db.PostDeliveryJob{}, errRetryMediaReuploadRequired
 	}
-	return h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
+	job, err := h.queries.CreateRetryPostDeliveryJobWithMediaActivation(ctx, db.CreateRetryPostDeliveryJobWithMediaActivationParams{
 		PostID:             post.ID,
 		SocialPostResultID: result.ID,
 		WorkspaceID:        post.WorkspaceID,
 		SocialAccountID:    result.SocialAccountID,
 		Platform:           platformName,
 		PostInputIndex:     postInputIndex,
-		Kind:               "retry",
-		State:              "pending",
-		Attempts:           0,
 		MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
 		NextRunAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		MediaIds:           mediaIDs,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.PostDeliveryJob{}, errRetryMediaReuploadRequired
+	}
+	return job, err
 }
 
 // DismissDeliveryJob archives a terminal (dead/failed/cancelled)

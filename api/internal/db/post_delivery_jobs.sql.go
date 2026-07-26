@@ -492,6 +492,125 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 	return i, err
 }
 
+const createRetryPostDeliveryJobWithMediaActivation = `-- name: CreateRetryPostDeliveryJobWithMediaActivation :one
+WITH locked_media AS MATERIALIZED (
+  UPDATE media
+  SET usage_version = usage_version + 1
+  WHERE workspace_id = $3
+    AND id = ANY($9::text[])
+    AND status = 'uploaded'
+  RETURNING id
+), all_media_available AS MATERIALIZED (
+  SELECT COUNT(DISTINCT id)::int = CARDINALITY($9::text[]) AS available
+  FROM locked_media
+), activated_usage AS (
+  INSERT INTO media_post_usages (
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+  )
+  SELECT
+    $3, locked_media.id, $1,
+    'publishing', NULL, 'active_post'
+  FROM locked_media, all_media_available
+  WHERE all_media_available.available
+  ON CONFLICT (media_id, post_id) DO UPDATE
+  SET post_status = 'publishing',
+      cleanup_after_at = NULL,
+      retention_reason = 'active_post',
+      updated_at = NOW()
+  RETURNING media_id
+)
+INSERT INTO post_delivery_jobs (
+  post_id,
+  social_post_result_id,
+  workspace_id,
+  social_account_id,
+  platform,
+  post_input_index,
+  kind,
+  state,
+  attempts,
+  max_attempts,
+  failure_stage,
+  error_code,
+  platform_error_code,
+  last_error,
+  next_run_at,
+  last_attempt_at,
+  finished_at
+)
+SELECT
+  $1, $2, $3,
+  $4, $5, $6,
+  'retry', 'pending', 0, $7, NULL, NULL, NULL, NULL,
+  $8, NULL, NULL
+FROM all_media_available
+WHERE all_media_available.available
+  AND (
+    CARDINALITY($9::text[]) = 0
+    OR (SELECT COUNT(*) FROM activated_usage) = CARDINALITY($9::text[])
+  )
+RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
+`
+
+type CreateRetryPostDeliveryJobWithMediaActivationParams struct {
+	PostID             string             `json:"post_id"`
+	SocialPostResultID string             `json:"social_post_result_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	SocialAccountID    string             `json:"social_account_id"`
+	Platform           string             `json:"platform"`
+	PostInputIndex     int32              `json:"post_input_index"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
+	MediaIds           []string           `json:"media_ids"`
+}
+
+// The media parent-row version bump, usage-ledger activation, and retry-job
+// insert are one statement. Cleanup can therefore win before this statement
+// (and make all_media_available false), or Retry can win and invalidate the
+// cleanup snapshot; it cannot delete an object between activation and enqueue.
+func (q *Queries) CreateRetryPostDeliveryJobWithMediaActivation(ctx context.Context, arg CreateRetryPostDeliveryJobWithMediaActivationParams) (PostDeliveryJob, error) {
+	row := q.db.QueryRow(ctx, createRetryPostDeliveryJobWithMediaActivation,
+		arg.PostID,
+		arg.SocialPostResultID,
+		arg.WorkspaceID,
+		arg.SocialAccountID,
+		arg.Platform,
+		arg.PostInputIndex,
+		arg.MaxAttempts,
+		arg.NextRunAt,
+		arg.MediaIds,
+	)
+	var i PostDeliveryJob
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialPostResultID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.Platform,
+		&i.PostInputIndex,
+		&i.Kind,
+		&i.State,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.FailureStage,
+		&i.ErrorCode,
+		&i.PlatformErrorCode,
+		&i.LastError,
+		&i.NextRunAt,
+		&i.LastAttemptAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.DismissedAt,
+		&i.LeaseExpiresAt,
+		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
+	)
+	return i, err
+}
+
 const deleteOldSucceededPostDeliveryJobs = `-- name: DeleteOldSucceededPostDeliveryJobs :exec
 DELETE FROM post_delivery_jobs
 WHERE state = 'succeeded'

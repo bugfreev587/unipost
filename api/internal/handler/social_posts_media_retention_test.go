@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -200,6 +201,30 @@ func TestSyncPostMediaRetentionMarksNonTerminalUsageActive(t *testing.T) {
 	for _, upsert := range dbtx.upserts {
 		if upsert.RetentionReason != "active_post" || upsert.CleanupAfterAt.Valid {
 			t.Fatalf("active usage=%+v", upsert)
+		}
+	}
+}
+
+func TestRetryJobCreationAtomicallyReactivatesMediaUsage(t *testing.T) {
+	source, err := os.ReadFile("../db/queries/post_delivery_jobs.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "-- name: CreateRetryPostDeliveryJobWithMediaActivation")
+	if start < 0 {
+		t.Fatal("atomic retry/media query is missing")
+	}
+	query := text[start:]
+	for _, fragment := range []string{
+		"SET usage_version = usage_version + 1",
+		"INSERT INTO media_post_usages",
+		"ON CONFLICT (media_id, post_id) DO UPDATE",
+		"retention_reason = 'active_post'",
+		"INSERT INTO post_delivery_jobs",
+	} {
+		if !strings.Contains(query, fragment) {
+			t.Fatalf("atomic retry/media query missing %q", fragment)
 		}
 	}
 }

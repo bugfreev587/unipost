@@ -125,33 +125,3 @@ func (h *SocialPostHandler) syncPostMediaRetentionAt(
 		}
 	}
 }
-
-func (h *SocialPostHandler) activatePostMediaForRetry(ctx context.Context, post db.SocialPost) error {
-	ids, ok := decodeMediaIDsForRetention(post)
-	if !ok {
-		return errRetryMediaReuploadRequired
-	}
-	for _, mediaID := range ids {
-		media, err := h.queries.GetMediaByIDAndWorkspace(ctx, db.GetMediaByIDAndWorkspaceParams{
-			ID:          mediaID,
-			WorkspaceID: post.WorkspaceID,
-		})
-		if err != nil || media.Status != "uploaded" {
-			return errRetryMediaReuploadRequired
-		}
-	}
-	for _, mediaID := range ids {
-		applied, err := h.queries.UpsertMediaPostUsage(ctx, db.UpsertMediaPostUsageParams{
-			MediaID:         mediaID,
-			WorkspaceID:     post.WorkspaceID,
-			PostStatus:      "publishing",
-			CleanupAfterAt:  pgtype.Timestamptz{},
-			RetentionReason: "active_post",
-			PostID:          post.ID,
-		})
-		if err != nil || !applied {
-			return errRetryMediaReuploadRequired
-		}
-	}
-	return nil
-}

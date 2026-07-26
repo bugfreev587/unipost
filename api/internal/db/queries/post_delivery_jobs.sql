@@ -22,6 +22,69 @@ INSERT INTO post_delivery_jobs (
 )
 RETURNING *;
 
+-- name: CreateRetryPostDeliveryJobWithMediaActivation :one
+-- The media parent-row version bump, usage-ledger activation, and retry-job
+-- insert are one statement. Cleanup can therefore win before this statement
+-- (and make all_media_available false), or Retry can win and invalidate the
+-- cleanup snapshot; it cannot delete an object between activation and enqueue.
+WITH locked_media AS MATERIALIZED (
+  UPDATE media
+  SET usage_version = usage_version + 1
+  WHERE workspace_id = sqlc.arg(workspace_id)
+    AND id = ANY(sqlc.arg(media_ids)::text[])
+    AND status = 'uploaded'
+  RETURNING id
+), all_media_available AS MATERIALIZED (
+  SELECT COUNT(DISTINCT id)::int = CARDINALITY(sqlc.arg(media_ids)::text[]) AS available
+  FROM locked_media
+), activated_usage AS (
+  INSERT INTO media_post_usages (
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+  )
+  SELECT
+    sqlc.arg(workspace_id), locked_media.id, sqlc.arg(post_id),
+    'publishing', NULL, 'active_post'
+  FROM locked_media, all_media_available
+  WHERE all_media_available.available
+  ON CONFLICT (media_id, post_id) DO UPDATE
+  SET post_status = 'publishing',
+      cleanup_after_at = NULL,
+      retention_reason = 'active_post',
+      updated_at = NOW()
+  RETURNING media_id
+)
+INSERT INTO post_delivery_jobs (
+  post_id,
+  social_post_result_id,
+  workspace_id,
+  social_account_id,
+  platform,
+  post_input_index,
+  kind,
+  state,
+  attempts,
+  max_attempts,
+  failure_stage,
+  error_code,
+  platform_error_code,
+  last_error,
+  next_run_at,
+  last_attempt_at,
+  finished_at
+)
+SELECT
+  sqlc.arg(post_id), sqlc.arg(social_post_result_id), sqlc.arg(workspace_id),
+  sqlc.arg(social_account_id), sqlc.arg(platform), sqlc.arg(post_input_index),
+  'retry', 'pending', 0, sqlc.arg(max_attempts), NULL, NULL, NULL, NULL,
+  sqlc.arg(next_run_at), NULL, NULL
+FROM all_media_available
+WHERE all_media_available.available
+  AND (
+    CARDINALITY(sqlc.arg(media_ids)::text[]) = 0
+    OR (SELECT COUNT(*) FROM activated_usage) = CARDINALITY(sqlc.arg(media_ids)::text[])
+  )
+RETURNING *;
+
 -- name: GetPostDeliveryJobByIDAndWorkspace :one
 SELECT * FROM post_delivery_jobs
 WHERE id = $1 AND workspace_id = $2;
