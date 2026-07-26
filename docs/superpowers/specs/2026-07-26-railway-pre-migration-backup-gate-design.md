@@ -2,146 +2,209 @@
 
 ## Goal
 
-Prevent migrations 124 and 125 from modifying existing Railway PostgreSQL data unless the exact target environment has a newly created, successful, locked Railway volume backup. The gate must fail closed before Goose applies any pending migration. It must not connect to, back up, migrate, or deploy staging or production during implementation and testing.
+Prevent an irreversible data migration from running against a Railway PostgreSQL database unless the exact target environment has a newly created, locked, and independently identifiable Railway volume backup. The gate fails closed before Goose applies any pending affected migration.
+
+This task will not back up, connect to, migrate, deploy, or promote staging or production. Staging and production backups are release-time gates and must be created independently in their own environments.
 
 ## Current behavior and risk
 
-Every API and worker process calls `db.RunMigrations` during startup. `RunMigrations` immediately asks Goose to apply every pending embedded migration. There is currently no preflight check, backup creation, or backup verification.
+Every API and worker process currently calls `db.RunMigrations` during normal startup. That call immediately asks Goose to apply every pending embedded migration. Backup API latency or failure therefore delays the HTTP health endpoint and can make Railway kill an otherwise valid deployment before it becomes healthy.
 
-The relevant pending data changes are:
+The relevant data changes are:
 
-- Migration 124 adds `retryable` and `attempt_generation` to publishing-restriction email recipients. It also changes active `media_post_usages` rows from `retention_reason='plan_status'` to `retention_reason='active_post'`. The previous reason cannot be reconstructed reliably after the update.
+- Migration 124 adds `retryable` and `attempt_generation` to publishing-restriction email recipients. It also changes active `media_post_usages` rows from `retention_reason='plan_status'` to `retention_reason='active_post'`. The previous reason cannot be reconstructed reliably after that update.
 - Migration 125 changes every existing publishing-restriction email recipient with `status='failed'` to `retryable=FALSE`. The trustworthy pre-125 value cannot be reconstructed.
 
-Migration 124 may already have run in an isolated PR Preview. This design does not rewrite its historical Up section and does not claim to reconstruct values that were already changed. It protects any environment in which an affected data update is still pending.
+Migration 124 may already have run in an isolated PR Preview. This design does not rewrite its historical Up section, does not assume that editing an applied migration would rerun it, and does not claim to reconstruct values that were already changed. It protects only environments where an affected data update is still pending.
 
 ## Environment isolation
 
-Staging and production are separate backup and migration targets.
+Staging and production are separate backup and migration targets:
 
-- Before staging applies an affected migration, the gate must create and lock a backup of the staging PostgreSQL volume instance.
-- Before production applies an affected migration, the gate must independently create and lock a backup of the production PostgreSQL volume instance.
-- A staging backup cannot authorize a production migration, and a production backup cannot authorize a staging migration.
-- The verified backup record must match the current Railway environment ID and volume instance ID.
-- Dev and PR Preview environments never reuse staging or production backup evidence. Any database may proceed without a backup only when preflight proves that zero existing rows would be irreversibly modified. A dev or Preview database with affected existing rows must create and verify its own backup or fail before migration.
+- When an affected migration would modify existing staging rows, the gate creates and locks a backup of the staging PostgreSQL volume instance.
+- When an affected migration would modify existing production rows, the gate independently creates and locks a backup of the production PostgreSQL volume instance.
+- A backup from one environment never authorizes migration in another environment.
+- Dev and PR Preview never reuse staging or production evidence. A database may bypass backup only when preflight proves that all pending irreversible migrations have zero affected existing rows. Otherwise that environment needs its own backup or the migration fails.
+
+The environment-scoped Railway Project Token must report the configured project and environment IDs, and the configured volume instance must belong to that environment. Identity mismatch is a hard failure.
 
 ## Selected architecture
 
-### 1. Serialize backup and migration
+### 1. Run migration as a Railway pre-deploy command
 
-`RunMigrations` will acquire a UniPost-specific PostgreSQL advisory lock on a dedicated database connection before inspecting pending versions. It will hold that lock through backup verification and Goose migration completion.
+Add a narrow migration mode to the existing API artifact and configure Railway with:
 
-Every API and worker process follows the same path. The first process performs the preflight and, when necessary, the backup. Later processes wait for the advisory lock, observe that the migrations are already applied, and do not create duplicate backups.
+```toml
+[deploy]
+preDeployCommand = ["./bin/api migrate"]
+startCommand = "./bin/api"
+```
 
-The existing Goose session lock remains in place as defense in depth.
+`./bin/api migrate` initializes only logging, migration configuration, the database connection, and the Railway backup client. It performs the gate and migrations, then exits. Railway runs it in a separate pre-deploy container; a nonzero exit blocks the deployment before the new service starts.
 
-### 2. Detect whether irreversible data changes are pending
+Normal API and worker startup no longer runs migrations. It performs a read-only schema-current check before starting application workers/routes and fails clearly if required migrations are absent. This avoids a backup operation competing with Railway's HTTP health deadline and prevents an old worker replica from becoming an accidental migration leader.
 
-The preflight reads the current Goose version and evaluates only migrations that have not yet run.
+The same `api/railway.toml` is reused by API and dedicated worker services, so multiple services may invoke the pre-deploy command for one release. Serialization remains mandatory.
+
+### 2. Serialize all leaders in a fixed order
+
+The migration command acquires one documented, UniPost-specific PostgreSQL advisory-lock key on a dedicated connection before it reads the Goose version or affected-row counts. It holds that lock until Goose completes or the command exits.
+
+Lock order is fixed:
+
+1. acquire the UniPost pre-migration advisory lock;
+2. inspect current/pending migrations and affected rows;
+3. create and verify any required backup;
+4. invoke Goose, which retains its existing session locker as defense in depth;
+5. release on connection close.
+
+Concurrent pre-deploy containers wait at step 1. After the leader completes, each follower recomputes current migration state; it sees no affected migration pending and neither creates a backup nor reruns data changes.
+
+Each failed leader attempt uses a new unique backup name. A locked backup left by a crash is not silently reused because its relationship to the failed command cannot be proven. The replacement attempt creates a new backup; orphan review and any later deletion are explicit operator work.
+
+### 3. Classify irreversible migrations explicitly
+
+Use a small registry keyed by migration version. Each entry owns an affected-row query and an explanation of the irreversible field(s). Adding a future irreversible migration without adding it to this registry must fail a migration-manifest test.
 
 For migration 124:
 
-- If migration 122 has already run, count existing `media_post_usages` rows where `cleanup_after_at IS NULL` and `retention_reason='plan_status'`.
-- If migration 122 has not run but `media_post_usages` already exists, count rows where `cleanup_after_at IS NULL`, because migration 122 will give those existing rows the default `plan_status` value before migration 124 reclassifies them.
-- If the table does not exist or the count is zero, migration 124 has no existing data to irreversibly reclassify.
+- If migration 122 has already run, count `media_post_usages` rows where `cleanup_after_at IS NULL` and `retention_reason='plan_status'`.
+- If migration 122 has not run but `media_post_usages` already exists, count rows where `cleanup_after_at IS NULL`, because migration 122 will give those existing rows the `plan_status` default before migration 124 reclassifies them.
+- If the table does not exist or the count is zero, migration 124 has no existing value to overwrite. No historical value needs to be guessed or saved in the pre-122 case.
 
 For migration 125:
 
 - If the recipient table exists, count rows where `status='failed'`.
 - If the table does not exist or the count is zero, migration 125 has no existing retryability state to overwrite.
 
-The counts are used only to decide whether a backup is mandatory and for audit logging. They do not replace the migration predicates.
+Counts decide whether backup is mandatory and appear in audit logs. They do not replace the SQL migration predicates.
 
-### 3. Create and verify the Railway backup
+### 4. Create and verify a uniquely attributable Railway backup
 
-When at least one affected-row count is nonzero, the migration runner requires:
+When any pending registry entry has a nonzero affected-row count, the migration command requires:
 
-- a dedicated Railway API token supplied as a secret;
-- the exact Railway volume instance ID for the current PostgreSQL service;
-- Railway-provided project and environment identity for audit and mismatch detection.
+- a Railway Project Token scoped to the exact target environment;
+- exact project and environment IDs;
+- the exact PostgreSQL volume instance ID;
+- the exact application SHA.
 
-Using Railway's fixed public GraphQL endpoint, the runner will:
+The production client uses Railway's fixed public GraphQL hostname; only tests can inject a fake endpoint. The token is sent with `Project-Access-Token` and is never logged.
 
-1. create a manual backup for the configured volume instance;
-2. poll the resulting workflow/backup until Railway reports terminal success;
-3. resolve the exact new backup record rather than accepting an older scheduled backup;
-4. lock that backup so normal retention cannot expire it;
-5. re-read the backup and verify its ID, volume instance, successful state, locked state, and creation time;
-6. record the backup ID, environment ID, volume instance ID, affected migration versions, affected-row counts, and timestamp in structured logs;
-7. only then call Goose.
+The command then:
 
-The Railway token is never logged. The production client cannot override the Railway API hostname. Tests inject a local fake endpoint through an internal dependency seam.
+1. lists current backups and records all existing backup IDs;
+2. creates a backup with a unique name containing environment identity, application SHA, pending migration versions, and a random attempt suffix;
+3. records Railway's server-returned workflow ID for correlation, but does not mistake it for the backup ID;
+4. polls the backup list until exactly one record has the unique name, a new ID absent from step 1, a server `createdAt`, a nonempty `externalId`, and non-null `referencedMB`;
+5. requires those identifying fields to remain stable across two reads;
+6. locks that exact backup and requires the mutation to return `true`;
+7. re-lists and requires the same exact ID/name/identity fields to remain present;
+8. writes structured audit evidence, then invokes Goose.
 
-### 4. Fail closed
+The public API exposes no dependable terminal backup-status field to either the account token tested during the spike or the documented backup-list object. `workflowStatus` was introspectable but returned `Not Authorized`; the implementation must not depend on it. Backup-list readiness fields plus successful lock and exact reread are therefore the fail-closed public-API contract. If Railway changes that contract or any field is absent/ambiguous, migration stops.
 
-Goose is not called if any required condition fails, including:
+The first real staging and production release must treat this API contract as an acceptance gate: if its environment-scoped token cannot perform identity, list, create, lock, and reread operations, the pre-deploy command fails and no affected migration runs.
 
-- missing or malformed Railway identity/configuration;
-- missing API token or volume instance ID;
-- environment or volume mismatch;
-- backup creation failure;
-- backup polling timeout;
-- terminal backup failure;
-- inability to resolve the newly created backup;
-- inability to lock the backup;
-- inability to verify the locked backup record.
+### 5. Fail closed
 
-The process exits through the existing migration startup failure path. Error messages identify the target environment, pending migration versions, affected-row counts, and failed backup stage without exposing credentials.
+Goose is not called when any required condition fails, including:
 
-The gate never restores a backup automatically. Restore remains an explicit operator action because it replaces or remounts storage and requires separate authorization.
+- missing or malformed Railway/database identity;
+- missing token, SHA, or volume instance ID;
+- token identity or volume/environment mismatch;
+- backup list, create, attribution, readiness, lock, or reread failure;
+- timeout, ambiguity, duplicate unique name, or evidence-field regression;
+- an unregistered irreversible migration;
+- advisory-lock or affected-row query failure.
+
+Errors name the environment, pending migration versions, affected-row counts, and failed backup stage without exposing credentials. The gate never restores, unlocks, or deletes a backup automatically.
+
+## Snapshot and recovery semantics
+
+Railway volume backup is a storage snapshot, not a logical PostgreSQL dump. The disposable spike proved that a committed row present before backup was restored and a row committed after backup was absent. This is evidence of point-in-time volume behavior for the tested PostgreSQL image, not a promise of application-level consistency under every write workload.
+
+The old deployment may remain live while Railway runs a pre-deploy command. Therefore a restore represents the moment of the backup, and writes committed after that moment are not expected in the restored volume. Operational rollback must account for that interval through maintenance/write quiescence when required, PostgreSQL recovery capabilities, or explicit reconciliation. The backup gate guarantees a recovery checkpoint before migration; it does not fabricate continuous point-in-time recovery.
+
+Restore remains an explicit operator action because Railway creates a separate restored volume that must be deliberately mounted. The runbook must preserve the original volume, restore into a separate volume, verify the database offline or through an isolated service, and require separate authorization before any production remount.
 
 ## Configuration and release contract
 
-The migration runner will use narrowly scoped configuration for the Railway API token and PostgreSQL volume instance. The final implementation plan will use repository-consistent names after checking existing Railway variable conventions; no default value may point to staging or production.
+Implementation will use repository-consistent variable names after checking existing conventions. No default may point to a real environment. Each persistent environment supplies its own Project Token, project ID, environment ID, PostgreSQL volume instance ID, and application SHA.
 
-Before an affected release reaches staging or production, operators must configure the correct environment-scoped secret and volume instance ID. Missing configuration is an intentional deployment failure, not a bypass.
+Staging and production backups are not created during development of this change. They are created only by their respective release-time pre-deploy commands, immediately before an affected pending migration and only if the environment has affected existing rows. Missing configuration is an intentional deployment failure, never a bypass.
 
-The first staging deployment creates and locks a staging backup immediately before its affected migrations. A later production promotion repeats the process against the production volume. Both backup IDs must appear in their respective deployment logs and acceptance evidence.
+The release workflow must capture the structured backup evidence before accepting the deployment. A failed deployment may leave a locked backup; the report lists it as an orphan candidate, but no automated cleanup occurs.
+
+## Disposable Railway capability spike
+
+The API assumptions were tested on 2026-07-26 in a new disposable project, not in UniPost staging or production:
+
+- project `pr270-backup-spike` (`261b6fe0-bdca-4c39-8e25-e37a640d2182`);
+- environment `spike` (`97a9ccb3-85de-47a8-88cc-f0b506485332`);
+- source volume instance `dc2dbdc2-d920-4f28-a896-87551de9fef5`;
+- backup `751466fe-df7c-4cd0-bb3f-faee1f14622a`, locked after exact reread;
+- restored independent volume `d41825e8-286e-40a6-b804-a3a4aae16749`.
+
+Observed behavior:
+
+- backup create returned a workflow ID, while list returned the distinct backup ID and server metadata;
+- list, create, exact-name resolution, lock, reread, restore-to-new-volume, and isolated remount succeeded;
+- restoring the first backup produced `before_backup` and did not contain the later `after_backup` marker;
+- an environment-scoped Project Token identified the exact project/environment and successfully performed backup create/list/lock; capability backup `cb8181be-d7d6-475d-b617-f8e1c13a995a` remains locked;
+- `workflowStatus` returned `Not Authorized` and is not part of the design;
+- all spike resources remain available for inspection; nothing was deleted.
+
+This spike validates capability and data-point recovery only. It does not authorize or substitute for staging and production's own backups.
 
 ## Testing strategy
 
 Implementation follows TDD.
 
-Unit tests will prove:
+Unit tests prove:
 
 - pending-version and affected-row classification for pre-122, 122-to-123, 124, and 125-or-later databases;
-- zero affected rows do not call Railway;
-- nonzero affected rows cannot reach Goose without successful backup verification;
-- every backup failure state blocks migration;
-- a successful newly created and locked backup permits migration;
-- an old backup, wrong environment, wrong volume, unlocked backup, or ambiguous backup never permits migration;
-- credentials are absent from errors and logs.
+- zero affected rows never call Railway;
+- nonzero affected rows never reach Goose without complete evidence;
+- old, ambiguous, duplicate, wrong-environment, wrong-volume, missing-field, unstable, or unlocked backup evidence is rejected;
+- workflow ID is never accepted as backup ID;
+- every API/timeout/lock failure blocks migration;
+- credentials are absent from errors and logs;
+- normal serve mode does not call Goose and rejects an outdated schema;
+- the irreversible-migration registry remains synchronized with the migration manifest.
 
-The existing isolated PostgreSQL CI service will provide transaction-level integration tests that prove:
+The existing isolated PostgreSQL CI service proves:
 
-- the advisory lock allows only one concurrent backup/migration leader;
-- a second startup waits and then observes completed migrations without creating another backup;
-- failure before backup verification leaves the Goose version and affected rows unchanged;
-- successful fake Railway backup verification permits migrations 124 and 125 and produces the expected row states.
+- N concurrent migration commands elect one leader, create one required backup, and apply migrations once;
+- followers wait and then observe completed migrations;
+- a leader crash/failure before verified backup leaves Goose version and affected rows unchanged;
+- a leader crash after a locked backup but before Goose leaves an auditable orphan, and a replacement attempt creates fresh evidence rather than reusing it;
+- failure at every point before Goose leaves affected data unchanged;
+- successful fake Railway evidence permits migrations 124 and 125 and yields expected row states.
 
-The integration suite must fail rather than skip when its isolated PostgreSQL URL is absent from the required CI job. It will not use testcontainers and will never connect to shared dev, staging, or production databases.
+The integration job fails rather than skips when its isolated PostgreSQL URL is absent. It never uses testcontainers or connects to shared dev, staging, or production databases.
 
-Required verification remains the full API suite, the isolated PostgreSQL integration suite, Dashboard build, related frontend contracts, and Dashboard browser regression with zero required skips.
+Required verification remains the full API suite, isolated PostgreSQL integration suite, Dashboard build, related frontend contracts, and Dashboard browser regression with zero required skips.
 
 ## Operational evidence
 
-For each persistent-environment migration, the completion report must include:
+For each persistent-environment migration, the completion report includes:
 
 - environment name and ID;
 - exact application SHA;
 - database volume instance ID;
-- backup ID and creation time;
-- confirmation that the backup reached success and was locked;
-- migrations applied;
-- preflight affected-row counts;
+- backup workflow ID, backup ID, unique name, server `createdAt`, `externalId`, and size metadata;
+- lock mutation result and exact reread confirmation;
+- migrations applied and preflight affected-row counts;
+- any orphan backup IDs from failed attempts;
 - migration and deployment check URLs.
 
-No staging or production migration is considered authorized or complete without this evidence.
+No staging or production migration is considered authorized or complete without its own evidence. A zero-row bypass must still report the pending versions and zero counts that justified it.
 
 ## Non-goals
 
 - Rewriting migration 124 Up after it may have executed.
 - Fabricating a reversible Down migration for data whose original value is unknown.
-- Automatically restoring or deleting Railway backups.
-- Sharing backup evidence across environments.
-- Deploying, promoting, enabling publishing restrictions, or sending real email as part of this implementation task.
+- Automatically restoring, remounting, unlocking, or deleting Railway backups.
+- Reusing backup evidence across attempts or environments.
+- Claiming volume snapshots replace PostgreSQL point-in-time recovery or write quiescence.
+- Deploying, promoting, enabling publishing restrictions, sending real email, or touching PR #270/#271 as part of this design revision.
