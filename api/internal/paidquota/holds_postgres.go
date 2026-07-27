@@ -149,7 +149,7 @@ func (r *postgresHoldReconciler) ApplyPlanChange(
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(ctx)
+			rollbackTransaction(tx)
 		}
 	}()
 
@@ -202,7 +202,7 @@ func (s *postgresHoldStore) WithinPeriod(ctx context.Context, workspaceID, perio
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(ctx)
+			rollbackTransaction(tx)
 		}
 	}()
 	if _, err := tx.Exec(
