@@ -22,6 +22,8 @@ const postgresTestsByPackage = {
     "TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown",
     "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
     "TestCreateEmailSendAttemptAuditStillRetriesFailedRecord",
+    "TestCreateSkippedEmailSendAttemptAuditPreservesTerminalSentRecord",
+    "TestCreateSkippedEmailSendAttemptAuditUpdatesNonSentRecords",
     "TestMigration127UpgradeRollingCompatibilityAndDown",
     "TestPostPublishedOutboxSnapshotsFirstPostBeforeDelayedDispatch",
   ],

@@ -396,6 +396,24 @@ func integrationEmailAttempt(key, eventKey, email, subject string, variables []b
 	}
 }
 
+func integrationSkippedEmailAttempt(key, eventKey, email, subject, reason string, variables []byte) CreateSkippedEmailSendAttemptAuditParams {
+	return CreateSkippedEmailSendAttemptAuditParams{
+		EventKey:              eventKey,
+		RecipientUserID:       "",
+		RecipientEmail:        email,
+		WorkspaceID:           "",
+		Provider:              "loops",
+		ProviderTemplateID:    "template_skipped",
+		IdempotencyKey:        key,
+		DeliveryClass:         "service_alert",
+		SubjectSnapshot:       subject,
+		DataVariablesSnapshot: variables,
+		TriggerSource:         "worker",
+		TriggerReferenceID:    "reference_skipped",
+		LastError:             pgtype.Text{String: reason, Valid: true},
+	}
+}
+
 func TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord(t *testing.T) {
 	pool := openPublishingRestrictionIntegrationPool(t)
 	setupEmailAuditIntegrationSchema(t, pool)
@@ -464,6 +482,125 @@ func TestCreateEmailSendAttemptAuditStillRetriesFailedRecord(t *testing.T) {
 	}
 	if replayed.LastError.Valid || replayed.SentAt.Valid {
 		t.Fatalf("failed audit retry retained terminal fields: last_error=%+v sent_at=%+v", replayed.LastError, replayed.SentAt)
+	}
+}
+
+func TestCreateSkippedEmailSendAttemptAuditPreservesTerminalSentRecord(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	setupEmailAuditIntegrationSchema(t, pool)
+	ctx := context.Background()
+	queries := New(pool)
+
+	created, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+		"provider-key-sent-skipped", "event.original", "original@example.com", "Original subject", []byte(`{"body":"original"}`),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.MarkEmailSendAttemptAuditSent(ctx, created.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	var before EmailSendAttempt
+	if err := pool.QueryRow(ctx, `SELECT id, event_key, recipient_user_id, recipient_email, workspace_id, provider, provider_template_id, idempotency_key, delivery_class, status, subject_snapshot, data_variables_snapshot, trigger_source, trigger_reference_id, attempt_count, last_error, attempted_at, sent_at, created_at, updated_at FROM email_send_attempts WHERE id=$1`, created.ID).Scan(
+		&before.ID, &before.EventKey, &before.RecipientUserID, &before.RecipientEmail, &before.WorkspaceID,
+		&before.Provider, &before.ProviderTemplateID, &before.IdempotencyKey, &before.DeliveryClass,
+		&before.Status, &before.SubjectSnapshot, &before.DataVariablesSnapshot, &before.TriggerSource,
+		&before.TriggerReferenceID, &before.AttemptCount, &before.LastError, &before.AttemptedAt,
+		&before.SentAt, &before.CreatedAt, &before.UpdatedAt,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	replayed, err := queries.CreateSkippedEmailSendAttemptAudit(ctx, integrationSkippedEmailAttempt(
+		"provider-key-sent-skipped", "event.replayed", "changed@example.com", "Changed subject", "restriction enabled", []byte(`{"body":"changed"}`),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(replayed, before) {
+		t.Fatalf("sent audit changed on skipped provider-key replay:\n before=%+v\n replay=%+v", before, replayed)
+	}
+}
+
+func TestCreateSkippedEmailSendAttemptAuditUpdatesNonSentRecords(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	setupEmailAuditIntegrationSchema(t, pool)
+	ctx := context.Background()
+	queries := New(pool)
+
+	tests := []struct {
+		name  string
+		key   string
+		setup func(t *testing.T) EmailSendAttempt
+	}{
+		{
+			name: "pending",
+			key:  "provider-key-pending-skipped",
+			setup: func(t *testing.T) EmailSendAttempt {
+				t.Helper()
+				row, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+					"provider-key-pending-skipped", "event.pending", "pending@example.com", "Pending subject", []byte(`{"body":"pending"}`),
+				))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return row
+			},
+		},
+		{
+			name: "failed",
+			key:  "provider-key-failed-skipped",
+			setup: func(t *testing.T) EmailSendAttempt {
+				t.Helper()
+				row, err := queries.CreateEmailSendAttemptAudit(ctx, integrationEmailAttempt(
+					"provider-key-failed-skipped", "event.failed", "failed@example.com", "Failed subject", []byte(`{"body":"failed"}`),
+				))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := queries.MarkEmailSendAttemptAuditFailed(ctx, MarkEmailSendAttemptAuditFailedParams{
+					ID:        row.ID,
+					LastError: pgtype.Text{String: "temporary failure", Valid: true},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				row.Status = "failed"
+				return row
+			},
+		},
+		{
+			name: "skipped",
+			key:  "provider-key-skipped-skipped",
+			setup: func(t *testing.T) EmailSendAttempt {
+				t.Helper()
+				row, err := queries.CreateSkippedEmailSendAttemptAudit(ctx, integrationSkippedEmailAttempt(
+					"provider-key-skipped-skipped", "event.skipped", "skipped@example.com", "Skipped subject", "first skip", []byte(`{"body":"skipped"}`),
+				))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return row
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := tt.setup(t)
+			replayed, err := queries.CreateSkippedEmailSendAttemptAudit(ctx, integrationSkippedEmailAttempt(
+				tt.key, "event.replayed."+tt.name, tt.name+"-changed@example.com", "Changed "+tt.name, "restriction enabled", []byte(`{"body":"changed"}`),
+			))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if replayed.ID != before.ID || replayed.Status != "skipped" || replayed.AttemptCount != before.AttemptCount+1 {
+				t.Fatalf("%s skipped audit replay = %+v, want same id, skipped, attempt_count=%d", tt.name, replayed, before.AttemptCount+1)
+			}
+			if !replayed.LastError.Valid || replayed.LastError.String != "restriction enabled" || replayed.SentAt.Valid {
+				t.Fatalf("%s skipped audit terminal fields = last_error=%+v sent_at=%+v", tt.name, replayed.LastError, replayed.SentAt)
+			}
+		})
 	}
 }
 

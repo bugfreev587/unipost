@@ -422,6 +422,65 @@ func TestUpdateScheduledAndQuotaHoldContentRecomputesServerQuotaSnapshot(t *test
 	}
 }
 
+func TestUpdateScheduledAndQuotaHoldContentRejectsFullyRestrictedTargetsWithoutMutation(t *testing.T) {
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	for _, status := range []string{"scheduled", "quota_hold"} {
+		t.Run(status, func(t *testing.T) {
+			oldPosts := []platform.PlatformPostInput{{AccountID: "acct_1", Caption: "original"}}
+			existing := db.SocialPost{
+				ID:          "post_1",
+				WorkspaceID: "ws_1",
+				Status:      status,
+				ScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+				CreatedAt:   pgtype.Timestamptz{Time: scheduledAt.Add(-time.Hour), Valid: true},
+				Metadata:    scheduledQuotaSnapshotMetadata(t, oldPosts, 1),
+				Source:      "api",
+			}
+			dbtx := &scheduledEditTestDB{post: existing}
+			evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+				"tiktok": {
+					Restricted: true,
+					Platform:   "tiktok",
+					PlanID:     "free",
+					CycleID:    "cycle_active",
+					Code:       publishingrestrictions.NormalizedCode,
+				},
+			}}
+			queries := db.New(dbtx)
+			h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+				SetPublishingRestrictions(evaluator)
+			body := fmt.Sprintf(`{
+				"scheduled_at":%q,
+				"platform_posts":[
+					{"account_id":"acct_2","caption":"restricted replacement"}
+				]
+			}`, scheduledAt.Format(time.RFC3339Nano))
+			req := httptest.NewRequest(http.MethodPatch, "/v1/posts/post_1", strings.NewReader(body))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			req = req.WithContext(withoutPostMediaRetentionSync(req.Context()))
+			req = withChiParam(req, "id", "post_1")
+			rr := httptest.NewRecorder()
+
+			h.UpdateDraft(rr, req)
+
+			if rr.Code != http.StatusPaymentRequired {
+				t.Fatalf("status = %d, want 402; body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), `"code":"`+publishingrestrictions.APICode+`"`) {
+				t.Fatalf("response must use publishing restriction admission error: %s", rr.Body.String())
+			}
+			if dbtx.updateContentCalls != 0 || dbtx.rescheduleCalls != 0 {
+				t.Fatalf("persistent mutations: update=%d reschedule=%d, want zero", dbtx.updateContentCalls, dbtx.rescheduleCalls)
+			}
+			if string(dbtx.post.Metadata) != string(existing.Metadata) ||
+				dbtx.post.Caption != existing.Caption ||
+				!dbtx.post.ScheduledAt.Time.Equal(existing.ScheduledAt.Time) {
+				t.Fatalf("post mutated: got=%+v want=%+v", dbtx.post, existing)
+			}
+		})
+	}
+}
+
 func scheduledQuotaSnapshotMetadata(t *testing.T, posts []platform.PlatformPostInput, units int) []byte {
 	t.Helper()
 	metadata, err := platform.EncodePostMetadata(posts)
