@@ -81,7 +81,7 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 			GROUP BY cycle_id
 		)
 		SELECT `+aliasedRestrictionColumns+`,
-		       COUNT(DISTINCT sa.workspace_id) FILTER (
+		       COUNT(DISTINCT account_profile.workspace_id) FILTER (
 		         WHERE COALESCE(cp.plan_id, 'free') = ANY(r.restricted_plan_ids)
 		       )::INTEGER AS affected_workspaces,
 		       COUNT(sa.id) FILTER (
@@ -95,7 +95,8 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 		  ON sa.platform = r.platform
 		 AND sa.status = 'active'
 		 AND sa.disconnected_at IS NULL
-		LEFT JOIN current_plans cp ON cp.workspace_id = sa.workspace_id
+		LEFT JOIN profiles account_profile ON account_profile.id = sa.profile_id
+		LEFT JOIN current_plans cp ON cp.workspace_id = account_profile.workspace_id
 		LEFT JOIN retention_metrics ON retention_metrics.cycle_id = r.cycle_id
 		GROUP BY r.id
 		ORDER BY r.platform
@@ -304,7 +305,8 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 				  AND TRIM(u.email) <> ''
 				  AND EXISTS (
 					SELECT 1 FROM social_accounts sa
-					WHERE sa.workspace_id = wm.workspace_id AND sa.platform = $1
+					JOIN profiles account_profile ON account_profile.id = sa.profile_id
+					WHERE account_profile.workspace_id = wm.workspace_id AND sa.platform = $1
 					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
 				  )
 			)
@@ -345,7 +347,8 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 				  AND TRIM(canonical_user.email) <> ''
 				  AND EXISTS (
 					SELECT 1 FROM social_accounts sa
-					WHERE sa.workspace_id = prior.workspace_id AND sa.platform = $1
+					JOIN profiles account_profile ON account_profile.id = sa.profile_id
+					WHERE account_profile.workspace_id = prior.workspace_id AND sa.platform = $1
 					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
 				  )
 			)

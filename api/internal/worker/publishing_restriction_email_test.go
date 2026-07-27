@@ -18,7 +18,8 @@ import (
 func TestPublishingRestrictionEligibilityRechecksEveryRepresentedWorkspace(t *testing.T) {
 	for _, want := range []string{
 		"UNNEST($6::text[])",
-		"account.workspace_id=represented.workspace_id",
+		"JOIN profiles account_profile ON account_profile.id=account.profile_id",
+		"account_profile.workspace_id=represented.workspace_id",
 		"owner_user.id=$5",
 		"LOWER(TRIM(owner_user.email))=$4",
 	} {

@@ -160,6 +160,7 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	_, err := pool.Exec(context.Background(), `
 		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT);
 		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+		CREATE TABLE profiles (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);
 		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
 		CREATE TABLE subscriptions (
 			workspace_id TEXT NOT NULL,
@@ -174,7 +175,7 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 		);
 		CREATE TABLE social_accounts (
 			id TEXT PRIMARY KEY,
-			workspace_id TEXT NOT NULL,
+			profile_id TEXT NOT NULL,
 			platform TEXT NOT NULL,
 			status TEXT NOT NULL,
 			disconnected_at TIMESTAMPTZ
@@ -193,6 +194,7 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	}
 	_, err = pool.Exec(context.Background(), `
 		INSERT INTO users (id) VALUES ('worker_user_1'), ('worker_user_2');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO platform_publishing_restriction_email_campaigns (
 			id, restriction_id, cycle_id, campaign_type, subject_snapshot,
 			body_snapshot, restriction_version
@@ -223,8 +225,8 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 		INSERT INTO workspace_members (workspace_id, user_id, role, status) VALUES
 			('workspace_1', 'worker_user_1', 'owner', 'active'),
 			('workspace_1', 'worker_user_2', 'owner', 'active');
-		INSERT INTO social_accounts (id, workspace_id, platform, status)
-		VALUES ('social_recovery_identity', 'workspace_1', 'tiktok', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('social_recovery_identity', 'profile_workspace_1', 'tiktok', 'active');
 		UPDATE platform_publishing_restriction_email_campaigns
 		SET status='completed', sent_count=1
 		WHERE id='worker_campaign';
@@ -306,8 +308,8 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
-		INSERT INTO social_accounts (id, workspace_id, platform, status)
-		VALUES ('social_1', 'workspace_1', 'tiktok', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('social_1', 'profile_workspace_1', 'tiktok', 'active');
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -688,8 +690,8 @@ func TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicate
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
-		INSERT INTO social_accounts (id, workspace_id, platform, status)
-		VALUES ('social_audit_reconcile', 'workspace_1', 'tiktok', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('social_audit_reconcile', 'profile_workspace_1', 'tiktok', 'active');
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -791,8 +793,8 @@ func TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWri
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
-		INSERT INTO social_accounts (id, workspace_id, platform, status)
-		VALUES ('social_definitive_reconcile', 'workspace_1', 'tiktok', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('social_definitive_reconcile', 'profile_workspace_1', 'tiktok', 'active');
 		CREATE FUNCTION fail_recipient_failure_transition() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
 			IF NEW.status = 'failed' THEN
@@ -1160,8 +1162,8 @@ func TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAtte
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
-		INSERT INTO social_accounts (id, workspace_id, platform, status)
-		VALUES ('social_link_lost', 'workspace_1', 'tiktok', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('social_link_lost', 'profile_workspace_1', 'tiktok', 'active');
 	`)
 	if err != nil {
 		t.Fatal(err)

@@ -311,7 +311,8 @@ const publishingRestrictionRecipientEligibilitySQL = `
 		  )
 		  AND EXISTS (
 			SELECT 1 FROM social_accounts account
-			WHERE account.workspace_id=represented.workspace_id AND account.platform=$1
+			JOIN profiles account_profile ON account_profile.id=account.profile_id
+			WHERE account_profile.workspace_id=represented.workspace_id AND account.platform=$1
 			  AND account.status='active' AND account.disconnected_at IS NULL
 		  )
 	)`

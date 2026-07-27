@@ -17,9 +17,31 @@ func TestAdminRestrictionQueryIncludesCycleRetentionMetrics(t *testing.T) {
 		"current_cycle_retained_object_count",
 		"current_cycle_retained_bytes",
 		"current_cycle_projected_60_day_storage_cost_usd",
+		"LEFT JOIN profiles account_profile ON account_profile.id = sa.profile_id",
+		"COUNT(DISTINCT account_profile.workspace_id)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("admin retention metrics missing %q", want)
+		}
+	}
+}
+
+func TestCampaignAudienceQueriesResolveAccountWorkspaceThroughProfile(t *testing.T) {
+	for _, campaignType := range []CampaignType{RestrictionNotice, RecoveryNotice} {
+		query, _, err := campaignAudienceQuery(Restriction{Platform: "tiktok", CycleID: "cycle_1"}, campaignType)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			"JOIN profiles account_profile ON account_profile.id = sa.profile_id",
+			"account_profile.workspace_id",
+		} {
+			if !strings.Contains(query, want) {
+				t.Fatalf("%s audience must contain %q:\n%s", campaignType, want, query)
+			}
+		}
+		if strings.Contains(query, "sa.workspace_id") {
+			t.Fatalf("%s audience uses nonexistent social_accounts.workspace_id:\n%s", campaignType, query)
 		}
 	}
 }
