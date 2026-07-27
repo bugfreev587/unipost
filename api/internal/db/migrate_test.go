@@ -16,11 +16,14 @@ func TestRunMigrationsUsesPostgresSessionLocker(t *testing.T) {
 	}
 	text := string(source)
 	for _, want := range []string{
+		"return runMigrations(context.Background(), database, true)",
+		"func runMigrations(ctx context.Context, database *sql.DB, acquireSessionLock bool)",
+		"if acquireSessionLock {",
 		"lock.NewPostgresSessionLocker()",
 		"goose.NewProvider(",
 		"goose.DialectPostgres",
-		"goose.WithSessionLocker(sessionLocker)",
-		"provider.Up(context.Background())",
+		"providerOptions = append(providerOptions, goose.WithSessionLocker(sessionLocker))",
+		"provider.Up(ctx)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migration runner missing %q", want)

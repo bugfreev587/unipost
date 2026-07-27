@@ -238,6 +238,153 @@ type concurrentBackupClient struct {
 	startOnce     sync.Once
 }
 
+type pausedReadinessBackupClient struct {
+	mu               sync.Mutex
+	identity         railwaybackup.Identity
+	readinessStarted chan struct{}
+	releaseReadiness chan struct{}
+	readinessOnce    sync.Once
+	releaseOnce      sync.Once
+	createdName      string
+	createCalls      int
+}
+
+func (c *pausedReadinessBackupClient) Identity(context.Context) (railwaybackup.Identity, error) {
+	return c.identity, nil
+}
+
+func (c *pausedReadinessBackupClient) List(ctx context.Context, _ string) ([]railwaybackup.Backup, error) {
+	c.mu.Lock()
+	createdName := c.createdName
+	c.mu.Unlock()
+	if createdName == "" {
+		return nil, nil
+	}
+
+	c.readinessOnce.Do(func() { close(c.readinessStarted) })
+	select {
+	case <-c.releaseReadiness:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return []railwaybackup.Backup{readyMigrationBackup("historical-exclusion-backup", createdName)}, nil
+}
+
+func (c *pausedReadinessBackupClient) Create(_ context.Context, _ string, name string) (railwaybackup.CreateResult, error) {
+	c.mu.Lock()
+	c.createCalls++
+	c.createdName = name
+	c.mu.Unlock()
+	return railwaybackup.CreateResult{WorkflowID: "historical-exclusion-workflow"}, nil
+}
+
+func (c *pausedReadinessBackupClient) Lock(context.Context, string, string) error {
+	return nil
+}
+
+func (c *pausedReadinessBackupClient) release() {
+	c.releaseOnce.Do(func() { close(c.releaseReadiness) })
+}
+
+func (c *pausedReadinessBackupClient) creates() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.createCalls
+}
+
+func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	seedMigration124State(t, database)
+	config := testMigrationGateConfig()
+	config.Timeout = 10 * time.Second
+	client := &pausedReadinessBackupClient{
+		identity:         railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		readinessStarted: make(chan struct{}),
+		releaseReadiness: make(chan struct{}),
+	}
+	defer client.release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	gateResult := make(chan error, 1)
+	go func() {
+		gateResult <- RunMigrationsWithBackupGate(ctx, databaseURL, config, client)
+	}()
+
+	select {
+	case <-client.readinessStarted:
+	case err := <-gateResult:
+		t.Fatalf("migration gate completed before backup readiness pause: %v", err)
+	case <-ctx.Done():
+		t.Fatalf("migration gate did not reach backup readiness verification: %v", ctx.Err())
+	}
+
+	legacyResult := make(chan error, 1)
+	go func() {
+		legacyResult <- RunMigrations(databaseURL)
+	}()
+
+	select {
+	case err := <-legacyResult:
+		t.Errorf("historical RunMigrations completed before backup readiness was released: %v", err)
+		legacyResult <- err
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	var version int64
+	if err := database.QueryRowContext(ctx, `
+		SELECT version_id
+		FROM goose_db_version
+		WHERE is_applied
+		ORDER BY id DESC
+		LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	var retryable bool
+	if err := database.QueryRowContext(ctx, `
+		SELECT retryable
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id = 'failed-recipient'
+	`).Scan(&retryable); err != nil {
+		t.Fatal(err)
+	}
+	if version != 124 || !retryable {
+		t.Errorf("before backup readiness release version=%d retryable=%v, want version=124 retryable=true", version, retryable)
+	}
+
+	client.release()
+	if err := <-gateResult; err != nil {
+		t.Fatalf("migration gate: %v", err)
+	}
+	if err := <-legacyResult; err != nil {
+		t.Fatalf("historical RunMigrations: %v", err)
+	}
+
+	if err := database.QueryRowContext(ctx, `
+		SELECT version_id
+		FROM goose_db_version
+		WHERE is_applied
+		ORDER BY id DESC
+		LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, `
+		SELECT retryable
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id = 'failed-recipient'
+	`).Scan(&retryable); err != nil {
+		t.Fatal(err)
+	}
+	if version != 125 || retryable {
+		t.Fatalf("after backup verification version=%d retryable=%v, want version=125 retryable=false", version, retryable)
+	}
+	if createCalls := client.creates(); createCalls != 1 {
+		t.Fatalf("backup create calls = %d, want 1", createCalls)
+	}
+}
+
 func (c *concurrentBackupClient) Identity(context.Context) (railwaybackup.Identity, error) {
 	return c.identity, nil
 }
