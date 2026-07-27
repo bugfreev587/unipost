@@ -508,10 +508,38 @@ WITH transitioned_job AS (
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
   RETURNING transitioned_job.id AS job_id
+), locked_media AS MATERIALIZED (
+  UPDATE media AS parent
+  SET usage_version = usage_version + 1
+  FROM transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  WHERE parent.id = ANY(sqlc.arg('media_ids')::text[])
+    AND parent.workspace_id = transitioned_job.workspace_id
+    AND parent.status = 'uploaded'
+  RETURNING parent.id, transitioned_job.workspace_id, transitioned_job.post_id
+), retained_media AS (
+  INSERT INTO media_post_usages (
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+  )
+  SELECT
+    locked_media.workspace_id,
+    locked_media.id,
+    locked_media.post_id,
+    sqlc.arg('post_status'),
+    sqlc.arg('cleanup_after_at')::timestamptz,
+    'publishing_restriction'
+  FROM locked_media
+  ON CONFLICT (media_id, post_id) DO UPDATE
+  SET post_status = EXCLUDED.post_status,
+      cleanup_after_at = EXCLUDED.cleanup_after_at,
+      retention_reason = EXCLUDED.retention_reason,
+      updated_at = NOW()
+  RETURNING id
 )
 SELECT transitioned_job.*
 FROM transitioned_job
-JOIN updated_result ON updated_result.job_id = transitioned_job.id;
+JOIN updated_result ON updated_result.job_id = transitioned_job.id
+CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied;
 
 -- name: CancelPostDeliveryJob :one
 UPDATE post_delivery_jobs

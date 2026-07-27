@@ -888,6 +888,13 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	post db.SocialPost,
 	decision publishingrestrictions.Decision,
 ) error {
+	finalizedAt := time.Now()
+	mediaIDs, mediaMetadataOK := decodeMediaIDsForRetention(post)
+	if !mediaMetadataOK {
+		slog.Warn("media retention: metadata decode failed before restriction finalization",
+			"post_id", post.ID,
+			"post_status", post.Status)
+	}
 	_, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
 		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
 		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
@@ -898,6 +905,9 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		NextAction:       postfailures.ToText(publishingrestrictions.NextAction),
 		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
 		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
+		MediaIds:         mediaIDs,
+		PostStatus:       post.Status,
+		CleanupAfterAt:   pgtype.Timestamptz{Time: finalizedAt.UTC().Add(60 * 24 * time.Hour), Valid: true},
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -923,8 +933,11 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 			"restriction_cycle_id": decision.CycleID,
 		},
 	}))
-	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	h.refreshParentPostStatusContext(ctx, post, allResults)
+	allResults, err := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
+	if err != nil {
+		return fmt.Errorf("list current results after restriction finalization: %w", err)
+	}
+	h.refreshParentPostStatusContext(withoutPostMediaRetentionSync(ctx), post, allResults)
 	return nil
 }
 

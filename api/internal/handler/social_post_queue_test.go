@@ -890,6 +890,8 @@ type restrictedFinalizeLeaseDB struct {
 	retentionCalls      int
 	retentionUpserts    []db.UpsertMediaPostUsageParams
 	afterFinalize       func(context.Context)
+	afterListResults    func(context.Context)
+	listResultsErr      error
 }
 
 func (f *restrictedFinalizeLeaseDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -905,11 +907,18 @@ func (f *restrictedFinalizeLeaseDB) Exec(_ context.Context, query string, _ ...i
 	}
 }
 
-func (f *restrictedFinalizeLeaseDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+func (f *restrictedFinalizeLeaseDB) Query(ctx context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
 	switch {
 	case strings.Contains(query, "-- name: ListSocialPostResultsByPost"):
 		f.parentRefreshCalls++
-		return &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}, nil
+		if f.listResultsErr != nil {
+			return nil, f.listResultsErr
+		}
+		rows := &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}
+		if f.afterListResults != nil {
+			f.afterListResults(ctx)
+		}
+		return rows, nil
 	case strings.Contains(query, "-- name: ListPostDeliveryJobsByPost"):
 		f.parentRefreshCalls++
 		return &queueRows{}, nil
@@ -952,6 +961,16 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 		f.result.XCreditOperation = pgtype.Text{}
 		f.result.XCreditCatalogVersion = pgtype.Text{}
 		f.result.XCreditBillingMode = pgtype.Text{}
+		for _, mediaID := range args[9].([]string) {
+			f.retentionUpserts = append(f.retentionUpserts, db.UpsertMediaPostUsageParams{
+				MediaID:         mediaID,
+				WorkspaceID:     f.job.WorkspaceID,
+				PostStatus:      args[10].(string),
+				CleanupAfterAt:  args[11].(pgtype.Timestamptz),
+				RetentionReason: "publishing_restriction",
+				PostID:          f.job.PostID,
+			})
+		}
 		if f.afterFinalize != nil {
 			f.afterFinalize(ctx)
 		}
@@ -1141,8 +1160,11 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 	if dbtx.resultUpdateCalls != 1 {
 		t.Fatalf("atomic result update calls = %d, want 1 on owned lease", dbtx.resultUpdateCalls)
 	}
-	if dbtx.parentRefreshCalls == 0 || dbtx.retentionCalls == 0 {
-		t.Fatalf("parent refresh/retention calls = %d/%d, want both after owned transition", dbtx.parentRefreshCalls, dbtx.retentionCalls)
+	if dbtx.parentRefreshCalls == 0 {
+		t.Fatal("parent status should refresh after owned transition")
+	}
+	if dbtx.retentionCalls != 0 {
+		t.Fatalf("post-commit retention calls = %d, want 0 after atomic restriction retention", dbtx.retentionCalls)
 	}
 	if len(dbtx.retentionUpserts) != 2 {
 		t.Fatalf("retention upserts = %d, want 2 for restricted post media", len(dbtx.retentionUpserts))
@@ -1150,8 +1172,8 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 	wantBefore := time.Now().Add(60*24*time.Hour - time.Minute)
 	wantAfter := time.Now().Add(60*24*time.Hour + time.Minute)
 	for _, upsert := range dbtx.retentionUpserts {
-		if upsert.PostStatus != "failed" || upsert.RetentionReason != "publishing_restriction" {
-			t.Fatalf("restricted retention = %+v, want failed publishing_restriction", upsert)
+		if upsert.PostStatus != "publishing" || upsert.RetentionReason != "publishing_restriction" {
+			t.Fatalf("restricted retention = %+v, want atomic publishing_restriction retention", upsert)
 		}
 		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {
 			t.Fatalf("restricted cleanup_after_at = %#v, want about 60 days", upsert.CleanupAfterAt)
@@ -1221,6 +1243,106 @@ func TestFinalizeRestrictedDeliveryJobDoesNotOverwriteNewerRetryRetention(t *tes
 		}
 		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {
 			t.Fatalf("final retention deadline = %#v, want team published deadline about 30 days", upsert.CleanupAfterAt)
+		}
+	}
+}
+
+func TestFinalizeRestrictedDeliveryJobStaleResultSnapshotDoesNotOverwriteNewerRetryRetention(t *testing.T) {
+	publishedAt := time.Date(2026, 7, 26, 22, 30, 0, 0, time.UTC)
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_restricted", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: publishedAt.Add(-time.Minute), Valid: true}
+	staleResult := db.SocialPostResult{
+		ID:              job.SocialPostResultID,
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Status:          "processing",
+	}
+	post := mediaRetentionPost(t, "published")
+	post.ID = job.PostID
+	post.WorkspaceID = job.WorkspaceID
+	newerSuccess := staleResult
+	newerSuccess.Status = "published"
+	newerSuccess.ExternalID = pgtype.Text{String: "newer_platform_post", Valid: true}
+	newerSuccess.PublishedAt = pgtype.Timestamptz{Time: publishedAt, Valid: true}
+	newerSuccess.Url = pgtype.Text{String: "https://social.example.com/newer_platform_post", Valid: true}
+
+	dbtx := &restrictedFinalizeLeaseDB{
+		job:    job,
+		result: staleResult,
+		planID: "team",
+	}
+	queries := db.New(dbtx)
+	h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil)
+	dbtx.afterListResults = func(ctx context.Context) {
+		// A already owns a failed result snapshot. B now publishes the newer
+		// retry and restores plan retention before A starts its stale refresh.
+		dbtx.result = newerSuccess
+		dbtx.job.State = "succeeded"
+		dbtx.job.LeaseOwner = pgtype.Text{String: "worker_retry", Valid: true}
+		h.syncPostMediaRetention(ctx, post, post.Status)
+	}
+
+	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, staleResult, post, publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   job.Platform,
+		CycleID:    "cycle_stale_snapshot",
+	})
+	if err != nil {
+		t.Fatalf("finalizeRestrictedDeliveryJob: %v", err)
+	}
+	if !reflect.DeepEqual(dbtx.result, newerSuccess) {
+		t.Fatalf("durable result = %#v, want newer published success %#v", dbtx.result, newerSuccess)
+	}
+	if len(dbtx.retentionUpserts) < 2 {
+		t.Fatalf("retention upserts = %d, want at least 2", len(dbtx.retentionUpserts))
+	}
+	wantBefore := time.Now().Add(30*24*time.Hour - time.Minute)
+	wantAfter := time.Now().Add(30*24*time.Hour + time.Minute)
+	for _, upsert := range dbtx.retentionUpserts[len(dbtx.retentionUpserts)-2:] {
+		if upsert.PostStatus != "published" || upsert.RetentionReason != "plan_status" {
+			t.Fatalf("final retention = %+v, want newer published current-plan retention", upsert)
+		}
+		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {
+			t.Fatalf("final retention deadline = %#v, want team published deadline about 30 days", upsert.CleanupAfterAt)
+		}
+	}
+}
+
+func TestFinalizeRestrictedDeliveryJobReturnsResultRefreshError(t *testing.T) {
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_owner", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Date(2026, 7, 26, 23, 0, 0, 0, time.UTC), Valid: true}
+	result := db.SocialPostResult{
+		ID:              job.SocialPostResultID,
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Status:          "processing",
+	}
+	wantErr := errors.New("list current results unavailable")
+	dbtx := &restrictedFinalizeLeaseDB{job: job, result: result, listResultsErr: wantErr}
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil)
+	post := mediaRetentionPost(t, "publishing")
+	post.ID = job.PostID
+	post.WorkspaceID = job.WorkspaceID
+
+	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, result, post, publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   job.Platform,
+		CycleID:    "cycle_refresh_error",
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("finalizeRestrictedDeliveryJob error = %v, want %v", err, wantErr)
+	}
+	if dbtx.result.Status != "failed" {
+		t.Fatalf("atomic result status = %q, want failed before refresh error", dbtx.result.Status)
+	}
+	if len(dbtx.retentionUpserts) != 2 {
+		t.Fatalf("atomic retention upserts = %d, want 2 despite refresh error", len(dbtx.retentionUpserts))
+	}
+	for _, upsert := range dbtx.retentionUpserts {
+		if upsert.RetentionReason != "publishing_restriction" || !upsert.CleanupAfterAt.Valid {
+			t.Fatalf("atomic retention after refresh error = %+v, want durable publishing_restriction retention", upsert)
 		}
 	}
 }

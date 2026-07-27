@@ -757,10 +757,38 @@ WITH transitioned_job AS (
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
   RETURNING transitioned_job.id AS job_id
+), locked_media AS MATERIALIZED (
+  UPDATE media AS parent
+  SET usage_version = usage_version + 1
+  FROM transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  WHERE parent.id = ANY($10::text[])
+    AND parent.workspace_id = transitioned_job.workspace_id
+    AND parent.status = 'uploaded'
+  RETURNING parent.id, transitioned_job.workspace_id, transitioned_job.post_id
+), retained_media AS (
+  INSERT INTO media_post_usages (
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+  )
+  SELECT
+    locked_media.workspace_id,
+    locked_media.id,
+    locked_media.post_id,
+    $11,
+    $12::timestamptz,
+    'publishing_restriction'
+  FROM locked_media
+  ON CONFLICT (media_id, post_id) DO UPDATE
+  SET post_status = EXCLUDED.post_status,
+      cleanup_after_at = EXCLUDED.cleanup_after_at,
+      retention_reason = EXCLUDED.retention_reason,
+      updated_at = NOW()
+  RETURNING id
 )
 SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at
 FROM transitioned_job
 JOIN updated_result ON updated_result.job_id = transitioned_job.id
+CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
 `
 
 type FinalizeRestrictedPostDeliveryJobParams struct {
@@ -773,6 +801,9 @@ type FinalizeRestrictedPostDeliveryJobParams struct {
 	NextAction       pgtype.Text        `json:"next_action"`
 	ErrorSource      pgtype.Text        `json:"error_source"`
 	ErrorTemporality pgtype.Text        `json:"error_temporality"`
+	MediaIds         []string           `json:"media_ids"`
+	PostStatus       string             `json:"post_status"`
+	CleanupAfterAt   pgtype.Timestamptz `json:"cleanup_after_at"`
 }
 
 type FinalizeRestrictedPostDeliveryJobRow struct {
@@ -814,6 +845,9 @@ func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg Fin
 		arg.NextAction,
 		arg.ErrorSource,
 		arg.ErrorTemporality,
+		arg.MediaIds,
+		arg.PostStatus,
+		arg.CleanupAfterAt,
 	)
 	var i FinalizeRestrictedPostDeliveryJobRow
 	err := row.Scan(

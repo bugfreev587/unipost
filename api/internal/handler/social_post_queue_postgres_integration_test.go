@@ -125,6 +125,24 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			first_claimed_at TIMESTAMPTZ,
 			platform_started_at TIMESTAMPTZ
 		);
+		CREATE TABLE media (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			usage_version BIGINT NOT NULL DEFAULT 0
+		);
+		CREATE TABLE media_post_usages (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			workspace_id TEXT NOT NULL,
+			media_id TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			post_status TEXT NOT NULL,
+			cleanup_after_at TIMESTAMPTZ,
+			retention_reason TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (media_id, post_id)
+		);
 	`)
 	if err != nil {
 		t.Fatalf("create restricted-delivery integration tables: %v", err)
@@ -191,6 +209,8 @@ func restrictedFinalizeIntegrationParams(jobID, owner string, attemptedAt time.T
 		NextAction:       postfailures.ToText(publishingrestrictions.NextAction),
 		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
 		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
+		PostStatus:       "publishing",
+		CleanupAfterAt:   pgtype.Timestamptz{Time: attemptedAt.Add(60 * 24 * time.Hour), Valid: true},
 	}
 }
 
@@ -359,6 +379,141 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		}
 		if result.XCreditsCounted != 0 || result.XCreditOperation.Valid || result.XCreditCatalogVersion.Valid || result.XCreditBillingMode.Valid {
 			t.Fatalf("owned restricted X billing metadata = count:%d operation:%#v catalog:%#v billing:%#v, want cleared", result.XCreditsCounted, result.XCreditOperation, result.XCreditCatalogVersion, result.XCreditBillingMode)
+		}
+	})
+
+	t.Run("newer retry plan retention wins after atomic restriction retention", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ownerA, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerA.Release()
+		ownerB, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerB.Release()
+		var backendB int
+		if err := ownerB.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&backendB); err != nil {
+			t.Fatal(err)
+		}
+
+		attemptedAt := time.Date(2026, 7, 26, 22, 0, 0, 0, time.UTC)
+		restrictionDeadline := attemptedAt.Add(60 * 24 * time.Hour)
+		planDeadline := attemptedAt.Add(30 * 24 * time.Hour)
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO social_post_results (id, status)
+			VALUES ('result_retention_race', 'processing')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_retention_race', 'post_retention_race', 'result_retention_race',
+				'workspace_1', 'account_1', 'tiktok', 'dispatch', 'running', 1,
+				'owner_a', $1
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO media (id, workspace_id, status)
+			VALUES ('media_retention_race', 'workspace_1', 'uploaded')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		txA, err := ownerA.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txA.Rollback(ctx)
+		params := restrictedFinalizeIntegrationParams("job_retention_race", "owner_a", attemptedAt)
+		params.MediaIds = []string{"media_retention_race"}
+		params.CleanupAfterAt = pgtype.Timestamptz{Time: restrictionDeadline, Valid: true}
+		if _, err := db.New(txA).FinalizeRestrictedPostDeliveryJob(ctx, params); err != nil {
+			t.Fatalf("restriction finalization: %v", err)
+		}
+
+		bStarted := make(chan struct{})
+		bDone := make(chan error, 1)
+		go func() {
+			txB, beginErr := ownerB.Begin(ctx)
+			if beginErr != nil {
+				bDone <- beginErr
+				return
+			}
+			defer txB.Rollback(ctx)
+			close(bStarted)
+			if _, updateErr := txB.Exec(ctx, `
+				UPDATE social_post_results
+				SET status = 'published', external_id = 'newer_external_id',
+				    error_message = NULL, published_at = $1,
+				    error_code = NULL, failure_stage = NULL
+				WHERE id = 'result_retention_race'
+			`, attemptedAt.Add(time.Minute)); updateErr != nil {
+				bDone <- updateErr
+				return
+			}
+			if _, updateErr := txB.Exec(ctx, `
+				UPDATE media_post_usages
+				SET post_status = 'published', cleanup_after_at = $1,
+				    retention_reason = 'plan_status', updated_at = NOW()
+				WHERE media_id = 'media_retention_race'
+				  AND post_id = 'post_retention_race'
+			`, planDeadline); updateErr != nil {
+				bDone <- updateErr
+				return
+			}
+			bDone <- txB.Commit(ctx)
+		}()
+		<-bStarted
+
+		lockDeadline := time.Now().Add(2 * time.Second)
+		for {
+			var waiting bool
+			if err := pool.QueryRow(ctx, `
+				SELECT COALESCE(wait_event_type = 'Lock', FALSE)
+				FROM pg_stat_activity WHERE pid = $1
+			`, backendB).Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+			if waiting {
+				break
+			}
+			if time.Now().After(lockDeadline) {
+				t.Fatal("newer retry did not block on the atomic restriction result transition")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if err := txA.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-bDone; err != nil {
+			t.Fatalf("newer retry transaction: %v", err)
+		}
+
+		var status, postStatus, reason string
+		var cleanupAt pgtype.Timestamptz
+		if err := pool.QueryRow(ctx, `
+			SELECT result.status, usage.post_status, usage.retention_reason, usage.cleanup_after_at
+			FROM social_post_results result
+			JOIN media_post_usages usage
+			  ON usage.post_id = 'post_retention_race'
+			WHERE result.id = 'result_retention_race'
+		`).Scan(&status, &postStatus, &reason, &cleanupAt); err != nil {
+			t.Fatal(err)
+		}
+		if status != "published" || postStatus != "published" || reason != "plan_status" || !cleanupAt.Valid || !cleanupAt.Time.Equal(planDeadline) {
+			t.Fatalf("newer durable state = status:%q usage:%q reason:%q cleanup:%#v, want published plan retention %s", status, postStatus, reason, cleanupAt, planDeadline)
 		}
 	})
 }
