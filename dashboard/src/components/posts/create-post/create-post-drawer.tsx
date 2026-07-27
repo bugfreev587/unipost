@@ -40,6 +40,7 @@ import {
   createMedia,
   type AIPostAssistSuggestion,
   getPlatformCapabilities,
+  getPublishingRestrictions,
   getMe,
   getMedia,
   listProfiles,
@@ -50,10 +51,18 @@ import {
   type CreateSocialPostPayload,
   type SocialPostValidationIssue,
   type SocialPostValidationResult,
+  type WorkspacePublishingRestriction,
 } from "@/lib/api";
 import { isFeatureInDevEnabledForMe } from "@/lib/features-in-dev";
 import { cn } from "@/lib/utils";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
+import {
+  PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
+  findPublishingRestrictionResult,
+  filterAllowedAccountIds,
+  isPlanPlatformPublishingRestrictedError,
+  isPlatformRestricted,
+} from "@/lib/publishing-restrictions";
 
 const MIN_DRAWER_WIDTH = 880;
 const MAX_DRAWER_WIDTH = 1680;
@@ -66,6 +75,7 @@ const COMPOSE_DEFAULT_AI_PANE_WIDTH = 400;
 const COMPOSE_RESIZER_WIDTH = 12;
 
 type SubmitErrorState = {
+  title?: string;
   message: string;
   mailto: string;
   contactHref: string;
@@ -1651,6 +1661,61 @@ interface CreatePostDrawerProps {
   preselectedAccountIds?: string[];
 }
 
+function startPublishingRestrictionsRefresh({
+  getToken,
+  loadRestrictions,
+  clearRestrictions,
+  commitRestrictions,
+  markLoaded,
+  reportError,
+  addFocusListener,
+  removeFocusListener,
+}: {
+  getToken: () => Promise<string | null>;
+  loadRestrictions: (token: string) => Promise<WorkspacePublishingRestriction[]>;
+  clearRestrictions: () => void;
+  commitRestrictions: (restrictions: WorkspacePublishingRestriction[]) => void;
+  markLoaded: () => void;
+  reportError: (error: unknown) => void;
+  addFocusListener: (listener: () => void) => void;
+  removeFocusListener: (listener: () => void) => void;
+}) {
+  let active = true;
+  let generation = 0;
+
+  const refresh = async () => {
+    const requestGeneration = ++generation;
+    try {
+      const token = await getToken();
+      if (!active || requestGeneration !== generation) return;
+      if (!token) return;
+      const restrictions = await loadRestrictions(token);
+      if (!active || requestGeneration !== generation) return;
+      commitRestrictions(restrictions);
+    } catch (error) {
+      if (!active || requestGeneration !== generation) return;
+      reportError(error);
+    } finally {
+      if (active && requestGeneration === generation) {
+        // A failed advisory projection must not block the drawer forever. The
+        // submit path remains authoritative and renders the structured error.
+        markLoaded();
+      }
+    }
+  };
+
+  const handleFocus = () => void refresh();
+  clearRestrictions();
+  void refresh();
+  addFocusListener(handleFocus);
+
+  return () => {
+    active = false;
+    generation += 1;
+    removeFocusListener(handleFocus);
+  };
+}
+
 export function CreatePostDrawer({
   open,
   onOpenChange,
@@ -1691,6 +1756,8 @@ export function CreatePostDrawer({
   const [aiTone, setAITone] = useState<AIAssistTone>("friendly");
   const [aiIncludeCTA, setAIIncludeCTA] = useState(true);
   const [platformCapabilities, setPlatformCapabilities] = useState<PlatformCapabilitiesEnvelope["platforms"] | null>(null);
+  const [publishingRestrictions, setPublishingRestrictions] = useState<WorkspacePublishingRestriction[]>([]);
+  const [restrictionsLoaded, setRestrictionsLoaded] = useState(false);
   // Per-account runtime blockers reported by platform-specific panels
   // (e.g., TikTok creator_info failed, video too long for the creator).
   // These aren't derivable from form state, so we collect them here and
@@ -1774,6 +1841,7 @@ export function CreatePostDrawer({
       appliedPrefillRef.current = false;
       return;
     }
+    if (!restrictionsLoaded) return;
     if (appliedPrefillRef.current) return;
     if (initialCaption) {
       form.setMainContent(initialCaption);
@@ -1782,14 +1850,45 @@ export function CreatePostDrawer({
       const available = new Set(profileAccounts.map((account) => account.id));
       const matching = preselectedAccountIds.filter((id) => available.has(id));
       if (matching.length > 0) {
-        form.replaceSelectedAccounts(matching);
+        form.replaceSelectedAccounts(filterAllowedAccountIds(profileAccounts, matching, publishingRestrictions));
       }
     } else if (preselectAllAccounts && profileAccounts.length > 0) {
-      form.replaceSelectedAccounts(profileAccounts.map((a) => a.id));
+      form.replaceSelectedAccounts(filterAllowedAccountIds(profileAccounts, profileAccounts.map((a) => a.id), publishingRestrictions));
     }
     appliedPrefillRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, initialCaption, preselectAllAccounts, preselectedAccountIds, profileAccounts]);
+  }, [open, restrictionsLoaded, initialCaption, preselectAllAccounts, preselectedAccountIds, profileAccounts, publishingRestrictions]);
+
+  useEffect(() => {
+    if (!open) {
+      setRestrictionsLoaded(false);
+      return;
+    }
+    setRestrictionsLoaded(false);
+    return startPublishingRestrictionsRefresh({
+      getToken,
+      loadRestrictions: async (token) => {
+        const response = await getPublishingRestrictions(token);
+        return response.data.restrictions || [];
+      },
+      clearRestrictions: () => setPublishingRestrictions([]),
+      commitRestrictions: setPublishingRestrictions,
+      markLoaded: () => setRestrictionsLoaded(true),
+      reportError: (error) => console.error("Failed to refresh publishing restrictions:", error),
+      addFocusListener: (listener) => window.addEventListener("focus", listener),
+      removeFocusListener: (listener) => window.removeEventListener("focus", listener),
+    });
+  }, [open, getToken, workspaceId]);
+
+  const selectedAccountIdsForRestriction = form.selectedAccountIds;
+  const replaceSelectedAccountsForRestriction = form.replaceSelectedAccounts;
+  useEffect(() => {
+    if (!open || !restrictionsLoaded || publishingRestrictions.length === 0) return;
+    const allowed = filterAllowedAccountIds(allLoadedAccounts, selectedAccountIdsForRestriction, publishingRestrictions);
+    if (allowed.length !== selectedAccountIdsForRestriction.size) {
+      replaceSelectedAccountsForRestriction(allowed);
+    }
+  }, [open, restrictionsLoaded, publishingRestrictions, allLoadedAccounts, selectedAccountIdsForRestriction, replaceSelectedAccountsForRestriction]);
 
   // Reset form when drawer closes
   useEffect(() => {
@@ -1814,6 +1913,7 @@ export function CreatePostDrawer({
       setAIError(null);
       setTiktokBlockers({});
       setTiktokMaxByAccount({});
+      setPublishingRestrictions([]);
       pendingCloseRef.current = false;
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -2275,6 +2375,33 @@ export function CreatePostDrawer({
       if (!token) return;
       const response = await createSocialPost(token, payload);
       await onCreated(response.data.id);
+      const restrictedResult = findPublishingRestrictionResult(response.data.results);
+      if (restrictedResult) {
+        const allowedResults = response.data.results?.filter(
+          (result) => result.id !== restrictedResult.id && result.status !== "failed",
+        ) ?? [];
+        setSubmitError({
+          title: "Publishing restricted",
+          message: PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
+          mailto: buildSupportMailto({
+            subject: "TikTok publishing restricted in dashboard",
+            intro: "TikTok publishing was restricted while other selected platforms continued.",
+            details: [`Workspace ID: ${workspaceId}`, `Post ID: ${response.data.id}`],
+          }),
+          contactHref: buildContactPageHref({
+            topic: "publishing-restriction",
+            source: "create-post-drawer",
+            workspace: workspaceId,
+            profile: profileName,
+          }),
+        });
+        if (allowedResults.length > 0) {
+          setSubmitSuccess({
+            message: "Post created. Your other selected platforms are processing normally.",
+          });
+        }
+        return;
+      }
       // TikTok processes video/photo uploads asynchronously — the
       // Content Posting API audit requires us to tell the user the post
       // is in-flight, not silently assume "published". Hold the drawer
@@ -2319,10 +2446,14 @@ export function CreatePostDrawer({
         if (firstIssue) focusIssue(firstIssue);
       }
       const friendly = friendlyRateLimitMessage(err);
-      const message = friendly ?? (err instanceof Error ? err.message : "Failed to create post");
+      const isPublishingRestriction = isPlanPlatformPublishingRestrictedError(apiError);
+      const message = isPublishingRestriction
+        ? PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE
+        : friendly ?? (err instanceof Error ? err.message : "Failed to create post");
       console.error("Create post failed:", err);
       console.error("[CreatePost] payload was:", JSON.stringify(form.buildPayload(), null, 2));
       setSubmitError({
+        title: isPublishingRestriction ? "Publishing restricted" : undefined,
         message,
         requestId: apiError?.requestId,
         hint: apiError?.hint,
@@ -2420,6 +2551,25 @@ export function CreatePostDrawer({
 
   const primaryLabel = PRIMARY_BUTTON_LABELS[form.publishMode];
 
+  const restrictedAccountIds = useMemo(() => new Set(
+    profileAccounts
+      .filter((account) => isPlatformRestricted(publishingRestrictions, account.platform))
+      .map((account) => account.id),
+  ), [profileAccounts, publishingRestrictions]);
+
+  const publishingRestrictionActive = restrictedAccountIds.size > 0;
+  const hasRestrictedSelection = Array.from(form.selectedAccountIds).some((id) => restrictedAccountIds.has(id));
+
+  const toggleAllowedAccounts = useCallback(() => {
+    const allowed = filterAllowedAccountIds(
+      profileAccounts,
+      profileAccounts.filter((account) => account.status === "active").map((account) => account.id),
+      publishingRestrictions,
+    );
+    const allAllowedSelected = allowed.length > 0 && allowed.every((id) => form.selectedAccountIds.has(id));
+    form.replaceSelectedAccounts(allAllowedSelected ? [] : allowed);
+  }, [profileAccounts, publishingRestrictions, form]);
+
   // Classify the current media selection once per change so the TikTok
   // fields component can hide Duet/Stitch toggles for photo carousels
   // (per the Content Posting API audit requirements) without each child
@@ -2465,6 +2615,7 @@ export function CreatePostDrawer({
   // like a bug (especially when uploads are silently in flight).
   const disabledReason = useMemo(() => {
     if (form.submitting) return null;
+    if (hasRestrictedSelection) return PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE;
     if (form.selectedAccountIds.size === 0) return "Select at least one account to post to.";
     const uploading = form.mediaItems.filter((m) => m.mediaId === null && !m.error).length;
     if (uploading > 0) return `Waiting for ${uploading} media upload${uploading === 1 ? "" : "s"} to finish…`;
@@ -2518,6 +2669,7 @@ export function CreatePostDrawer({
     form.totalMediaCount,
     tiktokBlockers,
     oversizeVideos.length,
+    hasRestrictedSelection,
   ]);
 
   const handleGenerateAISuggestion = useCallback(async () => {
@@ -2556,7 +2708,7 @@ export function CreatePostDrawer({
     } finally {
       setAILoading(false);
     }
-  }, [aiAssistEnabled, aiMode, aiBrief, aiObjective, aiTone, aiIncludeCTA, form.mainContent, form.mediaItems, form.totalMediaCount, form.selectedAccountIds, form.uniqueSelectedAccounts, form.overrides, getToken, selectedProfileId, validationResult]);
+  }, [aiAssistEnabled, aiMode, aiBrief, aiObjective, aiTone, aiIncludeCTA, form.mainContent, form.mediaItems, form.totalMediaCount, form.uniqueSelectedAccounts, form.overrides, getToken, selectedProfileId, validationResult]);
 
   const handleApplyAISuggestion = useCallback(() => {
     if (!aiSuggestion?.main_caption) return;
@@ -2860,8 +3012,28 @@ export function CreatePostDrawer({
                 accounts={profileAccounts.filter((account) => account.status === "active")}
                 selectedIds={form.selectedAccountIds}
                 onToggle={form.toggleAccount}
+                onToggleAll={toggleAllowedAccounts}
                 profileName={profiles.find((profile) => profile.id === selectedProfileId)?.name}
+                disabledIds={restrictedAccountIds}
+                restrictionNoticeId="tiktok-free-publishing-restriction"
               />
+              {publishingRestrictionActive ? (
+                <div
+                  id="tiktok-free-publishing-restriction"
+                  role="status"
+                  className="mt-3 rounded-lg border px-3 py-2.5 text-[12px] leading-[1.55]"
+                  style={{
+                    color: "var(--dtext)",
+                    borderColor: "color-mix(in srgb, var(--warning) 35%, var(--dborder))",
+                    background: "color-mix(in srgb, var(--warning) 8%, var(--surface2))",
+                  }}
+                >
+                  <strong className="mb-1 block text-[11px] uppercase tracking-[0.08em]" style={{ color: "var(--warning)" }}>
+                    TikTok on Free
+                  </strong>
+                  {PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE}
+                </div>
+              ) : null}
             </div>
 
             {/* 3. Post To */}
@@ -2948,7 +3120,7 @@ export function CreatePostDrawer({
                 <div className="flex items-center gap-2 text-[#fecaca] mb-2">
                   <AlertTriangle className="w-4 h-4" />
                   <div className="text-[12px] font-mono uppercase tracking-[0.12em]">
-                    Action failed
+                    {submitError.title || "Action failed"}
                   </div>
                 </div>
                 <p className="text-[13px] text-[#fee2e2] leading-relaxed mb-3">
@@ -3091,7 +3263,7 @@ export function CreatePostDrawer({
             <button
               type="button"
               onClick={handleSubmit}
-              disabled={!form.canSubmit || isValidating || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0}
+              disabled={!form.canSubmit || isValidating || hasRestrictedSelection || Object.keys(tiktokBlockers).length > 0 || oversizeVideos.length > 0}
               title={disabledReason ?? undefined}
               className={cn(
                 "px-5 py-2 text-sm font-medium rounded-lg transition-colors",

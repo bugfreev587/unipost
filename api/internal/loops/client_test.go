@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -179,6 +181,140 @@ func TestClientReturnsProviderErrors(t *testing.T) {
 
 	if err := client.UpsertContact(context.Background(), Contact{Email: "bad@example.com"}); err == nil {
 		t.Fatal("expected provider error")
+	}
+}
+
+func TestClientSendTransactionalClassifiesLostResponseAsUnknownOutcome(t *testing.T) {
+	requestRecorded := false
+	cause := errors.New("response lost")
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requestRecorded = true
+		return nil, cause
+	})}
+	client := NewClient(Config{
+		APIKey:  "test-key",
+		BaseURL: "https://loops.test/api",
+		Client:  httpClient,
+	})
+
+	err := client.SendTransactional(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123",
+		Email:           "alex@example.com",
+		IdempotencyKey:  "txn_123",
+	})
+	if !requestRecorded {
+		t.Fatal("transport did not record the provider request")
+	}
+	if !IsSendOutcomeUnknown(err) {
+		t.Fatalf("IsSendOutcomeUnknown(%v) = false, want true", err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("unknown outcome error does not preserve its cause: %v", err)
+	}
+}
+
+func TestAuditedClientPreservesUnknownSendOutcomeClassification(t *testing.T) {
+	client := &fakeLifecycleClient{transactionalErr: &SendOutcomeUnknownError{Err: errors.New("response lost")}}
+	audit := &fakeEmailAuditStore{}
+	sender := NewAuditedClient(client, audit)
+
+	_, err := sender.SendTransactionalWithAttempt(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123",
+		Email:           "alex@example.com",
+		IdempotencyKey:  "txn_123",
+		Audit: EmailAudit{
+			EventKey:              "email.publishing_restriction.restriction_notice.v1",
+			AttemptIdempotencyKey: "txn_123:g1:a1",
+		},
+	}, nil)
+	if !IsSendOutcomeUnknown(err) {
+		t.Fatalf("audited send lost unknown-outcome classification: %v", err)
+	}
+	if audit.markedFailed != 1 || !strings.Contains(audit.failedReason, "provider request outcome unknown") {
+		t.Fatalf("audit failed updates=%d reason=%q, want clear unknown-outcome failure", audit.markedFailed, audit.failedReason)
+	}
+}
+
+func TestClientSendTransactionalDoesNotClassifyExplicitProviderFailureAsUnknownOutcome(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusServiceUnavailable, `{"message":"temporarily unavailable"}`), nil
+	})}
+	client := NewClient(Config{
+		APIKey:  "test-key",
+		BaseURL: "https://loops.test/api",
+		Client:  httpClient,
+	})
+
+	err := client.SendTransactional(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123",
+		Email:           "alex@example.com",
+	})
+	if err == nil {
+		t.Fatal("expected explicit provider failure")
+	}
+	if IsSendOutcomeUnknown(err) {
+		t.Fatalf("explicit provider failure classified as unknown outcome: %v", err)
+	}
+}
+
+func TestClientSendTransactionalTreats409WithThisRequestIdempotencyKeyAsAccepted(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Idempotency-Key"); got != "provider-key-1" {
+			t.Fatalf("idempotency key = %q", got)
+		}
+		return jsonResponse(http.StatusConflict, `{"message":"idempotency key already used"}`), nil
+	})}
+	client := NewClient(Config{APIKey: "test-key", BaseURL: "https://loops.test/api", Client: httpClient})
+
+	if err := client.SendTransactional(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123", Email: "alex@example.com", IdempotencyKey: "provider-key-1",
+	}); err != nil {
+		t.Fatalf("409 replay: %v", err)
+	}
+}
+
+func TestClientSendTransactionalRejects409WithoutIdempotencyKey(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusConflict, `{"message":"conflict"}`), nil
+	})}
+	client := NewClient(Config{APIKey: "test-key", BaseURL: "https://loops.test/api", Client: httpClient})
+
+	if err := client.SendTransactional(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123", Email: "alex@example.com",
+	}); err == nil {
+		t.Fatal("409 without idempotency key returned nil")
+	}
+}
+
+func TestClientSendTransactionalDoesNotClassifyLocalPreDoErrorsAsUnknownOutcome(t *testing.T) {
+	tests := []struct {
+		name   string
+		client *Client
+		email  TransactionalEmail
+	}{
+		{name: "nil client", client: nil},
+		{name: "missing API key", client: NewClient(Config{BaseURL: "https://loops.test/api"})},
+		{
+			name:   "marshal payload",
+			client: NewClient(Config{APIKey: "test-key", BaseURL: "https://loops.test/api"}),
+			email:  TransactionalEmail{DataVariables: map[string]any{"invalid": func() {}}},
+		},
+		{
+			name:   "construct request",
+			client: NewClient(Config{APIKey: "test-key", BaseURL: ":"}),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.client.SendTransactional(context.Background(), tt.email)
+			if err == nil {
+				t.Fatal("expected local pre-Do error")
+			}
+			if IsSendOutcomeUnknown(err) {
+				t.Fatalf("local pre-Do error classified as unknown outcome: %v", err)
+			}
+		})
 	}
 }
 

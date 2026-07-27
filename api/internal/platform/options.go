@@ -20,9 +20,9 @@ const (
 	// (string). When present the adapter should resume from it rather than
 	// initiating a fresh upload/publish.
 	OptResumePublishToken = "resume_publish_token"
-	// OptOnPublishToken carries a func(string) the adapter calls the moment
+	// OptOnPublishToken carries a func(string) error the adapter calls the moment
 	// it obtains an intermediate publish token, so the caller can persist it
-	// before the (re)publish step.
+	// before the (re)publish step. Returning an error aborts the provider flow.
 	OptOnPublishToken = "on_publish_token"
 )
 
@@ -32,15 +32,16 @@ func resumePublishToken(opts map[string]any) string {
 }
 
 // persistPublishToken invokes the caller's persistence hook (if any) so a
-// later retry can resume from token. Fire-and-forget: persistence failures
-// are the caller's concern and must never abort the publish.
-func persistPublishToken(opts map[string]any, token string) {
+// later retry can resume from token. A persistence failure must abort before
+// the adapter continues with a non-durable provider token.
+func persistPublishToken(opts map[string]any, token string) error {
 	if token == "" || opts == nil {
-		return
+		return nil
 	}
-	if fn, ok := opts[OptOnPublishToken].(func(string)); ok {
-		fn(token)
+	if fn, ok := opts[OptOnPublishToken].(func(string) error); ok {
+		return fn(token)
 	}
+	return nil
 }
 
 // optBool returns opts[key] as a bool. Accepts both native bool and the

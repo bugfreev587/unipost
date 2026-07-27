@@ -85,3 +85,31 @@ test("describePostResultFailure keeps legacy string fallback", () => {
   assert.equal(detail.nextActionLabel, "Reconnect account");
   assert.equal(detail.canRetry, false);
 });
+
+test("describePostResultFailure renders the approved publishing restriction contract", () => {
+  const message = "TikTok publishing is temporarily unavailable on the Free plan due to platform capacity limits. We’re working with TikTok to increase capacity. Upgrade your plan or try again after the restriction is lifted.";
+  const detail = describePostResultFailure({
+    status: "failed",
+    platform: "tiktok",
+    error_message: message,
+    error_code: "plan_platform_publishing_restricted",
+    failure_stage: "publishing_policy",
+    is_retriable: false,
+    next_action: "upgrade_or_wait_then_retry",
+    error_source: "unipost",
+    error_temporality: "temporary",
+    retry_policy: {
+      is_retriable: false,
+      will_retry: false,
+      retry_state: "blocked",
+      manual_retry_allowed: false,
+      reason: "publishing_restriction_active",
+    },
+  });
+
+  assert.equal(detail.title, "Publishing restricted");
+  assert.equal(detail.message, message);
+  assert.equal(detail.nextActionLabel, "Upgrade your plan or wait, then retry");
+  assert.equal(detail.retryStatusLabel, "Publishing restriction active");
+  assert.equal(detail.canRetry, false);
+});

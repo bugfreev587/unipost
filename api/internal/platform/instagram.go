@@ -177,7 +177,9 @@ func (a *InstagramAdapter) Post(ctx context.Context, accessToken string, text st
 		}
 		// Persist the container id before publishing so a crash between here
 		// and media_publish resumes with this same container.
-		persistPublishToken(opts, creationID)
+		if err := persistPublishToken(opts, creationID); err != nil {
+			return nil, fmt.Errorf("instagram: persist publish token: %w", err)
+		}
 	}
 
 	if err := a.waitForContainer(ctx, accessToken, creationID); err != nil {

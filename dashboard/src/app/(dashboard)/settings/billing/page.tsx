@@ -6,18 +6,25 @@ import { useAuth } from "@clerk/nextjs";
 import { useCurrentWorkspace } from "@/lib/use-current-workspace";
 import {
   getBilling,
+  getTrialHistory,
   getWorkspaceFeatureFlags,
   getXCreditsAllowance,
   updateXInboundDailyCap,
   createCheckout,
+  createPlanChangeSession,
   createPortal,
+  cancelTrialRenewal,
+  changeTrialPlan,
   type BillingInfo,
   type Plan,
+  type WorkspaceTrialHistoryEntry,
   type XCreditsAllowance,
 } from "@/lib/api";
 import { X_CREDIT_OPERATIONS, X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
 import { formatPlanPostAllowance, formatPostUsage, usagePercentage } from "@/lib/billing-format";
+import { isPlanVisibleInBilling } from "@/lib/plan-visibility";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
+import { formatWorkspaceTrial } from "@/lib/trial-format";
 import { CheckCircle2, ExternalLink } from "lucide-react";
 
 // Pricing redesign May 2026 (migration 058): tiers are now product-stage
@@ -40,6 +47,26 @@ const PLAN_BLURBS: Record<string, string> = {
   team:   "Adds RBAC and team collab.",
 };
 
+const BILLING_TRIAL_CSS = `
+.trial-summary{margin-bottom:24px;padding:18px;border:1px solid color-mix(in srgb,var(--daccent) 28%,var(--dborder));border-radius:10px;background:color-mix(in srgb,var(--daccent) 6%,var(--dcard))}
+.trial-summary-head,.trial-history-head,.trial-history-item-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.trial-badge{display:inline-flex;align-items:center;min-height:22px;padding:3px 8px;border-radius:999px;background:color-mix(in srgb,var(--daccent) 10%,var(--dcard));font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--daccent);white-space:nowrap}
+.trial-timeline{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-top:14px}
+.trial-timeline-item{padding-top:9px;border-top:1px solid var(--dborder);min-width:0}
+.trial-timeline-label{font-size:10px;color:var(--dmuted);text-transform:uppercase;letter-spacing:.05em}
+.trial-timeline-value{margin-top:3px;font-family:var(--font-geist-mono),monospace;font-size:12px;color:var(--dtext);overflow-wrap:anywhere}
+.trial-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+.trial-history{margin-top:30px;padding-top:24px;border-top:1px solid var(--dborder)}
+.trial-history-list{display:grid;gap:0;margin-top:12px;border-top:1px solid var(--dborder)}
+.trial-history-item{padding:16px 0;border-bottom:1px solid var(--dborder)}
+.trial-history-reason{margin-top:9px;font-size:12px;color:var(--dmuted)}
+.trial-state{margin-top:12px;padding:14px;border:1px dashed var(--dborder);border-radius:8px;font-size:12.5px;color:var(--dmuted)}
+.trial-skeleton{height:72px;background:linear-gradient(90deg,var(--dcard),color-mix(in srgb,var(--dcard) 82%,var(--dborder)),var(--dcard));background-size:200% 100%;animation:trial-shimmer 1.4s ease-in-out infinite}
+@keyframes trial-shimmer{to{background-position:-200% 0}}
+@media(max-width:680px){.trial-summary-head,.trial-history-head,.trial-history-item-head{flex-direction:column}.trial-timeline{grid-template-columns:1fr}.trial-actions .dbtn{width:100%;justify-content:center}.trial-history-item{padding:14px 0}}
+@media(prefers-reduced-motion:reduce){.trial-skeleton{animation:none}}
+`;
+
 // The page default export wraps the content in a Suspense boundary.
 // useSearchParams() on a statically prerenderable route (this one has
 // no dynamic segments) triggers Next.js's "missing-suspense-with-csr-
@@ -59,6 +86,9 @@ function BillingSettingsContent() {
   const searchParams = useSearchParams();
   const { getToken } = useAuth();
   const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [trialHistory, setTrialHistory] = useState<WorkspaceTrialHistoryEntry[]>([]);
+  const [trialHistoryLoading, setTrialHistoryLoading] = useState(true);
+  const [trialHistoryError, setTrialHistoryError] = useState<string | null>(null);
   const [xCredits, setXCredits] = useState<XCreditsAllowance | null>(null);
   const [xCreditsEnabled, setXCreditsEnabled] = useState(false);
   const [xCreditsLoading, setXCreditsLoading] = useState(true);
@@ -68,25 +98,47 @@ function BillingSettingsContent() {
   const [xInboundCapSaving, setXInboundCapSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [upgrading, setUpgrading] = useState<string | null>(null);
+  const [cancelingTrial, setCancelingTrial] = useState(false);
   const [billingError, setBillingError] = useState<{ message: string; topic: string } | null>(null);
   const callbackStatus = searchParams.get("status");
+  const hasForfeitableTrial = Boolean(
+    billing?.trial?.changing_plan_forfeits_trial &&
+      (billing.trial.status === "scheduled" || billing.trial.status === "active"),
+  );
 
   const loadBilling = useCallback(async () => {
     if (!workspaceId) return;
     try {
       setBillingError(null);
+      setTrialHistoryError(null);
+      setTrialHistoryLoading(true);
       setXCreditsError(null);
       setXCreditsLoading(true);
       const token = await getToken();
       if (!token) return;
-      const [billingResult, featureFlagsResult] = await Promise.allSettled([
+      const [billingResult, historyResult, featureFlagsResult] = await Promise.allSettled([
         getBilling(token),
+        getTrialHistory(token),
         getWorkspaceFeatureFlags(token),
       ]);
       if (billingResult.status === "rejected") {
         throw billingResult.reason;
       }
       setBilling(billingResult.value.data);
+      if (historyResult.status === "fulfilled") {
+        setTrialHistory(
+          [...historyResult.value.data].sort(
+            (left, right) => Date.parse(right.granted_at ?? "") - Date.parse(left.granted_at ?? ""),
+          ),
+        );
+      } else {
+        setTrialHistory([]);
+        setTrialHistoryError(
+          historyResult.reason instanceof Error
+            ? historyResult.reason.message
+            : "Trial history could not be loaded",
+        );
+      }
       const enabled =
         featureFlagsResult.status === "fulfilled" &&
         featureFlagsResult.value.data.flags.x_credits_billing_v1;
@@ -115,6 +167,7 @@ function BillingSettingsContent() {
       console.error("Failed to load billing:", err);
       setBillingError({ message, topic: "billing-load-failure" });
     } finally {
+      setTrialHistoryLoading(false);
       setXCreditsLoading(false);
       setLoading(false);
     }
@@ -143,13 +196,48 @@ function BillingSettingsContent() {
       setBillingError(null);
       const token = await getToken();
       if (!token) return;
-      const res = await createCheckout(token, planId);
-      window.location.href = res.data.checkout_url;
+      if (hasForfeitableTrial && billing?.trial?.plan_id !== planId) {
+        const confirmed = window.confirm(
+          "Changing plans ends your trial immediately. The new plan starts billing now for a full billing period. Continue?",
+        );
+        if (!confirmed) return;
+        await changeTrialPlan(token, planId);
+        await loadBilling();
+        return;
+      }
+      if (billing?.plan === "free") {
+        const res = await createCheckout(token, planId);
+        window.location.href = res.data.checkout_url;
+        return;
+      }
+      const res = await createPlanChangeSession(token, planId);
+      window.location.href = res.data.url;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to start billing checkout";
+      const message = err instanceof Error ? err.message : "Failed to start plan change";
       console.error("Failed:", err);
       setBillingError({ message, topic: "billing-upgrade-failure" });
       setUpgrading(null);
+    }
+  }
+
+  async function handleCancelTrialRenewal() {
+    if (!billing?.trial || cancelingTrial) return;
+    const confirmed = window.confirm(
+      "Cancel renewal? You will keep access through the trial end date and will not be charged afterward.",
+    );
+    if (!confirmed) return;
+    setCancelingTrial(true);
+    setBillingError(null);
+    try {
+      const token = await getToken();
+      if (!token) return;
+      await cancelTrialRenewal(token, billing.trial.id);
+      await loadBilling();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to cancel trial renewal";
+      setBillingError({ message, topic: "trial-cancel-renewal-failure" });
+    } finally {
+      setCancelingTrial(false);
     }
   }
 
@@ -190,7 +278,12 @@ function BillingSettingsContent() {
   }
 
   if (workspaceLoading || loading) {
-    return <div style={{ color: "var(--dmuted)" }}>Loading...</div>;
+    return (
+      <div aria-live="polite" aria-busy="true">
+        <div className="dt-body-sm" style={{ marginBottom: 10 }}>Loading billing and trial history…</div>
+        <div className="trial-state trial-skeleton" aria-hidden="true" />
+      </div>
+    );
   }
 
   const used = billing?.completed_usage ?? billing?.usage ?? 0;
@@ -216,9 +309,12 @@ function BillingSettingsContent() {
   const urlPostCredits = xOperationCredits["post.create_url"];
   const completeCommentCredits = xOperationCredits["post.mention.received"] + xOperationCredits["post.create"];
   const completeDMCredits = xOperationCredits["dm.received"] + xOperationCredits["dm.send"];
+  const visiblePlans = PLANS.filter((plan) => isPlanVisibleInBilling(plan.id, billing?.plan));
+  const formattedCurrentTrial = billing?.trial ? formatWorkspaceTrial(billing.trial) : null;
 
   return (
     <>
+      <style>{BILLING_TRIAL_CSS}</style>
       {callbackStatus === "success" && (
         <div
           style={{
@@ -304,6 +400,52 @@ function BillingSettingsContent() {
           </button>
         )}
       </div>
+
+      {billing?.trial && formattedCurrentTrial ? (
+        <section className="trial-summary" aria-labelledby="managed-trial-heading">
+          <div className="trial-summary-head">
+            <div>
+              <div id="managed-trial-heading" className="dt-label" style={{ marginBottom: 5 }}>Managed trial</div>
+              <div className="dt-body" style={{ fontWeight: 700 }}>{formattedCurrentTrial.headline}</div>
+              {formattedCurrentTrial.remainingDays !== null ? (
+                <div className="dt-body-sm" style={{ marginTop: 4 }}>
+                  {formattedCurrentTrial.remainingDays} day{formattedCurrentTrial.remainingDays === 1 ? "" : "s"} remaining
+                </div>
+              ) : null}
+            </div>
+            <span className="trial-badge">{formattedCurrentTrial.badge.label}</span>
+          </div>
+          <div className="trial-timeline">
+            {formattedCurrentTrial.timeline.map((item) => (
+              <div className="trial-timeline-item" key={`${item.label}-${item.value}`}>
+                <div className="trial-timeline-label">{item.label}</div>
+                <div className="trial-timeline-value">{item.value}</div>
+              </div>
+            ))}
+          </div>
+          {hasForfeitableTrial ? (
+            <div className="trial-state" role="note">
+              Changing plans ends your trial immediately. The selected plan starts billing for a full period.
+            </div>
+          ) : null}
+          {(billing.trial.status === "scheduled" || billing.trial.status === "active") ? (
+            <div className="trial-actions">
+              <button
+                type="button"
+                className="dbtn dbtn-ghost"
+                onClick={() => void handleCancelTrialRenewal()}
+                disabled={cancelingTrial || billing.trial.cancel_at_period_end}
+              >
+                {billing.trial.cancel_at_period_end
+                  ? "Renewal canceled"
+                  : cancelingTrial
+                    ? "Canceling…"
+                    : "Cancel renewal"}
+              </button>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
       <div className="stat-grid">
         <div className="stat-card">
@@ -554,12 +696,22 @@ function BillingSettingsContent() {
           <div className="dt-body" style={{ fontWeight: 600 }}>Upgrade Plan</div>
         </div>
         <div className="dt-body-sm">
-          Plans are product-stage tiers (Free / API / Basic / Growth / Team). See the full feature matrix at <a href="/pricing" style={{ color: "var(--daccent)", textDecoration: "underline" }}>unipost.dev/pricing</a>.
+          Plans are product-stage tiers (Free / Basic / Growth / Team). See the full feature matrix at <a href="/pricing" style={{ color: "var(--daccent)", textDecoration: "underline" }}>unipost.dev/pricing</a>.
         </div>
       </div>
       <div className="plan-cards">
-        {PLANS.map((plan) => {
+        {visiblePlans.map((plan) => {
           const isCurrent = billing?.plan === plan.id;
+          const isTrialPlan = billing?.trial?.plan_id === plan.id;
+          const trialPlanCta = isTrialPlan && billing?.trial?.status === "pending_activation"
+            ? `Start ${billing.trial.duration_days}-day free trial`
+            : isTrialPlan && billing?.trial?.status === "checkout_pending"
+              ? "Continue checkout"
+              : isTrialPlan && billing?.trial?.status === "provisioning"
+                ? "Activation in progress"
+                : null;
+          const currentPlanIndex = PLANS.findIndex((candidate) => candidate.id === billing?.plan);
+          const planIndex = PLANS.findIndex((candidate) => candidate.id === plan.id);
           const price = plan.price_cents == null
             ? "Custom"
             : plan.price_cents === 0
@@ -622,7 +774,12 @@ function BillingSettingsContent() {
                   {blurb}
                 </div>
               )}
-              {!isCurrent && plan.id !== "free" && (
+              {isTrialPlan && formattedCurrentTrial ? (
+                <div style={{ marginTop: 8, fontSize: 11, color: "var(--daccent)", fontWeight: 650 }}>
+                  {formattedCurrentTrial.badge.label} · {formattedCurrentTrial.headline}
+                </div>
+              ) : null}
+              {(!isCurrent || trialPlanCta) && plan.id !== "free" && (
                 <button
                   className="dbtn dbtn-ghost"
                   style={{
@@ -632,11 +789,22 @@ function BillingSettingsContent() {
                     fontSize: 12,
                   }}
                   onClick={() => handleUpgrade(plan.id)}
-                  disabled={upgrading === plan.id}
+                  disabled={upgrading === plan.id || billing?.trial?.status === "provisioning"}
                 >
-                  {upgrading === plan.id ? "..." : "Upgrade"}
+                  {upgrading === plan.id
+                    ? "Working…"
+                    : trialPlanCta
+                      ? trialPlanCta
+                    : hasForfeitableTrial
+                      ? planIndex > currentPlanIndex ? "Upgrade now" : "Downgrade now"
+                      : "Upgrade"}
                 </button>
               )}
+              {hasForfeitableTrial && !isTrialPlan && plan.id !== "free" ? (
+                <div style={{ marginTop: 7, fontSize: 10.5, lineHeight: 1.4, color: "var(--dmuted)" }}>
+                  Changing plans ends your trial immediately.
+                </div>
+              ) : null}
             </div>
           );
         })}
@@ -645,6 +813,55 @@ function BillingSettingsContent() {
         Need custom terms or security review?{" "}
         <a href="mailto:support@unipost.dev" style={{ color: "var(--daccent)", textDecoration: "underline" }}>Contact us about Enterprise</a>.
       </div>
+
+      <section className="trial-history" aria-labelledby="trial-history-heading">
+        <div className="trial-history-head">
+          <div>
+            <div id="trial-history-heading" className="dt-body" style={{ fontWeight: 700 }}>Trial History</div>
+            <div className="dt-body-sm" style={{ marginTop: 3 }}>Previous and current workspace trial grants, newest first.</div>
+          </div>
+        </div>
+        {trialHistoryLoading ? (
+          <div className="trial-state" aria-live="polite">Loading trial history…</div>
+        ) : trialHistoryError ? (
+          <div className="trial-state" role="alert">
+            <strong>Trial history could not be loaded.</strong> {trialHistoryError}
+            <button type="button" className="dbtn dbtn-ghost" style={{ marginTop: 10 }} onClick={() => void loadBilling()}>
+              Try again
+            </button>
+          </div>
+        ) : trialHistory.length === 0 ? (
+          <div className="trial-state">No trial history yet.</div>
+        ) : (
+          <div className="trial-history-list">
+            {trialHistory.map((entry) => {
+              const formatted = formatWorkspaceTrial(entry);
+              return (
+                <article className="trial-history-item" key={entry.id}>
+                  <div className="trial-history-item-head">
+                    <div>
+                      <div className="dt-body" style={{ fontWeight: 650 }}>{formatted.headline}</div>
+                      <div className="dt-body-sm" style={{ marginTop: 3 }}>{entry.duration_days}-day {entry.plan_id.toUpperCase()} trial</div>
+                    </div>
+                    <span className="trial-badge">{formatted.badge.label}</span>
+                  </div>
+                  <div className="trial-timeline">
+                    {formatted.timeline.map((item) => (
+                      <div className="trial-timeline-item" key={`${item.label}-${item.value}`}>
+                        <div className="trial-timeline-label">{item.label}</div>
+                        <div className="trial-timeline-value">{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {formatted.terminalReason ? (
+                    <div className="trial-history-reason">Outcome: {formatted.terminalReason}</div>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </>
   );
 }

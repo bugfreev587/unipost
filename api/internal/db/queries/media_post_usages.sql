@@ -10,6 +10,7 @@ WITH locked_media AS MATERIALIZED (
   UPDATE media_post_usages usage
   SET post_status = sqlc.arg(post_status),
       cleanup_after_at = sqlc.narg(cleanup_after_at),
+	  retention_reason = sqlc.arg(retention_reason),
       updated_at = NOW()
   FROM locked_media
   WHERE usage.media_id = locked_media.id
@@ -17,19 +18,21 @@ WITH locked_media AS MATERIALIZED (
   RETURNING usage.id
 ), inserted_usage AS (
   INSERT INTO media_post_usages (
-    workspace_id, media_id, post_id, post_status, cleanup_after_at
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
   )
   SELECT
     sqlc.arg(workspace_id),
     sqlc.arg(media_id),
     sqlc.arg(post_id),
     sqlc.arg(post_status),
-    sqlc.narg(cleanup_after_at)
+    sqlc.narg(cleanup_after_at),
+    sqlc.arg(retention_reason)
   FROM locked_media
   WHERE NOT EXISTS (SELECT 1 FROM updated_usage)
   ON CONFLICT (media_id, post_id) DO UPDATE
   SET post_status = EXCLUDED.post_status,
       cleanup_after_at = EXCLUDED.cleanup_after_at,
+	  retention_reason = EXCLUDED.retention_reason,
       updated_at = NOW()
   RETURNING id
 )
@@ -53,6 +56,31 @@ FROM social_posts
 WHERE workspace_id = $1
   AND status = 'scheduled'
   AND deleted_at IS NULL;
+
+-- name: GetPostPublishingRestrictionMediaRetention :one
+SELECT MAX(retained_until)::timestamptz
+FROM (
+  SELECT usage.cleanup_after_at AS retained_until
+  FROM media_post_usages usage
+  WHERE usage.post_id = sqlc.arg(post_id)
+    AND usage.retention_reason = 'publishing_restriction'
+
+  UNION ALL
+
+  SELECT CASE
+    WHEN jsonb_typeof(post.metadata->'publishing_restriction_media_retained_until') = 'string'
+      AND pg_input_is_valid(
+        post.metadata->>'publishing_restriction_media_retained_until',
+        'timestamptz'
+      ) THEN CASE
+        WHEN isfinite(
+          (post.metadata->>'publishing_restriction_media_retained_until')::timestamptz
+        ) THEN (post.metadata->>'publishing_restriction_media_retained_until')::timestamptz
+      END
+  END AS retained_until
+  FROM social_posts post
+  WHERE post.id = sqlc.arg(post_id)
+) restriction_retention;
 
 -- name: ClaimMediaDueForRetentionCleanup :many
 WITH snapshot_candidates AS MATERIALIZED (
@@ -118,7 +146,7 @@ WITH snapshot_candidates AS MATERIALIZED (
   JOIN snapshot_candidates snapshot
     ON snapshot.id = m.id
    AND snapshot.usage_version = m.usage_version
-  ORDER BY snapshot.due_at ASC
+  ORDER BY m.id
   FOR UPDATE OF m SKIP LOCKED
 )
 UPDATE media AS m

@@ -51,7 +51,9 @@ const (
 	ActionPlatformCredentialCreated = "PLATFORM_CREDENTIAL.CREATED"
 	ActionPlatformCredentialDeleted = "PLATFORM_CREDENTIAL.DELETED"
 
-	ActionPlanChanged = "PLAN.CHANGED"
+	ActionPlanChanged  = "PLAN.CHANGED"
+	ActionTrialGranted = "TRIAL.GRANTED"
+	ActionTrialRevoked = "TRIAL.REVOKED"
 )
 
 // Event is the input shape for Log. Pointer-y fields default to NULL

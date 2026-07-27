@@ -14,6 +14,7 @@
 package handler
 
 import (
+	"bytes"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,47 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 )
+
+// deferredHTTPResponse lets a transaction evaluate a mutable admission gate
+// without exposing an HTTP response before commit/rollback releases its locks.
+type deferredHTTPResponse struct {
+	header http.Header
+	status int
+	body   bytes.Buffer
+}
+
+func newDeferredHTTPResponse() *deferredHTTPResponse {
+	return &deferredHTTPResponse{header: make(http.Header)}
+}
+
+func (w *deferredHTTPResponse) Header() http.Header { return w.header }
+
+func (w *deferredHTTPResponse) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *deferredHTTPResponse) Write(payload []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(payload)
+}
+
+func (w *deferredHTTPResponse) flush(target http.ResponseWriter) {
+	for key, values := range w.header {
+		for _, value := range values {
+			target.Header().Add(key, value)
+		}
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusInternalServerError
+	}
+	target.WriteHeader(status)
+	_, _ = target.Write(w.body.Bytes())
+}
 
 // applyRateLimitHeaders writes the X-UniPost-RateLimit-* and
 // X-UniPost-QueueDepth headers from a Decision. Called for both
@@ -44,9 +86,9 @@ func applyRateLimitHeaders(w http.ResponseWriter, dec ratelimit.Decision) {
 
 // admissionOpts toggles which controls run for a given route.
 //
-//   request : per-workspace token bucket (request rate cap)
-//   enqueue : sliding-window cap on accepted post units
-//   depth   : workspace queue-depth cap on active delivery jobs
+//	request : per-workspace token bucket (request rate cap)
+//	enqueue : sliding-window cap on accepted post units
+//	depth   : workspace queue-depth cap on active delivery jobs
 //
 // Routes that only do request limiting (drafts, cancel, update,
 // bulk in v1) leave enqueue and depth false. Routes that admit new

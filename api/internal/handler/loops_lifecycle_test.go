@@ -124,6 +124,40 @@ func TestBuildLoopsBillingSubscriptionCanceledEvent(t *testing.T) {
 	assertLifecycleProp(t, event.Properties, "billing_url", "https://app.unipost.dev/settings/billing")
 }
 
+func TestBuildLoopsBillingTrialEndingEvent(t *testing.T) {
+	now := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	endsAt := now.Add(72 * time.Hour)
+	event := buildLoopsBillingTrialEndingEvent(
+		db.User{ID: "user_123", Email: "alex@example.com", Name: pgtype.Text{String: "Alex Smith", Valid: true}},
+		db.Workspace{ID: "ws_123", Name: "Alex Workspace"},
+		db.WorkspaceTrialGrant{ID: "grant_123", PlanID: "growth", DurationDays: 30, EndsAt: pgtype.Timestamptz{Time: endsAt, Valid: true}},
+		7900,
+		"https://app.unipost.dev/",
+		now,
+	)
+
+	if event.EventName != "billing_trial_ending" {
+		t.Fatalf("event name = %q", event.EventName)
+	}
+	if !event.SkipContact {
+		t.Fatal("trial-ending transactional must bypass contact upsert")
+	}
+	if event.IdempotencyKey != "billing_trial_ending:grant_123:2026-07-28T12:00:00Z" {
+		t.Fatalf("idempotency key = %q", event.IdempotencyKey)
+	}
+	if event.UserID != "user_123" || event.Email != "alex@example.com" || event.PlanID != "growth" {
+		t.Fatalf("recipient/plan = %#v", event)
+	}
+	assertLifecycleProp(t, event.Properties, "workspace_name", "Alex Workspace")
+	assertLifecycleProp(t, event.Properties, "plan_id", "growth")
+	assertLifecycleProp(t, event.Properties, "plan_name", "Growth")
+	assertLifecycleProp(t, event.Properties, "trial_end", "2026-07-28T12:00:00Z")
+	assertLifecycleProp(t, event.Properties, "days_remaining", int64(3))
+	assertLifecycleProp(t, event.Properties, "post_trial_price", "$79.00/month")
+	assertLifecycleProp(t, event.Properties, "billing_url", "https://app.unipost.dev/settings/billing")
+	assertLifecycleProp(t, event.Properties, "cancel_url", "https://app.unipost.dev/settings/billing")
+}
+
 func TestBuildLoopsAccountCanceledEventSkipsContact(t *testing.T) {
 	canceledAt := time.Date(2026, 5, 25, 12, 0, 0, 0, time.UTC)
 

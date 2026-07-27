@@ -2,12 +2,21 @@ package loops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/emailregistry"
+)
+
+const emailAuditFinalizationTimeout = 5 * time.Second
+
+const (
+	emailAuditOutcomeProviderUnknown    = "provider_unknown"
+	emailAuditOutcomeProviderDefinitive = "provider_definitive_failure"
 )
 
 type EmailAudit struct {
@@ -18,6 +27,10 @@ type EmailAudit struct {
 	TriggerSource      string
 	TriggerReferenceID string
 	Subject            string
+	// AttemptIdempotencyKey identifies one local network attempt in the
+	// audit ledger. It is intentionally separate from TransactionalEmail's
+	// stable provider idempotency key.
+	AttemptIdempotencyKey string
 }
 
 type EmailSendAttempt struct {
@@ -37,6 +50,31 @@ type EmailSendAttempt struct {
 
 type EmailSendAttemptRecord struct {
 	ID string
+}
+
+// EmailAuditFinalizationError means the provider request completed with
+// ProviderError, but its audit row could not be moved out of pending. Callers
+// must leave linked local work recoverable until reconciliation finalizes both
+// records; this is deliberately not a SendOutcomeUnknownError.
+type EmailAuditFinalizationError struct {
+	ProviderError error
+	AuditError    error
+}
+
+func (e *EmailAuditFinalizationError) Error() string {
+	if e.ProviderError == nil {
+		return fmt.Sprintf("loops: provider accepted send; finalize failed email audit: %v", e.AuditError)
+	}
+	return fmt.Sprintf("loops: provider result %v; finalize failed email audit: %v", e.ProviderError, e.AuditError)
+}
+
+func (e *EmailAuditFinalizationError) Unwrap() error {
+	return e.AuditError
+}
+
+func IsEmailAuditFinalizationError(err error) bool {
+	var finalizationErr *EmailAuditFinalizationError
+	return errors.As(err, &finalizationErr)
 }
 
 type EmailAuditStore interface {
@@ -81,27 +119,91 @@ func (c *AuditedClient) SendTransactional(ctx context.Context, email Transaction
 		return c.client.SendTransactional(ctx, email)
 	}
 
-	record, recordOK := c.createAttempt(ctx, email)
-	err := c.client.SendTransactional(ctx, email)
-	if !recordOK {
-		return err
-	}
-	if err != nil {
-		if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, err.Error()); auditErr != nil {
-			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
-		}
-		return err
-	}
-	if auditErr := c.store.MarkEmailSendAttemptSent(ctx, record.ID); auditErr != nil {
-		slog.Warn("loops: email audit sent update failed", "attempt_id", record.ID, "error", auditErr)
-	}
-	return nil
+	_, err := c.SendTransactionalWithAttempt(ctx, email, nil)
+	return err
 }
 
-func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEmail) (EmailSendAttemptRecord, bool) {
+// SendTransactionalWithAttempt is the strict campaign send path. It creates
+// a durable audit row, lets the caller link that row to its atomic local send
+// claim, and only then permits the provider request. A failure in either
+// local gate prevents the network call.
+func (c *AuditedClient) SendTransactionalWithAttempt(
+	ctx context.Context,
+	email TransactionalEmail,
+	beforeSend func(context.Context, string) error,
+) (EmailSendAttemptRecord, error) {
+	if c == nil || c.client == nil || c.store == nil || strings.TrimSpace(email.Audit.EventKey) == "" {
+		return EmailSendAttemptRecord{}, errors.New("loops: strict audited client is not configured")
+	}
+	record, err := c.createAttempt(ctx, email)
+	if err != nil {
+		return EmailSendAttemptRecord{}, err
+	}
+	if beforeSend != nil {
+		if linkErr := beforeSend(ctx, record.ID); linkErr != nil {
+			finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+			auditErr := c.store.MarkEmailSendAttemptFailed(
+				finalizeCtx,
+				record.ID,
+				emailAuditFailureEvidence("pre_send_failure", linkErr),
+			)
+			cancelFinalize()
+			if auditErr != nil {
+				slog.Warn("loops: email audit linkage failure update failed", "attempt_id", record.ID, "error", auditErr)
+				return record, &EmailAuditFinalizationError{ProviderError: linkErr, AuditError: auditErr}
+			}
+			return record, linkErr
+		}
+	}
+	err = c.client.SendTransactional(ctx, email)
+	if err != nil {
+		outcomeClass := emailAuditOutcomeProviderDefinitive
+		if IsSendOutcomeUnknown(err) {
+			outcomeClass = emailAuditOutcomeProviderUnknown
+		}
+		failureEvidence := emailAuditFailureEvidence(outcomeClass, err)
+		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+		auditErr := c.store.MarkEmailSendAttemptFailed(finalizeCtx, record.ID, failureEvidence)
+		cancelFinalize()
+		if auditErr != nil {
+			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
+			return record, &EmailAuditFinalizationError{ProviderError: err, AuditError: auditErr}
+		}
+		return record, err
+	}
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+	auditErr := c.store.MarkEmailSendAttemptSent(finalizeCtx, record.ID)
+	cancelFinalize()
+	if auditErr != nil {
+		slog.Warn("loops: email audit sent update failed", "attempt_id", record.ID, "error", auditErr)
+		return record, &EmailAuditFinalizationError{AuditError: auditErr}
+	}
+	return record, nil
+}
+
+func emailAuditFailureEvidence(outcomeClass string, err error) string {
+	evidence := struct {
+		OutcomeClass string `json:"outcome_class"`
+		Error        string `json:"error"`
+	}{OutcomeClass: outcomeClass}
+	if err != nil {
+		evidence.Error = err.Error()
+	}
+	raw, marshalErr := json.Marshal(evidence)
+	if marshalErr != nil {
+		return evidence.Error
+	}
+	return string(raw)
+}
+
+func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEmail) (EmailSendAttemptRecord, error) {
 	provider := strings.TrimSpace(email.Audit.Provider)
 	if provider == "" {
 		provider = "loops"
+	}
+	auditIdempotencyKey := strings.TrimSpace(email.Audit.AttemptIdempotencyKey)
+	if auditIdempotencyKey == "" {
+		auditIdempotencyKey = email.IdempotencyKey
 	}
 	record, err := c.store.CreateEmailSendAttempt(ctx, EmailSendAttempt{
 		EventKey:           email.Audit.EventKey,
@@ -110,7 +212,7 @@ func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEm
 		WorkspaceID:        email.Audit.WorkspaceID,
 		Provider:           provider,
 		ProviderTemplateID: email.TransactionalID,
-		IdempotencyKey:     email.IdempotencyKey,
+		IdempotencyKey:     auditIdempotencyKey,
 		DeliveryClass:      email.Audit.DeliveryClass,
 		SubjectSnapshot:    email.Audit.Subject,
 		DataVariables:      email.DataVariables,
@@ -119,9 +221,9 @@ func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEm
 	})
 	if err != nil {
 		slog.Warn("loops: email audit create failed", "event_key", email.Audit.EventKey, "email", email.Email, "error", err)
-		return EmailSendAttemptRecord{}, false
+		return EmailSendAttemptRecord{}, err
 	}
-	return record, true
+	return record, nil
 }
 
 func lifecycleTransactionalAudit(event LifecycleEvent) EmailAudit {
@@ -174,7 +276,7 @@ func lifecycleDeliveryClass(eventName string) string {
 
 func lifecycleTriggerSource(eventName string) string {
 	switch strings.TrimSpace(eventName) {
-	case "plan_changed", "billing_payment_failed", "billing_payment_recovered", "billing_subscription_canceled":
+	case "plan_changed", "billing_trial_ending", "billing_payment_failed", "billing_payment_recovered", "billing_subscription_canceled":
 		return "stripe_webhook"
 	case "account_disconnected", "post_failed":
 		return "worker"

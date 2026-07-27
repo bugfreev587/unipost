@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
@@ -99,38 +97,7 @@ func (c *Checker) MonthlySnapshotForPeriod(ctx context.Context, workspaceID, per
 		period = currentPeriod()
 	}
 
-	planID := "free"
-	sub, err := c.queries.GetSubscriptionByWorkspace(ctx, workspaceID)
-	if err == nil && sub.PlanID != "" {
-		planID = sub.PlanID
-	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return MonthlySnapshot{}, err
-	}
-
-	plan, err := c.queries.GetPlan(ctx, planID)
-	if err != nil {
-		return MonthlySnapshot{}, err
-	}
-
-	completed := 0
-	usage, err := c.queries.GetUsage(ctx, db.GetUsageParams{
-		WorkspaceID: workspaceID,
-		Period:      period,
-	})
-	if err == nil {
-		completed = int(usage.PostCount)
-	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return MonthlySnapshot{}, err
-	}
-
-	scheduled, err := c.queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{
-		WorkspaceID: workspaceID,
-		Period:      period,
-	})
-	if err != nil {
-		return MonthlySnapshot{}, err
-	}
-	held, err := c.queries.CountQuotaHoldUnitsByWorkspaceAndPeriod(ctx, db.CountQuotaHoldUnitsByWorkspaceAndPeriodParams{
+	row, err := c.queries.MonthlyQuotaSnapshotForPeriod(ctx, db.MonthlyQuotaSnapshotForPeriodParams{
 		WorkspaceID: workspaceID,
 		Period:      period,
 	})
@@ -140,12 +107,12 @@ func (c *Checker) MonthlySnapshotForPeriod(ctx context.Context, workspaceID, per
 
 	return MonthlySnapshot{
 		WorkspaceID: workspaceID,
-		PlanID:      planID,
+		PlanID:      row.PlanID,
 		Period:      period,
-		Completed:   completed,
-		Scheduled:   int(scheduled),
-		QuotaHold:   int(held),
-		Limit:       int(plan.PostLimit),
+		Completed:   int(row.Completed),
+		Scheduled:   int(row.Scheduled),
+		QuotaHold:   int(row.QuotaHold),
+		Limit:       int(row.PostLimit),
 	}, nil
 }
 
@@ -178,12 +145,20 @@ func (c *Checker) CheckForPeriod(ctx context.Context, workspaceID, period string
 		postCount = int(usage.PostCount)
 	}
 
-	pct := float64(postCount) / float64(plan.PostLimit) * 100
+	return quotaStatusForUsage(postCount, int(plan.PostLimit))
+}
+
+func quotaStatusForUsage(postCount, postLimit int) QuotaStatus {
+	if postLimit < 0 {
+		return QuotaStatus{Allowed: true, Limit: -1}
+	}
+
+	pct := float64(postCount) / float64(postLimit) * 100
 
 	status := QuotaStatus{
 		Allowed:    true, // Never block
 		Usage:      postCount,
-		Limit:      int(plan.PostLimit),
+		Limit:      postLimit,
 		Percentage: pct,
 	}
 
@@ -222,6 +197,29 @@ func (c *Checker) FreePlanHardBlockGate(ctx context.Context, workspaceID string)
 }
 
 func (c *Checker) FreePlanHardBlockGateForPeriod(ctx context.Context, workspaceID, period string) FreePlanHardBlockGate {
+	snapshot, err := c.MonthlySnapshotForPeriod(ctx, workspaceID, period)
+	if err != nil {
+		return c.legacyFreePlanHardBlockGateForPeriod(ctx, workspaceID, period)
+	}
+
+	gate := FreePlanHardBlockGate{
+		Status: quotaStatusForUsage(snapshot.Completed, snapshot.Limit),
+	}
+	if gate.Status.Limit < 0 {
+		return gate
+	}
+	gate.enabled = true
+	gate.planID = snapshot.PlanID
+	if gate.planID == "free" {
+		gate.Status.Reserved = snapshot.Scheduled
+	}
+	return gate
+}
+
+// legacyFreePlanHardBlockGateForPeriod preserves the pre-snapshot fallback
+// when the atomic query itself is unavailable. The normal admission path above
+// always gets usage and reservations from one PostgreSQL statement.
+func (c *Checker) legacyFreePlanHardBlockGateForPeriod(ctx context.Context, workspaceID, period string) FreePlanHardBlockGate {
 	status := c.CheckForPeriod(ctx, workspaceID, period)
 	gate := FreePlanHardBlockGate{Status: status}
 	if status.Limit < 0 {

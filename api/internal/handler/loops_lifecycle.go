@@ -14,6 +14,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
 
 type loopsLifecycleSyncer interface {
@@ -106,6 +107,41 @@ func (h *StripeWebhookHandler) syncLoopsBillingSubscriptionCanceled(ctx context.
 	event := buildLoopsBillingSubscriptionCanceledEvent(owner, workspace, localSub, stripeSub, h.appBaseURL)
 	if err := h.loopsSyncer.SendLifecycleEvent(ctx, event); err != nil {
 		slog.Warn("loops: failed to send billing_subscription_canceled", "workspace_id", localSub.WorkspaceID, "user_id", owner.ID, "subscription_id", stripeSub.ID, "error", err)
+	}
+}
+
+func (h *StripeWebhookHandler) maybeSyncShortTrialEnding(ctx context.Context, grant trials.Grant, now time.Time) {
+	if grant.DurationDays < 1 || grant.DurationDays > 3 {
+		return
+	}
+	h.syncLoopsBillingTrialEnding(ctx, grant, now)
+}
+
+func (h *StripeWebhookHandler) syncLoopsBillingTrialEnding(ctx context.Context, grant trials.Grant, now time.Time) {
+	if h == nil || h.loopsSyncer == nil || h.queries == nil || grant.Status != trials.StatusActive || grant.EndsAt == nil || grant.EndsAt.IsZero() {
+		return
+	}
+	if !now.UTC().Before(grant.EndsAt.UTC()) {
+		return
+	}
+	workspace, owner, ok := h.billingEmailRecipient(ctx, grant.WorkspaceID, "trial_ending")
+	if !ok {
+		return
+	}
+	plan, err := h.queries.GetPlan(ctx, grant.PlanID)
+	if err != nil {
+		slog.Warn("loops: failed to load plan for billing_trial_ending", "workspace_id", grant.WorkspaceID, "plan_id", grant.PlanID, "error", err)
+		return
+	}
+	event := buildLoopsBillingTrialEndingEvent(owner, workspace, db.WorkspaceTrialGrant{
+		ID: grant.ID, WorkspaceID: grant.WorkspaceID, Kind: string(grant.Kind), PlanID: grant.PlanID,
+		DurationDays: grant.DurationDays, Status: string(grant.Status), EndsAt: pgtype.Timestamptz{Time: grant.EndsAt.UTC(), Valid: true},
+	}, int64(plan.PriceCents), h.appBaseURL, now)
+	if strings.TrimSpace(plan.Name) != "" {
+		event.Properties["plan_name"] = plan.Name
+	}
+	if err := h.loopsSyncer.SendLifecycleEvent(ctx, event); err != nil {
+		slog.Warn("loops: failed to send billing_trial_ending", "workspace_id", grant.WorkspaceID, "user_id", owner.ID, "trial_grant_id", grant.ID, "error", err)
 	}
 }
 
@@ -262,6 +298,52 @@ func buildLoopsBillingSubscriptionCanceledEvent(owner db.User, workspace db.Work
 			"effective_at":   effectiveAt,
 			"billing_url":    normalizeAppBaseURL(appBaseURL) + "/settings/billing",
 		},
+	}
+}
+
+func buildLoopsBillingTrialEndingEvent(owner db.User, workspace db.Workspace, grant db.WorkspaceTrialGrant, priceCents int64, appBaseURL string, now time.Time) loops.LifecycleEvent {
+	trialEnd := grant.EndsAt.Time.UTC()
+	daysRemaining := int64(0)
+	if remaining := trialEnd.Sub(now.UTC()); remaining > 0 {
+		daysRemaining = int64((remaining + 24*time.Hour - 1) / (24 * time.Hour))
+	}
+	planID := normalizePlanID(grant.PlanID)
+	baseURL := normalizeAppBaseURL(appBaseURL)
+	return loops.LifecycleEvent{
+		UserID:         owner.ID,
+		Email:          owner.Email,
+		Name:           userName(owner),
+		WorkspaceID:    workspace.ID,
+		WorkspaceName:  workspace.Name,
+		PlanID:         planID,
+		EventName:      "billing_trial_ending",
+		IdempotencyKey: fmt.Sprintf("billing_trial_ending:%s:%s", grant.ID, trialEnd.Format(time.RFC3339)),
+		SkipContact:    true,
+		Properties: map[string]any{
+			"workspace_name":   workspace.Name,
+			"plan_id":          planID,
+			"plan_name":        trialPlanName(planID),
+			"trial_end":        trialEnd.Format(time.RFC3339),
+			"days_remaining":   daysRemaining,
+			"post_trial_price": fmt.Sprintf("$%.2f/month", float64(priceCents)/100),
+			"billing_url":      baseURL + "/settings/billing",
+			"cancel_url":       baseURL + "/settings/billing",
+		},
+	}
+}
+
+func trialPlanName(planID string) string {
+	switch strings.ToLower(strings.TrimSpace(planID)) {
+	case "api":
+		return "API"
+	case "basic":
+		return "Basic"
+	case "growth":
+		return "Growth"
+	case "team":
+		return "Team"
+	default:
+		return strings.TrimSpace(planID)
 	}
 }
 

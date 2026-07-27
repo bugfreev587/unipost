@@ -1,12 +1,363 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/xiaoboyu/unipost-api/internal/audit"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
+
+func TestAdminGrantTrialReturnsCreatedAndPassesAuthenticatedActor(t *testing.T) {
+	service := &fakeAdminTrialService{grant: trials.Grant{
+		ID: "grant_1", WorkspaceID: "ws_1", Kind: trials.KindFreeToPaid,
+		PlanID: "growth", DurationDays: 30, Status: trials.StatusPendingActivation,
+		GrantedAt: time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
+	}}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+
+	h.GrantTrial(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if service.grantReq.ActorUserID != "admin_1" || service.grantReq.WorkspaceID != "ws_1" {
+		t.Fatalf("request = %#v", service.grantReq)
+	}
+	var response struct {
+		Data trials.Grant `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Data.ID != "grant_1" || response.Data.Status != trials.StatusPendingActivation {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+}
+
+func TestAdminSetPlanRejectsEveryOpenTrialBeforeSubscriptionMutation(t *testing.T) {
+	for _, status := range []trials.Status{
+		trials.StatusProvisioning,
+		trials.StatusPendingActivation,
+		trials.StatusCheckoutPending,
+		trials.StatusScheduled,
+		trials.StatusActive,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			service := &fakeAdminTrialService{history: []trials.HistoryProjection{{
+				ID: "grant_1", PlanID: "growth", Status: status,
+			}}}
+			h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+			req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/plan", `{"plan_id":"team"}`, map[string]string{"workspaceID": "ws_1"})
+			rec := httptest.NewRecorder()
+
+			h.SetPlan(rec, req)
+
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var response ErrorResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Error.Code != "TRIAL_PLAN_CHANGE_CONFLICT" {
+				t.Fatalf("error=%#v", response.Error)
+			}
+			if strings.Contains(rec.Body.String(), "grant_1") {
+				t.Fatalf("conflict response leaked trial details: %s", rec.Body.String())
+			}
+			if service.historyCalls != 1 {
+				t.Fatalf("history calls=%d, want 1", service.historyCalls)
+			}
+		})
+	}
+}
+
+func TestAdminSetPlanFailsClosedWhenTrialReadFails(t *testing.T) {
+	service := &fakeAdminTrialService{historyErr: errors.New("database unavailable")}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/plan", `{"plan_id":"team"}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+
+	h.SetPlan(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response ErrorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != "INTERNAL_ERROR" || strings.Contains(rec.Body.String(), "database unavailable") {
+		t.Fatalf("unsafe error response=%s", rec.Body.String())
+	}
+}
+
+func TestAdminPlanFlipGuardAllowsNoGrantAndTerminalHistory(t *testing.T) {
+	for _, history := range [][]trials.HistoryProjection{
+		nil,
+		{{ID: "completed", Status: trials.StatusCompleted}},
+		{{ID: "failed", Status: trials.StatusFailed}, {ID: "revoked", Status: trials.StatusRevoked}},
+	} {
+		service := &fakeAdminTrialService{history: history}
+		h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+
+		blocked, err := h.hasOpenTrial(t.Context(), "ws_1")
+
+		if err != nil || blocked {
+			t.Fatalf("hasOpenTrial()=(%t,%v), want (false,nil), history=%#v", blocked, err, history)
+		}
+	}
+}
+
+func TestAdminBillingTrialSummaryIsSafeAndQueryUsesOneLateralJoin(t *testing.T) {
+	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	end := start.Add(30 * 24 * time.Hour)
+	subscriptionID := "sub_trial"
+	scheduleID := "sched_trial"
+	row := adminBillingRow{Trial: &adminBillingTrialSummary{
+		ID: "grant_1", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 30,
+		Status: trials.StatusFailed, ScheduledStartAt: &start, EndsAt: &end,
+		FailureReason: trials.TerminalReasonUnavailable, StripeSubscriptionID: &subscriptionID, StripeScheduleID: &scheduleID,
+	}}
+	encoded, err := json.Marshal(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(encoded)
+	for _, want := range []string{`"trial"`, `"id":"grant_1"`, `"post_trial_price_cents":0`, `"cancel_at_period_end":false`, `"failure_reason":"trial_unavailable"`, `"stripe_subscription_id":"sub_trial"`, `"stripe_schedule_id":"sched_trial"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("summary missing %q: %s", want, body)
+		}
+	}
+	for _, forbidden := range []string{"granted_by_user_id", "stripe_customer_id", "failure_code", "failure_message"} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("summary leaked %q: %s", forbidden, body)
+		}
+	}
+	normalized := strings.ToLower(adminBillingSQL)
+	if strings.Count(normalized, "lateral") != 1 || !strings.Contains(normalized, "workspace_trial_grants") || !strings.Contains(normalized, "limit 1") {
+		t.Fatalf("admin billing query must select trial in one lateral join: %s", adminBillingSQL)
+	}
+	if strings.Contains(normalized, "status in ('active', 'trialing')") {
+		t.Fatal("admin billing query must not count trialing subscriptions as revenue")
+	}
+	if !strings.Contains(normalized, "trial_plan.price_cents") || !strings.Contains(normalized, "trial.canceled_at is not null") {
+		t.Fatal("admin billing trial projection must include target price and durable renewal-cancellation intent")
+	}
+	if !strings.Contains(normalized, "trial.status in ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')\n    or greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at))") {
+		t.Fatal("old open grants must remain visible while terminal grants use the freshness cutoff")
+	}
+}
+
+func TestAdminBillingTrialSummaryOmitsMissingStripeIDs(t *testing.T) {
+	encoded, err := json.Marshal(adminBillingRow{Trial: &adminBillingTrialSummary{ID: "grant_1", Kind: trials.KindFreeToPaid, PlanID: "growth", DurationDays: 30, Status: trials.StatusPendingActivation}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(encoded)
+	for _, omitted := range []string{"stripe_subscription_id", "stripe_schedule_id"} {
+		if strings.Contains(body, omitted) {
+			t.Fatalf("nil optional field %q was emitted: %s", omitted, body)
+		}
+	}
+}
+
+func TestAdminBillingTrialDaysCutoffKeepsOldOpenAndFiltersOldTerminal(t *testing.T) {
+	normalized := strings.ToLower(adminBillingSQL)
+	const openClause = "trial.status in ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')"
+	if !strings.Contains(normalized, "and (\n    "+openClause+"\n    or greatest(s.updated_at, coalesce(trial.updated_at, s.updated_at)) >= now() - ($2::int * interval '1 day')\n  )") {
+		t.Fatalf("visibility predicate does not let an old open grant bypass only the days cutoff: %s", adminBillingSQL)
+	}
+	for _, terminal := range []string{"completed", "canceled", "revoked", "superseded", "failed"} {
+		if strings.Contains(openClause, "'"+terminal+"'") {
+			t.Fatalf("terminal status %q bypasses the days cutoff", terminal)
+		}
+	}
+}
+
+func TestAdminGrantTrialStatusMapping(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "invalid plan", err: trials.ErrInvalidPlan, want: http.StatusUnprocessableEntity},
+		{name: "invalid duration", err: trials.ErrInvalidDuration, want: http.StatusUnprocessableEntity},
+		{name: "workspace missing", err: trials.ErrWorkspaceNotFound, want: http.StatusNotFound},
+		{name: "open grant", err: trials.ErrOpenGrantExists, want: http.StatusConflict},
+		{name: "paid mismatch", err: trials.ErrPaidPlanMismatch, want: http.StatusConflict},
+		{name: "ineligible", err: trials.ErrIneligibleSubscription, want: http.StatusConflict},
+		{name: "internal", err: errors.New("database unavailable"), want: http.StatusInternalServerError},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service := &fakeAdminTrialService{grantErr: test.err}
+			h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+			req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+			rec := httptest.NewRecorder()
+			h.GrantTrial(rec, req)
+			if rec.Code != test.want {
+				t.Fatalf("status=%d body=%s, want %d", rec.Code, rec.Body.String(), test.want)
+			}
+		})
+	}
+}
+
+func TestAdminGrantTrialOpenConflictIncludesSafeCurrentTrialSummary(t *testing.T) {
+	current := trials.Grant{ID: "grant_existing", WorkspaceID: "ws_1", Kind: trials.KindPaidSamePlan, PlanID: "basic", DurationDays: 30, Status: trials.StatusScheduled, ActorUserID: "admin_secret", StripeSubscriptionID: "sub_secret", FailureMessage: "secret failure"}
+	service := &fakeAdminTrialService{grantErr: &trials.OpenGrantConflictError{Current: current}}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+	h.GrantTrial(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var response struct {
+		Error struct {
+			Code    string                     `json:"code"`
+			Details map[string]json.RawMessage `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Error.Code != "TRIAL_GRANT_CONFLICT" || response.Error.Details["current_trial"] == nil {
+		t.Fatalf("response=%s", rec.Body.String())
+	}
+	for _, forbidden := range []string{"admin_secret", "sub_secret", "secret failure", "granted_by_user_id", "stripe_subscription_id", "failure_message"} {
+		if strings.Contains(rec.Body.String(), forbidden) {
+			t.Fatalf("conflict leaked %q: %s", forbidden, rec.Body.String())
+		}
+	}
+}
+
+func TestAdminGrantTrialUnrelatedScheduleHasSpecificConflict(t *testing.T) {
+	service := &fakeAdminTrialService{grantErr: trials.ErrUnrelatedSchedule}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"basic","duration_days":30}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+	h.GrantTrial(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"code":"TRIAL_SCHEDULE_CONFLICT"`) || !strings.Contains(rec.Body.String(), "Subscription already has an unrelated Stripe schedule") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminGrantTrialRejectsMalformedBodyBeforeService(t *testing.T) {
+	service := &fakeAdminTrialService{}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials", `{"plan_id":"growth","duration_days":30.5}`, map[string]string{"workspaceID": "ws_1"})
+	rec := httptest.NewRecorder()
+	h.GrantTrial(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity || service.grantCalls != 0 {
+		t.Fatalf("status=%d calls=%d body=%s", rec.Code, service.grantCalls, rec.Body.String())
+	}
+}
+
+func TestAdminRevokeTrialReturnsConflictWhenCheckoutCompletionWins(t *testing.T) {
+	service := &fakeAdminTrialService{revokeErr: trials.ErrRevokeConflict}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials/grant_1/revoke", `{}`, map[string]string{"workspaceID": "ws_1", "trialID": "grant_1"})
+	rec := httptest.NewRecorder()
+	h.RevokeTrial(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if service.revokeReq.ActorUserID != "admin_1" || service.revokeReq.GrantID != "grant_1" {
+		t.Fatalf("request=%#v", service.revokeReq)
+	}
+}
+
+func TestAdminRevokeTrialAmbiguousStripeFailureReturnsInternal(t *testing.T) {
+	service := &fakeAdminTrialService{revokeErr: fmt.Errorf("expire Checkout outcome unknown: %w", context.DeadlineExceeded)}
+	h := NewAdminHandler(nil, nil, nil).SetTrialService(service)
+	req := adminTrialRequest(t, http.MethodPost, "/v1/admin/workspaces/ws_1/trials/grant_1/revoke", `{}`, map[string]string{"workspaceID": "ws_1", "trialID": "grant_1"})
+	rec := httptest.NewRecorder()
+	h.RevokeTrial(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAdminTrialRoutesAndAuditActionsAreWired(t *testing.T) {
+	source, err := os.ReadFile("../../cmd/api/main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`r.Post("/v1/admin/workspaces/{workspaceID}/trials", adminHandler.GrantTrial)`,
+		`r.Post("/v1/admin/workspaces/{workspaceID}/trials/{trialID}/revoke", adminHandler.RevokeTrial)`,
+	} {
+		if !strings.Contains(string(source), want) {
+			t.Errorf("main route missing %q", want)
+		}
+	}
+	if audit.ActionTrialGranted != "TRIAL.GRANTED" || audit.ActionTrialRevoked != "TRIAL.REVOKED" {
+		t.Fatalf("audit actions = %q, %q", audit.ActionTrialGranted, audit.ActionTrialRevoked)
+	}
+	adminSource, err := os.ReadFile("admin.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"audit.ActionTrialGranted", "audit.ActionTrialRevoked"} {
+		if !strings.Contains(string(adminSource), want) {
+			t.Errorf("admin audit missing %q", want)
+		}
+	}
+}
+
+type fakeAdminTrialService struct {
+	grant        trials.Grant
+	grantErr     error
+	revokeErr    error
+	history      []trials.HistoryProjection
+	historyErr   error
+	grantReq     trials.GrantRequest
+	revokeReq    trials.RevokeRequest
+	grantCalls   int
+	historyCalls int
+}
+
+func (s *fakeAdminTrialService) Grant(_ context.Context, req trials.GrantRequest) (trials.Grant, error) {
+	s.grantCalls++
+	s.grantReq = req
+	return s.grant, s.grantErr
+}
+func (s *fakeAdminTrialService) Revoke(_ context.Context, req trials.RevokeRequest) (trials.Grant, error) {
+	s.revokeReq = req
+	if s.grant.ID == "" {
+		s.grant = trials.Grant{ID: req.GrantID, WorkspaceID: req.WorkspaceID, Status: trials.StatusRevoked}
+	}
+	return s.grant, s.revokeErr
+}
+func (s *fakeAdminTrialService) ListTrialHistory(_ context.Context, _ string) ([]trials.HistoryProjection, error) {
+	s.historyCalls++
+	return s.history, s.historyErr
+}
+
+func adminTrialRequest(t *testing.T, method, target, body string, params map[string]string) *http.Request {
+	t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "admin_1"))
+	routeContext := chi.NewRouteContext()
+	for key, value := range params {
+		routeContext.URLParams.Add(key, value)
+	}
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
+}
 
 func adminSourceSection(t *testing.T, source, start, end string) string {
 	t.Helper()
