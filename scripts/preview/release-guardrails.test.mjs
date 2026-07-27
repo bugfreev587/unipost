@@ -35,7 +35,11 @@ const postgresTestSelector = `^(?:${Object.values(postgresTestsByPackage).flat()
 
 function assertUnconditional(item, label) {
   assert.equal(item.if, undefined, `${label} must not have an if condition`);
-  assert.notEqual(item["continue-on-error"], true, `${label} must not continue on error`);
+  assert.equal(
+    Object.hasOwn(item, "continue-on-error"),
+    false,
+    `${label} must not define continue-on-error`,
+  );
 }
 
 function requiredStep(job, name, jobName) {
@@ -180,9 +184,17 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
       frontendStep,
       `${frontendStep}\n        continue-on-error: true`,
     ),
+    "expression continue-on-error frontend step": (source) => source.replace(
+      frontendStep,
+      `${frontendStep}\n        continue-on-error: \${{ true }}`,
+    ),
     "disabled PostgreSQL job": (source) => source.replace(
       "  api-postgres-integration:\n",
       "  api-postgres-integration:\n    if: false\n",
+    ),
+    "expression continue-on-error PostgreSQL job": (source) => source.replace(
+      "  api-postgres-integration:\n",
+      "  api-postgres-integration:\n    continue-on-error: ${{ matrix.experimental }}\n",
     ),
     "frontend command in the wrong job": (source) => source
       .replace(`${frontendStep}\n\n`, "")
