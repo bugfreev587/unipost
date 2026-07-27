@@ -321,6 +321,37 @@ func TestCreateBulkSharesOnePolicySnapshotAcrossEntries(t *testing.T) {
 	}
 }
 
+func TestCreateBulkSharesFirstPolicyErrorAcrossEntries(t *testing.T) {
+	h, _, evaluator, _, _ := newSamePlatformPolicySnapshotHarness(t, "publishing")
+	h.quota = quota.NewChecker(h.queries)
+	evaluator.decisionsByCall = nil
+	evaluator.err = errors.New("policy snapshot unavailable")
+	evaluator.errOnCall = 1
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/bulk", strings.NewReader(`{
+		"posts":[
+			{"platform_posts":[{"account_id":"tk_1","caption":"first","media_urls":["https://cdn.example.com/first.mp4"],"platform_options":{"privacy_level":"PUBLIC_TO_EVERYONE"}}]},
+			{"platform_posts":[{"account_id":"ig_1","caption":"second","media_urls":["https://cdn.example.com/second.mp4"],"platform_options":{"privacy_level":"PUBLIC_TO_EVERYONE"}}]}
+		]
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rr := httptest.NewRecorder()
+
+	h.CreateBulk(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("CreateBulk status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if got := strings.Join(evaluator.calls, ","); got != "tiktok" {
+		t.Fatalf("policy calls=%q, want one request-scoped failed tiktok snapshot", got)
+	}
+	if got := strings.Count(rr.Body.String(), `"status":503`); got != 2 {
+		t.Fatalf("CreateBulk body=%s, want both entries to reuse the failed snapshot", rr.Body.String())
+	}
+	if got := strings.Count(rr.Body.String(), `"code":"POLICY_UNAVAILABLE"`); got != 2 {
+		t.Fatalf("CreateBulk body=%s, want both entries to expose policy unavailable", rr.Body.String())
+	}
+}
+
 func TestImmediatePersistenceUsesAdmissionPolicySnapshot(t *testing.T) {
 	h, dbtx, evaluator, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
 	blockedTargets, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", parsed.Posts, accounts)
