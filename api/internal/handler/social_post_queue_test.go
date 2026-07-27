@@ -46,6 +46,40 @@ func TestRetryDeliveryJobNowMarksDeprecated(t *testing.T) {
 	}
 }
 
+func TestSchedulerDelegatesClaimAndEnqueueToOneHandlerTransaction(t *testing.T) {
+	source, err := os.ReadFile("../worker/scheduler.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if strings.Contains(text, ".ClaimScheduledPost(") {
+		t.Fatal("scheduler worker must not commit the scheduled claim before enqueue")
+	}
+	if !strings.Contains(text, ".ClaimAndEnqueueScheduledPost(") {
+		t.Fatal("scheduler worker must delegate claim and enqueue to the handler transaction")
+	}
+}
+
+func TestDraftClaimAndRestrictedEnqueueShareOneTransaction(t *testing.T) {
+	source, err := os.ReadFile("social_posts_drafts.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	start := strings.Index(text, "func (h *SocialPostHandler) PublishDraft")
+	end := strings.Index(text[start:], "func (h *SocialPostHandler) rollbackToDraft")
+	if start < 0 || end < 0 {
+		t.Fatal("PublishDraft boundaries not found")
+	}
+	fn := text[start : start+end]
+	tx := strings.Index(fn, ".WithTransaction(")
+	claim := strings.Index(fn, ".ClaimDraftForPublish(")
+	enqueue := strings.Index(fn, ".enqueueExistingPostDeliveriesInTransaction(")
+	if tx < 0 || claim < 0 || enqueue < 0 || tx > claim || claim > enqueue {
+		t.Fatalf("draft transaction/claim/enqueue order = %d/%d/%d", tx, claim, enqueue)
+	}
+}
+
 func TestWorkerPublishingEventSourceIsWorker(t *testing.T) {
 	event := workerPublishingEvent(integrationlogs.Event{
 		Action: integrationlogs.ActionPostPublishPlatformFailed,
@@ -1158,8 +1192,8 @@ func TestFinalizeRestrictedDeliveryJobPublishedResultConvergesWithoutFailureSide
 	if len(dbtx.retentionUpserts) != 0 {
 		t.Fatalf("published convergence restriction retention upserts = %d, want zero", len(dbtx.retentionUpserts))
 	}
-	if dbtx.parentRefreshCalls == 0 {
-		t.Fatal("published convergence must refresh the parent from current durable results")
+	if dbtx.parentRefreshCalls != 0 {
+		t.Fatalf("published convergence parent refresh calls = %d, want 0 after atomic finalization", dbtx.parentRefreshCalls)
 	}
 	if logStore.calls != 0 {
 		t.Fatalf("published convergence integration failure logs = %d, want zero", logStore.calls)
@@ -1244,8 +1278,8 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 	if dbtx.resultUpdateCalls != 1 {
 		t.Fatalf("atomic result update calls = %d, want 1 on owned lease", dbtx.resultUpdateCalls)
 	}
-	if dbtx.parentRefreshCalls == 0 {
-		t.Fatal("parent status should refresh after owned transition")
+	if dbtx.parentRefreshCalls != 0 {
+		t.Fatalf("parent refresh calls = %d, want 0 after atomic finalization", dbtx.parentRefreshCalls)
 	}
 	if dbtx.retentionCalls != 0 {
 		t.Fatalf("post-commit retention calls = %d, want 0 after atomic restriction retention", dbtx.retentionCalls)
@@ -1331,40 +1365,28 @@ func TestFinalizeRestrictedDeliveryJobDoesNotOverwriteNewerRetryRetention(t *tes
 	}
 }
 
-func TestFinalizeRestrictedDeliveryJobStaleResultSnapshotDoesNotOverwriteNewerRetryRetention(t *testing.T) {
-	publishedAt := time.Date(2026, 7, 26, 22, 30, 0, 0, time.UTC)
+func TestFinalizeRestrictedDeliveryJobHasNoPostCommitResultRefreshWindow(t *testing.T) {
 	job := baseDeliveryJob()
 	job.LeaseOwner = pgtype.Text{String: "worker_restricted", Valid: true}
-	job.LastAttemptAt = pgtype.Timestamptz{Time: publishedAt.Add(-time.Minute), Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Date(2026, 7, 26, 22, 30, 0, 0, time.UTC), Valid: true}
 	staleResult := db.SocialPostResult{
 		ID:              job.SocialPostResultID,
 		PostID:          job.PostID,
 		SocialAccountID: job.SocialAccountID,
 		Status:          "processing",
 	}
-	post := mediaRetentionPost(t, "published")
+	post := mediaRetentionPost(t, "publishing")
 	post.ID = job.PostID
 	post.WorkspaceID = job.WorkspaceID
-	newerSuccess := staleResult
-	newerSuccess.Status = "published"
-	newerSuccess.ExternalID = pgtype.Text{String: "newer_platform_post", Valid: true}
-	newerSuccess.PublishedAt = pgtype.Timestamptz{Time: publishedAt, Valid: true}
-	newerSuccess.Url = pgtype.Text{String: "https://social.example.com/newer_platform_post", Valid: true}
 
 	dbtx := &restrictedFinalizeLeaseDB{
-		job:    job,
-		result: staleResult,
-		planID: "team",
+		job: job, result: staleResult,
 	}
 	queries := db.New(dbtx)
 	h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil)
+	refreshCalled := false
 	dbtx.afterListResults = func(ctx context.Context) {
-		// A already owns a failed result snapshot. B now publishes the newer
-		// retry and restores plan retention before A starts its stale refresh.
-		dbtx.result = newerSuccess
-		dbtx.job.State = "succeeded"
-		dbtx.job.LeaseOwner = pgtype.Text{String: "worker_retry", Valid: true}
-		h.syncPostMediaRetention(ctx, post, post.Status)
+		refreshCalled = true
 	}
 
 	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, staleResult, post, publishingrestrictions.Decision{
@@ -1375,25 +1397,20 @@ func TestFinalizeRestrictedDeliveryJobStaleResultSnapshotDoesNotOverwriteNewerRe
 	if err != nil {
 		t.Fatalf("finalizeRestrictedDeliveryJob: %v", err)
 	}
-	if !reflect.DeepEqual(dbtx.result, newerSuccess) {
-		t.Fatalf("durable result = %#v, want newer published success %#v", dbtx.result, newerSuccess)
+	if refreshCalled || dbtx.parentRefreshCalls != 0 {
+		t.Fatalf("post-commit refresh window remained: callback=%v calls=%d", refreshCalled, dbtx.parentRefreshCalls)
 	}
-	if len(dbtx.retentionUpserts) < 2 {
-		t.Fatalf("retention upserts = %d, want at least 2", len(dbtx.retentionUpserts))
+	if dbtx.result.Status != "failed" {
+		t.Fatalf("durable result status = %q, want failed", dbtx.result.Status)
 	}
-	wantBefore := time.Now().Add(30*24*time.Hour - time.Minute)
-	wantAfter := time.Now().Add(30*24*time.Hour + time.Minute)
-	for _, upsert := range dbtx.retentionUpserts[len(dbtx.retentionUpserts)-2:] {
-		if upsert.PostStatus != "published" || upsert.RetentionReason != "plan_status" {
-			t.Fatalf("final retention = %+v, want newer published current-plan retention", upsert)
-		}
-		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {
-			t.Fatalf("final retention deadline = %#v, want team published deadline about 30 days", upsert.CleanupAfterAt)
+	for _, upsert := range dbtx.retentionUpserts {
+		if upsert.PostStatus != "failed" || upsert.RetentionReason != "publishing_restriction" {
+			t.Fatalf("atomic retention = %+v, want failed/publishing_restriction", upsert)
 		}
 	}
 }
 
-func TestFinalizeRestrictedDeliveryJobReturnsResultRefreshError(t *testing.T) {
+func TestFinalizeRestrictedDeliveryJobDoesNotDependOnPostCommitRefresh(t *testing.T) {
 	job := baseDeliveryJob()
 	job.LeaseOwner = pgtype.Text{String: "worker_owner", Valid: true}
 	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Date(2026, 7, 26, 23, 0, 0, 0, time.UTC), Valid: true}
@@ -1415,8 +1432,8 @@ func TestFinalizeRestrictedDeliveryJobReturnsResultRefreshError(t *testing.T) {
 		Platform:   job.Platform,
 		CycleID:    "cycle_refresh_error",
 	})
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("finalizeRestrictedDeliveryJob error = %v, want %v", err, wantErr)
+	if err != nil {
+		t.Fatalf("finalizeRestrictedDeliveryJob error = %v, want nil after atomic finalization", err)
 	}
 	if dbtx.result.Status != "failed" {
 		t.Fatalf("atomic result status = %q, want failed before refresh error", dbtx.result.Status)
@@ -1428,6 +1445,9 @@ func TestFinalizeRestrictedDeliveryJobReturnsResultRefreshError(t *testing.T) {
 		if upsert.RetentionReason != "publishing_restriction" || !upsert.CleanupAfterAt.Valid {
 			t.Fatalf("atomic retention after refresh error = %+v, want durable publishing_restriction retention", upsert)
 		}
+	}
+	if dbtx.parentRefreshCalls != 0 {
+		t.Fatalf("parent refresh calls = %d, want 0 after atomic finalization", dbtx.parentRefreshCalls)
 	}
 }
 

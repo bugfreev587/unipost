@@ -164,6 +164,16 @@ func (h *SocialPostHandler) applyPublishingRestrictionRetryProjection(
 	if response.RetryPolicy == nil {
 		response.RetryPolicy = deriveRetryPolicy(result, jobs)
 	}
+	account, accountErr := h.queries.GetSocialAccount(ctx, result.SocialAccountID)
+	if accountErr != nil || socialAccountUnavailableForDelivery(account, true) {
+		response.RetryPolicy.IsRetriable = false
+		response.RetryPolicy.WillRetry = false
+		response.RetryPolicy.NextRunAt = nil
+		response.RetryPolicy.ManualRetryAllowed = false
+		response.RetryPolicy.RetryState = "blocked"
+		response.RetryPolicy.Reason = "social_account_not_available"
+		return
+	}
 	restrictionActive := true
 	if h != nil && h.publishingRestrictions != nil {
 		decision, err := h.publishingRestrictions.Evaluate(ctx, workspaceID, response.Platform)

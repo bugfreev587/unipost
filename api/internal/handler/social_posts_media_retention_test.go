@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -212,6 +213,33 @@ func TestStrictPublishingRestrictionRetentionUsesFailureTimePlusSixtyDays(t *tes
 			!upsert.CleanupAfterAt.Valid || !upsert.CleanupAfterAt.Time.Equal(want) {
 			t.Fatalf("strict retention upsert=%+v, want publishing_restriction through %v", upsert, want)
 		}
+	}
+}
+
+func TestStrictPublishingRestrictionRetentionSortsUniqueMediaIDs(t *testing.T) {
+	meta, err := platform.EncodePostMetadata([]platform.PlatformPostInput{
+		{AccountID: "acct_1", Caption: "one", MediaIDs: []string{"media_b", "media_a"}},
+		{AccountID: "acct_2", Caption: "two", MediaIDs: []string{"media_b"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := db.SocialPost{ID: "post_sorted", WorkspaceID: "ws_1", Status: "failed", Metadata: meta}
+	dbtx := &mediaRetentionTestDB{}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	if err := handler.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+		context.Background(), post, post.Status, time.Now(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(dbtx.upserts))
+	for _, upsert := range dbtx.upserts {
+		got = append(got, upsert.MediaID)
+	}
+	want := []string{"media_a", "media_b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("strict retention media order = %v, want %v", got, want)
 	}
 }
 

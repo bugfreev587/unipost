@@ -34,6 +34,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
@@ -147,98 +148,107 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Optimistic lock — only one caller can win the draft → publishing
-	// transition. The loser sees pgx.ErrNoRows.
-	claimed, err := h.queries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
-		ID:          postID,
-		WorkspaceID: workspaceID,
+	var response socialPostResponse
+	var queuedPosts []platform.PlatformPostInput
+	var failureKind string
+	var fatalIssues []platform.Issue
+	var restrictedDecision publishingrestrictions.Decision
+	var blockedQuota quota.QuotaStatus
+	var blockedQuotaUnits int
+	err := h.queries.WithTransaction(r.Context(), func(txQueries *db.Queries) error {
+		txHandler := h.withQueueQueries(txQueries)
+		claimed, claimErr := txQueries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
+			ID:          postID,
+			WorkspaceID: workspaceID,
+		})
+		if claimErr != nil {
+			failureKind = "claim"
+			return claimErr
+		}
+
+		fallbackCaption := ""
+		if claimed.Caption.Valid {
+			fallbackCaption = claimed.Caption.String
+		}
+		posts, decodeErr := platform.DecodePostMetadata(claimed.Metadata, fallbackCaption)
+		if decodeErr != nil || len(posts) == 0 {
+			failureKind = "metadata"
+			if decodeErr != nil {
+				return decodeErr
+			}
+			return errors.New("draft has no platform_posts")
+		}
+		queuedPosts = posts
+
+		accountMap, accountErr := txHandler.loadValidateAccounts(r, workspaceID)
+		if accountErr != nil {
+			failureKind = "accounts"
+			return accountErr
+		}
+		validation := txHandler.runPublishValidation(r, workspaceID, posts, nil, accountMap)
+		fatalIssues = filterFatalIssues(validation.Errors)
+		if len(fatalIssues) > 0 {
+			failureKind = "validation"
+			return errors.New("draft publish validation failed")
+		}
+
+		parsed := parsedRequest{Posts: posts}
+		blockedTargets, policyErr := txHandler.evaluatePublishingRestrictions(r.Context(), workspaceID, posts, accountMap)
+		if policyErr != nil {
+			failureKind = "policy"
+			return policyErr
+		}
+		if decision, fullyBlocked := fullyRestrictedDecision(posts, blockedTargets); fullyBlocked {
+			failureKind = "restricted"
+			restrictedDecision = decision
+			return errors.New("draft publish fully restricted")
+		}
+		allowedTargets := allowedPublishingTargets(posts, blockedTargets)
+		blockedQuotaUnits = countPublishQuotaUnits(allowedTargets, accountMap)
+		if status, blocked := txHandler.checkFreePlanPostQuota(r.Context(), workspaceID, blockedQuotaUnits); blocked {
+			failureKind = "quota"
+			blockedQuota = status
+			return errors.New("draft publish quota blocked")
+		}
+
+		claimed.ProfileIds = txHandler.ensureProfileIDsForPost(r.Context(), claimed, uniqueAccountIDs(posts))
+		var enqueueErr error
+		response, enqueueErr = txHandler.enqueueExistingPostDeliveriesInTransaction(
+			r.Context(), claimed, parsed.Posts, accountMap, blockedTargets,
+		)
+		if enqueueErr != nil {
+			failureKind = "enqueue"
+		}
+		return enqueueErr
 	})
 	if err != nil {
-		if err == pgx.ErrNoRows {
-			// Either the post isn't a draft anymore (already
-			// published or being published by another worker) or
-			// it doesn't exist / belong to this workspace. Both map
-			// to 409 — the resource isn't in a publishable state.
-			writeError(w, http.StatusConflict, "CONFLICT",
-				"Post is not a draft (already publishing, published, or not found in this workspace)")
-			return
+		switch failureKind {
+		case "claim":
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusConflict, "CONFLICT", "Post is not a draft (already publishing, published, or not found in this workspace)")
+				return
+			}
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to claim draft")
+		case "metadata":
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Draft has no platform_posts to publish")
+		case "accounts":
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
+		case "validation":
+			writeValidationErrors(w, fatalIssues)
+		case "policy":
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+		case "restricted":
+			writePublishingRestrictionError(w, restrictedDecision)
+		case "quota":
+			h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{Blocked: true, RequestedUnits: blockedQuotaUnits})
+			writeFreePlanPostQuotaExceeded(w, blockedQuota, blockedQuotaUnits)
+		default:
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to claim draft")
 		return
 	}
-
-	// Re-hydrate the parsed request shape from the persisted v2
-	// metadata so we can hand it to createImmediatePost. fallback
-	// caption is the parent post's caption (used only for v1 rows
-	// that pre-date Sprint 1).
-	fallbackCaption := ""
-	if claimed.Caption.Valid {
-		fallbackCaption = claimed.Caption.String
-	}
-	posts, decErr := platform.DecodePostMetadata(claimed.Metadata, fallbackCaption)
-	if decErr != nil || len(posts) == 0 {
-		// Roll the draft back to its original status so the user can
-		// edit it. Without this they'd be stuck in 'publishing' with
-		// nothing to publish.
-		_ = h.rollbackClaimedPost(r, claimed)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Draft has no platform_posts to publish")
-		return
-	}
-
-	parsed := parsedRequest{
-		Posts:       posts,
-		ScheduledAt: nil, // publish-from-draft is always immediate
-	}
-
-	// Load accounts once so the validator and the publish loop see
-	// the same view.
-	accountMap, err := h.loadValidateAccounts(r, workspaceID)
-	if err != nil {
-		_ = h.rollbackClaimedPost(r, claimed)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
-		return
-	}
-
-	// Re-run the validator with strict (fatal) gating — same as a
-	// fresh immediate publish. We don't want to dispatch a draft
-	// whose content was edited into something invalid after creation.
-	vr := h.runPublishValidation(r, workspaceID, posts, nil, accountMap)
-	if fatal := filterFatalIssues(vr.Errors); len(fatal) > 0 {
-		_ = h.rollbackClaimedPost(r, claimed)
-		writeValidationErrors(w, fatal)
-		return
-	}
-
-	blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
-	if policyErr != nil {
-		_ = h.rollbackClaimedPost(r, claimed)
-		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
-		return
-	}
-	if decision, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
-		if err := h.rollbackClaimedPost(r, claimed); err != nil {
-			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to restore draft after publishing policy check")
-			return
-		}
-		writePublishingRestrictionError(w, decision)
-		return
-	}
-	allowedTargets := allowedPublishingTargets(posts, blockedTargets)
-	quotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
-	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, quotaUnits); blocked {
-		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
-			Blocked:        true,
-			RequestedUnits: quotaUnits,
-		})
-		h.rollbackClaimedAndWriteFreePlanQuotaError(w, r, claimed, status, quotaUnits)
-		return
-	}
-
-	// Reuse the existing publish loop. createImmediatePost will
-	// re-create the parent row, but we already have one — instead,
-	// inline the same logic against the claimed row. To minimize
-	// duplication we add a thin variant that takes an existing row.
-	h.publishExistingPost(w, r, workspaceID, claimed, parsed, accountMap, blockedTargets)
+	h.logQueuedPost(r.Context(), workspaceID, postID, "draft_publish", queuedPosts, response.QueuedResultsCount, response.ActiveJobCount)
+	writeAccepted(w, response)
 }
 
 // rollbackToDraft is the inverse of ClaimDraftForPublish. Used when

@@ -203,6 +203,24 @@ func evaluateQueuedDeliveryTargets(
 	return evaluations
 }
 
+func hasRestrictedPublishingTarget(blockedTargets map[string]publishingrestrictions.Decision) bool {
+	for _, decision := range blockedTargets {
+		if decision.Restricted {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *SocialPostHandler) withQueueQueries(queries *db.Queries) *SocialPostHandler {
+	clone := *h
+	clone.queries = queries
+	if h.quota != nil {
+		clone.quota = quota.NewChecker(queries)
+	}
+	return &clone
+}
+
 func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	ctx context.Context,
 	post db.SocialPost,
@@ -311,9 +329,12 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	}
 	post.Status = newStatus
 	post.PublishedAt = pgtype.Timestamptz{}
-	h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	if !policyFailureAt.IsZero() {
-		h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, newStatus, policyFailureAt)
+		if err := h.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(ctx, post, newStatus, policyFailureAt); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	}
 	if newStatus == "failed" && len(failureSummaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
@@ -326,6 +347,30 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 }
 
 func (h *SocialPostHandler) queueImmediatePost(
+	ctx context.Context,
+	workspaceID string,
+	parsed parsedRequest,
+	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
+) (socialPostResponse, error) {
+	var response socialPostResponse
+	var err error
+	if hasRestrictedPublishingTarget(blockedTargets) {
+		err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+			var txErr error
+			response, txErr = h.withQueueQueries(txQueries).queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
+			return txErr
+		})
+	} else {
+		response, err = h.queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
+	}
+	if err == nil {
+		h.logQueuedPost(ctx, workspaceID, response.ID, "immediate", parsed.Posts, response.QueuedResultsCount, response.ActiveJobCount)
+	}
+	return response, err
+}
+
+func (h *SocialPostHandler) queueImmediatePostInTransaction(
 	ctx context.Context,
 	workspaceID string,
 	parsed parsedRequest,
@@ -361,21 +406,6 @@ func (h *SocialPostHandler) queueImmediatePost(
 	if err != nil {
 		return socialPostResponse{}, err
 	}
-	h.logPublishingEvent(ctx, integrationlogs.Event{
-		WorkspaceID: workspaceID,
-		Level:       integrationlogs.LevelInfo,
-		Status:      integrationlogs.StatusSuccess,
-		Action:      integrationlogs.ActionPostPublishQueued,
-		Message:     "Queued post deliveries for publishing.",
-		PostID:      post.ID,
-		Metadata: map[string]any{
-			"mode":            "immediate",
-			"target_count":    len(parsed.Posts),
-			"queued_jobs":     len(jobs),
-			"result_count":    len(results),
-			"target_accounts": uniqueAccountIDs(parsed.Posts),
-		},
-	})
 	return h.socialPostResponseFromData(post, results, jobs, "async"), nil
 }
 
@@ -386,29 +416,79 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 	accountMap map[string]platform.ValidateAccount,
 	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
+	var response socialPostResponse
+	var err error
+	if hasRestrictedPublishingTarget(blockedTargets) {
+		err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+			var txErr error
+			response, txErr = h.withQueueQueries(txQueries).enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
+			return txErr
+		})
+	} else {
+		response, err = h.enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
+	}
+	if err == nil {
+		h.logQueuedPost(ctx, post.WorkspaceID, post.ID, "draft_publish", parsed, response.QueuedResultsCount, response.ActiveJobCount)
+	}
+	return response, err
+}
+
+func (h *SocialPostHandler) enqueueExistingPostDeliveriesInTransaction(
+	ctx context.Context,
+	post db.SocialPost,
+	parsed []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
+) (socialPostResponse, error) {
 	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
 	if err != nil {
 		return socialPostResponse{}, err
 	}
-	h.logPublishingEvent(ctx, integrationlogs.Event{
-		WorkspaceID: post.WorkspaceID,
-		Level:       integrationlogs.LevelInfo,
-		Status:      integrationlogs.StatusSuccess,
-		Action:      integrationlogs.ActionPostPublishQueued,
-		Message:     "Queued draft deliveries for publishing.",
-		PostID:      post.ID,
-		Metadata: map[string]any{
-			"mode":            "draft_publish",
-			"target_count":    len(parsed),
-			"queued_jobs":     len(jobs),
-			"result_count":    len(results),
-			"target_accounts": uniqueAccountIDs(parsed),
-		},
-	})
 	return h.socialPostResponseFromData(post, results, jobs, "async"), nil
 }
 
+func (h *SocialPostHandler) logQueuedPost(ctx context.Context, workspaceID, postID, mode string, posts []platform.PlatformPostInput, resultCount, jobCount int) {
+	message := "Queued post deliveries for publishing."
+	if mode == "draft_publish" {
+		message = "Queued draft deliveries for publishing."
+	}
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishQueued,
+		Message:     message,
+		PostID:      postID,
+		Metadata: map[string]any{
+			"mode":            mode,
+			"target_count":    len(posts),
+			"queued_jobs":     jobCount,
+			"result_count":    resultCount,
+			"target_accounts": uniqueAccountIDs(posts),
+		},
+	})
+}
+
 func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.SocialPost) error {
+	return h.enqueueClaimedScheduledPost(ctx, post)
+}
+
+// ClaimAndEnqueueScheduledPost keeps the scheduled->publishing claim, delivery
+// rows, parent terminal state, and strict restriction retention in one
+// transaction. Any failure leaves the post scheduled and eligible for the next
+// scheduler pass.
+func (h *SocialPostHandler) ClaimAndEnqueueScheduledPost(ctx context.Context, postID string) error {
+	return h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		txHandler := h.withQueueQueries(txQueries)
+		claimed, err := txQueries.ClaimScheduledPost(ctx, postID)
+		if err != nil {
+			return err
+		}
+		return txHandler.enqueueClaimedScheduledPost(ctx, claimed)
+	})
+}
+
+func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, post db.SocialPost) error {
 	parentCaption := ""
 	if post.Caption.Valid {
 		parentCaption = post.Caption.String
@@ -499,9 +579,12 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 	}
 	post.Status = "failed"
 	post.PublishedAt = pgtype.Timestamptz{}
-	h.syncPostMediaRetention(ctx, post, post.Status)
 	if policyFailed {
-		h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, post.Status, time.Now())
+		if err := h.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(ctx, post, post.Status, time.Now()); err != nil {
+			return err
+		}
+	} else {
+		h.syncPostMediaRetention(ctx, post, post.Status)
 	}
 	if len(summaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
@@ -716,9 +799,13 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	dbAccounts := h.loadDBAccountsByIDs(ctx, post.WorkspaceID, []string{pp.AccountID})
 	accountMap := map[string]platform.ValidateAccount{}
 	if acc, ok := dbAccounts[pp.AccountID]; ok {
+		unavailable := socialAccountUnavailableForDelivery(acc, true)
 		accountMap[pp.AccountID] = platform.ValidateAccount{
 			Platform:     acc.Platform,
-			Disconnected: socialAccountDisconnectedForPublish(acc, true),
+			Disconnected: unavailable,
+		}
+		if unavailable {
+			delete(dbAccounts, pp.AccountID)
 		}
 	}
 
@@ -877,9 +964,12 @@ func (h *SocialPostHandler) evaluateDeliveryPublishingRestriction(
 	if h == nil || h.publishingRestrictions == nil {
 		return publishingrestrictions.Decision{}, nil
 	}
+	if account.Disconnected {
+		return publishingrestrictions.Decision{}, nil
+	}
 	platformName := strings.ToLower(strings.TrimSpace(account.Platform))
 	if platformName == "" {
-		platformName = strings.ToLower(strings.TrimSpace(jobPlatform))
+		return publishingrestrictions.Decision{}, nil
 	}
 	return h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
 }
@@ -941,11 +1031,6 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	default:
 		return fmt.Errorf("unexpected restricted delivery finalization state %q", finalizedJob.State)
 	}
-	allResults, err := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	if err != nil {
-		return fmt.Errorf("list current results after restriction finalization: %w", err)
-	}
-	h.refreshParentPostStatusContext(withoutPostMediaRetentionSync(ctx), post, allResults)
 	return nil
 }
 

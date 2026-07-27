@@ -86,6 +86,100 @@ func TestMissingRetryAccountUsesStableActionError(t *testing.T) {
 	}
 }
 
+func TestEvaluateRetryPublishingRestrictionRejectsUnavailableAccountBeforePolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		account db.SocialAccount
+	}{
+		{
+			name: "disconnected timestamp",
+			account: db.SocialAccount{
+				ID:             "tk_1",
+				Platform:       "tiktok",
+				Status:         "active",
+				DisconnectedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			},
+		},
+		{name: "reconnect required status", account: db.SocialAccount{ID: "tk_1", Platform: "tiktok", Status: "reconnect_required"}},
+		{name: "disconnected status", account: db.SocialAccount{ID: "tk_1", Platform: "tiktok", Status: "disconnected"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dbtx := &policySnapshotDB{accounts: map[string]db.SocialAccount{"tk_1": test.account}}
+			evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+				"tiktok": {Restricted: true, Platform: "tiktok"},
+			}}
+			h := &SocialPostHandler{queries: db.New(dbtx), publishingRestrictions: evaluator}
+
+			_, err := h.evaluateRetryPublishingRestriction(context.Background(), "ws_1", db.SocialPostResult{SocialAccountID: "tk_1"})
+			var unavailable *retrySocialAccountUnavailableError
+			if !errors.As(err, &unavailable) {
+				t.Fatalf("evaluate retry error = %v, want retrySocialAccountUnavailableError", err)
+			}
+			if len(evaluator.calls) != 0 {
+				t.Fatalf("policy calls = %v, want none for unavailable account", evaluator.calls)
+			}
+		})
+	}
+}
+
+func TestPublishingRestrictionProjectionDoesNotOfferRetryForUnavailableAccount(t *testing.T) {
+	meta, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{AccountID: "tk_1", Caption: "retry projection"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx := &policySnapshotDB{accounts: map[string]db.SocialAccount{
+		"tk_1": {ID: "tk_1", Platform: "tiktok", Status: "disconnected"},
+	}}
+	evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+		"tiktok": {Restricted: false, Platform: "tiktok"},
+	}}
+	h := &SocialPostHandler{queries: db.New(dbtx), publishingRestrictions: evaluator}
+	result := db.SocialPostResult{
+		ID:              "result_1",
+		PostID:          "post_1",
+		SocialAccountID: "tk_1",
+		Status:          "failed",
+		ErrorCode:       pgtype.Text{String: publishingrestrictions.NormalizedCode, Valid: true},
+	}
+	response := postResultResponse{
+		Platform:    "tiktok",
+		RetryPolicy: deriveRetryPolicy(result, nil),
+	}
+
+	h.applyPublishingRestrictionRetryProjection(context.Background(), "ws_1", db.SocialPost{
+		ID: "post_1", WorkspaceID: "ws_1", Status: "failed", Metadata: meta,
+	}, &response, result, nil)
+
+	if response.RetryPolicy == nil || response.RetryPolicy.ManualRetryAllowed {
+		t.Fatalf("retry policy = %+v, want manual retry disabled for unavailable account", response.RetryPolicy)
+	}
+	if len(evaluator.calls) != 0 {
+		t.Fatalf("policy calls = %v, want account availability to fail closed before policy projection", evaluator.calls)
+	}
+}
+
+func TestDeliveryPublishingRestrictionSkipsUnavailableAccount(t *testing.T) {
+	evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+		"tiktok": {Restricted: true, Platform: "tiktok"},
+	}}
+	h := &SocialPostHandler{publishingRestrictions: evaluator}
+
+	decision, err := h.evaluateDeliveryPublishingRestriction(
+		context.Background(), "ws_1", "tiktok", platform.ValidateAccount{Platform: "tiktok", Disconnected: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.Restricted {
+		t.Fatalf("decision = %+v, want account failure to take precedence", decision)
+	}
+	if len(evaluator.calls) != 0 {
+		t.Fatalf("policy calls = %v, want none for unavailable account", evaluator.calls)
+	}
+}
+
 func (f *fakePostRestrictionEvaluator) Evaluate(_ context.Context, _ string, platformName string) (publishingrestrictions.Decision, error) {
 	f.calls = append(f.calls, platformName)
 	if f.err != nil && (f.errOnCall == 0 || len(f.calls) == f.errOnCall) {
@@ -609,7 +703,7 @@ func TestPublishDraftRejectsWhenAllowedTargetsExceedQuotaBoundary(t *testing.T) 
 	if !strings.Contains(rr.Body.String(), "this request needs 2 more") {
 		t.Fatalf("quota response must count both allowed targets: %s", rr.Body.String())
 	}
-	if dbtx.updatedStatus != "draft" || dbtx.post.Status != "draft" {
+	if dbtx.updatedStatus != "" || dbtx.post.Status != "draft" {
 		t.Fatalf("claimed draft was not restored: updated_status=%q post_status=%q", dbtx.updatedStatus, dbtx.post.Status)
 	}
 	if len(dbtx.results) != 0 || len(dbtx.jobs) != 0 || len(dbtx.failures) != 0 {
@@ -720,6 +814,53 @@ type policySnapshotDB struct {
 	quotaLimit       int32
 }
 
+func (f *policySnapshotDB) Begin(context.Context) (pgx.Tx, error) {
+	snapshot := *f
+	snapshot.results = append([]db.SocialPostResult(nil), f.results...)
+	snapshot.jobs = append([]db.PostDeliveryJob(nil), f.jobs...)
+	snapshot.failures = append([]db.CreatePostFailureParams(nil), f.failures...)
+	snapshot.failureDetails = append([]db.UpdateSocialPostResultFailureDetailsParams(nil), f.failureDetails...)
+	snapshot.retentionReasons = append([]string(nil), f.retentionReasons...)
+	return &policySnapshotTx{store: f, snapshot: snapshot}, nil
+}
+
+type policySnapshotTx struct {
+	store    *policySnapshotDB
+	snapshot policySnapshotDB
+	done     bool
+}
+
+func (f *policySnapshotTx) Begin(context.Context) (pgx.Tx, error) { return f, nil }
+func (f *policySnapshotTx) Commit(context.Context) error {
+	f.done = true
+	return nil
+}
+func (f *policySnapshotTx) Rollback(context.Context) error {
+	if !f.done {
+		*f.store = f.snapshot
+		f.done = true
+	}
+	return nil
+}
+func (f *policySnapshotTx) CopyFrom(ctx context.Context, table pgx.Identifier, columns []string, source pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected copy")
+}
+func (f *policySnapshotTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults { return nil }
+func (f *policySnapshotTx) LargeObjects() pgx.LargeObjects                         { return pgx.LargeObjects{} }
+func (f *policySnapshotTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("unexpected prepare")
+}
+func (f *policySnapshotTx) Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	return f.store.Exec(ctx, query, args...)
+}
+func (f *policySnapshotTx) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
+	return f.store.Query(ctx, query, args...)
+}
+func (f *policySnapshotTx) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
+	return f.store.QueryRow(ctx, query, args...)
+}
+func (f *policySnapshotTx) Conn() *pgx.Conn { return nil }
+
 func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
 	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
@@ -777,6 +918,12 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		f.post.Status = "publishing"
 		return socialPostScanRow(f.post)
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		account, ok := f.accounts[args[0].(string)]
+		if !ok {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return policySnapshotSocialAccountRow(account)
+	case strings.Contains(query, "-- name: GetSocialAccount :one"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
 			return scanRow{err: pgx.ErrNoRows}

@@ -37,6 +37,14 @@ type retryPolicyUnavailableError struct{ err error }
 
 type retrySocialAccountUnavailableError struct{ accountID string }
 
+func socialAccountUnavailableForDelivery(account db.SocialAccount, ok bool) bool {
+	if !ok || account.DisconnectedAt.Valid {
+		return true
+	}
+	status := strings.ToLower(strings.TrimSpace(account.Status))
+	return status == "disconnected" || status == "reconnect_required"
+}
+
 func (e *retryPolicyUnavailableError) Error() string { return e.err.Error() }
 func (e *retryPolicyUnavailableError) Unwrap() error { return e.err }
 
@@ -184,6 +192,9 @@ func (h *SocialPostHandler) evaluateRetryPublishingRestriction(
 			return publishingrestrictions.Decision{}, &retrySocialAccountUnavailableError{accountID: result.SocialAccountID}
 		}
 		return publishingrestrictions.Decision{}, err
+	}
+	if socialAccountUnavailableForDelivery(account, true) {
+		return publishingrestrictions.Decision{}, &retrySocialAccountUnavailableError{accountID: result.SocialAccountID}
 	}
 	if h.publishingRestrictions == nil {
 		return publishingrestrictions.Decision{}, nil

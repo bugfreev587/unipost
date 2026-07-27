@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
@@ -76,16 +77,38 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_, err := pool.Exec(ctx, `
+		CREATE TABLE social_posts (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			caption TEXT,
+			media_urls TEXT[] NOT NULL DEFAULT '{}',
+			status TEXT NOT NULL,
+			scheduled_at TIMESTAMPTZ,
+			published_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			idempotency_key TEXT,
+			workspace_id TEXT NOT NULL DEFAULT 'workspace_1',
+			archived_at TIMESTAMPTZ,
+			deleted_at TIMESTAMPTZ,
+			source TEXT NOT NULL DEFAULT 'api',
+			profile_ids TEXT[] NOT NULL DEFAULT '{}',
+			quota_hold_reason TEXT,
+			quota_hold_at TIMESTAMPTZ,
+			quota_hold_original_scheduled_at TIMESTAMPTZ
+		);
 		CREATE TABLE social_post_results (
-			id TEXT PRIMARY KEY,
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
 			post_id TEXT,
 			social_account_id TEXT,
 			status TEXT NOT NULL,
 			external_id TEXT,
 			error_message TEXT,
 			published_at TIMESTAMPTZ,
+			caption TEXT NOT NULL DEFAULT '',
 			url TEXT,
 			debug_curl TEXT,
+			fb_media_type TEXT,
+			remotely_deleted_at TIMESTAMPTZ,
 			publish_token TEXT,
 			error_code TEXT,
 			failure_stage TEXT,
@@ -127,6 +150,25 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			first_claimed_at TIMESTAMPTZ,
 			platform_started_at TIMESTAMPTZ
 		);
+		CREATE TABLE post_failures (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			post_id TEXT NOT NULL,
+			social_post_result_id TEXT,
+			workspace_id TEXT NOT NULL,
+			social_account_id TEXT,
+			platform TEXT NOT NULL,
+			failure_stage TEXT NOT NULL,
+			error_code TEXT NOT NULL,
+			platform_error_code TEXT,
+			message TEXT NOT NULL,
+			raw_error TEXT,
+			is_retriable BOOLEAN NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			error_source TEXT,
+			error_temporality TEXT,
+			provider_error JSONB,
+			restriction_cycle_id TEXT
+		);
 		CREATE TABLE media (
 			id TEXT PRIMARY KEY,
 			workspace_id TEXT NOT NULL,
@@ -145,9 +187,31 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			UNIQUE (media_id, post_id)
 		);
+		CREATE TABLE profiles (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL
+		);
 		CREATE TABLE social_accounts (
 			id TEXT PRIMARY KEY,
-			platform TEXT NOT NULL
+			profile_id TEXT NOT NULL DEFAULT 'profile_1' REFERENCES profiles(id),
+			platform TEXT NOT NULL,
+			access_token TEXT NOT NULL DEFAULT '',
+			refresh_token TEXT,
+			token_expires_at TIMESTAMPTZ,
+			external_account_id TEXT NOT NULL DEFAULT '',
+			account_name TEXT,
+			account_avatar_url TEXT,
+			connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			status TEXT NOT NULL DEFAULT 'active',
+			disconnected_at TIMESTAMPTZ,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+			scope TEXT[] NOT NULL DEFAULT '{}',
+			connection_type TEXT NOT NULL DEFAULT 'byo',
+			connect_session_id TEXT,
+			external_user_id TEXT,
+			external_user_email TEXT,
+			last_refreshed_at TIMESTAMPTZ,
+			x_app_mode TEXT
 		);
 		CREATE TABLE platform_publishing_restrictions (
 			platform TEXT PRIMARY KEY,
@@ -159,9 +223,270 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			plan_id TEXT NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_1', 'workspace_1');
 	`)
 	if err != nil {
 		t.Fatalf("create restricted-delivery integration tables: %v", err)
+	}
+}
+
+func TestImmediateRestrictionRetentionFailureRollsBackCreatedPostAndDeliveries(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_immediate_atomic', 'tiktok', 'active');
+		INSERT INTO media (id, workspace_id, status)
+		VALUES
+			('media_immediate_a', 'workspace_1', 'uploaded'),
+			('media_immediate_b', 'workspace_1', 'uploaded');
+		CREATE FUNCTION fail_immediate_second_usage() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.media_id = 'media_immediate_b' THEN
+				RAISE EXCEPTION 'injected immediate second retention upsert failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER fail_immediate_second_usage_trigger
+		BEFORE INSERT OR UPDATE ON media_post_usages
+		FOR EACH ROW EXECUTE FUNCTION fail_immediate_second_usage();
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{queries: db.New(pool)}
+	_, err := h.queueImmediatePost(
+		ctx,
+		"workspace_1",
+		parsedRequest{Posts: []platform.PlatformPostInput{{
+			AccountID: "account_immediate_atomic",
+			Caption:   "immediate atomic retention",
+			MediaIDs:  []string{"media_immediate_b", "media_immediate_a"},
+		}}},
+		map[string]platform.ValidateAccount{
+			"account_immediate_atomic": {Platform: "tiktok"},
+		},
+		map[string]publishingrestrictions.Decision{
+			"account_immediate_atomic": {
+				Restricted: true,
+				Platform:   "tiktok",
+				CycleID:    "cycle_immediate_atomic",
+			},
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "injected immediate second retention upsert failure") {
+		t.Fatalf("queue immediate error = %v, want injected second-upsert failure", err)
+	}
+
+	var posts, results, jobs, failures, usages, usageVersion int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT COUNT(*)::int FROM social_posts),
+			(SELECT COUNT(*)::int FROM social_post_results),
+			(SELECT COUNT(*)::int FROM post_delivery_jobs),
+			(SELECT COUNT(*)::int FROM post_failures),
+			(SELECT COUNT(*)::int FROM media_post_usages),
+			(SELECT COALESCE(SUM(usage_version), 0)::int FROM media)
+	`).Scan(&posts, &results, &jobs, &failures, &usages, &usageVersion); err != nil {
+		t.Fatal(err)
+	}
+	if posts != 0 || results != 0 || jobs != 0 || failures != 0 || usages != 0 || usageVersion != 0 {
+		t.Fatalf("rolled-back immediate state = posts:%d results:%d jobs:%d failures:%d usages:%d usage_version:%d", posts, results, jobs, failures, usages, usageVersion)
+	}
+}
+
+func TestDraftRestrictionRetentionFailureRollsBackClaimAndDeliveries(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	posts := []platform.PlatformPostInput{{
+		AccountID: "account_draft_atomic",
+		Caption:   "draft atomic retention",
+		MediaIDs:  []string{"media_draft_b", "media_draft_a"},
+	}}
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_draft_atomic', 'tiktok', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, metadata, workspace_id, profile_ids)
+		VALUES ('post_draft_atomic', 'draft', $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES
+			('media_draft_a', 'workspace_1', 'uploaded'),
+			('media_draft_b', 'workspace_1', 'uploaded');
+		CREATE FUNCTION fail_draft_second_usage() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.media_id = 'media_draft_b' THEN
+				RAISE EXCEPTION 'injected draft second retention upsert failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER fail_draft_second_usage_trigger
+		BEFORE INSERT OR UPDATE ON media_post_usages
+		FOR EACH ROW EXECUTE FUNCTION fail_draft_second_usage();
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{queries: db.New(pool)}
+	err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		claimed, claimErr := txQueries.ClaimDraftForPublish(ctx, db.ClaimDraftForPublishParams{
+			ID:          "post_draft_atomic",
+			WorkspaceID: "workspace_1",
+		})
+		if claimErr != nil {
+			return claimErr
+		}
+		_, enqueueErr := h.withQueueQueries(txQueries).enqueueExistingPostDeliveriesInTransaction(
+			ctx,
+			claimed,
+			posts,
+			map[string]platform.ValidateAccount{"account_draft_atomic": {Platform: "tiktok"}},
+			map[string]publishingrestrictions.Decision{"account_draft_atomic": {
+				Restricted: true,
+				Platform:   "tiktok",
+				CycleID:    "cycle_draft_atomic",
+			}},
+		)
+		return enqueueErr
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected draft second retention upsert failure") {
+		t.Fatalf("draft transaction error = %v, want injected second-upsert failure", err)
+	}
+
+	var status string
+	var results, jobs, failures, usages, usageVersion int
+	if err := pool.QueryRow(ctx, `
+		SELECT p.status,
+		       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM media_post_usages WHERE post_id = p.id),
+		       (SELECT COALESCE(SUM(usage_version), 0)::int FROM media WHERE id = ANY($2::text[]))
+		FROM social_posts p WHERE p.id = $1
+	`, "post_draft_atomic", []string{"media_draft_a", "media_draft_b"}).Scan(
+		&status, &results, &jobs, &failures, &usages, &usageVersion,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != "draft" || results != 0 || jobs != 0 || failures != 0 || usages != 0 || usageVersion != 0 {
+		t.Fatalf("rolled-back draft state = status:%s results:%d jobs:%d failures:%d usages:%d usage_version:%d", status, results, jobs, failures, usages, usageVersion)
+	}
+}
+
+func TestScheduledRestrictionRetentionFailureRollsBackClaimAndRemainsClaimable(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "account_scheduled_atomic",
+		Caption:   "scheduled atomic retention",
+		MediaIDs:  []string{"media_scheduled_b", "media_scheduled_a"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_scheduled_atomic', 'tiktok', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, scheduled_at, metadata, workspace_id, profile_ids)
+		VALUES ('post_scheduled_atomic', 'scheduled', NOW(), $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES
+			('media_scheduled_a', 'workspace_1', 'uploaded'),
+			('media_scheduled_b', 'workspace_1', 'uploaded');
+		CREATE FUNCTION fail_second_restriction_usage() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.media_id = 'media_scheduled_b' THEN
+				RAISE EXCEPTION 'injected second retention upsert failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER fail_second_restriction_usage_trigger
+		BEFORE INSERT OR UPDATE ON media_post_usages
+		FOR EACH ROW EXECUTE FUNCTION fail_second_restriction_usage();
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{
+		queries: db.New(pool),
+		publishingRestrictions: &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+			"tiktok": {
+				Restricted: true,
+				Platform:   "tiktok",
+				CycleID:    "cycle_scheduled_atomic",
+			},
+		}},
+	}
+	err = h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_atomic")
+	if err == nil || !strings.Contains(err.Error(), "injected second retention upsert failure") {
+		t.Fatalf("first claim error = %v, want injected second-upsert failure", err)
+	}
+
+	var status string
+	var results, jobs, failures, usages, usageVersion int
+	if err := pool.QueryRow(ctx, `
+		SELECT p.status,
+		       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM media_post_usages WHERE post_id = p.id),
+		       (SELECT COALESCE(SUM(usage_version), 0)::int FROM media WHERE id = ANY($2::text[]))
+		FROM social_posts p WHERE p.id = $1
+	`, "post_scheduled_atomic", []string{"media_scheduled_a", "media_scheduled_b"}).Scan(
+		&status, &results, &jobs, &failures, &usages, &usageVersion,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != "scheduled" || results != 0 || jobs != 0 || failures != 0 || usages != 0 || usageVersion != 0 {
+		t.Fatalf("rolled-back state = status:%s results:%d jobs:%d failures:%d usages:%d usage_version:%d", status, results, jobs, failures, usages, usageVersion)
+	}
+
+	if _, err := pool.Exec(ctx, `DROP TRIGGER fail_second_restriction_usage_trigger ON media_post_usages`); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_atomic"); err != nil {
+		t.Fatalf("second claim after rollback: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT p.status,
+		       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id = p.id),
+		       (SELECT COUNT(*)::int FROM media_post_usages WHERE post_id = p.id)
+		FROM social_posts p WHERE p.id = $1
+	`, "post_scheduled_atomic").Scan(&status, &results, &jobs, &failures, &usages); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || results != 1 || jobs != 0 || failures != 1 || usages != 2 {
+		t.Fatalf("successful retry state = status:%s results:%d jobs:%d failures:%d usages:%d", status, results, jobs, failures, usages)
 	}
 }
 
@@ -229,6 +554,51 @@ func restrictedFinalizeIntegrationParams(jobID, owner string, attemptedAt time.T
 	}
 }
 
+func insertRetryAccountAvailabilityFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, suffix string) db.CreateRetryPostDeliveryJobWithMediaActivationParams {
+	t.Helper()
+	accountID := "account_retry_availability_" + suffix
+	resultID := "result_retry_availability_" + suffix
+	postID := "post_retry_availability_" + suffix
+	mediaID := "media_retry_availability_" + suffix
+	workspaceID := "workspace_retry_availability_" + suffix
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ($1, 'tiktok', 'active')
+	`, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_post_results (id, post_id, social_account_id, status)
+		VALUES ($1, $2, $3, 'failed')
+	`, resultID, postID, accountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ($1, $2, 'uploaded')
+	`, mediaID, workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restrictions (platform, enabled, restricted_plan_ids)
+		VALUES ('tiktok', FALSE, ARRAY[]::text[])
+		ON CONFLICT (platform) DO NOTHING
+	`); err != nil {
+		t.Fatal(err)
+	}
+	return db.CreateRetryPostDeliveryJobWithMediaActivationParams{
+		PostID:             postID,
+		SocialPostResultID: resultID,
+		WorkspaceID:        workspaceID,
+		SocialAccountID:    accountID,
+		Platform:           "tiktok",
+		PostInputIndex:     0,
+		MaxAttempts:        5,
+		NextRunAt:          pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		MediaIds:           []string{mediaID},
+	}
+}
+
 func waitForPostgresSessionBlockedBy(
 	t *testing.T,
 	ctx context.Context,
@@ -254,6 +624,181 @@ func waitForPostgresSessionBlockedBy(
 		case <-ticker.C:
 		}
 	}
+}
+
+func TestCreateRetryPostDeliveryJobRejectsUnavailableAccountAtomically(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+
+	tests := []struct {
+		name       string
+		status     string
+		disconnect bool
+	}{
+		{name: "disconnected timestamp", status: "active", disconnect: true},
+		{name: "reconnect required status", status: "reconnect_required"},
+		{name: "disconnected status", status: "disconnected"},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			params := insertRetryAccountAvailabilityFixture(t, ctx, pool, fmt.Sprintf("direct_%d", index))
+			var disconnectedAt any
+			if test.disconnect {
+				disconnectedAt = time.Now().UTC()
+			}
+			if _, err := pool.Exec(ctx, `
+				UPDATE social_accounts SET status = $2, disconnected_at = $3 WHERE id = $1
+			`, params.SocialAccountID, test.status, disconnectedAt); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := db.New(pool).CreateRetryPostDeliveryJobWithMediaActivation(ctx, params)
+			if !errors.Is(err, pgx.ErrNoRows) {
+				t.Fatalf("retry enqueue error = %v, want pgx.ErrNoRows", err)
+			}
+			var jobs int
+			if err := pool.QueryRow(ctx, `
+				SELECT COUNT(*)::int FROM post_delivery_jobs WHERE social_post_result_id = $1
+			`, params.SocialPostResultID).Scan(&jobs); err != nil {
+				t.Fatal(err)
+			}
+			if jobs != 0 {
+				t.Fatalf("retry jobs = %d, want 0 for unavailable account", jobs)
+			}
+		})
+	}
+}
+
+func TestCreateRetryPostDeliveryJobSerializesWithAccountDisconnect(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+
+	t.Run("disconnect commits first and retry is rejected", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		params := insertRetryAccountAvailabilityFixture(t, ctx, pool, "disconnect_first")
+		disconnectConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer disconnectConn.Release()
+		retryConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer retryConn.Release()
+		var disconnectBackend, retryBackend int
+		if err := disconnectConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&disconnectBackend); err != nil {
+			t.Fatal(err)
+		}
+		if err := retryConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&retryBackend); err != nil {
+			t.Fatal(err)
+		}
+		disconnectTx, err := disconnectConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer disconnectTx.Rollback(ctx)
+		if _, err := disconnectTx.Exec(ctx, `
+			UPDATE social_accounts
+			SET status = 'disconnected', disconnected_at = NOW()
+			WHERE id = $1
+		`, params.SocialAccountID); err != nil {
+			t.Fatal(err)
+		}
+		retryTx, err := retryConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer retryTx.Rollback(ctx)
+		retried := make(chan error, 1)
+		go func() {
+			_, retryErr := db.New(retryTx).CreateRetryPostDeliveryJobWithMediaActivation(ctx, params)
+			retried <- retryErr
+		}()
+		waitForPostgresSessionBlockedBy(t, ctx, pool, retryBackend, disconnectBackend)
+		if err := disconnectTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case retryErr := <-retried:
+			if !errors.Is(retryErr, pgx.ErrNoRows) {
+				t.Fatalf("retry after disconnect commit error = %v, want pgx.ErrNoRows", retryErr)
+			}
+		case <-ctx.Done():
+			t.Fatalf("retry did not resume after disconnect commit: %v", ctx.Err())
+		}
+	})
+
+	t.Run("retry commits first and disconnect waits", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		params := insertRetryAccountAvailabilityFixture(t, ctx, pool, "retry_first")
+		retryConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer retryConn.Release()
+		disconnectConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer disconnectConn.Release()
+		var retryBackend, disconnectBackend int
+		if err := retryConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&retryBackend); err != nil {
+			t.Fatal(err)
+		}
+		if err := disconnectConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&disconnectBackend); err != nil {
+			t.Fatal(err)
+		}
+		retryTx, err := retryConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer retryTx.Rollback(ctx)
+		job, err := db.New(retryTx).CreateRetryPostDeliveryJobWithMediaActivation(ctx, params)
+		if err != nil {
+			t.Fatal(err)
+		}
+		disconnectTx, err := disconnectConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer disconnectTx.Rollback(ctx)
+		disconnected := make(chan error, 1)
+		go func() {
+			_, disconnectErr := disconnectTx.Exec(ctx, `
+				UPDATE social_accounts
+				SET status = 'disconnected', disconnected_at = NOW()
+				WHERE id = $1
+			`, params.SocialAccountID)
+			disconnected <- disconnectErr
+		}()
+		waitForPostgresSessionBlockedBy(t, ctx, pool, disconnectBackend, retryBackend)
+		if err := retryTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case disconnectErr := <-disconnected:
+			if disconnectErr != nil {
+				t.Fatal(disconnectErr)
+			}
+		case <-ctx.Done():
+			t.Fatalf("disconnect did not resume after retry commit: %v", ctx.Err())
+		}
+		if err := disconnectTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var state string
+		if err := pool.QueryRow(ctx, `SELECT state FROM post_delivery_jobs WHERE id = $1`, job.ID).Scan(&state); err != nil {
+			t.Fatal(err)
+		}
+		if state != "pending" {
+			t.Fatalf("linearized retry state = %q, want pending", state)
+		}
+	})
 }
 
 func insertSharedResultDeliveryRaceFixture(
@@ -739,8 +1284,15 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		completedB := attemptB.Add(time.Minute)
 		publishedAt := completedB.Add(-10 * time.Second)
 		_, err = ownerA.Exec(ctx, `
-			INSERT INTO social_post_results (id, status)
-			VALUES ('result_stale_owner', 'pending')
+			INSERT INTO social_posts (id, status, published_at)
+			VALUES ('post_stale_owner', 'published', $1)
+		`, publishedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO social_post_results (id, post_id, social_account_id, status)
+			VALUES ('result_stale_owner', 'post_stale_owner', 'account_1', 'pending')
 		`)
 		if err != nil {
 			t.Fatal(err)
@@ -814,6 +1366,16 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		if state != "succeeded" || owner.String != "owner_b" || !attemptedAt.Time.Equal(attemptB) || !finishedAt.Time.Equal(completedB) {
 			t.Fatalf("newer job changed after stale finalization: state=%q owner=%#v attempted=%#v finished=%#v", state, owner, attemptedAt, finishedAt)
 		}
+		var parentStatus string
+		var parentPublishedAt pgtype.Timestamptz
+		if err := ownerB.QueryRow(ctx, `
+			SELECT status, published_at FROM social_posts WHERE id = 'post_stale_owner'
+		`).Scan(&parentStatus, &parentPublishedAt); err != nil {
+			t.Fatal(err)
+		}
+		if parentStatus != "published" || !parentPublishedAt.Valid || !parentPublishedAt.Time.Equal(publishedAt) {
+			t.Fatalf("parent changed after stale finalization: status=%q published_at=%#v", parentStatus, parentPublishedAt)
+		}
 	})
 
 	t.Run("owned lease transitions job and result atomically", func(t *testing.T) {
@@ -821,12 +1383,19 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		defer cancel()
 		attemptedAt := time.Date(2026, 7, 26, 21, 0, 0, 0, time.UTC)
 		_, err := pool.Exec(ctx, `
+			INSERT INTO social_posts (id, status, published_at)
+			VALUES ('post_owned', 'publishing', $1)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
 			INSERT INTO social_post_results (
-				id, status, external_id, published_at, url, debug_curl, publish_token,
+				id, post_id, social_account_id, status, external_id, published_at, url, debug_curl, publish_token,
 				platform_error_code, provider_error, x_credits_counted,
 				x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
 			) VALUES (
-				'result_owned', 'processing', 'stale_external', $1,
+				'result_owned', 'post_owned', 'account_1', 'processing', 'stale_external', $1,
 				'https://social.example.com/stale', 'stale_debug', 'stale_publish_token',
 				'stale_provider_code', '{"stale":true}'::jsonb, 31,
 				'stale_operation', 'stale_catalog', 'stale_billing'
@@ -871,6 +1440,16 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		}
 		if result.XCreditsCounted != 0 || result.XCreditOperation.Valid || result.XCreditCatalogVersion.Valid || result.XCreditBillingMode.Valid {
 			t.Fatalf("owned restricted X billing metadata = count:%d operation:%#v catalog:%#v billing:%#v, want cleared", result.XCreditsCounted, result.XCreditOperation, result.XCreditCatalogVersion, result.XCreditBillingMode)
+		}
+		var parentStatus string
+		var parentPublishedAt pgtype.Timestamptz
+		if err := pool.QueryRow(ctx, `
+			SELECT status, published_at FROM social_posts WHERE id = 'post_owned'
+		`).Scan(&parentStatus, &parentPublishedAt); err != nil {
+			t.Fatal(err)
+		}
+		if parentStatus != "failed" || parentPublishedAt.Valid {
+			t.Fatalf("owned restricted parent = status:%q published_at:%#v, want failed/null", parentStatus, parentPublishedAt)
 		}
 	})
 
@@ -956,6 +1535,8 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		defer cancel()
 		attemptedAt := time.Date(2026, 7, 26, 21, 45, 0, 0, time.UTC)
 		_, err := pool.Exec(ctx, `
+			INSERT INTO social_posts (id, status)
+			VALUES ('post_partial_restricted', 'publishing');
 			INSERT INTO social_post_results (id, post_id, social_account_id, status) VALUES
 				('result_partial_restricted', 'post_partial_restricted', 'account_partial_restricted', 'processing'),
 				('result_partial_published', 'post_partial_restricted', 'account_partial_published', 'published');
@@ -987,6 +1568,16 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 		}
 		if status != "partial" || reason != "publishing_restriction" {
 			t.Fatalf("partial restriction usage = status:%q reason:%q, want partial/publishing_restriction", status, reason)
+		}
+		var parentStatus string
+		var parentPublishedAt pgtype.Timestamptz
+		if err := pool.QueryRow(ctx, `
+			SELECT status, published_at FROM social_posts WHERE id = 'post_partial_restricted'
+		`).Scan(&parentStatus, &parentPublishedAt); err != nil {
+			t.Fatal(err)
+		}
+		if parentStatus != "partial" || !parentPublishedAt.Valid {
+			t.Fatalf("partial restricted parent = status:%q published_at:%#v, want partial/non-null", parentStatus, parentPublishedAt)
 		}
 	})
 

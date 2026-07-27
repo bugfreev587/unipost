@@ -27,15 +27,20 @@ RETURNING *;
 -- insert are one statement. Cleanup can therefore win before this statement
 -- (and make all_media_available false), or Retry can win and invalidate the
 -- cleanup snapshot; it cannot delete an object between activation and enqueue.
--- Normalize dynamic database plan IDs at this SQL race barrier. Public policy
--- codes and customer copy remain centralized in internal/publishingrestrictions.
-WITH locked_policy AS MATERIALIZED (
-  SELECT restriction.enabled, restriction.restricted_plan_ids
-  FROM social_accounts account
-  JOIN platform_publishing_restrictions restriction
-    ON restriction.platform = account.platform
-  WHERE account.id = sqlc.arg(social_account_id)
-  FOR SHARE OF restriction
+-- Lock the current account snapshot at the same race barrier as policy and
+-- media activation. A concurrent disconnect either commits first and rejects
+-- this retry, or waits until the accepted retry transaction commits.
+WITH locked_account AS MATERIALIZED (
+	SELECT account.id, account.platform, account.status, account.disconnected_at
+	FROM social_accounts account
+	WHERE account.id = sqlc.arg(social_account_id)
+	FOR SHARE OF account
+), locked_policy AS MATERIALIZED (
+	SELECT restriction.enabled, restriction.restricted_plan_ids
+	FROM locked_account account
+	JOIN platform_publishing_restrictions restriction
+		ON restriction.platform = account.platform
+	FOR SHARE OF restriction
 ), locked_result AS MATERIALIZED (
   SELECT result.id, result.status
   FROM social_post_results result
@@ -45,8 +50,14 @@ WITH locked_policy AS MATERIALIZED (
   FOR UPDATE
 ), policy_admission AS MATERIALIZED (
   SELECT result.id
-  FROM locked_result result
-  WHERE result.status = 'failed'
+	FROM locked_result result
+	WHERE result.status = 'failed'
+		AND EXISTS (
+			SELECT 1
+			FROM locked_account account
+			WHERE account.disconnected_at IS NULL
+				AND LOWER(BTRIM(account.status)) NOT IN ('disconnected', 'reconnect_required')
+		)
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs active_job
@@ -536,12 +547,11 @@ WITH locked_result AS MATERIALIZED (
       WHEN result.id = transitioned_job.social_post_result_id THEN 'failed'
       ELSE result.status
     END AS status
-  FROM transitioned_job
-  JOIN updated_result ON updated_result.job_id = transitioned_job.id
-  JOIN social_post_results result ON result.post_id = transitioned_job.post_id
+	FROM transitioned_job
+	JOIN social_post_results result ON result.post_id = transitioned_job.post_id
 ), derived_post_status AS MATERIALIZED (
-  SELECT
-    transitioned_job.post_id,
+	SELECT
+		transitioned_job.post_id,
     CASE
       WHEN EXISTS (
         SELECT 1
@@ -565,9 +575,24 @@ WITH locked_result AS MATERIALIZED (
         WHERE result_status.status = 'published'
       ) THEN 'partial'
       ELSE 'failed'
-    END AS status
-  FROM transitioned_job
-  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+		END AS status,
+		EXISTS (
+			SELECT 1
+			FROM current_result_statuses result_status
+			WHERE result_status.status = 'published'
+		) AS has_published
+	FROM transitioned_job
+), updated_parent AS (
+	UPDATE social_posts AS parent
+	SET status = derived_post_status.status,
+		published_at = CASE
+			WHEN derived_post_status.has_published
+				THEN COALESCE(parent.published_at, NOW())
+			ELSE NULL
+		END
+	FROM derived_post_status
+	WHERE parent.id = derived_post_status.post_id
+	RETURNING parent.id
 ), deleted_obsolete_usage AS (
   DELETE FROM media_post_usages usage
   USING transitioned_job
@@ -616,6 +641,7 @@ WITH locked_result AS MATERIALIZED (
 )
 SELECT transitioned_job.*
 FROM transitioned_job
+CROSS JOIN (SELECT COUNT(*) FROM updated_parent) AS parent_updated
 CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
 CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted;
 
