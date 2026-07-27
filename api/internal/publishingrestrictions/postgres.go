@@ -468,6 +468,23 @@ func (s *PostgresStore) RetryFailedCampaign(ctx context.Context, platform, campa
 		return Campaign{}, err
 	}
 	defer tx.Rollback(ctx)
+	var retryWindowOpen bool
+	err = tx.QueryRow(ctx, `
+		SELECT campaign.created_at >= NOW() - INTERVAL '24 hours'
+		FROM platform_publishing_restriction_email_campaigns campaign
+		JOIN platform_publishing_restrictions restriction ON restriction.id=campaign.restriction_id
+		WHERE campaign.id=$1 AND restriction.platform=$2
+		FOR UPDATE OF campaign
+	`, campaignID, platform).Scan(&retryWindowOpen)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Campaign{}, ErrCampaignPrecondition
+	}
+	if err != nil {
+		return Campaign{}, err
+	}
+	if !retryWindowOpen {
+		return Campaign{}, ErrCampaignRetryExpired
+	}
 	command, err := tx.Exec(ctx, `
 		UPDATE platform_publishing_restriction_email_recipients recipient
 		SET status='pending',

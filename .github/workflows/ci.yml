@@ -102,7 +102,7 @@ jobs:
       - name: Run publishing restriction and migration gate PostgreSQL integration tests
         run: |
           set -euo pipefail
-          test_selector='^(?:TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup|TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged|TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified|TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup|TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup|TestRequireCurrentSchemaRejects124AndAccepts125|TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback|TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124|TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord|TestCreateEmailSendAttemptAuditStillRetriesFailedRecord|TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity|TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity|TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction|TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed)$'
+          test_selector='^(?:TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup|TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged|TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified|TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup|TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup|TestRequireCurrentSchemaRejects124AndAccepts125|TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback|TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124|TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord|TestCreateEmailSendAttemptAuditStillRetriesFailedRecord|TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity|TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity|TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow|TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically|TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming|TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable|TestPublishingRestrictionDefinitiveFailureRejectsLostSendClaim|TestPublishingRestrictionCampaignRefreshRejectsMissingCampaign|TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicateSend|TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWriteFailure|TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure|TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure|TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction|TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed|TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome|TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation)$'
 
           assert_exact_tests() {
             local package="$1"
@@ -137,8 +137,20 @@ jobs:
             TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity
           assert_exact_tests ./internal/worker \
             TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity \
+            TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow \
+            TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically \
+            TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming \
+            TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable \
+            TestPublishingRestrictionDefinitiveFailureRejectsLostSendClaim \
+            TestPublishingRestrictionCampaignRefreshRejectsMissingCampaign \
+            TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicateSend \
+            TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWriteFailure \
+            TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure \
+            TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure \
             TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction \
-            TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed
+            TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed \
+            TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome \
+            TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation
 
           go test -tags=integration ./internal/db ./internal/handler ./internal/worker \
             -run "$test_selector" -count=1 -v

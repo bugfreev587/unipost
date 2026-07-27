@@ -19,6 +19,7 @@ type contextAwareEmailAuditStore struct {
 	sentContextErr   error
 	failedContextErr error
 	failedErr        error
+	sentErr          error
 }
 
 func (s *contextAwareEmailAuditStore) CreateEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error) {
@@ -41,8 +42,33 @@ func (s *contextAwareEmailAuditStore) MarkEmailSendAttemptSent(ctx context.Conte
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if s.sentErr != nil {
+		return s.sentErr
+	}
 	s.status = "sent"
 	return nil
+}
+
+func TestAuditedClientReturnsTypedFinalizationErrorWhenSentAuditPersistenceFails(t *testing.T) {
+	auditErr := errors.New("sent audit unavailable")
+	store := &contextAwareEmailAuditStore{sentErr: auditErr}
+	sender := NewAuditedClient(&fakeLifecycleClient{}, store)
+
+	_, err := sender.SendTransactionalWithAttempt(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_restriction",
+		Email:           "owner@example.com",
+		Audit:           EmailAudit{EventKey: "email.publishing_restriction.restriction_notice.v1"},
+	}, nil)
+	var finalizationErr *EmailAuditFinalizationError
+	if !errors.As(err, &finalizationErr) || !errors.Is(err, auditErr) {
+		t.Fatalf("send error = %v, want typed sent audit finalization failure", err)
+	}
+	if finalizationErr.ProviderError != nil {
+		t.Fatalf("provider error = %v, want nil after accepted send", finalizationErr.ProviderError)
+	}
+	if store.status != "pending" {
+		t.Fatalf("audit status = %q, want pending", store.status)
+	}
 }
 
 func (s *contextAwareEmailAuditStore) MarkEmailSendAttemptFailed(ctx context.Context, _ string, reason string) error {

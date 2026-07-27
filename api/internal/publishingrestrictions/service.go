@@ -85,6 +85,7 @@ type CampaignStore interface {
 
 var (
 	ErrCampaignPrecondition  = errors.New("campaign precondition failed")
+	ErrCampaignRetryExpired  = errors.New("campaign retry idempotency window expired")
 	ErrInvalidPreviewToken   = errors.New("invalid or expired campaign preview token")
 	ErrCampaignNotConfigured = errors.New("campaign delivery is not configured")
 )

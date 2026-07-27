@@ -17,6 +17,7 @@ type PublishingRestrictionEmailWork struct {
 	CampaignID              string
 	CycleID                 string
 	CampaignType            publishingrestrictions.CampaignType
+	CampaignCreatedAt       time.Time
 	Platform                string
 	CanonicalUserID         string
 	RecipientEmail          string
@@ -106,15 +107,29 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 		return err
 	}
 	for _, recipient := range work {
+		if recipient.AttemptGeneration > 1 && !recipient.CampaignCreatedAt.IsZero() && time.Since(recipient.CampaignCreatedAt) >= 24*time.Hour {
+			if persistErr := w.finalizeRecipientAndCampaign(ctx, recipient.CampaignID, "expire publishing restriction email retry outside provider idempotency window", func(finalizeCtx context.Context) error {
+				return w.store.MarkPublishingRestrictionEmailRecipientTerminalFailed(finalizeCtx, recipient.RecipientID, "manual retry refused: provider idempotency window expired")
+			}); persistErr != nil {
+				return persistErr
+			}
+			continue
+		}
 		eligible, eligibilityErr := w.store.PublishingRestrictionEmailRecipientEligible(ctx, recipient)
 		if eligibilityErr != nil {
-			_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, eligibilityErr.Error())
-			_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
+			if persistErr := w.finalizeRecipientAndCampaign(ctx, recipient.CampaignID, "persist publishing restriction email eligibility failure", func(finalizeCtx context.Context) error {
+				return w.store.MarkPublishingRestrictionEmailRecipientFailed(finalizeCtx, recipient.RecipientID, eligibilityErr.Error())
+			}); persistErr != nil {
+				return persistErr
+			}
 			continue
 		}
 		if !eligible {
-			_ = w.store.MarkPublishingRestrictionEmailRecipientSkipped(ctx, recipient.RecipientID, "recipient no longer eligible")
-			_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
+			if persistErr := w.finalizeRecipientAndCampaign(ctx, recipient.CampaignID, "persist ineligible publishing restriction email recipient", func(finalizeCtx context.Context) error {
+				return w.store.MarkPublishingRestrictionEmailRecipientSkipped(finalizeCtx, recipient.RecipientID, "recipient no longer eligible")
+			}); persistErr != nil {
+				return persistErr
+			}
 			continue
 		}
 		templateID := w.restrictionTemplateID
@@ -124,8 +139,11 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 			eventKey = "email.publishing_restriction.recovery_notice.v1"
 		}
 		if w.sender == nil || templateID == "" {
-			_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, "audited email sender or transactional template is not configured")
-			_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
+			if persistErr := w.finalizeRecipientAndCampaign(ctx, recipient.CampaignID, "persist unconfigured publishing restriction email failure", func(finalizeCtx context.Context) error {
+				return w.store.MarkPublishingRestrictionEmailRecipientFailed(finalizeCtx, recipient.RecipientID, "audited email sender or transactional template is not configured")
+			}); persistErr != nil {
+				return persistErr
+			}
 			continue
 		}
 		firstName := strings.TrimSpace(recipient.FirstName)
@@ -193,21 +211,10 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 				}
 				continue
 			} else {
-				cleanupCtx, cancelCleanup := context.WithTimeout(
-					context.WithoutCancel(ctx),
-					publishingRestrictionEmailUnknownOutcomeCleanupTimeout,
-				)
-				failedErr := w.store.MarkPublishingRestrictionEmailRecipientFailed(cleanupCtx, recipient.RecipientID, err.Error())
-				if failedErr != nil {
-					failedErr = fmt.Errorf("persist definitive publishing restriction email failure: %w", failedErr)
-				}
-				refreshErr := w.store.RefreshPublishingRestrictionEmailCampaign(cleanupCtx, recipient.CampaignID)
-				if refreshErr != nil {
-					refreshErr = fmt.Errorf("refresh publishing restriction email campaign after definitive failure: %w", refreshErr)
-				}
-				cancelCleanup()
-				if cleanupErr := errors.Join(failedErr, refreshErr); cleanupErr != nil {
-					return cleanupErr
+				if persistErr := w.finalizeRecipientAndCampaign(ctx, recipient.CampaignID, "persist definitive publishing restriction email failure", func(finalizeCtx context.Context) error {
+					return w.store.MarkPublishingRestrictionEmailRecipientFailed(finalizeCtx, recipient.RecipientID, err.Error())
+				}); persistErr != nil {
+					return persistErr
 				}
 				continue
 			}
@@ -226,6 +233,28 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 		_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
 	}
 	return nil
+}
+
+func (w *PublishingRestrictionEmailWorker) finalizeRecipientAndCampaign(
+	ctx context.Context,
+	campaignID string,
+	transitionLabel string,
+	transition func(context.Context) error,
+) error {
+	finalizeCtx, cancelFinalize := context.WithTimeout(
+		context.WithoutCancel(ctx),
+		publishingRestrictionEmailUnknownOutcomeCleanupTimeout,
+	)
+	transitionErr := transition(finalizeCtx)
+	if transitionErr != nil {
+		transitionErr = fmt.Errorf("%s: %w", transitionLabel, transitionErr)
+	}
+	refreshErr := w.store.RefreshPublishingRestrictionEmailCampaign(finalizeCtx, campaignID)
+	if refreshErr != nil {
+		refreshErr = fmt.Errorf("refresh publishing restriction email campaign: %w", refreshErr)
+	}
+	cancelFinalize()
+	return errors.Join(transitionErr, refreshErr)
 }
 
 func (w *PublishingRestrictionEmailWorker) configured() bool {

@@ -122,11 +122,11 @@ SET status = 'sent',
     last_error = NULL,
     sent_at = NOW(),
     updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status = 'pending';
 
 -- name: MarkEmailSendAttemptAuditFailed :exec
 UPDATE email_send_attempts
 SET status = 'failed',
     last_error = $2,
     updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 AND status = 'pending';

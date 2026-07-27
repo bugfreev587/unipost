@@ -161,3 +161,19 @@ func TestPublishingRestrictionCampaignActionsMapNotConfigured(t *testing.T) {
 		})
 	}
 }
+
+func TestPublishingRestrictionRetryMapsExpiredProviderWindow(t *testing.T) {
+	service := &fakePublishingRestrictionService{campaignErr: publishingrestrictions.ErrCampaignRetryExpired}
+	h := NewPublishingRestrictionsHandler(service)
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/publishing-restrictions/tiktok/email-campaigns/campaign_1/retry-failed", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("platform", "tiktok")
+	rctx.URLParams.Add("campaignID", "campaign_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.AdminRetryFailedCampaign(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"code":"RETRY_WINDOW_EXPIRED"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}

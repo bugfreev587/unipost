@@ -27,30 +27,35 @@ func TestPublishingRestrictionEligibilityRechecksEveryRepresentedWorkspace(t *te
 }
 
 type fakeRestrictionCampaignEmailStore struct {
-	work            []PublishingRestrictionEmailWork
-	claimCalls      int
-	sent            []string
-	failed          []string
-	terminalFailed  []string
-	skipped         []string
-	refreshed       []string
-	linked          map[string]string
-	eligible        bool
-	sentErr         error
-	failedErr       error
-	terminalErr     error
-	refreshErr      error
-	terminalCtx     context.Context
-	refreshCtx      context.Context
-	failedCtx       context.Context
-	terminalCtxErr  error
-	refreshCtxErr   error
-	sentCtxErr      error
-	failedCtxErr    error
-	terminalBounded bool
-	refreshBounded  bool
-	sentBounded     bool
-	failedBounded   bool
+	work             []PublishingRestrictionEmailWork
+	claimCalls       int
+	sent             []string
+	failed           []string
+	terminalFailed   []string
+	skipped          []string
+	refreshed        []string
+	linked           map[string]string
+	eligible         bool
+	eligibilityErr   error
+	afterEligibility func()
+	sentErr          error
+	failedErr        error
+	terminalErr      error
+	refreshErr       error
+	terminalCtx      context.Context
+	refreshCtx       context.Context
+	failedCtx        context.Context
+	skippedCtx       context.Context
+	terminalCtxErr   error
+	refreshCtxErr    error
+	sentCtxErr       error
+	failedCtxErr     error
+	skippedCtxErr    error
+	terminalBounded  bool
+	refreshBounded   bool
+	sentBounded      bool
+	failedBounded    bool
+	skippedBounded   bool
 }
 
 func (f *fakeRestrictionCampaignEmailStore) ClaimPublishingRestrictionEmailRecipients(context.Context, int) ([]PublishingRestrictionEmailWork, error) {
@@ -130,7 +135,10 @@ func TestPublishingRestrictionEmailWorkerStartLogsOneWarningAndReturnsWhenUnread
 }
 
 func (f *fakeRestrictionCampaignEmailStore) PublishingRestrictionEmailRecipientEligible(context.Context, PublishingRestrictionEmailWork) (bool, error) {
-	return f.eligible, nil
+	if f.afterEligibility != nil {
+		f.afterEligibility()
+	}
+	return f.eligible, f.eligibilityErr
 }
 
 func (f *fakeRestrictionCampaignEmailStore) LinkPublishingRestrictionEmailAttempt(_ context.Context, recipientID, attemptID string, attemptCount, attemptGeneration int) error {
@@ -167,8 +175,11 @@ func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipi
 	return f.terminalErr
 }
 
-func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientSkipped(_ context.Context, recipientID, _ string) error {
+func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientSkipped(ctx context.Context, recipientID, _ string) error {
 	f.skipped = append(f.skipped, recipientID)
+	f.skippedCtx = ctx
+	f.skippedCtxErr = ctx.Err()
+	_, f.skippedBounded = ctx.Deadline()
 	return nil
 }
 
@@ -204,6 +215,7 @@ func (c *finalizationFailureLifecycleClient) SendTransactional(context.Context, 
 
 type finalizationFailureAuditStore struct {
 	markFailedErr error
+	markSentErr   error
 }
 
 func (*finalizationFailureAuditStore) CreateEmailSendAttempt(context.Context, loops.EmailSendAttempt) (loops.EmailSendAttemptRecord, error) {
@@ -212,8 +224,8 @@ func (*finalizationFailureAuditStore) CreateEmailSendAttempt(context.Context, lo
 func (*finalizationFailureAuditStore) CreateSkippedEmailSendAttempt(context.Context, loops.EmailSendAttempt, string) (loops.EmailSendAttemptRecord, error) {
 	return loops.EmailSendAttemptRecord{}, errors.New("unexpected skipped audit")
 }
-func (*finalizationFailureAuditStore) MarkEmailSendAttemptSent(context.Context, string) error {
-	return errors.New("unexpected sent audit")
+func (s *finalizationFailureAuditStore) MarkEmailSendAttemptSent(context.Context, string) error {
+	return s.markSentErr
 }
 func (s *finalizationFailureAuditStore) MarkEmailSendAttemptFailed(context.Context, string, string) error {
 	return s.markFailedErr
@@ -313,6 +325,27 @@ func TestPublishingRestrictionEmailWorkerLeavesSendingRecipientForAuditFinalizat
 	}
 }
 
+func TestPublishingRestrictionEmailWorkerLeavesSendingRecipientWhenSentAuditFinalizationFails(t *testing.T) {
+	auditErr := errors.New("sent audit database unavailable")
+	client := &finalizationFailureLifecycleClient{}
+	sender := loops.NewAuditedClient(client, &finalizationFailureAuditStore{markSentErr: auditErr})
+	store := &fakeRestrictionCampaignEmailStore{eligible: true, work: []PublishingRestrictionEmailWork{{
+		RecipientID: "recipient_1", CampaignID: "campaign_1", CycleID: "cycle_1",
+		CampaignType: publishingrestrictions.RestrictionNotice, CanonicalUserID: "user_1",
+		RecipientEmail: "owner@example.com", IdempotencyKey: "cycle_1:restriction_notice:user_1",
+		SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 1, AttemptGeneration: 1,
+	}}}
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
+
+	err := worker.ProcessBatch(context.Background())
+	if !errors.Is(err, auditErr) || client.sends != 1 {
+		t.Fatalf("ProcessBatch error=%v sends=%d", err, client.sends)
+	}
+	if len(store.sent) != 0 || len(store.failed) != 0 || len(store.terminalFailed) != 0 {
+		t.Fatalf("sent=%v failed=%v terminal=%v, want sending retained", store.sent, store.failed, store.terminalFailed)
+	}
+}
+
 func TestPublishingRestrictionEmailWorkerReturnsRecipientSentPersistenceFailure(t *testing.T) {
 	persistErr := errors.New("recipient sent transition unavailable")
 	store := &fakeRestrictionCampaignEmailStore{eligible: true, sentErr: persistErr, work: []PublishingRestrictionEmailWork{{
@@ -369,6 +402,57 @@ func TestPublishingRestrictionEmailWorkerSkipsIneligibleRecipient(t *testing.T) 
 	}
 	if len(sender.emails) != 0 || len(store.skipped) != 1 {
 		t.Fatalf("emails=%d skipped=%v", len(sender.emails), store.skipped)
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerRefusesExpiredManualRetryBeforeProviderCall(t *testing.T) {
+	store := &fakeRestrictionCampaignEmailStore{eligible: true, work: []PublishingRestrictionEmailWork{{
+		RecipientID: "recipient_1", CampaignID: "campaign_1", AttemptGeneration: 2,
+		CampaignCreatedAt: time.Now().Add(-24*time.Hour - time.Minute),
+	}}}
+	sender := &captureRestrictionCampaignSender{}
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
+
+	if err := worker.ProcessBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.emails) != 0 || len(store.terminalFailed) != 1 {
+		t.Fatalf("sends=%d terminal=%v", len(sender.emails), store.terminalFailed)
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerFinalizesPreSendCancellationWithoutProviderCall(t *testing.T) {
+	tests := []struct {
+		name           string
+		eligibilityErr error
+		wantFailed     int
+		wantSkipped    int
+	}{
+		{name: "eligibility error", eligibilityErr: errors.New("eligibility unavailable"), wantFailed: 1},
+		{name: "ineligible", wantSkipped: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			store := &fakeRestrictionCampaignEmailStore{
+				eligible: false, eligibilityErr: tt.eligibilityErr, afterEligibility: cancel,
+				work: []PublishingRestrictionEmailWork{{RecipientID: "recipient_1", CampaignID: "campaign_1"}},
+			}
+			sender := &captureRestrictionCampaignSender{}
+			worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
+			if err := worker.ProcessBatch(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if len(sender.emails) != 0 || len(store.failed) != tt.wantFailed || len(store.skipped) != tt.wantSkipped {
+				t.Fatalf("sends=%d failed=%v skipped=%v", len(sender.emails), store.failed, store.skipped)
+			}
+			if tt.wantFailed == 1 && (store.failedCtxErr != nil || !store.failedBounded) {
+				t.Fatalf("failed context error=%v bounded=%v", store.failedCtxErr, store.failedBounded)
+			}
+			if tt.wantSkipped == 1 && (store.skippedCtxErr != nil || !store.skippedBounded) {
+				t.Fatalf("skipped context error=%v bounded=%v", store.skippedCtxErr, store.skippedBounded)
+			}
+		})
 	}
 }
 

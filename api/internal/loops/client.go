@@ -161,6 +161,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload map[st
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
+	if resp.StatusCode == http.StatusConflict && path == "/v1/transactional" && strings.TrimSpace(idempotencyKey) != "" {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return nil
+	}
 
 	raw, _ := io.ReadAll(resp.Body)
 	var apiErr struct {

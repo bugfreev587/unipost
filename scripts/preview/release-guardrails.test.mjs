@@ -27,8 +27,20 @@ const postgresTestsByPackage = {
   ],
   "./internal/worker": [
     "TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity",
+    "TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow",
+    "TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically",
+    "TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming",
+    "TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable",
+    "TestPublishingRestrictionDefinitiveFailureRejectsLostSendClaim",
+    "TestPublishingRestrictionCampaignRefreshRejectsMissingCampaign",
+    "TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicateSend",
+    "TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWriteFailure",
+    "TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure",
+    "TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure",
     "TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction",
     "TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed",
+    "TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome",
+    "TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation",
   ],
 };
 const postgresTestSelector = `^(?:${Object.values(postgresTestsByPackage).flat().join("|")})$`;

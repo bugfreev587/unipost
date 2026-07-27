@@ -4,6 +4,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -331,6 +332,36 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 	}
 }
 
+func TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_expired_retry", "worker_user_1", "owner@example.com", time.Now().Add(-25*time.Hour))
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', retryable=FALSE, last_error='manual review required'
+		WHERE id='recipient_expired_retry';
+		UPDATE platform_publishing_restriction_email_campaigns
+		SET status='completed_with_failures', created_at=NOW()-INTERVAL '25 hours', completed_at=NOW()
+		WHERE id='worker_campaign';
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = publishingrestrictions.NewPostgresStore(pool).RetryFailedCampaign(ctx, "tiktok", "worker_campaign")
+	if !errors.Is(err, publishingrestrictions.ErrCampaignRetryExpired) {
+		t.Fatalf("retry error = %v, want ErrCampaignRetryExpired", err)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM platform_publishing_restriction_email_recipients WHERE id='recipient_expired_retry'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("recipient status = %q, want failed", status)
+	}
+}
+
 func insertPendingRestrictionRecipient(t *testing.T, pool *pgxpool.Pool, id, userID, email string, createdAt time.Time) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
@@ -458,7 +489,7 @@ func TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable(t
 		) VALUES (
 			'attempt_definitive_failure', 'email.publishing_restriction.restriction_notice.v1',
 			'definitive@example.com', 'loops', 'attempt-definitive-failure',
-			'service_alert', 'failed', 'loops: 503: temporarily unavailable'
+			'service_alert', 'failed', '{"outcome_class":"provider_definitive_failure","error":"loops: 503: temporarily unavailable"}'
 		);
 		INSERT INTO platform_publishing_restriction_email_recipients (
 			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
@@ -1011,5 +1042,104 @@ func TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed(t *test
 	}
 	if len(work) != 0 {
 		t.Fatalf("second claim reclaimed terminal stale recipient: %+v", work)
+	}
+}
+
+func TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id,campaign_id,canonical_user_id,recipient_email,normalized_email,status,attempt_count,
+			next_attempt_at,claimed_at,idempotency_key,retryable,created_at,updated_at
+		) VALUES (
+			'recipient_pre_send','worker_campaign','worker_user_1','pre@example.com','pre@example.com','sending',1,
+			NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes','worker_cycle:restriction_notice:worker_user_1',
+			FALSE,NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes'
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 0 {
+		t.Fatalf("pre-send recovery ignored backoff: %+v", work)
+	}
+	var status, lastError string
+	var retryable bool
+	if err := pool.QueryRow(ctx, `SELECT status,retryable,last_error FROM platform_publishing_restriction_email_recipients WHERE id='recipient_pre_send'`).Scan(&status, &retryable, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || !retryable || !strings.Contains(lastError, "not attempted") || strings.Contains(lastError, "outcome unknown") {
+		t.Fatalf("status=%q retryable=%v error=%q", status, retryable, lastError)
+	}
+}
+
+func TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		INSERT INTO email_send_attempts (id,event_key,recipient_email,provider,idempotency_key,delivery_class,status)
+		VALUES ('attempt_race','email.publishing_restriction.restriction_notice.v1','race@example.com','loops','attempt-race','service_alert','pending');
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id,campaign_id,canonical_user_id,recipient_email,normalized_email,status,attempt_count,
+			next_attempt_at,claimed_at,idempotency_key,email_send_attempt_id,retryable,created_at,updated_at
+		) VALUES (
+			'recipient_race','worker_campaign','worker_user_1','race@example.com','race@example.com','sending',1,
+			NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes','worker_cycle:restriction_notice:worker_user_1',
+			'attempt_race',FALSE,NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes'
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `SELECT id FROM platform_publishing_restriction_email_recipients WHERE id='recipient_race' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT id FROM email_send_attempts WHERE id='attempt_race' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	delayedDone := make(chan error, 1)
+	go func() {
+		delayedDone <- loops.NewPostgresEmailAuditStore(db.New(pool)).MarkEmailSendAttemptSent(ctx, "attempt_race")
+	}()
+	select {
+	case err := <-delayedDone:
+		t.Fatalf("delayed MarkSent did not wait for reconciliation lock: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if _, err := tx.Exec(ctx, `UPDATE email_send_attempts SET status='failed',last_error='{"outcome_class":"provider_unknown"}' WHERE id='attempt_race' AND status='pending'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `UPDATE platform_publishing_restriction_email_recipients SET status='failed',retryable=FALSE,claimed_at=NULL WHERE id='recipient_race' AND status='sending'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-delayedDone; err != nil {
+		t.Fatal(err)
+	}
+	var auditStatus, recipientStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT attempt.status,recipient.status FROM email_send_attempts attempt
+		JOIN platform_publishing_restriction_email_recipients recipient ON recipient.email_send_attempt_id=attempt.id
+		WHERE attempt.id='attempt_race'
+	`).Scan(&auditStatus, &recipientStatus); err != nil {
+		t.Fatal(err)
+	}
+	if auditStatus != "failed" || recipientStatus != "failed" {
+		t.Fatalf("audit=%q recipient=%q, want failed/failed", auditStatus, recipientStatus)
 	}
 }

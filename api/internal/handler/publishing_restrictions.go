@@ -210,6 +210,10 @@ func (h *PublishingRestrictionsHandler) AdminRetryFailedCampaign(w http.Response
 		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Publishing restriction email campaigns are not configured")
 		return
 	}
+	if errors.Is(err, publishingrestrictions.ErrCampaignRetryExpired) {
+		writeError(w, http.StatusConflict, "RETRY_WINDOW_EXPIRED", "This campaign is older than the provider idempotency window and cannot be retried safely")
+		return
+	}
 	if errors.Is(err, publishingrestrictions.ErrCampaignPrecondition) {
 		writeError(w, http.StatusConflict, "NO_FAILED_RECIPIENTS", "This campaign has no failed recipients to retry")
 		return

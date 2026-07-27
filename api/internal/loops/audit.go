@@ -2,6 +2,7 @@ package loops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -12,6 +13,11 @@ import (
 )
 
 const emailAuditFinalizationTimeout = 5 * time.Second
+
+const (
+	emailAuditOutcomeProviderUnknown    = "provider_unknown"
+	emailAuditOutcomeProviderDefinitive = "provider_definitive_failure"
+)
 
 type EmailAudit struct {
 	EventKey           string
@@ -56,6 +62,9 @@ type EmailAuditFinalizationError struct {
 }
 
 func (e *EmailAuditFinalizationError) Error() string {
+	if e.ProviderError == nil {
+		return fmt.Sprintf("loops: provider accepted send; finalize failed email audit: %v", e.AuditError)
+	}
 	return fmt.Sprintf("loops: provider result %v; finalize failed email audit: %v", e.ProviderError, e.AuditError)
 }
 
@@ -140,8 +149,13 @@ func (c *AuditedClient) SendTransactionalWithAttempt(
 	}
 	err = c.client.SendTransactional(ctx, email)
 	if err != nil {
+		outcomeClass := emailAuditOutcomeProviderDefinitive
+		if IsSendOutcomeUnknown(err) {
+			outcomeClass = emailAuditOutcomeProviderUnknown
+		}
+		failureEvidence := emailAuditFailureEvidence(outcomeClass, err)
 		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
-		auditErr := c.store.MarkEmailSendAttemptFailed(finalizeCtx, record.ID, err.Error())
+		auditErr := c.store.MarkEmailSendAttemptFailed(finalizeCtx, record.ID, failureEvidence)
 		cancelFinalize()
 		if auditErr != nil {
 			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
@@ -154,8 +168,24 @@ func (c *AuditedClient) SendTransactionalWithAttempt(
 	cancelFinalize()
 	if auditErr != nil {
 		slog.Warn("loops: email audit sent update failed", "attempt_id", record.ID, "error", auditErr)
+		return record, &EmailAuditFinalizationError{AuditError: auditErr}
 	}
 	return record, nil
+}
+
+func emailAuditFailureEvidence(outcomeClass string, err error) string {
+	evidence := struct {
+		OutcomeClass string `json:"outcome_class"`
+		Error        string `json:"error"`
+	}{OutcomeClass: outcomeClass}
+	if err != nil {
+		evidence.Error = err.Error()
+	}
+	raw, marshalErr := json.Marshal(evidence)
+	if marshalErr != nil {
+		return evidence.Error
+	}
+	return string(raw)
 }
 
 func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEmail) (EmailSendAttemptRecord, error) {

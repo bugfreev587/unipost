@@ -257,6 +257,35 @@ func TestClientSendTransactionalDoesNotClassifyExplicitProviderFailureAsUnknownO
 	}
 }
 
+func TestClientSendTransactionalTreats409WithThisRequestIdempotencyKeyAsAccepted(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if got := r.Header.Get("Idempotency-Key"); got != "provider-key-1" {
+			t.Fatalf("idempotency key = %q", got)
+		}
+		return jsonResponse(http.StatusConflict, `{"message":"idempotency key already used"}`), nil
+	})}
+	client := NewClient(Config{APIKey: "test-key", BaseURL: "https://loops.test/api", Client: httpClient})
+
+	if err := client.SendTransactional(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123", Email: "alex@example.com", IdempotencyKey: "provider-key-1",
+	}); err != nil {
+		t.Fatalf("409 replay: %v", err)
+	}
+}
+
+func TestClientSendTransactionalRejects409WithoutIdempotencyKey(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusConflict, `{"message":"conflict"}`), nil
+	})}
+	client := NewClient(Config{APIKey: "test-key", BaseURL: "https://loops.test/api", Client: httpClient})
+
+	if err := client.SendTransactional(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_123", Email: "alex@example.com",
+	}); err == nil {
+		t.Fatal("409 without idempotency key returned nil")
+	}
+}
+
 func TestClientSendTransactionalDoesNotClassifyLocalPreDoErrorsAsUnknownOutcome(t *testing.T) {
 	tests := []struct {
 		name   string
