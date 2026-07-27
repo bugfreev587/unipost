@@ -177,9 +177,16 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 		t.Fatal(err)
 	}
 
-	terminalReason := "send outcome unknown after provider request; manual review required"
+	terminalReason := "provider request outcome unknown after attempting send; manual review required"
 	if err := store.MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx, first.RecipientID, terminalReason); err != nil {
 		t.Fatal(err)
+	}
+	lostClaimErr := store.MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx, first.RecipientID, "must not overwrite terminal row")
+	if lostClaimErr == nil {
+		t.Fatal("terminal transition for a non-sending recipient returned nil, want lost-claim error")
+	}
+	if !strings.Contains(lostClaimErr.Error(), "lost active send claim") {
+		t.Fatalf("terminal zero-row error = %q, want clear lost active send claim", lostClaimErr)
 	}
 	if err := store.RefreshPublishingRestrictionEmailCampaign(ctx, first.CampaignID); err != nil {
 		t.Fatal(err)

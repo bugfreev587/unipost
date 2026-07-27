@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -246,12 +247,22 @@ func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmail
 }
 
 func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx context.Context, recipientID, reason string) error {
-	_, err := s.pool.Exec(ctx, `
+	command, err := s.pool.Exec(ctx, `
 		UPDATE platform_publishing_restriction_email_recipients
 		SET status='failed', retryable=FALSE, claimed_at=NULL, last_error=$2, updated_at=NOW()
 		WHERE id=$1 AND status='sending'
 	`, recipientID, reason)
-	return err
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"publishing restriction email terminal transition lost active send claim for recipient %s: affected %d rows, want 1",
+			recipientID,
+			command.RowsAffected(),
+		)
+	}
+	return nil
 }
 
 func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientSkipped(ctx context.Context, recipientID, reason string) error {

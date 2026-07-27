@@ -57,6 +57,8 @@ type PublishingRestrictionEmailWorker struct {
 	batchSize             int
 }
 
+const publishingRestrictionEmailUnknownOutcomeCleanupTimeout = 5 * time.Second
+
 func NewPublishingRestrictionEmailWorker(
 	store PublishingRestrictionEmailStore,
 	sender transactionalEmailSender,
@@ -157,11 +159,27 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 		})
 		if err != nil {
 			if loops.IsSendOutcomeUnknown(err) {
-				_ = w.store.MarkPublishingRestrictionEmailRecipientTerminalFailed(
-					ctx,
-					recipient.RecipientID,
-					"send outcome unknown after provider request; manual review required: "+err.Error(),
+				cleanupCtx, cancelCleanup := context.WithTimeout(
+					context.WithoutCancel(ctx),
+					publishingRestrictionEmailUnknownOutcomeCleanupTimeout,
 				)
+				terminalErr := w.store.MarkPublishingRestrictionEmailRecipientTerminalFailed(
+					cleanupCtx,
+					recipient.RecipientID,
+					"manual review required: "+err.Error(),
+				)
+				if terminalErr != nil {
+					terminalErr = fmt.Errorf("terminalize unknown publishing restriction email outcome: %w", terminalErr)
+				}
+				refreshErr := w.store.RefreshPublishingRestrictionEmailCampaign(cleanupCtx, recipient.CampaignID)
+				if refreshErr != nil {
+					refreshErr = fmt.Errorf("refresh publishing restriction email campaign after unknown outcome: %w", refreshErr)
+				}
+				cancelCleanup()
+				if cleanupErr := errors.Join(terminalErr, refreshErr); cleanupErr != nil {
+					return cleanupErr
+				}
+				continue
 			} else {
 				_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, err.Error())
 			}

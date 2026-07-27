@@ -26,15 +26,15 @@ type Client struct {
 	client  *http.Client
 }
 
-// SendOutcomeUnknownError means a provider request may have been accepted,
-// but no response reached the caller. Retrying it automatically could send a
+// SendOutcomeUnknownError means the provider request outcome could not be
+// determined after attempting a send. Retrying it automatically could send a
 // duplicate.
 type SendOutcomeUnknownError struct {
 	Err error
 }
 
 func (e *SendOutcomeUnknownError) Error() string {
-	return fmt.Sprintf("loops: send outcome unknown after provider request: %v", e.Err)
+	return fmt.Sprintf("loops: provider request outcome unknown after attempting send: %v", e.Err)
 }
 
 func (e *SendOutcomeUnknownError) Unwrap() error {

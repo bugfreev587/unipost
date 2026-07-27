@@ -24,14 +24,22 @@ func TestPublishingRestrictionEligibilityRechecksEveryRepresentedWorkspace(t *te
 }
 
 type fakeRestrictionCampaignEmailStore struct {
-	work           []PublishingRestrictionEmailWork
-	sent           []string
-	failed         []string
-	terminalFailed []string
-	skipped        []string
-	refreshed      []string
-	linked         map[string]string
-	eligible       bool
+	work            []PublishingRestrictionEmailWork
+	sent            []string
+	failed          []string
+	terminalFailed  []string
+	skipped         []string
+	refreshed       []string
+	linked          map[string]string
+	eligible        bool
+	terminalErr     error
+	refreshErr      error
+	terminalCtx     context.Context
+	refreshCtx      context.Context
+	terminalCtxErr  error
+	refreshCtxErr   error
+	terminalBounded bool
+	refreshBounded  bool
 }
 
 func (f *fakeRestrictionCampaignEmailStore) ClaimPublishingRestrictionEmailRecipients(context.Context, int) ([]PublishingRestrictionEmailWork, error) {
@@ -65,9 +73,12 @@ func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipi
 	return nil
 }
 
-func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(_ context.Context, recipientID, _ string) error {
+func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx context.Context, recipientID, _ string) error {
 	f.terminalFailed = append(f.terminalFailed, recipientID)
-	return nil
+	f.terminalCtx = ctx
+	f.terminalCtxErr = ctx.Err()
+	_, f.terminalBounded = ctx.Deadline()
+	return f.terminalErr
 }
 
 func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientSkipped(_ context.Context, recipientID, _ string) error {
@@ -75,15 +86,19 @@ func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipi
 	return nil
 }
 
-func (f *fakeRestrictionCampaignEmailStore) RefreshPublishingRestrictionEmailCampaign(_ context.Context, campaignID string) error {
+func (f *fakeRestrictionCampaignEmailStore) RefreshPublishingRestrictionEmailCampaign(ctx context.Context, campaignID string) error {
 	f.refreshed = append(f.refreshed, campaignID)
-	return nil
+	f.refreshCtx = ctx
+	f.refreshCtxErr = ctx.Err()
+	_, f.refreshBounded = ctx.Deadline()
+	return f.refreshErr
 }
 
 type captureRestrictionCampaignSender struct {
 	emails     []loops.TransactionalEmail
 	attemptIDs []string
 	err        error
+	afterSend  func()
 }
 
 func (s *captureRestrictionCampaignSender) SendTransactionalWithAttempt(
@@ -97,6 +112,9 @@ func (s *captureRestrictionCampaignSender) SendTransactionalWithAttempt(
 	}
 	s.emails = append(s.emails, email)
 	s.attemptIDs = append(s.attemptIDs, attemptID)
+	if s.afterSend != nil {
+		s.afterSend()
+	}
 	return loops.EmailSendAttemptRecord{ID: attemptID}, s.err
 }
 
@@ -212,6 +230,84 @@ func TestPublishingRestrictionEmailWorkerBoundedRetriesExplicitProviderFailure(t
 	}
 	if len(store.refreshed) != 1 || store.refreshed[0] != "campaign_1" {
 		t.Fatalf("campaign refreshes = %v, want campaign_1", store.refreshed)
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerReturnsUnknownOutcomeCleanupFailures(t *testing.T) {
+	terminalErr := errors.New("terminal transition failed")
+	refreshErr := errors.New("campaign refresh failed")
+	tests := []struct {
+		name        string
+		terminalErr error
+		refreshErr  error
+		wantErrors  []error
+	}{
+		{name: "terminal transition", terminalErr: terminalErr, wantErrors: []error{terminalErr}},
+		{name: "campaign refresh", refreshErr: refreshErr, wantErrors: []error{refreshErr}},
+		{name: "both", terminalErr: terminalErr, refreshErr: refreshErr, wantErrors: []error{terminalErr, refreshErr}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeRestrictionCampaignEmailStore{
+				eligible: true, terminalErr: tt.terminalErr, refreshErr: tt.refreshErr,
+				work: []PublishingRestrictionEmailWork{{
+					RecipientID: "recipient_1", CampaignID: "campaign_1", CycleID: "cycle_1",
+					CampaignType: publishingrestrictions.RestrictionNotice, CanonicalUserID: "user_1",
+					RecipientEmail: "owner@example.com", IdempotencyKey: "cycle_1:restriction_notice:user_1",
+					SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 1, AttemptGeneration: 1,
+				}},
+			}
+			sender := &captureRestrictionCampaignSender{err: &loops.SendOutcomeUnknownError{Err: errors.New("response lost")}}
+			worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+
+			err := worker.ProcessBatch(context.Background())
+			if err == nil {
+				t.Fatal("ProcessBatch returned nil, want unknown-outcome cleanup failure")
+			}
+			for _, wantErr := range tt.wantErrors {
+				if !errors.Is(err, wantErr) {
+					t.Fatalf("ProcessBatch error = %v, want errors.Is(_, %v)", err, wantErr)
+				}
+			}
+			if len(sender.emails) != 1 || len(store.terminalFailed) != 1 || len(store.refreshed) != 1 {
+				t.Fatalf("sends=%d terminal=%v refreshes=%v, want one of each", len(sender.emails), store.terminalFailed, store.refreshed)
+			}
+		})
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerPersistsUnknownOutcomeAfterParentCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	store := &fakeRestrictionCampaignEmailStore{eligible: true, work: []PublishingRestrictionEmailWork{{
+		RecipientID: "recipient_1", CampaignID: "campaign_1", CycleID: "cycle_1",
+		CampaignType: publishingrestrictions.RestrictionNotice, CanonicalUserID: "user_1",
+		RecipientEmail: "owner@example.com", IdempotencyKey: "cycle_1:restriction_notice:user_1",
+		SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 1, AttemptGeneration: 1,
+	}}}
+	sender := &captureRestrictionCampaignSender{
+		err:       &loops.SendOutcomeUnknownError{Err: errors.New("response lost")},
+		afterSend: cancel,
+	}
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+
+	if err := worker.ProcessBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		t.Fatalf("parent context error = %v, want canceled", ctx.Err())
+	}
+	if store.terminalCtxErr != nil || store.refreshCtxErr != nil {
+		t.Fatalf("cleanup context errors: terminal=%v refresh=%v, want live contexts", store.terminalCtxErr, store.refreshCtxErr)
+	}
+	if !store.terminalBounded || !store.refreshBounded {
+		t.Fatalf("cleanup context deadlines: terminal=%v refresh=%v, want both bounded", store.terminalBounded, store.refreshBounded)
+	}
+	if !errors.Is(store.terminalCtx.Err(), context.Canceled) || !errors.Is(store.refreshCtx.Err(), context.Canceled) {
+		t.Fatalf("cleanup contexts were not canceled after persistence: terminal=%v refresh=%v", store.terminalCtx.Err(), store.refreshCtx.Err())
+	}
+	if len(sender.emails) != 1 || len(store.terminalFailed) != 1 || len(store.refreshed) != 1 {
+		t.Fatalf("sends=%d terminal=%v refreshes=%v, want one of each", len(sender.emails), store.terminalFailed, store.refreshed)
 	}
 }
 

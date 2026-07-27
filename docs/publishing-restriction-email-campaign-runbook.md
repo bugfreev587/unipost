@@ -2,7 +2,7 @@
 
 ## Unknown send outcomes
 
-An unknown send outcome means UniPost made a provider request but did not receive a response. The provider may already have accepted and delivered the email. The recipient is terminally failed with `retryable = false`; the worker must not retry it automatically.
+An unknown send outcome means UniPost attempted a provider send but could not determine the provider request outcome. The provider may already have accepted and delivered the email. The recipient is terminally failed with `retryable = false`; the worker must not retry it automatically.
 
 This conservative behavior creates more failures that require manual review. It is intentional: an extra manual failure is safer than automatically sending a duplicate service-alert email.
 

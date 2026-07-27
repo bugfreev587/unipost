@@ -230,7 +230,7 @@ func TestAuditedClientPreservesUnknownSendOutcomeClassification(t *testing.T) {
 	if !IsSendOutcomeUnknown(err) {
 		t.Fatalf("audited send lost unknown-outcome classification: %v", err)
 	}
-	if audit.markedFailed != 1 || !strings.Contains(audit.failedReason, "send outcome unknown") {
+	if audit.markedFailed != 1 || !strings.Contains(audit.failedReason, "provider request outcome unknown") {
 		t.Fatalf("audit failed updates=%d reason=%q, want clear unknown-outcome failure", audit.markedFailed, audit.failedReason)
 	}
 }
@@ -257,7 +257,7 @@ func TestClientSendTransactionalDoesNotClassifyExplicitProviderFailureAsUnknownO
 	}
 }
 
-func TestClientSendTransactionalDoesNotClassifyPreNetworkErrorsAsUnknownOutcome(t *testing.T) {
+func TestClientSendTransactionalDoesNotClassifyLocalPreDoErrorsAsUnknownOutcome(t *testing.T) {
 	tests := []struct {
 		name   string
 		client *Client
@@ -280,10 +280,10 @@ func TestClientSendTransactionalDoesNotClassifyPreNetworkErrorsAsUnknownOutcome(
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.client.SendTransactional(context.Background(), tt.email)
 			if err == nil {
-				t.Fatal("expected pre-network error")
+				t.Fatal("expected local pre-Do error")
 			}
 			if IsSendOutcomeUnknown(err) {
-				t.Fatalf("pre-network error classified as unknown outcome: %v", err)
+				t.Fatalf("local pre-Do error classified as unknown outcome: %v", err)
 			}
 		})
 	}
