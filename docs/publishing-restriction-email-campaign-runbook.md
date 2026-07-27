@@ -8,7 +8,7 @@ This conservative behavior creates more failures that require manual review. It 
 
 ## Investigate a terminal failure
 
-Before retrying, inspect all of the following for the individual recipient:
+Before deciding the disposition, inspect all of the following for the individual recipient:
 
 1. The campaign recipient row, including status, `last_error`, `attempt_generation`, normalized email, and stable `idempotency_key`.
 2. The linked `email_send_attempts` row and its attempt-specific audit key.
@@ -27,6 +27,6 @@ The stable provider key is defense in depth, not proof that an earlier request w
 
 ## Retry decision
 
-Use the retry-failed campaign action only after provider evidence confirms the unknown attempt was not delivered or accepted for delivery. Record the supporting provider evidence in the incident or operator log before retrying.
+The retry-failed campaign action retries only recipients with definitive provider-failure or pre-send-failure evidence. It permanently excludes unknown or ambiguous provider outcomes, even when the same campaign also contains retry-safe failures.
 
-Never bulk retry unknown-outcome recipients without recipient-by-recipient provider confirmation. If provider evidence is unavailable or ambiguous, leave the recipient terminally failed and escalate for manual review.
+There is currently no recipient-level override for a confirmed unknown outcome. Record provider evidence in the incident or operator log and leave the recipient terminally failed; a future recipient-level workflow must require explicit evidence and approval before it can send. If provider evidence is unavailable or ambiguous, escalate for manual review.

@@ -73,6 +73,119 @@ func applyMigrationUpForIntegration(t *testing.T, pool *pgxpool.Pool, filename s
 	}
 }
 
+func applyMigrationDownForIntegration(t *testing.T, pool *pgxpool.Pool, filename string) {
+	t.Helper()
+	raw, err := os.ReadFile("migrations/" + filename)
+	if err != nil {
+		t.Fatalf("read migration %s: %v", filename, err)
+	}
+	parts := strings.Split(string(raw), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatalf("migration %s must have exactly one Down section", filename)
+	}
+	if _, err := pool.Exec(context.Background(), parts[1]); err != nil {
+		t.Fatalf("apply migration %s Down: %v", filename, err)
+	}
+}
+
+func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE users (id TEXT PRIMARY KEY);
+		CREATE TABLE email_send_attempts (id TEXT PRIMARY KEY);
+		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
+		INSERT INTO users (id) VALUES ('canonical_user'), ('empty_user');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationUpForIntegration(t, pool, "122_platform_publishing_restrictions.sql")
+	_, err = pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restriction_email_campaigns (
+			id, restriction_id, cycle_id, campaign_type, subject_snapshot,
+			body_snapshot, restriction_version
+		)
+		SELECT 'campaign_owner_snapshot', id, 'cycle_owner_snapshot',
+		       'restriction_notice', 'subject', 'body', version
+		FROM platform_publishing_restrictions WHERE platform='tiktok';
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, idempotency_key
+		) VALUES
+			('recipient_with_workspaces', 'campaign_owner_snapshot', 'canonical_user',
+			 'owner@example.com', 'owner@example.com', ARRAY['workspace_1','workspace_2']::TEXT[],
+			 'owner-snapshot-with-workspaces'),
+			('recipient_without_workspaces', 'campaign_owner_snapshot', 'empty_user',
+			 'empty@example.com', 'empty@example.com', ARRAY[]::TEXT[],
+			 'owner-snapshot-without-workspaces');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationUpForIntegration(t, pool, "124_publishing_restriction_email_send_gate.sql")
+	applyMigrationUpForIntegration(t, pool, "125_publishing_restriction_failed_recipient_retryability.sql")
+	applyMigrationUpForIntegration(t, pool, "126_publishing_restriction_recipient_owner_snapshot.sql")
+
+	var ownerIDs []string
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_with_workspaces'
+	`).Scan(&ownerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ownerIDs, []string{"canonical_user", "canonical_user"}) {
+		t.Fatalf("backfilled owner IDs = %#v, want canonical repeated for each workspace", ownerIDs)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_without_workspaces'
+	`).Scan(&ownerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if len(ownerIDs) != 0 {
+		t.Fatalf("empty workspace owner IDs = %#v, want empty array", ownerIDs)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET represented_owner_user_ids=ARRAY['canonical_user']::TEXT[]
+		WHERE id='recipient_with_workspaces'
+	`); err == nil {
+		t.Fatal("owner snapshot accepted a cardinality mismatch")
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET represented_owner_user_ids=ARRAY['canonical_user',NULL]::TEXT[]
+		WHERE id='recipient_with_workspaces'
+	`); err == nil {
+		t.Fatal("owner snapshot accepted a NULL owner element")
+	}
+
+	applyMigrationDownForIntegration(t, pool, "126_publishing_restriction_recipient_owner_snapshot.sql")
+	var columnExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_name='platform_publishing_restriction_email_recipients'
+			  AND column_name='represented_owner_user_ids'
+		)
+	`).Scan(&columnExists); err != nil {
+		t.Fatal(err)
+	}
+	if columnExists {
+		t.Fatal("migration 126 Down left represented_owner_user_ids behind")
+	}
+	var recipientCount int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_publishing_restriction_email_recipients`).Scan(&recipientCount); err != nil {
+		t.Fatal(err)
+	}
+	if recipientCount != 2 {
+		t.Fatalf("migration 126 Down changed recipient rows: got %d, want 2", recipientCount)
+	}
+}
+
 func TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124(t *testing.T) {
 	pool := openPublishingRestrictionIntegrationPool(t)
 	ctx := context.Background()

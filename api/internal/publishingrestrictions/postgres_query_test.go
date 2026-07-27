@@ -79,7 +79,8 @@ func TestCampaignAudienceQueryAggregatesAllWorkspacesPerNormalizedEmail(t *testi
 	}
 	for _, want := range []string{
 		"GROUP BY normalized_email",
-		"ARRAY_AGG(DISTINCT workspace_id ORDER BY workspace_id)",
+		"ARRAY_AGG(workspace_id ORDER BY user_id, workspace_id)",
+		"ARRAY_AGG(user_id ORDER BY user_id, workspace_id)",
 		"(ARRAY_AGG(user_id ORDER BY user_id))[1]",
 	} {
 		if !strings.Contains(query, want) {
@@ -98,7 +99,10 @@ func TestRecoveryCampaignAudienceRebuildsIdentityFromCanonicalUser(t *testing.T)
 	}
 	for _, want := range []string{
 		"JOIN users canonical_user ON canonical_user.id = prior.canonical_user_id",
-		"owner_member.user_id = prior.canonical_user_id",
+		"UNNEST(prior.represented_workspace_ids) WITH ORDINALITY",
+		"UNNEST(prior.represented_owner_user_ids) WITH ORDINALITY",
+		"owner.ordinality = workspace.ordinality",
+		"owner_member.user_id = prior.owner_user_id",
 		"LOWER(TRIM(canonical_user.email))",
 		"canonical_user.name",
 	} {
@@ -108,5 +112,23 @@ func TestRecoveryCampaignAudienceRebuildsIdentityFromCanonicalUser(t *testing.T)
 	}
 	if strings.Contains(query, "prior.recipient_email AS email") || strings.Contains(query, "prior.normalized_email") {
 		t.Fatalf("recovery audience must not copy stale recipient identity:\n%s", query)
+	}
+}
+
+func TestBulkRetryExcludesUnknownOrAmbiguousProviderOutcomes(t *testing.T) {
+	source, err := os.ReadFile("postgres.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, want := range []string{
+		"provider_definitive_failure",
+		"pre_send_failure",
+		"provider_unknown",
+		"email_send_attempts",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("bulk retry classification missing %q", want)
+		}
 	}
 }

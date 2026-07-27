@@ -103,3 +103,31 @@ func TestPublishingRestrictionFailedRecipientCorrectionMigrationContract(t *test
 		t.Fatal("migration 125 Down must refuse to reactivate failed recipients and document irreversibility")
 	}
 }
+
+func TestPublishingRestrictionRecipientOwnerSnapshotMigrationContract(t *testing.T) {
+	body, err := os.ReadFile("migrations/126_publishing_restriction_recipient_owner_snapshot.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := strings.Split(string(body), "-- +goose Down")
+	if len(parts) != 2 {
+		t.Fatalf("migration 126 must have one Down section, got %d parts", len(parts))
+	}
+	up := strings.ToLower(parts[0])
+	for _, fragment := range []string{
+		"add column represented_owner_user_ids text[]",
+		"array_fill(canonical_user_id",
+		"array[]::text[]",
+		"set not null",
+		"cardinality(represented_owner_user_ids) = cardinality(represented_workspace_ids)",
+		"array_position(represented_owner_user_ids, null) is null",
+	} {
+		if !strings.Contains(up, fragment) {
+			t.Fatalf("migration 126 Up missing %q", fragment)
+		}
+	}
+	down := strings.ToLower(parts[1])
+	if !strings.Contains(down, "drop column represented_owner_user_ids") {
+		t.Fatal("migration 126 Down must drop only the owner snapshot column and its attached constraints")
+	}
+}

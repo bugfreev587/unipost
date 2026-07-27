@@ -201,6 +201,7 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 		"122_platform_publishing_restrictions.sql",
 		"124_publishing_restriction_email_send_gate.sql",
 		"125_publishing_restriction_failed_recipient_retryability.sql",
+		"126_publishing_restriction_recipient_owner_snapshot.sql",
 	} {
 		applyWorkerMigrationUp(t, pool, migration)
 	}
@@ -261,6 +262,135 @@ func TestPublishingRestrictionAudienceAndAdminCountsUseProfileWorkspace(t *testi
 	}
 }
 
+func TestPublishingRestrictionSameEmailOwnersPreserveEligibilityAndRecovery(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		DELETE FROM platform_publishing_restriction_email_campaigns WHERE id='worker_campaign';
+		UPDATE platform_publishing_restrictions
+		SET enabled=TRUE, cycle_id='worker_cycle'
+		WHERE platform='tiktok';
+		UPDATE users SET email='shared@example.com', name='Canonical Owner' WHERE id='worker_user_1';
+		UPDATE users SET email='shared@example.com', name='Other Owner' WHERE id='worker_user_2';
+		INSERT INTO workspaces (id) VALUES ('workspace_1'), ('workspace_2');
+		INSERT INTO profiles (id, workspace_id)
+		VALUES ('profile_workspace_1', 'workspace_1'), ('profile_workspace_2', 'workspace_2');
+		INSERT INTO subscriptions (workspace_id, plan_id)
+		VALUES ('workspace_1', 'free'), ('workspace_2', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES
+			('workspace_1', 'worker_user_1', 'owner', 'active'),
+			('workspace_2', 'worker_user_2', 'owner', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES
+			('social_workspace_1', 'profile_workspace_1', 'tiktok', 'active'),
+			('social_workspace_2', 'profile_workspace_2', 'tiktok', 'active');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restrictionStore := publishingrestrictions.NewPostgresStore(pool)
+	restriction, err := restrictionStore.RestrictionForPlatform(ctx, "tiktok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restrictionCampaign, err := restrictionStore.CreateCampaign(
+		ctx,
+		restriction,
+		publishingrestrictions.RestrictionNotice,
+		publishingrestrictions.CampaignCopyFor(publishingrestrictions.RestrictionNotice),
+		1,
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restrictionWorkspaceIDs, restrictionOwnerIDs []string
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_workspace_ids, represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE campaign_id=$1
+	`, restrictionCampaign.ID).Scan(&restrictionWorkspaceIDs, &restrictionOwnerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(restrictionWorkspaceIDs, ",") != "workspace_1,workspace_2" ||
+		strings.Join(restrictionOwnerIDs, ",") != "worker_user_1,worker_user_2" {
+		t.Fatalf("restriction owner snapshot workspaces=%v owners=%v", restrictionWorkspaceIDs, restrictionOwnerIDs)
+	}
+
+	emailStore := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := emailStore.ClaimPublishingRestrictionEmailRecipients(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("restriction claim = %+v, want one normalized-email recipient", work)
+	}
+	if strings.Join(work[0].RepresentedOwnerUserIDs, ",") != "worker_user_1,worker_user_2" {
+		t.Fatalf("claimed owner IDs = %v", work[0].RepresentedOwnerUserIDs)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_members SET role='editor'
+		WHERE workspace_id='workspace_1' AND user_id='worker_user_1'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := emailStore.PublishingRestrictionEmailRecipientEligible(ctx, work[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("canonical owner losing ownership hid another snapshotted owner with the same email")
+	}
+	if err := emailStore.MarkPublishingRestrictionEmailRecipientSent(ctx, work[0].RecipientID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restrictions SET enabled=FALSE WHERE platform='tiktok'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	restriction, err = restrictionStore.RestrictionForPlatform(ctx, "tiktok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryCampaign, err := restrictionStore.CreateCampaign(
+		ctx,
+		restriction,
+		publishingrestrictions.RecoveryNotice,
+		publishingrestrictions.CampaignCopyFor(publishingrestrictions.RecoveryNotice),
+		1,
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recoveryWork, err := emailStore.ClaimPublishingRestrictionEmailRecipients(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recoveryWork) != 1 || recoveryWork[0].CampaignID != recoveryCampaign.ID {
+		t.Fatalf("recovery claim = %+v, want one recovery recipient", recoveryWork)
+	}
+	if strings.Join(recoveryWork[0].RepresentedWorkspaceIDs, ",") != "workspace_2" ||
+		strings.Join(recoveryWork[0].RepresentedOwnerUserIDs, ",") != "worker_user_2" {
+		t.Fatalf(
+			"recovery snapshot workspaces=%v owners=%v, want surviving owner pair",
+			recoveryWork[0].RepresentedWorkspaceIDs,
+			recoveryWork[0].RepresentedOwnerUserIDs,
+		)
+	}
+	eligible, err = emailStore.PublishingRestrictionEmailRecipientEligible(ctx, recoveryWork[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("recovery recipient became ineligible despite surviving same-email owner pair")
+	}
+}
+
 func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t *testing.T) {
 	pool := openPublishingRestrictionWorkerIntegrationPool(t)
 	setupPublishingRestrictionWorkerSchema(t, pool)
@@ -284,11 +414,13 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 		WHERE id='worker_campaign';
 		INSERT INTO platform_publishing_restriction_email_recipients (
 			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
-			first_name_snapshot, represented_workspace_ids, idempotency_key, status, sent_at
+			first_name_snapshot, represented_workspace_ids, represented_owner_user_ids,
+			idempotency_key, status, sent_at
 		) VALUES (
 			'recipient_prior_identity', 'worker_campaign', 'worker_user_1',
 			'old-owner@example.com', 'old-owner@example.com', 'Old',
-			ARRAY['workspace_1']::TEXT[], 'prior-key', 'sent', NOW()
+			ARRAY['workspace_1']::TEXT[], ARRAY['worker_user_1']::TEXT[],
+			'prior-key', 'sent', NOW()
 		);
 	`)
 	if err != nil {
@@ -319,6 +451,7 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 		CanonicalUserID:         "worker_user_1",
 		NormalizedEmail:         "new-owner@example.com",
 		RepresentedWorkspaceIDs: []string{"workspace_1"},
+		RepresentedOwnerUserIDs: []string{"worker_user_1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -345,6 +478,7 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 		CanonicalUserID:         "worker_user_1",
 		NormalizedEmail:         "old-owner@example.com",
 		RepresentedWorkspaceIDs: []string{"workspace_1"},
+		RepresentedOwnerUserIDs: []string{"worker_user_1"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -354,7 +488,7 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 	}
 }
 
-func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity(t *testing.T) {
+func TestPublishingRestrictionBulkRetryExcludesUnknownOutcomeRecipient(t *testing.T) {
 	pool := openPublishingRestrictionWorkerIntegrationPool(t)
 	setupPublishingRestrictionWorkerSchema(t, pool)
 	ctx := context.Background()
@@ -365,7 +499,8 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 		WHERE platform='tiktok';
 		UPDATE users SET email='owner@example.com' WHERE id='worker_user_1';
 		UPDATE platform_publishing_restriction_email_recipients
-		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
+		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[],
+		    represented_owner_user_ids=ARRAY['worker_user_1']::TEXT[]
 		WHERE id='recipient_manual_retry';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
 		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
@@ -388,7 +523,6 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 		t.Fatalf("first claim = %+v, want one recipient", firstClaim)
 	}
 	first := firstClaim[0]
-	firstAuditKey := fmt.Sprintf("%s:g%d:a%d", first.IdempotencyKey, first.AttemptGeneration, first.AttemptCount)
 	if first.AttemptGeneration != 1 || first.AttemptCount != 1 {
 		t.Fatalf("first attempt generation/count = %d/%d, want 1/1", first.AttemptGeneration, first.AttemptCount)
 	}
@@ -434,21 +568,8 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 	}
 
 	campaignStore := publishingrestrictions.NewPostgresStore(pool)
-	if _, err := campaignStore.RetryFailedCampaign(ctx, "tiktok", first.CampaignID); err != nil {
-		t.Fatalf("retry failed campaign: %v", err)
-	}
-	_, err = pool.Exec(ctx, `
-		INSERT INTO email_send_attempts (
-			id, event_key, recipient_email, provider, idempotency_key,
-			delivery_class, status
-		) VALUES (
-			'attempt_1', 'email.publishing_restriction.restriction_notice.v1',
-			'owner@example.com', 'loops', 'fixture-audit-attempt-key',
-			'service_alert', 'pending'
-		)
-	`)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := campaignStore.RetryFailedCampaign(ctx, "tiktok", first.CampaignID); !errors.Is(err, publishingrestrictions.ErrCampaignPrecondition) {
+		t.Fatalf("retry failed campaign error = %v, want ErrCampaignPrecondition", err)
 	}
 	sender := &captureRestrictionCampaignSender{}
 	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", publishingrestrictions.CampaignDeliveryReadiness{
@@ -457,42 +578,157 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 	if err := worker.ProcessBatch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(sender.emails) != 1 {
-		var diagnosticRecipientStatus, diagnosticRecipientError, diagnosticCampaignStatus string
-		if diagnosticErr := pool.QueryRow(ctx, `
-			SELECT recipient.status, COALESCE(recipient.last_error, ''), campaign.status
-			FROM platform_publishing_restriction_email_recipients recipient
-			JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
-			WHERE recipient.id='recipient_manual_retry'
-		`).Scan(&diagnosticRecipientStatus, &diagnosticRecipientError, &diagnosticCampaignStatus); diagnosticErr != nil {
-			t.Fatalf("manual retry sender attempts = %d; diagnostics failed: %v", len(sender.emails), diagnosticErr)
-		}
-		t.Fatalf(
-			"manual retry sender attempts = %d, want exactly 1; recipient status=%q error=%q campaign status=%q",
-			len(sender.emails), diagnosticRecipientStatus, diagnosticRecipientError, diagnosticCampaignStatus,
-		)
-	}
-	retried := sender.emails[0]
-	if retried.IdempotencyKey != first.IdempotencyKey {
-		t.Fatalf("provider idempotency key changed from %q to %q", first.IdempotencyKey, retried.IdempotencyKey)
-	}
-	if retried.Audit.AttemptIdempotencyKey == firstAuditKey {
-		t.Fatalf("audit attempt key did not change from %q", firstAuditKey)
-	}
-	wantRetryAuditKey := first.IdempotencyKey + ":g2:a1"
-	if retried.Audit.AttemptIdempotencyKey != wantRetryAuditKey {
-		t.Fatalf("manual retry audit key = %q, want %q", retried.Audit.AttemptIdempotencyKey, wantRetryAuditKey)
+	if len(sender.emails) != 0 {
+		t.Fatalf("bulk retry sent %d unknown-outcome recipients, want 0", len(sender.emails))
 	}
 	var retriedGeneration, retriedAttemptCount int
+	var retriedStatus string
+	var retriedRetryable bool
 	if err := pool.QueryRow(ctx, `
-		SELECT attempt_generation, attempt_count
+		SELECT status, retryable, attempt_generation, attempt_count
 		FROM platform_publishing_restriction_email_recipients
 		WHERE id='recipient_manual_retry'
-	`).Scan(&retriedGeneration, &retriedAttemptCount); err != nil {
+	`).Scan(&retriedStatus, &retriedRetryable, &retriedGeneration, &retriedAttemptCount); err != nil {
 		t.Fatal(err)
 	}
-	if retriedGeneration != 2 || retriedAttemptCount != 1 {
-		t.Fatalf("manual retry generation/count = %d/%d, want 2/1", retriedGeneration, retriedAttemptCount)
+	if retriedStatus != "failed" || retriedRetryable || retriedGeneration != 1 || retriedAttemptCount != 1 {
+		t.Fatalf(
+			"unknown recipient status=%q retryable=%v generation/count=%d/%d, want failed/false/1/1",
+			retriedStatus, retriedRetryable, retriedGeneration, retriedAttemptCount,
+		)
+	}
+}
+
+func TestPublishingRestrictionBulkRetryIncludesDefinitiveAndPreSendFailuresOnly(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO users (id) VALUES ('worker_user_3')`); err != nil {
+		t.Fatal(err)
+	}
+	insertPendingRestrictionRecipient(t, pool, "recipient_unknown_bulk", "worker_user_1", "unknown@example.com", time.Now())
+	insertPendingRestrictionRecipient(t, pool, "recipient_definitive_bulk", "worker_user_2", "definitive@example.com", time.Now())
+	insertPendingRestrictionRecipient(t, pool, "recipient_pre_send_bulk", "worker_user_3", "pre-send@example.com", time.Now())
+	_, err := pool.Exec(ctx, `
+		INSERT INTO email_send_attempts (
+			id, event_key, recipient_email, provider, idempotency_key,
+			delivery_class, status, last_error
+		) VALUES
+			('attempt_unknown_bulk', 'email.publishing_restriction.restriction_notice.v1',
+			 'unknown@example.com', 'loops', 'attempt-unknown-bulk', 'service_alert', 'failed',
+			 '{"outcome_class":"provider_unknown","error":"response lost"}'),
+			('attempt_definitive_bulk', 'email.publishing_restriction.restriction_notice.v1',
+			 'definitive@example.com', 'loops', 'attempt-definitive-bulk', 'service_alert', 'failed',
+			 '{"outcome_class":"provider_definitive_failure","error":"503"}');
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', retryable=FALSE, attempt_count=3,
+		    last_error='provider classification recorded in audit',
+		    email_send_attempt_id='attempt_unknown_bulk'
+		WHERE id='recipient_unknown_bulk';
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', retryable=FALSE, attempt_count=3,
+		    last_error='{"outcome_class":"provider_definitive_failure","error":"503"}',
+		    email_send_attempt_id='attempt_definitive_bulk'
+		WHERE id='recipient_definitive_bulk';
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', retryable=FALSE, attempt_count=3,
+		    last_error='provider send was not attempted before worker lease expired'
+		WHERE id='recipient_pre_send_bulk';
+		UPDATE platform_publishing_restriction_email_campaigns
+		SET status='completed_with_failures', pending_count=0, failed_count=3, completed_at=NOW()
+		WHERE id='worker_campaign';
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := publishingrestrictions.NewPostgresStore(pool).RetryFailedCampaign(ctx, "tiktok", "worker_campaign"); err != nil {
+		t.Fatal(err)
+	}
+	type recipientState struct {
+		status            string
+		retryable         bool
+		attemptCount      int
+		attemptGeneration int
+	}
+	states := map[string]recipientState{}
+	rows, err := pool.Query(ctx, `
+		SELECT id, status, retryable, attempt_count, attempt_generation
+		FROM platform_publishing_restriction_email_recipients
+		WHERE campaign_id='worker_campaign'
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var state recipientState
+		if err := rows.Scan(&id, &state.status, &state.retryable, &state.attemptCount, &state.attemptGeneration); err != nil {
+			t.Fatal(err)
+		}
+		states[id] = state
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	rows.Close()
+	for _, id := range []string{"recipient_definitive_bulk", "recipient_pre_send_bulk"} {
+		state := states[id]
+		if state.status != "pending" || !state.retryable || state.attemptCount != 0 || state.attemptGeneration != 2 {
+			t.Fatalf("safe retry %s state = %+v, want pending/true/0/2", id, state)
+		}
+	}
+	unknown := states["recipient_unknown_bulk"]
+	if unknown.status != "failed" || unknown.retryable || unknown.attemptCount != 3 || unknown.attemptGeneration != 1 {
+		t.Fatalf("unknown retry state = %+v, want failed/false/3/1", unknown)
+	}
+	var campaignStatus string
+	var pendingCount, failedCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT status, pending_count, failed_count
+		FROM platform_publishing_restriction_email_campaigns WHERE id='worker_campaign'
+	`).Scan(&campaignStatus, &pendingCount, &failedCount); err != nil {
+		t.Fatal(err)
+	}
+	if campaignStatus != "queued" || pendingCount != 2 || failedCount != 1 {
+		t.Fatalf("campaign after bulk retry status=%q pending=%d failed=%d, want queued/2/1", campaignStatus, pendingCount, failedCount)
+	}
+
+	emailStore := NewPostgresPublishingRestrictionEmailStore(pool)
+	claimed, err := emailStore.ClaimPublishingRestrictionEmailRecipients(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 2 {
+		t.Fatalf("safe bulk retry claims = %+v, want two", claimed)
+	}
+	wantProviderKeys := map[string]string{
+		"recipient_definitive_bulk": "worker_cycle:restriction_notice:worker_user_2",
+		"recipient_pre_send_bulk":   "worker_cycle:restriction_notice:worker_user_3",
+	}
+	for _, item := range claimed {
+		if item.IdempotencyKey != wantProviderKeys[item.RecipientID] || item.AttemptGeneration != 2 || item.AttemptCount != 1 {
+			t.Fatalf(
+				"safe retry claim %s provider_key=%q generation/count=%d/%d",
+				item.RecipientID, item.IdempotencyKey, item.AttemptGeneration, item.AttemptCount,
+			)
+		}
+		if err := emailStore.MarkPublishingRestrictionEmailRecipientSent(ctx, item.RecipientID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT status, pending_count, failed_count
+		FROM platform_publishing_restriction_email_campaigns WHERE id='worker_campaign'
+	`).Scan(&campaignStatus, &pendingCount, &failedCount); err != nil {
+		t.Fatal(err)
+	}
+	if campaignStatus != "completed_with_failures" || pendingCount != 0 || failedCount != 1 {
+		t.Fatalf(
+			"campaign after safe retries status=%q pending=%d failed=%d, want completed_with_failures/0/1",
+			campaignStatus, pendingCount, failedCount,
+		)
 	}
 }
 
@@ -531,8 +767,12 @@ func insertPendingRestrictionRecipient(t *testing.T, pool *pgxpool.Pool, id, use
 	_, err := pool.Exec(context.Background(), `
 		INSERT INTO platform_publishing_restriction_email_recipients (
 			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, represented_owner_user_ids,
 			status, next_attempt_at, idempotency_key, created_at, updated_at
-		) VALUES ($1, 'worker_campaign', $2, $3, $3, 'pending', NOW(), $4, $5, $5)
+		) VALUES (
+			$1, 'worker_campaign', $2, $3, $3, ARRAY[]::TEXT[], ARRAY[]::TEXT[],
+			'pending', NOW(), $4, $5, $5
+		)
 	`, id, userID, email, "worker_cycle:restriction_notice:"+userID, createdAt)
 	if err != nil {
 		t.Fatal(err)
@@ -657,11 +897,12 @@ func TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable(t
 		);
 		INSERT INTO platform_publishing_restriction_email_recipients (
 			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, represented_owner_user_ids,
 			status, attempt_count, next_attempt_at, claimed_at, idempotency_key,
 			email_send_attempt_id, retryable, created_at, updated_at
 		) VALUES (
 			'recipient_definitive_failure', 'worker_campaign', 'worker_user_1',
-			'definitive@example.com', 'definitive@example.com', 'sending', 1,
+			'definitive@example.com', 'definitive@example.com', ARRAY[]::TEXT[], ARRAY[]::TEXT[], 'sending', 1,
 			NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '20 minutes',
 			'worker_cycle:restriction_notice:worker_user_1', 'attempt_definitive_failure',
 			FALSE, NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '20 minutes'
@@ -748,7 +989,8 @@ func TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicate
 		WHERE platform='tiktok';
 		UPDATE users SET email='owner@example.com' WHERE id='worker_user_1';
 		UPDATE platform_publishing_restriction_email_recipients
-		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
+		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[],
+		    represented_owner_user_ids=ARRAY['worker_user_1']::TEXT[]
 		WHERE id='recipient_audit_reconcile';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
 		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
@@ -852,7 +1094,8 @@ func TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWri
 		WHERE platform='tiktok';
 		UPDATE users SET email='owner@example.com' WHERE id='worker_user_1';
 		UPDATE platform_publishing_restriction_email_recipients
-		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
+		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[],
+		    represented_owner_user_ids=ARRAY['worker_user_1']::TEXT[]
 		WHERE id='recipient_definitive_reconcile';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
 		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
@@ -1157,11 +1400,12 @@ func TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed(t *test
 
 		INSERT INTO platform_publishing_restriction_email_recipients (
 			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, represented_owner_user_ids,
 			status, attempt_count, next_attempt_at, claimed_at, idempotency_key,
 			email_send_attempt_id, retryable, created_at, updated_at
 		) VALUES (
 			'recipient_stale', 'worker_campaign', 'worker_user_1',
-			'stale@example.com', 'stale@example.com', 'sending', 1,
+			'stale@example.com', 'stale@example.com', ARRAY[]::TEXT[], ARRAY[]::TEXT[], 'sending', 1,
 			NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '20 minutes',
 			'worker_cycle:restriction_notice:worker_user_1', 'attempt_stale',
 			FALSE, NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '20 minutes'
@@ -1222,7 +1466,8 @@ func TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAtte
 		WHERE platform='tiktok';
 		UPDATE users SET email='owner@example.com' WHERE id='worker_user_1';
 		UPDATE platform_publishing_restriction_email_recipients
-		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
+		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[],
+		    represented_owner_user_ids=ARRAY['worker_user_1']::TEXT[]
 		WHERE id='recipient_link_lost';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
 		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
@@ -1366,10 +1611,12 @@ func TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome(t *
 	ctx := context.Background()
 	_, err := pool.Exec(ctx, `
 		INSERT INTO platform_publishing_restriction_email_recipients (
-			id,campaign_id,canonical_user_id,recipient_email,normalized_email,status,attempt_count,
+			id,campaign_id,canonical_user_id,recipient_email,normalized_email,
+			represented_workspace_ids,represented_owner_user_ids,status,attempt_count,
 			next_attempt_at,claimed_at,idempotency_key,retryable,created_at,updated_at
 		) VALUES (
-			'recipient_pre_send','worker_campaign','worker_user_1','pre@example.com','pre@example.com','sending',1,
+			'recipient_pre_send','worker_campaign','worker_user_1','pre@example.com','pre@example.com',
+			ARRAY[]::TEXT[],ARRAY[]::TEXT[],'sending',1,
 			NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes','worker_cycle:restriction_notice:worker_user_1',
 			FALSE,NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes'
 		);
@@ -1403,10 +1650,12 @@ func TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation(
 		INSERT INTO email_send_attempts (id,event_key,recipient_email,provider,idempotency_key,delivery_class,status)
 		VALUES ('attempt_race','email.publishing_restriction.restriction_notice.v1','race@example.com','loops','attempt-race','service_alert','pending');
 		INSERT INTO platform_publishing_restriction_email_recipients (
-			id,campaign_id,canonical_user_id,recipient_email,normalized_email,status,attempt_count,
+			id,campaign_id,canonical_user_id,recipient_email,normalized_email,
+			represented_workspace_ids,represented_owner_user_ids,status,attempt_count,
 			next_attempt_at,claimed_at,idempotency_key,email_send_attempt_id,retryable,created_at,updated_at
 		) VALUES (
-			'recipient_race','worker_campaign','worker_user_1','race@example.com','race@example.com','sending',1,
+			'recipient_race','worker_campaign','worker_user_1','race@example.com','race@example.com',
+			ARRAY[]::TEXT[],ARRAY[]::TEXT[],'sending',1,
 			NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes','worker_cycle:restriction_notice:worker_user_1',
 			'attempt_race',FALSE,NOW()-INTERVAL '20 minutes',NOW()-INTERVAL '20 minutes'
 		);
