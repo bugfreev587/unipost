@@ -532,14 +532,21 @@ WITH locked_policy AS MATERIALIZED (
           FROM UNNEST(restriction.restricted_plan_ids) AS plan_id
         )
     )
-), locked_media AS MATERIALIZED (
-  UPDATE media
-  SET usage_version = usage_version + 1
-  WHERE workspace_id = $3
-    AND id = ANY($9::text[])
-    AND status = 'uploaded'
+), ordered_media AS MATERIALIZED (
+  SELECT parent.id
+  FROM media parent
+  WHERE parent.workspace_id = $3
+    AND parent.id = ANY($9::text[])
+    AND parent.status = 'uploaded'
     AND EXISTS (SELECT 1 FROM policy_admission)
-  RETURNING id
+  ORDER BY parent.id
+  FOR UPDATE OF parent
+), locked_media AS MATERIALIZED (
+  UPDATE media parent
+  SET usage_version = parent.usage_version + 1
+  FROM ordered_media
+  WHERE parent.id = ordered_media.id
+  RETURNING parent.id
 ), all_media_available AS MATERIALIZED (
   SELECT COUNT(DISTINCT id)::int = CARDINALITY($9::text[]) AS available
   FROM locked_media
@@ -757,15 +764,72 @@ WITH transitioned_job AS (
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
   RETURNING transitioned_job.id AS job_id
-), locked_media AS MATERIALIZED (
-  UPDATE media AS parent
-  SET usage_version = usage_version + 1
+), current_result_statuses AS MATERIALIZED (
+  SELECT
+    result.id,
+    CASE
+      WHEN result.id = transitioned_job.social_post_result_id THEN 'failed'
+      ELSE result.status
+    END AS status
   FROM transitioned_job
   JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  JOIN social_post_results result ON result.post_id = transitioned_job.post_id
+), derived_post_status AS MATERIALIZED (
+  SELECT
+    transitioned_job.post_id,
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM post_delivery_jobs active_job
+        WHERE active_job.post_id = transitioned_job.post_id
+          AND active_job.id <> transitioned_job.id
+          AND active_job.state IN ('pending', 'running', 'retrying')
+      ) OR EXISTS (
+        SELECT 1
+        FROM current_result_statuses result_status
+        WHERE result_status.status NOT IN ('published', 'failed')
+      ) THEN 'publishing'
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM current_result_statuses result_status
+        WHERE result_status.status <> 'published'
+      ) THEN 'published'
+      WHEN EXISTS (
+        SELECT 1
+        FROM current_result_statuses result_status
+        WHERE result_status.status = 'published'
+      ) THEN 'partial'
+      ELSE 'failed'
+    END AS status
+  FROM transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+), deleted_obsolete_usage AS (
+  DELETE FROM media_post_usages usage
+  USING transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  WHERE usage.post_id = transitioned_job.post_id
+    AND NOT (usage.media_id = ANY($10::text[]))
+  RETURNING usage.id
+), ordered_media AS MATERIALIZED (
+  SELECT
+    parent.id,
+    transitioned_job.workspace_id,
+    transitioned_job.post_id,
+    derived_post_status.status AS post_status
+  FROM media parent
+  JOIN transitioned_job ON transitioned_job.workspace_id = parent.workspace_id
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  JOIN derived_post_status ON derived_post_status.post_id = transitioned_job.post_id
   WHERE parent.id = ANY($10::text[])
-    AND parent.workspace_id = transitioned_job.workspace_id
     AND parent.status = 'uploaded'
-  RETURNING parent.id, transitioned_job.workspace_id, transitioned_job.post_id
+  ORDER BY parent.id
+  FOR UPDATE OF parent
+), locked_media AS MATERIALIZED (
+  UPDATE media AS parent
+  SET usage_version = parent.usage_version + 1
+  FROM ordered_media
+  WHERE parent.id = ordered_media.id
+  RETURNING parent.id, ordered_media.workspace_id, ordered_media.post_id, ordered_media.post_status
 ), retained_media AS (
   INSERT INTO media_post_usages (
     workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
@@ -774,8 +838,8 @@ WITH transitioned_job AS (
     locked_media.workspace_id,
     locked_media.id,
     locked_media.post_id,
-    $11,
-    $12::timestamptz,
+    locked_media.post_status,
+    $11::timestamptz,
     'publishing_restriction'
   FROM locked_media
   ON CONFLICT (media_id, post_id) DO UPDATE
@@ -789,6 +853,7 @@ SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_po
 FROM transitioned_job
 JOIN updated_result ON updated_result.job_id = transitioned_job.id
 CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
+CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted
 `
 
 type FinalizeRestrictedPostDeliveryJobParams struct {
@@ -802,7 +867,6 @@ type FinalizeRestrictedPostDeliveryJobParams struct {
 	ErrorSource      pgtype.Text        `json:"error_source"`
 	ErrorTemporality pgtype.Text        `json:"error_temporality"`
 	MediaIds         []string           `json:"media_ids"`
-	PostStatus       string             `json:"post_status"`
 	CleanupAfterAt   pgtype.Timestamptz `json:"cleanup_after_at"`
 }
 
@@ -846,7 +910,6 @@ func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg Fin
 		arg.ErrorSource,
 		arg.ErrorTemporality,
 		arg.MediaIds,
-		arg.PostStatus,
 		arg.CleanupAfterAt,
 	)
 	var i FinalizeRestrictedPostDeliveryJobRow

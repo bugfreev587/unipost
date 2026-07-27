@@ -906,7 +906,6 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
 		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
 		MediaIds:         mediaIDs,
-		PostStatus:       post.Status,
 		CleanupAfterAt:   pgtype.Timestamptz{Time: finalizedAt.UTC().Add(60 * 24 * time.Hour), Valid: true},
 	})
 	if err != nil {

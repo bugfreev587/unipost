@@ -965,8 +965,8 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 			f.retentionUpserts = append(f.retentionUpserts, db.UpsertMediaPostUsageParams{
 				MediaID:         mediaID,
 				WorkspaceID:     f.job.WorkspaceID,
-				PostStatus:      args[10].(string),
-				CleanupAfterAt:  args[11].(pgtype.Timestamptz),
+				PostStatus:      "failed",
+				CleanupAfterAt:  args[10].(pgtype.Timestamptz),
 				RetentionReason: "publishing_restriction",
 				PostID:          f.job.PostID,
 			})
@@ -1172,7 +1172,7 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 	wantBefore := time.Now().Add(60*24*time.Hour - time.Minute)
 	wantAfter := time.Now().Add(60*24*time.Hour + time.Minute)
 	for _, upsert := range dbtx.retentionUpserts {
-		if upsert.PostStatus != "publishing" || upsert.RetentionReason != "publishing_restriction" {
+		if upsert.PostStatus != "failed" || upsert.RetentionReason != "publishing_restriction" {
 			t.Fatalf("restricted retention = %+v, want atomic publishing_restriction retention", upsert)
 		}
 		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {

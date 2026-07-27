@@ -127,7 +127,7 @@ WITH snapshot_candidates AS MATERIALIZED (
   JOIN snapshot_candidates snapshot
     ON snapshot.id = m.id
    AND snapshot.usage_version = m.usage_version
-  ORDER BY snapshot.due_at ASC
+  ORDER BY m.id
   FOR UPDATE OF m SKIP LOCKED
 )
 UPDATE media AS m

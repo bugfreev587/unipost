@@ -253,7 +253,7 @@ func TestRetryJobCreationAtomicallyReactivatesMediaUsage(t *testing.T) {
 		"restricted_plan_ids",
 		"LOWER(BTRIM(COALESCE((",
 		"SELECT LOWER(BTRIM(plan_id))",
-		"SET usage_version = usage_version + 1",
+		"SET usage_version = parent.usage_version + 1",
 		"INSERT INTO media_post_usages",
 		"ON CONFLICT (media_id, post_id) DO UPDATE",
 		"retention_reason = 'active_post'",
@@ -262,6 +262,64 @@ func TestRetryJobCreationAtomicallyReactivatesMediaUsage(t *testing.T) {
 		if !strings.Contains(query, fragment) {
 			t.Fatalf("atomic retry/media query missing %q", fragment)
 		}
+	}
+}
+
+func TestMediaLifecycleQueriesUseCanonicalParentLockOrder(t *testing.T) {
+	postDeliverySource, err := os.ReadFile("../db/queries/post_delivery_jobs.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	postDeliveryText := string(postDeliverySource)
+	queryBetween := func(startMarker, endMarker string) string {
+		t.Helper()
+		start := strings.Index(postDeliveryText, startMarker)
+		if start < 0 {
+			t.Fatalf("query marker %q not found", startMarker)
+		}
+		end := strings.Index(postDeliveryText[start:], endMarker)
+		if end < 0 {
+			t.Fatalf("query boundary %q not found", endMarker)
+		}
+		return postDeliveryText[start : start+end]
+	}
+
+	retryQuery := queryBetween(
+		"-- name: CreateRetryPostDeliveryJobWithMediaActivation",
+		"-- name: GetPostDeliveryJobByIDAndWorkspace",
+	)
+	finalizeQuery := queryBetween(
+		"-- name: FinalizeRestrictedPostDeliveryJob",
+		"-- name: CancelPostDeliveryJob",
+	)
+	for name, query := range map[string]string{
+		"retry activation":      retryQuery,
+		"restriction finalizer": finalizeQuery,
+	} {
+		for _, fragment := range []string{
+			"ordered_media AS MATERIALIZED",
+			"ORDER BY parent.id",
+			"FOR UPDATE OF parent",
+		} {
+			if !strings.Contains(query, fragment) {
+				t.Fatalf("%s query missing canonical media lock fragment %q", name, fragment)
+			}
+		}
+	}
+
+	cleanupSource, err := os.ReadFile("../db/queries/media_post_usages.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanupText := string(cleanupSource)
+	cleanupStart := strings.Index(cleanupText, "-- name: ClaimMediaDueForRetentionCleanup")
+	if cleanupStart < 0 {
+		t.Fatal("cleanup query marker not found")
+	}
+	cleanupQuery := cleanupText[cleanupStart:]
+	eligibleStart := strings.Index(cleanupQuery, "eligible AS")
+	if eligibleStart < 0 || !strings.Contains(cleanupQuery[eligibleStart:], "ORDER BY m.id") {
+		t.Fatal("cleanup eligible rows must lock media parents in canonical id order")
 	}
 }
 
