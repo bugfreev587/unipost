@@ -1661,6 +1661,57 @@ interface CreatePostDrawerProps {
   preselectedAccountIds?: string[];
 }
 
+function startPublishingRestrictionsRefresh({
+  getToken,
+  loadRestrictions,
+  commitRestrictions,
+  markLoaded,
+  reportError,
+  addFocusListener,
+  removeFocusListener,
+}: {
+  getToken: () => Promise<string | null>;
+  loadRestrictions: (token: string) => Promise<WorkspacePublishingRestriction[]>;
+  commitRestrictions: (restrictions: WorkspacePublishingRestriction[]) => void;
+  markLoaded: () => void;
+  reportError: (error: unknown) => void;
+  addFocusListener: (listener: () => void) => void;
+  removeFocusListener: (listener: () => void) => void;
+}) {
+  let active = true;
+  let generation = 0;
+
+  const refresh = async () => {
+    const requestGeneration = ++generation;
+    try {
+      const token = await getToken();
+      if (!token) return;
+      const restrictions = await loadRestrictions(token);
+      if (!active || requestGeneration !== generation) return;
+      commitRestrictions(restrictions);
+    } catch (error) {
+      if (!active || requestGeneration !== generation) return;
+      reportError(error);
+    } finally {
+      if (active && requestGeneration === generation) {
+        // A failed advisory projection must not block the drawer forever. The
+        // submit path remains authoritative and renders the structured error.
+        markLoaded();
+      }
+    }
+  };
+
+  const handleFocus = () => void refresh();
+  void refresh();
+  addFocusListener(handleFocus);
+
+  return () => {
+    active = false;
+    generation += 1;
+    removeFocusListener(handleFocus);
+  };
+}
+
 export function CreatePostDrawer({
   open,
   onOpenChange,
@@ -1804,32 +1855,25 @@ export function CreatePostDrawer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, restrictionsLoaded, initialCaption, preselectAllAccounts, preselectedAccountIds, profileAccounts, publishingRestrictions]);
 
-  const refreshPublishingRestrictions = useCallback(async () => {
-    try {
-      const token = await getToken();
-      if (!token) return;
-      const response = await getPublishingRestrictions(token);
-      setPublishingRestrictions(response.data.restrictions || []);
-    } catch (error) {
-      console.error("Failed to refresh publishing restrictions:", error);
-    } finally {
-      // A failed advisory projection must not block the drawer forever. The
-      // submit path remains authoritative and renders the structured error.
-      setRestrictionsLoaded(true);
-    }
-  }, [getToken]);
-
   useEffect(() => {
     if (!open) {
       setRestrictionsLoaded(false);
       return;
     }
     setRestrictionsLoaded(false);
-    void refreshPublishingRestrictions();
-    const handleFocus = () => void refreshPublishingRestrictions();
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, [open, refreshPublishingRestrictions]);
+    return startPublishingRestrictionsRefresh({
+      getToken,
+      loadRestrictions: async (token) => {
+        const response = await getPublishingRestrictions(token);
+        return response.data.restrictions || [];
+      },
+      commitRestrictions: setPublishingRestrictions,
+      markLoaded: () => setRestrictionsLoaded(true),
+      reportError: (error) => console.error("Failed to refresh publishing restrictions:", error),
+      addFocusListener: (listener) => window.addEventListener("focus", listener),
+      removeFocusListener: (listener) => window.removeEventListener("focus", listener),
+    });
+  }, [open, getToken]);
 
   const selectedAccountIdsForRestriction = form.selectedAccountIds;
   const replaceSelectedAccountsForRestriction = form.replaceSelectedAccounts;
