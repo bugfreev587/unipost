@@ -219,6 +219,25 @@ func TestPublishDraftPassesAdmissionPolicySnapshotToPersistence(t *testing.T) {
 	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
 }
 
+func TestPublishDraftCountsOnlyAllowedTargetsAtQuotaBoundary(t *testing.T) {
+	h, dbtx, evaluator, _, _ := newPolicySnapshotHarness(t, "draft")
+	dbtx.quotaEnabled = true
+	dbtx.quotaUsage = 99
+	dbtx.quotaLimit = 100
+	h.quota = quota.NewChecker(h.queries)
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/post_1/publish", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withChiParam(req, "id", "post_1")
+	rr := httptest.NewRecorder()
+
+	h.PublishDraft(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("PublishDraft status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
 func newPolicySnapshotHarness(t *testing.T, status string) (*SocialPostHandler, *policySnapshotDB, *fakePostRestrictionEvaluator, parsedRequest, map[string]platform.ValidateAccount) {
 	t.Helper()
 	posts := []platform.PlatformPostInput{
@@ -295,6 +314,9 @@ type policySnapshotDB struct {
 	failureDetails   []db.UpdateSocialPostResultFailureDetailsParams
 	retentionReasons []string
 	updatedStatus    string
+	quotaEnabled     bool
+	quotaUsage       int32
+	quotaLimit       int32
 }
 
 func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
@@ -413,10 +435,32 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		}
 		f.failures = append(f.failures, failure)
 		return policySnapshotPostFailureRow(failure)
-	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"),
-		strings.Contains(query, "-- name: GetPlan"),
-		strings.Contains(query, "-- name: GetUsage"):
-		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		if !f.quotaEnabled {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return scanRow{values: []any{
+			"sub_1", "free", pgtype.Text{}, pgtype.Text{}, "active",
+			pgtype.Timestamptz{}, pgtype.Timestamptz{}, pgtype.Bool{},
+			pgtype.Timestamptz{}, pgtype.Timestamptz{}, false, "ws_1",
+		}}
+	case strings.Contains(query, "-- name: GetPlan"):
+		if !f.quotaEnabled {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return scanRow{values: []any{
+			"free", "Free", int32(0), f.quotaLimit, pgtype.Text{},
+			pgtype.Timestamptz{}, false, false, false, false,
+			pgtype.Int4{}, pgtype.Int4{},
+		}}
+	case strings.Contains(query, "-- name: GetUsage"):
+		if !f.quotaEnabled {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return scanRow{values: []any{
+			"usage_1", args[1].(string), f.quotaUsage,
+			pgtype.Timestamptz{}, pgtype.Timestamptz{}, "ws_1",
+		}}
 	case strings.Contains(query, "-- name: CountScheduledQuotaUnitsByWorkspaceAndPeriod"):
 		return scanRow{values: []any{int32(0)}}
 	default:

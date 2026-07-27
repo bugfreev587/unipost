@@ -223,7 +223,8 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		writePublishingRestrictionError(w, decision)
 		return
 	}
-	quotaUnits := countPublishQuotaUnits(posts, accountMap)
+	allowedTargets := allowedPublishingTargets(posts, blockedTargets)
+	quotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
 	if status, blocked := h.checkFreePlanPostQuota(r.Context(), workspaceID, quotaUnits); blocked {
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 			Blocked:        true,
