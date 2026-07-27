@@ -30,7 +30,9 @@ jobs:
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (startsWith(github.event.pull_request.head.ref, 'dev-') ||
-      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+      startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -71,6 +73,13 @@ jobs:
           test -n "$RAILWAY_API_TOKEN"
           test "${#HEAD_SHA}" -eq 40
 
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: |
+          set -euo pipefail
+          echo "dashboard-dependencies" > ../artifacts/preview/current-stage
+          npm ci 2>&1 | tee ../artifacts/preview/npm-ci.log
+
       - name: Validate release contracts
         run: |
           set -euo pipefail
@@ -91,13 +100,6 @@ jobs:
             --output "$GITHUB_OUTPUT" \
             --manifest artifacts/preview/railway.json \
             2>&1 | tee artifacts/preview/railway-wait.log
-
-      - name: Install dashboard dependencies
-        working-directory: dashboard
-        run: |
-          set -euo pipefail
-          echo "dashboard-dependencies" > ../artifacts/preview/current-stage
-          npm ci 2>&1 | tee ../artifacts/preview/npm-ci.log
 
       - name: Pull Vercel Preview configuration
         run: |
@@ -266,7 +268,9 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (startsWith(github.event.pull_request.head.ref, 'dev-') ||
-      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+      startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

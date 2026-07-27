@@ -141,8 +141,42 @@ WHERE candidate.id = locked_candidate.id
   );
 
 -- name: HardDeleteMedia :exec
-DELETE FROM media
-WHERE id = $1;
+WITH restriction_retention AS MATERIALIZED (
+  SELECT usage.post_id, MAX(usage.cleanup_after_at)::timestamptz AS retained_until
+  FROM media_post_usages usage
+  WHERE usage.media_id = sqlc.arg(id)
+    AND usage.retention_reason = 'publishing_restriction'
+    AND usage.cleanup_after_at IS NOT NULL
+  GROUP BY usage.post_id
+), preserved_restriction_retention AS (
+  UPDATE social_posts post
+  SET metadata = CASE
+    WHEN jsonb_typeof(post.metadata) = 'object' THEN post.metadata
+    ELSE '{}'::jsonb
+  END || jsonb_build_object(
+    'publishing_restriction_media_retained_until',
+    GREATEST(
+      restriction_retention.retained_until,
+      CASE
+        WHEN jsonb_typeof(post.metadata->'publishing_restriction_media_retained_until') = 'string'
+          AND pg_input_is_valid(
+            post.metadata->>'publishing_restriction_media_retained_until',
+            'timestamptz'
+          ) THEN CASE
+            WHEN isfinite(
+              (post.metadata->>'publishing_restriction_media_retained_until')::timestamptz
+            ) THEN (post.metadata->>'publishing_restriction_media_retained_until')::timestamptz
+          END
+      END
+    )
+  )
+  FROM restriction_retention
+  WHERE post.id = restriction_retention.post_id
+  RETURNING post.id
+)
+DELETE FROM media target
+USING (SELECT COUNT(*) FROM preserved_restriction_retention) preservation
+WHERE target.id = sqlc.arg(id);
 
 -- name: ClaimAbandonedMedia :many
 WITH eligible AS (

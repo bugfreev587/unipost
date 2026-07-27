@@ -15,9 +15,9 @@ export function createPreviewManifest({ sha, branch, apiURL }) {
   if (!/^[a-f0-9]{40}$/i.test(sha ?? "")) {
     throw new Error("Preview manifest requires a full 40-character commit SHA");
   }
-  if (!/^(?:dev-|hotfix-)[a-z0-9][a-z0-9-]*$/i.test(branch ?? "")) {
+  if (!/^(?:(?:dev-|hotfix-)[a-z0-9][a-z0-9-]*|codex\/(?:staging-|pr270-)[a-z0-9][a-z0-9-]*)$/i.test(branch ?? "")) {
     throw new Error(
-      "Preview manifest branch must use the dev-<task-slug> or hotfix-<task-slug> form",
+      "Preview manifest branch must use the dev-<task-slug>, hotfix-<task-slug>, codex/staging-<task-slug>, or codex/pr270-<task-slug> form",
     );
   }
 

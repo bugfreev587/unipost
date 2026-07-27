@@ -7,6 +7,32 @@ INSERT INTO social_post_results (
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 RETURNING *;
 
+-- name: UpdateProcessingSocialPostResultAfterProviderPoll :one
+-- Provider poll transitions are the sole legal path from an accepted async
+-- processing result to a definitive terminal state. Match both the expected
+-- status and provider object id so a late poll cannot overwrite a newer
+-- published result or a replacement provider attempt.
+UPDATE social_post_results
+SET
+  status = sqlc.arg('status'),
+  external_id = sqlc.arg('external_id'),
+  error_message = sqlc.arg('error_message'),
+  published_at = sqlc.arg('published_at'),
+  url = sqlc.arg('url'),
+  debug_curl = NULL,
+  error_code = NULL,
+  failure_stage = NULL,
+  platform_error_code = NULL,
+  is_retriable = NULL,
+  next_action = NULL,
+  error_source = NULL,
+  error_temporality = NULL,
+  provider_error = NULL
+WHERE id = sqlc.arg('id')
+  AND status = 'processing'
+  AND external_id IS NOT DISTINCT FROM sqlc.arg('expected_external_id')::text
+RETURNING *;
+
 -- name: ListSocialPostResultsByPost :many
 SELECT * FROM social_post_results WHERE post_id = $1;
 
@@ -17,12 +43,19 @@ WHERE post_id = ANY($1::text[]);
 -- name: GetSocialPostResultByIDAndPost :one
 SELECT * FROM social_post_results WHERE id = $1 AND post_id = $2;
 
--- name: SetSocialPostResultPublishToken :exec
+-- name: SetSocialPostResultPublishToken :execrows
 -- Persist the platform intermediate publish token (IG creation_id /
 -- TikTok publish_id) so a retry can resume instead of re-uploading.
-UPDATE social_post_results
+UPDATE social_post_results AS result
 SET publish_token = sqlc.arg('publish_token')
-WHERE id = sqlc.arg('id');
+FROM post_delivery_jobs AS job
+WHERE result.id = sqlc.arg('id')
+  AND result.status <> 'published'
+  AND job.id = sqlc.arg('job_id')
+  AND job.social_post_result_id = result.id
+  AND job.state IN ('running', 'retrying')
+  AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+  AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz;
 
 -- name: UpdateSocialPostResultAfterRetry :one
 -- Overwrites the diagnostic columns on a failed result row after a
@@ -51,6 +84,7 @@ SET
   error_temporality = NULL,
   provider_error = NULL
 WHERE id = $1
+  AND status <> 'published'
 RETURNING *;
 
 -- name: UpdateSocialPostResultFailureDetails :exec
@@ -63,8 +97,13 @@ SET
   next_action = $6,
   error_source = $7,
   error_temporality = $8,
-  provider_error = $9
-WHERE id = $1;
+  provider_error = $9,
+  publish_token = CASE
+    WHEN $2 = 'plan_platform_publishing_restricted' THEN NULL
+    ELSE publish_token
+  END
+WHERE id = $1
+  AND status <> 'published';
 
 -- name: DeleteSocialPostResultsByPost :exec
 DELETE FROM social_post_results WHERE post_id = $1;

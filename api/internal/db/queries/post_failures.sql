@@ -13,9 +13,10 @@ INSERT INTO post_failures (
   is_retriable,
   error_source,
   error_temporality,
-  provider_error
+  provider_error,
+  restriction_cycle_id
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 RETURNING *;
 
 -- name: ListPostFailuresByPost :many

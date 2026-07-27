@@ -44,7 +44,7 @@ WHERE id = $1;
 SELECT * FROM social_posts
 WHERE workspace_id = $1
   AND idempotency_key = $2
-  AND status = 'scheduled'
+  AND status IN ('scheduled', 'quota_hold')
   AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT 1;
@@ -53,7 +53,7 @@ LIMIT 1;
 UPDATE social_posts
 SET idempotency_key = NULL
 WHERE idempotency_key IS NOT NULL
-  AND status <> 'scheduled'
+  AND status NOT IN ('scheduled', 'quota_hold')
   AND created_at <= NOW() - INTERVAL '24 hours';
 
 -- name: GetSocialPostByIDAndWorkspace :one
@@ -68,6 +68,14 @@ WHERE id = $1
 -- a session). Do NOT use from any auth-required handler — those
 -- should always join via workspace_id.
 SELECT * FROM social_posts
+WHERE id = $1
+  AND deleted_at IS NULL;
+
+-- name: GetSocialPostProjectionVersion :one
+-- xmin changes with every durable parent-row update. Terminal event delivery
+-- uses it together with status under the post advisory lock so a retry that
+-- moved the projection away (and even back again) invalidates the old event.
+SELECT xmin::text FROM social_posts
 WHERE id = $1
   AND deleted_at IS NULL;
 

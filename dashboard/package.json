@@ -13,6 +13,7 @@
     "test:team-plan-acceptance": "node --test tests/team-plan-acceptance.test.mjs",
     "test:dashboard-synthetic-auth": "node --test tests/dashboard-synthetic-auth.test.mjs",
     "test:hosted-connect": "node --test tests/hosted-connect-errors.test.mjs tests/hosted-connect-logs.test.mjs",
+    "test:publishing-restrictions": "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts",
     "acceptance:team-plan": "node scripts/team-plan-acceptance.mjs",
     "test:regression:dashboard": "playwright test --config=playwright.regression.config.ts",
     "test:regression:dashboard:authenticated": "playwright test --config=playwright.authenticated.config.ts",
@@ -44,6 +45,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.2",
+    "js-yaml": "4.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

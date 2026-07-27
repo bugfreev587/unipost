@@ -45,8 +45,10 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
+	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
 	appredis "github.com/xiaoboyu/unipost-api/internal/redis"
 	"github.com/xiaoboyu/unipost-api/internal/runtimeenv"
@@ -80,6 +82,19 @@ func main() {
 
 	logger := slog.New(logHandler)
 	slog.SetDefault(logger)
+	if handled, commandErr := handleMigrationCommand(
+		context.Background(),
+		os.Args,
+		os.Getenv,
+		func(token string) railwaybackup.Client { return railwaybackup.New(token) },
+		db.RunMigrationsWithBackupGate,
+	); handled {
+		if commandErr != nil {
+			slog.Error("migration command failed", "error", commandErr)
+			os.Exit(1)
+		}
+		return
+	}
 	processMode, err := normalizeProcessMode(os.Getenv("UNIPOST_PROCESS"))
 	if err != nil {
 		slog.Error("invalid process mode", "error", err)
@@ -197,9 +212,10 @@ func main() {
 	}
 	slog.Info("connected to database")
 
-	// Run database migrations
-	if err := db.RunMigrations(databaseURL); err != nil {
-		slog.Error("failed to run migrations", "error", err)
+	// Railway applies migrations in the pre-deploy container. Runtime
+	// processes only verify that they are not starting against stale schema.
+	if err := db.RequireCurrentSchema(ctx, databaseURL); err != nil {
+		slog.Error("database schema is not current", "error", err)
 		os.Exit(1)
 	}
 
@@ -208,6 +224,10 @@ func main() {
 	featureFlagStore := featureflags.NewPostgresStore(pool)
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
+	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
+	publishingRestrictionCampaignPreviewSecret := strings.TrimSpace(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
+	publishingRestrictionNoticeTemplateID := strings.TrimSpace(os.Getenv("LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID"))
+	publishingRecoveryNoticeTemplateID := strings.TrimSpace(os.Getenv("LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID"))
 	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
@@ -367,7 +387,8 @@ func main() {
 		EmailPolicy:     emailPolicyService,
 	}
 	loopsSyncer = loops.NewSyncer(nil, loopsOptions)
-	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
+	if key := os.Getenv("LOOPS_API_KEY"); strings.TrimSpace(key) != "" {
+		key = strings.TrimSpace(key)
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
@@ -377,6 +398,30 @@ func main() {
 		slog.Info("loops: lifecycle sync configured")
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
+	}
+	publishingRestrictionCampaignReadiness := publishingrestrictions.CampaignDeliveryReadiness{
+		PreviewSecret:       publishingRestrictionCampaignPreviewSecret != "",
+		AuditedSender:       auditedLoopsClient != nil,
+		RestrictionTemplate: publishingRestrictionNoticeTemplateID != "",
+		RecoveryTemplate:    publishingRecoveryNoticeTemplateID != "",
+	}
+	warnMissingPublishingRestrictionCampaignConfig := func() {
+		warnMissingPublishingRestrictionCampaignConfigFor(publishingRestrictionCampaignReadiness)
+	}
+	warnMissingPublishingRestrictionCampaignConfig()
+	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore).
+		SetCampaignPreviewSecret(publishingRestrictionCampaignPreviewSecret).
+		SetCampaignDeliveryReadiness(publishingRestrictionCampaignReadiness)
+	publishingRestrictionHandler := handler.NewPublishingRestrictionsHandler(publishingRestrictionService)
+	publishingRestrictionEmailWorker := worker.NewPublishingRestrictionEmailWorker(
+		worker.NewPostgresPublishingRestrictionEmailStore(pool),
+		auditedLoopsClient,
+		publishingRestrictionNoticeTemplateID,
+		publishingRecoveryNoticeTemplateID,
+		publishingRestrictionCampaignReadiness,
+	)
+	if processMode == processModeAPI {
+		go publishingRestrictionEmailWorker.Start(workerCtx)
 	}
 	var freePlanQuotaEmailService *quotaemail.Service
 	if loopsClient != nil && os.Getenv("LOOPS_FREE_PLAN_QUOTA_REMINDER_TRANSACTIONAL_ID") != "" {
@@ -427,6 +472,15 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
+	terminalPostEventWorker := worker.NewTerminalPostEventOutboxWorker(
+		queries,
+		webhookWorker,
+		notificationDispatcher,
+		loopsNotificationBus,
+	)
+	if processMode == processModeAPI {
+		go terminalPostEventWorker.Start(workerCtx)
+	}
 	baseXCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
 	xCreditsService := xcredits.NewRolloutService(baseXCreditsService, featureFlagEvaluator)
@@ -534,6 +588,7 @@ func main() {
 	}
 	paidQuotaHoldReconciler := paidquota.NewPostgresHoldReconciler(pool)
 	socialPostHandler := handler.NewSocialPostHandler(queries, encryptor, quotaChecker, eventBus, storageClient, limiter, integrationLogger).
+		SetPublishingRestrictions(publishingRestrictionService).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL")).
 		SetLoopsSyncer(loopsSyncer).
 		SetQuotaEmailService(freePlanQuotaEmailService).
@@ -610,7 +665,7 @@ func main() {
 	// post in the dashboard. This worker picks up the slack so the
 	// flip to published/failed happens on its own.
 	if processMode == processModeAPI {
-		facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor)
+		facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor, eventBus)
 		go facebookVideoStatusWorker.Start(workerCtx)
 
 		inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)
@@ -950,6 +1005,18 @@ func main() {
 			Get("/v1/admin/feature-flags", featureFlagsHandler.ListAdmin)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Feature flags are restricted to super admins")).
 			Patch("/v1/admin/feature-flags/{key}", featureFlagsHandler.UpdateAdmin)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Get("/v1/admin/publishing-restrictions", publishingRestrictionHandler.AdminList)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Patch("/v1/admin/publishing-restrictions/{platform}", publishingRestrictionHandler.AdminSet)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Post("/v1/admin/publishing-restrictions/{platform}/email-campaigns/preview", publishingRestrictionHandler.AdminPreviewCampaign)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Post("/v1/admin/publishing-restrictions/{platform}/email-campaigns", publishingRestrictionHandler.AdminCreateCampaign)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Get("/v1/admin/publishing-restrictions/{platform}/email-campaigns", publishingRestrictionHandler.AdminListCampaigns)
+		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Publishing restrictions are restricted to super admins")).
+			Post("/v1/admin/publishing-restrictions/{platform}/email-campaigns/{campaignID}/retry-failed", publishingRestrictionHandler.AdminRetryFailedCampaign)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
 			Get("/v1/admin/changelog-candidates/{id}", changelogAutomationHandler.GetAdminCandidate)
 		r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Changelog release actions are restricted to super admins")).
@@ -1115,6 +1182,7 @@ func main() {
 			Delete("/v1/platform-credentials/{platform}", platformCredHandler.Delete)
 
 		// Posts.
+		r.Get("/v1/publishing-restrictions", publishingRestrictionHandler.WorkspaceProjection)
 		r.Get("/v1/posts", socialPostHandler.List)
 		r.Get("/v1/posts/summaries", socialPostHandler.ListSummaries)
 		r.Post("/v1/posts", socialPostHandler.Create)
@@ -1300,6 +1368,26 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func warnMissingPublishingRestrictionCampaignConfigFor(readiness publishingrestrictions.CampaignDeliveryReadiness) {
+	missing := make([]string, 0, 4)
+	if !readiness.PreviewSecret {
+		missing = append(missing, "PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET")
+	}
+	if !readiness.AuditedSender {
+		missing = append(missing, "LOOPS_API_KEY")
+	}
+	if !readiness.RestrictionTemplate {
+		missing = append(missing, "LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID")
+	}
+	if !readiness.RecoveryTemplate {
+		missing = append(missing, "LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID")
+	}
+	if len(missing) > 0 {
+		slog.Warn("publishing restriction campaign action unavailable: required configuration is missing",
+			"missing_configuration", missing)
+	}
 }
 
 func corsAllowedOrigins() []string {

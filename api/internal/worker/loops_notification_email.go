@@ -17,8 +17,19 @@ type lifecycleEventSender interface {
 	SendLifecycleEvent(context.Context, loops.LifecycleEvent) error
 }
 
+type durableLifecycleEventSender interface {
+	SendLifecycleEventDurable(context.Context, loops.LifecycleEvent) error
+}
+
+type loopsNotificationStore interface {
+	CountPublishedPostsByWorkspace(context.Context, string) (int32, error)
+	GetWorkspace(context.Context, string) (db.Workspace, error)
+	GetUser(context.Context, string) (db.User, error)
+	ListSocialAccountsByWorkspace(context.Context, string) ([]db.SocialAccount, error)
+}
+
 type LoopsNotificationEmailBus struct {
-	queries    *db.Queries
+	queries    loopsNotificationStore
 	syncer     lifecycleEventSender
 	appBaseURL string
 }
@@ -43,6 +54,50 @@ func (b *LoopsNotificationEmailBus) Publish(ctx context.Context, workspaceID, ev
 	case events.EventPostPublished:
 		b.publishFirstPostPublished(ctx, workspaceID, data)
 	}
+}
+
+// PublishDurable dispatches the only post terminal event currently owned by
+// Loops. The first-post decision is snapshotted in the outbox transaction, and
+// the provider idempotency key is stable across retries of one sink delivery.
+func (b *LoopsNotificationEmailBus) PublishDurable(ctx context.Context, eventID string, workspaceID, event string, payload []byte) error {
+	if b == nil || b.queries == nil || b.syncer == nil || event != events.EventPostPublished {
+		return nil
+	}
+	eventID = strings.TrimSpace(eventID)
+	if eventID == "" {
+		return fmt.Errorf("durable Loops event ID is required")
+	}
+	var data map[string]any
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return fmt.Errorf("decode durable post event: %w", err)
+	}
+	first, _ := data["first_post_published"].(bool)
+	if _, snapshotted := data["first_post_published"]; !snapshotted {
+		count, err := b.queries.CountPublishedPostsByWorkspace(ctx, workspaceID)
+		if err != nil {
+			return fmt.Errorf("count published posts: %w", err)
+		}
+		first = count == 1
+	}
+	if !first {
+		return nil
+	}
+	workspace, err := b.queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("load workspace: %w", err)
+	}
+	owner, err := b.queries.GetUser(ctx, workspace.UserID)
+	if err != nil {
+		return fmt.Errorf("load workspace owner: %w", err)
+	}
+	if strings.TrimSpace(owner.Email) == "" {
+		return nil
+	}
+	lifecycleEvent := buildLoopsFirstPostPublishedEvent(owner, workspace, data, b.appBaseURL)
+	if durableSender, ok := b.syncer.(durableLifecycleEventSender); ok {
+		return durableSender.SendLifecycleEventDurable(ctx, lifecycleEvent)
+	}
+	return b.syncer.SendLifecycleEvent(ctx, lifecycleEvent)
 }
 
 func (b *LoopsNotificationEmailBus) publishAccountDisconnected(ctx context.Context, workspaceID string, data any) {
