@@ -119,7 +119,14 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 			    last_error = 'provider send was not attempted before worker lease expired',
 			    next_attempt_at = NOW() + INTERVAL '1 minute', updated_at = NOW()
 			FROM stale
-			WHERE recipient.id = stale.id AND stale.email_send_attempt_id IS NULL
+			WHERE recipient.id = stale.id
+			  AND (
+			    stale.email_send_attempt_id IS NULL
+			    OR (
+			      stale.audit_status = 'failed'
+			      AND stale.audit_outcome_class = 'pre_send_failure'
+			    )
+			  )
 			RETURNING recipient.campaign_id
 		), terminal_failed AS (
 			UPDATE platform_publishing_restriction_email_recipients recipient
@@ -134,7 +141,7 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 			  AND stale.audit_status IS DISTINCT FROM 'sent'
 			  AND NOT (
 			    stale.audit_status = 'failed'
-			    AND stale.audit_outcome_class = 'provider_definitive_failure'
+			    AND stale.audit_outcome_class IN ('provider_definitive_failure', 'pre_send_failure')
 			  )
 			RETURNING recipient.campaign_id
 		)

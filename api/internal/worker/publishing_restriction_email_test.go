@@ -290,6 +290,36 @@ func TestPublishingRestrictionEmailWorkerUsesExactCopyAndStableAuditIdentity(t *
 	}
 }
 
+func TestPublishingRestrictionEmailWorkerSendsRecoveredPreSendRetryOnceWithFreshAuditIdentity(t *testing.T) {
+	store := &fakeRestrictionCampaignEmailStore{eligible: true}
+	sender := &captureRestrictionCampaignSender{}
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
+
+	if err := worker.ProcessBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	store.work = []PublishingRestrictionEmailWork{{
+		RecipientID: "recipient_1", CampaignID: "campaign_1", CycleID: "cycle_1",
+		CampaignType: publishingrestrictions.RestrictionNotice, CanonicalUserID: "user_1",
+		RecipientEmail: "owner@example.com", IdempotencyKey: "cycle_1:restriction_notice:user_1",
+		SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 2, AttemptGeneration: 1,
+	}}
+	if err := worker.ProcessBatch(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sender.emails) != 1 || len(store.sent) != 1 {
+		t.Fatalf("provider sends=%d sent=%v, want one recovered send", len(sender.emails), store.sent)
+	}
+	email := sender.emails[0]
+	if email.IdempotencyKey != "cycle_1:restriction_notice:user_1" {
+		t.Fatalf("provider idempotency key = %q, want stable recipient key", email.IdempotencyKey)
+	}
+	if email.Audit.AttemptIdempotencyKey != "cycle_1:restriction_notice:user_1:g1:a2" {
+		t.Fatalf("audit attempt key = %q, want fresh second-attempt key", email.Audit.AttemptIdempotencyKey)
+	}
+}
+
 func TestPublishingRestrictionEmailWorkerLeavesSendingRecipientForAuditFinalizationReconciliation(t *testing.T) {
 	auditErr := errors.New("audit database unavailable")
 	client := &finalizationFailureLifecycleClient{err: &loops.SendOutcomeUnknownError{Err: errors.New("response lost")}}

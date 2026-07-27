@@ -36,6 +36,22 @@ func (c *integrationUnknownLifecycleClient) SendTransactional(context.Context, l
 	return &loops.SendOutcomeUnknownError{Err: fmt.Errorf("response lost")}
 }
 
+type integrationSuccessLifecycleClient struct {
+	sends  int
+	emails []loops.TransactionalEmail
+}
+
+func (*integrationSuccessLifecycleClient) Enabled() bool { return true }
+func (*integrationSuccessLifecycleClient) UpsertContact(context.Context, loops.Contact) error {
+	return nil
+}
+func (*integrationSuccessLifecycleClient) SendEvent(context.Context, loops.Event) error { return nil }
+func (c *integrationSuccessLifecycleClient) SendTransactional(_ context.Context, email loops.TransactionalEmail) error {
+	c.sends++
+	c.emails = append(c.emails, email)
+	return nil
+}
+
 type integrationDefinitiveFailureLifecycleClient struct {
 	cancel context.CancelFunc
 	sends  int
@@ -1042,6 +1058,154 @@ func TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed(t *test
 	}
 	if len(work) != 0 {
 		t.Fatalf("second claim reclaimed terminal stale recipient: %+v", work)
+	}
+}
+
+func TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAttempt(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_link_lost", "worker_user_1", "owner@example.com", time.Now())
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restrictions
+		SET enabled=TRUE, cycle_id='worker_cycle'
+		WHERE platform='tiktok';
+		UPDATE users SET email='owner@example.com' WHERE id='worker_user_1';
+		UPDATE platform_publishing_restriction_email_recipients
+		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
+		WHERE id='recipient_link_lost';
+		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
+		INSERT INTO social_accounts (id, workspace_id, platform, status)
+		VALUES ('social_link_lost', 'workspace_1', 'tiktok', 'active');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("initial claim = %+v, want one recipient", work)
+	}
+	first := work[0]
+	client := &integrationSuccessLifecycleClient{}
+	auditedSender := loops.NewAuditedClient(client, loops.NewPostgresEmailAuditStore(db.New(pool)))
+	oldAttempt, err := auditedSender.SendTransactionalWithAttempt(ctx, loops.TransactionalEmail{
+		TransactionalID: "restriction-template",
+		Email:           first.RecipientEmail,
+		UserID:          first.CanonicalUserID,
+		IdempotencyKey:  first.IdempotencyKey,
+		Audit: loops.EmailAudit{
+			EventKey: "email.publishing_restriction.restriction_notice.v1", Provider: "loops",
+			DeliveryClass: "service_alert", TriggerSource: "admin_confirmed_campaign",
+			TriggerReferenceID: first.RecipientID,
+			AttemptIdempotencyKey: fmt.Sprintf(
+				"%s:g%d:a%d",
+				first.IdempotencyKey,
+				first.AttemptGeneration,
+				first.AttemptCount,
+			),
+		},
+	}, func(linkCtx context.Context, attemptID string) error {
+		if linkErr := store.LinkPublishingRestrictionEmailAttempt(
+			linkCtx,
+			first.RecipientID,
+			attemptID,
+			first.AttemptCount,
+			first.AttemptGeneration,
+		); linkErr != nil {
+			return linkErr
+		}
+		return errors.New("link update response lost")
+	})
+	if err == nil || !strings.Contains(err.Error(), "link update response lost") {
+		t.Fatalf("link error = %v, want lost response", err)
+	}
+	if client.sends != 0 {
+		t.Fatalf("provider sends before stale recovery = %d, want 0", client.sends)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET claimed_at=NOW()-INTERVAL '20 minutes'
+		WHERE id='recipient_link_lost'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	work, err = store.ClaimPublishingRestrictionEmailRecipients(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 0 {
+		t.Fatalf("stale recovery ignored retry backoff: %+v", work)
+	}
+	var recipientStatus, recipientError, linkedAttemptID, oldAuditStatus, oldAuditError string
+	var retryable bool
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient.status, recipient.retryable, recipient.last_error,
+		       recipient.email_send_attempt_id, attempt.status, attempt.last_error
+		FROM platform_publishing_restriction_email_recipients recipient
+		JOIN email_send_attempts attempt ON attempt.id=recipient.email_send_attempt_id
+		WHERE recipient.id='recipient_link_lost'
+	`).Scan(&recipientStatus, &retryable, &recipientError, &linkedAttemptID, &oldAuditStatus, &oldAuditError); err != nil {
+		t.Fatal(err)
+	}
+	if recipientStatus != "failed" || !retryable || !strings.Contains(recipientError, "not attempted") || strings.Contains(recipientError, "outcome unknown") {
+		t.Fatalf("recovered recipient=%q retryable=%v error=%q", recipientStatus, retryable, recipientError)
+	}
+	if linkedAttemptID != oldAttempt.ID || oldAuditStatus != "failed" || !strings.Contains(oldAuditError, `"outcome_class":"pre_send_failure"`) {
+		t.Fatalf("old attempt link=%q status=%q error=%q, want preserved pre-send evidence", linkedAttemptID, oldAuditStatus, oldAuditError)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET next_attempt_at=NOW()
+		WHERE id='recipient_link_lost'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := NewPublishingRestrictionEmailWorker(
+		store,
+		auditedSender,
+		"restriction-template",
+		"recovery-template",
+		readyPublishingRestrictionCampaignDelivery(),
+	)
+	if err := worker.ProcessBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if client.sends != 1 || len(client.emails) != 1 {
+		t.Fatalf("provider sends=%d emails=%d, want exactly one retry", client.sends, len(client.emails))
+	}
+	var finalRecipientStatus, newAttemptID, newAuditStatus, newAuditKey string
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient.status, attempt.id, attempt.status, attempt.idempotency_key
+		FROM platform_publishing_restriction_email_recipients recipient
+		JOIN email_send_attempts attempt ON attempt.id=recipient.email_send_attempt_id
+		WHERE recipient.id='recipient_link_lost'
+	`).Scan(&finalRecipientStatus, &newAttemptID, &newAuditStatus, &newAuditKey); err != nil {
+		t.Fatal(err)
+	}
+	if finalRecipientStatus != "sent" || newAttemptID == oldAttempt.ID || newAuditStatus != "sent" {
+		t.Fatalf("recipient=%q old_attempt=%q new_attempt=%q new_audit=%q", finalRecipientStatus, oldAttempt.ID, newAttemptID, newAuditStatus)
+	}
+	wantNewAuditKey := first.IdempotencyKey + ":g1:a2"
+	if newAuditKey != wantNewAuditKey {
+		t.Fatalf("new audit key = %q, want %q", newAuditKey, wantNewAuditKey)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT status, last_error FROM email_send_attempts WHERE id=$1
+	`, oldAttempt.ID).Scan(&oldAuditStatus, &oldAuditError); err != nil {
+		t.Fatal(err)
+	}
+	if oldAuditStatus != "failed" || !strings.Contains(oldAuditError, `"outcome_class":"pre_send_failure"`) {
+		t.Fatalf("old audit after retry status=%q error=%q, want preserved failure evidence", oldAuditStatus, oldAuditError)
 	}
 }
 
