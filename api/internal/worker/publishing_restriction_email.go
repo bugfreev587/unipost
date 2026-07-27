@@ -167,6 +167,9 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 			)
 		})
 		if err != nil {
+			if loops.IsEmailAuditFinalizationError(err) {
+				return fmt.Errorf("publishing restriction email audit finalization: %w", err)
+			}
 			if loops.IsSendOutcomeUnknown(err) {
 				cleanupCtx, cancelCleanup := context.WithTimeout(
 					context.WithoutCancel(ctx),
@@ -190,7 +193,23 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 				}
 				continue
 			} else {
-				_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, err.Error())
+				cleanupCtx, cancelCleanup := context.WithTimeout(
+					context.WithoutCancel(ctx),
+					publishingRestrictionEmailUnknownOutcomeCleanupTimeout,
+				)
+				failedErr := w.store.MarkPublishingRestrictionEmailRecipientFailed(cleanupCtx, recipient.RecipientID, err.Error())
+				if failedErr != nil {
+					failedErr = fmt.Errorf("persist definitive publishing restriction email failure: %w", failedErr)
+				}
+				refreshErr := w.store.RefreshPublishingRestrictionEmailCampaign(cleanupCtx, recipient.CampaignID)
+				if refreshErr != nil {
+					refreshErr = fmt.Errorf("refresh publishing restriction email campaign after definitive failure: %w", refreshErr)
+				}
+				cancelCleanup()
+				if cleanupErr := errors.Join(failedErr, refreshErr); cleanupErr != nil {
+					return cleanupErr
+				}
+				continue
 			}
 		} else {
 			finalizeCtx, cancelFinalize := context.WithTimeout(

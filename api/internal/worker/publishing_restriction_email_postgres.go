@@ -56,7 +56,8 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 	campaignIDs := map[string]struct{}{}
 	staleRows, err := tx.Query(ctx, `
 		WITH stale AS MATERIALIZED (
-			SELECT recipient.id, recipient.email_send_attempt_id, attempt.status AS audit_status
+			SELECT recipient.id, recipient.email_send_attempt_id, attempt.status AS audit_status,
+			       COALESCE(attempt.last_error, '') AS audit_last_error
 			FROM platform_publishing_restriction_email_recipients recipient
 			LEFT JOIN email_send_attempts attempt ON attempt.id=recipient.email_send_attempt_id
 			WHERE recipient.status = 'sending'
@@ -82,6 +83,22 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 			WHERE recipient.id = stale.id
 			  AND stale.audit_status = 'sent'
 			RETURNING recipient.campaign_id
+		), definitive_failed AS (
+			UPDATE platform_publishing_restriction_email_recipients recipient
+			SET status = 'failed',
+			    retryable = recipient.attempt_count < $1,
+			    claimed_at = NULL,
+			    last_error = stale.audit_last_error,
+			    next_attempt_at = NOW() + CASE
+			      WHEN recipient.attempt_count < 2 THEN INTERVAL '1 minute'
+			      ELSE INTERVAL '5 minutes'
+			    END,
+			    updated_at = NOW()
+			FROM stale
+			WHERE recipient.id = stale.id
+			  AND stale.audit_status = 'failed'
+			  AND POSITION('provider request outcome unknown' IN stale.audit_last_error) = 0
+			RETURNING recipient.campaign_id
 		), terminal_failed AS (
 			UPDATE platform_publishing_restriction_email_recipients recipient
 			SET status = 'failed',
@@ -92,12 +109,18 @@ func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmai
 			FROM stale
 			WHERE recipient.id = stale.id
 			  AND stale.audit_status IS DISTINCT FROM 'sent'
+			  AND NOT (
+			    stale.audit_status = 'failed'
+			    AND POSITION('provider request outcome unknown' IN stale.audit_last_error) = 0
+			  )
 			RETURNING recipient.campaign_id
 		)
 		SELECT campaign_id FROM recovered_sent
 		UNION ALL
+		SELECT campaign_id FROM definitive_failed
+		UNION ALL
 		SELECT campaign_id FROM terminal_failed
-	`)
+	`, publishingRestrictionEmailMaxAttempts)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +342,7 @@ func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmail
 }
 
 func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientFailed(ctx context.Context, recipientID, reason string) error {
-	_, err := s.pool.Exec(ctx, `
+	command, err := s.pool.Exec(ctx, `
 		UPDATE platform_publishing_restriction_email_recipients
 		SET status='failed', claimed_at=NULL, last_error=$2,
 		    retryable = attempt_count < $3,
@@ -327,7 +350,17 @@ func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmail
 		    updated_at=NOW()
 		WHERE id=$1 AND status='sending'
 	`, recipientID, reason, publishingRestrictionEmailMaxAttempts)
-	return err
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"publishing restriction email definitive failure transition lost active send claim for recipient %s: affected %d rows, want 1",
+			recipientID,
+			command.RowsAffected(),
+		)
+	}
+	return nil
 }
 
 func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx context.Context, recipientID, reason string) error {
@@ -355,6 +388,16 @@ func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmail
 }
 
 func (s *PostgresPublishingRestrictionEmailStore) RefreshPublishingRestrictionEmailCampaign(ctx context.Context, campaignID string) error {
-	_, err := s.pool.Exec(ctx, publishingRestrictionEmailCampaignRefreshSQL, campaignID, publishingRestrictionEmailMaxAttempts)
-	return err
+	command, err := s.pool.Exec(ctx, publishingRestrictionEmailCampaignRefreshSQL, campaignID, publishingRestrictionEmailMaxAttempts)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"publishing restriction email campaign refresh for %s affected %d rows, want 1",
+			campaignID,
+			command.RowsAffected(),
+		)
+	}
+	return nil
 }

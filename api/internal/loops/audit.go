@@ -46,6 +46,28 @@ type EmailSendAttemptRecord struct {
 	ID string
 }
 
+// EmailAuditFinalizationError means the provider request completed with
+// ProviderError, but its audit row could not be moved out of pending. Callers
+// must leave linked local work recoverable until reconciliation finalizes both
+// records; this is deliberately not a SendOutcomeUnknownError.
+type EmailAuditFinalizationError struct {
+	ProviderError error
+	AuditError    error
+}
+
+func (e *EmailAuditFinalizationError) Error() string {
+	return fmt.Sprintf("loops: provider result %v; finalize failed email audit: %v", e.ProviderError, e.AuditError)
+}
+
+func (e *EmailAuditFinalizationError) Unwrap() error {
+	return e.AuditError
+}
+
+func IsEmailAuditFinalizationError(err error) bool {
+	var finalizationErr *EmailAuditFinalizationError
+	return errors.As(err, &finalizationErr)
+}
+
 type EmailAuditStore interface {
 	CreateEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error)
 	CreateSkippedEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt, reason string) (EmailSendAttemptRecord, error)
@@ -123,7 +145,7 @@ func (c *AuditedClient) SendTransactionalWithAttempt(
 		cancelFinalize()
 		if auditErr != nil {
 			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
-			return record, errors.Join(err, fmt.Errorf("finalize failed email audit: %w", auditErr))
+			return record, &EmailAuditFinalizationError{ProviderError: err, AuditError: auditErr}
 		}
 		return record, err
 	}

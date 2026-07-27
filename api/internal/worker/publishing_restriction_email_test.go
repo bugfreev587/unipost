@@ -37,16 +37,20 @@ type fakeRestrictionCampaignEmailStore struct {
 	linked          map[string]string
 	eligible        bool
 	sentErr         error
+	failedErr       error
 	terminalErr     error
 	refreshErr      error
 	terminalCtx     context.Context
 	refreshCtx      context.Context
+	failedCtx       context.Context
 	terminalCtxErr  error
 	refreshCtxErr   error
 	sentCtxErr      error
+	failedCtxErr    error
 	terminalBounded bool
 	refreshBounded  bool
 	sentBounded     bool
+	failedBounded   bool
 }
 
 func (f *fakeRestrictionCampaignEmailStore) ClaimPublishingRestrictionEmailRecipients(context.Context, int) ([]PublishingRestrictionEmailWork, error) {
@@ -147,9 +151,12 @@ func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipi
 	return f.sentErr
 }
 
-func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientFailed(_ context.Context, recipientID, _ string) error {
+func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientFailed(ctx context.Context, recipientID, _ string) error {
 	f.failed = append(f.failed, recipientID)
-	return nil
+	f.failedCtx = ctx
+	f.failedCtxErr = ctx.Err()
+	_, f.failedBounded = ctx.Deadline()
+	return f.failedErr
 }
 
 func (f *fakeRestrictionCampaignEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx context.Context, recipientID, _ string) error {
@@ -178,6 +185,38 @@ type captureRestrictionCampaignSender struct {
 	attemptIDs []string
 	err        error
 	afterSend  func()
+}
+
+type finalizationFailureLifecycleClient struct {
+	sends int
+	err   error
+}
+
+func (*finalizationFailureLifecycleClient) Enabled() bool { return true }
+func (*finalizationFailureLifecycleClient) UpsertContact(context.Context, loops.Contact) error {
+	return nil
+}
+func (*finalizationFailureLifecycleClient) SendEvent(context.Context, loops.Event) error { return nil }
+func (c *finalizationFailureLifecycleClient) SendTransactional(context.Context, loops.TransactionalEmail) error {
+	c.sends++
+	return c.err
+}
+
+type finalizationFailureAuditStore struct {
+	markFailedErr error
+}
+
+func (*finalizationFailureAuditStore) CreateEmailSendAttempt(context.Context, loops.EmailSendAttempt) (loops.EmailSendAttemptRecord, error) {
+	return loops.EmailSendAttemptRecord{ID: "attempt_1"}, nil
+}
+func (*finalizationFailureAuditStore) CreateSkippedEmailSendAttempt(context.Context, loops.EmailSendAttempt, string) (loops.EmailSendAttemptRecord, error) {
+	return loops.EmailSendAttemptRecord{}, errors.New("unexpected skipped audit")
+}
+func (*finalizationFailureAuditStore) MarkEmailSendAttemptSent(context.Context, string) error {
+	return errors.New("unexpected sent audit")
+}
+func (s *finalizationFailureAuditStore) MarkEmailSendAttemptFailed(context.Context, string, string) error {
+	return s.markFailedErr
 }
 
 func (s *captureRestrictionCampaignSender) SendTransactionalWithAttempt(
@@ -236,6 +275,41 @@ func TestPublishingRestrictionEmailWorkerUsesExactCopyAndStableAuditIdentity(t *
 	}
 	if store.linked["recipient_1"] != "attempt_1" {
 		t.Fatalf("recipient audit linkage=%v", store.linked)
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerLeavesSendingRecipientForAuditFinalizationReconciliation(t *testing.T) {
+	auditErr := errors.New("audit database unavailable")
+	client := &finalizationFailureLifecycleClient{err: &loops.SendOutcomeUnknownError{Err: errors.New("response lost")}}
+	sender := loops.NewAuditedClient(client, &finalizationFailureAuditStore{markFailedErr: auditErr})
+	store := &fakeRestrictionCampaignEmailStore{eligible: true, work: []PublishingRestrictionEmailWork{{
+		RecipientID: "recipient_1", CampaignID: "campaign_1", CycleID: "cycle_1",
+		CampaignType: publishingrestrictions.RestrictionNotice, CanonicalUserID: "user_1",
+		RecipientEmail: "owner@example.com", IdempotencyKey: "cycle_1:restriction_notice:user_1",
+		SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 1, AttemptGeneration: 1,
+	}}}
+	worker := NewPublishingRestrictionEmailWorker(
+		store,
+		sender,
+		"restriction-template",
+		"recovery-template",
+		readyPublishingRestrictionCampaignDelivery(),
+	)
+
+	err := worker.ProcessBatch(context.Background())
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("ProcessBatch error = %v, want audit finalization failure", err)
+	}
+	if client.sends != 1 {
+		t.Fatalf("provider sends = %d, want 1", client.sends)
+	}
+	if len(store.failed) != 0 || len(store.terminalFailed) != 0 || len(store.refreshed) != 0 {
+		t.Fatalf(
+			"failed=%v terminal=%v refreshed=%v, want recipient left sending for reconciliation",
+			store.failed,
+			store.terminalFailed,
+			store.refreshed,
+		)
 	}
 }
 
@@ -355,6 +429,59 @@ func TestPublishingRestrictionEmailWorkerBoundedRetriesExplicitProviderFailure(t
 	}
 	if len(store.refreshed) != 1 || store.refreshed[0] != "campaign_1" {
 		t.Fatalf("campaign refreshes = %v, want campaign_1", store.refreshed)
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerReturnsDefinitiveFailurePersistenceErrorsAfterParentCancellation(t *testing.T) {
+	markErr := errors.New("recipient failure transition unavailable")
+	refreshErr := errors.New("campaign refresh unavailable")
+	tests := []struct {
+		name       string
+		markErr    error
+		refreshErr error
+		wantErr    error
+	}{
+		{name: "recipient transition", markErr: markErr, wantErr: markErr},
+		{name: "campaign refresh", refreshErr: refreshErr, wantErr: refreshErr},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			store := &fakeRestrictionCampaignEmailStore{
+				eligible: true, failedErr: tt.markErr, refreshErr: tt.refreshErr,
+				work: []PublishingRestrictionEmailWork{{
+					RecipientID: "recipient_1", CampaignID: "campaign_1", CycleID: "cycle_1",
+					CampaignType: publishingrestrictions.RestrictionNotice, CanonicalUserID: "user_1",
+					RecipientEmail: "owner@example.com", IdempotencyKey: "cycle_1:restriction_notice:user_1",
+					SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 1, AttemptGeneration: 1,
+				}},
+			}
+			worker := NewPublishingRestrictionEmailWorker(
+				store,
+				&captureRestrictionCampaignSender{
+					err:       errors.New("loops: 503: temporarily unavailable"),
+					afterSend: cancel,
+				},
+				"restriction-template",
+				"recovery-template",
+				readyPublishingRestrictionCampaignDelivery(),
+			)
+
+			err := worker.ProcessBatch(ctx)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("ProcessBatch error = %v, want %v", err, tt.wantErr)
+			}
+			if store.failedCtxErr != nil || store.refreshCtxErr != nil || !store.failedBounded || !store.refreshBounded {
+				t.Fatalf(
+					"failure contexts: mark error=%v bounded=%v refresh error=%v bounded=%v",
+					store.failedCtxErr,
+					store.failedBounded,
+					store.refreshCtxErr,
+					store.refreshBounded,
+				)
+			}
+		})
 	}
 }
 

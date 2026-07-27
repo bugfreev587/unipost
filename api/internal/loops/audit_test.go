@@ -18,6 +18,7 @@ type contextAwareEmailAuditStore struct {
 	failedBounded    bool
 	sentContextErr   error
 	failedContextErr error
+	failedErr        error
 }
 
 func (s *contextAwareEmailAuditStore) CreateEmailSendAttempt(ctx context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error) {
@@ -51,9 +52,51 @@ func (s *contextAwareEmailAuditStore) MarkEmailSendAttemptFailed(ctx context.Con
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.status = "failed"
 	s.failedReason = reason
+	if s.failedErr != nil {
+		return s.failedErr
+	}
+	s.status = "failed"
 	return nil
+}
+
+func TestAuditedClientDoesNotClassifyAuditFinalizationFailureAsProviderUnknown(t *testing.T) {
+	auditErr := errors.New("audit database unavailable")
+	httpClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, errors.New("response lost")
+	})}
+	store := &contextAwareEmailAuditStore{failedErr: auditErr}
+	sender := NewAuditedClient(NewClient(Config{
+		APIKey:  "test-key",
+		BaseURL: "https://loops.test/api",
+		Client:  httpClient,
+	}), store)
+
+	_, err := sender.SendTransactionalWithAttempt(context.Background(), TransactionalEmail{
+		TransactionalID: "tmpl_restriction",
+		Email:           "owner@example.com",
+		IdempotencyKey:  "cycle_1:restriction_notice:user_1",
+		Audit: EmailAudit{
+			EventKey:              "email.publishing_restriction.restriction_notice.v1",
+			AttemptIdempotencyKey: "cycle_1:restriction_notice:user_1:g1:a1",
+		},
+	}, nil)
+	if err == nil {
+		t.Fatal("send returned nil, want audit finalization failure")
+	}
+	if IsSendOutcomeUnknown(err) {
+		t.Fatalf("audit finalization failure classified as provider unknown: %v", err)
+	}
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("send error = %v, want audit failure cause", err)
+	}
+	var finalizationErr *EmailAuditFinalizationError
+	if !errors.As(err, &finalizationErr) || !IsSendOutcomeUnknown(finalizationErr.ProviderError) {
+		t.Fatalf("send error = %v, want typed finalization error retaining provider outcome", err)
+	}
+	if store.status != "pending" {
+		t.Fatalf("in-memory audit status = %q, want pending after failed transition", store.status)
+	}
 }
 
 func TestAuditedClientFinalizesUnknownOutcomeAfterInflightRequestCancellation(t *testing.T) {
