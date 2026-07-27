@@ -872,6 +872,10 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
 			return
 		}
+		if decision, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
+			writePublishingRestrictionError(w, decision)
+			return
+		}
 		allowedTargets := allowedPublishingTargets(parsed.Posts, blockedTargets)
 		metaJSON, err = encodeScheduledPostMetadata(parsed.Posts, countPublishQuotaUnits(allowedTargets, accountMap))
 	} else {
