@@ -1664,6 +1664,7 @@ interface CreatePostDrawerProps {
 function startPublishingRestrictionsRefresh({
   getToken,
   loadRestrictions,
+  clearRestrictions,
   commitRestrictions,
   markLoaded,
   reportError,
@@ -1672,6 +1673,7 @@ function startPublishingRestrictionsRefresh({
 }: {
   getToken: () => Promise<string | null>;
   loadRestrictions: (token: string) => Promise<WorkspacePublishingRestriction[]>;
+  clearRestrictions: () => void;
   commitRestrictions: (restrictions: WorkspacePublishingRestriction[]) => void;
   markLoaded: () => void;
   reportError: (error: unknown) => void;
@@ -1703,6 +1705,7 @@ function startPublishingRestrictionsRefresh({
   };
 
   const handleFocus = () => void refresh();
+  clearRestrictions();
   void refresh();
   addFocusListener(handleFocus);
 
@@ -1868,6 +1871,7 @@ export function CreatePostDrawer({
         const response = await getPublishingRestrictions(token);
         return response.data.restrictions || [];
       },
+      clearRestrictions: () => setPublishingRestrictions([]),
       commitRestrictions: setPublishingRestrictions,
       markLoaded: () => setRestrictionsLoaded(true),
       reportError: (error) => console.error("Failed to refresh publishing restrictions:", error),

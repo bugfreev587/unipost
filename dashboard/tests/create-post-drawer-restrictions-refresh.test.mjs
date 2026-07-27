@@ -57,11 +57,16 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
-function createHarness(startPublishingRestrictionsRefresh, { getToken = async () => "token" } = {}) {
+function createHarness(
+  startPublishingRestrictionsRefresh,
+  { getToken = async () => "token", initialRestrictions = [] } = {},
+) {
   const requests = [];
   const committed = [];
   const loaded = [];
   const errors = [];
+  const cleared = [];
+  let currentRestrictions = initialRestrictions;
   let focusListener = null;
   let removedListener = null;
 
@@ -72,7 +77,14 @@ function createHarness(startPublishingRestrictionsRefresh, { getToken = async ()
       requests.push(request);
       return request.promise;
     },
-    commitRestrictions: (restrictions) => committed.push(restrictions),
+    clearRestrictions: () => {
+      currentRestrictions = [];
+      cleared.push(true);
+    },
+    commitRestrictions: (restrictions) => {
+      currentRestrictions = restrictions;
+      committed.push(restrictions);
+    },
     markLoaded: () => loaded.push(true),
     reportError: (error) => errors.push(error),
     addFocusListener: (listener) => {
@@ -88,6 +100,10 @@ function createHarness(startPublishingRestrictionsRefresh, { getToken = async ()
     committed,
     loaded,
     errors,
+    cleared,
+    get currentRestrictions() {
+      return currentRestrictions;
+    },
     cleanup,
     focus: () => {
       assert.ok(focusListener, "focus listener was not registered");
@@ -229,6 +245,41 @@ test("a newer focus generation prevents an older authenticated generation from r
   harness.cleanup();
 });
 
+test("a new workspace lifecycle clears the prior workspace snapshot when refresh cannot replace it", async (t) => {
+  const startPublishingRestrictionsRefresh = await loadRefreshCoordinator();
+  const restrictedA = [{ platform: "tiktok", enabled: true }];
+
+  for (const mode of ["missing token", "request failure"]) {
+    await t.test(mode, async () => {
+      const workspaceA = createHarness(startPublishingRestrictionsRefresh);
+      await flushMicrotasks();
+      workspaceA.requests[0].resolve(restrictedA);
+      await flushMicrotasks();
+      assert.deepEqual(workspaceA.currentRestrictions, restrictedA);
+      workspaceA.cleanup();
+
+      const workspaceB = createHarness(startPublishingRestrictionsRefresh, {
+        getToken: mode === "missing token" ? async () => null : async () => "workspace-b-token",
+        initialRestrictions: workspaceA.currentRestrictions,
+      });
+      await flushMicrotasks();
+      if (mode === "request failure") {
+        workspaceB.requests[0].reject(new Error("workspace B projection unavailable"));
+        await flushMicrotasks();
+      }
+
+      assert.deepEqual(
+        workspaceB.currentRestrictions,
+        [],
+        "workspace B must never apply workspace A restrictions",
+      );
+      assert.deepEqual(workspaceB.cleared, [true], "each lifecycle must clear exactly once");
+      assert.deepEqual(workspaceB.loaded, [true], "advisory refresh failure must not block workspace B");
+      workspaceB.cleanup();
+    });
+  }
+});
+
 test("the latest refresh failure releases advisory loading and future focus refresh still works", async () => {
   const startPublishingRestrictionsRefresh = await loadRefreshCoordinator();
   const harness = createHarness(startPublishingRestrictionsRefresh);
@@ -269,6 +320,28 @@ test("the drawer effect returns coordinator cleanup and restarts it when workspa
     returnsCoordinatorCleanup,
     true,
     "refresh effect must return the coordinator cleanup so old workspace generations become inactive",
+  );
+
+  const coordinatorCall = effectCallback.body.statements
+    .filter(ts.isReturnStatement)
+    .map((statement) => statement.expression)
+    .find(
+      (expression) =>
+        expression &&
+        ts.isCallExpression(expression) &&
+        expression.expression.getText(sourceFile) === "startPublishingRestrictionsRefresh",
+    );
+  assert.ok(coordinatorCall, "refresh effect must return the restrictions coordinator call");
+  const coordinatorOptions = coordinatorCall.arguments[0];
+  assert.ok(ts.isObjectLiteralExpression(coordinatorOptions), "coordinator must receive lifecycle options");
+  const clearProperty = coordinatorOptions.properties.find(
+    (property) => property.name?.getText(sourceFile) === "clearRestrictions",
+  );
+  assert.ok(clearProperty, "workspace lifecycle must wire a restrictions snapshot reset");
+  assert.match(
+    clearProperty.getText(sourceFile),
+    /setPublishingRestrictions\(\[\]\)/,
+    "workspace reset must clear the prior restrictions snapshot",
   );
 
   assert.ok(ts.isArrayLiteralExpression(dependencies), "refresh effect must declare dependencies");
