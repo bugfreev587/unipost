@@ -54,26 +54,35 @@ type PublishingRestrictionEmailWorker struct {
 	sender                transactionalEmailSender
 	restrictionTemplateID string
 	recoveryTemplateID    string
+	readiness             publishingrestrictions.CampaignDeliveryReadiness
 	batchSize             int
 }
 
 const publishingRestrictionEmailUnknownOutcomeCleanupTimeout = 5 * time.Second
+
+var ErrPublishingRestrictionEmailNotConfigured = errors.New("publishing restriction email worker is not configured")
 
 func NewPublishingRestrictionEmailWorker(
 	store PublishingRestrictionEmailStore,
 	sender transactionalEmailSender,
 	restrictionTemplateID string,
 	recoveryTemplateID string,
+	readiness publishingrestrictions.CampaignDeliveryReadiness,
 ) *PublishingRestrictionEmailWorker {
 	return &PublishingRestrictionEmailWorker{
 		store: store, sender: sender,
 		restrictionTemplateID: strings.TrimSpace(restrictionTemplateID),
 		recoveryTemplateID:    strings.TrimSpace(recoveryTemplateID),
+		readiness:             readiness,
 		batchSize:             50,
 	}
 }
 
 func (w *PublishingRestrictionEmailWorker) Start(ctx context.Context) {
+	if !w.configured() {
+		slog.Warn("publishing restriction email worker is not configured")
+		return
+	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -89,8 +98,8 @@ func (w *PublishingRestrictionEmailWorker) Start(ctx context.Context) {
 }
 
 func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) error {
-	if w == nil || w.store == nil {
-		return errors.New("publishing restriction email worker store is not configured")
+	if !w.configured() {
+		return ErrPublishingRestrictionEmailNotConfigured
 	}
 	work, err := w.store.ClaimPublishingRestrictionEmailRecipients(ctx, w.batchSize)
 	if err != nil {
@@ -189,6 +198,11 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 		_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
 	}
 	return nil
+}
+
+func (w *PublishingRestrictionEmailWorker) configured() bool {
+	return w != nil && w.readiness.Ready() && w.store != nil && w.sender != nil &&
+		w.restrictionTemplateID != "" && w.recoveryTemplateID != ""
 }
 
 func renderPublishingRestrictionEmailBody(body, firstName string) string {

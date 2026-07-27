@@ -225,10 +225,9 @@ func main() {
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
-	warnMissingPublishingRestrictionCampaignConfig()
-	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore).
-		SetCampaignPreviewSecret(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
-	publishingRestrictionHandler := handler.NewPublishingRestrictionsHandler(publishingRestrictionService)
+	publishingRestrictionCampaignPreviewSecret := strings.TrimSpace(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
+	publishingRestrictionNoticeTemplateID := strings.TrimSpace(os.Getenv("LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID"))
+	publishingRecoveryNoticeTemplateID := strings.TrimSpace(os.Getenv("LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID"))
 	aiProviderService := aiproviders.NewService(queries, encryptor)
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
@@ -388,7 +387,8 @@ func main() {
 		EmailPolicy:     emailPolicyService,
 	}
 	loopsSyncer = loops.NewSyncer(nil, loopsOptions)
-	if key := os.Getenv("LOOPS_API_KEY"); key != "" {
+	if key := os.Getenv("LOOPS_API_KEY"); strings.TrimSpace(key) != "" {
+		key = strings.TrimSpace(key)
 		loopsClient = loops.NewClient(loops.Config{
 			APIKey:  key,
 			BaseURL: os.Getenv("LOOPS_BASE_URL"),
@@ -399,11 +399,26 @@ func main() {
 	} else {
 		slog.Info("loops: LOOPS_API_KEY unset, lifecycle sync disabled")
 	}
+	publishingRestrictionCampaignReadiness := publishingrestrictions.CampaignDeliveryReadiness{
+		PreviewSecret:       publishingRestrictionCampaignPreviewSecret != "",
+		AuditedSender:       auditedLoopsClient != nil,
+		RestrictionTemplate: publishingRestrictionNoticeTemplateID != "",
+		RecoveryTemplate:    publishingRecoveryNoticeTemplateID != "",
+	}
+	warnMissingPublishingRestrictionCampaignConfig := func() {
+		warnMissingPublishingRestrictionCampaignConfigFor(publishingRestrictionCampaignReadiness)
+	}
+	warnMissingPublishingRestrictionCampaignConfig()
+	publishingRestrictionService := publishingrestrictions.NewService(publishingRestrictionStore).
+		SetCampaignPreviewSecret(publishingRestrictionCampaignPreviewSecret).
+		SetCampaignDeliveryReadiness(publishingRestrictionCampaignReadiness)
+	publishingRestrictionHandler := handler.NewPublishingRestrictionsHandler(publishingRestrictionService)
 	publishingRestrictionEmailWorker := worker.NewPublishingRestrictionEmailWorker(
 		worker.NewPostgresPublishingRestrictionEmailStore(pool),
 		auditedLoopsClient,
-		os.Getenv("LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID"),
-		os.Getenv("LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID"),
+		publishingRestrictionNoticeTemplateID,
+		publishingRecoveryNoticeTemplateID,
+		publishingRestrictionCampaignReadiness,
 	)
 	if processMode == processModeAPI {
 		go publishingRestrictionEmailWorker.Start(workerCtx)
@@ -1346,16 +1361,23 @@ func main() {
 	slog.Info("server stopped")
 }
 
-func warnMissingPublishingRestrictionCampaignConfig() {
-	for _, key := range []string{
-		"PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET",
-		"LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID",
-		"LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID",
-	} {
-		if strings.TrimSpace(os.Getenv(key)) == "" {
-			slog.Warn("publishing restriction campaign action unavailable: required configuration is missing",
-				"missing_env", key)
-		}
+func warnMissingPublishingRestrictionCampaignConfigFor(readiness publishingrestrictions.CampaignDeliveryReadiness) {
+	missing := make([]string, 0, 4)
+	if !readiness.PreviewSecret {
+		missing = append(missing, "PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET")
+	}
+	if !readiness.AuditedSender {
+		missing = append(missing, "LOOPS_API_KEY")
+	}
+	if !readiness.RestrictionTemplate {
+		missing = append(missing, "LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID")
+	}
+	if !readiness.RecoveryTemplate {
+		missing = append(missing, "LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID")
+	}
+	if len(missing) > 0 {
+		slog.Warn("publishing restriction campaign action unavailable: required configuration is missing",
+			"missing_configuration", missing)
 	}
 }
 

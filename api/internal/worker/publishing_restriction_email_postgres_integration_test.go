@@ -227,7 +227,9 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 		t.Fatal(err)
 	}
 	sender := &captureRestrictionCampaignSender{}
-	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", publishingrestrictions.CampaignDeliveryReadiness{
+		PreviewSecret: true, AuditedSender: true, RestrictionTemplate: true, RecoveryTemplate: true,
+	})
 	if err := worker.ProcessBatch(ctx); err != nil {
 		t.Fatal(err)
 	}

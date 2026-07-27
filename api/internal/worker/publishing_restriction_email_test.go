@@ -1,12 +1,15 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
@@ -25,6 +28,7 @@ func TestPublishingRestrictionEligibilityRechecksEveryRepresentedWorkspace(t *te
 
 type fakeRestrictionCampaignEmailStore struct {
 	work            []PublishingRestrictionEmailWork
+	claimCalls      int
 	sent            []string
 	failed          []string
 	terminalFailed  []string
@@ -43,9 +47,79 @@ type fakeRestrictionCampaignEmailStore struct {
 }
 
 func (f *fakeRestrictionCampaignEmailStore) ClaimPublishingRestrictionEmailRecipients(context.Context, int) ([]PublishingRestrictionEmailWork, error) {
+	f.claimCalls++
 	work := f.work
 	f.work = nil
 	return work, nil
+}
+
+func readyPublishingRestrictionCampaignDelivery() publishingrestrictions.CampaignDeliveryReadiness {
+	return publishingrestrictions.CampaignDeliveryReadiness{
+		PreviewSecret: true, AuditedSender: true, RestrictionTemplate: true, RecoveryTemplate: true,
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerRejectsUnreadyConfigBeforeClaim(t *testing.T) {
+	tests := []struct {
+		name      string
+		readiness publishingrestrictions.CampaignDeliveryReadiness
+	}{
+		{name: "preview secret", readiness: publishingrestrictions.CampaignDeliveryReadiness{AuditedSender: true, RestrictionTemplate: true, RecoveryTemplate: true}},
+		{name: "audited sender", readiness: publishingrestrictions.CampaignDeliveryReadiness{PreviewSecret: true, RestrictionTemplate: true, RecoveryTemplate: true}},
+		{name: "restriction template", readiness: publishingrestrictions.CampaignDeliveryReadiness{PreviewSecret: true, AuditedSender: true, RecoveryTemplate: true}},
+		{name: "recovery template", readiness: publishingrestrictions.CampaignDeliveryReadiness{PreviewSecret: true, AuditedSender: true, RestrictionTemplate: true}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeRestrictionCampaignEmailStore{}
+			worker := NewPublishingRestrictionEmailWorker(store, &captureRestrictionCampaignSender{}, "restriction-template", "recovery-template", tt.readiness)
+			err := worker.ProcessBatch(context.Background())
+			if !errors.Is(err, ErrPublishingRestrictionEmailNotConfigured) {
+				t.Fatalf("error = %v, want ErrPublishingRestrictionEmailNotConfigured", err)
+			}
+			if store.claimCalls != 0 {
+				t.Fatalf("claim calls = %d, want 0", store.claimCalls)
+			}
+		})
+	}
+}
+
+func TestPublishingRestrictionEmailWorkerStartLogsOneWarningAndReturnsWhenUnready(t *testing.T) {
+	store := &fakeRestrictionCampaignEmailStore{}
+	worker := NewPublishingRestrictionEmailWorker(
+		store,
+		&captureRestrictionCampaignSender{},
+		"restriction-template",
+		"recovery-template",
+		publishingrestrictions.CampaignDeliveryReadiness{},
+	)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		worker.Start(ctx)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		cancel()
+		<-done
+		t.Fatal("unready worker did not exit immediately")
+	}
+
+	if store.claimCalls != 0 {
+		t.Fatalf("claim calls = %d, want 0", store.claimCalls)
+	}
+	if count := strings.Count(logs.String(), "publishing restriction email worker is not configured"); count != 1 {
+		t.Fatalf("warning count = %d, want 1; logs=%q", count, logs.String())
+	}
 }
 
 func (f *fakeRestrictionCampaignEmailStore) PublishingRestrictionEmailRecipientEligible(context.Context, PublishingRestrictionEmailWork) (bool, error) {
@@ -127,7 +201,7 @@ func TestPublishingRestrictionEmailWorkerUsesExactCopyAndStableAuditIdentity(t *
 		SubjectSnapshot: copy.Subject, BodySnapshot: copy.Body, AttemptCount: 1, AttemptGeneration: 1,
 	}}}
 	sender := &captureRestrictionCampaignSender{}
-	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
 
 	if err := worker.ProcessBatch(context.Background()); err != nil {
 		t.Fatal(err)
@@ -163,7 +237,7 @@ func TestPublishingRestrictionEmailWorkerUsesExactCopyAndStableAuditIdentity(t *
 func TestPublishingRestrictionEmailWorkerSkipsIneligibleRecipient(t *testing.T) {
 	store := &fakeRestrictionCampaignEmailStore{eligible: false, work: []PublishingRestrictionEmailWork{{RecipientID: "recipient_1", CampaignID: "campaign_1"}}}
 	sender := &captureRestrictionCampaignSender{}
-	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
 
 	if err := worker.ProcessBatch(context.Background()); err != nil {
 		t.Fatal(err)
@@ -184,7 +258,7 @@ func TestPublishingRestrictionEmailWorkerTerminalizesUnknownSendOutcome(t *testi
 		"audited provider send failed: %w",
 		&loops.SendOutcomeUnknownError{Err: errors.New("response lost")},
 	)}
-	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
 
 	if err := worker.ProcessBatch(context.Background()); err != nil {
 		t.Fatal(err)
@@ -214,7 +288,7 @@ func TestPublishingRestrictionEmailWorkerBoundedRetriesExplicitProviderFailure(t
 		SubjectSnapshot: "subject", BodySnapshot: "body", AttemptCount: 1, AttemptGeneration: 1,
 	}}}
 	sender := &captureRestrictionCampaignSender{err: errors.New("loops: 503: temporarily unavailable")}
-	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
 
 	if err := worker.ProcessBatch(context.Background()); err != nil {
 		t.Fatal(err)
@@ -259,7 +333,7 @@ func TestPublishingRestrictionEmailWorkerReturnsUnknownOutcomeCleanupFailures(t 
 				}},
 			}
 			sender := &captureRestrictionCampaignSender{err: &loops.SendOutcomeUnknownError{Err: errors.New("response lost")}}
-			worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+			worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
 
 			err := worker.ProcessBatch(context.Background())
 			if err == nil {
@@ -289,7 +363,7 @@ func TestPublishingRestrictionEmailWorkerPersistsUnknownOutcomeAfterParentCancel
 		err:       &loops.SendOutcomeUnknownError{Err: errors.New("response lost")},
 		afterSend: cancel,
 	}
-	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template", readyPublishingRestrictionCampaignDelivery())
 
 	if err := worker.ProcessBatch(ctx); err != nil {
 		t.Fatal(err)
