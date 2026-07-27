@@ -15,7 +15,16 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
-var errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
+var (
+	errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
+	errInvalidPostMediaMetadata   = errors.New("invalid post media metadata")
+)
+
+type skipPostMediaRetentionSyncKey struct{}
+
+func withoutPostMediaRetentionSync(ctx context.Context) context.Context {
+	return context.WithValue(ctx, skipPostMediaRetentionSyncKey{}, true)
+}
 
 func shouldLogMediaPostUsageUpsertError(err error) bool {
 	// Cleanup may legitimately win the usage-version/status race. In that
@@ -72,6 +81,9 @@ func (h *SocialPostHandler) syncPostMediaRetentionAfterResultTransition(
 	postStatus string,
 	results []db.SocialPostResult,
 ) {
+	if skip, _ := ctx.Value(skipPostMediaRetentionSyncKey{}).(bool); skip {
+		return
+	}
 	hasPolicyFailure := false
 	for _, result := range results {
 		if result.Status == "failed" && result.ErrorCode.Valid && result.ErrorCode.String == publishingrestrictions.NormalizedCode {

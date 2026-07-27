@@ -132,6 +132,10 @@ func (h *PublishingRestrictionsHandler) AdminPreviewCampaign(w http.ResponseWrit
 		return
 	}
 	preview, err := service.PreviewCampaign(r.Context(), strings.ToLower(strings.TrimSpace(chi.URLParam(r, "platform"))), body.CampaignType)
+	if errors.Is(err, publishingrestrictions.ErrCampaignNotConfigured) {
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Publishing restriction email campaigns are not configured")
+		return
+	}
 	if errors.Is(err, publishingrestrictions.ErrCampaignPrecondition) {
 		writeError(w, http.StatusConflict, "CAMPAIGN_NOT_AVAILABLE", "This campaign is not available in the current restriction state")
 		return
@@ -162,6 +166,10 @@ func (h *PublishingRestrictionsHandler) AdminCreateCampaign(w http.ResponseWrite
 		Platform: strings.ToLower(strings.TrimSpace(chi.URLParam(r, "platform"))), CampaignType: body.CampaignType,
 		PreviewToken: body.PreviewToken, Confirmation: body.Confirmation, ActorUserID: auth.GetUserID(r.Context()),
 	})
+	if errors.Is(err, publishingrestrictions.ErrCampaignNotConfigured) {
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Publishing restriction email campaigns are not configured")
+		return
+	}
 	if errors.Is(err, publishingrestrictions.ErrInvalidPreviewToken) {
 		writeError(w, http.StatusBadRequest, "INVALID_PREVIEW_TOKEN", "Campaign preview expired or no longer matches")
 		return
@@ -198,6 +206,14 @@ func (h *PublishingRestrictionsHandler) AdminRetryFailedCampaign(w http.Response
 		return
 	}
 	campaign, err := service.RetryFailedCampaign(r.Context(), strings.ToLower(strings.TrimSpace(chi.URLParam(r, "platform"))), chi.URLParam(r, "campaignID"))
+	if errors.Is(err, publishingrestrictions.ErrCampaignNotConfigured) {
+		writeError(w, http.StatusServiceUnavailable, "NOT_CONFIGURED", "Publishing restriction email campaigns are not configured")
+		return
+	}
+	if errors.Is(err, publishingrestrictions.ErrCampaignRetryExpired) {
+		writeError(w, http.StatusConflict, "RETRY_WINDOW_EXPIRED", "This campaign is older than the provider idempotency window and cannot be retried safely")
+		return
+	}
 	if errors.Is(err, publishingrestrictions.ErrCampaignPrecondition) {
 		writeError(w, http.StatusConflict, "NO_FAILED_RECIPIENTS", "This campaign has no failed recipients to retry")
 		return

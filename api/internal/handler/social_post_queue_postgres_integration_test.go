@@ -1,0 +1,972 @@
+//go:build integration
+
+package handler
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"os"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/postfailures"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+)
+
+const restrictedDeliveryIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
+
+func openRestrictedDeliveryIntegrationPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	databaseURL := strings.TrimSpace(os.Getenv(restrictedDeliveryIntegrationDatabaseEnv))
+	if databaseURL == "" {
+		t.Fatalf("%s is required and must point to a temporary localhost PostgreSQL service", restrictedDeliveryIntegrationDatabaseEnv)
+	}
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL integration URL: %v", err)
+	}
+	host := strings.TrimSpace(config.ConnConfig.Host)
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		t.Fatalf("%s must use a loopback host, got %q", restrictedDeliveryIntegrationDatabaseEnv, host)
+	}
+
+	setupContext, cancelSetup := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelSetup()
+	admin, err := pgxpool.New(setupContext, databaseURL)
+	if err != nil {
+		t.Fatalf("connect temporary PostgreSQL: %v", err)
+	}
+	schema := fmt.Sprintf("restricted_delivery_%d", time.Now().UnixNano())
+	if _, err := admin.Exec(setupContext, "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		admin.Close()
+		t.Fatalf("create isolated PostgreSQL schema: %v", err)
+	}
+
+	config.ConnConfig.RuntimeParams["search_path"] = schema
+	config.MaxConns = 4
+	pool, err := pgxpool.NewWithConfig(setupContext, config)
+	if err != nil {
+		admin.Close()
+		t.Fatalf("connect isolated PostgreSQL schema: %v", err)
+	}
+	t.Cleanup(func() {
+		pool.Close()
+		cleanupContext, cancelCleanup := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancelCleanup()
+		if _, err := admin.Exec(cleanupContext, "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE"); err != nil {
+			t.Errorf("drop isolated PostgreSQL schema: %v", err)
+		}
+		admin.Close()
+	})
+	return pool
+}
+
+func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE social_post_results (
+			id TEXT PRIMARY KEY,
+			post_id TEXT,
+			social_account_id TEXT,
+			status TEXT NOT NULL,
+			external_id TEXT,
+			error_message TEXT,
+			published_at TIMESTAMPTZ,
+			url TEXT,
+			debug_curl TEXT,
+			publish_token TEXT,
+			error_code TEXT,
+			failure_stage TEXT,
+			platform_error_code TEXT,
+			is_retriable BOOLEAN,
+			next_action TEXT,
+			error_source TEXT,
+			error_temporality TEXT,
+			provider_error JSONB,
+			x_credits_counted BIGINT NOT NULL DEFAULT 0,
+			x_credit_operation TEXT,
+			x_credit_catalog_version TEXT,
+			x_credit_billing_mode TEXT
+		);
+		CREATE TABLE post_delivery_jobs (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			post_id TEXT NOT NULL,
+			social_post_result_id TEXT NOT NULL REFERENCES social_post_results(id),
+			workspace_id TEXT NOT NULL,
+			social_account_id TEXT NOT NULL,
+			platform TEXT NOT NULL,
+			post_input_index INTEGER NOT NULL DEFAULT 0,
+			kind TEXT NOT NULL,
+			state TEXT NOT NULL,
+			attempts INTEGER NOT NULL DEFAULT 0,
+			max_attempts INTEGER NOT NULL DEFAULT 5,
+			failure_stage TEXT,
+			error_code TEXT,
+			platform_error_code TEXT,
+			last_error TEXT,
+			next_run_at TIMESTAMPTZ,
+			last_attempt_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			finished_at TIMESTAMPTZ,
+			dismissed_at TIMESTAMPTZ,
+			lease_expires_at TIMESTAMPTZ,
+			lease_owner TEXT,
+			first_claimed_at TIMESTAMPTZ,
+			platform_started_at TIMESTAMPTZ
+		);
+		CREATE TABLE media (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			status TEXT NOT NULL,
+			usage_version BIGINT NOT NULL DEFAULT 0
+		);
+		CREATE TABLE media_post_usages (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			workspace_id TEXT NOT NULL,
+			media_id TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			post_status TEXT NOT NULL,
+			cleanup_after_at TIMESTAMPTZ,
+			retention_reason TEXT NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (media_id, post_id)
+		);
+		CREATE TABLE social_accounts (
+			id TEXT PRIMARY KEY,
+			platform TEXT NOT NULL
+		);
+		CREATE TABLE platform_publishing_restrictions (
+			platform TEXT PRIMARY KEY,
+			enabled BOOLEAN NOT NULL,
+			restricted_plan_ids TEXT[] NOT NULL
+		);
+		CREATE TABLE subscriptions (
+			workspace_id TEXT NOT NULL,
+			plan_id TEXT NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+	`)
+	if err != nil {
+		t.Fatalf("create restricted-delivery integration tables: %v", err)
+	}
+}
+
+type restrictedResultSnapshot struct {
+	Status                string
+	ExternalID            pgtype.Text
+	ErrorMessage          pgtype.Text
+	PublishedAt           pgtype.Timestamptz
+	URL                   pgtype.Text
+	DebugCurl             pgtype.Text
+	PublishToken          pgtype.Text
+	ErrorCode             pgtype.Text
+	FailureStage          pgtype.Text
+	PlatformErrorCode     pgtype.Text
+	IsRetriable           pgtype.Bool
+	NextAction            pgtype.Text
+	ErrorSource           pgtype.Text
+	ErrorTemporality      pgtype.Text
+	ProviderError         []byte
+	XCreditsCounted       int64
+	XCreditOperation      pgtype.Text
+	XCreditCatalogVersion pgtype.Text
+	XCreditBillingMode    pgtype.Text
+}
+
+func loadRestrictedResultSnapshot(t *testing.T, ctx context.Context, querier interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, resultID string) restrictedResultSnapshot {
+	t.Helper()
+	var result restrictedResultSnapshot
+	err := querier.QueryRow(ctx, `
+		SELECT status, external_id, error_message, published_at, url, debug_curl,
+		       publish_token, error_code, failure_stage, platform_error_code,
+		       is_retriable, next_action, error_source, error_temporality,
+		       provider_error, x_credits_counted, x_credit_operation,
+		       x_credit_catalog_version, x_credit_billing_mode
+		FROM social_post_results
+		WHERE id = $1
+	`, resultID).Scan(
+		&result.Status, &result.ExternalID, &result.ErrorMessage, &result.PublishedAt,
+		&result.URL, &result.DebugCurl, &result.PublishToken, &result.ErrorCode,
+		&result.FailureStage, &result.PlatformErrorCode, &result.IsRetriable,
+		&result.NextAction, &result.ErrorSource, &result.ErrorTemporality,
+		&result.ProviderError, &result.XCreditsCounted, &result.XCreditOperation,
+		&result.XCreditCatalogVersion, &result.XCreditBillingMode,
+	)
+	if err != nil {
+		t.Fatalf("load social post result %s: %v", resultID, err)
+	}
+	return result
+}
+
+func restrictedFinalizeIntegrationParams(jobID, owner string, attemptedAt time.Time) db.FinalizeRestrictedPostDeliveryJobParams {
+	return db.FinalizeRestrictedPostDeliveryJobParams{
+		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
+		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
+		ErrorMessage:     postfailures.ToText(publishingrestrictions.UserMessage),
+		ID:               jobID,
+		LeaseOwner:       postfailures.ToText(owner),
+		LastAttemptAt:    pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		NextAction:       postfailures.ToText(publishingrestrictions.NextAction),
+		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
+		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
+		CleanupAfterAt:   pgtype.Timestamptz{Time: attemptedAt.Add(60 * 24 * time.Hour), Valid: true},
+	}
+}
+
+func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+
+	t.Run("invalid metadata preserves job result billing and existing usage", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 26, 18, 30, 0, 0, time.UTC)
+		_, err := pool.Exec(ctx, `
+			INSERT INTO social_post_results (
+				id, post_id, social_account_id, status, x_credits_counted,
+				x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+			) VALUES (
+				'result_invalid_metadata', 'post_invalid_metadata', 'account_invalid_metadata',
+				'processing', 29, 'existing_operation', 'existing_catalog', 'existing_billing'
+			)
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_invalid_metadata', 'post_invalid_metadata', 'result_invalid_metadata',
+				'workspace_invalid_metadata', 'account_invalid_metadata', 'tiktok',
+				'dispatch', 'running', 1, 'owner_invalid_metadata', $1
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO media (id, workspace_id, status)
+			VALUES ('media_invalid_metadata', 'workspace_invalid_metadata', 'uploaded');
+			INSERT INTO media_post_usages (
+				workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+			) VALUES (
+				'workspace_invalid_metadata', 'media_invalid_metadata', 'post_invalid_metadata',
+				'publishing', NULL, 'active_post'
+			)
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		queries := db.New(pool)
+		h := NewSocialPostHandler(queries, nil, nil, nil, nil, nil, nil)
+		job := db.PostDeliveryJob{
+			ID:                 "job_invalid_metadata",
+			PostID:             "post_invalid_metadata",
+			SocialPostResultID: "result_invalid_metadata",
+			WorkspaceID:        "workspace_invalid_metadata",
+			SocialAccountID:    "account_invalid_metadata",
+			Platform:           "tiktok",
+			State:              "running",
+			LeaseOwner:         pgtype.Text{String: "owner_invalid_metadata", Valid: true},
+			LastAttemptAt:      pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		}
+		result := db.SocialPostResult{
+			ID:                    "result_invalid_metadata",
+			PostID:                "post_invalid_metadata",
+			SocialAccountID:       "account_invalid_metadata",
+			Status:                "processing",
+			XCreditsCounted:       29,
+			XCreditOperation:      pgtype.Text{String: "existing_operation", Valid: true},
+			XCreditCatalogVersion: pgtype.Text{String: "existing_catalog", Valid: true},
+			XCreditBillingMode:    pgtype.Text{String: "existing_billing", Valid: true},
+		}
+		post := db.SocialPost{
+			ID:          "post_invalid_metadata",
+			WorkspaceID: "workspace_invalid_metadata",
+			Status:      "publishing",
+			Metadata:    []byte(`{"schema_version":2,"platform_posts":[`),
+		}
+		err = h.finalizeRestrictedDeliveryJob(ctx, job, result, post, publishingrestrictions.Decision{
+			Restricted: true,
+			Platform:   "tiktok",
+			CycleID:    "cycle_invalid_metadata_pg",
+		})
+		if !errors.Is(err, errInvalidPostMediaMetadata) {
+			t.Fatalf("finalizeRestrictedDeliveryJob error = %v, want media metadata error", err)
+		}
+
+		var jobState, resultStatus string
+		var credits int64
+		var operation, catalog, billing pgtype.Text
+		if err := pool.QueryRow(ctx, `SELECT state FROM post_delivery_jobs WHERE id = 'job_invalid_metadata'`).Scan(&jobState); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `
+			SELECT status, x_credits_counted, x_credit_operation,
+			       x_credit_catalog_version, x_credit_billing_mode
+			FROM social_post_results WHERE id = 'result_invalid_metadata'
+		`).Scan(&resultStatus, &credits, &operation, &catalog, &billing); err != nil {
+			t.Fatal(err)
+		}
+		if jobState != "running" || resultStatus != "processing" || credits != 29 || operation.String != "existing_operation" || catalog.String != "existing_catalog" || billing.String != "existing_billing" {
+			t.Fatalf("durable state changed = job:%q result:%q credits:%d operation:%#v catalog:%#v billing:%#v", jobState, resultStatus, credits, operation, catalog, billing)
+		}
+		var usageCount int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*)::int FROM media_post_usages
+			WHERE media_id = 'media_invalid_metadata'
+			  AND post_id = 'post_invalid_metadata'
+			  AND retention_reason = 'active_post'
+			  AND cleanup_after_at IS NULL
+		`).Scan(&usageCount); err != nil {
+			t.Fatal(err)
+		}
+		if usageCount != 1 {
+			t.Fatalf("preserved active media usages = %d, want 1", usageCount)
+		}
+	})
+
+	t.Run("stale owner preserves newer completed job and published result", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ownerA, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerA.Release()
+		ownerB, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerB.Release()
+		var backendA, backendB int
+		if err := ownerA.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&backendA); err != nil {
+			t.Fatal(err)
+		}
+		if err := ownerB.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&backendB); err != nil {
+			t.Fatal(err)
+		}
+		if backendA == backendB {
+			t.Fatalf("integration fixture requires two PostgreSQL sessions, both used backend %d", backendA)
+		}
+
+		attemptA := time.Date(2026, 7, 26, 19, 0, 0, 0, time.UTC)
+		attemptB := attemptA.Add(time.Minute)
+		completedB := attemptB.Add(time.Minute)
+		publishedAt := completedB.Add(-10 * time.Second)
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO social_post_results (id, status)
+			VALUES ('result_stale_owner', 'pending')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_stale_owner', 'post_stale_owner', 'result_stale_owner', 'workspace_1',
+				'account_1', 'tiktok', 'dispatch', 'running', 1, 'owner_a', $1
+			)
+		`, attemptA)
+		if err != nil {
+			t.Fatal(err)
+		}
+		txB, err := ownerB.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txB.Rollback(ctx)
+		_, err = txB.Exec(ctx, `
+			UPDATE post_delivery_jobs
+			SET state = 'succeeded', lease_owner = 'owner_b', last_attempt_at = $2,
+			    finished_at = $3, updated_at = $3
+			WHERE id = 'job_stale_owner' AND lease_owner = 'owner_a' AND last_attempt_at = $1
+		`, attemptA, attemptB, completedB)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = txB.Exec(ctx, `
+			UPDATE social_post_results
+			SET status = 'published', external_id = 'newer_external_id',
+			    error_message = NULL, published_at = $1,
+			    url = 'https://social.example.com/newer_external_id',
+			    debug_curl = 'newer_debug', publish_token = 'newer_publish_token',
+			    error_code = NULL, failure_stage = NULL, platform_error_code = NULL,
+			    is_retriable = NULL, next_action = NULL, error_source = NULL,
+			    error_temporality = NULL, provider_error = NULL,
+			    x_credits_counted = 23, x_credit_operation = 'newer_operation',
+			    x_credit_catalog_version = 'newer_catalog', x_credit_billing_mode = 'newer_billing'
+			WHERE id = 'result_stale_owner'
+		`, publishedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := txB.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		before := loadRestrictedResultSnapshot(t, ctx, ownerB, "result_stale_owner")
+		queriesA := db.New(ownerA)
+		_, err = queriesA.FinalizeRestrictedPostDeliveryJob(ctx, restrictedFinalizeIntegrationParams("job_stale_owner", "owner_a", attemptA))
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("stale finalization error = %v, want pgx.ErrNoRows", err)
+		}
+		after := loadRestrictedResultSnapshot(t, ctx, ownerB, "result_stale_owner")
+		if !reflect.DeepEqual(after, before) {
+			t.Fatalf("newer published result changed after stale finalization:\n before=%+v\n after=%+v", before, after)
+		}
+
+		var state string
+		var owner pgtype.Text
+		var attemptedAt, finishedAt pgtype.Timestamptz
+		if err := ownerB.QueryRow(ctx, `
+			SELECT state, lease_owner, last_attempt_at, finished_at
+			FROM post_delivery_jobs WHERE id = 'job_stale_owner'
+		`).Scan(&state, &owner, &attemptedAt, &finishedAt); err != nil {
+			t.Fatal(err)
+		}
+		if state != "succeeded" || owner.String != "owner_b" || !attemptedAt.Time.Equal(attemptB) || !finishedAt.Time.Equal(completedB) {
+			t.Fatalf("newer job changed after stale finalization: state=%q owner=%#v attempted=%#v finished=%#v", state, owner, attemptedAt, finishedAt)
+		}
+	})
+
+	t.Run("owned lease transitions job and result atomically", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 26, 21, 0, 0, 0, time.UTC)
+		_, err := pool.Exec(ctx, `
+			INSERT INTO social_post_results (
+				id, status, external_id, published_at, url, debug_curl, publish_token,
+				platform_error_code, provider_error, x_credits_counted,
+				x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+			) VALUES (
+				'result_owned', 'processing', 'stale_external', $1,
+				'https://social.example.com/stale', 'stale_debug', 'stale_publish_token',
+				'stale_provider_code', '{"stale":true}'::jsonb, 31,
+				'stale_operation', 'stale_catalog', 'stale_billing'
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_owned', 'post_owned', 'result_owned', 'workspace_1', 'account_1',
+				'tiktok', 'dispatch', 'running', 1, 'owner_current', $1
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		transitioned, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, restrictedFinalizeIntegrationParams("job_owned", "owner_current", attemptedAt))
+		if err != nil {
+			t.Fatalf("owned finalization: %v", err)
+		}
+		if transitioned.State != "dead" || !transitioned.FinishedAt.Valid {
+			t.Fatalf("transitioned job state=%q finished_at=%#v, want dead with timestamp", transitioned.State, transitioned.FinishedAt)
+		}
+		result := loadRestrictedResultSnapshot(t, ctx, pool, "result_owned")
+		if result.Status != "failed" || result.ExternalID.Valid || result.PublishedAt.Valid || result.URL.Valid || result.DebugCurl.Valid || result.PublishToken.Valid {
+			t.Fatalf("owned restricted result core fields = %+v", result)
+		}
+		if result.ErrorMessage.String != publishingrestrictions.UserMessage ||
+			result.ErrorCode.String != publishingrestrictions.NormalizedCode ||
+			result.FailureStage.String != publishingrestrictions.FailureStage ||
+			!result.IsRetriable.Valid || result.IsRetriable.Bool ||
+			result.NextAction.String != publishingrestrictions.NextAction ||
+			result.ErrorSource.String != postfailures.ErrorSourceUnipost ||
+			result.ErrorTemporality.String != postfailures.ErrorTemporalityTemporary ||
+			result.PlatformErrorCode.Valid || result.ProviderError != nil {
+			t.Fatalf("owned restricted result diagnostics = %+v", result)
+		}
+		if result.XCreditsCounted != 0 || result.XCreditOperation.Valid || result.XCreditCatalogVersion.Valid || result.XCreditBillingMode.Valid {
+			t.Fatalf("owned restricted X billing metadata = count:%d operation:%#v catalog:%#v billing:%#v, want cleared", result.XCreditsCounted, result.XCreditOperation, result.XCreditCatalogVersion, result.XCreditBillingMode)
+		}
+	})
+
+	t.Run("atomic restriction retention removes obsolete usage and derives final status", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 26, 21, 30, 0, 0, time.UTC)
+		cleanupAt := attemptedAt.Add(60 * 24 * time.Hour)
+		_, err := pool.Exec(ctx, `
+			INSERT INTO social_post_results (id, post_id, social_account_id, status)
+			VALUES ('result_stale_usage', 'post_stale_usage', 'account_stale_usage', 'processing')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_stale_usage', 'post_stale_usage', 'result_stale_usage', 'workspace_1',
+				'account_stale_usage', 'tiktok', 'dispatch', 'running', 1, 'owner_stale_usage', $1
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO media (id, workspace_id, status)
+			VALUES
+				('media_current_usage', 'workspace_1', 'uploaded'),
+				('media_obsolete_usage', 'workspace_1', 'uploaded'),
+				('media_obsolete_later_usage', 'workspace_1', 'uploaded')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO media_post_usages (
+				workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+			) VALUES
+				('workspace_1', 'media_current_usage', 'post_stale_usage', 'publishing', NULL, 'active_post'),
+				('workspace_1', 'media_obsolete_usage', 'post_stale_usage', 'publishing', NULL, 'active_post'),
+				('workspace_1', 'media_obsolete_later_usage', 'post_stale_usage', 'published', $1, 'plan_status')
+		`, attemptedAt.Add(365*24*time.Hour))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		params := restrictedFinalizeIntegrationParams("job_stale_usage", "owner_stale_usage", attemptedAt)
+		params.MediaIds = []string{"media_current_usage"}
+		params.CleanupAfterAt = pgtype.Timestamptz{Time: cleanupAt, Valid: true}
+		if _, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params); err != nil {
+			t.Fatalf("restriction finalization: %v", err)
+		}
+
+		var currentStatus, currentReason string
+		var currentCleanup pgtype.Timestamptz
+		if err := pool.QueryRow(ctx, `
+			SELECT post_status, retention_reason, cleanup_after_at
+			FROM media_post_usages
+			WHERE media_id = 'media_current_usage' AND post_id = 'post_stale_usage'
+		`).Scan(&currentStatus, &currentReason, &currentCleanup); err != nil {
+			t.Fatal(err)
+		}
+		if currentStatus != "failed" || currentReason != "publishing_restriction" || !currentCleanup.Valid || !currentCleanup.Time.Equal(cleanupAt) {
+			t.Fatalf("current restriction usage = status:%q reason:%q cleanup:%#v, want failed publishing_restriction %s", currentStatus, currentReason, currentCleanup, cleanupAt)
+		}
+		var obsoleteCount int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*)::int FROM media_post_usages
+			WHERE media_id = ANY($1::text[]) AND post_id = 'post_stale_usage'
+		`, []string{"media_obsolete_usage", "media_obsolete_later_usage"}).Scan(&obsoleteCount); err != nil {
+			t.Fatal(err)
+		}
+		if obsoleteCount != 0 {
+			t.Fatalf("obsolete media usages = %d, want 0", obsoleteCount)
+		}
+	})
+
+	t.Run("atomic restriction retention derives partial parent status", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 26, 21, 45, 0, 0, time.UTC)
+		_, err := pool.Exec(ctx, `
+			INSERT INTO social_post_results (id, post_id, social_account_id, status) VALUES
+				('result_partial_restricted', 'post_partial_restricted', 'account_partial_restricted', 'processing'),
+				('result_partial_published', 'post_partial_restricted', 'account_partial_published', 'published');
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_partial_restricted', 'post_partial_restricted', 'result_partial_restricted',
+				'workspace_1', 'account_partial_restricted', 'tiktok', 'dispatch', 'running',
+				1, 'owner_partial_restricted', TIMESTAMPTZ '2026-07-26 21:45:00+00'
+			);
+			INSERT INTO media (id, workspace_id, status)
+			VALUES ('media_partial_restricted', 'workspace_1', 'uploaded')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		params := restrictedFinalizeIntegrationParams("job_partial_restricted", "owner_partial_restricted", attemptedAt)
+		params.MediaIds = []string{"media_partial_restricted"}
+		if _, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params); err != nil {
+			t.Fatal(err)
+		}
+		var status, reason string
+		if err := pool.QueryRow(ctx, `
+			SELECT post_status, retention_reason FROM media_post_usages
+			WHERE media_id = 'media_partial_restricted' AND post_id = 'post_partial_restricted'
+		`).Scan(&status, &reason); err != nil {
+			t.Fatal(err)
+		}
+		if status != "partial" || reason != "publishing_restriction" {
+			t.Fatalf("partial restriction usage = status:%q reason:%q, want partial/publishing_restriction", status, reason)
+		}
+	})
+
+	t.Run("newer retry plan retention wins after atomic restriction retention", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ownerA, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerA.Release()
+		ownerB, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerB.Release()
+		attemptedAt := time.Date(2026, 7, 26, 22, 0, 0, 0, time.UTC)
+		restrictionDeadline := attemptedAt.Add(60 * 24 * time.Hour)
+		planDeadline := attemptedAt.Add(30 * 24 * time.Hour)
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO social_post_results (id, post_id, social_account_id, status)
+			VALUES ('result_retention_race', 'post_retention_race', 'account_1', 'processing')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_retention_race', 'post_retention_race', 'result_retention_race',
+				'workspace_1', 'account_1', 'tiktok', 'dispatch', 'running', 1,
+				'owner_a', $1
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO media (id, workspace_id, status)
+			VALUES
+				('media_retention_race_a', 'workspace_1', 'uploaded'),
+				('media_retention_race_b', 'workspace_1', 'uploaded')
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = ownerA.Exec(ctx, `
+			INSERT INTO social_accounts (id, platform)
+			VALUES ('account_1', 'tiktok');
+			INSERT INTO platform_publishing_restrictions (platform, enabled, restricted_plan_ids)
+			VALUES ('tiktok', FALSE, ARRAY[]::text[])
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		txA, err := ownerA.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txA.Rollback(ctx)
+		params := restrictedFinalizeIntegrationParams("job_retention_race", "owner_a", attemptedAt)
+		params.MediaIds = []string{"media_retention_race_b", "media_retention_race_a"}
+		params.CleanupAfterAt = pgtype.Timestamptz{Time: restrictionDeadline, Valid: true}
+		if _, err := db.New(txA).FinalizeRestrictedPostDeliveryJob(ctx, params); err != nil {
+			t.Fatalf("restriction finalization: %v", err)
+		}
+		if err := txA.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		txB, err := ownerB.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txB.Rollback(ctx)
+		retryJob, err := db.New(txB).CreateRetryPostDeliveryJobWithMediaActivation(ctx, db.CreateRetryPostDeliveryJobWithMediaActivationParams{
+			PostID:             "post_retention_race",
+			SocialPostResultID: "result_retention_race",
+			WorkspaceID:        "workspace_1",
+			SocialAccountID:    "account_1",
+			Platform:           "tiktok",
+			PostInputIndex:     0,
+			MaxAttempts:        5,
+			NextRunAt:          pgtype.Timestamptz{Time: attemptedAt.Add(time.Minute), Valid: true},
+			MediaIds:           []string{"media_retention_race_a", "media_retention_race_b"},
+		})
+		if err != nil {
+			t.Fatalf("create real retry job with media activation: %v", err)
+		}
+		if retryJob.State != "pending" || retryJob.Kind != "retry" {
+			t.Fatalf("retry job state/kind = %q/%q, want pending/retry", retryJob.State, retryJob.Kind)
+		}
+		rows, err := txB.Query(ctx, `
+				SELECT media.id, media.usage_version, usage.retention_reason,
+				       usage.cleanup_after_at
+				FROM media
+				JOIN media_post_usages usage
+				  ON usage.media_id = media.id
+				 AND usage.post_id = 'post_retention_race'
+				WHERE media.id = ANY($1::text[])
+				ORDER BY media.id
+		`, []string{"media_retention_race_a", "media_retention_race_b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		activatedCount := 0
+		for rows.Next() {
+			var mediaID, reason string
+			var version int64
+			var cleanup pgtype.Timestamptz
+			if err := rows.Scan(&mediaID, &version, &reason, &cleanup); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+			if version != 2 || reason != "active_post" || cleanup.Valid {
+				rows.Close()
+				t.Fatalf("activated media %s = version:%d reason:%q cleanup:%#v, want 2/active_post/null", mediaID, version, reason, cleanup)
+			}
+			activatedCount++
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		rows.Close()
+		if activatedCount != 2 {
+			t.Fatalf("activated media rows = %d, want 2", activatedCount)
+		}
+		if _, err := txB.Exec(ctx, `
+				UPDATE social_post_results
+				SET status = 'published', external_id = 'newer_external_id',
+				    error_message = NULL, published_at = $1,
+				    error_code = NULL, failure_stage = NULL
+				WHERE id = 'result_retention_race'
+		`, attemptedAt.Add(time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := txB.Exec(ctx, `
+				UPDATE post_delivery_jobs
+				SET state = 'succeeded', finished_at = NOW(), updated_at = NOW()
+				WHERE id = $1
+		`, retryJob.ID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := txB.Exec(ctx, `
+				UPDATE media_post_usages
+				SET post_status = 'published', cleanup_after_at = $1,
+				    retention_reason = 'plan_status', updated_at = NOW()
+				WHERE media_id = ANY($2::text[])
+				  AND post_id = 'post_retention_race'
+		`, planDeadline, []string{"media_retention_race_a", "media_retention_race_b"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := txB.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		var status string
+		if err := pool.QueryRow(ctx, `SELECT status FROM social_post_results WHERE id = 'result_retention_race'`).Scan(&status); err != nil {
+			t.Fatal(err)
+		}
+		if status != "published" {
+			t.Fatalf("newer result status = %q, want published", status)
+		}
+		rows, err = pool.Query(ctx, `
+			SELECT post_status, retention_reason, cleanup_after_at
+			FROM media_post_usages
+			WHERE media_id = ANY($1::text[]) AND post_id = 'post_retention_race'
+			ORDER BY media_id
+		`, []string{"media_retention_race_a", "media_retention_race_b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		retainedCount := 0
+		for rows.Next() {
+			var postStatus, reason string
+			var cleanupAt pgtype.Timestamptz
+			if err := rows.Scan(&postStatus, &reason, &cleanupAt); err != nil {
+				t.Fatal(err)
+			}
+			if postStatus != "published" || reason != "plan_status" || !cleanupAt.Valid || !cleanupAt.Time.Equal(planDeadline) {
+				t.Fatalf("newer durable usage = status:%q reason:%q cleanup:%#v, want published plan retention %s", postStatus, reason, cleanupAt, planDeadline)
+			}
+			retainedCount++
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if retainedCount != 2 {
+			t.Fatalf("newer retained media rows = %d, want 2", retainedCount)
+		}
+	})
+
+	t.Run("opposite media input orders serialize without deadlock", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		ownerA, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerA.Release()
+		ownerB, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ownerB.Release()
+		attemptedAt := time.Date(2026, 7, 26, 23, 0, 0, 0, time.UTC)
+
+		_, err = pool.Exec(ctx, `
+			INSERT INTO social_post_results (id, post_id, social_account_id, status) VALUES
+				('result_lock_finalize', 'post_lock_finalize', 'account_lock_finalize', 'processing'),
+				('result_lock_retry', 'post_lock_retry', 'account_lock_retry', 'failed');
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_lock_finalize', 'post_lock_finalize', 'result_lock_finalize',
+				'workspace_lock_order', 'account_lock_finalize', 'tiktok', 'dispatch',
+				'running', 1, 'owner_lock_finalize', TIMESTAMPTZ '2026-07-26 23:00:00+00'
+			);
+			INSERT INTO media (id, workspace_id, status) VALUES
+				('media_lock_a', 'workspace_lock_order', 'uploaded'),
+				('media_lock_b', 'workspace_lock_order', 'uploaded');
+			INSERT INTO social_accounts (id, platform) VALUES
+				('account_lock_retry', 'tiktok');
+			INSERT INTO platform_publishing_restrictions (platform, enabled, restricted_plan_ids)
+			VALUES ('tiktok', FALSE, ARRAY[]::text[])
+			ON CONFLICT (platform) DO UPDATE SET enabled = FALSE, restricted_plan_ids = ARRAY[]::text[]
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		txA, err := ownerA.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txA.Rollback(ctx)
+		txB, err := ownerB.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer txB.Rollback(ctx)
+
+		type mediaLockResult struct {
+			owner string
+			job   db.PostDeliveryJob
+			err   error
+		}
+		start := make(chan struct{})
+		done := make(chan mediaLockResult, 2)
+		go func() {
+			<-start
+			params := restrictedFinalizeIntegrationParams("job_lock_finalize", "owner_lock_finalize", attemptedAt)
+			params.MediaIds = []string{"media_lock_b", "media_lock_a"}
+			params.CleanupAfterAt = pgtype.Timestamptz{Time: attemptedAt.Add(60 * 24 * time.Hour), Valid: true}
+			_, finalizeErr := db.New(txA).FinalizeRestrictedPostDeliveryJob(ctx, params)
+			done <- mediaLockResult{owner: "a", err: finalizeErr}
+		}()
+		go func() {
+			<-start
+			job, retryErr := db.New(txB).CreateRetryPostDeliveryJobWithMediaActivation(ctx, db.CreateRetryPostDeliveryJobWithMediaActivationParams{
+				PostID:             "post_lock_retry",
+				SocialPostResultID: "result_lock_retry",
+				WorkspaceID:        "workspace_lock_order",
+				SocialAccountID:    "account_lock_retry",
+				Platform:           "tiktok",
+				PostInputIndex:     0,
+				MaxAttempts:        5,
+				NextRunAt:          pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+				MediaIds:           []string{"media_lock_a", "media_lock_b"},
+			})
+			done <- mediaLockResult{owner: "b", job: job, err: retryErr}
+		}()
+		close(start)
+
+		awaitResult := func() mediaLockResult {
+			t.Helper()
+			select {
+			case result := <-done:
+				return result
+			case <-ctx.Done():
+				t.Fatalf("media lock query timeout: %v", ctx.Err())
+				return mediaLockResult{}
+			}
+		}
+		commitOwner := func(owner string) error {
+			if owner == "a" {
+				return txA.Commit(ctx)
+			}
+			return txB.Commit(ctx)
+		}
+
+		first := awaitResult()
+		if first.err != nil {
+			t.Fatalf("first media lock query (%s): %v", first.owner, first.err)
+		}
+		if err := commitOwner(first.owner); err != nil {
+			t.Fatal(err)
+		}
+		second := awaitResult()
+		if second.err != nil {
+			t.Fatalf("second media lock query (%s): %v", second.owner, second.err)
+		}
+		if err := commitOwner(second.owner); err != nil {
+			t.Fatal(err)
+		}
+		retryJob := first.job
+		if second.owner == "b" {
+			retryJob = second.job
+		}
+		if retryJob.State != "pending" || retryJob.Kind != "retry" {
+			t.Fatalf("concurrent retry job = state:%q kind:%q, want pending/retry", retryJob.State, retryJob.Kind)
+		}
+
+		rows, err := pool.Query(ctx, `
+			SELECT id, usage_version FROM media
+			WHERE id = ANY($1::text[])
+			ORDER BY id
+		`, []string{"media_lock_a", "media_lock_b"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		count := 0
+		for rows.Next() {
+			var mediaID string
+			var version int64
+			if err := rows.Scan(&mediaID, &version); err != nil {
+				t.Fatal(err)
+			}
+			if version != 2 {
+				t.Fatalf("media %s usage_version = %d, want 2 after both atomic paths", mediaID, version)
+			}
+			count++
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
+		if count != 2 {
+			t.Fatalf("locked media rows = %d, want 2", count)
+		}
+	})
+}

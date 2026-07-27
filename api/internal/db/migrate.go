@@ -80,25 +80,32 @@ func RunMigrations(databaseURL string) error {
 		return fmt.Errorf("failed to open database for migrations: %w", err)
 	}
 	defer database.Close()
+	return runMigrations(context.Background(), database, true)
+}
 
+func runMigrations(ctx context.Context, database *sql.DB, acquireSessionLock bool) error {
 	migrationFS, err := fs.Sub(migrations, "migrations")
 	if err != nil {
 		return fmt.Errorf("failed to open embedded migrations: %w", err)
 	}
-	sessionLocker, err := lock.NewPostgresSessionLocker()
-	if err != nil {
-		return fmt.Errorf("failed to create migration session locker: %w", err)
+	providerOptions := make([]goose.ProviderOption, 0, 1)
+	if acquireSessionLock {
+		sessionLocker, err := lock.NewPostgresSessionLocker()
+		if err != nil {
+			return fmt.Errorf("failed to create migration session locker: %w", err)
+		}
+		providerOptions = append(providerOptions, goose.WithSessionLocker(sessionLocker))
 	}
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
 		database,
 		migrationFS,
-		goose.WithSessionLocker(sessionLocker),
+		providerOptions...,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create migration provider: %w", err)
 	}
-	if _, err := provider.Up(context.Background()); err != nil {
+	if _, err := provider.Up(ctx); err != nil {
 		return fmt.Errorf("failed to run migrations: %w", err)
 	}
 

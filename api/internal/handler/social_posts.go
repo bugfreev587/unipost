@@ -32,6 +32,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/ratelimit"
@@ -943,7 +944,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
-	h.createImmediatePost(w, r, workspaceID, parsed, accountMap)
+	h.createImmediatePost(w, r, workspaceID, parsed, accountMap, blockedTargets)
 }
 
 func applyIdempotencyKeyHeaderFallback(parsed *parsedRequest, headerValue string) {
@@ -1222,8 +1223,9 @@ func (h *SocialPostHandler) createImmediatePost(
 	workspaceID string,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) {
-	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap)
+	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap, blockedTargets)
 	if err != nil {
 		h.logPublishingEvent(r.Context(), integrationlogs.Event{
 			WorkspaceID: workspaceID,
@@ -1253,8 +1255,9 @@ func (h *SocialPostHandler) executeImmediatePost(
 	workspaceID string,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
-	return h.queueImmediatePost(r.Context(), workspaceID, parsed, accountMap)
+	return h.queueImmediatePost(r.Context(), workspaceID, parsed, accountMap, blockedTargets)
 }
 
 // publishExistingPost is the publish-from-draft entry point. The parent
@@ -1267,10 +1270,11 @@ func (h *SocialPostHandler) publishExistingPost(
 	post db.SocialPost,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) {
 	uniqueIDs := uniqueAccountIDs(parsed.Posts)
 	post.ProfileIds = h.ensureProfileIDsForPost(r.Context(), post, uniqueIDs)
-	resp, err := h.enqueueExistingPostDeliveries(r.Context(), post, parsed.Posts, accountMap)
+	resp, err := h.enqueueExistingPostDeliveries(r.Context(), post, parsed.Posts, accountMap, blockedTargets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return

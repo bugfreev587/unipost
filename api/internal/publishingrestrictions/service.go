@@ -61,7 +61,19 @@ type Service struct {
 	store         Store
 	campaignStore CampaignStore
 	previewSecret []byte
+	readiness     CampaignDeliveryReadiness
 	now           func() time.Time
+}
+
+type CampaignDeliveryReadiness struct {
+	PreviewSecret       bool
+	AuditedSender       bool
+	RestrictionTemplate bool
+	RecoveryTemplate    bool
+}
+
+func (r CampaignDeliveryReadiness) Ready() bool {
+	return r.PreviewSecret && r.AuditedSender && r.RestrictionTemplate && r.RecoveryTemplate
 }
 
 type CampaignStore interface {
@@ -72,8 +84,10 @@ type CampaignStore interface {
 }
 
 var (
-	ErrCampaignPrecondition = errors.New("campaign precondition failed")
-	ErrInvalidPreviewToken  = errors.New("invalid or expired campaign preview token")
+	ErrCampaignPrecondition  = errors.New("campaign precondition failed")
+	ErrCampaignRetryExpired  = errors.New("campaign retry idempotency window expired")
+	ErrInvalidPreviewToken   = errors.New("invalid or expired campaign preview token")
+	ErrCampaignNotConfigured = errors.New("campaign delivery is not configured")
 )
 
 func NewService(store Store) *Service {
@@ -84,6 +98,15 @@ func NewService(store Store) *Service {
 func (s *Service) SetCampaignPreviewSecret(secret string) *Service {
 	s.previewSecret = []byte(strings.TrimSpace(secret))
 	return s
+}
+
+func (s *Service) SetCampaignDeliveryReadiness(readiness CampaignDeliveryReadiness) *Service {
+	s.readiness = readiness
+	return s
+}
+
+func (s *Service) campaignDeliveryReady() bool {
+	return s != nil && s.campaignStore != nil && len(s.previewSecret) > 0 && s.readiness.Ready()
 }
 
 func (s *Service) Evaluate(ctx context.Context, workspaceID, platform string) (Decision, error) {
@@ -135,8 +158,8 @@ type campaignPreviewToken struct {
 }
 
 func (s *Service) PreviewCampaign(ctx context.Context, platform string, campaignType CampaignType) (CampaignPreview, error) {
-	if s.campaignStore == nil || len(s.previewSecret) == 0 {
-		return CampaignPreview{}, errors.New("campaign preview is not configured")
+	if !s.campaignDeliveryReady() {
+		return CampaignPreview{}, ErrCampaignNotConfigured
 	}
 	if campaignType != RestrictionNotice && campaignType != RecoveryNotice {
 		return CampaignPreview{}, fmt.Errorf("%w: unsupported campaign type", ErrCampaignPrecondition)
@@ -170,7 +193,10 @@ func (s *Service) PreviewCampaign(ctx context.Context, platform string, campaign
 }
 
 func (s *Service) ConfirmCampaign(ctx context.Context, request ConfirmCampaignRequest) (Campaign, error) {
-	if request.Confirmation != "SEND" || s.campaignStore == nil {
+	if !s.campaignDeliveryReady() {
+		return Campaign{}, ErrCampaignNotConfigured
+	}
+	if request.Confirmation != "SEND" {
 		return Campaign{}, ErrCampaignPrecondition
 	}
 	payload, err := s.verifyCampaignPreview(request.PreviewToken)
@@ -201,8 +227,8 @@ func (s *Service) ListCampaigns(ctx context.Context, platform string) ([]Campaig
 }
 
 func (s *Service) RetryFailedCampaign(ctx context.Context, platform, campaignID string) (Campaign, error) {
-	if s.campaignStore == nil {
-		return Campaign{}, errors.New("campaigns are not configured")
+	if !s.campaignDeliveryReady() {
+		return Campaign{}, ErrCampaignNotConfigured
 	}
 	return s.campaignStore.RetryFailedCampaign(ctx, strings.ToLower(strings.TrimSpace(platform)), campaignID)
 }

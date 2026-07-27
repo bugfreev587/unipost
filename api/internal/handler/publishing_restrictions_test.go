@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,11 +16,28 @@ import (
 )
 
 type fakePublishingRestrictionService struct {
-	projection []publishingrestrictions.Decision
-	admin      []publishingrestrictions.Restriction
-	transition publishingrestrictions.TransitionResult
-	err        error
-	request    publishingrestrictions.TransitionRequest
+	projection  []publishingrestrictions.Decision
+	admin       []publishingrestrictions.Restriction
+	transition  publishingrestrictions.TransitionResult
+	err         error
+	campaignErr error
+	request     publishingrestrictions.TransitionRequest
+}
+
+func (s *fakePublishingRestrictionService) PreviewCampaign(context.Context, string, publishingrestrictions.CampaignType) (publishingrestrictions.CampaignPreview, error) {
+	return publishingrestrictions.CampaignPreview{}, s.campaignErr
+}
+
+func (s *fakePublishingRestrictionService) ConfirmCampaign(context.Context, publishingrestrictions.ConfirmCampaignRequest) (publishingrestrictions.Campaign, error) {
+	return publishingrestrictions.Campaign{}, s.campaignErr
+}
+
+func (s *fakePublishingRestrictionService) ListCampaigns(context.Context, string) ([]publishingrestrictions.Campaign, error) {
+	return nil, s.campaignErr
+}
+
+func (s *fakePublishingRestrictionService) RetryFailedCampaign(context.Context, string, string) (publishingrestrictions.Campaign, error) {
+	return publishingrestrictions.Campaign{}, s.campaignErr
 }
 
 func (s *fakePublishingRestrictionService) WorkspaceProjection(context.Context, string) ([]publishingrestrictions.Decision, error) {
@@ -106,5 +124,56 @@ func TestPublishingRestrictionsAdminSetReturnsCurrentOnVersionConflict(t *testin
 	}
 	if _, ok := envelope.Error.Details["current"]; !ok {
 		t.Fatalf("missing current state: %s", rec.Body.String())
+	}
+}
+
+func TestPublishingRestrictionCampaignActionsMapNotConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		path string
+		body string
+		run  func(*PublishingRestrictionsHandler, http.ResponseWriter, *http.Request)
+	}{
+		{name: "preview", path: "/v1/admin/publishing-restrictions/tiktok/email-campaigns/preview", body: `{"campaign_type":"restriction_notice"}`, run: (*PublishingRestrictionsHandler).AdminPreviewCampaign},
+		{name: "create", path: "/v1/admin/publishing-restrictions/tiktok/email-campaigns", body: `{"campaign_type":"restriction_notice","preview_token":"token","confirmation":"SEND"}`, run: (*PublishingRestrictionsHandler).AdminCreateCampaign},
+		{name: "retry", path: "/v1/admin/publishing-restrictions/tiktok/email-campaigns/campaign_1/retry-failed", run: (*PublishingRestrictionsHandler).AdminRetryFailedCampaign},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			service := &fakePublishingRestrictionService{campaignErr: fmt.Errorf("delivery unavailable: %w", publishingrestrictions.ErrCampaignNotConfigured)}
+			h := NewPublishingRestrictionsHandler(service)
+			req := httptest.NewRequest(http.MethodPost, tt.path, strings.NewReader(tt.body))
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("platform", "tiktok")
+			rctx.URLParams.Add("campaignID", "campaign_1")
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			rec := httptest.NewRecorder()
+
+			tt.run(h, rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"code":"NOT_CONFIGURED"`) {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "Publishing restriction email campaigns are not configured") || strings.Contains(rec.Body.String(), "delivery unavailable") {
+				t.Fatalf("response did not use safe not-configured copy: %s", rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestPublishingRestrictionRetryMapsExpiredProviderWindow(t *testing.T) {
+	service := &fakePublishingRestrictionService{campaignErr: publishingrestrictions.ErrCampaignRetryExpired}
+	h := NewPublishingRestrictionsHandler(service)
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/publishing-restrictions/tiktok/email-campaigns/campaign_1/retry-failed", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("platform", "tiktok")
+	rctx.URLParams.Add("campaignID", "campaign_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.AdminRetryFailedCampaign(rec, req)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"code":"RETRY_WINDOW_EXPIRED"`) {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

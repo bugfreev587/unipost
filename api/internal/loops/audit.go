@@ -2,12 +2,21 @@ package loops
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/emailregistry"
+)
+
+const emailAuditFinalizationTimeout = 5 * time.Second
+
+const (
+	emailAuditOutcomeProviderUnknown    = "provider_unknown"
+	emailAuditOutcomeProviderDefinitive = "provider_definitive_failure"
 )
 
 type EmailAudit struct {
@@ -41,6 +50,31 @@ type EmailSendAttempt struct {
 
 type EmailSendAttemptRecord struct {
 	ID string
+}
+
+// EmailAuditFinalizationError means the provider request completed with
+// ProviderError, but its audit row could not be moved out of pending. Callers
+// must leave linked local work recoverable until reconciliation finalizes both
+// records; this is deliberately not a SendOutcomeUnknownError.
+type EmailAuditFinalizationError struct {
+	ProviderError error
+	AuditError    error
+}
+
+func (e *EmailAuditFinalizationError) Error() string {
+	if e.ProviderError == nil {
+		return fmt.Sprintf("loops: provider accepted send; finalize failed email audit: %v", e.AuditError)
+	}
+	return fmt.Sprintf("loops: provider result %v; finalize failed email audit: %v", e.ProviderError, e.AuditError)
+}
+
+func (e *EmailAuditFinalizationError) Unwrap() error {
+	return e.AuditError
+}
+
+func IsEmailAuditFinalizationError(err error) bool {
+	var finalizationErr *EmailAuditFinalizationError
+	return errors.As(err, &finalizationErr)
 }
 
 type EmailAuditStore interface {
@@ -107,23 +141,59 @@ func (c *AuditedClient) SendTransactionalWithAttempt(
 	}
 	if beforeSend != nil {
 		if linkErr := beforeSend(ctx, record.ID); linkErr != nil {
-			if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, linkErr.Error()); auditErr != nil {
+			finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+			auditErr := c.store.MarkEmailSendAttemptFailed(
+				finalizeCtx,
+				record.ID,
+				emailAuditFailureEvidence("pre_send_failure", linkErr),
+			)
+			cancelFinalize()
+			if auditErr != nil {
 				slog.Warn("loops: email audit linkage failure update failed", "attempt_id", record.ID, "error", auditErr)
+				return record, &EmailAuditFinalizationError{ProviderError: linkErr, AuditError: auditErr}
 			}
 			return record, linkErr
 		}
 	}
 	err = c.client.SendTransactional(ctx, email)
 	if err != nil {
-		if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, err.Error()); auditErr != nil {
+		outcomeClass := emailAuditOutcomeProviderDefinitive
+		if IsSendOutcomeUnknown(err) {
+			outcomeClass = emailAuditOutcomeProviderUnknown
+		}
+		failureEvidence := emailAuditFailureEvidence(outcomeClass, err)
+		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+		auditErr := c.store.MarkEmailSendAttemptFailed(finalizeCtx, record.ID, failureEvidence)
+		cancelFinalize()
+		if auditErr != nil {
 			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
+			return record, &EmailAuditFinalizationError{ProviderError: err, AuditError: auditErr}
 		}
 		return record, err
 	}
-	if auditErr := c.store.MarkEmailSendAttemptSent(ctx, record.ID); auditErr != nil {
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+	auditErr := c.store.MarkEmailSendAttemptSent(finalizeCtx, record.ID)
+	cancelFinalize()
+	if auditErr != nil {
 		slog.Warn("loops: email audit sent update failed", "attempt_id", record.ID, "error", auditErr)
+		return record, &EmailAuditFinalizationError{AuditError: auditErr}
 	}
 	return record, nil
+}
+
+func emailAuditFailureEvidence(outcomeClass string, err error) string {
+	evidence := struct {
+		OutcomeClass string `json:"outcome_class"`
+		Error        string `json:"error"`
+	}{OutcomeClass: outcomeClass}
+	if err != nil {
+		evidence.Error = err.Error()
+	}
+	raw, marshalErr := json.Marshal(evidence)
+	if marshalErr != nil {
+		return evidence.Error
+	}
+	return string(raw)
 }
 
 func (c *AuditedClient) createAttempt(ctx context.Context, email TransactionalEmail) (EmailSendAttemptRecord, error) {

@@ -7,17 +7,20 @@ import (
 )
 
 type fakeStore struct {
-	restriction    Restriction
-	restrictions   []Restriction
-	admin          []Restriction
-	planID         string
-	planErr        error
-	restrictionErr error
-	transition     TransitionResult
-	transitionErr  error
-	recipients     []RecipientSnapshot
-	campaign       Campaign
-	createCalls    int
+	restriction      Restriction
+	restrictions     []Restriction
+	admin            []Restriction
+	planID           string
+	planErr          error
+	restrictionErr   error
+	transition       TransitionResult
+	transitionErr    error
+	recipients       []RecipientSnapshot
+	campaign         Campaign
+	restrictionCalls int
+	previewCalls     int
+	createCalls      int
+	retryCalls       int
 }
 
 func (s *fakeStore) ListRestrictions(context.Context) ([]Restriction, error) {
@@ -29,6 +32,7 @@ func (s *fakeStore) ListAdminRestrictions(context.Context) ([]Restriction, error
 }
 
 func (s *fakeStore) RestrictionForPlatform(context.Context, string) (Restriction, error) {
+	s.restrictionCalls++
 	return s.restriction, s.restrictionErr
 }
 
@@ -41,6 +45,7 @@ func (s *fakeStore) SetEnabled(context.Context, TransitionRequest) (TransitionRe
 }
 
 func (s *fakeStore) PreviewCampaignRecipients(context.Context, Restriction, CampaignType) ([]RecipientSnapshot, error) {
+	s.previewCalls++
 	return s.recipients, nil
 }
 
@@ -52,7 +57,36 @@ func (s *fakeStore) CreateCampaign(context.Context, Restriction, CampaignType, C
 func (s *fakeStore) ListCampaigns(context.Context, string) ([]Campaign, error) { return nil, nil }
 
 func (s *fakeStore) RetryFailedCampaign(context.Context, string, string) (Campaign, error) {
+	s.retryCalls++
 	return s.campaign, nil
+}
+
+type fakePolicyOnlyStore struct{ inner *fakeStore }
+
+func (s *fakePolicyOnlyStore) ListRestrictions(ctx context.Context) ([]Restriction, error) {
+	return s.inner.ListRestrictions(ctx)
+}
+
+func (s *fakePolicyOnlyStore) ListAdminRestrictions(ctx context.Context) ([]Restriction, error) {
+	return s.inner.ListAdminRestrictions(ctx)
+}
+
+func (s *fakePolicyOnlyStore) RestrictionForPlatform(ctx context.Context, platform string) (Restriction, error) {
+	return s.inner.RestrictionForPlatform(ctx, platform)
+}
+
+func (s *fakePolicyOnlyStore) WorkspacePlanID(ctx context.Context, workspaceID string) (string, error) {
+	return s.inner.WorkspacePlanID(ctx, workspaceID)
+}
+
+func (s *fakePolicyOnlyStore) SetEnabled(ctx context.Context, request TransitionRequest) (TransitionResult, error) {
+	return s.inner.SetEnabled(ctx, request)
+}
+
+func readyCampaignDelivery() CampaignDeliveryReadiness {
+	return CampaignDeliveryReadiness{
+		PreviewSecret: true, AuditedSender: true, RestrictionTemplate: true, RecoveryTemplate: true,
+	}
 }
 
 func TestEvaluateRestrictsOnlyFreeTikTok(t *testing.T) {
@@ -184,7 +218,9 @@ func TestCampaignPreviewAndConfirmationUseSignedShortLivedToken(t *testing.T) {
 		recipients:  []RecipientSnapshot{{CanonicalUserID: "user_1", NormalizedEmail: "owner@example.com"}},
 		campaign:    Campaign{ID: "campaign_1", CycleID: "cycle_1", CampaignType: RestrictionNotice},
 	}
-	service := NewService(store).SetCampaignPreviewSecret("test-preview-secret")
+	service := NewService(store).
+		SetCampaignPreviewSecret("test-preview-secret").
+		SetCampaignDeliveryReadiness(readyCampaignDelivery())
 	preview, err := service.PreviewCampaign(context.Background(), "tiktok", RestrictionNotice)
 	if err != nil {
 		t.Fatal(err)
@@ -204,5 +240,61 @@ func TestCampaignPreviewAndConfirmationUseSignedShortLivedToken(t *testing.T) {
 	}
 	if created.ID != "campaign_1" || store.createCalls != 1 {
 		t.Fatalf("created=%+v calls=%d", created, store.createCalls)
+	}
+}
+
+func TestCampaignActionsRejectEveryMissingDeliveryPrerequisiteBeforeStoreAccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		readiness CampaignDeliveryReadiness
+		store     func(*fakeStore) Store
+	}{
+		{name: "preview secret", readiness: CampaignDeliveryReadiness{AuditedSender: true, RestrictionTemplate: true, RecoveryTemplate: true}, store: func(store *fakeStore) Store { return store }},
+		{name: "audited sender", readiness: CampaignDeliveryReadiness{PreviewSecret: true, RestrictionTemplate: true, RecoveryTemplate: true}, store: func(store *fakeStore) Store { return store }},
+		{name: "restriction template", readiness: CampaignDeliveryReadiness{PreviewSecret: true, AuditedSender: true, RecoveryTemplate: true}, store: func(store *fakeStore) Store { return store }},
+		{name: "recovery template", readiness: CampaignDeliveryReadiness{PreviewSecret: true, AuditedSender: true, RestrictionTemplate: true}, store: func(store *fakeStore) Store { return store }},
+		{name: "campaign store", readiness: readyCampaignDelivery(), store: func(store *fakeStore) Store { return &fakePolicyOnlyStore{inner: store} }},
+	}
+	actions := []struct {
+		name string
+		run  func(*Service) error
+	}{
+		{name: "preview", run: func(service *Service) error {
+			_, err := service.PreviewCampaign(context.Background(), "tiktok", RestrictionNotice)
+			return err
+		}},
+		{name: "confirm", run: func(service *Service) error {
+			_, err := service.ConfirmCampaign(context.Background(), ConfirmCampaignRequest{
+				Platform: "tiktok", CampaignType: RestrictionNotice, PreviewToken: "unused", Confirmation: "SEND",
+			})
+			return err
+		}},
+		{name: "retry", run: func(service *Service) error {
+			_, err := service.RetryFailedCampaign(context.Background(), "tiktok", "campaign_1")
+			return err
+		}},
+	}
+
+	for _, prerequisite := range tests {
+		for _, action := range actions {
+			t.Run(prerequisite.name+"/"+action.name, func(t *testing.T) {
+				store := &fakeStore{restriction: Restriction{Platform: "tiktok", Enabled: true, CycleID: "cycle_1", Version: 1}}
+				service := NewService(prerequisite.store(store)).
+					SetCampaignPreviewSecret("test-preview-secret").
+					SetCampaignDeliveryReadiness(prerequisite.readiness)
+				if prerequisite.name == "preview secret" {
+					service.SetCampaignPreviewSecret("")
+				}
+
+				err := action.run(service)
+				if !errors.Is(err, ErrCampaignNotConfigured) {
+					t.Fatalf("error = %v, want ErrCampaignNotConfigured", err)
+				}
+				if store.restrictionCalls != 0 || store.previewCalls != 0 || store.createCalls != 0 || store.retryCalls != 0 {
+					t.Fatalf("store calls before readiness rejection: restriction=%d preview=%d create=%d retry=%d",
+						store.restrictionCalls, store.previewCalls, store.createCalls, store.retryCalls)
+				}
+			})
+		}
 	}
 }

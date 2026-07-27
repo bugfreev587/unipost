@@ -493,12 +493,6 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 }
 
 const createRetryPostDeliveryJobWithMediaActivation = `-- name: CreateRetryPostDeliveryJobWithMediaActivation :one
--- The media parent-row version bump, usage-ledger activation, and retry-job
--- insert are one statement. Cleanup can therefore win before this statement
--- (and make all_media_available false), or Retry can win and invalidate the
--- cleanup snapshot; it cannot delete an object between activation and enqueue.
--- Normalize dynamic database plan IDs at this SQL race barrier. Public policy
--- codes and customer copy remain centralized in internal/publishingrestrictions.
 WITH locked_policy AS MATERIALIZED (
   SELECT restriction.enabled, restriction.restricted_plan_ids
   FROM social_accounts account
@@ -538,14 +532,21 @@ WITH locked_policy AS MATERIALIZED (
           FROM UNNEST(restriction.restricted_plan_ids) AS plan_id
         )
     )
-), locked_media AS MATERIALIZED (
-  UPDATE media
-  SET usage_version = usage_version + 1
-  WHERE workspace_id = $3
-    AND id = ANY($9::text[])
-    AND status = 'uploaded'
+), ordered_media AS MATERIALIZED (
+  SELECT parent.id
+  FROM media parent
+  WHERE parent.workspace_id = $3
+    AND parent.id = ANY($9::text[])
+    AND parent.status = 'uploaded'
     AND EXISTS (SELECT 1 FROM policy_admission)
-  RETURNING id
+  ORDER BY parent.id
+  FOR UPDATE OF parent
+), locked_media AS MATERIALIZED (
+  UPDATE media parent
+  SET usage_version = parent.usage_version + 1
+  FROM ordered_media
+  WHERE parent.id = ordered_media.id
+  RETURNING parent.id
 ), all_media_available AS MATERIALIZED (
   SELECT COUNT(DISTINCT id)::int = CARDINALITY($9::text[]) AS available
   FROM locked_media
@@ -615,6 +616,8 @@ type CreateRetryPostDeliveryJobWithMediaActivationParams struct {
 // insert are one statement. Cleanup can therefore win before this statement
 // (and make all_media_available false), or Retry can win and invalidate the
 // cleanup snapshot; it cannot delete an object between activation and enqueue.
+// Normalize dynamic database plan IDs at this SQL race barrier. Public policy
+// codes and customer copy remain centralized in internal/publishingrestrictions.
 func (q *Queries) CreateRetryPostDeliveryJobWithMediaActivation(ctx context.Context, arg CreateRetryPostDeliveryJobWithMediaActivationParams) (PostDeliveryJob, error) {
 	row := q.db.QueryRow(ctx, createRetryPostDeliveryJobWithMediaActivation,
 		arg.PostID,
@@ -691,6 +694,225 @@ type DismissPostDeliveryJobParams struct {
 func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDeliveryJobParams) (PostDeliveryJob, error) {
 	row := q.db.QueryRow(ctx, dismissPostDeliveryJob, arg.ID, arg.WorkspaceID)
 	var i PostDeliveryJob
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialPostResultID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.Platform,
+		&i.PostInputIndex,
+		&i.Kind,
+		&i.State,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.FailureStage,
+		&i.ErrorCode,
+		&i.PlatformErrorCode,
+		&i.LastError,
+		&i.NextRunAt,
+		&i.LastAttemptAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.DismissedAt,
+		&i.LeaseExpiresAt,
+		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
+	)
+	return i, err
+}
+
+const finalizeRestrictedPostDeliveryJob = `-- name: FinalizeRestrictedPostDeliveryJob :one
+WITH transitioned_job AS (
+  UPDATE post_delivery_jobs AS job
+  SET state = 'dead',
+      failure_stage = $1,
+      error_code = $2,
+      platform_error_code = NULL,
+      last_error = $3,
+      next_run_at = NULL,
+      updated_at = NOW(),
+      finished_at = NOW()
+  WHERE job.id = $4
+    AND job.state IN ('running', 'retrying')
+    AND job.lease_owner IS NOT DISTINCT FROM $5
+    AND job.last_attempt_at IS NOT DISTINCT FROM $6::timestamptz
+  RETURNING job.id, job.post_id, job.social_post_result_id, job.workspace_id, job.social_account_id, job.platform, job.post_input_index, job.kind, job.state, job.attempts, job.max_attempts, job.failure_stage, job.error_code, job.platform_error_code, job.last_error, job.next_run_at, job.last_attempt_at, job.created_at, job.updated_at, job.finished_at, job.dismissed_at, job.lease_expires_at, job.lease_owner, job.first_claimed_at, job.platform_started_at
+), updated_result AS (
+  UPDATE social_post_results AS result
+  SET status = 'failed',
+      external_id = NULL,
+      error_message = $3,
+      published_at = NULL,
+      url = NULL,
+      debug_curl = NULL,
+      publish_token = NULL,
+      error_code = $2,
+      failure_stage = $1,
+      platform_error_code = NULL,
+      is_retriable = FALSE,
+      next_action = $7,
+      error_source = $8,
+      error_temporality = $9,
+      provider_error = NULL,
+      x_credits_counted = 0,
+      x_credit_operation = NULL,
+      x_credit_catalog_version = NULL,
+      x_credit_billing_mode = NULL
+  FROM transitioned_job
+  WHERE result.id = transitioned_job.social_post_result_id
+  RETURNING transitioned_job.id AS job_id
+), current_result_statuses AS MATERIALIZED (
+  SELECT
+    result.id,
+    CASE
+      WHEN result.id = transitioned_job.social_post_result_id THEN 'failed'
+      ELSE result.status
+    END AS status
+  FROM transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  JOIN social_post_results result ON result.post_id = transitioned_job.post_id
+), derived_post_status AS MATERIALIZED (
+  SELECT
+    transitioned_job.post_id,
+    CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM post_delivery_jobs active_job
+        WHERE active_job.post_id = transitioned_job.post_id
+          AND active_job.id <> transitioned_job.id
+          AND active_job.state IN ('pending', 'running', 'retrying')
+      ) OR EXISTS (
+        SELECT 1
+        FROM current_result_statuses result_status
+        WHERE result_status.status NOT IN ('published', 'failed')
+      ) THEN 'publishing'
+      WHEN NOT EXISTS (
+        SELECT 1
+        FROM current_result_statuses result_status
+        WHERE result_status.status <> 'published'
+      ) THEN 'published'
+      WHEN EXISTS (
+        SELECT 1
+        FROM current_result_statuses result_status
+        WHERE result_status.status = 'published'
+      ) THEN 'partial'
+      ELSE 'failed'
+    END AS status
+  FROM transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+), deleted_obsolete_usage AS (
+  DELETE FROM media_post_usages usage
+  USING transitioned_job
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  WHERE usage.post_id = transitioned_job.post_id
+    AND NOT (usage.media_id = ANY($10::text[]))
+  RETURNING usage.id
+), ordered_media AS MATERIALIZED (
+  SELECT
+    parent.id,
+    transitioned_job.workspace_id,
+    transitioned_job.post_id,
+    derived_post_status.status AS post_status
+  FROM media parent
+  JOIN transitioned_job ON transitioned_job.workspace_id = parent.workspace_id
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  JOIN derived_post_status ON derived_post_status.post_id = transitioned_job.post_id
+  WHERE parent.id = ANY($10::text[])
+    AND parent.status = 'uploaded'
+  ORDER BY parent.id
+  FOR UPDATE OF parent
+), locked_media AS MATERIALIZED (
+  UPDATE media AS parent
+  SET usage_version = parent.usage_version + 1
+  FROM ordered_media
+  WHERE parent.id = ordered_media.id
+  RETURNING parent.id, ordered_media.workspace_id, ordered_media.post_id, ordered_media.post_status
+), retained_media AS (
+  INSERT INTO media_post_usages (
+    workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+  )
+  SELECT
+    locked_media.workspace_id,
+    locked_media.id,
+    locked_media.post_id,
+    locked_media.post_status,
+    $11::timestamptz,
+    'publishing_restriction'
+  FROM locked_media
+  ON CONFLICT (media_id, post_id) DO UPDATE
+  SET post_status = EXCLUDED.post_status,
+      cleanup_after_at = EXCLUDED.cleanup_after_at,
+      retention_reason = EXCLUDED.retention_reason,
+      updated_at = NOW()
+  RETURNING id
+)
+SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at
+FROM transitioned_job
+JOIN updated_result ON updated_result.job_id = transitioned_job.id
+CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
+CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted
+`
+
+type FinalizeRestrictedPostDeliveryJobParams struct {
+	FailureStage     pgtype.Text        `json:"failure_stage"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	ID               string             `json:"id"`
+	LeaseOwner       pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt    pgtype.Timestamptz `json:"last_attempt_at"`
+	NextAction       pgtype.Text        `json:"next_action"`
+	ErrorSource      pgtype.Text        `json:"error_source"`
+	ErrorTemporality pgtype.Text        `json:"error_temporality"`
+	MediaIds         []string           `json:"media_ids"`
+	CleanupAfterAt   pgtype.Timestamptz `json:"cleanup_after_at"`
+}
+
+type FinalizeRestrictedPostDeliveryJobRow struct {
+	ID                 string             `json:"id"`
+	PostID             string             `json:"post_id"`
+	SocialPostResultID string             `json:"social_post_result_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	SocialAccountID    string             `json:"social_account_id"`
+	Platform           string             `json:"platform"`
+	PostInputIndex     int32              `json:"post_input_index"`
+	Kind               string             `json:"kind"`
+	State              string             `json:"state"`
+	Attempts           int32              `json:"attempts"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	FailureStage       pgtype.Text        `json:"failure_stage"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	PlatformErrorCode  pgtype.Text        `json:"platform_error_code"`
+	LastError          pgtype.Text        `json:"last_error"`
+	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
+	LastAttemptAt      pgtype.Timestamptz `json:"last_attempt_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	DismissedAt        pgtype.Timestamptz `json:"dismissed_at"`
+	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
+	LeaseOwner         pgtype.Text        `json:"lease_owner"`
+	FirstClaimedAt     pgtype.Timestamptz `json:"first_claimed_at"`
+	PlatformStartedAt  pgtype.Timestamptz `json:"platform_started_at"`
+}
+
+func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg FinalizeRestrictedPostDeliveryJobParams) (FinalizeRestrictedPostDeliveryJobRow, error) {
+	row := q.db.QueryRow(ctx, finalizeRestrictedPostDeliveryJob,
+		arg.FailureStage,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.LeaseOwner,
+		arg.LastAttemptAt,
+		arg.NextAction,
+		arg.ErrorSource,
+		arg.ErrorTemporality,
+		arg.MediaIds,
+		arg.CleanupAfterAt,
+	)
+	var i FinalizeRestrictedPostDeliveryJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.PostID,

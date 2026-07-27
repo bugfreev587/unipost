@@ -173,24 +173,19 @@ type queuedDeliveryEvaluation struct {
 	policyDecision publishingrestrictions.Decision
 }
 
-func (h *SocialPostHandler) evaluateQueuedDeliveryTargets(
-	ctx context.Context,
-	workspaceID string,
+func evaluateQueuedDeliveryTargets(
 	parsed []platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
-) ([]queuedDeliveryEvaluation, error) {
+	blockedTargets map[string]publishingrestrictions.Decision,
+) []queuedDeliveryEvaluation {
 	evaluations := make([]queuedDeliveryEvaluation, 0, len(parsed))
 	for _, pp := range parsed {
 		account, ok := dbAccounts[pp.AccountID]
 		platformName, validationErr := summarizeAccountValidation(account, ok, accountMap[pp.AccountID])
 		var decision publishingrestrictions.Decision
-		if validationErr == nil && h.publishingRestrictions != nil {
-			var err error
-			decision, err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
-			if err != nil {
-				return nil, err
-			}
+		if validationErr == nil {
+			decision = blockedTargets[pp.AccountID]
 			if decision.Restricted {
 				validationErr = errors.New(publishingrestrictions.UserMessage)
 			}
@@ -202,7 +197,7 @@ func (h *SocialPostHandler) evaluateQueuedDeliveryTargets(
 			policyDecision: decision,
 		})
 	}
-	return evaluations, nil
+	return evaluations
 }
 
 func (h *SocialPostHandler) enqueueParsedPostDeliveries(
@@ -210,14 +205,10 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	post db.SocialPost,
 	parsed []platform.PlatformPostInput,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) ([]db.SocialPostResult, []db.PostDeliveryJob, error) {
 	dbAccounts := h.loadDBAccountsByIDs(ctx, post.WorkspaceID, uniqueAccountIDs(parsed))
-	evaluations, err := h.evaluateQueuedDeliveryTargets(ctx, post.WorkspaceID, parsed, dbAccounts, accountMap)
-	if err != nil {
-		// Policy reads are completed before the first result/job write so a
-		// mid-list database failure cannot leave partial immediate state.
-		return nil, nil, err
-	}
+	evaluations := evaluateQueuedDeliveryTargets(parsed, dbAccounts, accountMap, blockedTargets)
 	results := make([]db.SocialPostResult, 0, len(parsed))
 	jobs := make([]db.PostDeliveryJob, 0, len(parsed))
 	failureSummaries := make([]string, 0)
@@ -336,6 +327,7 @@ func (h *SocialPostHandler) queueImmediatePost(
 	workspaceID string,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
 	metaJSON, _ := platform.EncodePostMetadata(parsed.Posts)
 	canonicalCaption := pgtype.Text{}
@@ -362,7 +354,7 @@ func (h *SocialPostHandler) queueImmediatePost(
 		return socialPostResponse{}, fmt.Errorf("failed to create post: %w", err)
 	}
 
-	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed.Posts, accountMap)
+	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed.Posts, accountMap, blockedTargets)
 	if err != nil {
 		return socialPostResponse{}, err
 	}
@@ -389,8 +381,9 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 	post db.SocialPost,
 	parsed []platform.PlatformPostInput,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
-	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
+	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
 	if err != nil {
 		return socialPostResponse{}, err
 	}
@@ -452,7 +445,7 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 		})
 		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits)
 	}
-	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
+	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
 	return err
 }
 
@@ -895,34 +888,32 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	post db.SocialPost,
 	decision publishingrestrictions.Decision,
 ) error {
-	_, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       "failed",
-		ExternalID:   pgtype.Text{},
-		ErrorMessage: pgtype.Text{String: publishingrestrictions.UserMessage, Valid: true},
-		PublishedAt:  pgtype.Timestamptz{},
-		Url:          pgtype.Text{},
-		DebugCurl:    pgtype.Text{},
+	mediaIDs, mediaMetadataOK := decodeMediaIDsForRetention(post)
+	if !mediaMetadataOK {
+		return fmt.Errorf("%w: post %s", errInvalidPostMediaMetadata, post.ID)
+	}
+	finalizedAt := time.Now()
+	_, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
+		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
+		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
+		ErrorMessage:     postfailures.ToText(publishingrestrictions.UserMessage),
+		ID:               job.ID,
+		LeaseOwner:       job.LeaseOwner,
+		LastAttemptAt:    job.LastAttemptAt,
+		NextAction:       postfailures.ToText(publishingrestrictions.NextAction),
+		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
+		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
+		MediaIds:         mediaIDs,
+		CleanupAfterAt:   pgtype.Timestamptz{Time: finalizedAt.UTC().Add(60 * 24 * time.Hour), Valid: true},
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		return err
 	}
 	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
-	if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
-		return err
-	}
-	if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-		job,
-		"dead",
-		pgtype.Text{String: publishingrestrictions.FailureStage, Valid: true},
-		pgtype.Text{String: publishingrestrictions.NormalizedCode, Valid: true},
-		pgtype.Text{},
-		pgtype.Text{String: publishingrestrictions.UserMessage, Valid: true},
-		pgtype.Timestamptz{},
-	)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	h.recordPostFailure(ctx, failure)
+	h.recordPostFailureHistory(ctx, failure)
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           integrationlogs.LevelWarn,
@@ -939,14 +930,25 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 			"restriction_cycle_id": decision.CycleID,
 		},
 	}))
-	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	h.refreshParentPostStatusContext(ctx, post, allResults)
-	retentionPost := post
-	if refreshedPost, refreshErr := h.queries.GetSocialPostByID(ctx, post.ID); refreshErr == nil {
-		retentionPost = refreshedPost
+	allResults, err := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
+	if err != nil {
+		return fmt.Errorf("list current results after restriction finalization: %w", err)
 	}
-	h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, retentionPost, retentionPost.Status, time.Now())
+	h.refreshParentPostStatusContext(withoutPostMediaRetentionSync(ctx), post, allResults)
 	return nil
+}
+
+func (h *SocialPostHandler) recordPostFailureHistory(ctx context.Context, failure db.CreatePostFailureParams) {
+	failure.Message = sanitizeDeliveryErrorText(failure.Message)
+	failure.RawError = sanitizeDeliveryErrorTextValue(failure.RawError)
+	failure.PlatformErrorCode = sanitizeDeliveryErrorTextValue(failure.PlatformErrorCode)
+	if _, err := h.queries.CreatePostFailure(ctx, failure); err != nil {
+		slog.Warn("failed to persist structured post failure",
+			"post_id", failure.PostID,
+			"platform", failure.Platform,
+			"stage", failure.FailureStage,
+			"error", err)
+	}
 }
 
 func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.PostDeliveryJob, res db.SocialPostResult, post db.SocialPost, dispatchErr error) error {

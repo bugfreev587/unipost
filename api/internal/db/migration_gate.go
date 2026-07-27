@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/pressly/goose/v3/lock"
 	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
 )
 
@@ -34,8 +35,6 @@ var irreversibleMigrations = []irreversibleMigration{
 		CountAffected: countMigration125AffectedRows,
 	},
 }
-
-const migrationGateAdvisoryLockKey int64 = 0x554E49504F53544
 
 type AffectedMigration struct {
 	Version int64
@@ -71,12 +70,16 @@ func RunMigrationsWithBackupGate(
 		return fmt.Errorf("reserve database connection for migration backup gate: %w", err)
 	}
 	defer connection.Close()
-	if _, err := connection.ExecContext(ctx, `SELECT pg_advisory_lock($1)`, migrationGateAdvisoryLockKey); err != nil {
-		return fmt.Errorf("acquire migration backup advisory lock: %w", err)
+	sessionLocker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return fmt.Errorf("create migration backup session locker: %w", err)
+	}
+	if err := sessionLocker.SessionLock(ctx, connection); err != nil {
+		return fmt.Errorf("acquire migration backup session lock: %w", err)
 	}
 	defer func() {
-		if _, unlockErr := connection.ExecContext(context.Background(), `SELECT pg_advisory_unlock($1)`, migrationGateAdvisoryLockKey); unlockErr != nil {
-			slog.Error("release migration backup advisory lock", "error", unlockErr)
+		if unlockErr := sessionLocker.SessionUnlock(context.Background(), connection); unlockErr != nil {
+			slog.Error("release migration backup session lock", "error", unlockErr)
 		}
 	}()
 
@@ -94,7 +97,7 @@ func RunMigrationsWithBackupGate(
 	)
 
 	return runAfterBackupGate(ctx, config, client, affected, func(context.Context) error {
-		return RunMigrations(databaseURL)
+		return runMigrations(ctx, database, false)
 	})
 }
 

@@ -100,10 +100,61 @@ jobs:
           cache-dependency-path: api/go.sum
 
       - name: Run publishing restriction and migration gate PostgreSQL integration tests
-        run: >-
-          go test -tags=integration ./internal/db ./internal/worker
-          -run 'TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124|TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord|TestCreateEmailSendAttemptAuditStillRetriesFailedRecord|TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction|TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed|TestMigrationGatePostgres|TestRequireCurrentSchema'
-          -count=1 -v
+        run: |
+          set -euo pipefail
+          test_selector='^(?:TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup|TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged|TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified|TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup|TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup|TestRequireCurrentSchemaRejects124AndAccepts125|TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback|TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124|TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord|TestCreateEmailSendAttemptAuditStillRetriesFailedRecord|TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity|TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity|TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow|TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically|TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming|TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable|TestPublishingRestrictionDefinitiveFailureRejectsLostSendClaim|TestPublishingRestrictionCampaignRefreshRejectsMissingCampaign|TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicateSend|TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWriteFailure|TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure|TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure|TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction|TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed|TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAttempt|TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome|TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation)$'
+
+          assert_exact_tests() {
+            local package="$1"
+            shift
+            local list_output
+            list_output="$(go test -tags=integration "$package" -list "$test_selector")"
+            local actual_tests
+            actual_tests="$(printf '%s\n' "$list_output" | awk '/^Test/ { print $1 }' | sort)"
+            local expected_tests
+            expected_tests="$(printf '%s\n' "$@" | sort)"
+            if [[ -z "$actual_tests" || "$actual_tests" != "$expected_tests" ]]; then
+              echo "PostgreSQL test selection mismatch for ${package}" >&2
+              diff -u \
+                <(printf '%s\n' "$expected_tests") \
+                <(printf '%s\n' "$actual_tests") >&2 || true
+              exit 1
+            fi
+          }
+
+          assert_exact_tests ./internal/db \
+            TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup \
+            TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged \
+            TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified \
+            TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup \
+            TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup \
+            TestRequireCurrentSchemaRejects124AndAccepts125 \
+            TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback \
+            TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124 \
+            TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord \
+            TestCreateEmailSendAttemptAuditStillRetriesFailedRecord
+          assert_exact_tests ./internal/handler \
+            TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity
+          assert_exact_tests ./internal/worker \
+            TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity \
+            TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow \
+            TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically \
+            TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming \
+            TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable \
+            TestPublishingRestrictionDefinitiveFailureRejectsLostSendClaim \
+            TestPublishingRestrictionCampaignRefreshRejectsMissingCampaign \
+            TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicateSend \
+            TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWriteFailure \
+            TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure \
+            TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure \
+            TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction \
+            TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed \
+            TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAttempt \
+            TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome \
+            TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation
+
+          go test -tags=integration ./internal/db ./internal/handler ./internal/worker \
+            -run "$test_selector" -count=1 -v
 
   dashboard:
     name: Dashboard build
@@ -126,10 +177,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate release guardrails
-        working-directory: ${{ github.workspace }}
-        run: node --test scripts/preview/*.test.mjs
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -139,11 +186,18 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Validate release guardrails
+        working-directory: ${{ github.workspace }}
+        run: node --test scripts/preview/*.test.mjs
+
       - name: Run dashboard source regression
         run: npm run test:docs-ai
 
       - name: Run dashboard SEO source regression
         run: npm run test:seo
+
+      - name: Run publishing restriction frontend contracts
+        run: npm run test:publishing-restrictions
 
       - name: Build dashboard
         run: npm run build
