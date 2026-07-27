@@ -175,6 +175,7 @@ type queuedDeliveryEvaluation struct {
 	platformName   string
 	validationErr  error
 	policyDecision publishingrestrictions.Decision
+	quotaFailure   bool
 }
 
 func evaluateQueuedDeliveryTargets(
@@ -229,8 +230,26 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	accountMap map[string]platform.ValidateAccount,
 	blockedTargets map[string]publishingrestrictions.Decision,
 ) ([]db.SocialPostResult, []db.PostDeliveryJob, error) {
+	return h.enqueueParsedPostDeliveriesWithQuotaBlocks(ctx, post, parsed, accountMap, blockedTargets, nil)
+}
+
+func (h *SocialPostHandler) enqueueParsedPostDeliveriesWithQuotaBlocks(
+	ctx context.Context,
+	post db.SocialPost,
+	parsed []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
+	quotaBlockedTargets map[int]string,
+) ([]db.SocialPostResult, []db.PostDeliveryJob, error) {
 	dbAccounts := h.loadDBAccountsByIDs(ctx, post.WorkspaceID, uniqueAccountIDs(parsed))
 	evaluations := evaluateQueuedDeliveryTargets(parsed, dbAccounts, accountMap, blockedTargets)
+	for index, message := range quotaBlockedTargets {
+		if index < 0 || index >= len(evaluations) || evaluations[index].validationErr != nil {
+			continue
+		}
+		evaluations[index].validationErr = errors.New(message)
+		evaluations[index].quotaFailure = true
+	}
 	results := make([]db.SocialPostResult, 0, len(parsed))
 	jobs := make([]db.PostDeliveryJob, 0, len(parsed))
 	failureSummaries := make([]string, 0)
@@ -289,7 +308,11 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 			failure := postfailures.BuildParams(post.ID, res.ID, post.WorkspaceID, pp.AccountID,
 				postfailures.FirstNonEmpty(platformName, accountMap[pp.AccountID].Platform), "dispatch_prepare",
 				validationErr.Error(), validationErr.Error())
-			if policyDecision.Restricted {
+			if evaluation.quotaFailure {
+				failure = postfailures.BuildParams(post.ID, res.ID, post.WorkspaceID, pp.AccountID,
+					postfailures.FirstNonEmpty(platformName, accountMap[pp.AccountID].Platform), "quota",
+					validationErr.Error(), validationErr.Error())
+			} else if policyDecision.Restricted {
 				failure = publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, pp.AccountID, platformName, policyDecision.CycleID)
 			}
 			h.recordPostFailure(ctx, failure)
@@ -580,25 +603,67 @@ func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, pos
 	quotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
 	executionPeriod := quota.PeriodForTime(time.Now().UTC())
 	additionalQuotaUnits := scheduledExecutionAdditionalQuotaUnits(post, parsed, accountMap, quotaUnits, executionPeriod)
+	var quotaBlockedTargets map[int]string
+	quotaPartiallyBlocked := false
 	if status, blocked := h.checkFreePlanPostQuotaForPeriod(ctx, post.WorkspaceID, additionalQuotaUnits, executionPeriod); quotaUnits > 0 && blocked {
-		if err := h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits); err != nil {
-			return outcome, err
+		reservedIndexes, hasPerTargetSnapshot := scheduledQuotaReservedIndexesFromMetadata(post.Metadata)
+		if hasPerTargetSnapshot {
+			unreservedIndexes := make([]int, 0, additionalQuotaUnits)
+			releasedCurrentReservationUnits := 0
+			sameReservationPeriod := post.ScheduledAt.Valid && quota.PeriodForTime(post.ScheduledAt.Time) == executionPeriod
+			for index, pp := range parsed {
+				decision := blockedTargets[pp.AccountID]
+				account := accountMap[pp.AccountID]
+				available := !decision.Restricted && account.Platform != "" && !account.Disconnected
+				if sameReservationPeriod && reservedIndexes[index] && !available {
+					releasedCurrentReservationUnits++
+				}
+				if !available {
+					continue
+				}
+				if sameReservationPeriod && reservedIndexes[index] {
+					continue
+				}
+				unreservedIndexes = append(unreservedIndexes, index)
+			}
+			headroom := max(status.Limit-status.Usage-status.Reserved+releasedCurrentReservationUnits, 0)
+			if headroom > len(unreservedIndexes) {
+				headroom = len(unreservedIndexes)
+			}
+			blockedCount := len(unreservedIndexes) - headroom
+			failureStatus := status
+			failureStatus.Reserved = max(status.Reserved-releasedCurrentReservationUnits, 0) + headroom
+			quotaMessage := freePlanQuotaExceededMessage(failureStatus, blockedCount)
+			quotaBlockedTargets = make(map[int]string, blockedCount)
+			for _, index := range unreservedIndexes[headroom:] {
+				quotaBlockedTargets[index] = quotaMessage
+			}
+			quotaPartiallyBlocked = len(quotaBlockedTargets) > 0
 		}
-		post.Status = "failed"
-		post.PublishedAt = pgtype.Timestamptz{}
-		outcome.retentionPost = post
-		outcome.retentionStatus = post.Status
-		outcome.syncOrdinaryRetention = !hasRestrictedPublishingTarget(blockedTargets) && postMediaRetentionSyncSkipped(ctx)
-		outcome.blockedQuotaEmail = true
-		outcome.blockedQuotaRequestedQty = quotaUnits
-		return outcome, nil
+		if !quotaPartiallyBlocked {
+			if err := h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits); err != nil {
+				return outcome, err
+			}
+			post.Status = "failed"
+			post.PublishedAt = pgtype.Timestamptz{}
+			outcome.retentionPost = post
+			outcome.retentionStatus = post.Status
+			outcome.syncOrdinaryRetention = !hasRestrictedPublishingTarget(blockedTargets) && postMediaRetentionSyncSkipped(ctx)
+			outcome.blockedQuotaEmail = true
+			outcome.blockedQuotaRequestedQty = quotaUnits
+			return outcome, nil
+		}
 	}
 	if err := h.queries.SetScheduledExecutionReservationPeriod(ctx, post.ID, executionPeriod); err != nil {
 		return outcome, err
 	}
-	_, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
+	_, jobs, err := h.enqueueParsedPostDeliveriesWithQuotaBlocks(ctx, post, parsed, accountMap, blockedTargets, quotaBlockedTargets)
 	if err != nil {
 		return outcome, err
+	}
+	if quotaPartiallyBlocked {
+		outcome.blockedQuotaEmail = true
+		outcome.blockedQuotaRequestedQty = len(quotaBlockedTargets)
 	}
 	post.Status = "publishing"
 	if len(jobs) == 0 {

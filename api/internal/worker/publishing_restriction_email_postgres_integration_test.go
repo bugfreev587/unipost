@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"testing"
@@ -18,6 +17,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/loops"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+	"github.com/xiaoboyu/unipost-api/internal/testdbguard"
 )
 
 const publishingRestrictionWorkerIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
@@ -102,18 +102,14 @@ func openPublishingRestrictionWorkerIntegrationPool(t *testing.T) *pgxpool.Pool 
 		t.Fatalf("%s is required and must point to an isolated PostgreSQL test service", publishingRestrictionWorkerIntegrationDatabaseEnv)
 	}
 
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		t.Fatalf("parse PostgreSQL integration URL: %v", err)
-	}
-	host := strings.TrimSpace(config.ConnConfig.Host)
-	ip := net.ParseIP(host)
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		t.Fatalf("%s must use a loopback host, got %q", publishingRestrictionWorkerIntegrationDatabaseEnv, host)
-	}
-
 	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, databaseURL)
+	admin, config, err := testdbguard.OpenValidated(
+		publishingRestrictionWorkerIntegrationDatabaseEnv,
+		databaseURL,
+		func(validatedURL string) (*pgxpool.Pool, error) {
+			return pgxpool.New(ctx, validatedURL)
+		},
+	)
 	if err != nil {
 		t.Fatalf("connect PostgreSQL integration service: %v", err)
 	}

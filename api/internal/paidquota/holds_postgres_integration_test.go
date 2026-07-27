@@ -5,7 +5,6 @@ package paidquota
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/xiaoboyu/unipost-api/internal/quota"
+	"github.com/xiaoboyu/unipost-api/internal/testdbguard"
 )
 
 const paidQuotaIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
@@ -124,18 +124,14 @@ func openPaidQuotaIntegrationPool(t *testing.T) *pgxpool.Pool {
 	if databaseURL == "" {
 		t.Fatalf("%s is required and must point to an isolated PostgreSQL test service", paidQuotaIntegrationDatabaseEnv)
 	}
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		t.Fatalf("parse PostgreSQL integration URL: %v", err)
-	}
-	host := strings.TrimSpace(config.ConnConfig.Host)
-	ip := net.ParseIP(host)
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		t.Fatalf("%s must use a loopback host, got %q", paidQuotaIntegrationDatabaseEnv, host)
-	}
-
 	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, databaseURL)
+	admin, config, err := testdbguard.OpenValidated(
+		paidQuotaIntegrationDatabaseEnv,
+		databaseURL,
+		func(validatedURL string) (*pgxpool.Pool, error) {
+			return pgxpool.New(ctx, validatedURL)
+		},
+	)
 	if err != nil {
 		t.Fatalf("connect PostgreSQL integration service: %v", err)
 	}

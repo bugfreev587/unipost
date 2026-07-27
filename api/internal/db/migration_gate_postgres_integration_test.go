@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/xiaoboyu/unipost-api/internal/railwaybackup"
+	"github.com/xiaoboyu/unipost-api/internal/testdbguard"
 )
 
 func openMigrationGateIntegrationDatabase(t *testing.T) (string, *sql.DB) {
@@ -31,7 +32,13 @@ func openMigrationGateIntegrationDatabase(t *testing.T) (string, *sql.DB) {
 		t.Fatalf("%s is required and must point to an isolated PostgreSQL test service", publishingRestrictionIntegrationDatabaseEnv)
 	}
 
-	admin, err := sql.Open("pgx", databaseURL)
+	admin, _, err := testdbguard.OpenValidated(
+		publishingRestrictionIntegrationDatabaseEnv,
+		databaseURL,
+		func(validatedURL string) (*sql.DB, error) {
+			return sql.Open("pgx", validatedURL)
+		},
+	)
 	if err != nil {
 		t.Fatalf("open isolated PostgreSQL service: %v", err)
 	}

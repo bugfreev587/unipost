@@ -26,6 +26,9 @@ const postgresTestsByPackage = {
     "TestCreateSkippedEmailSendAttemptAuditUpdatesNonSentRecords",
     "TestMigration127UpgradeRollingCompatibilityAndDown",
     "TestPostPublishedOutboxSnapshotsFirstPostBeforeDelayedDispatch",
+    "TestPublishingRestrictionRetentionDeadlineSurvivesMediaHardDelete",
+    "TestPublishingRestrictionRetentionDeadlineNotProjectedForTextOnlyPost",
+    "TestPublishingRestrictionRetentionRepairsUnsafeMetadataBeforeHardDelete",
   ],
   "./internal/handler": [
     "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",
@@ -68,12 +71,24 @@ const postgresTestsByPackage = {
     "TestAtomicMonthlySnapshotRejectsDuringTerminalReservationConversion",
     "TestPublishQuotaHoldUsesSamePeriodDeltaAndCrossPeriodFullUnits",
     "TestConcurrentCrossPeriodQuotaHoldPublishReservesCurrentExecutionCapacity",
+    "TestConcurrentDueMixedPostKeepsAdmissionReservedTargetWhenRestrictionLiftExceedsQuota",
+    "TestDueMixedPostUsesPartialHeadroomDeterministically",
+    "TestDueMixedPostReusesReservationReleasedByCurrentRestriction",
+    "TestDueCrossMonthPostUsesOnlyCurrentPeriodPartialHeadroom",
+    "TestScheduledQuotaTargetSnapshotRejectsMissingMalformedAndForgedBindings",
+    "TestDuePostFailsClosedForMissingMalformedAndForgedQuotaSnapshots",
+    "TestDueRepeatedAccountSnapshotPreservesEveryThreadIndex",
     "TestScheduledOrdinaryRetentionFailureDoesNotAbortClaim",
     "TestDraftOrdinaryRetentionFailureDoesNotAbortClaim",
     "TestScheduledInvalidMetadataCommitsTerminalFailure",
   ],
   "./internal/paidquota": [
     "TestPostgresHoldServiceUsesScheduledQuotaSnapshotWithLegacyFallback",
+  ],
+  "./internal/testdbguard": [
+    "TestOpenValidatedRejectsRemoteFallbackBeforeOpen",
+    "TestOpenValidatedRejectsRemotePrimaryBeforeOpen",
+    "TestOpenValidatedAllowsAllLoopbackMultiHost",
   ],
   "./internal/worker": [
     "TestFacebookVideoStatusWorkerTerminalCoordinatorPostgres",
@@ -193,7 +208,7 @@ function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
   }
   assert.match(
     postgresStep.run,
-    /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/paidquota \.\/internal\/worker \\\n\s+-run "\$test_selector" -count=1 -v/,
+    /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/paidquota \.\/internal\/testdbguard \.\/internal\/worker \\\n\s+-run "\$test_selector" -count=1 -v/,
   );
 }
 

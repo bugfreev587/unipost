@@ -949,7 +949,7 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		}) {
 			return
 		}
-		h.createScheduledPost(w, r, workspaceID, parsed, allowedQuotaUnits)
+		h.createScheduledPostWithQuotaTargets(w, r, workspaceID, parsed, allowedTargets, accountMap)
 		return
 	}
 
@@ -974,15 +974,38 @@ func applyIdempotencyKeyHeaderFallback(parsed *parsedRequest, headerValue string
 	parsed.IdempotencyKey = strings.TrimSpace(headerValue)
 }
 
-const scheduledQuotaUnitsMetadataKey = "scheduled_quota_units"
+const (
+	scheduledQuotaUnitsMetadataKey      = "scheduled_quota_units"
+	scheduledQuotaAccountIDsMetadataKey = "scheduled_quota_account_ids"
+	scheduledQuotaSnapshotMetadataKey   = "scheduled_quota_snapshot"
+	scheduledQuotaSnapshotVersion       = 1
+)
+
+type scheduledQuotaTargetSnapshot struct {
+	PostInputIndex int    `json:"post_input_index"`
+	AccountID      string `json:"account_id"`
+	Reserved       bool   `json:"reserved"`
+}
+
+type scheduledQuotaSnapshot struct {
+	Version int                            `json:"version"`
+	Targets []scheduledQuotaTargetSnapshot `json:"targets"`
+}
 
 // encodeScheduledPostMetadata adds the server-owned admission reservation to
 // the normal post metadata. Clients cannot supply this field through the
 // publish request; every scheduled create/edit computes it from the trusted
 // account and publishing-policy snapshot used for admission.
 func encodeScheduledPostMetadata(posts []platform.PlatformPostInput, quotaUnits int) ([]byte, error) {
+	return encodeScheduledPostMetadataWithQuotaAccounts(posts, quotaUnits, nil)
+}
+
+func encodeScheduledPostMetadataWithQuotaAccounts(posts []platform.PlatformPostInput, quotaUnits int, quotaAccountIDs []string) ([]byte, error) {
 	if quotaUnits < 0 || quotaUnits > len(posts) {
 		return nil, fmt.Errorf("scheduled quota units %d outside target range 0..%d", quotaUnits, len(posts))
+	}
+	if quotaAccountIDs != nil && len(quotaAccountIDs) != quotaUnits {
+		return nil, fmt.Errorf("scheduled quota account ids count %d does not match units %d", len(quotaAccountIDs), quotaUnits)
 	}
 	metadata, err := platform.EncodePostMetadata(posts)
 	if err != nil {
@@ -997,11 +1020,127 @@ func encodeScheduledPostMetadata(posts []platform.PlatformPostInput, quotaUnits 
 		return nil, fmt.Errorf("encode scheduled quota units: %w", err)
 	}
 	object[scheduledQuotaUnitsMetadataKey] = rawUnits
+	if quotaAccountIDs != nil {
+		available := make(map[string]int, len(posts))
+		for _, post := range posts {
+			available[post.AccountID]++
+		}
+		reservedCounts := make(map[string]int, len(quotaAccountIDs))
+		for _, accountID := range quotaAccountIDs {
+			reservedCounts[accountID]++
+			if accountID == "" || reservedCounts[accountID] > available[accountID] {
+				return nil, fmt.Errorf("scheduled quota account id %q is not fully bound to platform posts", accountID)
+			}
+		}
+		for accountID, reserved := range reservedCounts {
+			if reserved != available[accountID] {
+				return nil, fmt.Errorf("scheduled quota account id %q reserves %d of %d repeated targets", accountID, reserved, available[accountID])
+			}
+		}
+		remaining := make(map[string]int, len(reservedCounts))
+		for accountID, count := range reservedCounts {
+			remaining[accountID] = count
+		}
+		targets := make([]scheduledQuotaTargetSnapshot, 0, len(posts))
+		for index, post := range posts {
+			reserved := remaining[post.AccountID] > 0
+			if reserved {
+				remaining[post.AccountID]--
+			}
+			targets = append(targets, scheduledQuotaTargetSnapshot{
+				PostInputIndex: index,
+				AccountID:      post.AccountID,
+				Reserved:       reserved,
+			})
+		}
+		rawAccountIDs, marshalErr := json.Marshal(quotaAccountIDs)
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode scheduled quota account ids: %w", marshalErr)
+		}
+		object[scheduledQuotaAccountIDsMetadataKey] = rawAccountIDs
+		rawSnapshot, marshalErr := json.Marshal(scheduledQuotaSnapshot{
+			Version: scheduledQuotaSnapshotVersion,
+			Targets: targets,
+		})
+		if marshalErr != nil {
+			return nil, fmt.Errorf("encode scheduled quota target snapshot: %w", marshalErr)
+		}
+		object[scheduledQuotaSnapshotMetadataKey] = rawSnapshot
+	}
 	metadata, err = json.Marshal(object)
 	if err != nil {
 		return nil, fmt.Errorf("encode scheduled post metadata: %w", err)
 	}
 	return metadata, nil
+}
+
+func publishQuotaAccountIDs(posts []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) []string {
+	accountIDs := make([]string, 0, len(posts))
+	for _, post := range posts {
+		account := accountMap[post.AccountID]
+		if account.Platform == "" || account.Disconnected {
+			continue
+		}
+		accountIDs = append(accountIDs, post.AccountID)
+	}
+	return accountIDs
+}
+
+// scheduledQuotaReservedIndexesFromMetadata validates the full server-owned
+// admission binding before trusting any reservation. Every original input is
+// bound by stable index and account ID; repeated/thread inputs for one account
+// must share the same policy outcome.
+func scheduledQuotaReservedIndexesFromMetadata(metadata []byte) ([]bool, bool) {
+	units, ok := scheduledQuotaUnitsFromMetadata(metadata)
+	if !ok {
+		return nil, false
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(metadata, &object); err != nil {
+		return nil, false
+	}
+	var accountIDs []string
+	if err := json.Unmarshal(object[scheduledQuotaAccountIDsMetadataKey], &accountIDs); err != nil || len(accountIDs) != units {
+		return nil, false
+	}
+	var posts []struct {
+		AccountID string `json:"account_id"`
+	}
+	if err := json.Unmarshal(object["platform_posts"], &posts); err != nil {
+		return nil, false
+	}
+	var snapshot scheduledQuotaSnapshot
+	if err := json.Unmarshal(object[scheduledQuotaSnapshotMetadataKey], &snapshot); err != nil ||
+		snapshot.Version != scheduledQuotaSnapshotVersion || len(snapshot.Targets) != len(posts) {
+		return nil, false
+	}
+	reserved := make([]bool, len(posts))
+	reservedByAccount := make(map[string]bool, len(posts))
+	seenAccount := make(map[string]bool, len(posts))
+	derivedAccountIDs := make([]string, 0, units)
+	for index, target := range snapshot.Targets {
+		if target.PostInputIndex != index || target.AccountID == "" || target.AccountID != posts[index].AccountID {
+			return nil, false
+		}
+		if seenAccount[target.AccountID] && reservedByAccount[target.AccountID] != target.Reserved {
+			return nil, false
+		}
+		seenAccount[target.AccountID] = true
+		reservedByAccount[target.AccountID] = target.Reserved
+		reserved[index] = target.Reserved
+		if target.Reserved {
+			derivedAccountIDs = append(derivedAccountIDs, target.AccountID)
+		}
+	}
+	if len(derivedAccountIDs) != units || len(derivedAccountIDs) != len(accountIDs) {
+		return nil, false
+	}
+	for index := range accountIDs {
+		if accountIDs[index] != derivedAccountIDs[index] {
+			return nil, false
+		}
+	}
+	return reserved, true
 }
 
 // scheduledQuotaUnitsFromMetadata returns only a structurally valid snapshot.
@@ -1038,11 +1177,23 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 	if len(quotaUnitsOverride) > 0 {
 		quotaUnits = quotaUnitsOverride[0]
 	}
-	h.createScheduledPostInternal(w, r, workspaceID, parsed, quotaUnits, nil, false)
+	var quotaAccountIDs []string
+	if quotaUnits == len(parsed.Posts) {
+		quotaAccountIDs = make([]string, 0, len(parsed.Posts))
+		for _, post := range parsed.Posts {
+			quotaAccountIDs = append(quotaAccountIDs, post.AccountID)
+		}
+	}
+	h.createScheduledPostInternal(w, r, workspaceID, parsed, quotaUnits, quotaAccountIDs, nil, false)
+}
+
+func (h *SocialPostHandler) createScheduledPostWithQuotaTargets(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest, quotaTargets []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount) {
+	quotaAccountIDs := publishQuotaAccountIDs(quotaTargets, accountMap)
+	h.createScheduledPostInternal(w, r, workspaceID, parsed, len(quotaAccountIDs), quotaAccountIDs, nil, false)
 }
 
 func (h *SocialPostHandler) createScheduledPostWithMutableGates(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest, accountMap map[string]platform.ValidateAccount) {
-	h.createScheduledPostInternal(w, r, workspaceID, parsed, 0, accountMap, true)
+	h.createScheduledPostInternal(w, r, workspaceID, parsed, 0, nil, accountMap, true)
 }
 
 var (
@@ -1057,6 +1208,7 @@ func (h *SocialPostHandler) createScheduledPostInternal(
 	workspaceID string,
 	parsed parsedRequest,
 	quotaUnits int,
+	quotaAccountIDs []string,
 	accountMap map[string]platform.ValidateAccount,
 	mutableGatesInTransaction bool,
 ) {
@@ -1066,7 +1218,7 @@ func (h *SocialPostHandler) createScheduledPostInternal(
 	var metaJSON []byte
 	var err error
 	if !mutableGatesInTransaction {
-		metaJSON, err = encodeScheduledPostMetadata(parsed.Posts, quotaUnits)
+		metaJSON, err = encodeScheduledPostMetadataWithQuotaAccounts(parsed.Posts, quotaUnits, quotaAccountIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode metadata")
 			return
@@ -1110,7 +1262,7 @@ func (h *SocialPostHandler) createScheduledPostInternal(
 	createMutation := func(queries *db.Queries) error {
 		if mutableGatesInTransaction {
 			var encodeErr error
-			metaJSON, encodeErr = encodeScheduledPostMetadata(parsed.Posts, quotaUnits)
+			metaJSON, encodeErr = encodeScheduledPostMetadataWithQuotaAccounts(parsed.Posts, quotaUnits, quotaAccountIDs)
 			if encodeErr != nil {
 				return encodeErr
 			}
@@ -1148,6 +1300,7 @@ func (h *SocialPostHandler) createScheduledPostInternal(
 					}
 					allowedTargets := allowedPublishingTargets(parsed.Posts, blockedTargets)
 					quotaUnits = countPublishQuotaUnits(allowedTargets, accountMap)
+					quotaAccountIDs = publishQuotaAccountIDs(allowedTargets, accountMap)
 				}
 				return resolution != nil, []paidquota.PeriodDelta{{
 					Period:         quota.PeriodForTime(*parsed.ScheduledAt),
