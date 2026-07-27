@@ -30,6 +30,7 @@ import (
 	"net/http"
 
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
 )
@@ -117,8 +118,9 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]bulkResultEntry, len(body.Posts))
 	acceptedQuotaUnits := 0
+	policySnapshot := make(publishingRestrictionPolicySnapshot)
 	for i, postBody := range body.Posts {
-		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, quotaGate, acceptedQuotaUnits)
+		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, quotaGate, acceptedQuotaUnits, policySnapshot)
 		if result.Error == nil {
 			acceptedQuotaUnits += quotaUnits
 		}
@@ -139,6 +141,7 @@ func (h *SocialPostHandler) processBulkOne(
 	accountMap map[string]platform.ValidateAccount,
 	quotaGate quota.FreePlanHardBlockGate,
 	acceptedQuotaUnits int,
+	policySnapshot publishingRestrictionPolicySnapshot,
 ) (bulkResultEntry, int) {
 	parsed, status, msg := parsePublishRequest(body)
 	if status != 0 {
@@ -184,7 +187,24 @@ func (h *SocialPostHandler) processBulkOne(
 		}, 0
 	}
 
-	quotaUnits := countPublishQuotaUnits(parsed.Posts, accountMap)
+	blockedTargets, policyErr := h.evaluatePublishingRestrictionsWithSnapshot(r.Context(), workspaceID, parsed.Posts, accountMap, policySnapshot)
+	if policyErr != nil {
+		return bulkResultEntry{
+			Status: http.StatusServiceUnavailable,
+			Error:  &bulkErrorEnvelope{Code: "POLICY_UNAVAILABLE", Message: "Publishing policy is temporarily unavailable"},
+		}, 0
+	}
+	if _, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
+		return bulkResultEntry{
+			Status: http.StatusPaymentRequired,
+			Error: &bulkErrorEnvelope{
+				Code:    publishingrestrictions.APICode,
+				Message: publishingrestrictions.UserMessage,
+			},
+		}, 0
+	}
+
+	quotaUnits := countPublishQuotaUnits(allowedPublishingTargets(parsed.Posts, blockedTargets), accountMap)
 	if quotaGate.Blocked(acceptedQuotaUnits + quotaUnits) {
 		h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{
 			Blocked:        true,
@@ -200,7 +220,7 @@ func (h *SocialPostHandler) processBulkOne(
 	}
 
 	// Publish.
-	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap)
+	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap, blockedTargets)
 	if err != nil {
 		return bulkResultEntry{
 			Status: http.StatusInternalServerError,

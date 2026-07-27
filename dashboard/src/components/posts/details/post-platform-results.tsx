@@ -11,8 +11,14 @@ import {
   retrySocialPostResult,
   type PostDeliveryJob,
   type SocialPost,
+  type ApiFetchError,
 } from "@/lib/api";
 import { describePostResultFailure } from "@/lib/post-result-errors";
+import {
+  PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE,
+  describePublishingRestrictionRetry,
+  isPlanPlatformPublishingRestrictedError,
+} from "@/lib/publishing-restrictions";
 
 import { getJobsForResult, getQueueDiagnosticsState } from "./post-platform-results-model";
 import { TimeMetricsPanel } from "./time-metrics-panel";
@@ -146,7 +152,11 @@ function PostResultCard({
       await retrySocialPostResult(token, post.id, result.id);
       await onRetryComplete?.();
     } catch (error) {
-      setRetryError(error instanceof Error ? error.message : "Retry failed");
+      setRetryError(
+        isPlanPlatformPublishingRestrictedError(error as ApiFetchError)
+          ? PLAN_PLATFORM_PUBLISHING_RESTRICTED_MESSAGE
+          : error instanceof Error ? error.message : "Retry failed",
+      );
     } finally {
       setRetrying(false);
     }
@@ -158,6 +168,10 @@ function PostResultCard({
       ? postUrlFor(result.platform, result.external_id)
       : null;
   const failure = result.status === "failed" ? describePostResultFailure(result) : null;
+  const publishingRestrictionFailure = result.error_code === "plan_platform_publishing_restricted";
+  const publishingRestrictionRetry = publishingRestrictionFailure
+    ? describePublishingRestrictionRetry(result)
+    : null;
 
   return (
     <div className="posts-result-card">
@@ -223,11 +237,22 @@ function PostResultCard({
               {failure.retryStatusLabel}
             </div>
           ) : null}
-          {result.id && failure?.canRetry ? (
+          {publishingRestrictionFailure && result.media_retained_until ? (
+            <div className="posts-hint posts-result-retention-hint">
+              <span className="posts-hint-label">Media retained until: </span>
+              {formatLongDate(result.media_retained_until)}
+            </div>
+          ) : null}
+          {result.id && (failure?.canRetry || publishingRestrictionRetry) ? (
             <div className="posts-retry-row">
-              <button type="button" onClick={handleRetry} disabled={retrying} className="posts-retry-btn">
+              <button
+                type="button"
+                onClick={handleRetry}
+                disabled={retrying || (publishingRestrictionRetry !== null && publishingRestrictionRetry?.state !== "ready")}
+                className="posts-retry-btn"
+              >
                 <RotateCcw className={retrying ? "is-spinning" : undefined} aria-hidden="true" />
-                {retrying ? "Retrying…" : "Retry"}
+                {retrying ? "Retrying…" : publishingRestrictionRetry?.label || "Retry"}
               </button>
               {retryError ? <span className="posts-retry-error" role="alert">{retryError}</span> : null}
             </div>
@@ -573,7 +598,7 @@ const PLATFORM_RESULTS_CSS = `
 .posts-error-title{font-size:12px;font-weight:800;color:var(--danger);margin-bottom:6px}
 .posts-error{font-size:12px;color:var(--danger);background:var(--danger-soft);border:1px solid color-mix(in srgb,var(--danger) 22%,transparent);border-radius:10px;padding:10px 12px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-geist-mono),monospace;line-height:1.6;max-height:148px;overflow:auto}
 .posts-hint{font-size:14px;color:var(--dtext);line-height:1.65}.posts-hint-label{color:var(--dmuted)}
-.posts-result-action-hint{margin-top:10px}.posts-result-retry-hint{margin-top:8px}.posts-result-id{margin-top:10px}.posts-fb-processing{margin-top:10px}
+.posts-result-action-hint{margin-top:10px}.posts-result-retry-hint,.posts-result-retention-hint{margin-top:8px}.posts-result-id{margin-top:10px}.posts-fb-processing{margin-top:10px}
 .posts-panel-spacing{margin-top:10px}.posts-debug-panel,.posts-submitted-panel,.posts-time-metrics-panel,.posts-queue-panel{border:1px solid var(--dborder);border-radius:10px;background:var(--surface1);overflow:hidden}
 .posts-queue-panel{margin-top:10px}
 .posts-debug-toggle{display:flex;align-items:center;gap:6px;width:100%;padding:10px 12px;font-size:11.5px;font-weight:650;color:var(--dmuted);background:transparent;border:0;cursor:pointer;font-family:var(--font-geist-mono),monospace;text-transform:uppercase;letter-spacing:.08em;text-align:left}

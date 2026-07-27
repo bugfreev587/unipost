@@ -284,6 +284,36 @@ The admin view supports filtering by status, provider, event key, quota period/t
 - Retention policy: retain metadata and variable snapshots for 13 months.
 - External Loops workflow audit: no cancellation workflow should send in addition to the backend account-canceled template.
 
+### email.publishing_restriction.restriction_notice.v1
+
+- Template env: `LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID`
+- Provider: Loops through `loops.AuditedClient`
+- Delivery class: `service_alert`
+- Owner area: Publishing / Operations
+- Trigger: a Super Admin separately previews and irreversibly confirms the fixed restriction campaign; the restriction toggle never sends it.
+- Recipient policy: deduped current Free workspace owners with active connected TikTok, snapshotted at confirmation and rechecked at send.
+- Required variables: `subject`, `body`
+- Rendering contract: the backend replaces `{{first_name}}` in the immutable body snapshot before calling Loops (`there` fallback). The Loops template renders the supplied `subject` and `body` variables exactly and must not contain separate notice copy or attempt nested `{{first_name}}` evaluation.
+- Idempotency policy: `{cycle_id}:restriction_notice:{canonical_user_id}`
+- Audit policy: create and atomically link one `email_send_attempts` row before every network attempt. A provider key is stable per cycle/type/user; the local audit key is unique per bounded attempt.
+- Fallback policy: none; missing provider/template configuration is a durable recipient failure.
+- External Loops workflow audit: no workflow may auto-send this notice from a toggle or contact property.
+
+### email.publishing_restriction.recovery_notice.v1
+
+- Template env: `LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID`
+- Provider: Loops through `loops.AuditedClient`
+- Delivery class: `service_alert`
+- Owner area: Publishing / Operations
+- Trigger: a Super Admin separately previews and irreversibly confirms the fixed recovery campaign; disabling the restriction never sends it.
+- Recipient policy: recipients successfully sent the same-cycle restriction notice who remain Free owners with active connected TikTok. This intentionally excludes users who never received that notice.
+- Required variables: `subject`, `body`
+- Rendering contract: the backend replaces `{{first_name}}` in the immutable body snapshot before calling Loops (`there` fallback). The Loops template renders the supplied `subject` and `body` variables exactly and must not contain separate recovery copy or attempt nested `{{first_name}}` evaluation.
+- Idempotency policy: `{cycle_id}:recovery_notice:{canonical_user_id}`
+- Audit policy: create and atomically link one `email_send_attempts` row before every network attempt. A provider key is stable per cycle/type/user; the local audit key is unique per bounded attempt.
+- Fallback policy: none; missing provider/template configuration is a durable recipient failure.
+- External Loops workflow audit: no workflow may auto-send recovery from a toggle or contact property.
+
 ## Loops Dashboard Audit Checklist
 
 Before migrating or enabling a template, audit the Loops dashboard for workflows and transactional templates that listen to the same event or contact state.

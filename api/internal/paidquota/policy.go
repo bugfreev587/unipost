@@ -32,17 +32,126 @@ type Mutation func(*db.Queries) error
 
 type Planner func(*db.Queries) ([]PeriodDelta, error)
 
+// TransactionContext keeps every mutable gate in the same transaction that
+// owns the scheduled idempotency advisory lock. DBTX is provided so stores
+// consulted by a gate can bind their reads to the existing connection instead
+// of checking another one out of the pool and self-deadlocking at MaxConns=1.
+type TransactionContext struct {
+	Queries *db.Queries
+	DBTX    db.DBTX
+}
+
+type ScheduledIdempotencyPlanner func(TransactionContext) (handled bool, deltas []PeriodDelta, err error)
+
+type ScheduledPostQuotaAdmitted func(TransactionContext) error
+
 type Coordinator interface {
 	Mutate(ctx context.Context, workspaceID string, deltas []PeriodDelta, mutation Mutation) error
 	MutatePlanned(ctx context.Context, workspaceID string, periods []string, planner Planner, mutation Mutation) error
 }
 
+// ScheduledIdempotencyCoordinator serializes a keyed scheduled create before
+// any mutable capacity gate. Lock ordering is global and intentional:
+// scheduled idempotency key, sorted quota periods, then the active-scheduled
+// cap acquired by the insert query.
+type ScheduledIdempotencyCoordinator interface {
+	Coordinator
+	MutateScheduledIdempotent(
+		ctx context.Context,
+		workspaceID string,
+		idempotencyKey string,
+		planner ScheduledIdempotencyPlanner,
+		afterQuota ScheduledPostQuotaAdmitted,
+		mutation Mutation,
+	) (handled bool, err error)
+}
+
 type transaction interface {
+	LockScheduledIdempotency(ctx context.Context, workspaceID, idempotencyKey string) error
 	LockPeriod(ctx context.Context, workspaceID, period string) error
 	Snapshot(ctx context.Context, workspaceID, period string) (quota.MonthlySnapshot, error)
 	Queries() *db.Queries
+	DBTX() db.DBTX
 	Commit(ctx context.Context) error
 	Rollback(ctx context.Context) error
+}
+
+func (c *coordinator) MutateScheduledIdempotent(
+	ctx context.Context,
+	workspaceID string,
+	idempotencyKey string,
+	planner ScheduledIdempotencyPlanner,
+	afterQuota ScheduledPostQuotaAdmitted,
+	mutation Mutation,
+) (bool, error) {
+	if c == nil || c.beginner == nil {
+		return false, errors.New("paid quota coordinator is not configured")
+	}
+	tx, err := c.beginner.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Never acquire a period lock before this key lock. Other scheduled
+	// mutations acquire only sorted period locks, and the active-cap lock is
+	// acquired last by CreateSocialPostWithActiveScheduledCap.
+	if err := tx.LockScheduledIdempotency(ctx, workspaceID, idempotencyKey); err != nil {
+		return false, err
+	}
+	transactionContext := TransactionContext{Queries: tx.Queries(), DBTX: tx.DBTX()}
+	var deltas []PeriodDelta
+	if planner != nil {
+		handled, plannedDeltas, err := planner(transactionContext)
+		if err != nil {
+			return false, err
+		}
+		if handled {
+			if err := tx.Commit(ctx); err != nil {
+				return false, err
+			}
+			committed = true
+			return true, nil
+		}
+		deltas = plannedDeltas
+	}
+
+	normalized := normalizePeriodDeltas(deltas)
+	for _, delta := range normalized {
+		if err := tx.LockPeriod(ctx, workspaceID, delta.Period); err != nil {
+			return false, err
+		}
+	}
+	for _, delta := range normalized {
+		snapshot, err := tx.Snapshot(ctx, workspaceID, delta.Period)
+		if err != nil {
+			return false, err
+		}
+		decision := Decide(snapshot, delta.ReleasedUnits, delta.RequestedUnits)
+		if !decision.Allowed {
+			return false, NewProjectedAdmissionError(snapshot, delta.RequestedUnits, decision.ProjectedUsage)
+		}
+	}
+	if afterQuota != nil {
+		if err := afterQuota(transactionContext); err != nil {
+			return false, err
+		}
+	}
+	if mutation != nil {
+		if err := mutation(tx.Queries()); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	committed = true
+	return false, nil
 }
 
 type transactionBeginner interface {
@@ -53,7 +162,7 @@ type coordinator struct {
 	beginner transactionBeginner
 }
 
-func newCoordinator(beginner transactionBeginner) Coordinator {
+func newCoordinator(beginner transactionBeginner) *coordinator {
 	return &coordinator{beginner: beginner}
 }
 
@@ -204,7 +313,11 @@ func Decide(snapshot quota.MonthlySnapshot, released, requested int) Decision {
 		requested = 0
 	}
 	projected := snapshot.EffectiveUsage() - released + requested
-	if !AppliesToPlan(snapshot.PlanID) || snapshot.Limit < 0 {
+	isFree := strings.EqualFold(strings.TrimSpace(snapshot.PlanID), "free")
+	if (!isFree && !AppliesToPlan(snapshot.PlanID)) || snapshot.Limit < 0 {
+		return Decision{Allowed: true, ProjectedUsage: projected}
+	}
+	if requested <= released {
 		return Decision{Allowed: true, ProjectedUsage: projected}
 	}
 	if snapshot.QuotaHold > 0 && requested > released {

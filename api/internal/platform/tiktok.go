@@ -418,14 +418,19 @@ func (a *TikTokAdapter) Post(ctx context.Context, accessToken string, text strin
 	} else {
 		if uploadMode == "pull_from_url" {
 			publishID, initErr = a.initVideoPull(ctx, accessToken, text, privacyLevel, videoURL, opts)
+			if initErr == nil {
+				// PULL_FROM_URL has no upload step, but the publish ID must still be
+				// durable before polling begins.
+				if err := persistPublishToken(opts, publishID); err != nil {
+					return nil, fmt.Errorf("tiktok: persist publish token: %w", err)
+				}
+			}
 		} else {
 			publishID, initErr = a.initAndPushVideoFile(ctx, accessToken, text, privacyLevel, videoURL, opts)
 		}
 		if initErr != nil {
 			return nil, initErr
 		}
-		// Persist before polling so a crash during the poll resumes here.
-		persistPublishToken(opts, publishID)
 	}
 
 	slog.Info("tiktok post: video submitted, polling status", "publish_id", publishID)
@@ -552,7 +557,9 @@ func (a *TikTokAdapter) initPhotoContentWithPrivacy(ctx context.Context, accessT
 	}
 
 	// Persist before polling so a crash during the poll resumes here.
-	persistPublishToken(opts, result.Data.PublishID)
+	if err := persistPublishToken(opts, result.Data.PublishID); err != nil {
+		return nil, fmt.Errorf("tiktok photo: persist publish token: %w", err)
+	}
 
 	slog.Info("tiktok photo post: submitted, polling status", "publish_id", result.Data.PublishID)
 	return a.waitForPublish(ctx, accessToken, result.Data.PublishID)
@@ -749,8 +756,17 @@ func (a *TikTokAdapter) initAndPushVideoFileWithPrivacy(ctx context.Context, acc
 	if initResult.Error.Code != "" && initResult.Error.Code != "ok" {
 		return "", fmt.Errorf("tiktok error: %s", initResult.Error.Message)
 	}
+	if initResult.Data.PublishID == "" {
+		return "", fmt.Errorf("tiktok upload init: empty publish_id")
+	}
 	if initResult.Data.UploadURL == "" {
 		return "", fmt.Errorf("tiktok returned no upload URL")
+	}
+	// TikTok has created the provider-side publish operation. Persist its ID
+	// before the first PUT so a lost local lease cannot continue uploading a
+	// video whose provider operation is not durably resumable.
+	if err := persistPublishToken(opts, initResult.Data.PublishID); err != nil {
+		return "", fmt.Errorf("tiktok: persist publish token: %w", err)
 	}
 
 	slog.Info("tiktok post: uploading video",

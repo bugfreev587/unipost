@@ -371,7 +371,7 @@ func TestSyncerAuditsTrialEndingProviderFailure(t *testing.T) {
 		t.Fatalf("SendLifecycleEvent returned error: %v", err)
 	}
 
-	assertFailedTrialEndingAudit(t, audit, "loops down")
+	assertFailedTrialEndingAudit(t, audit, emailAuditFailureEvidence(emailAuditOutcomeProviderDefinitive, errors.New("loops down")))
 	if client.transactionals != 1 || client.contacts != 0 || client.events != 0 {
 		t.Fatalf("provider calls contacts=%d events=%d transactionals=%d", client.contacts, client.events, client.transactionals)
 	}
@@ -931,8 +931,8 @@ func TestSyncerAuditsLifecycleTransactionalEmailFailure(t *testing.T) {
 	if audit.markedFailed != 1 {
 		t.Fatalf("audit markedFailed = %d, want 1", audit.markedFailed)
 	}
-	if audit.failedReason != "loops down" {
-		t.Fatalf("failure reason = %q, want loops down", audit.failedReason)
+	if want := emailAuditFailureEvidence(emailAuditOutcomeProviderDefinitive, errors.New("loops down")); audit.failedReason != want {
+		t.Fatalf("failure reason = %q, want %q", audit.failedReason, want)
 	}
 	if audit.lastAttempt.EventKey != "email.billing.payment_failed.v1" {
 		t.Fatalf("event key = %q, want email.billing.payment_failed.v1", audit.lastAttempt.EventKey)
@@ -983,11 +983,15 @@ type fakeEmailAuditStore struct {
 	lastAttempt   EmailSendAttempt
 	failedReason  string
 	skippedReason string
+	createErr     error
 }
 
 func (f *fakeEmailAuditStore) CreateEmailSendAttempt(_ context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error) {
 	f.created++
 	f.lastAttempt = attempt
+	if f.createErr != nil {
+		return EmailSendAttemptRecord{}, f.createErr
+	}
 	return EmailSendAttemptRecord{ID: "audit_123"}, nil
 }
 

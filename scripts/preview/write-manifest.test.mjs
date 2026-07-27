@@ -27,6 +27,18 @@ test("creates a non-secret manifest for a hotfix sync branch", () => {
   });
 });
 
+test("creates a non-secret manifest for an explicitly staging-based Codex branch", () => {
+  assert.deepEqual(createPreviewManifest({
+    sha: "c".repeat(40),
+    branch: "codex/staging-tiktok-free-publishing-restriction",
+    apiURL: "https://api-pr-270.up.railway.app",
+  }), {
+    sha: "c".repeat(40),
+    branch: "codex/staging-tiktok-free-publishing-restriction",
+    apiURL: "https://api-pr-270.up.railway.app",
+  });
+});
+
 test("rejects persistent API targets", () => {
   for (const apiURL of [
     "https://api.unipost.dev",
@@ -60,7 +72,7 @@ test("rejects malformed SHAs, branches, and non-HTTPS API URLs", () => {
       branch: "main",
       apiURL: "https://api-pr-42.up.railway.app",
     }),
-    /dev-|hotfix-/,
+    /dev-|hotfix-|codex\/staging-/,
   );
   assert.throws(
     () => createPreviewManifest({
