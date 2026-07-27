@@ -101,8 +101,8 @@ jobs:
 
       - name: Run publishing restriction and migration gate PostgreSQL integration tests
         run: >-
-          go test -tags=integration ./internal/db ./internal/worker
-          -run 'TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124|TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord|TestCreateEmailSendAttemptAuditStillRetriesFailedRecord|TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction|TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed|TestMigrationGatePostgres|TestRequireCurrentSchema'
+          go test -tags=integration ./internal/db ./internal/handler ./internal/worker
+          -run 'TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124|TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord|TestCreateEmailSendAttemptAuditStillRetriesFailedRecord|TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity|TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity|TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction|TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed|TestMigrationGatePostgres|TestRequireCurrentSchema'
           -count=1 -v
 
   dashboard:
@@ -144,6 +144,9 @@ jobs:
 
       - name: Run dashboard SEO source regression
         run: npm run test:seo
+
+      - name: Run publishing restriction frontend contracts
+        run: npm run test:publishing-restrictions
 
       - name: Build dashboard
         run: npm run build

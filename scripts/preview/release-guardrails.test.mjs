@@ -49,6 +49,51 @@ test("CI makes the dashboard SEO regression blocking", async () => {
   );
 });
 
+test("CI makes the four publishing restriction frontend contracts blocking before build", async () => {
+  const packageJson = JSON.parse(await read("dashboard/package.json"));
+  assert.equal(
+    packageJson.scripts["test:publishing-restrictions"],
+    "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts",
+  );
+
+  const workflow = await read(".github/workflows/ci.yml");
+  const contractsStep = workflow.indexOf("- name: Run publishing restriction frontend contracts");
+  const buildStep = workflow.indexOf("- name: Build dashboard");
+  assert.notEqual(contractsStep, -1, "CI must run the publishing restriction frontend contracts");
+  assert.notEqual(buildStep, -1, "CI must retain the dashboard build");
+  assert.ok(contractsStep < buildStep, "publishing restriction contracts must run before the dashboard build");
+  assert.match(
+    workflow,
+    /Run publishing restriction frontend contracts\s+run: npm run test:publishing-restrictions/,
+  );
+});
+
+test("CI runs every publishing restriction PostgreSQL contract against its isolated service", async () => {
+  const workflow = await read(".github/workflows/ci.yml");
+  assert.match(workflow, /api-postgres-integration:[\s\S]*services:[\s\S]*postgres:/);
+  assert.match(
+    workflow,
+    /PUBLISHING_RESTRICTION_TEST_DATABASE_URL: postgresql:\/\/postgres:test@127\.0\.0\.1:5432\/unipost_test\?sslmode=disable/,
+  );
+  assert.match(
+    workflow,
+    /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/worker/,
+  );
+  for (const testName of [
+    "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
+    "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
+    "TestCreateEmailSendAttemptAuditStillRetriesFailedRecord",
+    "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",
+    "TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity",
+    "TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction",
+    "TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed",
+    "TestMigrationGatePostgres",
+    "TestRequireCurrentSchema",
+  ]) {
+    assert.ok(workflow.includes(testName), `CI omits PostgreSQL contract ${testName}`);
+  }
+});
+
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
   const ciGates = await read("docs/ci-gates.md");
