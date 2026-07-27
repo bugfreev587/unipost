@@ -513,6 +513,27 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load scheduled post")
 		return
 	}
+	if h.publishingRestrictions != nil {
+		existingPosts, decodeErr := platform.DecodePostMetadata(existing.Metadata, derefText(existing.Caption))
+		if decodeErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to decode scheduled post")
+			return
+		}
+		accountMap, loadErr := h.loadValidateAccounts(r, workspaceID)
+		if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load accounts")
+			return
+		}
+		blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, existingPosts, accountMap)
+		if policyErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
+		if decision, fullyBlocked := fullyRestrictedDecision(existingPosts, blockedTargets); fullyBlocked {
+			writePublishingRestrictionError(w, decision)
+			return
+		}
+	}
 
 	var updated db.SocialPost
 	mutate := func(queries *db.Queries) error {

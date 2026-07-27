@@ -522,7 +522,7 @@ func (q *Queries) MarkSocialPostResultRemotelyDeleted(ctx context.Context, arg M
 	return err
 }
 
-const setSocialPostResultPublishToken = `-- name: SetSocialPostResultPublishToken :exec
+const setSocialPostResultPublishToken = `-- name: SetSocialPostResultPublishToken :execrows
 UPDATE social_post_results AS result
 SET publish_token = $1
 FROM post_delivery_jobs AS job
@@ -545,15 +545,18 @@ type SetSocialPostResultPublishTokenParams struct {
 
 // Persist the platform intermediate publish token (IG creation_id /
 // TikTok publish_id) so a retry can resume instead of re-uploading.
-func (q *Queries) SetSocialPostResultPublishToken(ctx context.Context, arg SetSocialPostResultPublishTokenParams) error {
-	_, err := q.db.Exec(ctx, setSocialPostResultPublishToken,
+func (q *Queries) SetSocialPostResultPublishToken(ctx context.Context, arg SetSocialPostResultPublishTokenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSocialPostResultPublishToken,
 		arg.PublishToken,
 		arg.ID,
 		arg.JobID,
 		arg.LeaseOwner,
 		arg.LastAttemptAt,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateProcessingSocialPostResultAfterProviderPoll = `-- name: UpdateProcessingSocialPostResultAfterProviderPoll :one

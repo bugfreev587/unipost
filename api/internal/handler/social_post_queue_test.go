@@ -951,7 +951,7 @@ func (f *publishTokenDB) Exec(_ context.Context, query string, args ...interface
 		f.setToken = args[0].(pgtype.Text).String
 		f.setID = args[1].(string)
 		f.setJobID = args[2].(string)
-		return pgconn.CommandTag{}, nil
+		return pgconn.NewCommandTag("UPDATE 1"), nil
 	}
 	return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
 }
@@ -975,11 +975,13 @@ func TestAttachPublishTokenResumeInjectsResumeAndPersist(t *testing.T) {
 	if got := pp.PlatformOptions[platform.OptResumePublishToken]; got != "creation_123" {
 		t.Fatalf("resume token = %v, want creation_123", got)
 	}
-	fn, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string))
+	fn, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string) error)
 	if !ok {
 		t.Fatal("persist callback not injected into opts")
 	}
-	fn("new_token_456")
+	if err := fn("new_token_456"); err != nil {
+		t.Fatalf("persist callback: %v", err)
+	}
 	if fake.setID != "res_1" || fake.setToken != "new_token_456" || fake.setJobID != job.ID {
 		t.Fatalf("persist callback stored id=%q token=%q job=%q, want res_1/new_token_456/%s",
 			fake.setID, fake.setToken, fake.setJobID, job.ID)
@@ -996,7 +998,7 @@ func TestAttachPublishTokenResumeOmitsResumeWhenNoPriorToken(t *testing.T) {
 	if _, present := pp.PlatformOptions[platform.OptResumePublishToken]; present {
 		t.Fatal("resume token must not be injected when no prior token exists")
 	}
-	if _, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string)); !ok {
+	if _, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string) error); !ok {
 		t.Fatal("persist callback should still be injected on a first attempt")
 	}
 }

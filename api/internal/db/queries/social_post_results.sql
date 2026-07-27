@@ -43,7 +43,7 @@ WHERE post_id = ANY($1::text[]);
 -- name: GetSocialPostResultByIDAndPost :one
 SELECT * FROM social_post_results WHERE id = $1 AND post_id = $2;
 
--- name: SetSocialPostResultPublishToken :exec
+-- name: SetSocialPostResultPublishToken :execrows
 -- Persist the platform intermediate publish token (IG creation_id /
 -- TikTok publish_id) so a retry can resume instead of re-uploading.
 UPDATE social_post_results AS result

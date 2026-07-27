@@ -72,7 +72,8 @@ func openTerminalPostEventOutboxPool(t *testing.T, maxConns int32) *pgxpool.Pool
 		CREATE TABLE social_posts (
 			id TEXT PRIMARY KEY,
 			workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			metadata JSONB NOT NULL DEFAULT '{}'::jsonb
 		);
 		CREATE TABLE terminal_post_first_publish_elections (
 			workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -136,10 +137,39 @@ func insertTerminalPostEventFixture(t *testing.T, pool *pgxpool.Pool, eventID, p
 	}
 }
 
+func insertTerminalPostProjection(t *testing.T, pool *pgxpool.Pool, postID string) string {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces(id) VALUES ('ws_1') ON CONFLICT DO NOTHING`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts(id,workspace_id,status) VALUES ($1,'ws_1','failed')
+	`, postID); err != nil {
+		t.Fatal(err)
+	}
+	var version string
+	if err := pool.QueryRow(ctx, `SELECT xmin::text FROM social_posts WHERE id=$1`, postID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
+
+func advanceTerminalPostProjection(t *testing.T, pool *pgxpool.Pool, postID string) string {
+	t.Helper()
+	var version string
+	if err := pool.QueryRow(context.Background(), `
+		UPDATE social_posts SET status='failed' WHERE id=$1 RETURNING xmin::text
+	`, postID).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	return version
+}
+
 func TestTerminalPostEventOutboxClaimUsesSkipLockedAndPerPostOrder(t *testing.T) {
 	pool := openTerminalPostEventOutboxPool(t, 2)
-	insertTerminalPostEventFixture(t, pool, "event_1", "post_1", "version_1", "webhook", "notification")
-	insertTerminalPostEventFixture(t, pool, "event_2", "post_1", "version_2", "webhook")
+	version1 := insertTerminalPostProjection(t, pool, "post_1")
+	insertTerminalPostEventFixture(t, pool, "event_1", "post_1", version1, "webhook", "notification")
 	queries := db.New(pool)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -156,6 +186,8 @@ func TestTerminalPostEventOutboxClaimUsesSkipLockedAndPerPostOrder(t *testing.T)
 		_ = tx.Rollback(ctx)
 		t.Fatalf("tx1 claimed = %+v", claimed)
 	}
+	version2 := advanceTerminalPostProjection(t, pool, "post_1")
+	insertTerminalPostEventFixture(t, pool, "event_2", "post_1", version2, "webhook")
 	concurrent, err := queries.ClaimPendingTerminalPostEventDeliveries(ctx, 10)
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -197,9 +229,131 @@ func TestTerminalPostEventOutboxClaimUsesSkipLockedAndPerPostOrder(t *testing.T)
 	}
 }
 
+func TestTerminalPostEventOutboxClaimInvalidatesEventSupersededByRetry(t *testing.T) {
+	pool := openTerminalPostEventOutboxPool(t, 2)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspaces(id) VALUES ('workspace_stale_terminal');
+		INSERT INTO social_posts(id,workspace_id,status)
+		VALUES ('post_stale_terminal','workspace_stale_terminal','failed');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	var failedVersion string
+	if err := pool.QueryRow(ctx, `
+		SELECT xmin::text FROM social_posts WHERE id='post_stale_terminal'
+	`).Scan(&failedVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO terminal_post_event_outbox
+			(id,post_id,workspace_id,parent_status,parent_version,event_type,payload)
+		VALUES
+			('event_stale_terminal','post_stale_terminal','workspace_stale_terminal',
+			 'failed',$1,'post.failed','{"id":"post_stale_terminal","status":"failed"}')
+	`, failedVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO terminal_post_event_deliveries(event_id,sink)
+		VALUES ('event_stale_terminal','webhook')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A retry cycle moves the parent away and back before committing a newer
+	// terminal generation. The earlier terminal event must not escape.
+	if _, err := pool.Exec(ctx, `
+		UPDATE social_posts SET status='publishing' WHERE id='post_stale_terminal'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	var retryVersion string
+	if err := pool.QueryRow(ctx, `
+		SELECT xmin::text FROM social_posts WHERE id='post_stale_terminal'
+	`).Scan(&retryVersion); err != nil {
+		t.Fatal(err)
+	}
+	if retryVersion == failedVersion {
+		t.Fatalf("retry did not advance parent version: before=%q after=%q", failedVersion, retryVersion)
+	}
+	var replacementVersion string
+	if err := pool.QueryRow(ctx, `
+		UPDATE social_posts SET status='failed'
+		WHERE id='post_stale_terminal'
+		RETURNING xmin::text
+	`).Scan(&replacementVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO terminal_post_event_outbox
+			(id,post_id,workspace_id,parent_status,parent_version,event_type,payload)
+		VALUES
+			('event_current_terminal','post_stale_terminal','workspace_stale_terminal',
+			 'failed',$1,'post.failed','{"id":"post_stale_terminal","status":"failed"}')
+	`, replacementVersion); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO terminal_post_event_deliveries(event_id,sink)
+		VALUES ('event_current_terminal','webhook')
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	claimed, err := db.New(pool).ClaimPendingTerminalPostEventDeliveries(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].EventID != "event_current_terminal" || claimed[0].ParentVersion != replacementVersion {
+		t.Fatalf("claim returned stale event or lost current event: %+v", claimed)
+	}
+	var status string
+	var lastError pgtype.Text
+	if err := pool.QueryRow(ctx, `
+		SELECT status,last_error
+		FROM terminal_post_event_deliveries
+		WHERE event_id='event_stale_terminal' AND sink='webhook'
+	`).Scan(&status, &lastError); err != nil {
+		t.Fatal(err)
+	}
+	if status != "enqueued" || !lastError.Valid || lastError.String != "invalidated: parent projection superseded" {
+		t.Fatalf("stale delivery status=%q last_error=%+v", status, lastError)
+	}
+}
+
+func TestTerminalPostEventOutboxClaimKeepsTerminalEventAfterSameStatusMetadataUpdate(t *testing.T) {
+	pool := openTerminalPostEventOutboxPool(t, 2)
+	ctx := context.Background()
+	version := insertTerminalPostProjection(t, pool, "post_metadata_update")
+	insertTerminalPostEventFixture(t, pool, "event_metadata_update", "post_metadata_update", version, "webhook")
+
+	var updatedVersion string
+	if err := pool.QueryRow(ctx, `
+		UPDATE social_posts
+		SET metadata=jsonb_build_object('error_summary','redacted provider detail')
+		WHERE id='post_metadata_update'
+		RETURNING xmin::text
+	`).Scan(&updatedVersion); err != nil {
+		t.Fatal(err)
+	}
+	if updatedVersion == version {
+		t.Fatalf("metadata update did not advance xmin: before=%q after=%q", version, updatedVersion)
+	}
+
+	claimed, err := db.New(pool).ClaimPendingTerminalPostEventDeliveries(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].EventID != "event_metadata_update" {
+		t.Fatalf("same-status metadata update invalidated terminal event: %+v", claimed)
+	}
+}
+
 func TestTerminalPostEventOutboxReleasesSmallPoolBeforeSinkIO(t *testing.T) {
 	pool := openTerminalPostEventOutboxPool(t, 1)
-	insertTerminalPostEventFixture(t, pool, "event_small_pool", "post_small_pool", "version_1", "webhook")
+	version := insertTerminalPostProjection(t, pool, "post_small_pool")
+	insertTerminalPostEventFixture(t, pool, "event_small_pool", "post_small_pool", version, "webhook")
 	sink := &postgresProbeDurableSink{pool: pool}
 	worker := NewTerminalPostEventOutboxWorker(db.New(pool), sink, sink, sink)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -224,8 +378,8 @@ func TestTerminalPostEventOutboxReleasesSmallPoolBeforeSinkIO(t *testing.T) {
 func TestTerminalPostEventOutboxStaleClaimCannotOverwriteReclaimedDelivery(t *testing.T) {
 	t.Run("stale retry cannot reopen successful reclaim", func(t *testing.T) {
 		pool := openTerminalPostEventOutboxPool(t, 2)
-		insertTerminalPostEventFixture(t, pool, "event_generation", "post_generation", "version_1", "webhook")
-		insertTerminalPostEventFixture(t, pool, "event_next", "post_generation", "version_2", "webhook")
+		version1 := insertTerminalPostProjection(t, pool, "post_generation")
+		insertTerminalPostEventFixture(t, pool, "event_generation", "post_generation", version1, "webhook")
 		queries := db.New(pool)
 		ctx := context.Background()
 
@@ -264,6 +418,8 @@ func TestTerminalPostEventOutboxStaleClaimCannotOverwriteReclaimedDelivery(t *te
 		if status != "enqueued" {
 			t.Fatalf("stale retry reopened reclaimed success: status=%q", status)
 		}
+		version2 := advanceTerminalPostProjection(t, pool, "post_generation")
+		insertTerminalPostEventFixture(t, pool, "event_next", "post_generation", version2, "webhook")
 		next, err := queries.ClaimPendingTerminalPostEventDeliveries(ctx, 1)
 		if err != nil || len(next) != 1 || next[0].EventID != "event_next" {
 			t.Fatalf("next version remained blocked after true success: %+v, err=%v", next, err)
@@ -272,8 +428,8 @@ func TestTerminalPostEventOutboxStaleClaimCannotOverwriteReclaimedDelivery(t *te
 
 	t.Run("stale success cannot finish active reclaim", func(t *testing.T) {
 		pool := openTerminalPostEventOutboxPool(t, 2)
-		insertTerminalPostEventFixture(t, pool, "event_active", "post_active", "version_1", "webhook")
-		insertTerminalPostEventFixture(t, pool, "event_active_next", "post_active", "version_2", "webhook")
+		version1 := insertTerminalPostProjection(t, pool, "post_active")
+		insertTerminalPostEventFixture(t, pool, "event_active", "post_active", version1, "webhook")
 		queries := db.New(pool)
 		ctx := context.Background()
 
@@ -305,6 +461,8 @@ func TestTerminalPostEventOutboxStaleClaimCannotOverwriteReclaimedDelivery(t *te
 		if status != "processing" || attempts != 2 {
 			t.Fatalf("stale success finished active reclaim: status=%q attempts=%d", status, attempts)
 		}
+		version2 := advanceTerminalPostProjection(t, pool, "post_active")
+		insertTerminalPostEventFixture(t, pool, "event_active_next", "post_active", version2, "webhook")
 		blocked, err := queries.ClaimPendingTerminalPostEventDeliveries(ctx, 1)
 		if err != nil || len(blocked) != 0 {
 			t.Fatalf("next version bypassed active reclaim: %+v, err=%v", blocked, err)

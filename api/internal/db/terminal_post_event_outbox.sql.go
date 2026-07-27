@@ -12,15 +12,55 @@ import (
 )
 
 const claimPendingTerminalPostEventDeliveries = `-- name: ClaimPendingTerminalPostEventDeliveries :many
-WITH candidates AS (
+WITH stale_candidates AS MATERIALIZED (
   SELECT delivery.event_id, delivery.sink
   FROM terminal_post_event_deliveries delivery
   JOIN terminal_post_event_outbox event ON event.id = delivery.event_id
+  JOIN social_posts post ON post.id = event.post_id
+  WHERE (
+      delivery.status = 'pending'
+      OR (delivery.status = 'processing' AND delivery.lease_expires_at <= NOW())
+    )
+    AND (
+      post.status IS DISTINCT FROM event.parent_status
+      OR EXISTS (
+        SELECT 1
+        FROM terminal_post_event_outbox later_event
+        WHERE later_event.post_id = event.post_id
+          AND later_event.sequence_number > event.sequence_number
+      )
+    )
+  ORDER BY event.sequence_number, delivery.sink
+  FOR UPDATE OF delivery SKIP LOCKED
+  LIMIT $1
+), invalidated AS (
+  UPDATE terminal_post_event_deliveries delivery
+  SET status = 'enqueued',
+      enqueued_at = NOW(),
+      lease_expires_at = NULL,
+      last_error = 'invalidated: parent projection superseded',
+      updated_at = NOW()
+  FROM stale_candidates
+  WHERE delivery.event_id = stale_candidates.event_id
+    AND delivery.sink = stale_candidates.sink
+  RETURNING delivery.event_id, delivery.sink
+), candidates AS (
+  SELECT delivery.event_id, delivery.sink
+  FROM terminal_post_event_deliveries delivery
+  JOIN terminal_post_event_outbox event ON event.id = delivery.event_id
+  JOIN social_posts post ON post.id = event.post_id
   WHERE (
       delivery.status = 'pending'
       OR (delivery.status = 'processing' AND delivery.lease_expires_at <= NOW())
     )
     AND delivery.next_attempt_at <= NOW()
+    AND post.status = event.parent_status
+    AND NOT EXISTS (
+      SELECT 1
+      FROM terminal_post_event_outbox later_event
+      WHERE later_event.post_id = event.post_id
+        AND later_event.sequence_number > event.sequence_number
+    )
     AND NOT EXISTS (
       SELECT 1
       FROM terminal_post_event_outbox earlier_event
@@ -29,6 +69,12 @@ WITH candidates AS (
       WHERE earlier_event.post_id = event.post_id
         AND earlier_event.sequence_number < event.sequence_number
         AND earlier_delivery.status <> 'enqueued'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM invalidated
+          WHERE invalidated.event_id = earlier_delivery.event_id
+            AND invalidated.sink = earlier_delivery.sink
+        )
     )
   ORDER BY event.sequence_number, delivery.sink
   FOR UPDATE OF delivery SKIP LOCKED
@@ -74,6 +120,10 @@ type ClaimPendingTerminalPostEventDeliveriesRow struct {
 	SequenceNumber int64  `json:"sequence_number"`
 }
 
+// parent_version is a payload/idempotency snapshot, not a delivery fence:
+// PostgreSQL xmin also changes for unrelated metadata updates. Status plus the
+// ordered transition stream is the durable fence. Every later outbox row is a
+// newer post generation, including event_type=” retry/resumption sentinels.
 func (q *Queries) ClaimPendingTerminalPostEventDeliveries(ctx context.Context, limit int32) ([]ClaimPendingTerminalPostEventDeliveriesRow, error) {
 	rows, err := q.db.Query(ctx, claimPendingTerminalPostEventDeliveries, limit)
 	if err != nil {
