@@ -898,7 +898,8 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		allowedTargets := allowedPublishingTargets(parsed.Posts, blockedTargets)
-		metaJSON, err = encodeScheduledPostMetadata(parsed.Posts, countPublishQuotaUnits(allowedTargets, accountMap))
+		quotaAccountIDs := publishQuotaAccountIDs(allowedTargets, accountMap)
+		metaJSON, err = encodeScheduledPostMetadataWithQuotaAccounts(parsed.Posts, len(quotaAccountIDs), quotaAccountIDs)
 	} else {
 		metaJSON, err = platform.EncodePostMetadata(parsed.Posts)
 	}

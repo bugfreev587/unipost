@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/testdbguard"
 )
 
 const publishingRestrictionIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
@@ -26,7 +28,13 @@ func openPublishingRestrictionIntegrationPool(t *testing.T) *pgxpool.Pool {
 	}
 
 	ctx := context.Background()
-	admin, err := pgxpool.New(ctx, databaseURL)
+	admin, config, err := testdbguard.OpenValidated(
+		publishingRestrictionIntegrationDatabaseEnv,
+		databaseURL,
+		func(validatedURL string) (*pgxpool.Pool, error) {
+			return pgxpool.New(ctx, validatedURL)
+		},
+	)
 	if err != nil {
 		t.Fatalf("connect PostgreSQL integration service: %v", err)
 	}
@@ -36,11 +44,6 @@ func openPublishingRestrictionIntegrationPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("create isolated PostgreSQL schema: %v", err)
 	}
 
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		admin.Close()
-		t.Fatalf("parse PostgreSQL integration URL: %v", err)
-	}
 	config.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -32,7 +33,8 @@ func TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets(t *test
 	pool := openRestrictedDeliveryIntegrationPool(t)
 	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
 	ctx := context.Background()
-	scheduledAt := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
+	baseline := time.Now().UTC()
+	scheduledAt := time.Date(baseline.Year(), baseline.Month()+1, 15, 12, 0, 0, 0, time.UTC)
 	posts := []platform.PlatformPostInput{
 		{AccountID: "account_tiktok", Caption: "restricted at admission"},
 		{AccountID: "account_instagram", Caption: "allowed at admission"},
@@ -40,6 +42,16 @@ func TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets(t *test
 	accountMap := map[string]platform.ValidateAccount{
 		"account_tiktok":    {Platform: "tiktok"},
 		"account_instagram": {Platform: "instagram"},
+	}
+	period := quota.PeriodForTime(scheduledAt)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO plans(id,name,price_cents,post_limit) VALUES ('free','Free',0,100);
+		INSERT INTO subscriptions(workspace_id,plan_id,status) VALUES ('workspace_snapshot','free','active');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO usage(workspace_id,period,post_count) VALUES ('workspace_snapshot',$1,0)`, period); err != nil {
+		t.Fatal(err)
 	}
 	evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
 		"tiktok": {
@@ -51,23 +63,32 @@ func TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets(t *test
 		},
 	}}
 	queries := db.New(pool)
-	h := NewSocialPostHandler(queries, nil, nil, nil, nil, nil, nil).SetPublishingRestrictions(evaluator)
+	h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).SetPublishingRestrictions(evaluator)
 	blocked, err := h.evaluatePublishingRestrictions(ctx, "workspace_snapshot", posts, accountMap)
 	if err != nil {
 		t.Fatalf("evaluate admission policy: %v", err)
 	}
-	allowedUnits := countPublishQuotaUnits(allowedPublishingTargets(posts, blocked), accountMap)
+	allowedTargets := allowedPublishingTargets(posts, blocked)
+	allowedUnits := countPublishQuotaUnits(allowedTargets, accountMap)
 	if allowedUnits != 1 {
 		t.Fatalf("admission allowed units = %d, want 1", allowedUnits)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts", nil)
+	body := fmt.Sprintf(`{
+		"scheduled_at":%q,
+		"scheduled_quota_units":2,
+		"scheduled_quota_account_ids":["account_tiktok"],
+		"scheduled_quota_snapshot":{"version":1,"targets":[]},
+		"platform_posts":[
+			{"account_id":"account_tiktok","caption":"restricted at admission","media_urls":["https://cdn.example/image.jpg"]},
+			{"account_id":"account_instagram","caption":"allowed at admission","media_urls":["https://cdn.example/image.jpg"]}
+		]
+	}`, scheduledAt.Format(time.RFC3339Nano))
+	req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(body))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "workspace_snapshot"))
 	req = req.WithContext(withoutPostMediaRetentionSync(req.Context()))
 	rr := httptest.NewRecorder()
-	h.createScheduledPost(rr, req, "workspace_snapshot", parsedRequest{
-		Posts:       posts,
-		ScheduledAt: &scheduledAt,
-	}, allowedUnits)
+	h.Create(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("create scheduled status = %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -88,8 +109,14 @@ func TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets(t *test
 	if got := persisted["scheduled_quota_units"]; got != float64(1) {
 		t.Fatalf("persisted scheduled_quota_units = %#v, want 1", got)
 	}
+	if got, ok := persisted["scheduled_quota_account_ids"].([]any); !ok || len(got) != 1 || got[0] != "account_instagram" {
+		t.Fatalf("persisted scheduled_quota_account_ids = %#v, want [account_instagram]", persisted["scheduled_quota_account_ids"])
+	}
+	reserved, ok := scheduledQuotaReservedIndexesFromMetadata(metadata)
+	if !ok || !slices.Equal(reserved, []bool{false, true}) {
+		t.Fatalf("persisted scheduled target snapshot = %v/%t, want [false true]/true", reserved, ok)
+	}
 
-	period := quota.PeriodForTime(scheduledAt)
 	countScheduled := func(workspaceID string) int32 {
 		t.Helper()
 		got, err := queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{
@@ -166,6 +193,636 @@ func TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets(t *test
 	}
 	if got := countScheduled("workspace_snapshot"); got != 1 {
 		t.Fatalf("publishing reservation = %d, want pending result count 1", got)
+	}
+}
+
+func TestScheduledQuotaTargetSnapshotRejectsMissingMalformedAndForgedBindings(t *testing.T) {
+	tests := []struct {
+		name     string
+		metadata string
+		want     []bool
+		wantOK   bool
+	}{
+		{
+			name: "complete mixed binding",
+			metadata: `{"schema_version":2,"scheduled_quota_units":1,"scheduled_quota_account_ids":["facebook"],
+				"scheduled_quota_snapshot":{"version":1,"targets":[
+					{"post_input_index":0,"account_id":"tiktok","reserved":false},
+					{"post_input_index":1,"account_id":"facebook","reserved":true}]},
+				"platform_posts":[{"account_id":"tiktok"},{"account_id":"facebook"}]}`,
+			want:   []bool{false, true},
+			wantOK: true,
+		},
+		{
+			name: "missing full snapshot",
+			metadata: `{"schema_version":2,"scheduled_quota_units":1,"scheduled_quota_account_ids":["facebook"],
+				"platform_posts":[{"account_id":"tiktok"},{"account_id":"facebook"}]}`,
+		},
+		{
+			name: "missing target binding",
+			metadata: `{"schema_version":2,"scheduled_quota_units":1,"scheduled_quota_account_ids":["facebook"],
+				"scheduled_quota_snapshot":{"version":1,"targets":[{"post_input_index":1,"account_id":"facebook","reserved":true}]},
+				"platform_posts":[{"account_id":"tiktok"},{"account_id":"facebook"}]}`,
+		},
+		{
+			name: "reserved account list steals facebook unit for tiktok",
+			metadata: `{"schema_version":2,"scheduled_quota_units":1,"scheduled_quota_account_ids":["tiktok"],
+				"scheduled_quota_snapshot":{"version":1,"targets":[
+					{"post_input_index":0,"account_id":"tiktok","reserved":false},
+					{"post_input_index":1,"account_id":"facebook","reserved":true}]},
+				"platform_posts":[{"account_id":"tiktok"},{"account_id":"facebook"}]}`,
+		},
+		{
+			name: "snapshot bit steals facebook unit for tiktok",
+			metadata: `{"schema_version":2,"scheduled_quota_units":1,"scheduled_quota_account_ids":["facebook"],
+				"scheduled_quota_snapshot":{"version":1,"targets":[
+					{"post_input_index":0,"account_id":"tiktok","reserved":true},
+					{"post_input_index":1,"account_id":"facebook","reserved":false}]},
+				"platform_posts":[{"account_id":"tiktok"},{"account_id":"facebook"}]}`,
+		},
+		{
+			name: "repeated account cannot reserve only one thread entry",
+			metadata: `{"schema_version":2,"scheduled_quota_units":1,"scheduled_quota_account_ids":["threaded"],
+				"scheduled_quota_snapshot":{"version":1,"targets":[
+					{"post_input_index":0,"account_id":"threaded","reserved":true},
+					{"post_input_index":1,"account_id":"threaded","reserved":false}]},
+				"platform_posts":[{"account_id":"threaded","thread_position":1},{"account_id":"threaded","thread_position":2}]}`,
+		},
+		{
+			name: "repeated account complete reservation",
+			metadata: `{"schema_version":2,"scheduled_quota_units":2,"scheduled_quota_account_ids":["threaded","threaded"],
+				"scheduled_quota_snapshot":{"version":1,"targets":[
+					{"post_input_index":0,"account_id":"threaded","reserved":true},
+					{"post_input_index":1,"account_id":"threaded","reserved":true}]},
+				"platform_posts":[{"account_id":"threaded","thread_position":1},{"account_id":"threaded","thread_position":2}]}`,
+			want:   []bool{true, true},
+			wantOK: true,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := scheduledQuotaReservedIndexesFromMetadata([]byte(test.metadata))
+			if ok != test.wantOK || !slices.Equal(got, test.want) {
+				t.Fatalf("snapshot=%v/%t, want %v/%t", got, ok, test.want, test.wantOK)
+			}
+		})
+	}
+}
+
+func TestDuePostFailsClosedForMissingMalformedAndForgedQuotaSnapshots(t *testing.T) {
+	tests := []struct {
+		name     string
+		repeated bool
+		mutate   func(map[string]any)
+	}{
+		{name: "missing", mutate: func(object map[string]any) { delete(object, scheduledQuotaSnapshotMetadataKey) }},
+		{name: "malformed", mutate: func(object map[string]any) {
+			snapshot := object[scheduledQuotaSnapshotMetadataKey].(map[string]any)
+			snapshot["targets"] = snapshot["targets"].([]any)[:1]
+		}},
+		{name: "forged reserved account", mutate: func(object map[string]any) {
+			object[scheduledQuotaAccountIDsMetadataKey] = []any{"account_invalid_tiktok"}
+		}},
+		{name: "repeated thread undercount", repeated: true, mutate: func(object map[string]any) {
+			object[scheduledQuotaUnitsMetadataKey] = float64(1)
+			object[scheduledQuotaAccountIDsMetadataKey] = []any{"account_invalid_threaded"}
+			snapshot := object[scheduledQuotaSnapshotMetadataKey].(map[string]any)
+			targets := snapshot["targets"].([]any)
+			targets[1].(map[string]any)["reserved"] = false
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			pool := openRestrictedDeliveryIntegrationPool(t)
+			setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
+			ctx := withoutPostMediaRetentionSync(context.Background())
+			now := time.Now().UTC()
+			period := quota.PeriodForTime(now)
+			posts := []platform.PlatformPostInput{
+				{AccountID: "account_invalid_tiktok", Caption: "newly allowed"},
+				{AccountID: "account_invalid_facebook", Caption: "original reservation"},
+			}
+			quotaAccountIDs := []string{"account_invalid_facebook"}
+			if test.repeated {
+				posts = []platform.PlatformPostInput{
+					{AccountID: "account_invalid_threaded", Caption: "thread one", ThreadPosition: 1},
+					{AccountID: "account_invalid_threaded", Caption: "thread two", ThreadPosition: 2},
+				}
+				quotaAccountIDs = []string{"account_invalid_threaded", "account_invalid_threaded"}
+			}
+			metadata, err := encodeScheduledPostMetadataWithQuotaAccounts(posts, len(quotaAccountIDs), quotaAccountIDs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var object map[string]any
+			if err := json.Unmarshal(metadata, &object); err != nil {
+				t.Fatal(err)
+			}
+			test.mutate(object)
+			metadata, err = json.Marshal(object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, ok := scheduledQuotaReservedIndexesFromMetadata(metadata); ok {
+				t.Fatal("mutated snapshot unexpectedly validated")
+			}
+
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO profiles VALUES ('profile_invalid','workspace_invalid_due');
+				INSERT INTO social_accounts(id,profile_id,platform) VALUES
+					('account_invalid_tiktok','profile_invalid','tiktok'),
+					('account_invalid_facebook','profile_invalid','facebook'),
+					('account_invalid_threaded','profile_invalid','linkedin');
+				INSERT INTO plans(id,name,price_cents,post_limit) VALUES ('free','Free',0,100);
+				INSERT INTO subscriptions(workspace_id,plan_id,status) VALUES ('workspace_invalid_due','free','active');
+			`); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO usage(workspace_id,period,post_count) VALUES ('workspace_invalid_due',$1,99)`, period); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO social_posts(id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_invalid_due','workspace_invalid_due','scheduled',$1,$1,$2)`, now, metadata); err != nil {
+				t.Fatal(err)
+			}
+			queries := db.New(pool)
+			handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+				SetPublishingRestrictions(&fakePostRestrictionEvaluator{})
+			if err := handler.ClaimAndEnqueueScheduledPost(ctx, "post_invalid_due"); err != nil {
+				t.Fatal(err)
+			}
+			var status string
+			var results, failed, jobs int
+			if err := pool.QueryRow(ctx, `
+				SELECT status,
+				       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id='post_invalid_due'),
+				       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id='post_invalid_due' AND status='failed'),
+				       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id='post_invalid_due')
+				FROM social_posts WHERE id='post_invalid_due'
+			`).Scan(&status, &results, &failed, &jobs); err != nil {
+				t.Fatal(err)
+			}
+			if status != "failed" || results != 2 || failed != 2 || jobs != 0 {
+				t.Fatalf("fail-closed outcome=%q/%d/%d/%d, want failed/2/2/0", status, results, failed, jobs)
+			}
+		})
+	}
+}
+
+func TestDueRepeatedAccountSnapshotPreservesEveryThreadIndex(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
+	ctx := withoutPostMediaRetentionSync(context.Background())
+	now := time.Now().UTC()
+	period := quota.PeriodForTime(now)
+	posts := []platform.PlatformPostInput{
+		{AccountID: "account_threaded_due", Caption: "thread one", ThreadPosition: 1},
+		{AccountID: "account_threaded_due", Caption: "thread two", ThreadPosition: 2},
+	}
+	metadata, err := encodeScheduledPostMetadataWithQuotaAccounts(posts, 2, []string{"account_threaded_due", "account_threaded_due"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO profiles VALUES ('profile_threaded_due','workspace_threaded_due');
+		INSERT INTO social_accounts(id,profile_id,platform) VALUES ('account_threaded_due','profile_threaded_due','linkedin');
+		INSERT INTO plans(id,name,price_cents,post_limit) VALUES ('free','Free',0,100);
+		INSERT INTO subscriptions(workspace_id,plan_id,status) VALUES ('workspace_threaded_due','free','active');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO usage(workspace_id,period,post_count) VALUES ('workspace_threaded_due',$1,98)`, period); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO social_posts(id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_threaded_due','workspace_threaded_due','scheduled',$1,$1,$2)`, now, metadata); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(pool)
+	if err := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+		ClaimAndEnqueueScheduledPost(ctx, "post_threaded_due"); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var results, jobs int
+	var indexes []int32
+	if err := pool.QueryRow(ctx, `
+		SELECT status,
+		       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id='post_threaded_due'),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id='post_threaded_due'),
+		       (SELECT ARRAY_AGG(post_input_index ORDER BY post_input_index) FROM post_delivery_jobs WHERE post_id='post_threaded_due')
+		FROM social_posts WHERE id='post_threaded_due'
+	`).Scan(&status, &results, &jobs, &indexes); err != nil {
+		t.Fatal(err)
+	}
+	if status != "publishing" || results != 2 || jobs != 2 || !slices.Equal(indexes, []int32{0, 1}) {
+		t.Fatalf("threaded due outcome=%q/%d/%d/%v, want publishing/2/2/[0 1]", status, results, jobs, indexes)
+	}
+}
+
+func TestConcurrentDueMixedPostKeepsAdmissionReservedTargetWhenRestrictionLiftExceedsQuota(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(withoutPostMediaRetentionSync(context.Background()), 10*time.Second)
+	defer cancel()
+
+	now := time.Now().UTC()
+	period := quota.PeriodForTime(now)
+	metadata, err := encodeScheduledPostMetadataWithQuotaAccounts([]platform.PlatformPostInput{
+		{AccountID: "account_mixed_tiktok", Caption: "newly allowed at execution"},
+		{AccountID: "account_mixed_facebook", Caption: "reserved at admission"},
+	}, 1, []string{"account_mixed_facebook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_mixed_growth', 'workspace_mixed_growth');
+		INSERT INTO social_accounts (id, profile_id, platform) VALUES
+			('account_mixed_tiktok', 'profile_mixed_growth', 'tiktok'),
+			('account_mixed_facebook', 'profile_mixed_growth', 'facebook');
+		INSERT INTO plans (id, name, price_cents, post_limit) VALUES ('free', 'Free', 0, 100);
+		INSERT INTO subscriptions (workspace_id, plan_id, status) VALUES ('workspace_mixed_growth', 'free', 'active');
+	`); err != nil {
+		t.Fatalf("seed mixed due quota identities: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO usage (workspace_id, period, post_count) VALUES ('workspace_mixed_growth', $1, 99)`, period); err != nil {
+		t.Fatalf("seed mixed due quota usage: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, workspace_id, status, scheduled_at, created_at, metadata)
+		VALUES ('post_mixed_growth', 'workspace_mixed_growth', 'scheduled', $1::timestamptz, $1::timestamptz - INTERVAL '1 hour', $2::jsonb)
+	`, now, metadata); err != nil {
+		t.Fatalf("seed mixed due quota fixture: %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		go func() {
+			<-start
+			queries := db.New(pool)
+			handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+				SetPublishingRestrictions(&fakePostRestrictionEvaluator{})
+			errs <- handler.ClaimAndEnqueueScheduledPost(ctx, "post_mixed_growth")
+		}()
+	}
+	close(start)
+
+	var successes, lostClaims int
+	for range 2 {
+		err := <-errs
+		switch {
+		case err == nil:
+			successes++
+		case errors.Is(err, pgx.ErrNoRows):
+			lostClaims++
+		default:
+			t.Fatalf("concurrent mixed claim: %v", err)
+		}
+	}
+	if successes != 1 || lostClaims != 1 {
+		t.Fatalf("concurrent claims = success:%d lost:%d, want 1/1", successes, lostClaims)
+	}
+
+	var parentStatus, facebookStatus, tiktokStatus string
+	var tiktokError pgtype.Text
+	var facebookJobs, facebookPostInputIndex, tiktokJobs, quotaFailures, usage int
+	if err := pool.QueryRow(ctx, `
+		SELECT sp.status,
+		       facebook.status,
+		       tiktok.status,
+		       tiktok.error_message,
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id=sp.id AND social_account_id='account_mixed_facebook'),
+		       (SELECT post_input_index FROM post_delivery_jobs WHERE post_id=sp.id AND social_account_id='account_mixed_facebook'),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id=sp.id AND social_account_id='account_mixed_tiktok'),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id=sp.id AND social_account_id='account_mixed_tiktok' AND failure_stage='quota'),
+		       (SELECT post_count FROM usage WHERE workspace_id=sp.workspace_id AND period=$1)
+		FROM social_posts sp
+		JOIN social_post_results facebook ON facebook.post_id=sp.id AND facebook.social_account_id='account_mixed_facebook'
+		JOIN social_post_results tiktok ON tiktok.post_id=sp.id AND tiktok.social_account_id='account_mixed_tiktok'
+		WHERE sp.id='post_mixed_growth'
+	`, period).Scan(
+		&parentStatus, &facebookStatus, &tiktokStatus, &tiktokError,
+		&facebookJobs, &facebookPostInputIndex, &tiktokJobs, &quotaFailures, &usage,
+	); err != nil {
+		t.Fatalf("load mixed due outcome: %v", err)
+	}
+	if parentStatus != "publishing" || facebookStatus != "pending" || facebookJobs != 1 || facebookPostInputIndex != 1 {
+		t.Fatalf("reserved Facebook outcome = parent:%q result:%q jobs:%d index:%d, want publishing/pending/1/1", parentStatus, facebookStatus, facebookJobs, facebookPostInputIndex)
+	}
+	if tiktokStatus != "failed" || tiktokJobs != 0 || quotaFailures != 1 || !strings.Contains(tiktokError.String, "quota exceeded") {
+		t.Fatalf("new TikTok outcome = result:%q jobs:%d failures:%d error:%q, want quota-failed/0/1", tiktokStatus, tiktokJobs, quotaFailures, tiktokError.String)
+	}
+	if usage != 99 {
+		t.Fatalf("usage after enqueue = %d, want 99 until Facebook publishes", usage)
+	}
+	reservedUnits, err := db.New(pool).CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{
+		WorkspaceID: "workspace_mixed_growth",
+		Period:      period,
+	})
+	if err != nil || reservedUnits != 1 {
+		t.Fatalf("mixed execution reservation = %d, err=%v, want 1", reservedUnits, err)
+	}
+
+	var facebookResultID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM social_post_results WHERE post_id='post_mixed_growth' AND social_account_id='account_mixed_facebook'`).Scan(&facebookResultID); err != nil {
+		t.Fatal(err)
+	}
+	publishedAt := time.Now().UTC()
+	if _, err := db.New(pool).UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
+		ID:          facebookResultID,
+		Status:      "published",
+		ExternalID:  pgtype.Text{String: "facebook_external", Valid: true},
+		PublishedAt: pgtype.Timestamptz{Time: publishedAt, Valid: true},
+		WorkspaceID: "workspace_mixed_growth",
+		Period:      period,
+		PostCount:   1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE post_delivery_jobs SET state='succeeded', finished_at=$1 WHERE post_id='post_mixed_growth' AND social_account_id='account_mixed_facebook'`, publishedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE terminal_post_event_outbox (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			sequence_number BIGSERIAL NOT NULL UNIQUE,
+			post_id TEXT NOT NULL,
+			workspace_id TEXT NOT NULL,
+			parent_status TEXT NOT NULL,
+			parent_version TEXT NOT NULL,
+			event_type TEXT NOT NULL DEFAULT '',
+			payload JSONB NOT NULL,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE(post_id,parent_version)
+		);
+		CREATE TABLE terminal_post_event_deliveries (
+			event_id TEXT NOT NULL,
+			sink TEXT NOT NULL,
+			status TEXT NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			lease_expires_at TIMESTAMPTZ,
+			last_error TEXT,
+			enqueued_at TIMESTAMPTZ,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			PRIMARY KEY(event_id,sink)
+		);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	post, err := db.New(pool).GetSocialPostByID(ctx, "post_mixed_growth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := db.New(pool).ListSocialPostResultsByPost(ctx, "post_mixed_growth")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewSocialPostHandler(db.New(pool), nil, quota.NewChecker(db.New(pool)), nil, nil, nil, nil).
+		refreshParentPostStatusContext(ctx, post, results); err != nil {
+		t.Fatal(err)
+	}
+	var finalParent, finalFacebook, finalTikTok string
+	var finalUsage, finalEvents int
+	if err := pool.QueryRow(ctx, `
+		SELECT post.status, facebook.status, tiktok.status,
+		       (SELECT post_count FROM usage WHERE workspace_id=post.workspace_id AND period=$1),
+		       (SELECT COUNT(*)::int FROM terminal_post_event_outbox WHERE post_id=post.id AND parent_status='partial')
+		FROM social_posts post
+		JOIN social_post_results facebook ON facebook.post_id=post.id AND facebook.social_account_id='account_mixed_facebook'
+		JOIN social_post_results tiktok ON tiktok.post_id=post.id AND tiktok.social_account_id='account_mixed_tiktok'
+		WHERE post.id='post_mixed_growth'
+	`, period).Scan(&finalParent, &finalFacebook, &finalTikTok, &finalUsage, &finalEvents); err != nil {
+		t.Fatal(err)
+	}
+	if finalParent != "partial" || finalFacebook != "published" || finalTikTok != "failed" || finalUsage != 100 || finalEvents != 1 {
+		t.Fatalf("Facebook terminal aggregation=%q/%q/%q usage=%d events=%d, want partial/published/failed/100/1", finalParent, finalFacebook, finalTikTok, finalUsage, finalEvents)
+	}
+	reservedUnits, err = db.New(pool).CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{WorkspaceID: "workspace_mixed_growth", Period: period})
+	if err != nil || reservedUnits != 0 {
+		t.Fatalf("terminal mixed reservation=%d err=%v, want 0", reservedUnits, err)
+	}
+}
+
+func TestDueMixedPostUsesPartialHeadroomDeterministically(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
+	ctx := withoutPostMediaRetentionSync(context.Background())
+	now := time.Now().UTC()
+	period := quota.PeriodForTime(now)
+	metadata, err := encodeScheduledPostMetadataWithQuotaAccounts([]platform.PlatformPostInput{
+		{AccountID: "account_headroom_tiktok", Caption: "first newly allowed"},
+		{AccountID: "account_headroom_facebook", Caption: "reserved"},
+		{AccountID: "account_headroom_instagram", Caption: "second newly allowed"},
+	}, 1, []string{"account_headroom_facebook"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO profiles VALUES ('profile_headroom','workspace_headroom');
+		INSERT INTO social_accounts (id,profile_id,platform) VALUES
+			('account_headroom_tiktok','profile_headroom','tiktok'),
+			('account_headroom_facebook','profile_headroom','facebook'),
+			('account_headroom_instagram','profile_headroom','instagram');
+		INSERT INTO plans (id,name,price_cents,post_limit) VALUES ('free','Free',0,100);
+		INSERT INTO subscriptions (workspace_id,plan_id,status) VALUES ('workspace_headroom','free','active');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO usage(workspace_id,period,post_count) VALUES ('workspace_headroom',$1,98)`, period); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO social_posts(id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_headroom','workspace_headroom','scheduled',$1,$1,$2::jsonb)`, now, metadata); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(pool)
+	handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+		SetPublishingRestrictions(&fakePostRestrictionEvaluator{})
+	if err := handler.ClaimAndEnqueueScheduledPost(ctx, "post_headroom"); err != nil {
+		t.Fatal(err)
+	}
+
+	type targetOutcome struct {
+		accountID string
+		status    string
+		jobIndex  pgtype.Int4
+		error     pgtype.Text
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT result.social_account_id, result.status, job.post_input_index, result.error_message
+		FROM social_post_results result
+		LEFT JOIN post_delivery_jobs job ON job.social_post_result_id=result.id
+		WHERE result.post_id='post_headroom'
+		ORDER BY CASE result.social_account_id
+			WHEN 'account_headroom_tiktok' THEN 0
+			WHEN 'account_headroom_facebook' THEN 1
+			ELSE 2 END
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var outcomes []targetOutcome
+	for rows.Next() {
+		var outcome targetOutcome
+		if err := rows.Scan(&outcome.accountID, &outcome.status, &outcome.jobIndex, &outcome.error); err != nil {
+			t.Fatal(err)
+		}
+		outcomes = append(outcomes, outcome)
+	}
+	if len(outcomes) != 3 {
+		t.Fatalf("outcomes=%v, want 3", outcomes)
+	}
+	if outcomes[0].status != "pending" || !outcomes[0].jobIndex.Valid || outcomes[0].jobIndex.Int32 != 0 {
+		t.Fatalf("first newly allowed outcome=%+v, want pending index 0", outcomes[0])
+	}
+	if outcomes[1].status != "pending" || !outcomes[1].jobIndex.Valid || outcomes[1].jobIndex.Int32 != 1 {
+		t.Fatalf("reserved outcome=%+v, want pending index 1", outcomes[1])
+	}
+	if outcomes[2].status != "failed" || outcomes[2].jobIndex.Valid || !strings.Contains(outcomes[2].error.String, "already have 2 scheduled posts reserved") {
+		t.Fatalf("overflow outcome=%+v, want quota failed without job", outcomes[2])
+	}
+	var parentStatus string
+	var failures, usage int
+	if err := pool.QueryRow(ctx, `
+		SELECT status,
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id='post_headroom' AND failure_stage='quota'),
+		       (SELECT post_count FROM usage WHERE workspace_id='workspace_headroom' AND period=$1)
+		FROM social_posts WHERE id='post_headroom'
+	`, period).Scan(&parentStatus, &failures, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if parentStatus != "publishing" || failures != 1 || usage != 98 {
+		t.Fatalf("partial headroom parent/failures/usage=%q/%d/%d, want publishing/1/98", parentStatus, failures, usage)
+	}
+	reserved, err := queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{WorkspaceID: "workspace_headroom", Period: period})
+	if err != nil || reserved != 2 {
+		t.Fatalf("partial headroom reservation=%d err=%v, want 2", reserved, err)
+	}
+}
+
+func TestDueMixedPostReusesReservationReleasedByCurrentRestriction(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
+	ctx := withoutPostMediaRetentionSync(context.Background())
+	now := time.Now().UTC()
+	period := quota.PeriodForTime(now)
+	posts := []platform.PlatformPostInput{
+		{AccountID: "account_release_facebook", Caption: "reserved and still allowed"},
+		{AccountID: "account_release_instagram", Caption: "reserved then restricted"},
+		{AccountID: "account_release_tiktok", Caption: "first newly allowed"},
+		{AccountID: "account_release_threads", Caption: "second newly allowed"},
+	}
+	metadata, err := encodeScheduledPostMetadataWithQuotaAccounts(posts, 2, []string{"account_release_facebook", "account_release_instagram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO profiles VALUES ('profile_release','workspace_release');
+		INSERT INTO social_accounts(id,profile_id,platform) VALUES
+			('account_release_facebook','profile_release','facebook'),
+			('account_release_instagram','profile_release','instagram'),
+			('account_release_tiktok','profile_release','tiktok'),
+			('account_release_threads','profile_release','threads');
+		INSERT INTO plans(id,name,price_cents,post_limit) VALUES ('free','Free',0,100);
+		INSERT INTO subscriptions(workspace_id,plan_id,status) VALUES ('workspace_release','free','active');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO usage(workspace_id,period,post_count) VALUES ('workspace_release',$1,98)`, period); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO social_posts(id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_release','workspace_release','scheduled',$1,$1,$2)`, now, metadata); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(pool)
+	handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+		SetPublishingRestrictions(&fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
+			"instagram": {Restricted: true, Platform: "instagram", PlanID: "free", CycleID: "cycle_release"},
+		}})
+	if err := handler.ClaimAndEnqueueScheduledPost(ctx, "post_release"); err != nil {
+		t.Fatal(err)
+	}
+	var parent string
+	var jobIndexes []int32
+	var policyFailures, quotaFailures, usage int
+	if err := pool.QueryRow(ctx, `
+		SELECT status,
+		       (SELECT ARRAY_AGG(post_input_index ORDER BY post_input_index) FROM post_delivery_jobs WHERE post_id='post_release'),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id='post_release' AND failure_stage='publishing_policy'),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id='post_release' AND failure_stage='quota'),
+		       (SELECT post_count FROM usage WHERE workspace_id='workspace_release' AND period=$1)
+		FROM social_posts WHERE id='post_release'
+	`, period).Scan(&parent, &jobIndexes, &policyFailures, &quotaFailures, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if parent != "publishing" || !slices.Equal(jobIndexes, []int32{0, 2}) || policyFailures != 1 || quotaFailures != 1 || usage != 98 {
+		t.Fatalf("released reservation outcome=%q jobs=%v policy=%d quota=%d usage=%d, want publishing/[0 2]/1/1/98", parent, jobIndexes, policyFailures, quotaFailures, usage)
+	}
+	reserved, err := queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{WorkspaceID: "workspace_release", Period: period})
+	if err != nil || reserved != 2 {
+		t.Fatalf("released reservation final units=%d err=%v, want 2", reserved, err)
+	}
+}
+
+func TestDueCrossMonthPostUsesOnlyCurrentPeriodPartialHeadroom(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupScheduledQuotaSnapshotIntegrationSchema(t, pool)
+	ctx := withoutPostMediaRetentionSync(context.Background())
+	now := time.Now().UTC()
+	period := quota.PeriodForTime(now)
+	priorScheduledAt := now.AddDate(0, -1, 0)
+	posts := []platform.PlatformPostInput{
+		{AccountID: "account_cross_headroom_0", Caption: "first current-month slot"},
+		{AccountID: "account_cross_headroom_1", Caption: "second current-month slot"},
+		{AccountID: "account_cross_headroom_2", Caption: "overflow"},
+	}
+	metadata, err := encodeScheduledPostMetadataWithQuotaAccounts(posts, 3, []string{
+		"account_cross_headroom_0", "account_cross_headroom_1", "account_cross_headroom_2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO profiles VALUES ('profile_cross_headroom','workspace_cross_headroom');
+		INSERT INTO social_accounts(id,profile_id,platform) VALUES
+			('account_cross_headroom_0','profile_cross_headroom','linkedin'),
+			('account_cross_headroom_1','profile_cross_headroom','facebook'),
+			('account_cross_headroom_2','profile_cross_headroom','instagram');
+		INSERT INTO plans(id,name,price_cents,post_limit) VALUES ('free','Free',0,100);
+		INSERT INTO subscriptions(workspace_id,plan_id,status) VALUES ('workspace_cross_headroom','free','active');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO usage(workspace_id,period,post_count) VALUES ('workspace_cross_headroom',$1,98)`, period); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO social_posts(id,workspace_id,status,scheduled_at,created_at,metadata) VALUES ('post_cross_headroom','workspace_cross_headroom','scheduled',$1,$1,$2)`, priorScheduledAt, metadata); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(pool)
+	if err := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+		ClaimAndEnqueueScheduledPost(ctx, "post_cross_headroom"); err != nil {
+		t.Fatal(err)
+	}
+	var parent string
+	var jobIndexes []int32
+	var quotaFailures, usage int
+	if err := pool.QueryRow(ctx, `
+		SELECT status,
+		       (SELECT ARRAY_AGG(post_input_index ORDER BY post_input_index) FROM post_delivery_jobs WHERE post_id='post_cross_headroom'),
+		       (SELECT COUNT(*)::int FROM post_failures WHERE post_id='post_cross_headroom' AND failure_stage='quota'),
+		       (SELECT post_count FROM usage WHERE workspace_id='workspace_cross_headroom' AND period=$1)
+		FROM social_posts WHERE id='post_cross_headroom'
+	`, period).Scan(&parent, &jobIndexes, &quotaFailures, &usage); err != nil {
+		t.Fatal(err)
+	}
+	if parent != "publishing" || !slices.Equal(jobIndexes, []int32{0, 1}) || quotaFailures != 1 || usage != 98 {
+		t.Fatalf("cross-month headroom outcome=%q jobs=%v failures=%d usage=%d, want publishing/[0 1]/1/98", parent, jobIndexes, quotaFailures, usage)
+	}
+	reserved, err := queries.CountScheduledQuotaUnitsByWorkspaceAndPeriod(ctx, db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{WorkspaceID: "workspace_cross_headroom", Period: period})
+	if err != nil || reserved != 2 {
+		t.Fatalf("cross-month current reservation=%d err=%v, want 2", reserved, err)
 	}
 }
 
@@ -252,10 +909,10 @@ func TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically(t *testing.T) {
 			now := time.Now().UTC()
 			period := quota.PeriodForTime(now)
 			scheduledAt := now.Add(24 * time.Hour)
-			oldMetadata, err := encodeScheduledPostMetadata([]platform.PlatformPostInput{{
+			oldMetadata, err := encodeScheduledPostMetadataWithQuotaAccounts([]platform.PlatformPostInput{{
 				AccountID: "account_edit_one",
 				Caption:   "existing reservation",
-			}}, 1)
+			}}, 1, []string{"account_edit_one"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -283,7 +940,12 @@ func TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically(t *testing.T) {
 			for _, accountID := range tt.newTargets {
 				posts = append(posts, fmt.Sprintf(`{"account_id":%q,"caption":"updated"}`, accountID))
 			}
-			body := fmt.Sprintf(`{"platform_posts":[%s]}`, strings.Join(posts, ","))
+			body := fmt.Sprintf(`{
+				"scheduled_quota_units":0,
+				"scheduled_quota_account_ids":[],
+				"scheduled_quota_snapshot":{"version":1,"targets":[]},
+				"platform_posts":[%s]
+			}`, strings.Join(posts, ","))
 			req := httptest.NewRequest(http.MethodPatch, "/v1/posts/post_edit_boundary", strings.NewReader(body))
 			routeCtx := chi.NewRouteContext()
 			routeCtx.URLParams.Add("id", "post_edit_boundary")
@@ -307,6 +969,16 @@ func TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically(t *testing.T) {
 			units, ok := scheduledQuotaUnitsFromMetadata(metadata)
 			if !ok || units != tt.wantUnits {
 				t.Fatalf("persisted snapshot = %d/%t, want %d/true", units, ok, tt.wantUnits)
+			}
+			if tt.wantStatus == http.StatusOK {
+				reserved, ok := scheduledQuotaReservedIndexesFromMetadata(metadata)
+				wantReserved := make([]bool, len(tt.newTargets))
+				for index := range wantReserved {
+					wantReserved[index] = true
+				}
+				if !ok || !slices.Equal(reserved, wantReserved) {
+					t.Fatalf("updated target snapshot = %v/%t, want %v/true", reserved, ok, wantReserved)
+				}
 			}
 			parsed, err := platform.DecodePostMetadata(metadata, "")
 			if err != nil {
@@ -418,7 +1090,7 @@ func TestConcurrentScheduledIdempotencyReplayPrecedesMutableCapacityGates(t *tes
 			}
 
 			responses := runConcurrentScheduledCreatesBehindPeriodLock(t, pool, workspaceID, accountID, "same-key", []string{"same payload", "same payload"}, scheduledAt)
-			assertConcurrentScheduledReplayOutcomes(t, pool, workspaceID, period, responses)
+			assertConcurrentScheduledReplayOutcomes(t, pool, workspaceID, accountID, period, responses)
 		})
 	}
 }
@@ -728,7 +1400,14 @@ func runConcurrentScheduledCreatesBehindPeriodLock(
 		caption := caption
 		go func() {
 			<-start
-			body := fmt.Sprintf(`{"scheduled_at":%q,"idempotency_key":%q,"platform_posts":[{"account_id":%q,"caption":%q}]}`, scheduledAt.Format(time.RFC3339Nano), idempotencyKey, accountID, caption)
+			body := fmt.Sprintf(`{
+				"scheduled_at":%q,
+				"idempotency_key":%q,
+				"scheduled_quota_units":0,
+				"scheduled_quota_account_ids":[],
+				"scheduled_quota_snapshot":{"version":1,"targets":[]},
+				"platform_posts":[{"account_id":%q,"caption":%q}]
+			}`, scheduledAt.Format(time.RFC3339Nano), idempotencyKey, accountID, caption)
 			req := httptest.NewRequest(http.MethodPost, "/v1/posts", strings.NewReader(body))
 			req = req.WithContext(auth.SetWorkspaceID(req.Context(), workspaceID))
 			req = req.WithContext(withoutPostMediaRetentionSync(req.Context()))
@@ -780,7 +1459,7 @@ func countWaitingAdvisoryLocks(t *testing.T, pool *pgxpool.Pool) int {
 	return count
 }
 
-func assertConcurrentScheduledReplayOutcomes(t *testing.T, pool *pgxpool.Pool, workspaceID, period string, responses []scheduledCreateIntegrationResponse) {
+func assertConcurrentScheduledReplayOutcomes(t *testing.T, pool *pgxpool.Pool, workspaceID, accountID, period string, responses []scheduledCreateIntegrationResponse) {
 	t.Helper()
 	statuses := []int{responses[0].status, responses[1].status}
 	slices.Sort(statuses)
@@ -799,6 +1478,14 @@ func assertConcurrentScheduledReplayOutcomes(t *testing.T, pool *pgxpool.Pool, w
 	var posts int
 	if err := pool.QueryRow(context.Background(), `SELECT COUNT(*)::int FROM social_posts WHERE workspace_id=$1`, workspaceID).Scan(&posts); err != nil || posts != 1 {
 		t.Fatalf("persisted posts = %d, err=%v, want 1", posts, err)
+	}
+	var metadata []byte
+	if err := pool.QueryRow(context.Background(), `SELECT metadata FROM social_posts WHERE workspace_id=$1`, workspaceID).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	reservedIndexes, ok := scheduledQuotaReservedIndexesFromMetadata(metadata)
+	if !ok || !slices.Equal(reservedIndexes, []bool{true}) {
+		t.Fatalf("idempotent replay snapshot for %s = %v/%t, want [true]/true", accountID, reservedIndexes, ok)
 	}
 	reserved, err := db.New(pool).CountScheduledQuotaUnitsByWorkspaceAndPeriod(context.Background(), db.CountScheduledQuotaUnitsByWorkspaceAndPeriodParams{WorkspaceID: workspaceID, Period: period})
 	if err != nil || reserved != 1 {
@@ -957,8 +1644,11 @@ func TestConcurrentDueReservationGrowthSerializesAndCrossMonthUsesFullUnits(t *t
 		ctx := withoutPostMediaRetentionSync(context.Background())
 		now := time.Now().UTC()
 		period := quota.PeriodForTime(now)
-		metadata, _ := encodeScheduledPostMetadata([]platform.PlatformPostInput{{AccountID: "account_cross_month"}}, 1)
-		if _, err := pool.Exec(ctx, `INSERT INTO profiles VALUES ('profile_cross_month','workspace_cross_month'); INSERT INTO social_accounts (id,profile_id,platform) VALUES ('account_cross_month','profile_cross_month','linkedin'); INSERT INTO plans (id,name,price_cents,post_limit) VALUES ('free','Free',0,100); INSERT INTO subscriptions (workspace_id,plan_id,status) VALUES ('workspace_cross_month','free','active');`); err != nil {
+		metadata, _ := encodeScheduledPostMetadataWithQuotaAccounts([]platform.PlatformPostInput{
+			{AccountID: "account_cross_month_reserved"},
+			{AccountID: "account_cross_month_new"},
+		}, 1, []string{"account_cross_month_reserved"})
+		if _, err := pool.Exec(ctx, `INSERT INTO profiles VALUES ('profile_cross_month','workspace_cross_month'); INSERT INTO social_accounts (id,profile_id,platform) VALUES ('account_cross_month_reserved','profile_cross_month','linkedin'), ('account_cross_month_new','profile_cross_month','linkedin'); INSERT INTO plans (id,name,price_cents,post_limit) VALUES ('free','Free',0,100); INSERT INTO subscriptions (workspace_id,plan_id,status) VALUES ('workspace_cross_month','free','active');`); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := pool.Exec(ctx, `INSERT INTO usage (workspace_id,period,post_count) VALUES ('workspace_cross_month',$1,100)`, period); err != nil {
@@ -973,11 +1663,17 @@ func TestConcurrentDueReservationGrowthSerializesAndCrossMonthUsesFullUnits(t *t
 			t.Fatal(err)
 		}
 		var status string
-		if err := pool.QueryRow(ctx, `SELECT status FROM social_posts WHERE id='post_cross_month'`).Scan(&status); err != nil {
+		var results, jobs int
+		if err := pool.QueryRow(ctx, `
+			SELECT status,
+			       (SELECT COUNT(*)::int FROM social_post_results WHERE post_id='post_cross_month'),
+			       (SELECT COUNT(*)::int FROM post_delivery_jobs WHERE post_id='post_cross_month')
+			FROM social_posts WHERE id='post_cross_month'
+		`).Scan(&status, &results, &jobs); err != nil {
 			t.Fatal(err)
 		}
-		if status != "failed" {
-			t.Fatalf("cross-month status=%q, want failed", status)
+		if status != "failed" || results != 2 || jobs != 0 {
+			t.Fatalf("cross-month outcome=%q/%d/%d, want failed/2/0", status, results, jobs)
 		}
 	})
 }
@@ -1319,6 +2015,18 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			provider_error JSONB,
 			restriction_cycle_id TEXT
 		);
+		CREATE TABLE media_post_usages (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			workspace_id TEXT NOT NULL,
+			media_id TEXT NOT NULL,
+			post_id TEXT NOT NULL,
+			post_status TEXT NOT NULL,
+			cleanup_after_at TIMESTAMPTZ,
+			retention_reason TEXT NOT NULL DEFAULT 'plan_status',
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			UNIQUE (media_id, post_id)
+		);
 		CREATE TABLE admin_post_quota_resets (
 			workspace_id TEXT NOT NULL,
 			period TEXT NOT NULL,
@@ -1372,9 +2080,9 @@ func setupScheduledQuotaSnapshotIntegrationSchema(t *testing.T, pool *pgxpool.Po
 			WHERE idempotency_key IS NOT NULL
 			  AND status = 'scheduled';
 		INSERT INTO profiles (id, workspace_id) VALUES ('profile_1', 'workspace_snapshot');
-		INSERT INTO social_accounts (id, profile_id) VALUES
-			('account_tiktok', 'profile_1'),
-			('account_instagram', 'profile_1');
+		INSERT INTO social_accounts (id, profile_id, platform) VALUES
+			('account_tiktok', 'profile_1', 'tiktok'),
+			('account_instagram', 'profile_1', 'instagram');
 	`)
 	if err != nil {
 		t.Fatalf("setup scheduled quota snapshot schema: %v", err)

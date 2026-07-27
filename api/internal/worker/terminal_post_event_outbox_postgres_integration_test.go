@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"testing"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/testdbguard"
 )
 
 type postgresProbeDurableSink struct {
@@ -40,18 +40,15 @@ func openTerminalPostEventOutboxPool(t *testing.T, maxConns int32) *pgxpool.Pool
 	if databaseURL == "" {
 		t.Fatal("PUBLISHING_RESTRICTION_TEST_DATABASE_URL is required and must point to a temporary localhost PostgreSQL service")
 	}
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	host := strings.TrimSpace(config.ConnConfig.Host)
-	ip := net.ParseIP(host)
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		t.Fatalf("integration PostgreSQL must use loopback, got %q", host)
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	admin, err := pgxpool.New(ctx, databaseURL)
+	admin, config, err := testdbguard.OpenValidated(
+		"PUBLISHING_RESTRICTION_TEST_DATABASE_URL",
+		databaseURL,
+		func(validatedURL string) (*pgxpool.Pool, error) {
+			return pgxpool.New(ctx, validatedURL)
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

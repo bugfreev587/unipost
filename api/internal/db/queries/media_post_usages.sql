@@ -58,10 +58,29 @@ WHERE workspace_id = $1
   AND deleted_at IS NULL;
 
 -- name: GetPostPublishingRestrictionMediaRetention :one
-SELECT MAX(cleanup_after_at)::timestamptz
-FROM media_post_usages
-WHERE post_id = $1
-  AND retention_reason = 'publishing_restriction';
+SELECT MAX(retained_until)::timestamptz
+FROM (
+  SELECT usage.cleanup_after_at AS retained_until
+  FROM media_post_usages usage
+  WHERE usage.post_id = sqlc.arg(post_id)
+    AND usage.retention_reason = 'publishing_restriction'
+
+  UNION ALL
+
+  SELECT CASE
+    WHEN jsonb_typeof(post.metadata->'publishing_restriction_media_retained_until') = 'string'
+      AND pg_input_is_valid(
+        post.metadata->>'publishing_restriction_media_retained_until',
+        'timestamptz'
+      ) THEN CASE
+        WHEN isfinite(
+          (post.metadata->>'publishing_restriction_media_retained_until')::timestamptz
+        ) THEN (post.metadata->>'publishing_restriction_media_retained_until')::timestamptz
+      END
+  END AS retained_until
+  FROM social_posts post
+  WHERE post.id = sqlc.arg(post_id)
+) restriction_retention;
 
 -- name: ClaimMediaDueForRetentionCleanup :many
 WITH snapshot_candidates AS MATERIALIZED (
