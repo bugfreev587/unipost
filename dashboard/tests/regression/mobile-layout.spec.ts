@@ -23,6 +23,14 @@ const mobilePublicRoutes = [
     requiresLandingHost: true,
   },
   { path: "/pricing", marker: /Start free/i },
+  {
+    path: "/docs/api/posts/retry",
+    marker: /Queue one new delivery attempt for a failed per-destination result/i,
+  },
+  {
+    path: "/docs/guides/posts/retry-failed-posts",
+    marker: /Decide whether UniPost will retry a failed destination automatically/i,
+  },
 ];
 
 test.describe("mobile public layout", () => {
