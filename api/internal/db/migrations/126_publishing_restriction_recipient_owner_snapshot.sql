@@ -4,6 +4,29 @@
 ALTER TABLE platform_publishing_restriction_email_recipients
   ADD COLUMN represented_owner_user_ids TEXT[];
 
+-- +goose StatementBegin
+CREATE FUNCTION backfill_publishing_restriction_recipient_owner_snapshot()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  IF NEW.represented_owner_user_ids IS NULL THEN
+    NEW.represented_owner_user_ids = CASE
+      WHEN CARDINALITY(NEW.represented_workspace_ids) = 0 THEN ARRAY[]::TEXT[]
+      ELSE ARRAY_FILL(NEW.canonical_user_id, ARRAY[CARDINALITY(NEW.represented_workspace_ids)])
+    END;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+-- +goose StatementEnd
+
+CREATE TRIGGER publishing_restriction_owner_snapshot_backfill
+BEFORE INSERT OR UPDATE OF represented_workspace_ids, canonical_user_id
+ON platform_publishing_restriction_email_recipients
+FOR EACH ROW
+EXECUTE FUNCTION backfill_publishing_restriction_recipient_owner_snapshot();
+
 UPDATE platform_publishing_restriction_email_recipients
 SET represented_owner_user_ids = CASE
   WHEN CARDINALITY(represented_workspace_ids) = 0 THEN ARRAY[]::TEXT[]
@@ -19,6 +42,11 @@ ALTER TABLE platform_publishing_restriction_email_recipients
   );
 
 -- +goose Down
+
+DROP TRIGGER publishing_restriction_owner_snapshot_backfill
+  ON platform_publishing_restriction_email_recipients;
+
+DROP FUNCTION backfill_publishing_restriction_recipient_owner_snapshot();
 
 ALTER TABLE platform_publishing_restriction_email_recipients
   DROP CONSTRAINT platform_publishing_restriction_recipient_owner_snapshot_shape_check,

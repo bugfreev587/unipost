@@ -116,6 +116,9 @@ func TestPublishingRestrictionRecipientOwnerSnapshotMigrationContract(t *testing
 	up := strings.ToLower(parts[0])
 	for _, fragment := range []string{
 		"add column represented_owner_user_ids text[]",
+		"create function backfill_publishing_restriction_recipient_owner_snapshot()",
+		"before insert or update of represented_workspace_ids, canonical_user_id",
+		"new.represented_owner_user_ids is null",
 		"array_fill(canonical_user_id",
 		"array[]::text[]",
 		"set not null",
@@ -127,7 +130,14 @@ func TestPublishingRestrictionRecipientOwnerSnapshotMigrationContract(t *testing
 		}
 	}
 	down := strings.ToLower(parts[1])
-	if !strings.Contains(down, "drop column represented_owner_user_ids") {
-		t.Fatal("migration 126 Down must drop only the owner snapshot column and its attached constraints")
+	for _, fragment := range []string{
+		"drop trigger",
+		"drop function backfill_publishing_restriction_recipient_owner_snapshot()",
+		"drop constraint platform_publishing_restriction_recipient_owner_snapshot_shape_check",
+		"drop column represented_owner_user_ids",
+	} {
+		if !strings.Contains(down, fragment) {
+			t.Fatalf("migration 126 Down missing %q", fragment)
+		}
 	}
 }

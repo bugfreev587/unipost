@@ -721,6 +721,9 @@ type PlatformPublishingRestrictionEmailRecipient struct {
 	SentAt                  pgtype.Timestamptz `json:"sent_at"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	Retryable               bool               `json:"retryable"`
+	AttemptGeneration       int32              `json:"attempt_generation"`
+	RepresentedOwnerUserIds []string           `json:"represented_owner_user_ids"`
 }
 
 type PlatformPublishingRestrictionEvent struct {

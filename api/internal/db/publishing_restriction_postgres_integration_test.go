@@ -95,7 +95,8 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 		CREATE TABLE users (id TEXT PRIMARY KEY);
 		CREATE TABLE email_send_attempts (id TEXT PRIMARY KEY);
 		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
-		INSERT INTO users (id) VALUES ('canonical_user'), ('empty_user');
+		INSERT INTO users (id) VALUES
+			('canonical_user'), ('empty_user'), ('legacy_writer_user'), ('explicit_writer_user');
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -148,6 +149,52 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	if len(ownerIDs) != 0 {
 		t.Fatalf("empty workspace owner IDs = %#v, want empty array", ownerIDs)
 	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, idempotency_key
+		) VALUES (
+			'recipient_legacy_writer', 'campaign_owner_snapshot', 'legacy_writer_user',
+			'legacy@example.com', 'legacy@example.com', ARRAY['legacy_workspace_1','legacy_workspace_2']::TEXT[],
+			'owner-snapshot-legacy-writer'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("migration 125 writer insert after migration 126: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_legacy_writer'
+	`).Scan(&ownerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ownerIDs, []string{"legacy_writer_user", "legacy_writer_user"}) {
+		t.Fatalf("legacy writer owner IDs = %#v, want canonical repeated for each workspace", ownerIDs)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, represented_owner_user_ids, idempotency_key
+		) VALUES (
+			'recipient_explicit_writer', 'campaign_owner_snapshot', 'explicit_writer_user',
+			'explicit@example.com', 'explicit@example.com', ARRAY['explicit_workspace']::TEXT[],
+			ARRAY['preserved_owner']::TEXT[], 'owner-snapshot-explicit-writer'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("migration 126 writer insert: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_explicit_writer'
+	`).Scan(&ownerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ownerIDs, []string{"preserved_owner"}) {
+		t.Fatalf("explicit writer owner IDs = %#v, want explicit snapshot preserved", ownerIDs)
+	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE platform_publishing_restriction_email_recipients
 		SET represented_owner_user_ids=ARRAY['canonical_user']::TEXT[]
@@ -177,12 +224,33 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	if columnExists {
 		t.Fatal("migration 126 Down left represented_owner_user_ids behind")
 	}
+	var triggerExists, functionExists bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_trigger
+			WHERE tgname='publishing_restriction_owner_snapshot_backfill'
+			  AND NOT tgisinternal
+		)
+	`).Scan(&triggerExists); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_proc
+			WHERE proname='backfill_publishing_restriction_recipient_owner_snapshot'
+		)
+	`).Scan(&functionExists); err != nil {
+		t.Fatal(err)
+	}
+	if triggerExists || functionExists {
+		t.Fatalf("migration 126 Down cleanup trigger=%v function=%v, want both false", triggerExists, functionExists)
+	}
 	var recipientCount int
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_publishing_restriction_email_recipients`).Scan(&recipientCount); err != nil {
 		t.Fatal(err)
 	}
-	if recipientCount != 2 {
-		t.Fatalf("migration 126 Down changed recipient rows: got %d, want 2", recipientCount)
+	if recipientCount != 4 {
+		t.Fatalf("migration 126 Down changed recipient rows: got %d, want 4", recipientCount)
 	}
 }
 

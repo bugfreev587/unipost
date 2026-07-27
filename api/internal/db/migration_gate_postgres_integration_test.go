@@ -92,11 +92,16 @@ func seedMigration124State(t *testing.T, database *sql.DB) {
 		);
 		CREATE TABLE platform_publishing_restriction_email_recipients (
 			id TEXT PRIMARY KEY,
+			canonical_user_id TEXT NOT NULL,
+			represented_workspace_ids TEXT[] NOT NULL,
 			status TEXT NOT NULL,
 			retryable BOOLEAN NOT NULL DEFAULT TRUE
 		);
-		INSERT INTO platform_publishing_restriction_email_recipients (id, status, retryable)
-		VALUES ('failed-recipient', 'failed', TRUE);
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, canonical_user_id, represented_workspace_ids, status, retryable
+		) VALUES (
+			'failed-recipient', 'canonical-user', ARRAY['workspace-1','workspace-2']::TEXT[], 'failed', TRUE
+		);
 	`)
 	if err != nil {
 		t.Fatalf("seed migration 124 state: %v", err)
@@ -120,12 +125,17 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 		);
 		CREATE TABLE platform_publishing_restriction_email_recipients (
 			id TEXT PRIMARY KEY,
+			canonical_user_id TEXT NOT NULL,
+			represented_workspace_ids TEXT[] NOT NULL,
 			status TEXT NOT NULL
 		);
 		INSERT INTO media_post_usages (id, cleanup_after_at, retention_reason)
 		VALUES ('active-usage', NULL, 'plan_status');
-		INSERT INTO platform_publishing_restriction_email_recipients (id, status)
-		VALUES ('failed-recipient', 'failed');
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, canonical_user_id, represented_workspace_ids, status
+		) VALUES (
+			'failed-recipient', 'canonical-user', ARRAY['workspace-1','workspace-2']::TEXT[], 'failed'
+		);
 	`)
 	if err != nil {
 		t.Fatalf("seed migration 123 state: %v", err)
@@ -184,7 +194,7 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 	}
 }
 
-func TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup(t *testing.T) {
+func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues126(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 	config := testMigrationGateConfig()
@@ -196,6 +206,7 @@ func TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup(t *testing.T) {
 	}
 	var version int64
 	var retryable bool
+	var ownerUserIDs string
 	if err := database.QueryRowContext(context.Background(), `
 		SELECT version_id
 		FROM goose_db_version
@@ -206,14 +217,17 @@ func TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.QueryRowContext(context.Background(), `
-		SELECT retryable
+		SELECT retryable, ARRAY_TO_STRING(represented_owner_user_ids, ',')
 		FROM platform_publishing_restriction_email_recipients
 		WHERE id='failed-recipient'
-	`).Scan(&retryable); err != nil {
+	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 125 || retryable {
-		t.Fatalf("version=%d retryable=%v, want version=125 retryable=false", version, retryable)
+	if version != 126 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+		t.Fatalf(
+			"version=%d retryable=%v owner_user_ids=%v, want version=126 retryable=false canonical owner backfill",
+			version, retryable, ownerUserIDs,
+		)
 	}
 	if client.lockedID != "backup-125" {
 		t.Fatalf("locked backup ID = %q", client.lockedID)
@@ -493,12 +507,21 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&retryable); err != nil {
 		t.Fatal(err)
 	}
-	if version != 125 || retentionReason != "active_post" || retryable {
+	var ownerUserIDs string
+	if err := database.QueryRowContext(ctx, `
+		SELECT ARRAY_TO_STRING(represented_owner_user_ids, ',')
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id = 'failed-recipient'
+	`).Scan(&ownerUserIDs); err != nil {
+		t.Fatal(err)
+	}
+	if version != 126 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v, want version=125 retention_reason=active_post retryable=false",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=126 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
+			ownerUserIDs,
 		)
 	}
 	if createCalls := client.creates(); createCalls != 1 {
@@ -588,8 +611,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 125 {
-		t.Fatalf("final migration version = %d, want 125", version)
+	if version != 126 {
+		t.Fatalf("final migration version = %d, want 126", version)
 	}
 }
 
@@ -639,14 +662,23 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	if secondClient.lockedID == firstClient.lockedID {
 		t.Fatal("replacement runner reused orphan backup")
 	}
+	var version int64
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 126 {
+		t.Fatalf("replacement runner final migration version = %d, want 126", version)
+	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts125(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts126(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 125") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 126") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -669,14 +701,14 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (126, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (127, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 125") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 126") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }

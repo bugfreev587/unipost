@@ -11,14 +11,15 @@ const publishingRestrictionScript =
   "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
 const postgresTestsByPackage = {
   "./internal/db": [
-    "TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup",
+    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues126",
     "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
     "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
     "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
     "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
-    "TestRequireCurrentSchemaRejects124AndAccepts125",
+    "TestRequireCurrentSchemaRejects124AndAccepts126",
     "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
     "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
+    "TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown",
     "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
     "TestCreateEmailSendAttemptAuditStillRetriesFailedRecord",
   ],
@@ -27,8 +28,10 @@ const postgresTestsByPackage = {
   ],
   "./internal/worker": [
     "TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail",
+    "TestPublishingRestrictionSameEmailOwnersPreserveEligibilityAndRecovery",
     "TestPublishingRestrictionAudienceAndAdminCountsUseProfileWorkspace",
-    "TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity",
+    "TestPublishingRestrictionBulkRetryExcludesUnknownOutcomeRecipient",
+    "TestPublishingRestrictionBulkRetryIncludesDefinitiveAndPreSendFailuresOnly",
     "TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow",
     "TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically",
     "TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming",
