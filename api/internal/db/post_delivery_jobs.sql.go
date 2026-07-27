@@ -493,12 +493,6 @@ func (q *Queries) CreatePostDeliveryJob(ctx context.Context, arg CreatePostDeliv
 }
 
 const createRetryPostDeliveryJobWithMediaActivation = `-- name: CreateRetryPostDeliveryJobWithMediaActivation :one
--- The media parent-row version bump, usage-ledger activation, and retry-job
--- insert are one statement. Cleanup can therefore win before this statement
--- (and make all_media_available false), or Retry can win and invalidate the
--- cleanup snapshot; it cannot delete an object between activation and enqueue.
--- Normalize dynamic database plan IDs at this SQL race barrier. Public policy
--- codes and customer copy remain centralized in internal/publishingrestrictions.
 WITH locked_policy AS MATERIALIZED (
   SELECT restriction.enabled, restriction.restricted_plan_ids
   FROM social_accounts account
@@ -615,6 +609,8 @@ type CreateRetryPostDeliveryJobWithMediaActivationParams struct {
 // insert are one statement. Cleanup can therefore win before this statement
 // (and make all_media_available false), or Retry can win and invalidate the
 // cleanup snapshot; it cannot delete an object between activation and enqueue.
+// Normalize dynamic database plan IDs at this SQL race barrier. Public policy
+// codes and customer copy remain centralized in internal/publishingrestrictions.
 func (q *Queries) CreateRetryPostDeliveryJobWithMediaActivation(ctx context.Context, arg CreateRetryPostDeliveryJobWithMediaActivationParams) (PostDeliveryJob, error) {
 	row := q.db.QueryRow(ctx, createRetryPostDeliveryJobWithMediaActivation,
 		arg.PostID,
@@ -691,6 +687,131 @@ type DismissPostDeliveryJobParams struct {
 func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDeliveryJobParams) (PostDeliveryJob, error) {
 	row := q.db.QueryRow(ctx, dismissPostDeliveryJob, arg.ID, arg.WorkspaceID)
 	var i PostDeliveryJob
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialPostResultID,
+		&i.WorkspaceID,
+		&i.SocialAccountID,
+		&i.Platform,
+		&i.PostInputIndex,
+		&i.Kind,
+		&i.State,
+		&i.Attempts,
+		&i.MaxAttempts,
+		&i.FailureStage,
+		&i.ErrorCode,
+		&i.PlatformErrorCode,
+		&i.LastError,
+		&i.NextRunAt,
+		&i.LastAttemptAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FinishedAt,
+		&i.DismissedAt,
+		&i.LeaseExpiresAt,
+		&i.LeaseOwner,
+		&i.FirstClaimedAt,
+		&i.PlatformStartedAt,
+	)
+	return i, err
+}
+
+const finalizeRestrictedPostDeliveryJob = `-- name: FinalizeRestrictedPostDeliveryJob :one
+WITH transitioned_job AS (
+  UPDATE post_delivery_jobs AS job
+  SET state = 'dead',
+      failure_stage = $1,
+      error_code = $2,
+      platform_error_code = NULL,
+      last_error = $3,
+      next_run_at = NULL,
+      updated_at = NOW(),
+      finished_at = NOW()
+  WHERE job.id = $4
+    AND job.state IN ('running', 'retrying')
+    AND job.lease_owner IS NOT DISTINCT FROM $5
+    AND job.last_attempt_at IS NOT DISTINCT FROM $6::timestamptz
+  RETURNING job.id, job.post_id, job.social_post_result_id, job.workspace_id, job.social_account_id, job.platform, job.post_input_index, job.kind, job.state, job.attempts, job.max_attempts, job.failure_stage, job.error_code, job.platform_error_code, job.last_error, job.next_run_at, job.last_attempt_at, job.created_at, job.updated_at, job.finished_at, job.dismissed_at, job.lease_expires_at, job.lease_owner, job.first_claimed_at, job.platform_started_at
+), updated_result AS (
+  UPDATE social_post_results AS result
+  SET status = 'failed',
+      external_id = NULL,
+      error_message = $3,
+      published_at = NULL,
+      url = NULL,
+      debug_curl = NULL,
+      publish_token = NULL,
+      error_code = $2,
+      failure_stage = $1,
+      platform_error_code = NULL,
+      is_retriable = FALSE,
+      next_action = $7,
+      error_source = $8,
+      error_temporality = $9,
+      provider_error = NULL
+  FROM transitioned_job
+  WHERE result.id = transitioned_job.social_post_result_id
+  RETURNING transitioned_job.id AS job_id
+)
+SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at
+FROM transitioned_job
+JOIN updated_result ON updated_result.job_id = transitioned_job.id
+`
+
+type FinalizeRestrictedPostDeliveryJobParams struct {
+	FailureStage     pgtype.Text        `json:"failure_stage"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	ErrorMessage     pgtype.Text        `json:"error_message"`
+	ID               string             `json:"id"`
+	LeaseOwner       pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt    pgtype.Timestamptz `json:"last_attempt_at"`
+	NextAction       pgtype.Text        `json:"next_action"`
+	ErrorSource      pgtype.Text        `json:"error_source"`
+	ErrorTemporality pgtype.Text        `json:"error_temporality"`
+}
+
+type FinalizeRestrictedPostDeliveryJobRow struct {
+	ID                 string             `json:"id"`
+	PostID             string             `json:"post_id"`
+	SocialPostResultID string             `json:"social_post_result_id"`
+	WorkspaceID        string             `json:"workspace_id"`
+	SocialAccountID    string             `json:"social_account_id"`
+	Platform           string             `json:"platform"`
+	PostInputIndex     int32              `json:"post_input_index"`
+	Kind               string             `json:"kind"`
+	State              string             `json:"state"`
+	Attempts           int32              `json:"attempts"`
+	MaxAttempts        int32              `json:"max_attempts"`
+	FailureStage       pgtype.Text        `json:"failure_stage"`
+	ErrorCode          pgtype.Text        `json:"error_code"`
+	PlatformErrorCode  pgtype.Text        `json:"platform_error_code"`
+	LastError          pgtype.Text        `json:"last_error"`
+	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
+	LastAttemptAt      pgtype.Timestamptz `json:"last_attempt_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
+	DismissedAt        pgtype.Timestamptz `json:"dismissed_at"`
+	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
+	LeaseOwner         pgtype.Text        `json:"lease_owner"`
+	FirstClaimedAt     pgtype.Timestamptz `json:"first_claimed_at"`
+	PlatformStartedAt  pgtype.Timestamptz `json:"platform_started_at"`
+}
+
+func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg FinalizeRestrictedPostDeliveryJobParams) (FinalizeRestrictedPostDeliveryJobRow, error) {
+	row := q.db.QueryRow(ctx, finalizeRestrictedPostDeliveryJob,
+		arg.FailureStage,
+		arg.ErrorCode,
+		arg.ErrorMessage,
+		arg.ID,
+		arg.LeaseOwner,
+		arg.LastAttemptAt,
+		arg.NextAction,
+		arg.ErrorSource,
+		arg.ErrorTemporality,
+	)
+	var i FinalizeRestrictedPostDeliveryJobRow
 	err := row.Scan(
 		&i.ID,
 		&i.PostID,

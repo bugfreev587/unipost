@@ -888,33 +888,24 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	post db.SocialPost,
 	decision publishingrestrictions.Decision,
 ) error {
-	_, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       "failed",
-		ExternalID:   pgtype.Text{},
-		ErrorMessage: pgtype.Text{String: publishingrestrictions.UserMessage, Valid: true},
-		PublishedAt:  pgtype.Timestamptz{},
-		Url:          pgtype.Text{},
-		DebugCurl:    pgtype.Text{},
+	_, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
+		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
+		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
+		ErrorMessage:     postfailures.ToText(publishingrestrictions.UserMessage),
+		ID:               job.ID,
+		LeaseOwner:       job.LeaseOwner,
+		LastAttemptAt:    job.LastAttemptAt,
+		NextAction:       postfailures.ToText(publishingrestrictions.NextAction),
+		ErrorSource:      postfailures.ToText(postfailures.ErrorSourceUnipost),
+		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
 	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
 		return err
 	}
 	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
-	if err := h.queries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
-		return err
-	}
-	if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-		job,
-		"dead",
-		pgtype.Text{String: publishingrestrictions.FailureStage, Valid: true},
-		pgtype.Text{String: publishingrestrictions.NormalizedCode, Valid: true},
-		pgtype.Text{},
-		pgtype.Text{String: publishingrestrictions.UserMessage, Valid: true},
-		pgtype.Timestamptz{},
-	)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
 	h.recordPostFailure(ctx, failure)
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,

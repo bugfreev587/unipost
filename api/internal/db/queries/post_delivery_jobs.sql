@@ -468,6 +468,47 @@ WHERE id = sqlc.arg('id')
   AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
 RETURNING *;
 
+-- name: FinalizeRestrictedPostDeliveryJob :one
+WITH transitioned_job AS (
+  UPDATE post_delivery_jobs AS job
+  SET state = 'dead',
+      failure_stage = sqlc.arg('failure_stage'),
+      error_code = sqlc.arg('error_code'),
+      platform_error_code = NULL,
+      last_error = sqlc.arg('error_message'),
+      next_run_at = NULL,
+      updated_at = NOW(),
+      finished_at = NOW()
+  WHERE job.id = sqlc.arg('id')
+    AND job.state IN ('running', 'retrying')
+    AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+    AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
+  RETURNING job.*
+), updated_result AS (
+  UPDATE social_post_results AS result
+  SET status = 'failed',
+      external_id = NULL,
+      error_message = sqlc.arg('error_message'),
+      published_at = NULL,
+      url = NULL,
+      debug_curl = NULL,
+      publish_token = NULL,
+      error_code = sqlc.arg('error_code'),
+      failure_stage = sqlc.arg('failure_stage'),
+      platform_error_code = NULL,
+      is_retriable = FALSE,
+      next_action = sqlc.arg('next_action'),
+      error_source = sqlc.arg('error_source'),
+      error_temporality = sqlc.arg('error_temporality'),
+      provider_error = NULL
+  FROM transitioned_job
+  WHERE result.id = transitioned_job.social_post_result_id
+  RETURNING transitioned_job.id AS job_id
+)
+SELECT transitioned_job.*
+FROM transitioned_job
+JOIN updated_result ON updated_result.job_id = transitioned_job.id;
+
 -- name: CancelPostDeliveryJob :one
 UPDATE post_delivery_jobs
 SET state = 'cancelled',
