@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -237,6 +238,44 @@ func TestCoordinatorRollsBackMutationFailure(t *testing.T) {
 	}
 }
 
+func TestCoordinatorRollsBackWithIndependentBoundedContextAfterRequestCancellation(t *testing.T) {
+	tx := &fakeTransaction{
+		snapshots: map[string]quota.MonthlySnapshot{
+			"2026-07": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-07", Completed: 99, Limit: 100},
+		},
+	}
+	coordinator := newCoordinator(&fakeBeginner{tx: tx})
+	ctx, cancel := context.WithCancel(context.Background())
+	wantErr := errors.New("request canceled during mutation")
+	startedAt := time.Now()
+
+	err := coordinator.Mutate(ctx, "ws_123", []PeriodDelta{
+		{Period: "2026-07", RequestedUnits: 1},
+	}, func(*db.Queries) error {
+		cancel()
+		return wantErr
+	})
+
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want %v", err, wantErr)
+	}
+	if tx.rollbackContextErr != nil {
+		t.Fatalf("rollback context error = %v, want nil", tx.rollbackContextErr)
+	}
+	if !tx.rollbackHasDeadline {
+		t.Fatal("rollback context must have a deadline")
+	}
+	if tx.rollbackDeadline.Before(startedAt) || tx.rollbackDeadline.After(startedAt.Add(10*time.Second)) {
+		t.Fatalf("rollback deadline = %v, want a live deadline within 10s of %v", tx.rollbackDeadline, startedAt)
+	}
+	if tx.lockHeld {
+		t.Fatal("quota advisory lock remained held after rollback")
+	}
+	if !tx.rolledBack {
+		t.Fatal("transaction was not rolled back")
+	}
+}
+
 func TestCoordinatorPlansDeltaAfterLocksAreHeld(t *testing.T) {
 	tx := &fakeTransaction{
 		snapshots: map[string]quota.MonthlySnapshot{
@@ -312,6 +351,11 @@ type fakeTransaction struct {
 	lockEvents []string
 	committed  bool
 	rolledBack bool
+	lockHeld   bool
+
+	rollbackContextErr  error
+	rollbackDeadline    time.Time
+	rollbackHasDeadline bool
 }
 
 func (f *fakeTransaction) LockScheduledIdempotency(_ context.Context, _, idempotencyKey string) error {
@@ -322,6 +366,7 @@ func (f *fakeTransaction) LockScheduledIdempotency(_ context.Context, _, idempot
 func (f *fakeTransaction) LockPeriod(_ context.Context, _, period string) error {
 	f.locked = append(f.locked, period)
 	f.lockEvents = append(f.lockEvents, "period:"+period)
+	f.lockHeld = true
 	return nil
 }
 
@@ -345,7 +390,13 @@ func (f *fakeTransaction) Commit(context.Context) error {
 	return nil
 }
 
-func (f *fakeTransaction) Rollback(context.Context) error {
+func (f *fakeTransaction) Rollback(ctx context.Context) error {
+	f.rollbackContextErr = ctx.Err()
+	f.rollbackDeadline, f.rollbackHasDeadline = ctx.Deadline()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.rolledBack = true
+	f.lockHeld = false
 	return nil
 }

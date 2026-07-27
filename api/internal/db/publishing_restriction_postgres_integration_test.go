@@ -91,8 +91,40 @@ func applyMigrationDownForIntegration(t *testing.T, pool *pgxpool.Pool, filename
 	}
 }
 
+func createMigration126CrossSchemaDecoy(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	ctx := context.Background()
+	schema := fmt.Sprintf("pr126_decoy_%d", time.Now().UnixNano())
+	qualifiedSchema := pgx.Identifier{schema}.Sanitize()
+	qualifiedTable := pgx.Identifier{schema, "platform_publishing_restriction_email_recipients"}.Sanitize()
+	qualifiedFunction := pgx.Identifier{schema, "backfill_publishing_restriction_recipient_owner_snapshot"}.Sanitize()
+
+	if _, err := pool.Exec(ctx, "CREATE SCHEMA "+qualifiedSchema); err != nil {
+		t.Fatalf("create migration 126 cross-schema decoy: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), "DROP SCHEMA "+qualifiedSchema+" CASCADE"); err != nil {
+			t.Errorf("drop migration 126 cross-schema decoy: %v", err)
+		}
+	})
+	if _, err := pool.Exec(ctx, fmt.Sprintf(`
+		CREATE TABLE %s (represented_owner_user_ids TEXT[]);
+		CREATE FUNCTION %s()
+		RETURNS TRIGGER
+		LANGUAGE plpgsql
+		AS $$ BEGIN RETURN NEW; END; $$;
+		CREATE TRIGGER publishing_restriction_owner_snapshot_backfill
+		BEFORE INSERT ON %s
+		FOR EACH ROW
+		EXECUTE FUNCTION %s();
+	`, qualifiedTable, qualifiedFunction, qualifiedTable, qualifiedFunction)); err != nil {
+		t.Fatalf("populate migration 126 cross-schema decoy: %v", err)
+	}
+}
+
 func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T) {
 	pool := openPublishingRestrictionIntegrationPool(t)
+	createMigration126CrossSchemaDecoy(t, pool)
 	ctx := context.Background()
 	_, err := pool.Exec(ctx, `
 		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT);
@@ -258,7 +290,8 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM information_schema.columns
-			WHERE table_name='platform_publishing_restriction_email_recipients'
+			WHERE table_schema=current_schema()
+			  AND table_name='platform_publishing_restriction_email_recipients'
 			  AND column_name='represented_owner_user_ids'
 		)
 	`).Scan(&columnExists); err != nil {
@@ -270,17 +303,24 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	var triggerExists, functionExists bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM pg_trigger
-			WHERE tgname='publishing_restriction_owner_snapshot_backfill'
-			  AND NOT tgisinternal
+			SELECT 1
+			FROM pg_trigger trigger_definition
+			JOIN pg_class table_definition ON table_definition.oid=trigger_definition.tgrelid
+			JOIN pg_namespace namespace ON namespace.oid=table_definition.relnamespace
+			WHERE namespace.nspname=current_schema()
+			  AND trigger_definition.tgname='publishing_restriction_owner_snapshot_backfill'
+			  AND NOT trigger_definition.tgisinternal
 		)
 	`).Scan(&triggerExists); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM pg_proc
-			WHERE proname='backfill_publishing_restriction_recipient_owner_snapshot'
+			SELECT 1
+			FROM pg_proc function_definition
+			JOIN pg_namespace namespace ON namespace.oid=function_definition.pronamespace
+			WHERE namespace.nspname=current_schema()
+			  AND function_definition.proname='backfill_publishing_restriction_recipient_owner_snapshot'
 		)
 	`).Scan(&functionExists); err != nil {
 		t.Fatal(err)
