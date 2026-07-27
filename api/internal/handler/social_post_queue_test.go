@@ -2,12 +2,15 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -985,32 +988,32 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 		f.resultUpdateCalls++
 		updated := f.job
 		updated.State = "dead"
-		updated.FailureStage = args[3].(pgtype.Text)
-		updated.ErrorCode = args[4].(pgtype.Text)
+		updated.FailureStage = args[4].(pgtype.Text)
+		updated.ErrorCode = args[5].(pgtype.Text)
 		updated.PlatformErrorCode = pgtype.Text{}
-		updated.LastError = pgtype.Text{String: args[5].(string), Valid: true}
+		updated.LastError = pgtype.Text{String: args[6].(string), Valid: true}
 		updated.NextRunAt = pgtype.Timestamptz{}
 		f.job = updated
 		f.result.Status = "failed"
 		f.result.ExternalID = pgtype.Text{}
-		f.result.ErrorMessage = pgtype.Text{String: args[5].(string), Valid: true}
+		f.result.ErrorMessage = pgtype.Text{String: args[6].(string), Valid: true}
 		f.result.PublishedAt = pgtype.Timestamptz{}
 		f.result.Url = pgtype.Text{}
 		f.result.DebugCurl = pgtype.Text{}
 		f.result.PublishToken = pgtype.Text{}
-		f.result.ErrorCode = args[4].(pgtype.Text)
-		f.result.FailureStage = args[3].(pgtype.Text)
+		f.result.ErrorCode = args[5].(pgtype.Text)
+		f.result.FailureStage = args[4].(pgtype.Text)
 		f.result.PlatformErrorCode = pgtype.Text{}
 		f.result.IsRetriable = pgtype.Bool{Bool: false, Valid: true}
-		f.result.NextAction = args[6].(pgtype.Text)
-		f.result.ErrorSource = args[7].(pgtype.Text)
-		f.result.ErrorTemporality = args[8].(pgtype.Text)
+		f.result.NextAction = args[7].(pgtype.Text)
+		f.result.ErrorSource = args[8].(pgtype.Text)
+		f.result.ErrorTemporality = args[9].(pgtype.Text)
 		f.result.ProviderError = nil
 		f.result.XCreditsCounted = 0
 		f.result.XCreditOperation = pgtype.Text{}
 		f.result.XCreditCatalogVersion = pgtype.Text{}
 		f.result.XCreditBillingMode = pgtype.Text{}
-		for _, mediaID := range args[9].([]string) {
+		for _, mediaID := range args[3].([]string) {
 			f.retentionUpserts = append(f.retentionUpserts, db.UpsertMediaPostUsageParams{
 				MediaID:         mediaID,
 				WorkspaceID:     f.job.WorkspaceID,
@@ -1064,12 +1067,94 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 }
 
 type restrictedFinalizeIntegrationLogStore struct {
-	calls int
+	calls  int
+	params []db.InsertIntegrationLogParams
 }
 
-func (s *restrictedFinalizeIntegrationLogStore) InsertIntegrationLog(context.Context, db.InsertIntegrationLogParams) (db.IntegrationLog, error) {
+func (s *restrictedFinalizeIntegrationLogStore) InsertIntegrationLog(_ context.Context, params db.InsertIntegrationLogParams) (db.IntegrationLog, error) {
 	s.calls++
+	s.params = append(s.params, params)
 	return db.IntegrationLog{}, nil
+}
+
+func runIntegrationLogger(t *testing.T, store *restrictedFinalizeIntegrationLogStore) (*integrationlogs.Logger, func()) {
+	t.Helper()
+	logger := integrationlogs.NewLogger(store, nil)
+	loggerContext, stopLogger := context.WithCancel(context.Background())
+	loggerStopped := make(chan struct{})
+	go func() {
+		logger.Start(loggerContext)
+		close(loggerStopped)
+	}()
+	var once sync.Once
+	return logger, func() {
+		once.Do(func() {
+			stopLogger()
+			<-loggerStopped
+		})
+	}
+}
+
+func queuedLogMetadata(t *testing.T, store *restrictedFinalizeIntegrationLogStore) map[string]any {
+	t.Helper()
+	for _, params := range store.params {
+		if params.Action != integrationlogs.ActionPostPublishQueued {
+			continue
+		}
+		var metadata map[string]any
+		if err := json.Unmarshal(params.Metadata, &metadata); err != nil {
+			t.Fatalf("decode queued log metadata: %v", err)
+		}
+		return metadata
+	}
+	t.Fatal("queued publishing integration log not found")
+	return nil
+}
+
+func TestQueueImmediatePostLogsEveryMixedDeliveryResult(t *testing.T) {
+	h, _, _, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	logStore := &restrictedFinalizeIntegrationLogStore{}
+	logger, stopLogger := runIntegrationLogger(t, logStore)
+	defer stopLogger()
+	h.ilog = logger
+
+	response, err := h.queueImmediatePost(context.Background(), "ws_1", parsed, accounts, map[string]publishingrestrictions.Decision{
+		"tk_1": {Restricted: true, Platform: "tiktok", CycleID: "cycle_1"},
+	})
+	if err != nil {
+		t.Fatalf("queueImmediatePost: %v", err)
+	}
+	if len(response.Results) != 2 || response.ActiveJobCount != 1 {
+		t.Fatalf("response results/jobs = %d/%d, want 2/1", len(response.Results), response.ActiveJobCount)
+	}
+	stopLogger()
+	metadata := queuedLogMetadata(t, logStore)
+	if metadata["result_count"] != float64(2) || metadata["queued_jobs"] != float64(1) {
+		t.Fatalf("queued metadata = %#v, want result_count=2 queued_jobs=1", metadata)
+	}
+}
+
+func TestQueueImmediatePostLogsEveryLocallyFailedResult(t *testing.T) {
+	h, _, _, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	accounts["tk_1"] = platform.ValidateAccount{Platform: "tiktok", Disconnected: true}
+	accounts["ig_1"] = platform.ValidateAccount{Platform: "instagram", Disconnected: true}
+	logStore := &restrictedFinalizeIntegrationLogStore{}
+	logger, stopLogger := runIntegrationLogger(t, logStore)
+	defer stopLogger()
+	h.ilog = logger
+
+	response, err := h.queueImmediatePost(context.Background(), "ws_1", parsed, accounts, nil)
+	if err != nil {
+		t.Fatalf("queueImmediatePost: %v", err)
+	}
+	if len(response.Results) != 2 || response.ActiveJobCount != 0 {
+		t.Fatalf("response results/jobs = %d/%d, want 2/0", len(response.Results), response.ActiveJobCount)
+	}
+	stopLogger()
+	metadata := queuedLogMetadata(t, logStore)
+	if metadata["result_count"] != float64(2) || metadata["queued_jobs"] != float64(0) {
+		t.Fatalf("queued metadata = %#v, want result_count=2 queued_jobs=0", metadata)
+	}
 }
 
 func TestFinalizeRestrictedDeliveryJobLostLeasePreservesNewerSuccess(t *testing.T) {
@@ -1540,6 +1625,171 @@ func TestFinalizeRestrictedDeliveryJobAllowsValidMetadataWithoutMedia(t *testing
 	}
 	if len(dbtx.retentionUpserts) != 0 {
 		t.Fatalf("no-media retention upserts = %d, want 0", len(dbtx.retentionUpserts))
+	}
+}
+
+type unavailableAccountAdapterSpy struct {
+	platformName string
+	postCalls    int
+}
+
+func (s *unavailableAccountAdapterSpy) Platform() string { return s.platformName }
+func (s *unavailableAccountAdapterSpy) Connect(context.Context, map[string]string) (*platform.ConnectResult, error) {
+	return nil, errors.New("unexpected connect")
+}
+func (s *unavailableAccountAdapterSpy) Post(context.Context, string, string, []platform.MediaItem, map[string]any) (*platform.PostResult, error) {
+	s.postCalls++
+	return nil, errors.New("unavailable account reached adapter")
+}
+func (s *unavailableAccountAdapterSpy) DeletePost(context.Context, string, string) error {
+	return errors.New("unexpected delete")
+}
+func (s *unavailableAccountAdapterSpy) RefreshToken(context.Context, string) (string, string, time.Time, error) {
+	return "", "", time.Time{}, errors.New("unexpected refresh")
+}
+
+type unavailableAccountDeliveryDB struct {
+	job                  db.PostDeliveryJob
+	post                 db.SocialPost
+	result               db.SocialPostResult
+	account              db.SocialAccount
+	platformStartedCalls int
+	failureDetailsCode   string
+	recordedFailureCode  string
+}
+
+func (f *unavailableAccountDeliveryDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
+		f.failureDetailsCode = args[1].(pgtype.Text).String
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "-- name: MarkSocialAccountReconnectRequired"):
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"),
+		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
+		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"):
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	default:
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected Exec: %s", query)
+	}
+}
+
+func (f *unavailableAccountDeliveryDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	switch {
+	case strings.Contains(query, "-- name: ListSocialPostResultsByPost"):
+		return &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}, nil
+	case strings.Contains(query, "-- name: ListPostDeliveryJobsByPost"):
+		return &queueRows{values: [][]any{postDeliveryJobScanRow(f.job).values}}, nil
+	default:
+		return nil, fmt.Errorf("unexpected Query: %s", query)
+	}
+}
+
+func (f *unavailableAccountDeliveryDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetPostDeliveryJobByIDAndWorkspace"):
+		return postDeliveryJobScanRow(f.job)
+	case strings.Contains(query, "-- name: GetSocialPostByID"):
+		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
+		return socialPostResultScanRow(f.result)
+	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		return policySnapshotSocialAccountRow(f.account)
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobPlatformStarted"):
+		f.platformStartedCalls++
+		started := f.job
+		started.PlatformStartedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		return postDeliveryJobScanRow(started)
+	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
+		f.result.Status = args[1].(string)
+		f.result.ErrorMessage = args[3].(pgtype.Text)
+		return socialPostResultScanRow(f.result)
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		f.recordedFailureCode = args[6].(string)
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
+		f.job.State = args[0].(string)
+		f.job.FailureStage = args[1].(pgtype.Text)
+		f.job.ErrorCode = args[2].(pgtype.Text)
+		return postDeliveryJobScanRow(f.job)
+	default:
+		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
+	}
+}
+
+func TestProcessPostDeliveryJobRejectsUnavailableAccountBeforePlatformStart(t *testing.T) {
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{AccountID: "acct_ig", Caption: "do not dispatch"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name    string
+		account db.SocialAccount
+	}{
+		{
+			name:    "reconnect_required",
+			account: db.SocialAccount{ID: "acct_ig", ProfileID: "profile_1", Platform: "instagram", Status: "reconnect_required"},
+		},
+		{
+			name: "disconnected_at",
+			account: db.SocialAccount{
+				ID: "acct_ig", ProfileID: "profile_1", Platform: "instagram", Status: "active",
+				DisconnectedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			job := baseDeliveryJob()
+			job.LeaseOwner = pgtype.Text{String: "worker_1", Valid: true}
+			job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+			dbtx := &unavailableAccountDeliveryDB{
+				job: job,
+				post: db.SocialPost{
+					ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing", Metadata: metadata,
+					CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				},
+				result: db.SocialPostResult{
+					ID: job.SocialPostResultID, PostID: job.PostID, SocialAccountID: job.SocialAccountID,
+					Status: "processing", Caption: "do not dispatch",
+				},
+				account: test.account,
+			}
+			adapter := &unavailableAccountAdapterSpy{platformName: "instagram"}
+			previous, previousErr := platform.Get("instagram")
+			platform.Register(adapter)
+			defer func() {
+				if previousErr == nil {
+					platform.Register(previous)
+				}
+			}()
+			logStore := &restrictedFinalizeIntegrationLogStore{}
+			logger, stopLogger := runIntegrationLogger(t, logStore)
+			defer stopLogger()
+			h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, logger)
+
+			if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
+				t.Fatalf("ProcessPostDeliveryJob: %v", err)
+			}
+			stopLogger()
+
+			if adapter.postCalls != 0 {
+				t.Fatalf("adapter post calls = %d, want 0", adapter.postCalls)
+			}
+			if dbtx.platformStartedCalls != 0 || dbtx.job.PlatformStartedAt.Valid {
+				t.Fatalf("platform start writes = %d timestamp=%v, want none", dbtx.platformStartedCalls, dbtx.job.PlatformStartedAt)
+			}
+			if dbtx.result.Status != "failed" || dbtx.failureDetailsCode != "account_reconnect_required" || dbtx.recordedFailureCode != "account_reconnect_required" {
+				t.Fatalf("terminal result/failure = status:%q details:%q history:%q", dbtx.result.Status, dbtx.failureDetailsCode, dbtx.recordedFailureCode)
+			}
+			if dbtx.job.State != "dead" || dbtx.job.ErrorCode.String != "account_reconnect_required" {
+				t.Fatalf("job = state:%q code:%q, want dead/account_reconnect_required", dbtx.job.State, dbtx.job.ErrorCode.String)
+			}
+			for _, params := range logStore.params {
+				if params.Action == integrationlogs.ActionPostPublishPlatformStarted {
+					t.Fatal("unavailable account emitted a platform-started integration log")
+				}
+			}
+		})
 	}
 }
 

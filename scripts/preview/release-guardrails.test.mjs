@@ -25,10 +25,18 @@ const postgresTestsByPackage = {
   ],
   "./internal/handler": [
     "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",
+    "TestFinalizeRestrictedPostDeliveryJobRequiresEveryMediaBeforeMutation",
+    "TestFinalizeRestrictedPostDeliveryJobCleanupOrdering",
+    "TestFinalizeRestrictedPostDeliveryJobAllowsEmptyMediaSet",
+    "TestScheduledOrdinaryRetentionFailureDoesNotAbortClaim",
+    "TestDraftOrdinaryRetentionFailureDoesNotAbortClaim",
+    "TestScheduledInvalidMetadataCommitsTerminalFailure",
   ],
   "./internal/worker": [
     "TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail",
     "TestPublishingRestrictionSameEmailOwnersPreserveEligibilityAndRecovery",
+    "TestPublishingRestrictionMigration126OldWriterCapturesSameEmailOwnersForRecovery",
+    "TestPublishingRestrictionMigration126HistoricalFallbackRejectsEmailTakeover",
     "TestPublishingRestrictionAudienceAndAdminCountsUseProfileWorkspace",
     "TestPublishingRestrictionBulkRetryExcludesUnknownOutcomeRecipient",
     "TestPublishingRestrictionBulkRetryIncludesDefinitiveAndPreSendFailuresOnly",

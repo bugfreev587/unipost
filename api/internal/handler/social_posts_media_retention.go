@@ -28,6 +28,11 @@ func withoutPostMediaRetentionSync(ctx context.Context) context.Context {
 	return context.WithValue(ctx, skipPostMediaRetentionSyncKey{}, true)
 }
 
+func postMediaRetentionSyncSkipped(ctx context.Context) bool {
+	skip, _ := ctx.Value(skipPostMediaRetentionSyncKey{}).(bool)
+	return skip
+}
+
 func shouldLogMediaPostUsageUpsertError(err error) bool {
 	// Cleanup may legitimately win the usage-version/status race. In that
 	// case the query returns no row and the object remains safely unavailable.
@@ -63,6 +68,9 @@ func decodeMediaIDsForRetention(post db.SocialPost) ([]string, bool) {
 }
 
 func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.SocialPost, postStatus string) {
+	if postMediaRetentionSyncSkipped(ctx) {
+		return
+	}
 	h.syncPostMediaRetentionAt(ctx, post, postStatus, "", time.Time{})
 }
 
@@ -102,7 +110,7 @@ func (h *SocialPostHandler) syncPostMediaRetentionAfterResultTransition(
 	postStatus string,
 	results []db.SocialPostResult,
 ) {
-	if skip, _ := ctx.Value(skipPostMediaRetentionSyncKey{}).(bool); skip {
+	if postMediaRetentionSyncSkipped(ctx) {
 		return
 	}
 	hasPolicyFailure := false

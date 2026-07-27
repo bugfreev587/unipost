@@ -496,6 +496,45 @@ func TestScheduledEnqueueUsesExecutionPolicySnapshot(t *testing.T) {
 	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
 }
 
+func TestScheduledQuotaEmailWaitsForStrictRetentionAndCommit(t *testing.T) {
+	tests := []struct {
+		name         string
+		retentionErr error
+		commitErr    error
+	}{
+		{name: "strict retention failure", retentionErr: errors.New("strict retention unavailable")},
+		{name: "commit failure", commitErr: errors.New("commit unavailable")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, dbtx, _, parsed, _ := newPolicySnapshotHarness(t, "scheduled")
+			parsed.Posts[0].MediaIDs = []string{"media_tk"}
+			parsed.Posts[1].MediaIDs = []string{"media_ig"}
+			metadata, err := platform.EncodePostMetadata(parsed.Posts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dbtx.post.Metadata = metadata
+			dbtx.quotaEnabled = true
+			dbtx.quotaUsage = 100
+			dbtx.quotaLimit = 100
+			dbtx.retentionErr = test.retentionErr
+			dbtx.commitErr = test.commitErr
+			h.quota = quota.NewChecker(h.queries)
+			quotaEmail := &recordingQuotaEmailService{}
+			h.SetQuotaEmailService(quotaEmail)
+
+			err = h.ClaimAndEnqueueScheduledPost(context.Background(), dbtx.post.ID)
+			if err == nil {
+				t.Fatal("ClaimAndEnqueueScheduledPost error = nil, want transaction failure")
+			}
+			if len(quotaEmail.evals) != 0 {
+				t.Fatalf("quota emails before successful commit = %d, want 0", len(quotaEmail.evals))
+			}
+		})
+	}
+}
+
 func TestPublishingEntryPointsReuseOnePolicySnapshotForSamePlatformTargets(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -812,6 +851,8 @@ type policySnapshotDB struct {
 	quotaEnabled     bool
 	quotaUsage       int32
 	quotaLimit       int32
+	retentionErr     error
+	commitErr        error
 }
 
 func (f *policySnapshotDB) Begin(context.Context) (pgx.Tx, error) {
@@ -832,6 +873,9 @@ type policySnapshotTx struct {
 
 func (f *policySnapshotTx) Begin(context.Context) (pgx.Tx, error) { return f, nil }
 func (f *policySnapshotTx) Commit(context.Context) error {
+	if f.store.commitErr != nil {
+		return f.store.commitErr
+	}
 	f.done = true
 	return nil
 }
@@ -917,6 +961,12 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 	case strings.Contains(query, "-- name: ClaimDraftForPublish"):
 		f.post.Status = "publishing"
 		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: ClaimScheduledPost"):
+		if f.post.Status != "scheduled" {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		f.post.Status = "publishing"
+		return socialPostScanRow(f.post)
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
@@ -965,6 +1015,9 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 	case strings.Contains(query, "-- name: GetPostPublishingRestrictionMediaRetention"):
 		return scanRow{values: []any{pgtype.Timestamptz{}}}
 	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
+		if f.retentionErr != nil {
+			return scanRow{err: f.retentionErr}
+		}
 		f.retentionReasons = append(f.retentionReasons, args[4].(string))
 		return scanRow{values: []any{true}}
 	case strings.Contains(query, "-- name: CreatePostFailure"):

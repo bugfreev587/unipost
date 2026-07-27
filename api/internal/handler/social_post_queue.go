@@ -365,7 +365,7 @@ func (h *SocialPostHandler) queueImmediatePost(
 		response, err = h.queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
 	}
 	if err == nil {
-		h.logQueuedPost(ctx, workspaceID, response.ID, "immediate", parsed.Posts, response.QueuedResultsCount, response.ActiveJobCount)
+		h.logQueuedPost(ctx, workspaceID, response.ID, "immediate", parsed.Posts, len(response.Results), response.ActiveJobCount)
 	}
 	return response, err
 }
@@ -428,7 +428,7 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 		response, err = h.enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
 	}
 	if err == nil {
-		h.logQueuedPost(ctx, post.WorkspaceID, post.ID, "draft_publish", parsed, response.QueuedResultsCount, response.ActiveJobCount)
+		h.logQueuedPost(ctx, post.WorkspaceID, post.ID, "draft_publish", parsed, len(response.Results), response.ActiveJobCount)
 	}
 	return response, err
 }
@@ -470,7 +470,33 @@ func (h *SocialPostHandler) logQueuedPost(ctx context.Context, workspaceID, post
 }
 
 func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.SocialPost) error {
-	return h.enqueueClaimedScheduledPost(ctx, post)
+	outcome, err := h.enqueueClaimedScheduledPost(ctx, post)
+	if err != nil {
+		return err
+	}
+	h.applyScheduledEnqueueOutcome(ctx, outcome)
+	return outcome.terminalErr
+}
+
+type scheduledEnqueueOutcome struct {
+	terminalErr              error
+	retentionPost            db.SocialPost
+	retentionStatus          string
+	syncOrdinaryRetention    bool
+	blockedQuotaEmail        bool
+	blockedQuotaRequestedQty int
+}
+
+func (h *SocialPostHandler) applyScheduledEnqueueOutcome(ctx context.Context, outcome scheduledEnqueueOutcome) {
+	if outcome.syncOrdinaryRetention {
+		h.syncPostMediaRetention(ctx, outcome.retentionPost, outcome.retentionStatus)
+	}
+	if outcome.blockedQuotaEmail {
+		h.maybeSendFreePlanQuotaEmail(ctx, outcome.retentionPost.WorkspaceID, quotaemail.Evaluation{
+			Blocked:        true,
+			RequestedUnits: outcome.blockedQuotaRequestedQty,
+		})
+	}
 }
 
 // ClaimAndEnqueueScheduledPost keeps the scheduled->publishing claim, delivery
@@ -478,32 +504,49 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 // transaction. Any failure leaves the post scheduled and eligible for the next
 // scheduler pass.
 func (h *SocialPostHandler) ClaimAndEnqueueScheduledPost(ctx context.Context, postID string) error {
-	return h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+	var outcome scheduledEnqueueOutcome
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
 		txHandler := h.withQueueQueries(txQueries)
 		claimed, err := txQueries.ClaimScheduledPost(ctx, postID)
 		if err != nil {
 			return err
 		}
-		return txHandler.enqueueClaimedScheduledPost(ctx, claimed)
+		outcome, err = txHandler.enqueueClaimedScheduledPost(withoutPostMediaRetentionSync(ctx), claimed)
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	h.applyScheduledEnqueueOutcome(ctx, outcome)
+	return outcome.terminalErr
 }
 
-func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, post db.SocialPost) error {
+func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, post db.SocialPost) (scheduledEnqueueOutcome, error) {
+	outcome := scheduledEnqueueOutcome{retentionPost: post}
 	parentCaption := ""
 	if post.Caption.Valid {
 		parentCaption = post.Caption.String
 	}
 	parsed, err := platform.DecodePostMetadata(post.Metadata, parentCaption)
 	if err != nil || len(parsed) == 0 {
-		_ = h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+		if updateErr := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
 			ID:          post.ID,
 			Status:      "failed",
 			PublishedAt: pgtype.Timestamptz{},
-		})
+		}); updateErr != nil {
+			return outcome, updateErr
+		}
 		post.Status = "failed"
 		post.PublishedAt = pgtype.Timestamptz{}
 		h.syncPostMediaRetention(ctx, post, post.Status)
-		return fmt.Errorf("decode post metadata: %w", err)
+		if err == nil {
+			err = errors.New("post metadata contains no platform posts")
+		}
+		outcome.terminalErr = fmt.Errorf("decode post metadata: %w", err)
+		outcome.retentionPost = post
+		outcome.retentionStatus = post.Status
+		outcome.syncOrdinaryRetention = postMediaRetentionSyncSkipped(ctx)
+		return outcome, nil
 	}
 
 	accountMap := make(map[string]platform.ValidateAccount, len(parsed))
@@ -517,19 +560,36 @@ func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, pos
 	}
 	blockedTargets, policyErr := h.evaluatePublishingRestrictions(ctx, post.WorkspaceID, parsed, accountMap)
 	if policyErr != nil {
-		return policyErr
+		return outcome, policyErr
 	}
 	allowedTargets := allowedPublishingTargets(parsed, blockedTargets)
 	quotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
 	if status, blocked := h.checkFreePlanPostQuota(ctx, post.WorkspaceID, quotaUnits); quotaUnits > 0 && blocked {
-		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{
-			Blocked:        true,
-			RequestedUnits: quotaUnits,
-		})
-		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits)
+		if err := h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits); err != nil {
+			return outcome, err
+		}
+		post.Status = "failed"
+		post.PublishedAt = pgtype.Timestamptz{}
+		outcome.retentionPost = post
+		outcome.retentionStatus = post.Status
+		outcome.syncOrdinaryRetention = !hasRestrictedPublishingTarget(blockedTargets) && postMediaRetentionSyncSkipped(ctx)
+		outcome.blockedQuotaEmail = true
+		outcome.blockedQuotaRequestedQty = quotaUnits
+		return outcome, nil
 	}
-	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
-	return err
+	_, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
+	if err != nil {
+		return outcome, err
+	}
+	post.Status = "publishing"
+	if len(jobs) == 0 {
+		post.Status = "failed"
+	}
+	post.PublishedAt = pgtype.Timestamptz{}
+	outcome.retentionPost = post
+	outcome.retentionStatus = post.Status
+	outcome.syncOrdinaryRetention = !hasRestrictedPublishingTarget(blockedTargets) && postMediaRetentionSyncSkipped(ctx)
+	return outcome, nil
 }
 
 func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post db.SocialPost, parsed []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount, blockedTargets map[string]publishingrestrictions.Decision, status quota.QuotaStatus, requestedUnits int) error {
@@ -807,6 +867,12 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		if unavailable {
 			delete(dbAccounts, pp.AccountID)
 		}
+	}
+	if account := accountMap[pp.AccountID]; account.Disconnected {
+		return h.handleJobDispatchFailure(ctx, post, res, job, publishOneOutcome{
+			platform: account.Platform,
+			err:      errors.New("account is disconnected"),
+		})
 	}
 
 	if shouldEvaluateDeliveryPublishingRestriction(res) {

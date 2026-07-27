@@ -155,6 +155,9 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	var restrictedDecision publishingrestrictions.Decision
 	var blockedQuota quota.QuotaStatus
 	var blockedQuotaUnits int
+	var ordinaryRetentionPost db.SocialPost
+	var ordinaryRetentionStatus string
+	var syncOrdinaryRetention bool
 	err := h.queries.WithTransaction(r.Context(), func(txQueries *db.Queries) error {
 		txHandler := h.withQueueQueries(txQueries)
 		claimed, claimErr := txQueries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
@@ -214,12 +217,21 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		claimed.ProfileIds = txHandler.ensureProfileIDsForPost(r.Context(), claimed, uniqueAccountIDs(posts))
 		var enqueueErr error
 		response, enqueueErr = txHandler.enqueueExistingPostDeliveriesInTransaction(
-			r.Context(), claimed, parsed.Posts, accountMap, blockedTargets,
+			withoutPostMediaRetentionSync(r.Context()), claimed, parsed.Posts, accountMap, blockedTargets,
 		)
 		if enqueueErr != nil {
 			failureKind = "enqueue"
+			return enqueueErr
 		}
-		return enqueueErr
+		if !hasRestrictedPublishingTarget(blockedTargets) {
+			ordinaryRetentionPost = claimed
+			ordinaryRetentionStatus = "publishing"
+			if response.ActiveJobCount == 0 {
+				ordinaryRetentionStatus = "failed"
+			}
+			syncOrdinaryRetention = true
+		}
+		return nil
 	})
 	if err != nil {
 		switch failureKind {
@@ -247,7 +259,10 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	h.logQueuedPost(r.Context(), workspaceID, postID, "draft_publish", queuedPosts, response.QueuedResultsCount, response.ActiveJobCount)
+	if syncOrdinaryRetention {
+		h.syncPostMediaRetention(r.Context(), ordinaryRetentionPost, ordinaryRetentionStatus)
+	}
+	h.logQueuedPost(r.Context(), workspaceID, postID, "draft_publish", queuedPosts, len(response.Results), response.ActiveJobCount)
 	writeAccepted(w, response)
 }
 

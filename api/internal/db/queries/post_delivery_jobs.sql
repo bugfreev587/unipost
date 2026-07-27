@@ -487,8 +487,9 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: FinalizeRestrictedPostDeliveryJob :one
-WITH locked_result AS MATERIALIZED (
-  SELECT result.id, result.status
+WITH eligible_job AS MATERIALIZED (
+  SELECT job.id, job.workspace_id, job.post_id, job.social_post_result_id,
+         result.status AS result_status
   FROM social_post_results AS result
   JOIN post_delivery_jobs AS job
     ON job.social_post_result_id = result.id
@@ -496,20 +497,37 @@ WITH locked_result AS MATERIALIZED (
     AND job.state IN ('running', 'retrying')
     AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
     AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
-  FOR UPDATE OF result
+  FOR UPDATE OF job, result
+), ordered_media AS MATERIALIZED (
+  SELECT parent.id, eligible_job.workspace_id, eligible_job.post_id
+  FROM media parent
+  JOIN eligible_job ON eligible_job.workspace_id = parent.workspace_id
+  WHERE eligible_job.result_status <> 'published'
+    AND parent.id = ANY(sqlc.arg('media_ids')::text[])
+    AND parent.status = 'uploaded'
+  ORDER BY parent.id
+  FOR UPDATE OF parent
+), all_media_available AS MATERIALIZED (
+  SELECT eligible_job.id
+  FROM eligible_job
+  LEFT JOIN ordered_media ON TRUE
+  GROUP BY eligible_job.id, eligible_job.result_status
+  HAVING eligible_job.result_status = 'published'
+    OR COUNT(ordered_media.id) = COALESCE(CARDINALITY(sqlc.arg('media_ids')::text[]), 0)
 ), transitioned_job AS (
   UPDATE post_delivery_jobs AS job
-  SET state = CASE WHEN locked_result.status = 'published' THEN 'succeeded' ELSE 'dead' END,
-      failure_stage = CASE WHEN locked_result.status = 'published' THEN NULL ELSE sqlc.arg('failure_stage') END,
-      error_code = CASE WHEN locked_result.status = 'published' THEN NULL ELSE sqlc.arg('error_code') END,
+  SET state = CASE WHEN eligible_job.result_status = 'published' THEN 'succeeded' ELSE 'dead' END,
+      failure_stage = CASE WHEN eligible_job.result_status = 'published' THEN NULL ELSE sqlc.arg('failure_stage') END,
+      error_code = CASE WHEN eligible_job.result_status = 'published' THEN NULL ELSE sqlc.arg('error_code') END,
       platform_error_code = NULL,
-      last_error = CASE WHEN locked_result.status = 'published' THEN NULL ELSE sqlc.arg('error_message')::text END,
+      last_error = CASE WHEN eligible_job.result_status = 'published' THEN NULL ELSE sqlc.arg('error_message')::text END,
       next_run_at = NULL,
       updated_at = NOW(),
       finished_at = NOW()
-  FROM locked_result
+  FROM eligible_job
+  JOIN all_media_available ON all_media_available.id = eligible_job.id
   WHERE job.id = sqlc.arg('id')
-    AND locked_result.id = job.social_post_result_id
+    AND eligible_job.social_post_result_id = job.social_post_result_id
     AND job.state IN ('running', 'retrying')
     AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
     AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
@@ -544,7 +562,10 @@ WITH locked_result AS MATERIALIZED (
   SELECT
     result.id,
     CASE
-      WHEN result.id = transitioned_job.social_post_result_id THEN 'failed'
+      WHEN result.id = transitioned_job.social_post_result_id
+        AND transitioned_job.state = 'dead' THEN 'failed'
+      WHEN result.id = transitioned_job.social_post_result_id
+        AND transitioned_job.state = 'succeeded' THEN 'published'
       ELSE result.status
     END AS status
 	FROM transitioned_job
@@ -558,6 +579,7 @@ WITH locked_result AS MATERIALIZED (
         FROM post_delivery_jobs active_job
         WHERE active_job.post_id = transitioned_job.post_id
           AND active_job.id <> transitioned_job.id
+          AND active_job.social_post_result_id <> transitioned_job.social_post_result_id
           AND active_job.state IN ('pending', 'running', 'retrying')
       ) OR EXISTS (
         SELECT 1
@@ -600,26 +622,17 @@ WITH locked_result AS MATERIALIZED (
   WHERE usage.post_id = transitioned_job.post_id
     AND NOT (usage.media_id = ANY(sqlc.arg('media_ids')::text[]))
   RETURNING usage.id
-), ordered_media AS MATERIALIZED (
-  SELECT
-    parent.id,
-    transitioned_job.workspace_id,
-    transitioned_job.post_id,
-    derived_post_status.status AS post_status
-  FROM media parent
-  JOIN transitioned_job ON transitioned_job.workspace_id = parent.workspace_id
-  JOIN updated_result ON updated_result.job_id = transitioned_job.id
-  JOIN derived_post_status ON derived_post_status.post_id = transitioned_job.post_id
-  WHERE parent.id = ANY(sqlc.arg('media_ids')::text[])
-    AND parent.status = 'uploaded'
-  ORDER BY parent.id
-  FOR UPDATE OF parent
 ), locked_media AS MATERIALIZED (
   UPDATE media AS parent
   SET usage_version = parent.usage_version + 1
   FROM ordered_media
+  JOIN transitioned_job ON transitioned_job.workspace_id = ordered_media.workspace_id
+    AND transitioned_job.post_id = ordered_media.post_id
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  JOIN derived_post_status ON derived_post_status.post_id = transitioned_job.post_id
   WHERE parent.id = ordered_media.id
-  RETURNING parent.id, ordered_media.workspace_id, ordered_media.post_id, ordered_media.post_status
+  RETURNING parent.id, ordered_media.workspace_id, ordered_media.post_id,
+    derived_post_status.status AS post_status
 ), retained_media AS (
   INSERT INTO media_post_usages (
     workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason

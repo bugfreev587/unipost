@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -17,10 +19,12 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 const restrictedDeliveryIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
@@ -173,7 +177,13 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			id TEXT PRIMARY KEY,
 			workspace_id TEXT NOT NULL,
 			status TEXT NOT NULL,
+			cleanup_after_at TIMESTAMPTZ,
 			usage_version BIGINT NOT NULL DEFAULT 0
+		);
+		CREATE TABLE media_processing_usages (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			media_id TEXT NOT NULL,
+			cleanup_after_at TIMESTAMPTZ
 		);
 		CREATE TABLE media_post_usages (
 			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
@@ -219,14 +229,300 @@ func setupRestrictedDeliveryIntegrationSchema(t *testing.T, pool *pgxpool.Pool) 
 			restricted_plan_ids TEXT[] NOT NULL
 		);
 		CREATE TABLE subscriptions (
+			id TEXT PRIMARY KEY DEFAULT md5(random()::text || clock_timestamp()::text),
+			stripe_customer_id TEXT,
+			stripe_subscription_id TEXT,
+			status TEXT NOT NULL DEFAULT 'active',
+			current_period_start TIMESTAMPTZ,
+			current_period_end TIMESTAMPTZ,
+			cancel_at_period_end BOOLEAN,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 			workspace_id TEXT NOT NULL,
 			plan_id TEXT NOT NULL,
-			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			trial_used BOOLEAN NOT NULL DEFAULT FALSE
+		);
+		CREATE TABLE plans (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			price_cents INTEGER NOT NULL,
+			post_limit INTEGER NOT NULL,
+			stripe_price_id TEXT,
+			created_at TIMESTAMPTZ,
+			white_label BOOLEAN NOT NULL DEFAULT FALSE,
+			allow_twitter BOOLEAN NOT NULL DEFAULT TRUE,
+			allow_inbox BOOLEAN NOT NULL DEFAULT TRUE,
+			allow_analytics BOOLEAN NOT NULL DEFAULT TRUE,
+			max_profiles INTEGER,
+			max_members INTEGER
+		);
+		CREATE TABLE admin_post_quota_resets (
+			workspace_id TEXT NOT NULL,
+			period TEXT NOT NULL,
+			quota_kind TEXT NOT NULL,
+			reset_at TIMESTAMPTZ NOT NULL
 		);
 		INSERT INTO profiles (id, workspace_id) VALUES ('profile_1', 'workspace_1');
 	`)
 	if err != nil {
 		t.Fatalf("create restricted-delivery integration tables: %v", err)
+	}
+}
+
+func insertRestrictedFinalizeMediaGuardFixture(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	suffix string,
+	availableMediaIDs []string,
+) db.FinalizeRestrictedPostDeliveryJobParams {
+	t.Helper()
+	attemptedAt := time.Date(2026, 7, 27, 1, 0, 0, 0, time.UTC)
+	postID := "post_media_guard_" + suffix
+	resultID := "result_media_guard_" + suffix
+	jobID := "job_media_guard_" + suffix
+	workspaceID := "workspace_media_guard_" + suffix
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, workspace_id)
+		VALUES ($1, 'publishing', $2)
+	`, postID, workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_post_results (
+			id, post_id, social_account_id, status, external_id, error_message,
+			x_credits_counted, x_credit_operation
+		) VALUES ($2, $1, 'account_media_guard', 'processing', 'existing_external',
+			'existing_error', 17, 'existing_operation')
+	`, postID, resultID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO post_delivery_jobs (
+			id, post_id, social_post_result_id, workspace_id, social_account_id,
+			platform, kind, state, attempts, lease_owner, last_attempt_at
+		) VALUES ($4, $1, $3, $2, 'account_media_guard', 'tiktok', 'dispatch',
+			'running', 1, 'owner_media_guard', $5)
+	`, postID, workspaceID, resultID, jobID, attemptedAt); err != nil {
+		t.Fatal(err)
+	}
+	for _, mediaID := range availableMediaIDs {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO media (id, workspace_id, status)
+			VALUES ($1, $2, 'uploaded')
+		`, mediaID, workspaceID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	params := restrictedFinalizeIntegrationParams(jobID, "owner_media_guard", attemptedAt)
+	params.CleanupAfterAt = pgtype.Timestamptz{Time: attemptedAt.Add(60 * 24 * time.Hour), Valid: true}
+	return params
+}
+
+func assertRestrictedFinalizeRetryableState(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	params db.FinalizeRestrictedPostDeliveryJobParams,
+	mediaIDs []string,
+) {
+	t.Helper()
+	var jobState, resultStatus, parentStatus string
+	var finishedAt, failureStage, errorCode pgtype.Text
+	var externalID, errorMessage, operation pgtype.Text
+	var credits, usageVersion int64
+	var usages int
+	if err := pool.QueryRow(ctx, `
+		SELECT job.state, job.finished_at::text, job.failure_stage, job.error_code,
+		       result.status, result.external_id, result.error_message,
+		       result.x_credits_counted, result.x_credit_operation,
+		       parent.status,
+		       (SELECT COALESCE(SUM(media.usage_version), 0)::bigint
+		          FROM media WHERE media.id = ANY($2::text[])),
+		       (SELECT COUNT(*)::int FROM media_post_usages usage
+		          WHERE usage.post_id = job.post_id)
+		FROM post_delivery_jobs job
+		JOIN social_post_results result ON result.id = job.social_post_result_id
+		JOIN social_posts parent ON parent.id = job.post_id
+		WHERE job.id = $1
+	`, params.ID, mediaIDs).Scan(
+		&jobState, &finishedAt, &failureStage, &errorCode,
+		&resultStatus, &externalID, &errorMessage, &credits, &operation,
+		&parentStatus, &usageVersion, &usages,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if jobState != "running" || finishedAt.Valid || failureStage.Valid || errorCode.Valid ||
+		resultStatus != "processing" || externalID.String != "existing_external" ||
+		errorMessage.String != "existing_error" || credits != 17 || operation.String != "existing_operation" ||
+		parentStatus != "publishing" || usageVersion != 0 || usages != 0 {
+		t.Fatalf("finalization was not retryable: job=%q finished=%#v stage=%#v code=%#v result=%q external=%#v error=%#v credits=%d operation=%#v parent=%q version=%d usages=%d",
+			jobState, finishedAt, failureStage, errorCode, resultStatus, externalID,
+			errorMessage, credits, operation, parentStatus, usageVersion, usages)
+	}
+}
+
+func TestFinalizeRestrictedPostDeliveryJobRequiresEveryMediaBeforeMutation(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	mediaA := "media_guard_missing_a"
+	mediaB := "media_guard_missing_b"
+	params := insertRestrictedFinalizeMediaGuardFixture(t, ctx, pool, "missing", []string{mediaA})
+	params.MediaIds = []string{mediaA, mediaB}
+	if _, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing-media finalization error = %v, want pgx.ErrNoRows", err)
+	}
+	assertRestrictedFinalizeRetryableState(t, ctx, pool, params, params.MediaIds)
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		SELECT $1, workspace_id, 'uploaded'
+		FROM post_delivery_jobs WHERE id = $2
+	`, mediaB, params.ID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params)
+	if err != nil {
+		t.Fatalf("retry after restoring media: %v", err)
+	}
+	if job.State != "dead" {
+		t.Fatalf("retry job state = %q, want dead", job.State)
+	}
+	var usages int
+	if err := pool.QueryRow(ctx, `
+		SELECT COUNT(*)::int FROM media_post_usages
+		WHERE post_id = (SELECT post_id FROM post_delivery_jobs WHERE id = $1)
+		  AND retention_reason = 'publishing_restriction'
+	`, params.ID).Scan(&usages); err != nil {
+		t.Fatal(err)
+	}
+	if usages != 2 {
+		t.Fatalf("retained media usages after retry = %d, want 2", usages)
+	}
+}
+
+func TestFinalizeRestrictedPostDeliveryJobCleanupOrdering(t *testing.T) {
+	t.Run("cleanup wins", func(t *testing.T) {
+		pool := openRestrictedDeliveryIntegrationPool(t)
+		setupRestrictedDeliveryIntegrationSchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		mediaA := "media_guard_cleanup_first_a"
+		mediaB := "media_guard_cleanup_first_b"
+		params := insertRestrictedFinalizeMediaGuardFixture(t, ctx, pool, "cleanup_first", []string{mediaA, mediaB})
+		params.MediaIds = []string{mediaA, mediaB}
+
+		cleanupConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanupConn.Release()
+		finalizeConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer finalizeConn.Release()
+		var cleanupBackend, finalizeBackend int
+		if err := cleanupConn.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&cleanupBackend); err != nil {
+			t.Fatal(err)
+		}
+		if err := finalizeConn.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&finalizeBackend); err != nil {
+			t.Fatal(err)
+		}
+		cleanupTx, err := cleanupConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer cleanupTx.Rollback(ctx)
+		deleted, err := db.New(cleanupTx).SoftDeleteUnusedMedia(ctx, db.SoftDeleteUnusedMediaParams{
+			ID: mediaB, WorkspaceID: "workspace_media_guard_cleanup_first",
+		})
+		if err != nil || deleted != 1 {
+			t.Fatalf("cleanup claim rows/error = %d/%v, want 1/nil", deleted, err)
+		}
+		finalized := make(chan error, 1)
+		go func() {
+			_, finalizeErr := db.New(finalizeConn).FinalizeRestrictedPostDeliveryJob(ctx, params)
+			finalized <- finalizeErr
+		}()
+		waitForPostgresSessionBlockedBy(t, ctx, pool, finalizeBackend, cleanupBackend)
+		if err := cleanupTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := <-finalized; !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("cleanup-first finalization error = %v, want pgx.ErrNoRows", err)
+		}
+		assertRestrictedFinalizeRetryableState(t, ctx, pool, params, params.MediaIds)
+
+		if _, err := pool.Exec(ctx, `UPDATE media SET status = 'uploaded', cleanup_after_at = NULL WHERE id = $1`, mediaB); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params); err != nil {
+			t.Fatalf("cleanup-first retry after restore: %v", err)
+		}
+	})
+
+	t.Run("finalization wins", func(t *testing.T) {
+		pool := openRestrictedDeliveryIntegrationPool(t)
+		setupRestrictedDeliveryIntegrationSchema(t, pool)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		mediaA := "media_guard_finalize_first_a"
+		mediaB := "media_guard_finalize_first_b"
+		params := insertRestrictedFinalizeMediaGuardFixture(t, ctx, pool, "finalize_first", []string{mediaA, mediaB})
+		params.MediaIds = []string{mediaA, mediaB}
+
+		finalizeTx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer finalizeTx.Rollback(ctx)
+		if _, err := db.New(finalizeTx).FinalizeRestrictedPostDeliveryJob(ctx, params); err != nil {
+			t.Fatal(err)
+		}
+		deleted, err := db.New(pool).SoftDeleteUnusedMedia(ctx, db.SoftDeleteUnusedMediaParams{
+			ID: mediaA, WorkspaceID: "workspace_media_guard_finalize_first",
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deleted != 0 {
+			t.Fatalf("cleanup rows while finalization holds media locks = %d, want 0", deleted)
+		}
+		if err := finalizeTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var state string
+		var usages int
+		if err := pool.QueryRow(ctx, `
+			SELECT job.state,
+			       (SELECT COUNT(*)::int FROM media_post_usages usage WHERE usage.post_id = job.post_id)
+			FROM post_delivery_jobs job WHERE job.id = $1
+		`, params.ID).Scan(&state, &usages); err != nil {
+			t.Fatal(err)
+		}
+		if state != "dead" || usages != 2 {
+			t.Fatalf("finalization-first state/usages = %q/%d, want dead/2", state, usages)
+		}
+	})
+}
+
+func TestFinalizeRestrictedPostDeliveryJobAllowsEmptyMediaSet(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	params := insertRestrictedFinalizeMediaGuardFixture(t, ctx, pool, "empty", nil)
+	params.MediaIds = []string{}
+	job, err := db.New(pool).FinalizeRestrictedPostDeliveryJob(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.State != "dead" {
+		t.Fatalf("empty-media job state = %q, want dead", job.State)
 	}
 }
 
@@ -487,6 +783,167 @@ func TestScheduledRestrictionRetentionFailureRollsBackClaimAndRemainsClaimable(t
 	}
 	if status != "failed" || results != 1 || jobs != 0 || failures != 1 || usages != 2 {
 		t.Fatalf("successful retry state = status:%s results:%d jobs:%d failures:%d usages:%d", status, results, jobs, failures, usages)
+	}
+}
+
+func TestScheduledOrdinaryRetentionFailureDoesNotAbortClaim(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "account_scheduled_best_effort",
+		Caption:   "ordinary retention remains best effort",
+		MediaIDs:  []string{"media_scheduled_best_effort"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_scheduled_best_effort', 'instagram', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, scheduled_at, metadata, workspace_id, profile_ids)
+		VALUES ('post_scheduled_best_effort', 'scheduled', NOW(), $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ('media_scheduled_best_effort', 'workspace_1', 'uploaded');
+		CREATE FUNCTION fail_ordinary_scheduled_retention() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected ordinary scheduled retention failure';
+		END $$;
+		CREATE TRIGGER fail_ordinary_scheduled_retention_trigger
+		BEFORE INSERT OR UPDATE ON media_post_usages
+		FOR EACH ROW EXECUTE FUNCTION fail_ordinary_scheduled_retention();
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	h := &SocialPostHandler{queries: db.New(pool)}
+	if err := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_best_effort"); err != nil {
+		t.Fatalf("claim and enqueue with best-effort retention failure: %v", err)
+	}
+	var status string
+	var results, jobs, usages int
+	if err := pool.QueryRow(ctx, `
+		SELECT post.status,
+		       (SELECT COUNT(*)::int FROM social_post_results result WHERE result.post_id = post.id),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs job WHERE job.post_id = post.id),
+		       (SELECT COUNT(*)::int FROM media_post_usages usage WHERE usage.post_id = post.id)
+		FROM social_posts post WHERE post.id = 'post_scheduled_best_effort'
+	`).Scan(&status, &results, &jobs, &usages); err != nil {
+		t.Fatal(err)
+	}
+	if status != "publishing" || results != 1 || jobs != 1 || usages != 0 {
+		t.Fatalf("scheduled best-effort state = status:%q results:%d jobs:%d usages:%d, want publishing/1/1/0", status, results, jobs, usages)
+	}
+}
+
+func TestDraftOrdinaryRetentionFailureDoesNotAbortClaim(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "account_draft_best_effort",
+		Caption:   "ordinary draft retention remains best effort",
+		MediaURLs: []string{"https://cdn.example.com/draft-best-effort.jpg"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_accounts (id, platform, status)
+		VALUES ('account_draft_best_effort', 'instagram', 'active')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, metadata, workspace_id, profile_ids)
+		VALUES ('post_draft_best_effort', 'draft', $1, 'workspace_1', ARRAY['profile_1'])
+	`, metadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ('media_draft_best_effort_stale', 'workspace_1', 'uploaded');
+		INSERT INTO media_post_usages (
+			workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+		) VALUES (
+			'workspace_1', 'media_draft_best_effort_stale', 'post_draft_best_effort',
+			'draft', NULL, 'active_post'
+		);
+		CREATE FUNCTION fail_ordinary_draft_retention() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'injected ordinary draft retention failure';
+		END $$;
+		CREATE TRIGGER fail_ordinary_draft_retention_trigger
+		BEFORE DELETE ON media_post_usages
+		FOR EACH ROW EXECUTE FUNCTION fail_ordinary_draft_retention();
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	queries := db.New(pool)
+	h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/post_draft_best_effort/publish", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "workspace_1"))
+	req = withChiParam(req, "id", "post_draft_best_effort")
+	rec := httptest.NewRecorder()
+	h.PublishDraft(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("draft response = %d %s, want 202", rec.Code, rec.Body.String())
+	}
+	var status string
+	var results, jobs, usages int
+	if err := pool.QueryRow(ctx, `
+		SELECT post.status,
+		       (SELECT COUNT(*)::int FROM social_post_results result WHERE result.post_id = post.id),
+		       (SELECT COUNT(*)::int FROM post_delivery_jobs job WHERE job.post_id = post.id),
+		       (SELECT COUNT(*)::int FROM media_post_usages usage WHERE usage.post_id = post.id)
+		FROM social_posts post WHERE post.id = 'post_draft_best_effort'
+	`).Scan(&status, &results, &jobs, &usages); err != nil {
+		t.Fatal(err)
+	}
+	if status != "publishing" || results != 1 || jobs != 1 || usages != 1 {
+		t.Fatalf("draft best-effort state = status:%q results:%d jobs:%d usages:%d, want publishing/1/1/1", status, results, jobs, usages)
+	}
+}
+
+func TestScheduledInvalidMetadataCommitsTerminalFailure(t *testing.T) {
+	pool := openRestrictedDeliveryIntegrationPool(t)
+	setupRestrictedDeliveryIntegrationSchema(t, pool)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, scheduled_at, metadata, workspace_id)
+		VALUES (
+			'post_scheduled_invalid_metadata', 'scheduled', NOW(),
+			'{"schema_version":2,"platform_posts":"invalid"}'::jsonb, 'workspace_1'
+		)
+	`); err != nil {
+		t.Fatal(err)
+	}
+	h := &SocialPostHandler{queries: db.New(pool)}
+	firstErr := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_invalid_metadata")
+	if firstErr == nil || !strings.Contains(firstErr.Error(), "decode post metadata") {
+		t.Fatalf("first invalid metadata outcome = %v, want terminal decode error", firstErr)
+	}
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM social_posts WHERE id = 'post_scheduled_invalid_metadata'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("invalid metadata post status = %q, want failed", status)
+	}
+	if err := h.ClaimAndEnqueueScheduledPost(ctx, "post_scheduled_invalid_metadata"); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("second invalid metadata claim = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -815,6 +1272,13 @@ func insertSharedResultDeliveryRaceFixture(
 	successJobID = "job_success_" + suffix
 	mediaID = "media_shared_" + suffix
 	_, err := pool.Exec(ctx, `
+		INSERT INTO social_posts (id, status, published_at, workspace_id)
+		VALUES ($1, 'publishing', NULL, 'workspace_shared')
+	`, postID)
+	if err != nil {
+		t.Fatalf("insert shared parent race fixture %s: %v", suffix, err)
+	}
+	_, err = pool.Exec(ctx, `
 		INSERT INTO social_post_results (
 			id, post_id, social_account_id, status, external_id, error_message,
 			published_at, url, debug_curl, publish_token, error_code, failure_stage,
@@ -902,6 +1366,14 @@ func publishSharedResultInTransaction(
 		return err
 	}
 	_, err = tx.Exec(ctx, `
+		UPDATE social_posts
+		SET status = 'published', published_at = $2
+		WHERE id = $1
+	`, postID, publishedAt)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
 		UPDATE media
 		SET usage_version = usage_version + 1
 		WHERE id = $1
@@ -980,6 +1452,16 @@ func assertSharedResultPublishedWinner(
 	}
 	if usageStatus != "published" || retentionReason != "plan_status" || !cleanupAt.Valid || !cleanupAt.Time.Equal(publishedAt.Add(30*24*time.Hour)) {
 		t.Fatalf("shared-result media retention = status:%q reason:%q cleanup:%#v, want published/plan_status/%s", usageStatus, retentionReason, cleanupAt, publishedAt.Add(30*24*time.Hour))
+	}
+	var parentStatus string
+	var parentPublishedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT status, published_at FROM social_posts WHERE id = $1
+	`, postID).Scan(&parentStatus, &parentPublishedAt); err != nil {
+		t.Fatal(err)
+	}
+	if parentStatus != "published" || !parentPublishedAt.Valid || !parentPublishedAt.Time.Equal(publishedAt) {
+		t.Fatalf("shared-result parent = status:%q published_at:%#v, want published/%s", parentStatus, parentPublishedAt, publishedAt)
 	}
 }
 
