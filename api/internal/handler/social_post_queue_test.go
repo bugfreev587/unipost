@@ -944,6 +944,10 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(_ context.Context, query string, ar
 		f.result.ErrorSource = args[7].(pgtype.Text)
 		f.result.ErrorTemporality = args[8].(pgtype.Text)
 		f.result.ProviderError = nil
+		f.result.XCreditsCounted = 0
+		f.result.XCreditOperation = pgtype.Text{}
+		f.result.XCreditCatalogVersion = pgtype.Text{}
+		f.result.XCreditBillingMode = pgtype.Text{}
 		return postDeliveryJobScanRow(updated)
 	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
 		f.resultUpdateCalls++
@@ -1056,6 +1060,13 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 		PlatformErrorCode: pgtype.Text{String: "stale_provider_code", Valid: true},
 		ProviderError:     []byte(`{"stale":true}`),
 		PublishToken:      pgtype.Text{String: "stale_publish_token", Valid: true},
+		XCreditsCounted:   17,
+		XCreditOperation:  pgtype.Text{String: "stale_operation", Valid: true},
+		XCreditCatalogVersion: pgtype.Text{
+			String: "stale_catalog",
+			Valid:  true,
+		},
+		XCreditBillingMode: pgtype.Text{String: "stale_billing", Valid: true},
 	}
 	dbtx := &restrictedFinalizeLeaseDB{job: job, result: result}
 	logStore := &restrictedFinalizeIntegrationLogStore{}
@@ -1100,8 +1111,11 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 	if got.PlatformErrorCode.Valid || got.ProviderError != nil {
 		t.Fatalf("provider diagnostics = code:%#v payload:%s, want null", got.PlatformErrorCode, got.ProviderError)
 	}
-	if dbtx.failureDetailCalls != 1 || dbtx.failureHistoryCalls != 1 {
-		t.Fatalf("failure detail/history calls = %d/%d, want 1/1 on owned lease", dbtx.failureDetailCalls, dbtx.failureHistoryCalls)
+	if got.XCreditsCounted != 0 || got.XCreditOperation.Valid || got.XCreditCatalogVersion.Valid || got.XCreditBillingMode.Valid {
+		t.Errorf("X billing metadata = count:%d operation:%#v catalog:%#v billing:%#v, want cleared", got.XCreditsCounted, got.XCreditOperation, got.XCreditCatalogVersion, got.XCreditBillingMode)
+	}
+	if dbtx.failureDetailCalls != 0 || dbtx.failureHistoryCalls != 1 {
+		t.Errorf("failure detail/history calls = %d/%d, want 0/1 on owned lease", dbtx.failureDetailCalls, dbtx.failureHistoryCalls)
 	}
 	if dbtx.resultUpdateCalls != 1 {
 		t.Fatalf("atomic result update calls = %d, want 1 on owned lease", dbtx.resultUpdateCalls)

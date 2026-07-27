@@ -500,7 +500,11 @@ WITH transitioned_job AS (
       next_action = sqlc.arg('next_action'),
       error_source = sqlc.arg('error_source'),
       error_temporality = sqlc.arg('error_temporality'),
-      provider_error = NULL
+      provider_error = NULL,
+      x_credits_counted = 0,
+      x_credit_operation = NULL,
+      x_credit_catalog_version = NULL,
+      x_credit_billing_mode = NULL
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
   RETURNING transitioned_job.id AS job_id

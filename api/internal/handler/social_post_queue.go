@@ -906,7 +906,7 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		return err
 	}
 	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
-	h.recordPostFailure(ctx, failure)
+	h.recordPostFailureHistory(ctx, failure)
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           integrationlogs.LevelWarn,
@@ -931,6 +931,19 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	}
 	h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, retentionPost, retentionPost.Status, time.Now())
 	return nil
+}
+
+func (h *SocialPostHandler) recordPostFailureHistory(ctx context.Context, failure db.CreatePostFailureParams) {
+	failure.Message = sanitizeDeliveryErrorText(failure.Message)
+	failure.RawError = sanitizeDeliveryErrorTextValue(failure.RawError)
+	failure.PlatformErrorCode = sanitizeDeliveryErrorTextValue(failure.PlatformErrorCode)
+	if _, err := h.queries.CreatePostFailure(ctx, failure); err != nil {
+		slog.Warn("failed to persist structured post failure",
+			"post_id", failure.PostID,
+			"platform", failure.Platform,
+			"stage", failure.FailureStage,
+			"error", err)
+	}
 }
 
 func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.PostDeliveryJob, res db.SocialPostResult, post db.SocialPost, dispatchErr error) error {

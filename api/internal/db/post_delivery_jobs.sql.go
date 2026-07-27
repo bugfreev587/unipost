@@ -749,7 +749,11 @@ WITH transitioned_job AS (
       next_action = $7,
       error_source = $8,
       error_temporality = $9,
-      provider_error = NULL
+      provider_error = NULL,
+      x_credits_counted = 0,
+      x_credit_operation = NULL,
+      x_credit_catalog_version = NULL,
+      x_credit_billing_mode = NULL
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
   RETURNING transitioned_job.id AS job_id
