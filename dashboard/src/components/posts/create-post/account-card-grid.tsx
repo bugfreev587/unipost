@@ -14,6 +14,8 @@ interface ConnectedAccountsGridProps {
   onToggle: (id: string) => void;
   onToggleAll?: () => void;
   profileName?: string;
+  disabledIds?: Set<string>;
+  restrictionNoticeId?: string;
 }
 
 // Alias for backward compatibility with the drawer
@@ -30,6 +32,8 @@ export function ConnectedAccountsGrid({
   onToggle,
   onToggleAll,
   profileName,
+  disabledIds = new Set(),
+  restrictionNoticeId,
 }: ConnectedAccountsGridProps) {
   if (accounts.length === 0) {
     return (
@@ -69,6 +73,8 @@ export function ConnectedAccountsGrid({
             account={account}
             selected={selectedIds.has(account.id)}
             onToggle={onToggle}
+            disabled={disabledIds.has(account.id)}
+            restrictionNoticeId={restrictionNoticeId}
           />
         ))}
       </div>
@@ -86,10 +92,14 @@ function AccountCardSmall({
   account,
   selected,
   onToggle,
+  disabled,
+  restrictionNoticeId,
 }: {
   account: SocialAccount;
   selected: boolean;
   onToggle: (id: string) => void;
+  disabled: boolean;
+  restrictionNoticeId?: string;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
   const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
@@ -101,8 +111,10 @@ function AccountCardSmall({
     <button
       type="button"
       onClick={() => onToggle(account.id)}
+      disabled={disabled}
+      aria-describedby={disabled ? restrictionNoticeId : undefined}
       aria-label={`${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
-      className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)]"
+      className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] disabled:cursor-not-allowed disabled:opacity-55"
       style={
         selected
           ? {

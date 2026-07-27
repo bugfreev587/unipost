@@ -1,8 +1,216 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const read = (path) => readFile(new URL(`../../${path}`, import.meta.url), "utf8");
+const requireFromDashboard = createRequire(new URL("../../dashboard/package.json", import.meta.url));
+const { load: parseYaml } = requireFromDashboard("js-yaml");
+
+const publishingRestrictionScript =
+  "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/create-post-drawer-restrictions-refresh.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
+const postgresTestsByPackage = {
+  "./internal/db": [
+    "TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127",
+    "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
+    "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
+    "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
+    "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
+    "TestRequireCurrentSchemaRejects124AndAccepts127",
+    "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
+    "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
+    "TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown",
+    "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
+    "TestCreateEmailSendAttemptAuditStillRetriesFailedRecord",
+    "TestCreateSkippedEmailSendAttemptAuditPreservesTerminalSentRecord",
+    "TestCreateSkippedEmailSendAttemptAuditUpdatesNonSentRecords",
+    "TestMigration127UpgradeRollingCompatibilityAndDown",
+    "TestPostPublishedOutboxSnapshotsFirstPostBeforeDelayedDispatch",
+    "TestPublishingRestrictionRetentionDeadlineSurvivesMediaHardDelete",
+    "TestPublishingRestrictionRetentionDeadlineNotProjectedForTextOnlyPost",
+    "TestPublishingRestrictionRetentionRepairsUnsafeMetadataBeforeHardDelete",
+  ],
+  "./internal/handler": [
+    "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",
+    "TestFinalizeRestrictedPostDeliveryJobRequiresEveryMediaBeforeMutation",
+    "TestFinalizeRestrictedPostDeliveryJobCleanupOrdering",
+    "TestFinalizeRestrictedPostDeliveryJobAllowsEmptyMediaSet",
+    "TestFinalizeRestrictedPostDeliveryJobConcurrentResultsConvergeParentStatus",
+    "TestRestrictedAndPublishedFinalizersConvergeParentPartial",
+    "TestRestrictedAndOrdinaryTerminalFailureConvergeParentFailed",
+    "TestProcessPostDeliveryJobPublishedEarlyExitRefreshesParent",
+    "TestRecoverStalePublishedResultRefreshesParent",
+    "TestCancelDeliveryJobReturnsMissingParentRefreshError",
+    "TestCancelDeliveryJobReturnsParentStatusUpdateError",
+    "TestCancelDeliveryJobDoesNotOverwriteConcurrentWorkerClaim",
+    "TestHandleJobDispatchFailureStaleLeaseHasNoSharedSideEffects",
+    "TestRecoverStaleDeliveryJobLostLeaseHasNoSharedSideEffects",
+    "TestProcessPostDeliveryJobProviderSuccessSurvivesLostLeaseAndRetryConverges",
+    "TestPublishTokenCallbackLostLeaseDoesNotOverwriteNewOwnerToken",
+    "TestTerminalParentRefreshWaiterPreservesCommittedPublishedAt",
+    "TestTerminalParentEventPublishesAfterStatusCommit",
+    "TestOrdinaryFinalizationPublishedRaceAndFacebookProcessingAuthority",
+    "TestDispatchFailureParentUpdateErrorRollsBackEntireTerminalTransition",
+    "TestFacebookProviderPollDefinitiveFailureAndPublishedRace",
+    "TestEnqueueRetryAndTerminalFinalizerSerializePostProjection",
+    "TestTerminalParentEventSerializesBeforeManualRetry",
+    "TestTerminalParentEventSkipsStaleProjectionWhenRetryWins",
+    "TestTerminalRetentionSortsSharedMediaLocksAcrossPosts",
+    "TestCancelDeliveryJobTerminalResultAndPostCommitRetention",
+    "TestRestrictedFinalizationPublishesParentTerminalEventExactlyOnce",
+    "TestScheduledQuotaSnapshotPostgresCountsOnlyAdmissionAllowedTargets",
+    "TestClaimScheduledPostDoesNotDoubleCountOwnQuotaReservation",
+    "TestUpdateScheduledPostEnforcesFreeQuotaDeltaAtomically",
+    "TestConcurrentFreeScheduledCreatesSerializeQuotaAdmission",
+    "TestConcurrentScheduledIdempotencyReplayPrecedesMutableCapacityGates",
+    "TestConcurrentScheduledIdempotencyDifferentPayloadConflicts",
+    "TestScheduledIdempotencySerializesPolicyAndEnqueueBehindKeyLock",
+    "TestScheduledIdempotencyPolicyUsesTransactionAtMaxConnsOne",
+    "TestScheduledQuotaHoldIdempotencyPhaseAUsesLegacyIndexAndNewLookup",
+    "TestConcurrentDueReservationGrowthSerializesAndCrossMonthUsesFullUnits",
+    "TestAtomicMonthlySnapshotRejectsDuringTerminalReservationConversion",
+    "TestPublishQuotaHoldUsesSamePeriodDeltaAndCrossPeriodFullUnits",
+    "TestConcurrentCrossPeriodQuotaHoldPublishReservesCurrentExecutionCapacity",
+    "TestConcurrentDueMixedPostKeepsAdmissionReservedTargetWhenRestrictionLiftExceedsQuota",
+    "TestDueMixedPostUsesPartialHeadroomDeterministically",
+    "TestDueMixedPostReusesReservationReleasedByCurrentRestriction",
+    "TestDueCrossMonthPostUsesOnlyCurrentPeriodPartialHeadroom",
+    "TestScheduledQuotaTargetSnapshotRejectsMissingMalformedAndForgedBindings",
+    "TestDuePostFailsClosedForMissingMalformedAndForgedQuotaSnapshots",
+    "TestDueRepeatedAccountSnapshotPreservesEveryThreadIndex",
+    "TestScheduledOrdinaryRetentionFailureDoesNotAbortClaim",
+    "TestDraftOrdinaryRetentionFailureDoesNotAbortClaim",
+    "TestScheduledInvalidMetadataCommitsTerminalFailure",
+  ],
+  "./internal/paidquota": [
+    "TestPostgresHoldServiceUsesScheduledQuotaSnapshotWithLegacyFallback",
+  ],
+  "./internal/testdbguard": [
+    "TestOpenValidatedRejectsRemoteFallbackBeforeOpen",
+    "TestOpenValidatedRejectsRemotePrimaryBeforeOpen",
+    "TestOpenValidatedAllowsAllLoopbackMultiHost",
+  ],
+  "./internal/worker": [
+    "TestFacebookVideoStatusWorkerTerminalCoordinatorPostgres",
+    "TestTerminalPostEventOutboxClaimUsesSkipLockedAndPerPostOrder",
+    "TestTerminalPostEventOutboxClaimInvalidatesEventSupersededByRetry",
+    "TestTerminalPostEventOutboxClaimKeepsTerminalEventAfterSameStatusMetadataUpdate",
+    "TestTerminalPostEventOutboxReleasesSmallPoolBeforeSinkIO",
+    "TestTerminalPostEventOutboxStaleClaimCannotOverwriteReclaimedDelivery",
+    "TestConcurrentFirstPostElectionProducesOneLoopsLifecycleSend",
+    "TestWorkspaceFirstPostElectionRollbackAndHistoricalSafety",
+    "TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail",
+    "TestPublishingRestrictionSameEmailOwnersPreserveEligibilityAndRecovery",
+    "TestPublishingRestrictionMigration126OldWriterCapturesSameEmailOwnersForRecovery",
+    "TestPublishingRestrictionMigration126HistoricalFallbackRejectsEmailTakeover",
+    "TestPublishingRestrictionAudienceAndAdminCountsUseProfileWorkspace",
+    "TestPublishingRestrictionBulkRetryExcludesUnknownOutcomeRecipient",
+    "TestPublishingRestrictionBulkRetryIncludesDefinitiveAndPreSendFailuresOnly",
+    "TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow",
+    "TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically",
+    "TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming",
+    "TestPublishingRestrictionStaleSendingRecoversDefinitiveFailureAsRetryable",
+    "TestPublishingRestrictionDefinitiveFailureRejectsLostSendClaim",
+    "TestPublishingRestrictionCampaignRefreshRejectsMissingCampaign",
+    "TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicateSend",
+    "TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWriteFailure",
+    "TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure",
+    "TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure",
+    "TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction",
+    "TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed",
+    "TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAttempt",
+    "TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome",
+    "TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation",
+  ],
+};
+const postgresTestSelector = `^(?:${Object.values(postgresTestsByPackage).flat().join("|")})$`;
+
+function assertUnconditional(item, label) {
+  assert.equal(item.if, undefined, `${label} must not have an if condition`);
+  assert.equal(
+    Object.hasOwn(item, "continue-on-error"),
+    false,
+    `${label} must not define continue-on-error`,
+  );
+}
+
+function requiredStep(job, name, jobName) {
+  const matches = (job.steps || []).filter((step) => step.name === name);
+  assert.equal(matches.length, 1, `${jobName} must have exactly one ${name} step`);
+  assertUnconditional(matches[0], `${jobName} / ${name}`);
+  return matches[0];
+}
+
+function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
+  assert.equal(
+    packageJson.scripts["test:publishing-restrictions"],
+    publishingRestrictionScript,
+  );
+
+  const parsed = parseYaml(workflow);
+  const dashboardJob = parsed.jobs?.dashboard;
+  assert.ok(dashboardJob, "CI must define jobs.dashboard");
+  assertUnconditional(dashboardJob, "jobs.dashboard");
+  const contractsStep = requiredStep(
+    dashboardJob,
+    "Run publishing restriction frontend contracts",
+    "jobs.dashboard",
+  );
+  assert.equal(contractsStep.run, "npm run test:publishing-restrictions");
+  const buildStep = requiredStep(dashboardJob, "Build dashboard", "jobs.dashboard");
+  assert.equal(buildStep.run, "npm run build");
+  assert.ok(
+    dashboardJob.steps.indexOf(contractsStep) < dashboardJob.steps.indexOf(buildStep),
+    "publishing restriction contracts must run before the dashboard build",
+  );
+
+  const postgresJob = parsed.jobs?.["api-postgres-integration"];
+  assert.ok(postgresJob, "CI must define jobs.api-postgres-integration");
+  assertUnconditional(postgresJob, "jobs.api-postgres-integration");
+  const postgresService = postgresJob.services?.postgres;
+  assert.ok(postgresService, "jobs.api-postgres-integration must define its PostgreSQL service");
+  assert.equal(postgresService.image, "postgres:16-alpine");
+  assert.deepEqual(postgresService.ports, ["5432:5432"]);
+  assert.deepEqual(postgresService.env, {
+    POSTGRES_USER: "postgres",
+    POSTGRES_PASSWORD: "test",
+    POSTGRES_DB: "unipost_test",
+  });
+  assert.equal(
+    postgresJob.env?.PUBLISHING_RESTRICTION_TEST_DATABASE_URL,
+    "postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable",
+  );
+
+  const postgresStep = requiredStep(
+    postgresJob,
+    "Run publishing restriction and migration gate PostgreSQL integration tests",
+    "jobs.api-postgres-integration",
+  );
+  const selectorMatch = postgresStep.run.match(/^test_selector='([^']+)'$/m);
+  assert.ok(selectorMatch, "PostgreSQL step must assign one literal test_selector");
+  assert.equal(selectorMatch[1], postgresTestSelector);
+  assert.match(postgresStep.run, /^set -euo pipefail$/m);
+  assert.match(
+    postgresStep.run,
+    /go test -tags=integration "\$package" -list "\$test_selector"/,
+  );
+  for (const [packageName, testNames] of Object.entries(postgresTestsByPackage)) {
+    const expectedCall = [
+      `assert_exact_tests ${packageName} \\`,
+      ...testNames.map((testName, index) => (
+        `  ${testName}${index === testNames.length - 1 ? "" : " \\"}`
+      )),
+    ].join("\n");
+    assert.ok(
+      postgresStep.run.includes(expectedCall),
+      `PostgreSQL step must enumerate the exact ${packageName} test set`,
+    );
+  }
+  assert.match(
+    postgresStep.run,
+    /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/paidquota \.\/internal\/testdbguard \.\/internal\/worker \\\n\s+-run "\$test_selector" -count=1 -v/,
+  );
+}
 
 test("AGENTS enforces exclusive branch and worktree ownership", async () => {
   const agents = await read("AGENTS.md");
@@ -49,6 +257,99 @@ test("CI makes the dashboard SEO regression blocking", async () => {
   );
 });
 
+test("CI makes the publishing restriction contracts blocking in their required jobs", async () => {
+  const packageJson = JSON.parse(await read("dashboard/package.json"));
+  const workflow = await read(".github/workflows/ci.yml");
+  assertPublishingRestrictionCIContracts({ packageJson, workflow });
+});
+
+test("publishing restriction CI guard rejects semantic workflow mutations", async (t) => {
+  const packageJson = JSON.parse(await read("dashboard/package.json"));
+  const workflow = await read(".github/workflows/ci.yml");
+  const frontendStep = [
+    "      - name: Run publishing restriction frontend contracts",
+    "        run: npm run test:publishing-restrictions",
+  ].join("\n");
+
+  const mutations = {
+    "continue-on-error frontend step": (source) => source.replace(
+      frontendStep,
+      `${frontendStep}\n        continue-on-error: true`,
+    ),
+    "expression continue-on-error frontend step": (source) => source.replace(
+      frontendStep,
+      `${frontendStep}\n        continue-on-error: \${{ true }}`,
+    ),
+    "disabled PostgreSQL job": (source) => source.replace(
+      "  api-postgres-integration:\n",
+      "  api-postgres-integration:\n    if: false\n",
+    ),
+    "expression continue-on-error PostgreSQL job": (source) => source.replace(
+      "  api-postgres-integration:\n",
+      "  api-postgres-integration:\n    continue-on-error: ${{ matrix.experimental }}\n",
+    ),
+    "frontend command in the wrong job": (source) => source
+      .replace(`${frontendStep}\n\n`, "")
+      .replace("\n  dashboard:\n", `\n${frontendStep}\n\n  dashboard:\n`),
+    "comment-only frontend command": (source) => source.replace(
+      frontendStep,
+      "      # - name: Run publishing restriction frontend contracts run: npm run test:publishing-restrictions",
+    ),
+    "unanchored PostgreSQL selector": (source) => source.replace(
+      "test_selector='^(?:",
+      "test_selector='(?:",
+    ),
+  };
+
+  for (const [name, mutate] of Object.entries(mutations)) {
+    await t.test(name, () => {
+      assert.throws(
+        () => assertPublishingRestrictionCIContracts({ packageJson, workflow: mutate(workflow) }),
+        undefined,
+        `${name} must be rejected`,
+      );
+    });
+  }
+});
+
+test("Preview Acceptance installs dashboard dependencies before release contracts", async () => {
+  const workflow = await read(".github/workflows/preview-acceptance.yml");
+  const previewJob = parseYaml(workflow).jobs?.preview;
+  assert.ok(previewJob, "Preview Acceptance must define jobs.preview");
+
+  const installStep = requiredStep(
+    previewJob,
+    "Install dashboard dependencies",
+    "jobs.preview",
+  );
+  assert.equal(installStep["working-directory"], "dashboard");
+  assert.match(installStep.run, /^set -euo pipefail$/m);
+  assert.match(installStep.run, /echo "dashboard-dependencies" > \.\.\/artifacts\/preview\/current-stage/);
+  assert.match(installStep.run, /npm ci 2>&1 \| tee \.\.\/artifacts\/preview\/npm-ci\.log/);
+
+  const contractsStep = requiredStep(
+    previewJob,
+    "Validate release contracts",
+    "jobs.preview",
+  );
+  assert.match(contractsStep.run, /^set -euo pipefail$/m);
+  assert.match(contractsStep.run, /echo "release-contracts" > artifacts\/preview\/current-stage/);
+  assert.match(
+    contractsStep.run,
+    /node --test scripts\/preview\/\*\.test\.mjs 2>&1 \| tee artifacts\/preview\/release-contracts\.log/,
+  );
+
+  assert.ok(
+    previewJob.steps.indexOf(installStep) < previewJob.steps.indexOf(contractsStep),
+    "dashboard dependencies must be installed before release contracts load js-yaml",
+  );
+  assert.equal(
+    previewJob.steps.filter((step) => /(?:^|\s)npm ci(?:\s|$)/.test(step.run || "")).length,
+    1,
+    "Preview Acceptance must install dashboard dependencies exactly once",
+  );
+});
+
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
   const ciGates = await read("docs/ci-gates.md");
@@ -73,6 +374,12 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
   assert.match(workflow, /github\.event\.pull_request\.head\.repo\.full_name == github\.repository/);
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'dev-'\)/);
   assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'hotfix-'\)/);
+  assert.match(workflow, /startsWith\(github\.event\.pull_request\.head\.ref, 'codex\/staging-'\)/);
+  assert.equal(
+    [...workflow.matchAll(/startsWith\(github\.event\.pull_request\.head\.ref, 'codex\/pr270-'\)/g)].length,
+    2,
+    "the PR 270 hardening branch must be accepted for both preview and cleanup",
+  );
   assert.match(workflow, /vercel@50\.26\.1/);
   assert.match(workflow, /--prebuilt[\s\S]*--archive=tgz/);
   assert.match(
@@ -169,6 +476,11 @@ test("Preview Acceptance is fail-closed and tied to the exact PR head", async ()
 
   const proxy = await read("dashboard/src/proxy.ts");
   assert.match(proxy, /pathname === "\/__unipost-preview\.json"/);
+  assert.match(
+    proxy,
+    /isVercelPreviewHost\(hostname\)[\s\S]*pathname === "\/"[\s\S]*url\.pathname = "\/marketing"/,
+    "a combined Vercel Preview host must serve the public homepage instead of Clerk-protecting the app root",
+  );
 });
 
 test("ordinary dashboard regression excludes deployed preview-only acceptance", async () => {

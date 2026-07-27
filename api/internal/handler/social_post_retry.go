@@ -15,17 +15,45 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
+
+type retryPublishingRestrictionError struct {
+	decision publishingrestrictions.Decision
+}
+
+type retryPolicyUnavailableError struct{ err error }
+
+type retrySocialAccountUnavailableError struct{ accountID string }
+
+func socialAccountUnavailableForDelivery(account db.SocialAccount, ok bool) bool {
+	if !ok || account.DisconnectedAt.Valid {
+		return true
+	}
+	status := strings.ToLower(strings.TrimSpace(account.Status))
+	return status == "disconnected" || status == "reconnect_required"
+}
+
+func (e *retryPolicyUnavailableError) Error() string { return e.err.Error() }
+func (e *retryPolicyUnavailableError) Unwrap() error { return e.err }
+
+func (e *retrySocialAccountUnavailableError) Error() string {
+	return "the connected account for this result is no longer available"
+}
+
+func (e *retryPublishingRestrictionError) Error() string {
+	return publishingrestrictions.UserMessage
+}
 
 // RetryResult handles
 //
@@ -94,10 +122,43 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 			fmt.Sprintf("Only failed results can be retried (current status: %s)", existing.Status))
 		return
 	}
+	decision, policyErr := h.evaluateRetryPublishingRestriction(r.Context(), workspaceID, existing)
+	if policyErr != nil {
+		var accountUnavailable *retrySocialAccountUnavailableError
+		if errors.As(policyErr, &accountUnavailable) {
+			writeRetrySocialAccountUnavailable(w)
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+		return
+	}
+	if decision.Restricted {
+		writePublishingRestrictionError(w, decision)
+		return
+	}
 	job, err := h.EnqueueRetryForResult(r.Context(), workspaceID, post.ID, existing.ID)
 	if err != nil {
+		var restrictionErr *retryPublishingRestrictionError
+		if errors.As(err, &restrictionErr) {
+			writePublishingRestrictionError(w, restrictionErr.decision)
+			return
+		}
+		var policyUnavailable *retryPolicyUnavailableError
+		if errors.As(err, &policyUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
+		var accountUnavailable *retrySocialAccountUnavailableError
+		if errors.As(err, &accountUnavailable) {
+			writeRetrySocialAccountUnavailable(w)
+			return
+		}
 		if isQueueConflict(err) {
 			writeError(w, http.StatusConflict, "QUEUE_JOB_ACTIVE", err.Error())
+			return
+		}
+		if errors.Is(err, errRetryMediaReuploadRequired) {
+			writeError(w, http.StatusConflict, "MEDIA_REUPLOAD_REQUIRED", "The retained media is no longer available. Upload the media again before retrying.")
 			return
 		}
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", err.Error())
@@ -116,6 +177,39 @@ func (h *SocialPostHandler) RetryResult(w http.ResponseWriter, r *http.Request) 
 	writeSuccess(w, rr)
 }
 
+func (h *SocialPostHandler) evaluateRetryPublishingRestriction(
+	ctx context.Context,
+	workspaceID string,
+	result db.SocialPostResult,
+) (publishingrestrictions.Decision, error) {
+	if h == nil {
+		return publishingrestrictions.Decision{}, nil
+	}
+	account, err := h.queries.GetSocialAccount(ctx, result.SocialAccountID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return publishingrestrictions.Decision{}, &retrySocialAccountUnavailableError{accountID: result.SocialAccountID}
+		}
+		return publishingrestrictions.Decision{}, err
+	}
+	if socialAccountUnavailableForDelivery(account, true) {
+		return publishingrestrictions.Decision{}, &retrySocialAccountUnavailableError{accountID: result.SocialAccountID}
+	}
+	if h.publishingRestrictions == nil {
+		return publishingrestrictions.Decision{}, nil
+	}
+	return h.publishingRestrictions.Evaluate(ctx, workspaceID, account.Platform)
+}
+
+func writeRetrySocialAccountUnavailable(w http.ResponseWriter) {
+	writeError(
+		w,
+		http.StatusConflict,
+		"SOCIAL_ACCOUNT_NOT_AVAILABLE",
+		"The connected account for this result is no longer available. Reconnect or select an account before publishing again.",
+	)
+}
+
 // refreshParentPostStatus walks the full set of results for a post
 // and sets the parent social_posts.status accordingly. Extracted so
 // the retry + bulk-ops paths share the same derivation.
@@ -123,19 +217,55 @@ func (h *SocialPostHandler) refreshParentPostStatus(r *http.Request, post db.Soc
 	h.refreshParentPostStatusContext(r.Context(), post, results)
 }
 
-func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, post db.SocialPost, results []db.SocialPostResult) {
-	if len(results) == 0 {
-		return
+type pendingParentPostStatusEvent struct {
+	workspaceID   string
+	event         string
+	response      socialPostResponse
+	parentStatus  string
+	parentVersion string
+}
+
+func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, post db.SocialPost, results []db.SocialPostResult) error {
+	pendingEvent, err := h.refreshParentPostStatusContextWithoutPublish(ctx, post, results)
+	if err != nil {
+		return err
 	}
-	jobs, _ := h.queries.ListPostDeliveryJobsByPost(ctx, post.ID)
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	return nil
+}
+
+// publishParentStatusEventIfCurrent remains as a compatibility call site for
+// transition paths. The durable event is now recorded by
+// refreshParentPostStatusContextWithoutPublish in the same transaction as the
+// parent projection; production bus fanout is performed later by the outbox
+// worker without holding a post lock or business transaction connection.
+func (h *SocialPostHandler) publishParentStatusEventIfCurrent(ctx context.Context, pending *pendingParentPostStatusEvent) {
+	_ = ctx
+	_ = pending
+}
+
+func (h *SocialPostHandler) refreshParentPostStatusContextWithoutPublish(
+	ctx context.Context,
+	post db.SocialPost,
+	results []db.SocialPostResult,
+) (*pendingParentPostStatusEvent, error) {
+	if len(results) == 0 {
+		return nil, nil
+	}
+	jobs, err := h.queries.ListPostDeliveryJobsByPost(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
 	published := 0
 	failed := 0
 	nonTerminal := 0
 	activeJobs := 0
+	publishedResultIDs := make(map[string]bool, len(results))
 	for _, res := range results {
 		switch res.Status {
 		case "published":
 			published++
+			publishedResultIDs[res.ID] = true
 		case "failed":
 			failed++
 		default:
@@ -143,7 +273,8 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 		}
 	}
 	for _, job := range jobs {
-		if job.State == "pending" || job.State == "running" || job.State == "retrying" {
+		if (job.State == "pending" || job.State == "running" || job.State == "retrying") &&
+			!publishedResultIDs[job.SocialPostResultID] {
 			activeJobs++
 		}
 	}
@@ -157,34 +288,43 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 		newStatus = "partial"
 	}
 	if newStatus == post.Status {
-		return
+		h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
+		return nil, nil
 	}
 	var newPublishedAt pgtype.Timestamptz
 	if published > 0 {
-		// Preserve the earliest published_at if the parent already
-		// had one, otherwise stamp now. "Now" is correct for a
-		// post that was previously "failed" with no publish time.
-		if post.PublishedAt.Valid {
-			newPublishedAt = post.PublishedAt
-		} else {
-			newPublishedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		// A parent is a projection of its durable results. Never invent a
+		// convergence timestamp: delayed workers must retain the provider
+		// completion time stored on the earliest published result.
+		newPublishedAt = post.PublishedAt
+		for _, result := range results {
+			if result.Status != "published" || !result.PublishedAt.Valid {
+				continue
+			}
+			if !newPublishedAt.Valid || result.PublishedAt.Time.Before(newPublishedAt.Time) {
+				newPublishedAt = result.PublishedAt
+			}
 		}
 	}
-	_ = h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+	if err := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
 		ID:          post.ID,
 		Status:      newStatus,
 		PublishedAt: newPublishedAt,
-	})
+	}); err != nil {
+		return nil, err
+	}
 	post.Status = newStatus
 	post.PublishedAt = newPublishedAt
-	h.syncPostMediaRetention(ctx, post, newStatus)
+	h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	// If we just flipped off of "failed", clear the metadata error
 	// summary so the posts list doesn't keep showing stale copy.
 	if newStatus != "failed" {
-		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+		if err := h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
 			Column2: "",
-		})
+		}); err != nil {
+			return nil, err
+		}
 	} else {
 		// Still failed but maybe fewer rows now — regenerate the
 		// summary from the latest errors.
@@ -194,13 +334,33 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 				summary = append(summary, fmt.Sprintf("[%s] %s", res.SocialAccountID, res.ErrorMessage.String))
 			}
 		}
-		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+		if err := h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
 			Column2: strings.Join(summary, "; "),
-		})
+		}); err != nil {
+			return nil, err
+		}
 	}
+	parentVersion, err := h.queries.GetSocialPostProjectionVersion(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := h.socialPostResponseFromData(post, results, jobs, "async")
+	event := ""
 	if newStatus == "published" || newStatus == "partial" || newStatus == "failed" {
-		resp := h.socialPostResponseFromData(post, results, jobs, "async")
-		h.bus.Publish(ctx, post.WorkspaceID, eventForStatus(newStatus), resp)
+		event = eventForStatus(newStatus)
 	}
+	if err := db.RecordPostStatusTransition(ctx, h.queries, post.ID, post.WorkspaceID, newStatus, parentVersion, event, resp); err != nil {
+		return nil, err
+	}
+	if event != "" {
+		return &pendingParentPostStatusEvent{
+			workspaceID:   post.WorkspaceID,
+			event:         event,
+			response:      resp,
+			parentStatus:  newStatus,
+			parentVersion: parentVersion,
+		}, nil
+	}
+	return nil, nil
 }

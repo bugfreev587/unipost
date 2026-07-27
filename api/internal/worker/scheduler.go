@@ -12,8 +12,8 @@ import (
 // SchedulerWorker claims due scheduled posts and hands them off to the
 // shared delivery-job enqueue path.
 type SchedulerWorker struct {
-	queries      *db.Queries
-	postHandler  *handler.SocialPostHandler
+	queries     *db.Queries
+	postHandler *handler.SocialPostHandler
 }
 
 func NewSchedulerWorker(queries *db.Queries, postHandler *handler.SocialPostHandler) *SchedulerWorker {
@@ -43,14 +43,10 @@ func (w *SchedulerWorker) enqueueDue(ctx context.Context) {
 		return
 	}
 	for _, post := range posts {
-		claimed, err := w.queries.ClaimScheduledPost(ctx, post.ID)
-		if err != nil {
-			continue
-		}
-		go func(post db.SocialPost) {
-			if err := w.postHandler.EnqueueScheduledPost(ctx, post); err != nil {
-				slog.Error("scheduler: failed to enqueue scheduled post", "post_id", post.ID, "error", err)
+		go func(postID string) {
+			if err := w.postHandler.ClaimAndEnqueueScheduledPost(ctx, postID); err != nil {
+				slog.Error("scheduler: failed to claim and enqueue scheduled post", "post_id", postID, "error", err)
 			}
-		}(claimed)
+		}(post.ID)
 	}
 }

@@ -58,6 +58,24 @@ test("GitHub workflows provide environment-matched Clerk secrets", async () => {
   assert.match(previewWorkflow, /EXPECTED_PREVIEW_API_URL/);
 });
 
+test("Preview build and runtime use the same Development Clerk instance", async () => {
+  const previewWorkflow = await source("../.github/workflows/preview-acceptance.yml");
+
+  assert.match(
+    previewWorkflow,
+    /Build the Vercel Preview[\s\S]*?CLERK_SECRET_KEY: \$\{\{ secrets\.CLERK_DEVELOPMENT_SECRET_KEY \}\}/,
+  );
+  assert.match(
+    previewWorkflow,
+    /Deploy and alias the Vercel Preview[\s\S]*?CLERK_SECRET_KEY: \$\{\{ secrets\.CLERK_DEVELOPMENT_SECRET_KEY \}\}/,
+  );
+  assert.match(previewWorkflow, /--env "CLERK_SECRET_KEY=\$CLERK_SECRET_KEY"/);
+  assert.match(
+    previewWorkflow,
+    /--env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=\$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"/,
+  );
+});
+
 test("CI documentation describes passwordless synthetic Dashboard auth", async () => {
   const documentation = await source("../docs/ci-gates.md");
   assert.match(documentation, /CLERK_DEVELOPMENT_SECRET_KEY/);

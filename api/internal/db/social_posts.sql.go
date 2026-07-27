@@ -325,7 +325,7 @@ const expireOldIdempotencyKeys = `-- name: ExpireOldIdempotencyKeys :exec
 UPDATE social_posts
 SET idempotency_key = NULL
 WHERE idempotency_key IS NOT NULL
-  AND status <> 'scheduled'
+  AND status NOT IN ('scheduled', 'quota_hold')
   AND created_at <= NOW() - INTERVAL '24 hours'
 `
 
@@ -431,7 +431,7 @@ const getScheduledSocialPostByIdempotencyKey = `-- name: GetScheduledSocialPostB
 SELECT id, caption, media_urls, status, scheduled_at, published_at, created_at, metadata, idempotency_key, workspace_id, archived_at, deleted_at, source, profile_ids, quota_hold_reason, quota_hold_at, quota_hold_original_scheduled_at FROM social_posts
 WHERE workspace_id = $1
   AND idempotency_key = $2
-  AND status = 'scheduled'
+  AND status IN ('scheduled', 'quota_hold')
   AND deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT 1
@@ -537,6 +537,22 @@ func (q *Queries) GetSocialPostByIDAndWorkspace(ctx context.Context, arg GetSoci
 		&i.QuotaHoldOriginalScheduledAt,
 	)
 	return i, err
+}
+
+const getSocialPostProjectionVersion = `-- name: GetSocialPostProjectionVersion :one
+SELECT xmin::text FROM social_posts
+WHERE id = $1
+  AND deleted_at IS NULL
+`
+
+// xmin changes with every durable parent-row update. Terminal event delivery
+// uses it together with status under the post advisory lock so a retry that
+// moved the projection away (and even back again) invalidates the old event.
+func (q *Queries) GetSocialPostProjectionVersion(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getSocialPostProjectionVersion, id)
+	var xmin string
+	err := row.Scan(&xmin)
+	return xmin, err
 }
 
 const listSocialPostsByWorkspace = `-- name: ListSocialPostsByWorkspace :many

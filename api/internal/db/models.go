@@ -465,14 +465,15 @@ type MediaCleanupRun struct {
 }
 
 type MediaPostUsage struct {
-	ID             string             `json:"id"`
-	WorkspaceID    string             `json:"workspace_id"`
-	MediaID        string             `json:"media_id"`
-	PostID         string             `json:"post_id"`
-	PostStatus     string             `json:"post_status"`
-	CleanupAfterAt pgtype.Timestamptz `json:"cleanup_after_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	ID              string             `json:"id"`
+	WorkspaceID     string             `json:"workspace_id"`
+	MediaID         string             `json:"media_id"`
+	PostID          string             `json:"post_id"`
+	PostStatus      string             `json:"post_status"`
+	CleanupAfterAt  pgtype.Timestamptz `json:"cleanup_after_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	RetentionReason string             `json:"retention_reason"`
 }
 
 type MediaProcessingJob struct {
@@ -662,6 +663,86 @@ type PlatformCredential struct {
 	WebhookRouteKey pgtype.Text        `json:"webhook_route_key"`
 }
 
+type PlatformPublishingRestriction struct {
+	ID                string             `json:"id"`
+	Platform          string             `json:"platform"`
+	Enabled           bool               `json:"enabled"`
+	RestrictedPlanIds []string           `json:"restricted_plan_ids"`
+	ReasonCode        string             `json:"reason_code"`
+	UserMessage       string             `json:"user_message"`
+	CycleID           pgtype.Text        `json:"cycle_id"`
+	Version           int64              `json:"version"`
+	EnabledAt         pgtype.Timestamptz `json:"enabled_at"`
+	DisabledAt        pgtype.Timestamptz `json:"disabled_at"`
+	UpdatedByUserID   pgtype.Text        `json:"updated_by_user_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformPublishingRestrictionEmailCampaign struct {
+	ID                 string             `json:"id"`
+	RestrictionID      string             `json:"restriction_id"`
+	CycleID            string             `json:"cycle_id"`
+	CampaignType       string             `json:"campaign_type"`
+	Status             string             `json:"status"`
+	SubjectSnapshot    string             `json:"subject_snapshot"`
+	BodySnapshot       string             `json:"body_snapshot"`
+	RestrictionVersion int64              `json:"restriction_version"`
+	PreviewedCount     int32              `json:"previewed_count"`
+	SnapshottedCount   int32              `json:"snapshotted_count"`
+	PendingCount       int32              `json:"pending_count"`
+	SentCount          int32              `json:"sent_count"`
+	FailedCount        int32              `json:"failed_count"`
+	SkippedCount       int32              `json:"skipped_count"`
+	CreatedByUserID    pgtype.Text        `json:"created_by_user_id"`
+	ConfirmedByUserID  pgtype.Text        `json:"confirmed_by_user_id"`
+	SnapshottedAt      pgtype.Timestamptz `json:"snapshotted_at"`
+	StartedAt          pgtype.Timestamptz `json:"started_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PlatformPublishingRestrictionEmailRecipient struct {
+	ID                      string             `json:"id"`
+	CampaignID              string             `json:"campaign_id"`
+	CanonicalUserID         string             `json:"canonical_user_id"`
+	RecipientEmail          string             `json:"recipient_email"`
+	NormalizedEmail         string             `json:"normalized_email"`
+	FirstNameSnapshot       pgtype.Text        `json:"first_name_snapshot"`
+	RepresentedWorkspaceIds []string           `json:"represented_workspace_ids"`
+	Status                  string             `json:"status"`
+	AttemptCount            int32              `json:"attempt_count"`
+	NextAttemptAt           pgtype.Timestamptz `json:"next_attempt_at"`
+	ClaimedAt               pgtype.Timestamptz `json:"claimed_at"`
+	LastError               pgtype.Text        `json:"last_error"`
+	IdempotencyKey          string             `json:"idempotency_key"`
+	EmailSendAttemptID      pgtype.Text        `json:"email_send_attempt_id"`
+	SentAt                  pgtype.Timestamptz `json:"sent_at"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	Retryable               bool               `json:"retryable"`
+	AttemptGeneration       int32              `json:"attempt_generation"`
+	RepresentedOwnerUserIds []string           `json:"represented_owner_user_ids"`
+}
+
+type PlatformPublishingRestrictionEvent struct {
+	ID               string             `json:"id"`
+	RestrictionID    string             `json:"restriction_id"`
+	Platform         string             `json:"platform"`
+	CycleID          string             `json:"cycle_id"`
+	EventType        string             `json:"event_type"`
+	ActorUserID      pgtype.Text        `json:"actor_user_id"`
+	ExpectedVersion  int64              `json:"expected_version"`
+	ResultingVersion int64              `json:"resulting_version"`
+	BeforeState      []byte             `json:"before_state"`
+	AfterState       []byte             `json:"after_state"`
+	RequestID        pgtype.Text        `json:"request_id"`
+	ActorIp          pgtype.Text        `json:"actor_ip"`
+	ActorUserAgent   pgtype.Text        `json:"actor_user_agent"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type PostAnalytic struct {
 	ID                  string             `json:"id"`
 	SocialPostResultID  string             `json:"social_post_result_id"`
@@ -727,6 +808,7 @@ type PostFailure struct {
 	ErrorSource        pgtype.Text        `json:"error_source"`
 	ErrorTemporality   pgtype.Text        `json:"error_temporality"`
 	ProviderError      []byte             `json:"provider_error"`
+	RestrictionCycleID pgtype.Text        `json:"restriction_cycle_id"`
 }
 
 type Profile struct {
@@ -926,6 +1008,44 @@ type SupportBundle struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type TerminalPostEventDelivery struct {
+	EventID        string             `json:"event_id"`
+	Sink           string             `json:"sink"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	EnqueuedAt     pgtype.Timestamptz `json:"enqueued_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TerminalPostEventOutbox struct {
+	ID             string             `json:"id"`
+	SequenceNumber int64              `json:"sequence_number"`
+	PostID         string             `json:"post_id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	ParentStatus   string             `json:"parent_status"`
+	ParentVersion  string             `json:"parent_version"`
+	EventType      string             `json:"event_type"`
+	Payload        []byte             `json:"payload"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type TerminalPostEventWebhookDelivery struct {
+	EventID           string             `json:"event_id"`
+	WebhookID         string             `json:"webhook_id"`
+	WebhookDeliveryID pgtype.Text        `json:"webhook_delivery_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type TerminalPostFirstPublishElection struct {
+	WorkspaceID string             `json:"workspace_id"`
+	PostID      string             `json:"post_id"`
+	ElectedAt   pgtype.Timestamptz `json:"elected_at"`
+}
+
 type UnipostNotificationChannel struct {
 	ID          string             `json:"id"`
 	UserID      string             `json:"user_id"`
@@ -1065,6 +1185,36 @@ type WorkspaceMember struct {
 	AcceptedAt  pgtype.Timestamptz `json:"accepted_at"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+type WorkspaceTrialGrant struct {
+	ID                      string             `json:"id"`
+	WorkspaceID             string             `json:"workspace_id"`
+	Kind                    string             `json:"kind"`
+	PlanID                  string             `json:"plan_id"`
+	DurationDays            int32              `json:"duration_days"`
+	Status                  string             `json:"status"`
+	GrantedByUserID         string             `json:"granted_by_user_id"`
+	StripeMode              pgtype.Text        `json:"stripe_mode"`
+	StripeCustomerID        pgtype.Text        `json:"stripe_customer_id"`
+	StripeSubscriptionID    pgtype.Text        `json:"stripe_subscription_id"`
+	StripeScheduleID        pgtype.Text        `json:"stripe_schedule_id"`
+	StripeCheckoutSessionID pgtype.Text        `json:"stripe_checkout_session_id"`
+	CheckoutAttempt         int32              `json:"checkout_attempt"`
+	GrantedAt               pgtype.Timestamptz `json:"granted_at"`
+	ScheduledStartAt        pgtype.Timestamptz `json:"scheduled_start_at"`
+	StartedAt               pgtype.Timestamptz `json:"started_at"`
+	EndsAt                  pgtype.Timestamptz `json:"ends_at"`
+	ActivatedAt             pgtype.Timestamptz `json:"activated_at"`
+	CanceledAt              pgtype.Timestamptz `json:"canceled_at"`
+	RevokedAt               pgtype.Timestamptz `json:"revoked_at"`
+	SupersededAt            pgtype.Timestamptz `json:"superseded_at"`
+	CompletedAt             pgtype.Timestamptz `json:"completed_at"`
+	SupersededByPlanID      pgtype.Text        `json:"superseded_by_plan_id"`
+	FailureCode             pgtype.Text        `json:"failure_code"`
+	FailureMessage          pgtype.Text        `json:"failure_message"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
 type XInboundCapNotification struct {

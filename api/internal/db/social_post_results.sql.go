@@ -522,22 +522,119 @@ func (q *Queries) MarkSocialPostResultRemotelyDeleted(ctx context.Context, arg M
 	return err
 }
 
-const setSocialPostResultPublishToken = `-- name: SetSocialPostResultPublishToken :exec
-UPDATE social_post_results
+const setSocialPostResultPublishToken = `-- name: SetSocialPostResultPublishToken :execrows
+UPDATE social_post_results AS result
 SET publish_token = $1
-WHERE id = $2
+FROM post_delivery_jobs AS job
+WHERE result.id = $2
+  AND result.status <> 'published'
+  AND job.id = $3
+  AND job.social_post_result_id = result.id
+  AND job.state IN ('running', 'retrying')
+  AND job.lease_owner IS NOT DISTINCT FROM $4
+  AND job.last_attempt_at IS NOT DISTINCT FROM $5::timestamptz
 `
 
 type SetSocialPostResultPublishTokenParams struct {
-	PublishToken pgtype.Text `json:"publish_token"`
-	ID           string      `json:"id"`
+	PublishToken  pgtype.Text        `json:"publish_token"`
+	ID            string             `json:"id"`
+	JobID         string             `json:"job_id"`
+	LeaseOwner    pgtype.Text        `json:"lease_owner"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
 }
 
 // Persist the platform intermediate publish token (IG creation_id /
 // TikTok publish_id) so a retry can resume instead of re-uploading.
-func (q *Queries) SetSocialPostResultPublishToken(ctx context.Context, arg SetSocialPostResultPublishTokenParams) error {
-	_, err := q.db.Exec(ctx, setSocialPostResultPublishToken, arg.PublishToken, arg.ID)
-	return err
+func (q *Queries) SetSocialPostResultPublishToken(ctx context.Context, arg SetSocialPostResultPublishTokenParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setSocialPostResultPublishToken,
+		arg.PublishToken,
+		arg.ID,
+		arg.JobID,
+		arg.LeaseOwner,
+		arg.LastAttemptAt,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateProcessingSocialPostResultAfterProviderPoll = `-- name: UpdateProcessingSocialPostResultAfterProviderPoll :one
+UPDATE social_post_results
+SET
+  status = $1,
+  external_id = $2,
+  error_message = $3,
+  published_at = $4,
+  url = $5,
+  debug_curl = NULL,
+  error_code = NULL,
+  failure_stage = NULL,
+  platform_error_code = NULL,
+  is_retriable = NULL,
+  next_action = NULL,
+  error_source = NULL,
+  error_temporality = NULL,
+  provider_error = NULL
+WHERE id = $6
+  AND status = 'processing'
+  AND external_id IS NOT DISTINCT FROM $7::text
+RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+`
+
+type UpdateProcessingSocialPostResultAfterProviderPollParams struct {
+	Status             string             `json:"status"`
+	ExternalID         pgtype.Text        `json:"external_id"`
+	ErrorMessage       pgtype.Text        `json:"error_message"`
+	PublishedAt        pgtype.Timestamptz `json:"published_at"`
+	Url                pgtype.Text        `json:"url"`
+	ID                 string             `json:"id"`
+	ExpectedExternalID string             `json:"expected_external_id"`
+}
+
+// Provider poll transitions are the sole legal path from an accepted async
+// processing result to a definitive terminal state. Match both the expected
+// status and provider object id so a late poll cannot overwrite a newer
+// published result or a replacement provider attempt.
+func (q *Queries) UpdateProcessingSocialPostResultAfterProviderPoll(ctx context.Context, arg UpdateProcessingSocialPostResultAfterProviderPollParams) (SocialPostResult, error) {
+	row := q.db.QueryRow(ctx, updateProcessingSocialPostResultAfterProviderPoll,
+		arg.Status,
+		arg.ExternalID,
+		arg.ErrorMessage,
+		arg.PublishedAt,
+		arg.Url,
+		arg.ID,
+		arg.ExpectedExternalID,
+	)
+	var i SocialPostResult
+	err := row.Scan(
+		&i.ID,
+		&i.PostID,
+		&i.SocialAccountID,
+		&i.Status,
+		&i.ExternalID,
+		&i.ErrorMessage,
+		&i.PublishedAt,
+		&i.Caption,
+		&i.Url,
+		&i.DebugCurl,
+		&i.FbMediaType,
+		&i.RemotelyDeletedAt,
+		&i.ErrorCode,
+		&i.FailureStage,
+		&i.PlatformErrorCode,
+		&i.IsRetriable,
+		&i.NextAction,
+		&i.ErrorSource,
+		&i.ErrorTemporality,
+		&i.ProviderError,
+		&i.PublishToken,
+		&i.XCreditsCounted,
+		&i.XCreditOperation,
+		&i.XCreditCatalogVersion,
+		&i.XCreditBillingMode,
+	)
+	return i, err
 }
 
 const updateSocialPostResultAfterRetry = `-- name: UpdateSocialPostResultAfterRetry :one
@@ -562,6 +659,7 @@ SET
   error_temporality = NULL,
   provider_error = NULL
 WHERE id = $1
+  AND status <> 'published'
 RETURNING id, post_id, social_account_id, status, external_id, error_message, published_at, caption, url, debug_curl, fb_media_type, remotely_deleted_at, error_code, failure_stage, platform_error_code, is_retriable, next_action, error_source, error_temporality, provider_error, publish_token, x_credits_counted, x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
 `
 
@@ -639,8 +737,13 @@ SET
   next_action = $6,
   error_source = $7,
   error_temporality = $8,
-  provider_error = $9
+  provider_error = $9,
+  publish_token = CASE
+    WHEN $2 = 'plan_platform_publishing_restricted' THEN NULL
+    ELSE publish_token
+  END
 WHERE id = $1
+  AND status <> 'published'
 `
 
 type UpdateSocialPostResultFailureDetailsParams struct {

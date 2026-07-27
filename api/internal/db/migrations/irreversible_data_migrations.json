@@ -1,0 +1,13 @@
+{
+  "baseline_version": 125,
+  "irreversible_data_migrations": [
+    {
+      "version": 124,
+      "description": "Overwrites existing media_post_usages retention_reason values. Historical Up SQL remains unchanged."
+    },
+    {
+      "version": 125,
+      "description": "Overwrites existing failed email recipient retryable values."
+    }
+  ]
+}

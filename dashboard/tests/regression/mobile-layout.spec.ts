@@ -53,6 +53,22 @@ test.describe("mobile public layout", () => {
 
       expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 2);
       expect(layout.navHeight).toBeLessThanOrEqual(112);
+
+      if (route.path === "/pricing") {
+        const planCards = page.locator(".pr-card");
+        await expect(planCards).toHaveCount(4);
+        const cardBounds = await planCards.evaluateAll((cards) =>
+          cards.map((card) => {
+            const rect = card.getBoundingClientRect();
+            return { left: rect.left, right: rect.right, width: rect.width };
+          }),
+        );
+        for (const bounds of cardBounds) {
+          expect(bounds.left).toBeGreaterThanOrEqual(0);
+          expect(bounds.right).toBeLessThanOrEqual(392);
+          expect(bounds.width).toBeGreaterThan(300);
+        }
+      }
     });
   }
 });
