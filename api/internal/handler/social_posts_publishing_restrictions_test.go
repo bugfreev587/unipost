@@ -394,7 +394,7 @@ func TestPublishDraftRejectsWhenAllowedTargetsExceedQuotaBoundary(t *testing.T) 
 	dbtx.quotaEnabled = true
 	dbtx.quotaUsage = 99
 	dbtx.quotaLimit = 100
-	evaluator.errOnCall = 4
+	evaluator.errOnCall = 3
 	h.quota = quota.NewChecker(h.queries)
 	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/post_1/publish", nil)
 	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
@@ -415,8 +415,8 @@ func TestPublishDraftRejectsWhenAllowedTargetsExceedQuotaBoundary(t *testing.T) 
 	if len(dbtx.results) != 0 || len(dbtx.jobs) != 0 || len(dbtx.failures) != 0 {
 		t.Fatalf("quota rejection persisted delivery state: results=%d jobs=%d failures=%d", len(dbtx.results), len(dbtx.jobs), len(dbtx.failures))
 	}
-	if got := strings.Join(evaluator.calls, ","); got != "tiktok,instagram,instagram" {
-		t.Fatalf("policy calls=%q, want one evaluation per target", got)
+	if got := strings.Join(evaluator.calls, ","); got != "tiktok,instagram" {
+		t.Fatalf("policy calls=%q, want one evaluation per trusted normalized platform", got)
 	}
 }
 
