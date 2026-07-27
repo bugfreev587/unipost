@@ -1685,6 +1685,7 @@ function startPublishingRestrictionsRefresh({
     const requestGeneration = ++generation;
     try {
       const token = await getToken();
+      if (!active || requestGeneration !== generation) return;
       if (!token) return;
       const restrictions = await loadRestrictions(token);
       if (!active || requestGeneration !== generation) return;
@@ -1873,7 +1874,7 @@ export function CreatePostDrawer({
       addFocusListener: (listener) => window.addEventListener("focus", listener),
       removeFocusListener: (listener) => window.removeEventListener("focus", listener),
     });
-  }, [open, getToken]);
+  }, [open, getToken, workspaceId]);
 
   const selectedAccountIdsForRestriction = form.selectedAccountIds;
   const replaceSelectedAccountsForRestriction = form.replaceSelectedAccounts;

@@ -57,7 +57,7 @@ async function flushMicrotasks() {
   await Promise.resolve();
 }
 
-function createHarness(startPublishingRestrictionsRefresh) {
+function createHarness(startPublishingRestrictionsRefresh, { getToken = async () => "token" } = {}) {
   const requests = [];
   const committed = [];
   const loaded = [];
@@ -66,7 +66,7 @@ function createHarness(startPublishingRestrictionsRefresh) {
   let removedListener = null;
 
   const cleanup = startPublishingRestrictionsRefresh({
-    getToken: async () => "token",
+    getToken,
     loadRestrictions: async () => {
       const request = deferred();
       requests.push(request);
@@ -95,6 +95,41 @@ function createHarness(startPublishingRestrictionsRefresh) {
     },
     listenerWasRemoved: () => removedListener === focusListener,
   };
+}
+
+async function loadRefreshEffectWiring() {
+  const source = await readFile(drawerSourcePath, "utf8");
+  const sourceFile = ts.createSourceFile(
+    drawerSourcePath.pathname,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const drawerNode = sourceFile.statements.find(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === "CreatePostDrawer",
+  );
+  assert.ok(drawerNode, "create-post drawer component must be declared");
+
+  let refreshEffect = null;
+  const visit = (node) => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "useEffect" &&
+      node.arguments.some((argument) =>
+        argument.getText(sourceFile).includes("startPublishingRestrictionsRefresh"),
+      )
+    ) {
+      refreshEffect = node;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(drawerNode);
+  assert.ok(refreshEffect, "drawer must wire the restrictions coordinator through useEffect");
+  return { sourceFile, refreshEffect };
 }
 
 test("only the latest open/focus generation commits restrictions when responses finish out of order", async () => {
@@ -156,6 +191,44 @@ test("cleanup prevents state writes after close or unmount", async () => {
   assert.deepEqual(harness.errors, []);
 });
 
+test("cleanup while authentication is pending prevents the restrictions request", async () => {
+  const startPublishingRestrictionsRefresh = await loadRefreshCoordinator();
+  const pendingToken = deferred();
+  const harness = createHarness(startPublishingRestrictionsRefresh, {
+    getToken: () => pendingToken.promise,
+  });
+
+  harness.cleanup();
+  pendingToken.resolve("token");
+  await flushMicrotasks();
+
+  assert.equal(harness.requests.length, 0, "closed drawer must not request restrictions after authentication resolves");
+  assert.deepEqual(harness.committed, []);
+  assert.deepEqual(harness.loaded, []);
+  assert.deepEqual(harness.errors, []);
+});
+
+test("a newer focus generation prevents an older authenticated generation from requesting restrictions", async () => {
+  const startPublishingRestrictionsRefresh = await loadRefreshCoordinator();
+  const tokens = [deferred(), deferred()];
+  let tokenIndex = 0;
+  const harness = createHarness(startPublishingRestrictionsRefresh, {
+    getToken: () => tokens[tokenIndex++].promise,
+  });
+
+  harness.focus();
+  tokens[0].resolve("stale-token");
+  await flushMicrotasks();
+  assert.equal(harness.requests.length, 0, "stale generation must stop before the restrictions API call");
+
+  tokens[1].resolve("current-token");
+  await flushMicrotasks();
+  assert.equal(harness.requests.length, 1, "current focus generation must request restrictions");
+  harness.requests[0].resolve([]);
+  await flushMicrotasks();
+  harness.cleanup();
+});
+
 test("the latest refresh failure releases advisory loading and future focus refresh still works", async () => {
   const startPublishingRestrictionsRefresh = await loadRefreshCoordinator();
   const harness = createHarness(startPublishingRestrictionsRefresh);
@@ -175,4 +248,34 @@ test("the latest refresh failure releases advisory loading and future focus refr
   assert.deepEqual(harness.committed, [recovered]);
   assert.deepEqual(harness.loaded, [true, true]);
   harness.cleanup();
+});
+
+test("the drawer effect returns coordinator cleanup and restarts it when workspace changes", async () => {
+  const { sourceFile, refreshEffect } = await loadRefreshEffectWiring();
+  const [effectCallback, dependencies] = refreshEffect.arguments;
+  assert.ok(
+    ts.isArrowFunction(effectCallback) || ts.isFunctionExpression(effectCallback),
+    "refresh effect must use an executable callback",
+  );
+  assert.ok(ts.isBlock(effectCallback.body), "refresh effect callback must have a cleanup-capable body");
+
+  const returnsCoordinatorCleanup = effectCallback.body.statements.some(
+    (statement) =>
+      ts.isReturnStatement(statement) &&
+      statement.expression !== undefined &&
+      statement.expression.getText(sourceFile).startsWith("startPublishingRestrictionsRefresh("),
+  );
+  assert.equal(
+    returnsCoordinatorCleanup,
+    true,
+    "refresh effect must return the coordinator cleanup so old workspace generations become inactive",
+  );
+
+  assert.ok(ts.isArrayLiteralExpression(dependencies), "refresh effect must declare dependencies");
+  const dependencyNames = dependencies.elements.map((element) => element.getText(sourceFile));
+  assert.deepEqual(
+    dependencyNames,
+    ["open", "getToken", "workspaceId"],
+    "open, auth, and workspace identity must each restart the refresh lifecycle",
+  );
 });
