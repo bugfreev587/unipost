@@ -925,11 +925,6 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	}))
 	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	h.refreshParentPostStatusContext(ctx, post, allResults)
-	retentionPost := post
-	if refreshedPost, refreshErr := h.queries.GetSocialPostByID(ctx, post.ID); refreshErr == nil {
-		retentionPost = refreshedPost
-	}
-	h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, retentionPost, retentionPost.Status, time.Now())
 	return nil
 }
 

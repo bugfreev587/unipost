@@ -22,6 +22,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 func TestRetryDeliveryJobNowMarksDeprecated(t *testing.T) {
@@ -880,12 +881,15 @@ func TestPersistedPublishTokenBypassesNewPublishingRestriction(t *testing.T) {
 type restrictedFinalizeLeaseDB struct {
 	job                 db.PostDeliveryJob
 	result              db.SocialPostResult
+	planID              string
 	lostLease           bool
 	resultUpdateCalls   int
 	failureDetailCalls  int
 	failureHistoryCalls int
 	parentRefreshCalls  int
 	retentionCalls      int
+	retentionUpserts    []db.UpsertMediaPostUsageParams
+	afterFinalize       func(context.Context)
 }
 
 func (f *restrictedFinalizeLeaseDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
@@ -914,7 +918,7 @@ func (f *restrictedFinalizeLeaseDB) Query(_ context.Context, query string, _ ...
 	}
 }
 
-func (f *restrictedFinalizeLeaseDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
 	case strings.Contains(query, "-- name: FinalizeRestrictedPostDeliveryJob"):
 		if f.lostLease {
@@ -948,6 +952,9 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(_ context.Context, query string, ar
 		f.result.XCreditOperation = pgtype.Text{}
 		f.result.XCreditCatalogVersion = pgtype.Text{}
 		f.result.XCreditBillingMode = pgtype.Text{}
+		if f.afterFinalize != nil {
+			f.afterFinalize(ctx)
+		}
 		return postDeliveryJobScanRow(updated)
 	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
 		f.resultUpdateCalls++
@@ -971,6 +978,18 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(_ context.Context, query string, ar
 	case strings.Contains(query, "-- name: GetSocialPostByID"):
 		f.parentRefreshCalls++
 		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		return subscriptionScanRow(f.planID)
+	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
+		f.retentionUpserts = append(f.retentionUpserts, db.UpsertMediaPostUsageParams{
+			MediaID:         args[0].(string),
+			WorkspaceID:     args[1].(string),
+			PostStatus:      args[2].(string),
+			CleanupAfterAt:  args[3].(pgtype.Timestamptz),
+			RetentionReason: args[4].(string),
+			PostID:          args[5].(string),
+		})
+		return scanRow{values: []any{true}}
 	default:
 		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
 	}
@@ -1078,7 +1097,9 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 		close(loggerStopped)
 	}()
 	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, logger)
-	post := db.SocialPost{ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing"}
+	post := mediaRetentionPost(t, "publishing")
+	post.ID = job.PostID
+	post.WorkspaceID = job.WorkspaceID
 
 	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, result, post, publishingrestrictions.Decision{
 		Restricted: true,
@@ -1123,8 +1144,84 @@ func TestFinalizeRestrictedDeliveryJobOwnedLeasePersistsFailureAndSideEffects(t 
 	if dbtx.parentRefreshCalls == 0 || dbtx.retentionCalls == 0 {
 		t.Fatalf("parent refresh/retention calls = %d/%d, want both after owned transition", dbtx.parentRefreshCalls, dbtx.retentionCalls)
 	}
+	if len(dbtx.retentionUpserts) != 2 {
+		t.Fatalf("retention upserts = %d, want 2 for restricted post media", len(dbtx.retentionUpserts))
+	}
+	wantBefore := time.Now().Add(60*24*time.Hour - time.Minute)
+	wantAfter := time.Now().Add(60*24*time.Hour + time.Minute)
+	for _, upsert := range dbtx.retentionUpserts {
+		if upsert.PostStatus != "failed" || upsert.RetentionReason != "publishing_restriction" {
+			t.Fatalf("restricted retention = %+v, want failed publishing_restriction", upsert)
+		}
+		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {
+			t.Fatalf("restricted cleanup_after_at = %#v, want about 60 days", upsert.CleanupAfterAt)
+		}
+	}
 	if logStore.calls != 1 {
 		t.Fatalf("integration log calls = %d, want 1 on owned lease", logStore.calls)
+	}
+}
+
+func TestFinalizeRestrictedDeliveryJobDoesNotOverwriteNewerRetryRetention(t *testing.T) {
+	publishedAt := time.Date(2026, 7, 26, 22, 0, 0, 0, time.UTC)
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_restricted", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: publishedAt.Add(-time.Minute), Valid: true}
+	staleResult := db.SocialPostResult{
+		ID:              job.SocialPostResultID,
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Status:          "processing",
+	}
+	post := mediaRetentionPost(t, "published")
+	post.ID = job.PostID
+	post.WorkspaceID = job.WorkspaceID
+	newerSuccess := staleResult
+	newerSuccess.Status = "published"
+	newerSuccess.ExternalID = pgtype.Text{String: "newer_platform_post", Valid: true}
+	newerSuccess.PublishedAt = pgtype.Timestamptz{Time: publishedAt, Valid: true}
+	newerSuccess.Url = pgtype.Text{String: "https://social.example.com/newer_platform_post", Valid: true}
+
+	dbtx := &restrictedFinalizeLeaseDB{
+		job:    job,
+		result: staleResult,
+		planID: "team",
+	}
+	queries := db.New(dbtx)
+	h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil)
+	dbtx.afterFinalize = func(ctx context.Context) {
+		// Interleave a newer retry after A's atomic restriction transition but
+		// before A resumes post-commit side effects. B publishes successfully
+		// and restores the current plan's media retention.
+		dbtx.result = newerSuccess
+		dbtx.job.State = "succeeded"
+		dbtx.job.LeaseOwner = pgtype.Text{String: "worker_retry", Valid: true}
+		h.syncPostMediaRetention(ctx, post, post.Status)
+	}
+
+	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, staleResult, post, publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   job.Platform,
+		CycleID:    "cycle_stale_finalizer",
+	})
+	if err != nil {
+		t.Fatalf("finalizeRestrictedDeliveryJob: %v", err)
+	}
+	if !reflect.DeepEqual(dbtx.result, newerSuccess) {
+		t.Fatalf("durable result = %#v, want newer published success %#v", dbtx.result, newerSuccess)
+	}
+	if len(dbtx.retentionUpserts) < 2 {
+		t.Fatalf("retention upserts = %d, want at least 2", len(dbtx.retentionUpserts))
+	}
+	wantBefore := time.Now().Add(30*24*time.Hour - time.Minute)
+	wantAfter := time.Now().Add(30*24*time.Hour + time.Minute)
+	for _, upsert := range dbtx.retentionUpserts[len(dbtx.retentionUpserts)-2:] {
+		if upsert.PostStatus != "published" || upsert.RetentionReason != "plan_status" {
+			t.Fatalf("final retention = %+v, want published current-plan retention", upsert)
+		}
+		if !upsert.CleanupAfterAt.Valid || upsert.CleanupAfterAt.Time.Before(wantBefore) || upsert.CleanupAfterAt.Time.After(wantAfter) {
+			t.Fatalf("final retention deadline = %#v, want team published deadline about 30 days", upsert.CleanupAfterAt)
+		}
 	}
 }
 
