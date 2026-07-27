@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
@@ -142,6 +143,82 @@ func TestScheduledEnqueueUsesExecutionPolicySnapshot(t *testing.T) {
 	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
 }
 
+func TestDisconnectedAccountFailureTakesPrecedenceOverRestrictionSnapshot(t *testing.T) {
+	h, dbtx, _, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	disconnected := dbtx.accounts["tk_1"]
+	disconnected.DisconnectedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	dbtx.accounts["tk_1"] = disconnected
+	parsed.Posts[0].MediaIDs = []string{"media_tk"}
+	parsed.Posts[1].MediaIDs = []string{"media_ig"}
+	metadata, err := platform.EncodePostMetadata(parsed.Posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx.post.Metadata = metadata
+	blockedTargets := map[string]publishingrestrictions.Decision{
+		"tk_1": {Restricted: true, Platform: "tiktok", CycleID: "cycle_1"},
+	}
+
+	_, err = h.enqueueExistingPostDeliveries(context.Background(), dbtx.post, parsed.Posts, accounts, blockedTargets)
+	if err != nil {
+		t.Fatalf("enqueueExistingPostDeliveries: %v", err)
+	}
+	if len(dbtx.failureDetails) == 0 {
+		t.Fatal("missing persisted result failure details")
+	}
+	details := dbtx.failureDetails[len(dbtx.failureDetails)-1]
+	if details.ErrorCode.String != "account_reconnect_required" || details.FailureStage.String != "dispatch_prepare" || details.NextAction.String != "reconnect_account" {
+		t.Fatalf("disconnected failure details=%+v", details)
+	}
+	if len(dbtx.failures) != 1 || dbtx.failures[0].RestrictionCycleID.Valid {
+		t.Fatalf("failures=%+v, want account failure without restriction cycle", dbtx.failures)
+	}
+	if len(dbtx.jobs) != 1 || dbtx.jobs[0].SocialAccountID != "ig_1" {
+		t.Fatalf("jobs=%+v, want one allowed instagram job", dbtx.jobs)
+	}
+	for _, reason := range dbtx.retentionReasons {
+		if reason == "publishing_restriction" {
+			t.Fatalf("restriction retention applied to disconnected account: %v", dbtx.retentionReasons)
+		}
+	}
+}
+
+func TestCreatePassesAdmissionPolicySnapshotToPersistence(t *testing.T) {
+	h, dbtx, evaluator, _, _ := newPolicySnapshotHarness(t, "publishing")
+	h.quota = quota.NewChecker(h.queries)
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts", strings.NewReader(`{
+		"platform_posts":[
+			{"account_id":"tk_1","caption":"blocked","media_urls":["https://cdn.example.com/video.mp4"],"platform_options":{"privacy_level":"PUBLIC_TO_EVERYONE"}},
+			{"account_id":"ig_1","caption":"allowed","media_urls":["https://cdn.example.com/image.jpg"]}
+		]
+	}`))
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	rr := httptest.NewRecorder()
+
+	h.Create(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("Create status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
+func TestPublishDraftPassesAdmissionPolicySnapshotToPersistence(t *testing.T) {
+	h, dbtx, evaluator, _, _ := newPolicySnapshotHarness(t, "draft")
+	h.quota = quota.NewChecker(h.queries)
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/post_1/publish", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withChiParam(req, "id", "post_1")
+	rr := httptest.NewRecorder()
+
+	h.PublishDraft(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("PublishDraft status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
 func newPolicySnapshotHarness(t *testing.T, status string) (*SocialPostHandler, *policySnapshotDB, *fakePostRestrictionEvaluator, parsedRequest, map[string]platform.ValidateAccount) {
 	t.Helper()
 	posts := []platform.PlatformPostInput{
@@ -199,14 +276,25 @@ func assertMixedPolicySnapshotPersistence(t *testing.T, dbtx *policySnapshotDB, 
 	if dbtx.updatedStatus != "publishing" {
 		t.Fatalf("parent status=%q, want publishing with an allowed job", dbtx.updatedStatus)
 	}
+	if len(dbtx.failures) != 1 {
+		t.Fatalf("failures=%+v, want one restriction failure", dbtx.failures)
+	}
+	failure := dbtx.failures[0]
+	if failure.ErrorCode != publishingrestrictions.NormalizedCode || failure.FailureStage != publishingrestrictions.FailureStage ||
+		!failure.RestrictionCycleID.Valid || failure.RestrictionCycleID.String != "cycle_1" {
+		t.Fatalf("restriction failure=%+v", failure)
+	}
 }
 
 type policySnapshotDB struct {
-	accounts      map[string]db.SocialAccount
-	post          db.SocialPost
-	results       []db.SocialPostResult
-	jobs          []db.PostDeliveryJob
-	updatedStatus string
+	accounts         map[string]db.SocialAccount
+	post             db.SocialPost
+	results          []db.SocialPostResult
+	jobs             []db.PostDeliveryJob
+	failures         []db.CreatePostFailureParams
+	failureDetails   []db.UpdateSocialPostResultFailureDetailsParams
+	retentionReasons []string
+	updatedStatus    string
 }
 
 func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
@@ -215,9 +303,22 @@ func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interfa
 		f.updatedStatus = args[1].(string)
 		f.post.Status = f.updatedStatus
 		return pgconn.CommandTag{}, nil
-	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"),
-		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"),
-		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"):
+	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
+		f.failureDetails = append(f.failureDetails, db.UpdateSocialPostResultFailureDetailsParams{
+			ID:                args[0].(string),
+			ErrorCode:         args[1].(pgtype.Text),
+			FailureStage:      args[2].(pgtype.Text),
+			PlatformErrorCode: args[3].(pgtype.Text),
+			IsRetriable:       args[4].(pgtype.Bool),
+			NextAction:        args[5].(pgtype.Text),
+			ErrorSource:       args[6].(pgtype.Text),
+			ErrorTemporality:  args[7].(pgtype.Text),
+			ProviderError:     args[8].([]byte),
+		})
+		return pgconn.CommandTag{}, nil
+	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"),
+		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
+		strings.Contains(query, "-- name: MarkSocialAccountReconnectRequired"):
 		return pgconn.CommandTag{}, nil
 	default:
 		return pgconn.CommandTag{}, fmt.Errorf("unexpected Exec: %s", query)
@@ -225,8 +326,14 @@ func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interfa
 }
 
 func (f *policySnapshotDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
-	if strings.Contains(query, "-- name: GetDistinctProfileIDsForAccounts") {
+	switch {
+	case strings.Contains(query, "-- name: GetDistinctProfileIDsForAccounts"):
 		return &policySnapshotRows{}, nil
+	case strings.Contains(query, "-- name: ListSocialAccountsByWorkspace"):
+		return &policySnapshotRows{values: [][]any{
+			policySnapshotSocialAccountValues(f.accounts["tk_1"]),
+			policySnapshotSocialAccountValues(f.accounts["ig_1"]),
+		}}, nil
 	}
 	return nil, fmt.Errorf("unexpected Query: %s", query)
 }
@@ -239,8 +346,15 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		f.post.Status = args[3].(string)
 		f.post.Metadata = args[4].([]byte)
 		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: ClaimDraftForPublish"):
+		f.post.Status = "publishing"
+		return socialPostScanRow(f.post)
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
-		return policySnapshotSocialAccountRow(f.accounts[args[0].(string)])
+		account, ok := f.accounts[args[0].(string)]
+		if !ok {
+			return scanRow{err: pgx.ErrNoRows}
+		}
+		return policySnapshotSocialAccountRow(account)
 	case strings.Contains(query, "-- name: CreateSocialPostResult"):
 		result := db.SocialPostResult{
 			ID:              fmt.Sprintf("result_%d", len(f.results)+1),
@@ -276,38 +390,94 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		return postDeliveryJobScanRow(job)
 	case strings.Contains(query, "-- name: GetPostPublishingRestrictionMediaRetention"):
 		return scanRow{values: []any{pgtype.Timestamptz{}}}
+	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
+		f.retentionReasons = append(f.retentionReasons, args[4].(string))
+		return scanRow{values: []any{true}}
 	case strings.Contains(query, "-- name: CreatePostFailure"):
-		return scanRow{values: []any{
-			"failure_1", args[0], args[1], args[2], args[3], args[4], args[5], args[6],
-			args[7], args[8], args[9], args[10], pgtype.Timestamptz{Time: time.Now(), Valid: true},
-			args[11], args[12], args[13], args[14],
-		}}
+		failure := db.CreatePostFailureParams{
+			PostID:             args[0].(string),
+			SocialPostResultID: args[1].(pgtype.Text),
+			WorkspaceID:        args[2].(string),
+			SocialAccountID:    args[3].(pgtype.Text),
+			Platform:           args[4].(string),
+			FailureStage:       args[5].(string),
+			ErrorCode:          args[6].(string),
+			PlatformErrorCode:  args[7].(pgtype.Text),
+			Message:            args[8].(string),
+			RawError:           args[9].(pgtype.Text),
+			IsRetriable:        args[10].(bool),
+			ErrorSource:        args[11].(pgtype.Text),
+			ErrorTemporality:   args[12].(pgtype.Text),
+			ProviderError:      args[13].([]byte),
+			RestrictionCycleID: args[14].(pgtype.Text),
+		}
+		f.failures = append(f.failures, failure)
+		return policySnapshotPostFailureRow(failure)
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"),
+		strings.Contains(query, "-- name: GetPlan"),
+		strings.Contains(query, "-- name: GetUsage"):
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: CountScheduledQuotaUnitsByWorkspaceAndPeriod"):
+		return scanRow{values: []any{int32(0)}}
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
 	}
 }
 
 func policySnapshotSocialAccountRow(account db.SocialAccount) scanRow {
-	return scanRow{values: []any{
+	return scanRow{values: policySnapshotSocialAccountValues(account)}
+}
+
+func policySnapshotSocialAccountValues(account db.SocialAccount) []any {
+	return []any{
 		account.ID, account.ProfileID, account.Platform, account.AccessToken, account.RefreshToken,
 		account.TokenExpiresAt, account.ExternalAccountID, account.AccountName, account.AccountAvatarUrl,
 		account.ConnectedAt, account.DisconnectedAt, account.Metadata, account.Scope, account.Status,
 		account.ConnectionType, account.ConnectSessionID, account.ExternalUserID, account.ExternalUserEmail,
 		account.LastRefreshedAt, account.XAppMode,
+	}
+}
+
+func policySnapshotPostFailureRow(failure db.CreatePostFailureParams) scanRow {
+	return scanRow{values: []any{
+		"failure_1", failure.PostID, failure.SocialPostResultID, failure.WorkspaceID,
+		failure.SocialAccountID, failure.Platform, failure.FailureStage, failure.ErrorCode,
+		failure.PlatformErrorCode, failure.Message, failure.RawError, failure.IsRetriable,
+		pgtype.Timestamptz{Time: time.Now(), Valid: true}, failure.ErrorSource,
+		failure.ErrorTemporality, failure.ProviderError, failure.RestrictionCycleID,
 	}}
 }
 
-type policySnapshotRows struct{}
+type policySnapshotRows struct {
+	values [][]any
+	index  int
+}
 
 func (*policySnapshotRows) Close()                                       {}
 func (*policySnapshotRows) Err() error                                   { return nil }
 func (*policySnapshotRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
 func (*policySnapshotRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
-func (*policySnapshotRows) Next() bool                                   { return false }
-func (*policySnapshotRows) Scan(...any) error                            { return errors.New("no current row") }
-func (*policySnapshotRows) Values() ([]any, error)                       { return nil, nil }
-func (*policySnapshotRows) RawValues() [][]byte                          { return nil }
-func (*policySnapshotRows) Conn() *pgx.Conn                              { return nil }
+func (r *policySnapshotRows) Next() bool {
+	if r.index >= len(r.values) {
+		return false
+	}
+	r.index++
+	return true
+}
+func (r *policySnapshotRows) Scan(dest ...any) error {
+	if r.index == 0 || r.index > len(r.values) {
+		return errors.New("no current row")
+	}
+	return scanRow{values: r.values[r.index-1]}.Scan(dest...)
+}
+func (r *policySnapshotRows) Values() ([]any, error) {
+	if r.index == 0 || r.index > len(r.values) {
+		return nil, errors.New("no current row")
+	}
+	return r.values[r.index-1], nil
+}
+func (*policySnapshotRows) RawValues() [][]byte { return nil }
+func (*policySnapshotRows) Conn() *pgx.Conn     { return nil }
 
 func TestEvaluatePublishingRestrictionsUsesTrustedAccountPlatforms(t *testing.T) {
 	evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{

@@ -183,9 +183,12 @@ func evaluateQueuedDeliveryTargets(
 	for _, pp := range parsed {
 		account, ok := dbAccounts[pp.AccountID]
 		platformName, validationErr := summarizeAccountValidation(account, ok, accountMap[pp.AccountID])
-		decision := blockedTargets[pp.AccountID]
-		if validationErr == nil && decision.Restricted {
-			validationErr = errors.New(publishingrestrictions.UserMessage)
+		var decision publishingrestrictions.Decision
+		if validationErr == nil {
+			decision = blockedTargets[pp.AccountID]
+			if decision.Restricted {
+				validationErr = errors.New(publishingrestrictions.UserMessage)
+			}
 		}
 		evaluations = append(evaluations, queuedDeliveryEvaluation{
 			account:        account,
