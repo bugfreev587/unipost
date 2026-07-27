@@ -846,19 +846,24 @@ func (h *SocialPostHandler) attachPublishTokenResume(ctx context.Context, pp *pl
 		pp.PlatformOptions[platform.OptResumePublishToken] = res.PublishToken.String
 	}
 	resultID := res.ID
-	pp.PlatformOptions[platform.OptOnPublishToken] = func(token string) {
+	pp.PlatformOptions[platform.OptOnPublishToken] = func(token string) error {
 		if token == "" {
-			return
+			return nil
 		}
-		if err := h.queries.SetSocialPostResultPublishToken(ctx, db.SetSocialPostResultPublishTokenParams{
+		affected, err := h.queries.SetSocialPostResultPublishToken(ctx, db.SetSocialPostResultPublishTokenParams{
 			ID:            resultID,
 			PublishToken:  pgtype.Text{String: token, Valid: true},
 			JobID:         job.ID,
 			LeaseOwner:    job.LeaseOwner,
 			LastAttemptAt: job.LastAttemptAt,
-		}); err != nil {
-			slog.Warn("publish token persist failed", "result_id", resultID, "error", err)
+		})
+		if err != nil {
+			return fmt.Errorf("persist publish token for result %s: %w", resultID, err)
 		}
+		if affected != 1 {
+			return fmt.Errorf("persist publish token for result %s: active delivery lease was lost", resultID)
+		}
+		return nil
 	}
 }
 

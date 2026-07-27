@@ -46,6 +46,10 @@ func TestTerminalPostEventOutboxClaimContract(t *testing.T) {
 		"earlier_event.sequence_number < event.sequence_number",
 		"earlier_delivery.status <> 'enqueued'",
 		"lease_expires_at <= now()",
+		"post.status is distinct from event.parent_status",
+		"post.status = event.parent_status",
+		"later_event.sequence_number > event.sequence_number",
+		"invalidated: parent projection superseded",
 		"on conflict (post_id, parent_version) do nothing",
 		"on conflict (workspace_id) do nothing",
 		"status = 'processing'",
@@ -54,5 +58,16 @@ func TestTerminalPostEventOutboxClaimContract(t *testing.T) {
 		if !strings.Contains(sql, required) {
 			t.Fatalf("terminal event query missing %q", required)
 		}
+	}
+	for _, forbidden := range []string{
+		"post.xmin::text is distinct from event.parent_version",
+		"post.xmin::text = event.parent_version",
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Fatalf("terminal event query must not fence delivery on unrelated row version changes: found %q", forbidden)
+		}
+	}
+	if strings.Contains(sql, "later_event.event_type <> ''") {
+		t.Fatal("all later transition generations, including non-terminal sentinels, must supersede older delivery")
 	}
 }

@@ -78,6 +78,8 @@ const postgresTestsByPackage = {
   "./internal/worker": [
     "TestFacebookVideoStatusWorkerTerminalCoordinatorPostgres",
     "TestTerminalPostEventOutboxClaimUsesSkipLockedAndPerPostOrder",
+    "TestTerminalPostEventOutboxClaimInvalidatesEventSupersededByRetry",
+    "TestTerminalPostEventOutboxClaimKeepsTerminalEventAfterSameStatusMetadataUpdate",
     "TestTerminalPostEventOutboxReleasesSmallPoolBeforeSinkIO",
     "TestTerminalPostEventOutboxStaleClaimCannotOverwriteReclaimedDelivery",
     "TestConcurrentFirstPostElectionProducesOneLoopsLifecycleSend",

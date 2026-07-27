@@ -1635,7 +1635,10 @@ func TestPublishTokenCallbackLostLeaseDoesNotOverwriteNewOwnerToken(t *testing.T
 	pp := platform.PlatformPostInput{AccountID: job.SocialAccountID}
 	NewSocialPostHandler(queries, nil, nil, events.NoopBus{}, nil, nil, nil).
 		attachPublishTokenResume(ctx, &pp, result, job)
-	callback := pp.PlatformOptions[platform.OptOnPublishToken].(func(string))
+	callback, ok := pp.PlatformOptions[platform.OptOnPublishToken].(func(string) error)
+	if !ok {
+		t.Fatal("publish-token callback must propagate persistence failures")
+	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE post_delivery_jobs
 		SET lease_owner = 'new_token_owner', last_attempt_at = $2::timestamptz
@@ -1650,7 +1653,9 @@ func TestPublishTokenCallbackLostLeaseDoesNotOverwriteNewOwnerToken(t *testing.T
 	`); err != nil {
 		t.Fatal(err)
 	}
-	callback("late_old_owner_token")
+	if err := callback("late_old_owner_token"); err == nil {
+		t.Fatal("lost-lease publish-token callback must fail closed")
+	}
 	var token string
 	if err := pool.QueryRow(ctx, `
 		SELECT publish_token FROM social_post_results WHERE id = 'result_token_lost_lease'
