@@ -324,7 +324,10 @@ export function SingleEndpointReferencePage({
     <ApiReferencePage breadcrumbItems={breadcrumbItems} section={section} title={title} description={description} guideLinks={resolvedGuideLinks}>
       <ApiReferenceGrid
         left={
-          <div className="api-reference-left-flow" style={{ display: "grid", gap: 16 }}>
+          <div
+            className="api-reference-left-flow"
+            style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 16 }}
+          >
             {shouldRenderPlayground ? (
               <ApiRequestConfigCard
                 method={method}
