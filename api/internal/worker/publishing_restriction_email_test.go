@@ -16,10 +16,12 @@ import (
 )
 
 func TestPublishingRestrictionEligibilityRechecksEveryRepresentedWorkspace(t *testing.T) {
-	if strings.Contains(publishingRestrictionRecipientEligibilitySQL, "member.user_id=$4") {
-		t.Fatalf("eligibility must not discard represented workspaces owned by another user sharing the email:\n%s", publishingRestrictionRecipientEligibilitySQL)
-	}
-	for _, want := range []string{"UNNEST($5::text[])", "account.workspace_id=represented.workspace_id", "LOWER(TRIM(owner_user.email))=$4"} {
+	for _, want := range []string{
+		"UNNEST($6::text[])",
+		"account.workspace_id=represented.workspace_id",
+		"owner_user.id=$5",
+		"LOWER(TRIM(owner_user.email))=$4",
+	} {
 		if !strings.Contains(publishingRestrictionRecipientEligibilitySQL, want) {
 			t.Fatalf("eligibility query missing %q:\n%s", want, publishingRestrictionRecipientEligibilitySQL)
 		}

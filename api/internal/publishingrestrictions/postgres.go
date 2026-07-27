@@ -322,19 +322,27 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 				SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
 				FROM subscriptions ORDER BY workspace_id, updated_at DESC
 			), prior_sent AS (
-				SELECT prior.canonical_user_id AS user_id, prior.recipient_email AS email,
-				       prior.normalized_email, COALESCE(NULLIF(prior.first_name_snapshot, ''), 'there') AS first_name,
-				       UNNEST(prior.represented_workspace_ids) AS workspace_id
+				SELECT prior.canonical_user_id, UNNEST(prior.represented_workspace_ids) AS workspace_id
 				FROM platform_publishing_restriction_email_recipients prior
 				JOIN platform_publishing_restriction_email_campaigns sent_campaign
 				  ON sent_campaign.id = prior.campaign_id AND sent_campaign.cycle_id = $2
 				 AND sent_campaign.campaign_type = 'restriction_notice'
 				WHERE prior.status = 'sent'
 			), eligible AS (
-				SELECT prior.*
+				SELECT prior.canonical_user_id AS user_id,
+				       canonical_user.email,
+				       LOWER(TRIM(canonical_user.email)) AS normalized_email,
+				       COALESCE(NULLIF(SPLIT_PART(TRIM(COALESCE(canonical_user.name, '')), ' ', 1), ''), 'there') AS first_name,
+				       prior.workspace_id
 				FROM prior_sent prior
+				JOIN users canonical_user ON canonical_user.id = prior.canonical_user_id
+				JOIN workspace_members owner_member
+				  ON owner_member.workspace_id = prior.workspace_id
+				 AND owner_member.user_id = prior.canonical_user_id
+				 AND owner_member.role = 'owner' AND owner_member.status = 'active'
 				LEFT JOIN current_plans cp ON cp.workspace_id = prior.workspace_id
 				WHERE COALESCE(cp.plan_id, 'free') = 'free'
+				  AND TRIM(canonical_user.email) <> ''
 				  AND EXISTS (
 					SELECT 1 FROM social_accounts sa
 					WHERE sa.workspace_id = prior.workspace_id AND sa.platform = $1

@@ -288,7 +288,7 @@ const publishingRestrictionRecipientEligibilitySQL = `
 		SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
 		FROM subscriptions ORDER BY workspace_id, updated_at DESC
 	), represented AS (
-		SELECT UNNEST($5::text[]) AS workspace_id
+		SELECT UNNEST($6::text[]) AS workspace_id
 	)
 	SELECT EXISTS (
 		SELECT 1
@@ -306,7 +306,8 @@ const publishingRestrictionRecipientEligibilitySQL = `
 			  ON owner_member.user_id=owner_user.id
 			 AND owner_member.workspace_id=represented.workspace_id
 			 AND owner_member.role='owner' AND owner_member.status='active'
-			WHERE LOWER(TRIM(owner_user.email))=$4
+			WHERE owner_user.id=$5
+			  AND LOWER(TRIM(owner_user.email))=$4
 		  )
 		  AND EXISTS (
 			SELECT 1 FROM social_accounts account
@@ -319,7 +320,7 @@ func (s *PostgresPublishingRestrictionEmailStore) PublishingRestrictionEmailReci
 	wantEnabled := work.CampaignType == publishingrestrictions.RestrictionNotice
 	var eligible bool
 	err := s.pool.QueryRow(ctx, publishingRestrictionRecipientEligibilitySQL,
-		work.Platform, work.CycleID, wantEnabled, work.NormalizedEmail, work.RepresentedWorkspaceIDs).Scan(&eligible)
+		work.Platform, work.CycleID, wantEnabled, work.NormalizedEmail, work.CanonicalUserID, work.RepresentedWorkspaceIDs).Scan(&eligible)
 	return eligible, err
 }
 

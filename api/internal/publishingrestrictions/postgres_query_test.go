@@ -68,3 +68,23 @@ func TestCampaignAudienceQueryAggregatesAllWorkspacesPerNormalizedEmail(t *testi
 		t.Fatalf("audience query must not discard represented workspaces:\n%s", query)
 	}
 }
+
+func TestRecoveryCampaignAudienceRebuildsIdentityFromCanonicalUser(t *testing.T) {
+	query, _, err := campaignAudienceQuery(Restriction{Platform: "tiktok", CycleID: "cycle_1"}, RecoveryNotice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"JOIN users canonical_user ON canonical_user.id = prior.canonical_user_id",
+		"owner_member.user_id = prior.canonical_user_id",
+		"LOWER(TRIM(canonical_user.email))",
+		"canonical_user.name",
+	} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("recovery audience must rebuild current canonical identity with %q:\n%s", want, query)
+		}
+	}
+	if strings.Contains(query, "prior.recipient_email AS email") || strings.Contains(query, "prior.normalized_email") {
+		t.Fatalf("recovery audience must not copy stale recipient identity:\n%s", query)
+	}
+}

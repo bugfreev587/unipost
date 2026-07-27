@@ -158,7 +158,7 @@ func applyWorkerMigrationUp(t *testing.T, pool *pgxpool.Pool, filename string) {
 func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
-		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT);
+		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT);
 		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
 		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
 		CREATE TABLE subscriptions (
@@ -204,6 +204,88 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	`)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restrictions
+		SET enabled=FALSE, cycle_id='worker_cycle'
+		WHERE platform='tiktok';
+		UPDATE users SET email='new-owner@example.com', name='New Owner' WHERE id='worker_user_1';
+		UPDATE users SET email='old-owner@example.com', name='Other Owner' WHERE id='worker_user_2';
+		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status) VALUES
+			('workspace_1', 'worker_user_1', 'owner', 'active'),
+			('workspace_1', 'worker_user_2', 'owner', 'active');
+		INSERT INTO social_accounts (id, workspace_id, platform, status)
+		VALUES ('social_recovery_identity', 'workspace_1', 'tiktok', 'active');
+		UPDATE platform_publishing_restriction_email_campaigns
+		SET status='completed', sent_count=1
+		WHERE id='worker_campaign';
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			first_name_snapshot, represented_workspace_ids, idempotency_key, status, sent_at
+		) VALUES (
+			'recipient_prior_identity', 'worker_campaign', 'worker_user_1',
+			'old-owner@example.com', 'old-owner@example.com', 'Old',
+			ARRAY['workspace_1']::TEXT[], 'prior-key', 'sent', NOW()
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	restrictionStore := publishingrestrictions.NewPostgresStore(pool)
+	recipients, err := restrictionStore.PreviewCampaignRecipients(ctx, publishingrestrictions.Restriction{
+		Platform: "tiktok", CycleID: "worker_cycle",
+	}, publishingrestrictions.RecoveryNotice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recipients) != 1 {
+		t.Fatalf("recovery recipients = %+v, want one canonical recipient", recipients)
+	}
+	got := recipients[0]
+	if got.CanonicalUserID != "worker_user_1" || got.RecipientEmail != "new-owner@example.com" ||
+		got.NormalizedEmail != "new-owner@example.com" || got.FirstName != "New" {
+		t.Fatalf("recovery recipient = %+v, want current canonical identity", got)
+	}
+
+	emailStore := NewPostgresPublishingRestrictionEmailStore(pool)
+	eligible, err := emailStore.PublishingRestrictionEmailRecipientEligible(ctx, PublishingRestrictionEmailWork{
+		Platform:                "tiktok",
+		CycleID:                 "worker_cycle",
+		CampaignType:            publishingrestrictions.RecoveryNotice,
+		CanonicalUserID:         "worker_user_1",
+		NormalizedEmail:         "old-owner@example.com",
+		RepresentedWorkspaceIDs: []string{"workspace_1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("reassigned old email made stale canonical recipient eligible")
+	}
+
+	eligible, err = emailStore.PublishingRestrictionEmailRecipientEligible(ctx, PublishingRestrictionEmailWork{
+		Platform:                "tiktok",
+		CycleID:                 "worker_cycle",
+		CampaignType:            publishingrestrictions.RecoveryNotice,
+		CanonicalUserID:         "worker_user_1",
+		NormalizedEmail:         "new-owner@example.com",
+		RepresentedWorkspaceIDs: []string{"workspace_1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("current canonical user identity should remain eligible")
 	}
 }
 
