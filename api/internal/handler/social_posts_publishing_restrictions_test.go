@@ -991,7 +991,10 @@ func TestQueuedPolicyEvaluationUsesProvidedSnapshot(t *testing.T) {
 	evaluations := evaluateQueuedDeliveryTargets(
 		parsed,
 		accounts,
-		map[string]platform.ValidateAccount{},
+		map[string]platform.ValidateAccount{
+			"tk_1": {Platform: "tiktok"},
+			"ig_1": {Platform: "instagram"},
+		},
 		map[string]publishingrestrictions.Decision{
 			"tk_1": {Restricted: true, Platform: "tiktok"},
 		},
@@ -1001,6 +1004,30 @@ func TestQueuedPolicyEvaluationUsesProvidedSnapshot(t *testing.T) {
 	}
 	if evaluations[1].policyDecision.Restricted || evaluations[1].validationErr != nil {
 		t.Fatalf("allowed evaluation=%+v", evaluations[1])
+	}
+}
+
+func TestQueuedPolicyEvaluationPinsInvalidAdmissionAccountSnapshot(t *testing.T) {
+	dbAccounts := map[string]db.SocialAccount{
+		"reconnected": {ID: "reconnected", Platform: "tiktok", Status: "active"},
+		"appeared":    {ID: "appeared", Platform: "tiktok", Status: "active"},
+	}
+	evaluations := evaluateQueuedDeliveryTargets(
+		[]platform.PlatformPostInput{{AccountID: "reconnected"}, {AccountID: "appeared"}},
+		dbAccounts,
+		map[string]platform.ValidateAccount{
+			"reconnected": {Platform: "tiktok", Disconnected: true},
+		},
+		map[string]publishingrestrictions.Decision{},
+	)
+	if len(evaluations) != 2 {
+		t.Fatalf("evaluations=%+v, want two pinned admission failures", evaluations)
+	}
+	if evaluations[0].validationErr == nil || evaluations[0].validationErr.Error() != "account is disconnected" {
+		t.Fatalf("reconnected evaluation=%+v, want admission-time disconnected failure", evaluations[0])
+	}
+	if evaluations[1].validationErr == nil || evaluations[1].validationErr.Error() != "account not found" {
+		t.Fatalf("appeared evaluation=%+v, want admission-time missing failure", evaluations[1])
 	}
 }
 

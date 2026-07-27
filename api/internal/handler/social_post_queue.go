@@ -149,19 +149,22 @@ func (h *SocialPostHandler) loadDBAccountsByIDs(ctx context.Context, workspaceID
 }
 
 func summarizeAccountValidation(dbAcc db.SocialAccount, ok bool, fallback platform.ValidateAccount) (platformName string, err error) {
-	if ok {
-		platformName = dbAcc.Platform
-		if socialAccountDisconnectedForPublish(dbAcc, true) {
-			return platformName, fmt.Errorf("account is disconnected")
-		}
-		return platformName, nil
-	}
+	// Preserve an invalid admission snapshot even if the account changes while
+	// this request is being persisted. Otherwise a missing/disconnected target
+	// could reconnect after policy and quota checks and become publishable here.
 	platformName = fallback.Platform
 	if fallback.Platform == "" {
 		return platformName, fmt.Errorf("account not found")
 	}
 	if fallback.Disconnected {
 		return platformName, fmt.Errorf("account is disconnected")
+	}
+	if ok {
+		platformName = dbAcc.Platform
+		if socialAccountDisconnectedForPublish(dbAcc, true) {
+			return platformName, fmt.Errorf("account is disconnected")
+		}
+		return platformName, nil
 	}
 	return platformName, fmt.Errorf("account not found")
 }
