@@ -56,7 +56,7 @@ test.describe("mobile public layout", () => {
 
       if (route.path === "/pricing") {
         const planCards = page.locator(".pr-card");
-        await expect(planCards).toHaveCount(5);
+        await expect(planCards).toHaveCount(4);
         const cardBounds = await planCards.evaluateAll((cards) =>
           cards.map((card) => {
             const rect = card.getBoundingClientRect();

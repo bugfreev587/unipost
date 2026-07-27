@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
@@ -76,6 +77,18 @@ type transaction interface {
 	Rollback(ctx context.Context) error
 }
 
+const transactionRollbackTimeout = 5 * time.Second
+
+type transactionRollbacker interface {
+	Rollback(ctx context.Context) error
+}
+
+func rollbackTransaction(tx transactionRollbacker) {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), transactionRollbackTimeout)
+	defer cancel()
+	_ = tx.Rollback(rollbackCtx)
+}
+
 func (c *coordinator) MutateScheduledIdempotent(
 	ctx context.Context,
 	workspaceID string,
@@ -94,7 +107,7 @@ func (c *coordinator) MutateScheduledIdempotent(
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(ctx)
+			rollbackTransaction(tx)
 		}
 	}()
 
@@ -177,7 +190,7 @@ func (c *coordinator) Mutate(ctx context.Context, workspaceID string, deltas []P
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(ctx)
+			rollbackTransaction(tx)
 		}
 	}()
 
@@ -220,7 +233,7 @@ func (c *coordinator) MutatePlanned(ctx context.Context, workspaceID string, per
 	committed := false
 	defer func() {
 		if !committed {
-			_ = tx.Rollback(ctx)
+			rollbackTransaction(tx)
 		}
 	}()
 
