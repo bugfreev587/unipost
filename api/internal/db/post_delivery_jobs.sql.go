@@ -725,32 +725,44 @@ func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDel
 }
 
 const finalizeRestrictedPostDeliveryJob = `-- name: FinalizeRestrictedPostDeliveryJob :one
-WITH transitioned_job AS (
+WITH locked_result AS MATERIALIZED (
+  SELECT result.id, result.status
+  FROM social_post_results AS result
+  JOIN post_delivery_jobs AS job
+    ON job.social_post_result_id = result.id
+  WHERE job.id = $1
+    AND job.state IN ('running', 'retrying')
+    AND job.lease_owner IS NOT DISTINCT FROM $2
+    AND job.last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
+  FOR UPDATE OF result
+), transitioned_job AS (
   UPDATE post_delivery_jobs AS job
-  SET state = 'dead',
-      failure_stage = $1,
-      error_code = $2,
+  SET state = CASE WHEN locked_result.status = 'published' THEN 'succeeded' ELSE 'dead' END,
+      failure_stage = CASE WHEN locked_result.status = 'published' THEN NULL ELSE $4 END,
+      error_code = CASE WHEN locked_result.status = 'published' THEN NULL ELSE $5 END,
       platform_error_code = NULL,
-      last_error = $3,
+      last_error = CASE WHEN locked_result.status = 'published' THEN NULL ELSE $6::text END,
       next_run_at = NULL,
       updated_at = NOW(),
       finished_at = NOW()
-  WHERE job.id = $4
+  FROM locked_result
+  WHERE job.id = $1
+    AND locked_result.id = job.social_post_result_id
     AND job.state IN ('running', 'retrying')
-    AND job.lease_owner IS NOT DISTINCT FROM $5
-    AND job.last_attempt_at IS NOT DISTINCT FROM $6::timestamptz
+    AND job.lease_owner IS NOT DISTINCT FROM $2
+    AND job.last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
   RETURNING job.id, job.post_id, job.social_post_result_id, job.workspace_id, job.social_account_id, job.platform, job.post_input_index, job.kind, job.state, job.attempts, job.max_attempts, job.failure_stage, job.error_code, job.platform_error_code, job.last_error, job.next_run_at, job.last_attempt_at, job.created_at, job.updated_at, job.finished_at, job.dismissed_at, job.lease_expires_at, job.lease_owner, job.first_claimed_at, job.platform_started_at
 ), updated_result AS (
   UPDATE social_post_results AS result
   SET status = 'failed',
       external_id = NULL,
-      error_message = $3,
+      error_message = $6,
       published_at = NULL,
       url = NULL,
       debug_curl = NULL,
       publish_token = NULL,
-      error_code = $2,
-      failure_stage = $1,
+      error_code = $5,
+      failure_stage = $4,
       platform_error_code = NULL,
       is_retriable = FALSE,
       next_action = $7,
@@ -763,6 +775,8 @@ WITH transitioned_job AS (
       x_credit_billing_mode = NULL
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
+    AND transitioned_job.state = 'dead'
+    AND result.status <> 'published'
   RETURNING transitioned_job.id AS job_id
 ), current_result_statuses AS MATERIALIZED (
   SELECT
@@ -851,18 +865,17 @@ WITH transitioned_job AS (
 )
 SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at
 FROM transitioned_job
-JOIN updated_result ON updated_result.job_id = transitioned_job.id
 CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
 CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted
 `
 
 type FinalizeRestrictedPostDeliveryJobParams struct {
-	FailureStage     pgtype.Text        `json:"failure_stage"`
-	ErrorCode        pgtype.Text        `json:"error_code"`
-	ErrorMessage     pgtype.Text        `json:"error_message"`
 	ID               string             `json:"id"`
 	LeaseOwner       pgtype.Text        `json:"lease_owner"`
 	LastAttemptAt    pgtype.Timestamptz `json:"last_attempt_at"`
+	FailureStage     pgtype.Text        `json:"failure_stage"`
+	ErrorCode        pgtype.Text        `json:"error_code"`
+	ErrorMessage     string             `json:"error_message"`
 	NextAction       pgtype.Text        `json:"next_action"`
 	ErrorSource      pgtype.Text        `json:"error_source"`
 	ErrorTemporality pgtype.Text        `json:"error_temporality"`
@@ -900,12 +913,12 @@ type FinalizeRestrictedPostDeliveryJobRow struct {
 
 func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg FinalizeRestrictedPostDeliveryJobParams) (FinalizeRestrictedPostDeliveryJobRow, error) {
 	row := q.db.QueryRow(ctx, finalizeRestrictedPostDeliveryJob,
-		arg.FailureStage,
-		arg.ErrorCode,
-		arg.ErrorMessage,
 		arg.ID,
 		arg.LeaseOwner,
 		arg.LastAttemptAt,
+		arg.FailureStage,
+		arg.ErrorCode,
+		arg.ErrorMessage,
 		arg.NextAction,
 		arg.ErrorSource,
 		arg.ErrorTemporality,

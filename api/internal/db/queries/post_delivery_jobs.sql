@@ -476,17 +476,29 @@ WHERE id = sqlc.arg('id')
 RETURNING *;
 
 -- name: FinalizeRestrictedPostDeliveryJob :one
-WITH transitioned_job AS (
+WITH locked_result AS MATERIALIZED (
+  SELECT result.id, result.status
+  FROM social_post_results AS result
+  JOIN post_delivery_jobs AS job
+    ON job.social_post_result_id = result.id
+  WHERE job.id = sqlc.arg('id')
+    AND job.state IN ('running', 'retrying')
+    AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+    AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
+  FOR UPDATE OF result
+), transitioned_job AS (
   UPDATE post_delivery_jobs AS job
-  SET state = 'dead',
-      failure_stage = sqlc.arg('failure_stage'),
-      error_code = sqlc.arg('error_code'),
+  SET state = CASE WHEN locked_result.status = 'published' THEN 'succeeded' ELSE 'dead' END,
+      failure_stage = CASE WHEN locked_result.status = 'published' THEN NULL ELSE sqlc.arg('failure_stage') END,
+      error_code = CASE WHEN locked_result.status = 'published' THEN NULL ELSE sqlc.arg('error_code') END,
       platform_error_code = NULL,
-      last_error = sqlc.arg('error_message'),
+      last_error = CASE WHEN locked_result.status = 'published' THEN NULL ELSE sqlc.arg('error_message')::text END,
       next_run_at = NULL,
       updated_at = NOW(),
       finished_at = NOW()
+  FROM locked_result
   WHERE job.id = sqlc.arg('id')
+    AND locked_result.id = job.social_post_result_id
     AND job.state IN ('running', 'retrying')
     AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
     AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
@@ -514,6 +526,8 @@ WITH transitioned_job AS (
       x_credit_billing_mode = NULL
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
+    AND transitioned_job.state = 'dead'
+    AND result.status <> 'published'
   RETURNING transitioned_job.id AS job_id
 ), current_result_statuses AS MATERIALIZED (
   SELECT
@@ -602,7 +616,6 @@ WITH transitioned_job AS (
 )
 SELECT transitioned_job.*
 FROM transitioned_job
-JOIN updated_result ON updated_result.job_id = transitioned_job.id
 CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
 CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted;
 

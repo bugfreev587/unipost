@@ -218,7 +218,7 @@ func restrictedFinalizeIntegrationParams(jobID, owner string, attemptedAt time.T
 	return db.FinalizeRestrictedPostDeliveryJobParams{
 		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
 		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
-		ErrorMessage:     postfailures.ToText(publishingrestrictions.UserMessage),
+		ErrorMessage:     publishingrestrictions.UserMessage,
 		ID:               jobID,
 		LeaseOwner:       postfailures.ToText(owner),
 		LastAttemptAt:    pgtype.Timestamptz{Time: attemptedAt, Valid: true},
@@ -229,9 +229,374 @@ func restrictedFinalizeIntegrationParams(jobID, owner string, attemptedAt time.T
 	}
 }
 
+func waitForPostgresSessionBlockedBy(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	blockedBackend int,
+	blockingBackend int,
+) {
+	t.Helper()
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		var blocked bool
+		err := pool.QueryRow(ctx, `SELECT $1::int = ANY(pg_blocking_pids($2::int))`, blockingBackend, blockedBackend).Scan(&blocked)
+		if err != nil {
+			t.Fatalf("inspect PostgreSQL lock graph: %v", err)
+		}
+		if blocked {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("PostgreSQL backend %d did not block behind backend %d: %v", blockedBackend, blockingBackend, ctx.Err())
+		case <-ticker.C:
+		}
+	}
+}
+
+func insertSharedResultDeliveryRaceFixture(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	suffix string,
+	attemptedAt time.Time,
+) (resultID, postID, restrictedJobID, successJobID, mediaID string) {
+	t.Helper()
+	resultID = "result_shared_" + suffix
+	postID = "post_shared_" + suffix
+	restrictedJobID = "job_restricted_" + suffix
+	successJobID = "job_success_" + suffix
+	mediaID = "media_shared_" + suffix
+	_, err := pool.Exec(ctx, `
+		INSERT INTO social_post_results (
+			id, post_id, social_account_id, status, external_id, error_message,
+			published_at, url, debug_curl, publish_token, error_code, failure_stage,
+			platform_error_code, is_retriable, next_action, error_source,
+			error_temporality, provider_error, x_credits_counted,
+			x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+		) VALUES (
+			$1, $2, 'account_shared', 'processing', 'stale_external', 'stale_error',
+			$3, 'https://social.example.com/stale', 'stale_debug', 'stale_publish_token',
+			'stale_error_code', 'stale_stage', 'stale_platform_code', TRUE,
+			'stale_action', 'provider', 'temporary', '{"stale":true}'::jsonb, 19,
+			'stale_operation', 'stale_catalog', 'stale_billing'
+		)
+	`, resultID, postID, attemptedAt)
+	if err != nil {
+		t.Fatalf("insert shared result race fixture %s: %v", suffix, err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO post_delivery_jobs (
+			id, post_id, social_post_result_id, workspace_id, social_account_id,
+			platform, kind, state, attempts, lease_owner, last_attempt_at
+		) VALUES
+			($3, $2, $1, 'workspace_shared', 'account_shared', 'tiktok',
+			 'dispatch', 'running', 1, 'owner_restricted', $5),
+			($4, $2, $1, 'workspace_shared', 'account_shared', 'tiktok',
+			 'retry', 'running', 1, 'owner_success', $5)
+	`, resultID, postID, restrictedJobID, successJobID, attemptedAt)
+	if err != nil {
+		t.Fatalf("insert shared delivery jobs race fixture %s: %v", suffix, err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO media (id, workspace_id, status)
+		VALUES ($1, 'workspace_shared', 'uploaded')
+	`, mediaID)
+	if err != nil {
+		t.Fatalf("insert shared media race fixture %s: %v", suffix, err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO media_post_usages (
+			workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+		) VALUES (
+			'workspace_shared', $1, $2, 'publishing', NULL, 'active_post'
+		)
+	`, mediaID, postID)
+	if err != nil {
+		t.Fatalf("insert shared media usage race fixture %s: %v", suffix, err)
+	}
+	return resultID, postID, restrictedJobID, successJobID, mediaID
+}
+
+func publishSharedResultInTransaction(
+	ctx context.Context,
+	tx pgx.Tx,
+	resultID string,
+	successJobID string,
+	mediaID string,
+	postID string,
+	publishedAt time.Time,
+) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE social_post_results
+		SET status = 'published', external_id = 'winning_external_id',
+			error_message = NULL, published_at = $2,
+			url = 'https://social.example.com/winning_external_id', debug_curl = NULL,
+			publish_token = 'winning_publish_token', error_code = NULL,
+			failure_stage = NULL, platform_error_code = NULL, is_retriable = NULL,
+			next_action = NULL, error_source = NULL, error_temporality = NULL,
+			provider_error = '{"provider":"success"}'::jsonb,
+			x_credits_counted = 41, x_credit_operation = 'winning_operation',
+			x_credit_catalog_version = 'winning_catalog',
+			x_credit_billing_mode = 'winning_billing'
+		WHERE id = $1
+	`, resultID, publishedAt)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE post_delivery_jobs
+		SET state = 'succeeded', failure_stage = NULL, error_code = NULL,
+			platform_error_code = NULL, last_error = NULL, next_run_at = NULL,
+			finished_at = $2, updated_at = $2
+		WHERE id = $1
+	`, successJobID, publishedAt)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE media
+		SET usage_version = usage_version + 1
+		WHERE id = $1
+	`, mediaID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		UPDATE media_post_usages
+		SET post_status = 'published', cleanup_after_at = $3::timestamptz + INTERVAL '30 days',
+			retention_reason = 'plan_status', updated_at = $3
+		WHERE media_id = $1 AND post_id = $2
+	`, mediaID, postID, publishedAt)
+	return err
+}
+
+func assertSharedResultPublishedWinner(
+	t *testing.T,
+	ctx context.Context,
+	pool *pgxpool.Pool,
+	resultID string,
+	restrictedJobID string,
+	successJobID string,
+	mediaID string,
+	postID string,
+	wantRestrictedJobState string,
+	publishedAt time.Time,
+) {
+	t.Helper()
+	result := loadRestrictedResultSnapshot(t, ctx, pool, resultID)
+	if result.Status != "published" || result.ExternalID.String != "winning_external_id" ||
+		!result.PublishedAt.Valid || !result.PublishedAt.Time.Equal(publishedAt) ||
+		result.URL.String != "https://social.example.com/winning_external_id" ||
+		result.PublishToken.String != "winning_publish_token" || result.ErrorMessage.Valid ||
+		result.ErrorCode.Valid || result.FailureStage.Valid || result.PlatformErrorCode.Valid ||
+		result.IsRetriable.Valid || result.NextAction.Valid || result.ErrorSource.Valid ||
+		result.ErrorTemporality.Valid || result.XCreditsCounted != 41 ||
+		result.XCreditOperation.String != "winning_operation" ||
+		result.XCreditCatalogVersion.String != "winning_catalog" ||
+		result.XCreditBillingMode.String != "winning_billing" {
+		t.Fatalf("shared result terminal published state changed: %+v", result)
+	}
+	if string(result.ProviderError) != `{"provider": "success"}` {
+		t.Fatalf("shared result provider response = %s, want published response", result.ProviderError)
+	}
+
+	var restrictedState, successState string
+	var restrictedFailureStage, restrictedErrorCode, restrictedLastError pgtype.Text
+	if err := pool.QueryRow(ctx, `
+		SELECT restricted.state, restricted.failure_stage, restricted.error_code,
+		       restricted.last_error, success.state
+		FROM post_delivery_jobs restricted
+		JOIN post_delivery_jobs success ON success.id = $2
+		WHERE restricted.id = $1
+	`, restrictedJobID, successJobID).Scan(
+		&restrictedState, &restrictedFailureStage, &restrictedErrorCode,
+		&restrictedLastError, &successState,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if restrictedState != wantRestrictedJobState || successState != "succeeded" {
+		t.Fatalf("shared-result job states = restricted:%q success:%q, want %q/succeeded", restrictedState, successState, wantRestrictedJobState)
+	}
+	if wantRestrictedJobState == "succeeded" && (restrictedFailureStage.Valid || restrictedErrorCode.Valid || restrictedLastError.Valid) {
+		t.Fatalf("converged restricted job retained failure diagnostics: stage=%#v code=%#v error=%#v", restrictedFailureStage, restrictedErrorCode, restrictedLastError)
+	}
+
+	var usageStatus, retentionReason string
+	var cleanupAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT post_status, retention_reason, cleanup_after_at
+		FROM media_post_usages
+		WHERE media_id = $1 AND post_id = $2
+	`, mediaID, postID).Scan(&usageStatus, &retentionReason, &cleanupAt); err != nil {
+		t.Fatal(err)
+	}
+	if usageStatus != "published" || retentionReason != "plan_status" || !cleanupAt.Valid || !cleanupAt.Time.Equal(publishedAt.Add(30*24*time.Hour)) {
+		t.Fatalf("shared-result media retention = status:%q reason:%q cleanup:%#v, want published/plan_status/%s", usageStatus, retentionReason, cleanupAt, publishedAt.Add(30*24*time.Hour))
+	}
+}
+
 func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 	pool := openRestrictedDeliveryIntegrationPool(t)
 	setupRestrictedDeliveryIntegrationSchema(t, pool)
+
+	t.Run("published shared result commits before restriction finalizer", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 27, 2, 0, 0, 0, time.UTC)
+		publishedAt := attemptedAt.Add(time.Minute)
+		resultID, postID, restrictedJobID, successJobID, mediaID := insertSharedResultDeliveryRaceFixture(
+			t, ctx, pool, "published_first", attemptedAt,
+		)
+
+		restrictedConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restrictedConn.Release()
+		successConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer successConn.Release()
+		var restrictedBackend, successBackend int
+		if err := restrictedConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&restrictedBackend); err != nil {
+			t.Fatal(err)
+		}
+		if err := successConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&successBackend); err != nil {
+			t.Fatal(err)
+		}
+		if restrictedBackend == successBackend {
+			t.Fatalf("shared-result race requires two PostgreSQL sessions, both used backend %d", restrictedBackend)
+		}
+
+		successTx, err := successConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer successTx.Rollback(ctx)
+		if err := publishSharedResultInTransaction(ctx, successTx, resultID, successJobID, mediaID, postID, publishedAt); err != nil {
+			t.Fatalf("stage published winner: %v", err)
+		}
+
+		restrictedTx, err := restrictedConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restrictedTx.Rollback(ctx)
+		type finalizeResult struct {
+			job db.FinalizeRestrictedPostDeliveryJobRow
+			err error
+		}
+		finalized := make(chan finalizeResult, 1)
+		go func() {
+			params := restrictedFinalizeIntegrationParams(restrictedJobID, "owner_restricted", attemptedAt)
+			params.MediaIds = []string{mediaID}
+			job, finalizeErr := db.New(restrictedTx).FinalizeRestrictedPostDeliveryJob(ctx, params)
+			finalized <- finalizeResult{job: job, err: finalizeErr}
+		}()
+		waitForPostgresSessionBlockedBy(t, ctx, pool, restrictedBackend, successBackend)
+		if err := successTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		var result finalizeResult
+		select {
+		case result = <-finalized:
+		case <-ctx.Done():
+			t.Fatalf("restriction finalizer did not resume after published commit: %v", ctx.Err())
+		}
+		if result.err != nil {
+			t.Fatalf("restriction finalizer after published commit: %v", result.err)
+		}
+		if result.job.State != "succeeded" {
+			t.Fatalf("restriction finalizer convergence state = %q, want succeeded", result.job.State)
+		}
+		if err := restrictedTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		assertSharedResultPublishedWinner(
+			t, ctx, pool, resultID, restrictedJobID, successJobID, mediaID, postID, "succeeded", publishedAt,
+		)
+	})
+
+	t.Run("restriction finalizer commits before published shared result", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 27, 2, 30, 0, 0, time.UTC)
+		publishedAt := attemptedAt.Add(time.Minute)
+		resultID, postID, restrictedJobID, successJobID, mediaID := insertSharedResultDeliveryRaceFixture(
+			t, ctx, pool, "restricted_first", attemptedAt,
+		)
+
+		restrictedConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restrictedConn.Release()
+		successConn, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer successConn.Release()
+		var restrictedBackend, successBackend int
+		if err := restrictedConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&restrictedBackend); err != nil {
+			t.Fatal(err)
+		}
+		if err := successConn.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&successBackend); err != nil {
+			t.Fatal(err)
+		}
+		if restrictedBackend == successBackend {
+			t.Fatalf("shared-result race requires two PostgreSQL sessions, both used backend %d", restrictedBackend)
+		}
+
+		restrictedTx, err := restrictedConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer restrictedTx.Rollback(ctx)
+		params := restrictedFinalizeIntegrationParams(restrictedJobID, "owner_restricted", attemptedAt)
+		params.MediaIds = []string{mediaID}
+		finalizedJob, err := db.New(restrictedTx).FinalizeRestrictedPostDeliveryJob(ctx, params)
+		if err != nil {
+			t.Fatalf("stage restriction finalization: %v", err)
+		}
+		if finalizedJob.State != "dead" {
+			t.Fatalf("first restriction state = %q, want dead", finalizedJob.State)
+		}
+
+		successTx, err := successConn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer successTx.Rollback(ctx)
+		published := make(chan error, 1)
+		go func() {
+			published <- publishSharedResultInTransaction(ctx, successTx, resultID, successJobID, mediaID, postID, publishedAt)
+		}()
+		waitForPostgresSessionBlockedBy(t, ctx, pool, successBackend, restrictedBackend)
+		if err := restrictedTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case err := <-published:
+			if err != nil {
+				t.Fatalf("published winner after restriction commit: %v", err)
+			}
+		case <-ctx.Done():
+			t.Fatalf("published winner did not resume after restriction commit: %v", ctx.Err())
+		}
+		if err := successTx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		assertSharedResultPublishedWinner(
+			t, ctx, pool, resultID, restrictedJobID, successJobID, mediaID, postID, "dead", publishedAt,
+		)
+	})
 
 	t.Run("invalid metadata preserves job result billing and existing usage", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

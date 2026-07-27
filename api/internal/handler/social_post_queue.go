@@ -893,10 +893,10 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		return fmt.Errorf("%w: post %s", errInvalidPostMediaMetadata, post.ID)
 	}
 	finalizedAt := time.Now()
-	_, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
+	finalizedJob, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
 		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
 		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
-		ErrorMessage:     postfailures.ToText(publishingrestrictions.UserMessage),
+		ErrorMessage:     publishingrestrictions.UserMessage,
 		ID:               job.ID,
 		LeaseOwner:       job.LeaseOwner,
 		LastAttemptAt:    job.LastAttemptAt,
@@ -912,24 +912,32 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		}
 		return err
 	}
-	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
-	h.recordPostFailureHistory(ctx, failure)
-	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
-		WorkspaceID:     post.WorkspaceID,
-		Level:           integrationlogs.LevelWarn,
-		Status:          integrationlogs.StatusError,
-		Action:          integrationlogs.ActionPostPublishPlatformFailed,
-		Message:         "Platform delivery blocked by publishing restriction.",
-		PostID:          post.ID,
-		SocialAccountID: res.SocialAccountID,
-		Platform:        decision.Platform,
-		ErrorCode:       publishingrestrictions.NormalizedCode,
-		Metadata: map[string]any{
-			"job_id":               job.ID,
-			"result_id":            res.ID,
-			"restriction_cycle_id": decision.CycleID,
-		},
-	}))
+	switch finalizedJob.State {
+	case "dead":
+		failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
+		h.recordPostFailureHistory(ctx, failure)
+		h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
+			WorkspaceID:     post.WorkspaceID,
+			Level:           integrationlogs.LevelWarn,
+			Status:          integrationlogs.StatusError,
+			Action:          integrationlogs.ActionPostPublishPlatformFailed,
+			Message:         "Platform delivery blocked by publishing restriction.",
+			PostID:          post.ID,
+			SocialAccountID: res.SocialAccountID,
+			Platform:        decision.Platform,
+			ErrorCode:       publishingrestrictions.NormalizedCode,
+			Metadata: map[string]any{
+				"job_id":               job.ID,
+				"result_id":            res.ID,
+				"restriction_cycle_id": decision.CycleID,
+			},
+		}))
+	case "succeeded":
+		// A different delivery job already committed this shared result as
+		// published. Converge this duplicate job without recording a failure.
+	default:
+		return fmt.Errorf("unexpected restricted delivery finalization state %q", finalizedJob.State)
+	}
 	allResults, err := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
 	if err != nil {
 		return fmt.Errorf("list current results after restriction finalization: %w", err)

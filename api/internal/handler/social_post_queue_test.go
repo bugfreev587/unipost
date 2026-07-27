@@ -883,6 +883,7 @@ type restrictedFinalizeLeaseDB struct {
 	result              db.SocialPostResult
 	planID              string
 	lostLease           bool
+	convergedPublished  bool
 	resultUpdateCalls   int
 	failureDetailCalls  int
 	failureHistoryCalls int
@@ -933,24 +934,38 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 		if f.lostLease {
 			return scanRow{err: pgx.ErrNoRows}
 		}
+		if f.convergedPublished {
+			updated := f.job
+			updated.State = "succeeded"
+			updated.FailureStage = pgtype.Text{}
+			updated.ErrorCode = pgtype.Text{}
+			updated.PlatformErrorCode = pgtype.Text{}
+			updated.LastError = pgtype.Text{}
+			updated.NextRunAt = pgtype.Timestamptz{}
+			f.job = updated
+			if f.afterFinalize != nil {
+				f.afterFinalize(ctx)
+			}
+			return postDeliveryJobScanRow(updated)
+		}
 		f.resultUpdateCalls++
 		updated := f.job
 		updated.State = "dead"
-		updated.FailureStage = args[0].(pgtype.Text)
-		updated.ErrorCode = args[1].(pgtype.Text)
+		updated.FailureStage = args[3].(pgtype.Text)
+		updated.ErrorCode = args[4].(pgtype.Text)
 		updated.PlatformErrorCode = pgtype.Text{}
-		updated.LastError = args[2].(pgtype.Text)
+		updated.LastError = pgtype.Text{String: args[5].(string), Valid: true}
 		updated.NextRunAt = pgtype.Timestamptz{}
 		f.job = updated
 		f.result.Status = "failed"
 		f.result.ExternalID = pgtype.Text{}
-		f.result.ErrorMessage = args[2].(pgtype.Text)
+		f.result.ErrorMessage = pgtype.Text{String: args[5].(string), Valid: true}
 		f.result.PublishedAt = pgtype.Timestamptz{}
 		f.result.Url = pgtype.Text{}
 		f.result.DebugCurl = pgtype.Text{}
 		f.result.PublishToken = pgtype.Text{}
-		f.result.ErrorCode = args[1].(pgtype.Text)
-		f.result.FailureStage = args[0].(pgtype.Text)
+		f.result.ErrorCode = args[4].(pgtype.Text)
+		f.result.FailureStage = args[3].(pgtype.Text)
 		f.result.PlatformErrorCode = pgtype.Text{}
 		f.result.IsRetriable = pgtype.Bool{Bool: false, Valid: true}
 		f.result.NextAction = args[6].(pgtype.Text)
@@ -1079,6 +1094,75 @@ func TestFinalizeRestrictedDeliveryJobLostLeasePreservesNewerSuccess(t *testing.
 	}
 	if logStore.calls != 0 {
 		t.Fatalf("integration log calls = %d, want 0 after lease loss", logStore.calls)
+	}
+}
+
+func TestFinalizeRestrictedDeliveryJobPublishedResultConvergesWithoutFailureSideEffects(t *testing.T) {
+	publishedAt := time.Date(2026, 7, 27, 1, 0, 0, 0, time.UTC)
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_restricted", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: publishedAt.Add(-time.Minute), Valid: true}
+	published := db.SocialPostResult{
+		ID:              job.SocialPostResultID,
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Status:          "published",
+		ExternalID:      pgtype.Text{String: "platform_post_winner", Valid: true},
+		PublishedAt:     pgtype.Timestamptz{Time: publishedAt, Valid: true},
+		Url:             pgtype.Text{String: "https://social.example.com/platform_post_winner", Valid: true},
+	}
+	dbtx := &restrictedFinalizeLeaseDB{
+		job:                job,
+		result:             published,
+		convergedPublished: true,
+	}
+	logStore := &restrictedFinalizeIntegrationLogStore{}
+	logger := integrationlogs.NewLogger(logStore, nil)
+	loggerContext, stopLogger := context.WithCancel(context.Background())
+	loggerStopped := make(chan struct{})
+	go func() {
+		logger.Start(loggerContext)
+		close(loggerStopped)
+	}()
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, logger)
+	staleResult := published
+	staleResult.Status = "processing"
+	staleResult.ExternalID = pgtype.Text{}
+	staleResult.PublishedAt = pgtype.Timestamptz{}
+	staleResult.Url = pgtype.Text{}
+	post := mediaRetentionPost(t, "publishing")
+	post.ID = job.PostID
+	post.WorkspaceID = job.WorkspaceID
+
+	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, staleResult, post, publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   job.Platform,
+		CycleID:    "cycle_published_winner",
+	})
+	if err != nil {
+		t.Fatalf("finalizeRestrictedDeliveryJob: %v", err)
+	}
+	stopLogger()
+	<-loggerStopped
+
+	if !reflect.DeepEqual(dbtx.result, published) {
+		t.Fatalf("published result changed:\n got=%#v\nwant=%#v", dbtx.result, published)
+	}
+	if dbtx.job.State != "succeeded" {
+		t.Fatalf("restricted duplicate job state = %q, want succeeded convergence", dbtx.job.State)
+	}
+	if dbtx.resultUpdateCalls != 0 || dbtx.failureDetailCalls != 0 || dbtx.failureHistoryCalls != 0 {
+		t.Fatalf("published convergence failure writes = result:%d detail:%d history:%d, want zero",
+			dbtx.resultUpdateCalls, dbtx.failureDetailCalls, dbtx.failureHistoryCalls)
+	}
+	if len(dbtx.retentionUpserts) != 0 {
+		t.Fatalf("published convergence restriction retention upserts = %d, want zero", len(dbtx.retentionUpserts))
+	}
+	if dbtx.parentRefreshCalls == 0 {
+		t.Fatal("published convergence must refresh the parent from current durable results")
+	}
+	if logStore.calls != 0 {
+		t.Fatalf("published convergence integration failure logs = %d, want zero", logStore.calls)
 	}
 }
 
