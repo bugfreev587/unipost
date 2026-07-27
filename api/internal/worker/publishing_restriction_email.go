@@ -193,7 +193,16 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 				_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, err.Error())
 			}
 		} else {
-			_ = w.store.MarkPublishingRestrictionEmailRecipientSent(ctx, recipient.RecipientID)
+			finalizeCtx, cancelFinalize := context.WithTimeout(
+				context.WithoutCancel(ctx),
+				publishingRestrictionEmailUnknownOutcomeCleanupTimeout,
+			)
+			sentErr := w.store.MarkPublishingRestrictionEmailRecipientSent(finalizeCtx, recipient.RecipientID)
+			cancelFinalize()
+			if sentErr != nil {
+				return fmt.Errorf("mark publishing restriction email recipient sent: %w", sentErr)
+			}
+			continue
 		}
 		_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
 	}

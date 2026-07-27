@@ -6,9 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/xiaoboyu/unipost-api/internal/emailregistry"
 )
+
+const emailAuditFinalizationTimeout = 5 * time.Second
 
 type EmailAudit struct {
 	EventKey           string
@@ -115,12 +118,19 @@ func (c *AuditedClient) SendTransactionalWithAttempt(
 	}
 	err = c.client.SendTransactional(ctx, email)
 	if err != nil {
-		if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, err.Error()); auditErr != nil {
+		finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+		auditErr := c.store.MarkEmailSendAttemptFailed(finalizeCtx, record.ID, err.Error())
+		cancelFinalize()
+		if auditErr != nil {
 			slog.Warn("loops: email audit failure update failed", "attempt_id", record.ID, "error", auditErr)
+			return record, errors.Join(err, fmt.Errorf("finalize failed email audit: %w", auditErr))
 		}
 		return record, err
 	}
-	if auditErr := c.store.MarkEmailSendAttemptSent(ctx, record.ID); auditErr != nil {
+	finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+	auditErr := c.store.MarkEmailSendAttemptSent(finalizeCtx, record.ID)
+	cancelFinalize()
+	if auditErr != nil {
 		slog.Warn("loops: email audit sent update failed", "attempt_id", record.ID, "error", auditErr)
 	}
 	return record, nil

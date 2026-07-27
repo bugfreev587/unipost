@@ -285,6 +285,237 @@ func insertPendingRestrictionRecipient(t *testing.T, pool *pgxpool.Pool, id, use
 	}
 }
 
+func TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_sent", "worker_user_1", "sent@example.com", time.Now())
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("claim = %+v, want one recipient", work)
+	}
+
+	if err := store.MarkPublishingRestrictionEmailRecipientSent(ctx, work[0].RecipientID); err != nil {
+		t.Fatal(err)
+	}
+
+	var recipientStatus, campaignStatus string
+	var sentCount, pendingCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient.status, campaign.status, campaign.sent_count, campaign.pending_count
+		FROM platform_publishing_restriction_email_recipients recipient
+		JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
+		WHERE recipient.id='recipient_sent'
+	`).Scan(&recipientStatus, &campaignStatus, &sentCount, &pendingCount); err != nil {
+		t.Fatal(err)
+	}
+	if recipientStatus != "sent" || campaignStatus != "completed" || sentCount != 1 || pendingCount != 0 {
+		t.Fatalf(
+			"recipient=%q campaign=%q sent=%d pending=%d, want sent/completed/1/0",
+			recipientStatus,
+			campaignStatus,
+			sentCount,
+			pendingCount,
+		)
+	}
+}
+
+func TestPublishingRestrictionStaleSendingReconcilesSentAuditWithoutReclaiming(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_reconcile_sent", "worker_user_1", "sent@example.com", time.Now())
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("initial claim = %+v, want one recipient", work)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO email_send_attempts (
+			id, event_key, recipient_email, provider, idempotency_key,
+			delivery_class, status, sent_at
+		) VALUES (
+			'attempt_reconcile_sent', 'email.publishing_restriction.restriction_notice.v1',
+			'sent@example.com', 'loops', 'attempt-reconcile-sent',
+			'service_alert', 'sent', NOW()
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.LinkPublishingRestrictionEmailAttempt(
+		ctx,
+		work[0].RecipientID,
+		"attempt_reconcile_sent",
+		work[0].AttemptCount,
+		work[0].AttemptGeneration,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET claimed_at=NOW()-INTERVAL '20 minutes'
+		WHERE id='recipient_reconcile_sent'
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	work, err = store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 0 {
+		t.Fatalf("reconciliation reclaimed work for a second provider send: %+v", work)
+	}
+	var recipientStatus, campaignStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient.status, campaign.status
+		FROM platform_publishing_restriction_email_recipients recipient
+		JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
+		WHERE recipient.id='recipient_reconcile_sent'
+	`).Scan(&recipientStatus, &campaignStatus); err != nil {
+		t.Fatal(err)
+	}
+	if recipientStatus != "sent" || campaignStatus != "completed" {
+		t.Fatalf("recipient=%q campaign=%q, want sent/completed", recipientStatus, campaignStatus)
+	}
+}
+
+func TestPublishingRestrictionRecipientSentRecoversAfterTransientCampaignRefreshFailure(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_refresh_retry", "worker_user_1", "sent@example.com", time.Now())
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("initial claim = %+v, want one recipient", work)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO email_send_attempts (
+			id, event_key, recipient_email, provider, idempotency_key,
+			delivery_class, status, sent_at
+		) VALUES (
+			'attempt_refresh_retry', 'email.publishing_restriction.restriction_notice.v1',
+			'sent@example.com', 'loops', 'attempt-refresh-retry',
+			'service_alert', 'sent', NOW()
+		);
+		CREATE FUNCTION fail_campaign_refresh() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'campaign refresh unavailable';
+		END
+		$$;
+		CREATE TRIGGER fail_campaign_refresh
+		BEFORE UPDATE ON platform_publishing_restriction_email_campaigns
+		FOR EACH ROW EXECUTE FUNCTION fail_campaign_refresh();
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.LinkPublishingRestrictionEmailAttempt(
+		ctx,
+		work[0].RecipientID,
+		"attempt_refresh_retry",
+		work[0].AttemptCount,
+		work[0].AttemptGeneration,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	markErr := store.MarkPublishingRestrictionEmailRecipientSent(ctx, work[0].RecipientID)
+	if markErr == nil || !strings.Contains(markErr.Error(), "campaign refresh unavailable") {
+		t.Fatalf("sent transition error = %v, want campaign refresh failure", markErr)
+	}
+	var statusAfterRollback string
+	if err := pool.QueryRow(ctx, `
+		SELECT status FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_refresh_retry'
+	`).Scan(&statusAfterRollback); err != nil {
+		t.Fatal(err)
+	}
+	if statusAfterRollback != "sending" {
+		t.Fatalf("recipient status after rollback = %q, want sending", statusAfterRollback)
+	}
+	_, err = pool.Exec(ctx, `
+		DROP TRIGGER fail_campaign_refresh ON platform_publishing_restriction_email_campaigns;
+		UPDATE platform_publishing_restriction_email_recipients
+		SET claimed_at=NOW()-INTERVAL '20 minutes'
+		WHERE id='recipient_refresh_retry';
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	work, err = store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 0 {
+		t.Fatalf("recovery reclaimed recipient for a duplicate provider send: %+v", work)
+	}
+	var recipientStatus, campaignStatus string
+	if err := pool.QueryRow(ctx, `
+		SELECT recipient.status, campaign.status
+		FROM platform_publishing_restriction_email_recipients recipient
+		JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
+		WHERE recipient.id='recipient_refresh_retry'
+	`).Scan(&recipientStatus, &campaignStatus); err != nil {
+		t.Fatal(err)
+	}
+	if recipientStatus != "sent" || campaignStatus != "completed" {
+		t.Fatalf("recipient=%q campaign=%q, want sent/completed", recipientStatus, campaignStatus)
+	}
+}
+
+func TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_prior_refresh", "worker_user_1", "sent@example.com", time.Now())
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='sent', sent_at=NOW(), claimed_at=NULL
+		WHERE id='recipient_prior_refresh';
+		UPDATE platform_publishing_restriction_email_campaigns
+		SET status='running', pending_count=1, sent_count=0
+		WHERE id='worker_campaign';
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 0 {
+		t.Fatalf("claim returned already-sent work: %+v", work)
+	}
+	var status string
+	var sentCount, pendingCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT status, sent_count, pending_count
+		FROM platform_publishing_restriction_email_campaigns
+		WHERE id='worker_campaign'
+	`).Scan(&status, &sentCount, &pendingCount); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" || sentCount != 1 || pendingCount != 0 {
+		t.Fatalf("campaign=%q sent=%d pending=%d, want completed/1/0", status, sentCount, pendingCount)
+	}
+}
+
 func TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction(t *testing.T) {
 	pool := openPublishingRestrictionWorkerIntegrationPool(t)
 	setupPublishingRestrictionWorkerSchema(t, pool)
