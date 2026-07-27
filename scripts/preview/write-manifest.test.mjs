@@ -39,6 +39,18 @@ test("creates a non-secret manifest for an explicitly staging-based Codex branch
   });
 });
 
+test("creates a non-secret manifest for the PR 270 hardening branch", () => {
+  assert.deepEqual(createPreviewManifest({
+    sha: "d".repeat(40),
+    branch: "codex/pr270-review-hardening",
+    apiURL: "https://api-pr-282.up.railway.app",
+  }), {
+    sha: "d".repeat(40),
+    branch: "codex/pr270-review-hardening",
+    apiURL: "https://api-pr-282.up.railway.app",
+  });
+});
+
 test("rejects persistent API targets", () => {
   for (const apiURL of [
     "https://api.unipost.dev",
