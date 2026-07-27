@@ -36,6 +36,7 @@ type PublishingRestrictionEmailStore interface {
 	LinkPublishingRestrictionEmailAttempt(context.Context, string, string, int, int) error
 	MarkPublishingRestrictionEmailRecipientSent(context.Context, string) error
 	MarkPublishingRestrictionEmailRecipientFailed(context.Context, string, string) error
+	MarkPublishingRestrictionEmailRecipientTerminalFailed(context.Context, string, string) error
 	MarkPublishingRestrictionEmailRecipientSkipped(context.Context, string, string) error
 	RefreshPublishingRestrictionEmailCampaign(context.Context, string) error
 }
@@ -155,7 +156,15 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 			)
 		})
 		if err != nil {
-			_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, err.Error())
+			if loops.IsSendOutcomeUnknown(err) {
+				_ = w.store.MarkPublishingRestrictionEmailRecipientTerminalFailed(
+					ctx,
+					recipient.RecipientID,
+					"send outcome unknown after provider request; manual review required: "+err.Error(),
+				)
+			} else {
+				_ = w.store.MarkPublishingRestrictionEmailRecipientFailed(ctx, recipient.RecipientID, err.Error())
+			}
 		} else {
 			_ = w.store.MarkPublishingRestrictionEmailRecipientSent(ctx, recipient.RecipientID)
 		}

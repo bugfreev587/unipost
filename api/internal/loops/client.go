@@ -26,6 +26,26 @@ type Client struct {
 	client  *http.Client
 }
 
+// SendOutcomeUnknownError means a provider request may have been accepted,
+// but no response reached the caller. Retrying it automatically could send a
+// duplicate.
+type SendOutcomeUnknownError struct {
+	Err error
+}
+
+func (e *SendOutcomeUnknownError) Error() string {
+	return fmt.Sprintf("loops: send outcome unknown after provider request: %v", e.Err)
+}
+
+func (e *SendOutcomeUnknownError) Unwrap() error {
+	return e.Err
+}
+
+func IsSendOutcomeUnknown(err error) bool {
+	var unknown *SendOutcomeUnknownError
+	return errors.As(err, &unknown)
+}
+
 func NewClient(cfg Config) *Client {
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {
@@ -133,7 +153,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, payload map[st
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("loops: http: %w", err)
+		return &SendOutcomeUnknownError{Err: err}
 	}
 	defer resp.Body.Close()
 

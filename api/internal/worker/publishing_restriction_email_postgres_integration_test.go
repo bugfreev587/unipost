@@ -5,6 +5,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"testing"
@@ -12,6 +13,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
 const publishingRestrictionWorkerIntegrationDatabaseEnv = "PUBLISHING_RESTRICTION_TEST_DATABASE_URL"
@@ -21,6 +24,16 @@ func openPublishingRestrictionWorkerIntegrationPool(t *testing.T) *pgxpool.Pool 
 	databaseURL := strings.TrimSpace(os.Getenv(publishingRestrictionWorkerIntegrationDatabaseEnv))
 	if databaseURL == "" {
 		t.Fatalf("%s is required and must point to an isolated PostgreSQL test service", publishingRestrictionWorkerIntegrationDatabaseEnv)
+	}
+
+	config, err := pgxpool.ParseConfig(databaseURL)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL integration URL: %v", err)
+	}
+	host := strings.TrimSpace(config.ConnConfig.Host)
+	ip := net.ParseIP(host)
+	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		t.Fatalf("%s must use a loopback host, got %q", publishingRestrictionWorkerIntegrationDatabaseEnv, host)
 	}
 
 	ctx := context.Background()
@@ -34,11 +47,6 @@ func openPublishingRestrictionWorkerIntegrationPool(t *testing.T) *pgxpool.Pool 
 		t.Fatalf("create isolated PostgreSQL schema: %v", err)
 	}
 
-	config, err := pgxpool.ParseConfig(databaseURL)
-	if err != nil {
-		admin.Close()
-		t.Fatalf("parse PostgreSQL integration URL: %v", err)
-	}
 	config.ConnConfig.RuntimeParams["search_path"] = schema
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
@@ -74,9 +82,27 @@ func applyWorkerMigrationUp(t *testing.T, pool *pgxpool.Pool, filename string) {
 func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
-		CREATE TABLE users (id TEXT PRIMARY KEY);
+		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT);
 		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
 		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
+		CREATE TABLE subscriptions (
+			workspace_id TEXT NOT NULL,
+			plan_id TEXT NOT NULL,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE TABLE workspace_members (
+			workspace_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			status TEXT NOT NULL
+		);
+		CREATE TABLE social_accounts (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			platform TEXT NOT NULL,
+			status TEXT NOT NULL,
+			disconnected_at TIMESTAMPTZ
+		);
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -102,6 +128,138 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	`)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	insertPendingRestrictionRecipient(t, pool, "recipient_manual_retry", "worker_user_1", "owner@example.com", time.Now())
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restrictions
+		SET enabled=TRUE, cycle_id='worker_cycle'
+		WHERE platform='tiktok';
+		UPDATE users SET email='owner@example.com' WHERE id='worker_user_1';
+		UPDATE platform_publishing_restriction_email_recipients
+		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
+		WHERE id='recipient_manual_retry';
+		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
+		INSERT INTO social_accounts (id, workspace_id, platform, status)
+		VALUES ('social_1', 'workspace_1', 'tiktok', 'active');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewPostgresPublishingRestrictionEmailStore(pool)
+	firstClaim, err := store.ClaimPublishingRestrictionEmailRecipients(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstClaim) != 1 {
+		t.Fatalf("first claim = %+v, want one recipient", firstClaim)
+	}
+	first := firstClaim[0]
+	firstAuditKey := fmt.Sprintf("%s:g%d:a%d", first.IdempotencyKey, first.AttemptGeneration, first.AttemptCount)
+	if first.AttemptGeneration != 1 || first.AttemptCount != 1 {
+		t.Fatalf("first attempt generation/count = %d/%d, want 1/1", first.AttemptGeneration, first.AttemptCount)
+	}
+	var nextAttemptBefore time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT next_attempt_at
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_manual_retry'
+	`).Scan(&nextAttemptBefore); err != nil {
+		t.Fatal(err)
+	}
+
+	terminalReason := "send outcome unknown after provider request; manual review required"
+	if err := store.MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx, first.RecipientID, terminalReason); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RefreshPublishingRestrictionEmailCampaign(ctx, first.CampaignID); err != nil {
+		t.Fatal(err)
+	}
+	var status, lastError string
+	var retryable bool
+	var claimedAt *time.Time
+	var nextAttemptAfter time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT status, retryable, claimed_at, last_error, next_attempt_at
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_manual_retry'
+	`).Scan(&status, &retryable, &claimedAt, &lastError, &nextAttemptAfter); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" || retryable || claimedAt != nil || !strings.Contains(lastError, "manual review required") {
+		t.Fatalf("terminal recipient status=%q retryable=%v claimed_at=%v error=%q", status, retryable, claimedAt, lastError)
+	}
+	if !nextAttemptAfter.Equal(nextAttemptBefore) {
+		t.Fatalf("terminal failure changed next_attempt_at from %v to %v", nextAttemptBefore, nextAttemptAfter)
+	}
+
+	campaignStore := publishingrestrictions.NewPostgresStore(pool)
+	if _, err := campaignStore.RetryFailedCampaign(ctx, "tiktok", first.CampaignID); err != nil {
+		t.Fatalf("retry failed campaign: %v", err)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO email_send_attempts (
+			id, event_key, recipient_email, provider, idempotency_key,
+			delivery_class, status
+		) VALUES (
+			'attempt_1', 'email.publishing_restriction.restriction_notice.v1',
+			'owner@example.com', 'loops', 'fixture-audit-attempt-key',
+			'service_alert', 'pending'
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &captureRestrictionCampaignSender{}
+	worker := NewPublishingRestrictionEmailWorker(store, sender, "restriction-template", "recovery-template")
+	if err := worker.ProcessBatch(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.emails) != 1 {
+		var diagnosticRecipientStatus, diagnosticRecipientError, diagnosticCampaignStatus string
+		if diagnosticErr := pool.QueryRow(ctx, `
+			SELECT recipient.status, COALESCE(recipient.last_error, ''), campaign.status
+			FROM platform_publishing_restriction_email_recipients recipient
+			JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
+			WHERE recipient.id='recipient_manual_retry'
+		`).Scan(&diagnosticRecipientStatus, &diagnosticRecipientError, &diagnosticCampaignStatus); diagnosticErr != nil {
+			t.Fatalf("manual retry sender attempts = %d; diagnostics failed: %v", len(sender.emails), diagnosticErr)
+		}
+		t.Fatalf(
+			"manual retry sender attempts = %d, want exactly 1; recipient status=%q error=%q campaign status=%q",
+			len(sender.emails), diagnosticRecipientStatus, diagnosticRecipientError, diagnosticCampaignStatus,
+		)
+	}
+	retried := sender.emails[0]
+	if retried.IdempotencyKey != first.IdempotencyKey {
+		t.Fatalf("provider idempotency key changed from %q to %q", first.IdempotencyKey, retried.IdempotencyKey)
+	}
+	if retried.Audit.AttemptIdempotencyKey == firstAuditKey {
+		t.Fatalf("audit attempt key did not change from %q", firstAuditKey)
+	}
+	wantRetryAuditKey := first.IdempotencyKey + ":g2:a1"
+	if retried.Audit.AttemptIdempotencyKey != wantRetryAuditKey {
+		t.Fatalf("manual retry audit key = %q, want %q", retried.Audit.AttemptIdempotencyKey, wantRetryAuditKey)
+	}
+	var retriedGeneration, retriedAttemptCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT attempt_generation, attempt_count
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_manual_retry'
+	`).Scan(&retriedGeneration, &retriedAttemptCount); err != nil {
+		t.Fatal(err)
+	}
+	if retriedGeneration != 2 || retriedAttemptCount != 1 {
+		t.Fatalf("manual retry generation/count = %d/%d, want 2/1", retriedGeneration, retriedAttemptCount)
 	}
 }
 

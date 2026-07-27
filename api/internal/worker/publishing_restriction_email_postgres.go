@@ -245,6 +245,15 @@ func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmail
 	return err
 }
 
+func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx context.Context, recipientID, reason string) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', retryable=FALSE, claimed_at=NULL, last_error=$2, updated_at=NOW()
+		WHERE id=$1 AND status='sending'
+	`, recipientID, reason)
+	return err
+}
+
 func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientSkipped(ctx context.Context, recipientID, reason string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE platform_publishing_restriction_email_recipients SET status='skipped_ineligible', claimed_at=NULL, last_error=$2, updated_at=NOW() WHERE id=$1 AND status='sending'`, recipientID, reason)
 	return err
