@@ -191,6 +191,115 @@ func TestSyncPostMediaRetentionForPublishingRestrictionUsesFailureTimePlusSixtyD
 	}
 }
 
+func TestStrictPublishingRestrictionRetentionUsesFailureTimePlusSixtyDays(t *testing.T) {
+	post := mediaRetentionPost(t, "failed")
+	dbtx := &mediaRetentionTestDB{planID: "free"}
+	handler := &SocialPostHandler{queries: db.New(dbtx), quota: quota.NewChecker(db.New(dbtx))}
+	failedAt := time.Date(2026, 7, 26, 18, 30, 0, 0, time.UTC)
+
+	err := handler.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+		context.Background(), post, post.Status, failedAt,
+	)
+	if err != nil {
+		t.Fatalf("strict retention: %v", err)
+	}
+	if len(dbtx.upserts) != 2 {
+		t.Fatalf("upserts=%d, want 2", len(dbtx.upserts))
+	}
+	for _, upsert := range dbtx.upserts {
+		want := failedAt.Add(60 * 24 * time.Hour)
+		if upsert.RetentionReason != "publishing_restriction" ||
+			!upsert.CleanupAfterAt.Valid || !upsert.CleanupAfterAt.Time.Equal(want) {
+			t.Fatalf("strict retention upsert=%+v, want publishing_restriction through %v", upsert, want)
+		}
+	}
+}
+
+func TestStrictPublishingRestrictionRetentionFailsAtEveryLedgerBoundary(t *testing.T) {
+	databaseUnavailable := errors.New("database unavailable")
+	noMediaMetadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{
+		AccountID: "acct_1",
+		Caption:   "no media",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		mutate  func(*db.SocialPost, *mediaRetentionTestDB)
+		wantErr error
+	}{
+		{
+			name: "metadata decode",
+			mutate: func(post *db.SocialPost, _ *mediaRetentionTestDB) {
+				post.Metadata = []byte(`{"schema_version":2,"platform_posts":[`)
+			},
+			wantErr: errInvalidPostMediaMetadata,
+		},
+		{
+			name: "delete stale usages",
+			mutate: func(_ *db.SocialPost, dbtx *mediaRetentionTestDB) {
+				dbtx.deleteExceptErr = databaseUnavailable
+			},
+			wantErr: databaseUnavailable,
+		},
+		{
+			name: "delete all usages for no-media post",
+			mutate: func(post *db.SocialPost, dbtx *mediaRetentionTestDB) {
+				post.Metadata = noMediaMetadata
+				dbtx.deleteAllErr = databaseUnavailable
+			},
+			wantErr: databaseUnavailable,
+		},
+		{
+			name: "upsert database failure",
+			mutate: func(_ *db.SocialPost, dbtx *mediaRetentionTestDB) {
+				dbtx.upsertErr = databaseUnavailable
+			},
+			wantErr: databaseUnavailable,
+		},
+		{
+			name: "upsert cleanup race",
+			mutate: func(_ *db.SocialPost, dbtx *mediaRetentionTestDB) {
+				dbtx.upsertErr = pgx.ErrNoRows
+			},
+			wantErr: pgx.ErrNoRows,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			post := mediaRetentionPost(t, "failed")
+			dbtx := &mediaRetentionTestDB{}
+			test.mutate(&post, dbtx)
+			handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+			err := handler.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+				context.Background(), post, post.Status, time.Now(),
+			)
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("strict retention error=%v, want %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestOrdinaryMediaRetentionRemainsBestEffortAcrossLedgerFailures(t *testing.T) {
+	databaseUnavailable := errors.New("database unavailable")
+	dbtx := &mediaRetentionTestDB{
+		deleteExceptErr: databaseUnavailable,
+		upsertErr:       databaseUnavailable,
+	}
+	handler := &SocialPostHandler{queries: db.New(dbtx)}
+
+	handler.syncPostMediaRetention(context.Background(), mediaRetentionPost(t, "published"), "published")
+
+	if dbtx.upsertCalls != 2 {
+		t.Fatalf("ordinary retention upsert attempts=%d, want both media attempted after best-effort failures", dbtx.upsertCalls)
+	}
+}
+
 func TestResultTransitionPreservesParentWidePublishingRestrictionDeadline(t *testing.T) {
 	post := mediaRetentionPost(t, "partial")
 	wantDeadline := time.Date(2026, 9, 24, 18, 30, 0, 0, time.UTC)
@@ -359,14 +468,18 @@ type mediaRetentionTestDB struct {
 	planID            string
 	retentionDeadline pgtype.Timestamptz
 	upserts           []db.UpsertMediaPostUsageParams
+	deleteAllErr      error
+	deleteExceptErr   error
+	upsertErr         error
+	upsertCalls       int
 }
 
 func (f *mediaRetentionTestDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
 	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPostExcept"):
-		return pgconn.CommandTag{}, nil
+		return pgconn.CommandTag{}, f.deleteExceptErr
 	case strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"):
-		return pgconn.CommandTag{}, nil
+		return pgconn.CommandTag{}, f.deleteAllErr
 	default:
 		return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
 	}
@@ -385,6 +498,10 @@ func (f *mediaRetentionTestDB) QueryRow(_ context.Context, query string, args ..
 	case strings.Contains(query, "-- name: GetPostPublishingRestrictionMediaRetention"):
 		return scheduledIdempotencyRow{values: []any{f.retentionDeadline}}
 	case strings.Contains(query, "-- name: UpsertMediaPostUsage"):
+		f.upsertCalls++
+		if f.upsertErr != nil {
+			return scheduledIdempotencyRow{err: f.upsertErr}
+		}
 		f.upserts = append(f.upserts, db.UpsertMediaPostUsageParams{
 			MediaID:         args[0].(string),
 			WorkspaceID:     args[1].(string),
