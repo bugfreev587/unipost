@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -149,19 +150,22 @@ func (h *SocialPostHandler) loadDBAccountsByIDs(ctx context.Context, workspaceID
 }
 
 func summarizeAccountValidation(dbAcc db.SocialAccount, ok bool, fallback platform.ValidateAccount) (platformName string, err error) {
-	if ok {
-		platformName = dbAcc.Platform
-		if socialAccountDisconnectedForPublish(dbAcc, true) {
-			return platformName, fmt.Errorf("account is disconnected")
-		}
-		return platformName, nil
-	}
+	// Preserve an invalid admission snapshot even if the account changes while
+	// this request is being persisted. Otherwise a missing/disconnected target
+	// could reconnect after policy and quota checks and become publishable here.
 	platformName = fallback.Platform
 	if fallback.Platform == "" {
 		return platformName, fmt.Errorf("account not found")
 	}
 	if fallback.Disconnected {
 		return platformName, fmt.Errorf("account is disconnected")
+	}
+	if ok {
+		platformName = dbAcc.Platform
+		if socialAccountDisconnectedForPublish(dbAcc, true) {
+			return platformName, fmt.Errorf("account is disconnected")
+		}
+		return platformName, nil
 	}
 	return platformName, fmt.Errorf("account not found")
 }
@@ -198,6 +202,24 @@ func evaluateQueuedDeliveryTargets(
 		})
 	}
 	return evaluations
+}
+
+func hasRestrictedPublishingTarget(blockedTargets map[string]publishingrestrictions.Decision) bool {
+	for _, decision := range blockedTargets {
+		if decision.Restricted {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *SocialPostHandler) withQueueQueries(queries *db.Queries) *SocialPostHandler {
+	clone := *h
+	clone.queries = queries
+	if h.quota != nil {
+		clone.quota = quota.NewChecker(queries)
+	}
+	return &clone
 }
 
 func (h *SocialPostHandler) enqueueParsedPostDeliveries(
@@ -308,9 +330,12 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	}
 	post.Status = newStatus
 	post.PublishedAt = pgtype.Timestamptz{}
-	h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	if !policyFailureAt.IsZero() {
-		h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, newStatus, policyFailureAt)
+		if err := h.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(ctx, post, newStatus, policyFailureAt); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	}
 	if newStatus == "failed" && len(failureSummaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
@@ -323,6 +348,30 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 }
 
 func (h *SocialPostHandler) queueImmediatePost(
+	ctx context.Context,
+	workspaceID string,
+	parsed parsedRequest,
+	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
+) (socialPostResponse, error) {
+	var response socialPostResponse
+	var err error
+	if hasRestrictedPublishingTarget(blockedTargets) {
+		err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+			var txErr error
+			response, txErr = h.withQueueQueries(txQueries).queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
+			return txErr
+		})
+	} else {
+		response, err = h.queueImmediatePostInTransaction(ctx, workspaceID, parsed, accountMap, blockedTargets)
+	}
+	if err == nil {
+		h.logQueuedPost(ctx, workspaceID, response.ID, "immediate", parsed.Posts, len(response.Results), response.ActiveJobCount)
+	}
+	return response, err
+}
+
+func (h *SocialPostHandler) queueImmediatePostInTransaction(
 	ctx context.Context,
 	workspaceID string,
 	parsed parsedRequest,
@@ -358,21 +407,6 @@ func (h *SocialPostHandler) queueImmediatePost(
 	if err != nil {
 		return socialPostResponse{}, err
 	}
-	h.logPublishingEvent(ctx, integrationlogs.Event{
-		WorkspaceID: workspaceID,
-		Level:       integrationlogs.LevelInfo,
-		Status:      integrationlogs.StatusSuccess,
-		Action:      integrationlogs.ActionPostPublishQueued,
-		Message:     "Queued post deliveries for publishing.",
-		PostID:      post.ID,
-		Metadata: map[string]any{
-			"mode":            "immediate",
-			"target_count":    len(parsed.Posts),
-			"queued_jobs":     len(jobs),
-			"result_count":    len(results),
-			"target_accounts": uniqueAccountIDs(parsed.Posts),
-		},
-	})
 	return h.socialPostResponseFromData(post, results, jobs, "async"), nil
 }
 
@@ -383,44 +417,150 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 	accountMap map[string]platform.ValidateAccount,
 	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
+	var response socialPostResponse
+	var err error
+	if hasRestrictedPublishingTarget(blockedTargets) {
+		err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+			var txErr error
+			response, txErr = h.withQueueQueries(txQueries).enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
+			return txErr
+		})
+	} else {
+		response, err = h.enqueueExistingPostDeliveriesInTransaction(ctx, post, parsed, accountMap, blockedTargets)
+	}
+	if err == nil {
+		h.logQueuedPost(ctx, post.WorkspaceID, post.ID, "draft_publish", parsed, len(response.Results), response.ActiveJobCount)
+	}
+	return response, err
+}
+
+func (h *SocialPostHandler) enqueueExistingPostDeliveriesInTransaction(
+	ctx context.Context,
+	post db.SocialPost,
+	parsed []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
+) (socialPostResponse, error) {
 	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
 	if err != nil {
 		return socialPostResponse{}, err
 	}
-	h.logPublishingEvent(ctx, integrationlogs.Event{
-		WorkspaceID: post.WorkspaceID,
-		Level:       integrationlogs.LevelInfo,
-		Status:      integrationlogs.StatusSuccess,
-		Action:      integrationlogs.ActionPostPublishQueued,
-		Message:     "Queued draft deliveries for publishing.",
-		PostID:      post.ID,
-		Metadata: map[string]any{
-			"mode":            "draft_publish",
-			"target_count":    len(parsed),
-			"queued_jobs":     len(jobs),
-			"result_count":    len(results),
-			"target_accounts": uniqueAccountIDs(parsed),
-		},
-	})
 	return h.socialPostResponseFromData(post, results, jobs, "async"), nil
 }
 
+func (h *SocialPostHandler) logQueuedPost(ctx context.Context, workspaceID, postID, mode string, posts []platform.PlatformPostInput, resultCount, jobCount int) {
+	message := "Queued post deliveries for publishing."
+	if mode == "draft_publish" {
+		message = "Queued draft deliveries for publishing."
+	}
+	h.logPublishingEvent(ctx, integrationlogs.Event{
+		WorkspaceID: workspaceID,
+		Level:       integrationlogs.LevelInfo,
+		Status:      integrationlogs.StatusSuccess,
+		Action:      integrationlogs.ActionPostPublishQueued,
+		Message:     message,
+		PostID:      postID,
+		Metadata: map[string]any{
+			"mode":            mode,
+			"target_count":    len(posts),
+			"queued_jobs":     jobCount,
+			"result_count":    resultCount,
+			"target_accounts": uniqueAccountIDs(posts),
+		},
+	})
+}
+
 func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.SocialPost) error {
+	outcome, err := h.enqueueClaimedScheduledPost(ctx, post)
+	if err != nil {
+		return err
+	}
+	h.applyScheduledEnqueueOutcome(ctx, outcome)
+	return outcome.terminalErr
+}
+
+type scheduledEnqueueOutcome struct {
+	terminalErr              error
+	retentionPost            db.SocialPost
+	retentionStatus          string
+	syncOrdinaryRetention    bool
+	blockedQuotaEmail        bool
+	blockedQuotaRequestedQty int
+}
+
+func (h *SocialPostHandler) applyScheduledEnqueueOutcome(ctx context.Context, outcome scheduledEnqueueOutcome) {
+	if outcome.syncOrdinaryRetention {
+		h.syncPostMediaRetention(ctx, outcome.retentionPost, outcome.retentionStatus)
+	}
+	if outcome.blockedQuotaEmail {
+		h.maybeSendFreePlanQuotaEmail(ctx, outcome.retentionPost.WorkspaceID, quotaemail.Evaluation{
+			Blocked:        true,
+			RequestedUnits: outcome.blockedQuotaRequestedQty,
+		})
+	}
+}
+
+// ClaimAndEnqueueScheduledPost keeps the scheduled->publishing claim, delivery
+// rows, parent terminal state, and strict restriction retention in one
+// transaction. Any failure leaves the post scheduled and eligible for the next
+// scheduler pass.
+func (h *SocialPostHandler) ClaimAndEnqueueScheduledPost(ctx context.Context, postID string) error {
+	preclaim, err := h.queries.GetSocialPostByID(ctx, postID)
+	if err != nil {
+		return err
+	}
+	periods := scheduledQuotaLockPeriods(preclaim, quota.PeriodForTime(time.Now().UTC()))
+	var outcome scheduledEnqueueOutcome
+	err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		for _, period := range periods {
+			if err := txQueries.LockScheduledQuotaPeriod(ctx, preclaim.WorkspaceID, period); err != nil {
+				return err
+			}
+		}
+		txHandler := h.withQueueQueries(txQueries)
+		claimed, err := txQueries.ClaimScheduledPost(ctx, postID)
+		if err != nil {
+			return err
+		}
+		if !sameScheduledQuotaPeriods(periods, scheduledQuotaLockPeriods(claimed, quota.PeriodForTime(time.Now().UTC()))) {
+			return errors.New("scheduled post period changed while acquiring quota locks")
+		}
+		outcome, err = txHandler.enqueueClaimedScheduledPost(withoutPostMediaRetentionSync(ctx), claimed)
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	h.applyScheduledEnqueueOutcome(ctx, outcome)
+	return outcome.terminalErr
+}
+
+func (h *SocialPostHandler) enqueueClaimedScheduledPost(ctx context.Context, post db.SocialPost) (scheduledEnqueueOutcome, error) {
+	outcome := scheduledEnqueueOutcome{retentionPost: post}
 	parentCaption := ""
 	if post.Caption.Valid {
 		parentCaption = post.Caption.String
 	}
 	parsed, err := platform.DecodePostMetadata(post.Metadata, parentCaption)
 	if err != nil || len(parsed) == 0 {
-		_ = h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+		if updateErr := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
 			ID:          post.ID,
 			Status:      "failed",
 			PublishedAt: pgtype.Timestamptz{},
-		})
+		}); updateErr != nil {
+			return outcome, updateErr
+		}
 		post.Status = "failed"
 		post.PublishedAt = pgtype.Timestamptz{}
 		h.syncPostMediaRetention(ctx, post, post.Status)
-		return fmt.Errorf("decode post metadata: %w", err)
+		if err == nil {
+			err = errors.New("post metadata contains no platform posts")
+		}
+		outcome.terminalErr = fmt.Errorf("decode post metadata: %w", err)
+		outcome.retentionPost = post
+		outcome.retentionStatus = post.Status
+		outcome.syncOrdinaryRetention = postMediaRetentionSyncSkipped(ctx)
+		return outcome, nil
 	}
 
 	accountMap := make(map[string]platform.ValidateAccount, len(parsed))
@@ -434,19 +574,85 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 	}
 	blockedTargets, policyErr := h.evaluatePublishingRestrictions(ctx, post.WorkspaceID, parsed, accountMap)
 	if policyErr != nil {
-		return policyErr
+		return outcome, policyErr
 	}
 	allowedTargets := allowedPublishingTargets(parsed, blockedTargets)
 	quotaUnits := countPublishQuotaUnits(allowedTargets, accountMap)
-	if status, blocked := h.checkFreePlanPostQuota(ctx, post.WorkspaceID, quotaUnits); quotaUnits > 0 && blocked {
-		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{
-			Blocked:        true,
-			RequestedUnits: quotaUnits,
-		})
-		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits)
+	executionPeriod := quota.PeriodForTime(time.Now().UTC())
+	additionalQuotaUnits := scheduledExecutionAdditionalQuotaUnits(post, parsed, accountMap, quotaUnits, executionPeriod)
+	if status, blocked := h.checkFreePlanPostQuotaForPeriod(ctx, post.WorkspaceID, additionalQuotaUnits, executionPeriod); quotaUnits > 0 && blocked {
+		if err := h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits); err != nil {
+			return outcome, err
+		}
+		post.Status = "failed"
+		post.PublishedAt = pgtype.Timestamptz{}
+		outcome.retentionPost = post
+		outcome.retentionStatus = post.Status
+		outcome.syncOrdinaryRetention = !hasRestrictedPublishingTarget(blockedTargets) && postMediaRetentionSyncSkipped(ctx)
+		outcome.blockedQuotaEmail = true
+		outcome.blockedQuotaRequestedQty = quotaUnits
+		return outcome, nil
 	}
-	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
-	return err
+	if err := h.queries.SetScheduledExecutionReservationPeriod(ctx, post.ID, executionPeriod); err != nil {
+		return outcome, err
+	}
+	_, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
+	if err != nil {
+		return outcome, err
+	}
+	post.Status = "publishing"
+	if len(jobs) == 0 {
+		post.Status = "failed"
+	}
+	post.PublishedAt = pgtype.Timestamptz{}
+	outcome.retentionPost = post
+	outcome.retentionStatus = post.Status
+	outcome.syncOrdinaryRetention = !hasRestrictedPublishingTarget(blockedTargets) && postMediaRetentionSyncSkipped(ctx)
+	return outcome, nil
+}
+
+func scheduledExecutionAdditionalQuotaUnits(
+	post db.SocialPost,
+	parsed []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	executionUnits int,
+	executionPeriod string,
+) int {
+	if post.ScheduledAt.Valid && quota.PeriodForTime(post.ScheduledAt.Time) != executionPeriod {
+		return max(executionUnits, 0)
+	}
+	reservedUnits := countPublishQuotaUnits(parsed, accountMap)
+	if snapshotUnits, ok := scheduledQuotaUnitsFromMetadata(post.Metadata); ok {
+		reservedUnits = snapshotUnits
+	}
+	return max(executionUnits-reservedUnits, 0)
+}
+
+func scheduledQuotaLockPeriods(post db.SocialPost, executionPeriod string) []string {
+	periods := []string{executionPeriod}
+	if post.ScheduledAt.Valid {
+		periods = append(periods, quota.PeriodForTime(post.ScheduledAt.Time))
+	}
+	sort.Strings(periods)
+	out := periods[:0]
+	for _, period := range periods {
+		if period != "" && (len(out) == 0 || out[len(out)-1] != period) {
+			out = append(out, period)
+		}
+	}
+	return out
+}
+
+func sameScheduledQuotaPeriods(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post db.SocialPost, parsed []platform.PlatformPostInput, accountMap map[string]platform.ValidateAccount, blockedTargets map[string]publishingrestrictions.Decision, status quota.QuotaStatus, requestedUnits int) error {
@@ -496,9 +702,12 @@ func (h *SocialPostHandler) failScheduledPostForQuota(ctx context.Context, post 
 	}
 	post.Status = "failed"
 	post.PublishedAt = pgtype.Timestamptz{}
-	h.syncPostMediaRetention(ctx, post, post.Status)
 	if policyFailed {
-		h.syncPostMediaRetentionForPublishingRestrictionStatusAt(ctx, post, post.Status, time.Now())
+		if err := h.syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(ctx, post, post.Status, time.Now()); err != nil {
+			return err
+		}
+	} else {
+		h.syncPostMediaRetention(ctx, post, post.Status)
 	}
 	if len(summaries) > 0 {
 		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
@@ -626,7 +835,7 @@ func markDeliveryJobFailedParams(job db.PostDeliveryJob, state string, failureSt
 // platform token (IG creation_id / TikTok publish_id). Only the IG and TikTok
 // adapters read these keys; every other adapter ignores them, so this is a
 // no-op for them.
-func (h *SocialPostHandler) attachPublishTokenResume(ctx context.Context, pp *platform.PlatformPostInput, res db.SocialPostResult) {
+func (h *SocialPostHandler) attachPublishTokenResume(ctx context.Context, pp *platform.PlatformPostInput, res db.SocialPostResult, job db.PostDeliveryJob) {
 	if h == nil || h.queries == nil || pp == nil {
 		return
 	}
@@ -642,8 +851,11 @@ func (h *SocialPostHandler) attachPublishTokenResume(ctx context.Context, pp *pl
 			return
 		}
 		if err := h.queries.SetSocialPostResultPublishToken(ctx, db.SetSocialPostResultPublishTokenParams{
-			ID:           resultID,
-			PublishToken: pgtype.Text{String: token, Valid: true},
+			ID:            resultID,
+			PublishToken:  pgtype.Text{String: token, Valid: true},
+			JobID:         job.ID,
+			LeaseOwner:    job.LeaseOwner,
+			LastAttemptAt: job.LastAttemptAt,
 		}); err != nil {
 			slog.Warn("publish token persist failed", "result_id", resultID, "error", err)
 		}
@@ -696,13 +908,22 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	// here (fresh from the DB, so it reflects the original's just-committed
 	// success) lets us skip the platform call when the result is already
 	// published, closing the job as succeeded instead of duplicating.
-	if res.Status == "published" {
-		slog.Info("delivery job: result already published, skipping duplicate publish",
+	if providerTerminalOrAccepted(res, job.Platform) {
+		slog.Info("delivery job: provider result already accepted, skipping duplicate publish",
 			"job_id", job.ID, "post_id", job.PostID, "result_id", res.ID)
-		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		converged, err := h.convergeProviderAcceptedDelivery(ctx, job)
+		if err != nil {
 			return err
 		}
-		return nil
+		if converged {
+			return nil
+		}
+		// The result changed after the optimistic read. Continue only from the
+		// fresh durable state observed under the post finalization lock.
+		res, err = h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: res.ID, PostID: post.ID})
+		if err != nil {
+			return err
+		}
 	}
 
 	pp, err := platformPostInputAtIndex(post, int(job.PostInputIndex))
@@ -710,13 +931,35 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		return h.finalizeJobLoadFailure(ctx, job, res, post, err)
 	}
 
-	dbAccounts := h.loadDBAccountsByIDs(ctx, post.WorkspaceID, []string{pp.AccountID})
-	accountMap := map[string]platform.ValidateAccount{}
-	if acc, ok := dbAccounts[pp.AccountID]; ok {
-		accountMap[pp.AccountID] = platform.ValidateAccount{
-			Platform:     acc.Platform,
-			Disconnected: socialAccountDisconnectedForPublish(acc, true),
+	acc, err := h.queries.GetSocialAccountByIDAndWorkspace(ctx, db.GetSocialAccountByIDAndWorkspaceParams{
+		ID:          pp.AccountID,
+		WorkspaceID: post.WorkspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return h.handleJobDispatchFailure(ctx, post, res, job, publishOneOutcome{
+				platform: job.Platform,
+				err:      errors.New("account not found"),
+			})
 		}
+		return err
+	}
+	unavailable := socialAccountUnavailableForDelivery(acc, true)
+	dbAccounts := map[string]db.SocialAccount{pp.AccountID: acc}
+	accountMap := map[string]platform.ValidateAccount{
+		pp.AccountID: {
+			Platform:     acc.Platform,
+			Disconnected: unavailable,
+		},
+	}
+	if unavailable {
+		delete(dbAccounts, pp.AccountID)
+	}
+	if account := accountMap[pp.AccountID]; account.Disconnected {
+		return h.handleJobDispatchFailure(ctx, post, res, job, publishOneOutcome{
+			platform: account.Platform,
+			err:      errors.New("account is disconnected"),
+		})
 	}
 
 	if shouldEvaluateDeliveryPublishingRestriction(res) {
@@ -733,7 +976,7 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 	// token a prior attempt persisted, and persist the token this attempt
 	// obtains, so a crash between "media uploaded" and "external_id recorded"
 	// re-uses the same container/publish_id instead of duplicating the post.
-	h.attachPublishTokenResume(ctx, &pp, res)
+	h.attachPublishTokenResume(ctx, &pp, res, job)
 
 	startedJob, err := h.queries.MarkPostDeliveryJobPlatformStarted(ctx, markDeliveryJobPlatformStartedParams(job))
 	if err != nil {
@@ -814,35 +1057,49 @@ func (h *SocialPostHandler) ProcessPostDeliveryJob(ctx context.Context, job db.P
 		},
 	}
 	var updated db.SocialPostResult
-	if status == "published" {
-		updated, err = h.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
-			ID:                    updateParams.ID,
-			Status:                updateParams.Status,
-			ExternalID:            updateParams.ExternalID,
-			ErrorMessage:          updateParams.ErrorMessage,
-			PublishedAt:           updateParams.PublishedAt,
-			Url:                   updateParams.Url,
-			DebugCurl:             updateParams.DebugCurl,
-			XCreditsCounted:       updateParams.XCreditsCounted,
-			XCreditOperation:      updateParams.XCreditOperation,
-			XCreditCatalogVersion: updateParams.XCreditCatalogVersion,
-			XCreditBillingMode:    updateParams.XCreditBillingMode,
-			WorkspaceID:           post.WorkspaceID,
-			Period:                quota.PeriodForTime(completedAt),
-			PostCount:             1,
-		})
-	} else {
-		updated, err = h.queries.UpdateSocialPostResultAfterRetry(ctx, updateParams)
-	}
+	newlyPublished := false
+	var pendingEvent *pendingParentPostStatusEvent
+	err = h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
+			return err
+		}
+		fresh, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: res.ID, PostID: post.ID})
+		if err != nil {
+			return err
+		}
+		if fresh.Status == "published" {
+			updated = fresh
+		} else if status == "published" {
+			updated, err = txQueries.UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
+				ID: updateParams.ID, Status: updateParams.Status, ExternalID: updateParams.ExternalID,
+				ErrorMessage: updateParams.ErrorMessage, PublishedAt: updateParams.PublishedAt,
+				Url: updateParams.Url, DebugCurl: updateParams.DebugCurl,
+				XCreditsCounted: updateParams.XCreditsCounted, XCreditOperation: updateParams.XCreditOperation,
+				XCreditCatalogVersion: updateParams.XCreditCatalogVersion, XCreditBillingMode: updateParams.XCreditBillingMode,
+				WorkspaceID: post.WorkspaceID, Period: quota.PeriodForTime(completedAt), PostCount: 1,
+			})
+			if err != nil {
+				return err
+			}
+			newlyPublished = true
+		} else {
+			updated, err = txQueries.UpdateSocialPostResultAfterRetry(ctx, updateParams)
+			if err != nil {
+				return err
+			}
+		}
+		if _, err := txQueries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, completedAt)); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		return err
+	})
 	if err != nil {
 		return err
 	}
-	if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, completedAt)); err != nil {
-		return err
-	}
-	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	h.refreshParentPostStatusContext(ctx, post, allResults)
-	if updated.Status == "published" {
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	if newlyPublished {
 		h.maybeSendFreePlanQuotaEmail(ctx, post.WorkspaceID, quotaemail.Evaluation{})
 		h.maybeEvaluatePaidQuota(ctx, post.WorkspaceID, quota.PeriodForTime(completedAt))
 	}
@@ -874,9 +1131,12 @@ func (h *SocialPostHandler) evaluateDeliveryPublishingRestriction(
 	if h == nil || h.publishingRestrictions == nil {
 		return publishingrestrictions.Decision{}, nil
 	}
+	if account.Disconnected {
+		return publishingrestrictions.Decision{}, nil
+	}
 	platformName := strings.ToLower(strings.TrimSpace(account.Platform))
 	if platformName == "" {
-		platformName = strings.ToLower(strings.TrimSpace(jobPlatform))
+		return publishingrestrictions.Decision{}, nil
 	}
 	return h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
 }
@@ -893,10 +1153,10 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		return fmt.Errorf("%w: post %s", errInvalidPostMediaMetadata, post.ID)
 	}
 	finalizedAt := time.Now()
-	_, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
+	params := db.FinalizeRestrictedPostDeliveryJobParams{
 		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
 		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),
-		ErrorMessage:     postfailures.ToText(publishingrestrictions.UserMessage),
+		ErrorMessage:     publishingrestrictions.UserMessage,
 		ID:               job.ID,
 		LeaseOwner:       job.LeaseOwner,
 		LastAttemptAt:    job.LastAttemptAt,
@@ -905,6 +1165,25 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		ErrorTemporality: postfailures.ToText(postfailures.ErrorTemporalityTemporary),
 		MediaIds:         mediaIDs,
 		CleanupAfterAt:   pgtype.Timestamptz{Time: finalizedAt.UTC().Add(60 * 24 * time.Hour), Valid: true},
+	}
+	var finalizedJob db.FinalizeRestrictedPostDeliveryJobRow
+	var pendingEvent *pendingParentPostStatusEvent
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		// This must be a separate statement from finalization. A concurrent
+		// waiter then evaluates all sibling jobs/results using a fresh
+		// READ COMMITTED snapshot after the previous finalizer commits.
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
+			return err
+		}
+		var finalizeErr error
+		finalizedJob, finalizeErr = txQueries.FinalizeRestrictedPostDeliveryJob(ctx, params)
+		if finalizeErr != nil {
+			return finalizeErr
+		}
+		if finalizedJob.ParentTransitioned && (finalizedJob.ParentCurrentStatus == "failed" || finalizedJob.ParentCurrentStatus == "partial") {
+			pendingEvent, finalizeErr = h.parentStatusEventFromQueries(ctx, txQueries, post.ID, finalizedJob.ParentCurrentStatus)
+		}
+		return finalizeErr
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -912,30 +1191,178 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 		}
 		return err
 	}
-	failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
-	h.recordPostFailureHistory(ctx, failure)
-	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
-		WorkspaceID:     post.WorkspaceID,
-		Level:           integrationlogs.LevelWarn,
-		Status:          integrationlogs.StatusError,
-		Action:          integrationlogs.ActionPostPublishPlatformFailed,
-		Message:         "Platform delivery blocked by publishing restriction.",
-		PostID:          post.ID,
-		SocialAccountID: res.SocialAccountID,
-		Platform:        decision.Platform,
-		ErrorCode:       publishingrestrictions.NormalizedCode,
-		Metadata: map[string]any{
-			"job_id":               job.ID,
-			"result_id":            res.ID,
-			"restriction_cycle_id": decision.CycleID,
-		},
-	}))
-	allResults, err := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	if err != nil {
-		return fmt.Errorf("list current results after restriction finalization: %w", err)
+	switch finalizedJob.State {
+	case "dead":
+		failure := publishingRestrictionFailure(post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, decision.Platform, decision.CycleID)
+		h.recordPostFailureHistory(ctx, failure)
+		h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
+			WorkspaceID:     post.WorkspaceID,
+			Level:           integrationlogs.LevelWarn,
+			Status:          integrationlogs.StatusError,
+			Action:          integrationlogs.ActionPostPublishPlatformFailed,
+			Message:         "Platform delivery blocked by publishing restriction.",
+			PostID:          post.ID,
+			SocialAccountID: res.SocialAccountID,
+			Platform:        decision.Platform,
+			ErrorCode:       publishingrestrictions.NormalizedCode,
+			Metadata: map[string]any{
+				"job_id":               job.ID,
+				"result_id":            res.ID,
+				"restriction_cycle_id": decision.CycleID,
+			},
+		}))
+	case "succeeded":
+		// A different delivery job already committed this shared result as
+		// published. Converge this duplicate job without recording a failure.
+	default:
+		return fmt.Errorf("unexpected restricted delivery finalization state %q", finalizedJob.State)
 	}
-	h.refreshParentPostStatusContext(withoutPostMediaRetentionSync(ctx), post, allResults)
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
 	return nil
+}
+
+func (h *SocialPostHandler) parentStatusEventFromQueries(ctx context.Context, queries *db.Queries, postID, status string) (*pendingParentPostStatusEvent, error) {
+	post, err := queries.GetSocialPostByID(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	results, err := queries.ListSocialPostResultsByPost(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := queries.ListPostDeliveryJobsByPost(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	parentVersion, err := queries.GetSocialPostProjectionVersion(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	pending := &pendingParentPostStatusEvent{
+		workspaceID:   post.WorkspaceID,
+		event:         eventForStatus(status),
+		response:      h.socialPostResponseFromData(post, results, jobs, "async"),
+		parentStatus:  status,
+		parentVersion: parentVersion,
+	}
+	if err := db.RecordPostStatusTransition(ctx, queries, post.ID, post.WorkspaceID, status, parentVersion, pending.event, pending.response); err != nil {
+		return nil, err
+	}
+	return pending, nil
+}
+
+func (h *SocialPostHandler) refreshTerminalParentPostStatusContext(
+	ctx context.Context,
+	post db.SocialPost,
+	_ []db.SocialPostResult,
+) error {
+	var pendingEvent *pendingParentPostStatusEvent
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
+			return err
+		}
+		var refreshErr error
+		pendingEvent, refreshErr = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		return refreshErr
+	})
+	if err != nil {
+		return err
+	}
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	return nil
+}
+
+func (h *SocialPostHandler) refreshTerminalParentPostStatusLocked(
+	ctx context.Context,
+	txQueries *db.Queries,
+	postID string,
+) (*pendingParentPostStatusEvent, error) {
+	// The lock is intentionally a separate statement. Re-read the parent
+	// and every sibling only after it is acquired so a waiter observes the
+	// prior finalizer's committed status, published_at, and retention state.
+	freshPost, err := txQueries.GetSocialPostByID(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	results, err := txQueries.ListSocialPostResultsByPost(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	return h.withQueueQueries(txQueries).
+		refreshParentPostStatusContextWithoutPublish(withoutPostMediaRetentionSync(ctx), freshPost, results)
+}
+
+// syncTerminalPostRetentionAfterCommit deliberately runs after the terminal
+// transaction. It reacquires the same post lock before re-reading the parent
+// projection and updating media usage, so a manual retry cannot activate media
+// between the retention snapshot and write. Retention remains best effort: a
+// ledger error never rolls back or disguises the durable provider result.
+func (h *SocialPostHandler) syncTerminalPostRetentionAfterCommit(ctx context.Context, postID string) {
+	if postMediaRetentionSyncSkipped(ctx) {
+		return
+	}
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, postID); err != nil {
+			return err
+		}
+		post, err := txQueries.GetSocialPostByID(ctx, postID)
+		if err != nil {
+			return err
+		}
+		results, err := txQueries.ListSocialPostResultsByPost(ctx, postID)
+		if err != nil {
+			return err
+		}
+		h.withQueueQueries(txQueries).syncPostMediaRetentionAfterResultTransition(ctx, post, post.Status, results)
+		return nil
+	})
+	if err != nil {
+		slog.Warn("terminal media retention: locked sync failed", "post_id", postID, "error", err)
+	}
+}
+
+func providerAcceptedProcessing(result db.SocialPostResult, platformName string) bool {
+	return strings.EqualFold(strings.TrimSpace(platformName), "facebook") &&
+		result.Status == "processing" && result.ExternalID.Valid && strings.TrimSpace(result.ExternalID.String) != ""
+}
+
+func providerTerminalOrAccepted(result db.SocialPostResult, platformName string) bool {
+	return result.Status == "published" || providerAcceptedProcessing(result, platformName)
+}
+
+func (h *SocialPostHandler) convergeProviderAcceptedDelivery(ctx context.Context, job db.PostDeliveryJob) (bool, error) {
+	var pendingEvent *pendingParentPostStatusEvent
+	converged := false
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, job.PostID); err != nil {
+			return err
+		}
+		fresh, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
+			ID: job.SocialPostResultID, PostID: job.PostID,
+		})
+		if err != nil {
+			return err
+		}
+		if !providerTerminalOrAccepted(fresh, job.Platform) {
+			return nil
+		}
+		if _, err := txQueries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, job.PostID)
+		if err != nil {
+			return err
+		}
+		converged = true
+		return nil
+	})
+	if err != nil || !converged {
+		return converged, err
+	}
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, job.PostID)
+	return true, nil
 }
 
 func (h *SocialPostHandler) recordPostFailureHistory(ctx context.Context, failure db.CreatePostFailureParams) {
@@ -953,28 +1380,74 @@ func (h *SocialPostHandler) recordPostFailureHistory(ctx context.Context, failur
 
 func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.PostDeliveryJob, res db.SocialPostResult, post db.SocialPost, dispatchErr error) error {
 	msg := sanitizeDeliveryErrorText(dispatchErr.Error())
-	_, _ = h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-		ID:           res.ID,
-		Status:       "failed",
-		ExternalID:   pgtype.Text{},
-		ErrorMessage: pgtype.Text{String: msg, Valid: true},
-		PublishedAt:  pgtype.Timestamptz{},
-		Url:          pgtype.Text{},
-		DebugCurl:    pgtype.Text{},
-	})
-	_, _ = h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-		job,
-		"dead",
-		pgtype.Text{String: "dispatch_prepare", Valid: true},
-		pgtype.Text{String: "validation_error", Valid: true},
-		pgtype.Text{},
-		pgtype.Text{String: msg, Valid: true},
-		pgtype.Timestamptz{},
-	))
 	failure := postfailures.BuildParams(
 		post.ID, res.ID, post.WorkspaceID, res.SocialAccountID, job.Platform, "dispatch_prepare", msg, msg,
 	)
-	h.recordPostFailure(ctx, failure)
+	var pendingEvent *pendingParentPostStatusEvent
+	failureApplied := false
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
+			return err
+		}
+		freshResult, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: res.ID, PostID: post.ID})
+		if err != nil {
+			return err
+		}
+		if providerTerminalOrAccepted(freshResult, job.Platform) {
+			if _, err := txQueries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+			return err
+		}
+		// Claim the terminal transition before touching the shared result. If
+		// this lease is stale, MarkPostDeliveryJobFailed returns no rows and the
+		// former owner must not overwrite the current owner's result or parent.
+		if _, err := txQueries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+			job,
+			"dead",
+			pgtype.Text{String: "dispatch_prepare", Valid: true},
+			pgtype.Text{String: "validation_error", Valid: true},
+			pgtype.Text{},
+			pgtype.Text{String: msg, Valid: true},
+			pgtype.Timestamptz{},
+		)); err != nil {
+			return err
+		}
+		if _, err := txQueries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+			ID:           res.ID,
+			Status:       "failed",
+			ExternalID:   pgtype.Text{},
+			ErrorMessage: pgtype.Text{String: msg, Valid: true},
+			PublishedAt:  pgtype.Timestamptz{},
+			Url:          pgtype.Text{},
+			DebugCurl:    pgtype.Text{},
+		}); err != nil {
+			return err
+		}
+		if err := txQueries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+			return err
+		}
+		if _, err := txQueries.CreatePostFailure(ctx, failure); err != nil {
+			return err
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		if err == nil {
+			failureApplied = true
+		}
+		return err
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return err
+	}
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	if !failureApplied {
+		return nil
+	}
 	h.logPublishingEvent(ctx, workerPublishingEvent(integrationlogs.Event{
 		WorkspaceID:     post.WorkspaceID,
 		Level:           integrationlogs.LevelError,
@@ -994,8 +1467,6 @@ func (h *SocialPostHandler) finalizeJobLoadFailure(ctx context.Context, job db.P
 			"error": msg,
 		},
 	}))
-	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	h.refreshParentPostStatusContext(ctx, post, allResults)
 	h.syncLoopsPostFailed(ctx, post, res, job, failure, false)
 	return nil
 }
@@ -1031,7 +1502,7 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 		resultStatus = "processing"
 	}
 
-	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+	resultUpdate := db.UpdateSocialPostResultAfterRetryParams{
 		ID:              res.ID,
 		Status:          resultStatus,
 		ExternalID:      pgtype.Text{},
@@ -1052,16 +1523,63 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			String: oc.xCreditBillingMode,
 			Valid:  oc.xCreditBillingMode != "",
 		},
-	}); err != nil {
-		return err
 	}
-	h.recordPostFailure(ctx, failure)
-
-	if failure.IsRetriable {
-		if job.Kind == "dispatch" {
-			if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+	var pendingEvent *pendingParentPostStatusEvent
+	failureApplied := false
+	transitionErr := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
+			return err
+		}
+		freshResult, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: res.ID, PostID: post.ID})
+		if err != nil {
+			return err
+		}
+		if providerTerminalOrAccepted(freshResult, job.Platform) {
+			if _, err := txQueries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+			return err
+		}
+		// Win the lease-checked job transition before mutating the result that
+		// may already belong to a newer attempt. The transaction makes a lost
+		// lease a zero-side-effect no-op, including retry creation.
+		if failure.IsRetriable {
+			if job.Kind == "dispatch" {
+				if _, err := txQueries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+					job,
+					"failed",
+					pgtype.Text{String: failure.FailureStage, Valid: true},
+					pgtype.Text{String: failure.ErrorCode, Valid: true},
+					failure.PlatformErrorCode,
+					pgtype.Text{String: errMsg, Valid: true},
+					pgtype.Timestamptz{},
+				)); err != nil {
+					return err
+				}
+			} else {
+				nextRunAt := pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true}
+				state := "pending"
+				if job.Attempts >= job.MaxAttempts {
+					state = "dead"
+					nextRunAt = pgtype.Timestamptz{}
+				}
+				if _, err := txQueries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+					job,
+					state,
+					pgtype.Text{String: failure.FailureStage, Valid: true},
+					pgtype.Text{String: failure.ErrorCode, Valid: true},
+					failure.PlatformErrorCode,
+					pgtype.Text{String: errMsg, Valid: true},
+					nextRunAt,
+				)); err != nil {
+					return err
+				}
+			}
+		} else {
+			if _, err := txQueries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
 				job,
-				"failed",
+				"dead",
 				pgtype.Text{String: failure.FailureStage, Valid: true},
 				pgtype.Text{String: failure.ErrorCode, Valid: true},
 				failure.PlatformErrorCode,
@@ -1070,7 +1588,19 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			)); err != nil {
 				return err
 			}
-			if _, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
+		}
+
+		if _, err := txQueries.UpdateSocialPostResultAfterRetry(ctx, resultUpdate); err != nil {
+			return err
+		}
+		if err := txQueries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(res.ID, failure)); err != nil {
+			return err
+		}
+		if _, err := txQueries.CreatePostFailure(ctx, failure); err != nil {
+			return err
+		}
+		if failure.IsRetriable && job.Kind == "dispatch" {
+			if _, err := txQueries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
 				PostID:             post.ID,
 				SocialPostResultID: res.ID,
 				WorkspaceID:        post.WorkspaceID,
@@ -1089,41 +1619,25 @@ func (h *SocialPostHandler) handleJobDispatchFailure(ctx context.Context, post d
 			}); err != nil {
 				return err
 			}
-		} else {
-			nextRunAt := pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true}
-			state := "pending"
-			if job.Attempts >= job.MaxAttempts {
-				state = "dead"
-				nextRunAt = pgtype.Timestamptz{}
-			}
-			if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-				job,
-				state,
-				pgtype.Text{String: failure.FailureStage, Valid: true},
-				pgtype.Text{String: failure.ErrorCode, Valid: true},
-				failure.PlatformErrorCode,
-				pgtype.Text{String: errMsg, Valid: true},
-				nextRunAt,
-			)); err != nil {
-				return err
-			}
 		}
-	} else {
-		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-			job,
-			"dead",
-			pgtype.Text{String: failure.FailureStage, Valid: true},
-			pgtype.Text{String: failure.ErrorCode, Valid: true},
-			failure.PlatformErrorCode,
-			pgtype.Text{String: errMsg, Valid: true},
-			pgtype.Timestamptz{},
-		)); err != nil {
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		if err != nil {
 			return err
 		}
+		failureApplied = true
+		return nil
+	})
+	if transitionErr != nil {
+		if errors.Is(transitionErr, pgx.ErrNoRows) {
+			return nil
+		}
+		return transitionErr
 	}
-
-	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	h.refreshParentPostStatusContext(ctx, post, allResults)
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	if !failureApplied {
+		return nil
+	}
 	logLevel := integrationlogs.LevelWarn
 	if !failure.IsRetriable || (job.Kind == "retry" && job.Attempts >= job.MaxAttempts) {
 		logLevel = integrationlogs.LevelError
@@ -1219,13 +1733,11 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 	// If a prior attempt already published this result, do not re-queue a
 	// retry: doing so would duplicate the post on the platform. Close the
 	// stale job out as succeeded to reflect reality instead.
-	if result.Status == "published" {
-		slog.Info("stale recovery: result already published, closing job without retry",
+	if providerTerminalOrAccepted(result, job.Platform) {
+		slog.Info("stale recovery: provider result already accepted, closing job without retry",
 			"job_id", job.ID, "post_id", job.PostID, "result_id", result.ID)
-		if _, err := h.queries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		return nil
+		_, err := h.convergeProviderAcceptedDelivery(ctx, job)
+		return err
 	}
 
 	errMsg := fmt.Sprintf("delivery attempt stalled after %s and was re-queued automatically", staleDeliveryAttemptTimeout.Round(time.Second))
@@ -1244,7 +1756,7 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 		resultStatus = "processing"
 	}
 
-	if _, err := h.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+	resultUpdate := db.UpdateSocialPostResultAfterRetryParams{
 		ID:           result.ID,
 		Status:       resultStatus,
 		ExternalID:   pgtype.Text{},
@@ -1252,78 +1764,117 @@ func (h *SocialPostHandler) recoverStaleDeliveryJob(ctx context.Context, job db.
 		PublishedAt:  pgtype.Timestamptz{},
 		Url:          pgtype.Text{},
 		DebugCurl:    pgtype.Text{},
-	}); err != nil {
-		return err
 	}
 
 	failureStage := pgtype.Text{String: "worker_timeout", Valid: true}
 	errorCode := pgtype.Text{String: "worker_stalled", Valid: true}
 	lastError := pgtype.Text{String: errMsg, Valid: true}
+	failure := postfailures.BuildParams(
+		post.ID, result.ID, post.WorkspaceID, result.SocialAccountID,
+		postfailures.FirstNonEmpty(job.Platform), "worker_timeout", errMsg, errMsg,
+	)
 
-	switch job.Kind {
-	case "dispatch":
-		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-			job,
-			"failed",
-			failureStage,
-			errorCode,
-			pgtype.Text{},
-			lastError,
-			pgtype.Timestamptz{},
-		)); err != nil {
+	var pendingEvent *pendingParentPostStatusEvent
+	failureApplied := false
+	transitionErr := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
 			return err
 		}
-		if _, err := h.queries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
-			PostID:             post.ID,
-			SocialPostResultID: result.ID,
-			WorkspaceID:        post.WorkspaceID,
-			SocialAccountID:    result.SocialAccountID,
-			Platform:           job.Platform,
-			PostInputIndex:     job.PostInputIndex,
-			Kind:               "retry",
-			State:              "pending",
-			Attempts:           0,
-			MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
-			FailureStage:       failureStage,
-			ErrorCode:          errorCode,
-			PlatformErrorCode:  pgtype.Text{},
-			LastError:          lastError,
-			NextRunAt:          pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true},
-		}); err != nil {
+		freshResult, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: result.ID, PostID: post.ID})
+		if err != nil {
 			return err
 		}
-	default:
-		nextRunAt := pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true}
-		state := "pending"
-		if job.Attempts >= job.MaxAttempts {
-			state = "dead"
-			nextRunAt = pgtype.Timestamptz{}
-		}
-		if _, err := h.queries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
-			job,
-			state,
-			failureStage,
-			errorCode,
-			pgtype.Text{},
-			lastError,
-			nextRunAt,
-		)); err != nil {
+		if providerTerminalOrAccepted(freshResult, job.Platform) {
+			if _, err := txQueries.MarkPostDeliveryJobSucceeded(ctx, markDeliveryJobSucceededParams(job, time.Now())); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
 			return err
 		}
+		// A stale recovery snapshot is allowed to lose its lease. Claim the
+		// lease-checked transition first so that loser cannot overwrite the
+		// newer attempt's result or retry schedule.
+		switch job.Kind {
+		case "dispatch":
+			if _, err := txQueries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+				job,
+				"failed",
+				failureStage,
+				errorCode,
+				pgtype.Text{},
+				lastError,
+				pgtype.Timestamptz{},
+			)); err != nil {
+				return err
+			}
+		default:
+			nextRunAt := pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true}
+			state := "pending"
+			if job.Attempts >= job.MaxAttempts {
+				state = "dead"
+				nextRunAt = pgtype.Timestamptz{}
+			}
+			if _, err := txQueries.MarkPostDeliveryJobFailed(ctx, markDeliveryJobFailedParams(
+				job,
+				state,
+				failureStage,
+				errorCode,
+				pgtype.Text{},
+				lastError,
+				nextRunAt,
+			)); err != nil {
+				return err
+			}
+		}
+		if _, err := txQueries.UpdateSocialPostResultAfterRetry(ctx, resultUpdate); err != nil {
+			return err
+		}
+		if err := txQueries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(result.ID, failure)); err != nil {
+			return err
+		}
+		if _, err := txQueries.CreatePostFailure(ctx, failure); err != nil {
+			return err
+		}
+		if job.Kind == "dispatch" {
+			if _, err := txQueries.CreatePostDeliveryJob(ctx, db.CreatePostDeliveryJobParams{
+				PostID:             post.ID,
+				SocialPostResultID: result.ID,
+				WorkspaceID:        post.WorkspaceID,
+				SocialAccountID:    result.SocialAccountID,
+				Platform:           job.Platform,
+				PostInputIndex:     job.PostInputIndex,
+				Kind:               "retry",
+				State:              "pending",
+				Attempts:           0,
+				MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
+				FailureStage:       failureStage,
+				ErrorCode:          errorCode,
+				PlatformErrorCode:  pgtype.Text{},
+				LastError:          lastError,
+				NextRunAt:          pgtype.Timestamptz{Time: time.Now().Add(retryBackoff(job.Attempts)), Valid: true},
+			}); err != nil {
+				return err
+			}
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		if err != nil {
+			return err
+		}
+		failureApplied = true
+		return nil
+	})
+	if transitionErr != nil {
+		if errors.Is(transitionErr, pgx.ErrNoRows) {
+			return nil
+		}
+		return transitionErr
 	}
 
-	h.recordPostFailure(ctx, postfailures.BuildParams(
-		post.ID,
-		result.ID,
-		post.WorkspaceID,
-		result.SocialAccountID,
-		postfailures.FirstNonEmpty(job.Platform),
-		"worker_timeout",
-		errMsg,
-		errMsg,
-	))
-	allResults, _ := h.queries.ListSocialPostResultsByPost(ctx, post.ID)
-	h.refreshParentPostStatusContext(ctx, post, allResults)
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	if !failureApplied {
+		return nil
+	}
 	return nil
 }
 
@@ -1376,100 +1927,115 @@ func (h *SocialPostHandler) RequeueDeliveryJob(ctx context.Context, workspaceID,
 }
 
 func (h *SocialPostHandler) EnqueueRetryForResult(ctx context.Context, workspaceID, postID, resultID string) (db.PostDeliveryJob, error) {
-	post, err := h.queries.GetSocialPostByIDAndWorkspace(ctx, db.GetSocialPostByIDAndWorkspaceParams{
-		ID:          postID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	result, err := h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
-		ID:     resultID,
-		PostID: post.ID,
-	})
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	if result.Status != "failed" {
-		return db.PostDeliveryJob{}, fmt.Errorf("only failed deliveries can be retried")
-	}
-	decision, policyErr := h.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
-	if policyErr != nil {
-		var accountUnavailable *retrySocialAccountUnavailableError
-		if errors.As(policyErr, &accountUnavailable) {
-			return db.PostDeliveryJob{}, accountUnavailable
+	var post db.SocialPost
+	var queued db.PostDeliveryJob
+	var pendingEvent *pendingParentPostStatusEvent
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, postID); err != nil {
+			return err
 		}
-		return db.PostDeliveryJob{}, &retryPolicyUnavailableError{err: policyErr}
-	}
-	if decision.Restricted {
-		return db.PostDeliveryJob{}, &retryPublishingRestrictionError{decision: decision}
-	}
-
-	jobs, err := h.queries.ListPostDeliveryJobsByResult(ctx, result.ID)
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	postInputIndex := int32(findPostInputIndexForResult(post, result))
-	platformName := ""
-	for _, job := range jobs {
-		if job.State == "pending" || job.State == "running" || job.State == "retrying" {
-			return db.PostDeliveryJob{}, h.queueConflictError()
+		var err error
+		post, err = txQueries.GetSocialPostByIDAndWorkspace(ctx, db.GetSocialPostByIDAndWorkspaceParams{
+			ID: postID, WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return err
 		}
-		postInputIndex = job.PostInputIndex
-		if job.Platform != "" {
-			platformName = job.Platform
+		result, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
+			ID: resultID, PostID: post.ID,
+		})
+		if err != nil {
+			return err
 		}
-	}
-	if postInputIndex < 0 {
-		return db.PostDeliveryJob{}, fmt.Errorf("unable to resolve original post input for retry")
-	}
-	if platformName == "" {
-		if acc, accErr := h.queries.GetSocialAccount(ctx, result.SocialAccountID); accErr == nil {
-			platformName = acc.Platform
+		if result.Status != "failed" {
+			return fmt.Errorf("only failed deliveries can be retried")
 		}
-	}
-	mediaIDs, mediaOK := decodeMediaIDsForRetention(post)
-	if !mediaOK {
-		return db.PostDeliveryJob{}, errRetryMediaReuploadRequired
-	}
-	job, err := h.queries.CreateRetryPostDeliveryJobWithMediaActivation(ctx, db.CreateRetryPostDeliveryJobWithMediaActivationParams{
-		PostID:             post.ID,
-		SocialPostResultID: result.ID,
-		WorkspaceID:        post.WorkspaceID,
-		SocialAccountID:    result.SocialAccountID,
-		Platform:           platformName,
-		PostInputIndex:     postInputIndex,
-		MaxAttempts:        int32(defaultDeliveryJobMaxAttempts),
-		NextRunAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
-		MediaIds:           mediaIDs,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		decision, policyErr = h.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
+		txHandler := h.withQueueQueries(txQueries)
+		decision, policyErr := txHandler.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
 		if policyErr != nil {
 			var accountUnavailable *retrySocialAccountUnavailableError
 			if errors.As(policyErr, &accountUnavailable) {
-				return db.PostDeliveryJob{}, accountUnavailable
+				return accountUnavailable
 			}
-			return db.PostDeliveryJob{}, &retryPolicyUnavailableError{err: policyErr}
+			return &retryPolicyUnavailableError{err: policyErr}
 		}
 		if decision.Restricted {
-			return db.PostDeliveryJob{}, &retryPublishingRestrictionError{decision: decision}
+			return &retryPublishingRestrictionError{decision: decision}
 		}
-		current, currentErr := h.queries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: result.ID, PostID: post.ID})
-		if currentErr == nil && current.Status != "failed" {
-			return db.PostDeliveryJob{}, fmt.Errorf("only failed deliveries can be retried")
+		jobs, err := txQueries.ListPostDeliveryJobsByResult(ctx, result.ID)
+		if err != nil {
+			return err
 		}
-		currentJobs, jobsErr := h.queries.ListPostDeliveryJobsByResult(ctx, result.ID)
-		if jobsErr == nil {
-			for _, currentJob := range currentJobs {
-				if isActiveDeliveryJobState(currentJob.State) {
-					return db.PostDeliveryJob{}, h.queueConflictError()
-				}
+		postInputIndex := int32(findPostInputIndexForResult(post, result))
+		platformName := ""
+		for _, job := range jobs {
+			if isActiveDeliveryJobState(job.State) {
+				return h.queueConflictError()
+			}
+			postInputIndex = job.PostInputIndex
+			if job.Platform != "" {
+				platformName = job.Platform
 			}
 		}
-		return db.PostDeliveryJob{}, errRetryMediaReuploadRequired
+		if postInputIndex < 0 {
+			return fmt.Errorf("unable to resolve original post input for retry")
+		}
+		if platformName == "" {
+			account, accountErr := txQueries.GetSocialAccount(ctx, result.SocialAccountID)
+			if accountErr != nil {
+				return accountErr
+			}
+			platformName = account.Platform
+		}
+		mediaIDs, mediaOK := decodeMediaIDsForRetention(post)
+		if !mediaOK {
+			return errRetryMediaReuploadRequired
+		}
+		queued, err = txQueries.CreateRetryPostDeliveryJobWithMediaActivation(ctx, db.CreateRetryPostDeliveryJobWithMediaActivationParams{
+			PostID: post.ID, SocialPostResultID: result.ID, WorkspaceID: post.WorkspaceID,
+			SocialAccountID: result.SocialAccountID, Platform: platformName, PostInputIndex: postInputIndex,
+			MaxAttempts: int32(defaultDeliveryJobMaxAttempts),
+			NextRunAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			MediaIds:    mediaIDs,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			decision, policyErr = txHandler.evaluateRetryPublishingRestriction(ctx, workspaceID, result)
+			if policyErr != nil {
+				var accountUnavailable *retrySocialAccountUnavailableError
+				if errors.As(policyErr, &accountUnavailable) {
+					return accountUnavailable
+				}
+				return &retryPolicyUnavailableError{err: policyErr}
+			}
+			if decision.Restricted {
+				return &retryPublishingRestrictionError{decision: decision}
+			}
+			current, currentErr := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{ID: result.ID, PostID: post.ID})
+			if currentErr == nil && current.Status != "failed" {
+				return fmt.Errorf("only failed deliveries can be retried")
+			}
+			currentJobs, jobsErr := txQueries.ListPostDeliveryJobsByResult(ctx, result.ID)
+			if jobsErr == nil {
+				for _, currentJob := range currentJobs {
+					if isActiveDeliveryJobState(currentJob.State) {
+						return h.queueConflictError()
+					}
+				}
+			}
+			return errRetryMediaReuploadRequired
+		}
+		if err != nil {
+			return err
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		return err
+	})
+	if err != nil {
+		return db.PostDeliveryJob{}, err
 	}
-	return job, err
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	return queued, nil
 }
 
 // DismissDeliveryJob archives a terminal (dead/failed/cancelled)
@@ -1494,26 +2060,68 @@ func (h *SocialPostHandler) DismissDeliveryJob(ctx context.Context, workspaceID,
 }
 
 func (h *SocialPostHandler) CancelDeliveryJob(ctx context.Context, workspaceID, jobID string) (db.PostDeliveryJob, error) {
-	job, err := h.queries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
-		ID:          jobID,
-		WorkspaceID: workspaceID,
+	var cancelled db.PostDeliveryJob
+	var pendingEvent *pendingParentPostStatusEvent
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		job, err := txQueries.GetPostDeliveryJobByIDAndWorkspace(ctx, db.GetPostDeliveryJobByIDAndWorkspaceParams{
+			ID:          jobID,
+			WorkspaceID: workspaceID,
+		})
+		if err != nil {
+			return err
+		}
+		if job.State != "pending" {
+			return fmt.Errorf("only queued jobs that have not started provider delivery can be cancelled")
+		}
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, job.PostID); err != nil {
+			return err
+		}
+		result, err := txQueries.GetSocialPostResultByIDAndPost(ctx, db.GetSocialPostResultByIDAndPostParams{
+			ID: job.SocialPostResultID, PostID: job.PostID,
+		})
+		if err != nil {
+			return err
+		}
+		if providerTerminalOrAccepted(result, job.Platform) {
+			return fmt.Errorf("provider delivery has already started and cannot be cancelled")
+		}
+		cancelled, err = txQueries.CancelPostDeliveryJob(ctx, db.CancelPostDeliveryJobParams{
+			ID:          job.ID,
+			WorkspaceID: workspaceID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("only queued jobs that have not started provider delivery can be cancelled")
+		}
+		if err != nil {
+			return err
+		}
+		cancelMessage := "Delivery cancelled before provider dispatch."
+		if _, err := txQueries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
+			ID: result.ID, Status: "failed", ExternalID: pgtype.Text{},
+			ErrorMessage: pgtype.Text{String: cancelMessage, Valid: true}, PublishedAt: pgtype.Timestamptz{},
+			Url: pgtype.Text{}, DebugCurl: pgtype.Text{},
+		}); err != nil {
+			return err
+		}
+		cancelFailure := postfailures.BuildParams(
+			job.PostID, result.ID, workspaceID, result.SocialAccountID, job.Platform,
+			"queue_cancelled", cancelMessage, cancelMessage,
+		)
+		cancelFailure.ErrorCode = "delivery_cancelled"
+		cancelFailure.IsRetriable = false
+		cancelFailure.ErrorSource = pgtype.Text{String: postfailures.ErrorSourceUnipost, Valid: true}
+		cancelFailure.ErrorTemporality = pgtype.Text{String: postfailures.ErrorTemporalityPermanent, Valid: true}
+		if err := txQueries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(result.ID, cancelFailure)); err != nil {
+			return err
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, cancelled.PostID)
+		return err
 	})
 	if err != nil {
 		return db.PostDeliveryJob{}, err
 	}
-	if job.State != "pending" && job.State != "retrying" {
-		return db.PostDeliveryJob{}, fmt.Errorf("only pending or retrying jobs can be cancelled")
-	}
-	cancelled, err := h.queries.CancelPostDeliveryJob(ctx, job.ID)
-	if err != nil {
-		return db.PostDeliveryJob{}, err
-	}
-	post, err := h.queries.GetSocialPostByID(ctx, cancelled.PostID)
-	if err == nil {
-		if results, listErr := h.queries.ListSocialPostResultsByPost(ctx, cancelled.PostID); listErr == nil {
-			h.refreshParentPostStatusContext(ctx, post, results)
-		}
-	}
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, cancelled.PostID)
 	return cancelled, nil
 }
 

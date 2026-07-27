@@ -24,9 +24,9 @@ Staging and production are separate backup and migration targets:
 - When an affected migration would modify existing staging rows, the gate creates and locks a backup of the staging PostgreSQL volume instance.
 - When an affected migration would modify existing production rows, the gate independently creates and locks a backup of the production PostgreSQL volume instance.
 - A backup from one environment never authorizes migration in another environment.
-- Dev and PR Preview never reuse staging or production evidence. A database may bypass backup only when preflight proves that all pending irreversible migrations have zero affected existing rows. Otherwise that environment needs its own backup or the migration fails.
+- Dev and PR Preview never reuse staging or production evidence. A database may bypass backup only when no registered irreversible migration is pending. A pending irreversible migration requires that environment's own backup even when its affected-row count is zero.
 
-The environment-scoped Railway Project Token must report the configured project and environment IDs, and the configured volume instance must belong to that environment. Identity mismatch is a hard failure.
+The environment-scoped Railway Project Token must report the configured project and environment IDs. Before any backup list/create call, the gate must also read the configured volume instance and require its returned ID, `volume.projectId`, `environmentId`, and `serviceId` to match the configured volume, project, environment, and explicitly trusted PostgreSQL service ID. It then resolves the configured application service ID in the same project/environment, reads that service's unrendered variables, requires `DATABASE_URL` to be exactly `${{<verified Postgres service name>.DATABASE_URL}}`, and requires Railway's rendered deployment value to equal the migration process's runtime `DATABASE_URL`. Missing, sealed, literal, ambiguous, cross-service, or mismatched values fail closed without printing either URL. Matching only an environment or a human-readable service/volume name is insufficient.
 
 ## Selected architecture
 
@@ -77,29 +77,33 @@ For migration 125:
 - If the recipient table exists, count rows where `status='failed'`.
 - If the table does not exist or the count is zero, migration 125 has no existing retryability state to overwrite.
 
-Counts decide whether backup is mandatory and appear in audit logs. They do not replace the SQL migration predicates.
+Pending registry membership decides whether backup is mandatory. Counts are audit evidence only and do not replace the SQL migration predicates.
 
 ### 4. Create and verify a uniquely attributable Railway backup
 
-When any pending registry entry has a nonzero affected-row count, the migration command requires:
+When any registry entry is pending, regardless of its affected-row count, the migration command requires:
 
 - a Railway Project Token scoped to the exact target environment;
 - exact project and environment IDs;
 - the exact PostgreSQL volume instance ID;
+- the exact PostgreSQL service ID independently copied from the target Railway Postgres service;
+- the exact application service ID from `RAILWAY_SERVICE_ID`;
 - the exact application SHA.
 
 The production client uses Railway's fixed public GraphQL hostname; only tests can inject a fake endpoint. The token is sent with `Project-Access-Token` and is never logged.
 
 The command then:
 
-1. lists current backups and records all existing backup IDs;
-2. creates a backup with a unique name containing environment identity, application SHA, pending migration versions, and a random attempt suffix;
-3. records Railway's server-returned workflow ID for correlation, but does not mistake it for the backup ID;
-4. polls the backup list until exactly one record has the unique name, a new ID absent from step 1, a server `createdAt`, a nonempty `externalId`, and non-null `referencedMB`;
-5. requires those identifying fields to remain stable across two reads;
-6. locks that exact backup and requires the mutation to return `true`;
-7. re-lists and requires the same exact ID/name/identity fields to remain present;
-8. writes structured audit evidence, then invokes Goose.
+1. reads the volume instance by ID and verifies its exact project, environment, and PostgreSQL service identity;
+2. verifies that the application service's unrendered `DATABASE_URL` exactly references the verified PostgreSQL service and that its rendered deployment value exactly equals the runtime `DATABASE_URL`;
+3. lists current backups and records all existing backup IDs;
+4. creates a backup with a unique name containing environment identity, application SHA, every pending irreversible migration version, and a random attempt suffix;
+5. records Railway's server-returned workflow ID for correlation, but does not mistake it for the backup ID;
+6. polls the backup list until exactly one record has the unique name, a new ID absent from step 3, a server `createdAt`, a nonempty `externalId`, and non-null `referencedMB`;
+7. requires those identifying fields to remain stable across two reads;
+8. locks that exact backup and requires the mutation to return `true`;
+9. re-lists and requires the same exact ID/name/identity fields to remain present;
+10. writes structured audit evidence, then invokes Goose.
 
 The public API exposes no dependable terminal backup-status field to either the account token tested during the spike or the documented backup-list object. `workflowStatus` was introspectable but returned `Not Authorized`; the implementation must not depend on it. Backup-list readiness fields plus successful lock and exact reread are therefore the fail-closed public-API contract. If Railway changes that contract or any field is absent/ambiguous, migration stops.
 
@@ -110,8 +114,8 @@ The first real staging and production release must treat this API contract as an
 Goose is not called when any required condition fails, including:
 
 - missing or malformed Railway/database identity;
-- missing token, SHA, or volume instance ID;
-- token identity or volume/environment mismatch;
+- missing token, SHA, volume instance ID, application service ID, or trusted PostgreSQL service ID;
+- token identity, volume/project/environment/service mismatch, or unverified runtime database binding;
 - backup list, create, attribution, readiness, lock, or reread failure;
 - timeout, ambiguity, duplicate unique name, or evidence-field regression;
 - an unregistered irreversible migration;
@@ -129,9 +133,11 @@ Restore remains an explicit operator action because Railway creates a separate r
 
 ## Configuration and release contract
 
-Implementation will use repository-consistent variable names after checking existing conventions. No default may point to a real environment. Each persistent environment supplies its own Project Token, project ID, environment ID, PostgreSQL volume instance ID, and application SHA.
+Implementation uses `RAILWAY_MIGRATION_BACKUP_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, `RAILWAY_SERVICE_ID`, `RAILWAY_POSTGRES_VOLUME_INSTANCE_ID`, `RAILWAY_POSTGRES_SERVICE_ID`, and `RAILWAY_GIT_COMMIT_SHA`. No default may point to a real environment. Each persistent environment supplies its own Project Token, project ID, environment ID, application service ID, PostgreSQL volume instance ID, trusted PostgreSQL service ID, and application SHA. `RAILWAY_POSTGRES_SERVICE_ID` is the service that owns the database volume; `RAILWAY_SERVICE_ID` is the API or worker service running the migration command.
 
-Staging and production backups are not created during development of this change. They are created only by their respective release-time pre-deploy commands, immediately before an affected pending migration and only if the environment has affected existing rows. Missing configuration is an intentional deployment failure, never a bypass.
+Staging and production configure these values independently. A release is intentionally not ready while either environment lacks its own trusted PostgreSQL service ID; operators must copy the service ID from that environment's Postgres service and verify it against the volume attachment before promotion. The migration process never infers this trust anchor from a service name.
+
+Staging and production backups are not created during development of this change. They are created only by their respective release-time pre-deploy commands, immediately before any pending irreversible migration. A zero affected-row count does not bypass the backup. Missing configuration is an intentional deployment failure, never a bypass.
 
 The release workflow must capture the structured backup evidence before accepting the deployment. A failed deployment may leave a locked backup; the report lists it as an orphan candidate, but no automated cleanup occurs.
 
@@ -163,9 +169,9 @@ Implementation follows TDD.
 Unit tests prove:
 
 - pending-version and affected-row classification for pre-122, 122-to-123, 124, and 125-or-later databases;
-- zero affected rows never call Railway;
+- zero affected rows still require Railway backup evidence when an irreversible migration is pending;
 - nonzero affected rows never reach Goose without complete evidence;
-- old, ambiguous, duplicate, wrong-environment, wrong-volume, missing-field, unstable, or unlocked backup evidence is rejected;
+- old, ambiguous, duplicate, wrong-project, wrong-environment, wrong-service, wrong-volume, missing-field, unstable, or unlocked backup evidence is rejected;
 - workflow ID is never accepted as backup ID;
 - every API/timeout/lock failure blocks migration;
 - credentials are absent from errors and logs;
@@ -192,6 +198,7 @@ For each persistent-environment migration, the completion report includes:
 - environment name and ID;
 - exact application SHA;
 - database volume instance ID;
+- database PostgreSQL service ID and the volume instance identity returned by Railway;
 - backup workflow ID, backup ID, unique name, server `createdAt`, `externalId`, and size metadata;
 - lock mutation result and exact reread confirmation;
 - migrations applied and preflight affected-row counts;

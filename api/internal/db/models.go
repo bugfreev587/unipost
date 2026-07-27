@@ -721,6 +721,9 @@ type PlatformPublishingRestrictionEmailRecipient struct {
 	SentAt                  pgtype.Timestamptz `json:"sent_at"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
+	Retryable               bool               `json:"retryable"`
+	AttemptGeneration       int32              `json:"attempt_generation"`
+	RepresentedOwnerUserIds []string           `json:"represented_owner_user_ids"`
 }
 
 type PlatformPublishingRestrictionEvent struct {
@@ -1003,6 +1006,44 @@ type SupportBundle struct {
 	FindingCount     int32              `json:"finding_count"`
 	RecentErrorCount int32              `json:"recent_error_count"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
+type TerminalPostEventDelivery struct {
+	EventID        string             `json:"event_id"`
+	Sink           string             `json:"sink"`
+	Status         string             `json:"status"`
+	Attempts       int32              `json:"attempts"`
+	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
+	LeaseExpiresAt pgtype.Timestamptz `json:"lease_expires_at"`
+	LastError      pgtype.Text        `json:"last_error"`
+	EnqueuedAt     pgtype.Timestamptz `json:"enqueued_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
+type TerminalPostEventOutbox struct {
+	ID             string             `json:"id"`
+	SequenceNumber int64              `json:"sequence_number"`
+	PostID         string             `json:"post_id"`
+	WorkspaceID    string             `json:"workspace_id"`
+	ParentStatus   string             `json:"parent_status"`
+	ParentVersion  string             `json:"parent_version"`
+	EventType      string             `json:"event_type"`
+	Payload        []byte             `json:"payload"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type TerminalPostEventWebhookDelivery struct {
+	EventID           string             `json:"event_id"`
+	WebhookID         string             `json:"webhook_id"`
+	WebhookDeliveryID pgtype.Text        `json:"webhook_delivery_id"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
+type TerminalPostFirstPublishElection struct {
+	WorkspaceID string             `json:"workspace_id"`
+	PostID      string             `json:"post_id"`
+	ElectedAt   pgtype.Timestamptz `json:"elected_at"`
 }
 
 type UnipostNotificationChannel struct {

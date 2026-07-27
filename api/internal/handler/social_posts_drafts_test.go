@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,9 +15,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
@@ -139,6 +142,41 @@ func TestPaidScheduleEditDeltasUsesNetDestinationChangeWithinMonth(t *testing.T)
 	want := paidquota.PeriodDelta{Period: "2026-07", ReleasedUnits: 2, RequestedUnits: 1}
 	if len(deltas) != 1 || deltas[0] != want {
 		t.Fatalf("deltas = %#v, want %#v", deltas, []paidquota.PeriodDelta{want})
+	}
+}
+
+func TestPaidScheduleEditDeltasUsesPersistedSnapshotForReschedule(t *testing.T) {
+	oldTime := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	newTime := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	posts := []platform.PlatformPostInput{
+		{AccountID: "acct_1", Caption: "allowed"},
+		{AccountID: "acct_2", Caption: "policy failed at admission"},
+	}
+	existing := db.SocialPost{
+		Status:      "scheduled",
+		ScheduledAt: pgtype.Timestamptz{Time: oldTime, Valid: true},
+		Metadata:    scheduledQuotaSnapshotMetadata(t, posts, 1),
+	}
+	accounts := map[string]platform.ValidateAccount{
+		"acct_1": {Platform: "linkedin"},
+		"acct_2": {Platform: "tiktok"},
+	}
+
+	deltas, err := paidScheduleEditDeltas(existing, posts, newTime, accounts, existing.Metadata)
+	if err != nil {
+		t.Fatalf("deltas: %v", err)
+	}
+	want := []paidquota.PeriodDelta{
+		{Period: "2026-07", ReleasedUnits: 1},
+		{Period: "2026-08", RequestedUnits: 1},
+	}
+	if len(deltas) != len(want) {
+		t.Fatalf("deltas = %#v, want %#v", deltas, want)
+	}
+	for i := range want {
+		if deltas[i] != want[i] {
+			t.Fatalf("delta[%d] = %#v, want %#v", i, deltas[i], want[i])
+		}
 	}
 }
 
@@ -266,6 +304,142 @@ func TestUpdateScheduledContentPlansDestinationDeltaInsidePaidCoordinator(t *tes
 	}
 }
 
+func TestUpdateScheduledContentPlansUsingServerQuotaSnapshot(t *testing.T) {
+	scheduledAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	posts := []platform.PlatformPostInput{
+		{AccountID: "acct_1", Caption: "allowed"},
+		{AccountID: "acct_2", Caption: "policy failed"},
+	}
+	existing := db.SocialPost{
+		ID:          "post_1",
+		WorkspaceID: "ws_1",
+		Status:      "scheduled",
+		ScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+		CreatedAt:   pgtype.Timestamptz{Time: scheduledAt.Add(-time.Hour), Valid: true},
+		Metadata:    scheduledQuotaSnapshotMetadata(t, posts, 1),
+		Source:      "api",
+	}
+	dbtx := &scheduledEditTestDB{post: existing}
+	coordinator := &recordingPaidScheduleCoordinator{queries: db.New(dbtx)}
+	h := &SocialPostHandler{queries: db.New(dbtx), paidSchedule: coordinator}
+	params := buildSocialPostContentUpdateParams(
+		"post_1",
+		"ws_1",
+		posts,
+		scheduledQuotaSnapshotMetadata(t, posts, 1),
+		&scheduledAt,
+		[]string{"prof_1"},
+	)
+
+	if _, err := h.updateEditablePostContent(context.Background(), "ws_1", existing, posts, scheduledAt, params); err != nil {
+		t.Fatalf("update content: %v", err)
+	}
+	want := paidquota.PeriodDelta{Period: "2026-07", ReleasedUnits: 1, RequestedUnits: 1}
+	if len(coordinator.deltas) != 1 || coordinator.deltas[0] != want {
+		t.Fatalf("deltas = %#v, want %#v", coordinator.deltas, []paidquota.PeriodDelta{want})
+	}
+}
+
+func TestUpdateScheduledAndQuotaHoldContentRecomputesServerQuotaSnapshot(t *testing.T) {
+	scheduledAt := time.Now().UTC().Add(24 * time.Hour).Truncate(time.Second)
+	tests := []struct {
+		name      string
+		status    string
+		decisions map[string]publishingrestrictions.Decision
+		wantUnits float64
+	}{
+		{
+			name:   "scheduled while tiktok remains restricted",
+			status: "scheduled",
+			decisions: map[string]publishingrestrictions.Decision{
+				"tiktok": {Restricted: true, Platform: "tiktok", PlanID: "free", CycleID: "cycle_active"},
+			},
+			wantUnits: 1,
+		},
+		{
+			name:      "scheduled after restriction lifts",
+			status:    "scheduled",
+			decisions: map[string]publishingrestrictions.Decision{},
+			wantUnits: 2,
+		},
+		{
+			name:   "quota hold while tiktok remains restricted",
+			status: "quota_hold",
+			decisions: map[string]publishingrestrictions.Decision{
+				"tiktok": {Restricted: true, Platform: "tiktok", PlanID: "free", CycleID: "cycle_hold"},
+			},
+			wantUnits: 1,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			oldPosts := []platform.PlatformPostInput{{AccountID: "acct_1", Caption: "old"}}
+			existing := db.SocialPost{
+				ID:          "post_1",
+				WorkspaceID: "ws_1",
+				Status:      test.status,
+				ScheduledAt: pgtype.Timestamptz{Time: scheduledAt, Valid: true},
+				CreatedAt:   pgtype.Timestamptz{Time: scheduledAt.Add(-time.Hour), Valid: true},
+				Metadata:    scheduledQuotaSnapshotMetadata(t, oldPosts, 1),
+				Source:      "api",
+			}
+			dbtx := &scheduledEditTestDB{post: existing}
+			evaluator := &fakePostRestrictionEvaluator{decisions: test.decisions}
+			queries := db.New(dbtx)
+			h := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+				SetPublishingRestrictions(evaluator)
+			body := fmt.Sprintf(`{
+				"scheduled_at":%q,
+				"metadata":{"scheduled_quota_units":0},
+				"platform_posts":[
+					{"account_id":"acct_1","caption":"allowed"},
+					{"account_id":"acct_2","caption":"tiktok target"}
+				]
+			}`, scheduledAt.Format(time.RFC3339Nano))
+			req := httptest.NewRequest(http.MethodPatch, "/v1/posts/post_1", strings.NewReader(body))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			req = req.WithContext(withoutPostMediaRetentionSync(req.Context()))
+			req = withChiParam(req, "id", "post_1")
+			rr := httptest.NewRecorder()
+
+			h.UpdateDraft(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+			}
+			var metadata map[string]any
+			if err := json.Unmarshal(dbtx.post.Metadata, &metadata); err != nil {
+				t.Fatalf("decode persisted metadata: %v", err)
+			}
+			if got := metadata["scheduled_quota_units"]; got != test.wantUnits {
+				t.Fatalf("scheduled_quota_units = %#v, want %.0f", got, test.wantUnits)
+			}
+			if len(evaluator.calls) != 2 {
+				t.Fatalf("policy calls = %v, want one per current target platform", evaluator.calls)
+			}
+		})
+	}
+}
+
+func scheduledQuotaSnapshotMetadata(t *testing.T, posts []platform.PlatformPostInput, units int) []byte {
+	t.Helper()
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		t.Fatalf("encode post metadata: %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(metadata, &object); err != nil {
+		t.Fatalf("decode post metadata: %v", err)
+	}
+	object["scheduled_quota_units"] = units
+	metadata, err = json.Marshal(object)
+	if err != nil {
+		t.Fatalf("encode scheduled quota snapshot metadata: %v", err)
+	}
+	return metadata
+}
+
 func TestSocialPostResponseExposesQuotaHoldMetadata(t *testing.T) {
 	heldAt := time.Date(2026, 7, 16, 12, 0, 0, 0, time.UTC)
 	originalScheduledAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
@@ -332,7 +506,8 @@ func (f *scheduledEditTestDB) Exec(context.Context, string, ...interface{}) (pgc
 }
 
 func (f *scheduledEditTestDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
-	if strings.Contains(query, "-- name: ListSocialAccountsByWorkspace") {
+	switch {
+	case strings.Contains(query, "-- name: ListSocialAccountsByWorkspace"):
 		return &scheduledQuotaRows{values: [][]any{
 			socialAccountValues(db.SocialAccount{
 				ID:                "acct_1",
@@ -353,12 +528,36 @@ func (f *scheduledEditTestDB) Query(_ context.Context, query string, _ ...interf
 				Status:            "connected",
 			}),
 		}}, nil
+	case strings.Contains(query, "-- name: GetDistinctProfileIDsForAccounts"):
+		return &scheduledQuotaRows{values: [][]any{{"prof_1"}}}, nil
 	}
 	return nil, errors.New("unexpected query")
 }
 
 func (f *scheduledEditTestDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
 	switch {
+	case strings.Contains(query, "monthly_quota_snapshot"):
+		return scanRow{values: []any{"basic", int32(2500), int32(0), int32(1), int32(0)}}
+	case strings.Contains(query, "-- name: GetSubscriptionByWorkspace"):
+		return scanRow{values: []any{
+			"sub_1", "basic", pgtype.Text{}, pgtype.Text{}, "active",
+			pgtype.Timestamptz{}, pgtype.Timestamptz{}, pgtype.Bool{},
+			pgtype.Timestamptz{}, pgtype.Timestamptz{}, false, "ws_1",
+		}}
+	case strings.Contains(query, "-- name: GetPlan"):
+		return scanRow{values: []any{
+			"basic", "Basic", int32(1000), int32(2500), pgtype.Text{},
+			pgtype.Timestamptz{}, false, true, true, true, pgtype.Int4{}, pgtype.Int4{},
+		}}
+	case strings.Contains(query, "-- name: GetUsage"):
+		return scanRow{values: []any{
+			"usage_1", args[1].(string), int32(0), pgtype.Timestamptz{},
+			pgtype.Timestamptz{}, "ws_1",
+		}}
+	case strings.Contains(query, "sp.status = 'quota_hold'"):
+		return scanRow{values: []any{int32(0)}}
+	case strings.Contains(query, "FROM social_posts sp"):
+		return scanRow{values: []any{int32(1)}}
 	case strings.Contains(query, "-- name: GetSocialPostByIDAndWorkspace"):
 		return scheduledIdempotencySocialPostRow(f.post)
 	case strings.Contains(query, "-- name: RescheduleSocialPost"):

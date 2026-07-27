@@ -152,6 +152,7 @@ type RecipientSnapshot struct {
 	NormalizedEmail         string
 	FirstName               string
 	RepresentedWorkspaceIDs []string
+	RepresentedOwnerUserIDs []string
 }
 
 type ConfirmCampaignRequest struct {

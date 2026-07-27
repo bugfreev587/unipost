@@ -27,15 +27,20 @@ RETURNING *;
 -- insert are one statement. Cleanup can therefore win before this statement
 -- (and make all_media_available false), or Retry can win and invalidate the
 -- cleanup snapshot; it cannot delete an object between activation and enqueue.
--- Normalize dynamic database plan IDs at this SQL race barrier. Public policy
--- codes and customer copy remain centralized in internal/publishingrestrictions.
-WITH locked_policy AS MATERIALIZED (
-  SELECT restriction.enabled, restriction.restricted_plan_ids
-  FROM social_accounts account
-  JOIN platform_publishing_restrictions restriction
-    ON restriction.platform = account.platform
-  WHERE account.id = sqlc.arg(social_account_id)
-  FOR SHARE OF restriction
+-- Lock the current account snapshot at the same race barrier as policy and
+-- media activation. A concurrent disconnect either commits first and rejects
+-- this retry, or waits until the accepted retry transaction commits.
+WITH locked_account AS MATERIALIZED (
+	SELECT account.id, account.platform, account.status, account.disconnected_at
+	FROM social_accounts account
+	WHERE account.id = sqlc.arg(social_account_id)
+	FOR SHARE OF account
+), locked_policy AS MATERIALIZED (
+	SELECT restriction.enabled, restriction.restricted_plan_ids
+	FROM locked_account account
+	JOIN platform_publishing_restrictions restriction
+		ON restriction.platform = account.platform
+	FOR SHARE OF restriction
 ), locked_result AS MATERIALIZED (
   SELECT result.id, result.status
   FROM social_post_results result
@@ -45,8 +50,14 @@ WITH locked_policy AS MATERIALIZED (
   FOR UPDATE
 ), policy_admission AS MATERIALIZED (
   SELECT result.id
-  FROM locked_result result
-  WHERE result.status = 'failed'
+	FROM locked_result result
+	WHERE result.status = 'failed'
+		AND EXISTS (
+			SELECT 1
+			FROM locked_account account
+			WHERE account.disconnected_at IS NULL
+				AND LOWER(BTRIM(account.status)) NOT IN ('disconnected', 'reconnect_required')
+		)
     AND NOT EXISTS (
       SELECT 1
       FROM post_delivery_jobs active_job
@@ -475,22 +486,83 @@ WHERE id = sqlc.arg('id')
   AND last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
 RETURNING *;
 
+-- name: LockPostDeliveryJobFinalization :exec
+-- Finalization derives the parent status from every result/job for the post.
+-- This lock MUST be acquired in a transaction by a separate statement before
+-- FinalizeRestrictedPostDeliveryJob so a waiter gets a new READ COMMITTED
+-- snapshot after the earlier finalizer commits. Putting this lock inside the
+-- finalization CTE would retain the stale statement snapshot.
+SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg('post_id')::text, 0));
+
 -- name: FinalizeRestrictedPostDeliveryJob :one
-WITH transitioned_job AS (
-  UPDATE post_delivery_jobs AS job
-  SET state = 'dead',
-      failure_stage = sqlc.arg('failure_stage'),
-      error_code = sqlc.arg('error_code'),
-      platform_error_code = NULL,
-      last_error = sqlc.arg('error_message'),
-      next_run_at = NULL,
-      updated_at = NOW(),
-      finished_at = NOW()
+WITH eligible_job AS MATERIALIZED (
+  SELECT job.id, job.workspace_id, job.post_id, job.social_post_result_id,
+         result.status AS result_status,
+         result.external_id AS result_external_id,
+         result.published_at AS result_published_at
+  FROM social_post_results AS result
+  JOIN post_delivery_jobs AS job
+    ON job.social_post_result_id = result.id
   WHERE job.id = sqlc.arg('id')
     AND job.state IN ('running', 'retrying')
     AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
     AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
+  FOR UPDATE OF job, result
+), ordered_media AS MATERIALIZED (
+  SELECT parent.id, eligible_job.workspace_id, eligible_job.post_id
+  FROM media parent
+  JOIN eligible_job ON eligible_job.workspace_id = parent.workspace_id
+  WHERE eligible_job.result_status <> 'published'
+    AND parent.id = ANY(sqlc.arg('media_ids')::text[])
+    AND parent.status = 'uploaded'
+  ORDER BY parent.id
+  FOR UPDATE OF parent
+), all_media_available AS MATERIALIZED (
+  SELECT eligible_job.id
+  FROM eligible_job
+  LEFT JOIN ordered_media ON TRUE
+  GROUP BY eligible_job.id, eligible_job.result_status
+  HAVING eligible_job.result_status = 'published'
+    OR COUNT(ordered_media.id) = COALESCE(CARDINALITY(sqlc.arg('media_ids')::text[]), 0)
+), transitioned_job AS (
+  UPDATE post_delivery_jobs AS job
+  SET state = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN 'succeeded'
+        ELSE 'dead'
+      END,
+      failure_stage = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN NULL ELSE sqlc.arg('failure_stage')
+      END,
+      error_code = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN NULL ELSE sqlc.arg('error_code')
+      END,
+      platform_error_code = NULL,
+      last_error = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN NULL ELSE sqlc.arg('error_message')::text
+      END,
+      next_run_at = NULL,
+      updated_at = NOW(),
+      finished_at = NOW()
+  FROM eligible_job
+  JOIN all_media_available ON all_media_available.id = eligible_job.id
+  WHERE job.id = sqlc.arg('id')
+    AND eligible_job.social_post_result_id = job.social_post_result_id
+    AND job.state IN ('running', 'retrying')
+    AND job.lease_owner IS NOT DISTINCT FROM sqlc.arg('lease_owner')
+    AND job.last_attempt_at IS NOT DISTINCT FROM sqlc.arg('last_attempt_at')::timestamptz
   RETURNING job.*
+), transition_context AS MATERIALIZED (
+  SELECT transitioned_job.*, eligible_job.result_status, eligible_job.result_published_at
+  FROM transitioned_job
+  JOIN eligible_job ON eligible_job.id = transitioned_job.id
 ), updated_result AS (
   UPDATE social_post_results AS result
   SET status = 'failed',
@@ -514,26 +586,39 @@ WITH transitioned_job AS (
       x_credit_billing_mode = NULL
   FROM transitioned_job
   WHERE result.id = transitioned_job.social_post_result_id
+    AND transitioned_job.state = 'dead'
+    AND result.status <> 'published'
   RETURNING transitioned_job.id AS job_id
 ), current_result_statuses AS MATERIALIZED (
   SELECT
     result.id,
     CASE
-      WHEN result.id = transitioned_job.social_post_result_id THEN 'failed'
+      WHEN result.id = transition_context.social_post_result_id
+        AND transition_context.state = 'dead' THEN 'failed'
+      WHEN result.id = transition_context.social_post_result_id
+        AND transition_context.state = 'succeeded'
+        AND transition_context.result_status = 'published' THEN 'published'
       ELSE result.status
-    END AS status
-  FROM transitioned_job
-  JOIN updated_result ON updated_result.job_id = transitioned_job.id
-  JOIN social_post_results result ON result.post_id = transitioned_job.post_id
+    END AS status,
+    CASE
+      WHEN result.id = transition_context.social_post_result_id
+        AND transition_context.state = 'succeeded'
+        AND transition_context.result_status = 'published'
+        THEN transition_context.result_published_at
+      ELSE result.published_at
+    END AS published_at
+	FROM transition_context
+	JOIN social_post_results result ON result.post_id = transition_context.post_id
 ), derived_post_status AS MATERIALIZED (
-  SELECT
-    transitioned_job.post_id,
+	SELECT
+		transitioned_job.post_id,
     CASE
       WHEN EXISTS (
         SELECT 1
         FROM post_delivery_jobs active_job
         WHERE active_job.post_id = transitioned_job.post_id
           AND active_job.id <> transitioned_job.id
+          AND active_job.social_post_result_id <> transitioned_job.social_post_result_id
           AND active_job.state IN ('pending', 'running', 'retrying')
       ) OR EXISTS (
         SELECT 1
@@ -551,9 +636,43 @@ WITH transitioned_job AS (
         WHERE result_status.status = 'published'
       ) THEN 'partial'
       ELSE 'failed'
-    END AS status
-  FROM transitioned_job
-  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+		END AS status,
+		EXISTS (
+			SELECT 1
+			FROM current_result_statuses result_status
+			WHERE result_status.status = 'published'
+		) AS has_published,
+    (
+      SELECT MIN(result_status.published_at)
+      FROM current_result_statuses result_status
+      WHERE result_status.status = 'published'
+        AND result_status.published_at IS NOT NULL
+    ) AS earliest_published_at
+	FROM transitioned_job
+), locked_parent AS MATERIALIZED (
+  SELECT parent.id, parent.status, parent.published_at
+  FROM social_posts parent
+  JOIN derived_post_status ON derived_post_status.post_id = parent.id
+  FOR UPDATE OF parent
+), updated_parent AS (
+	UPDATE social_posts AS parent
+	SET status = derived_post_status.status,
+		published_at = CASE
+			WHEN derived_post_status.has_published
+				THEN CASE
+            WHEN parent.published_at IS NULL THEN derived_post_status.earliest_published_at
+            WHEN derived_post_status.earliest_published_at IS NULL THEN parent.published_at
+            ELSE LEAST(parent.published_at, derived_post_status.earliest_published_at)
+          END
+			ELSE NULL
+		END
+	FROM derived_post_status, locked_parent
+	WHERE parent.id = derived_post_status.post_id
+	  AND locked_parent.id = parent.id
+	RETURNING parent.id,
+    locked_parent.status AS previous_status,
+    parent.status AS current_status,
+    locked_parent.status IS DISTINCT FROM parent.status AS parent_transitioned
 ), deleted_obsolete_usage AS (
   DELETE FROM media_post_usages usage
   USING transitioned_job
@@ -561,26 +680,17 @@ WITH transitioned_job AS (
   WHERE usage.post_id = transitioned_job.post_id
     AND NOT (usage.media_id = ANY(sqlc.arg('media_ids')::text[]))
   RETURNING usage.id
-), ordered_media AS MATERIALIZED (
-  SELECT
-    parent.id,
-    transitioned_job.workspace_id,
-    transitioned_job.post_id,
-    derived_post_status.status AS post_status
-  FROM media parent
-  JOIN transitioned_job ON transitioned_job.workspace_id = parent.workspace_id
-  JOIN updated_result ON updated_result.job_id = transitioned_job.id
-  JOIN derived_post_status ON derived_post_status.post_id = transitioned_job.post_id
-  WHERE parent.id = ANY(sqlc.arg('media_ids')::text[])
-    AND parent.status = 'uploaded'
-  ORDER BY parent.id
-  FOR UPDATE OF parent
 ), locked_media AS MATERIALIZED (
   UPDATE media AS parent
   SET usage_version = parent.usage_version + 1
   FROM ordered_media
+  JOIN transitioned_job ON transitioned_job.workspace_id = ordered_media.workspace_id
+    AND transitioned_job.post_id = ordered_media.post_id
+  JOIN updated_result ON updated_result.job_id = transitioned_job.id
+  JOIN derived_post_status ON derived_post_status.post_id = transitioned_job.post_id
   WHERE parent.id = ordered_media.id
-  RETURNING parent.id, ordered_media.workspace_id, ordered_media.post_id, ordered_media.post_status
+  RETURNING parent.id, ordered_media.workspace_id, ordered_media.post_id,
+    derived_post_status.status AS post_status
 ), retained_media AS (
   INSERT INTO media_post_usages (
     workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
@@ -600,9 +710,11 @@ WITH transitioned_job AS (
       updated_at = NOW()
   RETURNING id
 )
-SELECT transitioned_job.*
+SELECT transitioned_job.*,
+       COALESCE((SELECT previous_status FROM updated_parent), '')::text AS parent_previous_status,
+       COALESCE((SELECT current_status FROM updated_parent), '')::text AS parent_current_status,
+       COALESCE((SELECT parent_transitioned FROM updated_parent), FALSE)::boolean AS parent_transitioned
 FROM transitioned_job
-JOIN updated_result ON updated_result.job_id = transitioned_job.id
 CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
 CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted;
 
@@ -612,6 +724,8 @@ SET state = 'cancelled',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
+  AND workspace_id = sqlc.arg('workspace_id')
+  AND state = 'pending'
 RETURNING *;
 
 -- name: DeleteOldSucceededPostDeliveryJobs :exec

@@ -92,6 +92,49 @@ func (q *Queries) CreateWebhookDelivery(ctx context.Context, arg CreateWebhookDe
 	return i, err
 }
 
+const createWebhookDeliveryWithEventID = `-- name: CreateWebhookDeliveryWithEventID :exec
+WITH input AS (
+  SELECT
+    CAST($1 AS TEXT) AS webhook_id,
+    CAST($2 AS TEXT) AS event,
+    CAST($3 AS JSONB) AS payload,
+    CAST($4 AS TEXT) AS event_id
+), reserved AS (
+  INSERT INTO terminal_post_event_webhook_deliveries (event_id, webhook_id)
+  SELECT input.event_id, input.webhook_id FROM input
+  ON CONFLICT (event_id, webhook_id) DO NOTHING
+  RETURNING event_id, webhook_id
+), created AS (
+  INSERT INTO webhook_deliveries (webhook_id, event, payload)
+  SELECT reserved.webhook_id, input.event, input.payload
+  FROM reserved
+  CROSS JOIN input
+  RETURNING id, webhook_id
+)
+UPDATE terminal_post_event_webhook_deliveries mapping
+SET webhook_delivery_id = created.id
+FROM created
+WHERE mapping.event_id = (SELECT input.event_id FROM input)
+  AND mapping.webhook_id = created.webhook_id
+`
+
+type CreateWebhookDeliveryWithEventIDParams struct {
+	WebhookID string      `json:"webhook_id"`
+	Event     string      `json:"event"`
+	Payload   []byte      `json:"payload"`
+	EventID   pgtype.Text `json:"event_id"`
+}
+
+func (q *Queries) CreateWebhookDeliveryWithEventID(ctx context.Context, arg CreateWebhookDeliveryWithEventIDParams) error {
+	_, err := q.db.Exec(ctx, createWebhookDeliveryWithEventID,
+		arg.WebhookID,
+		arg.Event,
+		arg.Payload,
+		arg.EventID,
+	)
+	return err
+}
+
 const deleteWebhook = `-- name: DeleteWebhook :exec
 UPDATE webhooks SET active = false WHERE id = $1 AND workspace_id = $2
 `

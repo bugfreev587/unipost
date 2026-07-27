@@ -24,6 +24,7 @@ type PublishingRestrictionEmailWork struct {
 	NormalizedEmail         string
 	FirstName               string
 	RepresentedWorkspaceIDs []string
+	RepresentedOwnerUserIDs []string
 	IdempotencyKey          string
 	SubjectSnapshot         string
 	BodySnapshot            string

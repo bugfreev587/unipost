@@ -3,7 +3,9 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,6 +26,11 @@ type skipPostMediaRetentionSyncKey struct{}
 
 func withoutPostMediaRetentionSync(ctx context.Context) context.Context {
 	return context.WithValue(ctx, skipPostMediaRetentionSyncKey{}, true)
+}
+
+func postMediaRetentionSyncSkipped(ctx context.Context) bool {
+	skip, _ := ctx.Value(skipPostMediaRetentionSyncKey{}).(bool)
+	return skip
 }
 
 func shouldLogMediaPostUsageUpsertError(err error) bool {
@@ -57,10 +64,14 @@ func decodeMediaIDsForRetention(post db.SocialPost) ([]string, bool) {
 			ids = append(ids, id)
 		}
 	}
+	sort.Strings(ids)
 	return ids, true
 }
 
 func (h *SocialPostHandler) syncPostMediaRetention(ctx context.Context, post db.SocialPost, postStatus string) {
+	if postMediaRetentionSyncSkipped(ctx) {
+		return
+	}
 	h.syncPostMediaRetentionAt(ctx, post, postStatus, "", time.Time{})
 }
 
@@ -75,13 +86,32 @@ func (h *SocialPostHandler) syncPostMediaRetentionForPublishingRestrictionStatus
 	h.syncPostMediaRetentionAt(ctx, post, postStatus, "publishing_restriction", failedAt.UTC().Add(60*24*time.Hour))
 }
 
+func (h *SocialPostHandler) syncPostMediaRetentionForPublishingRestrictionStatusAtStrict(
+	ctx context.Context,
+	post db.SocialPost,
+	postStatus string,
+	failedAt time.Time,
+) error {
+	if failedAt.IsZero() {
+		failedAt = time.Now()
+	}
+	return h.syncPostMediaRetentionAtMode(
+		ctx,
+		post,
+		postStatus,
+		"publishing_restriction",
+		failedAt.UTC().Add(60*24*time.Hour),
+		true,
+	)
+}
+
 func (h *SocialPostHandler) syncPostMediaRetentionAfterResultTransition(
 	ctx context.Context,
 	post db.SocialPost,
 	postStatus string,
 	results []db.SocialPostResult,
 ) {
-	if skip, _ := ctx.Value(skipPostMediaRetentionSyncKey{}).(bool); skip {
+	if postMediaRetentionSyncSkipped(ctx) {
 		return
 	}
 	hasPolicyFailure := false
@@ -112,29 +142,52 @@ func (h *SocialPostHandler) syncPostMediaRetentionAt(
 	retentionReason string,
 	cleanupOverride time.Time,
 ) {
+	_ = h.syncPostMediaRetentionAtMode(ctx, post, postStatus, retentionReason, cleanupOverride, false)
+}
+
+func (h *SocialPostHandler) syncPostMediaRetentionAtMode(
+	ctx context.Context,
+	post db.SocialPost,
+	postStatus string,
+	retentionReason string,
+	cleanupOverride time.Time,
+	strict bool,
+) error {
 	if h == nil || h.queries == nil {
-		return
+		if strict {
+			return errors.New("media retention: database is not configured")
+		}
+		return nil
 	}
 	ids, ok := decodeMediaIDsForRetention(post)
 	if !ok {
+		if strict {
+			return fmt.Errorf("%w for post %s", errInvalidPostMediaMetadata, post.ID)
+		}
 		slog.Warn("media retention: metadata decode failed",
 			"post_id", post.ID,
 			"post_status", postStatus)
-		return
+		return nil
 	}
 	if len(ids) == 0 {
 		if err := h.queries.DeleteMediaPostUsagesForPost(ctx, post.ID); err != nil {
+			if strict {
+				return fmt.Errorf("media retention: delete usages for post %s: %w", post.ID, err)
+			}
 			slog.Warn("media retention: usage delete failed",
 				"post_id", post.ID,
 				"post_status", postStatus,
 				"error", err)
 		}
-		return
+		return nil
 	}
 	if err := h.queries.DeleteMediaPostUsagesForPostExcept(ctx, db.DeleteMediaPostUsagesForPostExceptParams{
 		PostID:   post.ID,
 		MediaIds: ids,
 	}); err != nil {
+		if strict {
+			return fmt.Errorf("media retention: delete stale usages for post %s: %w", post.ID, err)
+		}
 		slog.Warn("media retention: stale usage delete failed",
 			"post_id", post.ID,
 			"post_status", postStatus,
@@ -167,12 +220,18 @@ func (h *SocialPostHandler) syncPostMediaRetentionAt(
 			PostStatus:      postStatus,
 			CleanupAfterAt:  cleanupAfter,
 			RetentionReason: retentionReason,
-		}); shouldLogMediaPostUsageUpsertError(err) {
-			slog.Warn("media retention: usage upsert failed",
-				"post_id", post.ID,
-				"media_id", mediaID,
-				"post_status", postStatus,
-				"error", err)
+		}); err != nil {
+			if strict {
+				return fmt.Errorf("media retention: upsert usage for post %s media %s: %w", post.ID, mediaID, err)
+			}
+			if shouldLogMediaPostUsageUpsertError(err) {
+				slog.Warn("media retention: usage upsert failed",
+					"post_id", post.ID,
+					"media_id", mediaID,
+					"post_status", postStatus,
+					"error", err)
+			}
 		}
 	}
+	return nil
 }

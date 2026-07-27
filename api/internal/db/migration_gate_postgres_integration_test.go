@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -90,13 +91,39 @@ func seedMigration124State(t *testing.T, database *sql.DB) {
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
+		CREATE TABLE social_posts (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			idempotency_key TEXT,
+			status TEXT NOT NULL
+		);
+		CREATE TABLE workspaces (
+			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE webhooks (
+			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE webhook_deliveries (
+			id TEXT PRIMARY KEY,
+			webhook_id TEXT NOT NULL REFERENCES webhooks(id),
+			event TEXT NOT NULL,
+			payload JSONB NOT NULL
+		);
+		CREATE UNIQUE INDEX social_posts_workspace_scheduled_idempotency_uniq
+		  ON social_posts (workspace_id, idempotency_key)
+		  WHERE idempotency_key IS NOT NULL AND status = 'scheduled';
 		CREATE TABLE platform_publishing_restriction_email_recipients (
 			id TEXT PRIMARY KEY,
+			canonical_user_id TEXT NOT NULL,
+			represented_workspace_ids TEXT[] NOT NULL,
 			status TEXT NOT NULL,
 			retryable BOOLEAN NOT NULL DEFAULT TRUE
 		);
-		INSERT INTO platform_publishing_restriction_email_recipients (id, status, retryable)
-		VALUES ('failed-recipient', 'failed', TRUE);
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, canonical_user_id, represented_workspace_ids, status, retryable
+		) VALUES (
+			'failed-recipient', 'canonical-user', ARRAY['workspace-1','workspace-2']::TEXT[], 'failed', TRUE
+		);
 	`)
 	if err != nil {
 		t.Fatalf("seed migration 124 state: %v", err)
@@ -113,6 +140,27 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
+		CREATE TABLE social_posts (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL,
+			idempotency_key TEXT,
+			status TEXT NOT NULL
+		);
+		CREATE TABLE workspaces (
+			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE webhooks (
+			id TEXT PRIMARY KEY
+		);
+		CREATE TABLE webhook_deliveries (
+			id TEXT PRIMARY KEY,
+			webhook_id TEXT NOT NULL REFERENCES webhooks(id),
+			event TEXT NOT NULL,
+			payload JSONB NOT NULL
+		);
+		CREATE UNIQUE INDEX social_posts_workspace_scheduled_idempotency_uniq
+		  ON social_posts (workspace_id, idempotency_key)
+		  WHERE idempotency_key IS NOT NULL AND status = 'scheduled';
 		CREATE TABLE media_post_usages (
 			id TEXT PRIMARY KEY,
 			cleanup_after_at TIMESTAMPTZ,
@@ -120,12 +168,17 @@ func seedMigration123State(t *testing.T, database *sql.DB) {
 		);
 		CREATE TABLE platform_publishing_restriction_email_recipients (
 			id TEXT PRIMARY KEY,
+			canonical_user_id TEXT NOT NULL,
+			represented_workspace_ids TEXT[] NOT NULL,
 			status TEXT NOT NULL
 		);
 		INSERT INTO media_post_usages (id, cleanup_after_at, retention_reason)
 		VALUES ('active-usage', NULL, 'plan_status');
-		INSERT INTO platform_publishing_restriction_email_recipients (id, status)
-		VALUES ('failed-recipient', 'failed');
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, canonical_user_id, represented_workspace_ids, status
+		) VALUES (
+			'failed-recipient', 'canonical-user', ARRAY['workspace-1','workspace-2']::TEXT[], 'failed'
+		);
 	`)
 	if err != nil {
 		t.Fatalf("seed migration 123 state: %v", err)
@@ -174,6 +227,7 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 	backup := readyMigrationBackup("backup-125", name)
 	return &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:   trustedVolumeIdentity(config),
 		create:   railwaybackup.CreateResult{WorkflowID: "workflow-125"},
 		lists: [][]railwaybackup.Backup{
 			{},
@@ -184,7 +238,7 @@ func successfulGateClient(config MigrationGateConfig, affected []AffectedMigrati
 	}
 }
 
-func TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup(t *testing.T) {
+func TestMigrationGatePostgresApplies125AfterVerifiedBackupThenContinues127(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 	config := testMigrationGateConfig()
@@ -196,6 +250,7 @@ func TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup(t *testing.T) {
 	}
 	var version int64
 	var retryable bool
+	var ownerUserIDs string
 	if err := database.QueryRowContext(context.Background(), `
 		SELECT version_id
 		FROM goose_db_version
@@ -206,17 +261,45 @@ func TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := database.QueryRowContext(context.Background(), `
-		SELECT retryable
+		SELECT retryable, ARRAY_TO_STRING(represented_owner_user_ids, ',')
 		FROM platform_publishing_restriction_email_recipients
 		WHERE id='failed-recipient'
-	`).Scan(&retryable); err != nil {
+	`).Scan(&retryable, &ownerUserIDs); err != nil {
 		t.Fatal(err)
 	}
-	if version != 125 || retryable {
-		t.Fatalf("version=%d retryable=%v, want version=125 retryable=false", version, retryable)
+	if version != 127 || retryable || ownerUserIDs != "canonical-user,canonical-user" {
+		t.Fatalf(
+			"version=%d retryable=%v owner_user_ids=%v, want version=127 retryable=false canonical owner backfill",
+			version, retryable, ownerUserIDs,
+		)
 	}
 	if client.lockedID != "backup-125" {
 		t.Fatalf("locked backup ID = %q", client.lockedID)
+	}
+
+	zeroRowURL, zeroRowDatabase := openMigrationGateIntegrationDatabase(t)
+	seedMigration124State(t, zeroRowDatabase)
+	if _, err := zeroRowDatabase.ExecContext(context.Background(), `
+		DELETE FROM platform_publishing_restriction_email_recipients
+		WHERE status = 'failed'
+	`); err != nil {
+		t.Fatalf("remove migration 125 affected rows: %v", err)
+	}
+	zeroRowConfig := testMigrationGateConfig()
+	zeroRowClient := successfulGateClient(zeroRowConfig, []AffectedMigration{{Version: 125, Rows: 0}})
+	if err := RunMigrationsWithBackupGate(context.Background(), zeroRowURL, zeroRowConfig, zeroRowClient); err != nil {
+		t.Fatalf("zero-row pending irreversible migration gate: %v", err)
+	}
+	if zeroRowClient.lockedID != "backup-125" {
+		t.Fatalf("zero-row pending irreversible migration locked backup = %q", zeroRowClient.lockedID)
+	}
+	if err := zeroRowDatabase.QueryRowContext(context.Background(), `
+		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 127 {
+		t.Fatalf("zero-row pending irreversible migration final version = %d, want 127", version)
 	}
 }
 
@@ -226,6 +309,7 @@ func TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged(t *tes
 	config := testMigrationGateConfig()
 	client := &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:   trustedVolumeIdentity(config),
 		create:   railwaybackup.CreateResult{WorkflowID: "workflow-125"},
 		lists:    [][]railwaybackup.Backup{{}, {}, {}, {}},
 	}
@@ -260,9 +344,51 @@ func TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged(t *tes
 	}
 }
 
+func TestMigrationGatePostgresRejectsSameEnvironmentVolumeFromWrongServiceBeforeGoose(t *testing.T) {
+	databaseURL, database := openMigrationGateIntegrationDatabase(t)
+	seedMigration124State(t, database)
+	config := testMigrationGateConfig()
+	client := &recordingBackupClient{
+		identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:   trustedVolumeIdentity(config),
+	}
+	client.volume.ServiceID = "api-service-not-postgres"
+
+	err := RunMigrationsWithBackupGate(context.Background(), databaseURL, config, client)
+	if err == nil || !strings.Contains(err.Error(), "volume instance identity mismatch") {
+		t.Fatalf("gate error = %v", err)
+	}
+	wantCalls := []string{"identity", "volume:" + config.VolumeInstanceID}
+	if !reflect.DeepEqual(client.calls, wantCalls) {
+		t.Fatalf("Railway calls = %#v, want %#v", client.calls, wantCalls)
+	}
+	var version int64
+	var retryable bool
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT version_id
+		FROM goose_db_version
+		WHERE is_applied
+		ORDER BY id DESC
+		LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT retryable
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='failed-recipient'
+	`).Scan(&retryable); err != nil {
+		t.Fatal(err)
+	}
+	if version != 124 || !retryable {
+		t.Fatalf("version=%d retryable=%v, want unchanged version=124 retryable=true", version, retryable)
+	}
+}
+
 type concurrentBackupClient struct {
 	mu            sync.Mutex
 	identity      railwaybackup.Identity
+	volume        railwaybackup.VolumeInstanceIdentity
 	createStarted chan struct{}
 	releaseCreate chan struct{}
 	createdName   string
@@ -274,6 +400,7 @@ type concurrentBackupClient struct {
 type pausedReadinessBackupClient struct {
 	mu               sync.Mutex
 	identity         railwaybackup.Identity
+	volume           railwaybackup.VolumeInstanceIdentity
 	readinessStarted chan struct{}
 	releaseReadiness chan struct{}
 	readinessOnce    sync.Once
@@ -284,6 +411,14 @@ type pausedReadinessBackupClient struct {
 
 func (c *pausedReadinessBackupClient) Identity(context.Context) (railwaybackup.Identity, error) {
 	return c.identity, nil
+}
+
+func (c *pausedReadinessBackupClient) VolumeInstanceIdentity(context.Context, string) (railwaybackup.VolumeInstanceIdentity, error) {
+	return c.volume, nil
+}
+
+func (c *pausedReadinessBackupClient) VerifyDatabaseBinding(context.Context, railwaybackup.DatabaseBindingRequest) error {
+	return nil
 }
 
 func (c *pausedReadinessBackupClient) List(ctx context.Context, _ string) ([]railwaybackup.Backup, error) {
@@ -344,6 +479,7 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	config.Timeout = 10 * time.Second
 	client := &pausedReadinessBackupClient{
 		identity:         railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:           trustedVolumeIdentity(config),
 		readinessStarted: make(chan struct{}),
 		releaseReadiness: make(chan struct{}),
 	}
@@ -493,12 +629,21 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 	`).Scan(&retryable); err != nil {
 		t.Fatal(err)
 	}
-	if version != 125 || retentionReason != "active_post" || retryable {
+	var ownerUserIDs string
+	if err := database.QueryRowContext(ctx, `
+		SELECT ARRAY_TO_STRING(represented_owner_user_ids, ',')
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id = 'failed-recipient'
+	`).Scan(&ownerUserIDs); err != nil {
+		t.Fatal(err)
+	}
+	if version != 127 || retentionReason != "active_post" || retryable || ownerUserIDs != "canonical-user,canonical-user" {
 		t.Fatalf(
-			"after backup verification version=%d retention_reason=%q retryable=%v, want version=125 retention_reason=active_post retryable=false",
+			"after backup verification version=%d retention_reason=%q retryable=%v owner_user_ids=%v, want version=127 retention_reason=active_post retryable=false canonical owner backfill",
 			version,
 			retentionReason,
 			retryable,
+			ownerUserIDs,
 		)
 	}
 	if createCalls := client.creates(); createCalls != 1 {
@@ -508,6 +653,14 @@ func TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified
 
 func (c *concurrentBackupClient) Identity(context.Context) (railwaybackup.Identity, error) {
 	return c.identity, nil
+}
+
+func (c *concurrentBackupClient) VolumeInstanceIdentity(context.Context, string) (railwaybackup.VolumeInstanceIdentity, error) {
+	return c.volume, nil
+}
+
+func (c *concurrentBackupClient) VerifyDatabaseBinding(context.Context, railwaybackup.DatabaseBindingRequest) error {
+	return nil
 }
 
 func (c *concurrentBackupClient) List(context.Context, string) ([]railwaybackup.Backup, error) {
@@ -549,6 +702,7 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	config.Timeout = 2 * time.Second
 	client := &concurrentBackupClient{
 		identity:      railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:        trustedVolumeIdentity(config),
 		createStarted: make(chan struct{}),
 		releaseCreate: make(chan struct{}),
 	}
@@ -588,8 +742,8 @@ func TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup(t *testing.T) 
 	`).Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 125 {
-		t.Fatalf("final migration version = %d, want 125", version)
+	if version != 127 {
+		t.Fatalf("final migration version = %d, want 127", version)
 	}
 }
 
@@ -605,6 +759,7 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	orphan := readyMigrationBackup("orphan-backup", firstName)
 	firstClient := &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: firstConfig.ProjectID, EnvironmentID: firstConfig.EnvironmentID},
+		volume:   trustedVolumeIdentity(firstConfig),
 		create:   railwaybackup.CreateResult{WorkflowID: "orphan-workflow"},
 		lists:    [][]railwaybackup.Backup{{}, {orphan}, {orphan}, {orphan}},
 	}
@@ -622,6 +777,7 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	fresh := readyMigrationBackup("fresh-backup", secondName)
 	secondClient := &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: secondConfig.ProjectID, EnvironmentID: secondConfig.EnvironmentID},
+		volume:   trustedVolumeIdentity(secondConfig),
 		create:   railwaybackup.CreateResult{WorkflowID: "fresh-workflow"},
 		lists: [][]railwaybackup.Backup{
 			{orphan},
@@ -639,14 +795,23 @@ func TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup(t *
 	if secondClient.lockedID == firstClient.lockedID {
 		t.Fatal("replacement runner reused orphan backup")
 	}
+	var version int64
+	if err := database.QueryRowContext(context.Background(), `
+		SELECT version_id FROM goose_db_version WHERE is_applied ORDER BY id DESC LIMIT 1
+	`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != 127 {
+		t.Fatalf("replacement runner final migration version = %d, want 127", version)
+	}
 }
 
-func TestRequireCurrentSchemaRejects124AndAccepts125(t *testing.T) {
+func TestRequireCurrentSchemaRejects124AndAccepts127(t *testing.T) {
 	databaseURL, database := openMigrationGateIntegrationDatabase(t)
 	seedMigration124State(t, database)
 
 	err := RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 125") {
+	if err == nil || !strings.Contains(err.Error(), "current version 124") || !strings.Contains(err.Error(), "required version 127") {
 		t.Fatalf("schema guard error = %v", err)
 	}
 
@@ -669,14 +834,14 @@ func TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback(t *testing.T) 
 			is_applied BOOLEAN NOT NULL,
 			tstamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
-		INSERT INTO goose_db_version (version_id, is_applied) VALUES (126, TRUE);
+		INSERT INTO goose_db_version (version_id, is_applied) VALUES (128, TRUE);
 	`)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	err = RequireCurrentSchema(context.Background(), databaseURL)
-	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 125") || !strings.Contains(err.Error(), "rollback is unsafe") {
+	if err == nil || !strings.Contains(err.Error(), "newer than binary required version 127") || !strings.Contains(err.Error(), "rollback is unsafe") {
 		t.Fatalf("schema-ahead guard error = %v", err)
 	}
 }

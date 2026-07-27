@@ -21,6 +21,8 @@ func TestHandleMigrationCommandBuildsEnvironmentScopedGate(t *testing.T) {
 		"RAILWAY_PROJECT_ID":                  "project-1",
 		"RAILWAY_ENVIRONMENT_ID":              "environment-1",
 		"RAILWAY_POSTGRES_VOLUME_INSTANCE_ID": "volume-instance-1",
+		"RAILWAY_POSTGRES_SERVICE_ID":         "postgres-service-1",
+		"RAILWAY_SERVICE_ID":                  "api-service-1",
 		"RAILWAY_GIT_COMMIT_SHA":              "9eefc1090cfb25b6f23b753603506e5c1c7dc1bc",
 	}
 	var gotToken, gotDatabaseURL string
@@ -49,7 +51,7 @@ func TestHandleMigrationCommandBuildsEnvironmentScopedGate(t *testing.T) {
 	if gotDatabaseURL != environment["DATABASE_URL"] || gotToken != environment["RAILWAY_MIGRATION_BACKUP_TOKEN"] {
 		t.Fatalf("database=%q token=%q", gotDatabaseURL, gotToken)
 	}
-	if gotConfig.ProjectID != "project-1" || gotConfig.EnvironmentID != "environment-1" || gotConfig.VolumeInstanceID != "volume-instance-1" || gotConfig.ApplicationSHA != environment["RAILWAY_GIT_COMMIT_SHA"] {
+	if gotConfig.ProjectID != "project-1" || gotConfig.EnvironmentID != "environment-1" || gotConfig.VolumeInstanceID != "volume-instance-1" || gotConfig.PostgresServiceID != "postgres-service-1" || gotConfig.ApplicationServiceID != "api-service-1" || gotConfig.ApplicationSHA != environment["RAILWAY_GIT_COMMIT_SHA"] {
 		t.Fatalf("gate config = %#v", gotConfig)
 	}
 }
@@ -155,6 +157,12 @@ type commandBackupClient struct{}
 
 func (*commandBackupClient) Identity(context.Context) (railwaybackup.Identity, error) {
 	return railwaybackup.Identity{}, nil
+}
+func (*commandBackupClient) VolumeInstanceIdentity(context.Context, string) (railwaybackup.VolumeInstanceIdentity, error) {
+	return railwaybackup.VolumeInstanceIdentity{}, nil
+}
+func (*commandBackupClient) VerifyDatabaseBinding(context.Context, railwaybackup.DatabaseBindingRequest) error {
+	return nil
 }
 func (*commandBackupClient) List(context.Context, string) ([]railwaybackup.Backup, error) {
 	return nil, nil

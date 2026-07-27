@@ -23,7 +23,7 @@ WITH reset_baseline AS (
 SELECT
   sp.id,
   sp.status,
-  sp.scheduled_at,
+  COALESCE(sp.scheduled_at, sp.created_at) AS scheduled_at,
   sp.created_at,
   COALESCE(
     CASE
@@ -37,6 +37,11 @@ SELECT
           AND spr.status NOT IN ('published', 'failed')
           AND sa.disconnected_at IS NULL
       )
+      WHEN jsonb_typeof(sp.metadata->'scheduled_quota_units') = 'number'
+        AND (sp.metadata->>'scheduled_quota_units') ~ '^(0|[1-9][0-9]{0,8})$'
+        AND jsonb_typeof(sp.metadata->'platform_posts') = 'array'
+        AND (sp.metadata->>'scheduled_quota_units')::NUMERIC <= jsonb_array_length(sp.metadata->'platform_posts') THEN
+        (sp.metadata->>'scheduled_quota_units')::INTEGER
       WHEN jsonb_typeof(sp.metadata->'platform_posts') = 'array' THEN (
         SELECT COUNT(*)::INTEGER
         FROM jsonb_array_elements(sp.metadata->'platform_posts') AS pp
@@ -57,12 +62,35 @@ FROM social_posts sp
 CROSS JOIN reset_baseline rb
 WHERE sp.workspace_id = $1
   AND sp.status IN ('scheduled', 'quota_hold', 'publishing')
-  AND sp.scheduled_at IS NOT NULL
   AND sp.deleted_at IS NULL
-  AND sp.scheduled_at >= ($2 || '-01')::DATE
-  AND sp.scheduled_at < (($2 || '-01')::DATE + INTERVAL '1 month')
-  AND sp.created_at > COALESCE(rb.reset_at, '-infinity'::timestamptz)
-ORDER BY sp.scheduled_at, sp.created_at, sp.id
+  AND (
+    (
+      sp.status IN ('scheduled', 'quota_hold')
+      AND sp.scheduled_at >= ($2 || '-01')::DATE
+      AND sp.scheduled_at < (($2 || '-01')::DATE + INTERVAL '1 month')
+      AND sp.created_at > COALESCE(rb.reset_at, '-infinity'::timestamptz)
+    )
+    OR (
+      sp.status = 'publishing'
+      AND (
+        (
+          jsonb_typeof(sp.metadata->'scheduled_execution_reservation_period') = 'string'
+          AND (sp.metadata->>'scheduled_execution_reservation_period') ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'
+          AND sp.metadata->>'scheduled_execution_reservation_period' = $2
+        )
+        OR (
+          NOT COALESCE((
+            jsonb_typeof(sp.metadata->'scheduled_execution_reservation_period') = 'string'
+            AND (sp.metadata->>'scheduled_execution_reservation_period') ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'
+          ), FALSE)
+          AND sp.scheduled_at >= ($2 || '-01')::DATE
+          AND sp.scheduled_at < (($2 || '-01')::DATE + INTERVAL '1 month')
+          AND sp.created_at > COALESCE(rb.reset_at, '-infinity'::timestamptz)
+        )
+      )
+    )
+  )
+ORDER BY COALESCE(sp.scheduled_at, sp.created_at), sp.created_at, sp.id
 FOR UPDATE OF sp
 `
 

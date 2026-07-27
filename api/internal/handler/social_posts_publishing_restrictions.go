@@ -14,9 +14,29 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
-type publishingRestrictionEvaluator interface {
-	Evaluate(context.Context, string, string) (publishingrestrictions.Decision, error)
+type publishingRestrictionEvaluator = publishingrestrictions.Evaluator
+
+type transactionBoundPublishingRestrictionEvaluator interface {
+	WithDBTX(db.DBTX) publishingrestrictions.Evaluator
 }
+
+func (h *SocialPostHandler) withTransactionPublishingRestrictions(dbtx db.DBTX) *SocialPostHandler {
+	if h == nil || dbtx == nil {
+		return h
+	}
+	clone := *h
+	if binder, ok := h.publishingRestrictions.(transactionBoundPublishingRestrictionEvaluator); ok {
+		clone.publishingRestrictions = binder.WithDBTX(dbtx)
+	}
+	return &clone
+}
+
+type publishingRestrictionPolicyEvaluation struct {
+	decision publishingrestrictions.Decision
+	err      error
+}
+
+type publishingRestrictionPolicySnapshot map[string]publishingRestrictionPolicyEvaluation
 
 func (h *SocialPostHandler) SetPublishingRestrictions(evaluator publishingRestrictionEvaluator) *SocialPostHandler {
 	if h != nil {
@@ -31,18 +51,42 @@ func (h *SocialPostHandler) evaluatePublishingRestrictions(
 	posts []platform.PlatformPostInput,
 	accountMap map[string]platform.ValidateAccount,
 ) (map[string]publishingrestrictions.Decision, error) {
+	return h.evaluatePublishingRestrictionsWithSnapshot(ctx, workspaceID, posts, accountMap, nil)
+}
+
+func (h *SocialPostHandler) evaluatePublishingRestrictionsWithSnapshot(
+	ctx context.Context,
+	workspaceID string,
+	posts []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	snapshot publishingRestrictionPolicySnapshot,
+) (map[string]publishingrestrictions.Decision, error) {
 	blocked := make(map[string]publishingrestrictions.Decision)
 	if h == nil || h.publishingRestrictions == nil {
 		return blocked, nil
 	}
+	if snapshot == nil {
+		snapshot = make(publishingRestrictionPolicySnapshot)
+	}
 	for _, post := range posts {
-		platformName := strings.ToLower(strings.TrimSpace(accountMap[post.AccountID].Platform))
-		decision, err := h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
-		if err != nil {
-			return nil, err
+		account, trusted := accountMap[post.AccountID]
+		if !trusted || account.Disconnected {
+			continue
 		}
-		if decision.Restricted {
-			blocked[post.AccountID] = decision
+		platformName := strings.ToLower(strings.TrimSpace(account.Platform))
+		if platformName == "" {
+			continue
+		}
+		evaluation, evaluated := snapshot[platformName]
+		if !evaluated {
+			evaluation.decision, evaluation.err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
+			snapshot[platformName] = evaluation
+		}
+		if evaluation.err != nil {
+			return nil, evaluation.err
+		}
+		if evaluation.decision.Restricted {
+			blocked[post.AccountID] = evaluation.decision
 		}
 	}
 	return blocked, nil
@@ -132,6 +176,16 @@ func (h *SocialPostHandler) applyPublishingRestrictionRetryProjection(
 	}
 	if response.RetryPolicy == nil {
 		response.RetryPolicy = deriveRetryPolicy(result, jobs)
+	}
+	account, accountErr := h.queries.GetSocialAccount(ctx, result.SocialAccountID)
+	if accountErr != nil || socialAccountUnavailableForDelivery(account, true) {
+		response.RetryPolicy.IsRetriable = false
+		response.RetryPolicy.WillRetry = false
+		response.RetryPolicy.NextRunAt = nil
+		response.RetryPolicy.ManualRetryAllowed = false
+		response.RetryPolicy.RetryState = "blocked"
+		response.RetryPolicy.Reason = "social_account_not_available"
+		return
 	}
 	restrictionActive := true
 	if h != nil && h.publishingRestrictions != nil {

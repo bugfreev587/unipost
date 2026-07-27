@@ -28,7 +28,10 @@ func TestDecisionForPaidScheduleAdmission(t *testing.T) {
 		{name: "growth included", planID: "growth", current: 7500, requested: 1, limit: 7500, allowed: false},
 		{name: "team excluded", planID: "team", current: 999999, requested: 10, limit: -1, allowed: true},
 		{name: "enterprise excluded", planID: "enterprise", current: 999999, requested: 10, limit: 1000, allowed: true},
-		{name: "free delegated", planID: "free", current: 100, requested: 1, limit: 100, allowed: true},
+		{name: "free growth blocked atomically", planID: "free", current: 100, requested: 1, limit: 100, allowed: false},
+		{name: "over limit net decrease allowed", planID: "basic", current: 110, released: 2, requested: 1, limit: 100, allowed: true},
+		{name: "over limit net zero allowed", planID: "free", current: 110, released: 1, requested: 1, limit: 100, allowed: true},
+		{name: "over limit release only allowed", planID: "basic", current: 110, released: 2, requested: 0, limit: 100, allowed: true},
 	}
 
 	for _, tt := range tests {
@@ -124,6 +127,66 @@ func TestCoordinatorLocksPeriodsInOrderAndCommitsAllowedMutation(t *testing.T) {
 		t.Fatalf("locked periods = %#v, want sorted periods", tx.locked)
 	}
 	if !mutated || !tx.committed || tx.rolledBack {
+		t.Fatalf("transaction state mutated=%v committed=%v rolledBack=%v", mutated, tx.committed, tx.rolledBack)
+	}
+}
+
+func TestScheduledIdempotencyCoordinatorLocksKeyBeforeSortedPeriods(t *testing.T) {
+	tx := &fakeTransaction{snapshots: map[string]quota.MonthlySnapshot{
+		"2026-07": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-07", Limit: 100},
+		"2026-08": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-08", Limit: 100},
+	}}
+	coordinator := newCoordinator(&fakeBeginner{tx: tx})
+	mutated := false
+	admitted := false
+	handled, err := coordinator.MutateScheduledIdempotent(
+		context.Background(),
+		"ws_123",
+		"idem_123",
+		func(TransactionContext) (bool, []PeriodDelta, error) {
+			tx.lockEvents = append(tx.lockEvents, "planner")
+			return false, []PeriodDelta{{Period: "2026-08", RequestedUnits: 1}, {Period: "2026-07", RequestedUnits: 1}}, nil
+		},
+		func(TransactionContext) error {
+			admitted = true
+			tx.lockEvents = append(tx.lockEvents, "enqueue")
+			return nil
+		},
+		func(*db.Queries) error { mutated = true; return nil },
+	)
+	if err != nil || handled {
+		t.Fatalf("MutateScheduledIdempotent handled=%v err=%v, want false/nil", handled, err)
+	}
+	wantLocks := []string{"idempotency:idem_123", "planner", "period:2026-07", "period:2026-08", "snapshot:2026-07", "snapshot:2026-08", "enqueue"}
+	if !reflect.DeepEqual(tx.lockEvents, wantLocks) {
+		t.Fatalf("lock order = %#v, want %#v", tx.lockEvents, wantLocks)
+	}
+	if !admitted || !mutated || !tx.committed || tx.rolledBack {
+		t.Fatalf("transaction state mutated=%v committed=%v rolledBack=%v", mutated, tx.committed, tx.rolledBack)
+	}
+}
+
+func TestScheduledIdempotencyCoordinatorReplayCommitsBeforeCapacityGates(t *testing.T) {
+	tx := &fakeTransaction{snapshots: map[string]quota.MonthlySnapshot{
+		"2026-07": {WorkspaceID: "ws_123", PlanID: "basic", Period: "2026-07", Completed: 100, Limit: 100},
+	}}
+	coordinator := newCoordinator(&fakeBeginner{tx: tx})
+	mutated := false
+	handled, err := coordinator.MutateScheduledIdempotent(
+		context.Background(),
+		"ws_123",
+		"idem_123",
+		func(TransactionContext) (bool, []PeriodDelta, error) { return true, nil, nil },
+		nil,
+		func(*db.Queries) error { mutated = true; return nil },
+	)
+	if err != nil || !handled {
+		t.Fatalf("MutateScheduledIdempotent handled=%v err=%v, want true/nil", handled, err)
+	}
+	if !reflect.DeepEqual(tx.lockEvents, []string{"idempotency:idem_123"}) {
+		t.Fatalf("locks = %#v, want idempotency lock only", tx.lockEvents)
+	}
+	if mutated || !tx.committed || tx.rolledBack {
 		t.Fatalf("transaction state mutated=%v committed=%v rolledBack=%v", mutated, tx.committed, tx.rolledBack)
 	}
 }
@@ -246,22 +309,32 @@ func (f *fakeBeginner) Begin(context.Context) (transaction, error) {
 type fakeTransaction struct {
 	snapshots  map[string]quota.MonthlySnapshot
 	locked     []string
+	lockEvents []string
 	committed  bool
 	rolledBack bool
 }
 
+func (f *fakeTransaction) LockScheduledIdempotency(_ context.Context, _, idempotencyKey string) error {
+	f.lockEvents = append(f.lockEvents, "idempotency:"+idempotencyKey)
+	return nil
+}
+
 func (f *fakeTransaction) LockPeriod(_ context.Context, _, period string) error {
 	f.locked = append(f.locked, period)
+	f.lockEvents = append(f.lockEvents, "period:"+period)
 	return nil
 }
 
 func (f *fakeTransaction) Snapshot(_ context.Context, _, period string) (quota.MonthlySnapshot, error) {
+	f.lockEvents = append(f.lockEvents, "snapshot:"+period)
 	snapshot, ok := f.snapshots[period]
 	if !ok {
 		return quota.MonthlySnapshot{}, errors.New("snapshot missing")
 	}
 	return snapshot, nil
 }
+
+func (f *fakeTransaction) DBTX() db.DBTX { return nil }
 
 func (f *fakeTransaction) Queries() *db.Queries {
 	return nil

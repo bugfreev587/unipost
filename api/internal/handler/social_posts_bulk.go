@@ -118,8 +118,9 @@ func (h *SocialPostHandler) CreateBulk(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]bulkResultEntry, len(body.Posts))
 	acceptedQuotaUnits := 0
+	policySnapshot := make(publishingRestrictionPolicySnapshot)
 	for i, postBody := range body.Posts {
-		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, quotaGate, acceptedQuotaUnits)
+		result, quotaUnits := h.processBulkOne(r, workspaceID, postBody, accountMap, quotaGate, acceptedQuotaUnits, policySnapshot)
 		if result.Error == nil {
 			acceptedQuotaUnits += quotaUnits
 		}
@@ -140,6 +141,7 @@ func (h *SocialPostHandler) processBulkOne(
 	accountMap map[string]platform.ValidateAccount,
 	quotaGate quota.FreePlanHardBlockGate,
 	acceptedQuotaUnits int,
+	policySnapshot publishingRestrictionPolicySnapshot,
 ) (bulkResultEntry, int) {
 	parsed, status, msg := parsePublishRequest(body)
 	if status != 0 {
@@ -185,7 +187,7 @@ func (h *SocialPostHandler) processBulkOne(
 		}, 0
 	}
 
-	blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
+	blockedTargets, policyErr := h.evaluatePublishingRestrictionsWithSnapshot(r.Context(), workspaceID, parsed.Posts, accountMap, policySnapshot)
 	if policyErr != nil {
 		return bulkResultEntry{
 			Status: http.StatusServiceUnavailable,

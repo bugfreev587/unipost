@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 )
 
@@ -15,6 +16,13 @@ const publicGraphQLEndpoint = "https://backboard.railway.com/graphql/v2"
 type Identity struct {
 	ProjectID     string
 	EnvironmentID string
+}
+
+type VolumeInstanceIdentity struct {
+	ID            string
+	ProjectID     string
+	EnvironmentID string
+	ServiceID     string
 }
 
 type Backup struct {
@@ -29,11 +37,171 @@ type CreateResult struct {
 	WorkflowID string
 }
 
+type DatabaseBindingRequest struct {
+	ProjectID            string
+	EnvironmentID        string
+	ApplicationServiceID string
+	PostgresServiceID    string
+	RuntimeDatabaseURL   string
+}
+
 type Client interface {
 	Identity(context.Context) (Identity, error)
+	VolumeInstanceIdentity(context.Context, string) (VolumeInstanceIdentity, error)
+	VerifyDatabaseBinding(context.Context, DatabaseBindingRequest) error
 	List(context.Context, string) ([]Backup, error)
 	Create(context.Context, string, string) (CreateResult, error)
 	Lock(context.Context, string, string) error
+}
+
+func (c *GraphQLClient) VerifyDatabaseBinding(ctx context.Context, request DatabaseBindingRequest) error {
+	missing := make([]string, 0, 5)
+	for name, value := range map[string]string{
+		"project ID":             request.ProjectID,
+		"environment ID":         request.EnvironmentID,
+		"application service ID": request.ApplicationServiceID,
+		"Postgres service ID":    request.PostgresServiceID,
+		"runtime DATABASE_URL":   request.RuntimeDatabaseURL,
+	} {
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("verify Railway database binding: missing %s", strings.Join(missing, ", "))
+	}
+
+	var data struct {
+		Project struct {
+			ID       string `json:"id"`
+			Services struct {
+				Edges []struct {
+					Node struct {
+						ID   string `json:"id"`
+						Name string `json:"name"`
+					} `json:"node"`
+				} `json:"edges"`
+			} `json:"services"`
+		} `json:"project"`
+		Unrendered map[string]string `json:"unrendered"`
+		Rendered   map[string]string `json:"rendered"`
+	}
+	variables := map[string]any{
+		"projectId":            request.ProjectID,
+		"environmentId":        request.EnvironmentID,
+		"applicationServiceId": request.ApplicationServiceID,
+	}
+	query := `query($projectId: String!, $environmentId: String!, $applicationServiceId: String!) {
+  project(id: $projectId) {
+    id
+    services { edges { node { id name } } }
+  }
+  unrendered: variables(
+    projectId: $projectId
+    environmentId: $environmentId
+    serviceId: $applicationServiceId
+    unrendered: true
+  )
+  rendered: variablesForServiceDeployment(
+    projectId: $projectId
+    environmentId: $environmentId
+    serviceId: $applicationServiceId
+  )
+}`
+	if err := execute(ctx, c, query, variables, &data); err != nil {
+		return fmt.Errorf("verify Railway database binding: %w", err)
+	}
+	if data.Project.ID != request.ProjectID {
+		return fmt.Errorf("verify Railway database binding: project identity mismatch")
+	}
+
+	applicationMatches := 0
+	postgresMatches := 0
+	postgresNameMatches := 0
+	postgresServiceName := ""
+	for _, edge := range data.Project.Services.Edges {
+		if edge.Node.ID == request.ApplicationServiceID {
+			applicationMatches++
+		}
+		if edge.Node.ID == request.PostgresServiceID {
+			postgresMatches++
+			postgresServiceName = edge.Node.Name
+		}
+	}
+	if applicationMatches != 1 || postgresMatches != 1 || strings.TrimSpace(postgresServiceName) == "" {
+		return fmt.Errorf("verify Railway database binding: application or Postgres service identity is missing or ambiguous")
+	}
+	for _, edge := range data.Project.Services.Edges {
+		if edge.Node.Name == postgresServiceName {
+			postgresNameMatches++
+		}
+	}
+	if postgresNameMatches != 1 {
+		return fmt.Errorf("verify Railway database binding: Postgres service name is ambiguous")
+	}
+	wantReference := "${{" + postgresServiceName + ".DATABASE_URL}}"
+	if data.Unrendered["DATABASE_URL"] != wantReference {
+		return fmt.Errorf("verify Railway database binding: application DATABASE_URL does not exactly reference the verified Postgres service")
+	}
+	renderedURL := data.Rendered["DATABASE_URL"]
+	if strings.TrimSpace(renderedURL) == "" {
+		return fmt.Errorf("verify Railway database binding: rendered application DATABASE_URL is missing")
+	}
+	if renderedURL != request.RuntimeDatabaseURL {
+		return fmt.Errorf("verify Railway database binding: rendered DATABASE_URL does not match runtime DATABASE_URL")
+	}
+	return nil
+}
+
+func (c *GraphQLClient) VolumeInstanceIdentity(ctx context.Context, volumeInstanceID string) (VolumeInstanceIdentity, error) {
+	var data struct {
+		VolumeInstance struct {
+			ID            string `json:"id"`
+			EnvironmentID string `json:"environmentId"`
+			ServiceID     string `json:"serviceId"`
+			Volume        struct {
+				ProjectID string `json:"projectId"`
+			} `json:"volume"`
+		} `json:"volumeInstance"`
+	}
+	variables := map[string]any{"id": volumeInstanceID}
+	query := `query($id: String!) {
+  volumeInstance(id: $id) {
+    id
+    environmentId
+    serviceId
+    volume { projectId }
+  }
+}`
+	if err := execute(ctx, c, query, variables, &data); err != nil {
+		return VolumeInstanceIdentity{}, fmt.Errorf("read Railway volume instance identity: %w", err)
+	}
+	identity := VolumeInstanceIdentity{
+		ID:            data.VolumeInstance.ID,
+		ProjectID:     data.VolumeInstance.Volume.ProjectID,
+		EnvironmentID: data.VolumeInstance.EnvironmentID,
+		ServiceID:     data.VolumeInstance.ServiceID,
+	}
+	missing := make([]string, 0, 4)
+	for name, value := range map[string]string{
+		"volume instance ID": identity.ID,
+		"project ID":         identity.ProjectID,
+		"environment ID":     identity.EnvironmentID,
+		"service ID":         identity.ServiceID,
+	} {
+		if strings.TrimSpace(value) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return VolumeInstanceIdentity{}, fmt.Errorf(
+			"read Railway volume instance identity: response is missing %s",
+			strings.Join(missing, ", "),
+		)
+	}
+	return identity, nil
 }
 
 type GraphQLClient struct {

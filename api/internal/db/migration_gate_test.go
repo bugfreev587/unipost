@@ -19,9 +19,12 @@ import (
 
 type recordingBackupClient struct {
 	identity    railwaybackup.Identity
+	volume      railwaybackup.VolumeInstanceIdentity
 	lists       [][]railwaybackup.Backup
 	create      railwaybackup.CreateResult
 	identityErr error
+	volumeErr   error
+	bindingErr  error
 	listErr     error
 	createErr   error
 	lockErr     error
@@ -29,11 +32,23 @@ type recordingBackupClient struct {
 	listIndex   int
 	lockedID    string
 	createdName string
+	binding     railwaybackup.DatabaseBindingRequest
 }
 
 func (c *recordingBackupClient) Identity(context.Context) (railwaybackup.Identity, error) {
 	c.calls = append(c.calls, "identity")
 	return c.identity, c.identityErr
+}
+
+func (c *recordingBackupClient) VolumeInstanceIdentity(_ context.Context, volumeInstanceID string) (railwaybackup.VolumeInstanceIdentity, error) {
+	c.calls = append(c.calls, "volume:"+volumeInstanceID)
+	return c.volume, c.volumeErr
+}
+
+func (c *recordingBackupClient) VerifyDatabaseBinding(_ context.Context, binding railwaybackup.DatabaseBindingRequest) error {
+	c.calls = append(c.calls, "binding")
+	c.binding = binding
+	return c.bindingErr
 }
 
 func (c *recordingBackupClient) List(_ context.Context, volumeInstanceID string) ([]railwaybackup.Backup, error) {
@@ -78,22 +93,77 @@ func readyMigrationBackup(id, name string) railwaybackup.Backup {
 
 func testMigrationGateConfig() MigrationGateConfig {
 	return MigrationGateConfig{
-		ProjectID:        "project-1",
-		EnvironmentID:    "environment-1",
-		VolumeInstanceID: "volume-instance-1",
-		ApplicationSHA:   "9eefc1090cfb25b6f23b753603506e5c1c7dc1bc",
-		PollInterval:     time.Millisecond,
-		Timeout:          50 * time.Millisecond,
-		attemptSuffix:    func() string { return "attempt1" },
+		ProjectID:            "project-1",
+		EnvironmentID:        "environment-1",
+		VolumeInstanceID:     "volume-instance-1",
+		PostgresServiceID:    "postgres-service-1",
+		ApplicationServiceID: "api-service-1",
+		ApplicationSHA:       "9eefc1090cfb25b6f23b753603506e5c1c7dc1bc",
+		PollInterval:         time.Millisecond,
+		Timeout:              50 * time.Millisecond,
+		attemptSuffix:        func() string { return "attempt1" },
+		databaseURL:          "postgresql://runtime/test",
 	}
 }
 
-func TestMigrationGateSkipsRailwayWhenAffectedRowsAreZero(t *testing.T) {
-	client := &recordingBackupClient{}
+func TestMigrationGateRejectsMiswiredDatabaseBeforeBackupListOrMigrations(t *testing.T) {
+	config := testMigrationGateConfig()
+	client := &recordingBackupClient{
+		identity:   railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:     trustedVolumeIdentity(config),
+		bindingErr: errors.New("rendered DATABASE_URL does not match runtime DATABASE_URL"),
+	}
+	migrationsCalled := false
+	err := runAfterBackupGate(
+		context.Background(), config, client,
+		[]AffectedMigration{{Version: 125, Rows: 0}},
+		func(context.Context) error { migrationsCalled = true; return nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "rendered DATABASE_URL does not match runtime DATABASE_URL") {
+		t.Fatalf("gate error = %v", err)
+	}
+	if migrationsCalled {
+		t.Fatal("migration runner was called")
+	}
+	wantCalls := []string{"identity", "volume:volume-instance-1", "binding"}
+	if !reflect.DeepEqual(client.calls, wantCalls) {
+		t.Fatalf("calls = %#v, want %#v", client.calls, wantCalls)
+	}
+	if client.binding.ProjectID != config.ProjectID ||
+		client.binding.EnvironmentID != config.EnvironmentID ||
+		client.binding.ApplicationServiceID != config.ApplicationServiceID ||
+		client.binding.PostgresServiceID != config.PostgresServiceID ||
+		client.binding.RuntimeDatabaseURL != config.databaseURL {
+		t.Fatalf("binding request = %#v", client.binding)
+	}
+}
+
+func trustedVolumeIdentity(config MigrationGateConfig) railwaybackup.VolumeInstanceIdentity {
+	return railwaybackup.VolumeInstanceIdentity{
+		ID:            config.VolumeInstanceID,
+		ProjectID:     config.ProjectID,
+		EnvironmentID: config.EnvironmentID,
+		ServiceID:     config.PostgresServiceID,
+	}
+}
+
+func TestMigrationGateRequiresBackupWhenPendingIrreversibleRowsAreZero(t *testing.T) {
+	config := testMigrationGateConfig()
+	wantName := migrationBackupName(config, []AffectedMigration{{Version: 124, Rows: 0}, {Version: 125, Rows: 0}})
+	if !strings.Contains(wantName, "-m124-125-") {
+		t.Fatalf("zero-row pending migration backup name = %q, want both pending versions", wantName)
+	}
+	fresh := readyMigrationBackup("zero-row-backup", wantName)
+	client := &recordingBackupClient{
+		identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+		volume:   trustedVolumeIdentity(config),
+		create:   railwaybackup.CreateResult{WorkflowID: "zero-row-workflow"},
+		lists:    [][]railwaybackup.Backup{{}, {fresh}, {fresh}, {fresh}},
+	}
 	migrationsCalled := false
 	err := runAfterBackupGate(
 		context.Background(),
-		testMigrationGateConfig(),
+		config,
 		client,
 		[]AffectedMigration{{Version: 124, Rows: 0}, {Version: 125, Rows: 0}},
 		func(context.Context) error { migrationsCalled = true; return nil },
@@ -101,8 +171,8 @@ func TestMigrationGateSkipsRailwayWhenAffectedRowsAreZero(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(client.calls) != 0 {
-		t.Fatalf("Railway calls = %v", client.calls)
+	if client.createdName != wantName || client.lockedID != "zero-row-backup" {
+		t.Fatalf("created=%q locked=%q, want %q/zero-row-backup", client.createdName, client.lockedID, wantName)
 	}
 	if !migrationsCalled {
 		t.Fatal("migration runner was not called")
@@ -116,7 +186,11 @@ func TestMigrationGateVerifiesFreshStableLockedBackupBeforeMigrations(t *testing
 	fresh := readyMigrationBackup("new-backup", wantName)
 	client := &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
-		create:   railwaybackup.CreateResult{WorkflowID: "createVolumeInstanceBackup/workflow"},
+		volume: railwaybackup.VolumeInstanceIdentity{
+			ID: config.VolumeInstanceID, ProjectID: config.ProjectID,
+			EnvironmentID: config.EnvironmentID, ServiceID: config.PostgresServiceID,
+		},
+		create: railwaybackup.CreateResult{WorkflowID: "createVolumeInstanceBackup/workflow"},
 		lists: [][]railwaybackup.Backup{
 			{old},
 			{old, fresh},
@@ -148,6 +222,8 @@ func TestMigrationGateVerifiesFreshStableLockedBackupBeforeMigrations(t *testing
 	}
 	wantCalls := []string{
 		"identity",
+		"volume:volume-instance-1",
+		"binding",
 		"list:volume-instance-1",
 		"create:volume-instance-1",
 		"list:volume-instance-1",
@@ -165,8 +241,12 @@ func TestMigrationGateRejectsWorkflowIDAsBackupID(t *testing.T) {
 	config := testMigrationGateConfig()
 	client := &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
-		create:   railwaybackup.CreateResult{WorkflowID: "workflow-is-not-a-backup-id"},
-		lists:    [][]railwaybackup.Backup{{}, {}, {}, {}},
+		volume: railwaybackup.VolumeInstanceIdentity{
+			ID: config.VolumeInstanceID, ProjectID: config.ProjectID,
+			EnvironmentID: config.EnvironmentID, ServiceID: config.PostgresServiceID,
+		},
+		create: railwaybackup.CreateResult{WorkflowID: "workflow-is-not-a-backup-id"},
+		lists:  [][]railwaybackup.Backup{{}, {}, {}, {}},
 	}
 	migrationsCalled := false
 	err := runAfterBackupGate(
@@ -179,6 +259,105 @@ func TestMigrationGateRejectsWorkflowIDAsBackupID(t *testing.T) {
 	}
 	if client.lockedID != "" || migrationsCalled {
 		t.Fatalf("locked=%q migrationsCalled=%v", client.lockedID, migrationsCalled)
+	}
+}
+
+func TestMigrationGateRejectsUntrustedVolumeBeforeListingBackupsOrMigrations(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(MigrationGateConfig, *recordingBackupClient)
+		wantError string
+	}{
+		{
+			name: "wrong volume instance",
+			configure: func(_ MigrationGateConfig, client *recordingBackupClient) {
+				client.volume.ID = "other-volume-instance"
+			},
+			wantError: "volume instance identity mismatch",
+		},
+		{
+			name: "wrong project",
+			configure: func(_ MigrationGateConfig, client *recordingBackupClient) {
+				client.volume.ProjectID = "other-project"
+			},
+			wantError: "volume instance identity mismatch",
+		},
+		{
+			name: "wrong environment",
+			configure: func(_ MigrationGateConfig, client *recordingBackupClient) {
+				client.volume.EnvironmentID = "other-environment"
+			},
+			wantError: "volume instance identity mismatch",
+		},
+		{
+			name: "same environment but wrong service",
+			configure: func(_ MigrationGateConfig, client *recordingBackupClient) {
+				client.volume.ServiceID = "api-service-not-postgres"
+			},
+			wantError: "volume instance identity mismatch",
+		},
+		{
+			name: "lookup error",
+			configure: func(_ MigrationGateConfig, client *recordingBackupClient) {
+				client.volumeErr = errors.New("volume lookup unavailable")
+			},
+			wantError: "volume lookup unavailable",
+		},
+		{
+			name: "missing fields",
+			configure: func(_ MigrationGateConfig, client *recordingBackupClient) {
+				client.volume.ServiceID = ""
+			},
+			wantError: "missing",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := testMigrationGateConfig()
+			client := &recordingBackupClient{
+				identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+				volume: railwaybackup.VolumeInstanceIdentity{
+					ID: config.VolumeInstanceID, ProjectID: config.ProjectID,
+					EnvironmentID: config.EnvironmentID, ServiceID: config.PostgresServiceID,
+				},
+			}
+			test.configure(config, client)
+			migrationsCalled := false
+			err := runAfterBackupGate(
+				context.Background(), config, client,
+				[]AffectedMigration{{Version: 125, Rows: 1}},
+				func(context.Context) error { migrationsCalled = true; return nil },
+			)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("gate error = %v, want containing %q", err, test.wantError)
+			}
+			if migrationsCalled {
+				t.Fatal("migration runner was called")
+			}
+			wantCalls := []string{"identity", "volume:volume-instance-1"}
+			if !reflect.DeepEqual(client.calls, wantCalls) {
+				t.Fatalf("calls = %#v, want %#v", client.calls, wantCalls)
+			}
+		})
+	}
+}
+
+func TestMigrationGateRequiresTrustedPostgresServiceIDBeforeRailwayLookup(t *testing.T) {
+	config := testMigrationGateConfig()
+	config.PostgresServiceID = ""
+	client := &recordingBackupClient{}
+	migrationsCalled := false
+	err := runAfterBackupGate(
+		context.Background(), config, client,
+		[]AffectedMigration{{Version: 125, Rows: 1}},
+		func(context.Context) error { migrationsCalled = true; return nil },
+	)
+	if err == nil || !strings.Contains(err.Error(), "Postgres service ID") {
+		t.Fatalf("gate error = %v", err)
+	}
+	if len(client.calls) != 0 || migrationsCalled {
+		t.Fatalf("Railway calls = %v migrationsCalled=%v", client.calls, migrationsCalled)
 	}
 }
 
@@ -284,6 +463,7 @@ func TestMigrationGateRejectsInvalidBackupEvidence(t *testing.T) {
 			backupName := migrationBackupName(config, []AffectedMigration{{Version: 125, Rows: 1}})
 			client := &recordingBackupClient{
 				identity: railwaybackup.Identity{ProjectID: config.ProjectID, EnvironmentID: config.EnvironmentID},
+				volume:   trustedVolumeIdentity(config),
 				create:   railwaybackup.CreateResult{WorkflowID: "workflow"},
 			}
 			test.configure(config, client, backupName)
@@ -322,6 +502,7 @@ func TestMigrationGateNeverReusesOrphanFromPriorAttempt(t *testing.T) {
 	fresh := readyMigrationBackup("fresh-backup", secondName)
 	client := &recordingBackupClient{
 		identity: railwaybackup.Identity{ProjectID: second.ProjectID, EnvironmentID: second.EnvironmentID},
+		volume:   trustedVolumeIdentity(second),
 		create:   railwaybackup.CreateResult{WorkflowID: "new-workflow"},
 		lists: [][]railwaybackup.Backup{
 			{orphan},

@@ -2,18 +2,25 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/mediaretention"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/postfailures"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 // FacebookVideoStatusWorker flips Facebook video rows out of
@@ -42,10 +49,19 @@ import (
 type FacebookVideoStatusWorker struct {
 	queries   *db.Queries
 	encryptor *crypto.AESEncryptor
+	bus       events.EventBus
 }
 
-func NewFacebookVideoStatusWorker(queries *db.Queries, encryptor *crypto.AESEncryptor) *FacebookVideoStatusWorker {
-	return &FacebookVideoStatusWorker{queries: queries, encryptor: encryptor}
+func NewFacebookVideoStatusWorker(queries *db.Queries, encryptor *crypto.AESEncryptor, buses ...events.EventBus) *FacebookVideoStatusWorker {
+	var bus events.EventBus = events.NoopBus{}
+	if len(buses) > 0 && buses[0] != nil {
+		bus = buses[0]
+	}
+	return &FacebookVideoStatusWorker{queries: queries, encryptor: encryptor, bus: bus}
+}
+
+type facebookVideoStatusChecker interface {
+	CheckVideoStatus(context.Context, string, string) (*platform.FacebookVideoStatus, error)
 }
 
 const (
@@ -125,7 +141,7 @@ func (w *FacebookVideoStatusWorker) sweep(ctx context.Context) {
 	wg.Wait()
 }
 
-func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.FacebookAdapter, r db.ListFacebookVideosAwaitingStatusRow) {
+func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb facebookVideoStatusChecker, r db.ListFacebookVideosAwaitingStatusRow) {
 	if !r.ExternalID.Valid {
 		// Filtered out by the WHERE clause, but defensive.
 		return
@@ -159,20 +175,15 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 	intentionalReel := r.FbMediaType.Valid && strings.EqualFold(strings.TrimSpace(r.FbMediaType.String), "reel")
 	if !intentionalReel && isReelReclassified(st.PermalinkURL) && r.PostCreatedAt.Valid && time.Since(r.PostCreatedAt.Time) > facebookReelReclassifiedCap {
 		errMsg := "Facebook reclassified this vertical video as a Reel. Reels publishing is not yet supported — upload a horizontal or square video."
-		if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-			ID:           r.SocialPostResultID,
-			Status:       "failed",
-			ExternalID:   r.ExternalID,
-			ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-			PublishedAt:  pgtype.Timestamptz{Valid: false},
-			Url:          r.Url,
-			DebugCurl:    pgtype.Text{Valid: false},
-		}); err != nil {
+		applied, err := w.finalizeProviderPoll(ctx, r, "failed", r.ExternalID, r.Url, errMsg, "platform_status", time.Time{})
+		if err != nil {
 			slog.Error("facebook video status: reel-reclassified update failed",
 				"result_id", r.SocialPostResultID, "error", err)
 			return
 		}
-		w.recordFailure(ctx, r, "platform_status", errMsg)
+		if !applied {
+			return
+		}
 		slog.Warn("facebook video status: flipped to failed (reel reclassified)",
 			"result_id", r.SocialPostResultID, "video_id", videoID,
 			"permalink_url", st.PermalinkURL)
@@ -195,20 +206,13 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 			newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 		}
 		completedAt := time.Now().UTC()
-		if _, err := w.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(ctx, db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
-			ID:           r.SocialPostResultID,
-			Status:       "published",
-			ExternalID:   newExternalID,
-			ErrorMessage: pgtype.Text{Valid: false},
-			PublishedAt:  pgtype.Timestamptz{Time: completedAt, Valid: true},
-			Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
-			DebugCurl:    pgtype.Text{Valid: false},
-			WorkspaceID:  r.WorkspaceID,
-			Period:       completedAt.Format("2006-01"),
-			PostCount:    1,
-		}); err != nil {
+		applied, err := w.finalizeProviderPoll(ctx, r, "published", newExternalID, pgtype.Text{String: newURL, Valid: newURL != ""}, "", "", completedAt)
+		if err != nil {
 			slog.Error("facebook video status: update to published failed",
 				"result_id", r.SocialPostResultID, "error", err)
+			return
+		}
+		if !applied {
 			return
 		}
 		slog.Info("facebook video status: flipped to published",
@@ -219,20 +223,15 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 		if st.ErrorMessage != "" {
 			errMsg = "Facebook rejected the video: " + st.ErrorMessage
 		}
-		if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-			ID:           r.SocialPostResultID,
-			Status:       "failed",
-			ExternalID:   r.ExternalID,
-			ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-			PublishedAt:  pgtype.Timestamptz{Valid: false},
-			Url:          r.Url,
-			DebugCurl:    pgtype.Text{Valid: false},
-		}); err != nil {
+		applied, err := w.finalizeProviderPoll(ctx, r, "failed", r.ExternalID, r.Url, errMsg, "platform_status", time.Time{})
+		if err != nil {
 			slog.Error("facebook video status: update to failed failed",
 				"result_id", r.SocialPostResultID, "error", err)
 			return
 		}
-		w.recordFailure(ctx, r, "platform_status", errMsg)
+		if !applied {
+			return
+		}
 		slog.Info("facebook video status: flipped to failed (FB error)",
 			"result_id", r.SocialPostResultID, "video_id", videoID, "message", errMsg)
 
@@ -243,20 +242,15 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 		// user sees a clear failure instead of a 12h silence.
 		if phaseErr := firstPhaseError(st); phaseErr != "" {
 			errMsg := "Facebook video upload failed: " + phaseErr
-			if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-				ID:           r.SocialPostResultID,
-				Status:       "failed",
-				ExternalID:   r.ExternalID,
-				ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-				PublishedAt:  pgtype.Timestamptz{Valid: false},
-				Url:          r.Url,
-				DebugCurl:    pgtype.Text{Valid: false},
-			}); err != nil {
+			applied, err := w.finalizeProviderPoll(ctx, r, "failed", r.ExternalID, r.Url, errMsg, "platform_status", time.Time{})
+			if err != nil {
 				slog.Error("facebook video status: phase-error update failed",
 					"result_id", r.SocialPostResultID, "error", err)
 				return
 			}
-			w.recordFailure(ctx, r, "platform_status", errMsg)
+			if !applied {
+				return
+			}
 			slog.Warn("facebook video status: flipped to failed (phase error)",
 				"result_id", r.SocialPostResultID, "video_id", videoID, "message", errMsg)
 			return
@@ -268,20 +262,15 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 		// (UniPost's validator caps them at 1GB).
 		if r.PostCreatedAt.Valid && time.Since(r.PostCreatedAt.Time) > facebookVideoStatusStaleCap {
 			errMsg := fmt.Sprintf("Facebook video stuck in %q after %s; marking as failed", st.VideoStatus, facebookVideoStatusStaleCap)
-			if _, err := w.queries.UpdateSocialPostResultAfterRetry(ctx, db.UpdateSocialPostResultAfterRetryParams{
-				ID:           r.SocialPostResultID,
-				Status:       "failed",
-				ExternalID:   r.ExternalID,
-				ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-				PublishedAt:  pgtype.Timestamptz{Valid: false},
-				Url:          r.Url,
-				DebugCurl:    pgtype.Text{Valid: false},
-			}); err != nil {
+			applied, err := w.finalizeProviderPoll(ctx, r, "failed", r.ExternalID, r.Url, errMsg, "worker_timeout", time.Time{})
+			if err != nil {
 				slog.Error("facebook video status: stale-cap update failed",
 					"result_id", r.SocialPostResultID, "error", err)
 				return
 			}
-			w.recordFailure(ctx, r, "worker_timeout", errMsg)
+			if !applied {
+				return
+			}
 			slog.Warn("facebook video status: flipped to failed (stale cap)",
 				"result_id", r.SocialPostResultID, "video_id", videoID,
 				"phase", st.VideoStatus, "age", time.Since(r.PostCreatedAt.Time))
@@ -289,37 +278,307 @@ func (w *FacebookVideoStatusWorker) checkOne(ctx context.Context, fb *platform.F
 	}
 }
 
-func (w *FacebookVideoStatusWorker) recordFailure(ctx context.Context, row db.ListFacebookVideosAwaitingStatusRow, failureStage, message string) {
-	failure := postfailures.BuildParams(
-		row.PostID,
-		row.SocialPostResultID,
-		row.WorkspaceID,
-		row.SocialAccountID,
-		"facebook",
-		failureStage,
-		message,
-		message,
-	)
-	if err := w.queries.UpdateSocialPostResultFailureDetails(ctx, db.UpdateSocialPostResultFailureDetailsParams{
-		ID:                row.SocialPostResultID,
-		ErrorCode:         postfailures.ToText(failure.ErrorCode),
-		FailureStage:      postfailures.ToText(failure.FailureStage),
-		PlatformErrorCode: failure.PlatformErrorCode,
-		IsRetriable:       pgtype.Bool{Bool: failure.IsRetriable, Valid: true},
-		NextAction:        postfailures.ToText(postfailures.NextActionForErrorCode(failure.ErrorCode)),
-	}); err != nil {
-		slog.Warn("facebook video status: failed to persist structured result failure fields",
-			"post_id", row.PostID,
-			"result_id", row.SocialPostResultID,
-			"stage", failureStage,
-			"error", err)
+type facebookStatusPendingEvent struct {
+	workspaceID   string
+	event         string
+	data          map[string]any
+	postID        string
+	parentStatus  string
+	parentVersion string
+}
+
+func (w *FacebookVideoStatusWorker) finalizeProviderPoll(
+	ctx context.Context,
+	row db.ListFacebookVideosAwaitingStatusRow,
+	status string,
+	externalID pgtype.Text,
+	url pgtype.Text,
+	errorMessage string,
+	failureStage string,
+	completedAt time.Time,
+) (bool, error) {
+	var pendingEvent *facebookStatusPendingEvent
+	applied := false
+	err := w.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, row.PostID); err != nil {
+			return err
+		}
+		publishedAt := pgtype.Timestamptz{}
+		if status == "published" {
+			publishedAt = pgtype.Timestamptz{Time: completedAt.UTC(), Valid: true}
+		}
+		_, err := txQueries.UpdateProcessingSocialPostResultAfterProviderPoll(ctx, db.UpdateProcessingSocialPostResultAfterProviderPollParams{
+			Status:             status,
+			ExternalID:         externalID,
+			ErrorMessage:       pgtype.Text{String: errorMessage, Valid: strings.TrimSpace(errorMessage) != ""},
+			PublishedAt:        publishedAt,
+			Url:                url,
+			ID:                 row.SocialPostResultID,
+			ExpectedExternalID: row.ExternalID.String,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if status == "published" {
+			if err := txQueries.IncrementUsage(ctx, db.IncrementUsageParams{
+				WorkspaceID: row.WorkspaceID,
+				Period:      quota.PeriodForTime(completedAt),
+				PostCount:   1,
+			}); err != nil {
+				return err
+			}
+		} else if status == "failed" {
+			failure := postfailures.BuildParams(
+				row.PostID,
+				row.SocialPostResultID,
+				row.WorkspaceID,
+				row.SocialAccountID,
+				"facebook",
+				failureStage,
+				errorMessage,
+				errorMessage,
+			)
+			if err := txQueries.UpdateSocialPostResultFailureDetails(ctx, db.UpdateSocialPostResultFailureDetailsParams{
+				ID:                row.SocialPostResultID,
+				ErrorCode:         postfailures.ToText(failure.ErrorCode),
+				FailureStage:      postfailures.ToText(failure.FailureStage),
+				PlatformErrorCode: failure.PlatformErrorCode,
+				IsRetriable:       pgtype.Bool{Bool: failure.IsRetriable, Valid: true},
+				NextAction:        postfailures.ToText(postfailures.NextActionForErrorCode(failure.ErrorCode)),
+				ErrorSource:       failure.ErrorSource,
+				ErrorTemporality:  failure.ErrorTemporality,
+				ProviderError:     failure.ProviderError,
+			}); err != nil {
+				return err
+			}
+			if _, err := txQueries.CreatePostFailure(ctx, failure); err != nil {
+				return err
+			}
+		}
+		pendingEvent, err = reconcileFacebookStatusParentLocked(ctx, txQueries, row.PostID)
+		if err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	if err != nil || !applied {
+		return applied, err
 	}
-	if _, err := w.queries.CreatePostFailure(ctx, failure); err != nil {
-		slog.Warn("facebook video status: failed to persist structured post failure",
-			"post_id", row.PostID,
-			"result_id", row.SocialPostResultID,
-			"stage", failureStage,
-			"error", err)
+	w.publishParentEventIfCurrent(ctx, pendingEvent)
+	w.syncTerminalRetention(ctx, row.PostID)
+	return true, nil
+}
+
+func (w *FacebookVideoStatusWorker) publishParentEventIfCurrent(ctx context.Context, pending *facebookStatusPendingEvent) {
+	_ = ctx
+	_ = pending
+}
+
+func reconcileFacebookStatusParentLocked(ctx context.Context, queries *db.Queries, postID string) (*facebookStatusPendingEvent, error) {
+	post, err := queries.GetSocialPostByID(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	results, err := queries.ListSocialPostResultsByPost(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := queries.ListPostDeliveryJobsByPost(ctx, postID)
+	if err != nil {
+		return nil, err
+	}
+	published, failed, nonTerminal, activeJobs := 0, 0, 0, 0
+	publishedResultIDs := make(map[string]bool, len(results))
+	for _, result := range results {
+		switch result.Status {
+		case "published":
+			published++
+			publishedResultIDs[result.ID] = true
+		case "failed":
+			failed++
+		default:
+			nonTerminal++
+		}
+	}
+	for _, job := range jobs {
+		if (job.State == "pending" || job.State == "running" || job.State == "retrying") && !publishedResultIDs[job.SocialPostResultID] {
+			activeJobs++
+		}
+	}
+	newStatus := "failed"
+	switch {
+	case activeJobs > 0 || nonTerminal > 0:
+		newStatus = "publishing"
+	case published == len(results):
+		newStatus = "published"
+	case published > 0:
+		newStatus = "partial"
+	}
+	if newStatus == post.Status {
+		return nil, nil
+	}
+	var publishedAt pgtype.Timestamptz
+	if published > 0 {
+		publishedAt = post.PublishedAt
+		for _, result := range results {
+			if result.Status == "published" && result.PublishedAt.Valid && (!publishedAt.Valid || result.PublishedAt.Time.Before(publishedAt.Time)) {
+				publishedAt = result.PublishedAt
+			}
+		}
+	}
+	if err := queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+		ID: post.ID, Status: newStatus, PublishedAt: publishedAt,
+	}); err != nil {
+		return nil, err
+	}
+	post.Status = newStatus
+	post.PublishedAt = publishedAt
+	summary := ""
+	if newStatus == "failed" {
+		messages := make([]string, 0, failed)
+		for _, result := range results {
+			if result.Status == "failed" && result.ErrorMessage.Valid {
+				messages = append(messages, fmt.Sprintf("[%s] %s", result.SocialAccountID, result.ErrorMessage.String))
+			}
+		}
+		summary = strings.Join(messages, "; ")
+	}
+	if err := queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+		ID: post.ID, Column2: summary,
+	}); err != nil {
+		return nil, err
+	}
+	if newStatus != "published" && newStatus != "partial" && newStatus != "failed" {
+		return nil, nil
+	}
+	parentVersion, err := queries.GetSocialPostProjectionVersion(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	event := events.EventPostFailed
+	if newStatus == "published" {
+		event = events.EventPostPublished
+	} else if newStatus == "partial" {
+		event = events.EventPostPartial
+	}
+	pending := &facebookStatusPendingEvent{
+		workspaceID:   post.WorkspaceID,
+		event:         event,
+		postID:        post.ID,
+		parentStatus:  newStatus,
+		parentVersion: parentVersion,
+		data: map[string]any{
+			"id":            post.ID,
+			"caption":       post.Caption,
+			"media_urls":    post.MediaUrls,
+			"status":        post.Status,
+			"created_at":    post.CreatedAt,
+			"published_at":  post.PublishedAt,
+			"source":        post.Source,
+			"profile_ids":   post.ProfileIds,
+			"results":       results,
+			"delivery_jobs": jobs,
+		},
+	}
+	if err := db.RecordPostStatusTransition(ctx, queries, post.ID, post.WorkspaceID, newStatus, parentVersion, event, pending.data); err != nil {
+		return nil, err
+	}
+	return pending, nil
+}
+
+func (w *FacebookVideoStatusWorker) syncTerminalRetention(ctx context.Context, postID string) {
+	err := w.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, postID); err != nil {
+			return err
+		}
+		w.syncTerminalRetentionLocked(ctx, txQueries, postID)
+		return nil
+	})
+	if err != nil {
+		slog.Warn("facebook video status: locked retention sync failed", "post_id", postID, "error", err)
+	}
+}
+
+func (w *FacebookVideoStatusWorker) syncTerminalRetentionLocked(ctx context.Context, queries *db.Queries, postID string) {
+	post, err := queries.GetSocialPostByID(ctx, postID)
+	if err != nil {
+		slog.Warn("facebook video status: retention post reload failed", "post_id", postID, "error", err)
+		return
+	}
+	results, err := queries.ListSocialPostResultsByPost(ctx, postID)
+	if err != nil {
+		slog.Warn("facebook video status: retention result reload failed", "post_id", postID, "error", err)
+		return
+	}
+	parentCaption := ""
+	if post.Caption.Valid {
+		parentCaption = post.Caption.String
+	}
+	parsed, err := platform.DecodePostMetadata(post.Metadata, parentCaption)
+	if err != nil {
+		slog.Warn("facebook video status: retention metadata decode failed", "post_id", postID, "error", err)
+		return
+	}
+	seen := map[string]bool{}
+	mediaIDs := make([]string, 0)
+	for _, input := range parsed {
+		for _, mediaID := range input.MediaIDs {
+			if strings.TrimSpace(mediaID) != "" && !seen[mediaID] {
+				seen[mediaID] = true
+				mediaIDs = append(mediaIDs, mediaID)
+			}
+		}
+	}
+	sort.Strings(mediaIDs)
+	if len(mediaIDs) == 0 {
+		if err := queries.DeleteMediaPostUsagesForPost(ctx, postID); err != nil {
+			slog.Warn("facebook video status: retention delete failed", "post_id", postID, "error", err)
+		}
+		return
+	}
+	if err := queries.DeleteMediaPostUsagesForPostExcept(ctx, db.DeleteMediaPostUsagesForPostExceptParams{PostID: postID, MediaIds: mediaIDs}); err != nil {
+		slog.Warn("facebook video status: retention stale usage delete failed", "post_id", postID, "error", err)
+	}
+	planID := "free"
+	if subscription, err := queries.GetSubscriptionByWorkspace(ctx, post.WorkspaceID); err == nil {
+		planID = subscription.PlanID
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		slog.Warn("facebook video status: retention subscription lookup failed", "post_id", postID, "error", err)
+		return
+	}
+	cleanupAfter := pgtype.Timestamptz{}
+	retentionReason := "plan_status"
+	hasPolicyFailure := false
+	for _, result := range results {
+		if result.Status == "failed" && result.ErrorCode.Valid && result.ErrorCode.String == publishingrestrictions.NormalizedCode {
+			hasPolicyFailure = true
+			break
+		}
+	}
+	if hasPolicyFailure {
+		if retainedUntil, err := queries.GetPostPublishingRestrictionMediaRetention(ctx, postID); err == nil && retainedUntil.Valid {
+			cleanupAfter = retainedUntil
+			retentionReason = "publishing_restriction"
+		} else {
+			cleanupAfter = pgtype.Timestamptz{Time: time.Now().UTC().Add(60 * 24 * time.Hour), Valid: true}
+			retentionReason = "publishing_restriction"
+		}
+	} else if retention, ok := mediaretention.RetentionForPlanStatus(planID, post.Status); ok {
+		cleanupAfter = pgtype.Timestamptz{Time: time.Now().Add(retention), Valid: true}
+	} else {
+		retentionReason = "active_post"
+	}
+	for _, mediaID := range mediaIDs {
+		if _, err := queries.UpsertMediaPostUsage(ctx, db.UpsertMediaPostUsageParams{
+			MediaID: mediaID, WorkspaceID: post.WorkspaceID, PostStatus: post.Status,
+			CleanupAfterAt: cleanupAfter, RetentionReason: retentionReason, PostID: post.ID,
+		}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			slog.Warn("facebook video status: retention upsert failed", "post_id", postID, "media_id", mediaID, "error", err)
+		}
 	}
 }
 

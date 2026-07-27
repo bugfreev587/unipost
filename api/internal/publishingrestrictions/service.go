@@ -10,7 +10,13 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/xiaoboyu/unipost-api/internal/db"
 )
+
+type Evaluator interface {
+	Evaluate(context.Context, string, string) (Decision, error)
+}
 
 type Store interface {
 	RestrictionForPlatform(context.Context, string) (Restriction, error)
@@ -93,6 +99,22 @@ var (
 func NewService(store Store) *Service {
 	campaignStore, _ := store.(CampaignStore)
 	return &Service{store: store, campaignStore: campaignStore, now: time.Now}
+}
+
+// WithDBTX binds policy reads to an existing transaction when the backing
+// store supports it. This prevents a transaction holding an idempotency lock
+// from waiting on a second pool connection for its own policy query.
+func (s *Service) WithDBTX(dbtx db.DBTX) Evaluator {
+	if s == nil || dbtx == nil {
+		return s
+	}
+	binder, ok := s.store.(interface{ WithDBTX(db.DBTX) Store })
+	if !ok {
+		return s
+	}
+	clone := *s
+	clone.store = binder.WithDBTX(dbtx)
+	return &clone
 }
 
 func (s *Service) SetCampaignPreviewSecret(secret string) *Service {

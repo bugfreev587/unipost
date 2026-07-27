@@ -894,6 +894,25 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A keyed scheduled create serializes every mutable gate behind the same
+	// transaction-scoped idempotency lock. Immutable validation and the
+	// request-rate limiter deliberately remain outside this transaction.
+	if parsed.ScheduledAt != nil && parsed.IdempotencyKey != "" {
+		if _, ok := h.paidSchedule.(paidquota.ScheduledIdempotencyCoordinator); ok {
+			h.createScheduledPostWithMutableGates(w, r, workspaceID, parsed, accountMap)
+			return
+		}
+	}
+
+	// A scheduled idempotency key describes an already-accepted write.
+	// Resolve replay/conflict before consulting the current publishing
+	// policy so a later restriction (or policy-store outage) cannot
+	// replace the original response semantics. A key miss continues
+	// through the policy gate below like every new request.
+	if parsed.ScheduledAt != nil && h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
+		return
+	}
+
 	blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
 	if policyErr != nil {
 		writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
@@ -913,15 +932,16 @@ func (h *SocialPostHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// Phase 3).
 	deliveryJobUnits := len(allowedTargets)
 	if parsed.ScheduledAt != nil {
-		if h.maybeReplayScheduledIdempotency(w, r, workspaceID, parsed) {
-			return
-		}
-		if h.rejectFreePlanActiveScheduledPostsExceeded(w, r, workspaceID) {
-			return
-		}
-		quotaPeriod := quota.PeriodForTime(*parsed.ScheduledAt)
-		if h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, allowedQuotaUnits, quotaPeriod) {
-			return
+		_, transactionallyIdempotent := h.paidSchedule.(paidquota.ScheduledIdempotencyCoordinator)
+		transactionallyIdempotent = transactionallyIdempotent && parsed.IdempotencyKey != ""
+		if !transactionallyIdempotent {
+			if h.rejectFreePlanActiveScheduledPostsExceeded(w, r, workspaceID) {
+				return
+			}
+			quotaPeriod := quota.PeriodForTime(*parsed.ScheduledAt)
+			if h.rejectFreePlanPostQuotaExceededForPeriod(w, r, workspaceID, allowedQuotaUnits, quotaPeriod) {
+				return
+			}
 		}
 		if !h.admit(w, r, workspaceID, "POST /v1/posts", admissionOpts{
 			enqueue:      true,
@@ -954,17 +974,103 @@ func applyIdempotencyKeyHeaderFallback(parsed *parsedRequest, headerValue string
 	parsed.IdempotencyKey = strings.TrimSpace(headerValue)
 }
 
+const scheduledQuotaUnitsMetadataKey = "scheduled_quota_units"
+
+// encodeScheduledPostMetadata adds the server-owned admission reservation to
+// the normal post metadata. Clients cannot supply this field through the
+// publish request; every scheduled create/edit computes it from the trusted
+// account and publishing-policy snapshot used for admission.
+func encodeScheduledPostMetadata(posts []platform.PlatformPostInput, quotaUnits int) ([]byte, error) {
+	if quotaUnits < 0 || quotaUnits > len(posts) {
+		return nil, fmt.Errorf("scheduled quota units %d outside target range 0..%d", quotaUnits, len(posts))
+	}
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		return nil, err
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(metadata, &object); err != nil {
+		return nil, fmt.Errorf("decode scheduled post metadata: %w", err)
+	}
+	rawUnits, err := json.Marshal(quotaUnits)
+	if err != nil {
+		return nil, fmt.Errorf("encode scheduled quota units: %w", err)
+	}
+	object[scheduledQuotaUnitsMetadataKey] = rawUnits
+	metadata, err = json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("encode scheduled post metadata: %w", err)
+	}
+	return metadata, nil
+}
+
+// scheduledQuotaUnitsFromMetadata returns only a structurally valid snapshot.
+// Missing/invalid snapshots intentionally fall back to legacy target counting.
+func scheduledQuotaUnitsFromMetadata(metadata []byte) (int, bool) {
+	if len(metadata) == 0 {
+		return 0, false
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(metadata, &object); err != nil {
+		return 0, false
+	}
+	rawUnits, ok := object[scheduledQuotaUnitsMetadataKey]
+	if !ok {
+		return 0, false
+	}
+	var units int
+	if err := json.Unmarshal(rawUnits, &units); err != nil || units < 0 {
+		return 0, false
+	}
+	var posts []json.RawMessage
+	if err := json.Unmarshal(object["platform_posts"], &posts); err != nil || units > len(posts) {
+		return 0, false
+	}
+	return units, true
+}
+
 // createScheduledPost persists the post with status="scheduled" and
 // the v2 metadata blob so the scheduler can later fan out per-account
 // when the time arrives. Returns 201 Created with a minimal response
 // (no results yet — they'll exist after the scheduler fires).
 func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest, quotaUnitsOverride ...int) {
+	quotaUnits := len(parsed.Posts)
+	if len(quotaUnitsOverride) > 0 {
+		quotaUnits = quotaUnitsOverride[0]
+	}
+	h.createScheduledPostInternal(w, r, workspaceID, parsed, quotaUnits, nil, false)
+}
+
+func (h *SocialPostHandler) createScheduledPostWithMutableGates(w http.ResponseWriter, r *http.Request, workspaceID string, parsed parsedRequest, accountMap map[string]platform.ValidateAccount) {
+	h.createScheduledPostInternal(w, r, workspaceID, parsed, 0, accountMap, true)
+}
+
+var (
+	errScheduledPolicyUnavailable = errors.New("scheduled publishing policy unavailable")
+	errScheduledPolicyRestricted  = errors.New("scheduled publishing policy restricted")
+	errScheduledEnqueueDenied     = errors.New("scheduled enqueue admission denied")
+)
+
+func (h *SocialPostHandler) createScheduledPostInternal(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID string,
+	parsed parsedRequest,
+	quotaUnits int,
+	accountMap map[string]platform.ValidateAccount,
+	mutableGatesInTransaction bool,
+) {
 	// Persist the parsed request shape into metadata so the scheduler
-	// can reconstruct the per-account captions.
-	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode metadata")
-		return
+	// can reconstruct the per-account captions. The reservation snapshot
+	// records only targets admitted by the current server policy.
+	var metaJSON []byte
+	var err error
+	if !mutableGatesInTransaction {
+		metaJSON, err = encodeScheduledPostMetadata(parsed.Posts, quotaUnits)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode metadata")
+			return
+		}
 	}
 
 	// social_posts.caption is the canonical / "first" caption — used
@@ -996,17 +1102,77 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		Source:         resolveSource(r.Context()),
 		ProfileIds:     h.resolveProfileIDs(r.Context(), workspaceID, uniqueAccountIDs(parsed.Posts)),
 	}
-	quotaUnits := len(parsed.Posts)
-	if len(quotaUnitsOverride) > 0 {
-		quotaUnits = quotaUnitsOverride[0]
-	}
 	var post db.SocialPost
+	var idempotencyResolution *scheduledIdempotencyResolution
+	idempotencyLookupFailed := false
+	var restrictedDecision publishingrestrictions.Decision
+	var deferredAdmission *deferredHTTPResponse
 	createMutation := func(queries *db.Queries) error {
+		if mutableGatesInTransaction {
+			var encodeErr error
+			metaJSON, encodeErr = encodeScheduledPostMetadata(parsed.Posts, quotaUnits)
+			if encodeErr != nil {
+				return encodeErr
+			}
+			createParams.Metadata = metaJSON
+		}
 		var createErr error
-		post, createErr = h.createScheduledSocialPostWithQueries(r.Context(), queries, workspaceID, createParams)
+		post, createErr = h.withQueueQueries(queries).createScheduledSocialPostWithQueries(r.Context(), queries, workspaceID, createParams)
 		return createErr
 	}
-	if h.paidSchedule != nil && parsed.ScheduledAt != nil {
+	if coordinator, ok := h.paidSchedule.(paidquota.ScheduledIdempotencyCoordinator); ok && parsed.ScheduledAt != nil && parsed.IdempotencyKey != "" {
+		var handled bool
+		handled, err = coordinator.MutateScheduledIdempotent(
+			r.Context(),
+			workspaceID,
+			parsed.IdempotencyKey,
+			func(transaction paidquota.TransactionContext) (bool, []paidquota.PeriodDelta, error) {
+				resolution, lookupErr := lookupScheduledIdempotency(r.Context(), transaction.Queries, workspaceID, parsed)
+				if lookupErr != nil {
+					idempotencyLookupFailed = true
+					return false, nil, lookupErr
+				}
+				idempotencyResolution = resolution
+				if resolution != nil {
+					return true, nil, nil
+				}
+				if mutableGatesInTransaction {
+					txHandler := h.withQueueQueries(transaction.Queries).withTransactionPublishingRestrictions(transaction.DBTX)
+					blockedTargets, policyErr := txHandler.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
+					if policyErr != nil {
+						return false, nil, errScheduledPolicyUnavailable
+					}
+					if decision, fullyBlocked := fullyRestrictedDecision(parsed.Posts, blockedTargets); fullyBlocked {
+						restrictedDecision = decision
+						return false, nil, errScheduledPolicyRestricted
+					}
+					allowedTargets := allowedPublishingTargets(parsed.Posts, blockedTargets)
+					quotaUnits = countPublishQuotaUnits(allowedTargets, accountMap)
+				}
+				return resolution != nil, []paidquota.PeriodDelta{{
+					Period:         quota.PeriodForTime(*parsed.ScheduledAt),
+					RequestedUnits: quotaUnits,
+				}}, nil
+			},
+			func(transaction paidquota.TransactionContext) error {
+				if !mutableGatesInTransaction {
+					return nil
+				}
+				deferredAdmission = newDeferredHTTPResponse()
+				txHandler := h.withQueueQueries(transaction.Queries)
+				if !txHandler.admit(deferredAdmission, r, workspaceID, "POST /v1/posts", admissionOpts{enqueue: true, enqueueUnits: 1}) {
+					return errScheduledEnqueueDenied
+				}
+				deferredAdmission = nil
+				return nil
+			},
+			createMutation,
+		)
+		if handled {
+			h.writeScheduledIdempotencyResolution(w, r, idempotencyResolution)
+			return
+		}
+	} else if h.paidSchedule != nil && parsed.ScheduledAt != nil {
 		err = h.paidSchedule.Mutate(r.Context(), workspaceID, []paidquota.PeriodDelta{{
 			Period:         quota.PeriodForTime(*parsed.ScheduledAt),
 			RequestedUnits: quotaUnits,
@@ -1015,8 +1181,28 @@ func (h *SocialPostHandler) createScheduledPost(w http.ResponseWriter, r *http.R
 		err = createMutation(h.queries)
 	}
 	if err != nil {
+		if errors.Is(err, errScheduledPolicyUnavailable) {
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
+		if errors.Is(err, errScheduledPolicyRestricted) {
+			writePublishingRestrictionError(w, restrictedDecision)
+			return
+		}
+		if errors.Is(err, errScheduledEnqueueDenied) && deferredAdmission != nil {
+			deferredAdmission.flush(w)
+			return
+		}
+		if idempotencyLookupFailed {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check scheduled post idempotency")
+			return
+		}
 		var admissionErr *paidquota.AdmissionError
 		if errors.As(err, &admissionErr) {
+			if admissionErr.Snapshot.PlanID == "free" {
+				writeFreePlanPostQuotaExceeded(w, quota.QuotaStatus{Usage: admissionErr.Snapshot.Completed, Reserved: admissionErr.Snapshot.Scheduled, Limit: admissionErr.Snapshot.Limit}, admissionErr.RequestedUnits)
+				return
+			}
 			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)
 			return
 		}
@@ -1105,35 +1291,62 @@ func (h *SocialPostHandler) maybeReplayScheduledIdempotency(w http.ResponseWrite
 		return false
 	}
 
-	existing, err := h.queries.GetScheduledSocialPostByIdempotencyKey(r.Context(), db.GetScheduledSocialPostByIdempotencyKeyParams{
+	resolution, err := lookupScheduledIdempotency(r.Context(), h.queries, workspaceID, parsed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check scheduled post idempotency")
+		return true
+	}
+	if resolution == nil {
+		return false
+	}
+	h.writeScheduledIdempotencyResolution(w, r, resolution)
+	return true
+}
+
+type scheduledIdempotencyResolution struct {
+	existing   db.SocialPost
+	same       bool
+	compareErr error
+}
+
+func lookupScheduledIdempotency(ctx context.Context, queries *db.Queries, workspaceID string, parsed parsedRequest) (*scheduledIdempotencyResolution, error) {
+	if queries == nil || parsed.ScheduledAt == nil || parsed.IdempotencyKey == "" {
+		return nil, nil
+	}
+	existing, err := queries.GetScheduledSocialPostByIdempotencyKey(ctx, db.GetScheduledSocialPostByIdempotencyKeyParams{
 		WorkspaceID:    workspaceID,
 		IdempotencyKey: pgtype.Text{String: parsed.IdempotencyKey, Valid: true},
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return false
+			return nil, nil
 		}
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to check scheduled post idempotency")
-		return true
+		return nil, err
 	}
+	same, compareErr := scheduledIdempotencyPayloadMatches(existing, parsed.Posts, *parsed.ScheduledAt)
+	return &scheduledIdempotencyResolution{existing: existing, same: same, compareErr: compareErr}, nil
+}
 
-	same, err := scheduledIdempotencyPayloadMatches(existing, parsed.Posts, *parsed.ScheduledAt)
-	if err != nil {
+func (h *SocialPostHandler) writeScheduledIdempotencyResolution(w http.ResponseWriter, r *http.Request, resolution *scheduledIdempotencyResolution) {
+	if resolution == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to resolve scheduled post idempotency")
+		return
+	}
+	if resolution.compareErr != nil {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", "A scheduled post with the same idempotency_key already exists, but UniPost could not compare it with this request. Use a new idempotency_key to schedule a new post.")
-		return true
+		return
 	}
-	if !same {
+	if !resolution.same {
 		writeError(w, http.StatusConflict, "IDEMPOTENCY_KEY_CONFLICT", "A scheduled post with the same idempotency_key already exists for this workspace. Use the same payload to replay it, or use a new idempotency_key to schedule a different post.")
-		return true
+		return
 	}
 
-	resp := h.replayedPostResponse(r, existing)
+	resp := h.replayedPostResponse(r, resolution.existing)
 	resp.Message = "A scheduled post with the same idempotency_key already exists. Returning the existing scheduled post; no new post was scheduled."
 	resp.IdempotencyReplay = true
 	w.Header().Set("X-UniPost-Idempotent-Replay", "true")
 	w.Header().Set("Idempotent-Replay", "true")
 	writeCreated(w, resp)
-	return true
 }
 
 type scheduledIdempotencyPayload struct {
@@ -1662,6 +1875,76 @@ func (h *SocialPostHandler) recordPostFailure(ctx context.Context, arg db.Create
 				"error_code", arg.ErrorCode)
 		}
 	}
+}
+
+// finalizeFacebookProviderPoll is the only path allowed to turn an accepted
+// asynchronous Facebook result into a terminal result. The expected provider
+// object id CAS makes a late error poll harmless after a concurrent ready poll
+// has already published the row.
+func (h *SocialPostHandler) finalizeFacebookProviderPoll(
+	ctx context.Context,
+	post db.SocialPost,
+	result db.SocialPostResult,
+	workspaceID string,
+	status string,
+	externalID pgtype.Text,
+	url pgtype.Text,
+	errorMessage string,
+	completedAt time.Time,
+) (bool, error) {
+	var pendingEvent *pendingParentPostStatusEvent
+	applied := false
+	err := h.queries.WithTransaction(ctx, func(txQueries *db.Queries) error {
+		if err := txQueries.LockPostDeliveryJobFinalization(ctx, post.ID); err != nil {
+			return err
+		}
+		publishedAt := pgtype.Timestamptz{}
+		if status == "published" {
+			publishedAt = pgtype.Timestamptz{Time: completedAt, Valid: true}
+		}
+		_, err := txQueries.UpdateProcessingSocialPostResultAfterProviderPoll(ctx, db.UpdateProcessingSocialPostResultAfterProviderPollParams{
+			Status: status, ExternalID: externalID,
+			ErrorMessage: pgtype.Text{String: errorMessage, Valid: errorMessage != ""},
+			PublishedAt:  publishedAt, Url: url, ID: result.ID,
+			ExpectedExternalID: result.ExternalID.String,
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if status == "published" {
+			if err := txQueries.IncrementUsage(ctx, db.IncrementUsageParams{
+				WorkspaceID: workspaceID, Period: quota.PeriodForTime(completedAt), PostCount: 1,
+			}); err != nil {
+				return err
+			}
+		} else if status == "failed" {
+			failure := postfailures.BuildParams(
+				post.ID, result.ID, workspaceID, result.SocialAccountID,
+				"facebook", "platform_status", errorMessage, errorMessage,
+			)
+			if err := txQueries.UpdateSocialPostResultFailureDetails(ctx, updateSocialPostResultFailureDetailsParams(result.ID, failure)); err != nil {
+				return err
+			}
+			if _, err := txQueries.CreatePostFailure(ctx, failure); err != nil {
+				return err
+			}
+		}
+		pendingEvent, err = h.refreshTerminalParentPostStatusLocked(ctx, txQueries, post.ID)
+		if err != nil {
+			return err
+		}
+		applied = true
+		return nil
+	})
+	if err != nil || !applied {
+		return applied, err
+	}
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	h.syncTerminalPostRetentionAfterCommit(ctx, post.ID)
+	return true, nil
 }
 
 func postFailureShouldMarkReconnectRequired(arg db.CreatePostFailureParams) bool {
@@ -2661,19 +2944,11 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 									newURL = facebookFeedStoryURL(pageID, st.PostID)
 									newExternalID = pgtype.Text{String: st.PostID, Valid: true}
 								}
-								_, updateErr := h.queries.UpdateSocialPostResultAfterRetryAndIncrementUsage(r.Context(), db.UpdateSocialPostResultAfterRetryAndIncrementUsageParams{
-									ID:           res.ID,
-									Status:       "published",
-									ExternalID:   newExternalID,
-									ErrorMessage: pgtype.Text{Valid: false},
-									PublishedAt:  pgtype.Timestamptz{Time: completedAt, Valid: true},
-									Url:          pgtype.Text{String: newURL, Valid: newURL != ""},
-									DebugCurl:    pgtype.Text{Valid: false},
-									WorkspaceID:  workspaceID,
-									Period:       quota.PeriodForTime(completedAt),
-									PostCount:    1,
-								})
-								if updateErr == nil {
+								updated, updateErr := h.finalizeFacebookProviderPoll(
+									r.Context(), post, res, workspaceID, "published", newExternalID,
+									pgtype.Text{String: newURL, Valid: newURL != ""}, "", completedAt,
+								)
+								if updateErr == nil && updated {
 									rr.Status = "published"
 									clearPostResultFailureDetails(&rr)
 									if newURL != "" {
@@ -2685,29 +2960,18 @@ func (h *SocialPostHandler) Get(w http.ResponseWriter, r *http.Request) {
 								if st.ErrorMessage != "" {
 									errMsg = "Facebook rejected the video: " + st.ErrorMessage
 								}
-								_, _ = h.queries.UpdateSocialPostResultAfterRetry(r.Context(), db.UpdateSocialPostResultAfterRetryParams{
-									ID:           res.ID,
-									Status:       "failed",
-									ExternalID:   res.ExternalID,
-									ErrorMessage: pgtype.Text{String: errMsg, Valid: true},
-									PublishedAt:  pgtype.Timestamptz{Valid: false},
-									Url:          res.Url,
-									DebugCurl:    pgtype.Text{Valid: false},
-								})
-								rr.Status = "failed"
-								rr.ErrorMessage = &errMsg
-								failure := postfailures.BuildParams(
-									post.ID,
-									res.ID,
-									workspaceID,
-									res.SocialAccountID,
-									"facebook",
-									"platform_status",
-									errMsg,
-									errMsg,
+								updated, _ := h.finalizeFacebookProviderPoll(
+									r.Context(), post, res, workspaceID, "failed", res.ExternalID, res.Url, errMsg, time.Time{},
 								)
-								h.recordPostFailure(r.Context(), failure)
-								applyPostFailureDetailsToResponse(&rr, failure)
+								if updated {
+									rr.Status = "failed"
+									rr.ErrorMessage = &errMsg
+									failure := postfailures.BuildParams(
+										post.ID, res.ID, workspaceID, res.SocialAccountID,
+										"facebook", "platform_status", errMsg, errMsg,
+									)
+									applyPostFailureDetailsToResponse(&rr, failure)
+								}
 							}
 						}
 					}

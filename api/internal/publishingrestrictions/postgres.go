@@ -9,13 +9,26 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	readDB db.DBTX
 }
 
-func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore { return &PostgresStore{pool: pool} }
+func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+	return &PostgresStore{pool: pool, readDB: pool}
+}
+
+// WithDBTX returns a read-bound clone for policy evaluation inside a caller's
+// transaction. Administrative mutations continue to use the store pool.
+func (s *PostgresStore) WithDBTX(dbtx db.DBTX) Store {
+	clone := *s
+	clone.readDB = dbtx
+	return &clone
+}
 
 func scanRestriction(row pgx.Row) (Restriction, error) {
 	var r Restriction
@@ -34,7 +47,7 @@ const restrictionColumns = `id, platform, enabled, restricted_plan_ids, reason_c
 const aliasedRestrictionColumns = `r.id, r.platform, r.enabled, r.restricted_plan_ids, r.reason_code, r.user_message, r.cycle_id, r.version, r.enabled_at, r.disabled_at, r.updated_by_user_id, r.created_at, r.updated_at`
 
 func (s *PostgresStore) RestrictionForPlatform(ctx context.Context, platform string) (Restriction, error) {
-	r, err := scanRestriction(s.pool.QueryRow(ctx, `SELECT `+restrictionColumns+` FROM platform_publishing_restrictions WHERE platform = $1`, strings.ToLower(strings.TrimSpace(platform))))
+	r, err := scanRestriction(s.readDB.QueryRow(ctx, `SELECT `+restrictionColumns+` FROM platform_publishing_restrictions WHERE platform = $1`, strings.ToLower(strings.TrimSpace(platform))))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Restriction{Platform: strings.ToLower(strings.TrimSpace(platform)), RestrictedPlanIDs: []string{}}, nil
 	}
@@ -81,7 +94,7 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 			GROUP BY cycle_id
 		)
 		SELECT `+aliasedRestrictionColumns+`,
-		       COUNT(DISTINCT sa.workspace_id) FILTER (
+		       COUNT(DISTINCT account_profile.workspace_id) FILTER (
 		         WHERE COALESCE(cp.plan_id, 'free') = ANY(r.restricted_plan_ids)
 		       )::INTEGER AS affected_workspaces,
 		       COUNT(sa.id) FILTER (
@@ -95,7 +108,8 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 		  ON sa.platform = r.platform
 		 AND sa.status = 'active'
 		 AND sa.disconnected_at IS NULL
-		LEFT JOIN current_plans cp ON cp.workspace_id = sa.workspace_id
+		LEFT JOIN profiles account_profile ON account_profile.id = sa.profile_id
+		LEFT JOIN current_plans cp ON cp.workspace_id = account_profile.workspace_id
 		LEFT JOIN retention_metrics ON retention_metrics.cycle_id = r.cycle_id
 		GROUP BY r.id
 		ORDER BY r.platform
@@ -164,7 +178,7 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 
 func (s *PostgresStore) WorkspacePlanID(ctx context.Context, workspaceID string) (string, error) {
 	var planID string
-	err := s.pool.QueryRow(ctx, `
+	err := s.readDB.QueryRow(ctx, `
 		SELECT COALESCE((
 			SELECT plan_id FROM subscriptions
 			WHERE workspace_id = $1
@@ -304,7 +318,8 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 				  AND TRIM(u.email) <> ''
 				  AND EXISTS (
 					SELECT 1 FROM social_accounts sa
-					WHERE sa.workspace_id = wm.workspace_id AND sa.platform = $1
+					JOIN profiles account_profile ON account_profile.id = sa.profile_id
+					WHERE account_profile.workspace_id = wm.workspace_id AND sa.platform = $1
 					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
 				  )
 			)
@@ -312,7 +327,8 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 			       (ARRAY_AGG(email ORDER BY user_id))[1] AS email,
 			       normalized_email,
 			       (ARRAY_AGG(first_name ORDER BY user_id))[1] AS first_name,
-			       ARRAY_AGG(DISTINCT workspace_id ORDER BY workspace_id) AS workspace_ids
+			       ARRAY_AGG(workspace_id ORDER BY user_id, workspace_id) AS workspace_ids,
+			       ARRAY_AGG(user_id ORDER BY user_id, workspace_id) AS owner_user_ids
 			FROM eligible_owners
 			GROUP BY normalized_email
 			ORDER BY normalized_email`, []any{restriction.Platform}, nil
@@ -322,22 +338,39 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 				SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
 				FROM subscriptions ORDER BY workspace_id, updated_at DESC
 			), prior_sent AS (
-				SELECT prior.canonical_user_id AS user_id, prior.recipient_email AS email,
-				       prior.normalized_email, COALESCE(NULLIF(prior.first_name_snapshot, ''), 'there') AS first_name,
-				       UNNEST(prior.represented_workspace_ids) AS workspace_id
+				SELECT prior.canonical_user_id, workspace.workspace_id, owner.owner_user_id
 				FROM platform_publishing_restriction_email_recipients prior
 				JOIN platform_publishing_restriction_email_campaigns sent_campaign
 				  ON sent_campaign.id = prior.campaign_id AND sent_campaign.cycle_id = $2
 				 AND sent_campaign.campaign_type = 'restriction_notice'
+				CROSS JOIN LATERAL UNNEST(prior.represented_workspace_ids) WITH ORDINALITY
+				  AS workspace(workspace_id, ordinality)
+				JOIN LATERAL UNNEST(prior.represented_owner_user_ids) WITH ORDINALITY
+				  AS owner(owner_user_id, ordinality)
+				  ON owner.ordinality = workspace.ordinality
 				WHERE prior.status = 'sent'
 			), eligible AS (
-				SELECT prior.*
+				SELECT prior.canonical_user_id AS user_id,
+				       canonical_user.email,
+				       LOWER(TRIM(canonical_user.email)) AS normalized_email,
+				       COALESCE(NULLIF(SPLIT_PART(TRIM(COALESCE(canonical_user.name, '')), ' ', 1), ''), 'there') AS first_name,
+				       prior.workspace_id,
+				       prior.owner_user_id
 				FROM prior_sent prior
+				JOIN users canonical_user ON canonical_user.id = prior.canonical_user_id
+				JOIN users owner_user ON owner_user.id = prior.owner_user_id
+				JOIN workspace_members owner_member
+				  ON owner_member.workspace_id = prior.workspace_id
+				 AND owner_member.user_id = prior.owner_user_id
+				 AND owner_member.role = 'owner' AND owner_member.status = 'active'
 				LEFT JOIN current_plans cp ON cp.workspace_id = prior.workspace_id
 				WHERE COALESCE(cp.plan_id, 'free') = 'free'
+				  AND TRIM(canonical_user.email) <> ''
+				  AND LOWER(TRIM(owner_user.email)) = LOWER(TRIM(canonical_user.email))
 				  AND EXISTS (
 					SELECT 1 FROM social_accounts sa
-					WHERE sa.workspace_id = prior.workspace_id AND sa.platform = $1
+					JOIN profiles account_profile ON account_profile.id = sa.profile_id
+					WHERE account_profile.workspace_id = prior.workspace_id AND sa.platform = $1
 					  AND sa.status = 'active' AND sa.disconnected_at IS NULL
 				  )
 			)
@@ -345,7 +378,8 @@ func campaignAudienceQuery(restriction Restriction, campaignType CampaignType) (
 			       (ARRAY_AGG(email ORDER BY user_id))[1] AS email,
 			       normalized_email,
 			       (ARRAY_AGG(first_name ORDER BY user_id))[1] AS first_name,
-			       ARRAY_AGG(DISTINCT workspace_id ORDER BY workspace_id) AS workspace_ids
+			       ARRAY_AGG(workspace_id ORDER BY user_id, workspace_id) AS workspace_ids,
+			       ARRAY_AGG(owner_user_id ORDER BY user_id, workspace_id) AS owner_user_ids
 			FROM eligible
 			GROUP BY normalized_email
 			ORDER BY normalized_email`, []any{restriction.Platform, restriction.CycleID}, nil
@@ -366,7 +400,10 @@ func previewCampaignRecipients(ctx context.Context, q campaignQuerier, restricti
 	result := make([]RecipientSnapshot, 0)
 	for rows.Next() {
 		var recipient RecipientSnapshot
-		if err := rows.Scan(&recipient.CanonicalUserID, &recipient.RecipientEmail, &recipient.NormalizedEmail, &recipient.FirstName, &recipient.RepresentedWorkspaceIDs); err != nil {
+		if err := rows.Scan(
+			&recipient.CanonicalUserID, &recipient.RecipientEmail, &recipient.NormalizedEmail,
+			&recipient.FirstName, &recipient.RepresentedWorkspaceIDs, &recipient.RepresentedOwnerUserIDs,
+		); err != nil {
 			return nil, err
 		}
 		result = append(result, recipient)
@@ -425,10 +462,11 @@ func (s *PostgresStore) CreateCampaign(ctx context.Context, expected Restriction
 		_, err := tx.Exec(ctx, `
 			INSERT INTO platform_publishing_restriction_email_recipients (
 				campaign_id, canonical_user_id, recipient_email, normalized_email,
-				first_name_snapshot, represented_workspace_ids, idempotency_key
-			) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7)
+				first_name_snapshot, represented_workspace_ids, represented_owner_user_ids,
+				idempotency_key
+			) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8)
 		`, campaign.ID, recipient.CanonicalUserID, recipient.RecipientEmail, recipient.NormalizedEmail,
-			recipient.FirstName, recipient.RepresentedWorkspaceIDs,
+			recipient.FirstName, recipient.RepresentedWorkspaceIDs, recipient.RepresentedOwnerUserIDs,
 			current.CycleID+":"+string(campaignType)+":"+recipient.CanonicalUserID)
 		if err != nil {
 			return Campaign{}, err
@@ -500,6 +538,28 @@ func (s *PostgresStore) RetryFailedCampaign(ctx context.Context, platform, campa
 		JOIN platform_publishing_restrictions restriction ON restriction.id=campaign.restriction_id
 		WHERE recipient.campaign_id=campaign.id AND campaign.id=$1 AND restriction.platform=$2
 		  AND recipient.status='failed'
+		  AND (
+		    recipient.retryable=TRUE
+		    OR (
+		      recipient.retryable=FALSE
+		      AND LOWER(COALESCE(recipient.last_error, '')) NOT LIKE '%manual review%'
+		      AND LOWER(COALESCE(recipient.last_error, '')) NOT LIKE '%outcome unknown%'
+		      AND (
+		        recipient.email_send_attempt_id IS NULL
+		        OR EXISTS (
+		          SELECT 1
+		          FROM email_send_attempts attempt
+		          WHERE attempt.id=recipient.email_send_attempt_id
+		            AND attempt.status='failed'
+		            AND CASE
+		              WHEN pg_input_is_valid(COALESCE(attempt.last_error, ''), 'jsonb')
+		              THEN COALESCE((attempt.last_error::jsonb)->>'outcome_class', 'provider_unknown')
+		              ELSE 'provider_unknown'
+		            END IN ('provider_definitive_failure', 'pre_send_failure')
+		        )
+		      )
+		    )
+		  )
 	`, campaignID, platform)
 	if err != nil {
 		return Campaign{}, err
@@ -510,7 +570,8 @@ func (s *PostgresStore) RetryFailedCampaign(ctx context.Context, platform, campa
 	_, err = tx.Exec(ctx, `
 		UPDATE platform_publishing_restriction_email_campaigns
 		SET status='queued', pending_count=(SELECT COUNT(*) FROM platform_publishing_restriction_email_recipients WHERE campaign_id=$1 AND status='pending'),
-		    failed_count=0, completed_at=NULL, updated_at=NOW()
+		    failed_count=(SELECT COUNT(*) FROM platform_publishing_restriction_email_recipients WHERE campaign_id=$1 AND status='failed'),
+		    completed_at=NULL, updated_at=NOW()
 		WHERE id=$1
 	`, campaignID)
 	if err != nil {
