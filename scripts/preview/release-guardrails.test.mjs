@@ -233,6 +233,44 @@ test("publishing restriction CI guard rejects semantic workflow mutations", asyn
   }
 });
 
+test("Preview Acceptance installs dashboard dependencies before release contracts", async () => {
+  const workflow = await read(".github/workflows/preview-acceptance.yml");
+  const previewJob = parseYaml(workflow).jobs?.preview;
+  assert.ok(previewJob, "Preview Acceptance must define jobs.preview");
+
+  const installStep = requiredStep(
+    previewJob,
+    "Install dashboard dependencies",
+    "jobs.preview",
+  );
+  assert.equal(installStep["working-directory"], "dashboard");
+  assert.match(installStep.run, /^set -euo pipefail$/m);
+  assert.match(installStep.run, /echo "dashboard-dependencies" > \.\.\/artifacts\/preview\/current-stage/);
+  assert.match(installStep.run, /npm ci 2>&1 \| tee \.\.\/artifacts\/preview\/npm-ci\.log/);
+
+  const contractsStep = requiredStep(
+    previewJob,
+    "Validate release contracts",
+    "jobs.preview",
+  );
+  assert.match(contractsStep.run, /^set -euo pipefail$/m);
+  assert.match(contractsStep.run, /echo "release-contracts" > artifacts\/preview\/current-stage/);
+  assert.match(
+    contractsStep.run,
+    /node --test scripts\/preview\/\*\.test\.mjs 2>&1 \| tee artifacts\/preview\/release-contracts\.log/,
+  );
+
+  assert.ok(
+    previewJob.steps.indexOf(installStep) < previewJob.steps.indexOf(contractsStep),
+    "dashboard dependencies must be installed before release contracts load js-yaml",
+  );
+  assert.equal(
+    previewJob.steps.filter((step) => /(?:^|\s)npm ci(?:\s|$)/.test(step.run || "")).length,
+    1,
+    "Preview Acceptance must install dashboard dependencies exactly once",
+  );
+});
+
 test("Preview Acceptance is fail-closed and tied to the exact PR head", async () => {
   const workflow = await read(".github/workflows/preview-acceptance.yml");
   const ciGates = await read("docs/ci-gates.md");
