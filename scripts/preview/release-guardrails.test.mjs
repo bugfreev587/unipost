@@ -39,6 +39,7 @@ const postgresTestsByPackage = {
     "TestPublishingRestrictionClaimReconcilesRunningCampaignAfterPriorRefreshFailure",
     "TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction",
     "TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed",
+    "TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAttempt",
     "TestPublishingRestrictionStalePreSendClaimRecoversWithoutUnknownOutcome",
     "TestPublishingRestrictionDelayedAuditSentCannotRacePastStaleReconciliation",
   ],
