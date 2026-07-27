@@ -160,22 +160,34 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	_, err := pool.Exec(context.Background(), `
 		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT);
 		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
-		CREATE TABLE profiles (id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL);
-		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
+		CREATE TABLE profiles (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE
+		);
+		CREATE TABLE media (id TEXT PRIMARY KEY, size_bytes BIGINT NOT NULL DEFAULT 0);
+		CREATE TABLE media_post_usages (
+			post_id TEXT,
+			media_id TEXT,
+			cleanup_after_at TIMESTAMPTZ
+		);
+		CREATE TABLE post_failures (post_id TEXT, restriction_cycle_id TEXT);
 		CREATE TABLE subscriptions (
 			workspace_id TEXT NOT NULL,
 			plan_id TEXT NOT NULL,
 			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 		);
 		CREATE TABLE workspace_members (
-			workspace_id TEXT NOT NULL,
-			user_id TEXT NOT NULL,
+			workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			role TEXT NOT NULL,
-			status TEXT NOT NULL
+			status TEXT NOT NULL,
+			PRIMARY KEY (workspace_id, user_id)
 		);
+		CREATE UNIQUE INDEX workspace_members_one_owner_idx
+			ON workspace_members (workspace_id) WHERE role = 'owner';
 		CREATE TABLE social_accounts (
 			id TEXT PRIMARY KEY,
-			profile_id TEXT NOT NULL,
+			profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
 			platform TEXT NOT NULL,
 			status TEXT NOT NULL,
 			disconnected_at TIMESTAMPTZ
@@ -194,7 +206,6 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	}
 	_, err = pool.Exec(context.Background(), `
 		INSERT INTO users (id) VALUES ('worker_user_1'), ('worker_user_2');
-		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO platform_publishing_restriction_email_campaigns (
 			id, restriction_id, cycle_id, campaign_type, subject_snapshot,
 			body_snapshot, restriction_version
@@ -206,6 +217,47 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 	`)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPublishingRestrictionAudienceAndAdminCountsUseProfileWorkspace(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		UPDATE users SET email='owner@example.com', name='Current Owner' WHERE id='worker_user_1';
+		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
+		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('social_profile_workspace', 'profile_workspace_1', 'tiktok', 'active');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	store := publishingrestrictions.NewPostgresStore(pool)
+	recipients, err := store.PreviewCampaignRecipients(ctx, publishingrestrictions.Restriction{
+		Platform: "tiktok",
+	}, publishingrestrictions.RestrictionNotice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recipients) != 1 || recipients[0].CanonicalUserID != "worker_user_1" ||
+		recipients[0].RecipientEmail != "owner@example.com" ||
+		len(recipients[0].RepresentedWorkspaceIDs) != 1 || recipients[0].RepresentedWorkspaceIDs[0] != "workspace_1" {
+		t.Fatalf("restriction audience = %+v, want current owner through profile workspace", recipients)
+	}
+
+	restrictions, err := store.ListAdminRestrictions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restrictions) != 1 || restrictions[0].Platform != "tiktok" ||
+		restrictions[0].AffectedWorkspaces != 1 || restrictions[0].AffectedAccounts != 1 {
+		t.Fatalf("admin restriction metrics = %+v, want one workspace and one account", restrictions)
 	}
 }
 
@@ -221,10 +273,10 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 		UPDATE users SET email='new-owner@example.com', name='New Owner' WHERE id='worker_user_1';
 		UPDATE users SET email='old-owner@example.com', name='Other Owner' WHERE id='worker_user_2';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
-		INSERT INTO workspace_members (workspace_id, user_id, role, status) VALUES
-			('workspace_1', 'worker_user_1', 'owner', 'active'),
-			('workspace_1', 'worker_user_2', 'owner', 'active');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
 		INSERT INTO social_accounts (id, profile_id, platform, status)
 		VALUES ('social_recovery_identity', 'profile_workspace_1', 'tiktok', 'active');
 		UPDATE platform_publishing_restriction_email_campaigns
@@ -265,21 +317,6 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 		CycleID:                 "worker_cycle",
 		CampaignType:            publishingrestrictions.RecoveryNotice,
 		CanonicalUserID:         "worker_user_1",
-		NormalizedEmail:         "old-owner@example.com",
-		RepresentedWorkspaceIDs: []string{"workspace_1"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if eligible {
-		t.Fatal("reassigned old email made stale canonical recipient eligible")
-	}
-
-	eligible, err = emailStore.PublishingRestrictionEmailRecipientEligible(ctx, PublishingRestrictionEmailWork{
-		Platform:                "tiktok",
-		CycleID:                 "worker_cycle",
-		CampaignType:            publishingrestrictions.RecoveryNotice,
-		CanonicalUserID:         "worker_user_1",
 		NormalizedEmail:         "new-owner@example.com",
 		RepresentedWorkspaceIDs: []string{"workspace_1"},
 	})
@@ -288,6 +325,32 @@ func TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail(t
 	}
 	if !eligible {
 		t.Fatal("current canonical user identity should remain eligible")
+	}
+
+	_, err = pool.Exec(ctx, `
+		UPDATE workspace_members
+		SET role='editor'
+		WHERE workspace_id='workspace_1' AND user_id='worker_user_1';
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES ('workspace_1', 'worker_user_2', 'owner', 'active');
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	eligible, err = emailStore.PublishingRestrictionEmailRecipientEligible(ctx, PublishingRestrictionEmailWork{
+		Platform:                "tiktok",
+		CycleID:                 "worker_cycle",
+		CampaignType:            publishingrestrictions.RecoveryNotice,
+		CanonicalUserID:         "worker_user_1",
+		NormalizedEmail:         "old-owner@example.com",
+		RepresentedWorkspaceIDs: []string{"workspace_1"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("reassigned old email made stale canonical recipient eligible after ownership transfer")
 	}
 }
 
@@ -305,6 +368,7 @@ func TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentit
 		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
 		WHERE id='recipient_manual_retry';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
@@ -687,6 +751,7 @@ func TestPublishingRestrictionAuditFinalizationFailureReconcilesWithoutDuplicate
 		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
 		WHERE id='recipient_audit_reconcile';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
@@ -790,6 +855,7 @@ func TestPublishingRestrictionCanceledDefinitiveFailureRecoversAfterRecipientWri
 		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
 		WHERE id='recipient_definitive_reconcile';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');
@@ -1159,6 +1225,7 @@ func TestPublishingRestrictionStaleLinkedPreSendFailureRetriesWithFreshAuditAtte
 		SET represented_workspace_ids=ARRAY['workspace_1']::TEXT[]
 		WHERE id='recipient_link_lost';
 		INSERT INTO workspaces (id) VALUES ('workspace_1');
+		INSERT INTO profiles (id, workspace_id) VALUES ('profile_workspace_1', 'workspace_1');
 		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('workspace_1', 'free');
 		INSERT INTO workspace_members (workspace_id, user_id, role, status)
 		VALUES ('workspace_1', 'worker_user_1', 'owner', 'active');

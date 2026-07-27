@@ -27,6 +27,7 @@ const postgresTestsByPackage = {
   ],
   "./internal/worker": [
     "TestRecoveryCampaignUsesCurrentCanonicalIdentityAndRejectsReassignedEmail",
+    "TestPublishingRestrictionAudienceAndAdminCountsUseProfileWorkspace",
     "TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity",
     "TestPublishingRestrictionManualRetryRejectsExpiredProviderIdempotencyWindow",
     "TestPublishingRestrictionRecipientSentTransitionAggregatesCampaignAtomically",
