@@ -888,13 +888,11 @@ func (h *SocialPostHandler) finalizeRestrictedDeliveryJob(
 	post db.SocialPost,
 	decision publishingrestrictions.Decision,
 ) error {
-	finalizedAt := time.Now()
 	mediaIDs, mediaMetadataOK := decodeMediaIDsForRetention(post)
 	if !mediaMetadataOK {
-		slog.Warn("media retention: metadata decode failed before restriction finalization",
-			"post_id", post.ID,
-			"post_status", post.Status)
+		return fmt.Errorf("%w: post %s", errInvalidPostMediaMetadata, post.ID)
 	}
+	finalizedAt := time.Now()
 	_, err := h.queries.FinalizeRestrictedPostDeliveryJob(ctx, db.FinalizeRestrictedPostDeliveryJobParams{
 		FailureStage:     postfailures.ToText(publishingrestrictions.FailureStage),
 		ErrorCode:        postfailures.ToText(publishingrestrictions.NormalizedCode),

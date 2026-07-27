@@ -15,7 +15,10 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
-var errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
+var (
+	errRetryMediaReuploadRequired = errors.New("retained media is unavailable; re-upload required")
+	errInvalidPostMediaMetadata   = errors.New("invalid post media metadata")
+)
 
 type skipPostMediaRetentionSyncKey struct{}
 

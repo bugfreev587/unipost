@@ -233,6 +233,118 @@ func TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity(t *testing.T) {
 	pool := openRestrictedDeliveryIntegrationPool(t)
 	setupRestrictedDeliveryIntegrationSchema(t, pool)
 
+	t.Run("invalid metadata preserves job result billing and existing usage", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		attemptedAt := time.Date(2026, 7, 26, 18, 30, 0, 0, time.UTC)
+		_, err := pool.Exec(ctx, `
+			INSERT INTO social_post_results (
+				id, post_id, social_account_id, status, x_credits_counted,
+				x_credit_operation, x_credit_catalog_version, x_credit_billing_mode
+			) VALUES (
+				'result_invalid_metadata', 'post_invalid_metadata', 'account_invalid_metadata',
+				'processing', 29, 'existing_operation', 'existing_catalog', 'existing_billing'
+			)
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO post_delivery_jobs (
+				id, post_id, social_post_result_id, workspace_id, social_account_id,
+				platform, kind, state, attempts, lease_owner, last_attempt_at
+			) VALUES (
+				'job_invalid_metadata', 'post_invalid_metadata', 'result_invalid_metadata',
+				'workspace_invalid_metadata', 'account_invalid_metadata', 'tiktok',
+				'dispatch', 'running', 1, 'owner_invalid_metadata', $1
+			)
+		`, attemptedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = pool.Exec(ctx, `
+			INSERT INTO media (id, workspace_id, status)
+			VALUES ('media_invalid_metadata', 'workspace_invalid_metadata', 'uploaded');
+			INSERT INTO media_post_usages (
+				workspace_id, media_id, post_id, post_status, cleanup_after_at, retention_reason
+			) VALUES (
+				'workspace_invalid_metadata', 'media_invalid_metadata', 'post_invalid_metadata',
+				'publishing', NULL, 'active_post'
+			)
+		`)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		queries := db.New(pool)
+		h := NewSocialPostHandler(queries, nil, nil, nil, nil, nil, nil)
+		job := db.PostDeliveryJob{
+			ID:                 "job_invalid_metadata",
+			PostID:             "post_invalid_metadata",
+			SocialPostResultID: "result_invalid_metadata",
+			WorkspaceID:        "workspace_invalid_metadata",
+			SocialAccountID:    "account_invalid_metadata",
+			Platform:           "tiktok",
+			State:              "running",
+			LeaseOwner:         pgtype.Text{String: "owner_invalid_metadata", Valid: true},
+			LastAttemptAt:      pgtype.Timestamptz{Time: attemptedAt, Valid: true},
+		}
+		result := db.SocialPostResult{
+			ID:                    "result_invalid_metadata",
+			PostID:                "post_invalid_metadata",
+			SocialAccountID:       "account_invalid_metadata",
+			Status:                "processing",
+			XCreditsCounted:       29,
+			XCreditOperation:      pgtype.Text{String: "existing_operation", Valid: true},
+			XCreditCatalogVersion: pgtype.Text{String: "existing_catalog", Valid: true},
+			XCreditBillingMode:    pgtype.Text{String: "existing_billing", Valid: true},
+		}
+		post := db.SocialPost{
+			ID:          "post_invalid_metadata",
+			WorkspaceID: "workspace_invalid_metadata",
+			Status:      "publishing",
+			Metadata:    []byte(`{"schema_version":2,"platform_posts":[`),
+		}
+		err = h.finalizeRestrictedDeliveryJob(ctx, job, result, post, publishingrestrictions.Decision{
+			Restricted: true,
+			Platform:   "tiktok",
+			CycleID:    "cycle_invalid_metadata_pg",
+		})
+		if !errors.Is(err, errInvalidPostMediaMetadata) {
+			t.Fatalf("finalizeRestrictedDeliveryJob error = %v, want media metadata error", err)
+		}
+
+		var jobState, resultStatus string
+		var credits int64
+		var operation, catalog, billing pgtype.Text
+		if err := pool.QueryRow(ctx, `SELECT state FROM post_delivery_jobs WHERE id = 'job_invalid_metadata'`).Scan(&jobState); err != nil {
+			t.Fatal(err)
+		}
+		if err := pool.QueryRow(ctx, `
+			SELECT status, x_credits_counted, x_credit_operation,
+			       x_credit_catalog_version, x_credit_billing_mode
+			FROM social_post_results WHERE id = 'result_invalid_metadata'
+		`).Scan(&resultStatus, &credits, &operation, &catalog, &billing); err != nil {
+			t.Fatal(err)
+		}
+		if jobState != "running" || resultStatus != "processing" || credits != 29 || operation.String != "existing_operation" || catalog.String != "existing_catalog" || billing.String != "existing_billing" {
+			t.Fatalf("durable state changed = job:%q result:%q credits:%d operation:%#v catalog:%#v billing:%#v", jobState, resultStatus, credits, operation, catalog, billing)
+		}
+		var usageCount int
+		if err := pool.QueryRow(ctx, `
+			SELECT COUNT(*)::int FROM media_post_usages
+			WHERE media_id = 'media_invalid_metadata'
+			  AND post_id = 'post_invalid_metadata'
+			  AND retention_reason = 'active_post'
+			  AND cleanup_after_at IS NULL
+		`).Scan(&usageCount); err != nil {
+			t.Fatal(err)
+		}
+		if usageCount != 1 {
+			t.Fatalf("preserved active media usages = %d, want 1", usageCount)
+		}
+	})
+
 	t.Run("stale owner preserves newer completed job and published result", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()

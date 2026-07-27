@@ -1347,6 +1347,98 @@ func TestFinalizeRestrictedDeliveryJobReturnsResultRefreshError(t *testing.T) {
 	}
 }
 
+func TestFinalizeRestrictedDeliveryJobInvalidMediaMetadataFailsClosed(t *testing.T) {
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_invalid_metadata", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Date(2026, 7, 26, 23, 30, 0, 0, time.UTC), Valid: true}
+	result := db.SocialPostResult{
+		ID:                    job.SocialPostResultID,
+		PostID:                job.PostID,
+		SocialAccountID:       job.SocialAccountID,
+		Status:                "processing",
+		XCreditsCounted:       19,
+		XCreditOperation:      pgtype.Text{String: "existing_operation", Valid: true},
+		XCreditCatalogVersion: pgtype.Text{String: "existing_catalog", Valid: true},
+		XCreditBillingMode:    pgtype.Text{String: "existing_billing", Valid: true},
+	}
+	originalJob := job
+	originalResult := result
+	dbtx := &restrictedFinalizeLeaseDB{job: job, result: result}
+	logStore := &restrictedFinalizeIntegrationLogStore{}
+	logger := integrationlogs.NewLogger(logStore, nil)
+	loggerContext, stopLogger := context.WithCancel(context.Background())
+	loggerStopped := make(chan struct{})
+	go func() {
+		logger.Start(loggerContext)
+		close(loggerStopped)
+	}()
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, logger)
+	post := db.SocialPost{
+		ID:          job.PostID,
+		WorkspaceID: job.WorkspaceID,
+		Status:      "publishing",
+		Metadata:    []byte(`{"schema_version":2,"platform_posts":[`),
+	}
+
+	err := h.finalizeRestrictedDeliveryJob(context.Background(), job, result, post, publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   job.Platform,
+		CycleID:    "cycle_invalid_metadata",
+	})
+	stopLogger()
+	<-loggerStopped
+	if !errors.Is(err, errInvalidPostMediaMetadata) {
+		t.Fatalf("finalizeRestrictedDeliveryJob error = %v, want media metadata error", err)
+	}
+	if !reflect.DeepEqual(dbtx.job, originalJob) {
+		t.Fatalf("job changed on metadata failure:\n got=%#v\nwant=%#v", dbtx.job, originalJob)
+	}
+	if !reflect.DeepEqual(dbtx.result, originalResult) {
+		t.Fatalf("result/billing changed on metadata failure:\n got=%#v\nwant=%#v", dbtx.result, originalResult)
+	}
+	if dbtx.resultUpdateCalls != 0 || dbtx.failureHistoryCalls != 0 || dbtx.parentRefreshCalls != 0 || len(dbtx.retentionUpserts) != 0 {
+		t.Fatalf("metadata failure side effects = result:%d history:%d parent:%d retention:%d, want all zero",
+			dbtx.resultUpdateCalls, dbtx.failureHistoryCalls, dbtx.parentRefreshCalls, len(dbtx.retentionUpserts))
+	}
+	if logStore.calls != 0 {
+		t.Fatalf("integration log calls = %d, want 0 on metadata failure", logStore.calls)
+	}
+}
+
+func TestFinalizeRestrictedDeliveryJobAllowsValidMetadataWithoutMedia(t *testing.T) {
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_no_media", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Date(2026, 7, 26, 23, 45, 0, 0, time.UTC), Valid: true}
+	result := db.SocialPostResult{
+		ID:              job.SocialPostResultID,
+		PostID:          job.PostID,
+		SocialAccountID: job.SocialAccountID,
+		Status:          "processing",
+	}
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{AccountID: job.SocialAccountID}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx := &restrictedFinalizeLeaseDB{job: job, result: result}
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil)
+	post := db.SocialPost{ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing", Metadata: metadata}
+
+	err = h.finalizeRestrictedDeliveryJob(context.Background(), job, result, post, publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   job.Platform,
+		CycleID:    "cycle_valid_no_media",
+	})
+	if err != nil {
+		t.Fatalf("finalizeRestrictedDeliveryJob: %v", err)
+	}
+	if dbtx.result.Status != "failed" || dbtx.resultUpdateCalls != 1 {
+		t.Fatalf("valid no-media finalization = status:%q updates:%d, want failed/1", dbtx.result.Status, dbtx.resultUpdateCalls)
+	}
+	if len(dbtx.retentionUpserts) != 0 {
+		t.Fatalf("no-media retention upserts = %d, want 0", len(dbtx.retentionUpserts))
+	}
+}
+
 type persistedTokenRestrictionSpy struct{ calls int }
 
 func (s *persistedTokenRestrictionSpy) Evaluate(context.Context, string, string) (publishingrestrictions.Decision, error) {
