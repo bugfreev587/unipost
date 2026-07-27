@@ -141,8 +141,16 @@ func (c *AuditedClient) SendTransactionalWithAttempt(
 	}
 	if beforeSend != nil {
 		if linkErr := beforeSend(ctx, record.ID); linkErr != nil {
-			if auditErr := c.store.MarkEmailSendAttemptFailed(ctx, record.ID, linkErr.Error()); auditErr != nil {
+			finalizeCtx, cancelFinalize := context.WithTimeout(context.WithoutCancel(ctx), emailAuditFinalizationTimeout)
+			auditErr := c.store.MarkEmailSendAttemptFailed(
+				finalizeCtx,
+				record.ID,
+				emailAuditFailureEvidence("pre_send_failure", linkErr),
+			)
+			cancelFinalize()
+			if auditErr != nil {
 				slog.Warn("loops: email audit linkage failure update failed", "attempt_id", record.ID, "error", auditErr)
+				return record, &EmailAuditFinalizationError{ProviderError: linkErr, AuditError: auditErr}
 			}
 			return record, linkErr
 		}

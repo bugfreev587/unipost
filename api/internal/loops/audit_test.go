@@ -71,6 +71,58 @@ func TestAuditedClientReturnsTypedFinalizationErrorWhenSentAuditPersistenceFails
 	}
 }
 
+func TestAuditedClientFinalizesLinkFailureAfterParentCancellation(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	store := &contextAwareEmailAuditStore{}
+	sender := NewAuditedClient(client, store)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, err := sender.SendTransactionalWithAttempt(ctx, TransactionalEmail{
+		TransactionalID: "tmpl_restriction",
+		Email:           "owner@example.com",
+		Audit:           EmailAudit{EventKey: "email.publishing_restriction.restriction_notice.v1"},
+	}, func(context.Context, string) error {
+		cancel()
+		return context.Canceled
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("send error = %v, want linkage cancellation", err)
+	}
+	if store.status != "failed" || store.failedContextErr != nil || !store.failedBounded {
+		t.Fatalf("audit status=%q context_error=%v bounded=%v", store.status, store.failedContextErr, store.failedBounded)
+	}
+	if client.transactionals != 0 {
+		t.Fatalf("provider calls = %d, want 0", client.transactionals)
+	}
+}
+
+func TestAuditedClientReturnsTypedErrorWhenCanceledLinkFailureAuditFinalizationFails(t *testing.T) {
+	auditErr := errors.New("audit finalization unavailable")
+	client := &fakeLifecycleClient{}
+	store := &contextAwareEmailAuditStore{failedErr: auditErr}
+	sender := NewAuditedClient(client, store)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	_, err := sender.SendTransactionalWithAttempt(ctx, TransactionalEmail{
+		TransactionalID: "tmpl_restriction",
+		Email:           "owner@example.com",
+		Audit:           EmailAudit{EventKey: "email.publishing_restriction.restriction_notice.v1"},
+	}, func(context.Context, string) error {
+		cancel()
+		return context.Canceled
+	})
+	var finalizationErr *EmailAuditFinalizationError
+	if !errors.As(err, &finalizationErr) || !errors.Is(err, auditErr) {
+		t.Fatalf("send error = %v, want typed audit finalization failure", err)
+	}
+	if !errors.Is(finalizationErr.ProviderError, context.Canceled) {
+		t.Fatalf("preserved linkage error = %v, want context canceled", finalizationErr.ProviderError)
+	}
+	if store.status != "pending" || client.transactionals != 0 {
+		t.Fatalf("audit status=%q provider calls=%d, want pending/0", store.status, client.transactionals)
+	}
+}
+
 func (s *contextAwareEmailAuditStore) MarkEmailSendAttemptFailed(ctx context.Context, _ string, reason string) error {
 	s.failedContext = ctx
 	s.failedContextErr = ctx.Err()
