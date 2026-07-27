@@ -64,6 +64,7 @@ func decodeMediaIDsForRetention(post db.SocialPost) ([]string, bool) {
 			ids = append(ids, id)
 		}
 	}
+	sort.Strings(ids)
 	return ids, true
 }
 
@@ -167,9 +168,6 @@ func (h *SocialPostHandler) syncPostMediaRetentionAtMode(
 			"post_id", post.ID,
 			"post_status", postStatus)
 		return nil
-	}
-	if strict {
-		sort.Strings(ids)
 	}
 	if len(ids) == 0 {
 		if err := h.queries.DeleteMediaPostUsagesForPost(ctx, post.ID); err != nil {

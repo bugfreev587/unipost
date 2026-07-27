@@ -22,6 +22,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
@@ -307,7 +308,7 @@ func TestProcessPostDeliveryJobMarksPlatformStartedImmediatelyBeforeDispatch(t *
 	}
 	fn := text[start : start+end]
 
-	resultGuard := strings.Index(fn, `if res.Status == "published"`)
+	resultGuard := strings.Index(fn, `if providerTerminalOrAccepted(res, job.Platform)`)
 	platformInput := strings.Index(fn, "platformPostInputAtIndex")
 	policyRecheck := strings.Index(fn, "evaluateDeliveryPublishingRestriction")
 	markStarted := strings.Index(fn, "MarkPostDeliveryJobPlatformStarted")
@@ -620,6 +621,20 @@ func postDeliveryJobScanRow(job db.PostDeliveryJob) scanRow {
 	return scanRow{values: postDeliveryJobValues(job)}
 }
 
+func terminalPostEventOutboxScanRow(id, postID, workspaceID, status, version, event string) scanRow {
+	return scanRow{values: []any{
+		id,
+		int64(1),
+		postID,
+		workspaceID,
+		status,
+		version,
+		event,
+		[]byte(`{"id":"` + postID + `"}`),
+		pgtype.Timestamptz{Time: time.Now(), Valid: true},
+	}}
+}
+
 func postDeliveryJobValues(job db.PostDeliveryJob) []any {
 	return []any{
 		job.ID,
@@ -774,14 +789,35 @@ type retryAfterPublishedDB struct {
 	reachedPublishPath bool
 }
 
-func (f *retryAfterPublishedDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
-	f.reachedPublishPath = true
-	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+func (f *retryAfterPublishedDB) Begin(context.Context) (pgx.Tx, error) {
+	return &queueDBTXTestTx{db: f}, nil
 }
 
-func (f *retryAfterPublishedDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
-	f.reachedPublishPath = true
-	return nil, errors.New("unexpected Query")
+func (f *retryAfterPublishedDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: LockPostDeliveryJobFinalization"):
+		return pgconn.CommandTag{}, nil
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"),
+		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
+		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"),
+		strings.Contains(query, "-- name: CreateTerminalPostEventDelivery"):
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	default:
+		f.reachedPublishPath = true
+		return pgconn.CommandTag{}, errors.New("unexpected Exec")
+	}
+}
+
+func (f *retryAfterPublishedDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	switch {
+	case strings.Contains(query, "-- name: ListSocialPostResultsByPost"):
+		return &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}, nil
+	case strings.Contains(query, "-- name: ListPostDeliveryJobsByPost"):
+		return &queueRows{values: [][]any{postDeliveryJobScanRow(f.job).values}}, nil
+	default:
+		f.reachedPublishPath = true
+		return nil, errors.New("unexpected Query")
+	}
 }
 
 func (f *retryAfterPublishedDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
@@ -803,7 +839,14 @@ func (f *retryAfterPublishedDB) QueryRow(_ context.Context, query string, args .
 		succeeded := f.job
 		succeeded.State = "succeeded"
 		succeeded.FinishedAt = finishedAt
+		f.job = succeeded
 		return postDeliveryJobScanRow(succeeded)
+	case strings.Contains(query, "-- name: GetSocialPostProjectionVersion"):
+		return scanRow{values: []any{"published-version"}}
+	case strings.Contains(query, "-- name: ElectWorkspaceFirstPostPublished"):
+		return scanRow{values: []any{f.job.WorkspaceID}}
+	case strings.Contains(query, "-- name: CreatePostStatusTransitionEvent"):
+		return terminalPostEventOutboxScanRow("post-event-1", f.job.PostID, f.job.WorkspaceID, "published", "published-version", "post.published")
 	default:
 		f.reachedPublishPath = true
 		return scanRow{err: errors.New("advanced toward publish path: " + query)}
@@ -823,7 +866,7 @@ func TestProcessPostDeliveryJobSkipsWhenResultAlreadyPublished(t *testing.T) {
 			Status:          "published",
 		},
 	}
-	h := &SocialPostHandler{queries: db.New(dbtx)}
+	h := &SocialPostHandler{queries: db.New(dbtx), bus: events.NoopBus{}}
 
 	if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
 		t.Fatalf("ProcessPostDeliveryJob returned error: %v", err)
@@ -836,22 +879,78 @@ func TestProcessPostDeliveryJobSkipsWhenResultAlreadyPublished(t *testing.T) {
 	}
 }
 
+type staleLoadFailureOwnerDB struct {
+	resultUpdateCalls int
+	parentLockCalls   int
+	result            db.SocialPostResult
+}
+
+func (f *staleLoadFailureOwnerDB) Begin(context.Context) (pgx.Tx, error) {
+	return &queueDBTXTestTx{db: f}, nil
+}
+
+func (f *staleLoadFailureOwnerDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: LockPostDeliveryJobFinalization") {
+		f.parentLockCalls++
+		return pgconn.CommandTag{}, nil
+	}
+	return pgconn.CommandTag{}, fmt.Errorf("unexpected Exec: %s", query)
+}
+
+func (f *staleLoadFailureOwnerDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+	return nil, errors.New("unexpected Query")
+}
+
+func (f *staleLoadFailureOwnerDB) QueryRow(_ context.Context, query string, _ ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
+		return socialPostResultScanRow(f.result)
+	case strings.Contains(query, "-- name: MarkPostDeliveryJobFailed"):
+		return scanRow{err: pgx.ErrNoRows}
+	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
+		f.resultUpdateCalls++
+		return scanRow{err: errors.New("stale owner must not update the shared result")}
+	default:
+		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
+	}
+}
+
+func TestFinalizeJobLoadFailureStaleOwnerDoesNotMutateOrRefresh(t *testing.T) {
+	dbtx := &staleLoadFailureOwnerDB{}
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "stale_owner", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	post := db.SocialPost{ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing"}
+	result := db.SocialPostResult{
+		ID: job.SocialPostResultID, PostID: job.PostID,
+		SocialAccountID: job.SocialAccountID, Status: "processing",
+	}
+	dbtx.result = result
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, events.NoopBus{}, nil, nil, nil)
+
+	if err := h.finalizeJobLoadFailure(context.Background(), job, result, post, errors.New("invalid platform input")); err != nil {
+		t.Fatalf("finalizeJobLoadFailure stale owner: %v", err)
+	}
+	if dbtx.resultUpdateCalls != 0 {
+		t.Fatalf("stale owner result updates = %d, want 0", dbtx.resultUpdateCalls)
+	}
+	if dbtx.parentLockCalls != 1 {
+		t.Fatalf("stale owner terminal parent finalization locks = %d, want 1", dbtx.parentLockCalls)
+	}
+}
+
 // publishTokenDB captures SetSocialPostResultPublishToken persistence.
 type publishTokenDB struct {
 	setID    string
 	setToken string
+	setJobID string
 }
 
 func (f *publishTokenDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	if strings.Contains(query, "-- name: SetSocialPostResultPublishToken") {
-		for _, a := range args {
-			switch v := a.(type) {
-			case string:
-				f.setID = v
-			case pgtype.Text:
-				f.setToken = v.String
-			}
-		}
+		f.setToken = args[0].(pgtype.Text).String
+		f.setID = args[1].(string)
+		f.setJobID = args[2].(string)
 		return pgconn.CommandTag{}, nil
 	}
 	return pgconn.CommandTag{}, errors.New("unexpected Exec: " + query)
@@ -868,8 +967,10 @@ func TestAttachPublishTokenResumeInjectsResumeAndPersist(t *testing.T) {
 	h := &SocialPostHandler{queries: db.New(fake)}
 	pp := platform.PlatformPostInput{AccountID: "acct_ig"}
 	res := db.SocialPostResult{ID: "res_1", PublishToken: pgtype.Text{String: "creation_123", Valid: true}}
+	job := baseDeliveryJob()
+	job.ID = "job_token_1"
 
-	h.attachPublishTokenResume(context.Background(), &pp, res)
+	h.attachPublishTokenResume(context.Background(), &pp, res, job)
 
 	if got := pp.PlatformOptions[platform.OptResumePublishToken]; got != "creation_123" {
 		t.Fatalf("resume token = %v, want creation_123", got)
@@ -879,8 +980,9 @@ func TestAttachPublishTokenResumeInjectsResumeAndPersist(t *testing.T) {
 		t.Fatal("persist callback not injected into opts")
 	}
 	fn("new_token_456")
-	if fake.setID != "res_1" || fake.setToken != "new_token_456" {
-		t.Fatalf("persist callback stored id=%q token=%q, want res_1/new_token_456", fake.setID, fake.setToken)
+	if fake.setID != "res_1" || fake.setToken != "new_token_456" || fake.setJobID != job.ID {
+		t.Fatalf("persist callback stored id=%q token=%q job=%q, want res_1/new_token_456/%s",
+			fake.setID, fake.setToken, fake.setJobID, job.ID)
 	}
 }
 
@@ -889,7 +991,7 @@ func TestAttachPublishTokenResumeOmitsResumeWhenNoPriorToken(t *testing.T) {
 	pp := platform.PlatformPostInput{AccountID: "acct_ig"}
 	res := db.SocialPostResult{ID: "res_1"} // no prior token
 
-	h.attachPublishTokenResume(context.Background(), &pp, res)
+	h.attachPublishTokenResume(context.Background(), &pp, res, baseDeliveryJob())
 
 	if _, present := pp.PlatformOptions[platform.OptResumePublishToken]; present {
 		t.Fatal("resume token must not be injected when no prior token exists")
@@ -932,8 +1034,55 @@ type restrictedFinalizeLeaseDB struct {
 	listResultsErr      error
 }
 
+func (f *restrictedFinalizeLeaseDB) Begin(context.Context) (pgx.Tx, error) {
+	snapshot := *f
+	snapshot.retentionUpserts = append([]db.UpsertMediaPostUsageParams(nil), f.retentionUpserts...)
+	return &restrictedFinalizeLeaseTx{store: f, snapshot: snapshot}, nil
+}
+
+type restrictedFinalizeLeaseTx struct {
+	store    *restrictedFinalizeLeaseDB
+	snapshot restrictedFinalizeLeaseDB
+	done     bool
+}
+
+func (f *restrictedFinalizeLeaseTx) Begin(context.Context) (pgx.Tx, error) { return f, nil }
+func (f *restrictedFinalizeLeaseTx) Commit(context.Context) error {
+	f.done = true
+	return nil
+}
+func (f *restrictedFinalizeLeaseTx) Rollback(context.Context) error {
+	if !f.done {
+		*f.store = f.snapshot
+		f.done = true
+	}
+	return nil
+}
+func (*restrictedFinalizeLeaseTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected copy")
+}
+func (*restrictedFinalizeLeaseTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults {
+	return nil
+}
+func (*restrictedFinalizeLeaseTx) LargeObjects() pgx.LargeObjects { return pgx.LargeObjects{} }
+func (*restrictedFinalizeLeaseTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("unexpected prepare")
+}
+func (f *restrictedFinalizeLeaseTx) Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	return f.store.Exec(ctx, query, args...)
+}
+func (f *restrictedFinalizeLeaseTx) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
+	return f.store.Query(ctx, query, args...)
+}
+func (f *restrictedFinalizeLeaseTx) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
+	return f.store.QueryRow(ctx, query, args...)
+}
+func (*restrictedFinalizeLeaseTx) Conn() *pgx.Conn { return nil }
+
 func (f *restrictedFinalizeLeaseDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
 	switch {
+	case strings.Contains(query, "-- name: LockPostDeliveryJobFinalization"):
+		return pgconn.CommandTag{}, nil
 	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
 		f.failureDetailCalls++
 		return pgconn.CommandTag{}, nil
@@ -983,7 +1132,9 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 			if f.afterFinalize != nil {
 				f.afterFinalize(ctx)
 			}
-			return postDeliveryJobScanRow(updated)
+			row := postDeliveryJobScanRow(updated)
+			row.values = append(row.values, "publishing", "publishing", false)
+			return row
 		}
 		f.resultUpdateCalls++
 		updated := f.job
@@ -1026,7 +1177,9 @@ func (f *restrictedFinalizeLeaseDB) QueryRow(ctx context.Context, query string, 
 		if f.afterFinalize != nil {
 			f.afterFinalize(ctx)
 		}
-		return postDeliveryJobScanRow(updated)
+		row := postDeliveryJobScanRow(updated)
+		row.values = append(row.values, "publishing", "failed", false)
+		return row
 	case strings.Contains(query, "-- name: UpdateSocialPostResultAfterRetry"):
 		f.resultUpdateCalls++
 		f.result.Status = args[1].(string)
@@ -1653,13 +1806,46 @@ type unavailableAccountDeliveryDB struct {
 	post                 db.SocialPost
 	result               db.SocialPostResult
 	account              db.SocialAccount
+	accountErr           error
 	platformStartedCalls int
 	failureDetailsCode   string
 	recordedFailureCode  string
 }
 
+func (f *unavailableAccountDeliveryDB) Begin(context.Context) (pgx.Tx, error) {
+	return &queueDBTXTestTx{db: f}, nil
+}
+
+type queueDBTXTestTx struct {
+	db db.DBTX
+}
+
+func (f *queueDBTXTestTx) Begin(context.Context) (pgx.Tx, error) { return f, nil }
+func (*queueDBTXTestTx) Commit(context.Context) error            { return nil }
+func (*queueDBTXTestTx) Rollback(context.Context) error          { return nil }
+func (*queueDBTXTestTx) CopyFrom(context.Context, pgx.Identifier, []string, pgx.CopyFromSource) (int64, error) {
+	return 0, errors.New("unexpected copy")
+}
+func (*queueDBTXTestTx) SendBatch(context.Context, *pgx.Batch) pgx.BatchResults { return nil }
+func (*queueDBTXTestTx) LargeObjects() pgx.LargeObjects                         { return pgx.LargeObjects{} }
+func (*queueDBTXTestTx) Prepare(context.Context, string, string) (*pgconn.StatementDescription, error) {
+	return nil, errors.New("unexpected prepare")
+}
+func (f *queueDBTXTestTx) Exec(ctx context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	return f.db.Exec(ctx, query, args...)
+}
+func (f *queueDBTXTestTx) Query(ctx context.Context, query string, args ...interface{}) (pgx.Rows, error) {
+	return f.db.Query(ctx, query, args...)
+}
+func (f *queueDBTXTestTx) QueryRow(ctx context.Context, query string, args ...interface{}) pgx.Row {
+	return f.db.QueryRow(ctx, query, args...)
+}
+func (*queueDBTXTestTx) Conn() *pgx.Conn { return nil }
+
 func (f *unavailableAccountDeliveryDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
 	switch {
+	case strings.Contains(query, "-- name: LockPostDeliveryJobFinalization"):
+		return pgconn.CommandTag{}, nil
 	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"):
 		f.failureDetailsCode = args[1].(pgtype.Text).String
 		return pgconn.NewCommandTag("UPDATE 1"), nil
@@ -1667,7 +1853,8 @@ func (f *unavailableAccountDeliveryDB) Exec(_ context.Context, query string, arg
 		return pgconn.NewCommandTag("UPDATE 1"), nil
 	case strings.Contains(query, "-- name: UpdateSocialPostStatus"),
 		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
-		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"):
+		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"),
+		strings.Contains(query, "-- name: CreateTerminalPostEventDelivery"):
 		return pgconn.NewCommandTag("UPDATE 1"), nil
 	default:
 		return pgconn.CommandTag{}, fmt.Errorf("unexpected Exec: %s", query)
@@ -1694,6 +1881,9 @@ func (f *unavailableAccountDeliveryDB) QueryRow(_ context.Context, query string,
 	case strings.Contains(query, "-- name: GetSocialPostResultByIDAndPost"):
 		return socialPostResultScanRow(f.result)
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		if f.accountErr != nil {
+			return scanRow{err: f.accountErr}
+		}
 		return policySnapshotSocialAccountRow(f.account)
 	case strings.Contains(query, "-- name: MarkPostDeliveryJobPlatformStarted"):
 		f.platformStartedCalls++
@@ -1714,6 +1904,111 @@ func (f *unavailableAccountDeliveryDB) QueryRow(_ context.Context, query string,
 		return postDeliveryJobScanRow(f.job)
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
+	}
+}
+
+func TestProcessPostDeliveryJobRejectsMissingAccountBeforePlatformStart(t *testing.T) {
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{AccountID: "acct_missing", Caption: "do not dispatch"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := baseDeliveryJob()
+	job.SocialAccountID = "acct_missing"
+	job.LeaseOwner = pgtype.Text{String: "worker_1", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	dbtx := &unavailableAccountDeliveryDB{
+		job: job,
+		post: db.SocialPost{
+			ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing", Metadata: metadata,
+			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+		result: db.SocialPostResult{
+			ID: job.SocialPostResultID, PostID: job.PostID, SocialAccountID: job.SocialAccountID,
+			Status: "processing", Caption: "do not dispatch",
+		},
+		accountErr: pgx.ErrNoRows,
+	}
+	adapter := &unavailableAccountAdapterSpy{platformName: "instagram"}
+	previous, previousErr := platform.Get("instagram")
+	platform.Register(adapter)
+	defer func() {
+		if previousErr == nil {
+			platform.Register(previous)
+		}
+	}()
+	logStore := &restrictedFinalizeIntegrationLogStore{}
+	logger, stopLogger := runIntegrationLogger(t, logStore)
+	defer stopLogger()
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, logger)
+
+	if err := h.ProcessPostDeliveryJob(context.Background(), job); err != nil {
+		t.Fatalf("ProcessPostDeliveryJob: %v", err)
+	}
+	stopLogger()
+
+	if adapter.postCalls != 0 {
+		t.Fatalf("adapter post calls = %d, want 0", adapter.postCalls)
+	}
+	if dbtx.platformStartedCalls != 0 || dbtx.job.PlatformStartedAt.Valid {
+		t.Fatalf("platform start writes = %d timestamp=%v, want none", dbtx.platformStartedCalls, dbtx.job.PlatformStartedAt)
+	}
+	if dbtx.result.Status != "failed" || dbtx.result.ErrorMessage.String != "account not found" || dbtx.recordedFailureCode != "target_not_found" {
+		t.Fatalf("terminal result/failure = status:%q message:%q history:%q, want failed/account not found/target_not_found",
+			dbtx.result.Status, dbtx.result.ErrorMessage.String, dbtx.recordedFailureCode)
+	}
+	if dbtx.job.State != "dead" || dbtx.job.ErrorCode.String != "target_not_found" || dbtx.job.NextRunAt.Valid {
+		t.Fatalf("job = state:%q code:%q next_run_at:%v, want dead/target_not_found/nonretry", dbtx.job.State, dbtx.job.ErrorCode.String, dbtx.job.NextRunAt)
+	}
+	for _, params := range logStore.params {
+		if params.Action == integrationlogs.ActionPostPublishPlatformStarted {
+			t.Fatal("missing account emitted a platform-started integration log")
+		}
+	}
+}
+
+func TestProcessPostDeliveryJobReturnsAccountLookupErrorWithoutDeadLettering(t *testing.T) {
+	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{{AccountID: "acct_ig", Caption: "retry lookup"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := baseDeliveryJob()
+	job.LeaseOwner = pgtype.Text{String: "worker_1", Valid: true}
+	job.LastAttemptAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	lookupErr := errors.New("temporary account lookup failure")
+	dbtx := &unavailableAccountDeliveryDB{
+		job: job,
+		post: db.SocialPost{
+			ID: job.PostID, WorkspaceID: job.WorkspaceID, Status: "publishing", Metadata: metadata,
+			CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		},
+		result: db.SocialPostResult{
+			ID: job.SocialPostResultID, PostID: job.PostID, SocialAccountID: job.SocialAccountID,
+			Status: "processing", Caption: "retry lookup",
+		},
+		accountErr: lookupErr,
+	}
+	adapter := &unavailableAccountAdapterSpy{platformName: "instagram"}
+	previous, previousErr := platform.Get("instagram")
+	platform.Register(adapter)
+	defer func() {
+		if previousErr == nil {
+			platform.Register(previous)
+		}
+	}()
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil)
+
+	err = h.ProcessPostDeliveryJob(context.Background(), job)
+	if !errors.Is(err, lookupErr) {
+		t.Fatalf("ProcessPostDeliveryJob error = %v, want %v", err, lookupErr)
+	}
+	if adapter.postCalls != 0 {
+		t.Fatalf("adapter post calls = %d, want 0", adapter.postCalls)
+	}
+	if dbtx.platformStartedCalls != 0 || dbtx.job.PlatformStartedAt.Valid {
+		t.Fatalf("platform start writes = %d timestamp=%v, want none", dbtx.platformStartedCalls, dbtx.job.PlatformStartedAt)
+	}
+	if dbtx.result.Status != "processing" || dbtx.job.State != "running" {
+		t.Fatalf("lookup error mutated terminal state = result:%q job:%q, want processing/running", dbtx.result.Status, dbtx.job.State)
 	}
 }
 
@@ -1845,7 +2140,17 @@ type persistedTokenDeliveryDB struct {
 	restrictedFinalization bool
 }
 
+func (f *persistedTokenDeliveryDB) Begin(context.Context) (pgx.Tx, error) {
+	return &queueDBTXTestTx{db: f}, nil
+}
+
 func (f *persistedTokenDeliveryDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "-- name: LockPostDeliveryJobFinalization") ||
+		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost") ||
+		strings.Contains(query, "-- name: UpdateSocialPostStatus") ||
+		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata") {
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	}
 	if strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails") ||
 		strings.Contains(query, "-- name: CreatePostFailure") {
 		f.restrictedFinalization = true
@@ -2003,13 +2308,33 @@ type stalePublishedResultDB struct {
 	createdRetryJob   bool
 }
 
-func (f *stalePublishedResultDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
-	return pgconn.CommandTag{}, errors.New("unexpected Exec")
+func (f *stalePublishedResultDB) Begin(context.Context) (pgx.Tx, error) {
+	return &queueDBTXTestTx{db: f}, nil
+}
+
+func (f *stalePublishedResultDB) Exec(_ context.Context, query string, _ ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: LockPostDeliveryJobFinalization"):
+		return pgconn.CommandTag{}, nil
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"),
+		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"),
+		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"),
+		strings.Contains(query, "-- name: CreateTerminalPostEventDelivery"):
+		return pgconn.NewCommandTag("UPDATE 1"), nil
+	default:
+		return pgconn.CommandTag{}, errors.New("unexpected Exec")
+	}
 }
 
 func (f *stalePublishedResultDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
 	if strings.Contains(query, "-- name: ListStaleActivePostDeliveryJobs") {
 		return &queueRows{values: [][]any{postDeliveryJobValues(f.staleJob)}}, nil
+	}
+	if strings.Contains(query, "-- name: ListSocialPostResultsByPost") {
+		return &queueRows{values: [][]any{socialPostResultScanRow(f.result).values}}, nil
+	}
+	if strings.Contains(query, "-- name: ListPostDeliveryJobsByPost") {
+		return &queueRows{values: [][]any{postDeliveryJobScanRow(f.staleJob).values}}, nil
 	}
 	return nil, errors.New("unexpected Query: " + query)
 }
@@ -2026,10 +2351,17 @@ func (f *stalePublishedResultDB) QueryRow(_ context.Context, query string, args 
 		succeeded := f.staleJob
 		succeeded.State = "succeeded"
 		succeeded.FinishedAt = finishedAt
+		f.staleJob = succeeded
 		return postDeliveryJobScanRow(succeeded)
 	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
 		f.createdRetryJob = true
 		return scanRow{err: errors.New("must not create a retry job when result already published")}
+	case strings.Contains(query, "-- name: GetSocialPostProjectionVersion"):
+		return scanRow{values: []any{"published-version"}}
+	case strings.Contains(query, "-- name: ElectWorkspaceFirstPostPublished"):
+		return scanRow{values: []any{f.post.WorkspaceID}}
+	case strings.Contains(query, "-- name: CreatePostStatusTransitionEvent"):
+		return terminalPostEventOutboxScanRow("post-event-2", f.post.ID, f.post.WorkspaceID, "published", "published-version", "post.published")
 	default:
 		return scanRow{err: errors.New("unexpected QueryRow: " + query)}
 	}
@@ -2053,7 +2385,7 @@ func TestRecoverStaleDeliveryJobSkipsRetryWhenResultAlreadyPublished(t *testing.
 			Status:          "published",
 		},
 	}
-	h := &SocialPostHandler{queries: db.New(dbtx)}
+	h := &SocialPostHandler{queries: db.New(dbtx), bus: events.NoopBus{}}
 
 	if err := h.RecoverStaleDeliveryJobs(context.Background(), 5*time.Minute); err != nil {
 		t.Fatalf("RecoverStaleDeliveryJobs returned error: %v", err)

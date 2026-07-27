@@ -23,8 +23,8 @@ import (
 
 func TestMediaIDsForRetentionFromPostMetadataDedupesAcrossPlatformPosts(t *testing.T) {
 	meta, err := platform.EncodePostMetadata([]platform.PlatformPostInput{
-		{AccountID: "sa_1", Caption: "one", MediaIDs: []string{"med_a", "med_b", "med_a"}},
-		{AccountID: "sa_2", Caption: "two", MediaIDs: []string{"med_b", "med_c"}},
+		{AccountID: "sa_1", Caption: "one", MediaIDs: []string{"med_c", "med_b", "med_c"}},
+		{AccountID: "sa_2", Caption: "two", MediaIDs: []string{"med_b", "med_a"}},
 	})
 	if err != nil {
 		t.Fatalf("encode metadata: %v", err)

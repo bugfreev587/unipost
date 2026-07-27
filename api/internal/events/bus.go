@@ -14,6 +14,13 @@ package events
 
 import "context"
 
+// DurableEventSink is implemented by delivery-ledger-backed sinks. eventID is
+// stable across outbox retries so a sink that already committed work can make
+// a replay a no-op.
+type DurableEventSink interface {
+	PublishDurable(ctx context.Context, eventID, workspaceID, event string, payload []byte) error
+}
+
 // EventBus is the publisher-side interface. Implementations live in
 // internal/worker (real delivery) or in tests (recording stubs).
 type EventBus interface {

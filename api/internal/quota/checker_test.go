@@ -128,13 +128,14 @@ func TestTrialingPaidPlanUnlocksPlanGate(t *testing.T) {
 }
 
 func TestCheckerMonthlySnapshotForPeriodIncludesScheduledAndHeldUnits(t *testing.T) {
-	checker := NewChecker(db.New(&fakeQuotaDB{
+	dbtx := &fakeQuotaDB{
 		planID:         "basic",
 		limit:          2500,
 		usage:          2488,
 		scheduledUnits: 12,
 		quotaHoldUnits: 3,
-	}))
+	}
+	checker := NewChecker(db.New(dbtx))
 
 	snapshot, err := checker.MonthlySnapshotForPeriod(context.Background(), "ws_123", "2026-07")
 	if err != nil {
@@ -145,6 +146,9 @@ func TestCheckerMonthlySnapshotForPeriodIncludesScheduledAndHeldUnits(t *testing
 	}
 	if snapshot.Completed != 2488 || snapshot.Scheduled != 12 || snapshot.QuotaHold != 3 || snapshot.Limit != 2500 {
 		t.Fatalf("snapshot counts = %#v", snapshot)
+	}
+	if dbtx.queryRowCalls != 1 {
+		t.Fatalf("snapshot query calls = %d, want one MVCC statement", dbtx.queryRowCalls)
 	}
 }
 
@@ -194,6 +198,46 @@ func TestFreePlanHardBlockStatusIncludesScheduledReservations(t *testing.T) {
 	}
 }
 
+func TestFreePlanHardBlockGateUsesAtomicSnapshotDuringReservationConversion(t *testing.T) {
+	dbtx := &fakeQuotaDB{
+		planID:                      "free",
+		limit:                       100,
+		usage:                       99,
+		scheduledUnits:              1,
+		convertReservationAfterRead: true,
+	}
+	checker := NewChecker(db.New(dbtx))
+
+	status, blocked := checker.FreePlanHardBlockStatusForPeriod(t.Context(), "ws_123", 1, "2026-07")
+	if !blocked {
+		t.Fatal("expected the consistent 99 completed + 1 reserved snapshot to block another post")
+	}
+	if status.Usage != 99 || status.Reserved != 1 {
+		t.Fatalf("status = usage %d reserved %d, want the pre-conversion 99/1 snapshot", status.Usage, status.Reserved)
+	}
+	if dbtx.queryRowCalls != 1 {
+		t.Fatalf("quota gate query calls = %d, want one MVCC statement", dbtx.queryRowCalls)
+	}
+}
+
+func TestFreePlanHardBlockGatePreservesFallbackWhenAtomicSnapshotFails(t *testing.T) {
+	checker := NewChecker(db.New(&fakeQuotaDB{
+		planID:             "free",
+		limit:              100,
+		usage:              98,
+		scheduledUnits:     2,
+		monthlySnapshotErr: errors.New("atomic snapshot unavailable"),
+	}))
+
+	status, blocked := checker.FreePlanHardBlockStatusForPeriod(t.Context(), "ws_123", 1, "2026-07")
+	if !blocked {
+		t.Fatal("expected the legacy fallback to retain scheduled quota enforcement")
+	}
+	if status.Usage != 98 || status.Reserved != 2 || status.Limit != 100 {
+		t.Fatalf("fallback status = %#v, want usage=98 reserved=2 limit=100", status)
+	}
+}
+
 func TestFreePlanHardBlockGateProjectsBulkAccumulation(t *testing.T) {
 	gate := FreePlanHardBlockGate{
 		Status:  QuotaStatus{Allowed: true, Usage: 0, Limit: 100},
@@ -214,14 +258,17 @@ func TestFreePlanHardBlockGateProjectsBulkAccumulation(t *testing.T) {
 }
 
 type fakeQuotaDB struct {
-	planID             string
-	subscriptionErr    error
-	limit              int32
-	usage              int32
-	scheduledUnits     int32
-	quotaHoldUnits     int32
-	subscriptionStatus string
-	allowAnalytics     bool
+	planID                      string
+	subscriptionErr             error
+	limit                       int32
+	usage                       int32
+	scheduledUnits              int32
+	quotaHoldUnits              int32
+	subscriptionStatus          string
+	allowAnalytics              bool
+	queryRowCalls               int
+	convertReservationAfterRead bool
+	monthlySnapshotErr          error
 }
 
 func (f *fakeQuotaDB) Exec(context.Context, string, ...interface{}) (pgconn.CommandTag, error) {
@@ -233,7 +280,15 @@ func (f *fakeQuotaDB) Query(context.Context, string, ...interface{}) (pgx.Rows, 
 }
 
 func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) pgx.Row {
+	f.queryRowCalls++
 	switch {
+	case strings.Contains(sql, "monthly_quota_snapshot"):
+		if f.monthlySnapshotErr != nil {
+			return fakeQuotaRow{err: f.monthlySnapshotErr}
+		}
+		usage, scheduledUnits := f.usage, f.scheduledUnits
+		f.convertReservationToUsage()
+		return fakeQuotaRow{values: []any{f.planID, f.limit, usage, scheduledUnits, f.quotaHoldUnits}}
 	case strings.Contains(sql, "FROM subscriptions"):
 		if f.subscriptionErr != nil {
 			return fakeQuotaRow{err: f.subscriptionErr}
@@ -272,10 +327,12 @@ func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) 
 			pgtype.Int4{},
 		}}
 	case strings.Contains(sql, "FROM usage"):
+		usage := f.usage
+		f.convertReservationToUsage()
 		return fakeQuotaRow{values: []any{
 			"usage_123",
 			currentPeriod(),
-			f.usage,
+			usage,
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
 			"ws_123",
@@ -287,6 +344,15 @@ func (f *fakeQuotaDB) QueryRow(_ context.Context, sql string, _ ...interface{}) 
 	default:
 		return fakeQuotaRow{err: errors.New("unexpected query row")}
 	}
+}
+
+func (f *fakeQuotaDB) convertReservationToUsage() {
+	if !f.convertReservationAfterRead || f.scheduledUnits <= 0 {
+		return
+	}
+	f.usage++
+	f.scheduledUnits--
+	f.convertReservationAfterRead = false
 }
 
 type fakeQuotaRow struct {

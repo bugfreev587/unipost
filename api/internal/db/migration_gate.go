@@ -42,15 +42,18 @@ type AffectedMigration struct {
 }
 
 type MigrationGateConfig struct {
-	ProjectID        string
-	EnvironmentID    string
-	VolumeInstanceID string
-	ApplicationSHA   string
-	PollInterval     time.Duration
-	Timeout          time.Duration
+	ProjectID            string
+	EnvironmentID        string
+	VolumeInstanceID     string
+	PostgresServiceID    string
+	ApplicationServiceID string
+	ApplicationSHA       string
+	PollInterval         time.Duration
+	Timeout              time.Duration
 
 	attemptSuffix    func() string
 	beforeMigrations func(context.Context) error
+	databaseURL      string
 }
 
 func RunMigrationsWithBackupGate(
@@ -59,6 +62,7 @@ func RunMigrationsWithBackupGate(
 	config MigrationGateConfig,
 	client railwaybackup.Client,
 ) error {
+	config.databaseURL = databaseURL
 	database, err := sql.Open("pgx", databaseURL)
 	if err != nil {
 		return fmt.Errorf("open database for migration backup gate: %w", err)
@@ -208,14 +212,7 @@ func runAfterBackupGate(
 	affected []AffectedMigration,
 	runMigrations func(context.Context) error,
 ) (err error) {
-	needsBackup := false
-	for _, migration := range affected {
-		if migration.Rows > 0 {
-			needsBackup = true
-			break
-		}
-	}
-	if !needsBackup {
+	if len(affected) == 0 {
 		return runMigrations(ctx)
 	}
 	defer func() {
@@ -255,6 +252,39 @@ func runAfterBackupGate(
 			config.EnvironmentID,
 		)
 	}
+	volumeIdentity, err := client.VolumeInstanceIdentity(gateContext, config.VolumeInstanceID)
+	if err != nil {
+		return fmt.Errorf("verify Railway volume instance identity: %w", err)
+	}
+	if volumeIdentity.ID == "" || volumeIdentity.ProjectID == "" ||
+		volumeIdentity.EnvironmentID == "" || volumeIdentity.ServiceID == "" {
+		return fmt.Errorf("Railway volume instance identity response is missing required fields")
+	}
+	if volumeIdentity.ID != config.VolumeInstanceID ||
+		volumeIdentity.ProjectID != config.ProjectID ||
+		volumeIdentity.EnvironmentID != config.EnvironmentID ||
+		volumeIdentity.ServiceID != config.PostgresServiceID {
+		return fmt.Errorf(
+			"Railway volume instance identity mismatch: got volume %q project %q environment %q service %q, expected volume %q project %q environment %q service %q",
+			volumeIdentity.ID,
+			volumeIdentity.ProjectID,
+			volumeIdentity.EnvironmentID,
+			volumeIdentity.ServiceID,
+			config.VolumeInstanceID,
+			config.ProjectID,
+			config.EnvironmentID,
+			config.PostgresServiceID,
+		)
+	}
+	if err := client.VerifyDatabaseBinding(gateContext, railwaybackup.DatabaseBindingRequest{
+		ProjectID:            config.ProjectID,
+		EnvironmentID:        config.EnvironmentID,
+		ApplicationServiceID: config.ApplicationServiceID,
+		PostgresServiceID:    config.PostgresServiceID,
+		RuntimeDatabaseURL:   config.databaseURL,
+	}); err != nil {
+		return fmt.Errorf("verify Railway database target binding: %w", err)
+	}
 
 	before, err := client.List(gateContext, config.VolumeInstanceID)
 	if err != nil {
@@ -289,6 +319,7 @@ func runAfterBackupGate(
 		"project_id", config.ProjectID,
 		"environment_id", config.EnvironmentID,
 		"volume_instance_id", config.VolumeInstanceID,
+		"postgres_service_id", config.PostgresServiceID,
 		"application_sha", config.ApplicationSHA,
 		"backup_workflow_id", created.WorkflowID,
 		"backup_id", backup.ID,
@@ -315,12 +346,15 @@ func formatAffectedMigrations(affected []AffectedMigration) string {
 }
 
 func validateMigrationGateConfig(config MigrationGateConfig) error {
-	missing := make([]string, 0, 4)
+	missing := make([]string, 0, 7)
 	for name, value := range map[string]string{
-		"project ID":         config.ProjectID,
-		"environment ID":     config.EnvironmentID,
-		"volume instance ID": config.VolumeInstanceID,
-		"application SHA":    config.ApplicationSHA,
+		"project ID":             config.ProjectID,
+		"environment ID":         config.EnvironmentID,
+		"volume instance ID":     config.VolumeInstanceID,
+		"Postgres service ID":    config.PostgresServiceID,
+		"application service ID": config.ApplicationServiceID,
+		"application SHA":        config.ApplicationSHA,
+		"runtime DATABASE_URL":   config.databaseURL,
 	} {
 		if strings.TrimSpace(value) == "" {
 			missing = append(missing, name)
@@ -420,9 +454,7 @@ func backupReady(backup railwaybackup.Backup) bool {
 func migrationBackupName(config MigrationGateConfig, affected []AffectedMigration) string {
 	versions := make([]string, 0, len(affected))
 	for _, migration := range affected {
-		if migration.Rows > 0 {
-			versions = append(versions, fmt.Sprintf("%d", migration.Version))
-		}
+		versions = append(versions, fmt.Sprintf("%d", migration.Version))
 	}
 	suffix := ""
 	if config.attemptSuffix != nil {

@@ -47,6 +47,31 @@ INSERT INTO webhook_deliveries (webhook_id, event, payload)
 VALUES ($1, $2, $3)
 RETURNING *;
 
+-- name: CreateWebhookDeliveryWithEventID :exec
+WITH input AS (
+  SELECT
+    CAST(sqlc.arg(webhook_id) AS TEXT) AS webhook_id,
+    CAST(sqlc.arg(event) AS TEXT) AS event,
+    CAST(sqlc.arg(payload) AS JSONB) AS payload,
+    CAST(sqlc.narg(event_id) AS TEXT) AS event_id
+), reserved AS (
+  INSERT INTO terminal_post_event_webhook_deliveries (event_id, webhook_id)
+  SELECT input.event_id, input.webhook_id FROM input
+  ON CONFLICT (event_id, webhook_id) DO NOTHING
+  RETURNING event_id, webhook_id
+), created AS (
+  INSERT INTO webhook_deliveries (webhook_id, event, payload)
+  SELECT reserved.webhook_id, input.event, input.payload
+  FROM reserved
+  CROSS JOIN input
+  RETURNING id, webhook_id
+)
+UPDATE terminal_post_event_webhook_deliveries mapping
+SET webhook_delivery_id = created.id
+FROM created
+WHERE mapping.event_id = (SELECT input.event_id FROM input)
+  AND mapping.webhook_id = created.webhook_id;
+
 -- name: UpdateWebhookDelivery :exec
 UPDATE webhook_deliveries
 SET status_code = $2, attempts = $3, next_retry_at = $4, delivered_at = $5

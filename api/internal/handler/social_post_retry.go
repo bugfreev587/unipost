@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -218,19 +217,55 @@ func (h *SocialPostHandler) refreshParentPostStatus(r *http.Request, post db.Soc
 	h.refreshParentPostStatusContext(r.Context(), post, results)
 }
 
-func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, post db.SocialPost, results []db.SocialPostResult) {
-	if len(results) == 0 {
-		return
+type pendingParentPostStatusEvent struct {
+	workspaceID   string
+	event         string
+	response      socialPostResponse
+	parentStatus  string
+	parentVersion string
+}
+
+func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, post db.SocialPost, results []db.SocialPostResult) error {
+	pendingEvent, err := h.refreshParentPostStatusContextWithoutPublish(ctx, post, results)
+	if err != nil {
+		return err
 	}
-	jobs, _ := h.queries.ListPostDeliveryJobsByPost(ctx, post.ID)
+	h.publishParentStatusEventIfCurrent(ctx, pendingEvent)
+	return nil
+}
+
+// publishParentStatusEventIfCurrent remains as a compatibility call site for
+// transition paths. The durable event is now recorded by
+// refreshParentPostStatusContextWithoutPublish in the same transaction as the
+// parent projection; production bus fanout is performed later by the outbox
+// worker without holding a post lock or business transaction connection.
+func (h *SocialPostHandler) publishParentStatusEventIfCurrent(ctx context.Context, pending *pendingParentPostStatusEvent) {
+	_ = ctx
+	_ = pending
+}
+
+func (h *SocialPostHandler) refreshParentPostStatusContextWithoutPublish(
+	ctx context.Context,
+	post db.SocialPost,
+	results []db.SocialPostResult,
+) (*pendingParentPostStatusEvent, error) {
+	if len(results) == 0 {
+		return nil, nil
+	}
+	jobs, err := h.queries.ListPostDeliveryJobsByPost(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
 	published := 0
 	failed := 0
 	nonTerminal := 0
 	activeJobs := 0
+	publishedResultIDs := make(map[string]bool, len(results))
 	for _, res := range results {
 		switch res.Status {
 		case "published":
 			published++
+			publishedResultIDs[res.ID] = true
 		case "failed":
 			failed++
 		default:
@@ -238,7 +273,8 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 		}
 	}
 	for _, job := range jobs {
-		if job.State == "pending" || job.State == "running" || job.State == "retrying" {
+		if (job.State == "pending" || job.State == "running" || job.State == "retrying") &&
+			!publishedResultIDs[job.SocialPostResultID] {
 			activeJobs++
 		}
 	}
@@ -253,34 +289,42 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 	}
 	if newStatus == post.Status {
 		h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
-		return
+		return nil, nil
 	}
 	var newPublishedAt pgtype.Timestamptz
 	if published > 0 {
-		// Preserve the earliest published_at if the parent already
-		// had one, otherwise stamp now. "Now" is correct for a
-		// post that was previously "failed" with no publish time.
-		if post.PublishedAt.Valid {
-			newPublishedAt = post.PublishedAt
-		} else {
-			newPublishedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		// A parent is a projection of its durable results. Never invent a
+		// convergence timestamp: delayed workers must retain the provider
+		// completion time stored on the earliest published result.
+		newPublishedAt = post.PublishedAt
+		for _, result := range results {
+			if result.Status != "published" || !result.PublishedAt.Valid {
+				continue
+			}
+			if !newPublishedAt.Valid || result.PublishedAt.Time.Before(newPublishedAt.Time) {
+				newPublishedAt = result.PublishedAt
+			}
 		}
 	}
-	_ = h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
+	if err := h.queries.UpdateSocialPostStatus(ctx, db.UpdateSocialPostStatusParams{
 		ID:          post.ID,
 		Status:      newStatus,
 		PublishedAt: newPublishedAt,
-	})
+	}); err != nil {
+		return nil, err
+	}
 	post.Status = newStatus
 	post.PublishedAt = newPublishedAt
 	h.syncPostMediaRetentionAfterResultTransition(ctx, post, newStatus, results)
 	// If we just flipped off of "failed", clear the metadata error
 	// summary so the posts list doesn't keep showing stale copy.
 	if newStatus != "failed" {
-		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+		if err := h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
 			Column2: "",
-		})
+		}); err != nil {
+			return nil, err
+		}
 	} else {
 		// Still failed but maybe fewer rows now — regenerate the
 		// summary from the latest errors.
@@ -290,13 +334,33 @@ func (h *SocialPostHandler) refreshParentPostStatusContext(ctx context.Context, 
 				summary = append(summary, fmt.Sprintf("[%s] %s", res.SocialAccountID, res.ErrorMessage.String))
 			}
 		}
-		_ = h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
+		if err := h.queries.UpdateSocialPostErrorMetadata(ctx, db.UpdateSocialPostErrorMetadataParams{
 			ID:      post.ID,
 			Column2: strings.Join(summary, "; "),
-		})
+		}); err != nil {
+			return nil, err
+		}
 	}
+	parentVersion, err := h.queries.GetSocialPostProjectionVersion(ctx, post.ID)
+	if err != nil {
+		return nil, err
+	}
+	resp := h.socialPostResponseFromData(post, results, jobs, "async")
+	event := ""
 	if newStatus == "published" || newStatus == "partial" || newStatus == "failed" {
-		resp := h.socialPostResponseFromData(post, results, jobs, "async")
-		h.bus.Publish(ctx, post.WorkspaceID, eventForStatus(newStatus), resp)
+		event = eventForStatus(newStatus)
 	}
+	if err := db.RecordPostStatusTransition(ctx, h.queries, post.ID, post.WorkspaceID, newStatus, parentVersion, event, resp); err != nil {
+		return nil, err
+	}
+	if event != "" {
+		return &pendingParentPostStatusEvent{
+			workspaceID:   post.WorkspaceID,
+			event:         event,
+			response:      resp,
+			parentStatus:  newStatus,
+			parentVersion: parentVersion,
+		}, nil
+	}
+	return nil, nil
 }

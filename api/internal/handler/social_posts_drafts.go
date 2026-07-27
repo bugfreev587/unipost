@@ -158,7 +158,24 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	var ordinaryRetentionPost db.SocialPost
 	var ordinaryRetentionStatus string
 	var syncOrdinaryRetention bool
+	var preclaim db.SocialPost
+	if h.paidSchedule != nil {
+		var preclaimErr error
+		preclaim, preclaimErr = h.queries.GetSocialPostByIDAndWorkspace(r.Context(), db.GetSocialPostByIDAndWorkspaceParams{ID: postID, WorkspaceID: workspaceID})
+		if preclaimErr != nil {
+			writeError(w, http.StatusConflict, "CONFLICT", "Post is not available for publishing")
+			return
+		}
+	}
+	executionPeriod := quota.PeriodForTime(time.Now().UTC())
 	err := h.queries.WithTransaction(r.Context(), func(txQueries *db.Queries) error {
+		if h.paidSchedule != nil {
+			for _, period := range scheduledQuotaLockPeriods(preclaim, executionPeriod) {
+				if lockErr := txQueries.LockScheduledQuotaPeriod(r.Context(), workspaceID, period); lockErr != nil {
+					return lockErr
+				}
+			}
+		}
 		txHandler := h.withQueueQueries(txQueries)
 		claimed, claimErr := txQueries.ClaimDraftForPublish(r.Context(), db.ClaimDraftForPublishParams{
 			ID:          postID,
@@ -167,6 +184,13 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		if claimErr != nil {
 			failureKind = "claim"
 			return claimErr
+		}
+		if h.paidSchedule != nil && !sameScheduledQuotaPeriods(
+			scheduledQuotaLockPeriods(preclaim, executionPeriod),
+			scheduledQuotaLockPeriods(claimed, executionPeriod),
+		) {
+			failureKind = "claim"
+			return errors.New("post period changed while acquiring quota locks")
 		}
 
 		fallbackCaption := ""
@@ -208,10 +232,18 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		}
 		allowedTargets := allowedPublishingTargets(posts, blockedTargets)
 		blockedQuotaUnits = countPublishQuotaUnits(allowedTargets, accountMap)
-		if status, blocked := txHandler.checkFreePlanPostQuota(r.Context(), workspaceID, blockedQuotaUnits); blocked {
+		additionalUnits := blockedQuotaUnits
+		if claimed.QuotaHoldReason.Valid {
+			additionalUnits = scheduledExecutionAdditionalQuotaUnits(claimed, posts, accountMap, blockedQuotaUnits, executionPeriod)
+		}
+		if status, blocked := txHandler.checkFreePlanPostQuotaForPeriod(r.Context(), workspaceID, additionalUnits, executionPeriod); blocked {
 			failureKind = "quota"
 			blockedQuota = status
 			return errors.New("draft publish quota blocked")
+		}
+		if reservationErr := txQueries.SetScheduledExecutionReservationPeriod(r.Context(), claimed.ID, executionPeriod); reservationErr != nil {
+			failureKind = "reservation"
+			return reservationErr
 		}
 
 		claimed.ProfileIds = txHandler.ensureProfileIDsForPost(r.Context(), claimed, uniqueAccountIDs(posts))
@@ -254,6 +286,8 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 		case "quota":
 			h.maybeSendFreePlanQuotaEmail(r.Context(), workspaceID, quotaemail.Evaluation{Blocked: true, RequestedUnits: blockedQuotaUnits})
 			writeFreePlanPostQuotaExceeded(w, blockedQuota, blockedQuotaUnits)
+		case "reservation":
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to reserve publishing quota")
 		default:
 			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		}
@@ -513,7 +547,14 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 				if loadErr != nil {
 					return nil, loadErr
 				}
-				return paidScheduleEditDeltas(lockedPost, oldPosts, t, accounts)
+				deltas, loadErr := paidScheduleEditDeltas(lockedPost, oldPosts, t, accounts, lockedPost.Metadata)
+				if loadErr != nil {
+					return nil, loadErr
+				}
+				if loadErr := validateFreeScheduleEditDeltas(r.Context(), queries, workspaceID, deltas); loadErr != nil {
+					return nil, loadErr
+				}
+				return deltas, nil
 			},
 			mutate,
 		)
@@ -521,6 +562,11 @@ func (h *SocialPostHandler) reschedulePost(w http.ResponseWriter, r *http.Reques
 		err = mutate(h.queries)
 	}
 	if err != nil {
+		var freeAdmissionErr *freeScheduleEditAdmissionError
+		if errors.As(err, &freeAdmissionErr) {
+			writeFreePlanPostQuotaExceeded(w, freeAdmissionErr.status, freeAdmissionErr.requestedUnits)
+			return
+		}
 		var admissionErr *paidquota.AdmissionError
 		if errors.As(err, &admissionErr) {
 			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)
@@ -599,6 +645,7 @@ func paidScheduleEditDeltas(
 	newPosts []platform.PlatformPostInput,
 	newScheduledAt time.Time,
 	accountMap map[string]platform.ValidateAccount,
+	newMetadata ...[]byte,
 ) ([]paidquota.PeriodDelta, error) {
 	if (existing.Status != "scheduled" && existing.Status != "quota_hold") || !existing.ScheduledAt.Valid {
 		return nil, fmt.Errorf("post is not an active scheduled post")
@@ -608,7 +655,15 @@ func paidScheduleEditDeltas(
 		return nil, err
 	}
 	oldUnits := countPublishQuotaUnits(oldPosts, accountMap)
+	if snapshotUnits, ok := scheduledQuotaUnitsFromMetadata(existing.Metadata); ok {
+		oldUnits = snapshotUnits
+	}
 	newUnits := countPublishQuotaUnits(newPosts, accountMap)
+	if len(newMetadata) > 0 {
+		if snapshotUnits, ok := scheduledQuotaUnitsFromMetadata(newMetadata[0]); ok {
+			newUnits = snapshotUnits
+		}
+	}
 	oldPeriod := quota.PeriodForTime(existing.ScheduledAt.Time)
 	newPeriod := quota.PeriodForTime(newScheduledAt)
 	if oldPeriod == newPeriod {
@@ -622,6 +677,42 @@ func paidScheduleEditDeltas(
 		{Period: oldPeriod, ReleasedUnits: oldUnits},
 		{Period: newPeriod, RequestedUnits: newUnits},
 	}, nil
+}
+
+type freeScheduleEditAdmissionError struct {
+	status         quota.QuotaStatus
+	requestedUnits int
+}
+
+func (e *freeScheduleEditAdmissionError) Error() string {
+	return "free schedule edit would exceed monthly post quota"
+}
+
+func validateFreeScheduleEditDeltas(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID string,
+	deltas []paidquota.PeriodDelta,
+) error {
+	checker := quota.NewChecker(queries)
+	for _, delta := range deltas {
+		snapshot, err := checker.MonthlySnapshotForPeriod(ctx, workspaceID, delta.Period)
+		if err != nil {
+			return err
+		}
+		if snapshot.PlanID != "free" || delta.RequestedUnits <= delta.ReleasedUnits || !snapshot.WouldExceed(delta.ReleasedUnits, delta.RequestedUnits) {
+			continue
+		}
+		return &freeScheduleEditAdmissionError{
+			status: quota.QuotaStatus{
+				Usage:    snapshot.Completed,
+				Reserved: snapshot.Scheduled,
+				Limit:    snapshot.Limit,
+			},
+			requestedUnits: max(delta.RequestedUnits-delta.ReleasedUnits, 1),
+		}
+	}
+	return nil
 }
 
 func (h *SocialPostHandler) updateEditablePostContent(
@@ -663,7 +754,14 @@ func (h *SocialPostHandler) updateEditablePostContent(
 			if err != nil {
 				return nil, err
 			}
-			return paidScheduleEditDeltas(lockedPost, newPosts, newScheduledAt, accounts)
+			deltas, err := paidScheduleEditDeltas(lockedPost, newPosts, newScheduledAt, accounts, params.Metadata)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateFreeScheduleEditDeltas(ctx, queries, workspaceID, deltas); err != nil {
+				return nil, err
+			}
+			return deltas, nil
 		},
 		mutate,
 	)
@@ -767,7 +865,18 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 	}
 	parsed.resolveLegacyPlatformOptions(accountMap)
 
-	metaJSON, err := platform.EncodePostMetadata(parsed.Posts)
+	var metaJSON []byte
+	if existing.Status == "scheduled" || existing.Status == "quota_hold" {
+		blockedTargets, policyErr := h.evaluatePublishingRestrictions(r.Context(), workspaceID, parsed.Posts, accountMap)
+		if policyErr != nil {
+			writeError(w, http.StatusServiceUnavailable, "POLICY_UNAVAILABLE", "Publishing policy is temporarily unavailable")
+			return
+		}
+		allowedTargets := allowedPublishingTargets(parsed.Posts, blockedTargets)
+		metaJSON, err = encodeScheduledPostMetadata(parsed.Posts, countPublishQuotaUnits(allowedTargets, accountMap))
+	} else {
+		metaJSON, err = platform.EncodePostMetadata(parsed.Posts)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode metadata")
 		return
@@ -802,6 +911,11 @@ func (h *SocialPostHandler) UpdateDraft(w http.ResponseWriter, r *http.Request) 
 		updated, err = h.queries.UpdateDraftContent(r.Context(), updateParams)
 	}
 	if err != nil {
+		var freeAdmissionErr *freeScheduleEditAdmissionError
+		if errors.As(err, &freeAdmissionErr) {
+			writeFreePlanPostQuotaExceeded(w, freeAdmissionErr.status, freeAdmissionErr.requestedUnits)
+			return
+		}
 		var admissionErr *paidquota.AdmissionError
 		if errors.As(err, &admissionErr) {
 			writePaidPlanSchedulingCapacityExceeded(w, admissionErr)

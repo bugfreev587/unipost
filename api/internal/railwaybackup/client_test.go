@@ -58,6 +58,228 @@ func TestClientUsesProjectTokenAndReturnsEnvironmentIdentity(t *testing.T) {
 	}
 }
 
+func TestClientReturnsVolumeInstanceIdentity(t *testing.T) {
+	server := newGraphQLServer(t, func(_ *http.Request, request graphQLRequest) (int, any) {
+		if !strings.Contains(request.Query, "volumeInstance") ||
+			!strings.Contains(request.Query, "environmentId") ||
+			!strings.Contains(request.Query, "serviceId") ||
+			!strings.Contains(request.Query, "projectId") {
+			t.Fatalf("query = %q", request.Query)
+		}
+		if request.Variables["id"] != "volume-instance-1" {
+			t.Fatalf("variables = %#v", request.Variables)
+		}
+		return http.StatusOK, map[string]any{"data": map[string]any{
+			"volumeInstance": map[string]any{
+				"id":            "volume-instance-1",
+				"environmentId": "environment-1",
+				"serviceId":     "postgres-service-1",
+				"volume": map[string]any{
+					"projectId": "project-1",
+				},
+			},
+		}}
+	})
+	defer server.Close()
+
+	client := newTestClient(server.URL, "token", server.Client())
+	identity, err := client.VolumeInstanceIdentity(context.Background(), "volume-instance-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := VolumeInstanceIdentity{
+		ID:            "volume-instance-1",
+		ProjectID:     "project-1",
+		EnvironmentID: "environment-1",
+		ServiceID:     "postgres-service-1",
+	}
+	if identity != want {
+		t.Fatalf("volume identity = %#v, want %#v", identity, want)
+	}
+}
+
+func TestClientRejectsIncompleteVolumeInstanceIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		response map[string]any
+		missing  string
+	}{
+		{name: "id", missing: "volume instance ID", response: map[string]any{
+			"environmentId": "environment-1", "serviceId": "postgres-service-1", "volume": map[string]any{"projectId": "project-1"},
+		}},
+		{name: "project", missing: "project ID", response: map[string]any{
+			"id": "volume-instance-1", "environmentId": "environment-1", "serviceId": "postgres-service-1", "volume": map[string]any{},
+		}},
+		{name: "environment", missing: "environment ID", response: map[string]any{
+			"id": "volume-instance-1", "serviceId": "postgres-service-1", "volume": map[string]any{"projectId": "project-1"},
+		}},
+		{name: "service", missing: "service ID", response: map[string]any{
+			"id": "volume-instance-1", "environmentId": "environment-1", "volume": map[string]any{"projectId": "project-1"},
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newGraphQLServer(t, func(_ *http.Request, _ graphQLRequest) (int, any) {
+				return http.StatusOK, map[string]any{"data": map[string]any{"volumeInstance": test.response}}
+			})
+			defer server.Close()
+
+			client := newTestClient(server.URL, "token", server.Client())
+			_, err := client.VolumeInstanceIdentity(context.Background(), "volume-instance-1")
+			if err == nil || !strings.Contains(err.Error(), test.missing) {
+				t.Fatalf("VolumeInstanceIdentity error = %v, want missing %s", err, test.missing)
+			}
+		})
+	}
+}
+
+func TestClientVerifiesDatabaseURLBindingToPostgresService(t *testing.T) {
+	const databaseURL = "postgresql://postgres:secret@postgres.railway.internal:5432/railway"
+	server := newGraphQLServer(t, func(_ *http.Request, request graphQLRequest) (int, any) {
+		for _, want := range []string{"project(id:", "services", "unrendered: variables", "variablesForServiceDeployment"} {
+			if !strings.Contains(request.Query, want) {
+				t.Fatalf("binding query missing %q: %s", want, request.Query)
+			}
+		}
+		for key, want := range map[string]any{
+			"projectId": "project-1", "environmentId": "environment-1", "applicationServiceId": "api-service-1",
+		} {
+			if request.Variables[key] != want {
+				t.Fatalf("binding variable %s = %#v, want %#v", key, request.Variables[key], want)
+			}
+		}
+		return http.StatusOK, map[string]any{"data": map[string]any{
+			"project": map[string]any{
+				"id": "project-1",
+				"services": map[string]any{"edges": []any{
+					map[string]any{"node": map[string]any{"id": "api-service-1", "name": "api"}},
+					map[string]any{"node": map[string]any{"id": "postgres-service-1", "name": "Postgres"}},
+				}},
+			},
+			"unrendered": map[string]any{"DATABASE_URL": `${{Postgres.DATABASE_URL}}`},
+			"rendered":   map[string]any{"DATABASE_URL": databaseURL},
+		}}
+	})
+	defer server.Close()
+
+	client := newTestClient(server.URL, "token", server.Client())
+	err := client.VerifyDatabaseBinding(context.Background(), DatabaseBindingRequest{
+		ProjectID: "project-1", EnvironmentID: "environment-1",
+		ApplicationServiceID: "api-service-1", PostgresServiceID: "postgres-service-1",
+		RuntimeDatabaseURL: databaseURL,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClientRejectsMiswiredDatabaseURLWithoutLeakingURLs(t *testing.T) {
+	const runtimeURL = "postgresql://postgres:runtime-secret@wrong.railway.internal:5432/railway"
+	const renderedURL = "postgresql://postgres:rendered-secret@postgres.railway.internal:5432/railway"
+	server := newGraphQLServer(t, func(_ *http.Request, _ graphQLRequest) (int, any) {
+		return http.StatusOK, map[string]any{"data": map[string]any{
+			"project": map[string]any{
+				"id": "project-1",
+				"services": map[string]any{"edges": []any{
+					map[string]any{"node": map[string]any{"id": "api-service-1", "name": "api"}},
+					map[string]any{"node": map[string]any{"id": "postgres-service-1", "name": "Postgres"}},
+				}},
+			},
+			"unrendered": map[string]any{"DATABASE_URL": `${{Postgres.DATABASE_URL}}`},
+			"rendered":   map[string]any{"DATABASE_URL": renderedURL},
+		}}
+	})
+	defer server.Close()
+
+	client := newTestClient(server.URL, "token", server.Client())
+	err := client.VerifyDatabaseBinding(context.Background(), DatabaseBindingRequest{
+		ProjectID: "project-1", EnvironmentID: "environment-1",
+		ApplicationServiceID: "api-service-1", PostgresServiceID: "postgres-service-1",
+		RuntimeDatabaseURL: runtimeURL,
+	})
+	if err == nil || !strings.Contains(err.Error(), "rendered DATABASE_URL does not match runtime DATABASE_URL") {
+		t.Fatalf("VerifyDatabaseBinding error = %v", err)
+	}
+	if strings.Contains(err.Error(), runtimeURL) || strings.Contains(err.Error(), renderedURL) ||
+		strings.Contains(err.Error(), "runtime-secret") || strings.Contains(err.Error(), "rendered-secret") {
+		t.Fatalf("binding error leaked a database URL: %v", err)
+	}
+}
+
+func TestClientRejectsDatabaseURLWithoutExactPostgresServiceReference(t *testing.T) {
+	const databaseURL = "postgresql://postgres:secret@postgres.railway.internal:5432/railway"
+	tests := []struct {
+		name       string
+		unrendered string
+	}{
+		{name: "literal URL", unrendered: databaseURL},
+		{name: "wrong service", unrendered: `${{OtherPostgres.DATABASE_URL}}`},
+		{name: "sealed value", unrendered: "********"},
+		{name: "missing value", unrendered: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := newGraphQLServer(t, func(_ *http.Request, _ graphQLRequest) (int, any) {
+				return http.StatusOK, map[string]any{"data": map[string]any{
+					"project": map[string]any{
+						"id": "project-1",
+						"services": map[string]any{"edges": []any{
+							map[string]any{"node": map[string]any{"id": "api-service-1", "name": "api"}},
+							map[string]any{"node": map[string]any{"id": "postgres-service-1", "name": "Postgres"}},
+						}},
+					},
+					"unrendered": map[string]any{"DATABASE_URL": test.unrendered},
+					"rendered":   map[string]any{"DATABASE_URL": databaseURL},
+				}}
+			})
+			defer server.Close()
+
+			client := newTestClient(server.URL, "token", server.Client())
+			err := client.VerifyDatabaseBinding(context.Background(), DatabaseBindingRequest{
+				ProjectID: "project-1", EnvironmentID: "environment-1",
+				ApplicationServiceID: "api-service-1", PostgresServiceID: "postgres-service-1",
+				RuntimeDatabaseURL: databaseURL,
+			})
+			if err == nil || !strings.Contains(err.Error(), "does not exactly reference the verified Postgres service") {
+				t.Fatalf("VerifyDatabaseBinding error = %v", err)
+			}
+			if strings.Contains(err.Error(), databaseURL) || strings.Contains(err.Error(), "secret") {
+				t.Fatalf("binding error leaked a database URL: %v", err)
+			}
+		})
+	}
+}
+
+func TestClientRejectsAmbiguousPostgresServiceName(t *testing.T) {
+	const databaseURL = "postgresql://postgres:secret@postgres.railway.internal:5432/railway"
+	server := newGraphQLServer(t, func(_ *http.Request, _ graphQLRequest) (int, any) {
+		return http.StatusOK, map[string]any{"data": map[string]any{
+			"project": map[string]any{
+				"id": "project-1",
+				"services": map[string]any{"edges": []any{
+					map[string]any{"node": map[string]any{"id": "api-service-1", "name": "api"}},
+					map[string]any{"node": map[string]any{"id": "postgres-service-1", "name": "Postgres"}},
+					map[string]any{"node": map[string]any{"id": "other-postgres-service", "name": "Postgres"}},
+				}},
+			},
+			"unrendered": map[string]any{"DATABASE_URL": `${{Postgres.DATABASE_URL}}`},
+			"rendered":   map[string]any{"DATABASE_URL": databaseURL},
+		}}
+	})
+	defer server.Close()
+
+	client := newTestClient(server.URL, "token", server.Client())
+	err := client.VerifyDatabaseBinding(context.Background(), DatabaseBindingRequest{
+		ProjectID: "project-1", EnvironmentID: "environment-1",
+		ApplicationServiceID: "api-service-1", PostgresServiceID: "postgres-service-1",
+		RuntimeDatabaseURL: databaseURL,
+	})
+	if err == nil || !strings.Contains(err.Error(), "Postgres service name is ambiguous") {
+		t.Fatalf("VerifyDatabaseBinding error = %v", err)
+	}
+}
+
 func TestClientCreateReturnsWorkflowNotBackupID(t *testing.T) {
 	server := newGraphQLServer(t, func(_ *http.Request, request graphQLRequest) (int, any) {
 		if !strings.Contains(request.Query, "volumeInstanceBackupCreate") {

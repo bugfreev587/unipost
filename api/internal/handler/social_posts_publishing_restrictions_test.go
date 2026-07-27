@@ -496,6 +496,63 @@ func TestScheduledEnqueueUsesExecutionPolicySnapshot(t *testing.T) {
 	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
 }
 
+func TestScheduledExecutionReevaluatesCurrentPolicyForQuotaUnits(t *testing.T) {
+	tests := []struct {
+		name          string
+		liftPolicy    bool
+		wantJobs      int
+		wantStatus    string
+		wantErrorCode string
+	}{
+		{
+			name:          "restriction remains active and only allowed target consumes quota",
+			wantJobs:      1,
+			wantStatus:    "publishing",
+			wantErrorCode: publishingrestrictions.NormalizedCode,
+		},
+		{
+			name:       "restriction lifted and only reservation growth consumes capacity",
+			liftPolicy: true,
+			wantJobs:   2,
+			wantStatus: "publishing",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, dbtx, evaluator, _, _ := newPolicySnapshotHarness(t, "scheduled")
+			dbtx.quotaEnabled = true
+			dbtx.quotaUsage = 98
+			dbtx.quotaLimit = 100
+			dbtx.scheduledReservations = 1
+			if test.liftPolicy {
+				evaluator.decisions = map[string]publishingrestrictions.Decision{}
+			}
+			h.quota = quota.NewChecker(h.queries)
+
+			if err := h.EnqueueScheduledPost(context.Background(), dbtx.post); err != nil {
+				t.Fatalf("EnqueueScheduledPost: %v", err)
+			}
+			if len(dbtx.jobs) != test.wantJobs {
+				t.Fatalf("jobs = %d, want %d", len(dbtx.jobs), test.wantJobs)
+			}
+			if dbtx.updatedStatus != test.wantStatus {
+				t.Fatalf("post status = %q, want %q", dbtx.updatedStatus, test.wantStatus)
+			}
+			if got := strings.Join(evaluator.calls, ","); got != "tiktok,instagram" {
+				t.Fatalf("execution policy calls = %q, want tiktok,instagram", got)
+			}
+			if test.wantErrorCode != "" {
+				if len(dbtx.failures) != 1 || dbtx.failures[0].ErrorCode != test.wantErrorCode {
+					t.Fatalf("failures = %+v, want one current policy failure", dbtx.failures)
+				}
+			} else if len(dbtx.failures) != 0 {
+				t.Fatalf("failures = %+v, want no quota failures when replacement usage stays at the limit", dbtx.failures)
+			}
+		})
+	}
+}
+
 func TestScheduledQuotaEmailWaitsForStrictRetentionAndCommit(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -840,19 +897,20 @@ func assertMixedPolicySnapshotPersistence(t *testing.T, dbtx *policySnapshotDB, 
 }
 
 type policySnapshotDB struct {
-	accounts         map[string]db.SocialAccount
-	post             db.SocialPost
-	results          []db.SocialPostResult
-	jobs             []db.PostDeliveryJob
-	failures         []db.CreatePostFailureParams
-	failureDetails   []db.UpdateSocialPostResultFailureDetailsParams
-	retentionReasons []string
-	updatedStatus    string
-	quotaEnabled     bool
-	quotaUsage       int32
-	quotaLimit       int32
-	retentionErr     error
-	commitErr        error
+	accounts              map[string]db.SocialAccount
+	post                  db.SocialPost
+	results               []db.SocialPostResult
+	jobs                  []db.PostDeliveryJob
+	failures              []db.CreatePostFailureParams
+	failureDetails        []db.UpdateSocialPostResultFailureDetailsParams
+	retentionReasons      []string
+	updatedStatus         string
+	quotaEnabled          bool
+	quotaUsage            int32
+	quotaLimit            int32
+	scheduledReservations int32
+	retentionErr          error
+	commitErr             error
 }
 
 func (f *policySnapshotDB) Begin(context.Context) (pgx.Tx, error) {
@@ -967,6 +1025,8 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 		}
 		f.post.Status = "publishing"
 		return socialPostScanRow(f.post)
+	case strings.Contains(query, "scheduled_execution_reservation_period") && strings.Contains(query, "UPDATE social_posts"):
+		return scanRow{values: []any{f.post.ID}}
 	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
 		account, ok := f.accounts[args[0].(string)]
 		if !ok {
@@ -1066,8 +1126,8 @@ func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...int
 			"usage_1", args[1].(string), f.quotaUsage,
 			pgtype.Timestamptz{}, pgtype.Timestamptz{}, "ws_1",
 		}}
-	case strings.Contains(query, "-- name: CountScheduledQuotaUnitsByWorkspaceAndPeriod"):
-		return scanRow{values: []any{int32(0)}}
+	case strings.Contains(query, "FROM social_posts sp") && !strings.Contains(query, "sp.status = 'quota_hold'"):
+		return scanRow{values: []any{f.scheduledReservations}}
 	default:
 		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
 	}

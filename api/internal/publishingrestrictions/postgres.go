@@ -9,13 +9,26 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/db"
 )
 
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool   *pgxpool.Pool
+	readDB db.DBTX
 }
 
-func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore { return &PostgresStore{pool: pool} }
+func NewPostgresStore(pool *pgxpool.Pool) *PostgresStore {
+	return &PostgresStore{pool: pool, readDB: pool}
+}
+
+// WithDBTX returns a read-bound clone for policy evaluation inside a caller's
+// transaction. Administrative mutations continue to use the store pool.
+func (s *PostgresStore) WithDBTX(dbtx db.DBTX) Store {
+	clone := *s
+	clone.readDB = dbtx
+	return &clone
+}
 
 func scanRestriction(row pgx.Row) (Restriction, error) {
 	var r Restriction
@@ -34,7 +47,7 @@ const restrictionColumns = `id, platform, enabled, restricted_plan_ids, reason_c
 const aliasedRestrictionColumns = `r.id, r.platform, r.enabled, r.restricted_plan_ids, r.reason_code, r.user_message, r.cycle_id, r.version, r.enabled_at, r.disabled_at, r.updated_by_user_id, r.created_at, r.updated_at`
 
 func (s *PostgresStore) RestrictionForPlatform(ctx context.Context, platform string) (Restriction, error) {
-	r, err := scanRestriction(s.pool.QueryRow(ctx, `SELECT `+restrictionColumns+` FROM platform_publishing_restrictions WHERE platform = $1`, strings.ToLower(strings.TrimSpace(platform))))
+	r, err := scanRestriction(s.readDB.QueryRow(ctx, `SELECT `+restrictionColumns+` FROM platform_publishing_restrictions WHERE platform = $1`, strings.ToLower(strings.TrimSpace(platform))))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Restriction{Platform: strings.ToLower(strings.TrimSpace(platform)), RestrictedPlanIDs: []string{}}, nil
 	}
@@ -165,7 +178,7 @@ func (s *PostgresStore) ListAdminRestrictions(ctx context.Context) ([]Restrictio
 
 func (s *PostgresStore) WorkspacePlanID(ctx context.Context, workspaceID string) (string, error) {
 	var planID string
-	err := s.pool.QueryRow(ctx, `
+	err := s.readDB.QueryRow(ctx, `
 		SELECT COALESCE((
 			SELECT plan_id FROM subscriptions
 			WHERE workspace_id = $1

@@ -472,6 +472,15 @@ func main() {
 	// the user notification system. Handler code depends on
 	// events.EventBus so nothing else has to change.
 	eventBus := events.NewMultiBus(webhookWorker, notificationDispatcher, loopsNotificationBus)
+	terminalPostEventWorker := worker.NewTerminalPostEventOutboxWorker(
+		queries,
+		webhookWorker,
+		notificationDispatcher,
+		loopsNotificationBus,
+	)
+	if processMode == processModeAPI {
+		go terminalPostEventWorker.Start(workerCtx)
+	}
 	baseXCreditsService := xcredits.NewPostgresService(pool, queries).
 		SetAppBaseURL(os.Getenv("APP_BASE_URL"))
 	xCreditsService := xcredits.NewRolloutService(baseXCreditsService, featureFlagEvaluator)
@@ -656,7 +665,7 @@ func main() {
 	// post in the dashboard. This worker picks up the slack so the
 	// flip to published/failed happens on its own.
 	if processMode == processModeAPI {
-		facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor)
+		facebookVideoStatusWorker := worker.NewFacebookVideoStatusWorker(queries, encryptor, eventBus)
 		go facebookVideoStatusWorker.Start(workerCtx)
 
 		inboxSyncWorker := worker.NewInboxSyncWorker(queries, encryptor, pool)

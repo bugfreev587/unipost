@@ -14,10 +14,11 @@ func TestScheduledParentsQueryPreservesQuotaSemantics(t *testing.T) {
 	sql := strings.ToLower(listScheduledParentsForPeriodSQL)
 	for _, want := range []string{
 		"status in ('scheduled', 'quota_hold', 'publishing')",
-		"scheduled_at is not null",
+		"scheduled_execution_reservation_period",
+		"coalesce(sp.scheduled_at, sp.created_at)",
 		"disconnected_at is null",
 		"admin_post_quota_resets",
-		"order by sp.scheduled_at, sp.created_at, sp.id",
+		"order by coalesce(sp.scheduled_at, sp.created_at), sp.created_at, sp.id",
 		"for update of sp",
 	} {
 		if !strings.Contains(sql, want) {

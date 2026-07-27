@@ -87,8 +87,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 126 {
-		t.Fatalf("final Goose version = %d, want 126", version)
+	if version != 127 {
+		t.Fatalf("final Goose version = %d, want 127", version)
 	}
 
 	verifyInboxTenantIsolationAgainstPostgres(t, databaseURL)
@@ -125,8 +125,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 126 {
-		t.Fatalf("latest embedded migration version = %d, want 126", version)
+	if version != 127 {
+		t.Fatalf("latest embedded migration version = %d, want 127", version)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestCommittedScheduledQuotaQueryCountsPublishingAndQuotaHold(t *testing.T) 
 	for _, want := range []string{
 		"status in ('scheduled', 'quota_hold')",
 		"status = 'publishing'",
-		"scheduled_at is not null",
+		"scheduled_execution_reservation_period",
 		"deleted_at is null",
 		"disconnected_at is null",
 		"admin_post_quota_resets",

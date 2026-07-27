@@ -466,3 +466,142 @@ func TestCreateEmailSendAttemptAuditStillRetriesFailedRecord(t *testing.T) {
 		t.Fatalf("failed audit retry retained terminal fields: last_error=%+v sent_at=%+v", replayed.LastError, replayed.SentAt)
 	}
 }
+
+func TestMigration127UpgradeRollingCompatibilityAndDown(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+		CREATE TABLE social_posts (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+			status TEXT NOT NULL,
+			deleted_at TIMESTAMPTZ
+		);
+		CREATE TABLE webhooks (id TEXT PRIMARY KEY);
+		CREATE TABLE webhook_deliveries (
+			id TEXT PRIMARY KEY,
+			webhook_id TEXT NOT NULL REFERENCES webhooks(id),
+			event TEXT NOT NULL,
+			payload JSONB NOT NULL
+		);
+		INSERT INTO workspaces(id) VALUES ('ws_127');
+		INSERT INTO social_posts(id,workspace_id,status) VALUES ('post_127','ws_127','failed');
+		INSERT INTO webhooks(id) VALUES ('webhook_127');
+		INSERT INTO webhook_deliveries(id,webhook_id,event,payload)
+		VALUES ('legacy_before','webhook_127','post.failed','{}');
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	applyMigrationUpForIntegration(t, pool, "127_terminal_post_event_outbox.sql")
+	// Simulate an old binary after the additive migration: its INSERT omits the
+	// new nullable event_id column and must continue to work unchanged.
+	if _, err := pool.Exec(ctx, `INSERT INTO webhook_deliveries(id,webhook_id,event,payload)
+		VALUES ('legacy_after','webhook_127','post.failed','{}')`); err != nil {
+		t.Fatalf("old binary webhook insert after migration 127: %v", err)
+	}
+	var legacyID, legacyWebhookID, legacyEvent string
+	var legacyPayload []byte
+	if err := pool.QueryRow(ctx, `SELECT * FROM webhook_deliveries WHERE id='legacy_before'`).Scan(
+		&legacyID, &legacyWebhookID, &legacyEvent, &legacyPayload,
+	); err != nil {
+		t.Fatalf("old binary SELECT * scan after migration 127: %v", err)
+	}
+	queries := New(pool)
+	if err := RecordPostStatusTransition(ctx, queries, "post_127", "ws_127", "failed", "version_127", "post.failed", map[string]any{"id": "post_127", "status": "failed"}); err != nil {
+		t.Fatal(err)
+	}
+	var events, deliveries int
+	if err := pool.QueryRow(ctx, `SELECT
+		(SELECT COUNT(*) FROM terminal_post_event_outbox),
+		(SELECT COUNT(*) FROM terminal_post_event_deliveries)`).Scan(&events, &deliveries); err != nil {
+		t.Fatal(err)
+	}
+	if events != 1 || deliveries != 3 {
+		t.Fatalf("migration 127 outbox events/deliveries = %d/%d", events, deliveries)
+	}
+
+	applyMigrationDownForIntegration(t, pool, "127_terminal_post_event_outbox.sql")
+	var legacyRows int
+	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM webhook_deliveries`).Scan(&legacyRows); err != nil {
+		t.Fatal(err)
+	}
+	if legacyRows != 2 {
+		t.Fatalf("legacy webhook rows after Down = %d", legacyRows)
+	}
+	var outboxExists, webhookMappingExists, firstPostElectionExists bool
+	if err := pool.QueryRow(ctx, `SELECT
+		to_regclass('terminal_post_event_outbox') IS NOT NULL,
+		to_regclass('terminal_post_event_webhook_deliveries') IS NOT NULL,
+		to_regclass('terminal_post_first_publish_elections') IS NOT NULL`).Scan(&outboxExists, &webhookMappingExists, &firstPostElectionExists); err != nil {
+		t.Fatal(err)
+	}
+	if outboxExists || webhookMappingExists || firstPostElectionExists {
+		t.Fatalf("migration 127 Down left outbox/webhook mapping/election: %v/%v/%v", outboxExists, webhookMappingExists, firstPostElectionExists)
+	}
+}
+
+func TestPostPublishedOutboxSnapshotsFirstPostBeforeDelayedDispatch(t *testing.T) {
+	pool := openPublishingRestrictionIntegrationPool(t)
+	ctx := context.Background()
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE workspaces (id TEXT PRIMARY KEY);
+		CREATE TABLE social_posts (
+			id TEXT PRIMARY KEY,
+			workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+			status TEXT NOT NULL,
+			deleted_at TIMESTAMPTZ
+		);
+		CREATE TABLE webhooks (id TEXT PRIMARY KEY);
+		CREATE TABLE webhook_deliveries (
+			id TEXT PRIMARY KEY,
+			webhook_id TEXT NOT NULL REFERENCES webhooks(id),
+			event TEXT NOT NULL,
+			payload JSONB NOT NULL
+		);
+		INSERT INTO workspaces(id) VALUES ('ws_first_snapshot');
+		INSERT INTO social_posts(id,workspace_id,status) VALUES
+			('post_first_snapshot','ws_first_snapshot','publishing'),
+			('post_second_snapshot','ws_first_snapshot','publishing');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	applyMigrationUpForIntegration(t, pool, "127_terminal_post_event_outbox.sql")
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE social_posts SET status='published' WHERE id='post_first_snapshot'`); err != nil {
+		t.Fatal(err)
+	}
+	var version string
+	if err := tx.QueryRow(ctx, `SELECT xmin::text FROM social_posts WHERE id='post_first_snapshot'`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordPostStatusTransition(ctx, New(tx), "post_first_snapshot", "ws_first_snapshot", "published", version, "post.published", map[string]any{
+		"id": "post_first_snapshot", "status": "published",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A second publication commits before the delayed outbox dispatch. The
+	// first-post decision must remain the transaction-time snapshot.
+	if _, err := pool.Exec(ctx, `UPDATE social_posts SET status='published' WHERE id='post_second_snapshot'`); err != nil {
+		t.Fatal(err)
+	}
+	var firstSnapshot bool
+	var publishedNow int
+	if err := pool.QueryRow(ctx, `SELECT
+		(e.payload->>'first_post_published')::boolean,
+		(SELECT COUNT(*)::int FROM social_posts WHERE workspace_id='ws_first_snapshot' AND status='published')
+		FROM terminal_post_event_outbox e WHERE e.post_id='post_first_snapshot'`).Scan(&firstSnapshot, &publishedNow); err != nil {
+		t.Fatal(err)
+	}
+	if !firstSnapshot || publishedNow != 2 {
+		t.Fatalf("first-post snapshot/current count = %v/%d, want true/2", firstSnapshot, publishedNow)
+	}
+}

@@ -14,8 +14,21 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 )
 
-type publishingRestrictionEvaluator interface {
-	Evaluate(context.Context, string, string) (publishingrestrictions.Decision, error)
+type publishingRestrictionEvaluator = publishingrestrictions.Evaluator
+
+type transactionBoundPublishingRestrictionEvaluator interface {
+	WithDBTX(db.DBTX) publishingrestrictions.Evaluator
+}
+
+func (h *SocialPostHandler) withTransactionPublishingRestrictions(dbtx db.DBTX) *SocialPostHandler {
+	if h == nil || dbtx == nil {
+		return h
+	}
+	clone := *h
+	if binder, ok := h.publishingRestrictions.(transactionBoundPublishingRestrictionEvaluator); ok {
+		clone.publishingRestrictions = binder.WithDBTX(dbtx)
+	}
+	return &clone
 }
 
 type publishingRestrictionPolicyEvaluation struct {

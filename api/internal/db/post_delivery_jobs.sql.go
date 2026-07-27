@@ -35,11 +35,18 @@ SET state = 'cancelled',
     updated_at = NOW(),
     finished_at = NOW()
 WHERE id = $1
+  AND workspace_id = $2
+  AND state = 'pending'
 RETURNING id, post_id, social_post_result_id, workspace_id, social_account_id, platform, post_input_index, kind, state, attempts, max_attempts, failure_stage, error_code, platform_error_code, last_error, next_run_at, last_attempt_at, created_at, updated_at, finished_at, dismissed_at, lease_expires_at, lease_owner, first_claimed_at, platform_started_at
 `
 
-func (q *Queries) CancelPostDeliveryJob(ctx context.Context, id string) (PostDeliveryJob, error) {
-	row := q.db.QueryRow(ctx, cancelPostDeliveryJob, id)
+type CancelPostDeliveryJobParams struct {
+	ID          string `json:"id"`
+	WorkspaceID string `json:"workspace_id"`
+}
+
+func (q *Queries) CancelPostDeliveryJob(ctx context.Context, arg CancelPostDeliveryJobParams) (PostDeliveryJob, error) {
+	row := q.db.QueryRow(ctx, cancelPostDeliveryJob, arg.ID, arg.WorkspaceID)
 	var i PostDeliveryJob
 	err := row.Scan(
 		&i.ID,
@@ -738,7 +745,9 @@ func (q *Queries) DismissPostDeliveryJob(ctx context.Context, arg DismissPostDel
 const finalizeRestrictedPostDeliveryJob = `-- name: FinalizeRestrictedPostDeliveryJob :one
 WITH eligible_job AS MATERIALIZED (
   SELECT job.id, job.workspace_id, job.post_id, job.social_post_result_id,
-         result.status AS result_status
+         result.status AS result_status,
+         result.external_id AS result_external_id,
+         result.published_at AS result_published_at
   FROM social_post_results AS result
   JOIN post_delivery_jobs AS job
     ON job.social_post_result_id = result.id
@@ -765,11 +774,28 @@ WITH eligible_job AS MATERIALIZED (
     OR COUNT(ordered_media.id) = COALESCE(CARDINALITY($4::text[]), 0)
 ), transitioned_job AS (
   UPDATE post_delivery_jobs AS job
-  SET state = CASE WHEN eligible_job.result_status = 'published' THEN 'succeeded' ELSE 'dead' END,
-      failure_stage = CASE WHEN eligible_job.result_status = 'published' THEN NULL ELSE $5 END,
-      error_code = CASE WHEN eligible_job.result_status = 'published' THEN NULL ELSE $6 END,
+  SET state = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN 'succeeded'
+        ELSE 'dead'
+      END,
+      failure_stage = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN NULL ELSE $5
+      END,
+      error_code = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN NULL ELSE $6
+      END,
       platform_error_code = NULL,
-      last_error = CASE WHEN eligible_job.result_status = 'published' THEN NULL ELSE $7::text END,
+      last_error = CASE
+        WHEN eligible_job.result_status = 'published'
+          OR (LOWER(BTRIM(job.platform)) = 'facebook' AND eligible_job.result_status = 'processing' AND NULLIF(BTRIM(eligible_job.result_external_id), '') IS NOT NULL)
+          THEN NULL ELSE $7::text
+      END,
       next_run_at = NULL,
       updated_at = NOW(),
       finished_at = NOW()
@@ -781,6 +807,10 @@ WITH eligible_job AS MATERIALIZED (
     AND job.lease_owner IS NOT DISTINCT FROM $2
     AND job.last_attempt_at IS NOT DISTINCT FROM $3::timestamptz
   RETURNING job.id, job.post_id, job.social_post_result_id, job.workspace_id, job.social_account_id, job.platform, job.post_input_index, job.kind, job.state, job.attempts, job.max_attempts, job.failure_stage, job.error_code, job.platform_error_code, job.last_error, job.next_run_at, job.last_attempt_at, job.created_at, job.updated_at, job.finished_at, job.dismissed_at, job.lease_expires_at, job.lease_owner, job.first_claimed_at, job.platform_started_at
+), transition_context AS MATERIALIZED (
+  SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at, eligible_job.result_status, eligible_job.result_published_at
+  FROM transitioned_job
+  JOIN eligible_job ON eligible_job.id = transitioned_job.id
 ), updated_result AS (
   UPDATE social_post_results AS result
   SET status = 'failed',
@@ -811,14 +841,22 @@ WITH eligible_job AS MATERIALIZED (
   SELECT
     result.id,
     CASE
-      WHEN result.id = transitioned_job.social_post_result_id
-        AND transitioned_job.state = 'dead' THEN 'failed'
-      WHEN result.id = transitioned_job.social_post_result_id
-        AND transitioned_job.state = 'succeeded' THEN 'published'
+      WHEN result.id = transition_context.social_post_result_id
+        AND transition_context.state = 'dead' THEN 'failed'
+      WHEN result.id = transition_context.social_post_result_id
+        AND transition_context.state = 'succeeded'
+        AND transition_context.result_status = 'published' THEN 'published'
       ELSE result.status
-    END AS status
-	FROM transitioned_job
-	JOIN social_post_results result ON result.post_id = transitioned_job.post_id
+    END AS status,
+    CASE
+      WHEN result.id = transition_context.social_post_result_id
+        AND transition_context.state = 'succeeded'
+        AND transition_context.result_status = 'published'
+        THEN transition_context.result_published_at
+      ELSE result.published_at
+    END AS published_at
+	FROM transition_context
+	JOIN social_post_results result ON result.post_id = transition_context.post_id
 ), derived_post_status AS MATERIALIZED (
 	SELECT
 		transitioned_job.post_id,
@@ -851,19 +889,38 @@ WITH eligible_job AS MATERIALIZED (
 			SELECT 1
 			FROM current_result_statuses result_status
 			WHERE result_status.status = 'published'
-		) AS has_published
+		) AS has_published,
+    (
+      SELECT MIN(result_status.published_at)
+      FROM current_result_statuses result_status
+      WHERE result_status.status = 'published'
+        AND result_status.published_at IS NOT NULL
+    ) AS earliest_published_at
 	FROM transitioned_job
+), locked_parent AS MATERIALIZED (
+  SELECT parent.id, parent.status, parent.published_at
+  FROM social_posts parent
+  JOIN derived_post_status ON derived_post_status.post_id = parent.id
+  FOR UPDATE OF parent
 ), updated_parent AS (
 	UPDATE social_posts AS parent
 	SET status = derived_post_status.status,
 		published_at = CASE
 			WHEN derived_post_status.has_published
-				THEN COALESCE(parent.published_at, NOW())
+				THEN CASE
+            WHEN parent.published_at IS NULL THEN derived_post_status.earliest_published_at
+            WHEN derived_post_status.earliest_published_at IS NULL THEN parent.published_at
+            ELSE LEAST(parent.published_at, derived_post_status.earliest_published_at)
+          END
 			ELSE NULL
 		END
-	FROM derived_post_status
+	FROM derived_post_status, locked_parent
 	WHERE parent.id = derived_post_status.post_id
-	RETURNING parent.id
+	  AND locked_parent.id = parent.id
+	RETURNING parent.id,
+    locked_parent.status AS previous_status,
+    parent.status AS current_status,
+    locked_parent.status IS DISTINCT FROM parent.status AS parent_transitioned
 ), deleted_obsolete_usage AS (
   DELETE FROM media_post_usages usage
   USING transitioned_job
@@ -901,9 +958,11 @@ WITH eligible_job AS MATERIALIZED (
       updated_at = NOW()
   RETURNING id
 )
-SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at
+SELECT transitioned_job.id, transitioned_job.post_id, transitioned_job.social_post_result_id, transitioned_job.workspace_id, transitioned_job.social_account_id, transitioned_job.platform, transitioned_job.post_input_index, transitioned_job.kind, transitioned_job.state, transitioned_job.attempts, transitioned_job.max_attempts, transitioned_job.failure_stage, transitioned_job.error_code, transitioned_job.platform_error_code, transitioned_job.last_error, transitioned_job.next_run_at, transitioned_job.last_attempt_at, transitioned_job.created_at, transitioned_job.updated_at, transitioned_job.finished_at, transitioned_job.dismissed_at, transitioned_job.lease_expires_at, transitioned_job.lease_owner, transitioned_job.first_claimed_at, transitioned_job.platform_started_at,
+       COALESCE((SELECT previous_status FROM updated_parent), '')::text AS parent_previous_status,
+       COALESCE((SELECT current_status FROM updated_parent), '')::text AS parent_current_status,
+       COALESCE((SELECT parent_transitioned FROM updated_parent), FALSE)::boolean AS parent_transitioned
 FROM transitioned_job
-CROSS JOIN (SELECT COUNT(*) FROM updated_parent) AS parent_updated
 CROSS JOIN (SELECT COUNT(*) FROM retained_media) AS retention_applied
 CROSS JOIN (SELECT COUNT(*) FROM deleted_obsolete_usage) AS obsolete_usage_deleted
 `
@@ -923,31 +982,34 @@ type FinalizeRestrictedPostDeliveryJobParams struct {
 }
 
 type FinalizeRestrictedPostDeliveryJobRow struct {
-	ID                 string             `json:"id"`
-	PostID             string             `json:"post_id"`
-	SocialPostResultID string             `json:"social_post_result_id"`
-	WorkspaceID        string             `json:"workspace_id"`
-	SocialAccountID    string             `json:"social_account_id"`
-	Platform           string             `json:"platform"`
-	PostInputIndex     int32              `json:"post_input_index"`
-	Kind               string             `json:"kind"`
-	State              string             `json:"state"`
-	Attempts           int32              `json:"attempts"`
-	MaxAttempts        int32              `json:"max_attempts"`
-	FailureStage       pgtype.Text        `json:"failure_stage"`
-	ErrorCode          pgtype.Text        `json:"error_code"`
-	PlatformErrorCode  pgtype.Text        `json:"platform_error_code"`
-	LastError          pgtype.Text        `json:"last_error"`
-	NextRunAt          pgtype.Timestamptz `json:"next_run_at"`
-	LastAttemptAt      pgtype.Timestamptz `json:"last_attempt_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt         pgtype.Timestamptz `json:"finished_at"`
-	DismissedAt        pgtype.Timestamptz `json:"dismissed_at"`
-	LeaseExpiresAt     pgtype.Timestamptz `json:"lease_expires_at"`
-	LeaseOwner         pgtype.Text        `json:"lease_owner"`
-	FirstClaimedAt     pgtype.Timestamptz `json:"first_claimed_at"`
-	PlatformStartedAt  pgtype.Timestamptz `json:"platform_started_at"`
+	ID                   string             `json:"id"`
+	PostID               string             `json:"post_id"`
+	SocialPostResultID   string             `json:"social_post_result_id"`
+	WorkspaceID          string             `json:"workspace_id"`
+	SocialAccountID      string             `json:"social_account_id"`
+	Platform             string             `json:"platform"`
+	PostInputIndex       int32              `json:"post_input_index"`
+	Kind                 string             `json:"kind"`
+	State                string             `json:"state"`
+	Attempts             int32              `json:"attempts"`
+	MaxAttempts          int32              `json:"max_attempts"`
+	FailureStage         pgtype.Text        `json:"failure_stage"`
+	ErrorCode            pgtype.Text        `json:"error_code"`
+	PlatformErrorCode    pgtype.Text        `json:"platform_error_code"`
+	LastError            pgtype.Text        `json:"last_error"`
+	NextRunAt            pgtype.Timestamptz `json:"next_run_at"`
+	LastAttemptAt        pgtype.Timestamptz `json:"last_attempt_at"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt           pgtype.Timestamptz `json:"finished_at"`
+	DismissedAt          pgtype.Timestamptz `json:"dismissed_at"`
+	LeaseExpiresAt       pgtype.Timestamptz `json:"lease_expires_at"`
+	LeaseOwner           pgtype.Text        `json:"lease_owner"`
+	FirstClaimedAt       pgtype.Timestamptz `json:"first_claimed_at"`
+	PlatformStartedAt    pgtype.Timestamptz `json:"platform_started_at"`
+	ParentPreviousStatus string             `json:"parent_previous_status"`
+	ParentCurrentStatus  string             `json:"parent_current_status"`
+	ParentTransitioned   bool               `json:"parent_transitioned"`
 }
 
 func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg FinalizeRestrictedPostDeliveryJobParams) (FinalizeRestrictedPostDeliveryJobRow, error) {
@@ -991,6 +1053,9 @@ func (q *Queries) FinalizeRestrictedPostDeliveryJob(ctx context.Context, arg Fin
 		&i.LeaseOwner,
 		&i.FirstClaimedAt,
 		&i.PlatformStartedAt,
+		&i.ParentPreviousStatus,
+		&i.ParentCurrentStatus,
+		&i.ParentTransitioned,
 	)
 	return i, err
 }
@@ -1389,6 +1454,20 @@ func (q *Queries) ListStaleActivePostDeliveryJobs(ctx context.Context, staleBefo
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockPostDeliveryJobFinalization = `-- name: LockPostDeliveryJobFinalization :exec
+SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
+`
+
+// Finalization derives the parent status from every result/job for the post.
+// This lock MUST be acquired in a transaction by a separate statement before
+// FinalizeRestrictedPostDeliveryJob so a waiter gets a new READ COMMITTED
+// snapshot after the earlier finalizer commits. Putting this lock inside the
+// finalization CTE would retain the stale statement snapshot.
+func (q *Queries) LockPostDeliveryJobFinalization(ctx context.Context, postID string) error {
+	_, err := q.db.Exec(ctx, lockPostDeliveryJobFinalization, postID)
+	return err
 }
 
 const markPostDeliveryJobFailed = `-- name: MarkPostDeliveryJobFailed :one
