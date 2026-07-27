@@ -6,6 +6,12 @@ An unknown send outcome means UniPost attempted a provider send but could not de
 
 This conservative behavior creates more failures that require manual review. It is intentional: an extra manual failure is safer than automatically sending a duplicate service-alert email.
 
+## Owner snapshots across migration 126
+
+Recipient owner/workspace pairs are immutable audience evidence. New application versions write both arrays explicitly. During a rolling deployment, migration 126 also supports an old binary that omits owner IDs on INSERT: for each represented workspace, it records the unique current active owner only when that owner's normalized email exactly matches the recipient snapshot. Missing or ambiguous evidence falls back to the canonical user and fails closed during later eligibility checks.
+
+Rows created before migration 126 retain the conservative canonical-user fallback. Do not rewrite those historical pairs from current workspace membership: a current matching owner may represent a later email or ownership takeover rather than the owner at snapshot time. If the stored pair cannot pass current eligibility, leave it skipped. Recovery Preview may therefore report no eligible recipients for an ambiguous historical row; Preview does not issue a provider send.
+
 ## Investigate a terminal failure
 
 Before deciding the disposition, inspect all of the following for the individual recipient:

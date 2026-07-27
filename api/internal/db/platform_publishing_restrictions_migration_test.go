@@ -117,10 +117,15 @@ func TestPublishingRestrictionRecipientOwnerSnapshotMigrationContract(t *testing
 	for _, fragment := range []string{
 		"add column represented_owner_user_ids text[]",
 		"create function backfill_publishing_restriction_recipient_owner_snapshot()",
-		"before insert or update of represented_workspace_ids, canonical_user_id",
+		"before insert",
 		"new.represented_owner_user_ids is null",
+		"unnest(new.represented_workspace_ids) with ordinality",
+		"lower(trim(owner_user.email)) = new.normalized_email",
+		"count(owner_user.id) as candidate_count",
+		"resolution.candidate_count = 1",
 		"array_fill(canonical_user_id",
 		"array[]::text[]",
+		"historical rows cannot safely",
 		"set not null",
 		"cardinality(represented_owner_user_ids) = cardinality(represented_workspace_ids)",
 		"array_position(represented_owner_user_ids, null) is null",
@@ -128,6 +133,9 @@ func TestPublishingRestrictionRecipientOwnerSnapshotMigrationContract(t *testing
 		if !strings.Contains(up, fragment) {
 			t.Fatalf("migration 126 Up missing %q", fragment)
 		}
+	}
+	if strings.Contains(up, "before insert or update") || strings.Contains(up, "update of represented_workspace_ids") {
+		t.Fatal("migration 126 trigger must be INSERT-only because recipient snapshots are immutable")
 	}
 	down := strings.ToLower(parts[1])
 	for _, fragment := range []string{

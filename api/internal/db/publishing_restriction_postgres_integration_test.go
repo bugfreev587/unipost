@@ -92,11 +92,28 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	pool := openPublishingRestrictionIntegrationPool(t)
 	ctx := context.Background()
 	_, err := pool.Exec(ctx, `
-		CREATE TABLE users (id TEXT PRIMARY KEY);
+		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT);
 		CREATE TABLE email_send_attempts (id TEXT PRIMARY KEY);
 		CREATE TABLE media_post_usages (cleanup_after_at TIMESTAMPTZ);
+		CREATE TABLE workspace_members (
+			workspace_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			status TEXT NOT NULL,
+			PRIMARY KEY (workspace_id, user_id)
+		);
 		INSERT INTO users (id) VALUES
-			('canonical_user'), ('empty_user'), ('legacy_writer_user'), ('explicit_writer_user');
+			('canonical_user'), ('empty_user'), ('explicit_writer_user'), ('legacy_fallback_user');
+		INSERT INTO users (id, email) VALUES
+			('legacy_writer_user', 'legacy@example.com'),
+			('legacy_other_owner', 'legacy@example.com'),
+			('ambiguous_owner_1', 'fallback@example.com'),
+			('ambiguous_owner_2', 'fallback@example.com');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status) VALUES
+			('legacy_workspace_1', 'legacy_writer_user', 'owner', 'active'),
+			('legacy_workspace_2', 'legacy_other_owner', 'owner', 'active'),
+			('unresolved_workspace', 'ambiguous_owner_1', 'owner', 'active'),
+			('unresolved_workspace', 'ambiguous_owner_2', 'owner', 'active');
 	`)
 	if err != nil {
 		t.Fatal(err)
@@ -169,8 +186,31 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	`).Scan(&ownerIDs); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(ownerIDs, []string{"legacy_writer_user", "legacy_writer_user"}) {
-		t.Fatalf("legacy writer owner IDs = %#v, want canonical repeated for each workspace", ownerIDs)
+	if !reflect.DeepEqual(ownerIDs, []string{"legacy_writer_user", "legacy_other_owner"}) {
+		t.Fatalf("legacy writer owner IDs = %#v, want resolved same-email owners by workspace ordinality", ownerIDs)
+	}
+	_, err = pool.Exec(ctx, `
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			represented_workspace_ids, idempotency_key
+		) VALUES (
+			'recipient_legacy_fallback', 'campaign_owner_snapshot', 'legacy_fallback_user',
+			'fallback@example.com', 'fallback@example.com', ARRAY['unresolved_workspace']::TEXT[],
+			'owner-snapshot-legacy-fallback'
+		);
+	`)
+	if err != nil {
+		t.Fatalf("migration 125 writer fallback insert after migration 126: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_legacy_fallback'
+	`).Scan(&ownerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(ownerIDs, []string{"legacy_fallback_user"}) {
+		t.Fatalf("ambiguous legacy writer owner IDs = %#v, want conservative canonical fallback", ownerIDs)
 	}
 	_, err = pool.Exec(ctx, `
 		INSERT INTO platform_publishing_restriction_email_recipients (
@@ -249,8 +289,8 @@ func TestPublishingRestrictionRecipientOwnerSnapshotUpgradeAndDown(t *testing.T)
 	if err := pool.QueryRow(ctx, `SELECT COUNT(*) FROM platform_publishing_restriction_email_recipients`).Scan(&recipientCount); err != nil {
 		t.Fatal(err)
 	}
-	if recipientCount != 4 {
-		t.Fatalf("migration 126 Down changed recipient rows: got %d, want 4", recipientCount)
+	if recipientCount != 5 {
+		t.Fatalf("migration 126 Down changed recipient rows: got %d, want 5", recipientCount)
 	}
 }
 

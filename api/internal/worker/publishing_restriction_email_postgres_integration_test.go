@@ -156,6 +156,11 @@ func applyWorkerMigrationUp(t *testing.T, pool *pgxpool.Pool, filename string) {
 }
 
 func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
+	setupPublishingRestrictionWorkerSchemaThroughMigration125(t, pool)
+	applyWorkerMigrationUp(t, pool, "126_publishing_restriction_recipient_owner_snapshot.sql")
+}
+
+func setupPublishingRestrictionWorkerSchemaThroughMigration125(t *testing.T, pool *pgxpool.Pool) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(), `
 		CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT, name TEXT);
@@ -201,7 +206,6 @@ func setupPublishingRestrictionWorkerSchema(t *testing.T, pool *pgxpool.Pool) {
 		"122_platform_publishing_restrictions.sql",
 		"124_publishing_restriction_email_send_gate.sql",
 		"125_publishing_restriction_failed_recipient_retryability.sql",
-		"126_publishing_restriction_recipient_owner_snapshot.sql",
 	} {
 		applyWorkerMigrationUp(t, pool, migration)
 	}
@@ -388,6 +392,160 @@ func TestPublishingRestrictionSameEmailOwnersPreserveEligibilityAndRecovery(t *t
 	}
 	if !eligible {
 		t.Fatal("recovery recipient became ineligible despite surviving same-email owner pair")
+	}
+}
+
+func TestPublishingRestrictionMigration126OldWriterCapturesSameEmailOwnersForRecovery(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchema(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restrictions
+		SET enabled=TRUE, cycle_id='worker_cycle'
+		WHERE platform='tiktok';
+		UPDATE users SET email='legacy-shared@example.com', name='Legacy Canonical' WHERE id='worker_user_1';
+		UPDATE users SET email='legacy-shared@example.com', name='Legacy Other' WHERE id='worker_user_2';
+		INSERT INTO workspaces (id) VALUES ('legacy_workspace_1'), ('legacy_workspace_2');
+		INSERT INTO profiles (id, workspace_id)
+		VALUES ('legacy_profile_1', 'legacy_workspace_1'), ('legacy_profile_2', 'legacy_workspace_2');
+		INSERT INTO subscriptions (workspace_id, plan_id)
+		VALUES ('legacy_workspace_1', 'free'), ('legacy_workspace_2', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES
+			('legacy_workspace_1', 'worker_user_1', 'owner', 'active'),
+			('legacy_workspace_2', 'worker_user_2', 'owner', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES
+			('legacy_social_1', 'legacy_profile_1', 'tiktok', 'active'),
+			('legacy_social_2', 'legacy_profile_2', 'tiktok', 'active');
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			first_name_snapshot, represented_workspace_ids, idempotency_key
+		) VALUES (
+			'recipient_legacy_writer_126', 'worker_campaign', 'worker_user_1',
+			'legacy-shared@example.com', 'legacy-shared@example.com', 'Legacy',
+			ARRAY['legacy_workspace_1','legacy_workspace_2']::TEXT[],
+			'worker_cycle:restriction_notice:legacy-writer'
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	emailStore := NewPostgresPublishingRestrictionEmailStore(pool)
+	work, err := emailStore.ClaimPublishingRestrictionEmailRecipients(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(work) != 1 {
+		t.Fatalf("legacy writer claim = %+v, want one recipient", work)
+	}
+	if strings.Join(work[0].RepresentedOwnerUserIDs, ",") != "worker_user_1,worker_user_2" {
+		t.Fatalf("legacy writer owner IDs = %v, want current same-email owner pair", work[0].RepresentedOwnerUserIDs)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_members SET role='editor'
+		WHERE workspace_id='legacy_workspace_1' AND user_id='worker_user_1'
+	`); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err := emailStore.PublishingRestrictionEmailRecipientEligible(ctx, work[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !eligible {
+		t.Fatal("legacy writer snapshot lost the surviving same-email owner eligibility")
+	}
+	if err := emailStore.MarkPublishingRestrictionEmailRecipientSent(ctx, work[0].RecipientID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE platform_publishing_restrictions SET enabled=FALSE WHERE platform='tiktok'`); err != nil {
+		t.Fatal(err)
+	}
+	recovery, err := publishingrestrictions.NewPostgresStore(pool).PreviewCampaignRecipients(
+		ctx,
+		publishingrestrictions.Restriction{Platform: "tiktok", CycleID: "worker_cycle"},
+		publishingrestrictions.RecoveryNotice,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovery) != 1 || strings.Join(recovery[0].RepresentedWorkspaceIDs, ",") != "legacy_workspace_2" ||
+		strings.Join(recovery[0].RepresentedOwnerUserIDs, ",") != "worker_user_2" {
+		t.Fatalf("legacy writer recovery audience = %+v, want surviving same-email owner pair", recovery)
+	}
+}
+
+func TestPublishingRestrictionMigration126HistoricalFallbackRejectsEmailTakeover(t *testing.T) {
+	pool := openPublishingRestrictionWorkerIntegrationPool(t)
+	setupPublishingRestrictionWorkerSchemaThroughMigration125(t, pool)
+	ctx := context.Background()
+	_, err := pool.Exec(ctx, `
+		UPDATE platform_publishing_restrictions
+		SET enabled=FALSE, cycle_id='worker_cycle'
+		WHERE platform='tiktok';
+		UPDATE users SET email='new-owner@example.com', name='Original User' WHERE id='worker_user_1';
+		UPDATE users SET email='old-owner@example.com', name='Takeover User' WHERE id='worker_user_2';
+		INSERT INTO workspaces (id) VALUES ('historical_workspace');
+		INSERT INTO profiles (id, workspace_id) VALUES ('historical_profile', 'historical_workspace');
+		INSERT INTO subscriptions (workspace_id, plan_id) VALUES ('historical_workspace', 'free');
+		INSERT INTO workspace_members (workspace_id, user_id, role, status)
+		VALUES ('historical_workspace', 'worker_user_2', 'owner', 'active');
+		INSERT INTO social_accounts (id, profile_id, platform, status)
+		VALUES ('historical_social', 'historical_profile', 'tiktok', 'active');
+		UPDATE platform_publishing_restriction_email_campaigns
+		SET status='completed', pending_count=0, sent_count=1, completed_at=NOW()
+		WHERE id='worker_campaign';
+		INSERT INTO platform_publishing_restriction_email_recipients (
+			id, campaign_id, canonical_user_id, recipient_email, normalized_email,
+			first_name_snapshot, represented_workspace_ids, idempotency_key, status, sent_at
+		) VALUES (
+			'recipient_historical_ambiguous', 'worker_campaign', 'worker_user_1',
+			'old-owner@example.com', 'old-owner@example.com', 'Original',
+			ARRAY['historical_workspace']::TEXT[], 'historical-ambiguous-key', 'sent', NOW()
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyWorkerMigrationUp(t, pool, "126_publishing_restriction_recipient_owner_snapshot.sql")
+
+	var ownerIDs []string
+	if err := pool.QueryRow(ctx, `
+		SELECT represented_owner_user_ids
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id='recipient_historical_ambiguous'
+	`).Scan(&ownerIDs); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(ownerIDs, ",") != "worker_user_1" {
+		t.Fatalf("historical owner IDs = %v, want conservative canonical fallback", ownerIDs)
+	}
+	eligible, err := NewPostgresPublishingRestrictionEmailStore(pool).PublishingRestrictionEmailRecipientEligible(
+		ctx,
+		PublishingRestrictionEmailWork{
+			Platform:                "tiktok",
+			CycleID:                 "worker_cycle",
+			CampaignType:            publishingrestrictions.RecoveryNotice,
+			CanonicalUserID:         "worker_user_1",
+			NormalizedEmail:         "old-owner@example.com",
+			RepresentedWorkspaceIDs: []string{"historical_workspace"},
+			RepresentedOwnerUserIDs: ownerIDs,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if eligible {
+		t.Fatal("historical canonical fallback accepted a reassigned email owner")
+	}
+	_, err = publishingrestrictions.NewPostgresStore(pool).PreviewCampaignRecipients(
+		ctx,
+		publishingrestrictions.Restriction{Platform: "tiktok", CycleID: "worker_cycle"},
+		publishingrestrictions.RecoveryNotice,
+	)
+	if !errors.Is(err, publishingrestrictions.ErrCampaignPrecondition) {
+		t.Fatalf("historical recovery preview error = %v, want ErrCampaignPrecondition without a send", err)
 	}
 }
 
