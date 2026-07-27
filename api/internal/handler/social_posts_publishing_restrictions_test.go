@@ -152,6 +152,175 @@ func TestEvaluatePublishingRestrictionsSnapshotsEachTrustedNormalizedPlatformOnc
 	}
 }
 
+func TestEvaluatePublishingRestrictionsSkipsUntrustedTargets(t *testing.T) {
+	evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{}}
+	h := &SocialPostHandler{publishingRestrictions: evaluator}
+	posts := []platform.PlatformPostInput{
+		{AccountID: "missing"},
+		{AccountID: "disconnected"},
+		{AccountID: "empty_platform"},
+		{AccountID: "trusted"},
+	}
+	accounts := map[string]platform.ValidateAccount{
+		"disconnected":   {Platform: "tiktok", Disconnected: true},
+		"empty_platform": {Platform: "   "},
+		"trusted":        {Platform: " TikTok "},
+	}
+
+	if _, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", posts, accounts); err != nil {
+		t.Fatalf("evaluatePublishingRestrictions: %v", err)
+	}
+	if got := strings.Join(evaluator.calls, ","); got != "tiktok" {
+		t.Fatalf("policy calls=%q, want only the trusted connected target", got)
+	}
+}
+
+func TestCreateLetsAccountValidationPrecedePolicyForUntrustedTargets(t *testing.T) {
+	restricted := publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   "tiktok",
+		PlanID:     "free",
+		CycleID:    "cycle_untrusted",
+		Code:       publishingrestrictions.NormalizedCode,
+	}
+	tests := []struct {
+		name       string
+		accountID  string
+		disconnect bool
+		evaluator  *fakePostRestrictionEvaluator
+	}{
+		{
+			name:       "disconnected account with restricted policy",
+			accountID:  "tk_1",
+			disconnect: true,
+			evaluator:  &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{"tiktok": restricted}},
+		},
+		{
+			name:       "disconnected account with policy read error",
+			accountID:  "tk_1",
+			disconnect: true,
+			evaluator:  &fakePostRestrictionEvaluator{err: errors.New("policy unavailable")},
+		},
+		{
+			name:      "missing account with restricted empty-platform policy",
+			accountID: "missing_1",
+			evaluator: &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{"": restricted}},
+		},
+		{
+			name:      "missing account with policy read error",
+			accountID: "missing_1",
+			evaluator: &fakePostRestrictionEvaluator{err: errors.New("policy unavailable")},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, dbtx, _, _, _ := newPolicySnapshotHarness(t, "publishing")
+			h.quota = quota.NewChecker(h.queries)
+			h.SetPublishingRestrictions(test.evaluator)
+			if test.disconnect {
+				account := dbtx.accounts[test.accountID]
+				account.DisconnectedAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+				dbtx.accounts[test.accountID] = account
+			}
+
+			body := fmt.Sprintf(`{
+				"platform_posts":[{
+					"account_id":%q,
+					"caption":"account validation wins",
+					"media_urls":["https://cdn.example.com/video.mp4"],
+					"platform_options":{"privacy_level":"PUBLIC_TO_EVERYONE"}
+				}]
+			}`, test.accountID)
+			req := httptest.NewRequest(http.MethodPost, "/v1/social-posts", strings.NewReader(body))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			rr := httptest.NewRecorder()
+
+			h.Create(rr, req)
+
+			if rr.Code != http.StatusAccepted {
+				t.Fatalf("Create status=%d body=%s, want account validation path", rr.Code, rr.Body.String())
+			}
+			if len(test.evaluator.calls) != 0 {
+				t.Fatalf("policy calls=%v, want none for untrusted target", test.evaluator.calls)
+			}
+			if len(dbtx.results) != 1 || dbtx.results[0].Status != "failed" || !dbtx.results[0].ErrorMessage.Valid {
+				t.Fatalf("results=%+v, want one account validation failure", dbtx.results)
+			}
+			wantMessage := "account not found"
+			if test.disconnect {
+				wantMessage = "account is disconnected"
+			}
+			if dbtx.results[0].ErrorMessage.String != wantMessage {
+				t.Fatalf("result error=%q, want %q", dbtx.results[0].ErrorMessage.String, wantMessage)
+			}
+		})
+	}
+}
+
+func TestCreateBulkSharesOnePolicySnapshotAcrossEntries(t *testing.T) {
+	restricted := publishingrestrictions.Decision{
+		Restricted: true,
+		Platform:   "tiktok",
+		PlanID:     "free",
+		CycleID:    "cycle_bulk_snapshot",
+		Code:       publishingrestrictions.NormalizedCode,
+	}
+	tests := []struct {
+		name      string
+		configure func(*fakePostRestrictionEvaluator)
+	}{
+		{
+			name: "second read changes",
+			configure: func(evaluator *fakePostRestrictionEvaluator) {
+				evaluator.err = nil
+				evaluator.errOnCall = 0
+				evaluator.decisionsByCall = []publishingrestrictions.Decision{
+					restricted,
+					{Restricted: false, Platform: "tiktok", PlanID: "free"},
+				}
+			},
+		},
+		{
+			name: "second read errors",
+			configure: func(evaluator *fakePostRestrictionEvaluator) {
+				evaluator.decisions = map[string]publishingrestrictions.Decision{"tiktok": restricted}
+				evaluator.decisionsByCall = nil
+				evaluator.err = errors.New("second policy read must not happen")
+				evaluator.errOnCall = 2
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, _, evaluator, _, _ := newSamePlatformPolicySnapshotHarness(t, "publishing")
+			h.quota = quota.NewChecker(h.queries)
+			test.configure(evaluator)
+			req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/bulk", strings.NewReader(`{
+				"posts":[
+					{"platform_posts":[{"account_id":"tk_1","caption":"first","media_urls":["https://cdn.example.com/first.mp4"],"platform_options":{"privacy_level":"PUBLIC_TO_EVERYONE"}}]},
+					{"platform_posts":[{"account_id":"ig_1","caption":"second","media_urls":["https://cdn.example.com/second.mp4"],"platform_options":{"privacy_level":"PUBLIC_TO_EVERYONE"}}]}
+				]
+			}`))
+			req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+			rr := httptest.NewRecorder()
+
+			h.CreateBulk(rr, req)
+
+			if rr.Code != http.StatusOK {
+				t.Fatalf("CreateBulk status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if got := strings.Join(evaluator.calls, ","); got != "tiktok" {
+				t.Fatalf("policy calls=%q, want one request-scoped tiktok snapshot", got)
+			}
+			if got := strings.Count(rr.Body.String(), `"status":402`); got != 2 {
+				t.Fatalf("CreateBulk body=%s, want both entries to reuse the restricted snapshot", rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestImmediatePersistenceUsesAdmissionPolicySnapshot(t *testing.T) {
 	h, dbtx, evaluator, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
 	blockedTargets, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", parsed.Posts, accounts)
@@ -172,7 +341,7 @@ func TestBulkPersistenceUsesAdmissionPolicySnapshot(t *testing.T) {
 		{AccountID: parsed.Posts[1].AccountID, Caption: parsed.Posts[1].Caption, MediaURLs: parsed.Posts[1].MediaURLs},
 	}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/bulk", nil)
-	entry, _ := h.processBulkOne(req, "ws_1", body, accounts, quota.FreePlanHardBlockGate{}, 0)
+	entry, _ := h.processBulkOne(req, "ws_1", body, accounts, quota.FreePlanHardBlockGate{}, 0, nil)
 	if entry.Error != nil {
 		t.Fatalf("processBulkOne: %+v", entry.Error)
 	}
@@ -231,7 +400,7 @@ func TestPublishingEntryPointsReuseOnePolicySnapshotForSamePlatformTargets(t *te
 					{AccountID: parsed.Posts[1].AccountID, Caption: parsed.Posts[1].Caption, MediaURLs: parsed.Posts[1].MediaURLs, PlatformOptions: parsed.Posts[1].PlatformOptions},
 				}}
 				req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/bulk", nil)
-				entry, _ := h.processBulkOne(req, "ws_1", body, accounts, quota.FreePlanHardBlockGate{}, 0)
+				entry, _ := h.processBulkOne(req, "ws_1", body, accounts, quota.FreePlanHardBlockGate{}, 0, nil)
 				if entry.Status != http.StatusPaymentRequired || entry.Error == nil || entry.Error.Code != publishingrestrictions.APICode {
 					if entry.Error == nil {
 						t.Fatalf("bulk result=%+v, want fully restricted response", entry)

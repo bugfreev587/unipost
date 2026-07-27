@@ -18,6 +18,13 @@ type publishingRestrictionEvaluator interface {
 	Evaluate(context.Context, string, string) (publishingrestrictions.Decision, error)
 }
 
+type publishingRestrictionPolicyEvaluation struct {
+	decision publishingrestrictions.Decision
+	err      error
+}
+
+type publishingRestrictionPolicySnapshot map[string]publishingRestrictionPolicyEvaluation
+
 func (h *SocialPostHandler) SetPublishingRestrictions(evaluator publishingRestrictionEvaluator) *SocialPostHandler {
 	if h != nil {
 		h.publishingRestrictions = evaluator
@@ -31,24 +38,42 @@ func (h *SocialPostHandler) evaluatePublishingRestrictions(
 	posts []platform.PlatformPostInput,
 	accountMap map[string]platform.ValidateAccount,
 ) (map[string]publishingrestrictions.Decision, error) {
+	return h.evaluatePublishingRestrictionsWithSnapshot(ctx, workspaceID, posts, accountMap, nil)
+}
+
+func (h *SocialPostHandler) evaluatePublishingRestrictionsWithSnapshot(
+	ctx context.Context,
+	workspaceID string,
+	posts []platform.PlatformPostInput,
+	accountMap map[string]platform.ValidateAccount,
+	snapshot publishingRestrictionPolicySnapshot,
+) (map[string]publishingrestrictions.Decision, error) {
 	blocked := make(map[string]publishingrestrictions.Decision)
 	if h == nil || h.publishingRestrictions == nil {
 		return blocked, nil
 	}
-	decisionsByPlatform := make(map[string]publishingrestrictions.Decision)
+	if snapshot == nil {
+		snapshot = make(publishingRestrictionPolicySnapshot)
+	}
 	for _, post := range posts {
-		platformName := strings.ToLower(strings.TrimSpace(accountMap[post.AccountID].Platform))
-		decision, evaluated := decisionsByPlatform[platformName]
-		if !evaluated {
-			var err error
-			decision, err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
-			if err != nil {
-				return nil, err
-			}
-			decisionsByPlatform[platformName] = decision
+		account, trusted := accountMap[post.AccountID]
+		if !trusted || account.Disconnected {
+			continue
 		}
-		if decision.Restricted {
-			blocked[post.AccountID] = decision
+		platformName := strings.ToLower(strings.TrimSpace(account.Platform))
+		if platformName == "" {
+			continue
+		}
+		evaluation, evaluated := snapshot[platformName]
+		if !evaluated {
+			evaluation.decision, evaluation.err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
+			snapshot[platformName] = evaluation
+		}
+		if evaluation.err != nil {
+			return nil, evaluation.err
+		}
+		if evaluation.decision.Restricted {
+			blocked[post.AccountID] = evaluation.decision
 		}
 	}
 	return blocked, nil
