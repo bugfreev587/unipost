@@ -3,16 +3,21 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 type fakePostRestrictionEvaluator struct {
@@ -87,6 +92,223 @@ func (f *fakePostRestrictionEvaluator) Evaluate(_ context.Context, _ string, pla
 	return f.decisions[platformName], nil
 }
 
+func TestImmediatePersistenceUsesAdmissionPolicySnapshot(t *testing.T) {
+	h, dbtx, evaluator, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	blockedTargets, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", parsed.Posts, accounts)
+	if err != nil {
+		t.Fatalf("admission policy snapshot: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts", nil)
+	if _, err := h.executeImmediatePost(req, "ws_1", parsed, accounts, blockedTargets); err != nil {
+		t.Fatalf("executeImmediatePost: %v", err)
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
+func TestBulkPersistenceUsesAdmissionPolicySnapshot(t *testing.T) {
+	h, dbtx, evaluator, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	body := publishRequestBody{PlatformPosts: []platformPostBody{
+		{AccountID: parsed.Posts[0].AccountID, Caption: parsed.Posts[0].Caption, MediaURLs: parsed.Posts[0].MediaURLs, PlatformOptions: parsed.Posts[0].PlatformOptions},
+		{AccountID: parsed.Posts[1].AccountID, Caption: parsed.Posts[1].Caption, MediaURLs: parsed.Posts[1].MediaURLs},
+	}}
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/bulk", nil)
+	entry, _ := h.processBulkOne(req, "ws_1", body, accounts, quota.FreePlanHardBlockGate{}, 0)
+	if entry.Error != nil {
+		t.Fatalf("processBulkOne: %+v", entry.Error)
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
+func TestPublishFromDraftPersistenceUsesAdmissionPolicySnapshot(t *testing.T) {
+	h, dbtx, evaluator, parsed, accounts := newPolicySnapshotHarness(t, "publishing")
+	blockedTargets, err := h.evaluatePublishingRestrictions(context.Background(), "ws_1", parsed.Posts, accounts)
+	if err != nil {
+		t.Fatalf("draft policy snapshot: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/post_1/publish", nil)
+	rr := httptest.NewRecorder()
+	h.publishExistingPost(rr, req, "ws_1", dbtx.post, parsed, accounts, blockedTargets)
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("publishExistingPost status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
+func TestScheduledEnqueueUsesExecutionPolicySnapshot(t *testing.T) {
+	h, dbtx, evaluator, _, _ := newPolicySnapshotHarness(t, "scheduled")
+	if err := h.EnqueueScheduledPost(context.Background(), dbtx.post); err != nil {
+		t.Fatalf("EnqueueScheduledPost: %v", err)
+	}
+	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
+}
+
+func newPolicySnapshotHarness(t *testing.T, status string) (*SocialPostHandler, *policySnapshotDB, *fakePostRestrictionEvaluator, parsedRequest, map[string]platform.ValidateAccount) {
+	t.Helper()
+	posts := []platform.PlatformPostInput{
+		{AccountID: "tk_1", Caption: "blocked", MediaURLs: []string{"https://cdn.example.com/video.mp4"}, PlatformOptions: map[string]any{"privacy_level": "PUBLIC_TO_EVERYONE"}},
+		{AccountID: "ig_1", Caption: "allowed", MediaURLs: []string{"https://cdn.example.com/image.jpg"}},
+	}
+	metadata, err := platform.EncodePostMetadata(posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx := &policySnapshotDB{
+		accounts: map[string]db.SocialAccount{
+			"tk_1": {ID: "tk_1", ProfileID: "profile_1", Platform: "tiktok", Status: "active"},
+			"ig_1": {ID: "ig_1", ProfileID: "profile_1", Platform: "instagram", Status: "active"},
+		},
+		post: db.SocialPost{
+			ID:          "post_1",
+			WorkspaceID: "ws_1",
+			Status:      status,
+			Metadata:    metadata,
+			CreatedAt:   pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			ProfileIds:  []string{"profile_1"},
+		},
+	}
+	evaluator := &fakePostRestrictionEvaluator{
+		decisions: map[string]publishingrestrictions.Decision{
+			"tiktok": {Restricted: true, Platform: "tiktok", PlanID: "free", CycleID: "cycle_1", Code: publishingrestrictions.NormalizedCode},
+		},
+		err:       errors.New("unexpected second policy read"),
+		errOnCall: 3,
+	}
+	h := NewSocialPostHandler(db.New(dbtx), nil, nil, nil, nil, nil, nil).SetPublishingRestrictions(evaluator)
+	accounts := map[string]platform.ValidateAccount{
+		"tk_1": {Platform: "tiktok"},
+		"ig_1": {Platform: "instagram"},
+	}
+	return h, dbtx, evaluator, parsedRequest{Posts: posts}, accounts
+}
+
+func assertMixedPolicySnapshotPersistence(t *testing.T, dbtx *policySnapshotDB, evaluator *fakePostRestrictionEvaluator) {
+	t.Helper()
+	if got := strings.Join(evaluator.calls, ","); got != "tiktok,instagram" {
+		t.Fatalf("policy calls=%q, want one tiktok/instagram snapshot", got)
+	}
+	if len(dbtx.results) != 2 {
+		t.Fatalf("results=%+v, want two", dbtx.results)
+	}
+	if dbtx.results[0].SocialAccountID != "tk_1" || dbtx.results[0].Status != "failed" ||
+		!dbtx.results[0].ErrorMessage.Valid || dbtx.results[0].ErrorMessage.String != publishingrestrictions.UserMessage {
+		t.Fatalf("restricted tiktok result=%+v", dbtx.results[0])
+	}
+	if len(dbtx.jobs) != 1 || dbtx.jobs[0].SocialAccountID != "ig_1" || dbtx.jobs[0].Platform != "instagram" {
+		t.Fatalf("jobs=%+v, want one instagram job", dbtx.jobs)
+	}
+	if dbtx.updatedStatus != "publishing" {
+		t.Fatalf("parent status=%q, want publishing with an allowed job", dbtx.updatedStatus)
+	}
+}
+
+type policySnapshotDB struct {
+	accounts      map[string]db.SocialAccount
+	post          db.SocialPost
+	results       []db.SocialPostResult
+	jobs          []db.PostDeliveryJob
+	updatedStatus string
+}
+
+func (f *policySnapshotDB) Exec(_ context.Context, query string, args ...interface{}) (pgconn.CommandTag, error) {
+	switch {
+	case strings.Contains(query, "-- name: UpdateSocialPostStatus"):
+		f.updatedStatus = args[1].(string)
+		f.post.Status = f.updatedStatus
+		return pgconn.CommandTag{}, nil
+	case strings.Contains(query, "-- name: UpdateSocialPostResultFailureDetails"),
+		strings.Contains(query, "-- name: DeleteMediaPostUsagesForPost"),
+		strings.Contains(query, "-- name: UpdateSocialPostErrorMetadata"):
+		return pgconn.CommandTag{}, nil
+	default:
+		return pgconn.CommandTag{}, fmt.Errorf("unexpected Exec: %s", query)
+	}
+}
+
+func (f *policySnapshotDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	if strings.Contains(query, "-- name: GetDistinctProfileIDsForAccounts") {
+		return &policySnapshotRows{}, nil
+	}
+	return nil, fmt.Errorf("unexpected Query: %s", query)
+}
+
+func (f *policySnapshotDB) QueryRow(_ context.Context, query string, args ...interface{}) pgx.Row {
+	switch {
+	case strings.Contains(query, "-- name: CreateSocialPost :one"):
+		f.post.Caption = args[1].(pgtype.Text)
+		f.post.MediaUrls = args[2].([]string)
+		f.post.Status = args[3].(string)
+		f.post.Metadata = args[4].([]byte)
+		return socialPostScanRow(f.post)
+	case strings.Contains(query, "-- name: GetSocialAccountByIDAndWorkspace"):
+		return policySnapshotSocialAccountRow(f.accounts[args[0].(string)])
+	case strings.Contains(query, "-- name: CreateSocialPostResult"):
+		result := db.SocialPostResult{
+			ID:              fmt.Sprintf("result_%d", len(f.results)+1),
+			PostID:          args[0].(string),
+			SocialAccountID: args[1].(string),
+			Caption:         args[2].(string),
+			Status:          args[3].(string),
+			ExternalID:      args[4].(pgtype.Text),
+			ErrorMessage:    args[5].(pgtype.Text),
+			PublishedAt:     args[6].(pgtype.Timestamptz),
+			Url:             args[7].(pgtype.Text),
+			DebugCurl:       args[8].(pgtype.Text),
+			FbMediaType:     args[9].(pgtype.Text),
+		}
+		f.results = append(f.results, result)
+		return socialPostResultScanRow(result)
+	case strings.Contains(query, "-- name: CreatePostDeliveryJob"):
+		job := db.PostDeliveryJob{
+			ID:                 fmt.Sprintf("job_%d", len(f.jobs)+1),
+			PostID:             args[0].(string),
+			SocialPostResultID: args[1].(string),
+			WorkspaceID:        args[2].(string),
+			SocialAccountID:    args[3].(string),
+			Platform:           args[4].(string),
+			PostInputIndex:     args[5].(int32),
+			Kind:               args[6].(string),
+			State:              args[7].(string),
+			Attempts:           args[8].(int32),
+			MaxAttempts:        args[9].(int32),
+			CreatedAt:          pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		}
+		f.jobs = append(f.jobs, job)
+		return postDeliveryJobScanRow(job)
+	case strings.Contains(query, "-- name: GetPostPublishingRestrictionMediaRetention"):
+		return scanRow{values: []any{pgtype.Timestamptz{}}}
+	case strings.Contains(query, "-- name: CreatePostFailure"):
+		return scanRow{values: []any{
+			"failure_1", args[0], args[1], args[2], args[3], args[4], args[5], args[6],
+			args[7], args[8], args[9], args[10], pgtype.Timestamptz{Time: time.Now(), Valid: true},
+			args[11], args[12], args[13], args[14],
+		}}
+	default:
+		return scanRow{err: fmt.Errorf("unexpected QueryRow: %s", query)}
+	}
+}
+
+func policySnapshotSocialAccountRow(account db.SocialAccount) scanRow {
+	return scanRow{values: []any{
+		account.ID, account.ProfileID, account.Platform, account.AccessToken, account.RefreshToken,
+		account.TokenExpiresAt, account.ExternalAccountID, account.AccountName, account.AccountAvatarUrl,
+		account.ConnectedAt, account.DisconnectedAt, account.Metadata, account.Scope, account.Status,
+		account.ConnectionType, account.ConnectSessionID, account.ExternalUserID, account.ExternalUserEmail,
+		account.LastRefreshedAt, account.XAppMode,
+	}}
+}
+
+type policySnapshotRows struct{}
+
+func (*policySnapshotRows) Close()                                       {}
+func (*policySnapshotRows) Err() error                                   { return nil }
+func (*policySnapshotRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (*policySnapshotRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (*policySnapshotRows) Next() bool                                   { return false }
+func (*policySnapshotRows) Scan(...any) error                            { return errors.New("no current row") }
+func (*policySnapshotRows) Values() ([]any, error)                       { return nil, nil }
+func (*policySnapshotRows) RawValues() [][]byte                          { return nil }
+func (*policySnapshotRows) Conn() *pgx.Conn                              { return nil }
+
 func TestEvaluatePublishingRestrictionsUsesTrustedAccountPlatforms(t *testing.T) {
 	evaluator := &fakePostRestrictionEvaluator{decisions: map[string]publishingrestrictions.Decision{
 		"tiktok": {Restricted: true, Platform: "tiktok", PlanID: "free", Code: publishingrestrictions.NormalizedCode},
@@ -141,26 +363,25 @@ func TestQueuedPolicyPreflightPrecedesEveryResultAndJobWrite(t *testing.T) {
 	}
 }
 
-func TestQueuedPolicyPreflightAbortsWhenLaterTargetReadFails(t *testing.T) {
-	evaluator := &fakePostRestrictionEvaluator{err: errors.New("policy database unavailable"), errOnCall: 2}
-	h := &SocialPostHandler{publishingRestrictions: evaluator}
+func TestQueuedPolicyEvaluationUsesProvidedSnapshot(t *testing.T) {
 	parsed := []platform.PlatformPostInput{{AccountID: "tk_1"}, {AccountID: "ig_1"}}
 	accounts := map[string]db.SocialAccount{
 		"tk_1": {ID: "tk_1", Platform: "tiktok", Status: "active"},
 		"ig_1": {ID: "ig_1", Platform: "instagram", Status: "active"},
 	}
-	evaluations, err := h.evaluateQueuedDeliveryTargets(
-		context.Background(),
-		"ws_1",
+	evaluations := evaluateQueuedDeliveryTargets(
 		parsed,
 		accounts,
 		map[string]platform.ValidateAccount{},
+		map[string]publishingrestrictions.Decision{
+			"tk_1": {Restricted: true, Platform: "tiktok"},
+		},
 	)
-	if err == nil || evaluations != nil {
-		t.Fatalf("later policy read must abort the whole preflight: evaluations=%+v err=%v", evaluations, err)
+	if len(evaluations) != 2 || !evaluations[0].policyDecision.Restricted || evaluations[0].validationErr == nil {
+		t.Fatalf("evaluations=%+v", evaluations)
 	}
-	if strings.Join(evaluator.calls, ",") != "tiktok,instagram" {
-		t.Fatalf("policy calls=%v", evaluator.calls)
+	if evaluations[1].policyDecision.Restricted || evaluations[1].validationErr != nil {
+		t.Fatalf("allowed evaluation=%+v", evaluations[1])
 	}
 }
 

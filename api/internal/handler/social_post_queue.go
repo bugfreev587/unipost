@@ -173,27 +173,19 @@ type queuedDeliveryEvaluation struct {
 	policyDecision publishingrestrictions.Decision
 }
 
-func (h *SocialPostHandler) evaluateQueuedDeliveryTargets(
-	ctx context.Context,
-	workspaceID string,
+func evaluateQueuedDeliveryTargets(
 	parsed []platform.PlatformPostInput,
 	dbAccounts map[string]db.SocialAccount,
 	accountMap map[string]platform.ValidateAccount,
-) ([]queuedDeliveryEvaluation, error) {
+	blockedTargets map[string]publishingrestrictions.Decision,
+) []queuedDeliveryEvaluation {
 	evaluations := make([]queuedDeliveryEvaluation, 0, len(parsed))
 	for _, pp := range parsed {
 		account, ok := dbAccounts[pp.AccountID]
 		platformName, validationErr := summarizeAccountValidation(account, ok, accountMap[pp.AccountID])
-		var decision publishingrestrictions.Decision
-		if validationErr == nil && h.publishingRestrictions != nil {
-			var err error
-			decision, err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
-			if err != nil {
-				return nil, err
-			}
-			if decision.Restricted {
-				validationErr = errors.New(publishingrestrictions.UserMessage)
-			}
+		decision := blockedTargets[pp.AccountID]
+		if validationErr == nil && decision.Restricted {
+			validationErr = errors.New(publishingrestrictions.UserMessage)
 		}
 		evaluations = append(evaluations, queuedDeliveryEvaluation{
 			account:        account,
@@ -202,7 +194,7 @@ func (h *SocialPostHandler) evaluateQueuedDeliveryTargets(
 			policyDecision: decision,
 		})
 	}
-	return evaluations, nil
+	return evaluations
 }
 
 func (h *SocialPostHandler) enqueueParsedPostDeliveries(
@@ -210,14 +202,10 @@ func (h *SocialPostHandler) enqueueParsedPostDeliveries(
 	post db.SocialPost,
 	parsed []platform.PlatformPostInput,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) ([]db.SocialPostResult, []db.PostDeliveryJob, error) {
 	dbAccounts := h.loadDBAccountsByIDs(ctx, post.WorkspaceID, uniqueAccountIDs(parsed))
-	evaluations, err := h.evaluateQueuedDeliveryTargets(ctx, post.WorkspaceID, parsed, dbAccounts, accountMap)
-	if err != nil {
-		// Policy reads are completed before the first result/job write so a
-		// mid-list database failure cannot leave partial immediate state.
-		return nil, nil, err
-	}
+	evaluations := evaluateQueuedDeliveryTargets(parsed, dbAccounts, accountMap, blockedTargets)
 	results := make([]db.SocialPostResult, 0, len(parsed))
 	jobs := make([]db.PostDeliveryJob, 0, len(parsed))
 	failureSummaries := make([]string, 0)
@@ -336,6 +324,7 @@ func (h *SocialPostHandler) queueImmediatePost(
 	workspaceID string,
 	parsed parsedRequest,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
 	metaJSON, _ := platform.EncodePostMetadata(parsed.Posts)
 	canonicalCaption := pgtype.Text{}
@@ -362,7 +351,7 @@ func (h *SocialPostHandler) queueImmediatePost(
 		return socialPostResponse{}, fmt.Errorf("failed to create post: %w", err)
 	}
 
-	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed.Posts, accountMap)
+	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed.Posts, accountMap, blockedTargets)
 	if err != nil {
 		return socialPostResponse{}, err
 	}
@@ -389,8 +378,9 @@ func (h *SocialPostHandler) enqueueExistingPostDeliveries(
 	post db.SocialPost,
 	parsed []platform.PlatformPostInput,
 	accountMap map[string]platform.ValidateAccount,
+	blockedTargets map[string]publishingrestrictions.Decision,
 ) (socialPostResponse, error) {
-	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
+	results, jobs, err := h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
 	if err != nil {
 		return socialPostResponse{}, err
 	}
@@ -452,7 +442,7 @@ func (h *SocialPostHandler) EnqueueScheduledPost(ctx context.Context, post db.So
 		})
 		return h.failScheduledPostForQuota(ctx, post, parsed, accountMap, blockedTargets, status, quotaUnits)
 	}
-	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap)
+	_, _, err = h.enqueueParsedPostDeliveries(ctx, post, parsed, accountMap, blockedTargets)
 	return err
 }
 

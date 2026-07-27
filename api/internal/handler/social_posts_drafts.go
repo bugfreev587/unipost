@@ -237,7 +237,7 @@ func (h *SocialPostHandler) PublishDraft(w http.ResponseWriter, r *http.Request)
 	// re-create the parent row, but we already have one — instead,
 	// inline the same logic against the claimed row. To minimize
 	// duplication we add a thin variant that takes an existing row.
-	h.publishExistingPost(w, r, workspaceID, claimed, parsed, accountMap)
+	h.publishExistingPost(w, r, workspaceID, claimed, parsed, accountMap, blockedTargets)
 }
 
 // rollbackToDraft is the inverse of ClaimDraftForPublish. Used when

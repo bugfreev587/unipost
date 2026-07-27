@@ -218,7 +218,7 @@ func (h *SocialPostHandler) processBulkOne(
 	}
 
 	// Publish.
-	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap)
+	resp, err := h.executeImmediatePost(r, workspaceID, parsed, accountMap, blockedTargets)
 	if err != nil {
 		return bulkResultEntry{
 			Status: http.StatusInternalServerError,
