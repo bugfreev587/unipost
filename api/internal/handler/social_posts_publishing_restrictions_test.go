@@ -238,6 +238,53 @@ func TestPublishDraftCountsOnlyAllowedTargetsAtQuotaBoundary(t *testing.T) {
 	assertMixedPolicySnapshotPersistence(t, dbtx, evaluator)
 }
 
+func TestPublishDraftRejectsWhenAllowedTargetsExceedQuotaBoundary(t *testing.T) {
+	h, dbtx, evaluator, parsed, _ := newPolicySnapshotHarness(t, "draft")
+	parsed.Posts = append(parsed.Posts, platform.PlatformPostInput{
+		AccountID: "ig_2",
+		Caption:   "second allowed",
+		MediaURLs: []string{"https://cdn.example.com/second-image.jpg"},
+	})
+	metadata, err := platform.EncodePostMetadata(parsed.Posts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dbtx.post.Metadata = metadata
+	dbtx.accounts["ig_2"] = db.SocialAccount{
+		ID:        "ig_2",
+		ProfileID: "profile_2",
+		Platform:  "instagram",
+		Status:    "active",
+	}
+	dbtx.quotaEnabled = true
+	dbtx.quotaUsage = 99
+	dbtx.quotaLimit = 100
+	evaluator.errOnCall = 4
+	h.quota = quota.NewChecker(h.queries)
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts/post_1/publish", nil)
+	req = req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+	req = withChiParam(req, "id", "post_1")
+	rr := httptest.NewRecorder()
+
+	h.PublishDraft(rr, req)
+
+	if rr.Code != http.StatusPaymentRequired || !strings.Contains(rr.Body.String(), `"code":"PLAN_POST_QUOTA_EXCEEDED"`) {
+		t.Fatalf("PublishDraft status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "this request needs 2 more") {
+		t.Fatalf("quota response must count both allowed targets: %s", rr.Body.String())
+	}
+	if dbtx.updatedStatus != "draft" || dbtx.post.Status != "draft" {
+		t.Fatalf("claimed draft was not restored: updated_status=%q post_status=%q", dbtx.updatedStatus, dbtx.post.Status)
+	}
+	if len(dbtx.results) != 0 || len(dbtx.jobs) != 0 || len(dbtx.failures) != 0 {
+		t.Fatalf("quota rejection persisted delivery state: results=%d jobs=%d failures=%d", len(dbtx.results), len(dbtx.jobs), len(dbtx.failures))
+	}
+	if got := strings.Join(evaluator.calls, ","); got != "tiktok,instagram,instagram" {
+		t.Fatalf("policy calls=%q, want one evaluation per target", got)
+	}
+}
+
 func newPolicySnapshotHarness(t *testing.T, status string) (*SocialPostHandler, *policySnapshotDB, *fakePostRestrictionEvaluator, parsedRequest, map[string]platform.ValidateAccount) {
 	t.Helper()
 	posts := []platform.PlatformPostInput{
@@ -352,10 +399,14 @@ func (f *policySnapshotDB) Query(_ context.Context, query string, _ ...interface
 	case strings.Contains(query, "-- name: GetDistinctProfileIDsForAccounts"):
 		return &policySnapshotRows{}, nil
 	case strings.Contains(query, "-- name: ListSocialAccountsByWorkspace"):
-		return &policySnapshotRows{values: [][]any{
-			policySnapshotSocialAccountValues(f.accounts["tk_1"]),
-			policySnapshotSocialAccountValues(f.accounts["ig_1"]),
-		}}, nil
+		values := make([][]any, 0, len(f.accounts))
+		for _, accountID := range []string{"tk_1", "ig_1", "ig_2"} {
+			account, ok := f.accounts[accountID]
+			if ok {
+				values = append(values, policySnapshotSocialAccountValues(account))
+			}
+		}
+		return &policySnapshotRows{values: values}, nil
 	}
 	return nil, fmt.Errorf("unexpected Query: %s", query)
 }
