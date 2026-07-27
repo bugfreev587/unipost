@@ -35,11 +35,17 @@ func (h *SocialPostHandler) evaluatePublishingRestrictions(
 	if h == nil || h.publishingRestrictions == nil {
 		return blocked, nil
 	}
+	decisionsByPlatform := make(map[string]publishingrestrictions.Decision)
 	for _, post := range posts {
 		platformName := strings.ToLower(strings.TrimSpace(accountMap[post.AccountID].Platform))
-		decision, err := h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
-		if err != nil {
-			return nil, err
+		decision, evaluated := decisionsByPlatform[platformName]
+		if !evaluated {
+			var err error
+			decision, err = h.publishingRestrictions.Evaluate(ctx, workspaceID, platformName)
+			if err != nil {
+				return nil, err
+			}
+			decisionsByPlatform[platformName] = decision
 		}
 		if decision.Restricted {
 			blocked[post.AccountID] = decision
