@@ -1,8 +1,120 @@
 import assert from "node:assert/strict";
+import { createRequire } from "node:module";
 import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 
 const read = (path) => readFile(new URL(`../../${path}`, import.meta.url), "utf8");
+const requireFromDashboard = createRequire(new URL("../../dashboard/package.json", import.meta.url));
+const { load: parseYaml } = requireFromDashboard("js-yaml");
+
+const publishingRestrictionScript =
+  "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts";
+const postgresTestsByPackage = {
+  "./internal/db": [
+    "TestMigrationGatePostgresApplies125OnlyAfterVerifiedBackup",
+    "TestMigrationGatePostgresFailureBeforeVerificationLeaves124Unchanged",
+    "TestMigrationGatePostgresExcludesHistoricalRunMigrationsUntilBackupVerified",
+    "TestMigrationGatePostgresConcurrentPreDeploysCreateOneBackup",
+    "TestMigrationGatePostgresReplacementAfterLockedOrphanCreatesFreshBackup",
+    "TestRequireCurrentSchemaRejects124AndAccepts125",
+    "TestRequireCurrentSchemaRejectsNewerDatabaseAsUnsafeRollback",
+    "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
+    "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
+    "TestCreateEmailSendAttemptAuditStillRetriesFailedRecord",
+  ],
+  "./internal/handler": [
+    "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",
+  ],
+  "./internal/worker": [
+    "TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity",
+    "TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction",
+    "TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed",
+  ],
+};
+const postgresTestSelector = `^(?:${Object.values(postgresTestsByPackage).flat().join("|")})$`;
+
+function assertUnconditional(item, label) {
+  assert.equal(item.if, undefined, `${label} must not have an if condition`);
+  assert.notEqual(item["continue-on-error"], true, `${label} must not continue on error`);
+}
+
+function requiredStep(job, name, jobName) {
+  const matches = (job.steps || []).filter((step) => step.name === name);
+  assert.equal(matches.length, 1, `${jobName} must have exactly one ${name} step`);
+  assertUnconditional(matches[0], `${jobName} / ${name}`);
+  return matches[0];
+}
+
+function assertPublishingRestrictionCIContracts({ packageJson, workflow }) {
+  assert.equal(
+    packageJson.scripts["test:publishing-restrictions"],
+    publishingRestrictionScript,
+  );
+
+  const parsed = parseYaml(workflow);
+  const dashboardJob = parsed.jobs?.dashboard;
+  assert.ok(dashboardJob, "CI must define jobs.dashboard");
+  assertUnconditional(dashboardJob, "jobs.dashboard");
+  const contractsStep = requiredStep(
+    dashboardJob,
+    "Run publishing restriction frontend contracts",
+    "jobs.dashboard",
+  );
+  assert.equal(contractsStep.run, "npm run test:publishing-restrictions");
+  const buildStep = requiredStep(dashboardJob, "Build dashboard", "jobs.dashboard");
+  assert.equal(buildStep.run, "npm run build");
+  assert.ok(
+    dashboardJob.steps.indexOf(contractsStep) < dashboardJob.steps.indexOf(buildStep),
+    "publishing restriction contracts must run before the dashboard build",
+  );
+
+  const postgresJob = parsed.jobs?.["api-postgres-integration"];
+  assert.ok(postgresJob, "CI must define jobs.api-postgres-integration");
+  assertUnconditional(postgresJob, "jobs.api-postgres-integration");
+  const postgresService = postgresJob.services?.postgres;
+  assert.ok(postgresService, "jobs.api-postgres-integration must define its PostgreSQL service");
+  assert.equal(postgresService.image, "postgres:16-alpine");
+  assert.deepEqual(postgresService.ports, ["5432:5432"]);
+  assert.deepEqual(postgresService.env, {
+    POSTGRES_USER: "postgres",
+    POSTGRES_PASSWORD: "test",
+    POSTGRES_DB: "unipost_test",
+  });
+  assert.equal(
+    postgresJob.env?.PUBLISHING_RESTRICTION_TEST_DATABASE_URL,
+    "postgresql://postgres:test@127.0.0.1:5432/unipost_test?sslmode=disable",
+  );
+
+  const postgresStep = requiredStep(
+    postgresJob,
+    "Run publishing restriction and migration gate PostgreSQL integration tests",
+    "jobs.api-postgres-integration",
+  );
+  const selectorMatch = postgresStep.run.match(/^test_selector='([^']+)'$/m);
+  assert.ok(selectorMatch, "PostgreSQL step must assign one literal test_selector");
+  assert.equal(selectorMatch[1], postgresTestSelector);
+  assert.match(postgresStep.run, /^set -euo pipefail$/m);
+  assert.match(
+    postgresStep.run,
+    /go test -tags=integration "\$package" -list "\$test_selector"/,
+  );
+  for (const [packageName, testNames] of Object.entries(postgresTestsByPackage)) {
+    const expectedCall = [
+      `assert_exact_tests ${packageName} \\`,
+      ...testNames.map((testName, index) => (
+        `  ${testName}${index === testNames.length - 1 ? "" : " \\"}`
+      )),
+    ].join("\n");
+    assert.ok(
+      postgresStep.run.includes(expectedCall),
+      `PostgreSQL step must enumerate the exact ${packageName} test set`,
+    );
+  }
+  assert.match(
+    postgresStep.run,
+    /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/worker \\\n\s+-run "\$test_selector" -count=1 -v/,
+  );
+}
 
 test("AGENTS enforces exclusive branch and worktree ownership", async () => {
   const agents = await read("AGENTS.md");
@@ -49,48 +161,50 @@ test("CI makes the dashboard SEO regression blocking", async () => {
   );
 });
 
-test("CI makes the four publishing restriction frontend contracts blocking before build", async () => {
+test("CI makes the publishing restriction contracts blocking in their required jobs", async () => {
   const packageJson = JSON.parse(await read("dashboard/package.json"));
-  assert.equal(
-    packageJson.scripts["test:publishing-restrictions"],
-    "node --test src/lib/publishing-restrictions.test.ts tests/admin-publishing-restrictions-source.test.mjs tests/publishing-restrictions-customer-source.test.mjs tests/post-result-errors.test.mts",
-  );
-
   const workflow = await read(".github/workflows/ci.yml");
-  const contractsStep = workflow.indexOf("- name: Run publishing restriction frontend contracts");
-  const buildStep = workflow.indexOf("- name: Build dashboard");
-  assert.notEqual(contractsStep, -1, "CI must run the publishing restriction frontend contracts");
-  assert.notEqual(buildStep, -1, "CI must retain the dashboard build");
-  assert.ok(contractsStep < buildStep, "publishing restriction contracts must run before the dashboard build");
-  assert.match(
-    workflow,
-    /Run publishing restriction frontend contracts\s+run: npm run test:publishing-restrictions/,
-  );
+  assertPublishingRestrictionCIContracts({ packageJson, workflow });
 });
 
-test("CI runs every publishing restriction PostgreSQL contract against its isolated service", async () => {
+test("publishing restriction CI guard rejects semantic workflow mutations", async (t) => {
+  const packageJson = JSON.parse(await read("dashboard/package.json"));
   const workflow = await read(".github/workflows/ci.yml");
-  assert.match(workflow, /api-postgres-integration:[\s\S]*services:[\s\S]*postgres:/);
-  assert.match(
-    workflow,
-    /PUBLISHING_RESTRICTION_TEST_DATABASE_URL: postgresql:\/\/postgres:test@127\.0\.0\.1:5432\/unipost_test\?sslmode=disable/,
-  );
-  assert.match(
-    workflow,
-    /go test -tags=integration \.\/internal\/db \.\/internal\/handler \.\/internal\/worker/,
-  );
-  for (const testName of [
-    "TestPublishingRestrictionFailedRecipientUpgradeConvergesAfterExecuted124",
-    "TestCreateEmailSendAttemptAuditPreservesTerminalSentRecord",
-    "TestCreateEmailSendAttemptAuditStillRetriesFailedRecord",
-    "TestFinalizeRestrictedPostDeliveryJobPostgresLeaseAtomicity",
-    "TestPublishingRestrictionTerminalFailureManualRetryPreservesProviderIdentity",
-    "TestPublishingRestrictionRecipientClaimSkipsRowLockedByConcurrentTransaction",
-    "TestPublishingRestrictionStaleSendingTerminatesAndCannotBeReclaimed",
-    "TestMigrationGatePostgres",
-    "TestRequireCurrentSchema",
-  ]) {
-    assert.ok(workflow.includes(testName), `CI omits PostgreSQL contract ${testName}`);
+  const frontendStep = [
+    "      - name: Run publishing restriction frontend contracts",
+    "        run: npm run test:publishing-restrictions",
+  ].join("\n");
+
+  const mutations = {
+    "continue-on-error frontend step": (source) => source.replace(
+      frontendStep,
+      `${frontendStep}\n        continue-on-error: true`,
+    ),
+    "disabled PostgreSQL job": (source) => source.replace(
+      "  api-postgres-integration:\n",
+      "  api-postgres-integration:\n    if: false\n",
+    ),
+    "frontend command in the wrong job": (source) => source
+      .replace(`${frontendStep}\n\n`, "")
+      .replace("\n  dashboard:\n", `\n${frontendStep}\n\n  dashboard:\n`),
+    "comment-only frontend command": (source) => source.replace(
+      frontendStep,
+      "      # - name: Run publishing restriction frontend contracts run: npm run test:publishing-restrictions",
+    ),
+    "unanchored PostgreSQL selector": (source) => source.replace(
+      "test_selector='^(?:",
+      "test_selector='(?:",
+    ),
+  };
+
+  for (const [name, mutate] of Object.entries(mutations)) {
+    await t.test(name, () => {
+      assert.throws(
+        () => assertPublishingRestrictionCIContracts({ packageJson, workflow: mutate(workflow) }),
+        undefined,
+        `${name} must be rejected`,
+      );
+    });
   }
 });
 
