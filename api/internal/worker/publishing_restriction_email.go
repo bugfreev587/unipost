@@ -230,7 +230,6 @@ func (w *PublishingRestrictionEmailWorker) ProcessBatch(ctx context.Context) err
 			}
 			continue
 		}
-		_ = w.store.RefreshPublishingRestrictionEmailCampaign(ctx, recipient.CampaignID)
 	}
 	return nil
 }
