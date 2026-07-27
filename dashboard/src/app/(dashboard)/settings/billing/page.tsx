@@ -22,6 +22,7 @@ import {
 } from "@/lib/api";
 import { X_CREDIT_OPERATIONS, X_CREDIT_PLANS } from "@/data/x-credits-catalog.generated";
 import { formatPlanPostAllowance, formatPostUsage, usagePercentage } from "@/lib/billing-format";
+import { isPlanVisibleInBilling } from "@/lib/plan-visibility";
 import { buildContactPageHref, buildSupportMailto } from "@/lib/support";
 import { formatWorkspaceTrial } from "@/lib/trial-format";
 import { CheckCircle2, ExternalLink } from "lucide-react";
@@ -308,6 +309,7 @@ function BillingSettingsContent() {
   const urlPostCredits = xOperationCredits["post.create_url"];
   const completeCommentCredits = xOperationCredits["post.mention.received"] + xOperationCredits["post.create"];
   const completeDMCredits = xOperationCredits["dm.received"] + xOperationCredits["dm.send"];
+  const visiblePlans = PLANS.filter((plan) => isPlanVisibleInBilling(plan.id, billing?.plan));
   const formattedCurrentTrial = billing?.trial ? formatWorkspaceTrial(billing.trial) : null;
 
   return (
@@ -694,11 +696,11 @@ function BillingSettingsContent() {
           <div className="dt-body" style={{ fontWeight: 600 }}>Upgrade Plan</div>
         </div>
         <div className="dt-body-sm">
-          Plans are product-stage tiers (Free / API / Basic / Growth / Team). See the full feature matrix at <a href="/pricing" style={{ color: "var(--daccent)", textDecoration: "underline" }}>unipost.dev/pricing</a>.
+          Plans are product-stage tiers (Free / Basic / Growth / Team). See the full feature matrix at <a href="/pricing" style={{ color: "var(--daccent)", textDecoration: "underline" }}>unipost.dev/pricing</a>.
         </div>
       </div>
       <div className="plan-cards">
-        {PLANS.map((plan) => {
+        {visiblePlans.map((plan) => {
           const isCurrent = billing?.plan === plan.id;
           const isTrialPlan = billing?.trial?.plan_id === plan.id;
           const trialPlanCta = isTrialPlan && billing?.trial?.status === "pending_activation"
