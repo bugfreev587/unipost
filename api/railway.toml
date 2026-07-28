@@ -5,6 +5,10 @@ buildCommand = "go build -o bin/api ./cmd/api"
 # Every environment that can run irreversible migrations, including an
 # isolated PR environment, must supply its own environment-scoped Railway
 # backup token and exact Postgres service and volume-instance IDs.
+# Railway variables are service-scoped, so configure them on every service
+# that inherits this pre-deploy command, including API and worker services.
+# A cloned PR environment must replace the base environment's token and
+# volume-instance ID with values scoped to the new environment before deploy.
 preDeployCommand = ["./bin/api migrate"]
 startCommand = "./bin/api"
 healthcheckPath = "/health"
