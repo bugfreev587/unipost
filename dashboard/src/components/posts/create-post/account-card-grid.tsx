@@ -14,6 +14,8 @@ interface ConnectedAccountsGridProps {
   onToggle: (id: string) => void;
   onToggleAll?: () => void;
   profileName?: string;
+  disabledIds?: Set<string>;
+  restrictionNoticeId?: string;
 }
 
 // Alias for backward compatibility with the drawer
@@ -30,6 +32,8 @@ export function ConnectedAccountsGrid({
   onToggle,
   onToggleAll,
   profileName,
+  disabledIds = new Set(),
+  restrictionNoticeId,
 }: ConnectedAccountsGridProps) {
   if (accounts.length === 0) {
     return (
@@ -78,6 +82,8 @@ export function ConnectedAccountsGrid({
               selected={selectedIds.has(account.id)}
               selectedSiblingId={selectedSiblingId}
               onToggle={onToggle}
+              disabled={disabledIds.has(account.id)}
+              restrictionNoticeId={restrictionNoticeId}
             />
           );
         })}
@@ -97,26 +103,32 @@ function AccountCardSmall({
   selected,
   selectedSiblingId,
   onToggle,
+  disabled,
+  restrictionNoticeId,
 }: {
   account: SocialAccount;
   selected: boolean;
   selectedSiblingId: string | null;
   onToggle: (id: string) => void;
+  disabled: boolean;
+  restrictionNoticeId?: string;
 }) {
   const brandColor = PLATFORM_BRAND_COLORS[account.platform] || "var(--dmuted)";
   const iconColor = account.platform === "youtube" ? "var(--dmuted)" : brandColor;
   const iconBackground = account.platform === "youtube" ? "color-mix(in srgb, var(--dmuted) 12%, transparent)" : `${brandColor}20`;
   const label = accountSourceLabel(account);
   const accountLabel = getAccountDisplayName(account);
+  const isDisabled = disabled || !!selectedSiblingId;
 
   return (
     <button
       type="button"
       onClick={() => onToggle(account.id)}
-      disabled={!!selectedSiblingId}
+      disabled={isDisabled}
+      aria-describedby={disabled ? restrictionNoticeId : undefined}
       aria-label={selectedSiblingId ? `Already selected from another Profile: ${label} ${accountLabel}` : `${selected ? "Unselect" : "Select"} ${label} ${accountLabel}`}
       title={selectedSiblingId ? "Already selected from another Profile" : undefined}
-      className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] disabled:cursor-not-allowed disabled:opacity-50"
+      className="relative rounded-lg border p-2.5 text-left transition-all duration-[180ms] [transition-timing-function:cubic-bezier(0.16,1,0.3,1)] disabled:cursor-not-allowed disabled:opacity-55"
       style={
         selected
           ? {

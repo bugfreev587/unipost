@@ -29,8 +29,14 @@ import (
 // This is the parallel of WebhookDeliveryWorker's role on the webhook
 // side. Compose both under events.MultiBus so one handler.Publish
 // feeds both systems.
+type notificationFanoutStore interface {
+	ResolveNotificationTargets(context.Context, db.ResolveNotificationTargetsParams) ([]db.ResolveNotificationTargetsRow, error)
+	CreateNotificationDelivery(context.Context, db.CreateNotificationDeliveryParams) error
+	CreateSkippedNotificationDelivery(context.Context, db.CreateSkippedNotificationDeliveryParams) error
+}
+
 type NotificationDispatcher struct {
-	queries *db.Queries
+	queries notificationFanoutStore
 }
 
 func NewNotificationDispatcher(queries *db.Queries) *NotificationDispatcher {
@@ -65,6 +71,18 @@ func (d *NotificationDispatcher) EnqueueXInboundNotification(
 	workspaceID string,
 	event string,
 	eventID string,
+	payload []byte,
+) error {
+	return d.fanoutWithEventID(ctx, workspaceID, event, eventID, payload)
+}
+
+// PublishDurable uses the outbox event id as the notification event id. The
+// delivery table's (event_id, channel_id) uniqueness makes retries idempotent.
+func (d *NotificationDispatcher) PublishDurable(
+	ctx context.Context,
+	eventID string,
+	workspaceID string,
+	event string,
 	payload []byte,
 ) error {
 	return d.fanoutWithEventID(ctx, workspaceID, event, eventID, payload)

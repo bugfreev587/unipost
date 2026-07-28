@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,8 +16,11 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
+	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
 
 func TestScheduledIdempotencyPayloadHashIgnoresPostOrder(t *testing.T) {
@@ -128,6 +132,19 @@ func TestMaybeReplayScheduledIdempotencyWritesCreatedReplay(t *testing.T) {
 	assertScheduledReplayResponse(t, rr, existing.ID)
 }
 
+func TestMaybeReplayScheduledIdempotencyIncludesQuotaHold(t *testing.T) {
+	scheduledAt := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	posts := []platform.PlatformPostInput{{AccountID: "sa_threads", Caption: "Launching today"}}
+	existing := scheduledIdempotencyExistingPost(t, posts, scheduledAt)
+	existing.Status = "quota_hold"
+	handler := &SocialPostHandler{queries: db.New(&scheduledIdempotencyTestDB{existing: existing})}
+	rr := httptest.NewRecorder()
+	if !handler.maybeReplayScheduledIdempotency(rr, httptest.NewRequest(http.MethodPost, "/v1/social-posts", nil), "ws_1", scheduledIdempotencyParsed(posts, scheduledAt)) {
+		t.Fatal("expected quota_hold idempotency replay")
+	}
+	assertScheduledReplayResponse(t, rr, existing.ID)
+}
+
 func TestMaybeReplayScheduledIdempotencyPayloadConflict(t *testing.T) {
 	scheduledAt := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
 	existingPosts := []platform.PlatformPostInput{{AccountID: "sa_threads", Caption: "Launching today"}}
@@ -150,6 +167,174 @@ func TestMaybeReplayScheduledIdempotencyPayloadConflict(t *testing.T) {
 	}
 	if envelope.Error.Code != "IDEMPOTENCY_KEY_CONFLICT" {
 		t.Fatalf("error code = %q, want IDEMPOTENCY_KEY_CONFLICT", envelope.Error.Code)
+	}
+}
+
+func TestCreateScheduledIdempotencyReplayPrecedesCurrentPublishingPolicy(t *testing.T) {
+	scheduledAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	posts := []platform.PlatformPostInput{{
+		AccountID: "ig_1",
+		Caption:   "Launching today",
+		MediaURLs: []string{"https://cdn.example.com/launch.jpg"},
+	}}
+
+	tests := []struct {
+		name      string
+		decision  publishingrestrictions.Decision
+		policyErr error
+	}{
+		{
+			name: "restriction enabled after the original create",
+			decision: publishingrestrictions.Decision{
+				Restricted: true,
+				Platform:   "instagram",
+				PlanID:     "free",
+				CycleID:    "cycle_new_restriction",
+				Code:       publishingrestrictions.NormalizedCode,
+			},
+		},
+		{
+			name:      "policy read fails after the original create",
+			policyErr: fmt.Errorf("policy unavailable"),
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			existing := scheduledIdempotencyExistingPost(t, posts, scheduledAt)
+			dbtx := &scheduledIdempotencyTestDB{
+				existing: existing,
+				accounts: []db.SocialAccount{{
+					ID:        "ig_1",
+					ProfileID: "profile_1",
+					Platform:  "instagram",
+					Status:    "active",
+				}},
+			}
+			queries := db.New(dbtx)
+			evaluator := &scheduledIdempotencyPolicyEvaluator{decision: test.decision, err: test.policyErr}
+			handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+				SetPublishingRestrictions(evaluator)
+
+			rr := httptest.NewRecorder()
+			handler.Create(rr, scheduledIdempotencyCreateRequest(posts[0], scheduledAt))
+
+			assertScheduledReplayResponse(t, rr, existing.ID)
+			if evaluator.calls != 0 {
+				t.Fatalf("policy calls = %d, want 0 for an idempotency replay", evaluator.calls)
+			}
+			if dbtx.createCalls != 0 {
+				t.Fatalf("create calls = %d, want 0 for an idempotency replay", dbtx.createCalls)
+			}
+		})
+	}
+}
+
+func TestCreateScheduledIdempotencyConflictPrecedesCurrentPublishingPolicy(t *testing.T) {
+	scheduledAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	existingPosts := []platform.PlatformPostInput{{
+		AccountID: "ig_1",
+		Caption:   "Original caption",
+		MediaURLs: []string{"https://cdn.example.com/launch.jpg"},
+	}}
+	requestPost := existingPosts[0]
+	requestPost.Caption = "Different caption"
+	dbtx := &scheduledIdempotencyTestDB{
+		existing: scheduledIdempotencyExistingPost(t, existingPosts, scheduledAt),
+		accounts: []db.SocialAccount{{
+			ID:        "ig_1",
+			ProfileID: "profile_1",
+			Platform:  "instagram",
+			Status:    "active",
+		}},
+	}
+	queries := db.New(dbtx)
+	evaluator := &scheduledIdempotencyPolicyEvaluator{err: fmt.Errorf("policy unavailable")}
+	handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+		SetPublishingRestrictions(evaluator)
+
+	rr := httptest.NewRecorder()
+	handler.Create(rr, scheduledIdempotencyCreateRequest(requestPost, scheduledAt))
+
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d; body: %s", rr.Code, http.StatusConflict, rr.Body.String())
+	}
+	var envelope ErrorResponse
+	if err := json.NewDecoder(rr.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if envelope.Error.Code != "IDEMPOTENCY_KEY_CONFLICT" {
+		t.Fatalf("error code = %q, want IDEMPOTENCY_KEY_CONFLICT", envelope.Error.Code)
+	}
+	if evaluator.calls != 0 {
+		t.Fatalf("policy calls = %d, want 0 for an idempotency conflict", evaluator.calls)
+	}
+	if dbtx.createCalls != 0 {
+		t.Fatalf("create calls = %d, want 0 for an idempotency conflict", dbtx.createCalls)
+	}
+}
+
+func TestCreateNewScheduledRequestStillRunsPublishingPolicy(t *testing.T) {
+	scheduledAt := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Second)
+	post := platform.PlatformPostInput{
+		AccountID: "ig_1",
+		Caption:   "Launching today",
+		MediaURLs: []string{"https://cdn.example.com/launch.jpg"},
+	}
+
+	tests := []struct {
+		name      string
+		decision  publishingrestrictions.Decision
+		policyErr error
+		wantCode  int
+	}{
+		{
+			name: "restricted",
+			decision: publishingrestrictions.Decision{
+				Restricted: true,
+				Platform:   "instagram",
+				PlanID:     "free",
+				CycleID:    "cycle_restricted",
+				Code:       publishingrestrictions.NormalizedCode,
+			},
+			wantCode: http.StatusPaymentRequired,
+		},
+		{
+			name:      "policy unavailable",
+			policyErr: fmt.Errorf("policy unavailable"),
+			wantCode:  http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			dbtx := &scheduledIdempotencyTestDB{
+				existingErr: pgx.ErrNoRows,
+				accounts: []db.SocialAccount{{
+					ID:        "ig_1",
+					ProfileID: "profile_1",
+					Platform:  "instagram",
+					Status:    "active",
+				}},
+			}
+			queries := db.New(dbtx)
+			evaluator := &scheduledIdempotencyPolicyEvaluator{decision: test.decision, err: test.policyErr}
+			handler := NewSocialPostHandler(queries, nil, quota.NewChecker(queries), nil, nil, nil, nil).
+				SetPublishingRestrictions(evaluator)
+
+			rr := httptest.NewRecorder()
+			handler.Create(rr, scheduledIdempotencyCreateRequest(post, scheduledAt))
+
+			if rr.Code != test.wantCode {
+				t.Fatalf("status = %d, want %d; body: %s", rr.Code, test.wantCode, rr.Body.String())
+			}
+			if evaluator.calls != 1 {
+				t.Fatalf("policy calls = %d, want 1 for a new scheduled request", evaluator.calls)
+			}
+			if dbtx.createCalls != 0 {
+				t.Fatalf("create calls = %d, want 0 when policy rejects admission", dbtx.createCalls)
+			}
+		})
 	}
 }
 
@@ -249,6 +434,20 @@ func scheduledIdempotencyParsed(posts []platform.PlatformPostInput, scheduledAt 
 	}
 }
 
+func scheduledIdempotencyCreateRequest(post platform.PlatformPostInput, scheduledAt time.Time) *http.Request {
+	body := fmt.Sprintf(`{
+		"platform_posts":[{
+			"account_id":%q,
+			"caption":%q,
+			"media_urls":[%q]
+		}],
+		"scheduled_at":%q,
+		"idempotency_key":"idem_1"
+	}`, post.AccountID, post.Caption, post.MediaURLs[0], scheduledAt.Format(time.RFC3339Nano))
+	req := httptest.NewRequest(http.MethodPost, "/v1/social-posts", strings.NewReader(body))
+	return req.WithContext(auth.SetWorkspaceID(req.Context(), "ws_1"))
+}
+
 func scheduledIdempotencyExistingPost(t *testing.T, posts []platform.PlatformPostInput, scheduledAt time.Time) db.SocialPost {
 	t.Helper()
 
@@ -314,6 +513,7 @@ func assertScheduledReplayResponse(t *testing.T, rr *httptest.ResponseRecorder, 
 type scheduledIdempotencyTestDB struct {
 	existing             db.SocialPost
 	existingErr          error
+	accounts             []db.SocialAccount
 	createErr            error
 	createCalls          int
 	getScheduledCalls    int
@@ -324,7 +524,14 @@ func (f *scheduledIdempotencyTestDB) Exec(context.Context, string, ...interface{
 	return pgconn.CommandTag{}, nil
 }
 
-func (f *scheduledIdempotencyTestDB) Query(context.Context, string, ...interface{}) (pgx.Rows, error) {
+func (f *scheduledIdempotencyTestDB) Query(_ context.Context, query string, _ ...interface{}) (pgx.Rows, error) {
+	if strings.Contains(query, "-- name: ListSocialAccountsByWorkspace") {
+		values := make([][]any, 0, len(f.accounts))
+		for _, account := range f.accounts {
+			values = append(values, scheduledIdempotencySocialAccountValues(account))
+		}
+		return &scheduledIdempotencyRows{values: values}, nil
+	}
 	return emptyScheduledIdempotencyRows{}, nil
 }
 
@@ -425,3 +632,59 @@ func (emptyScheduledIdempotencyRows) Scan(...any) error                         
 func (emptyScheduledIdempotencyRows) Values() ([]any, error)                       { return nil, nil }
 func (emptyScheduledIdempotencyRows) RawValues() [][]byte                          { return nil }
 func (emptyScheduledIdempotencyRows) Conn() *pgx.Conn                              { return nil }
+
+type scheduledIdempotencyRows struct {
+	values [][]any
+	index  int
+}
+
+func (*scheduledIdempotencyRows) Close()                                       {}
+func (*scheduledIdempotencyRows) Err() error                                   { return nil }
+func (*scheduledIdempotencyRows) CommandTag() pgconn.CommandTag                { return pgconn.CommandTag{} }
+func (*scheduledIdempotencyRows) FieldDescriptions() []pgconn.FieldDescription { return nil }
+func (r *scheduledIdempotencyRows) Next() bool {
+	if r.index >= len(r.values) {
+		return false
+	}
+	r.index++
+	return true
+}
+func (r *scheduledIdempotencyRows) Scan(dest ...any) error {
+	if r.index == 0 || r.index > len(r.values) {
+		return errors.New("no current row")
+	}
+	return scheduledIdempotencyRow{values: r.values[r.index-1]}.Scan(dest...)
+}
+func (r *scheduledIdempotencyRows) Values() ([]any, error) {
+	if r.index == 0 || r.index > len(r.values) {
+		return nil, errors.New("no current row")
+	}
+	return r.values[r.index-1], nil
+}
+func (*scheduledIdempotencyRows) RawValues() [][]byte { return nil }
+func (*scheduledIdempotencyRows) Conn() *pgx.Conn     { return nil }
+
+func scheduledIdempotencySocialAccountValues(account db.SocialAccount) []any {
+	return []any{
+		account.ID, account.ProfileID, account.Platform, account.AccessToken, account.RefreshToken,
+		account.TokenExpiresAt, account.ExternalAccountID, account.AccountName, account.AccountAvatarUrl,
+		account.ConnectedAt, account.DisconnectedAt, account.Metadata, account.Scope, account.Status,
+		account.ConnectionType, account.ConnectSessionID, account.ExternalUserID, account.ExternalUserEmail,
+		account.LastRefreshedAt, account.XAppMode, account.ConnectionID, account.BindingVersion,
+		account.BindingStatus,
+	}
+}
+
+type scheduledIdempotencyPolicyEvaluator struct {
+	decision publishingrestrictions.Decision
+	err      error
+	calls    int
+}
+
+func (f *scheduledIdempotencyPolicyEvaluator) Evaluate(_ context.Context, _, _ string) (publishingrestrictions.Decision, error) {
+	f.calls++
+	if f.err != nil {
+		return publishingrestrictions.Decision{}, f.err
+	}
+	return f.decision, nil
+}

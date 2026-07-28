@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -25,6 +26,8 @@ import (
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/xinbox"
 )
@@ -50,6 +53,345 @@ func TestValidateReturnURL(t *testing.T) {
 			t.Errorf("validateReturnURL(%q): want good=%v, got err=%v", c.in, c.good, err)
 		}
 	}
+}
+
+func TestConnectRedirectFacebookPresentationDirectHTML(t *testing.T) {
+	tests := []struct {
+		reason string
+		title  string
+		body   string
+	}{
+		{
+			reason: "facebook_page_not_available",
+			title:  "Facebook Page unavailable",
+			body:   "We couldn’t find a Facebook Page this account can manage or has allowed UniPost to access.",
+		},
+		{
+			reason: "facebook_page_permission_required",
+			title:  "Facebook Page permission required",
+			body:   "Your Facebook account can access a Page, but it doesn’t have permission to publish content.",
+		},
+		{
+			reason: "facebook_authorization_failed",
+			title:  "Connection failed",
+			body:   "Facebook authorization couldn’t be completed.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.reason, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/facebook", nil)
+			(&ConnectCallbackHandler{}).redirectWithStatus(w, r, "", "error", tt.reason, false)
+
+			body := w.Body.String()
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+			}
+			for _, want := range []string{tt.title, tt.body} {
+				if !strings.Contains(body, want) {
+					t.Fatalf("body missing %q: %s", want, body)
+				}
+			}
+			for _, forbidden := range []string{tt.reason, "token_exchange_failed"} {
+				if strings.Contains(body, forbidden) {
+					t.Fatalf("body exposed reason %q: %s", forbidden, body)
+				}
+			}
+		})
+	}
+}
+
+func TestConnectRedirectFacebookPresentationReturnURL(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/facebook", nil)
+	(&ConnectCallbackHandler{}).redirectWithStatus(
+		w,
+		r,
+		"https://app.example.com/connect?source=test",
+		"error",
+		"facebook_page_not_available",
+		false,
+	)
+
+	location := w.Header().Get("Location")
+	if w.Code != http.StatusFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusFound)
+	}
+	if !strings.Contains(location, "reason=facebook_page_not_available") {
+		t.Fatalf("redirect missing stable reason: %s", location)
+	}
+	for _, forbidden := range []string{"raw-provider-secret", "token_exchange_failed"} {
+		if strings.Contains(location, forbidden) {
+			t.Fatalf("redirect exposed %q: %s", forbidden, location)
+		}
+	}
+}
+
+func TestConnectCallback_FacebookFailures(t *testing.T) {
+	tests := []struct {
+		name        string
+		failure     *connect.FacebookConnectFailure
+		wantCode    string
+		wantContent string
+	}{
+		{
+			name: "no accessible Page",
+			failure: &connect.FacebookConnectFailure{
+				Code: connect.FacebookPageNotAvailable, Stage: "page_discovery",
+				PageCount: 0, PublishablePageCount: 0,
+			},
+			wantCode:    "facebook_page_not_available",
+			wantContent: "Facebook Page unavailable",
+		},
+		{
+			name: "publishing permission missing",
+			failure: &connect.FacebookConnectFailure{
+				Code: connect.FacebookPagePermissionRequired, Stage: "page_permission",
+				PageCount: 2, PublishablePageCount: 0,
+			},
+			wantCode:    "facebook_page_permission_required",
+			wantContent: "Facebook Page permission required",
+		},
+		{
+			name: "unexpected authorization failure",
+			failure: &connect.FacebookConnectFailure{
+				Code: connect.FacebookAuthorizationFailed, Stage: "short_token_response",
+				RemoteStatusCode: http.StatusBadRequest, MetaCode: 190, MetaSubcode: 463,
+			},
+			wantCode:    "facebook_authorization_failed",
+			wantContent: "Facebook authorization couldn’t be completed.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: "facebook", allowQuickstart: true}
+			writer := &recordingOutcomeWriter{}
+			h := newOutcomeCallbackTestHandler(t, fdb, fakeOAuthConnector{
+				platform: "facebook", exchangeErr: tt.failure,
+			}, writer, defaultOutcomeOwnershipStore())
+
+			rec := runOutcomeCallback(h, "facebook", "code=oauth-code-secret&state=state_1")
+
+			if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tt.wantContent) {
+				t.Fatalf("response = (%d, %q)", rec.Code, rec.Body.String())
+			}
+			event := requireSingleOutcome(t, writer)
+			if event.ErrorCode != tt.wantCode || event.RequestID == "" {
+				t.Fatalf("event = %+v", event)
+			}
+			metadata := event.Metadata.(map[string]any)
+			if metadata["connect_session_id"] != "cs_1" || metadata["external_user_id"] != "user_123" {
+				t.Fatalf("metadata = %#v", metadata)
+			}
+			if tt.failure.Code != connect.FacebookAuthorizationFailed {
+				if metadata["page_count"] != tt.failure.PageCount || metadata["publishable_page_count"] != tt.failure.PublishablePageCount {
+					t.Fatalf("page metadata = %#v", metadata)
+				}
+				for _, forbiddenKey := range []string{"facebook_stage", "remote_status_code", "meta_error_code", "meta_error_subcode"} {
+					if _, exists := metadata[forbiddenKey]; exists {
+						t.Fatalf("actionable Page metadata must not contain %q: %#v", forbiddenKey, metadata)
+					}
+				}
+			}
+			encoded, _ := json.Marshal(event)
+			for _, forbidden := range []string{"oauth-code-secret", "raw-provider-secret", "token_exchange_failed"} {
+				if bytes.Contains(encoded, []byte(forbidden)) || strings.Contains(rec.Body.String(), forbidden) {
+					t.Fatalf("outcome exposed %q", forbidden)
+				}
+			}
+			if fdb.completionClaimCalls != 0 || fdb.completedAcctID != "" {
+				t.Fatal("retryable Facebook failure must leave Session pending")
+			}
+		})
+	}
+}
+
+func TestConnectCallback_OutcomeMatrix(t *testing.T) {
+	platforms := []string{"twitter", "linkedin", "youtube", "tiktok", "instagram", "threads", "facebook", "pinterest"}
+	for _, platformName := range platforms {
+		t.Run(platformName+" success", func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: platformName, allowQuickstart: true}
+			writer := &recordingOutcomeWriter{}
+			h := newOutcomeCallbackTestHandler(t, fdb, fakeOAuthConnector{platform: platformName}, writer, defaultOutcomeOwnershipStore())
+			rec := runOutcomeCallback(h, platformName, "code=auth-code&state=state_1")
+			if rec.Code != http.StatusOK {
+				t.Fatalf("response = (%d, %q)", rec.Code, rec.Body.String())
+			}
+			event := requireSingleOutcome(t, writer)
+			if event.Action != integrationlogs.ActionAccountConnectCallbackOK || event.Status != integrationlogs.StatusSuccess || event.Platform != platformName {
+				t.Fatalf("event = %+v", event)
+			}
+		})
+
+		t.Run(platformName+" exchange failure", func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: platformName, allowQuickstart: true}
+			writer := &recordingOutcomeWriter{}
+			h := newOutcomeCallbackTestHandler(t, fdb, fakeOAuthConnector{
+				platform: platformName, exchangeErr: errors.New("raw-provider-secret"),
+			}, writer, defaultOutcomeOwnershipStore())
+			rec := runOutcomeCallback(h, platformName, "code=auth-code&state=state_1")
+			event := requireSingleOutcome(t, writer)
+			wantCode := "token_exchange_failed"
+			if platformName == "facebook" {
+				wantCode = "facebook_authorization_failed"
+			}
+			if event.Action != integrationlogs.ActionAccountConnectCallbackFailed || event.ErrorCode != wantCode {
+				t.Fatalf("event = %+v", event)
+			}
+			encoded, _ := json.Marshal(event)
+			if bytes.Contains(encoded, []byte("raw-provider-secret")) || strings.Contains(rec.Body.String(), "raw-provider-secret") {
+				t.Fatal("raw connector error escaped the callback boundary")
+			}
+		})
+	}
+}
+
+func TestConnectCallback_OutcomeFailurePaths(t *testing.T) {
+	t.Run("provider cancellation", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "facebook", allowQuickstart: true}
+		writer := &recordingOutcomeWriter{}
+		h := newOutcomeCallbackTestHandler(t, fdb, fakeOAuthConnector{platform: "facebook"}, writer, defaultOutcomeOwnershipStore())
+		rec := runOutcomeCallback(h, "facebook", "error=access_denied&error_description=raw-provider-secret&state=state_1")
+		event := requireSingleOutcome(t, writer)
+		if event.Action != integrationlogs.ActionAccountConnectCallbackCancelled || event.ErrorCode != "access_denied" {
+			t.Fatalf("event = %+v", event)
+		}
+		encoded, _ := json.Marshal(event)
+		if bytes.Contains(encoded, []byte("raw-provider-secret")) || strings.Contains(rec.Body.String(), "raw-provider-secret") {
+			t.Fatal("provider description escaped the callback boundary")
+		}
+	})
+
+	t.Run("invalid state is unattributable", func(t *testing.T) {
+		fdb := &connectSessionTestDB{platform: "threads", allowQuickstart: true}
+		writer := &recordingOutcomeWriter{}
+		h := newOutcomeCallbackTestHandler(t, fdb, fakeOAuthConnector{platform: "threads"}, writer, defaultOutcomeOwnershipStore())
+		rec := runOutcomeCallback(h, "threads", "code=auth-code")
+		if rec.Code != http.StatusBadRequest || len(writer.events) != 0 {
+			t.Fatalf("response/events = %d/%d", rec.Code, len(writer.events))
+		}
+	})
+
+	for _, tc := range []struct {
+		name          string
+		contained     bool
+		wantErrorCode string
+	}{
+		{"Instagram subscription failure", true, "webhook_subscription_failed"},
+		{"Instagram containment failure", false, "webhook_subscription_containment_failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: "instagram", allowQuickstart: true}
+			if !tc.contained {
+				fdb.reconnectRequiredRowsSet = true
+				fdb.reconnectRequiredRows = 0
+			}
+			writer := &recordingOutcomeWriter{}
+			h := newOutcomeCallbackTestHandler(t, fdb, fakeOAuthConnector{platform: "instagram"}, writer, defaultOutcomeOwnershipStore())
+			h.instagramWebhookSubscriber = &fakeInstagramWebhookSubscriber{err: errors.New("webhook secret")}
+			runOutcomeCallback(h, "instagram", "code=auth-code&state=state_1")
+			event := requireSingleOutcome(t, writer)
+			if event.ErrorCode != tc.wantErrorCode {
+				t.Fatalf("error code = %q, want %q", event.ErrorCode, tc.wantErrorCode)
+			}
+			encoded, _ := json.Marshal(event)
+			if bytes.Contains(encoded, []byte("webhook secret")) {
+				t.Fatal("webhook failure detail entered the result event")
+			}
+		})
+	}
+
+	tests := []struct {
+		name      string
+		platform  string
+		configure func(*connectSessionTestDB, *fakeOAuthConnector, *fakeManagedOwnershipStore)
+		wantCode  string
+	}{
+		{"connector unavailable", "threads", func(f *connectSessionTestDB, _ *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			f.allowQuickstart = false
+		}, "connector_resolution_failed"},
+		{"profile failure", "threads", func(_ *connectSessionTestDB, c *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			c.profileErr = errors.New("profile secret")
+		}, "profile_fetch_failed"},
+		{"identity missing", "threads", func(_ *connectSessionTestDB, c *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			c.profile = &connect.Profile{Username: "No ID"}
+		}, "provider_identity_missing"},
+		{"ownership check failed", "threads", func(_ *connectSessionTestDB, _ *fakeOAuthConnector, s *fakeManagedOwnershipStore) {
+			s.checkErr = errors.New("ownership secret")
+		}, "account_ownership_failed"},
+		{"ownership conflict", "threads", func(_ *connectSessionTestDB, _ *fakeOAuthConnector, s *fakeManagedOwnershipStore) {
+			s.checkDecision = connectownership.Decision{Kind: connectownership.Conflict}
+		}, "account_ownership_conflict"},
+		{"managed account limit", "threads", func(f *connectSessionTestDB, _ *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			f.activeManagedAccountCount = 2
+		}, "managed_account_limit_reached"},
+		{"account unavailable", "threads", func(f *connectSessionTestDB, _ *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			f.managedSharingBlocked = true
+		}, "account_unavailable"},
+		{"save failure", "threads", func(_ *connectSessionTestDB, _ *fakeOAuthConnector, s *fakeManagedOwnershipStore) {
+			s.saveErr = errors.New("save secret")
+		}, "account_save_failed"},
+		{"completion failure", "threads", func(f *connectSessionTestDB, _ *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			f.completionClaimErr = errors.New("completion secret")
+		}, "session_completion_failed"},
+		{"repeat callback", "threads", func(f *connectSessionTestDB, _ *fakeOAuthConnector, _ *fakeManagedOwnershipStore) {
+			f.status = "completed"
+		}, "connect_session_not_pending"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: tt.platform, allowQuickstart: true}
+			connector := fakeOAuthConnector{platform: tt.platform}
+			store := defaultOutcomeOwnershipStore()
+			tt.configure(fdb, &connector, store)
+			writer := &recordingOutcomeWriter{}
+			h := newOutcomeCallbackTestHandler(t, fdb, connector, writer, store)
+			runOutcomeCallback(h, tt.platform, "code=auth-code&state=state_1")
+			event := requireSingleOutcome(t, writer)
+			if event.ErrorCode != tt.wantCode {
+				t.Fatalf("error code = %q, want %q; event=%+v", event.ErrorCode, tt.wantCode, event)
+			}
+		})
+	}
+}
+
+func newOutcomeCallbackTestHandler(t *testing.T, fdb *connectSessionTestDB, connector fakeOAuthConnector, writer hostedConnectOutcomeWriter, store *fakeManagedOwnershipStore) *ConnectCallbackHandler {
+	t.Helper()
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatalf("encryptor: %v", err)
+	}
+	h := NewConnectCallbackHandler(
+		db.New(fdb), encryptor, events.NoopBus{}, connect.NewRegistry(connector),
+		"https://api.example.com", nil, store,
+	).SetIntegrationLogger(writer)
+	h.instagramWebhookSubscriber = &fakeInstagramWebhookSubscriber{}
+	return h
+}
+
+func defaultOutcomeOwnershipStore() *fakeManagedOwnershipStore {
+	return &fakeManagedOwnershipStore{
+		checkDecision: connectownership.Decision{Kind: connectownership.Create},
+		saveAccount:   db.SocialAccount{ID: "sa_outcome_1"},
+	}
+}
+
+func runOutcomeCallback(h *ConnectCallbackHandler, platformName, rawQuery string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodGet, "/v1/connect/callback/"+platformName+"?"+rawQuery, nil)
+	req = withChiParam(req, "platform", platformName)
+	rec := httptest.NewRecorder()
+	appmw.Logger(http.HandlerFunc(h.Callback)).ServeHTTP(rec, req)
+	return rec
+}
+
+func requireSingleOutcome(t *testing.T, writer *recordingOutcomeWriter) integrationlogs.Event {
+	t.Helper()
+	if len(writer.events) != 1 {
+		t.Fatalf("events = %d, want 1", len(writer.events))
+	}
+	return writer.events[0]
 }
 
 // TestRandomBase64URL — produces unique, URL-safe, padding-free strings
@@ -2200,8 +2542,10 @@ func pgTextString(args []interface{}, index int) string {
 }
 
 type fakeOAuthConnector struct {
-	platform string
-	profile  *connect.Profile
+	platform    string
+	profile     *connect.Profile
+	exchangeErr error
+	profileErr  error
 }
 
 type fakeInstagramWebhookSubscriber struct {
@@ -2231,6 +2575,9 @@ func (f fakeOAuthConnector) AuthorizeURL(connect.SessionView) (string, error) {
 }
 
 func (f fakeOAuthConnector) ExchangeCode(context.Context, connect.SessionView, string) (*connect.TokenSet, error) {
+	if f.exchangeErr != nil {
+		return nil, f.exchangeErr
+	}
 	return &connect.TokenSet{
 		AccessToken:  "access-token",
 		RefreshToken: "refresh-token",
@@ -2240,6 +2587,9 @@ func (f fakeOAuthConnector) ExchangeCode(context.Context, connect.SessionView, s
 }
 
 func (f fakeOAuthConnector) FetchProfile(context.Context, string) (*connect.Profile, error) {
+	if f.profileErr != nil {
+		return nil, f.profileErr
+	}
 	if f.profile != nil {
 		return f.profile, nil
 	}

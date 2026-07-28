@@ -1,0 +1,454 @@
+package worker
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
+)
+
+type PostgresPublishingRestrictionEmailStore struct{ pool *pgxpool.Pool }
+
+const publishingRestrictionEmailMaxAttempts = 3
+
+const publishingRestrictionEmailCampaignRefreshSQL = `
+	WITH counts AS (
+		SELECT
+		  COUNT(*) FILTER (
+		    WHERE status IN ('pending','sending')
+		       OR (status='failed' AND retryable = TRUE AND attempt_count < $2)
+		  )::int AS pending_count,
+		  COUNT(*) FILTER (WHERE status='sent')::int AS sent_count,
+		  COUNT(*) FILTER (
+		    WHERE status='failed' AND (retryable = FALSE OR attempt_count >= $2)
+		  )::int AS failed_count,
+		  COUNT(*) FILTER (WHERE status='skipped_ineligible')::int AS skipped_count
+		FROM platform_publishing_restriction_email_recipients WHERE campaign_id=$1
+	)
+	UPDATE platform_publishing_restriction_email_campaigns campaign
+	SET pending_count=counts.pending_count, sent_count=counts.sent_count,
+	    failed_count=counts.failed_count, skipped_count=counts.skipped_count,
+	    status=CASE WHEN counts.pending_count > 0 THEN 'running'
+	                WHEN counts.failed_count > 0 THEN 'completed_with_failures'
+	                ELSE 'completed' END,
+	    started_at=CASE WHEN counts.pending_count > 0 THEN COALESCE(started_at,NOW()) ELSE started_at END,
+	    completed_at=CASE WHEN counts.pending_count=0 THEN NOW() ELSE NULL END,
+	    updated_at=NOW()
+	FROM counts WHERE campaign.id=$1`
+
+func NewPostgresPublishingRestrictionEmailStore(pool *pgxpool.Pool) *PostgresPublishingRestrictionEmailStore {
+	return &PostgresPublishingRestrictionEmailStore{pool: pool}
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) ClaimPublishingRestrictionEmailRecipients(ctx context.Context, limit int) ([]PublishingRestrictionEmailWork, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	campaignIDs := map[string]struct{}{}
+	staleRows, err := tx.Query(ctx, `
+		WITH stale_recipients AS MATERIALIZED (
+			SELECT recipient.id, recipient.email_send_attempt_id
+			FROM platform_publishing_restriction_email_recipients recipient
+			WHERE recipient.status = 'sending'
+			  AND recipient.claimed_at < NOW() - INTERVAL '15 minutes'
+			FOR UPDATE OF recipient SKIP LOCKED
+		), locked_audits AS MATERIALIZED (
+			SELECT attempt.id, attempt.status, attempt.last_error
+			FROM email_send_attempts attempt
+			JOIN stale_recipients recipient ON recipient.email_send_attempt_id=attempt.id
+			FOR UPDATE OF attempt
+		), stale AS MATERIALIZED (
+			SELECT recipient.id, recipient.email_send_attempt_id, attempt.status AS audit_status,
+			       COALESCE(attempt.last_error, '') AS audit_last_error,
+			       CASE
+			         WHEN pg_input_is_valid(COALESCE(attempt.last_error, ''), 'jsonb')
+			         THEN COALESCE((attempt.last_error::jsonb)->>'outcome_class', '')
+			         ELSE ''
+			       END AS audit_outcome_class
+			FROM stale_recipients recipient
+			LEFT JOIN locked_audits attempt ON attempt.id=recipient.email_send_attempt_id
+		), failed_audits AS (
+			UPDATE email_send_attempts attempt
+			SET status = 'failed',
+			    last_error = 'send outcome unknown after worker lease expired; not automatically retried',
+			    updated_at = NOW()
+			FROM stale
+			WHERE attempt.id = stale.email_send_attempt_id
+			  AND attempt.status = 'pending'
+			RETURNING attempt.id
+		), recovered_sent AS (
+			UPDATE platform_publishing_restriction_email_recipients recipient
+			SET status = 'sent',
+			    sent_at = COALESCE(recipient.sent_at, NOW()),
+			    claimed_at = NULL,
+			    last_error = NULL,
+			    updated_at = NOW()
+			FROM stale
+			WHERE recipient.id = stale.id
+			  AND stale.audit_status = 'sent'
+			RETURNING recipient.campaign_id
+		), definitive_failed AS (
+			UPDATE platform_publishing_restriction_email_recipients recipient
+			SET status = 'failed',
+			    retryable = recipient.attempt_count < $1,
+			    claimed_at = NULL,
+			    last_error = stale.audit_last_error,
+			    next_attempt_at = NOW() + CASE
+			      WHEN recipient.attempt_count < 2 THEN INTERVAL '1 minute'
+			      ELSE INTERVAL '5 minutes'
+			    END,
+			    updated_at = NOW()
+			FROM stale
+			WHERE recipient.id = stale.id
+			  AND stale.audit_status = 'failed'
+			  AND stale.audit_outcome_class = 'provider_definitive_failure'
+			RETURNING recipient.campaign_id
+		), pre_send_failed AS (
+			UPDATE platform_publishing_restriction_email_recipients recipient
+			SET status = 'failed', retryable = recipient.attempt_count < $1,
+			    claimed_at = NULL,
+			    last_error = 'provider send was not attempted before worker lease expired',
+			    next_attempt_at = NOW() + INTERVAL '1 minute', updated_at = NOW()
+			FROM stale
+			WHERE recipient.id = stale.id
+			  AND (
+			    stale.email_send_attempt_id IS NULL
+			    OR (
+			      stale.audit_status = 'failed'
+			      AND stale.audit_outcome_class = 'pre_send_failure'
+			    )
+			  )
+			RETURNING recipient.campaign_id
+		), terminal_failed AS (
+			UPDATE platform_publishing_restriction_email_recipients recipient
+			SET status = 'failed',
+			    retryable = FALSE,
+			    claimed_at = NULL,
+			    last_error = 'send outcome unknown after worker lease expired; manual review required',
+			    updated_at = NOW()
+			FROM stale
+			WHERE recipient.id = stale.id
+			  AND stale.email_send_attempt_id IS NOT NULL
+			  AND stale.audit_status IS DISTINCT FROM 'sent'
+			  AND NOT (
+			    stale.audit_status = 'failed'
+			    AND stale.audit_outcome_class IN ('provider_definitive_failure', 'pre_send_failure')
+			  )
+			RETURNING recipient.campaign_id
+		)
+		SELECT campaign_id FROM recovered_sent
+		UNION ALL
+		SELECT campaign_id FROM definitive_failed
+		UNION ALL
+		SELECT campaign_id FROM pre_send_failed
+		UNION ALL
+		SELECT campaign_id FROM terminal_failed
+	`, publishingRestrictionEmailMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	for staleRows.Next() {
+		var campaignID string
+		if err := staleRows.Scan(&campaignID); err != nil {
+			staleRows.Close()
+			return nil, err
+		}
+		campaignIDs[campaignID] = struct{}{}
+	}
+	if err := staleRows.Err(); err != nil {
+		staleRows.Close()
+		return nil, err
+	}
+	staleRows.Close()
+	rows, err := tx.Query(ctx, `
+		WITH candidates AS MATERIALIZED (
+			SELECT recipient.id
+			FROM platform_publishing_restriction_email_recipients recipient
+			JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=recipient.campaign_id
+			WHERE campaign.status IN ('queued','running')
+			  AND (
+				recipient.status='pending'
+				OR (
+					recipient.status='failed'
+					AND recipient.retryable = TRUE
+					AND recipient.attempt_count < $2
+					AND recipient.next_attempt_at <= NOW()
+				)
+			  )
+			ORDER BY recipient.created_at
+			FOR UPDATE OF recipient SKIP LOCKED
+			LIMIT $1
+		), claimed AS (
+			UPDATE platform_publishing_restriction_email_recipients recipient
+			SET status='sending', attempt_count=attempt_count+1, retryable = FALSE,
+			    email_send_attempt_id=NULL, claimed_at=NOW(), updated_at=NOW()
+			FROM candidates WHERE recipient.id=candidates.id
+			RETURNING recipient.*
+		)
+		SELECT claimed.id, claimed.campaign_id, campaign.cycle_id, campaign.campaign_type, campaign.created_at,
+		       restriction.platform, claimed.canonical_user_id, claimed.recipient_email,
+		       claimed.normalized_email, COALESCE(claimed.first_name_snapshot, ''), claimed.represented_workspace_ids,
+		       claimed.represented_owner_user_ids,
+		       claimed.idempotency_key, campaign.subject_snapshot, campaign.body_snapshot,
+		       claimed.attempt_count, claimed.attempt_generation
+		FROM claimed
+		JOIN platform_publishing_restriction_email_campaigns campaign ON campaign.id=claimed.campaign_id
+		JOIN platform_publishing_restrictions restriction ON restriction.id=campaign.restriction_id
+	`, limit, publishingRestrictionEmailMaxAttempts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	work := make([]PublishingRestrictionEmailWork, 0)
+	for rows.Next() {
+		var item PublishingRestrictionEmailWork
+		if err := rows.Scan(
+			&item.RecipientID, &item.CampaignID, &item.CycleID, &item.CampaignType, &item.CampaignCreatedAt,
+			&item.Platform, &item.CanonicalUserID, &item.RecipientEmail, &item.NormalizedEmail, &item.FirstName,
+			&item.RepresentedWorkspaceIDs, &item.RepresentedOwnerUserIDs, &item.IdempotencyKey,
+			&item.SubjectSnapshot, &item.BodySnapshot,
+			&item.AttemptCount, &item.AttemptGeneration,
+		); err != nil {
+			return nil, err
+		}
+		work = append(work, item)
+		campaignIDs[item.CampaignID] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	activeCampaignRows, err := tx.Query(ctx, `
+		SELECT id
+		FROM platform_publishing_restriction_email_campaigns
+		WHERE status IN ('queued','running')
+		FOR UPDATE SKIP LOCKED
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for activeCampaignRows.Next() {
+		var campaignID string
+		if err := activeCampaignRows.Scan(&campaignID); err != nil {
+			activeCampaignRows.Close()
+			return nil, err
+		}
+		campaignIDs[campaignID] = struct{}{}
+	}
+	if err := activeCampaignRows.Err(); err != nil {
+		activeCampaignRows.Close()
+		return nil, err
+	}
+	activeCampaignRows.Close()
+	for campaignID := range campaignIDs {
+		_, err = tx.Exec(ctx, publishingRestrictionEmailCampaignRefreshSQL, campaignID, publishingRestrictionEmailMaxAttempts)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return work, nil
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) LinkPublishingRestrictionEmailAttempt(
+	ctx context.Context,
+	recipientID string,
+	attemptID string,
+	attemptCount int,
+	attemptGeneration int,
+) error {
+	var linkedID string
+	err := s.pool.QueryRow(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET email_send_attempt_id = $2, updated_at = NOW()
+		WHERE id = $1
+		  AND status = 'sending'
+		  AND attempt_count = $3
+		  AND attempt_generation = $4
+		  AND email_send_attempt_id IS NULL
+		RETURNING id
+	`, recipientID, attemptID, attemptCount, attemptGeneration).Scan(&linkedID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return errors.New("publishing restriction email send claim is no longer active")
+	}
+	return err
+}
+
+const publishingRestrictionRecipientEligibilitySQL = `
+	WITH current_plans AS (
+		SELECT DISTINCT ON (workspace_id) workspace_id, plan_id
+		FROM subscriptions ORDER BY workspace_id, updated_at DESC
+	), represented AS (
+		SELECT workspace.workspace_id, owner.owner_user_id
+		FROM UNNEST($6::text[]) WITH ORDINALITY AS workspace(workspace_id, ordinality)
+		JOIN UNNEST($7::text[]) WITH ORDINALITY AS owner(owner_user_id, ordinality)
+		  ON owner.ordinality=workspace.ordinality
+	)
+	SELECT EXISTS (
+		SELECT 1
+		FROM platform_publishing_restrictions restriction
+		WHERE restriction.platform=$1 AND restriction.cycle_id=$2 AND restriction.enabled=$3
+	) AND EXISTS (
+		SELECT 1
+		FROM users canonical_user
+		WHERE canonical_user.id=$5
+		  AND LOWER(TRIM(canonical_user.email))=$4
+	) AND EXISTS (
+		SELECT 1
+		FROM represented
+		LEFT JOIN current_plans plan ON plan.workspace_id=represented.workspace_id
+		WHERE COALESCE(plan.plan_id,'free')='free'
+		  AND EXISTS (
+			SELECT 1
+			FROM users owner_user
+			JOIN workspace_members owner_member
+			  ON owner_member.user_id=represented.owner_user_id
+			 AND owner_member.workspace_id=represented.workspace_id
+			 AND owner_member.role='owner' AND owner_member.status='active'
+			WHERE owner_user.id=represented.owner_user_id
+			  AND LOWER(TRIM(owner_user.email))=$4
+		  )
+		  AND EXISTS (
+			SELECT 1 FROM social_accounts account
+			JOIN profiles account_profile ON account_profile.id=account.profile_id
+			WHERE account_profile.workspace_id=represented.workspace_id AND account.platform=$1
+			  AND account.status='active' AND account.disconnected_at IS NULL
+		  )
+	)`
+
+func (s *PostgresPublishingRestrictionEmailStore) PublishingRestrictionEmailRecipientEligible(ctx context.Context, work PublishingRestrictionEmailWork) (bool, error) {
+	wantEnabled := work.CampaignType == publishingrestrictions.RestrictionNotice
+	var eligible bool
+	err := s.pool.QueryRow(ctx, publishingRestrictionRecipientEligibilitySQL,
+		work.Platform, work.CycleID, wantEnabled, work.NormalizedEmail, work.CanonicalUserID,
+		work.RepresentedWorkspaceIDs, work.RepresentedOwnerUserIDs).Scan(&eligible)
+	return eligible, err
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientSent(ctx context.Context, recipientID string) error {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var campaignID, status string
+	err = tx.QueryRow(ctx, `
+		SELECT campaign_id, status
+		FROM platform_publishing_restriction_email_recipients
+		WHERE id=$1
+		FOR UPDATE
+	`, recipientID).Scan(&campaignID, &status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("publishing restriction email recipient %s does not exist", recipientID)
+	}
+	if err != nil {
+		return err
+	}
+	if status != "sent" {
+		if status != "sending" {
+			return fmt.Errorf(
+				"publishing restriction email sent transition lost active send claim for recipient %s: status %s",
+				recipientID,
+				status,
+			)
+		}
+		command, updateErr := tx.Exec(ctx, `
+			UPDATE platform_publishing_restriction_email_recipients
+			SET status='sent', sent_at=NOW(), claimed_at=NULL, last_error=NULL, updated_at=NOW()
+			WHERE id=$1 AND status='sending'
+		`, recipientID)
+		if updateErr != nil {
+			return updateErr
+		}
+		if command.RowsAffected() != 1 {
+			return fmt.Errorf(
+				"publishing restriction email sent transition lost active send claim for recipient %s: affected %d rows, want 1",
+				recipientID,
+				command.RowsAffected(),
+			)
+		}
+	}
+	if _, err := tx.Exec(ctx, publishingRestrictionEmailCampaignRefreshSQL, campaignID, publishingRestrictionEmailMaxAttempts); err != nil {
+		return fmt.Errorf("refresh publishing restriction email campaign after sent transition: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientFailed(ctx context.Context, recipientID, reason string) error {
+	command, err := s.pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', claimed_at=NULL, last_error=$2,
+		    retryable = attempt_count < $3,
+		    next_attempt_at=NOW()+CASE WHEN attempt_count < 2 THEN INTERVAL '1 minute' ELSE INTERVAL '5 minutes' END,
+		    updated_at=NOW()
+		WHERE id=$1 AND status='sending'
+	`, recipientID, reason, publishingRestrictionEmailMaxAttempts)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"publishing restriction email definitive failure transition lost active send claim for recipient %s: affected %d rows, want 1",
+			recipientID,
+			command.RowsAffected(),
+		)
+	}
+	return nil
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientTerminalFailed(ctx context.Context, recipientID, reason string) error {
+	command, err := s.pool.Exec(ctx, `
+		UPDATE platform_publishing_restriction_email_recipients
+		SET status='failed', retryable=FALSE, claimed_at=NULL, last_error=$2, updated_at=NOW()
+		WHERE id=$1 AND status='sending'
+	`, recipientID, reason)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"publishing restriction email terminal transition lost active send claim for recipient %s: affected %d rows, want 1",
+			recipientID,
+			command.RowsAffected(),
+		)
+	}
+	return nil
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) MarkPublishingRestrictionEmailRecipientSkipped(ctx context.Context, recipientID, reason string) error {
+	command, err := s.pool.Exec(ctx, `UPDATE platform_publishing_restriction_email_recipients SET status='skipped_ineligible', claimed_at=NULL, last_error=$2, updated_at=NOW() WHERE id=$1 AND status='sending'`, recipientID, reason)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf("publishing restriction email skipped transition lost active send claim for recipient %s: affected %d rows, want 1", recipientID, command.RowsAffected())
+	}
+	return nil
+}
+
+func (s *PostgresPublishingRestrictionEmailStore) RefreshPublishingRestrictionEmailCampaign(ctx context.Context, campaignID string) error {
+	command, err := s.pool.Exec(ctx, publishingRestrictionEmailCampaignRefreshSQL, campaignID, publishingRestrictionEmailMaxAttempts)
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return fmt.Errorf(
+			"publishing restriction email campaign refresh for %s affected %d rows, want 1",
+			campaignID,
+			command.RowsAffected(),
+		)
+	}
+	return nil
+}

@@ -269,10 +269,19 @@ type tiktokPhotoInitRetryTransport struct {
 }
 
 type tiktokChunkedUploadTransport struct {
-	videoSize     int64
-	initSource    tiktokChunkedUploadSource
-	uploadRanges  []string
-	uploadLengths []int64
+	videoSize      int64
+	emptyPublishID bool
+	initSource     tiktokChunkedUploadSource
+	uploadRanges   []string
+	uploadLengths  []int64
+	statusCalls    int
+}
+
+type tiktokResumeTransport struct {
+	sourceReads int
+	initCalls   int
+	uploadCalls int
+	statusCalls int
 }
 
 type tiktokChunkedUploadSource struct {
@@ -316,6 +325,9 @@ func (t *tiktokChunkedUploadTransport) RoundTrip(req *http.Request) (*http.Respo
 		}
 		_ = json.Unmarshal(body, &payload)
 		t.initSource = payload.SourceInfo
+		if t.emptyPublishID {
+			return tiktokHTTPResponse(http.StatusOK, `{"data":{"publish_id":"","upload_url":"https://upload.example/video"},"error":{"code":"ok"}}`, req), nil
+		}
 		return tiktokHTTPResponse(http.StatusOK, `{"data":{"publish_id":"publish_123","upload_url":"https://upload.example/video"},"error":{"code":"ok"}}`, req), nil
 	case req.Method == http.MethodPut && req.URL.Host == "upload.example":
 		body, _ := io.ReadAll(req.Body)
@@ -326,9 +338,119 @@ func (t *tiktokChunkedUploadTransport) RoundTrip(req *http.Request) (*http.Respo
 		}
 		return tiktokHTTPResponse(http.StatusPartialContent, `{}`, req), nil
 	case req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/status/fetch/"):
+		t.statusCalls++
 		return tiktokHTTPResponse(http.StatusOK, `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7350123456789012345"]},"error":{"code":"ok"}}`, req), nil
 	default:
 		return tiktokHTTPResponse(http.StatusNotFound, `{}`, req), nil
+	}
+}
+
+func TestTikTokAbortsBeforePollingWhenPublishTokenPersistenceFails(t *testing.T) {
+	withTikTokPublishPollConfig(t, 1, 0)
+	transport := &tiktokChunkedUploadTransport{videoSize: 1_000_000}
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: transport}
+	want := errors.New("publish token lease was lost")
+
+	result, err := adapter.Post(
+		context.Background(),
+		"tiktok-token",
+		"caption",
+		[]MediaItem{{URL: "https://video.example/persist-failure.mp4", Kind: MediaKindVideo}},
+		map[string]any{
+			"privacy_level":   "SELF_ONLY",
+			"upload_mode":     "file_upload",
+			OptOnPublishToken: func(string) error { return want },
+		},
+	)
+	if !errors.Is(err, want) {
+		t.Fatalf("Post error = %v, want %v", err, want)
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	if len(transport.uploadRanges) != 0 {
+		t.Fatalf("upload PUT calls = %d, want zero after persistence failure", len(transport.uploadRanges))
+	}
+	if transport.statusCalls != 0 {
+		t.Fatalf("status calls = %d, want zero after persistence failure", transport.statusCalls)
+	}
+}
+
+func TestTikTokFileUploadRejectsEmptyPublishIDBeforeUpload(t *testing.T) {
+	withTikTokPublishPollConfig(t, 1, 0)
+	transport := &tiktokChunkedUploadTransport{videoSize: 1_000_000, emptyPublishID: true}
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: transport}
+
+	result, err := adapter.Post(
+		context.Background(),
+		"tiktok-token",
+		"caption",
+		[]MediaItem{{URL: "https://video.example/empty-publish-id.mp4", Kind: MediaKindVideo}},
+		map[string]any{"privacy_level": "SELF_ONLY", "upload_mode": "file_upload"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "empty publish_id") {
+		t.Fatalf("Post error = %v, want empty publish_id", err)
+	}
+	if result != nil {
+		t.Fatalf("result = %#v, want nil", result)
+	}
+	if len(transport.uploadRanges) != 0 {
+		t.Fatalf("upload PUT calls = %d, want zero for empty publish_id", len(transport.uploadRanges))
+	}
+	if transport.statusCalls != 0 {
+		t.Fatalf("status calls = %d, want zero for empty publish_id", transport.statusCalls)
+	}
+}
+
+func (t *tiktokResumeTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	switch {
+	case req.Method == http.MethodPost && strings.Contains(req.URL.Path, "/status/fetch/"):
+		t.statusCalls++
+		body, _ := io.ReadAll(req.Body)
+		if !strings.Contains(string(body), `"publish_id":"publish_123"`) {
+			return tiktokHTTPResponse(http.StatusBadRequest, `{"error":{"code":"wrong_publish_id"}}`, req), nil
+		}
+		return tiktokHTTPResponse(http.StatusOK, `{"data":{"status":"PUBLISH_COMPLETE","publicaly_available_post_id":["7350123456789012345"]},"error":{"code":"ok"}}`, req), nil
+	case req.Method == http.MethodGet:
+		t.sourceReads++
+	case strings.Contains(req.URL.Path, "/video/init/"):
+		t.initCalls++
+	case req.Method == http.MethodPut:
+		t.uploadCalls++
+	}
+	return tiktokHTTPResponse(http.StatusInternalServerError, `{"error":{"code":"duplicate_upload"}}`, req), nil
+}
+
+func TestTikTokResumeFromPersistedPublishTokenOnlyChecksStatus(t *testing.T) {
+	withTikTokPublishPollConfig(t, 1, 0)
+	transport := &tiktokResumeTransport{}
+	adapter := NewTikTokAdapter()
+	adapter.client = &http.Client{Transport: transport}
+
+	result, err := adapter.Post(
+		context.Background(),
+		"tiktok-token",
+		"caption",
+		[]MediaItem{{URL: "https://video.example/already-uploaded.mp4", Kind: MediaKindVideo}},
+		map[string]any{
+			"privacy_level":       "SELF_ONLY",
+			"upload_mode":         "file_upload",
+			OptResumePublishToken: "publish_123",
+		},
+	)
+	if err != nil {
+		t.Fatalf("resume Post: %v", err)
+	}
+	if result == nil || result.ExternalID != "publish_123" {
+		t.Fatalf("result = %#v, want existing publish_123", result)
+	}
+	if transport.statusCalls != 1 || transport.sourceReads != 0 || transport.initCalls != 0 || transport.uploadCalls != 0 {
+		t.Fatalf(
+			"resume calls status=%d source=%d init=%d upload=%d; want status only",
+			transport.statusCalls, transport.sourceReads, transport.initCalls, transport.uploadCalls,
+		)
 	}
 }
 

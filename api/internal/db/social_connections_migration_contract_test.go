@@ -24,7 +24,7 @@ func compactSocialConnectionSQL(source string) string {
 
 func readSocialConnectionsMigration(t *testing.T) string {
 	t.Helper()
-	body, err := os.ReadFile("migrations/121_social_connections_and_profile_bindings.sql")
+	body, err := os.ReadFile("migrations/128_social_connections_and_profile_bindings.sql")
 	if err != nil {
 		t.Fatalf("read migration 121: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestSocialConnectionMigrationAuditRedactsRoutingMetadata(t *testing.T) {
 }
 
 func TestInboxConnectionMigrationRollbackPreservesSupersededEvidence(t *testing.T) {
-	body, err := os.ReadFile("migrations/123_inbox_connection_deduplication.sql")
+	body, err := os.ReadFile("migrations/130_inbox_connection_deduplication.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestSocialConnectionsMigrationBackfillSeparatesUnsafeOwnership(t *testing.T
 		t.Fatalf("seed social connection migration fixture: %v", err)
 	}
 
-	applyMigrationUp(t, ctx, tx, "migrations/121_social_connections_and_profile_bindings.sql")
+	applyMigrationUp(t, ctx, tx, "migrations/128_social_connections_and_profile_bindings.sql")
 
 	var safeConnectionCount int
 	var safeDistinctBindings int
@@ -337,8 +337,8 @@ func TestSocialConnectionsMigrationBackfillSeparatesUnsafeOwnership(t *testing.T
 	`); err != nil {
 		t.Fatalf("seed sibling inbox duplicates before connection dedupe migration: %v", err)
 	}
-	applyMigrationUp(t, ctx, tx, "migrations/122_delivery_job_connection_snapshot.sql")
-	applyMigrationUp(t, ctx, tx, "migrations/123_inbox_connection_deduplication.sql")
+	applyMigrationUp(t, ctx, tx, "migrations/129_delivery_job_connection_snapshot.sql")
+	applyMigrationUp(t, ctx, tx, "migrations/130_inbox_connection_deduplication.sql")
 
 	var authoritativeInboxRows int
 	if err := tx.QueryRowContext(ctx, `
@@ -368,7 +368,7 @@ func TestSocialConnectionsMigrationBackfillSeparatesUnsafeOwnership(t *testing.T
 		t.Fatalf("historical inbox visibility = (%d visible, %d superseded), want (1, 1)", visibleInboxRows, supersededInboxRows)
 	}
 
-	applyMigrationUp(t, ctx, tx, "migrations/124_physical_daily_publish_reservations.sql")
+	applyMigrationUp(t, ctx, tx, "migrations/131_physical_daily_publish_reservations.sql")
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO social_accounts (
 			id, profile_id, platform, access_token, refresh_token, token_expires_at,

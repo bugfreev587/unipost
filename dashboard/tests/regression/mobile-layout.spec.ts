@@ -9,7 +9,10 @@ import { expect, test } from "@playwright/test";
 // so no distinct landing host exists there and the landing assertion is
 // skipped. Pricing is public on every host, so it stays baseURL-relative.
 const appBaseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
-const landingBaseURL = appBaseURL.replace("://app.", "://");
+const landingBaseURL = appBaseURL
+  .replace("://staging-app.", "://staging.")
+  .replace("://dev-app.", "://dev.")
+  .replace("://app.", "://");
 const landingHostTestable =
   landingBaseURL !== appBaseURL && !/localhost|127\.0\.0\.1/.test(appBaseURL);
 
@@ -20,6 +23,14 @@ const mobilePublicRoutes = [
     requiresLandingHost: true,
   },
   { path: "/pricing", marker: /Start free/i },
+  {
+    path: "/docs/api/posts/retry",
+    marker: /Queue one new delivery attempt for a failed per-destination result/i,
+  },
+  {
+    path: "/docs/guides/posts/retry-failed-posts",
+    marker: /Decide whether UniPost will retry a failed destination automatically/i,
+  },
 ];
 
 test.describe("mobile public layout", () => {
@@ -50,6 +61,22 @@ test.describe("mobile public layout", () => {
 
       expect(layout.scrollWidth).toBeLessThanOrEqual(layout.clientWidth + 2);
       expect(layout.navHeight).toBeLessThanOrEqual(112);
+
+      if (route.path === "/pricing") {
+        const planCards = page.locator(".pr-card");
+        await expect(planCards).toHaveCount(4);
+        const cardBounds = await planCards.evaluateAll((cards) =>
+          cards.map((card) => {
+            const rect = card.getBoundingClientRect();
+            return { left: rect.left, right: rect.right, width: rect.width };
+          }),
+        );
+        for (const bounds of cardBounds) {
+          expect(bounds.left).toBeGreaterThanOrEqual(0);
+          expect(bounds.right).toBeLessThanOrEqual(392);
+          expect(bounds.width).toBeGreaterThan(300);
+        }
+      }
     });
   }
 });

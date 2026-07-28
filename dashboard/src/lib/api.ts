@@ -1376,6 +1376,7 @@ export interface SocialPostResult {
   error_temporality?: ErrorTemporality;
   provider_error?: ProviderError;
   retry_policy?: RetryPolicy;
+  media_retained_until?: string;
   published_at?: string;
   // Serialized curl dump of every failing HTTP request the adapter
   // made during this dispatch. Populated only when status === "failed".
@@ -1663,6 +1664,113 @@ export async function dismissPostDeliveryJob(
 
 // Billing (workspace-scoped)
 
+export type TrialKind = "free_to_paid" | "paid_same_plan";
+
+export type TrialStatus =
+  | "provisioning"
+  | "pending_activation"
+  | "checkout_pending"
+  | "scheduled"
+  | "active"
+  | "completed"
+  | "canceled"
+  | "revoked"
+  | "superseded"
+  | "failed";
+
+export type TrialTerminalReason =
+  | "trial_completed"
+  | "renewal_canceled"
+  | "offer_revoked"
+  | "plan_changed"
+  | "trial_unavailable";
+
+interface WorkspaceTrialTimeline {
+  id: string;
+  kind: TrialKind;
+  plan_id: string;
+  duration_days: number;
+  status: TrialStatus;
+  granted_at?: string;
+  scheduled_start_at?: string;
+  started_at?: string;
+  ends_at?: string;
+  activated_at?: string;
+  canceled_at?: string;
+}
+
+/** Current user-safe trial projection returned by GET /v1/billing. */
+export interface WorkspaceTrial extends WorkspaceTrialTimeline {
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  post_trial_price_cents: number;
+  cancel_at_period_end: boolean;
+  changing_plan_forfeits_trial: boolean;
+  terminal_reason?: TrialTerminalReason;
+}
+
+/** User-safe durable row returned by GET /v1/billing/trials. */
+export interface WorkspaceTrialHistoryEntry extends WorkspaceTrialTimeline {
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  superseded_by_plan_id?: string;
+  post_trial_price_cents: number;
+  cancel_at_period_end: boolean;
+  terminal_reason?: TrialTerminalReason;
+}
+
+/** Trial summary embedded in each GET /v1/admin/billing row. */
+export interface AdminWorkspaceTrial extends WorkspaceTrialTimeline {
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  stripe_subscription_id?: string;
+  stripe_schedule_id?: string;
+  post_trial_price_cents: number;
+  cancel_at_period_end: boolean;
+  failure_reason?: TrialTerminalReason;
+}
+
+/** Full admin-only response from grant and revoke mutations. */
+export interface AdminTrialGrantMutation extends WorkspaceTrialTimeline {
+  workspace_id: string;
+  granted_by_user_id: string;
+  granted_at: string;
+  stripe_mode?: string;
+  stripe_customer_id?: string;
+  stripe_subscription_id?: string;
+  stripe_schedule_id?: string;
+  stripe_checkout_session_id?: string;
+  revoked_at?: string;
+  superseded_at?: string;
+  completed_at?: string;
+  superseded_by_plan_id?: string;
+  failure_code?: string;
+  failure_message?: string;
+}
+
+export interface TrialMutationTrial extends WorkspaceTrialTimeline {
+  changing_plan_forfeits_trial: boolean;
+}
+
+export interface TrialMutationBilling {
+  current_plan: string;
+  target_plan: string;
+  status: TrialStatus | "change_pending";
+  change_pending: boolean;
+  cancel_at_period_end: boolean;
+  period_start_at?: string;
+  period_end_at?: string;
+}
+
+/** Response shared by the trial-aware change-plan and cancel-renewal calls. */
+export interface TrialMutationProjection {
+  trial: TrialMutationTrial;
+  billing: TrialMutationBilling;
+}
+
 export interface BillingInfo {
   plan: string;
   plan_name: string;
@@ -1681,6 +1789,7 @@ export interface BillingInfo {
   resets_at: string;
   cancel_at_period_end: boolean;
   trial_eligible: boolean;
+  trial?: WorkspaceTrial;
 }
 
 export interface Plan {
@@ -1734,10 +1843,128 @@ export interface AdminFeatureFlag {
   updated_at: string;
 }
 
+export interface AdminPublishingRestrictionEvent {
+  id: string;
+  event_type: "enabled" | "disabled";
+  actor_user_id?: string;
+  expected_version: number;
+  resulting_version: number;
+  created_at: string;
+}
+
+export interface AdminPublishingRestriction {
+  id: string;
+  platform: string;
+  enabled: boolean;
+  restricted_plan_ids: string[];
+  reason_code: string;
+  user_message: string;
+  cycle_id?: string;
+  version: number;
+  enabled_at?: string;
+  disabled_at?: string;
+  created_at: string;
+  updated_at: string;
+  updated_by_user_id?: string;
+  affected_workspace_count?: number;
+  affected_account_count?: number;
+  current_cycle_retained_object_count?: number;
+  current_cycle_retained_bytes?: number;
+  current_cycle_projected_60_day_storage_cost_usd?: number;
+  recent_events?: AdminPublishingRestrictionEvent[];
+}
+
+export interface AdminPublishingRestrictionTransition {
+  restriction: AdminPublishingRestriction;
+  changed: boolean;
+}
+
+export type PublishingRestrictionCampaignType =
+  | "restriction_notice"
+  | "recovery_notice";
+
+export type PublishingRestrictionCampaignStatus =
+  | "queued"
+  | "running"
+  | "completed"
+  | "completed_with_failures"
+  | "failed";
+
+export interface AdminPublishingRestrictionCampaignPreview {
+  platform: string;
+  cycle_id: string;
+  campaign_type: PublishingRestrictionCampaignType;
+  restriction_version: number;
+  recipient_count: number;
+  subject: string;
+  body: string;
+  preview_token: string;
+  expires_at: string;
+}
+
+export interface AdminPublishingRestrictionCampaign {
+  id: string;
+  cycle_id: string;
+  campaign_type: PublishingRestrictionCampaignType;
+  status: PublishingRestrictionCampaignStatus;
+  subject_snapshot: string;
+  body_snapshot: string;
+  restriction_version: number;
+  previewed_count: number;
+  snapshotted_count: number;
+  pending_count: number;
+  sent_count: number;
+  failed_count: number;
+  skipped_count: number;
+  created_at: string;
+  updated_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface WorkspacePublishingRestriction {
+  restricted: boolean;
+  platform: string;
+  plan_id: string;
+  reason_code?: string;
+  code?: string;
+  message?: string;
+  next_action?: string;
+}
+
+export interface WorkspacePublishingRestrictions {
+  restrictions: WorkspacePublishingRestriction[];
+}
+
 export async function getBilling(
   token: string,
 ): Promise<ApiResponse<BillingInfo>> {
   return request(`/v1/billing`, token);
+}
+
+export async function getTrialHistory(
+  token: string,
+): Promise<ApiResponse<WorkspaceTrialHistoryEntry[]>> {
+  return request(`/v1/billing/trials`, token);
+}
+
+export async function changeTrialPlan(
+  token: string,
+  planId: string,
+): Promise<ApiResponse<TrialMutationProjection>> {
+  return request(`/v1/billing/change-plan`, token, {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId }),
+  });
+}
+
+export async function cancelTrialRenewal(
+  token: string,
+  trialId: string,
+): Promise<ApiResponse<TrialMutationProjection>> {
+  return request(`/v1/billing/trials/${encodeURIComponent(trialId)}/cancel-renewal`, token, {
+    method: "POST",
+  });
 }
 
 export async function getXCreditsAllowance(
@@ -1771,6 +1998,12 @@ export async function getWorkspaceFeatureFlags(
   return request("/v1/me/features", token);
 }
 
+export async function getPublishingRestrictions(
+  token: string,
+): Promise<ApiResponse<WorkspacePublishingRestrictions>> {
+  return request("/v1/publishing-restrictions", token);
+}
+
 export async function getPublicFeatureFlags(): Promise<ApiResponse<PublicFeatureFlags>> {
   return requestPublic("/v1/public/features");
 }
@@ -1789,6 +2022,66 @@ export async function updateAdminFeatureFlag(
   return request(`/v1/admin/feature-flags/${encodeURIComponent(key)}`, token, {
     method: "PATCH",
     body: JSON.stringify({ enabled }),
+  });
+}
+
+export async function listAdminPublishingRestrictions(
+  token: string,
+): Promise<ApiResponse<AdminPublishingRestriction[]>> {
+  return request("/v1/admin/publishing-restrictions", token);
+}
+
+export async function updateAdminPublishingRestriction(
+  token: string,
+  platform: string,
+  body: { enabled: boolean; expected_version: number },
+): Promise<ApiResponse<AdminPublishingRestrictionTransition>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function previewAdminPublishingRestrictionCampaign(
+  token: string,
+  platform: string,
+  body: { campaign_type: PublishingRestrictionCampaignType },
+): Promise<ApiResponse<AdminPublishingRestrictionCampaignPreview>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns/preview`, token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function createAdminPublishingRestrictionCampaign(
+  token: string,
+  platform: string,
+  body: {
+    campaign_type: PublishingRestrictionCampaignType;
+    preview_token: string;
+    confirmation: "SEND";
+  },
+): Promise<ApiResponse<AdminPublishingRestrictionCampaign>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns`, token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function listAdminPublishingRestrictionCampaigns(
+  token: string,
+  platform: string,
+): Promise<ApiResponse<AdminPublishingRestrictionCampaign[]>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns`, token);
+}
+
+export async function retryFailedAdminPublishingRestrictionCampaign(
+  token: string,
+  platform: string,
+  campaignId: string,
+): Promise<ApiResponse<AdminPublishingRestrictionCampaign>> {
+  return request(`/v1/admin/publishing-restrictions/${encodeURIComponent(platform)}/email-campaigns/${encodeURIComponent(campaignId)}/retry-failed`, token, {
+    method: "POST",
   });
 }
 
@@ -1888,6 +2181,16 @@ export async function createCheckout(
   planId: string
 ): Promise<ApiResponse<{ checkout_url: string }>> {
   return request(`/v1/billing/checkout`, token, {
+    method: "POST",
+    body: JSON.stringify({ plan_id: planId }),
+  });
+}
+
+export async function createPlanChangeSession(
+  token: string,
+  planId: string,
+): Promise<ApiResponse<{ url: string }>> {
+  return request(`/v1/billing/plan-change-session`, token, {
     method: "POST",
     body: JSON.stringify({ plan_id: planId }),
   });
@@ -3019,17 +3322,10 @@ export interface AdminEmailNotificationListParams {
   status?: "all" | AdminEmailNotificationStatus;
   provider?: "all" | string;
   event_key?: string;
-  email?: "all" | string;
   threshold?: "all" | 80 | 85 | 90 | 95 | 100 | 105 | 110 | 115 | 120;
   period?: string;
-  start_at?: string;
-  end_at?: string;
   limit?: number;
   offset?: number;
-}
-
-export interface AdminEmailNotificationFilterOptions {
-  emails: string[];
 }
 
 export interface AdminPaidQuotaFollowUpRow {
@@ -3078,6 +3374,7 @@ export interface AdminBillingRow {
   posts_used: number;
   post_limit: number;
   updated_at: string;
+  trial?: AdminWorkspaceTrial;
 }
 
 export interface AdminBillingListParams {
@@ -3780,21 +4077,12 @@ export async function listAdminEmailNotifications(
   if (params?.status && params.status !== "all") qs.set("status", params.status);
   if (params?.provider && params.provider !== "all") qs.set("provider", params.provider);
   if (params?.event_key) qs.set("event_key", params.event_key);
-  if (params?.email && params.email !== "all") qs.set("email", params.email);
   if (params?.threshold && params.threshold !== "all") qs.set("threshold", String(params.threshold));
   if (params?.period) qs.set("period", params.period);
-  if (params?.start_at) qs.set("start_at", params.start_at);
-  if (params?.end_at) qs.set("end_at", params.end_at);
   if (params?.limit != null) qs.set("limit", String(params.limit));
   if (params?.offset != null) qs.set("offset", String(params.offset));
   const s = qs.toString();
   return request(`/v1/admin/email-notifications${s ? `?${s}` : ""}`, token);
-}
-
-export async function listAdminEmailNotificationFilterOptions(
-  token: string,
-): Promise<ApiResponse<AdminEmailNotificationFilterOptions>> {
-  return request("/v1/admin/email-notifications/filter-options", token);
 }
 
 export async function retryAdminPaidQuotaEmailNotification(
@@ -3845,6 +4133,29 @@ export async function listAdminBilling(
   if (params?.limit != null) qs.set("limit", String(params.limit));
   const s = qs.toString();
   return request(`/v1/admin/billing${s ? `?${s}` : ""}`, token);
+}
+
+export async function grantAdminTrial(
+  token: string,
+  workspaceId: string,
+  data: { plan_id: string; duration_days: number },
+): Promise<ApiResponse<AdminTrialGrantMutation>> {
+  return request(`/v1/admin/workspaces/${encodeURIComponent(workspaceId)}/trials`, token, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function revokeAdminTrial(
+  token: string,
+  workspaceId: string,
+  trialId: string,
+): Promise<ApiResponse<AdminTrialGrantMutation>> {
+  return request(
+    `/v1/admin/workspaces/${encodeURIComponent(workspaceId)}/trials/${encodeURIComponent(trialId)}/revoke`,
+    token,
+    { method: "POST", body: JSON.stringify({}) },
+  );
 }
 
 // Admin-only: flip a workspace's plan_id without going through Stripe.

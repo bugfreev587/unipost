@@ -705,10 +705,10 @@ func (f *scheduledExecutionQuotaTestDB) QueryRow(_ context.Context, query string
 
 func scheduledExecutionQuotaPost(t *testing.T) db.SocialPost {
 	t.Helper()
-	metadata, err := platform.EncodePostMetadata([]platform.PlatformPostInput{
+	metadata, err := encodeScheduledPostMetadata([]platform.PlatformPostInput{
 		{AccountID: "acct_youtube_1", Caption: "Scheduled video one"},
 		{AccountID: "acct_youtube_2", Caption: "Scheduled video two"},
-	})
+	}, 1)
 	if err != nil {
 		t.Fatalf("encode metadata: %v", err)
 	}
@@ -750,6 +750,8 @@ func socialPostResultScanRow(result db.SocialPostResult) scanRow {
 		result.XCreditOperation,
 		result.XCreditCatalogVersion,
 		result.XCreditBillingMode,
+		result.DailyReservationOperationKey,
+		result.DailyReservationReleasePending,
 	}}
 }
 

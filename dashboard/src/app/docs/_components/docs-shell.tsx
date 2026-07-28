@@ -415,6 +415,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
     {
       title: "Publishing Guides",
       items: [
+        { label: "Retry failed posts", href: "/docs/guides/posts/retry-failed-posts" },
         { label: "Publish GIFs", href: "/docs/guides/publish-gifs" },
         { label: "Platform options examples", href: "/docs/guides/platform-options" },
         { label: "Instagram Stories", href: "/docs/guides/instagram-stories" },
@@ -520,6 +521,7 @@ const DOCS_SIDEBAR_NAV: Record<DocsPrimaryKey, DocsSidebarSection[]> = {
             { label: "Get post", href: "/docs/api/posts/get", method: "GET" },
             { label: "Update post", href: "/docs/api/posts/update", method: "PATCH" },
             { label: "Validate post", href: "/docs/api/posts/validate", method: "POST" },
+            { label: "Retry Post", href: "/docs/api/posts/retry", method: "POST" },
           ],
         },
         {

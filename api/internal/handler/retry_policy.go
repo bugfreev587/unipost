@@ -103,6 +103,33 @@ func applyRetryPolicyToResponse(resp *postResultResponse, result db.SocialPostRe
 	resp.RetryPolicy = deriveRetryPolicy(result, jobs)
 }
 
+func applyPublishingRestrictionRetryEligibility(policy *retryPolicyResponse, restrictionActive, mediaAvailable bool) {
+	if policy == nil {
+		return
+	}
+	if policy.RetryState == "scheduled" || policy.RetryState == "running" {
+		policy.ManualRetryAllowed = false
+		return
+	}
+	policy.IsRetriable = false
+	policy.WillRetry = false
+	policy.NextRunAt = nil
+	policy.ManualRetryAllowed = false
+	if restrictionActive {
+		policy.RetryState = "blocked"
+		policy.Reason = "publishing_restriction_active"
+		return
+	}
+	if !mediaAvailable {
+		policy.RetryState = "blocked"
+		policy.Reason = "media_reupload_required"
+		return
+	}
+	policy.RetryState = "manual_only"
+	policy.ManualRetryAllowed = true
+	policy.Reason = "restriction_lifted_or_plan_upgraded"
+}
+
 func retryPolicyFromFailureDetails(status string, failure db.CreatePostFailureParams) *retryPolicyResponse {
 	if status != "failed" {
 		return nil

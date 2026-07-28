@@ -20,7 +20,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
   { name: "post_id?", type: "string", description: "Filter logs associated with one post." },
   { name: "request_id?", type: "string", description: "Filter logs associated with one API request." },
   { name: "error_code?", type: "string", description: "Filter logs by normalized error code." },
-  { name: "q?", type: "string", description: "Search message, action, request id, post id, and error code." },
+  { name: "q?", type: "string", description: "Search message, action, request id, post id, and error code by substring, or match a complete metadata.connect_session_id or metadata.external_user_id exactly." },
   { name: "from?", type: "string", description: "RFC3339 timestamp. Inclusive lower bound. Defaults to 7 days ago — set it explicitly to backfill further." },
   { name: "to?", type: "string", description: "RFC3339 timestamp. Inclusive upper bound." },
   { name: "limit?", type: "integer", description: "Page size. Default 100, maximum 500." },
@@ -56,7 +56,7 @@ const SNIPPETS = [
   {
     lang: "curl",
     label: "cURL",
-    code: `curl "https://api.unipost.dev/v1/logs?status=error&limit=50" \\
+    code: `curl "https://api.unipost.dev/v1/logs?category=oauth&platform=facebook&status=error&q=cs_example_01&limit=50" \\
   -H "Authorization: Bearer $UNIPOST_API_KEY"`,
   },
   {
@@ -136,18 +136,26 @@ const RESPONSE_SNIPPETS = [
     code: `{
   "data": [
     {
-      "id": 110966,
-      "workspace_id": "ae267ee2-298d-4fa8-b6a0-c386000b17af",
-      "ts": "2026-06-17T20:16:34.476752Z",
+      "id": 101,
+      "workspace_id": "ws_example",
+      "ts": "2026-07-24T18:15:00Z",
       "level": "error",
       "status": "error",
       "category": "oauth",
       "action": "account.connect.callback_failed",
       "source": "oauth",
-      "message": "Failed to persist connected account.",
-      "request_id": "req_abc123",
-      "platform": "instagram",
-      "error_code": "account_save_failed"
+      "message": "Hosted Connect failed: no manageable Facebook Page was found.",
+      "request_id": "req_example_01",
+      "platform": "facebook",
+      "error_code": "facebook_page_not_available",
+      "metadata": {
+        "connect_session_id": "cs_example_01",
+        "external_user_id": "managed_user_example",
+        "callback_status": "error",
+        "connection_type": "managed",
+        "page_count": 0,
+        "publishable_page_count": 0
+      }
     }
   ],
   "meta": {

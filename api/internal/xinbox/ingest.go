@@ -12,11 +12,9 @@ import (
 )
 
 var (
-	ErrInboxAccountNotFound   = errors.New("X inbox account not found")
-	ErrInboxAccountAmbiguous  = errors.New("X inbox account routing is ambiguous")
-	ErrAppSecretNotFound      = errors.New("X app consumer secret not found")
-	ErrMalformedEvent         = errors.New("malformed recognized X inbox event")
-	ErrDMFeatureNotConfigured = errors.New("X DM feature evaluator is not configured")
+	ErrInboxAccountNotFound = errors.New("X inbox account not found")
+	ErrAppSecretNotFound    = errors.New("X app consumer secret not found")
+	ErrMalformedEvent       = errors.New("malformed recognized X inbox event")
 )
 
 type InboxAccount struct {
@@ -113,16 +111,8 @@ type IngestionResult struct {
 
 type IngestionStore interface {
 	AccountForApp(context.Context, string, string) (InboxAccount, error)
-	InsertInboxItem(context.Context, InboxItem) (InboxItem, bool, error)
-}
-
-type providerUserAccountStore interface {
 	AccountsForProviderUser(context.Context, string, string) ([]InboxAccount, error)
-}
-
-type providerUserIngestionStore interface {
-	IngestionStore
-	providerUserAccountStore
+	InsertInboxItem(context.Context, InboxItem) (InboxItem, bool, error)
 }
 
 type IngestionConfig struct {
@@ -197,7 +187,7 @@ func (s *IngestionService) IngestStreamEvent(ctx context.Context, appClientID st
 			AuthorID:         event.Data.AuthorID,
 			AuthorAvatarURL:  authorAvatar,
 			Body:             event.Data.Text,
-			IsOwn:            strings.TrimSpace(event.Data.AuthorID) == strings.TrimSpace(account.ExternalAccountID),
+			IsOwn:            event.Data.AuthorID != "" && event.Data.AuthorID == account.ExternalUserID,
 			ReceivedAt:       receivedAt,
 			ThreadKey:        firstNonEmptyString(event.Data.ConversationID, event.Data.ID),
 			ThreadStatus:     "open",
@@ -218,66 +208,54 @@ func (s *IngestionService) IngestActivityEvent(ctx context.Context, appClientID 
 	if s == nil || s.store == nil {
 		return errors.New("X inbox ingestion store is not configured")
 	}
-	var account InboxAccount
+	var accounts []InboxAccount
 	if strings.TrimSpace(event.AccountID) != "" {
-		var err error
-		account, err = s.store.AccountForApp(ctx, appClientID, event.AccountID)
+		account, err := s.store.AccountForApp(ctx, appClientID, event.AccountID)
 		if err != nil {
 			return err
 		}
-		providerUserID := strings.TrimSpace(event.ExternalUserID)
-		if providerUserID == "" || providerUserID != strings.TrimSpace(account.ExternalAccountID) {
-			return fmt.Errorf("%w: tagged provider route mismatch", ErrInboxAccountNotFound)
-		}
+		accounts = []InboxAccount{account}
 	} else {
-		providerStore, ok := s.store.(providerUserAccountStore)
-		if !ok {
-			return errors.New("X inbox provider user lookup is not configured")
-		}
 		providerUserID := firstNonEmptyString(event.ExternalUserID, event.RecipientID)
-		accounts, err := providerStore.AccountsForProviderUser(ctx, appClientID, providerUserID)
+		var err error
+		accounts, err = s.store.AccountsForProviderUser(ctx, appClientID, providerUserID)
 		if err != nil {
 			return err
 		}
-		switch len(accounts) {
-		case 0:
-			return ErrInboxAccountNotFound
-		case 1:
-			account = accounts[0]
-		default:
-			return fmt.Errorf("%w: provider user %q matched %d accounts", ErrInboxAccountAmbiguous, providerUserID, len(accounts))
+	}
+	var errs []error
+	for _, account := range accounts {
+		if !account.PlanAllowsInbox || !hasRequiredScopes(account.Scopes, "dm.read", "users.read") {
+			continue
+		}
+		isOwn := event.SenderID != "" &&
+			(event.SenderID == account.ExternalUserID || event.SenderID == account.ExternalAccountID)
+		item := InboxItem{
+			SocialAccountID:  account.ID,
+			WorkspaceID:      account.WorkspaceID,
+			Source:           "x_dm",
+			ExternalID:       event.ExternalID,
+			ParentExternalID: event.ThreadKey(),
+			AuthorName:       event.SenderName,
+			AuthorID:         event.SenderID,
+			AuthorAvatarURL:  event.SenderAvatarURL,
+			Body:             event.Text,
+			IsOwn:            isOwn,
+			ReceivedAt:       event.CreatedAt,
+			ThreadKey:        event.ThreadKey(),
+			ThreadStatus:     "open",
+			Metadata: map[string]any{
+				"conversation_id": event.ConversationID,
+			},
+		}
+		if item.ReceivedAt.IsZero() {
+			item.ReceivedAt = s.now().UTC()
+		}
+		if err := s.admitAndInsert(ctx, account, item, "dm.received", "activity"); err != nil {
+			errs = append(errs, err)
 		}
 	}
-	if err := s.requireDMFeatureEvaluator("x_dm"); err != nil {
-		return err
-	}
-	if !account.PlanAllowsInbox || !hasRequiredScopes(account.Scopes, "dm.read", "users.read") {
-		return nil
-	}
-	isOwn := event.SenderID != "" &&
-		(event.SenderID == account.ExternalUserID || event.SenderID == account.ExternalAccountID)
-	item := InboxItem{
-		SocialAccountID:  account.ID,
-		WorkspaceID:      account.WorkspaceID,
-		Source:           "x_dm",
-		ExternalID:       event.ExternalID,
-		ParentExternalID: event.ThreadKey(),
-		AuthorName:       event.SenderName,
-		AuthorID:         event.SenderID,
-		AuthorAvatarURL:  event.SenderAvatarURL,
-		Body:             event.Text,
-		IsOwn:            isOwn,
-		ReceivedAt:       event.CreatedAt,
-		ThreadKey:        event.ThreadKey(),
-		ThreadStatus:     "open",
-		Metadata: map[string]any{
-			"conversation_id": event.ConversationID,
-		},
-	}
-	if item.ReceivedAt.IsZero() {
-		item.ReceivedAt = s.now().UTC()
-	}
-	return s.admitAndInsert(ctx, account, item, "dm.received", "activity")
+	return errors.Join(errs...)
 }
 
 func (s *IngestionService) admitAndInsert(
@@ -306,9 +284,6 @@ func (s *IngestionService) IngestRecovery(
 		item.WorkspaceID != "" && item.WorkspaceID != account.WorkspaceID {
 		return IngestionResult{}, errors.New("X recovery item does not match the account workspace")
 	}
-	if err := s.requireDMFeatureEvaluator(item.Source); err != nil {
-		return IngestionResult{}, err
-	}
 	item.SocialAccountID = account.ID
 	item.WorkspaceID = account.WorkspaceID
 	return s.admitAndInsertResult(ctx, account, item, operationKey, source, s.now().UTC())
@@ -322,13 +297,10 @@ func (s *IngestionService) admitAndInsertResult(
 	source string,
 	admissionAt time.Time,
 ) (IngestionResult, error) {
-	if err := s.requireDMFeatureEvaluator(item.Source); err != nil {
-		return IngestionResult{}, err
-	}
 	if item.ExternalID == "" {
 		return IngestionResult{}, nil
 	}
-	if item.Source == "x_dm" {
+	if item.Source == "x_dm" && s.dmsAvailable != nil {
 		available, err := s.dmsAvailable(ctx, account.WorkspaceID)
 		if err != nil {
 			return IngestionResult{}, err
@@ -381,28 +353,18 @@ func (s *IngestionService) admitAndInsertResult(
 	return IngestionResult{Admission: admission, Item: insertedItem, Inserted: inserted}, nil
 }
 
-func (s *IngestionService) requireDMFeatureEvaluator(source string) error {
-	if source == "x_dm" && (s == nil || s.dmsAvailable == nil) {
-		return ErrDMFeatureNotConfigured
-	}
-	return nil
-}
-
 func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
-	type currentActivityData struct {
-		EventType string `json:"event_type"`
-		Filter    struct {
-			UserID string `json:"user_id"`
-		} `json:"filter"`
-		Tag       string          `json:"tag"`
-		CreatedAt string          `json:"created_at"`
-		Payload   json.RawMessage `json:"payload"`
-	}
 	var envelope struct {
-		Data                json.RawMessage `json:"data"`
-		CurrentEventTypeRaw json.RawMessage `json:"event_type"`
-		CurrentPayloadRaw   json.RawMessage `json:"payload"`
-		ForUserID           string          `json:"for_user_id"`
+		Data struct {
+			EventType string `json:"event_type"`
+			Filter    struct {
+				UserID string `json:"user_id"`
+			} `json:"filter"`
+			Tag       string          `json:"tag"`
+			CreatedAt string          `json:"created_at"`
+			Payload   json.RawMessage `json:"payload"`
+		} `json:"data"`
+		ForUserID           string `json:"for_user_id"`
 		DirectMessageEvents []struct {
 			Type             string `json:"type"`
 			ID               string `json:"id"`
@@ -426,24 +388,9 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, fmt.Errorf("decode X activity envelope: %w", err)
 	}
-	currentShape := len(envelope.Data) > 0 || len(envelope.CurrentEventTypeRaw) > 0 || len(envelope.CurrentPayloadRaw) > 0
-	if currentShape {
-		var data currentActivityData
-		if len(envelope.Data) > 0 {
-			if err := json.Unmarshal(envelope.Data, &data); err != nil {
-				return nil, fmt.Errorf("%w: decode current X activity data: %v", ErrMalformedEvent, err)
-			}
-		}
-		eventType := strings.TrimSpace(data.EventType)
-		if eventType == "" {
-			return nil, fmt.Errorf("%w: current X activity envelope is missing event_type", ErrMalformedEvent)
-		}
-		if eventType != "dm.received" {
-			return []ActivityEvent{}, nil
-		}
-		if len(data.Payload) == 0 {
-			return nil, fmt.Errorf("%w: dm.received payload is missing", ErrMalformedEvent)
-		}
+
+	events := make([]ActivityEvent, 0, 1+len(envelope.DirectMessageEvents))
+	if envelope.Data.EventType == "dm.received" && len(envelope.Data.Payload) > 0 {
 		var payload struct {
 			ID               string   `json:"id"`
 			DMEventID        string   `json:"dm_event_id"`
@@ -455,10 +402,10 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 			ParticipantIDs   []string `json:"participant_ids"`
 			Text             string   `json:"text"`
 		}
-		if err := json.Unmarshal(data.Payload, &payload); err != nil {
+		if err := json.Unmarshal(envelope.Data.Payload, &payload); err != nil {
 			return nil, fmt.Errorf("decode X dm.received payload: %w", err)
 		}
-		recipientID := firstNonEmptyString(payload.RecipientID, data.Filter.UserID)
+		recipientID := firstNonEmptyString(payload.RecipientID, envelope.Data.Filter.UserID)
 		if recipientID == "" {
 			for _, participantID := range payload.ParticipantIDs {
 				if participantID != payload.SenderID {
@@ -468,23 +415,24 @@ func ParseActivityEvents(body []byte) ([]ActivityEvent, error) {
 			}
 		}
 		event := ActivityEvent{
-			AccountID:      activityAccountID(data.Tag),
-			ExternalUserID: data.Filter.UserID,
+			AccountID:      activityAccountID(envelope.Data.Tag),
+			ExternalUserID: envelope.Data.Filter.UserID,
 			ExternalID:     firstNonEmptyString(payload.ID, payload.DMEventID),
 			ConversationID: firstNonEmptyString(payload.DMConversationID, payload.ConversationID),
 			SenderID:       payload.SenderID,
 			RecipientID:    recipientID,
 			Text:           payload.Text,
-			CreatedAt:      parseRFC3339(firstNonEmptyString(payload.CreatedAt, data.CreatedAt)),
+			CreatedAt:      parseRFC3339(firstNonEmptyString(payload.CreatedAt, envelope.Data.CreatedAt)),
 		}
-		if event.AccountID == "" || event.ExternalID == "" || event.ExternalUserID == "" || event.SenderID == "" ||
+		if event.ExternalID == "" || event.ExternalUserID == "" || event.SenderID == "" ||
 			event.CreatedAt.IsZero() || (event.ConversationID == "" && event.RecipientID == "") {
-			return nil, fmt.Errorf("%w: dm.received is missing account tag, event id, routing user, participants, conversation, or timestamp", ErrMalformedEvent)
+			return nil, fmt.Errorf("%w: dm.received is missing event id, routing user, participants, conversation, or timestamp", ErrMalformedEvent)
 		}
-		return []ActivityEvent{event}, nil
+		events = append(events, event)
+	} else if envelope.Data.EventType == "dm.received" {
+		return nil, fmt.Errorf("%w: dm.received payload is missing", ErrMalformedEvent)
 	}
 
-	events := make([]ActivityEvent, 0, len(envelope.DirectMessageEvents))
 	for _, dm := range envelope.DirectMessageEvents {
 		if dm.Type != "message_create" {
 			continue

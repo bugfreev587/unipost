@@ -94,6 +94,40 @@ func (w *WebhookDeliveryWorker) Publish(ctx context.Context, workspaceID, event 
 	}
 }
 
+// PublishDurable fans out a stable outbox event. The per-webhook event_id
+// constraint makes retries safe when another sink failed after webhook rows
+// were already committed.
+func (w *WebhookDeliveryWorker) PublishDurable(ctx context.Context, eventID, workspaceID, event string, payload []byte) error {
+	webhooks, err := w.queries.ListWebhooksByWorkspaceAndEvent(ctx, db.ListWebhooksByWorkspaceAndEventParams{
+		WorkspaceID: workspaceID,
+		Event:       event,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list webhooks: %w", err)
+	}
+	wrapped, err := json.Marshal(map[string]any{
+		"event":     event,
+		"event_id":  eventID,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+		"data":      json.RawMessage(payload),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	var firstErr error
+	for _, webhook := range webhooks {
+		if err := w.queries.CreateWebhookDeliveryWithEventID(ctx, db.CreateWebhookDeliveryWithEventIDParams{
+			WebhookID: webhook.ID,
+			Event:     event,
+			Payload:   wrapped,
+			EventID:   pgtype.Text{String: eventID, Valid: true},
+		}); err != nil && firstErr == nil {
+			firstErr = fmt.Errorf("create webhook delivery %s: %w", webhook.ID, err)
+		}
+	}
+	return firstErr
+}
+
 // Enqueue creates webhook delivery records for all matching webhooks.
 func (w *WebhookDeliveryWorker) Enqueue(ctx context.Context, workspaceID string, event string, data any) error {
 	webhooks, err := w.queries.ListWebhooksByWorkspaceAndEvent(ctx, db.ListWebhooksByWorkspaceAndEventParams{

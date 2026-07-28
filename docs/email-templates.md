@@ -16,6 +16,7 @@ As of 2026-06-26, these paths are wired to Loops transactional templates in code
 - `email.workspace.member_invited.v1` via `LOOPS_WORKSPACE_MEMBER_INVITED_TRANSACTIONAL_ID`.
 - `email.notification.test.v1` via `LOOPS_NOTIFICATION_TEST_TRANSACTIONAL_ID`.
 - `email.billing.plan_changed.v1` via `LOOPS_PLAN_CHANGED_TRANSACTIONAL_ID`.
+- `email.billing.trial_ending.v1` via `LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID`.
 - `email.billing.payment_failed.v1` via `LOOPS_BILLING_PAYMENT_FAILED_TRANSACTIONAL_ID`.
 - `email.billing.payment_recovered.v1` via `LOOPS_BILLING_PAYMENT_RECOVERED_TRANSACTIONAL_ID`.
 - `email.billing.subscription_canceled.v1` via `LOOPS_BILLING_SUBSCRIPTION_CANCELED_TRANSACTIONAL_ID`.
@@ -25,7 +26,7 @@ As of 2026-06-26, these paths are wired to Loops transactional templates in code
 
 Welcome and invite sends are best-effort and skipped when the Loops sender or template ID is missing. Notification test email returns a configuration error when the Loops test template is missing, because the user explicitly requested a provider test.
 
-Billing lifecycle events are emitted from Stripe webhook handling through the Loops lifecycle syncer. If a billing transactional template ID is missing, the syncer falls back to the matching Loops event path, so Loops dashboard workflows must be audited before enabling those event listeners. The old backend-rendered Resend paid activation email has been removed; paid activation copy should live in `email.billing.plan_changed.v1`.
+Billing lifecycle events are emitted from Stripe webhook handling through the Loops lifecycle syncer. Most existing billing events fall back to the matching Loops event path if their transactional template ID is missing. Trial-ending reminders are stricter: missing Loops API or template configuration records a failed `email_send_attempts` row and never falls back to a Loops event, preventing an unaudited duplicate workflow. The old backend-rendered Resend paid activation email has been removed; paid activation copy should live in `email.billing.plan_changed.v1`.
 
 `post.failed` and `account.disconnected` email channels are now Loops-owned. The notification dispatcher preserves Slack and Discord delivery for those events, while email-channel notification rows are recorded as `skipped` audit rows instead of being sent through Resend. The legacy `billing.usage_80pct` notification setting is hidden; free-plan quota reminders use `email.quota.free_plan_reminder.v1` and the `free_plan_quota_email_reminders` ledger.
 
@@ -144,6 +145,22 @@ The admin view supports filtering by status, provider, event key, quota period/t
 - Fallback policy: none by default.
 - Retention policy: retain metadata and variable snapshots for 13 months.
 - External Loops workflow audit: no overlapping cancellation workflow should send for the same subscription cancellation.
+
+### email.billing.trial_ending.v1
+
+- Template env: `LOOPS_BILLING_TRIAL_ENDING_TRANSACTIONAL_ID`
+- Provider: Loops
+- Delivery class: `critical_transactional`
+- Owner area: Billing
+- Trigger: Stripe `customer.subscription.trial_will_end` for an active managed grant. A one-, two-, or three-day managed trial uses the same sender immediately after activation.
+- Recipient policy: workspace owner.
+- Preference policy: essential account/billing notice; not unsubscribe-gated.
+- Required variables: `workspace_name`, `plan_id`, `plan_name`, `trial_end`, `days_remaining`, `post_trial_price`, `billing_url`, `cancel_url`
+- Idempotency policy: `billing_trial_ending:{trial_grant_id}:{trial_end}`
+- Audit policy: one `email_send_attempts` row per grant/end key; retries increment `attempt_count` on that row. Missing API/template configuration and pre-send policy failures mark that row failed while Stripe webhook handling still succeeds.
+- Fallback policy: send immediately after activation for one-, two-, or three-day trials.
+- Retention policy: retain metadata and variable snapshots for 13 months.
+- External Loops workflow audit: audit workflows listening to `billing_trial_ending` before enabling this template so no second workflow sends the same reminder.
 
 ### email.quota.free_plan_reminder.v1
 
@@ -266,6 +283,36 @@ The admin view supports filtering by status, provider, event key, quota period/t
 - Fallback policy: none by default.
 - Retention policy: retain metadata and variable snapshots for 13 months.
 - External Loops workflow audit: no cancellation workflow should send in addition to the backend account-canceled template.
+
+### email.publishing_restriction.restriction_notice.v1
+
+- Template env: `LOOPS_TIKTOK_FREE_RESTRICTION_NOTICE_TRANSACTIONAL_ID`
+- Provider: Loops through `loops.AuditedClient`
+- Delivery class: `service_alert`
+- Owner area: Publishing / Operations
+- Trigger: a Super Admin separately previews and irreversibly confirms the fixed restriction campaign; the restriction toggle never sends it.
+- Recipient policy: deduped current Free workspace owners with active connected TikTok, snapshotted at confirmation and rechecked at send.
+- Required variables: `subject`, `body`
+- Rendering contract: the backend replaces `{{first_name}}` in the immutable body snapshot before calling Loops (`there` fallback). The Loops template renders the supplied `subject` and `body` variables exactly and must not contain separate notice copy or attempt nested `{{first_name}}` evaluation.
+- Idempotency policy: `{cycle_id}:restriction_notice:{canonical_user_id}`
+- Audit policy: create and atomically link one `email_send_attempts` row before every network attempt. A provider key is stable per cycle/type/user; the local audit key is unique per bounded attempt.
+- Fallback policy: none; missing provider/template configuration is a durable recipient failure.
+- External Loops workflow audit: no workflow may auto-send this notice from a toggle or contact property.
+
+### email.publishing_restriction.recovery_notice.v1
+
+- Template env: `LOOPS_TIKTOK_FREE_RECOVERY_NOTICE_TRANSACTIONAL_ID`
+- Provider: Loops through `loops.AuditedClient`
+- Delivery class: `service_alert`
+- Owner area: Publishing / Operations
+- Trigger: a Super Admin separately previews and irreversibly confirms the fixed recovery campaign; disabling the restriction never sends it.
+- Recipient policy: recipients successfully sent the same-cycle restriction notice who remain Free owners with active connected TikTok. This intentionally excludes users who never received that notice.
+- Required variables: `subject`, `body`
+- Rendering contract: the backend replaces `{{first_name}}` in the immutable body snapshot before calling Loops (`there` fallback). The Loops template renders the supplied `subject` and `body` variables exactly and must not contain separate recovery copy or attempt nested `{{first_name}}` evaluation.
+- Idempotency policy: `{cycle_id}:recovery_notice:{canonical_user_id}`
+- Audit policy: create and atomically link one `email_send_attempts` row before every network attempt. A provider key is stable per cycle/type/user; the local audit key is unique per bounded attempt.
+- Fallback policy: none; missing provider/template configuration is a durable recipient failure.
+- External Loops workflow audit: no workflow may auto-send recovery from a toggle or contact property.
 
 ## Loops Dashboard Audit Checklist
 

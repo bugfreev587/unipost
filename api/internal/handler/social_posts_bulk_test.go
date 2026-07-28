@@ -22,7 +22,15 @@ func TestProcessBulkOneRejectsDuplicateSocialConnectionBeforePublish(t *testing.
 		"sa_prod": {Platform: "twitter", ConnectionID: "conn_1", ProfileID: "pr_prod"},
 	}
 
-	result, accepted := h.processBulkOne(req, "ws_1", body, accounts, quota.FreePlanHardBlockGate{}, 0)
+	result, accepted := h.processBulkOne(
+		req,
+		"ws_1",
+		body,
+		accounts,
+		quota.FreePlanHardBlockGate{},
+		0,
+		make(publishingRestrictionPolicySnapshot),
+	)
 	if result.Status != http.StatusUnprocessableEntity || result.Error == nil {
 		t.Fatalf("result = %#v, want duplicate 422", result)
 	}

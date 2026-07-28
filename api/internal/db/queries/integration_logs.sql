@@ -57,6 +57,8 @@ WHERE workspace_id = sqlc.arg('workspace_id')::text
     OR request_id ILIKE '%' || sqlc.arg('query') || '%'
     OR post_id ILIKE '%' || sqlc.arg('query') || '%'
     OR error_code ILIKE '%' || sqlc.arg('query') || '%'
+    OR metadata->>'connect_session_id' = sqlc.arg('query')::TEXT
+    OR metadata->>'external_user_id' = sqlc.arg('query')::TEXT
   )
   AND ts >= sqlc.arg('from_ts')::timestamptz
   AND ts <= sqlc.arg('to_ts')::timestamptz

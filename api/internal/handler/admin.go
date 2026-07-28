@@ -21,7 +21,14 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
+	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
+
+type adminTrialService interface {
+	Grant(context.Context, trials.GrantRequest) (trials.Grant, error)
+	Revoke(context.Context, trials.RevokeRequest) (trials.Grant, error)
+	ListTrialHistory(context.Context, string) ([]trials.HistoryProjection, error)
+}
 
 // AdminHandler exposes read-only aggregates for the /admin dashboard.
 // Auth + ADMIN_USERS gating live in auth.AdminMiddleware. We talk to
@@ -33,6 +40,31 @@ type AdminHandler struct {
 	queries   *db.Queries // for audit-log writes
 	holds     paidquota.HoldReconciler
 	evaluator paidQuotaEvaluationService
+	trials    adminTrialService
+}
+
+func (h *AdminHandler) SetTrialService(service adminTrialService) *AdminHandler {
+	h.trials = service
+	return h
+}
+
+func (h *AdminHandler) hasOpenTrial(ctx context.Context, workspaceID string) (bool, error) {
+	if h.trials == nil {
+		return false, errors.New("trial service is unavailable")
+	}
+	history, err := h.trials.ListTrialHistory(ctx, workspaceID)
+	if err != nil {
+		return false, err
+	}
+	for _, grant := range history {
+		if grant.Status.IsOpen() {
+			return true, nil
+		}
+		if !grant.Status.IsTerminal() {
+			return false, fmt.Errorf("unknown trial status %q", grant.Status)
+		}
+	}
+	return false, nil
 }
 
 func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
@@ -1011,22 +1043,45 @@ type adminPostsEvent struct {
 }
 
 type adminBillingRow struct {
-	WorkspaceID          string     `json:"workspace_id"`
-	WorkspaceName        string     `json:"workspace_name"`
-	UserID               string     `json:"user_id"`
-	UserEmail            string     `json:"user_email"`
-	PlanID               string     `json:"plan_id"`
-	PlanName             string     `json:"plan_name"`
-	PriceCents           int64      `json:"price_cents"`
-	Status               string     `json:"status"`
-	StripeCustomerID     *string    `json:"stripe_customer_id,omitempty"`
-	StripeSubscriptionID *string    `json:"stripe_subscription_id,omitempty"`
-	CurrentPeriodEnd     *time.Time `json:"current_period_end,omitempty"`
-	CancelAtPeriodEnd    bool       `json:"cancel_at_period_end"`
-	TrialUsed            bool       `json:"trial_used"`
-	PostsUsed            int64      `json:"posts_used"`
-	PostLimit            int64      `json:"post_limit"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	WorkspaceID          string                    `json:"workspace_id"`
+	WorkspaceName        string                    `json:"workspace_name"`
+	UserID               string                    `json:"user_id"`
+	UserEmail            string                    `json:"user_email"`
+	PlanID               string                    `json:"plan_id"`
+	PlanName             string                    `json:"plan_name"`
+	PriceCents           int64                     `json:"price_cents"`
+	Status               string                    `json:"status"`
+	StripeCustomerID     *string                   `json:"stripe_customer_id,omitempty"`
+	StripeSubscriptionID *string                   `json:"stripe_subscription_id,omitempty"`
+	CurrentPeriodEnd     *time.Time                `json:"current_period_end,omitempty"`
+	CancelAtPeriodEnd    bool                      `json:"cancel_at_period_end"`
+	TrialUsed            bool                      `json:"trial_used"`
+	PostsUsed            int64                     `json:"posts_used"`
+	PostLimit            int64                     `json:"post_limit"`
+	UpdatedAt            time.Time                 `json:"updated_at"`
+	Trial                *adminBillingTrialSummary `json:"trial,omitempty"`
+}
+
+type adminBillingTrialSummary struct {
+	ID                   string                `json:"id"`
+	Kind                 trials.Kind           `json:"kind"`
+	PlanID               string                `json:"plan_id"`
+	DurationDays         int32                 `json:"duration_days"`
+	Status               trials.Status         `json:"status"`
+	GrantedAt            *time.Time            `json:"granted_at,omitempty"`
+	ScheduledStartAt     *time.Time            `json:"scheduled_start_at,omitempty"`
+	StartedAt            *time.Time            `json:"started_at,omitempty"`
+	EndsAt               *time.Time            `json:"ends_at,omitempty"`
+	ActivatedAt          *time.Time            `json:"activated_at,omitempty"`
+	CanceledAt           *time.Time            `json:"canceled_at,omitempty"`
+	RevokedAt            *time.Time            `json:"revoked_at,omitempty"`
+	SupersededAt         *time.Time            `json:"superseded_at,omitempty"`
+	CompletedAt          *time.Time            `json:"completed_at,omitempty"`
+	StripeSubscriptionID *string               `json:"stripe_subscription_id,omitempty"`
+	StripeScheduleID     *string               `json:"stripe_schedule_id,omitempty"`
+	PostTrialPriceCents  int64                 `json:"post_trial_price_cents"`
+	CancelAtPeriodEnd    bool                  `json:"cancel_at_period_end"`
+	FailureReason        trials.TerminalReason `json:"failure_reason,omitempty"`
 }
 
 type adminBillingQuery struct {
@@ -1081,11 +1136,8 @@ type adminEmailNotificationsQuery struct {
 	Status    string
 	Provider  string
 	EventKey  string
-	Email     string
 	Threshold int
 	Period    string
-	StartAt   *time.Time
-	EndAt     *time.Time
 	Limit     int
 	Offset    int
 }
@@ -1415,9 +1467,6 @@ WHERE ($1::TEXT = '' OR status = $1 OR ($1 = 'skipped' AND status LIKE 'skipped_
   AND ($3::TEXT = '' OR period = $3)
   AND ($5::TEXT = '' OR provider = $5)
   AND ($6::TEXT = '' OR event_key = $6)
-  AND ($7::TEXT = '' OR LOWER(BTRIM(email)) = LOWER(BTRIM($7)))
-  AND ($8::TIMESTAMPTZ IS NULL OR attempted_at >= $8)
-  AND ($9::TIMESTAMPTZ IS NULL OR attempted_at < $9)
   AND (
     $4::TEXT = ''
     OR email ILIKE '%' || $4 || '%'
@@ -1437,18 +1486,6 @@ WHERE ($1::TEXT = '' OR status = $1 OR ($1 = 'skipped' AND status LIKE 'skipped_
 func adminEmailNotificationsBaseSelect() string {
 	return adminEmailNotificationsCTESQL + adminEmailNotificationsSelectSQL + adminEmailNotificationsWhereSQL + `
 ORDER BY attempted_at DESC, created_at DESC`
-}
-
-func adminEmailNotificationFilterOptionsSQL() string {
-	return adminEmailNotificationsCTESQL + `
-SELECT email
-FROM (
-  SELECT DISTINCT ON (LOWER(BTRIM(email))) BTRIM(email) AS email
-  FROM email_notifications
-  WHERE BTRIM(email) <> ''
-  ORDER BY LOWER(BTRIM(email)), BTRIM(email)
-) distinct_emails
-ORDER BY LOWER(email), email`
 }
 
 func normalizeAdminEmailNotificationStatus(raw string) (string, bool) {
@@ -1479,33 +1516,6 @@ func parseAdminEmailNotificationThreshold(raw string) (int, bool) {
 	default:
 		return 0, false
 	}
-}
-
-func parseAdminEmailNotificationRange(startRaw, endRaw string) (*time.Time, *time.Time, error) {
-	parse := func(name, raw string) (*time.Time, error) {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return nil, nil
-		}
-		value, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			return nil, fmt.Errorf("%s must be an RFC3339 timestamp", name)
-		}
-		return &value, nil
-	}
-
-	start, err := parse("start_at", startRaw)
-	if err != nil {
-		return nil, nil, err
-	}
-	end, err := parse("end_at", endRaw)
-	if err != nil {
-		return nil, nil, err
-	}
-	if start != nil && end != nil && !end.After(*start) {
-		return nil, nil, errors.New("end_at must be after start_at")
-	}
-	return start, end, nil
 }
 
 func normalizeAdminPostFailurePeriod(raw string) string {
@@ -2099,17 +2109,7 @@ ORDER BY sp.created_at ASC`, args...)
 	return out, nil
 }
 
-func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery) ([]adminBillingRow, error) {
-	days := opts.Days
-	if days <= 0 || days > 365 {
-		days = 90
-	}
-	limit := opts.Limit
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-
-	rows, err := h.pool.Query(ctx, `
+const adminBillingSQL = `
 SELECT
   w.id AS workspace_id,
   w.name AS workspace_name,
@@ -2126,14 +2126,49 @@ SELECT
   s.trial_used,
   COALESCE(usg.post_count, 0)::BIGINT AS posts_used,
   COALESCE(pl.post_limit, 0)::BIGINT AS post_limit,
-  s.updated_at
+  s.updated_at,
+  trial.id,
+  trial.kind,
+  trial.plan_id,
+  trial.duration_days,
+  trial.status,
+  trial.granted_at,
+  trial.scheduled_start_at,
+  trial.started_at,
+  trial.ends_at,
+  trial.activated_at,
+  trial.canceled_at,
+  trial.revoked_at,
+  trial.superseded_at,
+  trial.completed_at,
+  trial.stripe_subscription_id,
+  trial.stripe_schedule_id,
+  COALESCE(trial_plan.price_cents, 0)::BIGINT AS trial_post_trial_price_cents,
+  (COALESCE(s.cancel_at_period_end, false) OR trial.canceled_at IS NOT NULL) AS trial_cancel_at_period_end
 FROM subscriptions s
 JOIN workspaces w ON w.id = s.workspace_id
 JOIN users u ON u.id = w.user_id
 JOIN plans pl ON pl.id = s.plan_id
 LEFT JOIN usage usg ON usg.workspace_id = w.id AND usg.period = to_char(NOW(), 'YYYY-MM')
+LEFT JOIN LATERAL (
+  SELECT tg.id, tg.kind, tg.plan_id, tg.duration_days, tg.status,
+         tg.granted_at, tg.scheduled_start_at, tg.started_at, tg.ends_at,
+         tg.activated_at, tg.canceled_at, tg.revoked_at, tg.superseded_at, tg.completed_at,
+         NULLIF(tg.stripe_subscription_id, '') AS stripe_subscription_id,
+         NULLIF(tg.stripe_schedule_id, '') AS stripe_schedule_id,
+         tg.updated_at
+  FROM workspace_trial_grants tg
+  WHERE tg.workspace_id = w.id
+  ORDER BY CASE WHEN tg.status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active') THEN 0 ELSE 1 END,
+           tg.granted_at DESC, tg.id DESC
+  LIMIT 1
+) trial ON TRUE
+LEFT JOIN plans trial_plan ON trial_plan.id = trial.plan_id
 WHERE u.id != ALL($1)
-  AND s.updated_at >= NOW() - ($2::INT * INTERVAL '1 day')
+  AND (
+    trial.status IN ('provisioning', 'pending_activation', 'checkout_pending', 'scheduled', 'active')
+    OR GREATEST(s.updated_at, COALESCE(trial.updated_at, s.updated_at)) >= NOW() - ($2::INT * INTERVAL '1 day')
+  )
   AND ($3::TEXT = '' OR s.status = $3)
   AND ($4::TEXT = '' OR s.plan_id = $4)
   AND (
@@ -2142,9 +2177,21 @@ WHERE u.id != ALL($1)
     OR w.name ILIKE '%' || $5 || '%'
     OR s.plan_id ILIKE '%' || $5 || '%'
   )
-ORDER BY pl.price_cents DESC, s.updated_at DESC
+ORDER BY pl.price_cents DESC, GREATEST(s.updated_at, COALESCE(trial.updated_at, s.updated_at)) DESC
 LIMIT $6
-`, opts.Excluded, days, opts.Status, opts.PlanID, opts.Search, limit)
+`
+
+func (h *AdminHandler) queryBilling(ctx context.Context, opts adminBillingQuery) ([]adminBillingRow, error) {
+	days := opts.Days
+	if days <= 0 || days > 365 {
+		days = 90
+	}
+	limit := opts.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+
+	rows, err := h.pool.Query(ctx, adminBillingSQL, opts.Excluded, days, opts.Status, opts.PlanID, opts.Search, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -2155,6 +2202,11 @@ LIMIT $6
 		var item adminBillingRow
 		var stripeCustomerID, stripeSubscriptionID *string
 		var currentPeriodEnd *time.Time
+		var trialID, trialKind, trialPlanID, trialStatus, trialSubscriptionID, trialScheduleID *string
+		var trialDurationDays *int32
+		var trialPostTrialPriceCents int64
+		var trialCancelAtPeriodEnd bool
+		var trialGrantedAt, trialScheduledStartAt, trialStartedAt, trialEndsAt, trialActivatedAt, trialCanceledAt, trialRevokedAt, trialSupersededAt, trialCompletedAt *time.Time
 		if err := rows.Scan(
 			&item.WorkspaceID,
 			&item.WorkspaceName,
@@ -2172,12 +2224,44 @@ LIMIT $6
 			&item.PostsUsed,
 			&item.PostLimit,
 			&item.UpdatedAt,
+			&trialID,
+			&trialKind,
+			&trialPlanID,
+			&trialDurationDays,
+			&trialStatus,
+			&trialGrantedAt,
+			&trialScheduledStartAt,
+			&trialStartedAt,
+			&trialEndsAt,
+			&trialActivatedAt,
+			&trialCanceledAt,
+			&trialRevokedAt,
+			&trialSupersededAt,
+			&trialCompletedAt,
+			&trialSubscriptionID,
+			&trialScheduleID,
+			&trialPostTrialPriceCents,
+			&trialCancelAtPeriodEnd,
 		); err != nil {
 			return nil, err
 		}
 		item.StripeCustomerID = stripeCustomerID
 		item.StripeSubscriptionID = stripeSubscriptionID
 		item.CurrentPeriodEnd = currentPeriodEnd
+		if trialID != nil && trialKind != nil && trialPlanID != nil && trialDurationDays != nil && trialStatus != nil {
+			status := trials.Status(*trialStatus)
+			item.Trial = &adminBillingTrialSummary{
+				ID: *trialID, Kind: trials.Kind(*trialKind), PlanID: *trialPlanID, DurationDays: *trialDurationDays, Status: status,
+				GrantedAt: trialGrantedAt, ScheduledStartAt: trialScheduledStartAt, StartedAt: trialStartedAt,
+				EndsAt: trialEndsAt, ActivatedAt: trialActivatedAt, CanceledAt: trialCanceledAt, RevokedAt: trialRevokedAt,
+				SupersededAt: trialSupersededAt, CompletedAt: trialCompletedAt,
+				StripeSubscriptionID: trialSubscriptionID, StripeScheduleID: trialScheduleID,
+				PostTrialPriceCents: trialPostTrialPriceCents, CancelAtPeriodEnd: trialCancelAtPeriodEnd,
+			}
+			if status == trials.StatusFailed {
+				item.Trial.FailureReason = trials.TerminalReasonUnavailable
+			}
+		}
 		out = append(out, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -2718,9 +2802,6 @@ func (h *AdminHandler) queryEmailNotifications(ctx context.Context, opts adminEm
 		strings.TrimSpace(opts.Search),
 		strings.TrimSpace(opts.Provider),
 		strings.TrimSpace(opts.EventKey),
-		strings.TrimSpace(opts.Email),
-		opts.StartAt,
-		opts.EndAt,
 	}
 
 	var total int64
@@ -2732,7 +2813,7 @@ FROM email_notifications
 	}
 
 	rows, err := h.pool.Query(ctx, adminEmailNotificationsBaseSelect()+`
-LIMIT $10 OFFSET $11`, append(args, limit, offset)...)
+LIMIT $7 OFFSET $8`, append(args, limit, offset)...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -2793,27 +2874,6 @@ LIMIT $10 OFFSET $11`, append(args, limit, offset)...)
 	return out, total, nil
 }
 
-func (h *AdminHandler) queryEmailNotificationFilterOptions(ctx context.Context) ([]string, error) {
-	rows, err := h.pool.Query(ctx, adminEmailNotificationFilterOptionsSQL())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	emails := make([]string, 0)
-	for rows.Next() {
-		var email string
-		if err := rows.Scan(&email); err != nil {
-			return nil, err
-		}
-		emails = append(emails, email)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return emails, nil
-}
-
 // ListEmailNotifications serves GET /v1/admin/email-notifications.
 // It is the read-only operational view for user-facing email sends and
 // migration audit rows across Loops, quota, support, and legacy
@@ -2831,12 +2891,6 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "threshold must be one of: 80, 85, 90, 95, 100, 105, 110, 115, 120")
 		return
 	}
-	startAt, endAt, err := parseAdminEmailNotificationRange(q.Get("start_at"), q.Get("end_at"))
-	if err != nil {
-		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", err.Error())
-		return
-	}
-
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 {
 		limit = 100
@@ -2850,11 +2904,8 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 		Status:    status,
 		Provider:  q.Get("provider"),
 		EventKey:  q.Get("event_key"),
-		Email:     q.Get("email"),
 		Threshold: threshold,
 		Period:    q.Get("period"),
-		StartAt:   startAt,
-		EndAt:     endAt,
 		Limit:     limit,
 		Offset:    offset,
 	})
@@ -2864,18 +2915,6 @@ func (h *AdminHandler) ListEmailNotifications(w http.ResponseWriter, r *http.Req
 	}
 
 	writeSuccessWithListMeta(w, out, int(total), limit)
-}
-
-// ListEmailNotificationFilterOptions serves
-// GET /v1/admin/email-notifications/filter-options.
-func (h *AdminHandler) ListEmailNotificationFilterOptions(w http.ResponseWriter, r *http.Request) {
-	emails, err := h.queryEmailNotificationFilterOptions(r.Context())
-	if err != nil {
-		slog.Error("admin email filter options query failed", "error", err)
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load email notification filter options")
-		return
-	}
-	writeSuccess(w, map[string]any{"emails": emails})
 }
 
 func (h *AdminHandler) RetryPaidQuotaEmailNotification(w http.ResponseWriter, r *http.Request) {
@@ -3090,6 +3129,21 @@ func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This endpoint bypasses Stripe, so it must never race ahead of a managed
+	// trial. Read the trial ledger before any workspace/subscription mutation
+	// and fail closed if the ledger cannot be read.
+	hasOpenTrial, err := h.hasOpenTrial(r.Context(), workspaceID)
+	if err != nil {
+		slog.Error("admin plan flip trial preflight failed", "workspace_id", workspaceID, "error", err)
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to verify workspace trial state")
+		return
+	}
+	if hasOpenTrial {
+		writeError(w, http.StatusConflict, "TRIAL_PLAN_CHANGE_CONFLICT",
+			"Workspace plan cannot be changed while a trial is open")
+		return
+	}
+
 	// Workspace existence check — surface 404 instead of silently
 	// upserting against a non-existent workspace.
 	var exists bool
@@ -3140,6 +3194,102 @@ func (h *AdminHandler) SetPlan(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *AdminHandler) GrantTrial(w http.ResponseWriter, r *http.Request) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceID"))
+	if workspaceID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "workspace_id is required")
+		return
+	}
+	var body struct {
+		PlanID       string `json:"plan_id"`
+		DurationDays int32  `json:"duration_days"`
+	}
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "invalid trial grant request")
+		return
+	}
+	if h.trials == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "trial service is unavailable")
+		return
+	}
+
+	grant, err := h.trials.Grant(r.Context(), trials.GrantRequest{
+		WorkspaceID: workspaceID, PlanID: strings.TrimSpace(body.PlanID),
+		DurationDays: body.DurationDays, ActorUserID: auth.GetUserID(r.Context()),
+	})
+	if err != nil {
+		writeAdminTrialError(w, err)
+		return
+	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID: workspaceID, ActorUserID: auth.GetUserID(r.Context()),
+		Action: audit.ActionTrialGranted, ResourceType: "workspace_trial_grant", ResourceID: grant.ID,
+		Category: audit.CategoryBilling, IPAddress: r.RemoteAddr, UserAgent: r.UserAgent(),
+		After: grant, Metadata: trialAuditMetadata(grant),
+	})
+	writeCreated(w, grant)
+}
+
+func (h *AdminHandler) RevokeTrial(w http.ResponseWriter, r *http.Request) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "workspaceID"))
+	trialID := strings.TrimSpace(chi.URLParam(r, "trialID"))
+	if workspaceID == "" || trialID == "" {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "workspace_id and trial_id are required")
+		return
+	}
+	if h.trials == nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "trial service is unavailable")
+		return
+	}
+	grant, err := h.trials.Revoke(r.Context(), trials.RevokeRequest{
+		WorkspaceID: workspaceID, GrantID: trialID, ActorUserID: auth.GetUserID(r.Context()),
+	})
+	if err != nil {
+		writeAdminTrialError(w, err)
+		return
+	}
+	audit.Log(r.Context(), h.queries, audit.Event{
+		WorkspaceID: workspaceID, ActorUserID: auth.GetUserID(r.Context()),
+		Action: audit.ActionTrialRevoked, ResourceType: "workspace_trial_grant", ResourceID: grant.ID,
+		Category: audit.CategoryBilling, IPAddress: r.RemoteAddr, UserAgent: r.UserAgent(),
+		Before: map[string]any{"status": grant.PreviousStatus}, After: grant,
+		Metadata: trialAuditMetadata(grant),
+	})
+	writeSuccess(w, grant)
+}
+
+func writeAdminTrialError(w http.ResponseWriter, err error) {
+	var openConflict *trials.OpenGrantConflictError
+	switch {
+	case errors.Is(err, trials.ErrInvalidPlan):
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "plan_id must be one of: api, basic, growth, team")
+	case errors.Is(err, trials.ErrInvalidDuration):
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "duration_days must be between 1 and 730")
+	case errors.Is(err, trials.ErrWorkspaceNotFound), errors.Is(err, trials.ErrGrantNotFound):
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "workspace or trial grant not found")
+	case errors.As(err, &openConflict):
+		writeErrorWithDetails(w, http.StatusConflict, "TRIAL_GRANT_CONFLICT", "Workspace already has an open trial grant", ErrorDetails{Details: map[string]any{"current_trial": trials.NewConflictSummary(openConflict.Current)}})
+	case errors.Is(err, trials.ErrUnrelatedSchedule):
+		writeError(w, http.StatusConflict, "TRIAL_SCHEDULE_CONFLICT", "Subscription already has an unrelated Stripe schedule")
+	case errors.Is(err, trials.ErrOpenGrantExists), errors.Is(err, trials.ErrPaidPlanMismatch),
+		errors.Is(err, trials.ErrIneligibleSubscription), errors.Is(err, trials.ErrRevokeConflict):
+		writeError(w, http.StatusConflict, "CONFLICT", err.Error())
+	default:
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "trial operation failed")
+	}
+}
+
+func trialAuditMetadata(grant trials.Grant) map[string]any {
+	return map[string]any{
+		"kind": grant.Kind, "plan_id": grant.PlanID, "duration_days": grant.DurationDays,
+		"stripe_mode": grant.StripeMode, "stripe_customer_id": grant.StripeCustomerID,
+		"stripe_subscription_id": grant.StripeSubscriptionID, "stripe_schedule_id": grant.StripeScheduleID,
+		"stripe_checkout_session_id": grant.StripeCheckoutSessionID,
+	}
 }
 
 func (h *AdminHandler) ListBilling(w http.ResponseWriter, r *http.Request) {

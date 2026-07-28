@@ -30,7 +30,9 @@ jobs:
       github.event.action != 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (startsWith(github.event.pull_request.head.ref, 'dev-') ||
-      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+      startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -71,6 +73,13 @@ jobs:
           test -n "$RAILWAY_API_TOKEN"
           test "${#HEAD_SHA}" -eq 40
 
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: |
+          set -euo pipefail
+          echo "dashboard-dependencies" > ../artifacts/preview/current-stage
+          npm ci 2>&1 | tee ../artifacts/preview/npm-ci.log
+
       - name: Validate release contracts
         run: |
           set -euo pipefail
@@ -91,13 +100,6 @@ jobs:
             --output "$GITHUB_OUTPUT" \
             --manifest artifacts/preview/railway.json \
             2>&1 | tee artifacts/preview/railway-wait.log
-
-      - name: Install dashboard dependencies
-        working-directory: dashboard
-        run: |
-          set -euo pipefail
-          echo "dashboard-dependencies" > ../artifacts/preview/current-stage
-          npm ci 2>&1 | tee ../artifacts/preview/npm-ci.log
 
       - name: Pull Vercel Preview configuration
         run: |
@@ -125,6 +127,9 @@ jobs:
           cp dashboard/public/__unipost-preview.json artifacts/preview/frontend.json
 
       - name: Build the Vercel Preview
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           echo "vercel-build" > artifacts/preview/current-stage
@@ -134,6 +139,9 @@ jobs:
           export NEXT_PUBLIC_LANDING_URL="https://${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_APP_HOST="${PREVIEW_ALIAS_HOST}"
           export NEXT_PUBLIC_UNIPOST_ENV="development"
+          export NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}"
+          test -n "$CLERK_SECRET_KEY"
+          test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
           npx --yes vercel@50.26.1 build \
             --token="$VERCEL_TOKEN" \
             --scope="$VERCEL_TEAM_SLUG" \
@@ -143,12 +151,19 @@ jobs:
       - name: Deploy and alias the Vercel Preview
         id: vercel
         shell: bash
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
+          NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
           echo "vercel-deploy" > artifacts/preview/current-stage
+          test -n "$CLERK_SECRET_KEY"
+          test -n "$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
           deployment_url="$(
             npx --yes vercel@50.26.1 deploy \
               --prebuilt \
+              --env "CLERK_SECRET_KEY=$CLERK_SECRET_KEY" \
+              --env "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY" \
               --archive=tgz \
               --yes \
               --token="$VERCEL_TOKEN" \
@@ -183,7 +198,9 @@ jobs:
       - name: Run deployed preview regression
         working-directory: dashboard
         env:
-          DASHBOARD_BASE_URL: ${{ steps.vercel.outputs.deployment_url }}
+          DASHBOARD_BASE_URL: https://${{ env.PREVIEW_ALIAS_HOST }}
+          DASHBOARD_TEST_CLERK_SECRET_KEY: ${{ secrets.CLERK_DEVELOPMENT_SECRET_KEY }}
+          DASHBOARD_TEST_CLERK_PUBLISHABLE_KEY: ${{ vars.NEXT_PUBLIC_CLERK_DEVELOPMENT_PUBLISHABLE_KEY }}
           EXPECTED_PREVIEW_API_URL: ${{ steps.railway.outputs.api_url }}
           EXPECTED_PREVIEW_SHA: ${{ github.event.pull_request.head.sha }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
@@ -251,7 +268,9 @@ jobs:
       github.event.action == 'closed' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       (startsWith(github.event.pull_request.head.ref, 'dev-') ||
-      startsWith(github.event.pull_request.head.ref, 'hotfix-'))
+      startsWith(github.event.pull_request.head.ref, 'hotfix-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/staging-') ||
+      startsWith(github.event.pull_request.head.ref, 'codex/pr270-'))
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:

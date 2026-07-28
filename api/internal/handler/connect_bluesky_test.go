@@ -3,6 +3,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -18,6 +20,9 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/connectownership"
 	appcrypto "github.com/xiaoboyu/unipost-api/internal/crypto"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/events"
+	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
+	appmw "github.com/xiaoboyu/unipost-api/internal/middleware"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
 )
 
@@ -81,6 +86,171 @@ func TestBlueskyTemplate_NoPasswordEcho(t *testing.T) {
 			if strings.Contains(line, "value=") {
 				t.Errorf("password input should never carry a value attribute: %q", line)
 			}
+		}
+	}
+}
+
+func TestConnectBlueskySuccessOutcome(t *testing.T) {
+	fdb := &connectSessionTestDB{platform: "bluesky", allowQuickstart: true}
+	store := &fakeManagedOwnershipStore{
+		checkDecision: connectownership.Decision{Kind: connectownership.Create},
+		saveAccount:   db.SocialAccount{ID: "sa_bluesky_outcome"},
+	}
+	writer := &recordingOutcomeWriter{}
+	h := newBlueskyOutcomeTestHandler(t, fdb, store, writer)
+	h.connectAccount = func(_ context.Context, credentials map[string]string) (*platform.ConnectResult, error) {
+		if credentials["app_password"] != "app-password-secret" {
+			t.Fatalf("app password was not passed to connector")
+		}
+		return &platform.ConnectResult{
+			AccessToken:       "access-jwt-secret",
+			RefreshToken:      "refresh-jwt-secret",
+			ExternalAccountID: "did:plc:verified",
+			AccountName:       "robyn.bsky.social",
+		}, nil
+	}
+
+	rec := runBlueskyOutcomeSubmit(h, "handle=robyn.bsky.social&app_password=app-password-secret")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("response = (%d, %q)", rec.Code, rec.Body.String())
+	}
+	event := requireSingleOutcome(t, writer)
+	if event.Action != integrationlogs.ActionAccountConnectCallbackOK || event.SocialAccountID != "sa_bluesky_outcome" || event.RequestID == "" {
+		t.Fatalf("event = %+v", event)
+	}
+	assertBlueskyOutcomeHasNoSecrets(t, event, rec.Body.String())
+}
+
+func TestConnectBlueskyInvalidCredentialsOutcome(t *testing.T) {
+	fdb := &connectSessionTestDB{platform: "bluesky", allowQuickstart: true}
+	writer := &recordingOutcomeWriter{}
+	h := newBlueskyOutcomeTestHandler(t, fdb, defaultOutcomeOwnershipStore(), writer)
+	h.connectAccount = func(context.Context, map[string]string) (*platform.ConnectResult, error) {
+		return nil, errors.New("provider rejected app-password-secret")
+	}
+
+	rec := runBlueskyOutcomeSubmit(h, "handle=robyn.bsky.social&app_password=app-password-secret")
+
+	event := requireSingleOutcome(t, writer)
+	if rec.Code != http.StatusUnauthorized || event.ErrorCode != "bluesky_credentials_rejected" {
+		t.Fatalf("response/event = %d/%+v", rec.Code, event)
+	}
+	assertBlueskyOutcomeHasNoSecrets(t, event, rec.Body.String())
+}
+
+func TestConnectBlueskyMissingCredentialsOutcome(t *testing.T) {
+	fdb := &connectSessionTestDB{platform: "bluesky", allowQuickstart: true}
+	writer := &recordingOutcomeWriter{}
+	h := newBlueskyOutcomeTestHandler(t, fdb, defaultOutcomeOwnershipStore(), writer)
+
+	rec := runBlueskyOutcomeSubmit(h, "handle=robyn.bsky.social")
+
+	event := requireSingleOutcome(t, writer)
+	if rec.Code != http.StatusBadRequest || event.ErrorCode != "bluesky_credentials_required" {
+		t.Fatalf("response/event = %d/%+v", rec.Code, event)
+	}
+	assertBlueskyOutcomeHasNoSecrets(t, event, rec.Body.String())
+}
+
+func TestConnectBlueskyFailureOutcomes(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*connectSessionTestDB, *fakeManagedOwnershipStore, *ConnectBlueskyHandler)
+		wantCode  string
+	}{
+		{"repeat Session", func(f *connectSessionTestDB, _ *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			f.status = "completed"
+		}, "connect_session_not_pending"},
+		{"provider identity missing", func(_ *connectSessionTestDB, _ *fakeManagedOwnershipStore, h *ConnectBlueskyHandler) {
+			h.connectAccount = func(context.Context, map[string]string) (*platform.ConnectResult, error) {
+				return &platform.ConnectResult{AccessToken: "access-jwt-secret", RefreshToken: "refresh-jwt-secret"}, nil
+			}
+		}, "provider_identity_missing"},
+		{"ownership failed", func(_ *connectSessionTestDB, s *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			s.checkErr = errors.New("ownership secret")
+		}, "account_ownership_failed"},
+		{"ownership conflict", func(_ *connectSessionTestDB, s *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			s.checkDecision = connectownership.Decision{Kind: connectownership.Conflict}
+		}, "account_ownership_conflict"},
+		{"account limit", func(f *connectSessionTestDB, _ *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			f.activeManagedAccountCount = 2
+		}, "managed_account_limit_reached"},
+		{"account unavailable", func(f *connectSessionTestDB, _ *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			f.managedSharingBlocked = true
+		}, "account_unavailable"},
+		{"save failed", func(_ *connectSessionTestDB, s *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			s.saveErr = errors.New("save secret")
+		}, "account_save_failed"},
+		{"completion failed", func(f *connectSessionTestDB, _ *fakeManagedOwnershipStore, _ *ConnectBlueskyHandler) {
+			f.completionClaimErr = errors.New("completion secret")
+		}, "session_completion_failed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fdb := &connectSessionTestDB{platform: "bluesky", allowQuickstart: true}
+			store := defaultOutcomeOwnershipStore()
+			writer := &recordingOutcomeWriter{}
+			h := newBlueskyOutcomeTestHandler(t, fdb, store, writer)
+			tt.configure(fdb, store, h)
+			runBlueskyOutcomeSubmit(h, "handle=robyn.bsky.social&app_password=app-password-secret")
+			event := requireSingleOutcome(t, writer)
+			if event.ErrorCode != tt.wantCode {
+				t.Fatalf("error code = %q, want %q; event=%+v", event.ErrorCode, tt.wantCode, event)
+			}
+			assertBlueskyOutcomeHasNoSecrets(t, event, "")
+		})
+	}
+}
+
+func TestConnectBlueskyInvalidStateHasNoOutcome(t *testing.T) {
+	fdb := &connectSessionTestDB{platform: "bluesky", allowQuickstart: true}
+	writer := &recordingOutcomeWriter{}
+	h := newBlueskyOutcomeTestHandler(t, fdb, defaultOutcomeOwnershipStore(), writer)
+	req := blueskySubmitRequest("", "")
+	rec := httptest.NewRecorder()
+	appmw.Logger(http.HandlerFunc(h.SubmitForm)).ServeHTTP(rec, req)
+	if len(writer.events) != 0 {
+		t.Fatalf("events = %d, want 0", len(writer.events))
+	}
+}
+
+func newBlueskyOutcomeTestHandler(t *testing.T, fdb *connectSessionTestDB, store *fakeManagedOwnershipStore, writer hostedConnectOutcomeWriter) *ConnectBlueskyHandler {
+	t.Helper()
+	encryptor, err := appcrypto.NewAESEncryptor(strings.Repeat("01", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewConnectBlueskyHandler(db.New(fdb), encryptor, events.NoopBus{}, store).SetIntegrationLogger(writer)
+	h.connectAccount = func(context.Context, map[string]string) (*platform.ConnectResult, error) {
+		return &platform.ConnectResult{
+			AccessToken:       "access-jwt-secret",
+			RefreshToken:      "refresh-jwt-secret",
+			ExternalAccountID: "did:plc:verified",
+			AccountName:       "robyn.bsky.social",
+		}, nil
+	}
+	return h
+}
+
+func runBlueskyOutcomeSubmit(h *ConnectBlueskyHandler, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/v1/public/connect/sessions/cs_1/bluesky?state=state_1", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "cs_1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	appmw.Logger(http.HandlerFunc(h.SubmitForm)).ServeHTTP(rec, req)
+	return rec
+}
+
+func assertBlueskyOutcomeHasNoSecrets(t *testing.T, event integrationlogs.Event, responseBody string) {
+	t.Helper()
+	encoded, _ := json.Marshal(event)
+	for _, secret := range []string{"app-password-secret", "access-jwt-secret", "refresh-jwt-secret"} {
+		if bytes.Contains(encoded, []byte(secret)) || strings.Contains(responseBody, secret) {
+			t.Fatalf("outcome exposed %q", secret)
 		}
 	}
 }

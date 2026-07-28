@@ -16,11 +16,14 @@ func TestRunMigrationsUsesPostgresSessionLocker(t *testing.T) {
 	}
 	text := string(source)
 	for _, want := range []string{
+		"return runMigrations(context.Background(), database, true)",
+		"func runMigrations(ctx context.Context, database *sql.DB, acquireSessionLock bool)",
+		"if acquireSessionLock {",
 		"lock.NewPostgresSessionLocker()",
 		"goose.NewProvider(",
 		"goose.DialectPostgres",
-		"goose.WithSessionLocker(sessionLocker)",
-		"provider.Up(context.Background())",
+		"providerOptions = append(providerOptions, goose.WithSessionLocker(sessionLocker))",
+		"provider.Up(ctx)",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("migration runner missing %q", want)
@@ -84,8 +87,8 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 122 {
-		t.Fatalf("final Goose version = %d, want 122", version)
+	if version != 131 {
+		t.Fatalf("final Goose version = %d, want 131", version)
 	}
 
 	verifyInboxTenantIsolationAgainstPostgres(t, databaseURL)
@@ -114,6 +117,16 @@ func TestEmbeddedMigrationVersionsAreUnique(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("walk migrations: %v", err)
+	}
+}
+
+func TestLatestEmbeddedMigrationVersion(t *testing.T) {
+	version, err := latestEmbeddedMigrationVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 131 {
+		t.Fatalf("latest embedded migration version = %d, want 131", version)
 	}
 }
 
@@ -273,7 +286,7 @@ func TestCommittedScheduledQuotaQueryCountsPublishingAndQuotaHold(t *testing.T) 
 	for _, want := range []string{
 		"status in ('scheduled', 'quota_hold')",
 		"status = 'publishing'",
-		"scheduled_at is not null",
+		"scheduled_execution_reservation_period",
 		"deleted_at is null",
 		"disconnected_at is null",
 		"admin_post_quota_resets",

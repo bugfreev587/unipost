@@ -257,6 +257,150 @@ func TestSyncerSendsBillingPaymentFailedTransactionalEmailWhenTemplateConfigured
 	assertProperty(t, client.lastTransactional.DataVariables, "next_payment_attempt", "2026-07-01T12:00:00Z")
 }
 
+func TestSyncerSendsBillingTrialEndingTransactionalEmailWhenTemplateConfigured(t *testing.T) {
+	client := &fakeLifecycleClient{contactErr: errors.New("contact endpoint unavailable")}
+	audit := &fakeEmailAuditStore{}
+	syncer := NewSyncer(client, Options{
+		Enabled: func(context.Context, DashboardUser) bool { return true },
+		TransactionalIDs: TransactionalIDs{
+			BillingTrialEnding: "tmpl_trial_ending",
+		},
+		EmailAuditStore: audit,
+	})
+
+	properties := map[string]any{
+		"workspace_name":   "Alex Workspace",
+		"plan_id":          "growth",
+		"plan_name":        "Growth",
+		"trial_end":        "2026-07-28T12:00:00Z",
+		"days_remaining":   int64(3),
+		"post_trial_price": "$79.00/month",
+		"billing_url":      "https://app.unipost.dev/settings/billing",
+		"cancel_url":       "https://app.unipost.dev/settings/billing",
+	}
+	if err := syncer.SendLifecycleEvent(context.Background(), LifecycleEvent{
+		UserID: "user_123", Email: "alex@example.com", WorkspaceID: "ws_123", WorkspaceName: "Alex Workspace",
+		PlanID: "growth", EventName: "billing_trial_ending", IdempotencyKey: "billing_trial_ending:grant_123:2026-07-28T12:00:00Z", Properties: properties, SkipContact: true,
+	}); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	if client.contacts != 0 || client.events != 0 || client.transactionals != 1 {
+		t.Fatalf("contacts=%d events=%d transactionals=%d", client.contacts, client.events, client.transactionals)
+	}
+	if client.lastTransactional.TransactionalID != "tmpl_trial_ending" {
+		t.Fatalf("transactional ID = %q", client.lastTransactional.TransactionalID)
+	}
+	if client.lastTransactional.IdempotencyKey != "billing_trial_ending:grant_123:2026-07-28T12:00:00Z" {
+		t.Fatalf("idempotency key = %q", client.lastTransactional.IdempotencyKey)
+	}
+	for key, want := range properties {
+		if key == "days_remaining" {
+			want = float64(3)
+		}
+		assertProperty(t, client.lastTransactional.DataVariables, key, want)
+	}
+	if audit.created != 1 || audit.markedSent != 1 || audit.markedFailed != 0 {
+		t.Fatalf("audit=%#v", audit)
+	}
+	if audit.lastAttempt.EventKey != "email.billing.trial_ending.v1" || audit.lastAttempt.DeliveryClass != "critical_transactional" || audit.lastAttempt.TriggerSource != "stripe_webhook" {
+		t.Fatalf("audit attempt=%#v", audit.lastAttempt)
+	}
+}
+
+func TestSyncerAuditsTrialEndingMissingTransactionalIDWithoutProviderFallback(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	audit := &fakeEmailAuditStore{}
+	syncer := NewSyncer(client, Options{EmailAuditStore: audit})
+	event := testBillingTrialEndingLifecycleEvent()
+
+	if err := syncer.SendLifecycleEvent(context.Background(), event); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	assertFailedTrialEndingAudit(t, audit, "missing_transactional_id")
+	if client.contacts != 0 || client.events != 0 || client.transactionals != 0 {
+		t.Fatalf("provider calls contacts=%d events=%d transactionals=%d", client.contacts, client.events, client.transactionals)
+	}
+}
+
+func TestSyncerAuditsTrialEndingWhenProviderUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		client LifecycleClient
+	}{
+		{name: "nil client"},
+		{name: "disabled client", client: &fakeLifecycleClient{disabled: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			audit := &fakeEmailAuditStore{}
+			syncer := NewSyncer(tc.client, Options{TransactionalIDs: TransactionalIDs{BillingTrialEnding: "tmpl_trial_ending"}, EmailAuditStore: audit})
+			if err := syncer.SendLifecycleEvent(context.Background(), testBillingTrialEndingLifecycleEvent()); err != nil {
+				t.Fatalf("SendLifecycleEvent returned error: %v", err)
+			}
+			assertFailedTrialEndingAudit(t, audit, "provider_unavailable")
+		})
+	}
+}
+
+func TestSyncerAuditsTrialEndingEmailPolicyFailure(t *testing.T) {
+	client := &fakeLifecycleClient{}
+	audit := &fakeEmailAuditStore{}
+	syncer := NewSyncer(client, Options{
+		TransactionalIDs: TransactionalIDs{BillingTrialEnding: "tmpl_trial_ending"},
+		EmailAuditStore:  audit,
+		EmailPolicy:      &fakeEmailPolicy{err: errors.New("preference store unavailable")},
+	})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), testBillingTrialEndingLifecycleEvent()); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	assertFailedTrialEndingAudit(t, audit, "email_policy_failed")
+	if client.transactionals != 0 || client.events != 0 || client.contacts != 0 {
+		t.Fatalf("provider calls contacts=%d events=%d transactionals=%d", client.contacts, client.events, client.transactionals)
+	}
+}
+
+func TestSyncerAuditsTrialEndingProviderFailure(t *testing.T) {
+	client := &fakeLifecycleClient{transactionalErr: errors.New("loops down")}
+	audit := &fakeEmailAuditStore{}
+	syncer := NewSyncer(client, Options{TransactionalIDs: TransactionalIDs{BillingTrialEnding: "tmpl_trial_ending"}, EmailAuditStore: audit})
+
+	if err := syncer.SendLifecycleEvent(context.Background(), testBillingTrialEndingLifecycleEvent()); err != nil {
+		t.Fatalf("SendLifecycleEvent returned error: %v", err)
+	}
+
+	assertFailedTrialEndingAudit(t, audit, emailAuditFailureEvidence(emailAuditOutcomeProviderDefinitive, errors.New("loops down")))
+	if client.transactionals != 1 || client.contacts != 0 || client.events != 0 {
+		t.Fatalf("provider calls contacts=%d events=%d transactionals=%d", client.contacts, client.events, client.transactionals)
+	}
+}
+
+func testBillingTrialEndingLifecycleEvent() LifecycleEvent {
+	return LifecycleEvent{
+		UserID: "user_123", Email: "alex@example.com", WorkspaceID: "ws_123", WorkspaceName: "Alex Workspace", PlanID: "growth",
+		EventName: "billing_trial_ending", IdempotencyKey: "billing_trial_ending:grant_123:2026-07-28T12:00:00Z", SkipContact: true,
+		Properties: map[string]any{
+			"workspace_name": "Alex Workspace", "plan_id": "growth", "plan_name": "Growth", "trial_end": "2026-07-28T12:00:00Z",
+			"days_remaining": int64(3), "post_trial_price": "$79.00/month", "billing_url": "https://app.unipost.dev/settings/billing", "cancel_url": "https://app.unipost.dev/settings/billing",
+		},
+	}
+}
+
+func assertFailedTrialEndingAudit(t *testing.T, audit *fakeEmailAuditStore, reason string) {
+	t.Helper()
+	if audit.created != 1 || audit.markedFailed != 1 || audit.markedSent != 0 {
+		t.Fatalf("audit=%#v", audit)
+	}
+	if audit.failedReason != reason {
+		t.Fatalf("failed reason=%q, want %q", audit.failedReason, reason)
+	}
+	if audit.lastAttempt.EventKey != "email.billing.trial_ending.v1" || audit.lastAttempt.IdempotencyKey != "billing_trial_ending:grant_123:2026-07-28T12:00:00Z" {
+		t.Fatalf("audit attempt=%#v", audit.lastAttempt)
+	}
+}
+
 func TestSyncerSendsBillingPaymentRecoveredTransactionalEmailWhenTemplateConfigured(t *testing.T) {
 	client := &fakeLifecycleClient{}
 	syncer := NewSyncer(client, Options{
@@ -787,8 +931,8 @@ func TestSyncerAuditsLifecycleTransactionalEmailFailure(t *testing.T) {
 	if audit.markedFailed != 1 {
 		t.Fatalf("audit markedFailed = %d, want 1", audit.markedFailed)
 	}
-	if audit.failedReason != "loops down" {
-		t.Fatalf("failure reason = %q, want loops down", audit.failedReason)
+	if want := emailAuditFailureEvidence(emailAuditOutcomeProviderDefinitive, errors.New("loops down")); audit.failedReason != want {
+		t.Fatalf("failure reason = %q, want %q", audit.failedReason, want)
 	}
 	if audit.lastAttempt.EventKey != "email.billing.payment_failed.v1" {
 		t.Fatalf("event key = %q, want email.billing.payment_failed.v1", audit.lastAttempt.EventKey)
@@ -806,10 +950,11 @@ type fakeLifecycleClient struct {
 	contactErr        error
 	eventErr          error
 	transactionalErr  error
+	disabled          bool
 }
 
 func (f *fakeLifecycleClient) Enabled() bool {
-	return true
+	return !f.disabled
 }
 
 func (f *fakeLifecycleClient) UpsertContact(_ context.Context, contact Contact) error {
@@ -838,11 +983,15 @@ type fakeEmailAuditStore struct {
 	lastAttempt   EmailSendAttempt
 	failedReason  string
 	skippedReason string
+	createErr     error
 }
 
 func (f *fakeEmailAuditStore) CreateEmailSendAttempt(_ context.Context, attempt EmailSendAttempt) (EmailSendAttemptRecord, error) {
 	f.created++
 	f.lastAttempt = attempt
+	if f.createErr != nil {
+		return EmailSendAttemptRecord{}, f.createErr
+	}
 	return EmailSendAttemptRecord{ID: "audit_123"}, nil
 }
 

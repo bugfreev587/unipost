@@ -47,12 +47,26 @@ func (t *postgresTransaction) LockPeriod(ctx context.Context, workspaceID, perio
 	return err
 }
 
+func (t *postgresTransaction) LockScheduledIdempotency(ctx context.Context, workspaceID, idempotencyKey string) error {
+	_, err := t.tx.Exec(
+		ctx,
+		`SELECT pg_advisory_xact_lock(hashtextextended(jsonb_build_array($1::text, $2::text)::text, 0))`,
+		workspaceID,
+		"scheduled_idempotency:"+idempotencyKey,
+	)
+	return err
+}
+
 func (t *postgresTransaction) Snapshot(ctx context.Context, workspaceID, period string) (quota.MonthlySnapshot, error) {
 	return t.checker.MonthlySnapshotForPeriod(ctx, workspaceID, period)
 }
 
 func (t *postgresTransaction) Queries() *db.Queries {
 	return t.queries
+}
+
+func (t *postgresTransaction) DBTX() db.DBTX {
+	return t.tx
 }
 
 func (t *postgresTransaction) Commit(ctx context.Context) error {
