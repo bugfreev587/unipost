@@ -142,26 +142,3 @@ func TestFeatureFlagsHandlerPublicReturnsOnlyGlobalValues(t *testing.T) {
 		t.Fatalf("public response leaks admin metadata: %s", rec.Body.String())
 	}
 }
-
-func TestFeatureFlagsHandlerCannotEnablePreparedObservabilityReadSwitch(t *testing.T) {
-	store := &handlerFeatureFlagStore{flags: map[string]bool{}}
-	h := NewFeatureFlagsHandler(store, featureflags.NewEvaluator(store, nil))
-	req := httptest.NewRequest(http.MethodPatch, "/v1/admin/feature-flags/"+featureflags.ObservabilityReadsV2, strings.NewReader(`{"enabled":true}`))
-	req = req.WithContext(context.WithValue(req.Context(), auth.UserIDKey, "admin_1"))
-	routeContext := chi.NewRouteContext()
-	routeContext.URLParams.Add("key", featureflags.ObservabilityReadsV2)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, routeContext))
-	rec := httptest.NewRecorder()
-
-	h.UpdateAdmin(rec, req)
-
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if store.flags[featureflags.ObservabilityReadsV2] {
-		t.Fatal("prepared read switch was enabled")
-	}
-	if !strings.Contains(rec.Body.String(), "FLAG_NOT_READY") {
-		t.Fatalf("response = %s", rec.Body.String())
-	}
-}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 )
 
 // fakeLogsStore records the params it receives and returns canned rows
@@ -310,5 +311,156 @@ func TestLogsGet_IncludesRedactedPayloads(t *testing.T) {
 	// marker survives to the response body.
 	if got := string(resp.Data["request_payload"]); got == "" || !json.Valid(resp.Data["request_payload"]) {
 		t.Fatalf("unexpected request_payload: %q", got)
+	}
+}
+
+type fakeObservabilitySelector struct{ enabled bool }
+
+func (f fakeObservabilitySelector) UseV2(context.Context) bool { return f.enabled }
+
+type fakeObservabilityLogReader struct {
+	listWorkspaceCalls int
+	listWorkspaceID    string
+	listFilters        observabilityreads.LogFilters
+	listCursor         *observabilityreads.LogCursor
+	listLimit          int
+	listPage           observabilityreads.LogPage
+	listErr            error
+	adminFilters       observabilityreads.LogFilters
+	adminCursor        *observabilityreads.LogCursor
+	adminLimit         int
+	adminPage          observabilityreads.LogPage
+	adminErr           error
+	adminCalls         int
+	getWorkspaceID     string
+	getID              string
+	getDetail          observabilityreads.LogDetail
+	getErr             error
+	getAdminID         string
+	getAdminDetail     observabilityreads.LogDetail
+	getAdminErr        error
+	getAdminCalls      int
+}
+
+func (f *fakeObservabilityLogReader) ListWorkspace(_ context.Context, workspaceID string, filters observabilityreads.LogFilters, cursor *observabilityreads.LogCursor, limit int) (observabilityreads.LogPage, error) {
+	f.listWorkspaceCalls++
+	f.listWorkspaceID, f.listFilters, f.listCursor, f.listLimit = workspaceID, filters, cursor, limit
+	return f.listPage, f.listErr
+}
+
+func (f *fakeObservabilityLogReader) ListAdmin(_ context.Context, filters observabilityreads.LogFilters, cursor *observabilityreads.LogCursor, limit int) (observabilityreads.LogPage, error) {
+	f.adminCalls++
+	f.adminFilters, f.adminCursor, f.adminLimit = filters, cursor, limit
+	return f.adminPage, f.adminErr
+}
+
+func (f *fakeObservabilityLogReader) GetWorkspace(_ context.Context, workspaceID, id string) (observabilityreads.LogDetail, error) {
+	f.getWorkspaceID, f.getID = workspaceID, id
+	return f.getDetail, f.getErr
+}
+
+func (f *fakeObservabilityLogReader) GetAdmin(_ context.Context, id string) (observabilityreads.LogDetail, error) {
+	f.getAdminCalls++
+	f.getAdminID = id
+	return f.getAdminDetail, f.getAdminErr
+}
+
+func TestLogsSelectorFallsBackToLegacyWhenOff(t *testing.T) {
+	legacy := &fakeLogsStore{listRows: []db.IntegrationLog{sampleLog(7, "ws_authed", time.Now())}}
+	v2 := &fakeObservabilityLogReader{}
+	h := NewLogsHandler(legacy).SetObservabilityReads(fakeObservabilitySelector{}, v2)
+	w := httptest.NewRecorder()
+	h.List(w, newLogsRequest("/v1/logs", "ws_authed"))
+	if w.Code != http.StatusOK || legacy.listParams.WorkspaceID != "ws_authed" {
+		t.Fatalf("legacy path not used: status=%d params=%#v", w.Code, legacy.listParams)
+	}
+	if v2.listWorkspaceID != "" {
+		t.Fatalf("v2 reader called while selector OFF: %#v", v2)
+	}
+}
+
+func TestLogsTypedNilV2ReaderFallsBackToLegacy(t *testing.T) {
+	legacy := &fakeLogsStore{listRows: []db.IntegrationLog{sampleLog(8, "ws_authed", time.Now())}}
+	var v2 observabilityreads.LogReader = (*fakeObservabilityLogReader)(nil)
+	h := NewLogsHandler(legacy).SetObservabilityReads(fakeObservabilitySelector{enabled: true}, v2)
+	w := httptest.NewRecorder()
+	h.List(w, newLogsRequest("/v1/logs", "ws_authed"))
+	if w.Code != http.StatusOK || legacy.listParams.WorkspaceID != "ws_authed" {
+		t.Fatalf("typed-nil reader did not fall back to legacy: status=%d params=%#v", w.Code, legacy.listParams)
+	}
+}
+
+func TestLogsV2ListIsWorkspaceScopedMetadataOnlyAndCursorQualified(t *testing.T) {
+	now := time.Now().UTC()
+	next := observabilityreads.LogCursor{Timestamp: now, SourceKind: observabilityreads.LogSourceRequest, SourceID: "event-1"}
+	v2 := &fakeObservabilityLogReader{listPage: observabilityreads.LogPage{
+		Logs: []observabilityreads.LogProjection{{
+			ID: "request:event-2", SourceKind: observabilityreads.LogSourceRequest, SourceID: "event-2",
+			WorkspaceID: "ws_authed", Timestamp: now, Category: "api_request",
+		}},
+		NextCursor: &next,
+	}}
+	h := NewLogsHandler(&fakeLogsStore{}).SetObservabilityReads(fakeObservabilitySelector{enabled: true}, v2)
+	w := httptest.NewRecorder()
+	h.List(w, newLogsRequest("/v1/logs?workspace_id=ws_attacker&limit=1", "ws_authed"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if v2.listWorkspaceID != "ws_authed" || v2.listLimit != 1 {
+		t.Fatalf("v2 list call = workspace %q limit %d", v2.listWorkspaceID, v2.listLimit)
+	}
+	var response struct {
+		Data []map[string]json.RawMessage `json:"data"`
+		Meta struct {
+			NextCursor string `json:"next_cursor"`
+			HasMore    bool   `json:"has_more"`
+		} `json:"meta"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(response.Data[0]["id"]); got != `"request:event-2"` {
+		t.Fatalf("id = %s", got)
+	}
+	for _, key := range []string{"request_payload", "response_payload"} {
+		if _, exists := response.Data[0][key]; exists {
+			t.Fatalf("metadata list exposed %s", key)
+		}
+	}
+	decoded, err := observabilityreads.DecodeLogCursor(response.Meta.NextCursor)
+	if err != nil || decoded != next || !response.Meta.HasMore {
+		t.Fatalf("cursor = %#v err=%v has_more=%v", decoded, err, response.Meta.HasMore)
+	}
+}
+
+func TestLogsV2GetUsesQualifiedIDAndMapsNotFound(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		id         string
+		detail     observabilityreads.LogDetail
+		err        error
+		wantStatus int
+	}{
+		{name: "workspace detail", id: "request:event-1", detail: observabilityreads.LogDetail{LogProjection: observabilityreads.LogProjection{ID: "request:event-1", WorkspaceID: "ws_authed"}}, wantStatus: http.StatusOK},
+		{name: "legacy numeric integration detail", id: "42", detail: observabilityreads.LogDetail{LogProjection: observabilityreads.LogProjection{ID: "integration:42", WorkspaceID: "ws_authed"}}, wantStatus: http.StatusOK},
+		{name: "noncanonical legacy numeric rejected", id: "01", err: pgx.ErrNoRows, wantStatus: http.StatusNotFound},
+		{name: "cross workspace or unknown", id: "request:event-2", err: pgx.ErrNoRows, wantStatus: http.StatusNotFound},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			v2 := &fakeObservabilityLogReader{getDetail: tt.detail, getErr: tt.err}
+			h := NewLogsHandler(&fakeLogsStore{}).SetObservabilityReads(fakeObservabilitySelector{enabled: true}, v2)
+			r := newLogsRequest("/v1/logs/"+tt.id, "ws_authed")
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", tt.id)
+			r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+			w := httptest.NewRecorder()
+			h.Get(w, r)
+			if w.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d: %s", w.Code, tt.wantStatus, w.Body.String())
+			}
+			if v2.getWorkspaceID != "ws_authed" || v2.getID != tt.id {
+				t.Fatalf("get call = (%q, %q)", v2.getWorkspaceID, v2.getID)
+			}
+		})
 	}
 }

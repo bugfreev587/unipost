@@ -8,8 +8,9 @@ import (
 )
 
 type fakeStore struct {
-	enabled map[string]bool
-	owner   string
+	enabled     map[string]bool
+	owner       string
+	globalCalls int
 }
 
 func (s *fakeStore) List(context.Context) ([]Flag, error) {
@@ -33,10 +34,27 @@ func (s *fakeStore) Set(_ context.Context, key string, enabled bool, actor strin
 }
 
 func (s *fakeStore) GlobalEnabled(_ context.Context, key string) (bool, error) {
+	s.globalCalls++
 	if _, ok := DefinitionFor(key); !ok {
 		return false, ErrUnknownFlag
 	}
 	return s.enabled[key], nil
+}
+
+func TestEvaluatorPublicFailsClosedBeforeStoreForActivationLockedFlag(t *testing.T) {
+	store := &fakeStore{enabled: map[string]bool{ObservabilityReadsV2: true}}
+	evaluator := NewEvaluator(store, nil)
+
+	enabled, err := evaluator.Public(context.Background(), ObservabilityReadsV2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if enabled {
+		t.Fatal("activation-locked flag honored stale stored true value")
+	}
+	if store.globalCalls != 0 {
+		t.Fatalf("GlobalEnabled calls = %d, want 0", store.globalCalls)
+	}
 }
 
 func (s *fakeStore) WorkspaceOwner(context.Context, string) (string, error) {
@@ -67,6 +85,53 @@ func TestDefinitionsAreAllowlistedAndDefaultOff(t *testing.T) {
 	}
 	if !got[0].ActivationReady || !got[1].ActivationReady || got[2].ActivationReady {
 		t.Fatalf("activation readiness = %#v", got)
+	}
+}
+
+func TestObservabilityReadFlagStaysLockedInternalAndDefaultOffUntilSDKsAreCompatible(t *testing.T) {
+	definition, ok := DefinitionFor(ObservabilityReadsV2)
+	if !ok {
+		t.Fatal("observability read flag is not registered")
+	}
+	if definition.ActivationReady {
+		t.Fatal("observability read flag must stay locked until every public SDK supports opaque log IDs")
+	}
+	if !definition.Internal {
+		t.Fatal("observability read flag must remain internal")
+	}
+	if definition.DefaultEnabled {
+		t.Fatal("observability read flag must remain default OFF")
+	}
+	if definition.OwnerArea != "API / Admin Observability" {
+		t.Fatalf("owner area = %q, want API / Admin Observability", definition.OwnerArea)
+	}
+	if definition.Description != "Uses the canonical request-event model for Logs and API Metrics reads; activation is locked pending SDK, canonical live-publisher, historical Metrics coverage/parity, retention safety, and exact-SHA prerequisites." {
+		t.Fatalf("description = %q", definition.Description)
+	}
+}
+
+func TestFlagWithDefinitionMetadataUsesAuthoritativeDescription(t *testing.T) {
+	updatedAt := time.Date(2026, time.July, 29, 12, 0, 0, 0, time.UTC)
+	persisted := Flag{
+		Key:         ObservabilityReadsV2,
+		Enabled:     true,
+		Description: "Uses the canonical request-event model for Logs, Metrics, and Errors reads.",
+		UpdatedBy:   "admin_1",
+		UpdatedAt:   updatedAt,
+	}
+
+	got, ok := flagWithDefinitionMetadata(persisted)
+	if !ok {
+		t.Fatal("registered flag was rejected")
+	}
+	if got.Description != "Uses the canonical request-event model for Logs and API Metrics reads; activation is locked pending SDK, canonical live-publisher, historical Metrics coverage/parity, retention safety, and exact-SHA prerequisites." {
+		t.Fatalf("description = %q", got.Description)
+	}
+	if got.Key != persisted.Key || got.Enabled != persisted.Enabled || got.UpdatedBy != persisted.UpdatedBy || !got.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("persisted state changed: got %#v want %#v", got, persisted)
+	}
+	if _, ok := flagWithDefinitionMetadata(Flag{Key: "unknown", Description: "stale"}); ok {
+		t.Fatal("unregistered database flag must remain hidden")
 	}
 }
 

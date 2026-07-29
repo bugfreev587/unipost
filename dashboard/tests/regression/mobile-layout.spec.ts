@@ -4,17 +4,16 @@ import { expect, test } from "@playwright/test";
 // unipost.dev), where src/proxy.ts rewrites "/" -> /marketing. On the app
 // host (app.unipost.dev, the default baseURL) "/" is auth-gated and
 // "/marketing" redirects back to it, so the landing page must be reached
-// via an absolute URL on the landing host. The CI "Dashboard build" job
-// runs a single local server that the proxy always treats as the app host,
-// so no distinct landing host exists there and the landing assertion is
-// skipped. Pricing is public on every host, so it stays baseURL-relative.
+// via an absolute URL on the landing host. The dedicated local regression
+// gate uses the RFC localhost names dev-app.localhost and dev.localhost on one
+// server, while the ordinary single-host CI build still skips this assertion.
+// Pricing is public on every host, so it stays baseURL-relative.
 const appBaseURL = process.env.DASHBOARD_BASE_URL || "https://app.unipost.dev";
 const landingBaseURL = appBaseURL
   .replace("://staging-app.", "://staging.")
   .replace("://dev-app.", "://dev.")
   .replace("://app.", "://");
-const landingHostTestable =
-  landingBaseURL !== appBaseURL && !/localhost|127\.0\.0\.1/.test(appBaseURL);
+const landingHostTestable = landingBaseURL !== appBaseURL;
 
 const mobilePublicRoutes = [
   {

@@ -268,7 +268,7 @@ export interface PlatformCapabilitiesEnvelope {
 }
 
 export interface IntegrationLog {
-  id: number;
+  id: number | string;
   workspace_id: string;
   ts: string;
   level: "debug" | "info" | "warn" | "error";
@@ -293,8 +293,10 @@ export interface IntegrationLog {
   duration_ms?: number;
   error_code?: string;
   metadata?: Record<string, unknown> | null;
-  request_payload?: Record<string, unknown> | null;
-  response_payload?: Record<string, unknown> | null;
+  has_error_detail?: boolean;
+  detail_status?: "available" | "expired";
+  request_payload?: unknown;
+  response_payload?: unknown;
 }
 
 export interface IntegrationLogListParams {
@@ -2082,7 +2084,7 @@ export async function getIntegrationLog(
   token: string,
   id: number | string
 ): Promise<ApiResponse<IntegrationLog>> {
-  return request(`/v1/logs/${id}`, token);
+  return request(`/v1/logs/${encodeURIComponent(String(id))}`, token);
 }
 
 export async function listAdminIntegrationLogs(
@@ -2102,7 +2104,7 @@ export async function getAdminIntegrationLog(
   token: string,
   id: number | string
 ): Promise<ApiResponse<AdminIntegrationLog>> {
-  return request(`/v1/admin/logs/${id}`, token);
+  return request(`/v1/admin/logs/${encodeURIComponent(String(id))}`, token);
 }
 
 export async function listAdminSearchHistory(

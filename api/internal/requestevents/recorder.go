@@ -33,6 +33,8 @@ type Config struct {
 	DirectFallbackLimit time.Duration
 	DrainTimeout        time.Duration
 	FallbackWorkers     int
+	CallbackTimeout     time.Duration
+	OnPersistedBatch    func(context.Context, []Event)
 }
 
 type Stats struct {
@@ -96,6 +98,8 @@ type Recorder struct {
 	maxFailureLatencyUS  atomic.Int64
 	failureFallbacks     atomic.Uint64
 	abandoned            atomic.Uint64
+	callbackTimeout      time.Duration
+	onPersistedBatch     func(context.Context, []Event)
 }
 
 func NewRecorder(store Store, config Config) *Recorder {
@@ -116,6 +120,8 @@ func NewRecorder(store Store, config Config) *Recorder {
 		stop:                make(chan struct{}),
 		done:                make(chan struct{}),
 		accepting:           true,
+		callbackTimeout:     durationOr(config.CallbackTimeout, 250*time.Millisecond),
+		onPersistedBatch:    config.OnPersistedBatch,
 	}
 }
 
@@ -322,6 +328,7 @@ func (r *Recorder) writeSuccessBatch(events []Event, timeout time.Duration) {
 		return
 	}
 	r.successWritten.Add(uint64(len(batch)))
+	r.notifyPersistedBatch(batch)
 }
 
 func (r *Recorder) writeFailure(item failureItem, timeout time.Duration) {
@@ -341,6 +348,17 @@ func (r *Recorder) writeFailure(item failureItem, timeout time.Duration) {
 		return
 	}
 	r.failureWritten.Add(1)
+	r.notifyPersistedBatch([]Event{item.event})
+}
+
+func (r *Recorder) notifyPersistedBatch(events []Event) {
+	if r.onPersistedBatch == nil || len(events) == 0 {
+		return
+	}
+	batch := append([]Event(nil), events...)
+	ctx, cancel := context.WithTimeout(context.Background(), r.callbackTimeout)
+	defer cancel()
+	r.onPersistedBatch(ctx, batch)
 }
 
 func (r *Recorder) recordSuccessLatency(duration time.Duration) {

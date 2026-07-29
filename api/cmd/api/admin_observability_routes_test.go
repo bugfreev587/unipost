@@ -66,14 +66,38 @@ func TestCanonicalRequestEventRecorderIsDarkDualWriteMiddleware(t *testing.T) {
 			t.Fatalf("main.go missing dark request-event wiring %q", required)
 		}
 	}
-	if strings.Contains(source, "ObservabilityReadsV2") {
-		t.Fatal("write-model workstream must not evaluate the read-path flag")
-	}
 	if strings.Contains(source, "requestEventParityMonitor.Start") {
 		t.Fatal("async insert timestamps must not drive automatic exact-parity alerts")
 	}
 	statsPattern := regexp.MustCompile(`(?s)r\.With\(auth\.RequireSuperAdmin\([^\n]+Request-event telemetry is restricted to super admins[^\n]+\)\)\.\s*Get\("/v1/admin/observability/request-events", requestevents\.StatsHandler\(requestEventRecorder\)\)`)
 	if !statsPattern.MatchString(source) {
 		t.Fatal("request-event recorder stats route is missing or not protected by RequireSuperAdmin")
+	}
+}
+
+func TestObservabilityReadsV2IsWiredOnlyAsOptionalReadDependencies(t *testing.T) {
+	body, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	for _, required := range []string{
+		"observabilityreads.NewPostgresLogStore(pool)",
+		"observabilityreads.NewReadSelector(featureFlagEvaluator, slog.Default())",
+		"NewLogsHandler(queries).SetObservabilityReads(observabilityReadSelector, observabilityLogStore)",
+		"SetObservabilityReads(observabilityReadSelector, observabilityLogStore)",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("main.go missing observability read wiring %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"observabilityLogStore.Start",
+		"observabilityReadSelector.ForWorkspace",
+		"requestEventRecorder.SetObservabilityReads",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("read flag leaked into writer/background/business wiring %q", forbidden)
+		}
 	}
 }

@@ -36,6 +36,7 @@ type tokenAuthenticator func(context.Context, *db.Queries, string) (context.Cont
 type clerkTokenVerifier func(context.Context, string) (string, error)
 type webSocketAcceptor func(http.ResponseWriter, *http.Request, *websocket.AcceptOptions) (*websocket.Conn, error)
 type webSocketServer func(context.Context, string, *websocket.Conn)
+type logWebSocketServer func(context.Context, string, *websocket.Conn)
 type scopedWebSocketServer func(context.Context, inboxaccess.Scope, *websocket.Conn)
 
 // Handler upgrades an HTTP request to a WebSocket connection. Clerk sessions
@@ -52,7 +53,9 @@ type Handler struct {
 	legacyClerkTokenVerifier clerkTokenVerifier
 	acceptWebSocket          webSocketAcceptor
 	serveWebSocket           webSocketServer
+	serveLogWebSocket        logWebSocketServer
 	serveScopedWebSocket     scopedWebSocketServer
+	logReadSelector          logReadSelector
 }
 
 func NewHandler(hub *Hub, queries *db.Queries) *Handler {
@@ -64,8 +67,17 @@ func NewHandler(hub *Hub, queries *db.Queries) *Handler {
 		legacyClerkTokenVerifier: auth.VerifyClerkSessionToken,
 		acceptWebSocket:          websocket.Accept,
 		serveWebSocket:           hub.ServeConn,
+		serveLogWebSocket:        hub.ServeLogConn,
 		serveScopedWebSocket:     hub.ServeScopedConn,
 	}
+}
+
+func (h *Handler) WithLogReadSelector(selector logReadSelector) *Handler {
+	h.logReadSelector = selector
+	if h.Hub != nil {
+		h.Hub.WithLogReadSelector(selector)
+	}
+	return h
 }
 
 func (h *Handler) WithInboxPlanGate(checker inboxPlanChecker) *Handler {
@@ -194,6 +206,10 @@ func (h *Handler) acceptAndServe(w http.ResponseWriter, r *http.Request, workspa
 	}
 
 	slog.Info("ws: upgrading", "workspace_id", workspaceID)
+	if h.logReadSelector != nil {
+		h.serveLogWebSocket(r.Context(), workspaceID, connection)
+		return
+	}
 	h.serveWebSocket(r.Context(), workspaceID, connection)
 }
 
