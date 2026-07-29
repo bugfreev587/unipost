@@ -10,7 +10,7 @@
 
 ## 1. Executive summary
 
-UniPost currently stores most API-key request traffic twice: once as a rich `integration_logs` row and again as a lean `api_metrics` row. Successful request logs also persist request and response payloads that are rarely needed. Separately, a small number of binary TikTok upload failures have created extremely large `debug_curl` values in `social_post_results`.
+UniPost currently stores most API-key request traffic twice: once as a rich `integration_logs` row and again as a lean `api_metrics` row. Successful request logs also persist request and response payloads that are rarely needed. Separately, the cross-platform publishing debug recorder has embedded complete request bodies in `debug_curl`; the observed extreme rows came from TikTok binary uploads, but the unbounded request-body path is platform-independent.
 
 These two patterns cause almost all current database growth and the observed Admin Logs and Admin Errors performance failures.
 
@@ -24,7 +24,7 @@ This PRD adopts a unified API request event model:
 - internal runtime logs, stack traces, worker health, and infrastructure telemetry go to Better Stack;
 - business state, audit records, outbox entries, delivery records, and idempotency receipts remain in PostgreSQL.
 
-The target is to reduce the production database from approximately 7.22 GB to no more than 2.0 GB after historical compaction, reduce daily physical growth by at least 75%, and bring cold Admin Logs load time below 1.5 seconds.
+The target is to reduce the production database from approximately 7.22 GB to no more than 2.3 GB after historical compaction, operate toward a 2.0 GB steady-state capacity objective, reduce daily physical growth by at least 75%, and bring cold Admin Logs load time below 1.5 seconds.
 
 ## 2. Production evidence
 
@@ -72,12 +72,15 @@ For API-key traffic, both middleware write a raw per-request row. The production
 
 ### 2.4 `debug_curl`
 
+The legacy debug recorder is not wholly unbounded. It already limits each response excerpt to 8 KB and each publish attempt to 16 failing entries. The actual unbounded component is the request path: `io.ReadAll(req.Body)` reads the complete request body and `buildCurl` renders all of it into `--data`. The fix therefore targets request capture while retaining or tightening the existing response and entry limits.
+
 Production contained 1,119 non-empty `debug_curl` values totaling approximately 473 MB uncompressed:
 
 - 20 rows larger than 1 MB accounted for approximately 472 MB;
 - the remaining 1,099 rows accounted for only about 1.5 MB;
 - the largest individual value was approximately 30 MB;
-- all extreme values were recent and consistent with binary upload bodies being embedded in curl text.
+- all extreme values were recent and consistent with binary upload bodies being embedded in curl text;
+- the extreme production samples were TikTok uploads, but the shared write path covers every publishing platform.
 
 The Admin Errors list returned `debug_curl` for every result. A 100-item production response transferred approximately 73.6 MB and took approximately 15.6 seconds to complete.
 
@@ -98,7 +101,7 @@ Sending internal runtime logs to Better Stack does not itself materially shrink 
 3. Preserve bounded, redacted payload detail only for failures.
 4. Preserve existing customer Developer Logs retention entitlements.
 5. Continue supporting Logs, API Metrics, Admin Logs, and Admin Errors without a customer-visible feature regression.
-6. Reduce production database physical size to no more than 2.0 GB after migration and compaction.
+6. Reduce production database physical size to no more than 2.3 GB after migration and compaction, with a 2.0 GB steady-state operating objective.
 7. Reduce sustained daily physical growth by at least 75%.
 8. Reduce Admin Logs cold-query time below 1.5 seconds.
 9. Reduce Admin Errors and Admin Logs list responses below 250 KB.
@@ -110,7 +113,7 @@ Sending internal runtime logs to Better Stack does not itself materially shrink 
 - Do not move audit records, outbox rows, delivery state, idempotency receipts, or billing events out of PostgreSQL.
 - Do not change customer plan retention entitlements.
 - Do not redesign the visual appearance of the Logs or Errors pages.
-- Do not add a product feature flag.
+- Do not add customer-facing rollout flags; one temporary, internal Admin read-path kill-switch is explicitly in scope for Stage 2.
 - Do not provide full-text search over request or response payloads.
 - Do not preserve binary request bodies for replay.
 
@@ -124,7 +127,7 @@ Sending internal runtime logs to Better Stack does not itself materially shrink 
 | Publishing, OAuth, Connect, webhook, and customer-actionable system events | PostgreSQL `integration_logs` | Product events; no new `api_request` rows |
 | Optional non-API event failure details | PostgreSQL `integration_log_details` | Failure-only, bounded, on-demand |
 | Publishing failure facts | PostgreSQL `post_failures` | Structured business and support record |
-| Publishing HTTP diagnostic detail | PostgreSQL `post_failure_debug_details` | Bounded replacement for unbounded `debug_curl` |
+| Publishing HTTP diagnostic detail | PostgreSQL `post_failure_debug_details` | Bounded replacement for the legacy request-body-unbounded `debug_curl` path |
 | Security-sensitive mutations | PostgreSQL `audit_log` | Durable, tenant-scoped audit evidence |
 | Outbox, delivery, receipt, attempt, and idempotency state | Existing PostgreSQL business tables | Operational state, not disposable logs |
 
@@ -230,7 +233,7 @@ New `category='api_request'` writes stop after cutover. The base row remains lea
 
 ### 6.5 Publishing failures and Errors
 
-`post_failures` remains the structured source for publishing failure history. `social_post_results` remains the current result state. Unbounded `social_post_results.debug_curl` writes stop.
+`post_failures` remains the structured source for publishing failure history. `social_post_results` remains the current result state. Writes through the request-body-unbounded `social_post_results.debug_curl` path stop. Existing response-body and failing-entry caps are preserved or tightened by the new structured representation.
 
 `post_failure_debug_details` stores a bounded diagnostic representation:
 
@@ -333,7 +336,7 @@ Required indexes:
 - descending global `(ts, id)`;
 - confirmed exact lookup indexes for request, post, and social-account correlation.
 
-The existing category, status, action, platform, and metadata GIN indexes enter a 14-day observation window. The implementation records query plans and index usage, then removes only indexes proven redundant or unused by supported queries.
+The existing `(workspace_id, category, ts)`, `(workspace_id, status, ts)`, `(workspace_id, action, ts)`, `(workspace_id, platform, ts)`, and metadata GIN indexes enter a 14-day observation window. They must be evaluated as composite indexes against supported query predicates, not described or assessed as single-column indexes. The implementation records query plans and index usage, then removes only indexes proven redundant or unused by supported queries.
 
 All new production indexes on populated tables must be created concurrently through a deployment-safe migration procedure.
 
@@ -367,6 +370,8 @@ The current maximum 90-day Metrics query range remains unchanged. Hourly rollups
 
 ## 10. Retention and partitioning
 
+Plan-based retention for the existing `integration_logs` table already exists through `IntegrationLogRetentionWorker` and `RetentionDaysForPlan`; this PRD does not claim it as a new capability. New work extends the same entitlement mapping to `api_request_events`, introduces a bounded raw-metric lifecycle where `api_metrics` previously had no retention, adds the missing audit/debug policies, and changes execution to partition-aware bounded cleanup.
+
 ### 10.1 Retention policy
 
 | Data | Retention |
@@ -395,9 +400,28 @@ Partitioned event identity and detail references must include the event timestam
 - Delete in bounded batches rather than one large workspace transaction.
 - Continue processing other workspaces when one workspace fails.
 - Record and alert on the oldest expired row that remains.
-- Cascade detail deletion from its parent event.
+- Cascade detail deletion from its parent event during row-level deletion.
 - Verify partition maximum timestamp and retention entitlement before dropping a partition.
 - Tune autovacuum per active partition and monitor dead tuples and retention lag.
+
+### 10.4 Parent and detail partition lifecycle
+
+Parent event partitions and their one-to-one detail partitions use identical weekly boundaries and a recorded parent/child partition manifest. Row-level `ON DELETE CASCADE` does not run when a partition is dropped. The partition lifecycle operation must therefore:
+
+1. verify both parent and detail partition bounds;
+2. stop or reject writes into the closed interval;
+3. detach the aligned detail partition and parent partition as one controlled operation;
+4. validate that neither detached partition received an out-of-range row;
+5. drop both detached partitions only after backup and retention checks;
+6. alert and stop if one side is missing or has different bounds.
+
+Partition lifecycle integration tests must prove that dropping an old parent partition cannot orphan a detail partition.
+
+### 10.5 Short-plan retention inside long-lived partitions
+
+Weekly time partitions cannot directly implement Free's one-day retention while Team and Enterprise events remain for 90 or 180 days. Free, API, Basic, and Growth expiration therefore remains row-level deletion inside active weekly partitions. This creates dead tuples until autovacuum reuses the space and does not immediately return storage to the Railway volume.
+
+The capacity model depends on this cleanup remaining healthy. Active partitions require lower, measured autovacuum thresholds, bounded daily deletion, dead-tuple monitoring by plan, and a retention-lag alert. Whole-partition drop remains the physical reclamation mechanism only after the longest 180-day entitlement has expired.
 
 ## 11. Privacy and security
 
@@ -464,23 +488,44 @@ Migration is split into independently deployable and reversible stages.
 - create hourly metric rollups;
 - introduce the unified recorder;
 - keep existing writers temporarily for a bounded comparison window;
-- add counters that compare old and new write paths.
+- add counters that compare old and new write paths;
+- register the environment-global internal flag `observability_reads_v2`, seeded OFF, in the existing PostgreSQL feature flag control plane;
+- display and audit this flag through `/admin/feature-flags` and the existing Super Admin API.
 
-No product feature flag is introduced. Compatibility is controlled through staged schema and code deployments that can be reverted independently.
+The flag is evaluated by the backend through the global evaluator, not the workspace evaluator, so the existing Super Admin workspace bypass cannot accidentally force new reads. It controls reads only and never gates writes, retention, backfill, or destructive migration.
+
+Flag contract:
+
+| Field | Value |
+| --- | --- |
+| Key | `observability_reads_v2` |
+| Owner | API / Admin Observability |
+| Production default | OFF |
+| OFF behavior | Logs, Metrics, and Errors use the compatible legacy read projection |
+| ON behavior | Logs, Metrics, and Errors use the unified request-event/detail projection |
+| Rollback | Turn OFF in `/admin/feature-flags` while dual writes remain healthy |
+| Third-party dependency | None |
 
 ### Stage 2: Switch reads
 
-- switch Logs to the merged request-event and integration-event projection;
-- switch Metrics to raw request events plus hourly rollups;
-- switch Errors to list metadata plus on-demand debug detail;
+- turn `observability_reads_v2` ON in dev, then staging, then production after each environment's exact-SHA acceptance;
+- when ON, switch Logs to the merged request-event and integration-event projection;
+- when ON, switch Metrics to raw request events plus hourly rollups;
+- when ON, switch Errors to list metadata plus on-demand debug detail;
+- when OFF, immediately return all three surfaces to their compatible legacy reads without redeployment;
 - compare dev and staging results against the old paths on the exact deployed SHA.
+
+The kill-switch is valid only while old and new raw writers both remain current. Each ON/OFF transition is audited through `feature_flag_changes` and emits an internal Better Stack event.
 
 ### Stage 3: Stop duplicate writes
 
+- require `observability_reads_v2` to remain continuously ON with successful production acceptance for at least 48 hours;
 - stop `api_metrics` writes;
 - stop `integration_logs` `api_request` writes;
 - make the unified recorder the only API request event writer;
 - monitor count parity, queue health, dropped events, and write failures for at least 48 hours.
+
+Once old writes stop, OFF can no longer provide a current legacy view. Stage 3 therefore locks the flag ON and removes the toggle action from the Admin page. The flag is removed with the old read code and old relations in Stage 5.
 
 ### Stage 4: Backfill retained history
 
@@ -496,8 +541,10 @@ No product feature flag is introduced. Compatibility is controlled through stage
 - delete the obsolete `api_metrics` relation after validation;
 - swap the compact partitioned integration event relation in place of the 5.71 GB legacy relation;
 - migrate or remove legacy `debug_curl` values;
-- perform a controlled rewrite or equivalent compaction of `social_post_results` so the 490 MB TOAST footprint is physically returned;
+- run a staging-timed, production-maintenance-window `VACUUM FULL social_post_results` so the 490 MB TOAST footprint is physically returned;
 - remove old relations only after backup and post-cutover observation.
+
+Production does not expose `pg_repack` in `pg_available_extensions`, and `social_post_results` is referenced by multiple foreign keys. This PRD therefore rejects an unverified shadow-table swap. The approved method is `VACUUM FULL` during a measured maintenance window with API and worker publishing/result writes suspended. The staging rehearsal establishes expected lock duration, temporary disk requirement, and recovery procedure before production scheduling.
 
 Plain `DELETE` and ordinary `VACUUM` are insufficient acceptance evidence because they usually make space reusable without returning it to the Railway volume. Acceptance uses `pg_total_relation_size` and `pg_database_size` after the physical compaction stage.
 
@@ -514,11 +561,21 @@ Before any destructive or space-intensive stage:
 Rollback behavior:
 
 - before destructive cleanup, old tables remain readable;
-- a failed read cutover rolls back the application while both schemas remain compatible;
+- during Stage 2, a failed read cutover first turns `observability_reads_v2` OFF; application rollback remains available while both schemas remain compatible;
 - old raw writers remain available only for the bounded comparison stage;
 - obsolete tables are retained for at least 48 hours after successful cutover when volume capacity permits;
 - after physical cleanup, recovery relies on the verified Railway backup;
 - database downgrade migrations are not required for application rollback.
+
+### 14.1 High-risk implementation controls
+
+The following controls are release blockers, not optional implementation notes:
+
+1. **Dual-source cursor:** the global order is `(timestamp DESC, source_kind ASC, source_id DESC)`. The next-page predicate is `timestamp < cursor.timestamp`, or equal timestamp with a later source kind, or equal timestamp and kind with a smaller source-local ID. IDs are compared only within the same source kind. Boundary tests cover identical timestamps, empty sources, deletion between pages, and page-size transitions.
+2. **Aligned partition drop:** parent and detail partitions must share boundaries and be detached/dropped together; row-level cascade is not relied upon for partition removal.
+3. **Short retention:** dead tuples, autovacuum progress, and per-plan retention lag must remain within measured thresholds before capacity acceptance.
+4. **Hot-table compaction:** `social_post_results` uses the staged maintenance-window `VACUUM FULL` procedure; no unverified online swap is allowed.
+5. **Read kill-switch lifetime:** `observability_reads_v2` is reversible only during dual write, is locked ON before old writes stop, and is removed during legacy cleanup.
 
 ## 15. Monitoring and alerts
 
@@ -647,7 +704,7 @@ Any failed, timed-out, skipped, cancelled, missing, or wrong-SHA required check 
 
 The project is complete only when all conditions hold in production:
 
-1. The physical production database is no larger than 2.0 GB immediately after compaction.
+1. The physical production database is no larger than 2.3 GB immediately after compaction; 2.0 GB remains the steady-state operating objective and 3.0 GB the capacity alert threshold.
 2. Every successfully persisted API-key request has exactly one canonical request event and no duplicate raw event; the production acceptance window has zero dropped success events.
 3. `integration_logs` receives no new `api_request` event.
 4. `api_metrics` receives no new row and is removed after migration validation.
@@ -669,4 +726,4 @@ The project is complete only when all conditions hold in production:
 - Successful API requests retain structured metadata only.
 - Full bounded payload detail is retained only for failures.
 - Existing plan-based Developer Logs retention remains unchanged.
-- No product feature flag is introduced.
+- Stage 2 uses the explicitly authorized internal `observability_reads_v2` kill-switch on `/admin/feature-flags`; it is not customer-facing and is removed after legacy cleanup.
