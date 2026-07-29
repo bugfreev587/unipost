@@ -16,12 +16,22 @@ Only these files may change in this workstream:
 
 - `api/internal/debugrt/debugrt.go`
 - `api/internal/debugrt/debugrt_test.go`
+- `api/internal/postfailuredebug/writer.go`
+- `api/internal/postfailuredebug/writer_test.go`
 - `api/internal/handler/admin.go`
 - `api/internal/handler/admin_observability_test.go`
+- `api/internal/handler/social_posts.go`
+- `api/internal/handler/social_post_queue.go`
+- `api/internal/handler/social_posts_publishing_restrictions_test.go`
+- `api/internal/handler/social_post_queue_test.go`
+- `api/internal/handler/social_post_queue_postgres_integration_test.go`
+- `api/internal/audit/audit.go`
 - `api/cmd/api/main.go`
 - `api/cmd/api/admin_observability_routes_test.go`
 - `api/internal/db/migrations/128_admin_logs_global_time_index.sql`
+- `api/internal/db/migrations/129_post_failure_debug_details.sql`
 - `api/internal/db/admin_logs_index_migration_test.go`
+- `api/internal/db/post_failure_debug_migration_test.go`
 - `api/internal/db/migrate_test.go`
 - `api/internal/db/migration_gate_postgres_integration_test.go`
 - `dashboard/src/lib/api.ts`
@@ -29,14 +39,25 @@ Only these files may change in this workstream:
 - `dashboard/tests/admin-observability-source.test.mjs`
 - this plan and the approved PRD
 
-The only database relation changed is a new index on `integration_logs`. No migration or write may target `social_posts`, `social_accounts`, `social_post_results`, `post_delivery_jobs`, outbox, billing, authentication, quota, receipt, or idempotency tables. Existing `social_post_results.debug_curl` rows remain untouched.
+The only database objects added in this workstream are a new index on `integration_logs` and the log-owned `post_failure_debug_details` relation. No migration may alter or lock `social_posts`, `social_accounts`, `social_post_results`, `post_delivery_jobs`, outbox, billing, authentication, quota, receipt, or idempotency tables. Existing `social_post_results.debug_curl` rows remain untouched.
+
+The two publishing implementation files are an explicitly approved, narrow exception after code review found that diagnostic text was still written inside customer business writes and retry transactions. Their permitted diff is limited to:
+
+- passing an empty legacy `debug_curl` value to existing business writes;
+- enqueueing the same already-finalized diagnostic after the business write or transaction succeeds;
+- removing the duplicate diagnostic body from an integration-log payload;
+- wiring a non-returning, panic-contained observability sink.
+
+They may not change provider calls, status calculation, retry classification or scheduling, job mutation, quota or billing, account selection, response contracts, or transaction boundaries. Fault-injection tests must prove that an unavailable, saturated, or panicking diagnostic sink leaves those outcomes unchanged.
 
 ## File responsibility map
 
 - `debugrt.go`: bounded, observational-only capture of failed outbound HTTP requests.
+- `postfailuredebug`: bounded asynchronous persistence owned wholly by observability; failures are counted/logged and never returned to publishing.
 - `admin.go`: metadata-only list projections and one on-demand debug-detail query.
 - `main.go`: Super Admin routing for the Admin Errors list and detail endpoint.
 - migration 128: global `(ts DESC, id DESC)` index for `integration_logs` using non-blocking concurrent creation.
+- migration 129: bounded diagnostic-detail relation with no foreign key or alteration on a protected business table.
 - `api.ts`: typed client for the dedicated failure debug endpoint.
 - Admin Errors page: load debug text only after an operator opens one failure.
 - contract tests: prove the SQL, routing, UI request sequence, and protected-table boundary.
@@ -432,7 +453,7 @@ git diff --name-only origin/dev...HEAD
 git diff origin/dev...HEAD -- api/internal/db/migrations
 ```
 
-Expected: every changed implementation file appears in the allowlist; the only new database object is `idx_integration_logs_admin_ts_id` on `integration_logs`.
+Expected: every changed implementation file appears in the allowlist; the only new database objects are `idx_integration_logs_admin_ts_id` on `integration_logs` and the observability-owned `post_failure_debug_details` relation.
 
 - [x] **Step 2: Run full API tests**
 
@@ -458,11 +479,12 @@ Expected: all commands PASS. A missing browser, skipped suite, timeout, or cance
 Run searches proving no implementation diff changes publishing, account connection, business persistence, or protected migrations:
 
 ```bash
-git diff --exit-code origin/dev...HEAD -- api/internal/handler/social_posts.go api/internal/handler/social_post_queue.go api/internal/handler/connect_callback.go api/internal/handler/oauth.go api/internal/db/queries api/internal/db/models.go
+git diff --exit-code origin/dev...HEAD -- api/internal/handler/connect_callback.go api/internal/handler/oauth.go api/internal/db/queries api/internal/db/models.go
+cd api && go test ./internal/handler -run 'Test(PostFailureDebugSink|PublishingDiagnosticsStay)' -count=1
 git diff --check origin/dev...HEAD
 ```
 
-Expected: both commands exit 0.
+Expected: untouched protected paths have no diff; the source-boundary and panic-containment tests pass; whitespace validation exits 0.
 
 - [x] **Step 5: Commit any plan tracking update separately**
 
@@ -470,6 +492,45 @@ Expected: both commands exit 0.
 git add docs/superpowers/plans/2026-07-28-admin-observability-containment.md
 git commit -m "docs: record admin observability implementation plan"
 ```
+
+### Task 6A: Isolate publishing diagnostics from customer persistence
+
+**Files:**
+- Create: `api/internal/postfailuredebug/writer.go`
+- Create: `api/internal/postfailuredebug/writer_test.go`
+- Create: `api/internal/db/migrations/129_post_failure_debug_details.sql`
+- Create: `api/internal/db/post_failure_debug_migration_test.go`
+- Modify: `api/internal/handler/social_posts.go`
+- Modify: `api/internal/handler/social_post_queue.go`
+- Modify: publishing fault-injection tests listed in the allowlist
+- Modify: `api/internal/handler/admin.go`
+- Modify: `api/internal/handler/admin_observability_test.go`
+- Modify: `api/internal/audit/audit.go`
+- Modify: `api/cmd/api/main.go`
+
+- [x] **Step 1: Write failing security, bounded-detail, migration, audit, and failure-isolation tests**
+
+Prove that malformed diagnostic bytes, a full queue, a database write failure, and a panicking injected sink cannot alter publishing result status, delivery-job state, retry creation, provider call count, or the customer response. Prove the new relation is log-owned, bounded to 64 KB, and has no foreign key or DDL against a protected business table.
+
+- [x] **Step 2: Add the bounded diagnostic writer and relation**
+
+Use a fixed-capacity queue and one worker. Enqueue is non-blocking and has no return value. The worker normalizes UTF-8, strips NUL, enforces the byte cap, upserts by `social_post_result_id`, and exposes counters/logs for queue saturation and database failure. The migration must not reference or lock a protected business relation.
+
+- [x] **Step 3: Stop future legacy diagnostic writes**
+
+Keep existing publishing business writes and transactions byte-for-byte equivalent except that `DebugCurl` is always empty. After a successful immediate result insert or queued-failure transaction commit, enqueue the bounded detail. Remove `debug_curl` from the duplicate integration-log response payload. Contain a sink panic at the observability boundary.
+
+- [x] **Step 4: Bound and audit the Admin detail read**
+
+Prefer `post_failure_debug_details`, fall back to historical `social_post_results.debug_curl`, return at most a response-safe excerpt with original/stored byte counts and a truncation flag, and emit a best-effort `POST_FAILURE.DEBUG_VIEWED` audit event containing no diagnostic text.
+
+- [x] **Step 5: Make migration 128 retry-safe and align fixtures**
+
+Drop an invalid/same-name partial concurrent index before recreating it. Make the PostgreSQL fixtures use production-compatible ID types and update schema-version expectations for migration 129 without changing the exact CI selector names.
+
+- [x] **Step 6: Run focused, race, PostgreSQL, protected-flow, full API, Dashboard, and scope checks**
+
+No push or Preview rerun may occur until every required check succeeds on the replacement local head.
 
 ### Task 7: Preview Acceptance and development promotion
 
