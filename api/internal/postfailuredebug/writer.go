@@ -167,12 +167,21 @@ func (w *Writer) write(detail StoredDetail) {
 
 func normalize(detail Detail) StoredDetail {
 	originalBytes := len(detail.DebugText)
-	text := strings.ToValidUTF8(detail.DebugText, "�")
+	const marker = "\n# diagnostic truncated at 65536 bytes"
+	raw := detail.DebugText
+	truncated := false
+	if len(raw) > MaxDetailBytes-len(marker) {
+		raw = raw[:MaxDetailBytes-len(marker)]
+		truncated = true
+	}
+	text := strings.ToValidUTF8(raw, "�")
 	text = strings.ReplaceAll(text, "\x00", "")
-	truncated := text != detail.DebugText
-	if len(text) > MaxDetailBytes {
-		const marker = "\n# diagnostic truncated at 65536 bytes"
-		prefix := text[:MaxDetailBytes-len(marker)]
+	truncated = truncated || text != detail.DebugText
+	if truncated || len(text) > MaxDetailBytes {
+		prefix := text
+		if len(prefix) > MaxDetailBytes-len(marker) {
+			prefix = prefix[:MaxDetailBytes-len(marker)]
+		}
 		for !utf8.ValidString(prefix) {
 			prefix = prefix[:len(prefix)-1]
 		}
