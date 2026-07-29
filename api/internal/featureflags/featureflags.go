@@ -43,7 +43,7 @@ var definitions = []Definition{
 	{
 		Key:         ObservabilityReadsV2,
 		Label:       "Observability reads v2",
-		Description: "Uses the canonical request-event model for Logs, Metrics, and Errors reads.",
+		Description: "Uses the canonical request-event model for Logs and API Metrics reads; activation is locked pending SDK, canonical live-publisher, historical Metrics coverage/parity, retention safety, and exact-SHA prerequisites.",
 		OwnerArea:   "API / Admin Observability",
 		Internal:    true,
 	},
@@ -70,6 +70,15 @@ type Flag struct {
 	Description string    `json:"description"`
 	UpdatedBy   string    `json:"updated_by"`
 	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+func flagWithDefinitionMetadata(flag Flag) (Flag, bool) {
+	definition, ok := DefinitionFor(flag.Key)
+	if !ok {
+		return Flag{}, false
+	}
+	flag.Description = definition.Description
+	return flag, true
 }
 
 type Store interface {
@@ -114,8 +123,12 @@ func (e *Evaluator) ForWorkspace(ctx context.Context, workspaceID, key string) (
 }
 
 func (e *Evaluator) Public(ctx context.Context, key string) (bool, error) {
-	if _, ok := DefinitionFor(key); !ok {
+	definition, ok := DefinitionFor(key)
+	if !ok {
 		return false, fmt.Errorf("%w: %s", ErrUnknownFlag, key)
+	}
+	if !definition.ActivationReady {
+		return false, nil
 	}
 	if e == nil || e.store == nil {
 		return false, errors.New("feature flag evaluator is not configured")

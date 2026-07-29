@@ -20,6 +20,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/billing"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/trials"
 )
@@ -41,6 +42,8 @@ type AdminHandler struct {
 	holds     paidquota.HoldReconciler
 	evaluator paidQuotaEvaluationService
 	trials    adminTrialService
+	selector  observabilityReadSelector
+	v2        observabilityreads.LogReader
 }
 
 func (h *AdminHandler) SetTrialService(service adminTrialService) *AdminHandler {
@@ -69,6 +72,16 @@ func (h *AdminHandler) hasOpenTrial(ctx context.Context, workspaceID string) (bo
 
 func NewAdminHandler(pool *pgxpool.Pool, stripeMgr *billing.Manager, queries *db.Queries) *AdminHandler {
 	return &AdminHandler{pool: pool, stripeMgr: stripeMgr, queries: queries}
+}
+
+func (h *AdminHandler) SetObservabilityReads(selector observabilityReadSelector, reader observabilityreads.LogReader) *AdminHandler {
+	h.selector = selector
+	h.v2 = reader
+	return h
+}
+
+func (h *AdminHandler) observabilityLogReader(ctx context.Context) observabilityreads.LogReader {
+	return observabilityreads.SelectLogReader(ctx, h.selector, h.v2)
 }
 
 func (h *AdminHandler) SetPaidQuotaServices(holds paidquota.HoldReconciler, evaluator paidQuotaEvaluationService) *AdminHandler {
@@ -425,6 +438,10 @@ func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegra
 }
 
 func (h *AdminHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
+	if reader := h.observabilityLogReader(r.Context()); reader != nil {
+		h.listLogsV2(w, r, reader)
+		return
+	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 500 {
@@ -503,7 +520,55 @@ LIMIT $17`
 	writeSuccessWithListMeta(w, out, len(out), limit)
 }
 
+func (h *AdminHandler) listLogsV2(w http.ResponseWriter, r *http.Request, reader observabilityreads.LogReader) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 {
+		limit = 100
+	} else if limit > 200 {
+		limit = 200
+	}
+	to := parseAdminLogTime(q.Get("to"), time.Now())
+	from := parseAdminLogTime(q.Get("from"), to.Add(-24*time.Hour))
+	var cursor *observabilityreads.LogCursor
+	if raw := strings.TrimSpace(q.Get("cursor")); raw != "" {
+		decoded, err := observabilityreads.DecodeLogCursor(raw)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid cursor")
+			return
+		}
+		cursor = &decoded
+	}
+	page, err := reader.ListAdmin(r.Context(), observabilityLogFilters(q, from, to), cursor, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load admin logs: "+err.Error())
+		return
+	}
+	nextCursor := ""
+	if page.NextCursor != nil {
+		nextCursor, err = observabilityreads.EncodeLogCursor(*page.NextCursor)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode admin logs cursor")
+			return
+		}
+	}
+	writeSuccessWithCursor(w, page.Logs, nextCursor, page.NextCursor != nil, limit)
+}
+
 func (h *AdminHandler) GetLog(w http.ResponseWriter, r *http.Request) {
+	if reader := h.observabilityLogReader(r.Context()); reader != nil {
+		item, err := reader.GetAdmin(r.Context(), chi.URLParam(r, "id"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Log not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load admin log: "+err.Error())
+			return
+		}
+		writeSuccess(w, item)
+		return
+	}
 	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil || id <= 0 {
 		writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid log id")

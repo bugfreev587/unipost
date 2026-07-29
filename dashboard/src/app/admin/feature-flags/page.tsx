@@ -158,11 +158,11 @@ export default function AdminFeatureFlagsPage() {
                 <Check aria-hidden="true" />
                 <span>
                   {!flag.activation_ready
-                    ? "The canonical write model is prepared. This read switch stays locked until read migration and exact-SHA acceptance are complete."
+                    ? "The canonical write model is prepared. This read switch stays locked until JavaScript/TypeScript, Python, Go, and Java SDK releases pass opaque log ID validation, a bounded canonical batch publisher passes live-stream safety checks, historical 7-90-day Metrics coverage and legacy parity pass, raw-retention sealing is proven safe, and exact-SHA acceptance is complete."
                     : flag.internal
                     ? flag.enabled
-                      ? "Canonical Logs, Metrics, and Errors reads are active across this deployment."
-                      : "Legacy Logs, Metrics, and Errors reads remain active; canonical dual writes continue."
+                      ? "Canonical Logs and API Metrics reads are active across this deployment."
+                      : "Legacy Logs and API Metrics reads remain active; canonical dual writes continue."
                     : flag.enabled
                       ? "Feature is available to regular users."
                       : "Feature is not available to regular users."}
@@ -211,8 +211,8 @@ export default function AdminFeatureFlagsPage() {
                 <strong>
                   {pendingChange.flag.internal
                     ? pendingChange.enabled
-                      ? "Logs, Metrics, and Errors will use the canonical read path."
-                      : "Logs, Metrics, and Errors will return to the legacy read path."
+                      ? "Logs and API Metrics will use the canonical read path."
+                      : "Logs and API Metrics will return to the legacy read path."
                     : pendingChange.enabled
                       ? "The feature will become available to regular users."
                       : "The feature will no longer be available to regular users."}

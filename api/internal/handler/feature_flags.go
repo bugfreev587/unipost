@@ -86,7 +86,7 @@ func (h *FeatureFlagsHandler) UpdateAdmin(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if *body.Enabled && !definition.ActivationReady {
-		writeError(w, http.StatusConflict, "FLAG_NOT_READY", "This feature flag cannot be enabled until its read path is implemented and accepted")
+		writeError(w, http.StatusConflict, "FLAG_NOT_READY", "This feature flag cannot be enabled until its SDK, canonical live-publisher, historical Metrics coverage/parity, retention-safety, and exact-SHA prerequisites are met")
 		return
 	}
 	actor := auth.GetUserID(r.Context())

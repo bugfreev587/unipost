@@ -25,7 +25,7 @@ const QUERY_FIELDS: ApiFieldItem[] = [
 
 const EVENT_FIELDS: ApiFieldItem[] = [
   { name: "event", type: "string", description: "Always log.created." },
-  { name: "id", type: "integer", description: "The log id. SSE clients echo it as Last-Event-ID on reconnect." },
+  { name: "id", type: "integer", description: "Always a numeric integration-log ID. SSE clients echo it as Last-Event-ID on reconnect." },
   { name: "data", type: "object", description: "Compact JSON log object, the same shape as a list row. Never includes raw payloads." },
 ];
 
@@ -125,7 +125,7 @@ export default function StreamLogsPage() {
     <SingleEndpointReferencePage
       section="logs"
       title="Stream logs"
-      description="Opens a Server-Sent Events stream of new workspace logs for near real-time ingestion. Filter at connection time and optionally replay retained rows before entering live mode."
+      description="Opens a Server-Sent Events stream of new workspace logs for near real-time ingestion. Stream event IDs are always numeric integration-log IDs. Filter at connection time and optionally replay retained rows before entering live mode."
       method="GET"
       path="/v1/logs/stream"
       requestSections={[

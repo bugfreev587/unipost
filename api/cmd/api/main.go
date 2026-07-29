@@ -42,6 +42,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/mediaprocessing"
 	"github.com/xiaoboyu/unipost-api/internal/metrics"
 	mw "github.com/xiaoboyu/unipost-api/internal/middleware"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
@@ -225,6 +226,14 @@ func main() {
 	superAdminChecker := auth.NewSuperAdminChecker(queries)
 	featureFlagStore := featureflags.NewPostgresStore(pool)
 	featureFlagEvaluator := featureflags.NewEvaluator(featureFlagStore, superAdminChecker)
+	observabilityLogStore := observabilityreads.NewPostgresLogStore(pool)
+	observabilityMetricsStore := observabilityreads.NewPostgresMetricsStore(pool)
+	observabilityReadSelector := observabilityreads.NewReadSelector(featureFlagEvaluator, slog.Default())
+	observabilityLiveLogMode := observabilityreads.NewCachedReadSelector(observabilityReadSelector, observabilityreads.CachedReadSelectorConfig{
+		RefreshInterval:   time.Second,
+		EvaluationTimeout: 500 * time.Millisecond,
+		Logger:            slog.Default(),
+	})
 	featureFlagsHandler := handler.NewFeatureFlagsHandler(featureFlagStore, featureFlagEvaluator)
 	publishingRestrictionStore := publishingrestrictions.NewPostgresStore(pool)
 	publishingRestrictionCampaignPreviewSecret := strings.TrimSpace(os.Getenv("PUBLISHING_RESTRICTION_CAMPAIGN_PREVIEW_SECRET"))
@@ -290,6 +299,15 @@ func main() {
 	// Start background workers
 	workerCtx, workerCancel := context.WithCancel(ctx)
 	defer workerCancel()
+
+	if processMode == processModeAPI {
+		observabilityRollupStore := observabilityreads.NewPostgresRollupStore(pool)
+		observabilityRollupWorker := observabilityreads.NewRollupWorker(observabilityRollupStore)
+		go observabilityRollupWorker.Start(workerCtx)
+	}
+	if processMode == processModeAPI {
+		observabilityLiveLogMode.Start(workerCtx)
+	}
 
 	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
 		go integrationLogger.Start(workerCtx)
@@ -754,8 +772,8 @@ func main() {
 	mediaProcessingAdmitter := mediaprocessing.NewPostgresAdmitter(pool)
 	mediaAudioOverlayHandler := handler.NewMediaAudioOverlayHandler(queries, storageClient).WithAdmitter(mediaProcessingAdmitter)
 	mediaGIFConversionHandler := handler.NewMediaGIFConversionHandler(queries, storageClient, mediaProcessingAdmitter)
-	apiMetricsHandler := handler.NewAPIMetricsHandler(queries)
-	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries)
+	apiMetricsHandler := handler.NewAPIMetricsHandler(queries).WithObservabilityReads(observabilityReadSelector, observabilityMetricsStore)
+	adminAPIMetricsHandler := handler.NewAdminAPIMetricsHandler(queries).WithObservabilityReads(observabilityReadSelector, observabilityMetricsStore)
 	adminObjectStorageHandler := handler.NewAdminObjectStorageHandler(queries, os.Getenv("R2_BUCKET_NAME"))
 	adminSearchHistoryHandler := handler.NewAdminSearchHistoryHandler(queries, superAdminChecker)
 	apiMetricsRecorder := metrics.NewRecorder(queries)
@@ -823,7 +841,8 @@ func main() {
 	billingHandler.SetTrialService(trialService)
 	adminHandler := handler.NewAdminHandler(pool, stripeMgr, queries).
 		SetTrialService(trialService).
-		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService)
+		SetPaidQuotaServices(paidQuotaHoldReconciler, paidPlanQuotaEmailService).
+		SetObservabilityReads(observabilityReadSelector, observabilityLogStore)
 	supportBundleHandler := handler.NewSupportBundleHandler(queries)
 	aiProviderHandler := handler.NewAIProviderHandler(aiProviderService)
 	errorTriageHandler := handler.NewErrorTriageHandler(errorTriageStore, errorTriageService, errorTriageEmailService)
@@ -872,7 +891,7 @@ func main() {
 	inboxWSHandler := ws.NewHandler(inboxHub, queries).
 		WithInboxPlanGate(quotaChecker).
 		WithInboxScopeAuth()
-	logsWSHandler := ws.NewHandler(logsHub, queries)
+	logsWSHandler := ws.NewHandler(logsHub, queries).WithLogReadSelector(observabilityLiveLogMode)
 	r.Get("/v1/inbox/ws", inboxWSHandler.ServeHTTP)
 	r.Get("/v1/logs/ws", logsWSHandler.ServeHTTP)
 
@@ -1321,7 +1340,7 @@ func main() {
 		// inline at every mutation site via internal/audit.Log().
 		auditHandler := handler.NewAuditHandler(queries)
 		r.With(handler.RequirePlanAuditLog(quotaChecker)).Get("/v1/audit-log", auditHandler.List)
-		logsHandler := handler.NewLogsHandler(queries)
+		logsHandler := handler.NewLogsHandler(queries).SetObservabilityReads(observabilityReadSelector, observabilityLogStore)
 		r.Get("/v1/logs", logsHandler.List)
 		// Mount the static /stream route before the /{id} param route so
 		// chi does not treat "stream" as a log id.
@@ -1390,6 +1409,7 @@ func main() {
 
 	slog.Info("shutting down server")
 	workerCancel()
+	observabilityLiveLogMode.Stop()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -1399,10 +1419,21 @@ func main() {
 	}
 	waitForPostFailureDebugShutdown(shutdownCtx, postFailureDebugWriter)
 	waitForRequestEventRecorderShutdown(shutdownCtx, requestEventRecorder)
+	waitForObservabilityLiveLogModeShutdown(shutdownCtx, observabilityLiveLogMode)
 	if shutdownErr != nil {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func waitForObservabilityLiveLogModeShutdown(ctx context.Context, observabilityLiveLogMode *observabilityreads.CachedReadSelector) {
+	if observabilityLiveLogMode == nil {
+		return
+	}
+	observabilityLiveLogMode.Stop()
+	if err := observabilityLiveLogMode.Wait(ctx); err != nil {
+		slog.Warn("observability live-log mode shutdown timed out", "error", err)
+	}
 }
 
 func waitForPostFailureDebugShutdown(ctx context.Context, writer *postfailuredebug.Writer) {

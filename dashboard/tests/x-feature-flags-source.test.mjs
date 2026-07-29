@@ -17,9 +17,14 @@ test("admin feature flags page distinguishes customer and internal controls", ()
 	assert.match(page, /observability_reads_v2/);
 	assert.match(page, /flag\.internal/);
 	assert.match(page, /flag\.activation_ready/);
-	assert.match(page, /read switch stays locked until read migration and exact-SHA acceptance/i);
+	assert.match(page, /read switch stays locked until JavaScript\/TypeScript, Python, Go, and Java SDK releases pass opaque log ID validation, a bounded canonical batch publisher passes live-stream safety checks, historical 7-90-day Metrics coverage and legacy parity pass, raw-retention sealing is proven safe, and exact-SHA acceptance is complete/i);
 	assert.match(page, /enableBlocked/);
 	assert.match(page, /No Super Admin workspace bypass applies/i);
+  assert.match(page, /Canonical Logs and API Metrics reads are active across this deployment\./);
+  assert.match(page, /Legacy Logs and API Metrics reads remain active; canonical dual writes continue\./);
+  assert.match(page, /Logs and API Metrics will use the canonical read path\./);
+  assert.match(page, /Logs and API Metrics will return to the legacy read path\./);
+  assert.doesNotMatch(page, /\bErrors\b/);
   assert.match(page, /available to regular users/i);
   assert.match(page, /Super Admin-owned workspaces/i);
   assert.doesNotMatch(page, /window\.confirm/);

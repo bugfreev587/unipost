@@ -87,8 +87,23 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	`).Scan(&version); err != nil {
 		t.Fatalf("read final Goose version: %v", err)
 	}
-	if version != 130 {
-		t.Fatalf("final Goose version = %d, want 130", version)
+	if version != 132 {
+		t.Fatalf("final Goose version = %d, want 132", version)
+	}
+	timezoneTx, err := database.Begin()
+	if err != nil {
+		t.Fatalf("begin non-UTC migration contract transaction: %v", err)
+	}
+	if _, err := timezoneTx.Exec(`SET LOCAL TIME ZONE 'Asia/Kolkata'`); err != nil {
+		_ = timezoneTx.Rollback()
+		t.Fatalf("set fractional-offset timezone: %v", err)
+	}
+	if _, err := timezoneTx.Exec(`INSERT INTO api_request_metric_rollup_hours(hour_bucket) VALUES ('2035-01-01 12:00:00+00')`); err != nil {
+		_ = timezoneTx.Rollback()
+		t.Fatalf("migration 132 rejected a UTC-hour boundary under Asia/Kolkata: %v", err)
+	}
+	if err := timezoneTx.Rollback(); err != nil {
+		t.Fatalf("rollback non-UTC migration contract transaction: %v", err)
 	}
 	var observabilityReadsEnabled bool
 	if err := database.QueryRow(`
@@ -119,6 +134,19 @@ func TestRunMigrationsAppliesAllEmbeddedMigrationsWithGoose(t *testing.T) {
 	}
 
 	verifyInboxTenantIsolationAgainstPostgres(t, databaseURL)
+}
+
+func TestRollupCompletionMigrationUsesExplicitUTCBoundaryCheck(t *testing.T) {
+	body, err := fs.ReadFile(migrations, "migrations/132_api_request_metric_rollup_hours.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	for _, want := range []string{"hour_bucket AT TIME ZONE 'UTC'", "AT TIME ZONE 'UTC'"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("migration 132 missing explicit UTC boundary expression %q", want)
+		}
+	}
 }
 
 func TestEmbeddedMigrationVersionsAreUnique(t *testing.T) {
@@ -152,8 +180,8 @@ func TestLatestEmbeddedMigrationVersion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if version != 130 {
-		t.Fatalf("latest embedded migration version = %d, want 130", version)
+	if version != 132 {
+		t.Fatalf("latest embedded migration version = %d, want 132", version)
 	}
 }
 

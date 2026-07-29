@@ -74,13 +74,14 @@ func TestRecorderBatchesSuccessEvents(t *testing.T) {
 
 	recorder.Enqueue(validEvent("event-1", httpStatusOK), nil)
 	recorder.Enqueue(validEvent("event-2", httpStatusCreated), nil)
-	waitForRecorderWrite(t, store.wrote)
+	stats := waitForRecorderStats(t, recorder, "success batch completion", func(stats Stats) bool {
+		return stats.SuccessWritten == 2 && stats.SuccessBatchWrites == 1
+	})
 
 	batches, failures := store.snapshot()
 	if len(batches) != 1 || len(batches[0]) != 2 || len(failures) != 0 {
 		t.Fatalf("writes = batches %#v failures %#v", batches, failures)
 	}
-	stats := recorder.Stats()
 	if stats.SuccessAccepted != 2 || stats.SuccessWritten != 2 || stats.SuccessDropped != 0 || stats.SuccessBatchWrites != 1 ||
 		stats.ConfiguredBatchSize != 2 || stats.LastSuccessBatchSize != 2 || stats.MaxSuccessBatchSize != 2 {
 		t.Fatalf("stats = %#v", stats)
@@ -98,15 +99,156 @@ func TestRecorderWritesFailureAndDetailAtomicallyThroughStoreContract(t *testing
 	event.HasErrorDetail = true
 	detail := &Detail{EventID: event.ID, OccurredAt: event.OccurredAt, WorkspaceID: event.WorkspaceID}
 	recorder.Enqueue(event, detail)
-	waitForRecorderWrite(t, store.wrote)
+	stats := waitForRecorderStats(t, recorder, "failure insert completion", func(stats Stats) bool {
+		return stats.FailureWritten == 1 && stats.FailureInsertWrites == 1
+	})
 
 	_, failures := store.snapshot()
 	if len(failures) != 1 || failures[0].event.ID != event.ID || failures[0].detail.EventID != event.ID {
 		t.Fatalf("failure write = %#v", failures)
 	}
-	stats := recorder.Stats()
 	if stats.FailureAccepted != 1 || stats.FailureWritten != 1 || stats.FailureWriteFailures != 0 || stats.FailureInsertWrites != 1 {
 		t.Fatalf("stats = %#v", stats)
+	}
+}
+
+func TestRecorderNotifiesOncePerDurableBatch(t *testing.T) {
+	store := &recordingStore{wrote: make(chan struct{}, 1)}
+	persisted := make(chan []Event, 1)
+	recorder := NewRecorder(store, Config{BatchSize: 2, FlushInterval: time.Hour, OnPersistedBatch: func(_ context.Context, events []Event) {
+		persisted <- append([]Event(nil), events...)
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go recorder.Start(ctx)
+
+	recorder.Enqueue(validEvent("success-1", httpStatusOK), nil)
+	recorder.Enqueue(validEvent("success-2", httpStatusOK), nil)
+
+	select {
+	case events := <-persisted:
+		if len(events) != 2 || events[0].ID != "success-1" || events[1].ID != "success-2" {
+			t.Fatalf("persisted batch = %#v", events)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for persisted batch callback")
+	}
+	stopRecorderAndWait(t, recorder)
+	select {
+	case events := <-persisted:
+		t.Fatalf("received O(batch) duplicate callback: %#v", events)
+	default:
+	}
+}
+
+func TestRecorderDoesNotNotifyWhenPersistenceFails(t *testing.T) {
+	store := &recordingStore{successErr: errors.New("down"), failureErr: errors.New("down"), wrote: make(chan struct{}, 2)}
+	persisted := make(chan []Event, 2)
+	recorder := NewRecorder(store, Config{BatchSize: 1, OnPersistedBatch: func(_ context.Context, events []Event) {
+		persisted <- events
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go recorder.Start(ctx)
+
+	recorder.Enqueue(validEvent("success", httpStatusOK), nil)
+	recorder.Enqueue(validEvent("failure", httpStatusInternalServerError), nil)
+	waitForRecorderStats(t, recorder, "failed persistence completion", func(stats Stats) bool {
+		return stats.SuccessWriteFailures == 1 && stats.FailureWriteFailures == 1
+	})
+	stopRecorderAndWait(t, recorder)
+	select {
+	case events := <-persisted:
+		t.Fatalf("notified unpersisted events %#v", events)
+	default:
+	}
+}
+
+type waitForInsertDeadlineStore struct{}
+
+func (*waitForInsertDeadlineStore) InsertSuccessBatch(ctx context.Context, _ []Event) error {
+	<-ctx.Done()
+	return nil
+}
+func (*waitForInsertDeadlineStore) InsertFailure(context.Context, Event, *Detail) error { return nil }
+
+func TestRecorderBatchCallbackUsesIndependentBoundedContext(t *testing.T) {
+	type callbackState struct {
+		err         error
+		hasDeadline bool
+	}
+	callback := make(chan callbackState, 1)
+	recorder := NewRecorder(&waitForInsertDeadlineStore{}, Config{
+		BatchSize: 1, WriteTimeout: 5 * time.Millisecond, CallbackTimeout: 50 * time.Millisecond,
+		OnPersistedBatch: func(ctx context.Context, _ []Event) {
+			_, hasDeadline := ctx.Deadline()
+			callback <- callbackState{err: ctx.Err(), hasDeadline: hasDeadline}
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go recorder.Start(ctx)
+	recorder.Enqueue(validEvent("success", httpStatusOK), nil)
+
+	select {
+	case state := <-callback:
+		if state.err != nil {
+			t.Fatalf("callback inherited canceled insert context: %v", state.err)
+		}
+		if !state.hasDeadline {
+			t.Fatal("callback context is not bounded")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for callback")
+	}
+}
+
+func TestRecorderBatchCallbackBackpressureIsBoundedByItsContext(t *testing.T) {
+	store := &recordingStore{wrote: make(chan struct{}, 2)}
+	callbacks := make(chan string, 2)
+	recorder := NewRecorder(store, Config{
+		BatchSize: 1, CallbackTimeout: 10 * time.Millisecond,
+		OnPersistedBatch: func(ctx context.Context, events []Event) {
+			<-ctx.Done()
+			callbacks <- events[0].ID
+		},
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go recorder.Start(ctx)
+	recorder.Enqueue(validEvent("success-1", httpStatusOK), nil)
+	recorder.Enqueue(validEvent("success-2", httpStatusOK), nil)
+
+	want := map[string]bool{"success-1": true, "success-2": true}
+	deadline := time.After(250 * time.Millisecond)
+	for len(want) > 0 {
+		select {
+		case id := <-callbacks:
+			delete(want, id)
+		case <-deadline:
+			t.Fatalf("callback backpressure stalled later batches: missing %v", want)
+		}
+	}
+}
+
+func TestRecorderFailureInsertInvokesOneSingleEventBatchCallback(t *testing.T) {
+	store := &recordingStore{wrote: make(chan struct{}, 1)}
+	callbacks := make(chan []Event, 1)
+	recorder := NewRecorder(store, Config{OnPersistedBatch: func(_ context.Context, events []Event) {
+		callbacks <- append([]Event(nil), events...)
+	}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go recorder.Start(ctx)
+	recorder.Enqueue(validEvent("failure", httpStatusInternalServerError), nil)
+
+	select {
+	case events := <-callbacks:
+		if len(events) != 1 || events[0].ID != "failure" {
+			t.Fatalf("failure callback batch = %#v", events)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for failure callback batch")
 	}
 }
 
@@ -258,13 +400,14 @@ func TestRecorderFailureQueueSaturationUsesDetachedDirectFallback(t *testing.T) 
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("failure fallback blocked the customer path")
 	}
-	waitForRecorderWrite(t, store.wrote)
+	stats := waitForRecorderStats(t, recorder, "direct fallback completion", func(stats Stats) bool {
+		return stats.FailureWritten == 1 && stats.FailureFallbackAttempts == 1
+	})
 
 	_, failures := store.snapshot()
 	if len(failures) != 1 || failures[0].event.ID != second.ID {
 		t.Fatalf("direct fallback writes = %#v", failures)
 	}
-	stats := recorder.Stats()
 	if stats.FailureAccepted != 2 || stats.FailureFallbackAttempts != 1 || stats.FailureWritten != 1 {
 		t.Fatalf("stats = %#v", stats)
 	}
@@ -328,13 +471,10 @@ func TestRecorderDatabaseFailuresAreContainedAndObservable(t *testing.T) {
 	event := validEvent("event-1", httpStatusInternalServerError)
 	event.HasErrorDetail = true
 	recorder.Enqueue(event, &Detail{EventID: event.ID, OccurredAt: event.OccurredAt, WorkspaceID: event.WorkspaceID})
-	waitForRecorderWrite(t, store.wrote)
-
-	deadline := time.Now().Add(time.Second)
-	for recorder.Stats().FailureWriteFailures != 1 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if stats := recorder.Stats(); stats.FailureWriteFailures != 1 || stats.FailureWritten != 0 {
+	stats := waitForRecorderStats(t, recorder, "failed failure write completion", func(stats Stats) bool {
+		return stats.FailureWriteFailures == 1
+	})
+	if stats.FailureWritten != 0 {
 		t.Fatalf("stats = %#v", stats)
 	}
 }
@@ -398,5 +538,34 @@ func waitForRecorderStart(t *testing.T, recorder *Recorder) {
 	}
 	if !recorder.started.Load() {
 		t.Fatal("timed out waiting for recorder start")
+	}
+}
+
+func stopRecorderAndWait(t *testing.T, recorder *Recorder) {
+	t.Helper()
+	recorder.Stop()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := recorder.Wait(ctx); err != nil {
+		t.Fatalf("timed out waiting for recorder stop: %v", err)
+	}
+}
+
+func waitForRecorderStats(t *testing.T, recorder *Recorder, description string, done func(Stats) bool) Stats {
+	t.Helper()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	for {
+		stats := recorder.Stats()
+		if done(stats) {
+			return stats
+		}
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			t.Fatalf("timed out waiting for %s; stats=%#v", description, stats)
+		}
 	}
 }

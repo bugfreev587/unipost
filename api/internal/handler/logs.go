@@ -7,15 +7,18 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/xiaoboyu/unipost-api/internal/auth"
 	"github.com/xiaoboyu/unipost-api/internal/db"
+	"github.com/xiaoboyu/unipost-api/internal/observabilityreads"
 )
 
 // logsStore is the subset of *db.Queries the logs handlers need. An
@@ -26,11 +29,23 @@ type logsStore interface {
 }
 
 type LogsHandler struct {
-	queries logsStore
+	queries  logsStore
+	selector observabilityReadSelector
+	v2       observabilityreads.LogReader
+}
+
+type observabilityReadSelector interface {
+	UseV2(context.Context) bool
 }
 
 func NewLogsHandler(queries logsStore) *LogsHandler {
 	return &LogsHandler{queries: queries}
+}
+
+func (h *LogsHandler) SetObservabilityReads(selector observabilityReadSelector, reader observabilityreads.LogReader) *LogsHandler {
+	h.selector = selector
+	h.v2 = reader
+	return h
 }
 
 // encodeLogCursor produces an opaque, reversible page position. It
@@ -95,6 +110,10 @@ func (h *LogsHandler) List(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if reader := observabilityreads.SelectLogReader(r.Context(), h.selector, h.v2); reader != nil {
+		h.listV2(w, r, workspaceID, reader)
 		return
 	}
 
@@ -163,10 +182,56 @@ func (h *LogsHandler) List(w http.ResponseWriter, r *http.Request) {
 	writeSuccessWithCursor(w, out, nextCursor, hasMore, limit)
 }
 
+func (h *LogsHandler) listV2(w http.ResponseWriter, r *http.Request, workspaceID string, reader observabilityreads.LogReader) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	from := parseLogTime(q.Get("from"), time.Now().AddDate(0, 0, -7))
+	to := parseLogTime(q.Get("to"), time.Now())
+	var cursor *observabilityreads.LogCursor
+	if raw := strings.TrimSpace(q.Get("cursor")); raw != "" {
+		decoded, err := observabilityreads.DecodeLogCursor(raw)
+		if err != nil {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", "Invalid cursor")
+			return
+		}
+		cursor = &decoded
+	}
+	page, err := reader.ListWorkspace(r.Context(), workspaceID, observabilityLogFilters(q, from, to), cursor, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load logs: "+err.Error())
+		return
+	}
+	nextCursor := ""
+	if page.NextCursor != nil {
+		nextCursor, err = observabilityreads.EncodeLogCursor(*page.NextCursor)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to encode logs cursor")
+			return
+		}
+	}
+	writeSuccessWithCursor(w, page.Logs, nextCursor, page.NextCursor != nil, limit)
+}
+
 func (h *LogsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	workspaceID := auth.GetWorkspaceID(r.Context())
 	if workspaceID == "" {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing workspace context")
+		return
+	}
+	if reader := observabilityreads.SelectLogReader(r.Context(), h.selector, h.v2); reader != nil {
+		item, err := reader.GetWorkspace(r.Context(), workspaceID, chi.URLParam(r, "id"))
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", "Log not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to load log: "+err.Error())
+			return
+		}
+		writeSuccess(w, item)
 		return
 	}
 
@@ -186,6 +251,29 @@ func (h *LogsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeSuccess(w, toIntegrationLogResponse(row, true))
+}
+
+func observabilityLogFilters(q url.Values, from, to time.Time) observabilityreads.LogFilters {
+	return observabilityreads.LogFilters{
+		WorkspaceID:     strings.TrimSpace(q.Get("workspace_id")),
+		OwnerEmail:      strings.TrimSpace(q.Get("owner_email")),
+		Category:        strings.TrimSpace(q.Get("category")),
+		Action:          strings.TrimSpace(q.Get("action")),
+		Source:          strings.TrimSpace(q.Get("source")),
+		Level:           strings.TrimSpace(q.Get("level")),
+		Status:          strings.TrimSpace(q.Get("status")),
+		Platform:        strings.TrimSpace(q.Get("platform")),
+		ProfileID:       strings.TrimSpace(q.Get("profile_id")),
+		SocialAccountID: strings.TrimSpace(q.Get("social_account_id")),
+		PostID:          strings.TrimSpace(q.Get("post_id")),
+		RequestID:       strings.TrimSpace(q.Get("request_id")),
+		ErrorCode:       strings.TrimSpace(q.Get("error_code")),
+		Query:           strings.TrimSpace(q.Get("q")),
+		Method:          strings.TrimSpace(q.Get("method")),
+		Endpoint:        strings.TrimSpace(q.Get("endpoint")),
+		From:            from,
+		To:              to,
+	}
 }
 
 func parseLogTime(raw string, fallback time.Time) time.Time {
