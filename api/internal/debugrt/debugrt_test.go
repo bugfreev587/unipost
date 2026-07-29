@@ -468,7 +468,7 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 	recorder := NewRecorder()
 	recorder.append(Entry{
 		CurlCommand:    "curl -X POST 'https://example.test'\x00\xff",
-		TransportError: `dial failed: Authorization=Bearer transport-secret access_token=query-secret {"access_token":"quoted-secret","client_secret": "quoted-client-secret","id_token":"id-secret","session_token": "session-secret","webhook_secret":"webhook-secret"} escaped={\"id_token\":\"escaped-id-secret\"} HTTPS://provider-user:provider-password@example.test/path?token=url-secret#fragment-secret` + "\x00\xff",
+		TransportError: `dial failed: Authorization=Bearer transport-secret access_token=query-secret {"access_token":"quoted-secret","client_secret": "quoted-client-secret","id_token":"id-secret","session_token": "session-secret","webhook_secret":"webhook-secret","password":"correct horse battery staple","refresh_token":"abc&def;ghi"} escaped={\"id_token\":\"escaped-id-secret\",\"password\":\"escaped secret&tail\"} single={'password':'single secret&tail'} HTTPS://provider-user:provider-password@example.test/path?token=url-secret#fragment-secret` + "\x00\xff",
 		ResponseBody:   "response\x00\xff",
 	})
 	out := recorder.Serialize()
@@ -487,6 +487,13 @@ func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
 		"session-secret",
 		"webhook-secret",
 		"escaped-id-secret",
+		"correct horse battery staple",
+		"horse battery staple",
+		"abc&def;ghi",
+		"&def;ghi",
+		"escaped secret&tail",
+		"secret&tail",
+		"single secret&tail",
 		"provider-user",
 		"provider-password",
 		"url-secret",

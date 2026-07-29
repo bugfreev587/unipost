@@ -468,7 +468,7 @@ func isSensitiveFieldKey(key string) bool {
 
 var (
 	authorizationValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
-	credentialPairPattern     = regexp.MustCompile(`((?:\\?["'])?([A-Za-z0-9_.-]+)(?:\\?["'])?\s*[:=]\s*)(?:\\?["'])?[^\s\\"'&,;}]+(?:\\?["'])?`)
+	credentialPairPattern     = regexp.MustCompile(`((?:\\?["'])?([A-Za-z0-9_.-]+)(?:\\?["'])?\s*[:=]\s*)(?:\\"(?:\\.|[^"\\])*\\"|\\'(?:\\.|[^'\\])*\\'|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s\\"'&,;}]+)`)
 	diagnosticURLPattern      = regexp.MustCompile(`(?i)https?://[^\s'"<>]+`)
 )
 
