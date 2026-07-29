@@ -237,7 +237,6 @@ function timeAgo(dateStr: string): string {
 }
 
 function sourceLabel(source: InboxItem["source"]) {
-  if (source === "youtube_comment") return "Source: YouTube";
   return getInboxSourceDefinition(source).shortLabel;
 }
 
@@ -2002,7 +2001,7 @@ function InboxPageInner() {
                           {isDMSource(group.source) ? group.title : group.title || `@${group.accountName || "post"}`}
                         </span>
                         <span className="dt-mono" style={{ fontSize: 10, color: "var(--dmuted2)" }}>
-                          {sourceLabel(group.source)}
+                          {group.source === "youtube_comment" ? "Source: YouTube" : sourceLabel(group.source)}
                         </span>
                         {group.unreadCount > 0 ? (
                           <span

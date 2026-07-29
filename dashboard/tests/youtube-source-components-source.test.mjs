@@ -89,6 +89,8 @@ test("Inbox uses neutral platform glyphs and isolates validated YouTube source a
   assert.doesNotMatch(source, /import \{ PlatformIcon \}/);
   assert.match(source, /AccountDestinationIcon/);
   assert.match(source, /Source: YouTube/);
+  assert.match(source, /group\.source === "youtube_comment"\s*\? "Source: YouTube"/);
+  assert.match(source, /function sourceLabel[\s\S]*return getInboxSourceDefinition\(source\)\.shortLabel/);
   assert.match(source, /normalizeYouTubeContentUrl/);
   assert.match(source, /YouTubeSourceLink/);
   assert.match(source, /data-youtube-inbox-source-action/);
