@@ -110,6 +110,7 @@ test("authenticated regression exercises the synthetic YouTube identity contract
 
   assert.match(source, /youtube-audit-fixture/);
   assert.match(source, /youtube-initials-fixture/);
+  assert.equal((source.match(/connection_type: "byo"/g) || []).length, 4);
   assert.match(source, /data-youtube-account-id/);
   assert.match(source, /data-youtube-source-link/);
   assert.match(source, /data-unipost-account-status/);

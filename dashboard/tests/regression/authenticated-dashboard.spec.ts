@@ -84,7 +84,7 @@ async function installYouTubeAccountFixture(page: Page, profileID: string) {
             account_avatar_url: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='80' height='80'%3E%3Crect width='80' height='80' rx='40' fill='%23334155'/%3E%3Ctext x='40' y='48' text-anchor='middle' font-size='24' fill='white'%3EUA%3C/text%3E%3C/svg%3E",
             connected_at: "2026-07-29T12:00:00.000Z",
             status: "active",
-            connection_type: "managed",
+            connection_type: "byo",
             scope: ["youtube.readonly", "yt-analytics.readonly"],
           },
           {
@@ -96,7 +96,7 @@ async function installYouTubeAccountFixture(page: Page, profileID: string) {
             account_avatar_url: "data:image/png;base64,broken",
             connected_at: "2026-07-29T12:00:00.000Z",
             status: "active",
-            connection_type: "managed",
+            connection_type: "byo",
             scope: ["youtube.readonly"],
           },
           {
@@ -108,7 +108,7 @@ async function installYouTubeAccountFixture(page: Page, profileID: string) {
             account_avatar_url: "data:image/png;base64,also-broken",
             connected_at: "2026-07-29T12:00:00.000Z",
             status: "active",
-            connection_type: "managed",
+            connection_type: "byo",
             scope: ["youtube.readonly"],
           },
           {
@@ -120,7 +120,7 @@ async function installYouTubeAccountFixture(page: Page, profileID: string) {
             account_avatar_url: null,
             connected_at: "2026-07-29T12:00:00.000Z",
             status: "disconnected",
-            connection_type: "managed",
+            connection_type: "byo",
             scope: [],
           },
         ],
