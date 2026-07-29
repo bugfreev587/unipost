@@ -7,6 +7,27 @@ const YOUTUBE_CONTENT_HOSTS = new Set([
   "youtu.be",
 ]);
 
+export function isDisconnectedYouTubeAccount(
+  status?: string | null,
+  rawChannelId?: string | null,
+): boolean {
+  return status === "disconnected"
+    || rawChannelId?.trim().toLowerCase().startsWith("disconnected:") === true;
+}
+
+export function getYouTubeIdentityInitials(
+  name?: string | null,
+  disconnected = false,
+): string | null {
+  if (disconnected) return null;
+  return name
+    ?.trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join("") || null;
+}
+
 export function buildYouTubeChannelUrl(rawChannelId?: string | null): string | null {
   const channelId = rawChannelId?.trim();
   if (!channelId || channelId.toLowerCase().startsWith("disconnected:")) return null;

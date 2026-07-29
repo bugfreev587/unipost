@@ -56,6 +56,7 @@ test("YouTube channel identity composes avatar, name, and source without UniPost
   assert.match(source, /Disconnected YouTube channel/);
   assert.match(source, /data-youtube-channel-avatar/);
   assert.match(source, /data-youtube-account-id=\{account\.id\}/);
+  assert.match(source, /getYouTubeIdentityInitials\(account\.account_name, disconnected\)/);
   assert.doesNotMatch(source, /dbadge|UniPost status|health/i);
 });
 
