@@ -33,7 +33,7 @@ export function YouTubeChannelIdentity({
   compact = false,
   disclosure = "Source: YouTube",
 }: YouTubeChannelIdentityProps) {
-  const [avatarFailed, setAvatarFailed] = useState(false);
+  const [failedAvatarUrl, setFailedAvatarUrl] = useState("");
   const sentinelId = account.external_account_id?.trim().toLowerCase().startsWith("disconnected:") === true;
   const disconnected = account.status === "disconnected" || sentinelId;
   const channelUrl = buildYouTubeChannelUrl(account.external_account_id);
@@ -42,11 +42,9 @@ export function YouTubeChannelIdentity({
     : account.account_name?.trim() || "YouTube channel";
   const sourceHref = disconnected ? null : channelUrl || YOUTUBE_HOME_URL;
   const initials = getInitials(account.account_name);
-  const showAvatar = !disconnected && Boolean(account.account_avatar_url) && !avatarFailed;
-
-  useEffect(() => {
-    setAvatarFailed(false);
-  }, [account.account_avatar_url]);
+  const showAvatar = !disconnected
+    && Boolean(account.account_avatar_url)
+    && failedAvatarUrl !== account.account_avatar_url;
 
   useEffect(() => {
     if (disconnected || channelUrl || warnedHomeFallbackAccountIds.has(account.id)) return;
@@ -69,7 +67,7 @@ export function YouTubeChannelIdentity({
           alt=""
           className={styles.avatar}
           data-youtube-channel-avatar
-          onError={() => setAvatarFailed(true)}
+          onError={() => setFailedAvatarUrl(account.account_avatar_url || "")}
         />
       ) : (
         <span className={styles.avatarFallback} aria-hidden="true" data-youtube-channel-avatar-fallback>
