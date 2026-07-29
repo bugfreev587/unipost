@@ -1,18 +1,18 @@
 // Package debugrt captures outbound HTTP requests that fail (non-2xx
-// response or transport error) so the dispatcher can persist a curl
-// equivalent on the social_post_results row when a publish fails.
+// response or transport error) so the dispatcher can persist a bounded,
+// redacted diagnostic when a publish fails.
 //
 // The collector is context-local: a publish attempt creates a Recorder,
 // stashes it on the context, and the shared RoundTripper appends one
 // entry per failing request. After the adapter's Post returns, the
-// dispatcher reads Entries and writes the result to the debug_curl
-// column. No entries are recorded when a Recorder is absent from the
+// dispatcher reads Entries and hands the result to the observability
+// writer. No entries are recorded when a Recorder is absent from the
 // context — callers that don't care about debug capture (webhook
 // subscribers, media downloads, etc.) pay zero cost.
 //
-// Sensitive fields are redacted before entries are stored: the
-// Authorization header, any bearer tokens in the URL, and a handful of
-// query-string secrets that the adapters happen to use.
+// Sensitive fields are redacted before entries are stored. Only explicitly
+// allowlisted headers are retained, all query values are omitted, structured
+// bodies are recursively redacted, and unstructured bodies are omitted.
 package debugrt
 
 import (
@@ -20,11 +20,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"hash"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -113,18 +115,18 @@ func (r *Recorder) Serialize() string {
 			b.WriteString("\n\n")
 		}
 		fmt.Fprintf(&b, "# Request %d — ", i+1)
-		if e.TransportError != "" {
-			fmt.Fprintf(&b, "transport error: %s", e.TransportError)
+		if transportError := sanitizeDiagnosticText(e.TransportError); transportError != "" {
+			fmt.Fprintf(&b, "transport error: %s", transportError)
 		} else {
 			fmt.Fprintf(&b, "HTTP %d (%s)", e.Status, e.Duration.Round(time.Millisecond))
 		}
 		b.WriteString("\n")
-		b.WriteString(e.CurlCommand)
-		if e.ResponseBody != "" {
+		b.WriteString(sanitizeDiagnosticText(e.CurlCommand))
+		if responseBody := sanitizeDiagnosticText(e.ResponseBody); responseBody != "" {
 			b.WriteString("\n# Response:\n# ")
 			// Prefix every line so the whole block reads as a curl
 			// comment — user can paste straight into a shell.
-			lines := strings.Split(e.ResponseBody, "\n")
+			lines := strings.Split(responseBody, "\n")
 			b.WriteString(strings.Join(lines, "\n# "))
 		}
 	}
@@ -135,6 +137,7 @@ func (r *Recorder) Serialize() string {
 }
 
 func boundSerialized(value string) string {
+	value = normalizeDiagnosticText(value)
 	if len(value) <= maxSerializedBytes {
 		return value
 	}
@@ -250,7 +253,7 @@ func (t *Transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	rec.append(Entry{
 		CurlCommand:  buildCurlFromCapture(req, snapshotRequestBody(bodyCapture)),
 		Status:       resp.StatusCode,
-		ResponseBody: string(bodyForRecorder),
+		ResponseBody: sanitizeResponseBody(bodyForRecorder, resp.Header.Get("Content-Type")),
 		Duration:     elapsed,
 		RecordedAt:   time.Now(),
 	})
@@ -284,23 +287,23 @@ type capturedRequestBody struct {
 }
 
 type requestBodyCapture struct {
-	body        io.ReadCloser
-	mu          sync.Mutex
-	hash        hash.Hash
-	data        []byte
-	contentType string
-	observed    int64
-	captureText bool
+	body              io.ReadCloser
+	mu                sync.Mutex
+	hash              hash.Hash
+	data              []byte
+	contentType       string
+	observed          int64
+	captureStructured bool
 }
 
 func newRequestBodyCapture(body io.ReadCloser, contentType string) *requestBodyCapture {
 	mediaType := normalizedContentType(contentType)
 	return &requestBodyCapture{
-		body:        body,
-		hash:        sha256.New(),
-		data:        make([]byte, 0, maxRequestBodyBytes),
-		contentType: mediaType,
-		captureText: isSafeTextContentType(mediaType),
+		body:              body,
+		hash:              sha256.New(),
+		data:              make([]byte, 0, maxRequestBodyBytes),
+		contentType:       mediaType,
+		captureStructured: isSafeStructuredContentType(mediaType),
 	}
 }
 
@@ -311,7 +314,7 @@ func (c *requestBodyCapture) Read(p []byte) (int, error) {
 		c.mu.Lock()
 		c.observed += int64(n)
 		_, _ = c.hash.Write(chunk)
-		if c.captureText && len(c.data) < maxRequestBodyBytes {
+		if c.captureStructured && len(c.data) < maxRequestBodyBytes {
 			remaining := maxRequestBodyBytes - len(c.data)
 			if remaining > n {
 				remaining = n
@@ -334,13 +337,13 @@ func (c *requestBodyCapture) snapshot() capturedRequestBody {
 		Data:        append([]byte(nil), c.data...),
 		ContentType: c.contentType,
 		Observed:    c.observed,
-		Omitted:     !c.captureText && c.observed > 0,
-		Truncated:   c.captureText && c.observed > int64(len(c.data)),
+		Omitted:     !c.captureStructured && c.observed > 0,
+		Truncated:   c.captureStructured && c.observed > int64(len(c.data)),
 	}
 	if c.observed > 0 {
 		snapshot.SHA256 = hex.EncodeToString(c.hash.Sum(nil))
 	}
-	return snapshot
+	return sanitizeCapturedRequestBody(snapshot)
 }
 
 func snapshotRequestBody(capture *requestBodyCapture) capturedRequestBody {
@@ -359,11 +362,135 @@ func normalizedContentType(value string) string {
 	return mediaType
 }
 
-func isSafeTextContentType(mediaType string) bool {
-	return strings.HasPrefix(mediaType, "text/") ||
-		mediaType == "application/json" ||
+func isSafeStructuredContentType(mediaType string) bool {
+	return mediaType == "application/json" ||
 		strings.HasSuffix(mediaType, "+json") ||
 		mediaType == "application/x-www-form-urlencoded"
+}
+
+func sanitizeCapturedRequestBody(body capturedRequestBody) capturedRequestBody {
+	if body.Observed == 0 {
+		body.Data = nil
+		return body
+	}
+	if body.Omitted || body.Truncated {
+		body.Data = nil
+		body.Omitted = true
+		return body
+	}
+	sanitized, ok := sanitizeStructuredPayload(body.Data, body.ContentType)
+	if !ok {
+		body.Data = nil
+		body.Omitted = true
+		return body
+	}
+	body.Data = sanitized
+	return body
+}
+
+func sanitizeStructuredPayload(data []byte, mediaType string) ([]byte, bool) {
+	switch {
+	case mediaType == "application/json" || strings.HasSuffix(mediaType, "+json"):
+		var value any
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		var trailing any
+		if err := decoder.Decode(&trailing); err != io.EOF {
+			return nil, false
+		}
+		redacted, err := json.Marshal(redactJSONValue(value))
+		return redacted, err == nil
+	case mediaType == "application/x-www-form-urlencoded":
+		values, err := url.ParseQuery(string(data))
+		if err != nil {
+			return nil, false
+		}
+		for key := range values {
+			if isSensitiveFieldKey(key) {
+				values[key] = []string{"[REDACTED]"}
+			}
+		}
+		return []byte(values.Encode()), true
+	default:
+		return nil, false
+	}
+}
+
+func redactJSONValue(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, nested := range typed {
+			if isSensitiveFieldKey(key) {
+				out[key] = "[REDACTED]"
+			} else {
+				out[key] = redactJSONValue(nested)
+			}
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, nested := range typed {
+			out[i] = redactJSONValue(nested)
+		}
+		return out
+	default:
+		return typed
+	}
+}
+
+func isSensitiveFieldKey(key string) bool {
+	normalized := strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		return -1
+	}, key)
+	for _, marker := range []string{"token", "secret", "password", "authorization", "cookie", "apikey", "signature", "appsecretproof"} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+var (
+	authorizationValuePattern = regexp.MustCompile(`(?i)\b(bearer|basic)\s+[^\s,;]+`)
+	credentialPairPattern     = regexp.MustCompile(`(?i)\b(access[_-]?token|refresh[_-]?token|client[_-]?secret|api[_-]?key|authorization|password|cookie|signature|appsecret[_-]?proof|token)\s*[:=]\s*[^\s&,;]+`)
+)
+
+func normalizeDiagnosticText(value string) string {
+	value = strings.ToValidUTF8(value, "�")
+	return strings.ReplaceAll(value, "\x00", "")
+}
+
+func sanitizeDiagnosticText(value string) string {
+	value = normalizeDiagnosticText(value)
+	value = authorizationValuePattern.ReplaceAllString(value, "$1 [REDACTED]")
+	return credentialPairPattern.ReplaceAllString(value, "$1=[REDACTED]")
+}
+
+func sanitizeResponseBody(data []byte, contentType string) string {
+	if len(data) == 0 {
+		return ""
+	}
+	mediaType := normalizedContentType(contentType)
+	if sanitized, ok := sanitizeStructuredPayload(data, mediaType); ok {
+		return sanitizeDiagnosticText(string(sanitized))
+	}
+	digest := sha256.Sum256(data)
+	return fmt.Sprintf(
+		"response body omitted: content_type=%s captured_bytes=%d sha256=%x",
+		mediaType,
+		len(data),
+		digest,
+	)
 }
 
 // ── Curl formatting + redaction ─────────────────────────────────────────
@@ -372,11 +499,25 @@ func isSafeTextContentType(mediaType string) bool {
 // Sensitive headers / query params are redacted in place; the caller's
 // original request is not mutated.
 func buildCurl(req *http.Request, body []byte) string {
-	return buildCurlFromCapture(req, capturedRequestBody{
+	originalSize := len(body)
+	var digest [sha256.Size]byte
+	if originalSize > 0 {
+		digest = sha256.Sum256(body)
+	}
+	if len(body) > maxRequestBodyBytes {
+		body = body[:maxRequestBodyBytes]
+	}
+	captured := capturedRequestBody{
 		Data:        body,
 		ContentType: normalizedContentType(req.Header.Get("Content-Type")),
-		Observed:    int64(len(body)),
-	})
+		Observed:    int64(originalSize),
+		Truncated:   originalSize > len(body),
+	}
+	if originalSize > 0 {
+		captured.SHA256 = hex.EncodeToString(digest[:])
+		captured = sanitizeCapturedRequestBody(captured)
+	}
+	return buildCurlFromCapture(req, captured)
 }
 
 func buildCurlFromCapture(req *http.Request, body capturedRequestBody) string {
@@ -395,6 +536,9 @@ func buildCurlFromCapture(req *http.Request, body capturedRequestBody) string {
 	}
 	sortStrings(names)
 	for _, name := range names {
+		if !allowlistedDiagnosticHeaders[http.CanonicalHeaderKey(name)] {
+			continue
+		}
 		for _, value := range req.Header[name] {
 			b.WriteString(" \\\n  -H '")
 			b.WriteString(name)
@@ -432,42 +576,22 @@ func escapeSingleQuotes(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
 }
 
-// redactedHeaders is the set of headers whose values we replace with
-// a placeholder. Matched case-insensitively against the canonical form.
-var redactedHeaders = map[string]bool{
-	"Authorization":       true,
-	"Cookie":              true,
-	"Set-Cookie":          true,
-	"Proxy-Authorization": true,
-	"X-Api-Key":           true,
-	"X-Auth-Token":        true,
-	"Client-Secret":       true,
+// Only headers known to carry non-secret protocol metadata are stored.
+// New provider headers remain omitted until they are explicitly reviewed.
+var allowlistedDiagnosticHeaders = map[string]bool{
+	"Accept":                    true,
+	"Content-Range":             true,
+	"Content-Type":              true,
+	"File_size":                 true,
+	"Linkedin-Version":          true,
+	"Offset":                    true,
+	"X-Restli-Protocol-Version": true,
+	"X-Upload-Content-Length":   true,
+	"X-Upload-Content-Type":     true,
 }
 
-func redactHeaderValue(name, value string) string {
-	canonical := http.CanonicalHeaderKey(name)
-	if !redactedHeaders[canonical] {
-		return value
-	}
-	// Authorization specifically gets a richer mask so the reader can
-	// tell it was a Bearer / Basic / etc. scheme — useful when the
-	// bug is "we sent the wrong kind of credential".
-	if canonical == "Authorization" {
-		if idx := strings.IndexByte(value, ' '); idx > 0 {
-			return value[:idx] + " [REDACTED]"
-		}
-	}
-	return "[REDACTED]"
-}
-
-// redactedQueryParams — query-string equivalents of the header list.
-// Platforms like Meta attach access tokens to URLs; we strip those.
-var redactedQueryParams = map[string]bool{
-	"access_token":  true,
-	"client_secret": true,
-	"refresh_token": true,
-	"token":         true,
-	"api_key":       true,
+func redactHeaderValue(_ string, value string) string {
+	return sanitizeDiagnosticText(value)
 }
 
 func redactURL(u *url.URL) string {
@@ -475,15 +599,8 @@ func redactURL(u *url.URL) string {
 		return ""
 	}
 	q := u.Query()
-	redacted := false
 	for key := range q {
-		if redactedQueryParams[strings.ToLower(key)] {
-			q.Set(key, "[REDACTED]")
-			redacted = true
-		}
-	}
-	if !redacted {
-		return u.String()
+		q.Set(key, "[REDACTED]")
 	}
 	clone := *u
 	clone.RawQuery = q.Encode()

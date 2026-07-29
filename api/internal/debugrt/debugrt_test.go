@@ -51,6 +51,7 @@ func TestNoRecorderNoCapture(t *testing.T) {
 
 func TestCaptureFailingRequest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(400)
 		w.Write([]byte(`{"error":{"code":"invalid_params","message":"nope"}}`))
 	}))
@@ -83,11 +84,8 @@ func TestCaptureFailingRequest(t *testing.T) {
 	if e.Status != 400 {
 		t.Errorf("Status = %d, want 400", e.Status)
 	}
-	if !strings.Contains(e.CurlCommand, "Bearer [REDACTED]") {
-		t.Errorf("Authorization header not redacted:\n%s", e.CurlCommand)
-	}
-	if strings.Contains(e.CurlCommand, "sk-abc123") {
-		t.Errorf("bearer token leaked into curl:\n%s", e.CurlCommand)
+	if strings.Contains(e.CurlCommand, "Authorization") || strings.Contains(e.CurlCommand, "sk-abc123") {
+		t.Errorf("non-allowlisted Authorization header leaked into curl:\n%s", e.CurlCommand)
 	}
 	if !strings.Contains(e.CurlCommand, `{"hello":"world"}`) {
 		t.Errorf("request body missing from curl:\n%s", e.CurlCommand)
@@ -117,18 +115,19 @@ func TestSuccessNotCaptured(t *testing.T) {
 	}
 }
 
-func TestRedactQueryParams(t *testing.T) {
-	u := "https://graph.facebook.com/v18.0/me?access_token=secrettoken&fields=name"
+func TestOmitAllQueryValuesByDefault(t *testing.T) {
+	u := "https://graph.facebook.com/v18.0/me?access_token=secrettoken&fields=name&signed_request=unknown-secret"
 	req, _ := http.NewRequest("GET", u, nil)
 	got := buildCurl(req, nil)
-	if strings.Contains(got, "secrettoken") {
-		t.Errorf("access_token query param leaked:\n%s", got)
+	for _, value := range []string{"secrettoken", "name", "unknown-secret"} {
+		if strings.Contains(got, value) {
+			t.Errorf("query value %q leaked:\n%s", value, got)
+		}
 	}
-	if !strings.Contains(got, "access_token=%5BREDACTED%5D") && !strings.Contains(got, "access_token=[REDACTED]") {
-		t.Errorf("access_token placeholder missing:\n%s", got)
-	}
-	if !strings.Contains(got, "fields=name") {
-		t.Errorf("non-sensitive query params should be preserved:\n%s", got)
+	for _, key := range []string{"access_token", "fields", "signed_request"} {
+		if !strings.Contains(got, key) {
+			t.Errorf("query key %q should remain for diagnostic context:\n%s", key, got)
+		}
 	}
 }
 
@@ -270,8 +269,8 @@ func TestLargeTextRequestIsForwardedAndSerializedWithinLimit(t *testing.T) {
 	if strings.Contains(out, "tail-marker-that-must-not-be-stored") {
 		t.Fatal("request tail was stored past the capture limit")
 	}
-	if !strings.Contains(out, "body truncated") {
-		t.Fatalf("truncation marker missing: %s", out)
+	if !strings.Contains(out, "body omitted") {
+		t.Fatalf("unsafe truncated body omission marker missing: %s", out)
 	}
 }
 
@@ -299,5 +298,167 @@ func TestSerializeNeverExceedsHardLimit(t *testing.T) {
 	}
 	if !strings.Contains(out, "diagnostic truncated") {
 		t.Fatal("hard-cap truncation marker missing")
+	}
+}
+
+func TestCaptureRedactsStructuredRequestAndResponseSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"access_token":"response-secret","nested":{"client_secret":"nested-secret"}},"message":"invalid"}`))
+	}))
+	defer server.Close()
+
+	recorder := NewRecorder()
+	requestBody := `{"caption":"safe","access_token":"request-secret","nested":{"refresh_token":"refresh-secret","password":"password-secret"}}`
+	req, err := http.NewRequestWithContext(
+		WithRecorder(context.Background(), recorder),
+		http.MethodPost,
+		server.URL,
+		strings.NewReader(requestBody),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer header-secret")
+	req.Header.Set("X-Provider-Secret", "unknown-header-secret")
+	req.Header.Set("X-Restli-Protocol-Version", "2.0.0")
+
+	resp, err := NewClient(5 * time.Second).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+
+	out := recorder.Serialize()
+	for _, secret := range []string{
+		"request-secret",
+		"refresh-secret",
+		"password-secret",
+		"response-secret",
+		"nested-secret",
+		"header-secret",
+		"unknown-header-secret",
+	} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("diagnostic leaked %q: %s", secret, out)
+		}
+	}
+	for _, expected := range []string{`"caption":"safe"`, `"message":"invalid"`, "X-Restli-Protocol-Version: 2.0.0", "[REDACTED]"} {
+		if !strings.Contains(out, expected) {
+			t.Fatalf("diagnostic missing %q: %s", expected, out)
+		}
+	}
+	if strings.Contains(out, "X-Provider-Secret") {
+		t.Fatalf("non-allowlisted header name was persisted: %s", out)
+	}
+}
+
+func TestCaptureRedactsFormCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"rejected"}`))
+	}))
+	defer server.Close()
+
+	recorder := NewRecorder()
+	body := "access_token=facebook-secret&message=hello&client_secret=client-secret&api_key=api-secret"
+	req, err := http.NewRequestWithContext(
+		WithRecorder(context.Background(), recorder),
+		http.MethodPost,
+		server.URL,
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := NewClient(5 * time.Second).Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	out := recorder.Serialize()
+	for _, secret := range []string{"facebook-secret", "client-secret", "api-secret"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("form diagnostic leaked %q: %s", secret, out)
+		}
+	}
+	if !strings.Contains(out, "message=hello") ||
+		(!strings.Contains(out, "%5BREDACTED%5D") && !strings.Contains(out, "[REDACTED]")) {
+		t.Fatalf("safe form value or redaction marker missing: %s", out)
+	}
+}
+
+func TestCaptureOmitsUnstructuredAndTruncatedBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		contentType string
+		body        string
+	}{
+		{name: "plain text", contentType: "text/plain", body: "token=plain-secret"},
+		{name: "truncated json", contentType: "application/json", body: `{"access_token":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				_, _ = io.ReadAll(req.Body)
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"error":"bad"}`)),
+					Request:    req,
+				}, nil
+			})
+			recorder := NewRecorder()
+			req, err := http.NewRequestWithContext(
+				WithRecorder(context.Background(), recorder),
+				http.MethodPost,
+				"https://example.test",
+				strings.NewReader(tc.body),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", tc.contentType)
+			resp, err := (&http.Client{Transport: Wrap(base)}).Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_ = resp.Body.Close()
+
+			out := recorder.Serialize()
+			if strings.Contains(out, "plain-secret") || strings.Contains(out, strings.Repeat("x", 64)) {
+				t.Fatalf("unsafe body content was persisted: %s", out)
+			}
+			if !strings.Contains(out, "body omitted") {
+				t.Fatalf("omission metadata missing: %s", out)
+			}
+		})
+	}
+}
+
+func TestSerializeSanitizesTransportErrorsAndInvalidText(t *testing.T) {
+	recorder := NewRecorder()
+	recorder.append(Entry{
+		CurlCommand:    "curl -X POST 'https://example.test'\x00\xff",
+		TransportError: "dial failed: Authorization=Bearer transport-secret access_token=query-secret\x00\xff",
+		ResponseBody:   "response\x00\xff",
+	})
+	out := recorder.Serialize()
+	if strings.ToValidUTF8(out, "") != out {
+		t.Fatal("serialized diagnostic is not valid UTF-8")
+	}
+	if strings.ContainsRune(out, '\x00') {
+		t.Fatal("serialized diagnostic contains a NUL byte")
+	}
+	for _, secret := range []string{"transport-secret", "query-secret"} {
+		if strings.Contains(out, secret) {
+			t.Fatalf("transport error leaked %q: %s", secret, out)
+		}
 	}
 }
