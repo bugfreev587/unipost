@@ -30,6 +30,10 @@ const adminUsersPath = new URL(
   "../src/app/admin/users/page.tsx",
   import.meta.url,
 );
+const authenticatedRegressionPath = new URL(
+  "./regression/authenticated-dashboard.spec.ts",
+  import.meta.url,
+);
 
 test("YouTube source links are validated, accessible text links without brand artwork", async () => {
   const source = await readFile(linkPath, "utf8");
@@ -96,4 +100,14 @@ test("Admin user summaries use neutral destinations for every dynamic platform l
   assert.doesNotMatch(source, /import \{ PlatformIcon \}/);
   assert.match(source, /AccountDestinationIcon/);
   assert.equal((source.match(/<AccountDestinationIcon/g) || []).length, 3);
+});
+
+test("authenticated regression exercises the synthetic YouTube identity contract", async () => {
+  const source = await readFile(authenticatedRegressionPath, "utf8");
+
+  assert.match(source, /youtube-audit-fixture/);
+  assert.match(source, /data-youtube-channel-identity/);
+  assert.match(source, /data-youtube-source-link/);
+  assert.match(source, /data-unipost-account-status/);
+  assert.match(source, /390/);
 });
