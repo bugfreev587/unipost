@@ -45,6 +45,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/paidquota"
 	"github.com/xiaoboyu/unipost-api/internal/paidquotaemail"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 	"github.com/xiaoboyu/unipost-api/internal/quotaemail"
@@ -232,6 +233,10 @@ func main() {
 	integrationLogger := integrationlogs.NewLogger(queries, func(ctx context.Context, row db.IntegrationLog) {
 		ws.NotifyLog(ctx, pool, ws.LogEnvelope(row))
 	})
+	postFailureDebugWriter := postfailuredebug.NewWriter(
+		postfailuredebug.NewPostgresStore(pool),
+		postfailuredebug.Config{},
+	)
 
 	// Build the Stripe billing manager now that the DB is ready. The
 	// SUPER_ADMINS list may contain email addresses, which the manager
@@ -283,6 +288,7 @@ func main() {
 
 	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
 		go integrationLogger.Start(workerCtx)
+		go postFailureDebugWriter.Start(workerCtx)
 	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
@@ -596,7 +602,8 @@ func main() {
 		SetXTokenRefresher(xTokenRefresher).
 		SetPaidScheduleCoordinator(paidquota.NewPostgresCoordinator(pool)).
 		SetHoldReconciler(paidQuotaHoldReconciler).
-		SetPaidQuotaEvaluator(paidPlanQuotaEmailService)
+		SetPaidQuotaEvaluator(paidPlanQuotaEmailService).
+		SetPostFailureDebugSink(postFailureDebugWriter)
 
 	// Sprint 3 PR7: managed token refresh worker. Started here so
 	// the bus dependency (eventBus) is already wired.

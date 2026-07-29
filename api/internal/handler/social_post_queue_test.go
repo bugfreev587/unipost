@@ -25,6 +25,7 @@ import (
 	"github.com/xiaoboyu/unipost-api/internal/events"
 	"github.com/xiaoboyu/unipost-api/internal/integrationlogs"
 	"github.com/xiaoboyu/unipost-api/internal/platform"
+	"github.com/xiaoboyu/unipost-api/internal/postfailuredebug"
 	"github.com/xiaoboyu/unipost-api/internal/publishingrestrictions"
 	"github.com/xiaoboyu/unipost-api/internal/quota"
 )
@@ -91,6 +92,75 @@ func TestWorkerPublishingEventSourceIsWorker(t *testing.T) {
 
 	if event.Source != integrationlogs.SourceWorker {
 		t.Fatalf("source = %q, want %q", event.Source, integrationlogs.SourceWorker)
+	}
+}
+
+type panickingPostFailureDebugSink struct{}
+
+func (panickingPostFailureDebugSink) Enqueue(postfailuredebug.Detail) {
+	panic("forced observability sink failure")
+}
+
+func TestPostFailureDebugSinkPanicIsContained(t *testing.T) {
+	h := (&SocialPostHandler{}).SetPostFailureDebugSink(panickingPostFailureDebugSink{})
+	didReturn := false
+	func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				t.Fatalf("observability panic escaped into publishing: %v", recovered)
+			}
+		}()
+		h.recordPostFailureDebug("result-1", "workspace-1", "safe diagnostic")
+		didReturn = true
+	}()
+	if !didReturn {
+		t.Fatal("publishing caller did not continue after observability panic")
+	}
+}
+
+func TestPublishingDiagnosticsStayOutsideBusinessWritesAndTransactions(t *testing.T) {
+	immediateSource, err := os.ReadFile("social_posts.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	immediate := string(immediateSource)
+	createAt := strings.Index(immediate, "h.queries.CreateSocialPostResult")
+	createEnd := strings.Index(immediate[createAt:], "if dbErr != nil")
+	if createAt < 0 || createEnd < 0 {
+		t.Fatal("immediate result persistence boundaries not found")
+	}
+	createBlock := immediate[createAt : createAt+createEnd]
+	if !strings.Contains(createBlock, "DebugCurl:       pgtype.Text{}") {
+		t.Fatal("immediate business insert must always receive an empty legacy debug value")
+	}
+	if strings.Contains(createBlock, "oc.debugCurl") {
+		t.Fatal("immediate business insert still depends on diagnostic text")
+	}
+
+	queueSource, err := os.ReadFile("social_post_queue.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	queue := string(queueSource)
+	start := strings.Index(queue, "func (h *SocialPostHandler) handleJobDispatchFailure")
+	endOffset := strings.Index(queue[start:], "func inferDispatchFailureStage")
+	if start < 0 || endOffset < 0 {
+		t.Fatal("queued failure handler boundaries not found")
+	}
+	fn := queue[start : start+endOffset]
+	resultUpdateAt := strings.Index(fn, "resultUpdate := db.UpdateSocialPostResultAfterRetryParams")
+	transactionAt := strings.Index(fn, "h.queries.WithTransaction")
+	debugEnqueueAt := strings.Index(fn, "h.recordPostFailureDebug")
+	failureAppliedAt := strings.Index(fn, "if !failureApplied")
+	if resultUpdateAt < 0 || transactionAt < 0 || failureAppliedAt < 0 || debugEnqueueAt < failureAppliedAt {
+		t.Fatal("queued diagnostic must be enqueued only after the successful business transaction")
+	}
+	resultUpdateBlock := fn[resultUpdateAt:transactionAt]
+	if !strings.Contains(resultUpdateBlock, "DebugCurl:       pgtype.Text{}") || strings.Contains(resultUpdateBlock, "oc.debugCurl") {
+		t.Fatal("queued business transaction still depends on diagnostic text")
+	}
+	if strings.Contains(fn, `"debug_curl": oc.debugCurl`) {
+		t.Fatal("queued integration log still duplicates the full diagnostic body")
 	}
 }
 
