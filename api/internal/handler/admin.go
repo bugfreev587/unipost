@@ -272,7 +272,7 @@ type adminIntegrationLogResponse struct {
 	ResponsePayload  json.RawMessage `json:"response_payload,omitempty"`
 }
 
-const adminLogsBaseSelect = `
+const adminLogsMetadataSelect = `
 SELECT
   l.id,
   l.workspace_id,
@@ -301,14 +301,22 @@ SELECT
   l.remote_status_code,
   l.duration_ms,
   l.error_code,
-  l.metadata,
-  l.request_payload,
-  l.response_payload
+  l.metadata`
+
+const adminLogsFrom = `
 FROM integration_logs l
 LEFT JOIN workspaces w ON w.id = l.workspace_id
 LEFT JOIN users u ON u.id = w.user_id
 LEFT JOIN subscriptions s ON s.workspace_id = w.id
 `
+
+func adminLogsSelect(includePayloads bool) string {
+	query := adminLogsMetadataSelect
+	if includePayloads {
+		query += ",\n  l.request_payload,\n  l.response_payload"
+	}
+	return query + adminLogsFrom
+}
 
 func parseAdminLogTime(raw string, fallback time.Time) time.Time {
 	raw = strings.TrimSpace(raw)
@@ -327,7 +335,7 @@ func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegra
 	var requestID, traceID, actorUserID, actorAPIKeyID, profileID, socialAccountID, postID, platformPostID, platform, endpoint, method, errorCode *string
 	var httpStatusCode, remoteStatusCode, durationMs *int32
 	var requestPayload, responsePayload []byte
-	err := row.Scan(
+	destinations := []any{
 		&out.ID,
 		&out.WorkspaceID,
 		&out.WorkspaceName,
@@ -356,9 +364,11 @@ func scanAdminIntegrationLogRow(row pgx.Row, includePayloads bool) (adminIntegra
 		&durationMs,
 		&errorCode,
 		&out.Metadata,
-		&requestPayload,
-		&responsePayload,
-	)
+	}
+	if includePayloads {
+		destinations = append(destinations, &requestPayload, &responsePayload)
+	}
+	err := row.Scan(destinations...)
 	if err != nil {
 		return adminIntegrationLogResponse{}, err
 	}
@@ -424,7 +434,7 @@ func (h *AdminHandler) ListLogs(w http.ResponseWriter, r *http.Request) {
 	from := parseAdminLogTime(q.Get("from"), time.Now().AddDate(0, 0, -7))
 	to := parseAdminLogTime(q.Get("to"), time.Now())
 
-	sql := adminLogsBaseSelect + `
+	sql := adminLogsSelect(false) + `
 WHERE ($1::TEXT = '' OR l.workspace_id = $1)
   AND ($2::TEXT = '' OR u.email ILIKE '%' || $2 || '%')
   AND ($3::TEXT = '' OR l.category = $3)
@@ -500,7 +510,7 @@ func (h *AdminHandler) GetLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row := h.pool.QueryRow(r.Context(), adminLogsBaseSelect+`
+	row := h.pool.QueryRow(r.Context(), adminLogsSelect(true)+`
 WHERE l.id = $1
 LIMIT 1`, id)
 
