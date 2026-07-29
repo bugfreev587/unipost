@@ -22,6 +22,7 @@ Only these files may change in this workstream:
 - `api/cmd/api/admin_observability_routes_test.go`
 - `api/internal/db/migrations/128_admin_logs_global_time_index.sql`
 - `api/internal/db/admin_logs_index_migration_test.go`
+- `api/internal/db/migrate_test.go`
 - `dashboard/src/lib/api.ts`
 - `dashboard/src/app/admin/errors/page.tsx`
 - `dashboard/tests/admin-observability-source.test.mjs`
@@ -45,7 +46,7 @@ The only database relation changed is a new index on `integration_logs`. No migr
 - Create: `api/internal/db/migrations/128_admin_logs_global_time_index.sql`
 - Create: `api/internal/db/admin_logs_index_migration_test.go`
 
-- [ ] **Step 1: Write the failing migration contract test**
+- [x] **Step 1: Write the failing migration contract test**
 
 ```go
 package db
@@ -80,13 +81,13 @@ func TestAdminLogsGlobalIndexMigrationIsConcurrentAndLogOnly(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the test and verify the missing file failure**
+- [x] **Step 2: Run the test and verify the missing file failure**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/db -run TestAdminLogsGlobalIndexMigrationIsConcurrentAndLogOnly -count=1`
 
 Expected: FAIL because migration 128 does not exist.
 
-- [ ] **Step 3: Add the concurrent migration**
+- [x] **Step 3: Add the concurrent migration**
 
 ```sql
 -- +goose NO TRANSACTION
@@ -100,13 +101,13 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_integration_logs_admin_ts_id
 DROP INDEX CONCURRENTLY IF EXISTS idx_integration_logs_admin_ts_id;
 ```
 
-- [ ] **Step 4: Run the focused and migration test suites**
+- [x] **Step 4: Run the focused and migration test suites**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/db -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the log-owned migration**
+- [x] **Step 5: Commit the log-owned migration**
 
 ```bash
 git add api/internal/db/migrations/128_admin_logs_global_time_index.sql api/internal/db/admin_logs_index_migration_test.go
@@ -119,7 +120,7 @@ git commit -m "perf: add global admin logs index"
 - Modify: `api/internal/handler/admin.go`
 - Create: `api/internal/handler/admin_observability_test.go`
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 ```go
 package handler
@@ -146,13 +147,13 @@ func TestAdminLogsDetailSelectIncludesPayloadColumns(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the tests and verify `adminLogsSelect` is undefined**
+- [x] **Step 2: Run the tests and verify `adminLogsSelect` is undefined**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/handler -run 'TestAdminLogs(List|Detail)Select' -count=1`
 
 Expected: FAIL to compile because `adminLogsSelect` does not exist.
 
-- [ ] **Step 3: Split the projection and scan targets**
+- [x] **Step 3: Split the projection and scan targets**
 
 Implement `adminLogsSelect(includePayloads bool)` so the shared metadata projection ends at `l.metadata`; append `l.request_payload` and `l.response_payload` only when `includePayloads` is true. Build the `row.Scan` destination slice the same way:
 
@@ -181,13 +182,13 @@ err := row.Scan(destinations...)
 
 Use `adminLogsSelect(false)` in `ListLogs` and `adminLogsSelect(true)` in `GetLog`.
 
-- [ ] **Step 4: Run handler tests**
+- [x] **Step 4: Run handler tests**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/handler -count=1`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the query containment**
+- [x] **Step 5: Commit the query containment**
 
 ```bash
 git add api/internal/handler/admin.go api/internal/handler/admin_observability_test.go
@@ -202,7 +203,7 @@ git commit -m "perf: keep admin log payloads out of list queries"
 - Modify: `api/cmd/api/main.go`
 - Create: `api/cmd/api/admin_observability_routes_test.go`
 
-- [ ] **Step 1: Add failing SQL and route contract tests**
+- [x] **Step 1: Add failing SQL and route contract tests**
 
 Add a test asserting `adminPostFailuresListSQL()` contains `NULL::TEXT AS debug_curl` and contains no `spr.debug_curl`. Add a route-source test asserting both `/v1/admin/post-failures` and `/v1/admin/post-failures/{id}/debug` use `auth.RequireSuperAdmin`.
 
@@ -218,17 +219,17 @@ func TestAdminPostFailuresListNeverReadsDebugCurl(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run the focused tests and verify they fail**
+- [x] **Step 2: Run the focused tests and verify they fail**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/handler ./cmd/api -run 'Admin(PostFailures|Observability)' -count=1`
 
 Expected: FAIL because the list SQL helper and detail route do not exist.
 
-- [ ] **Step 3: Extract list SQL and remove every debug column read**
+- [x] **Step 3: Extract list SQL and remove every debug column read**
 
 Move the current post-failure query text into `adminPostFailuresListSQL()` and replace both `NULLIF(spr.debug_curl, '') AS debug_curl` projections with `NULL::TEXT AS debug_curl`. Keep the existing scan shape and every filter/order behavior unchanged.
 
-- [ ] **Step 4: Add the on-demand debug handler**
+- [x] **Step 4: Add the on-demand debug handler**
 
 ```go
 type adminPostFailureDebugResponse struct {
@@ -257,7 +258,7 @@ func (h *AdminHandler) GetPostFailureDebug(w http.ResponseWriter, r *http.Reques
 
 The SQL resolves either a `post_failures.id` or `social_post_results.id`, returns at most one nullable `debug_curl`, and never mutates either relation.
 
-- [ ] **Step 5: Protect list and detail routes with the existing Super Admin middleware**
+- [x] **Step 5: Protect list and detail routes with the existing Super Admin middleware**
 
 Register:
 
@@ -268,7 +269,7 @@ r.With(auth.RequireSuperAdmin(superAdminChecker, "FORBIDDEN", "Admin errors are 
 	Get("/v1/admin/post-failures/{id}/debug", adminHandler.GetPostFailureDebug)
 ```
 
-- [ ] **Step 6: Run API tests and commit**
+- [x] **Step 6: Run API tests and commit**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/handler ./cmd/api -count=1`
 
@@ -285,7 +286,7 @@ git commit -m "perf: load admin failure debug details on demand"
 - Modify: `api/internal/debugrt/debugrt.go`
 - Modify: `api/internal/debugrt/debugrt_test.go`
 
-- [ ] **Step 1: Write failing streaming and size tests**
+- [x] **Step 1: Write failing streaming and size tests**
 
 Add tests that prove:
 
@@ -306,13 +307,13 @@ func TestBinaryRequestBodyIsForwardedButOmitted(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run debug tests and verify at least the size test fails**
+- [x] **Step 2: Run debug tests and verify at least the size test fails**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/debugrt -count=1`
 
 Expected: FAIL because the current transport calls `io.ReadAll(req.Body)` and embeds the whole body.
 
-- [ ] **Step 3: Replace pre-read buffering with a bounded observational wrapper**
+- [x] **Step 3: Replace pre-read buffering with a bounded observational wrapper**
 
 Implement an `io.ReadCloser` wrapper that forwards every byte unchanged while it:
 
@@ -325,7 +326,7 @@ Implement an `io.ReadCloser` wrapper that forwards every byte unchanged while it
 
 Use eight entries and cap the final serialized diagnostic string at 64 KB. Preserve the current 8 KB response cap. Append explicit truncation/omission metadata instead of binary content.
 
-- [ ] **Step 4: Run debug and protected-flow regression tests**
+- [x] **Step 4: Run debug and protected-flow regression tests**
 
 Run:
 
@@ -337,7 +338,7 @@ GOCACHE=/tmp/unipost-log-observability-go-build go test ./internal/handler -run 
 
 Expected: PASS. The second command is a scope safety gate, not evidence that business files changed.
 
-- [ ] **Step 5: Commit the bounded recorder**
+- [x] **Step 5: Commit the bounded recorder**
 
 ```bash
 git add api/internal/debugrt/debugrt.go api/internal/debugrt/debugrt_test.go
@@ -351,7 +352,7 @@ git commit -m "fix: bound publishing failure diagnostics"
 - Modify: `dashboard/src/app/admin/errors/page.tsx`
 - Create: `dashboard/tests/admin-observability-source.test.mjs`
 
-- [ ] **Step 1: Write the failing source contract test**
+- [x] **Step 1: Write the failing source contract test**
 
 ```js
 import assert from "node:assert/strict";
@@ -372,13 +373,13 @@ test("Admin Errors loads debug only from the selected detail endpoint", () => {
 });
 ```
 
-- [ ] **Step 2: Run the source test and verify it fails**
+- [x] **Step 2: Run the source test and verify it fails**
 
 Run: `cd dashboard && node --test tests/admin-observability-source.test.mjs`
 
 Expected: FAIL because the detail client and loading state do not exist.
 
-- [ ] **Step 3: Add the typed detail client**
+- [x] **Step 3: Add the typed detail client**
 
 ```ts
 export interface AdminPostFailureDebugDetail {
@@ -393,13 +394,13 @@ export async function getAdminPostFailureDebug(
 }
 ```
 
-- [ ] **Step 4: Load detail in the drawer effect**
+- [x] **Step 4: Load detail in the drawer effect**
 
 Add `debugCurl`, `debugLoading`, and `debugError` state. When selection changes, resolve `social_post_result_id ?? post_failure_id`; fetch only that ID, cancel stale effects, and clear detail on close. Render a loading state, a retryable error state, the fetched curl, or the existing empty message. Copy/raw JSON combines the selected metadata with the fetched detail without adding debug text to the list state.
 
 Set `requireSuperAdmin` on the page's `AdminShell`.
 
-- [ ] **Step 5: Run frontend checks and commit**
+- [x] **Step 5: Run frontend checks and commit**
 
 Run:
 
@@ -421,7 +422,7 @@ git commit -m "perf: lazy-load admin failure diagnostics"
 **Files:**
 - Modify only if a failure identifies an in-allowlist defect.
 
-- [ ] **Step 1: Audit changed files and relations**
+- [x] **Step 1: Audit changed files and relations**
 
 Run:
 
@@ -432,13 +433,13 @@ git diff origin/dev...HEAD -- api/internal/db/migrations
 
 Expected: every changed implementation file appears in the allowlist; the only new database object is `idx_integration_logs_admin_ts_id` on `integration_logs`.
 
-- [ ] **Step 2: Run full API tests**
+- [x] **Step 2: Run full API tests**
 
 Run: `cd api && GOCACHE=/tmp/unipost-log-observability-go-build go test ./...`
 
 Expected: PASS with zero failed or skipped required packages.
 
-- [ ] **Step 3: Run Dashboard source, build, and regression checks**
+- [x] **Step 3: Run Dashboard source, build, and regression checks**
 
 Run:
 
@@ -451,7 +452,7 @@ npm run test:regression:dashboard
 
 Expected: all commands PASS. A missing browser, skipped suite, timeout, or cancellation is a failure and blocks push.
 
-- [ ] **Step 4: Verify the exact safety invariants**
+- [x] **Step 4: Verify the exact safety invariants**
 
 Run searches proving no implementation diff changes publishing, account connection, business persistence, or protected migrations:
 
@@ -462,7 +463,7 @@ git diff --check origin/dev...HEAD
 
 Expected: both commands exit 0.
 
-- [ ] **Step 5: Commit any plan tracking update separately**
+- [x] **Step 5: Commit any plan tracking update separately**
 
 ```bash
 git add docs/superpowers/plans/2026-07-28-admin-observability-containment.md
