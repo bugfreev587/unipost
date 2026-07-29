@@ -8,6 +8,7 @@ const accountsPath = resolve("src/app/(dashboard)/projects/[id]/accounts/page.ts
 const statsPath = resolve("src/components/dashboard/connection-stats.tsx");
 const editorPath = resolve("src/components/posts/create-post/platform-editor-block.tsx");
 const destinationIconPath = resolve("src/components/account-destination-icon.tsx");
+const managedUserPath = resolve("src/app/(dashboard)/projects/[id]/users/[external_user_id]/page.tsx");
 const legacyCardPath = resolve("src/components/posts/create-post/account-card.tsx");
 const legacyModalPath = resolve("src/components/dashboard/create-post-modal.tsx");
 
@@ -28,6 +29,7 @@ async function main() {
     statsSource,
     editorSource,
     destinationIconSource,
+    managedUserSource,
     legacyCardSource,
     legacyModalSource,
   ] = await Promise.all([
@@ -37,6 +39,7 @@ async function main() {
     readFile(statsPath, "utf8"),
     readFile(editorPath, "utf8"),
     readOptional(destinationIconPath),
+    readFile(managedUserPath, "utf8"),
     readFile(legacyCardPath, "utf8"),
     readFile(legacyModalPath, "utf8"),
   ]);
@@ -56,6 +59,7 @@ async function main() {
   assert.doesNotMatch(statsSource, /quickstartSourceLabel/);
   assert.match(accountsSource, /connected through UniPost-managed OAuth/);
   assert.match(accountsSource, /AccountDestinationIcon/);
+  assert.match(accountsSource, /YouTubeChannelIdentity/);
   assert.doesNotMatch(accountsSource, /PlatformIcon/);
   assert.match(editorSource, /AccountDestinationIcon/);
   assert.doesNotMatch(editorSource, /PlatformIcon/);
@@ -64,7 +68,10 @@ async function main() {
   assert.match(legacyModalSource, /AccountDestinationIcon/);
   assert.doesNotMatch(legacyModalSource, /PlatformIcon/);
   assert.match(destinationIconSource, /platform === "youtube"/);
+  assert.match(destinationIconSource, /data-youtube-destination-icon/);
   assert.doesNotMatch(destinationIconSource, /fill="#ff0000"/);
+  assert.match(managedUserSource, /YouTubeChannelIdentity/);
+  assert.match(managedUserSource, /data-unipost-account-status/);
 }
 
 main().catch((error) => {
