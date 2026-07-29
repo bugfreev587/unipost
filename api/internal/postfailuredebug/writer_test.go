@@ -124,3 +124,71 @@ func TestWriterRejectsIncompleteIdentityWithoutQueueing(t *testing.T) {
 		t.Fatalf("invalid details changed queue stats: %#v", stats)
 	}
 }
+
+type blockingStore struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (s *blockingStore) UpsertPostFailureDebug(ctx context.Context, _ StoredDetail) error {
+	s.once.Do(func() { close(s.started) })
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestWriterCancellationHasBoundedDrainAndAccountsForUnwrittenDetails(t *testing.T) {
+	store := &blockingStore{started: make(chan struct{})}
+	writer := NewWriter(store, Config{
+		QueueSize:    4,
+		WriteTimeout: time.Second,
+		DrainTimeout: 25 * time.Millisecond,
+	})
+	for i := 0; i < 3; i++ {
+		writer.Enqueue(Detail{
+			SocialPostResultID: "result-" + string(rune('1'+i)),
+			WorkspaceID:        "workspace-1",
+			DebugText:          "diagnostic",
+		})
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	go writer.Start(ctx)
+	select {
+	case <-store.started:
+	case <-time.After(time.Second):
+		t.Fatal("writer did not begin the first write")
+	}
+	cancel()
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer waitCancel()
+	if err := writer.Wait(waitCtx); err != nil {
+		t.Fatalf("bounded writer shutdown: %v", err)
+	}
+	stats := writer.Stats()
+	if stats.Failures < 1 || stats.Abandoned+stats.Failures != 3 {
+		t.Fatalf("shutdown stats = %#v, want all three details explicitly failed or abandoned", stats)
+	}
+}
+
+func TestWriterWaitBeforeStartReturnsImmediately(t *testing.T) {
+	writer := NewWriter(&recordingStore{}, Config{})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := writer.Wait(ctx); err != nil {
+		t.Fatalf("wait before start: %v", err)
+	}
+}
+
+func TestWriterStopRejectsLateEnqueueAndCountsItAsAbandoned(t *testing.T) {
+	writer := NewWriter(&recordingStore{}, Config{QueueSize: 1})
+	writer.Stop()
+	writer.Enqueue(Detail{
+		SocialPostResultID: "late-result",
+		WorkspaceID:        "workspace-1",
+		DebugText:          "late diagnostic",
+	})
+	stats := writer.Stats()
+	if stats.QueueDepth != 0 || stats.Abandoned != 1 {
+		t.Fatalf("late enqueue stats = %#v, want queue_depth=0 abandoned=1", stats)
+	}
+}

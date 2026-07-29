@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
@@ -18,6 +19,7 @@ const (
 	MaxDetailBytes    = 64 * 1024
 	defaultQueueSize  = 512
 	defaultWriteLimit = 2 * time.Second
+	defaultDrainLimit = 3 * time.Second
 	defaultRedaction  = 1
 )
 
@@ -43,6 +45,7 @@ type Store interface {
 type Config struct {
 	QueueSize    int
 	WriteTimeout time.Duration
+	DrainTimeout time.Duration
 }
 
 type Stats struct {
@@ -50,15 +53,23 @@ type Stats struct {
 	Dropped    uint64
 	Failures   uint64
 	Writes     uint64
+	Abandoned  uint64
 }
 
 type Writer struct {
 	store        Store
 	queue        chan StoredDetail
 	writeTimeout time.Duration
+	drainTimeout time.Duration
+	done         chan struct{}
+	stop         chan struct{}
+	admissionMu  sync.RWMutex
+	accepting    bool
+	started      atomic.Bool
 	dropped      atomic.Uint64
 	failures     atomic.Uint64
 	writes       atomic.Uint64
+	abandoned    atomic.Uint64
 }
 
 func NewWriter(store Store, config Config) *Writer {
@@ -70,10 +81,18 @@ func NewWriter(store Store, config Config) *Writer {
 	if writeTimeout <= 0 {
 		writeTimeout = defaultWriteLimit
 	}
+	drainTimeout := config.DrainTimeout
+	if drainTimeout <= 0 {
+		drainTimeout = defaultDrainLimit
+	}
 	return &Writer{
 		store:        store,
 		queue:        make(chan StoredDetail, queueSize),
 		writeTimeout: writeTimeout,
+		drainTimeout: drainTimeout,
+		done:         make(chan struct{}),
+		stop:         make(chan struct{}),
+		accepting:    true,
 	}
 }
 
@@ -85,6 +104,12 @@ func (w *Writer) Enqueue(detail Detail) {
 		return
 	}
 	stored := normalize(detail)
+	w.admissionMu.RLock()
+	defer w.admissionMu.RUnlock()
+	if !w.accepting {
+		w.abandoned.Add(1)
+		return
+	}
 	select {
 	case w.queue <- stored:
 	default:
@@ -98,18 +123,31 @@ func (w *Writer) Start(ctx context.Context) {
 	if w == nil || w.store == nil {
 		return
 	}
+	if !w.started.CompareAndSwap(false, true) {
+		return
+	}
+	defer close(w.done)
 	slog.Info("post failure debug writer started", "queue_size", cap(w.queue))
 	reportTicker := time.NewTicker(30 * time.Second)
 	defer reportTicker.Stop()
 	var reportedDropped uint64
+	ctxDone := ctx.Done()
 	for {
 		select {
-		case <-ctx.Done():
-			drained := w.drain()
-			slog.Info("post failure debug writer stopped", "drained", drained)
+		case <-ctxDone:
+			w.Stop()
+			ctxDone = nil
+		case <-w.stop:
+			drained, abandoned := w.drainWithin(w.drainTimeout)
+			slog.Info("post failure debug writer stopped",
+				"drained", drained,
+				"abandoned", abandoned,
+				"dropped", w.dropped.Load(),
+				"failures", w.failures.Load(),
+			)
 			return
 		case detail := <-w.queue:
-			w.write(detail)
+			w.write(ctx, detail, w.writeTimeout)
 		case <-reportTicker.C:
 			dropped := w.dropped.Load()
 			if dropped > reportedDropped {
@@ -124,6 +162,22 @@ func (w *Writer) Start(ctx context.Context) {
 	}
 }
 
+// Stop atomically closes admission before asking the worker to drain. Any
+// producer that races with shutdown is counted as abandoned instead of being
+// accepted into a queue that no longer has a consumer.
+func (w *Writer) Stop() {
+	if w == nil {
+		return
+	}
+	w.admissionMu.Lock()
+	defer w.admissionMu.Unlock()
+	if !w.accepting {
+		return
+	}
+	w.accepting = false
+	close(w.stop)
+}
+
 func (w *Writer) Stats() Stats {
 	if w == nil {
 		return Stats{}
@@ -133,24 +187,48 @@ func (w *Writer) Stats() Stats {
 		Dropped:    w.dropped.Load(),
 		Failures:   w.failures.Load(),
 		Writes:     w.writes.Load(),
+		Abandoned:  w.abandoned.Load(),
 	}
 }
 
-func (w *Writer) drain() int {
+func (w *Writer) Wait(ctx context.Context) error {
+	if w == nil || !w.started.Load() {
+		return nil
+	}
+	select {
+	case <-w.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (w *Writer) drainWithin(limit time.Duration) (int, uint64) {
+	deadline := time.Now().Add(limit)
 	drained := 0
 	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			abandoned := uint64(len(w.queue))
+			w.abandoned.Add(abandoned)
+			return drained, abandoned
+		}
 		select {
 		case detail := <-w.queue:
-			w.write(detail)
+			writeLimit := w.writeTimeout
+			if remaining < writeLimit {
+				writeLimit = remaining
+			}
+			w.write(context.Background(), detail, writeLimit)
 			drained++
 		default:
-			return drained
+			return drained, 0
 		}
 	}
 }
 
-func (w *Writer) write(detail StoredDetail) {
-	ctx, cancel := context.WithTimeout(context.Background(), w.writeTimeout)
+func (w *Writer) write(parent context.Context, detail StoredDetail, timeout time.Duration) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 	if err := w.store.UpsertPostFailureDebug(ctx, detail); err != nil {
 		failures := w.failures.Add(1)

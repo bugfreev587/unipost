@@ -33,8 +33,11 @@ func TestPublishingFailureDebugWriterIsWiredAsBackgroundObservability(t *testing
 	for _, required := range []string{
 		"postfailuredebug.NewPostgresStore(pool)",
 		"postfailuredebug.NewWriter(",
-		"go postFailureDebugWriter.Start(workerCtx)",
+		"go postFailureDebugWriter.Start(ctx)",
 		"SetPostFailureDebugSink(postFailureDebugWriter)",
+		"waitForPostFailureDebugShutdown(",
+		"writer.Stop()",
+		"writer.Wait(",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("main.go missing background diagnostic wiring %q", required)

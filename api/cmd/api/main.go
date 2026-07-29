@@ -288,7 +288,9 @@ func main() {
 
 	if processMode == processModeAPI || processMode == processModePostDeliveryWorker {
 		go integrationLogger.Start(workerCtx)
-		go postFailureDebugWriter.Start(workerCtx)
+		// The diagnostic writer has its own lifecycle. Customer requests and
+		// delivery workers are quiesced before Stop closes queue admission.
+		go postFailureDebugWriter.Start(ctx)
 	}
 
 	// Sprint 3 PR3/PR4/PR7: managed Connect registry. Built early so
@@ -685,6 +687,9 @@ func main() {
 			processName = "media worker"
 		}
 		waitForProcessShutdown(processName, workerCancel, port)
+		debugWaitCtx, debugWaitCancel := context.WithTimeout(context.Background(), 4*time.Second)
+		waitForPostFailureDebugShutdown(debugWaitCtx, postFailureDebugWriter)
+		debugWaitCancel()
 		return
 	}
 
@@ -1373,11 +1378,32 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		slog.Error("server forced to shutdown", "error", err)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		slog.Error("server forced to shutdown", "error", shutdownErr)
+	}
+	waitForPostFailureDebugShutdown(shutdownCtx, postFailureDebugWriter)
+	if shutdownErr != nil {
 		os.Exit(1)
 	}
 	slog.Info("server stopped")
+}
+
+func waitForPostFailureDebugShutdown(ctx context.Context, writer *postfailuredebug.Writer) {
+	if writer == nil {
+		return
+	}
+	writer.Stop()
+	if err := writer.Wait(ctx); err != nil {
+		stats := writer.Stats()
+		slog.Warn("post failure debug writer shutdown timed out",
+			"error", err,
+			"queue_depth", stats.QueueDepth,
+			"abandoned", stats.Abandoned,
+			"dropped", stats.Dropped,
+			"failures", stats.Failures,
+		)
+	}
 }
 
 func warnMissingPublishingRestrictionCampaignConfigFor(readiness publishingrestrictions.CampaignDeliveryReadiness) {
