@@ -1,6 +1,6 @@
 # UniPost Log Storage, Errors, and Logs Performance PRD
 
-**Status:** Approved design, ready for implementation planning
+**Status:** Approved, scope locked, and authorized for implementation planning
 
 **Date:** 2026-07-28
 
@@ -24,7 +24,7 @@ This PRD adopts a unified API request event model:
 - internal runtime logs, stack traces, worker health, and infrastructure telemetry go to Better Stack;
 - business state, audit records, outbox entries, delivery records, and idempotency receipts remain in PostgreSQL.
 
-The target is to reduce the production database from approximately 7.22 GB to no more than 2.3 GB after historical compaction, operate toward a 2.0 GB steady-state capacity objective, reduce daily physical growth by at least 75%, and bring cold Admin Logs load time below 1.5 seconds.
+The target is to reduce the production database from approximately 7.22 GB to no more than 2.8 GB after log-only historical compaction, operate toward a 2.5 GB steady-state capacity objective, reduce daily physical growth by at least 75%, and bring cold Admin Logs load time below 1.5 seconds. The lower capacity target is intentionally secondary to product safety: this project does not rewrite or lock publishing, account-connection, authentication, billing, or other customer business tables to reclaim additional space.
 
 ## 2. Production evidence
 
@@ -88,11 +88,11 @@ The Admin Errors list returned `debug_curl` for every result. A 100-item product
 
 | Change level | Expected production size | Expected reduction |
 | --- | ---: | ---: |
-| Errors/Logs query fixes and `debug_curl` cleanup only | About 6.7 GB | 6–7% |
+| Errors/Logs query fixes and bounded future `debug_curl` capture only | About 6.7 GB | 6–7% |
 | Successful request payload removal, without removing duplicate rows | About 3.7–4.3 GB | 40–49% |
-| Unified request event model plus compaction | About 1.5–2.0 GB | 70–80% |
+| Unified request event model plus log-only compaction | About 2.0–2.5 GB | 65–72% |
 
-Sending internal runtime logs to Better Stack does not itself materially shrink the current database because structured `slog` output is already sent to Better Stack and is not the source of the three dominant PostgreSQL relations. The capacity benefit comes from removing duplicate per-request rows, removing successful payloads, bounding failure details, and physically compacting historical storage.
+Sending internal runtime logs to Better Stack does not itself materially shrink the current database because structured `slog` output is already sent to Better Stack and is not the source of the three dominant PostgreSQL relations. The in-scope capacity benefit comes from removing duplicate per-request rows, removing successful payloads, bounding failure details, and physically compacting log-owned storage. The existing `social_post_results` footprint remains in the estimate because that customer publishing table is outside the allowed migration and compaction scope.
 
 ## 3. Goals
 
@@ -101,11 +101,12 @@ Sending internal runtime logs to Better Stack does not itself materially shrink 
 3. Preserve bounded, redacted payload detail only for failures.
 4. Preserve existing customer Developer Logs retention entitlements.
 5. Continue supporting Logs, API Metrics, Admin Logs, and Admin Errors without a customer-visible feature regression.
-6. Reduce production database physical size to no more than 2.3 GB after migration and compaction, with a 2.0 GB steady-state operating objective.
+6. Reduce production database physical size to no more than 2.8 GB after migration and log-only compaction, with a 2.5 GB steady-state operating objective.
 7. Reduce sustained daily physical growth by at least 75%.
 8. Reduce Admin Logs cold-query time below 1.5 seconds.
 9. Reduce Admin Errors and Admin Logs list responses below 250 KB.
 10. Ensure Better Stack unavailability cannot affect customer API behavior or product log availability.
+11. Preserve the behavior, response contracts, transaction boundaries, jobs, retries, and data writes of every customer-facing flow outside Logs, Metrics, and Admin observability.
 
 ## 4. Non-goals
 
@@ -116,6 +117,23 @@ Sending internal runtime logs to Better Stack does not itself materially shrink 
 - Do not add customer-facing rollout flags; one temporary, internal Admin read-path kill-switch is explicitly in scope for Stage 2.
 - Do not provide full-text search over request or response payloads.
 - Do not preserve binary request bodies for replay.
+- Do not change publishing, scheduling, delivery, retry, OAuth, Connect, account linking, token refresh, authentication, authorization, billing, quota, onboarding, webhook, or idempotency behavior.
+- Do not rewrite, compact, change the schema of, or run blocking maintenance against customer business tables, including `social_posts`, `social_accounts`, `social_post_results`, `post_delivery_jobs`, outbox tables, and receipt/idempotency tables.
+- Do not add a synchronous Better Stack call, log persistence dependency, or observability transaction to a customer request path.
+
+### 4.1 Hard scope boundary
+
+The implementation is limited to:
+
+- log-, metrics-, debug-, rollup-, retention-, and audit-owned schemas and workers;
+- telemetry middleware and recorders that observe a completed or already-determined request outcome;
+- Logs, Metrics, Admin Logs, Admin Errors, and their detail endpoints;
+- the internal Admin read-path feature flag and Better Stack telemetry plumbing;
+- stopping future writes to the diagnostic-only `social_post_results.debug_curl` field, without rewriting its historical rows or changing any other `social_post_results` behavior.
+
+Publishing and account-connection code may expose an already-determined outcome to an observability adapter, but the adapter must not participate in business decisions. It must not change request or job payloads, provider calls, token handling, database transactions, retry classification, timeout budgets, queueing, delivery state, response status, or response body.
+
+Any implementation diff outside these surfaces requires a new PRD decision and explicit user approval. Discovery that the log work cannot be completed without changing a protected flow is a hard stop, not permission to expand scope.
 
 ## 5. Data classification and ownership
 
@@ -131,7 +149,7 @@ Sending internal runtime logs to Better Stack does not itself materially shrink 
 | Security-sensitive mutations | PostgreSQL `audit_log` | Durable, tenant-scoped audit evidence |
 | Outbox, delivery, receipt, attempt, and idempotency state | Existing PostgreSQL business tables | Operational state, not disposable logs |
 
-Better Stack must never become a dependency of the customer Logs API, the Metrics API, a publishing workflow, authentication, billing, or another product-critical request path.
+Better Stack must never become a dependency of the customer Logs API, the Metrics API, a publishing workflow, account connection, authentication, billing, or another product-critical request path. No log or debug record may be written in the same transaction as a customer business-state mutation.
 
 ## 6. Target architecture
 
@@ -147,6 +165,8 @@ Each API-key request attempts one canonical request event write. Telemetry persi
 - Developer Logs projects the same canonical request events into its list and detail response contracts.
 
 Non-API product events continue through the integration event writer. Runtime and infrastructure telemetry uses structured `slog` and Better Stack only.
+
+All observability writes are best-effort from the perspective of customer behavior. Queue saturation, PostgreSQL telemetry errors, Better Stack errors, serialization errors, and redaction errors emit health signals but do not change the business response or commit/rollback decision. The recorder may observe immutable copies of identifiers and outcomes only after the business path has established them.
 
 ### 6.2 `api_request_events`
 
@@ -233,7 +253,7 @@ New `category='api_request'` writes stop after cutover. The base row remains lea
 
 ### 6.5 Publishing failures and Errors
 
-`post_failures` remains the structured source for publishing failure history. `social_post_results` remains the current result state. Writes through the request-body-unbounded `social_post_results.debug_curl` path stop. Existing response-body and failing-entry caps are preserved or tightened by the new structured representation.
+`post_failures` remains the unchanged structured source for publishing failure history. `social_post_results` remains the unchanged current result state. Writes through the request-body-unbounded `social_post_results.debug_curl` path stop, but its existing schema and historical rows are not modified by this project. Existing response-body and failing-entry caps are preserved or tightened by the new structured representation.
 
 `post_failure_debug_details` stores a bounded diagnostic representation:
 
@@ -244,7 +264,7 @@ New `category='api_request'` writes stop after cutover. The base row remains lea
 - original size, stored size, hashes, and omission reasons;
 - request duration and capture timestamp.
 
-For supported JSON/text requests, the service may render a capped, safe curl command on demand. For binary or multipart requests, the rendered command contains a body omission explanation and never embeds the binary data.
+For supported JSON/text requests, the service may render a capped, safe curl command on demand. For binary or multipart requests, the rendered command contains a body omission explanation and never embeds the binary data. This capture occurs outside publishing business transactions and cannot alter publishing success, failure classification, retry, or latency budgets.
 
 Capture limits:
 
@@ -454,6 +474,7 @@ The unified recorder uses bounded queues and batch inserts instead of spawning a
 - A full success queue may drop success telemetry, but every drop increments a counter and can trigger an alert.
 - A failure event must never be silently dropped.
 - Better Stack errors never affect customer responses.
+- Telemetry persistence failure must never fail, roll back, delay, or reclassify a publishing, account-linking, authentication, billing, or other customer operation.
 
 Exposed health signals:
 
@@ -481,6 +502,8 @@ Migration is split into independently deployable and reversible stages.
 - stop Logs list queries from selecting request and response payloads;
 - create the Admin Logs global time index concurrently;
 - verify production list response sizes and query plans.
+
+Stage 0 may change only diagnostic capture and Admin/Logs projections. It must not change publishing requests, provider calls, account-connection callbacks, business transactions, retries, statuses, or customer-facing response contracts.
 
 ### Stage 1: Introduce the new model
 
@@ -540,11 +563,10 @@ Once old writes stop, OFF can no longer provide a current legacy view. Stage 3 t
 
 - delete the obsolete `api_metrics` relation after validation;
 - swap the compact partitioned integration event relation in place of the 5.71 GB legacy relation;
-- migrate or remove legacy `debug_curl` values;
-- run a staging-timed, production-maintenance-window `VACUUM FULL social_post_results` so the 490 MB TOAST footprint is physically returned;
+- leave historical `social_post_results.debug_curl` values and the physical `social_post_results` relation untouched;
 - remove old relations only after backup and post-cutover observation.
 
-Production does not expose `pg_repack` in `pg_available_extensions`, and `social_post_results` is referenced by multiple foreign keys. This PRD therefore rejects an unverified shadow-table swap. The approved method is `VACUUM FULL` during a measured maintenance window with API and worker publishing/result writes suspended. The staging rehearsal establishes expected lock duration, temporary disk requirement, and recovery procedure before production scheduling.
+Production does not expose `pg_repack` in `pg_available_extensions`, and `social_post_results` is referenced by multiple foreign keys. Both an unverified shadow-table swap and a blocking `VACUUM FULL social_post_results` are rejected by this PRD because they could affect normal publishing. Reclaiming its historical diagnostic TOAST footprint requires a separate, explicitly approved maintenance design.
 
 Plain `DELETE` and ordinary `VACUUM` are insufficient acceptance evidence because they usually make space reusable without returning it to the Railway volume. Acceptance uses `pg_total_relation_size` and `pg_database_size` after the physical compaction stage.
 
@@ -574,8 +596,9 @@ The following controls are release blockers, not optional implementation notes:
 1. **Dual-source cursor:** the global order is `(timestamp DESC, source_kind ASC, source_id DESC)`. The next-page predicate is `timestamp < cursor.timestamp`, or equal timestamp with a later source kind, or equal timestamp and kind with a smaller source-local ID. IDs are compared only within the same source kind. Boundary tests cover identical timestamps, empty sources, deletion between pages, and page-size transitions.
 2. **Aligned partition drop:** parent and detail partitions must share boundaries and be detached/dropped together; row-level cascade is not relied upon for partition removal.
 3. **Short retention:** dead tuples, autovacuum progress, and per-plan retention lag must remain within measured thresholds before capacity acceptance.
-4. **Hot-table compaction:** `social_post_results` uses the staged maintenance-window `VACUUM FULL` procedure; no unverified online swap is allowed.
+4. **Protected business tables:** no migration, rewrite, compaction, new lock, retention job, or schema change may target `social_post_results` or another customer business table. Any such need is a hard stop requiring a separate approved design.
 5. **Read kill-switch lifetime:** `observability_reads_v2` is reversible only during dual write, is locked ON before old writes stop, and is removed during legacy cleanup.
+6. **Customer-path isolation:** telemetry code cannot participate in business transactions or decisions. Its failure, timeout, queue saturation, or third-party outage must leave status codes, bodies, jobs, retries, provider calls, and committed business rows unchanged.
 
 ## 15. Monitoring and alerts
 
@@ -613,7 +636,7 @@ Alert when:
 - retention lag exceeds 48 hours;
 - rollup freshness exceeds two hours;
 - post-migration physical growth exceeds 50 MB per day on a sustained basis;
-- the post-migration database exceeds 3 GB.
+- the post-migration database exceeds 3.3 GB.
 
 ## 16. Implementation decomposition
 
@@ -626,6 +649,8 @@ This PRD is intentionally an umbrella design. It must not be implemented as one 
 5. **Historical migration and physical compaction:** backfill, relation swap, `api_metrics` retirement, legacy curl cleanup, and Railway volume reclamation.
 
 Each workstream receives its own task branch, Preview Acceptance, environment verification, promotion audit, rollback point, and production acceptance evidence. A destructive workstream cannot begin merely because a preceding code workstream merged.
+
+Every workstream also receives an explicit file and relation allowlist. A changed file or database relation outside the approved observability surface blocks the PR until it is removed or separately approved.
 
 ## 17. Test plan
 
@@ -641,6 +666,8 @@ Each workstream receives its own task branch, Preview Acceptance, environment ve
 - route normalization does not expose resource IDs;
 - rollup recomputation is idempotent;
 - plan retention mappings remain unchanged.
+- logging failures do not change handler status, response body, business transaction outcome, queued jobs, retry decisions, or provider call count;
+- the publishing and account-connection adapters expose outcomes without accepting control-flow decisions back from observability code.
 
 ### 17.2 PostgreSQL integration tests
 
@@ -653,6 +680,8 @@ Each workstream receives its own task branch, Preview Acceptance, environment ve
 - weekly partition routing and expiration are correct;
 - batch retention does not cross a plan entitlement boundary;
 - Metrics rollup counts match raw event counts.
+- log migrations acquire no blocking maintenance lock on protected business tables;
+- protected business-table row mutations are identical with observability enabled, disabled, saturated, and unavailable.
 
 ### 17.3 Security tests
 
@@ -683,6 +712,19 @@ Compare old and new paths by workspace, UTC hour, route, method, status code, ou
 - sample at least 100 workspaces and every supported platform;
 - no retained detail exceeds limits or contains a known credential.
 
+### 17.6 Customer core-flow non-regression
+
+Run the existing end-to-end and deployed regression coverage for publishing, scheduling, delivery retries, connected-account listing, OAuth/Connect callback validation, authentication, quota/billing gates, and idempotency. Compare the accepted baseline and candidate on the exact deployed SHA.
+
+Except for the explicitly changed Logs, Metrics, Admin Logs, Admin Errors, and debug-detail surfaces, the candidate must produce:
+
+- identical HTTP status and response contracts;
+- identical business-table mutations and transaction boundaries;
+- identical jobs, retry classifications, and provider call counts;
+- no synchronous call to Better Stack or an observability datastore;
+- user-path p95 latency increase no greater than the larger of 5 milliseconds or 2%;
+- successful customer operations when Better Stack is unreachable and when the telemetry queue or database writer is forced to fail.
+
 ## 18. Release gates
 
 Each migration stage uses a separate pull request and the standard environment promotion flow.
@@ -697,6 +739,9 @@ Before moving to the next environment or stage:
 - promotion content audit finds no unrelated or unidentified commit;
 - destructive operations have a successful backup gate;
 - the actually deployed SHA matches the audited SHA.
+- changed files and database relations are confined to the explicit observability allowlist;
+- the customer core-flow non-regression suite passes with healthy, saturated, and unavailable telemetry dependencies;
+- no migration plan or execution plan takes a blocking lock on a protected business table.
 
 Any failed, timed-out, skipped, cancelled, missing, or wrong-SHA required check is a hard stop.
 
@@ -704,7 +749,7 @@ Any failed, timed-out, skipped, cancelled, missing, or wrong-SHA required check 
 
 The project is complete only when all conditions hold in production:
 
-1. The physical production database is no larger than 2.3 GB immediately after compaction; 2.0 GB remains the steady-state operating objective and 3.0 GB the capacity alert threshold.
+1. The physical production database is no larger than 2.8 GB immediately after log-only compaction; 2.5 GB remains the steady-state operating objective and 3.3 GB the capacity alert threshold. Missing this capacity goal cannot justify maintenance on a protected business table.
 2. Every successfully persisted API-key request has exactly one canonical request event and no duplicate raw event; the production acceptance window has zero dropped success events.
 3. `integration_logs` receives no new `api_request` event.
 4. `api_metrics` receives no new row and is removed after migration validation.
@@ -718,6 +763,9 @@ The project is complete only when all conditions hold in production:
 12. Logs, Metrics, and Errors return equivalent supported information after migration.
 13. Better Stack failure does not affect customer API behavior or product log availability.
 14. Production monitoring, retention, rollup, and capacity alerts are active.
+15. Publishing, scheduling, delivery, retries, account connection, authentication, billing/quota, onboarding, webhooks, and idempotency retain their existing behavior and response contracts.
+16. No protected business table is rewritten, compacted, schema-changed, or exposed to a new blocking migration lock.
+17. Forced Better Stack, telemetry queue, redaction, serialization, and telemetry database failures do not change any customer operation result.
 
 ## 20. Decision record
 
@@ -727,3 +775,5 @@ The project is complete only when all conditions hold in production:
 - Full bounded payload detail is retained only for failures.
 - Existing plan-based Developer Logs retention remains unchanged.
 - Stage 2 uses the explicitly authorized internal `observability_reads_v2` kill-switch on `/admin/feature-flags`; it is not customer-facing and is removed after legacy cleanup.
+- Customer core flows are protected scope: this project may observe their finalized outcomes for logging, but cannot change their control flow, persistence, external calls, retries, or response contracts.
+- `social_post_results` compaction and historical `debug_curl` cleanup are excluded because the capacity benefit does not justify publishing risk without a separate approved maintenance design.
